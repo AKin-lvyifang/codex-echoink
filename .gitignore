@@ -10,4 +10,14 @@ release/
 .tmp/
 .omx/
 
+docs/PRD*.md
+docs/test-cases*.md
+docs/design/
+docs/ideas*.md
+docs/*idea*.md
+docs/*思路*.md
+docs/*方案*.md
+docs/*草稿*.md
+docs/*手稿*.md
+
 *.log

@@ -65,6 +65,7 @@ export interface ApiProviderConfig {
   name: string;
   baseUrl: string;
   model: string;
+  models: string[];
   apiKey: string;
   queryParams?: Record<string, string>;
 }
@@ -191,11 +192,21 @@ export function getActiveApiProvider(settings: Pick<CodexForObsidianSettings, "a
   return settings.apiProviders.find((provider) => provider.id === settings.activeApiProviderId) ?? null;
 }
 
-export function validateApiProvider(provider: Pick<ApiProviderConfig, "name" | "baseUrl" | "model" | "apiKey">): string[] {
+export function getApiProviderModels(provider: Pick<ApiProviderConfig, "model"> & Partial<Pick<ApiProviderConfig, "models">>): string[] {
+  return normalizeModelList([...(provider.models ?? []), provider.model]);
+}
+
+export function providerModelLabel(provider: Pick<ApiProviderConfig, "model"> & Partial<Pick<ApiProviderConfig, "models">>): string {
+  const models = getApiProviderModels(provider);
+  if (!models.length) return "未设置模型";
+  return models.length === 1 ? models[0] : `${models[0]} 等 ${models.length} 个`;
+}
+
+export function validateApiProvider(provider: Pick<ApiProviderConfig, "name" | "baseUrl" | "model" | "apiKey"> & Partial<Pick<ApiProviderConfig, "models">>): string[] {
   const errors: string[] = [];
   if (!provider.name.trim()) errors.push("名称不能为空");
   if (!provider.baseUrl.trim()) errors.push("Base URL 不能为空");
-  if (!provider.model.trim()) errors.push("模型不能为空");
+  if (!getApiProviderModels(provider).length) errors.push("模型不能为空");
   if (!provider.apiKey.trim()) errors.push("API key 不能为空");
   return errors;
 }
@@ -216,7 +227,7 @@ export function removeApiProvider(settings: Pick<CodexForObsidianSettings, "prov
 export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">): string {
   if (settings.providerMode !== "custom-api") return "Codex 登录态";
   const provider = getActiveApiProvider(settings);
-  return provider ? `自定义 API：${provider.name} · ${provider.model}` : "自定义 API 未配置";
+  return provider ? `自定义 API：${provider.name} · ${providerModelLabel(provider)}` : "自定义 API 未配置";
 }
 
 export function ensureModelChoices(models: CodexModel[], ...preferredModels: Array<string | null | undefined>): CodexModel[] {
@@ -292,15 +303,29 @@ function normalizeApiProviders(value: any): ApiProviderConfig[] {
     const id = uniqueProviderId(sanitizeProviderId(item?.id, index), usedIds, index);
     usedIds.add(id);
     const queryParams = normalizeQueryParams(item?.queryParams);
+    const models = normalizeModelList(Array.isArray(item?.models) ? [...item.models, item?.model] : [item?.model]);
     return {
       id,
       name: typeof item?.name === "string" ? item.name.trim() : "",
       baseUrl: typeof item?.baseUrl === "string" ? item.baseUrl.trim() : "",
-      model: typeof item?.model === "string" ? item.model.trim() : "",
+      model: models[0] ?? "",
+      models,
       apiKey: typeof item?.apiKey === "string" ? item.apiKey.trim() : "",
       ...(Object.keys(queryParams).length ? { queryParams } : {})
     };
   });
+}
+
+function normalizeModelList(value: unknown[]): string[] {
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of value) {
+    const model = typeof item === "string" ? item.trim() : "";
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  return models;
 }
 
 function sanitizeProviderId(value: any, index: number): string {

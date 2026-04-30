@@ -1,7 +1,8 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
 import { buildDiffSummary, parseFileChangeDiff, serializeFileChanges } from "../core/diff-summary";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import {
@@ -31,9 +32,11 @@ import {
 } from "../core/workspace-resources";
 import {
   DEFAULT_SETTINGS,
+  getApiProviderModels,
   getActiveApiProvider,
   ensureModelChoices,
   filterEnabledSkills,
+  providerModelLabel,
   providerConnectionLabel,
   normalizeSettingsData,
   removeApiProvider,
@@ -101,6 +104,41 @@ assert.equal(input[3].type, "text");
 assert.equal(input[4].type, "mention");
 assert.equal(input[5].type, "localImage");
 
+assert.equal(imageExtensionForMime("image/png"), "png");
+assert.equal(imageExtensionForMime("image/jpeg"), "jpg");
+assert.equal(imageExtensionForMime("image/webp"), "webp");
+
+const clipboardPng = new File([new Uint8Array([1, 2, 3])], "wechat-screenshot.png", { type: "image/png" });
+const clipboardText = new File(["hello"], "hello.txt", { type: "text/plain" });
+assert.deepEqual(
+  extractClipboardImageFiles({
+    items: [
+      { kind: "string", type: "text/plain", getAsFile: () => null },
+      { kind: "file", type: "image/png", getAsFile: () => clipboardPng },
+      { kind: "file", type: "text/plain", getAsFile: () => clipboardText }
+    ]
+  }),
+  [clipboardPng]
+);
+
+const clipboardVault = await mkdtemp(path.join(tmpdir(), "codex-clipboard-"));
+try {
+  const attachment = await saveClipboardImageAttachment(clipboardPng, {
+    vaultPath: clipboardVault,
+    timestamp: 1700000000000,
+    index: 1
+  });
+  const expectedPath = path.join(clipboardVault, ".obsidian", "plugins", "obsidian-codex", "clipboard", "clipboard-1700000000000-1.png");
+  assert.deepEqual(attachment, {
+    type: "image",
+    name: "clipboard-1700000000000-1.png",
+    path: expectedPath
+  });
+  assert.deepEqual(await readFile(expectedPath), Buffer.from([1, 2, 3]));
+} finally {
+  await rm(clipboardVault, { recursive: true, force: true });
+}
+
 assert.equal(contextPercent(50, 100), 50);
 assert.equal(contextPercent(200, 100), 100);
 assert.equal(contextPercent(0, 100), 0);
@@ -137,10 +175,10 @@ assert.equal(vaultFile.name, "a.md");
 const externalFile = normalizeProcessFileRef("/tmp/out.txt", "/vault");
 assert.equal(externalFile.kind, "external");
 assert.equal(externalFile.path, "/tmp/out.txt");
-const refs = extractProcessFileRefs("sed -n '1,20p' src/ui/codex-view.ts && rg foo docs/PRD.md", "/vault");
+const refs = extractProcessFileRefs("sed -n '1,20p' src/ui/codex-view.ts && rg foo docs/sample.md", "/vault");
 assert.deepEqual(
   refs.map((item) => item.path),
-  ["src/ui/codex-view.ts", "docs/PRD.md"]
+  ["src/ui/codex-view.ts", "docs/sample.md"]
 );
 assert.equal(summarizeProcessEvent("commandExecution", { command: "sed -n '1,20p' src/ui/codex-view.ts" }, "/vault").title, "查看文件");
 assert.equal(summarizeProcessEvent("commandExecution", { command: "rg -n foo docs" }, "/vault").title, "搜索文件");
@@ -148,8 +186,8 @@ assert.equal(summarizeProcessEvent("commandExecution", { command: "npm run build
 assert.equal(summarizeProcessEvent("commandExecution", { command: "rg -n foo docs" }, "/vault").kind, "search");
 assert.equal(summarizeProcessEvent("commandExecution", { command: "sed -n '1,20p' src/ui/codex-view.ts" }, "/vault").kind, "view");
 assert.equal(summarizeProcessEvent("commandExecution", { command: "npm run build" }, "/vault").kind, "run");
-assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/PRD.md" }] }, "/vault").title, "编辑文件");
-assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/PRD.md" }] }, "/vault").kind, "edit");
+assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/sample.md" }] }, "/vault").title, "编辑文件");
+assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/sample.md" }] }, "/vault").kind, "edit");
 assert.equal(reasoningTextFromPayload({ summary: ["先确认附件", "再读取文件"], content: ["检查结构"] }), "先确认附件\n再读取文件\n检查结构");
 assert.equal(summarizeProcessEvent("reasoning", { text: "确认当前文档", status: "running" }, "/vault").title, "正在思考");
 assert.equal(summarizeProcessEvent("reasoning", { summary: ["确认完成"] }, "/vault").title, "已思考");
@@ -275,7 +313,8 @@ const apiProviderSettings = normalizeSettingsData({
       name: "Demo API",
       baseUrl: "https://api.example.com/v1",
       model: "gpt-5.4",
-      apiKey: "sk-demo",
+      models: ["gpt-5.4", "gpt-5.5", "gpt-4.1"],
+      apiKey: "test-key-demo",
       queryParams: {
         "api-version": "2026-04-28",
         empty: ""
@@ -297,7 +336,13 @@ assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
 assert.equal(apiProviderSettings.settings.apiProviders[1].id, "provider_2");
 assert.deepEqual(apiProviderSettings.settings.apiProviders[0].queryParams, { "api-version": "2026-04-28" });
 assert.equal(getActiveApiProvider(apiProviderSettings.settings)?.name, "Demo API");
-assert.equal(providerConnectionLabel(apiProviderSettings.settings), "自定义 API：Demo API · gpt-5.4");
+assert.deepEqual(getApiProviderModels(apiProviderSettings.settings.apiProviders[0]), ["gpt-5.4", "gpt-5.5", "gpt-4.1"]);
+assert.equal(providerModelLabel(apiProviderSettings.settings.apiProviders[0]), "gpt-5.4 等 3 个");
+assert.equal(providerConnectionLabel(apiProviderSettings.settings), "自定义 API：Demo API · gpt-5.4 等 3 个");
+assert.deepEqual(
+  ensureModelChoices([], ...getApiProviderModels(apiProviderSettings.settings.apiProviders[0])).map((model) => model.model),
+  ["gpt-5.4", "gpt-5.5", "gpt-4.1"]
+);
 
 const invalidActiveProviderSettings = normalizeSettingsData({
   settingsVersion: 6,
@@ -314,8 +359,8 @@ const providerDeleteSettings = normalizeSettingsData({
   providerMode: "custom-api",
   activeApiProviderId: "first",
   apiProviders: [
-    { id: "first", name: "First", baseUrl: "https://first.example/v1", model: "gpt-5.4", apiKey: "sk-first" },
-    { id: "second", name: "Second", baseUrl: "https://second.example/v1", model: "gpt-5.4-mini", apiKey: "sk-second" }
+    { id: "first", name: "First", baseUrl: "https://first.example/v1", model: "gpt-5.4", apiKey: "test-key-first" },
+    { id: "second", name: "Second", baseUrl: "https://second.example/v1", model: "gpt-5.4-mini", apiKey: "test-key-second" }
   ]
 }).settings;
 assert.equal(removeApiProvider(providerDeleteSettings, "first"), true);
@@ -340,7 +385,8 @@ const customLaunch = buildCodexLaunchConfig({
     name: "Demo API",
     baseUrl: "https://api.example.com/v1",
     model: "gpt-5.4",
-    apiKey: "sk-secret",
+    models: ["gpt-5.4", "gpt-5.5"],
+    apiKey: "test-key-value",
     queryParams: { "api-version": "2026-04-28" }
   }
 });
@@ -351,8 +397,8 @@ assert.ok(customLaunch.args.includes('model_providers.provider_demo.base_url="ht
 assert.ok(customLaunch.args.includes('model_providers.provider_demo.wire_api="responses"'));
 assert.ok(customLaunch.args.includes('model_providers.provider_demo.env_key="OBSIDIAN_CODEX_API_KEY_PROVIDER_DEMO"'));
 assert.ok(customLaunch.args.includes('model_providers.provider_demo.query_params.api-version="2026-04-28"'));
-assert.equal(customLaunch.args.join(" ").includes("sk-secret"), false);
-assert.equal(customLaunch.env.OBSIDIAN_CODEX_API_KEY_PROVIDER_DEMO, "sk-secret");
+assert.equal(customLaunch.args.join(" ").includes("test-key-value"), false);
+assert.equal(customLaunch.env.OBSIDIAN_CODEX_API_KEY_PROVIDER_DEMO, "test-key-value");
 
 const loginLaunch = buildCodexLaunchConfig({
   proxyEnabled: false,
@@ -363,7 +409,8 @@ const loginLaunch = buildCodexLaunchConfig({
     name: "Demo API",
     baseUrl: "https://api.example.com/v1",
     model: "gpt-5.4",
-    apiKey: "sk-secret"
+    models: ["gpt-5.4"],
+    apiKey: "test-key-value"
   }
 });
 assert.deepEqual(loginLaunch.args, ["app-server", "--listen", "stdio://"]);

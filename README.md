@@ -1,26 +1,95 @@
-# Codex for Obsidian
+<a href="https://github.com/AKin-lvyifang/obsidian-codex">
+  <img width="1024" alt="Codex for Obsidian, a local AI workspace inside your vault." src="docs/images/obsidian-codex-parchment-hero.png">
+</a>
 
-在 Obsidian 侧栏中使用 Codex CLI，让 Codex 以当前 vault 为工作区阅读、整理和修改笔记。
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#whats-new">What's New</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#license">License</a> ·
+  <a href="README_CN.md">中文</a>
+</p>
 
-![Codex for Obsidian 侧栏演示](docs/images/obsidian-codex-vault-answer.png)
+<p align="center">
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
+    <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
+    <img src="https://img.shields.io/badge/version-v0.1.2-0EA5E9?style=flat-square" alt="Version v0.1.2">
+    <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
+    <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
+  </a>
+</p>
 
-## 功能
+<p align="center">
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.1.2/obsidian-codex-0.1.2.zip"><strong>Download v0.1.2</strong></a>
+  ·
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">Latest Release</a>
+</p>
 
-- 右侧栏多会话聊天
-- 复用本机 Codex CLI 登录状态
-- 支持模型、思考强度、速度、权限和 Agent / Plan 模式
-- 支持当前笔记、文件、图片、slash skills、MCP 和插件能力开关
-- 展示思考、命令、文件编辑、MCP 调用和上下文用量
+---
 
-## 安装
+## Features
 
-1. 先安装并登录 Codex CLI。
-2. 在 GitHub Releases 下载 `obsidian-codex-0.1.0.zip`。
-3. 解压后得到 `obsidian-codex` 文件夹。
-4. 放到你的 vault 插件目录：`<vault>/.obsidian/plugins/obsidian-codex/`。
-5. 重启 Obsidian，在第三方插件里启用 `Codex for Obsidian`。
+### Vault-native Codex Workspace
 
-插件文件夹里应包含：
+- Opens Codex in the Obsidian sidebar.
+- Uses the current vault as the working directory.
+- Lets Codex read notes, inspect folders, edit documents, and run local commands.
+- Keeps the workflow inside Obsidian instead of bouncing between apps.
+
+### Agent-style Process Timeline
+
+- Renders reasoning, commands, file edits, MCP calls, and context usage as readable process cards.
+- Shows file chips for touched files, with vault files opening back in Obsidian.
+- Keeps large outputs and raw details folded away so the conversation stays readable.
+- Supports Agent / Plan mode, model selection, reasoning effort, speed, and file permission modes.
+
+### Local-first Integration
+
+- Reuses your local Codex CLI login state.
+- Does not require storing an OpenAI API key by default.
+- Optionally supports OpenAI Responses API-compatible custom providers, including multiple models per provider.
+- Supports local proxy settings for the Codex child process.
+- Keeps plugin, MCP, and skill switches scoped to the current vault instead of rewriting global Codex config.
+
+## What's New
+
+### v0.1.2
+
+**New feature:** public releases now keep the GitHub repository focused on install and usage files only.
+
+**How to use:**
+
+1. Download the latest release package.
+2. Install the `obsidian-codex` plugin folder.
+3. Use the plugin without browsing internal project documents.
+
+### v0.1.1
+
+**New feature:** paste WeChat or system screenshots directly into the Codex input box.
+
+**How to use:**
+
+1. Take a screenshot.
+2. Click the Codex input box.
+3. Press `Command+V`, then send.
+
+## Install
+
+1. Install and log in to Codex CLI.
+2. Download [`obsidian-codex-0.1.2.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.1.2/obsidian-codex-0.1.2.zip) from [the latest release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest).
+3. Unzip it and get the `obsidian-codex` folder.
+4. Move it into your vault plugin directory:
+
+```text
+<vault>/.obsidian/plugins/obsidian-codex/
+```
+
+5. Restart Obsidian and enable `Codex for Obsidian` in Community plugins.
+
+The plugin folder should contain:
 
 ```text
 obsidian-codex/
@@ -29,7 +98,18 @@ obsidian-codex/
   styles.css
 ```
 
-## 本地开发
+## Quick Start
+
+1. Open the Codex sidebar from the ribbon icon or command palette.
+2. Ask Codex to inspect, summarize, rewrite, or manage files in the current vault.
+3. Attach notes, files, images, skills, or MCP tools when needed.
+4. Review the process cards for commands, edits, context usage, and evidence.
+
+## Screenshots
+
+![Codex for Obsidian sidebar demo](docs/images/obsidian-codex-vault-answer.png)
+
+## Development
 
 ```bash
 npm install
@@ -38,23 +118,27 @@ npm run typecheck
 npm run build
 ```
 
-生成可分享安装包：
+Generate a shareable install package:
 
 ```bash
 npm run package
 ```
 
-部署到自己的 Obsidian vault：
+Deploy to your own Obsidian vault:
 
 ```bash
 OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 ```
 
-## 注意
+## Requirements
 
-- 仅支持 Obsidian 桌面端。
-- 必须先安装并登录 Codex CLI；自定义 API 也通过 Codex CLI app-server 调用。
-- 自定义 API Provider 需要兼容 OpenAI Responses API，例如 `/v1/responses`；只支持 `/v1/chat/completions` 的通用 OpenAI 格式通常不可用。
-- 自定义 API key 会保存在 Obsidian 插件数据里，只建议本机使用。
-- Codex CLI 路径留空时会从 PATH 和常见安装目录自动查找；找不到时可在设置页填写路径。
-- 如需本地代理，可在插件设置里手动开启并填写地址。
+- Codex CLI must be installed and available locally. Custom API providers still run through `codex app-server`; the plugin does not call provider APIs directly.
+- Custom API providers must be compatible with the OpenAI Responses API, such as `/v1/responses`. Providers that only support `/v1/chat/completions` may not work.
+- Custom API keys are stored in Obsidian plugin data, so use them only on a trusted local machine.
+- Leave the Codex CLI path empty to auto-detect it from `PATH` and common install folders, or set the path manually in plugin settings.
+
+## License
+
+Codex for Obsidian is open source under the [MIT License](LICENSE).
+
+You may use, copy, modify, merge, publish, distribute, sublicense, and sell copies of this software as permitted by the MIT License, as long as the copyright and license notice are included. The software is provided "as is", without warranty of any kind.

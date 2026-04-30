@@ -1,7 +1,7 @@
 import { ItemView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
-import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills, newId, providerConnectionLabel } from "../settings/settings";
+import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, newId, providerConnectionLabel } from "../settings/settings";
 import type {
   CodexNotification,
   CodexSkill,
@@ -14,6 +14,7 @@ import type {
   TokenUsage,
   UiMode
 } from "../types/app-server";
+import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, parseFileChangeDiff, serializeFileChanges, type ParsedDiffFile } from "../core/diff-summary";
 import { basename, buildUserInput, contextUsageView, filterSkills, getSlashQuery, normalizeProcessFileRef, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
@@ -301,6 +302,9 @@ export class CodexView extends ItemView {
       attr: { placeholder: "问 Codex，让它管理当前 Obsidian 仓库" }
     });
     this.inputEl.addEventListener("input", () => this.onInputChanged());
+    this.inputEl.addEventListener("paste", (event) => {
+      void this.handlePastedFiles(event);
+    });
     this.inputEl.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -966,7 +970,11 @@ export class CodexView extends ItemView {
   private openModelMenu(event: MouseEvent): void {
     event.preventDefault();
     const menu = new Menu();
-    const models = ensureModelChoices(this.plugin.lastStatus?.models ?? [], this.selectedModel, this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel);
+    const providerModels = this.activeProviderModels();
+    const effectiveModel = this.effectiveModel();
+    const models = providerModels.length
+      ? ensureModelChoices([], ...providerModels)
+      : ensureModelChoices(this.plugin.lastStatus?.models ?? [], this.selectedModel, this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel);
     menu.addItem((item) => item.setTitle("模型").setIsLabel(true));
     if (models.length) {
       for (const model of models) {
@@ -974,7 +982,7 @@ export class CodexView extends ItemView {
           item
             .setTitle(model.displayName || model.model)
             .setIcon("box")
-            .setChecked(this.selectedModel === model.model)
+            .setChecked(effectiveModel === model.model)
             .onClick(() => {
               this.selectedModel = model.model;
               this.persistComposerDefaults();
@@ -1034,11 +1042,11 @@ export class CodexView extends ItemView {
   }
 
   private currentComposerSummary(): string {
-    return `${shortModelLabel(this.selectedModel || this.plugin.settings.defaultModel || DEFAULT_SETTINGS.defaultModel)} ${compactReasoningLabel(this.selectedReasoning)}`;
+    return `${shortModelLabel(this.effectiveModel())} ${compactReasoningLabel(this.selectedReasoning)}`;
   }
 
   private currentComposerSummaryTitle(): string {
-    return `模型：${this.selectedModel || this.plugin.settings.defaultModel || DEFAULT_SETTINGS.defaultModel}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
+    return `模型：${this.effectiveModel()}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
   }
 
   private persistComposerDefaults(): void {
@@ -1312,7 +1320,7 @@ export class CodexView extends ItemView {
 
   private currentTurnOptions() {
     return {
-      model: this.selectedModel || this.plugin.settings.defaultModel || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel,
+      model: this.effectiveModel(),
       reasoning: this.selectedReasoning,
       serviceTier: this.selectedServiceTier,
       permission: this.selectedPermission,
@@ -1320,6 +1328,20 @@ export class CodexView extends ItemView {
       mcpEnabled: this.plugin.settings.mcpEnabled,
       workspaceResources: this.plugin.settings.workspaceResources
     };
+  }
+
+  private activeProviderModels(): string[] {
+    if (this.plugin.settings.providerMode !== "custom-api") return [];
+    const provider = getActiveApiProvider(this.plugin.settings);
+    return provider ? getApiProviderModels(provider) : [];
+  }
+
+  private effectiveModel(): string {
+    const providerModels = this.activeProviderModels();
+    if (providerModels.length) {
+      return providerModels.includes(this.selectedModel) ? this.selectedModel : providerModels[0];
+    }
+    return this.selectedModel || this.plugin.settings.defaultModel || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel;
   }
 
   private prewarmActiveThread(): void {
@@ -1904,6 +1926,20 @@ export class CodexView extends ItemView {
       });
     }
     this.renderAttachments();
+  }
+
+  private async handlePastedFiles(event: ClipboardEvent): Promise<void> {
+    const files = extractClipboardImageFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    try {
+      const pasted = await saveClipboardImageAttachments(files, { vaultPath: this.plugin.getVaultPath() });
+      this.attachments.push(...pasted);
+      this.renderAttachments();
+    } catch (error) {
+      console.error("Codex paste image failed", error);
+      new Notice("粘贴图片失败");
+    }
   }
 }
 

@@ -22,7 +22,7 @@ import { buildCollaborationMode, buildSandboxPolicy, normalizeServiceTier } from
 import { CodexRpcClient } from "./codex-rpc";
 import { normalizeRateLimitResponse } from "./rate-limits";
 import { mergeMcpServers } from "./workspace-resources";
-import { hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
+import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
 
 export interface CodexServiceOptions {
   cliPath: string;
@@ -440,13 +440,14 @@ export function buildCodexLaunchConfig(options: {
   if (!provider) return { args, env };
 
   const providerId = provider.id;
+  const model = getApiProviderModels(provider)[0] ?? provider.model;
   const envKey = customApiProviderEnvKey(providerId);
   env[envKey] = provider.apiKey;
   args.push(
     "-c",
     `model_provider=${tomlString(providerId)}`,
     "-c",
-    `model=${tomlString(provider.model)}`,
+    `model=${tomlString(model)}`,
     "-c",
     `model_providers.${providerId}.name=${tomlString(provider.name)}`,
     "-c",
