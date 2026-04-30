@@ -397,19 +397,35 @@ export class CodexService {
   }
 }
 
-function resolveCodexCommand(customPath: string): string {
-  if (customPath.trim()) return expandHome(customPath.trim());
-  const home = os.homedir();
+export function resolveCodexCommand(customPath: string): string {
+  const requested = customPath.trim();
+  if (requested) {
+    const expanded = expandHome(requested);
+    const found = commandPath(expanded);
+    if (found) return found;
+    throw new Error(`找不到 Codex CLI：${expanded}。请先安装 Codex CLI，或在设置里填写正确路径。`);
+  }
+
+  const found = commandPath("codex");
+  if (found) return found;
+  throw new Error("找不到 Codex CLI。请先安装并登录 Codex CLI；自定义 API Provider 也需要通过 Codex CLI app-server 调用。");
+}
+
+function commandPath(command: string): string | null {
+  if (path.isAbsolute(command) || command.includes(path.sep)) {
+    return fs.existsSync(command) ? command : null;
+  }
+
   const candidates = [
-    path.join(home, ".npm-global", "bin", "codex"),
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
+    path.join(os.homedir(), ".npm-global", "bin", command),
+    "/opt/homebrew/bin/" + command,
+    "/usr/local/bin/" + command,
     ...String(process.env.PATH || "")
       .split(path.delimiter)
-      .map((part) => path.join(part, "codex"))
+      .filter(Boolean)
+      .map((part) => path.join(part, command))
   ];
-  const found = candidates.find((candidate) => fs.existsSync(candidate));
-  return found ?? "codex";
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
 export function buildCodexLaunchConfig(options: {

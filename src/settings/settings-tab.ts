@@ -73,7 +73,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.decorateSetting(
       new Setting(containerEl)
       .setName("Codex CLI 路径")
-      .setDesc("留空时自动从 PATH 和常见目录查找。不会保存 OpenAI key。")
+      .setDesc("必须先安装并登录 Codex CLI。自定义 API 也通过 Codex CLI app-server 调用，不是插件直连 API。留空时自动查找。")
       .addText((text) =>
         text.setPlaceholder("~/.npm-global/bin/codex").setValue(this.plugin.settings.cliPath).onChange(async (value) => {
           this.plugin.settings.cliPath = value.trim();
@@ -239,6 +239,10 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-resource-warning",
       text: "API key 会明文保存在 Obsidian 插件数据里；只建议本机使用，不建议同步或提交。"
     });
+    wrapper.createDiv({
+      cls: "codex-resource-warning",
+      text: "自定义 API 仍需要本机 Codex CLI。Base URL 必须兼容 OpenAI Responses API；只支持 /v1/chat/completions 的通用 OpenAI 格式通常不可用。"
+    });
 
     const modeRow = wrapper.createDiv({ cls: "codex-api-provider-mode" });
     modeRow.createDiv({
@@ -341,6 +345,7 @@ export class CodexSettingTab extends PluginSettingTab {
       provider.baseUrl = value.trim();
       await this.plugin.saveSettings();
     });
+    row.createDiv({ cls: "codex-resource-note", text: "要求：服务端需支持 Responses API，例如 /v1/responses；只支持 Chat Completions 的服务可能无法使用。" });
     this.addProviderText(row, "模型", provider.model, DEFAULT_SETTINGS.defaultModel, async (value) => {
       provider.model = value.trim();
       await this.plugin.saveSettings();

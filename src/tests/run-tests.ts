@@ -40,7 +40,7 @@ import {
   validateApiProvider,
   resourceEnabled
 } from "../settings/settings";
-import { buildCodexLaunchConfig } from "../core/codex-service";
+import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
@@ -367,6 +367,10 @@ const loginLaunch = buildCodexLaunchConfig({
   }
 });
 assert.deepEqual(loginLaunch.args, ["app-server", "--listen", "stdio://"]);
+assert.throws(
+  () => resolveCodexCommand("/definitely/missing/codex"),
+  /找不到 Codex CLI/
+);
 
 const modelChoices = ensureModelChoices([{ id: "gpt-5.4", model: "gpt-5.4", displayName: "GPT-5.4" }], "gpt-5.5");
 assert.deepEqual(

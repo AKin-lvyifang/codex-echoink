@@ -53,6 +53,8 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 ## 注意
 
 - 仅支持 Obsidian 桌面端。
-- 插件不会保存 OpenAI API key。
-- Codex CLI 路径留空时会从 PATH 和常见安装目录自动查找。
+- 必须先安装并登录 Codex CLI；自定义 API 也通过 Codex CLI app-server 调用。
+- 自定义 API Provider 需要兼容 OpenAI Responses API，例如 `/v1/responses`；只支持 `/v1/chat/completions` 的通用 OpenAI 格式通常不可用。
+- 自定义 API key 会保存在 Obsidian 插件数据里，只建议本机使用。
+- Codex CLI 路径留空时会从 PATH 和常见安装目录自动查找；找不到时可在设置页填写路径。
 - 如需本地代理，可在插件设置里手动开启并填写地址。
