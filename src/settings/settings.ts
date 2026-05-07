@@ -1,4 +1,6 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
+import { DEFAULT_EDITOR_ACTION_MODEL, type EditorAiActionConfig, type EditorAiActionSettings, type EditorAiStyleConfig } from "../editor-actions/types";
+export type { EditorAiActionConfig, EditorAiActionSettings, EditorAiStyleConfig };
 
 export interface StoredAttachment {
   type: "file" | "image";
@@ -56,7 +58,7 @@ export interface StoredSession {
   updatedAt: number;
 }
 
-export type SettingsTab = "general" | "providers" | "resources";
+export type SettingsTab = "general" | "providers" | "resources" | "editorActions";
 export type ProviderMode = "codex-login" | "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 
@@ -106,14 +108,135 @@ export interface CodexForObsidianSettings {
   autoOpen: boolean;
   showContext: boolean;
   resourceManagementTab: ResourceManagementTab;
+  editorActions: EditorAiActionSettings;
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
   activeSessionId: string;
 }
 
+const LEGACY_EDITOR_ACTION_PROMPTS: Record<string, string> = {
+  rewrite: "请在保持原意的前提下改写选中文字，让表达更清楚、更自然。\n\n选中文字：\n{{selected_text}}\n\n写作风格：{{style}}",
+  expand: "请在保持原意的前提下扩写选中文字，补充必要细节、上下文或例子。\n\n选中文字：\n{{selected_text}}\n\n写作风格：{{style}}",
+  continue: "请基于选中文字和前后文继续写。不要重复原文，只返回续写候选正文。\n\n选中文字：\n{{selected_text}}\n\n选区前文：\n{{before_context}}\n\n选区后文：\n{{after_context}}\n\n写作风格：{{style}}"
+};
+
+const VERSION_9_EDITOR_ACTION_PROMPTS: Record<string, string> = {
+  rewrite: [
+    "请把选中文字改写成一个明显不同、表达更有质感的版本。",
+    "要求：",
+    "1. 保留核心事实和真实含义，不编造新信息。",
+    "2. 重组句式和表达节奏，不要只替换一两个词，也不要只加语气词。",
+    "3. 按写作风格要求重塑语气、画面感和信息重点。",
+    "4. 如果原文太平，要主动补足表达张力，但不要夸张油腻。",
+    "5. 只返回改写后的候选正文。",
+    "",
+    "选中文字：",
+    "{{selected_text}}",
+    "",
+    "写作风格：{{style}}"
+  ].join("\n"),
+  expand: [
+    "请把选中文字扩写成信息更完整、读起来更顺的版本。",
+    "要求：",
+    "1. 保留原意，并围绕原意增加动机、背景、过程、感受或具体细节。",
+    "2. 扩写后长度要明显增加，不能只是同义改写。",
+    "3. 按写作风格要求调整语气和表达方式。",
+    "4. 不要编造硬事实；不确定的信息用更稳妥的表达。",
+    "5. 只返回扩写后的候选正文。",
+    "",
+    "选中文字：",
+    "{{selected_text}}",
+    "",
+    "选区前文：",
+    "{{before_context}}",
+    "",
+    "选区后文：",
+    "{{after_context}}",
+    "",
+    "写作风格：{{style}}"
+  ].join("\n"),
+  continue: [
+    "请基于选中文字和前后文继续写一段自然衔接的内容。",
+    "要求：",
+    "1. 承接当前语气、主题和叙述方向，不要重复原文。",
+    "2. 续写内容要能直接接在选中文字后面。",
+    "3. 按写作风格要求增强表达，但不要跑题。",
+    "4. 不要总结解释，不要输出多个版本。",
+    "5. 只返回续写候选正文。",
+    "",
+    "选中文字：",
+    "{{selected_text}}",
+    "",
+    "选区前文：",
+    "{{before_context}}",
+    "",
+    "选区后文：",
+    "{{after_context}}",
+    "",
+    "写作风格：{{style}}"
+  ].join("\n")
+};
+
+const DEFAULT_EDITOR_ACTIONS: EditorAiActionConfig[] = [
+  {
+    id: "rewrite",
+    label: "改写",
+    enabled: true,
+    promptTemplate: [
+      "请把选中文字改写成一个明显不同、表达更有质感的版本。",
+      "要求：",
+      "1. 保留核心事实和真实含义，不编造新信息。",
+      "2. 重组句式和表达节奏，不要只替换一两个词，也不要只加语气词。",
+      "3. 按写作风格要求重塑语气、画面感和信息重点。",
+      "4. 如果原文太平，要主动补足表达张力，但不要夸张油腻。",
+      "5. 只返回改写后的候选正文。"
+    ].join("\n")
+  },
+  {
+    id: "expand",
+    label: "扩写",
+    enabled: true,
+    promptTemplate: [
+      "请把选中文字扩写成信息更完整、读起来更顺的版本。",
+      "要求：",
+      "1. 保留原意，并围绕原意增加动机、背景、过程、感受或具体细节。",
+      "2. 扩写后长度要明显增加，不能只是同义改写。",
+      "3. 按写作风格要求调整语气和表达方式。",
+      "4. 不要编造硬事实；不确定的信息用更稳妥的表达。",
+      "5. 输出一小段即可，不要写成长文。",
+      "6. 只返回扩写后的候选正文。"
+    ].join("\n")
+  },
+  {
+    id: "continue",
+    label: "续写",
+    enabled: true,
+    promptTemplate: [
+      "请基于选中文字和前后文继续写一段自然衔接的内容。",
+      "要求：",
+      "1. 承接当前语气、主题和叙述方向，不要重复原文。",
+      "2. 续写内容要能直接接在选中文字后面。",
+      "3. 按写作风格要求增强表达，但不要跑题。",
+      "4. 不要总结解释，不要输出多个版本。",
+      "5. 只返回续写候选正文。"
+    ].join("\n")
+  }
+];
+
+const LEGACY_EDITOR_STYLE_INSTRUCTIONS: Record<string, string> = {
+  xiaohongshu: "表达更有分享感和吸引力，但不要夸张堆词。"
+};
+
+const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
+  { id: "clear", label: "清楚", instruction: "表达清楚、准确、自然，删掉含糊和绕弯，但保留原文的真实语气。" },
+  { id: "formal", label: "正式", instruction: "语气正式、稳重、有条理，适合方案、报告、文档和对外说明。" },
+  { id: "casual", label: "口语", instruction: "语气自然、像真实的人在表达，句子更顺口，但不要松散和啰嗦。" },
+  { id: "xiaohongshu", label: "小红书", instruction: "生活化、有画面感、有分享欲，适合笔记正文；可以增强情绪和场景，但避免夸张标题党、口水词和虚假承诺。" }
+];
+
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 6,
+  settingsVersion: 11,
   settingsTab: "general",
   cliPath: "",
   proxyEnabled: false,
@@ -130,6 +253,20 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   autoOpen: false,
   showContext: true,
   resourceManagementTab: "plugins",
+  editorActions: {
+    enabled: false,
+    statusSlotEnabled: true,
+    model: DEFAULT_EDITOR_ACTION_MODEL,
+    defaultStyleId: "clear",
+    maxSelectedChars: 4000,
+    contextCharsBefore: 300,
+    contextCharsAfter: 300,
+    timeoutMs: 25000,
+    summaryCacheEnabled: true,
+    summaryCache: {},
+    actions: DEFAULT_EDITOR_ACTIONS,
+    styles: DEFAULT_EDITOR_STYLES
+  },
   workspaceResources: {
     plugins: {},
     mcpServers: {},
@@ -150,6 +287,7 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(data?.apiProviders),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
+    editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: Array.isArray(data?.sessions) ? data.sessions : [],
@@ -242,6 +380,29 @@ export function ensureModelChoices(models: CodexModel[], ...preferredModels: Arr
   return [...preferred, ...models];
 }
 
+export function normalizeEditorActionSettings(value: any, previousVersion = DEFAULT_SETTINGS.settingsVersion): EditorAiActionSettings {
+  const defaults = DEFAULT_SETTINGS.editorActions;
+  const actions = normalizeEditorActionConfigs(value?.actions, defaults.actions, previousVersion);
+  const styles = normalizeEditorActionStyles(value?.styles, defaults.styles, previousVersion);
+  const defaultStyleId = typeof value?.defaultStyleId === "string" && styles.some((style) => style.id === value.defaultStyleId.trim())
+    ? value.defaultStyleId.trim()
+    : defaults.defaultStyleId;
+  return {
+    enabled: typeof value?.enabled === "boolean" ? value.enabled : defaults.enabled,
+    statusSlotEnabled: typeof value?.statusSlotEnabled === "boolean" ? value.statusSlotEnabled : defaults.statusSlotEnabled,
+    model: normalizeText(value?.model, defaults.model),
+    defaultStyleId,
+    maxSelectedChars: normalizePositiveInteger(value?.maxSelectedChars, defaults.maxSelectedChars, 200, 20000),
+    contextCharsBefore: normalizeEditorActionPerformanceNumber(value?.contextCharsBefore, defaults.contextCharsBefore, 1200, previousVersion, 0, 10000),
+    contextCharsAfter: normalizeEditorActionPerformanceNumber(value?.contextCharsAfter, defaults.contextCharsAfter, 1200, previousVersion, 0, 10000),
+    timeoutMs: normalizeEditorActionPerformanceNumber(value?.timeoutMs, defaults.timeoutMs, 90000, previousVersion, 10000, 300000),
+    summaryCacheEnabled: typeof value?.summaryCacheEnabled === "boolean" ? value.summaryCacheEnabled : defaults.summaryCacheEnabled,
+    summaryCache: normalizeEditorActionSummaryCache(value?.summaryCache),
+    actions,
+    styles
+  };
+}
+
 export function normalizeWorkspaceResources(value: any): WorkspaceResourceToggles {
   return {
     plugins: normalizeBooleanMap(value?.plugins),
@@ -256,6 +417,30 @@ export function normalizeWorkspaceResourceCache(value: any): WorkspaceResourceCa
     ...(normalizeCacheEntry(value?.mcp, normalizeCachedMcp) ? { mcp: normalizeCacheEntry(value?.mcp, normalizeCachedMcp) } : {}),
     ...(normalizeCacheEntry(value?.skills, normalizeCachedSkill) ? { skills: normalizeCacheEntry(value?.skills, normalizeCachedSkill) } : {})
   };
+}
+
+function normalizeEditorActionSummaryCache(value: any): EditorAiActionSettings["summaryCache"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.values(value)
+    .map((item: any) => {
+      const filePath = normalizeText(item?.filePath, "");
+      const summary = normalizeText(item?.summary, "");
+      const contentHash = normalizeText(item?.contentHash, "");
+      if (!filePath || !summary || !contentHash) return null;
+      return {
+        filePath,
+        mtime: normalizeNonNegativeNumber(item?.mtime),
+        size: normalizeNonNegativeNumber(item?.size),
+        contentHash,
+        summary,
+        updatedAt: normalizeNonNegativeNumber(item?.updatedAt),
+        lastUsedAt: normalizeNonNegativeNumber(item?.lastUsedAt ?? item?.updatedAt)
+      };
+    })
+    .filter((item): item is EditorAiActionSettings["summaryCache"][string] => Boolean(item))
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt)
+    .slice(0, 200);
+  return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
 }
 
 export function resourceEnabled(overrides: Record<string, boolean> | undefined, key: string, sourceEnabled = true): boolean {
@@ -281,11 +466,98 @@ function normalizeResourceManagementTab(value: any): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: any): SettingsTab {
-  return value === "providers" || value === "resources" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  return value === "providers" || value === "resources" || value === "editorActions" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 function normalizeProviderMode(value: any): ProviderMode {
   return value === "custom-api" ? "custom-api" : DEFAULT_SETTINGS.providerMode;
+}
+
+function normalizeEditorActionConfigs(value: any, defaults: EditorAiActionConfig[], previousVersion: number): EditorAiActionConfig[] {
+  const defaultById = new Map(defaults.map((item) => [item.id, item]));
+  const used = new Set<string>();
+  const result: EditorAiActionConfig[] = [];
+  const source = Array.isArray(value) ? value : [];
+  for (const item of source) {
+    const id = normalizeEditorActionId(item?.id);
+    if (!id || used.has(id)) continue;
+    const fallback = defaultById.get(id);
+    used.add(id);
+    const rawPromptTemplate = normalizeText(item?.promptTemplate, fallback?.promptTemplate ?? "{{selected_text}}");
+    result.push({
+      id,
+      label: normalizeText(item?.label, fallback?.label ?? id),
+      enabled: typeof item?.enabled === "boolean" ? item.enabled : fallback?.enabled ?? true,
+      promptTemplate: shouldMigrateEditorActionPrompt(id, rawPromptTemplate, previousVersion) ? fallback?.promptTemplate ?? rawPromptTemplate : rawPromptTemplate
+    });
+  }
+  for (const fallback of defaults) {
+    if (used.has(fallback.id)) continue;
+    result.push({ ...fallback });
+  }
+  return result;
+}
+
+function normalizeEditorActionStyles(value: any, defaults: EditorAiStyleConfig[], previousVersion: number): EditorAiStyleConfig[] {
+  const defaultById = new Map(defaults.map((item) => [item.id, item]));
+  const used = new Set<string>();
+  const result: EditorAiStyleConfig[] = [];
+  const source = Array.isArray(value) ? value : [];
+  for (const item of source) {
+    const id = normalizeEditorActionId(item?.id);
+    if (!id || used.has(id)) continue;
+    const fallback = defaultById.get(id);
+    used.add(id);
+    const rawInstruction = normalizeText(item?.instruction, fallback?.instruction ?? "");
+    result.push({
+      id,
+      label: normalizeText(item?.label, fallback?.label ?? id),
+      instruction: shouldMigrateEditorStyleInstruction(id, rawInstruction, previousVersion) ? fallback?.instruction ?? rawInstruction : rawInstruction
+    });
+  }
+  for (const fallback of defaults) {
+    if (used.has(fallback.id)) continue;
+    result.push({ ...fallback });
+  }
+  return result;
+}
+
+function normalizeEditorActionId(value: any): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  return /^[A-Za-z0-9_-]+$/.test(id) ? id : "";
+}
+
+function shouldMigrateEditorActionPrompt(id: string, value: string, previousVersion: number): boolean {
+  if (previousVersion < 8) return LEGACY_EDITOR_ACTION_PROMPTS[id] === value;
+  if (previousVersion < 10) return VERSION_9_EDITOR_ACTION_PROMPTS[id] === value;
+  return false;
+}
+
+function shouldMigrateEditorStyleInstruction(id: string, value: string, previousVersion: number): boolean {
+  if (previousVersion >= 8) return false;
+  return LEGACY_EDITOR_STYLE_INSTRUCTIONS[id] === value;
+}
+
+function normalizeText(value: any, fallback: string): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || fallback;
+}
+
+function normalizePositiveInteger(value: any, fallback: number, min: number, max: number): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function normalizeEditorActionPerformanceNumber(value: any, fallback: number, legacyDefault: number, previousVersion: number, min: number, max: number): number {
+  if (previousVersion < 10 && Number(value) === legacyDefault) return fallback;
+  return normalizePositiveInteger(value, fallback, min, max);
+}
+
+function normalizeNonNegativeNumber(value: any): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return number;
 }
 
 function normalizeApiProviderSelection(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">): void {

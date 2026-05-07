@@ -40,6 +40,12 @@ export interface CodexLaunchConfig {
   env: NodeJS.ProcessEnv;
 }
 
+export interface CodexCommandResolveOptions {
+  home?: string;
+  envPath?: string;
+  exists?: (candidate: string) => boolean;
+}
+
 export interface TurnOptions {
   model: string;
   reasoning: ReasoningEffort;
@@ -47,6 +53,8 @@ export interface TurnOptions {
   permission: PermissionMode;
   mode: UiMode;
   mcpEnabled: boolean;
+  persistExtendedHistory?: boolean;
+  requestTimeoutMs?: number;
   workspaceResources?: WorkspaceResourceToggles;
 }
 
@@ -92,8 +100,8 @@ export class CodexService {
 
   constructor(private readonly options: CodexServiceOptions) {}
 
-  async connect(force = false): Promise<CodexStatusSnapshot> {
-    if (this.client && !force && this.client.isAlive()) return this.refreshStatus();
+  async connect(force = false, options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
+    if (this.client && !force && this.client.isAlive()) return this.refreshStatus({ refreshToken: options.refreshLogin === true });
     await this.disconnect();
 
     const command = resolveCodexCommand(this.options.cliPath);
@@ -119,7 +127,7 @@ export class CodexService {
     }
 
     this.initResult = await this.client.initialize();
-    return this.refreshStatus();
+    return this.refreshStatus({ refreshToken: options.refreshLogin === true });
   }
 
   async disconnect(): Promise<void> {
@@ -133,7 +141,7 @@ export class CodexService {
     return Boolean(this.client?.isAlive());
   }
 
-  async refreshStatus(): Promise<CodexStatusSnapshot> {
+  async refreshStatus(options: { refreshToken?: boolean } = {}): Promise<CodexStatusSnapshot> {
     const errors: string[] = [];
     if (!this.client) {
       return {
@@ -150,7 +158,7 @@ export class CodexService {
     }
 
     const [account, models, skills] = await Promise.all([
-      this.safeRequest("account/read", { refreshToken: false }, 3000, errors),
+      this.safeRequest("account/read", { refreshToken: options.refreshToken === true }, options.refreshToken ? 15000 : 3000, errors),
       this.safeRequest("model/list", { cursor: null }, 3000, errors),
       Promise.resolve({ data: this.cachedSkills })
     ]);
@@ -253,9 +261,9 @@ export class CodexService {
         ...(scopedConfig ? { config: scopedConfig } : {}),
         serviceTier: normalizeServiceTier(options.serviceTier),
         experimentalRawEvents: false,
-        persistExtendedHistory: true
+        persistExtendedHistory: options.persistExtendedHistory !== false
       },
-      60000
+      options.requestTimeoutMs ?? 60000
     );
     const thread = result.thread;
     return {
@@ -277,9 +285,9 @@ export class CodexService {
         sandbox: options.permission,
         ...(scopedConfig ? { config: scopedConfig } : {}),
         serviceTier: normalizeServiceTier(options.serviceTier),
-        persistExtendedHistory: true
+        persistExtendedHistory: options.persistExtendedHistory !== false
       },
-      60000
+      options.requestTimeoutMs ?? 60000
     );
   }
 
@@ -299,7 +307,7 @@ export class CodexService {
         sandboxPolicy: buildSandboxPolicy(options.permission, this.options.vaultPath),
         ...(collaborationMode ? { collaborationMode } : {})
       },
-      60000
+      options.requestTimeoutMs ?? 60000
     );
     return result?.turn?.id ?? "";
   }
@@ -397,35 +405,26 @@ export class CodexService {
   }
 }
 
-export function resolveCodexCommand(customPath: string): string {
-  const requested = customPath.trim();
-  if (requested) {
-    const expanded = expandHome(requested);
-    const found = commandPath(expanded);
-    if (found) return found;
+export function resolveCodexCommand(customPath: string, options: CodexCommandResolveOptions = {}): string {
+  const custom = customPath.trim();
+  const found = detectCodexCommand(customPath, options);
+  if (found) return found;
+  if (custom) {
+    const expanded = expandHome(custom, options.home ?? os.homedir());
     throw new Error(`找不到 Codex CLI：${expanded}。请先安装 Codex CLI，或在设置里填写正确路径。`);
   }
-
-  const found = commandPath("codex");
-  if (found) return found;
   throw new Error("找不到 Codex CLI。请先安装并登录 Codex CLI；自定义 API Provider 也需要通过 Codex CLI app-server 调用。");
 }
 
-function commandPath(command: string): string | null {
-  if (path.isAbsolute(command) || command.includes(path.sep)) {
-    return fs.existsSync(command) ? command : null;
+export function detectCodexCommand(customPath: string, options: CodexCommandResolveOptions = {}): string | null {
+  const home = options.home ?? os.homedir();
+  const exists = options.exists ?? ((candidate: string) => fs.existsSync(candidate));
+  const custom = customPath.trim();
+  if (custom) {
+    const expanded = expandHome(custom, home);
+    return exists(expanded) ? expanded : null;
   }
-
-  const candidates = [
-    path.join(os.homedir(), ".npm-global", "bin", command),
-    "/opt/homebrew/bin/" + command,
-    "/usr/local/bin/" + command,
-    ...String(process.env.PATH || "")
-      .split(path.delimiter)
-      .filter(Boolean)
-      .map((part) => path.join(part, command))
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+  return codexCommandCandidates(home, options.envPath ?? process.env.PATH ?? "").find((candidate) => exists(candidate)) ?? null;
 }
 
 export function buildCodexLaunchConfig(options: {
@@ -477,8 +476,10 @@ function tomlString(value: string): string {
 }
 
 function buildEnv(proxyEnabled: boolean, proxyUrl: string): NodeJS.ProcessEnv {
+  const home = os.homedir();
   const pathParts = [
-    path.join(os.homedir(), ".npm-global", "bin"),
+    ...codexAppCommandCandidates(home).map((candidate) => path.dirname(candidate)),
+    path.join(home, ".npm-global", "bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     process.env.PATH || ""
@@ -503,9 +504,29 @@ function buildEnv(proxyEnabled: boolean, proxyUrl: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function expandHome(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+function codexCommandCandidates(home: string, envPath: string): string[] {
+  return [
+    path.join(home, ".npm-global", "bin", "codex"),
+    ...codexAppCommandCandidates(home),
+    "/opt/homebrew/bin/codex",
+    "/usr/local/bin/codex",
+    ...String(envPath || "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((part) => path.join(part, "codex"))
+  ];
+}
+
+function codexAppCommandCandidates(home: string): string[] {
+  return [
+    "/Applications/Codex.app/Contents/Resources/codex",
+    path.join(home, "Applications", "Codex.app", "Contents", "Resources", "codex")
+  ];
+}
+
+function expandHome(value: string, home = os.homedir()): string {
+  if (value === "~") return home;
+  if (value.startsWith("~/")) return path.join(home, value.slice(2));
   return value;
 }
 

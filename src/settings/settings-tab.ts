@@ -1,7 +1,6 @@
-import * as fs from "fs";
-import * as path from "path";
 import { Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
+import { detectCodexCommand } from "../core/codex-service";
 import {
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
@@ -22,6 +21,8 @@ import {
   resourceEnabled,
   validateApiProvider,
   type ApiProviderConfig,
+  type EditorAiActionConfig,
+  type EditorAiStyleConfig,
   type ResourceManagementTab,
   type SettingsTab
 } from "./settings";
@@ -57,6 +58,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addStatusRow(statusBox, "sparkles", "Skills 数量", `${status?.skills.length ?? 0}`);
     this.addStatusRow(statusBox, "blocks", "MCP 数量", `${status?.mcpServers.length ?? 0}`);
     this.addStatusRow(statusBox, "package-check", "插件目录", pluginInstallDir(this.plugin));
+    this.addStatusActions(statusBox);
 
     this.renderTopTabs(containerEl);
     if (this.plugin.settings.settingsTab === "providers") {
@@ -65,6 +67,10 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     if (this.plugin.settings.settingsTab === "resources") {
       this.renderWorkspaceResourceManager(containerEl);
+      return;
+    }
+    if (this.plugin.settings.settingsTab === "editorActions") {
+      this.renderEditorActionSettings(containerEl);
       return;
     }
 
@@ -211,6 +217,25 @@ export class CodexSettingTab extends PluginSettingTab {
     ), "refresh-cw");
   }
 
+  private addStatusActions(container: HTMLElement): void {
+    const actions = container.createDiv({ cls: "codex-settings-status-actions" });
+    const refresh = actions.createEl("button", {
+      cls: "codex-resource-refresh",
+      attr: { type: "button", title: "重启 Codex，并读取最新登录状态" }
+    });
+    const icon = refresh.createSpan({ cls: "codex-resource-refresh-icon" });
+    setIcon(icon, "refresh-cw");
+    const label = refresh.createSpan({ text: "刷新登录状态" });
+    refresh.onclick = async () => {
+      refresh.disabled = true;
+      label.setText("刷新中");
+      const status = await this.plugin.reconnectCodex({ refreshLogin: true });
+      if (status.connected) new Notice(`Codex 已刷新：${status.accountLabel}`);
+      else new Notice(`Codex 连接失败：${status.errors[0] ?? "未知错误"}`);
+      this.display();
+    };
+  }
+
   private renderTopTabs(container: HTMLElement): void {
     const tabs = container.createDiv({ cls: "codex-settings-tabs" });
     for (const tab of SETTINGS_TABS) {
@@ -291,6 +316,154 @@ export class CodexSettingTab extends PluginSettingTab {
     const body = wrapper.createDiv({ cls: "codex-api-provider-list" });
     for (const provider of this.plugin.settings.apiProviders) {
       this.renderApiProviderRow(body, provider);
+    }
+  }
+
+  private renderEditorActionSettings(container: HTMLElement): void {
+    const settings = this.plugin.settings.editorActions;
+
+    this.decorateSetting(
+      new Setting(container)
+        .setName("写作请求方式")
+        .setDesc("通过当前 Codex CLI 发起请求；自定义 API 仍需本机 Codex CLI 支持 Responses API。"),
+      "terminal"
+    );
+
+    this.decorateSetting(new Setting(container).setName("启用写作操作").setDesc("开启后，编辑区选中文字右键可选择改写、扩写、续写。").addToggle((toggle) =>
+      toggle.setValue(settings.enabled).onChange(async (value) => {
+        settings.enabled = value;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "toggle-right");
+
+    this.decorateSetting(new Setting(container).setName("显示侧栏写作状态").setDesc("只在右键写作操作运行时显示等待和确认状态。").addToggle((toggle) =>
+      toggle.setValue(settings.statusSlotEnabled).onChange(async (value) => {
+        settings.statusSlotEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "activity");
+
+    this.decorateSetting(new Setting(container).setName("默认写作风格").addDropdown((dropdown) => {
+      for (const style of settings.styles) dropdown.addOption(style.id, style.label || style.id);
+      dropdown.setValue(settings.defaultStyleId);
+      dropdown.onChange(async (value) => {
+        settings.defaultStyleId = value;
+        await this.plugin.saveSettings();
+      });
+    }), "palette");
+
+    this.decorateSetting(new Setting(container).setName("启用笔记摘要缓存").setDesc("后台静默生成笔记摘要；写作时有可用摘要才带入，不会阻塞首次请求。").addToggle((toggle) =>
+      toggle.setValue(settings.summaryCacheEnabled).onChange(async (value) => {
+        settings.summaryCacheEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "file-text");
+
+    this.decorateSetting(new Setting(container).setName("摘要缓存").setDesc(`当前缓存 ${Object.keys(settings.summaryCache).length} 篇笔记摘要。`).addButton((button) =>
+      button.setButtonText("清空").setIcon("trash-2").onClick(async () => {
+        settings.summaryCache = {};
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "database");
+
+    this.addEditorActionNumber(container, "最大选区字数", settings.maxSelectedChars, 200, 20000, async (value) => {
+      settings.maxSelectedChars = value;
+      await this.plugin.saveSettings();
+    });
+    this.addEditorActionNumber(container, "选区前文字符数", settings.contextCharsBefore, 0, 10000, async (value) => {
+      settings.contextCharsBefore = value;
+      await this.plugin.saveSettings();
+    });
+    this.addEditorActionNumber(container, "选区后文字符数", settings.contextCharsAfter, 0, 10000, async (value) => {
+      settings.contextCharsAfter = value;
+      await this.plugin.saveSettings();
+    });
+    this.addEditorActionNumber(container, "超时时间（秒）", Math.round(settings.timeoutMs / 1000), 10, 300, async (value) => {
+      settings.timeoutMs = value * 1000;
+      await this.plugin.saveSettings();
+    });
+
+    this.renderEditorActionList(container, settings.actions);
+    this.renderEditorStyleList(container, settings.styles);
+  }
+
+  private renderEditorActionList(container: HTMLElement, actions: EditorAiActionConfig[]): void {
+    const section = container.createDiv({ cls: "codex-editor-actions-section" });
+    section.createDiv({ cls: "codex-editor-actions-heading", text: "右键动作" });
+    for (const action of actions) {
+      const row = section.createDiv({ cls: "codex-api-provider-row codex-editor-action-row" });
+      const head = row.createDiv({ cls: "codex-api-provider-head" });
+      const title = head.createDiv({ cls: "codex-api-provider-title" });
+      const icon = title.createSpan({ cls: "codex-resource-row-icon" });
+      setIcon(icon, "sparkles");
+      title.createSpan({ text: action.label || action.id });
+      title.createSpan({ cls: "codex-resource-row-meta", text: action.enabled ? "已启用" : "已关闭" });
+      const toggleWrap = head.createDiv({ cls: "codex-api-provider-actions" });
+      new Setting(toggleWrap).addToggle((toggle) =>
+        toggle.setValue(action.enabled).onChange(async (value) => {
+          action.enabled = value;
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+      this.addProviderText(row, "名称", action.label, "改写", async (value) => {
+        action.label = value.trim() || action.id;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+      this.addProviderTextArea(row, "Prompt 模板", action.promptTemplate, "请处理：{{selected_text}}", async (value) => {
+        action.promptTemplate = value.trim();
+        await this.plugin.saveSettings();
+      });
+    }
+  }
+
+  private renderEditorStyleList(container: HTMLElement, styles: EditorAiStyleConfig[]): void {
+    const section = container.createDiv({ cls: "codex-editor-actions-section" });
+    const header = section.createDiv({ cls: "codex-resource-manager-header" });
+    header.createDiv({ cls: "codex-editor-actions-heading", text: "写作风格" });
+    const add = header.createEl("button", {
+      cls: "codex-resource-refresh",
+      text: "新增风格",
+      attr: { type: "button" }
+    });
+    add.onclick = async () => {
+      const id = `style_${Date.now()}`;
+      styles.push({ id, label: "自定义风格", instruction: "按我的个人表达习惯改写。" });
+      this.plugin.settings.editorActions.defaultStyleId = id;
+      await this.plugin.saveSettings(true);
+      this.display();
+    };
+
+    for (const style of styles) {
+      const row = section.createDiv({ cls: "codex-api-provider-row codex-editor-style-row" });
+      const head = row.createDiv({ cls: "codex-api-provider-head" });
+      const title = head.createDiv({ cls: "codex-api-provider-title" });
+      const icon = title.createSpan({ cls: "codex-resource-row-icon" });
+      setIcon(icon, "palette");
+      title.createSpan({ text: style.label || style.id });
+      title.createSpan({ cls: "codex-resource-row-meta", text: style.id });
+      const actions = head.createDiv({ cls: "codex-api-provider-actions" });
+      if (!DEFAULT_SETTINGS.editorActions.styles.some((item) => item.id === style.id)) {
+        const remove = actions.createEl("button", { cls: "codex-resource-tab", text: "删除", attr: { type: "button" } });
+        remove.onclick = async () => {
+          this.plugin.settings.editorActions.styles = styles.filter((item) => item.id !== style.id);
+          if (this.plugin.settings.editorActions.defaultStyleId === style.id) this.plugin.settings.editorActions.defaultStyleId = "clear";
+          await this.plugin.saveSettings(true);
+          this.display();
+        };
+      }
+      this.addProviderText(row, "名称", style.label, "清楚", async (value) => {
+        style.label = value.trim() || style.id;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+      this.addProviderTextArea(row, "风格说明", style.instruction, "表达清楚、准确、自然。", async (value) => {
+        style.instruction = value.trim();
+        await this.plugin.saveSettings();
+      });
     }
   }
 
@@ -405,6 +578,23 @@ export class CodexSettingTab extends PluginSettingTab {
     }) as HTMLTextAreaElement;
     input.value = value;
     input.onchange = () => void onChange(input.value);
+  }
+
+  private addEditorActionNumber(container: HTMLElement, label: string, value: number, min: number, max: number, onChange: (value: number) => Promise<void>): void {
+    this.decorateSetting(
+      new Setting(container)
+        .setName(label)
+        .addText((text) => {
+          text.inputEl.type = "number";
+          text.inputEl.min = String(min);
+          text.inputEl.max = String(max);
+          text.setValue(String(value)).onChange(async (raw) => {
+            const next = parseClampedInteger(raw, value, min, max);
+            await onChange(next);
+          });
+        }),
+      "sliders-horizontal"
+    );
   }
 
   private renderWorkspaceResourceManager(container: HTMLElement): void {
@@ -647,7 +837,8 @@ const RESOURCE_TABS: Array<{ id: ResourceManagementTab; label: string; icon: str
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: string }> = [
   { id: "general", label: "基础设置", icon: "settings" },
   { id: "providers", label: "API Provider", icon: "key-round" },
-  { id: "resources", label: "工作区能力", icon: "blocks" }
+  { id: "resources", label: "工作区能力", icon: "blocks" },
+  { id: "editorActions", label: "写作操作", icon: "wand-sparkles" }
 ];
 
 function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
@@ -655,18 +846,7 @@ function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
 }
 
 function detectCliPath(customPath: string): string {
-  const expanded = expandHome(customPath.trim());
-  const home = process.env.HOME ?? "";
-  const candidates = [
-    expanded,
-    home ? path.join(home, ".npm-global", "bin", "codex") : "",
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
-    ...String(process.env.PATH || "")
-      .split(path.delimiter)
-      .map((part) => path.join(part, "codex"))
-  ].filter(Boolean);
-  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  const found = detectCodexCommand(customPath);
   return found ? `已检测：${found}` : "未检测到，可手动填写";
 }
 
@@ -707,8 +887,8 @@ function parseModelList(value: string): string[] {
   return models;
 }
 
-function expandHome(value: string): string {
-  if (value === "~") return process.env.HOME ?? "";
-  if (value.startsWith("~/")) return path.join(process.env.HOME ?? "", value.slice(2));
-  return value;
+function parseClampedInteger(value: string, fallback: number, min: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
 }

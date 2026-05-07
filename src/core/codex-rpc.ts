@@ -55,7 +55,7 @@ export class CodexRpcClient {
 
     this.proc.on("error", (error) => {
       this.proc = null;
-      this.rejectAll(error instanceof Error ? error : new Error(String(error)));
+      this.rejectAll(formatProcessError(error, this.launch.command));
     });
   }
 
@@ -216,4 +216,10 @@ export class CodexRpcClient {
       this.pending.delete(id);
     }
   }
+}
+
+function formatProcessError(error: unknown, command: string): Error {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  if (code === "ENOENT") return new Error(`找不到 Codex CLI：${command}`);
+  return error instanceof Error ? error : new Error(String(error));
 }

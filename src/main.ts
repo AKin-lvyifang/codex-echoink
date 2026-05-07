@@ -6,13 +6,16 @@ import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
+import { EditorActionController } from "./editor-actions/controller";
 
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
   lastStatus: CodexStatusSnapshot | null = null;
   private view: CodexView | null = null;
+  private editorActions: EditorActionController | null = null;
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
+  private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
@@ -45,13 +48,21 @@ export default class CodexForObsidianPlugin extends Plugin {
     });
 
     this.addSettingTab(new CodexSettingTab(this));
+    this.editorActions = new EditorActionController(this);
+    this.editorActions.register();
 
     if (this.settings.autoOpen) {
       this.app.workspace.onLayoutReady(() => void this.activateView());
     }
+    if (this.settings.editorActions.enabled) {
+      this.app.workspace.onLayoutReady(() => {
+        window.setTimeout(() => void this.ensureCodexConnected(false, { silent: true }), 800);
+      });
+    }
   }
 
   async onunload(): Promise<void> {
+    this.editorActions?.cancelActiveCandidate("canceled", false);
     await this.saveSettings(true);
     await this.codex?.disconnect();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CODEX);
@@ -74,6 +85,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.view?.applySavedComposerDefaults();
   }
 
+  getCodexView(): CodexView | null {
+    return this.view;
+  }
+
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> {
     this.settings.settingsTab = "resources";
     this.settings.resourceManagementTab = tab;
@@ -87,8 +102,14 @@ export default class CodexForObsidianPlugin extends Plugin {
     setting.openTabById(this.manifest.id);
   }
 
-  async ensureCodexConnected(force = false): Promise<CodexStatusSnapshot> {
+  async ensureCodexConnected(force = false, options: { silent?: boolean; refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
     if (this.codex?.isConnected() && !force && this.lastStatus?.connected) return this.lastStatus;
+    if (this.connectPromise && !force) return this.connectPromise;
+    if (force) {
+      this.connectPromise = null;
+      await this.codex?.disconnect();
+      this.codex = null;
+    }
     if (!this.codex || force) {
       this.codex = new CodexService({
         cliPath: this.settings.cliPath,
@@ -101,29 +122,34 @@ export default class CodexForObsidianPlugin extends Plugin {
         onServerRequest: (request) => this.handleServerRequest(request)
       });
     }
-    try {
-      const previousStatus = this.lastStatus;
-      const nextStatus = await this.codex.connect(force);
-      this.lastStatus = {
-        ...nextStatus,
-        rateLimits: nextStatus.rateLimits ?? previousStatus?.rateLimits ?? null,
-        rateLimitsByLimitId: nextStatus.rateLimitsByLimitId ?? previousStatus?.rateLimitsByLimitId ?? null
-      };
-    } catch (error) {
-      this.lastStatus = {
-        connected: false,
-        accountLabel: "未连接",
-        loggedIn: false,
-        models: [],
-        skills: [],
-        mcpServers: [],
-        rateLimits: null,
-        rateLimitsByLimitId: null,
-        errors: [error instanceof Error ? error.message : String(error)]
-      };
-      new Notice(`Codex 连接失败：${this.lastStatus.errors[0]}`);
-    }
-    return this.lastStatus;
+    this.connectPromise = (async () => {
+      try {
+        const previousStatus = this.lastStatus;
+        const nextStatus = await this.codex!.connect(force, { refreshLogin: options.refreshLogin === true });
+        this.lastStatus = {
+          ...nextStatus,
+          rateLimits: nextStatus.rateLimits ?? previousStatus?.rateLimits ?? null,
+          rateLimitsByLimitId: nextStatus.rateLimitsByLimitId ?? previousStatus?.rateLimitsByLimitId ?? null
+        };
+      } catch (error) {
+        this.lastStatus = {
+          connected: false,
+          accountLabel: "未连接",
+          loggedIn: false,
+          models: [],
+          skills: [],
+          mcpServers: [],
+          rateLimits: null,
+          rateLimitsByLimitId: null,
+          errors: [error instanceof Error ? error.message : String(error)]
+        };
+        if (!options.silent) new Notice(`Codex 连接失败：${this.lastStatus.errors[0]}`);
+      }
+      return this.lastStatus!;
+    })().finally(() => {
+      this.connectPromise = null;
+    });
+    return this.connectPromise;
   }
 
   async ensureSkillsLoaded(force = false): Promise<CodexSkill[]> {
@@ -136,10 +162,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.skillsLoadPromise;
   }
 
-  async reconnectCodex(): Promise<CodexStatusSnapshot> {
+  async reconnectCodex(options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
+    this.connectPromise = null;
     await this.codex?.disconnect();
     this.codex = null;
-    return this.ensureCodexConnected(true);
+    return this.ensureCodexConnected(true, { refreshLogin: options.refreshLogin === true });
   }
 
   getVaultPath(): string {

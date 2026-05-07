@@ -13,8 +13,10 @@ release/
 docs/PRD*.md
 docs/test-cases*.md
 docs/design/
+docs/*plan*.md
 docs/ideas*.md
 docs/*idea*.md
+docs/*计划*.md
 docs/*思路*.md
 docs/*方案*.md
 docs/*草稿*.md
