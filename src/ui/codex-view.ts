@@ -25,7 +25,7 @@ import { renderSettingsGearIcon } from "./codex-icon";
 import { openImageOverlay, renderRichText } from "./render-message";
 import { textInputModal } from "./modals";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
-import { editorActionStartBlockReason, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification as isCurrentEditorActionNotification, isEditorActionHiddenNotification as isHiddenEditorActionNotification } from "../editor-actions/state";
+import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
 import type { EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildEditorActionSummaryPrompt, getFreshEditorActionSummary, makeEditorActionSummaryCacheEntry, upsertEditorActionSummaryCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
@@ -291,13 +291,10 @@ export class CodexView extends ItemView {
   private handleEditorActionNotification(method: string, params: any): boolean {
     if (this.handleEditorSummaryNotification(method, params)) return true;
     const isActiveEditorAction = this.isEditorActionRunActive();
-    const isCurrentEditorAction = isActiveEditorAction && this.isEditorActionCurrentRunNotification(params, this.editorActionThreadId, method === "error");
-    const isHiddenEditorThread = this.isEditorActionHiddenNotification(params);
-    if (!isCurrentEditorAction && !isHiddenEditorThread) {
-      return isActiveEditorAction && (method.startsWith("thread/") || method.startsWith("turn/") || method.startsWith("item/") || method === "error");
-    }
-    this.rememberEditorActionNotificationIds(params, isCurrentEditorAction);
-    if (!isCurrentEditorAction) return method.startsWith("thread/") || method.startsWith("turn/") || method.startsWith("item/") || method === "error";
+    const route = this.routeEditorActionNotification(method, params, isActiveEditorAction, this.editorActionThreadId, method === "error");
+    if (!route.swallow) return false;
+    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
+    if (!route.current) return true;
     if (method === "turn/started") {
       this.running = true;
       this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
@@ -323,7 +320,7 @@ export class CodexView extends ItemView {
       return true;
     }
     if (method === "item/agentMessage/delta") {
-      if (this.editorActionRun) this.editorActionRun.text += params?.delta ?? "";
+      if (route.collectAssistantDelta && this.editorActionRun) this.editorActionRun.text += params?.delta ?? "";
       return true;
     }
     if (method === "error") {
@@ -344,13 +341,10 @@ export class CodexView extends ItemView {
   private handleEditorSummaryNotification(method: string, params: any): boolean {
     if (!this.isEditorSummaryRunActive()) return false;
     const summaryThreadId = this.editorSummaryRun?.threadId ?? "";
-    const isCurrentSummary = this.isEditorActionCurrentRunNotification(params, summaryThreadId, method === "error");
-    const isHiddenEditorThread = this.isEditorActionHiddenNotification(params);
-    if (!isCurrentSummary && !isHiddenEditorThread) {
-      return method.startsWith("thread/") || method.startsWith("turn/") || method.startsWith("item/") || method === "error";
-    }
-    this.rememberEditorActionNotificationIds(params, isCurrentSummary);
-    if (!isCurrentSummary) return method.startsWith("thread/") || method.startsWith("turn/") || method.startsWith("item/") || method === "error";
+    const route = this.routeEditorActionNotification(method, params, true, summaryThreadId, method === "error");
+    if (!route.swallow) return false;
+    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
+    if (!route.current) return true;
     if (method === "turn/started") {
       this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
       return true;
@@ -1487,6 +1481,7 @@ export class CodexView extends ItemView {
       const turnOptions = buildEditorActionTurnOptions({
         model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
         serviceTier: this.selectedServiceTier,
+        timeoutMs,
         workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
       });
       const contextChars = request.snapshot.beforeContext.length + request.snapshot.afterContext.length;
@@ -1674,6 +1669,7 @@ export class CodexView extends ItemView {
       ...buildEditorActionTurnOptions({
         model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
         serviceTier: this.selectedServiceTier,
+        timeoutMs: this.plugin.settings.editorActions.timeoutMs,
         workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
       }),
       requestTimeoutMs: 15000
@@ -1718,6 +1714,7 @@ export class CodexView extends ItemView {
         ...buildEditorActionTurnOptions({
           model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
           serviceTier: this.selectedServiceTier,
+          timeoutMs: 20000,
           workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
         }),
         requestTimeoutMs: 20000
@@ -1814,18 +1811,11 @@ export class CodexView extends ItemView {
     return Boolean(this.editorActionRun && this.editorActionRun.runId === this.activeRunId);
   }
 
-  private isEditorActionHiddenNotification(params: any): boolean {
-    return isHiddenEditorActionNotification({
+  private routeEditorActionNotification(method: string, params: any, active: boolean, currentThreadId: string, allowUnscoped = false): ReturnType<typeof routeEditorActionNotificationState> {
+    return routeEditorActionNotificationState({
+      method,
       params,
-      threadIds: this.editorActionThreadIds,
-      turnIds: this.editorActionTurnIds,
-      itemIds: this.editorActionItemIds
-    });
-  }
-
-  private isEditorActionCurrentRunNotification(params: any, currentThreadId: string, allowUnscoped = false): boolean {
-    return isCurrentEditorActionNotification({
-      params,
+      active,
       currentThreadId,
       currentTurnId: this.activeTurnId,
       threadIds: this.editorActionThreadIds,

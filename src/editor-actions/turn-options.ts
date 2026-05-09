@@ -24,7 +24,8 @@ export function resolveEditorActionModel(input: { configuredModel?: string; avai
   return availableModels[0] ?? input.fallbackModel;
 }
 
-export function buildEditorActionTurnOptions(input: { model: string; serviceTier: ServiceTierChoice; workspaceResources?: WorkspaceResourceToggles }): TurnOptions {
+export function buildEditorActionTurnOptions(input: { model: string; serviceTier: ServiceTierChoice; timeoutMs?: number; workspaceResources?: WorkspaceResourceToggles }): TurnOptions {
+  const requestTimeoutMs = normalizeEditorActionTimeout(input.timeoutMs);
   return {
     model: input.model,
     reasoning: "medium",
@@ -33,7 +34,12 @@ export function buildEditorActionTurnOptions(input: { model: string; serviceTier
     mode: "agent",
     mcpEnabled: false,
     persistExtendedHistory: false,
-    requestTimeoutMs: 25000,
+    requestTimeoutMs,
     workspaceResources: input.workspaceResources ?? EMPTY_RESOURCES
   };
+}
+
+function normalizeEditorActionTimeout(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 45000;
+  return Math.max(10000, Math.min(300000, Math.round(value!)));
 }

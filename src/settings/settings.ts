@@ -236,7 +236,7 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
 ];
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 11,
+  settingsVersion: 13,
   settingsTab: "general",
   cliPath: "",
   proxyEnabled: false,
@@ -261,8 +261,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     maxSelectedChars: 4000,
     contextCharsBefore: 300,
     contextCharsAfter: 300,
-    timeoutMs: 25000,
-    summaryCacheEnabled: true,
+    timeoutMs: 45000,
+    summaryCacheEnabled: false,
     summaryCache: {},
     actions: DEFAULT_EDITOR_ACTIONS,
     styles: DEFAULT_EDITOR_STYLES
@@ -395,8 +395,8 @@ export function normalizeEditorActionSettings(value: any, previousVersion = DEFA
     maxSelectedChars: normalizePositiveInteger(value?.maxSelectedChars, defaults.maxSelectedChars, 200, 20000),
     contextCharsBefore: normalizeEditorActionPerformanceNumber(value?.contextCharsBefore, defaults.contextCharsBefore, 1200, previousVersion, 0, 10000),
     contextCharsAfter: normalizeEditorActionPerformanceNumber(value?.contextCharsAfter, defaults.contextCharsAfter, 1200, previousVersion, 0, 10000),
-    timeoutMs: normalizeEditorActionPerformanceNumber(value?.timeoutMs, defaults.timeoutMs, 90000, previousVersion, 10000, 300000),
-    summaryCacheEnabled: typeof value?.summaryCacheEnabled === "boolean" ? value.summaryCacheEnabled : defaults.summaryCacheEnabled,
+    timeoutMs: normalizeEditorActionTimeoutMs(value?.timeoutMs, defaults.timeoutMs, previousVersion),
+    summaryCacheEnabled: previousVersion < 13 ? false : (typeof value?.summaryCacheEnabled === "boolean" ? value.summaryCacheEnabled : defaults.summaryCacheEnabled),
     summaryCache: normalizeEditorActionSummaryCache(value?.summaryCache),
     actions,
     styles
@@ -552,6 +552,12 @@ function normalizePositiveInteger(value: any, fallback: number, min: number, max
 function normalizeEditorActionPerformanceNumber(value: any, fallback: number, legacyDefault: number, previousVersion: number, min: number, max: number): number {
   if (previousVersion < 10 && Number(value) === legacyDefault) return fallback;
   return normalizePositiveInteger(value, fallback, min, max);
+}
+
+function normalizeEditorActionTimeoutMs(value: any, fallback: number, previousVersion: number): number {
+  const number = Number(value);
+  if (previousVersion < 13 && (number === 90000 || number === 25000)) return fallback;
+  return normalizePositiveInteger(value, fallback, 10000, 300000);
 }
 
 function normalizeNonNegativeNumber(value: any): number {

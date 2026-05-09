@@ -46,7 +46,7 @@ import {
 import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { buildEditorActionPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
-import { cleanEditorActionOutput } from "../editor-actions/output";
+import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import {
   buildEditorActionSummaryPrompt,
   editorActionContentHash,
@@ -61,7 +61,7 @@ import {
   enabledEditorActionConfigs,
   validateEditorActionSelection
 } from "../editor-actions/selection";
-import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification } from "../editor-actions/state";
+import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
@@ -78,7 +78,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 11);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 13);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.editorActions.enabled, false);
@@ -88,8 +88,8 @@ assert.equal(DEFAULT_SETTINGS.editorActions.defaultStyleId, "clear");
 assert.equal(DEFAULT_SETTINGS.editorActions.maxSelectedChars, 4000);
 assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsBefore, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsAfter, 300);
-assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 25000);
-assert.equal(DEFAULT_SETTINGS.editorActions.summaryCacheEnabled, true);
+assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 45000);
+assert.equal(DEFAULT_SETTINGS.editorActions.summaryCacheEnabled, false);
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.summaryCache, {});
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue"]);
 
@@ -229,7 +229,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 11);
+assert.equal(migratedSettings.settings.settingsVersion, 13);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -256,7 +256,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 11);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 13);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -269,7 +269,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 11);
+assert.equal(workspaceResources.settings.settingsVersion, 13);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -358,7 +358,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 11);
+assert.equal(apiProviderSettings.settings.settingsVersion, 13);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -417,7 +417,7 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 11);
+assert.equal(editorActionSettings.settingsVersion, 13);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
 assert.equal(editorActionSettings.defaultMode, "plan");
@@ -435,7 +435,19 @@ const migratedFastEditorActions = normalizeSettingsData({
 }).settings.editorActions;
 assert.equal(migratedFastEditorActions.contextCharsBefore, 300);
 assert.equal(migratedFastEditorActions.contextCharsAfter, 300);
-assert.equal(migratedFastEditorActions.timeoutMs, 25000);
+assert.equal(migratedFastEditorActions.timeoutMs, 45000);
+assert.equal(migratedFastEditorActions.summaryCacheEnabled, false);
+
+const migratedStableEditorActions = normalizeSettingsData({
+  settingsVersion: 12,
+  editorActions: {
+    ...DEFAULT_SETTINGS.editorActions,
+    timeoutMs: 25000,
+    summaryCacheEnabled: true
+  }
+}).settings.editorActions;
+assert.equal(migratedStableEditorActions.timeoutMs, 45000);
+assert.equal(migratedStableEditorActions.summaryCacheEnabled, false);
 
 const customFastEditorActions = normalizeSettingsData({
   settingsVersion: 9,
@@ -521,7 +533,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 11);
+assert.equal(legacyEditorActionSettings.settingsVersion, 13);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));
@@ -540,10 +552,15 @@ assert.equal(cleanEditorActionOutput("```markdown\n候选正文\n```"), "候选�
 assert.equal(cleanEditorActionOutput("改写如下：\n候选正文"), "候选正文");
 assert.equal(cleanEditorActionOutput("当然可以，以下是扩写后的内容：\n\n- 保留列表\n- 继续表达"), "- 保留列表\n- 继续表达");
 assert.equal(cleanEditorActionOutput("我先确认一下上下文。\n<codex-candidate>\n真正应该写入笔记的正文\n</codex-candidate>"), "真正应该写入笔记的正文");
+assert.equal(cleanEditorActionOutput("思考过程：我先分析选区。\n最终输出：\n候选正文"), "候选正文");
+assert.equal(validateEditorActionCandidateText("候选正文").ok, true);
+assert.equal(validateEditorActionCandidateText("版本一：候选\n版本二：另一个候选").ok, false);
+assert.equal(validateEditorActionCandidateText("```markdown\n候选正文\n```").ok, false);
 
 const editorActionTurnOptions = buildEditorActionTurnOptions({
   model: "gpt-5.5",
-  serviceTier: "standard"
+  serviceTier: "standard",
+  timeoutMs: 45000
 });
 assert.deepEqual(editorActionTurnOptions, {
   model: "gpt-5.5",
@@ -553,7 +570,7 @@ assert.deepEqual(editorActionTurnOptions, {
   mode: "agent",
   mcpEnabled: false,
   persistExtendedHistory: false,
-  requestTimeoutMs: 25000,
+  requestTimeoutMs: 45000,
   workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
 });
 assert.equal(resolveEditorActionModel({ fallbackModel: "gpt-5.5" }), "gpt-5.5");
@@ -610,6 +627,15 @@ assert.equal(isEditorActionCurrentRunNotification({
   currentItemIds: new Set(["item-hidden"])
 }), false);
 assert.equal(isEditorActionCurrentRunNotification({
+  params: { threadId: "thread-hidden", itemId: "old-hidden-item" },
+  currentThreadId: "thread-hidden",
+  currentTurnId: "turn-hidden",
+  threadIds: new Set(["thread-hidden"]),
+  turnIds: new Set(["turn-hidden"]),
+  itemIds: new Set(["old-hidden-item"]),
+  currentItemIds: new Set(["item-hidden"])
+}), false);
+assert.equal(isEditorActionCurrentRunNotification({
   params: { item: { turnId: "turn-hidden", id: "candidate-item" } },
   currentThreadId: "thread-hidden",
   currentTurnId: "turn-hidden",
@@ -627,6 +653,54 @@ assert.equal(isEditorActionCurrentRunNotification({
   itemIds: new Set(["old-hidden-item"]),
   currentItemIds: new Set(["candidate-item"])
 }), true);
+assert.deepEqual(routeEditorActionNotification({
+  method: "item/agentMessage/delta",
+  params: { itemId: "candidate-item", delta: "候选" },
+  active: true,
+  currentThreadId: "thread-current",
+  currentTurnId: "turn-current",
+  threadIds: new Set(["old-thread"]),
+  turnIds: new Set(["turn-current"]),
+  itemIds: new Set(["old-item"]),
+  currentItemIds: new Set()
+}), {
+  swallow: true,
+  current: true,
+  collectAssistantDelta: true,
+  rememberCurrentItem: true
+});
+assert.deepEqual(routeEditorActionNotification({
+  method: "item/agentMessage/delta",
+  params: { itemId: "old-item", delta: "旧输出" },
+  active: true,
+  currentThreadId: "thread-current",
+  currentTurnId: "turn-current",
+  threadIds: new Set(["old-thread"]),
+  turnIds: new Set(["old-turn"]),
+  itemIds: new Set(["old-item"]),
+  currentItemIds: new Set()
+}), {
+  swallow: true,
+  current: false,
+  collectAssistantDelta: false,
+  rememberCurrentItem: false
+});
+assert.deepEqual(routeEditorActionNotification({
+  method: "item/reasoning/textDelta",
+  params: { itemId: "reasoning-item", delta: "过程" },
+  active: true,
+  currentThreadId: "thread-current",
+  currentTurnId: "turn-current",
+  threadIds: new Set(),
+  turnIds: new Set(),
+  itemIds: new Set(),
+  currentItemIds: new Set()
+}), {
+  swallow: true,
+  current: false,
+  collectAssistantDelta: false,
+  rememberCurrentItem: false
+});
 
 const summarySource = {
   filePath: "folder/demo.md",

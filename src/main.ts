@@ -47,6 +47,24 @@ export default class CodexForObsidianPlugin extends Plugin {
       }
     });
 
+    this.addCommand({
+      id: "editor-action-rewrite",
+      name: "改写选中文字",
+      editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "rewrite")
+    });
+
+    this.addCommand({
+      id: "editor-action-expand",
+      name: "扩写选中文字",
+      editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "expand")
+    });
+
+    this.addCommand({
+      id: "editor-action-continue",
+      name: "续写选中文字",
+      editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "continue")
+    });
+
     this.addSettingTab(new CodexSettingTab(this));
     this.editorActions = new EditorActionController(this);
     this.editorActions.register();

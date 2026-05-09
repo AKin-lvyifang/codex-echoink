@@ -1,7 +1,7 @@
 import { Notice, type Editor, type MarkdownFileInfo, type MarkdownView, type Menu } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { newId } from "../settings/settings";
-import { cleanEditorActionOutput } from "./output";
+import { cleanEditorActionOutput, validateEditorActionCandidateText } from "./output";
 import { buildEditorActionPrompt, resolveEditorActionStyle } from "./prompt";
 import { buildEditorActionSelectionSnapshot, confirmEditorActionCandidate, editorActionCandidateInvalidationReason, enabledEditorActionConfigs, validateEditorActionSelection } from "./selection";
 import { createEditorActionExtension, setEditorActionCandidate } from "./editor-extension";
@@ -125,7 +125,8 @@ export class EditorActionController {
       view.setEditorActionStatus({ status: "preparing", actionLabel: action.label, startedAt: Date.now() });
       const raw = await view.sendEditorActionRequest(request);
       const candidateText = cleanEditorActionOutput(raw);
-      if (!candidateText) throw new Error("Codex 没有返回可用候选文本");
+      const candidateValidation = validateEditorActionCandidateText(candidateText);
+      if (!candidateValidation.ok) throw new Error(candidateValidation.reason);
       const candidate: EditorActionCandidate = {
         id: newId("candidate"),
         actionId: action.id,
@@ -146,6 +147,15 @@ export class EditorActionController {
       view.setEditorActionStatus({ status: "failed", actionLabel: action.label, error: error instanceof Error ? error.message : String(error) });
       new Notice(`Codex ${action.label}失败：${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  runEditorActionById(editor: Editor, info: MarkdownView | MarkdownFileInfo, actionId: string): Promise<void> {
+    const action = enabledEditorActionConfigs(this.plugin.settings.editorActions).find((item) => item.id === actionId);
+    if (!action) {
+      new Notice("这个 Codex 写作操作未启用");
+      return Promise.resolve();
+    }
+    return this.runEditorAction(editor, info, action);
   }
 
   private confirmActiveCandidate(): boolean {
