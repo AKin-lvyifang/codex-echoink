@@ -2,6 +2,7 @@ import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, Permissi
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
+  type ArticleUnderstandingFingerprint,
   type EditorActionModeConfig,
   type EditorActionQualityMode,
   type EditorAiActionConfig,
@@ -528,6 +529,7 @@ function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstan
       const contentHash = normalizeText(item?.contentHash, "");
       const model = normalizeText(item?.model, DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality.model);
       const mode = normalizeEditorActionQualityMode(item?.mode, "quality");
+      const fingerprint = normalizeArticleUnderstandingFingerprint(item?.fingerprint);
       if (!filePath || !understanding || !contentHash) return null;
       return {
         filePath,
@@ -537,6 +539,7 @@ function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstan
         model,
         mode,
         understanding,
+        ...(fingerprint ? { fingerprint } : {}),
         updatedAt: normalizeNonNegativeNumber(item?.updatedAt),
         lastUsedAt: normalizeNonNegativeNumber(item?.lastUsedAt ?? item?.updatedAt)
       };
@@ -545,6 +548,22 @@ function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstan
     .sort((left, right) => right.lastUsedAt - left.lastUsedAt)
     .slice(0, 200);
   return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
+}
+
+function normalizeArticleUnderstandingFingerprint(value: any): ArticleUnderstandingFingerprint | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const stableLineHashes = Array.isArray(value.stableLineHashes)
+    ? value.stableLineHashes.map((item: any) => normalizeText(item, "")).filter(Boolean).slice(0, 12)
+    : [];
+  const fingerprint = {
+    textLength: normalizeNonNegativeNumber(value.textLength),
+    titleHash: normalizeText(value.titleHash, ""),
+    firstBlockHash: normalizeText(value.firstBlockHash, ""),
+    lastBlockHash: normalizeText(value.lastBlockHash, ""),
+    stableLineHashes
+  };
+  if (!fingerprint.textLength && !fingerprint.titleHash && !fingerprint.firstBlockHash && !fingerprint.lastBlockHash && !stableLineHashes.length) return null;
+  return fingerprint;
 }
 
 export function resourceEnabled(overrides: Record<string, boolean> | undefined, key: string, sourceEnabled = true): boolean {

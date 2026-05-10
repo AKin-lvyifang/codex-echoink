@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian，把 Obsidian 仓库变成本地 AI 工作台。" src="docs/images/obsidian-codex-parchment-hero.png">
+  <img width="1024" alt="Codex for Obsidian v0.3.0 写作上下文 Harness。" src="docs/images/obsidian-codex-writing-harness-v0.3.0.png">
 </a>
 
 <p align="center">
@@ -17,14 +17,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.2.0-0EA5E9?style=flat-square" alt="版本 v0.2.0">
+    <img src="https://img.shields.io/badge/version-v0.3.0-0EA5E9?style=flat-square" alt="版本 v0.3.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.2.0/obsidian-codex-0.2.0.zip"><strong>下载 v0.2.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.3.0/obsidian-codex-0.3.0.zip"><strong>下载 v0.3.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">最新 Release</a>
 </p>
@@ -56,14 +56,41 @@
 - 支持为插件启动的 Codex 子进程配置本地代理。
 - 插件、MCP、Skills 开关只作用于当前 vault，不改 Codex 全局配置。
 
-### 实验性编辑区写作操作
+### 写作上下文 Harness
 
 - 在编辑区对选中文字执行改写、扩写和续写。
+- 支持 `快速`、`质量`、`严格` 三档写作质量模式。
+- 用可见的“文章理解”替代隐藏后台摘要，不再偷偷抢链路。
+- 侧栏写作上下文面板会展示当前笔记、模型、理解状态和结构化文章理解。
+- 小幅连续改写、扩写、续写会复用已有文章理解，避免每次都重新理解全文。
 - 返回灰色候选，按 `Enter` 接受，按 `Esc` 取消。
-- 这个功能仍处于实验阶段，默认关闭，不成熟，不建议日常稳定使用。
+
+这个功能仍处于实验阶段，默认关闭；但 v0.3.0 已经把它升级成更完整、可见、可控的写作流程。
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.3.0
+
+**新功能：** 写作上下文 Harness，用于编辑区改写、扩写和续写。
+
+**更新内容：**
+
+- 新增 `快速`、`质量`、`严格` 三档写作质量模式。
+- 新增侧栏可见的写作上下文面板。
+- 新增结构化文章理解：主题、受众、写作目的、文章结构、关键事实、风格特征、禁止编造、局部写作建议。
+- 新增文章理解软复用：小幅连续编辑后复用已有理解，不再每次重新理解全文。
+- 新增严格模式审校：候选生成后再检查事实、风格、衔接和 Markdown。
+- 保留灰色候选闭环：`Enter` 确认，`Esc` 取消。
+- 文章理解不会进入普通聊天记录。
+
+**使用方法：**
+
+1. 在插件设置里开启写作操作。
+2. 选择默认写作质量：`快速`、`质量` 或 `严格`。
+3. 在编辑区选中文字，运行 `改写`、`扩写` 或 `续写`。
+4. 点击侧栏顶部 `写作` 状态，查看或刷新文章理解。
+5. 按 `Enter` 接受灰色候选，或按 `Esc` 取消。
 
 ### v0.2.0
 
@@ -102,7 +129,7 @@
 ## 安装
 
 1. 先安装并登录 Codex CLI。
-2. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.2.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.2.0/obsidian-codex-0.2.0.zip)。
+2. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.3.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.3.0/obsidian-codex-0.3.0.zip)。
 3. 解压后得到 `obsidian-codex` 文件夹。
 4. 放到你的 vault 插件目录：
 

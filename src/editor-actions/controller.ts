@@ -5,7 +5,7 @@ import { cleanEditorActionOutput, validateEditorActionCandidateText } from "./ou
 import { buildEditorActionPrompt, resolveEditorActionStyle } from "./prompt";
 import { buildEditorActionSelectionSnapshot, confirmEditorActionCandidate, editorActionCandidateInvalidationReason, editorActionCandidateReplacementRange, enabledEditorActionConfigs, validateEditorActionSelection } from "./selection";
 import { createEditorActionExtension, setEditorActionCandidate } from "./editor-extension";
-import { getFreshArticleUnderstanding, type EditorActionSummarySource } from "./summary-cache";
+import { resolveArticleUnderstandingCache, type EditorActionSummarySource } from "./summary-cache";
 import type { EditorActionCandidate, EditorActionRequest, EditorAiActionConfig } from "./types";
 
 export class EditorActionController {
@@ -93,8 +93,8 @@ export class EditorActionController {
     const qualityMode = settings.qualityMode;
     const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
     const articleUnderstanding = qualityMode === "fast"
-      ? null
-      : getFreshArticleUnderstanding(settings.articleUnderstandingCache, summarySource, qualityMode, modeConfig.model);
+      ? { state: "missing" as const, entry: null }
+      : resolveArticleUnderstandingCache(settings.articleUnderstandingCache, summarySource, qualityMode, modeConfig.model);
     const snapshot = buildEditorActionSelectionSnapshot({
       fullText,
       fromOffset: editor.posToOffset(from),
@@ -104,7 +104,8 @@ export class EditorActionController {
       contextCharsBefore: modeConfig.contextCharsBefore,
       contextCharsAfter: modeConfig.contextCharsAfter,
       filePath,
-      articleUnderstanding: articleUnderstanding?.understanding
+      articleUnderstanding: articleUnderstanding.entry?.understanding,
+      articleUnderstandingState: articleUnderstanding.entry ? articleUnderstanding.state : undefined
     });
     const style = resolveEditorActionStyle(settings);
     const prompt = buildEditorActionPrompt({ action, style, snapshot, qualityMode, modeLabel: modeConfig.label });

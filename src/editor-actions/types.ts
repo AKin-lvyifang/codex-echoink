@@ -17,6 +17,14 @@ export interface EditorActionSummaryCacheEntry {
 
 export type EditorActionSummaryCache = Record<string, EditorActionSummaryCacheEntry>;
 
+export interface ArticleUnderstandingFingerprint {
+  textLength: number;
+  titleHash: string;
+  firstBlockHash: string;
+  lastBlockHash: string;
+  stableLineHashes: string[];
+}
+
 export interface ArticleUnderstandingEntry {
   filePath: string;
   mtime: number;
@@ -25,13 +33,15 @@ export interface ArticleUnderstandingEntry {
   model: string;
   mode: EditorActionQualityMode;
   understanding: string;
+  fingerprint?: ArticleUnderstandingFingerprint;
   updatedAt: number;
   lastUsedAt: number;
 }
 
 export type ArticleUnderstandingCache = Record<string, ArticleUnderstandingEntry>;
 
-export type ArticleUnderstandingStatus = "idle" | "missing" | "running" | "fresh" | "stale" | "failed";
+export type ArticleUnderstandingCacheState = "fresh" | "reusable" | "stale" | "missing";
+export type ArticleUnderstandingStatus = "idle" | "missing" | "running" | "fresh" | "reused" | "stale" | "failed";
 
 export interface EditorActionModeConfig {
   mode: EditorActionQualityMode;
@@ -86,6 +96,7 @@ export interface EditorActionSelectionSnapshot {
   beforeContext: string;
   afterContext: string;
   articleUnderstanding?: string;
+  articleUnderstandingState?: ArticleUnderstandingCacheState;
   /** @deprecated use articleUnderstanding */
   noteSummary?: string;
 }

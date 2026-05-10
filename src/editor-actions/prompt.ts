@@ -32,12 +32,16 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
     file_name: input.snapshot.fileName
   };
   const renderedTemplate = renderTemplate(input.action.promptTemplate, variables).trim();
+  const articleUnderstandingNotice = articleUnderstanding && input.snapshot.articleUnderstandingState === "reusable"
+    ? "注意：这份文章理解来自稍早版本。当前选区和前后文优先，文章理解只用于主题、风格、事实边界。"
+    : "";
   return [
     `你正在 Obsidian 笔记中执行「${input.action.label}」。`,
     `当前文件：${input.snapshot.fileName} (${input.snapshot.filePath})`,
     modeLabel ? `写作质量：${modeLabel}` : "",
     `写作风格：${variables.style}`,
     articleUnderstanding ? "当前文章理解：" : "",
+    articleUnderstandingNotice,
     articleUnderstanding ? fenceContext(articleUnderstanding) : "",
     "",
     "选区前文：",
@@ -61,12 +65,16 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
 export function buildEditorActionReviewPrompt(input: EditorActionPromptInput & { candidateText: string }): string {
   const modeLabel = input.modeLabel ?? "严格";
   const articleUnderstanding = input.snapshot.articleUnderstanding ?? input.snapshot.noteSummary ?? "";
+  const articleUnderstandingNotice = articleUnderstanding && input.snapshot.articleUnderstandingState === "reusable"
+    ? "注意：这份文章理解来自稍早版本。当前选区和前后文优先，文章理解只用于主题、风格、事实边界。"
+    : "";
   return [
     `你正在审校 Obsidian 笔记中的「${input.action.label}」候选。`,
     `当前文件：${input.snapshot.fileName} (${input.snapshot.filePath})`,
     `写作质量：${modeLabel}`,
     `写作风格：${input.style.label}：${input.style.instruction}`,
     articleUnderstanding ? "当前文章理解：" : "",
+    articleUnderstandingNotice,
     articleUnderstanding ? fenceContext(articleUnderstanding) : "",
     "",
     "选区前文：",

@@ -1,5 +1,5 @@
 import type { EditorPosition } from "obsidian";
-import type { EditorActionCandidate, EditorActionSelectionSnapshot, EditorAiActionConfig, EditorAiActionSettings } from "./types";
+import type { ArticleUnderstandingCacheState, EditorActionCandidate, EditorActionSelectionSnapshot, EditorAiActionConfig, EditorAiActionSettings } from "./types";
 
 export interface SelectionValidationInput {
   selectedText: string;
@@ -30,6 +30,7 @@ export function buildEditorActionSelectionSnapshot(input: {
   contextCharsAfter: number;
   filePath: string;
   articleUnderstanding?: string;
+  articleUnderstandingState?: ArticleUnderstandingCacheState;
   noteSummary?: string;
   from?: EditorPosition;
   to?: EditorPosition;
@@ -51,6 +52,7 @@ export function buildEditorActionSelectionSnapshot(input: {
     beforeContext: input.fullText.slice(beforeStart, fromOffset),
     afterContext: input.fullText.slice(toOffset, afterEnd),
     articleUnderstanding: input.articleUnderstanding,
+    articleUnderstandingState: input.articleUnderstandingState,
     noteSummary: input.noteSummary
   };
 }

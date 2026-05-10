@@ -1,4 +1,4 @@
-import type { ArticleUnderstandingCache, ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionSummaryCache, EditorActionSummaryCacheEntry } from "./types";
+import type { ArticleUnderstandingCache, ArticleUnderstandingCacheState, ArticleUnderstandingEntry, ArticleUnderstandingFingerprint, EditorActionQualityMode, EditorActionSummaryCache, EditorActionSummaryCacheEntry } from "./types";
 
 export interface EditorActionSummarySource {
   filePath: string;
@@ -9,6 +9,11 @@ export interface EditorActionSummarySource {
 }
 
 const MAX_SUMMARY_SOURCE_CHARS = 12000;
+const ARTICLE_UNDERSTANDING_REUSE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ARTICLE_UNDERSTANDING_REUSE_RATIO = 0.12;
+const ARTICLE_UNDERSTANDING_REUSE_MIN_DELTA = 600;
+const ARTICLE_UNDERSTANDING_REUSE_MAX_DELTA = 3000;
+const MAX_STABLE_LINE_HASHES = 12;
 
 export function editorActionContentHash(text: string): string {
   let hash = 2166136261;
@@ -70,9 +75,15 @@ export function makeArticleUnderstandingCacheEntry(
     model,
     mode,
     understanding: understanding.trim(),
+    fingerprint: makeArticleUnderstandingFingerprint(source.text),
     updatedAt: now,
     lastUsedAt: now
   };
+}
+
+export interface ArticleUnderstandingCacheResolution {
+  state: ArticleUnderstandingCacheState;
+  entry: ArticleUnderstandingEntry | null;
 }
 
 export function getFreshArticleUnderstanding(
@@ -82,13 +93,30 @@ export function getFreshArticleUnderstanding(
   model: string,
   now = Date.now()
 ): ArticleUnderstandingEntry | null {
-  const entry = cache[source.filePath];
-  if (!entry) return null;
-  if (entry.mtime !== source.mtime || entry.size !== source.size) return null;
-  if (entry.contentHash !== editorActionContentHash(source.text)) return null;
-  if (entry.mode !== mode || entry.model !== model) return null;
-  entry.lastUsedAt = now;
-  return entry.understanding.trim() ? entry : null;
+  const resolved = resolveArticleUnderstandingCache(cache, source, mode, model, now);
+  return resolved.state === "fresh" ? resolved.entry : null;
+}
+
+export function resolveArticleUnderstandingCache(
+  cache: ArticleUnderstandingCache,
+  source: EditorActionSummarySource,
+  mode: EditorActionQualityMode,
+  model: string,
+  now = Date.now()
+): ArticleUnderstandingCacheResolution {
+  const entry = cache[source.filePath] ?? null;
+  if (!entry) return { state: "missing", entry: null };
+  if (!entry.understanding.trim()) return { state: "stale", entry };
+  if (entry.mode !== mode || entry.model !== model) return { state: "stale", entry };
+  if (entry.mtime === source.mtime && entry.size === source.size && entry.contentHash === editorActionContentHash(source.text)) {
+    entry.lastUsedAt = now;
+    return { state: "fresh", entry };
+  }
+  if (isReusableArticleUnderstanding(entry, source, now)) {
+    entry.lastUsedAt = now;
+    return { state: "reusable", entry };
+  }
+  return { state: "stale", entry };
 }
 
 export function upsertArticleUnderstandingCache(
@@ -132,6 +160,25 @@ export function buildArticleUnderstandingPrompt(source: EditorActionSummarySourc
   ].join("\n");
 }
 
+export function makeArticleUnderstandingFingerprint(text: string): ArticleUnderstandingFingerprint {
+  const normalized = normalizeArticleTextForFingerprint(text);
+  const title = firstHeading(normalized) ?? firstNonEmptyLine(normalized) ?? "";
+  const blocks = paragraphBlocks(normalized);
+  const stableLines = normalized
+    .split("\n")
+    .map((line) => normalizeFingerprintLine(line))
+    .filter((line) => line.length >= 20 && !line.startsWith("#"))
+    .filter((line, index, lines) => lines.indexOf(line) === index)
+    .slice(0, MAX_STABLE_LINE_HASHES);
+  return {
+    textLength: text.length,
+    titleHash: title ? editorActionContentHash(title) : "",
+    firstBlockHash: blocks[0] ? editorActionContentHash(blocks[0]) : "",
+    lastBlockHash: blocks.length ? editorActionContentHash(blocks[blocks.length - 1]) : "",
+    stableLineHashes: stableLines.map((line) => editorActionContentHash(line))
+  };
+}
+
 export function buildEditorActionSummaryPrompt(source: EditorActionSummarySource): string {
   return [
     "请为这篇 Obsidian 笔记生成一份简洁摘要，用于后续局部改写、扩写、续写时理解全文语境。",
@@ -153,4 +200,55 @@ function truncateSummarySource(text: string): string {
   const headLength = Math.floor(MAX_SUMMARY_SOURCE_CHARS * 0.65);
   const tailLength = MAX_SUMMARY_SOURCE_CHARS - headLength;
   return `${text.slice(0, headLength)}\n\n...[中间内容已截断]...\n\n${text.slice(-tailLength)}`;
+}
+
+function isReusableArticleUnderstanding(entry: ArticleUnderstandingEntry, source: EditorActionSummarySource, now: number): boolean {
+  if (!entry.fingerprint) return false;
+  if (now - entry.updatedAt > ARTICLE_UNDERSTANDING_REUSE_MAX_AGE_MS) return false;
+  const oldLength = Math.max(1, entry.fingerprint.textLength || entry.size || 1);
+  const changedChars = Math.abs(source.text.length - oldLength);
+  const maxChangedChars = Math.max(
+    ARTICLE_UNDERSTANDING_REUSE_MIN_DELTA,
+    Math.min(ARTICLE_UNDERSTANDING_REUSE_MAX_DELTA, Math.round(oldLength * ARTICLE_UNDERSTANDING_REUSE_RATIO))
+  );
+  if (changedChars > maxChangedChars) return false;
+  return sharedFingerprintAnchors(entry.fingerprint, makeArticleUnderstandingFingerprint(source.text)) > 0;
+}
+
+function sharedFingerprintAnchors(left: ArticleUnderstandingFingerprint, right: ArticleUnderstandingFingerprint): number {
+  let matches = 0;
+  if (left.titleHash && left.titleHash === right.titleHash) matches++;
+  if (left.firstBlockHash && left.firstBlockHash === right.firstBlockHash) matches++;
+  if (left.lastBlockHash && left.lastBlockHash === right.lastBlockHash) matches++;
+  const rightStable = new Set(right.stableLineHashes);
+  if (left.stableLineHashes.some((hash) => rightStable.has(hash))) matches++;
+  return matches;
+}
+
+function normalizeArticleTextForFingerprint(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/^---\n[\s\S]*?\n---\n?/, "")
+    .trim();
+}
+
+function firstHeading(text: string): string | null {
+  const heading = text.split("\n").map((line) => line.trim()).find((line) => /^#{1,6}\s+\S/.test(line));
+  return heading ? normalizeFingerprintLine(heading.replace(/^#{1,6}\s+/, "")) : null;
+}
+
+function firstNonEmptyLine(text: string): string | null {
+  const line = text.split("\n").map((item) => normalizeFingerprintLine(item)).find(Boolean);
+  return line ?? null;
+}
+
+function paragraphBlocks(text: string): string[] {
+  return text
+    .split(/\n\s*\n/g)
+    .map((block) => block.split("\n").map((line) => normalizeFingerprintLine(line)).filter(Boolean).join("\n"))
+    .filter(Boolean);
+}
+
+function normalizeFingerprintLine(line: string): string {
+  return line.replace(/\s+/g, " ").trim();
 }

@@ -28,7 +28,7 @@ import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActi
 import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
-import { buildArticleUnderstandingPrompt, getFreshArticleUnderstanding, makeArticleUnderstandingCacheEntry, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
+import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
@@ -532,7 +532,9 @@ export class CodexView extends ItemView {
       this.editorActionStatusResetTimer = window.setTimeout(() => {
         this.editorActionStatus = {
           status: "idle",
-          understandingStatus: this.articleUnderstandingPanelState.status === "fresh" ? "fresh" : this.articleUnderstandingPanelState.status === "stale" ? "stale" : undefined
+          understandingStatus: this.articleUnderstandingPanelState.status === "fresh" || this.articleUnderstandingPanelState.status === "reused" || this.articleUnderstandingPanelState.status === "stale"
+            ? this.articleUnderstandingPanelState.status
+            : undefined
         };
         this.renderEditorActionStatus();
       }, 2200);
@@ -1577,7 +1579,11 @@ export class CodexView extends ItemView {
       const model = this.effectiveEditorActionModel(availableModels, request.modeConfig.model);
       const understanding = await this.ensureArticleUnderstanding(request, availableModels, model, timeoutMs);
       const snapshot = understanding
-        ? { ...request.snapshot, articleUnderstanding: understanding.understanding }
+        ? {
+          ...request.snapshot,
+          articleUnderstanding: understanding.understanding,
+          articleUnderstandingState: this.articleUnderstandingPanelState.status === "reused" ? "reusable" as const : "fresh" as const
+        }
         : request.snapshot;
       const contextChars = request.snapshot.beforeContext.length + request.snapshot.afterContext.length;
       const debugMessage = `${request.modeConfig.label} · 模型 ${model} · 上下文 ${contextChars} 字 · 超时 ${Math.round(timeoutMs / 1000)}s`;
@@ -1629,7 +1635,7 @@ export class CodexView extends ItemView {
     }
   }
 
-  private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number): Promise<ArticleUnderstandingEntry | null> {
+  private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number, forceRefresh = false): Promise<ArticleUnderstandingEntry | null> {
     if (request.qualityMode === "fast") {
       this.setArticleUnderstandingPanelState({
         status: "idle",
@@ -1643,18 +1649,18 @@ export class CodexView extends ItemView {
       return null;
     }
     const settings = this.plugin.settings.editorActions;
-    const fresh = getFreshArticleUnderstanding(settings.articleUnderstandingCache, request.source, request.qualityMode, model);
-    if (fresh) {
+    const cached = forceRefresh ? { state: "stale" as const, entry: null } : resolveArticleUnderstandingCache(settings.articleUnderstandingCache, request.source, request.qualityMode, model);
+    if (!forceRefresh && cached.entry && (cached.state === "fresh" || cached.state === "reusable")) {
       this.setArticleUnderstandingPanelState({
-        status: "fresh",
+        status: cached.state === "fresh" ? "fresh" : "reused",
         source: request.source,
         mode: request.qualityMode,
         modeLabel: request.modeConfig.label,
         model,
-        entry: fresh,
+        entry: cached.entry,
         usedInLastRun: true
       });
-      return fresh;
+      return cached.entry;
     }
 
     this.setArticleUnderstandingPanelState({
@@ -1770,21 +1776,25 @@ export class CodexView extends ItemView {
     const availableModels = this.plugin.lastStatus?.models.map((item) => item.model) ?? [];
     const model = this.effectiveEditorActionModel(availableModels, modeConfig.model);
     const cachedEntry = settings.articleUnderstandingCache[source.filePath] ?? null;
-    const freshEntry = mode === "fast" ? null : getFreshArticleUnderstanding(settings.articleUnderstandingCache, source, mode, model);
+    const cacheResolution = mode === "fast"
+      ? { state: "missing" as const, entry: null }
+      : resolveArticleUnderstandingCache(settings.articleUnderstandingCache, source, mode, model);
     const status: ArticleUnderstandingStatus = mode === "fast"
       ? "idle"
-      : freshEntry
+      : cacheResolution.state === "fresh"
         ? "fresh"
-        : cachedEntry
-          ? "stale"
-          : "missing";
+        : cacheResolution.state === "reusable"
+          ? "reused"
+          : cacheResolution.state === "stale"
+            ? "stale"
+            : "missing";
     this.setArticleUnderstandingPanelState({
       status,
       source,
       mode,
       modeLabel: modeConfig.label,
       model,
-      entry: freshEntry ?? cachedEntry,
+      entry: cacheResolution.entry ?? cachedEntry,
       usedInLastRun: false
     });
   }
@@ -1831,7 +1841,7 @@ export class CodexView extends ItemView {
         prompt: "",
         createdAt: Date.now()
       };
-      await this.ensureArticleUnderstanding(request, status.models.map((item) => item.model), model, editorActionTimeoutForMode(settings.timeoutMs, mode));
+      await this.ensureArticleUnderstanding(request, status.models.map((item) => item.model), model, editorActionTimeoutForMode(settings.timeoutMs, mode), true);
       this.setEditorActionStatus({
         status: "idle",
         qualityMode: mode,
@@ -2911,6 +2921,7 @@ function editorActionStatusLabel(status: EditorActionStatusView): string {
   const mode = status.modeLabel ?? "";
   if (status.status === "idle") {
     if (status.understandingStatus === "fresh") return "已理解";
+    if (status.understandingStatus === "reused") return "正文有变化，已复用";
     if (status.understandingStatus === "stale") return "理解过期";
     return "写作";
   }
@@ -2930,6 +2941,7 @@ function editorActionStatusLabel(status: EditorActionStatusView): string {
 
 function articleUnderstandingStatusLabel(status: ArticleUnderstandingStatus, error?: string): string {
   if (status === "fresh") return "已理解";
+  if (status === "reused") return "正文有变化，已复用";
   if (status === "running") return "理解中";
   if (status === "stale") return "理解过期";
   if (status === "failed") return error ? `失败：${error}` : "理解失败";

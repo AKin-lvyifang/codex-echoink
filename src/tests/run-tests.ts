@@ -54,8 +54,10 @@ import {
   editorActionContentHash,
   getFreshArticleUnderstanding,
   getFreshEditorActionSummary,
+  makeArticleUnderstandingFingerprint,
   makeArticleUnderstandingCacheEntry,
   makeEditorActionSummaryCacheEntry,
+  resolveArticleUnderstandingCache,
   upsertArticleUnderstandingCache,
   upsertEditorActionSummaryCache
 } from "../editor-actions/summary-cache";
@@ -540,6 +542,14 @@ const promptWithSummary = buildEditorActionPrompt({
 assert.ok(promptWithSummary.includes("当前文章理解"));
 assert.ok(promptWithSummary.includes("老房改造"));
 assert.ok(promptWithSummary.includes("写作质量：质量"));
+const promptWithReusableUnderstanding = buildEditorActionPrompt({
+  action: rewriteAction,
+  style: resolveEditorActionStyle(DEFAULT_SETTINGS.editorActions),
+  snapshot: { ...selectionSnapshot, articleUnderstanding: "主题：老房改造", articleUnderstandingState: "reusable" },
+  qualityMode: "quality",
+  modeLabel: "质量"
+});
+assert.ok(promptWithReusableUnderstanding.includes("当前选区和前后文优先"));
 
 const reviewPrompt = buildEditorActionReviewPrompt({
   action: rewriteAction,
@@ -773,6 +783,26 @@ assert.equal(getFreshArticleUnderstanding(articleCache, summarySource, "quality"
 assert.equal(getFreshArticleUnderstanding(articleCache, { ...summarySource, mtime: 101 }, "quality", "gpt-5.4", 3100), null);
 assert.equal(getFreshArticleUnderstanding(articleCache, summarySource, "strict", "gpt-5.4", 3100), null);
 assert.equal(getFreshArticleUnderstanding(articleCache, summarySource, "quality", "gpt-5.5", 3100), null);
+assert.equal(resolveArticleUnderstandingCache(articleCache, summarySource, "quality", "gpt-5.4", 3100).state, "fresh");
+assert.equal(resolveArticleUnderstandingCache(articleCache, { ...summarySource, text: `${summarySource.text}\n续写一点内容。`, mtime: 101, size: 20 }, "quality", "gpt-5.4", 3100).state, "reusable");
+assert.equal(resolveArticleUnderstandingCache(articleCache, summarySource, "strict", "gpt-5.4", 3100).state, "stale");
+assert.equal(resolveArticleUnderstandingCache(articleCache, summarySource, "quality", "gpt-5.5", 3100).state, "stale");
+const oldFingerprintlessEntry = { ...articleEntry, fingerprint: undefined };
+assert.equal(resolveArticleUnderstandingCache({ [oldFingerprintlessEntry.filePath]: oldFingerprintlessEntry }, { ...summarySource, text: `${summarySource.text}\n续写一点内容。`, mtime: 101, size: 20 }, "quality", "gpt-5.4", 3100).state, "stale");
+const articleSource = {
+  filePath: "folder/article.md",
+  fileName: "article.md",
+  text: "# 老房改造\n\n第一段记录老房改造的缘起和宅家空间变化。\n\n第二段描述光线、家具和动线的调整。",
+  mtime: 200,
+  size: 52
+};
+const articleUnderstandingEntry = makeArticleUnderstandingCacheEntry(articleSource, "主题：老房改造", "quality", "gpt-5.4", 5000);
+const articleUnderstandingCache = { [articleSource.filePath]: articleUnderstandingEntry };
+assert.ok(articleUnderstandingEntry.fingerprint);
+assert.deepEqual(makeArticleUnderstandingFingerprint(articleSource.text).titleHash, articleUnderstandingEntry.fingerprint?.titleHash);
+assert.equal(resolveArticleUnderstandingCache(articleUnderstandingCache, { ...articleSource, text: `${articleSource.text}\n\n第三段补充一点使用感受。`, mtime: 201, size: 70 }, "quality", "gpt-5.4", 5100).state, "reusable");
+assert.equal(resolveArticleUnderstandingCache(articleUnderstandingCache, { ...articleSource, text: "# 完全不同主题\n\n这篇文章改成了旅行攻略、签证材料、酒店预订和行程安排。".repeat(160), mtime: 202, size: 9000 }, "quality", "gpt-5.4", 5100).state, "stale");
+assert.equal(resolveArticleUnderstandingCache(articleUnderstandingCache, { ...articleSource, text: `${articleSource.text}\n\n轻微补充。`, mtime: 203, size: 60 }, "quality", "gpt-5.4", 5000 + 8 * 24 * 60 * 60 * 1000).state, "stale");
 assert.ok(buildArticleUnderstandingPrompt(summarySource).includes("文章理解"));
 assert.ok(buildArticleUnderstandingPrompt(summarySource).includes("禁止编造"));
 for (let index = 0; index < 205; index++) {

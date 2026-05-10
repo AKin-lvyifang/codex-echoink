@@ -1,6 +1,6 @@
 {
   "name": "obsidian-codex",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Codex for Obsidian",
   "main": "dist/main.js",
   "scripts": {
