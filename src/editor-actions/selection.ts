@@ -29,6 +29,7 @@ export function buildEditorActionSelectionSnapshot(input: {
   contextCharsBefore: number;
   contextCharsAfter: number;
   filePath: string;
+  articleUnderstanding?: string;
   noteSummary?: string;
   from?: EditorPosition;
   to?: EditorPosition;
@@ -49,6 +50,7 @@ export function buildEditorActionSelectionSnapshot(input: {
     selectedText: input.fullText.slice(fromOffset, toOffset),
     beforeContext: input.fullText.slice(beforeStart, fromOffset),
     afterContext: input.fullText.slice(toOffset, afterEnd),
+    articleUnderstanding: input.articleUnderstanding,
     noteSummary: input.noteSummary
   };
 }
@@ -58,13 +60,19 @@ export function confirmEditorActionCandidate(documentText: string, candidate: Ed
   if (current !== candidate.originalText) {
     return { ok: false, reason: "原文已变化，请重新选择后再试" };
   }
+  const range = editorActionCandidateReplacementRange(candidate);
   return {
     ok: true,
-    text: `${documentText.slice(0, candidate.fromOffset)}${candidate.candidateText}${documentText.slice(candidate.toOffset)}`
+    text: `${documentText.slice(0, range.fromOffset)}${candidate.candidateText}${documentText.slice(range.toOffset)}`
   };
 }
 
 export type EditorActionCandidateInvalidationReason = "document-changed" | "original-text-changed";
+
+export function editorActionCandidateReplacementRange(candidate: Pick<EditorActionCandidate, "actionId" | "fromOffset" | "toOffset">): { fromOffset: number; toOffset: number } {
+  if (candidate.actionId === "continue") return { fromOffset: candidate.toOffset, toOffset: candidate.toOffset };
+  return { fromOffset: candidate.fromOffset, toOffset: candidate.toOffset };
+}
 
 export function editorActionCandidateInvalidationReason(documentText: string, candidate: EditorActionCandidate): EditorActionCandidateInvalidationReason | null {
   if (documentText.length !== candidate.documentLength) return "document-changed";

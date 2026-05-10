@@ -1,6 +1,14 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
-import { DEFAULT_EDITOR_ACTION_MODEL, type EditorAiActionConfig, type EditorAiActionSettings, type EditorAiStyleConfig } from "../editor-actions/types";
-export type { EditorAiActionConfig, EditorAiActionSettings, EditorAiStyleConfig };
+import {
+  DEFAULT_EDITOR_ACTION_MODEL,
+  type ArticleUnderstandingCache,
+  type EditorActionModeConfig,
+  type EditorActionQualityMode,
+  type EditorAiActionConfig,
+  type EditorAiActionSettings,
+  type EditorAiStyleConfig
+} from "../editor-actions/types";
+export type { EditorActionModeConfig, EditorActionQualityMode, EditorAiActionConfig, EditorAiActionSettings, EditorAiStyleConfig };
 
 export interface StoredAttachment {
   type: "file" | "image";
@@ -235,8 +243,32 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
   { id: "xiaohongshu", label: "小红书", instruction: "生活化、有画面感、有分享欲，适合笔记正文；可以增强情绪和场景，但避免夸张标题党、口水词和虚假承诺。" }
 ];
 
+export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode, EditorActionModeConfig> = {
+  fast: {
+    mode: "fast",
+    label: "快速",
+    model: DEFAULT_EDITOR_ACTION_MODEL,
+    contextCharsBefore: 500,
+    contextCharsAfter: 500
+  },
+  quality: {
+    mode: "quality",
+    label: "质量",
+    model: "gpt-5.4",
+    contextCharsBefore: 1000,
+    contextCharsAfter: 1000
+  },
+  strict: {
+    mode: "strict",
+    label: "严格",
+    model: "gpt-5.5",
+    contextCharsBefore: 1500,
+    contextCharsAfter: 1500
+  }
+};
+
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 13,
+  settingsVersion: 14,
   settingsTab: "general",
   cliPath: "",
   proxyEnabled: false,
@@ -256,12 +288,16 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   editorActions: {
     enabled: false,
     statusSlotEnabled: true,
+    qualityMode: "quality",
+    showContextPanel: true,
     model: DEFAULT_EDITOR_ACTION_MODEL,
     defaultStyleId: "clear",
     maxSelectedChars: 4000,
     contextCharsBefore: 300,
     contextCharsAfter: 300,
     timeoutMs: 45000,
+    modeConfigs: DEFAULT_EDITOR_ACTION_MODE_CONFIGS,
+    articleUnderstandingCache: {},
     summaryCacheEnabled: false,
     summaryCache: {},
     actions: DEFAULT_EDITOR_ACTIONS,
@@ -387,20 +423,39 @@ export function normalizeEditorActionSettings(value: any, previousVersion = DEFA
   const defaultStyleId = typeof value?.defaultStyleId === "string" && styles.some((style) => style.id === value.defaultStyleId.trim())
     ? value.defaultStyleId.trim()
     : defaults.defaultStyleId;
+  const legacyContextCharsBefore = normalizeEditorActionPerformanceNumber(value?.contextCharsBefore, defaults.contextCharsBefore, 1200, previousVersion, 0, 10000);
+  const legacyContextCharsAfter = normalizeEditorActionPerformanceNumber(value?.contextCharsAfter, defaults.contextCharsAfter, 1200, previousVersion, 0, 10000);
+  const legacyTimeoutMs = normalizeEditorActionTimeoutMs(value?.timeoutMs, defaults.timeoutMs, previousVersion);
+  const hasExistingEditorActionSettings = value && typeof value === "object" && !Array.isArray(value);
+  const legacyUpgrade = hasExistingEditorActionSettings && previousVersion < 14;
+  const qualityMode = legacyUpgrade ? "fast" : normalizeEditorActionQualityMode(value?.qualityMode, defaults.qualityMode);
+  const modeConfigs = normalizeEditorActionModeConfigs(previousVersion < 14 ? null : value?.modeConfigs, defaults.modeConfigs, legacyUpgrade ? {
+    model: normalizeText(value?.model, defaults.model),
+    contextCharsBefore: legacyContextCharsBefore,
+    contextCharsAfter: legacyContextCharsAfter
+  } : undefined);
   return {
     enabled: typeof value?.enabled === "boolean" ? value.enabled : defaults.enabled,
     statusSlotEnabled: typeof value?.statusSlotEnabled === "boolean" ? value.statusSlotEnabled : defaults.statusSlotEnabled,
+    qualityMode,
+    showContextPanel: typeof value?.showContextPanel === "boolean" ? value.showContextPanel : defaults.showContextPanel,
     model: normalizeText(value?.model, defaults.model),
     defaultStyleId,
     maxSelectedChars: normalizePositiveInteger(value?.maxSelectedChars, defaults.maxSelectedChars, 200, 20000),
-    contextCharsBefore: normalizeEditorActionPerformanceNumber(value?.contextCharsBefore, defaults.contextCharsBefore, 1200, previousVersion, 0, 10000),
-    contextCharsAfter: normalizeEditorActionPerformanceNumber(value?.contextCharsAfter, defaults.contextCharsAfter, 1200, previousVersion, 0, 10000),
-    timeoutMs: normalizeEditorActionTimeoutMs(value?.timeoutMs, defaults.timeoutMs, previousVersion),
+    contextCharsBefore: legacyContextCharsBefore,
+    contextCharsAfter: legacyContextCharsAfter,
+    timeoutMs: legacyTimeoutMs,
+    modeConfigs,
+    articleUnderstandingCache: normalizeArticleUnderstandingCache(value?.articleUnderstandingCache, value?.summaryCache, modeConfigs.quality.model),
     summaryCacheEnabled: previousVersion < 13 ? false : (typeof value?.summaryCacheEnabled === "boolean" ? value.summaryCacheEnabled : defaults.summaryCacheEnabled),
     summaryCache: normalizeEditorActionSummaryCache(value?.summaryCache),
     actions,
     styles
   };
+}
+
+export function resolveEditorActionModeConfig(settings: EditorAiActionSettings, mode = settings.qualityMode): EditorActionModeConfig {
+  return settings.modeConfigs[mode] ?? settings.modeConfigs.quality ?? settings.modeConfigs.fast ?? DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality;
 }
 
 export function normalizeWorkspaceResources(value: any): WorkspaceResourceToggles {
@@ -438,6 +493,55 @@ function normalizeEditorActionSummaryCache(value: any): EditorAiActionSettings["
       };
     })
     .filter((item): item is EditorAiActionSettings["summaryCache"][string] => Boolean(item))
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt)
+    .slice(0, 200);
+  return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
+}
+
+function normalizeArticleUnderstandingCache(value: any, legacySummaryCache: any, fallbackModel: string): ArticleUnderstandingCache {
+  const direct = normalizeArticleUnderstandingCacheEntries(value);
+  if (Object.keys(direct).length) return direct;
+  const summaries = Object.values(normalizeEditorActionSummaryCache(legacySummaryCache))
+    .map((entry) => ({
+      filePath: entry.filePath,
+      mtime: entry.mtime,
+      size: entry.size,
+      contentHash: entry.contentHash,
+      model: fallbackModel || DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality.model,
+      mode: "quality" as EditorActionQualityMode,
+      understanding: entry.summary,
+      updatedAt: entry.updatedAt,
+      lastUsedAt: entry.lastUsedAt
+    }))
+    .filter((entry) => entry.filePath && entry.understanding)
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt)
+    .slice(0, 200);
+  return Object.fromEntries(summaries.map((entry) => [entry.filePath, entry]));
+}
+
+function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstandingCache {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.values(value)
+    .map((item: any) => {
+      const filePath = normalizeText(item?.filePath, "");
+      const understanding = normalizeText(item?.understanding, "");
+      const contentHash = normalizeText(item?.contentHash, "");
+      const model = normalizeText(item?.model, DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality.model);
+      const mode = normalizeEditorActionQualityMode(item?.mode, "quality");
+      if (!filePath || !understanding || !contentHash) return null;
+      return {
+        filePath,
+        mtime: normalizeNonNegativeNumber(item?.mtime),
+        size: normalizeNonNegativeNumber(item?.size),
+        contentHash,
+        model,
+        mode,
+        understanding,
+        updatedAt: normalizeNonNegativeNumber(item?.updatedAt),
+        lastUsedAt: normalizeNonNegativeNumber(item?.lastUsedAt ?? item?.updatedAt)
+      };
+    })
+    .filter((item): item is ArticleUnderstandingCache[string] => Boolean(item))
     .sort((left, right) => right.lastUsedAt - left.lastUsedAt)
     .slice(0, 200);
   return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
@@ -520,6 +624,41 @@ function normalizeEditorActionStyles(value: any, defaults: EditorAiStyleConfig[]
     result.push({ ...fallback });
   }
   return result;
+}
+
+function normalizeEditorActionModeConfigs(
+  value: any,
+  defaults: Record<EditorActionQualityMode, EditorActionModeConfig>,
+  legacyFast?: { model: string; contextCharsBefore: number; contextCharsAfter: number }
+): Record<EditorActionQualityMode, EditorActionModeConfig> {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    fast: normalizeEditorActionModeConfig(source.fast, defaults.fast, legacyFast ? {
+      model: legacyFast.model || defaults.fast.model,
+      contextCharsBefore: legacyFast.contextCharsBefore,
+      contextCharsAfter: legacyFast.contextCharsAfter
+    } : undefined),
+    quality: normalizeEditorActionModeConfig(source.quality, defaults.quality),
+    strict: normalizeEditorActionModeConfig(source.strict, defaults.strict)
+  };
+}
+
+function normalizeEditorActionModeConfig(
+  value: any,
+  fallback: EditorActionModeConfig,
+  overrideFallback?: Partial<Pick<EditorActionModeConfig, "model" | "contextCharsBefore" | "contextCharsAfter">>
+): EditorActionModeConfig {
+  return {
+    mode: fallback.mode,
+    label: fallback.label,
+    model: normalizeText(value?.model, overrideFallback?.model ?? fallback.model),
+    contextCharsBefore: normalizePositiveInteger(value?.contextCharsBefore, overrideFallback?.contextCharsBefore ?? fallback.contextCharsBefore, 0, 10000),
+    contextCharsAfter: normalizePositiveInteger(value?.contextCharsAfter, overrideFallback?.contextCharsAfter ?? fallback.contextCharsAfter, 0, 10000)
+  };
+}
+
+function normalizeEditorActionQualityMode(value: any, fallback: EditorActionQualityMode): EditorActionQualityMode {
+  return value === "fast" || value === "quality" || value === "strict" ? value : fallback;
 }
 
 function normalizeEditorActionId(value: any): string {

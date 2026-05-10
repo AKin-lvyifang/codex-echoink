@@ -21,6 +21,7 @@ import {
   resourceEnabled,
   validateApiProvider,
   type ApiProviderConfig,
+  type EditorActionQualityMode,
   type EditorAiActionConfig,
   type EditorAiStyleConfig,
   type ResourceManagementTab,
@@ -344,6 +345,23 @@ export class CodexSettingTab extends PluginSettingTab {
       })
     ), "activity");
 
+    this.decorateSetting(new Setting(container).setName("显示写作上下文面板").setDesc("点击侧栏顶部写作状态时，展示文章理解、模式和模型信息。").addToggle((toggle) =>
+      toggle.setValue(settings.showContextPanel).onChange(async (value) => {
+        settings.showContextPanel = value;
+        await this.plugin.saveSettings();
+      })
+    ), "file-search");
+
+    this.decorateSetting(new Setting(container).setName("默认写作质量").setDesc("快速直接生成；质量会先理解文章；严格会额外审校候选。").addDropdown((dropdown) => {
+      for (const mode of EDITOR_ACTION_QUALITY_MODES) dropdown.addOption(mode.id, mode.label);
+      dropdown.setValue(settings.qualityMode);
+      dropdown.onChange(async (value) => {
+        settings.qualityMode = normalizeEditorActionQualityModeForUi(value);
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }), "gauge");
+
     this.decorateSetting(new Setting(container).setName("默认写作风格").addDropdown((dropdown) => {
       for (const style of settings.styles) dropdown.addOption(style.id, style.label || style.id);
       dropdown.setValue(settings.defaultStyleId);
@@ -353,37 +371,24 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }), "palette");
 
-    this.decorateSetting(new Setting(container).setName("启用笔记摘要缓存").setDesc("后台静默生成笔记摘要；写作时有可用摘要才带入，不会阻塞首次请求。").addToggle((toggle) =>
-      toggle.setValue(settings.summaryCacheEnabled).onChange(async (value) => {
-        settings.summaryCacheEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    ), "file-text");
-
-    this.decorateSetting(new Setting(container).setName("摘要缓存").setDesc(`当前缓存 ${Object.keys(settings.summaryCache).length} 篇笔记摘要。`).addButton((button) =>
-      button.setButtonText("清空").setIcon("trash-2").onClick(async () => {
-        settings.summaryCache = {};
-        await this.plugin.saveSettings();
-        this.display();
-      })
-    ), "database");
-
     this.addEditorActionNumber(container, "最大选区字数", settings.maxSelectedChars, 200, 20000, async (value) => {
       settings.maxSelectedChars = value;
-      await this.plugin.saveSettings();
-    });
-    this.addEditorActionNumber(container, "选区前文字符数", settings.contextCharsBefore, 0, 10000, async (value) => {
-      settings.contextCharsBefore = value;
-      await this.plugin.saveSettings();
-    });
-    this.addEditorActionNumber(container, "选区后文字符数", settings.contextCharsAfter, 0, 10000, async (value) => {
-      settings.contextCharsAfter = value;
       await this.plugin.saveSettings();
     });
     this.addEditorActionNumber(container, "超时时间（秒）", Math.round(settings.timeoutMs / 1000), 10, 300, async (value) => {
       settings.timeoutMs = value * 1000;
       await this.plugin.saveSettings();
     });
+
+    this.renderEditorActionModeConfigs(container);
+
+    this.decorateSetting(new Setting(container).setName("文章理解缓存").setDesc(`当前缓存 ${Object.keys(settings.articleUnderstandingCache).length} 篇文章理解。`).addButton((button) =>
+      button.setButtonText("清空").setIcon("trash-2").onClick(async () => {
+        settings.articleUnderstandingCache = {};
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "database");
 
     this.renderEditorActionList(container, settings.actions);
     this.renderEditorStyleList(container, settings.styles);
@@ -415,6 +420,42 @@ export class CodexSettingTab extends PluginSettingTab {
       });
       this.addProviderTextArea(row, "Prompt 模板", action.promptTemplate, "请处理：{{selected_text}}", async (value) => {
         action.promptTemplate = value.trim();
+        await this.plugin.saveSettings();
+      });
+    }
+  }
+
+  private renderEditorActionModeConfigs(container: HTMLElement): void {
+    const settings = this.plugin.settings.editorActions;
+    const section = container.createDiv({ cls: "codex-editor-actions-section" });
+    section.createDiv({ cls: "codex-editor-actions-heading", text: "写作质量模式" });
+    const modelChoices = ensureModelChoices(this.plugin.lastStatus?.models ?? [], "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", DEFAULT_SETTINGS.defaultModel);
+    for (const mode of EDITOR_ACTION_QUALITY_MODES) {
+      const config = settings.modeConfigs[mode.id];
+      const row = section.createDiv({ cls: "codex-api-provider-row codex-editor-mode-row" });
+      const head = row.createDiv({ cls: "codex-api-provider-head" });
+      const title = head.createDiv({ cls: "codex-api-provider-title" });
+      const icon = title.createSpan({ cls: "codex-resource-row-icon" });
+      setIcon(icon, mode.icon);
+      title.createSpan({ text: mode.label });
+      title.createSpan({ cls: "codex-resource-row-meta", text: mode.desc });
+
+      this.decorateSetting(new Setting(row).setName("模型").addDropdown((dropdown) => {
+        for (const model of ensureModelChoices(modelChoices, config.model)) dropdown.addOption(model.model, model.displayName || model.model);
+        dropdown.setValue(config.model);
+        dropdown.onChange(async (value) => {
+          config.model = value;
+          await this.plugin.saveSettings();
+        });
+      }), "box");
+      this.addEditorActionNumber(row, "选区前文字符数", config.contextCharsBefore, 0, 10000, async (value) => {
+        config.contextCharsBefore = value;
+        if (mode.id === "fast") settings.contextCharsBefore = value;
+        await this.plugin.saveSettings();
+      });
+      this.addEditorActionNumber(row, "选区后文字符数", config.contextCharsAfter, 0, 10000, async (value) => {
+        config.contextCharsAfter = value;
+        if (mode.id === "fast") settings.contextCharsAfter = value;
         await this.plugin.saveSettings();
       });
     }
@@ -840,6 +881,16 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: string }> = [
   { id: "resources", label: "工作区能力", icon: "blocks" },
   { id: "editorActions", label: "写作操作", icon: "wand-sparkles" }
 ];
+
+const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; label: string; icon: string; desc: string }> = [
+  { id: "fast", label: "快速", icon: "zap", desc: "短句润色，直接生成" },
+  { id: "quality", label: "质量", icon: "file-search", desc: "先理解文章，再生成" },
+  { id: "strict", label: "严格", icon: "shield-check", desc: "理解、生成、审校" }
+];
+
+function normalizeEditorActionQualityModeForUi(value: string): EditorActionQualityMode {
+  return value === "fast" || value === "quality" || value === "strict" ? value : "quality";
+}
 
 function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
   return tab === "mcp" ? "mcp" : tab === "skills" ? "skills" : "plugins";

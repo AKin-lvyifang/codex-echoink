@@ -3,6 +3,7 @@ import type { Extension } from "@codemirror/state";
 import { Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
 import type { EditorActionCandidate } from "./types";
+import { editorActionCandidateReplacementRange } from "./selection";
 
 export const setEditorActionCandidateEffect = StateEffect.define<EditorActionCandidate | null>();
 
@@ -47,9 +48,10 @@ export function createEditorActionExtension(handlers: {
 export function setEditorActionCandidate(editor: Editor, candidate: EditorActionCandidate | null): boolean {
   const view = editorViewFromEditor(editor);
   if (!view) return false;
+  const range = candidate ? editorActionCandidateReplacementRange(candidate) : null;
   view.dispatch({
     effects: setEditorActionCandidateEffect.of(candidate),
-    ...(candidate ? { selection: { anchor: candidate.fromOffset }, scrollIntoView: true } : {})
+    ...(range ? { selection: { anchor: range.fromOffset }, scrollIntoView: true } : {})
   });
   const stored = view.state.field(editorActionCandidateField, false);
   return candidate ? stored?.id === candidate.id : !stored;
@@ -57,11 +59,21 @@ export function setEditorActionCandidate(editor: Editor, candidate: EditorAction
 
 function candidateDecorations(candidate: EditorActionCandidate | null): DecorationSet {
   if (!candidate) return Decoration.none;
+  const range = editorActionCandidateReplacementRange(candidate);
+  const widget = new EditorActionCandidateWidget(candidate);
+  if (range.fromOffset === range.toOffset) {
+    return Decoration.set([
+      Decoration.widget({
+        widget,
+        side: 1
+      }).range(range.fromOffset)
+    ]);
+  }
   return Decoration.set([
     Decoration.replace({
-      widget: new EditorActionCandidateWidget(candidate),
+      widget,
       inclusive: false
-    }).range(candidate.fromOffset, candidate.toOffset)
+    }).range(range.fromOffset, range.toOffset)
   ]);
 }
 

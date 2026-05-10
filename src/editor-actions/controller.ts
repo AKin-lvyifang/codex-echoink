@@ -1,11 +1,11 @@
 import { Notice, type Editor, type MarkdownFileInfo, type MarkdownView, type Menu } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { newId } from "../settings/settings";
+import { newId, resolveEditorActionModeConfig } from "../settings/settings";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "./output";
 import { buildEditorActionPrompt, resolveEditorActionStyle } from "./prompt";
-import { buildEditorActionSelectionSnapshot, confirmEditorActionCandidate, editorActionCandidateInvalidationReason, enabledEditorActionConfigs, validateEditorActionSelection } from "./selection";
+import { buildEditorActionSelectionSnapshot, confirmEditorActionCandidate, editorActionCandidateInvalidationReason, editorActionCandidateReplacementRange, enabledEditorActionConfigs, validateEditorActionSelection } from "./selection";
 import { createEditorActionExtension, setEditorActionCandidate } from "./editor-extension";
-import { getFreshEditorActionSummary, type EditorActionSummarySource } from "./summary-cache";
+import { getFreshArticleUnderstanding, type EditorActionSummarySource } from "./summary-cache";
 import type { EditorActionCandidate, EditorActionRequest, EditorAiActionConfig } from "./types";
 
 export class EditorActionController {
@@ -90,25 +90,32 @@ export class EditorActionController {
       mtime: info.file?.stat.mtime ?? 0,
       size: info.file?.stat.size ?? fullText.length
     };
-    const noteSummary = settings.summaryCacheEnabled ? getFreshEditorActionSummary(settings.summaryCache, summarySource) : null;
+    const qualityMode = settings.qualityMode;
+    const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
+    const articleUnderstanding = qualityMode === "fast"
+      ? null
+      : getFreshArticleUnderstanding(settings.articleUnderstandingCache, summarySource, qualityMode, modeConfig.model);
     const snapshot = buildEditorActionSelectionSnapshot({
       fullText,
       fromOffset: editor.posToOffset(from),
       toOffset: editor.posToOffset(to),
       from,
       to,
-      contextCharsBefore: settings.contextCharsBefore,
-      contextCharsAfter: settings.contextCharsAfter,
+      contextCharsBefore: modeConfig.contextCharsBefore,
+      contextCharsAfter: modeConfig.contextCharsAfter,
       filePath,
-      noteSummary: noteSummary ?? undefined
+      articleUnderstanding: articleUnderstanding?.understanding
     });
     const style = resolveEditorActionStyle(settings);
-    const prompt = buildEditorActionPrompt({ action, style, snapshot });
+    const prompt = buildEditorActionPrompt({ action, style, snapshot, qualityMode, modeLabel: modeConfig.label });
     const request: EditorActionRequest = {
       id: newId("editor-action"),
       action,
       style,
       snapshot,
+      source: summarySource,
+      qualityMode,
+      modeConfig,
       prompt,
       createdAt: Date.now()
     };
@@ -141,7 +148,6 @@ export class EditorActionController {
       if (!setEditorActionCandidate(editor, candidate)) throw new Error("当前编辑器不支持灰色候选预览");
       this.active = { editor, candidate };
       view.setEditorActionStatus({ status: "awaiting-confirm", actionLabel: action.label, message: "Enter 确认 / Esc 取消" });
-      view.queueEditorActionSummaryRefresh(summarySource);
       editor.focus();
     } catch (error) {
       view.setEditorActionStatus({ status: "failed", actionLabel: action.label, error: error instanceof Error ? error.message : String(error) });
@@ -169,11 +175,14 @@ export class EditorActionController {
     }
     this.confirming = true;
     try {
-      editor.replaceRange(candidate.candidateText, editor.offsetToPos(candidate.fromOffset), editor.offsetToPos(candidate.toOffset), "codex-editor-action");
+      const range = editorActionCandidateReplacementRange(candidate);
       setEditorActionCandidate(editor, null);
+      editor.replaceRange(candidate.candidateText, editor.offsetToPos(range.fromOffset), editor.offsetToPos(range.toOffset), "codex-editor-action");
       this.active = null;
-      this.plugin.getCodexView()?.setEditorActionStatus({ status: "confirmed", message: "已替换" });
-      new Notice("已替换为 Codex 候选");
+      const isContinue = candidate.actionId === "continue";
+      const message = isContinue ? "已续写" : "已替换";
+      this.plugin.getCodexView()?.setEditorActionStatus({ status: "confirmed", message });
+      new Notice(isContinue ? "已插入 Codex 续写" : "已替换为 Codex 候选");
     } finally {
       this.confirming = false;
     }

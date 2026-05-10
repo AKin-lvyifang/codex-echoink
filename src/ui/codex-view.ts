@@ -1,7 +1,7 @@
-import { ItemView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
-import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, newId, providerConnectionLabel } from "../settings/settings";
+import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
 import type {
   CodexNotification,
   CodexSkill,
@@ -24,12 +24,12 @@ import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom 
 import { renderSettingsGearIcon } from "./codex-icon";
 import { openImageOverlay, renderRichText } from "./render-message";
 import { textInputModal } from "./modals";
-import { buildEditorActionUserInput } from "../editor-actions/prompt";
+import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput } from "../editor-actions/prompt";
 import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
-import type { EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
-import { buildEditorActionSummaryPrompt, getFreshEditorActionSummary, makeEditorActionSummaryCacheEntry, upsertEditorActionSummaryCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
-import { cleanEditorActionOutput } from "../editor-actions/output";
+import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
+import { buildArticleUnderstandingPrompt, getFreshArticleUnderstanding, makeArticleUnderstandingCacheEntry, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
+import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 
@@ -48,12 +48,24 @@ interface EditorSummaryRunWaiter extends EditorActionRunWaiter {
   threadId: string;
 }
 
+interface ArticleUnderstandingPanelState {
+  status: ArticleUnderstandingStatus;
+  source?: EditorActionSummarySource;
+  entry?: ArticleUnderstandingEntry | null;
+  mode?: EditorActionQualityMode;
+  modeLabel?: string;
+  model?: string;
+  usedInLastRun?: boolean;
+  error?: string;
+}
+
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
   private headerStatusEl!: HTMLElement;
   private headerStatusTextEl!: HTMLElement;
   private editorActionStatusEl!: HTMLElement;
   private editorActionStatusTextEl!: HTMLElement;
+  private articleUnderstandingPanelEl!: HTMLElement;
   private headerUsageEl!: HTMLButtonElement;
   private headerUsageTextEl!: HTMLElement;
   private usagePanelEl!: HTMLElement;
@@ -101,9 +113,13 @@ export class CodexView extends ItemView {
   private usageError: string | null = null;
   private usageRequestId = 0;
   private editorActionStatus: EditorActionStatusView = { status: "idle" };
+  private articleUnderstandingPanelVisible = false;
+  private articleUnderstandingPanelState: ArticleUnderstandingPanelState = { status: "idle" };
+  private editorActionHarnessRunId = "";
   private editorActionStatusTicker: number | null = null;
   private editorActionStatusResetTimer: number | null = null;
   private editorActionRun: EditorActionRunWaiter | null = null;
+  private editorActionActiveTimeoutMs = 0;
   private editorActionThreadId = "";
   private editorActionThreadIds = new Set<string>();
   private editorActionTurnIds = new Set<string>();
@@ -112,7 +128,6 @@ export class CodexView extends ItemView {
   private editorActionPrewarmThreadId = "";
   private editorActionPrewarmPromise: Promise<string | null> | null = null;
   private editorSummaryRun: EditorSummaryRunWaiter | null = null;
-  private editorSummaryTimer: number | null = null;
   private editorSummaryTimeout: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
@@ -299,7 +314,7 @@ export class CodexView extends ItemView {
       this.running = true;
       this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
       this.turnStartedAt = Date.now();
-      this.armTurnWatchdog(this.plugin.settings.editorActions.timeoutMs);
+      this.armTurnWatchdog(this.editorActionActiveTimeoutMs || this.plugin.settings.editorActions.timeoutMs);
       this.applyStatus();
       return true;
     }
@@ -392,10 +407,26 @@ export class CodexView extends ItemView {
     setIcon(icon, "bot");
     title.createSpan({ cls: "codex-title-text", text: "Codex" });
     const headerActions = header.createDiv({ cls: "codex-header-actions" });
-    this.editorActionStatusEl = headerActions.createDiv({ cls: "codex-status-chip codex-editor-action-status is-idle" });
+    this.editorActionStatusEl = headerActions.createDiv({
+      cls: "codex-status-chip codex-editor-action-status is-idle",
+      attr: { role: "button", tabindex: "0", "aria-label": "写作上下文" }
+    });
     const editorActionIcon = this.editorActionStatusEl.createSpan({ cls: "codex-header-status-icon" });
     setIcon(editorActionIcon, "wand-sparkles");
     this.editorActionStatusTextEl = this.editorActionStatusEl.createSpan({ cls: "codex-header-status-text", text: "写作" });
+    this.editorActionStatusEl.onclick = (event) => {
+      event.stopPropagation();
+      this.articleUnderstandingPanelVisible = !this.articleUnderstandingPanelVisible;
+      if (this.articleUnderstandingPanelVisible) void this.refreshArticleUnderstandingPanelSourceState();
+      this.renderArticleUnderstandingPanel();
+    };
+    this.editorActionStatusEl.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      this.articleUnderstandingPanelVisible = !this.articleUnderstandingPanelVisible;
+      if (this.articleUnderstandingPanelVisible) void this.refreshArticleUnderstandingPanelSourceState();
+      this.renderArticleUnderstandingPanel();
+    };
     this.headerStatusEl = headerActions.createDiv({ cls: "codex-header-status codex-status-chip" });
     const statusIcon = this.headerStatusEl.createSpan({ cls: "codex-header-status-icon" });
     setIcon(statusIcon, "activity");
@@ -430,6 +461,7 @@ export class CodexView extends ItemView {
     settingsButton.onclick = () => this.openPluginSettings();
 
     this.usagePanelEl = header.createDiv({ cls: "codex-usage-panel" });
+    this.articleUnderstandingPanelEl = header.createDiv({ cls: "codex-article-panel" });
     this.registerDomEvent(document, "click", (event) => {
       if (!this.rootEl.contains(event.target as Node)) this.usagePanelEl.removeClass("is-visible");
     });
@@ -471,6 +503,7 @@ export class CodexView extends ItemView {
     this.mcpPanelEl = this.rootEl.createDiv({ cls: "codex-mcp-panel" });
     this.renderToolbar();
     this.renderEditorActionStatus();
+    this.renderArticleUnderstandingPanel();
   }
 
   private applyStatus(): void {
@@ -497,7 +530,10 @@ export class CodexView extends ItemView {
     }
     if (status.status === "confirmed" || status.status === "canceled" || status.status === "failed") {
       this.editorActionStatusResetTimer = window.setTimeout(() => {
-        this.editorActionStatus = { status: "idle" };
+        this.editorActionStatus = {
+          status: "idle",
+          understandingStatus: this.articleUnderstandingPanelState.status === "fresh" ? "fresh" : this.articleUnderstandingPanelState.status === "stale" ? "stale" : undefined
+        };
         this.renderEditorActionStatus();
       }, 2200);
     }
@@ -516,6 +552,66 @@ export class CodexView extends ItemView {
     this.editorActionStatusEl.toggleClass("has-warning", status.status === "failed" || status.status === "canceled");
     this.editorActionStatusTextEl.setText(editorActionStatusLabel(status));
     this.editorActionStatusEl.setAttr("title", status.error || status.message || "编辑区 AI 写作状态");
+    this.renderArticleUnderstandingPanel();
+  }
+
+  private renderArticleUnderstandingPanel(): void {
+    if (!this.articleUnderstandingPanelEl) return;
+    const settings = this.plugin.settings.editorActions;
+    this.articleUnderstandingPanelEl.empty();
+    this.articleUnderstandingPanelEl.toggleClass("is-visible", this.articleUnderstandingPanelVisible && settings.showContextPanel);
+    if (!this.articleUnderstandingPanelVisible || !settings.showContextPanel) return;
+
+    const state = this.articleUnderstandingPanelState;
+    const modeConfig = resolveEditorActionModeConfig(settings, state.mode ?? settings.qualityMode);
+    const title = this.articleUnderstandingPanelEl.createDiv({ cls: "codex-article-panel-title" });
+    const titleIcon = title.createSpan({ cls: "codex-usage-panel-icon" });
+    setIcon(titleIcon, "file-search");
+    title.createSpan({ text: "写作上下文" });
+
+    const meta = this.articleUnderstandingPanelEl.createDiv({ cls: "codex-article-panel-meta" });
+    this.addArticlePanelRow(meta, "文件", state.source?.fileName ?? "当前未选择笔记");
+    this.addArticlePanelRow(meta, "模式", state.modeLabel ?? modeConfig.label);
+    this.addArticlePanelRow(meta, "模型", state.model ?? modeConfig.model);
+    this.addArticlePanelRow(meta, "状态", articleUnderstandingStatusLabel(state.status, state.error));
+    this.addArticlePanelRow(meta, "更新时间", state.entry?.updatedAt ? formatRelativeTime(state.entry.updatedAt) : "无");
+    this.addArticlePanelRow(meta, "本次使用", state.usedInLastRun ? "已使用文章理解" : "未使用文章理解");
+
+    const body = this.articleUnderstandingPanelEl.createDiv({ cls: "codex-article-panel-body" });
+    if (state.entry?.understanding) {
+      renderRichText(this.plugin.app, this, body, state.entry.understanding);
+    } else if (state.mode === "fast" || settings.qualityMode === "fast") {
+      body.createDiv({ cls: "codex-article-panel-empty", text: "快速模式写作时不使用文章理解；也可以手动刷新，先建立可见上下文。" });
+    } else {
+      body.createDiv({ cls: "codex-article-panel-empty", text: "还没有文章理解。点击刷新理解，或直接使用质量/严格写作触发。" });
+    }
+
+    const actions = this.articleUnderstandingPanelEl.createDiv({ cls: "codex-article-panel-actions" });
+    const refresh = actions.createEl("button", { cls: "codex-resource-refresh", text: "刷新理解", attr: { type: "button" } });
+    refresh.disabled = state.status === "running";
+    refresh.onclick = () => void this.refreshArticleUnderstandingFromPanel();
+    const clear = actions.createEl("button", { cls: "codex-resource-tab", text: "清除理解", attr: { type: "button" } });
+    clear.disabled = !state.source?.filePath && !state.entry?.filePath;
+    clear.onclick = async () => {
+      const filePath = state.source?.filePath ?? state.entry?.filePath;
+      if (!filePath) return;
+      delete this.plugin.settings.editorActions.articleUnderstandingCache[filePath];
+      this.articleUnderstandingPanelState = { ...state, status: settings.qualityMode === "fast" ? "idle" : "missing", entry: null, usedInLastRun: false };
+      await this.plugin.saveSettings();
+      this.renderEditorActionStatus();
+    };
+    const settingsButton = actions.createEl("button", { cls: "codex-resource-tab", text: "打开设置", attr: { type: "button" } });
+    settingsButton.onclick = async () => {
+      this.plugin.settings.settingsTab = "editorActions";
+      await this.plugin.saveSettings();
+      this.openPluginSettings();
+    };
+  }
+
+  private addArticlePanelRow(container: HTMLElement, label: string, value: string): void {
+    const row = container.createDiv({ cls: "codex-article-panel-row" });
+    row.createSpan({ cls: "codex-article-panel-label", text: label });
+    row.createSpan({ cls: "codex-article-panel-value", text: value });
   }
 
   private clearEditorActionStatusTimers(): void {
@@ -1456,46 +1552,194 @@ export class CodexView extends ItemView {
   }
 
   async sendEditorActionRequest(request: EditorActionRequest): Promise<string> {
-    if (this.editorSummaryRun) this.cancelEditorSummaryRun("写作操作抢占摘要");
+    if (this.editorSummaryRun) this.cancelEditorSummaryRun("写作操作抢占文章理解");
     const blockReason = this.editorActionStartBlockReason();
     if (blockReason) throw new Error(blockReason);
-    const runId = newId("editor-action-run");
+    const harnessRunId = newId("editor-action-harness");
+    this.editorActionHarnessRunId = harnessRunId;
+    const timeoutMs = editorActionTimeoutForMode(this.plugin.settings.editorActions.timeoutMs, request.qualityMode);
+    const requestStartedAt = Date.now();
+    try {
+      this.setArticleUnderstandingPanelState({
+        status: request.qualityMode === "fast" ? "idle" : "missing",
+        source: request.source,
+        mode: request.qualityMode,
+        modeLabel: request.modeConfig.label,
+        model: request.modeConfig.model,
+        usedInLastRun: false
+      });
+      this.setEditorActionStatus({ status: "connecting", actionLabel: request.action.label, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label, filePath: request.source.filePath, model: request.modeConfig.model, startedAt: requestStartedAt });
+      const status = await this.withEditorActionTimeout(this.plugin.ensureCodexConnected(false, { silent: true }), timeoutMs, "写作操作连接超时");
+      this.applyStatus();
+      if (!status.connected) throw new Error("Codex 未连接");
+
+      const availableModels = status.models.map((model) => model.model);
+      const model = this.effectiveEditorActionModel(availableModels, request.modeConfig.model);
+      const understanding = await this.ensureArticleUnderstanding(request, availableModels, model, timeoutMs);
+      const snapshot = understanding
+        ? { ...request.snapshot, articleUnderstanding: understanding.understanding }
+        : request.snapshot;
+      const contextChars = request.snapshot.beforeContext.length + request.snapshot.afterContext.length;
+      const debugMessage = `${request.modeConfig.label} · 模型 ${model} · 上下文 ${contextChars} 字 · 超时 ${Math.round(timeoutMs / 1000)}s`;
+      console.debug("[obsidian-codex] editor action", debugMessage);
+
+      let result = await this.runEditorActionPromptTurn({
+        prompt: buildEditorActionPrompt({ action: request.action, style: request.style, snapshot, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label }),
+        actionLabel: request.action.label,
+        qualityMode: request.qualityMode,
+        modeLabel: request.modeConfig.label,
+        model,
+        phase: "generating",
+        statusMessage: debugMessage,
+        timeoutMs,
+        startedAt: requestStartedAt
+      });
+      if (request.qualityMode === "strict") {
+        const candidateText = cleanEditorActionOutput(result);
+        const candidateValidation = validateEditorActionCandidateText(candidateText);
+        if (!candidateValidation.ok) throw new Error(candidateValidation.reason);
+        result = await this.runEditorActionPromptTurn({
+          prompt: buildEditorActionReviewPrompt({ action: request.action, style: request.style, snapshot, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label, candidateText }),
+          actionLabel: request.action.label,
+          qualityMode: request.qualityMode,
+          modeLabel: request.modeConfig.label,
+          model,
+          phase: "reviewing",
+          statusMessage: `${request.modeConfig.label}审校中`,
+          timeoutMs: Math.max(45000, Math.min(timeoutMs, 90000)),
+          startedAt: requestStartedAt
+        });
+      }
+      this.prewarmEditorActionThread();
+      return result;
+    } catch (error) {
+      this.rejectEditorActionRun(error instanceof Error ? error : new Error(String(error)));
+      this.running = false;
+      this.activeTurnId = "";
+      this.editorActionActiveTimeoutMs = 0;
+      this.clearTurnWatchdog();
+      this.clearActiveRun();
+      this.editorActionCurrentItemIds.clear();
+      this.applyStatus();
+      this.setArticleUnderstandingPanelState({ ...this.articleUnderstandingPanelState, status: "failed", error: error instanceof Error ? error.message : String(error) });
+      this.prewarmEditorActionThread();
+      throw error;
+    } finally {
+      if (this.editorActionHarnessRunId === harnessRunId) this.editorActionHarnessRunId = "";
+    }
+  }
+
+  private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number): Promise<ArticleUnderstandingEntry | null> {
+    if (request.qualityMode === "fast") {
+      this.setArticleUnderstandingPanelState({
+        status: "idle",
+        source: request.source,
+        mode: request.qualityMode,
+        modeLabel: request.modeConfig.label,
+        model,
+        entry: null,
+        usedInLastRun: false
+      });
+      return null;
+    }
+    const settings = this.plugin.settings.editorActions;
+    const fresh = getFreshArticleUnderstanding(settings.articleUnderstandingCache, request.source, request.qualityMode, model);
+    if (fresh) {
+      this.setArticleUnderstandingPanelState({
+        status: "fresh",
+        source: request.source,
+        mode: request.qualityMode,
+        modeLabel: request.modeConfig.label,
+        model,
+        entry: fresh,
+        usedInLastRun: true
+      });
+      return fresh;
+    }
+
+    this.setArticleUnderstandingPanelState({
+      status: "running",
+      source: request.source,
+      mode: request.qualityMode,
+      modeLabel: request.modeConfig.label,
+      model,
+      entry: null,
+      usedInLastRun: false
+    });
+    const understandingRaw = await this.runEditorActionPromptTurn({
+      prompt: buildArticleUnderstandingPrompt(request.source),
+      actionLabel: "理解文章",
+      qualityMode: request.qualityMode,
+      modeLabel: request.modeConfig.label,
+      model: this.effectiveEditorActionModel(availableModels, model),
+      phase: "understanding",
+      statusMessage: `${request.modeConfig.label} · 正在理解文章`,
+      timeoutMs: Math.max(45000, Math.min(timeoutMs, 90000)),
+      startedAt: Date.now()
+    });
+    const understanding = cleanEditorActionOutput(understandingRaw);
+    if (!understanding.trim()) throw new Error("文章理解为空");
+    const entry = makeArticleUnderstandingCacheEntry(request.source, understanding, request.qualityMode, model);
+    settings.articleUnderstandingCache = upsertArticleUnderstandingCache(settings.articleUnderstandingCache, entry);
+    await this.plugin.saveSettings();
+    this.setArticleUnderstandingPanelState({
+      status: "fresh",
+      source: request.source,
+      mode: request.qualityMode,
+      modeLabel: request.modeConfig.label,
+      model,
+      entry,
+      usedInLastRun: true
+    });
+    return entry;
+  }
+
+  private async runEditorActionPromptTurn(input: {
+    prompt: string;
+    actionLabel: string;
+    qualityMode: EditorActionQualityMode;
+    modeLabel: string;
+    model: string;
+    phase: "understanding" | "generating" | "reviewing";
+    statusMessage: string;
+    timeoutMs: number;
+    startedAt: number;
+  }): Promise<string> {
+    const runId = newId(`editor-${input.phase}-run`);
     this.editorActionCurrentItemIds.clear();
     const waitForResult = new Promise<string>((resolve, reject) => {
       this.editorActionRun = { runId, text: "", resolve, reject };
     });
-    const timeoutMs = this.plugin.settings.editorActions.timeoutMs;
-    const requestStartedAt = Date.now();
-    const remainingMs = () => Math.max(1000, timeoutMs - (Date.now() - requestStartedAt));
+    const turnOptions = buildEditorActionTurnOptions({
+      model: input.model,
+      serviceTier: this.selectedServiceTier,
+      timeoutMs: input.timeoutMs,
+      workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
+    });
     try {
       this.activeRunId = runId;
       this.activeRunSessionId = "";
       this.running = true;
-      this.turnStartedAt = requestStartedAt;
-      this.armTurnWatchdog(timeoutMs);
-      this.setEditorActionStatus({ status: "connecting", actionLabel: request.action.label, startedAt: requestStartedAt });
-      const status = await this.withEditorActionTimeout(this.plugin.ensureCodexConnected(false, { silent: true }), remainingMs(), "写作操作连接超时");
-      this.applyStatus();
-      if (!status.connected) throw new Error("Codex 未连接");
-
-      const turnOptions = buildEditorActionTurnOptions({
-        model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
-        serviceTier: this.selectedServiceTier,
-        timeoutMs,
-        workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
+      this.editorActionActiveTimeoutMs = input.timeoutMs;
+      this.turnStartedAt = Date.now();
+      this.armTurnWatchdog(input.timeoutMs);
+      this.setEditorActionStatus({
+        status: "generating",
+        actionLabel: input.actionLabel,
+        phase: input.phase,
+        qualityMode: input.qualityMode,
+        modeLabel: input.modeLabel,
+        model: input.model,
+        startedAt: input.startedAt,
+        message: input.statusMessage,
+        understandingStatus: this.articleUnderstandingPanelState.status
       });
-      const contextChars = request.snapshot.beforeContext.length + request.snapshot.afterContext.length;
-      const debugMessage = `模型 ${turnOptions.model} · 上下文 ${contextChars} 字 · 超时 ${Math.round(this.plugin.settings.editorActions.timeoutMs / 1000)}s`;
-      console.debug("[obsidian-codex] editor action", debugMessage);
-      this.applyStatus();
-      this.editorActionThreadId = await this.withEditorActionTimeout(this.takeEditorActionThread(turnOptions), remainingMs(), "写作操作启动超时");
+      this.editorActionThreadId = await this.withEditorActionTimeout(this.takeEditorActionThread(turnOptions), input.timeoutMs, "写作操作启动超时");
       this.editorActionThreadIds.add(this.editorActionThreadId);
-      this.activeTurnId = await this.withEditorActionTimeout(this.plugin.codex!.startTurn(this.editorActionThreadId, buildEditorActionUserInput(request.prompt), turnOptions), remainingMs(), "写作操作启动超时");
+      this.activeTurnId = await this.withEditorActionTimeout(this.plugin.codex!.startTurn(this.editorActionThreadId, buildEditorActionUserInput(input.prompt), turnOptions), input.timeoutMs, "写作操作启动超时");
       if (this.activeTurnId) this.editorActionTurnIds.add(this.activeTurnId);
-      this.setEditorActionStatus({ status: "generating", actionLabel: request.action.label, startedAt: requestStartedAt, message: debugMessage });
       const result = await waitForResult;
       this.releaseEditorActionRunLock(runId);
-      this.prewarmEditorActionThread();
       return result;
     } catch (error) {
       void waitForResult.catch(() => undefined);
@@ -1503,15 +1747,152 @@ export class CodexView extends ItemView {
         void this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(() => undefined);
       }
       this.rejectEditorActionRun(error instanceof Error ? error : new Error(String(error)));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.editorActionCurrentItemIds.clear();
-      this.applyStatus();
-      this.prewarmEditorActionThread();
+      this.releaseEditorActionRunLock(runId);
       throw error;
     }
+  }
+
+  private setArticleUnderstandingPanelState(state: ArticleUnderstandingPanelState): void {
+    this.articleUnderstandingPanelState = state;
+    this.renderEditorActionStatus();
+  }
+
+  private async refreshArticleUnderstandingPanelSourceState(): Promise<void> {
+    if (this.articleUnderstandingPanelState.status === "running") return;
+    const source = await this.currentArticleUnderstandingSource();
+    if (!source) {
+      this.setArticleUnderstandingPanelState({ status: "idle", usedInLastRun: false });
+      return;
+    }
+    const settings = this.plugin.settings.editorActions;
+    const mode = settings.qualityMode;
+    const modeConfig = resolveEditorActionModeConfig(settings, mode);
+    const availableModels = this.plugin.lastStatus?.models.map((item) => item.model) ?? [];
+    const model = this.effectiveEditorActionModel(availableModels, modeConfig.model);
+    const cachedEntry = settings.articleUnderstandingCache[source.filePath] ?? null;
+    const freshEntry = mode === "fast" ? null : getFreshArticleUnderstanding(settings.articleUnderstandingCache, source, mode, model);
+    const status: ArticleUnderstandingStatus = mode === "fast"
+      ? "idle"
+      : freshEntry
+        ? "fresh"
+        : cachedEntry
+          ? "stale"
+          : "missing";
+    this.setArticleUnderstandingPanelState({
+      status,
+      source,
+      mode,
+      modeLabel: modeConfig.label,
+      model,
+      entry: freshEntry ?? cachedEntry,
+      usedInLastRun: false
+    });
+  }
+
+  private async refreshArticleUnderstandingFromPanel(): Promise<void> {
+    const source = await this.currentArticleUnderstandingSource();
+    if (!source) {
+      new Notice("请先打开一篇 Markdown 笔记");
+      return;
+    }
+    const settings = this.plugin.settings.editorActions;
+    const mode = settings.qualityMode === "fast" ? "quality" : settings.qualityMode;
+    const modeConfig = resolveEditorActionModeConfig(settings, mode);
+    if (this.editorSummaryRun) this.cancelEditorSummaryRun("刷新文章理解");
+    const blockReason = this.editorActionStartBlockReason();
+    if (blockReason) {
+      new Notice(blockReason);
+      return;
+    }
+    const harnessRunId = newId("article-understanding-refresh");
+    this.editorActionHarnessRunId = harnessRunId;
+    try {
+      const status = await this.plugin.ensureCodexConnected(false, { silent: true });
+      if (!status.connected) throw new Error("Codex 未连接");
+      const model = this.effectiveEditorActionModel(status.models.map((item) => item.model), modeConfig.model);
+      const request: EditorActionRequest = {
+        id: newId("editor-action-refresh"),
+        action: { id: "rewrite", label: "理解文章", enabled: true, promptTemplate: "" },
+        style: { id: "clear", label: "清楚", instruction: "表达清楚、准确、自然。" },
+        snapshot: {
+          filePath: source.filePath,
+          fileName: source.fileName,
+          fromOffset: 0,
+          toOffset: 0,
+          from: { line: 0, ch: 0 },
+          to: { line: 0, ch: 0 },
+          selectedText: "",
+          beforeContext: "",
+          afterContext: ""
+        },
+        source,
+        qualityMode: mode,
+        modeConfig,
+        prompt: "",
+        createdAt: Date.now()
+      };
+      await this.ensureArticleUnderstanding(request, status.models.map((item) => item.model), model, editorActionTimeoutForMode(settings.timeoutMs, mode));
+      this.setEditorActionStatus({
+        status: "idle",
+        qualityMode: mode,
+        modeLabel: modeConfig.label,
+        filePath: source.filePath,
+        model,
+        understandingStatus: "fresh",
+        usedArticleUnderstanding: true
+      });
+      new Notice("文章理解已刷新");
+    } catch (error) {
+      this.setEditorActionStatus({
+        status: "failed",
+        actionLabel: "理解文章",
+        phase: "understanding",
+        qualityMode: mode,
+        modeLabel: modeConfig.label,
+        filePath: source.filePath,
+        model: modeConfig.model,
+        understandingStatus: "failed",
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.setArticleUnderstandingPanelState({
+        status: "failed",
+        source,
+        mode,
+        modeLabel: modeConfig.label,
+        model: modeConfig.model,
+        error: error instanceof Error ? error.message : String(error),
+        usedInLastRun: false
+      });
+      new Notice(`文章理解失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (this.editorActionHarnessRunId === harnessRunId) this.editorActionHarnessRunId = "";
+    }
+  }
+
+  private async currentArticleUnderstandingSource(): Promise<EditorActionSummarySource | null> {
+    const markdownView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+    if (markdownView?.file) {
+      const text = markdownView.editor.getValue();
+      return {
+        filePath: markdownView.file.path,
+        fileName: markdownView.file.name,
+        text,
+        mtime: markdownView.file.stat.mtime,
+        size: markdownView.file.stat.size ?? text.length
+      };
+    }
+    const existing = this.articleUnderstandingPanelState.source;
+    if (existing) return existing;
+    const file = this.plugin.app.workspace.getActiveFile();
+    if (!file) return null;
+    const text = await this.plugin.app.vault.cachedRead(file);
+    return {
+      filePath: file.path,
+      fileName: file.name,
+      text,
+      mtime: file.stat.mtime,
+      size: file.stat.size ?? text.length
+    };
   }
 
   private async stopTurn(): Promise<void> {
@@ -1535,6 +1916,7 @@ export class CodexView extends ItemView {
     if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error("写作操作已中断"));
     this.running = false;
     this.activeTurnId = "";
+    this.editorActionActiveTimeoutMs = 0;
     this.clearTurnWatchdog();
     this.finishThinkingMessage(session, "中断");
     this.finishRunningProcessMessages(session, "interrupted");
@@ -1611,6 +1993,7 @@ export class CodexView extends ItemView {
   }
 
   private editorActionStartBlockReason(): string | null {
+    if (this.editorActionHarnessRunId) return "Codex 正在处理上一轮，请稍后再试";
     const reason = editorActionStartBlockReason({
       running: this.running,
       activeRunId: this.activeRunId,
@@ -1665,9 +2048,10 @@ export class CodexView extends ItemView {
   private async createEditorActionPrewarmThread(): Promise<string | null> {
     const status = await this.plugin.ensureCodexConnected(false, { silent: true });
     if (!status.connected || !this.plugin.codex || this.running) return null;
+    const modeConfig = resolveEditorActionModeConfig(this.plugin.settings.editorActions);
     const turnOptions = {
       ...buildEditorActionTurnOptions({
-        model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
+        model: this.effectiveEditorActionModel(status.models.map((model) => model.model), modeConfig.model),
         serviceTier: this.selectedServiceTier,
         timeoutMs: this.plugin.settings.editorActions.timeoutMs,
         workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
@@ -1679,67 +2063,6 @@ export class CodexView extends ItemView {
     this.editorActionThreadIds.add(started.threadId);
     this.editorActionPrewarmThreadId = started.threadId;
     return started.threadId;
-  }
-
-  queueEditorActionSummaryRefresh(source: EditorActionSummarySource): void {
-    const settings = this.plugin.settings.editorActions;
-    if (!settings.summaryCacheEnabled) return;
-    if (getFreshEditorActionSummary(settings.summaryCache, source)) return;
-    if (this.editorSummaryTimer) window.clearTimeout(this.editorSummaryTimer);
-    this.editorSummaryTimer = window.setTimeout(() => {
-      this.editorSummaryTimer = null;
-      void this.generateEditorActionSummary(source);
-    }, 3500);
-  }
-
-  private async generateEditorActionSummary(source: EditorActionSummarySource): Promise<void> {
-    const settings = this.plugin.settings.editorActions;
-    if (!settings.summaryCacheEnabled || this.running || this.editorSummaryRun) return;
-    if (getFreshEditorActionSummary(settings.summaryCache, source)) return;
-    const runId = newId("editor-summary-run");
-    let resolveRun!: (text: string) => void;
-    let rejectRun!: (error: Error) => void;
-    const waitForResult = new Promise<string>((resolve, reject) => {
-      resolveRun = resolve;
-      rejectRun = reject;
-    });
-    const summaryRun: EditorSummaryRunWaiter = { runId, threadId: "", text: "", resolve: resolveRun, reject: rejectRun };
-    this.editorSummaryRun = summaryRun;
-    this.editorActionCurrentItemIds.clear();
-    try {
-      const status = await this.plugin.ensureCodexConnected();
-      if (this.editorSummaryRun !== summaryRun || this.running) return;
-      if (!status.connected || !this.plugin.codex) throw new Error("Codex 未连接");
-      const turnOptions = {
-        ...buildEditorActionTurnOptions({
-          model: this.effectiveEditorActionModel(status.models.map((model) => model.model)),
-          serviceTier: this.selectedServiceTier,
-          timeoutMs: 20000,
-          workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
-        }),
-        requestTimeoutMs: 20000
-      };
-      this.running = true;
-      this.activeRunId = runId;
-      this.activeRunSessionId = "";
-      const started = await this.plugin.codex.startThread(turnOptions);
-      if (this.editorSummaryRun !== summaryRun) return;
-      summaryRun.threadId = started.threadId;
-      this.editorActionThreadIds.add(started.threadId);
-      this.activeTurnId = await this.plugin.codex.startTurn(started.threadId, buildEditorActionUserInput(buildEditorActionSummaryPrompt(source)), turnOptions);
-      if (this.activeTurnId) this.editorActionTurnIds.add(this.activeTurnId);
-      this.armEditorSummaryTimeout(20000);
-      const raw = await waitForResult;
-      const summary = cleanEditorActionOutput(raw);
-      if (!summary) return;
-      settings.summaryCache = upsertEditorActionSummaryCache(settings.summaryCache, makeEditorActionSummaryCacheEntry(source, summary));
-      await this.plugin.saveSettings();
-    } catch {
-      void waitForResult.catch(() => undefined);
-      if (this.editorSummaryRun === summaryRun) this.rejectEditorSummaryRun(new Error("摘要生成失败"));
-    } finally {
-      this.releaseEditorSummaryRunLock(runId);
-    }
   }
 
   private isEditorSummaryRunActive(): boolean {
@@ -1784,10 +2107,6 @@ export class CodexView extends ItemView {
   }
 
   private clearEditorSummaryTimers(): void {
-    if (this.editorSummaryTimer) {
-      window.clearTimeout(this.editorSummaryTimer);
-      this.editorSummaryTimer = null;
-    }
     this.clearEditorSummaryTimeout();
   }
 
@@ -1883,10 +2202,10 @@ export class CodexView extends ItemView {
     return this.selectedModel || this.plugin.settings.defaultModel || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel;
   }
 
-  private effectiveEditorActionModel(availableModels: string[] = []): string {
+  private effectiveEditorActionModel(availableModels: string[] = [], configuredModel = this.plugin.settings.editorActions.model): string {
     const providerModels = this.activeProviderModels();
     return resolveEditorActionModel({
-      configuredModel: this.plugin.settings.editorActions.model,
+      configuredModel,
       availableModels: providerModels.length ? providerModels : availableModels,
       fallbackModel: this.effectiveModel()
     });
@@ -2322,6 +2641,7 @@ export class CodexView extends ItemView {
     this.activeRunId = "";
     this.activeRunSessionId = "";
     this.activeTurnId = "";
+    this.editorActionActiveTimeoutMs = 0;
     this.activeThinkingMessageId = "";
     this.activePlanMessageId = "";
     this.activeItemMessages.clear();
@@ -2588,17 +2908,50 @@ function rawTextForProcessItem(item: any): string {
 
 function editorActionStatusLabel(status: EditorActionStatusView): string {
   const action = status.actionLabel ?? "写作";
-  if (status.status === "idle") return "写作";
+  const mode = status.modeLabel ?? "";
+  if (status.status === "idle") {
+    if (status.understandingStatus === "fresh") return "已理解";
+    if (status.understandingStatus === "stale") return "理解过期";
+    return "写作";
+  }
   if (status.status === "preparing") return `准备${action}`;
   if (status.status === "connecting") return "连接 Codex";
   if (status.status === "generating") {
     const seconds = status.startedAt ? Math.max(0, Math.floor((Date.now() - status.startedAt) / 1000)) : 0;
-    return `${action}中 ${seconds}s`;
+    if (status.phase === "understanding") return `理解中 ${seconds}s`;
+    if (status.phase === "reviewing") return `${mode || "严格"}审校中 ${seconds}s`;
+    return `${mode ? `${mode}` : ""}${action}中 ${seconds}s`;
   }
   if (status.status === "awaiting-confirm") return "待确认 Enter / Esc";
   if (status.status === "confirmed") return status.message || "已替换";
   if (status.status === "canceled") return status.message || "已取消";
   return "写作失败";
+}
+
+function articleUnderstandingStatusLabel(status: ArticleUnderstandingStatus, error?: string): string {
+  if (status === "fresh") return "已理解";
+  if (status === "running") return "理解中";
+  if (status === "stale") return "理解过期";
+  if (status === "failed") return error ? `失败：${error}` : "理解失败";
+  if (status === "missing") return "未理解";
+  return "空闲";
+}
+
+function formatRelativeTime(value: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - value) / 1000));
+  if (seconds < 60) return `${seconds}s 前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天前`;
+}
+
+function editorActionTimeoutForMode(baseTimeoutMs: number, mode: EditorActionQualityMode): number {
+  if (mode === "strict") return Math.max(baseTimeoutMs, 120000);
+  if (mode === "quality") return Math.max(baseTimeoutMs, 90000);
+  return baseTimeoutMs;
 }
 
 function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: ProcessFileRef[]): ProcessFileRef[] {
