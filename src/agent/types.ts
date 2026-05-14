@@ -11,6 +11,17 @@ export interface AgentModelInfo {
   inputModalities: AgentInputModality[];
 }
 
+export type AgentProfileMode = "subagent" | "primary" | "all";
+
+export interface AgentProfileInfo {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  mode: AgentProfileMode;
+  native?: boolean;
+}
+
 export interface AgentSessionOptions {
   title: string;
   model?: {
@@ -63,6 +74,7 @@ export interface AgentBackend {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   listModels(): Promise<AgentModelInfo[]>;
+  listAgents?(): Promise<AgentProfileInfo[]>;
   startSession(options: AgentSessionOptions): Promise<{ sessionId: string; title: string }>;
   sendPrompt(options: AgentPromptOptions): Promise<string>;
   sendPromptAsync?(options: AgentPromptOptions): Promise<void>;

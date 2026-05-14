@@ -38,9 +38,13 @@ import {
   filterEnabledSkills,
   getKnowledgeBaseRulesFileChoices,
   ensureKnowledgeBaseSession,
+  openCodeAgentChoiceLabel,
+  openCodeAgentChoiceValue,
+  openCodeAgentModeLabel,
   openCodeModelCapabilityLabel,
   openCodeModelChoiceLabel,
   openCodeModelChoiceValue,
+  parseOpenCodeAgentChoiceValue,
   parseOpenCodeModelChoiceValue,
   providerModelLabel,
   providerConnectionLabel,
@@ -56,6 +60,7 @@ import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-servi
 import {
   detectOpenCodeCommand,
   ensureOpenCodeModelSupportsFiles,
+  flattenOpenCodeAgents,
   flattenOpenCodeModels,
   mimeForKnowledgeFile,
   modelInputModalities,
@@ -158,6 +163,12 @@ assert.equal(openCodeModelChoiceLabel({
   displayName: "DeepSeek · Reasoner",
   inputModalities: ["text"]
 }), "DeepSeek · Reasoner · 文本 ✓ · 图片 × · PDF ×");
+const openCodeAgent = { name: "build", mode: "primary" as const, native: true };
+assert.equal(openCodeAgentChoiceValue(openCodeAgent), "build");
+assert.equal(parseOpenCodeAgentChoiceValue(" build "), "build");
+assert.equal(parseOpenCodeAgentChoiceValue(" "), null);
+assert.equal(openCodeAgentModeLabel(openCodeAgent), "主 Agent");
+assert.equal(openCodeAgentChoiceLabel(openCodeAgent), "build · 主 Agent · 内置");
 const freshInstallEditorActions = normalizeSettingsData({}).settings.editorActions;
 assert.equal(freshInstallEditorActions.qualityMode, "quality");
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "fast").contextCharsBefore, 500);
@@ -1136,6 +1147,13 @@ const openCodeProviders = [
 const flattenedOpenCodeModels = flattenOpenCodeModels(openCodeProviders);
 assert.deepEqual(flattenedOpenCodeModels.map((model) => model.id), ["deepseek/deepseek-chat", "deepseek/vision-pdf", "openai/gpt-vision"]);
 assert.deepEqual(flattenedOpenCodeModels.find((model) => model.id === "deepseek/vision-pdf")?.inputModalities, ["text", "image", "pdf"]);
+const flattenedOpenCodeAgents = flattenOpenCodeAgents([
+  { name: "reviewer", mode: "subagent", permission: {}, options: {} },
+  { name: "build", mode: "primary", native: true, permission: {}, options: {} },
+  { name: "general", mode: "all", permission: {}, options: {} },
+  { name: "hidden", mode: "primary", hidden: true, permission: {}, options: {} }
+] as any);
+assert.deepEqual(flattenedOpenCodeAgents.map((agent) => agent.name), ["build", "general"]);
 assert.deepEqual(modelInputModalities({ capabilities: { input: { text: true, image: false, pdf: true } } } as any), ["text", "pdf"]);
 assert.doesNotThrow(() => ensureOpenCodeModelSupportsFiles(flattenedOpenCodeModels[1], [
   { type: "file", path: "/vault/raw/a.pdf", mime: "application/pdf" }

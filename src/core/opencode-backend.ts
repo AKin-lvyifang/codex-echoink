@@ -2,8 +2,8 @@ import { spawn, type ChildProcess } from "child_process";
 import * as http from "node:http";
 import * as https from "node:https";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
-import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentPromptOptions, AgentSessionOptions } from "../agent/types";
-import { flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
+import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions } from "../agent/types";
+import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
 
 export interface OpenCodeBackendOptions {
   cliPath: string;
@@ -93,6 +93,12 @@ export class OpenCodeBackend implements AgentBackend {
     const client = this.requireClient();
     const response = await unwrapOpenCodeResult(client.provider.list({ directory: this.options.vaultPath }), "读取 OpenCode 模型失败");
     return flattenOpenCodeModels(response?.all ?? []);
+  }
+
+  async listAgents(): Promise<AgentProfileInfo[]> {
+    const client = this.requireClient();
+    const response = await unwrapOpenCodeResult(client.app.agents({ directory: this.options.vaultPath }), "读取 OpenCode Agent 失败");
+    return flattenOpenCodeAgents(response ?? []);
   }
 
   async startSession(options: AgentSessionOptions): Promise<{ sessionId: string; title: string }> {

@@ -3,7 +3,7 @@ import type CodexForObsidianPlugin from "../main";
 import { detectCodexCommand } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { detectOpenCodeCommand } from "../core/opencode-models";
-import type { AgentModelInfo } from "../agent/types";
+import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import {
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
@@ -19,9 +19,13 @@ import {
   getApiProviderModels,
   getKnowledgeBaseRulesFileChoices,
   newId,
+  openCodeAgentChoiceLabel,
+  openCodeAgentChoiceValue,
+  openCodeAgentModeLabel,
   openCodeModelCapabilityLabel,
   openCodeModelChoiceLabel,
   openCodeModelChoiceValue,
+  parseOpenCodeAgentChoiceValue,
   parseOpenCodeModelChoiceValue,
   providerModelLabel,
   providerConnectionLabel,
@@ -48,6 +52,10 @@ export class CodexSettingTab extends PluginSettingTab {
   private openCodeModelsLoaded = false;
   private openCodeModelsLoading = false;
   private openCodeModelsError = "";
+  private openCodeAgentChoices: AgentProfileInfo[] = [];
+  private openCodeAgentsLoaded = false;
+  private openCodeAgentsLoading = false;
+  private openCodeAgentsError = "";
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
@@ -374,20 +382,18 @@ export class CodexSettingTab extends PluginSettingTab {
       opencode.modelId = value.trim();
       await this.plugin.saveSettings();
     });
-    this.addProviderText(openCodeSection, "Agent", opencode.agent, "build", async (value) => {
-      opencode.agent = value.trim() || "build";
-      await this.plugin.saveSettings();
-    });
+    this.addOpenCodeAgentPicker(openCodeSection);
     openCodeSection.createDiv({
       cls: "codex-resource-note",
       text: `模型能力：文本 ${opencode.textEnabled ? "✓" : "×"} · 图片 ${opencode.imageEnabled ? "✓" : "×"} · PDF ${opencode.pdfEnabled ? "✓" : "×"}`
     });
     if (opencode.lastError) openCodeSection.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
     if (this.openCodeModelsError) openCodeSection.createDiv({ cls: "codex-resource-error", text: this.openCodeModelsError });
+    if (this.openCodeAgentsError) openCodeSection.createDiv({ cls: "codex-resource-error", text: this.openCodeAgentsError });
     const openCodeActions = openCodeSection.createDiv({ cls: "codex-api-provider-actions" });
     const testOpenCode = openCodeActions.createEl("button", { cls: "codex-resource-tab", text: "测试连接", attr: { type: "button" } });
     testOpenCode.onclick = async () => {
-      await this.refreshOpenCodeModels();
+      await this.refreshOpenCodeRuntimeOptions();
       this.display();
     };
 
@@ -840,36 +846,131 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
+  private addOpenCodeAgentPicker(container: HTMLElement): void {
+    const opencode = this.plugin.settings.opencode;
+    const currentValue = opencode.agent?.trim() || "build";
+    const field = container.createDiv({ cls: "codex-api-provider-field codex-opencode-agent-field" });
+    field.createDiv({ cls: "codex-api-provider-label", text: "Agent" });
+    const controls = field.createDiv({ cls: "codex-opencode-model-picker" });
+    const values = new Set(this.openCodeAgentChoices.map((agent) => openCodeAgentChoiceValue(agent)));
+
+    if (this.openCodeAgentsLoaded && this.openCodeAgentChoices.length) {
+      const select = controls.createEl("select", {
+        cls: "codex-api-provider-input codex-opencode-model-select",
+        attr: { "aria-label": "选择 OpenCode Agent", title: "选择 OpenCode Agent" }
+      }) as HTMLSelectElement;
+      if (!values.has(currentValue)) {
+        select.createEl("option", { text: `当前：${currentValue}（未在列表）`, value: currentValue });
+      }
+      for (const agent of this.openCodeAgentChoices) {
+        select.createEl("option", { text: openCodeAgentChoiceLabel(agent), value: openCodeAgentChoiceValue(agent) });
+      }
+      select.value = currentValue;
+      select.onchange = async () => {
+        const selectedName = parseOpenCodeAgentChoiceValue(select.value);
+        if (!selectedName) return;
+        const selected = this.openCodeAgentChoices.find((agent) => agent.name === selectedName);
+        opencode.agent = selected?.name ?? selectedName;
+        await this.plugin.saveSettings(true);
+        this.display();
+      };
+    } else {
+      const input = controls.createEl("input", {
+        cls: "codex-api-provider-input codex-opencode-model-select",
+        attr: {
+          type: "text",
+          placeholder: "build",
+          value: currentValue,
+          "aria-label": "手动填写 OpenCode Agent"
+        }
+      }) as HTMLInputElement;
+      input.onchange = async () => {
+        opencode.agent = input.value.trim() || "build";
+        await this.plugin.saveSettings(true);
+        this.display();
+      };
+    }
+
+    const refresh = controls.createEl("button", {
+      cls: "codex-resource-tab",
+      text: this.openCodeAgentsLoading ? "读取中" : "刷新 Agent",
+      attr: { type: "button" }
+    });
+    refresh.disabled = this.openCodeAgentsLoading;
+    refresh.onclick = () => void this.refreshOpenCodeAgents();
+
+    const selectedAgent = this.openCodeAgentChoices.find((agent) => agent.name === currentValue);
+    field.createDiv({
+      cls: "codex-resource-note codex-opencode-model-note",
+      text: selectedAgent
+        ? `已选择：${selectedAgent.name}。${openCodeAgentModeLabel(selectedAgent)}${selectedAgent.description ? ` · ${selectedAgent.description}` : ""}`
+        : this.openCodeAgentsLoaded
+          ? `当前 Agent "${currentValue}" 不在 OpenCode 列表，建议从下拉选择一个可用 Agent。`
+          : "点击刷新 Agent 后可下拉选择；读取失败时可以继续手动填写。"
+    });
+  }
+
   private async refreshOpenCodeModels(): Promise<void> {
-    if (this.openCodeModelsLoading) return;
+    await this.refreshOpenCodeRuntimeOptions({ models: true, agents: false });
+  }
+
+  private async refreshOpenCodeAgents(): Promise<void> {
+    await this.refreshOpenCodeRuntimeOptions({ models: false, agents: true });
+  }
+
+  private async refreshOpenCodeRuntimeOptions(options: { models?: boolean; agents?: boolean } = { models: true, agents: true }): Promise<void> {
+    const shouldLoadModels = options.models !== false;
+    const shouldLoadAgents = options.agents !== false;
+    if ((shouldLoadModels && this.openCodeModelsLoading) || (shouldLoadAgents && this.openCodeAgentsLoading)) return;
     const backend = new OpenCodeBackend({
       ...this.plugin.settings.opencode,
       vaultPath: this.plugin.getVaultPath()
     });
-    this.openCodeModelsLoading = true;
-    this.openCodeModelsError = "";
+    if (shouldLoadModels) {
+      this.openCodeModelsLoading = true;
+      this.openCodeModelsError = "";
+    }
+    if (shouldLoadAgents) {
+      this.openCodeAgentsLoading = true;
+      this.openCodeAgentsError = "";
+    }
     this.display();
     try {
       await backend.connect();
-      const models = await backend.listModels();
-      this.openCodeModelChoices = models;
-      this.openCodeModelsLoaded = true;
       const opencode = this.plugin.settings.opencode;
-      const current = models.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
-      if (current) this.applyOpenCodeModelChoice(current);
+      if (shouldLoadModels) {
+        const models = await backend.listModels();
+        this.openCodeModelChoices = models;
+        this.openCodeModelsLoaded = true;
+        const current = models.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
+        if (current) this.applyOpenCodeModelChoice(current);
+      }
+      if (shouldLoadAgents) {
+        const agents = await backend.listAgents();
+        this.openCodeAgentChoices = agents;
+        this.openCodeAgentsLoaded = true;
+        const current = agents.find((agent) => agent.name === opencode.agent);
+        if (current) opencode.agent = current.name;
+        if (!opencode.agent && agents[0]) opencode.agent = agents[0].name;
+      }
       opencode.lastConnectedAt = Date.now();
       opencode.lastError = "";
       await this.plugin.saveSettings(true);
-      new Notice(models.length ? `已读取 ${models.length} 个 OpenCode 模型` : "OpenCode 已连接，但没有读取到模型");
+      const notices: string[] = [];
+      if (shouldLoadModels) notices.push(`${this.openCodeModelChoices.length} 个模型`);
+      if (shouldLoadAgents) notices.push(`${this.openCodeAgentChoices.length} 个 Agent`);
+      new Notice(notices.length ? `已读取 OpenCode：${notices.join("，")}` : "OpenCode 已连接");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.openCodeModelsError = message;
+      if (shouldLoadModels) this.openCodeModelsError = message;
+      if (shouldLoadAgents) this.openCodeAgentsError = message;
       this.plugin.settings.opencode.lastError = message;
       await this.plugin.saveSettings(true);
-      new Notice(`OpenCode 模型读取失败：${message}`);
+      new Notice(`OpenCode 读取失败：${message}`);
     } finally {
       await backend.disconnect().catch(() => undefined);
-      this.openCodeModelsLoading = false;
+      if (shouldLoadModels) this.openCodeModelsLoading = false;
+      if (shouldLoadAgents) this.openCodeAgentsLoading = false;
       this.display();
     }
   }

@@ -2,8 +2,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { pathToFileURL } from "node:url";
-import type { FilePartInput, Model, Provider, TextPartInput } from "@opencode-ai/sdk/v2";
-import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../agent/types";
+import type { Agent, FilePartInput, Model, Provider, TextPartInput } from "@opencode-ai/sdk/v2";
+import type { AgentInputModality, AgentModelInfo, AgentProfileInfo, AgentPromptPart } from "../agent/types";
 
 export interface OpenCodeCommandResolveOptions {
   home?: string;
@@ -76,6 +76,23 @@ export function flattenOpenCodeModels(providers: Provider[]): AgentModelInfo[] {
     }
   }
   return models.sort((left, right) => left.displayName.localeCompare(right.displayName));
+}
+
+export function flattenOpenCodeAgents(agents: Agent[]): AgentProfileInfo[] {
+  const visibleAgents = agents
+    .map((agent) => ({
+      id: agent.name,
+      name: agent.name,
+      displayName: agent.name,
+      description: agent.description,
+      mode: agent.mode,
+      native: agent.native,
+      hidden: agent.hidden
+    }))
+    .filter((agent) => agent.name && !agent.hidden);
+  const runnableAgents = visibleAgents.filter((agent) => agent.mode !== "subagent");
+  return (runnableAgents.length ? runnableAgents : visibleAgents)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
 export function mimeForKnowledgeFile(filePath: string): string {

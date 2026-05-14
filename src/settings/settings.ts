@@ -1,5 +1,5 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
-import type { AgentModelInfo } from "../agent/types";
+import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
@@ -738,6 +738,25 @@ export function openCodeModelCapabilityLabel(model: Pick<AgentModelInfo, "inputM
 
 export function openCodeModelChoiceLabel(model: Pick<AgentModelInfo, "displayName" | "providerId" | "modelId" | "inputModalities">): string {
   return `${model.displayName || `${model.providerId}/${model.modelId}`} · ${openCodeModelCapabilityLabel(model)}`;
+}
+
+export function openCodeAgentModeLabel(agent: Pick<AgentProfileInfo, "mode">): string {
+  if (agent.mode === "primary") return "主 Agent";
+  if (agent.mode === "all") return "通用 Agent";
+  return "子 Agent";
+}
+
+export function openCodeAgentChoiceValue(agent: Pick<AgentProfileInfo, "name">): string {
+  return agent.name;
+}
+
+export function parseOpenCodeAgentChoiceValue(value: string): string | null {
+  const agent = String(value ?? "").trim();
+  return agent ? agent : null;
+}
+
+export function openCodeAgentChoiceLabel(agent: Pick<AgentProfileInfo, "name" | "mode" | "native">): string {
+  return `${agent.name} · ${openCodeAgentModeLabel(agent)}${agent.native ? " · 内置" : ""}`;
 }
 
 export function newId(prefix: string): string {
