@@ -1,4 +1,5 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
+import type { AgentModelInfo } from "../agent/types";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
@@ -719,6 +720,24 @@ export function getKnowledgeBaseRulesFileChoices(paths: string[]): string[] {
     const byRank = rulesFileChoiceRank(left) - rulesFileChoiceRank(right);
     return byRank || left.localeCompare(right);
   });
+}
+
+export function openCodeModelChoiceValue(model: Pick<AgentModelInfo, "providerId" | "modelId">): string {
+  return `${model.providerId}\u0000${model.modelId}`;
+}
+
+export function parseOpenCodeModelChoiceValue(value: string): { providerId: string; modelId: string } | null {
+  const [providerId, modelId, ...rest] = String(value ?? "").split("\u0000");
+  if (rest.length || !providerId?.trim() || !modelId?.trim()) return null;
+  return { providerId: providerId.trim(), modelId: modelId.trim() };
+}
+
+export function openCodeModelCapabilityLabel(model: Pick<AgentModelInfo, "inputModalities">): string {
+  return `文本 ${model.inputModalities.includes("text") ? "✓" : "×"} · 图片 ${model.inputModalities.includes("image") ? "✓" : "×"} · PDF ${model.inputModalities.includes("pdf") ? "✓" : "×"}`;
+}
+
+export function openCodeModelChoiceLabel(model: Pick<AgentModelInfo, "displayName" | "providerId" | "modelId" | "inputModalities">): string {
+  return `${model.displayName || `${model.providerId}/${model.modelId}`} · ${openCodeModelCapabilityLabel(model)}`;
 }
 
 export function newId(prefix: string): string {

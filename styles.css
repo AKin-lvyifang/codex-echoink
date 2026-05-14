@@ -1080,6 +1080,22 @@ body.theme-light .codex-code-wrapper pre {
   flex-wrap: wrap;
 }
 
+.codex-opencode-model-picker {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.codex-opencode-model-select {
+  flex: 1 1 auto;
+}
+
+.codex-opencode-model-empty {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+
 .codex-rules-file-value {
   display: inline-flex;
   align-items: center;
@@ -1112,6 +1128,11 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-rules-file-note {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+.codex-opencode-model-note {
   grid-column: 1 / -1;
   margin-top: 0;
 }

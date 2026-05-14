@@ -1,7 +1,9 @@
 import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFile, type FuzzyMatch } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { detectCodexCommand } from "../core/codex-service";
+import { OpenCodeBackend } from "../core/opencode-backend";
 import { detectOpenCodeCommand } from "../core/opencode-models";
+import type { AgentModelInfo } from "../agent/types";
 import {
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
@@ -17,6 +19,10 @@ import {
   getApiProviderModels,
   getKnowledgeBaseRulesFileChoices,
   newId,
+  openCodeModelCapabilityLabel,
+  openCodeModelChoiceLabel,
+  openCodeModelChoiceValue,
+  parseOpenCodeModelChoiceValue,
   providerModelLabel,
   providerConnectionLabel,
   removeApiProvider,
@@ -38,6 +44,10 @@ export class CodexSettingTab extends PluginSettingTab {
   private resourceLoadingTab: ResourceManagementTab | null = null;
   private resourceLoaded: Record<ResourceManagementTab, boolean> = { plugins: false, mcp: false, skills: false };
   private resourceLoadErrors: Partial<Record<ResourceManagementTab, string>> = {};
+  private openCodeModelChoices: AgentModelInfo[] = [];
+  private openCodeModelsLoaded = false;
+  private openCodeModelsLoading = false;
+  private openCodeModelsError = "";
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
@@ -355,6 +365,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings();
       this.display();
     });
+    this.addOpenCodeModelPicker(openCodeSection);
     this.addProviderText(openCodeSection, "Provider ID", opencode.providerId, "anthropic", async (value) => {
       opencode.providerId = value.trim();
       await this.plugin.saveSettings();
@@ -372,10 +383,11 @@ export class CodexSettingTab extends PluginSettingTab {
       text: `模型能力：文本 ${opencode.textEnabled ? "✓" : "×"} · 图片 ${opencode.imageEnabled ? "✓" : "×"} · PDF ${opencode.pdfEnabled ? "✓" : "×"}`
     });
     if (opencode.lastError) openCodeSection.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
+    if (this.openCodeModelsError) openCodeSection.createDiv({ cls: "codex-resource-error", text: this.openCodeModelsError });
     const openCodeActions = openCodeSection.createDiv({ cls: "codex-api-provider-actions" });
     const testOpenCode = openCodeActions.createEl("button", { cls: "codex-resource-tab", text: "测试连接", attr: { type: "button" } });
     testOpenCode.onclick = async () => {
-      await this.plugin.getKnowledgeBaseManager()?.testOpenCodeConnection();
+      await this.refreshOpenCodeModels();
       this.display();
     };
 
@@ -769,6 +781,106 @@ export class CodexSettingTab extends PluginSettingTab {
       attr: { type, placeholder, value }
     }) as HTMLInputElement;
     input.onchange = () => void onChange(input.value);
+  }
+
+  private addOpenCodeModelPicker(container: HTMLElement): void {
+    const opencode = this.plugin.settings.opencode;
+    const currentValue = opencode.providerId && opencode.modelId
+      ? openCodeModelChoiceValue({ providerId: opencode.providerId, modelId: opencode.modelId })
+      : "";
+    const field = container.createDiv({ cls: "codex-api-provider-field codex-opencode-model-field" });
+    field.createDiv({ cls: "codex-api-provider-label", text: "OpenCode 模型" });
+    const controls = field.createDiv({ cls: "codex-opencode-model-picker" });
+    const values = new Set(this.openCodeModelChoices.map((model) => openCodeModelChoiceValue(model)));
+
+    if (this.openCodeModelsLoaded && this.openCodeModelChoices.length) {
+      const select = controls.createEl("select", {
+        cls: "codex-api-provider-input codex-opencode-model-select",
+        attr: { "aria-label": "选择 OpenCode 模型", title: "选择 OpenCode 模型" }
+      }) as HTMLSelectElement;
+      if (!currentValue) {
+        select.createEl("option", { text: "选择 OpenCode 模型", value: "" });
+      } else if (!values.has(currentValue)) {
+        select.createEl("option", { text: `当前：${opencode.providerId}/${opencode.modelId}（未在列表）`, value: currentValue });
+      }
+      for (const model of this.openCodeModelChoices) {
+        select.createEl("option", { text: openCodeModelChoiceLabel(model), value: openCodeModelChoiceValue(model) });
+      }
+      select.value = currentValue && (values.has(currentValue) || opencode.providerId) ? currentValue : "";
+      select.onchange = async () => {
+        const parsed = parseOpenCodeModelChoiceValue(select.value);
+        if (!parsed) return;
+        const selected = this.openCodeModelChoices.find((model) => model.providerId === parsed.providerId && model.modelId === parsed.modelId);
+        if (!selected) return;
+        this.applyOpenCodeModelChoice(selected);
+        await this.plugin.saveSettings(true);
+        this.display();
+      };
+    } else {
+      controls.createDiv({
+        cls: "codex-resource-note codex-opencode-model-empty",
+        text: this.openCodeModelsLoading ? "正在读取 OpenCode 模型..." : "点击刷新模型后选择。"
+      });
+    }
+
+    const refresh = controls.createEl("button", {
+      cls: "codex-resource-tab",
+      text: this.openCodeModelsLoading ? "读取中" : "刷新模型",
+      attr: { type: "button" }
+    });
+    refresh.disabled = this.openCodeModelsLoading;
+    refresh.onclick = () => void this.refreshOpenCodeModels();
+
+    const selectedModel = this.openCodeModelChoices.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
+    field.createDiv({
+      cls: "codex-resource-note codex-opencode-model-note",
+      text: selectedModel
+        ? `已选择：${selectedModel.displayName}。${openCodeModelCapabilityLabel(selectedModel)}`
+        : "选择后会自动写入 Provider ID、Model ID 和模型能力。Provider ID / Model ID 仍可手动兜底。"
+    });
+  }
+
+  private async refreshOpenCodeModels(): Promise<void> {
+    if (this.openCodeModelsLoading) return;
+    const backend = new OpenCodeBackend({
+      ...this.plugin.settings.opencode,
+      vaultPath: this.plugin.getVaultPath()
+    });
+    this.openCodeModelsLoading = true;
+    this.openCodeModelsError = "";
+    this.display();
+    try {
+      await backend.connect();
+      const models = await backend.listModels();
+      this.openCodeModelChoices = models;
+      this.openCodeModelsLoaded = true;
+      const opencode = this.plugin.settings.opencode;
+      const current = models.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
+      if (current) this.applyOpenCodeModelChoice(current);
+      opencode.lastConnectedAt = Date.now();
+      opencode.lastError = "";
+      await this.plugin.saveSettings(true);
+      new Notice(models.length ? `已读取 ${models.length} 个 OpenCode 模型` : "OpenCode 已连接，但没有读取到模型");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.openCodeModelsError = message;
+      this.plugin.settings.opencode.lastError = message;
+      await this.plugin.saveSettings(true);
+      new Notice(`OpenCode 模型读取失败：${message}`);
+    } finally {
+      await backend.disconnect().catch(() => undefined);
+      this.openCodeModelsLoading = false;
+      this.display();
+    }
+  }
+
+  private applyOpenCodeModelChoice(model: AgentModelInfo): void {
+    const opencode = this.plugin.settings.opencode;
+    opencode.providerId = model.providerId;
+    opencode.modelId = model.modelId;
+    opencode.textEnabled = model.inputModalities.includes("text");
+    opencode.imageEnabled = model.inputModalities.includes("image");
+    opencode.pdfEnabled = model.inputModalities.includes("pdf");
   }
 
   private addKnowledgeBaseRulesFilePicker(container: HTMLElement): void {

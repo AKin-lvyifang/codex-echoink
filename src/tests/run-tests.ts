@@ -38,6 +38,10 @@ import {
   filterEnabledSkills,
   getKnowledgeBaseRulesFileChoices,
   ensureKnowledgeBaseSession,
+  openCodeModelCapabilityLabel,
+  openCodeModelChoiceLabel,
+  openCodeModelChoiceValue,
+  parseOpenCodeModelChoiceValue,
   providerModelLabel,
   providerConnectionLabel,
   KNOWLEDGE_BASE_SESSION_TITLE,
@@ -143,6 +147,17 @@ assert.deepEqual(
   getKnowledgeBaseRulesFileChoices(["docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   ["AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
 );
+const openCodeChoice = { providerId: "deepseek", modelId: "deepseek-reasoner" };
+assert.equal(openCodeModelChoiceValue(openCodeChoice), "deepseek\u0000deepseek-reasoner");
+assert.deepEqual(parseOpenCodeModelChoiceValue("deepseek\u0000deepseek-reasoner"), openCodeChoice);
+assert.equal(parseOpenCodeModelChoiceValue("bad"), null);
+assert.equal(openCodeModelCapabilityLabel({ inputModalities: ["text", "image"] }), "文本 ✓ · 图片 ✓ · PDF ×");
+assert.equal(openCodeModelChoiceLabel({
+  providerId: "deepseek",
+  modelId: "deepseek-reasoner",
+  displayName: "DeepSeek · Reasoner",
+  inputModalities: ["text"]
+}), "DeepSeek · Reasoner · 文本 ✓ · 图片 × · PDF ×");
 const freshInstallEditorActions = normalizeSettingsData({}).settings.editorActions;
 assert.equal(freshInstallEditorActions.qualityMode, "quality");
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "fast").contextCharsBefore, 500);
