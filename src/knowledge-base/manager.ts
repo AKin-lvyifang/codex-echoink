@@ -173,8 +173,8 @@ export class KnowledgeBaseManager {
         await this.cancelMaintenance();
         return { status: "success", message: "已请求取消当前知识库任务。" };
       }
-      if (command.intent === "lint" || command.intent === "maintain" || command.intent === "reingest" || command.intent === "process-inbox") {
-        const mode = command.intent === "process-inbox" ? "inbox" : command.intent;
+      if (command.intent === "lint" || command.intent === "maintain" || command.intent === "reingest" || command.intent === "process-outputs" || command.intent === "process-inbox") {
+        const mode = command.intent === "process-inbox" ? "inbox" : command.intent === "process-outputs" ? "outputs" : command.intent;
         const result = await this.runMaintenance(mode, text);
         if (result.status === "success") {
           return {
@@ -843,7 +843,7 @@ async function writeKnowledgeBaseTracker(vaultPath: string, processed: Record<st
 }
 
 function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: KnowledgeBaseDiscovery): KnowledgeBaseSource[] {
-  if (mode === "lint" || mode === "inbox") return [];
+  if (mode === "lint" || mode === "inbox" || mode === "outputs") return [];
   if (mode === "reingest") {
     const changed = discovery.changedSources;
     if (changed.length) return changed;
@@ -855,6 +855,7 @@ function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: Knowledg
 function labelForRunMode(mode: KnowledgeBaseRunMode): string {
   if (mode === "lint") return "体检";
   if (mode === "reingest") return "重新提炼";
+  if (mode === "outputs") return "outputs 处理";
   if (mode === "inbox") return "收件箱处理";
   return "维护";
 }
@@ -880,7 +881,7 @@ function stripCollectPrefix(value: string): string {
 }
 
 function stripJournalPrefix(value: string): string {
-  return value.replace(/^(写日记|记日记|日报|journal)[:：\s]*/i, "").trim();
+  return value.replace(/^(\/journal|\/daily|\/diary|\/日记|写日记|记日记|日报|journal)[:：\s]*/i, "").trim();
 }
 
 function extractArticleMarkdown(html: string, url: string): { title: string; markdown: string } {

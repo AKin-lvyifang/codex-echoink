@@ -1,6 +1,6 @@
 import type { AgentInputModality } from "../agent/types";
 
-export type KnowledgeBaseRunMode = "maintain" | "lint" | "reingest" | "inbox";
+export type KnowledgeBaseRunMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox";
 
 export interface KnowledgeBaseSource {
   relativePath: string;

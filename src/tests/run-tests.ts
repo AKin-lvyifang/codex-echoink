@@ -164,8 +164,15 @@ assert.equal(kbSession.cwd, "/vault-next");
 assert.deepEqual(parseKnowledgeBaseCommand("只体检一下").intent, "lint");
 assert.deepEqual(parseKnowledgeBaseCommand("帮我维护并消化今天的 raw").intent, "maintain");
 assert.deepEqual(parseKnowledgeBaseCommand("重新提炼最近的资料").intent, "reingest");
+assert.deepEqual(parseKnowledgeBaseCommand("/check 只看断链").intent, "lint");
+assert.deepEqual(parseKnowledgeBaseCommand("/体检？只看断链").intent, "lint");
+assert.deepEqual(parseKnowledgeBaseCommand("/maintain 只处理今天新增").intent, "maintain");
+assert.deepEqual(parseKnowledgeBaseCommand("/outputs 提炼最近发布稿").intent, "process-outputs");
+assert.deepEqual(parseKnowledgeBaseCommand("/inbox 只归类不沉淀").intent, "process-inbox");
+assert.deepEqual(parseKnowledgeBaseCommand("/journal 今天完成知识库命令优化").intent, "journal");
 assert.deepEqual(parseKnowledgeBaseCommand("写日记：今天测试知识库频道").intent, "journal");
 assert.deepEqual(parseKnowledgeBaseCommand("处理 inbox").intent, "process-inbox");
+assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-outputs");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
@@ -1218,6 +1225,22 @@ try {
   assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
   assert.ok(kbPrompt.includes("raw/index.md 只允许做索引更新"));
   assert.ok(kbPrompt.includes(secondDiscovery.reportPath));
+  const outputsPrompt = buildKnowledgeBasePrompt({
+    vaultPath: kbVault,
+    mode: "outputs",
+    userRequest: "/outputs 只提炼长期方法论",
+    reportPath: secondDiscovery.reportPath,
+    sources: [],
+    rulesFilePath: "AGENTS.md",
+    rulesFileExists: true,
+    useCustomRulesFile: false,
+    hasRawIndex: true,
+    hasWikiIndex: true,
+    hasTracker: false
+  });
+  assert.ok(outputsPrompt.includes("处理 outputs"));
+  assert.ok(outputsPrompt.includes("长期复用价值"));
+  assert.ok(outputsPrompt.includes("用户原始指令：/outputs 只提炼长期方法论"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
   await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
   const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);

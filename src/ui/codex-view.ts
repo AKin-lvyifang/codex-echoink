@@ -1320,29 +1320,27 @@ export class CodexView extends ItemView {
     event.preventDefault();
     const menu = new Menu();
     const commands = [
-      { title: "体检", icon: "stethoscope", text: "只体检一下" },
-      { title: "重新提炼", icon: "refresh-cw", text: "重新提炼最近的资料" },
-      { title: "写日记", icon: "calendar-plus", text: "写日记：" },
-      { title: "处理 inbox", icon: "inbox", text: "处理 inbox" },
-      { title: "维护知识库", icon: "library", text: "维护知识库" }
+      { title: "体检", icon: "stethoscope", text: "/check " },
+      { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
+      { title: "写日记", icon: "calendar-plus", text: "/journal " },
+      { title: "处理 inbox", icon: "inbox", text: "/inbox " },
+      { title: "维护知识库", icon: "library", text: "/maintain " }
     ];
     for (const command of commands) {
       menu.addItem((item) =>
         item
           .setTitle(command.title)
           .setIcon(command.icon)
-          .onClick(() => {
-            if (command.text.endsWith("：")) {
-              this.inputEl.value = command.text;
-              this.focusInput();
-              return;
-            }
-            this.inputEl.value = command.text;
-            void this.sendMessage();
-          })
+          .onClick(() => this.fillKnowledgeBaseCommand(command.text))
       );
     }
     menu.showAtMouseEvent(event);
+  }
+
+  private fillKnowledgeBaseCommand(command: string): void {
+    this.inputEl.value = command;
+    this.inputEl.setSelectionRange(command.length, command.length);
+    this.focusInput();
   }
 
   private openModelMenu(event: MouseEvent): void {

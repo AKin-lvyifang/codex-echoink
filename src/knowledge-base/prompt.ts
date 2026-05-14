@@ -67,6 +67,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
 function taskForMode(mode: KnowledgeBaseRunMode): string {
   if (mode === "lint") return "只执行 Lint 体检，不做新增消化。";
   if (mode === "reingest") return "执行重新提炼：按用户指定资料重新生成或更新 wiki；如果未指定具体资料，只处理最近 raw，不全库重写。";
+  if (mode === "outputs") return "处理 outputs：扫描 outputs/ 中的协作产物，只把有长期复用价值的观点、方法、框架、决策提炼回 wiki；临时报告、发布草稿、一次性过程记录只在报告中说明，不要全量搬运。";
   if (mode === "inbox") return "处理 inbox：按知识库规则归类 inbox 内容，必要时沉淀到 wiki/journal/outputs；不要删除原文件，处理结果写报告。";
   return "执行 Ingest + Lint：消化新增/变更 raw 资料，更新 wiki 与维护报告。";
 }
