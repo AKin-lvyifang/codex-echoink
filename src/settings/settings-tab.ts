@@ -1,6 +1,7 @@
 import { Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { detectCodexCommand } from "../core/codex-service";
+import { detectOpenCodeCommand } from "../core/opencode-models";
 import {
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
@@ -21,9 +22,11 @@ import {
   resourceEnabled,
   validateApiProvider,
   type ApiProviderConfig,
+  type AgentBackendMode,
   type EditorActionQualityMode,
   type EditorAiActionConfig,
   type EditorAiStyleConfig,
+  type KnowledgeBaseBackendMode,
   type ResourceManagementTab,
   type SettingsTab
 } from "./settings";
@@ -51,8 +54,10 @@ export class CodexSettingTab extends PluginSettingTab {
     const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
     this.addStatusRow(statusBox, "activity", "Codex 状态", status?.connected ? "已连接" : "未连接");
     this.addStatusRow(statusBox, "user-check", "账号状态", status?.accountLabel ?? "未知");
+    this.addStatusRow(statusBox, "route", "Agent 后端", agentBackendLabel(this.plugin.settings.agentBackend));
     this.addStatusRow(statusBox, "key-round", "连接方式", providerConnectionLabel(this.plugin.settings));
     this.addStatusRow(statusBox, "terminal", "CLI 路径", detectCliPath(this.plugin.settings.cliPath));
+    this.addStatusRow(statusBox, "terminal-square", "OpenCode", detectOpenCodePath(this.plugin.settings.opencode.cliPath));
     this.addStatusRow(statusBox, "waypoints", "代理", this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : "关闭");
     this.addStatusRow(statusBox, "blocks", "聊天 MCP", this.plugin.settings.mcpEnabled ? "启用" : "关闭");
     this.addStatusRow(statusBox, "box", "模型数量", `${status?.models.length ?? 0}`);
@@ -74,11 +79,35 @@ export class CodexSettingTab extends PluginSettingTab {
       this.renderEditorActionSettings(containerEl);
       return;
     }
+    if (this.plugin.settings.settingsTab === "knowledgeBase") {
+      this.renderKnowledgeBaseSettings(containerEl);
+      return;
+    }
 
     this.renderGeneralSettings(containerEl, status);
   }
 
   private renderGeneralSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
+    this.decorateSetting(
+      new Setting(containerEl)
+      .setName("Agent 后端")
+      .setDesc("Codex CLI 复用登录态；OpenCode API 用本机 OpenCode runtime 和自配 Provider。普通聊天暂继续走 Codex，知识库管理可选择 OpenCode。")
+      .addDropdown((dropdown) => {
+        const options: Record<AgentBackendMode, string> = {
+          "codex-cli": "Codex CLI",
+          opencode: "OpenCode API"
+        };
+        for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
+        dropdown.setValue(this.plugin.settings.agentBackend);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.agentBackend = normalizeAgentBackendForUi(value);
+          await this.plugin.saveSettings();
+          this.display();
+        });
+      }),
+      "route"
+    );
+
     this.decorateSetting(
       new Setting(containerEl)
       .setName("Codex CLI 路径")
@@ -216,6 +245,148 @@ export class CodexSettingTab extends PluginSettingTab {
           this.display();
         })
     ), "refresh-cw");
+  }
+
+  private renderKnowledgeBaseSettings(container: HTMLElement): void {
+    const settings = this.plugin.settings.knowledgeBase;
+    const opencode = this.plugin.settings.opencode;
+    const wrapper = container.createDiv({ cls: "codex-api-provider-manager" });
+    const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
+    const title = header.createDiv({ cls: "codex-resource-manager-title" });
+    const icon = title.createSpan({ cls: "codex-setting-icon" });
+    setIcon(icon, "library");
+    title.createSpan({ text: "知识库管理" });
+
+    wrapper.createDiv({
+      cls: "codex-resource-warning",
+      text: "安全边界：允许写 wiki/ 和 outputs/；禁止修改 raw/ 原始资料、删除文件或自动归档。OpenCode 模式需要先外部安装 OpenCode。"
+    });
+
+    const summary = wrapper.createDiv({ cls: "codex-api-provider-row" });
+    summary.createDiv({ cls: "codex-editor-actions-heading", text: "运行状态" });
+    summary.createDiv({ cls: "codex-resource-note", text: `最近状态：${knowledgeStatusLabel(settings.lastRunStatus)}${settings.lastRunAt ? ` · ${new Date(settings.lastRunAt).toLocaleString()}` : ""}` });
+    summary.createDiv({ cls: "codex-resource-note", text: `操作指南：${settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md"}${settings.useCustomRulesFile ? "（自定义）" : "（默认）"}` });
+    if (settings.lastReportPath) summary.createDiv({ cls: "codex-resource-note", text: `最近报告：${settings.lastReportPath}` });
+    if (settings.lastError) summary.createDiv({ cls: "codex-resource-error", text: settings.lastError });
+    if (settings.lastSummary) summary.createDiv({ cls: "codex-resource-note", text: settings.lastSummary.slice(0, 180) });
+
+    const actions = summary.createDiv({ cls: "codex-api-provider-actions" });
+    const openChannel = actions.createEl("button", { cls: "codex-resource-tab", text: "打开知识库频道", attr: { type: "button" } });
+    openChannel.onclick = async () => {
+      await this.plugin.activateKnowledgeBaseChannel();
+      this.display();
+    };
+
+    this.decorateSetting(new Setting(wrapper).setName("启用知识库管理").addToggle((toggle) =>
+      toggle.setValue(settings.enabled).onChange(async (value) => {
+        settings.enabled = value;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "toggle-right");
+
+    this.decorateSetting(new Setting(wrapper).setName("知识库后端").setDesc("默认跟随基础设置里的 Agent 后端；也可以单独固定为 Codex 或 OpenCode。").addDropdown((dropdown) => {
+      const options: Record<KnowledgeBaseBackendMode, string> = {
+        default: `跟随全局（${agentBackendLabel(this.plugin.settings.agentBackend)}）`,
+        "codex-cli": "Codex CLI",
+        opencode: "OpenCode API"
+      };
+      for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
+      dropdown.setValue(settings.backend);
+      dropdown.onChange(async (value) => {
+        settings.backend = normalizeKnowledgeBackendForUi(value);
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }), "route");
+
+    this.decorateSetting(new Setting(wrapper).setName("使用自定义指南文件").setDesc("关闭时默认读取 Vault 根目录 AGENTS.md；开启后只读取下面填写的文件，不合并 AGENTS.md。").addToggle((toggle) =>
+      toggle.setValue(settings.useCustomRulesFile).onChange(async (value) => {
+        settings.useCustomRulesFile = value;
+        if (value && (!settings.rulesFilePath || settings.rulesFilePath === "AGENTS.md")) settings.rulesFilePath = "CLAUDE.md";
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "file-cog");
+    this.addProviderText(wrapper, "知识库操作指南文件", settings.rulesFilePath, settings.useCustomRulesFile ? "CLAUDE.md" : "AGENTS.md", async (value) => {
+      settings.rulesFilePath = sanitizeRelativeSettingsPath(value.trim() || (settings.useCustomRulesFile ? "CLAUDE.md" : "AGENTS.md"));
+      await this.plugin.saveSettings();
+      this.display();
+    });
+
+    this.decorateSetting(new Setting(wrapper).setName("每日自动维护").setDesc("仅在 Obsidian 打开时运行；错过后下次打开可补跑。").addToggle((toggle) =>
+      toggle.setValue(settings.scheduleEnabled).onChange(async (value) => {
+        settings.scheduleEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "calendar-clock");
+    this.addProviderText(wrapper, "每日运行时间", settings.scheduleTime, "09:00", async (value) => {
+      settings.scheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : settings.scheduleTime;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.decorateSetting(new Setting(wrapper).setName("启动补跑").setDesc("当天错过维护时间时，下次打开 Obsidian 自动补跑。").addToggle((toggle) =>
+      toggle.setValue(settings.catchUpOnStartup).onChange(async (value) => {
+        settings.catchUpOnStartup = value;
+        await this.plugin.saveSettings();
+      })
+    ), "history");
+
+    const openCodeSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
+    openCodeSection.createDiv({ cls: "codex-editor-actions-heading", text: "OpenCode API 模式" });
+    openCodeSection.createDiv({ cls: "codex-resource-note", text: `检测结果：${detectOpenCodePath(opencode.cliPath)}` });
+    this.addProviderText(openCodeSection, "OpenCode 路径", opencode.cliPath, "/opt/homebrew/bin/opencode", async (value) => {
+      opencode.cliPath = value.trim();
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addProviderText(openCodeSection, "已有 Server 地址", opencode.serverUrl, "http://127.0.0.1:4096", async (value) => {
+      opencode.serverUrl = value.trim().replace(/\/$/, "");
+      await this.plugin.saveSettings();
+    });
+    this.decorateSetting(new Setting(openCodeSection).setName("自动启动 OpenCode server").addToggle((toggle) =>
+      toggle.setValue(opencode.autoStart).onChange(async (value) => {
+        opencode.autoStart = value;
+        await this.plugin.saveSettings();
+      })
+    ), "power");
+    this.addProviderText(openCodeSection, "Host", opencode.hostname, "127.0.0.1", async (value) => {
+      opencode.hostname = value.trim() || "127.0.0.1";
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(openCodeSection, "Port", String(opencode.port), "4096", async (value) => {
+      opencode.port = parseClampedInteger(value, 4096, 1024, 65535);
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addProviderText(openCodeSection, "Provider ID", opencode.providerId, "anthropic", async (value) => {
+      opencode.providerId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(openCodeSection, "Model ID", opencode.modelId, "claude-sonnet-4-20250514", async (value) => {
+      opencode.modelId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(openCodeSection, "Agent", opencode.agent, "build", async (value) => {
+      opencode.agent = value.trim() || "build";
+      await this.plugin.saveSettings();
+    });
+    openCodeSection.createDiv({
+      cls: "codex-resource-note",
+      text: `模型能力：文本 ${opencode.textEnabled ? "✓" : "×"} · 图片 ${opencode.imageEnabled ? "✓" : "×"} · PDF ${opencode.pdfEnabled ? "✓" : "×"}`
+    });
+    if (opencode.lastError) openCodeSection.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
+    const openCodeActions = openCodeSection.createDiv({ cls: "codex-api-provider-actions" });
+    const testOpenCode = openCodeActions.createEl("button", { cls: "codex-resource-tab", text: "测试连接", attr: { type: "button" } });
+    testOpenCode.onclick = async () => {
+      await this.plugin.getKnowledgeBaseManager()?.testOpenCodeConnection();
+      this.display();
+    };
+
+    wrapper.createDiv({
+      cls: "codex-resource-note",
+      text: "维护、体检、收集链接、记录想法、收集图片/PDF 都在右侧“知识库管理”频道里用自然语言执行；设置页只负责配置和状态。"
+    });
   }
 
   private addStatusActions(container: HTMLElement): void {
@@ -879,7 +1050,8 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: string }> = [
   { id: "general", label: "基础设置", icon: "settings" },
   { id: "providers", label: "API Provider", icon: "key-round" },
   { id: "resources", label: "工作区能力", icon: "blocks" },
-  { id: "editorActions", label: "写作操作", icon: "wand-sparkles" }
+  { id: "editorActions", label: "写作操作", icon: "wand-sparkles" },
+  { id: "knowledgeBase", label: "知识库管理", icon: "library" }
 ];
 
 const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; label: string; icon: string; desc: string }> = [
@@ -899,6 +1071,31 @@ function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
 function detectCliPath(customPath: string): string {
   const found = detectCodexCommand(customPath);
   return found ? `已检测：${found}` : "未检测到，可手动填写";
+}
+
+function detectOpenCodePath(customPath: string): string {
+  const found = detectOpenCodeCommand(customPath);
+  return found ? `已检测：${found}` : "未检测到，可手动填写";
+}
+
+function agentBackendLabel(value: AgentBackendMode): string {
+  return value === "opencode" ? "OpenCode API" : "Codex CLI";
+}
+
+function normalizeAgentBackendForUi(value: string): AgentBackendMode {
+  return value === "opencode" ? "opencode" : "codex-cli";
+}
+
+function normalizeKnowledgeBackendForUi(value: string): KnowledgeBaseBackendMode {
+  return value === "codex-cli" || value === "opencode" ? value : "default";
+}
+
+function knowledgeStatusLabel(value: string): string {
+  if (value === "running") return "运行中";
+  if (value === "success") return "成功";
+  if (value === "failed") return "失败";
+  if (value === "canceled") return "已取消";
+  return "未运行";
 }
 
 function pluginInstallDir(plugin: CodexForObsidianPlugin): string {
@@ -924,6 +1121,11 @@ function parseQueryParams(value: string): Record<string, string> {
     if (/^[A-Za-z0-9_-]+$/.test(key) && paramValue) params[key] = paramValue;
   }
   return params;
+}
+
+function sanitizeRelativeSettingsPath(value: string): string {
+  const clean = value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/");
+  return clean || "AGENTS.md";
 }
 
 function parseModelList(value: string): string[] {

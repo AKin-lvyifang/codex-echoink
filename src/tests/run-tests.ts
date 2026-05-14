@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
@@ -36,8 +36,11 @@ import {
   getActiveApiProvider,
   ensureModelChoices,
   filterEnabledSkills,
+  ensureKnowledgeBaseSession,
   providerModelLabel,
   providerConnectionLabel,
+  KNOWLEDGE_BASE_SESSION_TITLE,
+  isKnowledgeBaseSession,
   normalizeSettingsData,
   removeApiProvider,
   resolveEditorActionModeConfig,
@@ -45,6 +48,15 @@ import {
   resourceEnabled
 } from "../settings/settings";
 import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
+import {
+  detectOpenCodeCommand,
+  ensureOpenCodeModelSupportsFiles,
+  flattenOpenCodeModels,
+  mimeForKnowledgeFile,
+  modelInputModalities,
+  requiredModalityForMime,
+  resolveOpenCodeCommand
+} from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
@@ -71,6 +83,11 @@ import {
 } from "../editor-actions/selection";
 import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
+import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
+import { buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
+import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
+import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "../knowledge-base/report";
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -78,6 +95,7 @@ assert.ok(workspace.writableRoots?.includes("/vault"));
 
 assert.equal(buildSandboxPolicy("read-only", "/vault").type, "readOnly");
 assert.equal(buildSandboxPolicy("danger-full-access", "/vault").type, "dangerFullAccess");
+assert.deepEqual(buildSandboxPolicy("workspace-write", "/vault", ["/vault/wiki", "/vault/outputs"]).writableRoots?.slice(0, 2), ["/vault/wiki", "/vault/outputs"]);
 
 assert.equal(normalizeServiceTier("standard"), null);
 assert.equal(normalizeServiceTier("fast"), "fast");
@@ -86,8 +104,9 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 14);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 17);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
+assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.editorActions.enabled, false);
 assert.equal(DEFAULT_SETTINGS.editorActions.statusSlotEnabled, true);
@@ -107,10 +126,77 @@ assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsAfter, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 45000);
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.articleUnderstandingCache, {});
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue"]);
+assert.equal(DEFAULT_SETTINGS.opencode.autoStart, true);
+assert.equal(DEFAULT_SETTINGS.opencode.hostname, "127.0.0.1");
+assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
+assert.equal(DEFAULT_SETTINGS.opencode.textEnabled, true);
+assert.equal(DEFAULT_SETTINGS.opencode.imageEnabled, false);
+assert.equal(DEFAULT_SETTINGS.opencode.pdfEnabled, false);
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.enabled, false);
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.backend, "default");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, false);
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, "AGENTS.md");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 const freshInstallEditorActions = normalizeSettingsData({}).settings.editorActions;
 assert.equal(freshInstallEditorActions.qualityMode, "quality");
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "fast").contextCharsBefore, 500);
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "quality").contextCharsBefore, 1000);
+
+const sessionSettings = normalizeSettingsData({
+  settingsVersion: 16,
+  sessions: [
+    { id: "chat-1", title: "普通会话", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 }
+  ],
+  activeSessionId: "chat-1"
+}).settings;
+const kbSession = ensureKnowledgeBaseSession(sessionSettings, "/vault", () => "kb-fixed");
+assert.equal(kbSession.id, "kb-fixed");
+assert.equal(kbSession.title, KNOWLEDGE_BASE_SESSION_TITLE);
+assert.equal(kbSession.kind, "knowledge-base");
+assert.equal(sessionSettings.knowledgeBase.sessionId, "kb-fixed");
+assert.equal(sessionSettings.activeSessionId, "chat-1");
+assert.equal(sessionSettings.sessions[0].id, "kb-fixed");
+assert.equal(isKnowledgeBaseSession(kbSession), true);
+assert.equal(ensureKnowledgeBaseSession(sessionSettings, "/vault-next", () => "kb-new").id, "kb-fixed");
+assert.equal(kbSession.cwd, "/vault-next");
+
+assert.deepEqual(parseKnowledgeBaseCommand("只体检一下").intent, "lint");
+assert.deepEqual(parseKnowledgeBaseCommand("帮我维护并消化今天的 raw").intent, "maintain");
+assert.deepEqual(parseKnowledgeBaseCommand("重新提炼最近的资料").intent, "reingest");
+assert.deepEqual(parseKnowledgeBaseCommand("写日记：今天测试知识库频道").intent, "journal");
+assert.deepEqual(parseKnowledgeBaseCommand("处理 inbox").intent, "process-inbox");
+assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
+assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
+assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
+assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "help");
+
+const kbRouteItems = new Set<string>();
+const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(orphanStarted.swallow, true);
+assert.equal(orphanStarted.rememberItemId, "item-1");
+kbRouteItems.add(orphanStarted.rememberItemId!);
+const orphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-1", delta: "报告" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(orphanDelta.swallow, true);
+assert.equal(orphanDelta.collectAssistantDelta, true);
+assert.equal(routeKnowledgeBaseCodexNotification("thread/tokenUsage/updated", { threadId: "thread-other" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+}).swallow, false);
+assert.equal(routeKnowledgeBaseCodexNotification("error", { message: "failed" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+}).swallow, true);
 
 assert.deepEqual(buildCollaborationMode("agent", "gpt-5.4", "high"), null);
 assert.deepEqual(buildCollaborationMode("plan", "gpt-5.4", "high"), {
@@ -248,7 +334,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 14);
+assert.equal(migratedSettings.settings.settingsVersion, 17);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -275,7 +361,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 14);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 17);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -288,7 +374,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 14);
+assert.equal(workspaceResources.settings.settingsVersion, 17);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -351,6 +437,72 @@ assert.equal(
   "paper"
 );
 
+const knowledgeBaseSettings = normalizeSettingsData({
+  settingsVersion: 14,
+  agentBackend: "opencode",
+  opencode: {
+    cliPath: "~/bin/opencode",
+    serverUrl: "http://127.0.0.1:4096/",
+    autoStart: false,
+    hostname: "0.0.0.0",
+    port: 5000,
+    providerId: "deepseek",
+    modelId: "deepseek-reasoner",
+    agent: "build",
+    textEnabled: true,
+    imageEnabled: true,
+    pdfEnabled: true,
+    lastConnectedAt: 10,
+    lastError: "旧错误"
+  },
+  knowledgeBase: {
+    enabled: true,
+    backend: "opencode",
+    useCustomRulesFile: true,
+    rulesFilePath: "CLAUDE.md",
+    scheduleEnabled: true,
+    scheduleTime: "23:30",
+    catchUpOnStartup: false,
+    lastRunAt: 20,
+    lastRunStatus: "success",
+    lastReportPath: "outputs/kb-maintenance.md",
+    lastError: "",
+    lastSummary: "已维护",
+    processedSources: {
+      "raw/demo.md": { size: 12, mtime: 100, digestedAt: 200 }
+    }
+  }
+}).settings;
+assert.equal(knowledgeBaseSettings.settingsVersion, 17);
+assert.equal(knowledgeBaseSettings.agentBackend, "opencode");
+assert.equal(knowledgeBaseSettings.opencode.serverUrl, "http://127.0.0.1:4096/");
+assert.equal(knowledgeBaseSettings.opencode.autoStart, false);
+assert.equal(knowledgeBaseSettings.opencode.imageEnabled, true);
+assert.equal(knowledgeBaseSettings.opencode.pdfEnabled, true);
+assert.equal(knowledgeBaseSettings.knowledgeBase.backend, "opencode");
+assert.equal(knowledgeBaseSettings.knowledgeBase.useCustomRulesFile, true);
+assert.equal(knowledgeBaseSettings.knowledgeBase.rulesFilePath, "CLAUDE.md");
+assert.equal(knowledgeBaseSettings.knowledgeBase.scheduleTime, "23:30");
+assert.equal(knowledgeBaseSettings.knowledgeBase.catchUpOnStartup, false);
+assert.equal(knowledgeBaseSettings.knowledgeBase.processedSources["raw/demo.md"].path, "raw/demo.md");
+
+const invalidKnowledgeBaseSettings = normalizeSettingsData({
+  settingsVersion: 14,
+  agentBackend: "bad",
+  opencode: { port: 1, textEnabled: false, imageEnabled: "yes", pdfEnabled: "yes" },
+  knowledgeBase: { backend: "bad", rulesFilePath: "../bad/path.md", scheduleTime: "25:99", lastRunStatus: "bad" }
+}).settings;
+assert.equal(invalidKnowledgeBaseSettings.agentBackend, "codex-cli");
+assert.equal(invalidKnowledgeBaseSettings.opencode.port, 1024);
+assert.equal(invalidKnowledgeBaseSettings.opencode.textEnabled, false);
+assert.equal(invalidKnowledgeBaseSettings.opencode.imageEnabled, false);
+assert.equal(invalidKnowledgeBaseSettings.opencode.pdfEnabled, false);
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.backend, "default");
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.useCustomRulesFile, false);
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.rulesFilePath, "bad/path.md");
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.scheduleTime, "09:00");
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.lastRunStatus, "idle");
+
 const apiProviderSettings = normalizeSettingsData({
   settingsVersion: 5,
   providerMode: "custom-api",
@@ -377,7 +529,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 14);
+assert.equal(apiProviderSettings.settings.settingsVersion, 17);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -436,7 +588,7 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 14);
+assert.equal(editorActionSettings.settingsVersion, 17);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.editorActions.qualityMode, "fast");
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
@@ -582,7 +734,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 14);
+assert.equal(legacyEditorActionSettings.settingsVersion, 17);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));
@@ -904,6 +1056,67 @@ assert.equal(resolveCodexCommand("", {
   exists: (candidate) => candidate === "/custom/bin/codex"
 }), "/custom/bin/codex");
 
+assert.equal(detectOpenCodeCommand("~/bin/opencode", {
+  home: "/Users/demo",
+  envPath: "",
+  exists: (candidate) => candidate === "/Users/demo/bin/opencode"
+}), "/Users/demo/bin/opencode");
+assert.equal(detectOpenCodeCommand("", {
+  home: "/Users/demo",
+  envPath: "/custom/bin",
+  exists: (candidate) => candidate === "/custom/bin/opencode"
+}), "/custom/bin/opencode");
+assert.throws(() => resolveOpenCodeCommand("/definitely/missing/opencode", {
+  exists: () => false
+}), /找不到 OpenCode CLI/);
+assert.equal(mimeForKnowledgeFile("/vault/raw/a.md"), "text/markdown");
+assert.equal(mimeForKnowledgeFile("/vault/raw/a.pdf"), "application/pdf");
+assert.equal(mimeForKnowledgeFile("/vault/raw/a.docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+assert.equal(mimeForKnowledgeFile("/vault/raw/a.png"), "image/png");
+assert.equal(requiredModalityForMime("image/png"), "image");
+assert.equal(requiredModalityForMime("application/pdf"), "pdf");
+assert.equal(requiredModalityForMime("text/markdown"), "text");
+
+const openCodeProviders = [
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    models: {
+      "deepseek-chat": {
+        id: "deepseek-chat",
+        name: "DeepSeek Chat",
+        capabilities: { input: { text: true, image: false, pdf: false } }
+      },
+      "vision-pdf": {
+        id: "vision-pdf",
+        name: "Vision PDF",
+        capabilities: { input: { text: true, image: true, pdf: true } }
+      }
+    }
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    models: {
+      "gpt-vision": {
+        id: "gpt-vision",
+        name: "GPT Vision",
+        capabilities: { input: { text: true, image: true, pdf: false } }
+      }
+    }
+  }
+] as any;
+const flattenedOpenCodeModels = flattenOpenCodeModels(openCodeProviders);
+assert.deepEqual(flattenedOpenCodeModels.map((model) => model.id), ["deepseek/deepseek-chat", "deepseek/vision-pdf", "openai/gpt-vision"]);
+assert.deepEqual(flattenedOpenCodeModels.find((model) => model.id === "deepseek/vision-pdf")?.inputModalities, ["text", "image", "pdf"]);
+assert.deepEqual(modelInputModalities({ capabilities: { input: { text: true, image: false, pdf: true } } } as any), ["text", "pdf"]);
+assert.doesNotThrow(() => ensureOpenCodeModelSupportsFiles(flattenedOpenCodeModels[1], [
+  { type: "file", path: "/vault/raw/a.pdf", mime: "application/pdf" }
+]));
+assert.throws(() => ensureOpenCodeModelSupportsFiles(flattenedOpenCodeModels[0], [
+  { type: "file", path: "/vault/raw/a.png", mime: "image/png" }
+]), /不支持 image 输入/);
+
 const modelChoices = ensureModelChoices([{ id: "gpt-5.4", model: "gpt-5.4", displayName: "GPT-5.4" }], "gpt-5.5");
 assert.deepEqual(
   modelChoices.map((item) => item.model),
@@ -955,6 +1168,66 @@ assert.equal(staleMessages.length, 2);
 assert.equal(staleMessages[0].status, "interrupted");
 assert.equal(staleMessages[0].text, "rg -n foo docs");
 assert.equal(staleMessages[1].status, "completed");
+
+const kbVault = await mkdtemp(path.join(tmpdir(), "codex-kb-"));
+try {
+  await mkdir(path.join(kbVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(kbVault, "raw", "attachments"), { recursive: true });
+  await writeFile(path.join(kbVault, "raw", "articles", "demo.md"), "# Demo\n\n正文", "utf8");
+  await writeFile(path.join(kbVault, "raw", "attachments", "image.png"), Buffer.from([1, 2, 3]));
+  await writeFile(path.join(kbVault, "raw", "attachments", "paper.pdf"), Buffer.from("%PDF-1.7"));
+  await writeFile(path.join(kbVault, "raw", "attachments", "doc.docx"), Buffer.from("PK"));
+  await writeFile(path.join(kbVault, "raw", "index.md"), "# Raw Index\n", "utf8");
+  await writeFile(path.join(kbVault, "raw", "ignore.csv"), "a,b", "utf8");
+  const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
+    "raw/articles/demo.md",
+    "raw/attachments/doc.docx",
+    "raw/attachments/image.png",
+    "raw/attachments/paper.pdf"
+  ]);
+  assert.equal(firstDiscovery.changedSources.length, 4);
+  assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("image.png"))?.modality, "image");
+  assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("paper.pdf"))?.modality, "pdf");
+  const demoSource = firstDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")!;
+  const secondDiscovery = await discoverKnowledgeBaseSources(kbVault, {
+    [demoSource.relativePath]: { size: demoSource.size, mtime: demoSource.mtime }
+  });
+  assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
+  assert.equal(secondDiscovery.changedSources.length, 3);
+  assert.ok(secondDiscovery.reportPath.startsWith("outputs/kb-maintenance-"));
+
+  const kbPrompt = buildKnowledgeBasePrompt({
+    vaultPath: kbVault,
+    mode: "maintain",
+    reportPath: secondDiscovery.reportPath,
+    sources: secondDiscovery.changedSources,
+    rulesFilePath: "CLAUDE.md",
+    rulesFileExists: true,
+    useCustomRulesFile: true,
+    hasRawIndex: true,
+    hasWikiIndex: true,
+    hasTracker: false
+  });
+  assert.ok(kbPrompt.includes("执行 Ingest + Lint"));
+  assert.ok(kbPrompt.includes("自定义规则文件：CLAUDE.md"));
+  assert.ok(kbPrompt.includes("不读取、不合并 AGENTS.md"));
+  assert.ok(kbPrompt.includes("CLAUDE.md: 存在，必须读取"));
+  assert.ok(kbPrompt.includes("raw/attachments/image.png"));
+  assert.ok(kbPrompt.includes("raw/index.md"));
+  assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
+  assert.ok(kbPrompt.includes("raw/index.md 只允许做索引更新"));
+  assert.ok(kbPrompt.includes(secondDiscovery.reportPath));
+  await mkdir(path.join(kbVault, "outputs"), { recursive: true });
+  await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
+  const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);
+  assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
+  assert.equal(isLintOnlyKnowledgeBaseReport(reportExcerpt!), true);
+  assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n执行 Ingest + Lint"), false);
+  assert.equal(await readKnowledgeBaseReportExcerpt(kbVault, "outputs/missing.md"), null);
+} finally {
+  await rm(kbVault, { recursive: true, force: true });
+}
 
 const tempVault = await mkdtemp(path.join(tmpdir(), "codex-raw-store-"));
 try {

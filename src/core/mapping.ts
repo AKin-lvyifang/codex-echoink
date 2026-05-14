@@ -22,7 +22,7 @@ export function normalizeServiceTier(value: ServiceTierChoice): "fast" | "flex" 
   return null;
 }
 
-export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string): SandboxPolicy {
+export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string, writableRootsOverride?: string[]): SandboxPolicy {
   if (mode === "danger-full-access") return { type: "dangerFullAccess" };
   if (mode === "read-only") {
     return {
@@ -32,7 +32,7 @@ export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string): San
     };
   }
 
-  const writableRoots = [vaultPath, os.tmpdir(), process.env.TMPDIR].filter((item): item is string => {
+  const writableRoots = [...(writableRootsOverride?.length ? writableRootsOverride : [vaultPath]), os.tmpdir(), process.env.TMPDIR].filter((item): item is string => {
     return typeof item === "string" && item.trim().length > 0;
   });
 

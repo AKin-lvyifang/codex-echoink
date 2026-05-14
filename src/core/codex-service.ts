@@ -55,6 +55,7 @@ export interface TurnOptions {
   mcpEnabled: boolean;
   persistExtendedHistory?: boolean;
   requestTimeoutMs?: number;
+  writableRoots?: string[];
   workspaceResources?: WorkspaceResourceToggles;
 }
 
@@ -304,7 +305,7 @@ export class CodexService {
         effort: options.reasoning,
         serviceTier: normalizeServiceTier(options.serviceTier),
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
-        sandboxPolicy: buildSandboxPolicy(options.permission, this.options.vaultPath),
+        sandboxPolicy: buildSandboxPolicy(options.permission, this.options.vaultPath, options.writableRoots),
         ...(collaborationMode ? { collaborationMode } : {})
       },
       options.requestTimeoutMs ?? 60000
