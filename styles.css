@@ -1037,6 +1037,24 @@ body.theme-light .codex-code-wrapper pre {
   gap: 8px;
 }
 
+.codex-knowledge-settings {
+  --codex-kb-detail-indent: 36px;
+  --codex-kb-icon-text-indent: 20px;
+}
+
+.codex-knowledge-settings .codex-setting-with-icon .setting-item-description {
+  margin-left: var(--codex-kb-icon-text-indent);
+}
+
+.codex-knowledge-settings > .codex-api-provider-field,
+.codex-knowledge-settings > .codex-editor-actions-section {
+  margin-left: var(--codex-kb-detail-indent);
+}
+
+.codex-knowledge-settings > .codex-editor-actions-section .codex-api-provider-field {
+  margin-left: var(--codex-kb-icon-text-indent);
+}
+
 .codex-api-provider-label {
   color: var(--text-muted);
   font-size: 12px;

@@ -251,7 +251,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderKnowledgeBaseSettings(container: HTMLElement): void {
     const settings = this.plugin.settings.knowledgeBase;
     const opencode = this.plugin.settings.opencode;
-    const wrapper = container.createDiv({ cls: "codex-api-provider-manager" });
+    const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-knowledge-settings" });
     const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
     const title = header.createDiv({ cls: "codex-resource-manager-title" });
     const icon = title.createSpan({ cls: "codex-setting-icon" });
@@ -277,15 +277,15 @@ export class CodexSettingTab extends PluginSettingTab {
       this.display();
     };
 
-    new Setting(wrapper).setName("启用知识库管理").setDesc("开启后，插件才会按下面的每日自动维护和启动补跑设置自动运行；关闭后不会自动跑任务，但仍可打开右侧知识库频道手动对话、收集和维护。").addToggle((toggle) =>
+    this.decorateSetting(new Setting(wrapper).setName("启用知识库管理").setDesc("开启后，插件才会按下面的每日自动维护和启动补跑设置自动运行；关闭后不会自动跑任务，但仍可打开右侧知识库频道手动对话、收集和维护。").addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
         await this.plugin.saveSettings();
         this.display();
       })
-    );
+    ), "toggle-right");
 
-    new Setting(wrapper).setName("知识库后端").setDesc("默认跟随基础设置里的 Agent 后端；也可以单独固定为 Codex 或 OpenCode。").addDropdown((dropdown) => {
+    this.decorateSetting(new Setting(wrapper).setName("知识库后端").setDesc("默认跟随基础设置里的 Agent 后端；也可以单独固定为 Codex 或 OpenCode。").addDropdown((dropdown) => {
       const options: Record<KnowledgeBaseBackendMode, string> = {
         default: `跟随全局（${agentBackendLabel(this.plugin.settings.agentBackend)}）`,
         "codex-cli": "Codex CLI",
@@ -298,35 +298,35 @@ export class CodexSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
-    });
+    }), "route");
 
-    new Setting(wrapper).setName("使用自定义指南文件").setDesc("关闭时默认读取 Vault 根目录 AGENTS.md；开启后只读取下面填写的文件，不合并 AGENTS.md。").addToggle((toggle) =>
+    this.decorateSetting(new Setting(wrapper).setName("使用自定义指南文件").setDesc("关闭时默认读取 Vault 根目录 AGENTS.md；开启后只读取下面填写的文件，不合并 AGENTS.md。").addToggle((toggle) =>
       toggle.setValue(settings.useCustomRulesFile).onChange(async (value) => {
         settings.useCustomRulesFile = value;
         if (value && (!settings.rulesFilePath || settings.rulesFilePath === "AGENTS.md")) settings.rulesFilePath = "CLAUDE.md";
         await this.plugin.saveSettings();
         this.display();
       })
-    );
+    ), "file-cog");
     this.addKnowledgeBaseRulesFilePicker(wrapper);
 
-    new Setting(wrapper).setName("每日自动维护").setDesc("仅在 Obsidian 打开时运行；错过后下次打开可补跑。").addToggle((toggle) =>
+    this.decorateSetting(new Setting(wrapper).setName("每日自动维护").setDesc("仅在 Obsidian 打开时运行；错过后下次打开可补跑。").addToggle((toggle) =>
       toggle.setValue(settings.scheduleEnabled).onChange(async (value) => {
         settings.scheduleEnabled = value;
         await this.plugin.saveSettings();
       })
-    );
+    ), "calendar-clock");
     this.addProviderText(wrapper, "每日运行时间", settings.scheduleTime, "09:00", async (value) => {
       settings.scheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : settings.scheduleTime;
       await this.plugin.saveSettings();
       this.display();
     });
-    new Setting(wrapper).setName("启动补跑").setDesc("当天错过维护时间时，下次打开 Obsidian 自动补跑。").addToggle((toggle) =>
+    this.decorateSetting(new Setting(wrapper).setName("启动补跑").setDesc("当天错过维护时间时，下次打开 Obsidian 自动补跑。").addToggle((toggle) =>
       toggle.setValue(settings.catchUpOnStartup).onChange(async (value) => {
         settings.catchUpOnStartup = value;
         await this.plugin.saveSettings();
       })
-    );
+    ), "history");
 
     const openCodeSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
     openCodeSection.createDiv({ cls: "codex-editor-actions-heading", text: "OpenCode API 模式" });
@@ -340,12 +340,12 @@ export class CodexSettingTab extends PluginSettingTab {
       opencode.serverUrl = value.trim().replace(/\/$/, "");
       await this.plugin.saveSettings();
     });
-    new Setting(openCodeSection).setName("自动启动 OpenCode server").addToggle((toggle) =>
+    this.decorateSetting(new Setting(openCodeSection).setName("自动启动 OpenCode server").addToggle((toggle) =>
       toggle.setValue(opencode.autoStart).onChange(async (value) => {
         opencode.autoStart = value;
         await this.plugin.saveSettings();
       })
-    );
+    ), "power");
     this.addProviderText(openCodeSection, "Host", opencode.hostname, "127.0.0.1", async (value) => {
       opencode.hostname = value.trim() || "127.0.0.1";
       await this.plugin.saveSettings();
@@ -1089,6 +1089,8 @@ export class CodexSettingTab extends PluginSettingTab {
   private decorateSetting(setting: Setting, iconName: string): Setting {
     const nameEl = (setting as any).nameEl as HTMLElement | undefined;
     if (!nameEl) return setting;
+    const settingEl = (setting as any).settingEl as HTMLElement | undefined;
+    settingEl?.addClass("codex-setting-with-icon");
     nameEl.addClass("codex-setting-name-with-icon");
     const icon = document.createElement("span");
     icon.addClass("codex-setting-icon");
