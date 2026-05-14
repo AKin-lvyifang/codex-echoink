@@ -1,7 +1,7 @@
 import { ItemView, MarkdownView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
-import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
+import { DEFAULT_SETTINGS, ensureKnowledgeBaseSession, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
 import type {
   CodexNotification,
   CodexSkill,
@@ -178,6 +178,15 @@ export class CodexView extends ItemView {
     this.selectedPermission = this.plugin.settings.defaultPermission;
     this.selectedMode = this.plugin.settings.defaultMode;
     this.renderToolbar();
+  }
+
+  refreshActiveSession(): void {
+    this.resetVirtualWindow();
+    this.renderTabs();
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    this.updateInputPlaceholder();
+    this.focusInput();
   }
 
   handleCodexNotification(notification: CodexNotification): void {
@@ -502,8 +511,17 @@ export class CodexView extends ItemView {
     this.toolbarEl = inputWrap.createDiv({ cls: "codex-toolbar" });
     this.mcpPanelEl = this.rootEl.createDiv({ cls: "codex-mcp-panel" });
     this.renderToolbar();
+    this.updateInputPlaceholder();
     this.renderEditorActionStatus();
     this.renderArticleUnderstandingPanel();
+  }
+
+  private updateInputPlaceholder(): void {
+    if (!this.inputEl) return;
+    const session = this.ensureSession();
+    this.inputEl.setAttr("placeholder", this.isKnowledgeBaseSession(session)
+      ? "知识库管理：输入“只体检一下 / 维护知识库 / 收集这个链接 / 记一下...”"
+      : "问 Codex，让它管理当前 Obsidian 仓库");
   }
 
   private applyStatus(): void {
@@ -717,11 +735,14 @@ export class CodexView extends ItemView {
   private renderTabs(): void {
     this.ensureSession();
     this.tabBarEl.empty();
-    this.plugin.settings.sessions.forEach((session, index) => {
+    let chatIndex = 0;
+    this.plugin.settings.sessions.forEach((session) => {
+      const knowledgeSession = isKnowledgeBaseSession(session, this.plugin.settings.knowledgeBase.sessionId);
+      if (!knowledgeSession) chatIndex += 1;
       const tab = this.tabBarEl.createEl("button", {
-        cls: `codex-tab ${session.id === this.plugin.settings.activeSessionId ? "is-active" : ""}`,
-        text: String(index + 1),
-        attr: { type: "button", title: session.title || "新会话" }
+        cls: `codex-tab ${session.id === this.plugin.settings.activeSessionId ? "is-active" : ""} ${knowledgeSession ? "is-knowledge-base" : ""}`.trim(),
+        text: knowledgeSession ? "知识库" : String(chatIndex),
+        attr: { type: "button", title: knowledgeSession ? "知识库管理（常驻）" : (session.title || "新会话") }
       });
       tab.onclick = async () => {
         this.plugin.settings.activeSessionId = session.id;
@@ -730,10 +751,17 @@ export class CodexView extends ItemView {
         this.renderTabs();
         this.renderMessages({ forceBottom: true });
         this.renderToolbar();
+        this.updateInputPlaceholder();
         this.prewarmActiveThread();
       };
       tab.oncontextmenu = (event) => this.openSessionMenu(event, session);
-      tab.ondblclick = () => void this.renameSession(session);
+      tab.ondblclick = () => {
+        if (knowledgeSession) {
+          new Notice("知识库管理频道是常驻频道，不能重命名");
+          return;
+        }
+        void this.renameSession(session);
+      };
     });
     const newButton = this.tabBarEl.createEl("button", { cls: "codex-tab-new", attr: { type: "button", "aria-label": "新建会话" } });
     setIcon(newButton, "plus");
@@ -744,6 +772,7 @@ export class CodexView extends ItemView {
       this.renderTabs();
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
+      this.updateInputPlaceholder();
       this.prewarmActiveThread();
     };
   }
@@ -761,7 +790,10 @@ export class CodexView extends ItemView {
     if (session.messages.length === 0) {
       this.virtualListEl.style.height = "100%";
       const welcome = this.virtualListEl.createDiv({ cls: "codex-welcome" });
-      welcome.createDiv({ cls: "codex-welcome-title", text: "What's new?" });
+      welcome.createDiv({ cls: "codex-welcome-title", text: this.isKnowledgeBaseSession(session) ? "知识库管理" : "What's new?" });
+      if (this.isKnowledgeBaseSession(session)) {
+        welcome.createDiv({ cls: "codex-resource-note", text: "在这里输入自然语言命令，例如：只体检一下、维护知识库、收集这个链接、记一下。" });
+      }
       return;
     }
     const rows = this.buildVirtualRows(session.messages);
@@ -1160,6 +1192,9 @@ export class CodexView extends ItemView {
 
     const model = this.plugin.lastStatus?.models.find((item) => item.isDefault)?.model || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel;
     if (!this.selectedModel) this.selectedModel = this.plugin.settings.defaultModel || model;
+    const session = this.ensureSession();
+    const knowledgeSession = this.isKnowledgeBaseSession(session);
+    const knowledgeRunning = knowledgeSession && (this.running || Boolean(this.plugin.getKnowledgeBaseManager()?.isRunning));
 
     const row = this.toolbarEl.createDiv({ cls: "codex-composer-row" });
     const left = row.createDiv({ cls: "codex-composer-left" });
@@ -1168,38 +1203,66 @@ export class CodexView extends ItemView {
     const addButton = this.createComposerIconButton(left, "plus", "添加内容");
     addButton.onclick = (event) => this.openAddMenu(event);
 
-    this.addComposerSelect<PermissionMode>(left, "shield-check", ["read-only", "workspace-write", "danger-full-access"], this.selectedPermission, (value) => {
-      this.selectedPermission = value;
-      this.persistComposerDefaults();
-      this.renderToolbar();
-    }, "权限", "codex-permission-control");
+    if (knowledgeSession) {
+      const wechatButton = this.createComposerIconButton(left, "newspaper", "公众号收集");
+      wechatButton.onclick = () => this.runKnowledgeBaseShortcut("公众号收集", async () => {
+        const paths = await this.plugin.getKnowledgeBaseManager()?.captureWeChatArticle();
+        return paths?.length ? `已收集公众号：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收集内容。";
+      });
+      const webButton = this.createComposerIconButton(left, "bookmark-plus", "网页收藏");
+      webButton.onclick = () => this.runKnowledgeBaseShortcut("网页收藏", async () => {
+        const paths = await this.plugin.getKnowledgeBaseManager()?.captureWebPage();
+        return paths?.length ? `已收藏网页：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收藏内容。";
+      });
+      const fileButton = this.createComposerIconButton(left, "file-plus", "文件收藏");
+      fileButton.onclick = () => this.pickKnowledgeBaseFiles();
 
-    this.contextEl = right.createDiv({ cls: "codex-context-meter", attr: { title: "上下文容量" } });
-    this.contextRingEl = this.contextEl.createSpan({ cls: "codex-context-ring", attr: { "aria-hidden": "true" } });
-    this.contextRingEl.createSpan({ cls: "codex-context-ring-hole" });
-    this.contextValueEl = this.contextEl.createSpan({ cls: "codex-context-value", text: "--" });
+      const kbChip = right.createEl("button", { cls: "codex-composer-model-button codex-kb-channel-chip", attr: { type: "button", title: "知识库常用命令" } });
+      const kbIcon = kbChip.createSpan({ cls: "codex-composer-model-icon" });
+      setIcon(kbIcon, "library");
+      kbChip.createSpan({ cls: "codex-composer-model-text", text: knowledgeRunning ? "知识库运行中" : "知识库命令" });
+      const chevron = kbChip.createSpan({ cls: "codex-composer-chevron" });
+      setIcon(chevron, "chevron-down");
+      kbChip.onclick = (event) => this.openKnowledgeCommandMenu(event);
+    } else {
+      this.addComposerSelect<PermissionMode>(left, "shield-check", ["read-only", "workspace-write", "danger-full-access"], this.selectedPermission, (value) => {
+        this.selectedPermission = value;
+        this.persistComposerDefaults();
+        this.renderToolbar();
+      }, "权限", "codex-permission-control");
 
-    const modelButton = right.createEl("button", {
-      cls: "codex-composer-model-button",
-      attr: { type: "button", "aria-label": "模型和运行参数", title: this.currentComposerSummaryTitle() }
-    });
-    const modelIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
-    setIcon(modelIcon, "zap");
-    modelButton.createSpan({ cls: "codex-composer-model-text", text: this.currentComposerSummary() });
-    const chevron = modelButton.createSpan({ cls: "codex-composer-chevron" });
-    setIcon(chevron, "chevron-down");
-    modelButton.onclick = (event) => this.openModelMenu(event);
+      this.contextEl = right.createDiv({ cls: "codex-context-meter", attr: { title: "上下文容量" } });
+      this.contextRingEl = this.contextEl.createSpan({ cls: "codex-context-ring", attr: { "aria-hidden": "true" } });
+      this.contextRingEl.createSpan({ cls: "codex-context-ring-hole" });
+      this.contextValueEl = this.contextEl.createSpan({ cls: "codex-context-value", text: "--" });
 
-    const micButton = this.createComposerIconButton(right, "mic", "语音输入");
-    micButton.onclick = () => new Notice("语音输入暂未接入");
+      const modelButton = right.createEl("button", {
+        cls: "codex-composer-model-button",
+        attr: { type: "button", "aria-label": "模型和运行参数", title: this.currentComposerSummaryTitle() }
+      });
+      const modelIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
+      setIcon(modelIcon, "zap");
+      modelButton.createSpan({ cls: "codex-composer-model-text", text: this.currentComposerSummary() });
+      const chevron = modelButton.createSpan({ cls: "codex-composer-chevron" });
+      setIcon(chevron, "chevron-down");
+      modelButton.onclick = (event) => this.openModelMenu(event);
 
+      const micButton = this.createComposerIconButton(right, "mic", "语音输入");
+      micButton.onclick = () => new Notice("语音输入暂未接入");
+    }
+
+    const busy = this.running || knowledgeRunning;
     const sendButton = row.createEl("button", {
       cls: "codex-send-button codex-composer-send-button",
-      attr: { type: "button", "aria-label": this.running ? "停止" : "发送", title: this.running ? "停止" : "发送" }
+      attr: { type: "button", "aria-label": busy ? "停止" : "发送", title: busy ? "停止" : "发送" }
     });
-    setIcon(sendButton, this.running ? "square" : "send-horizontal");
-    sendButton.onclick = () => (this.running ? this.stopTurn() : this.sendMessage());
-    this.updateContext(this.ensureSession().tokenUsage, false);
+    setIcon(sendButton, busy ? "square" : "send-horizontal");
+    sendButton.onclick = () => {
+      if (knowledgeRunning && knowledgeSession) void this.plugin.getKnowledgeBaseManager()?.cancelMaintenance();
+      else if (this.running) void this.stopTurn();
+      else void this.sendMessage();
+    };
+    if (!knowledgeSession) this.updateContext(session.tokenUsage, false);
   }
 
   private createComposerIconButton(container: HTMLElement, iconName: string, title: string): HTMLButtonElement {
@@ -1250,6 +1313,35 @@ export class CodexView extends ItemView {
         .setIcon("blocks")
         .onClick(() => this.toggleMcpPanel())
     );
+    menu.showAtMouseEvent(event);
+  }
+
+  private openKnowledgeCommandMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const menu = new Menu();
+    const commands = [
+      { title: "体检", icon: "stethoscope", text: "只体检一下" },
+      { title: "重新提炼", icon: "refresh-cw", text: "重新提炼最近的资料" },
+      { title: "写日记", icon: "calendar-plus", text: "写日记：" },
+      { title: "处理 inbox", icon: "inbox", text: "处理 inbox" },
+      { title: "维护知识库", icon: "library", text: "维护知识库" }
+    ];
+    for (const command of commands) {
+      menu.addItem((item) =>
+        item
+          .setTitle(command.title)
+          .setIcon(command.icon)
+          .onClick(() => {
+            if (command.text.endsWith("：")) {
+              this.inputEl.value = command.text;
+              this.focusInput();
+              return;
+            }
+            this.inputEl.value = command.text;
+            void this.sendMessage();
+          })
+      );
+    }
     menu.showAtMouseEvent(event);
   }
 
@@ -1349,6 +1441,10 @@ export class CodexView extends ItemView {
 
   private openSessionMenu(event: MouseEvent, session: StoredSession): void {
     event.preventDefault();
+    if (this.isKnowledgeBaseSession(session)) {
+      new Notice("知识库管理频道是常驻频道，不能删除");
+      return;
+    }
     const menu = new Menu();
     menu.addItem((item) =>
       item
@@ -1379,6 +1475,10 @@ export class CodexView extends ItemView {
     const sessions = this.plugin.settings.sessions;
     const index = sessions.findIndex((session) => session.id === sessionId);
     if (index < 0) return;
+    if (this.isKnowledgeBaseSession(sessions[index])) {
+      new Notice("知识库管理频道不能删除");
+      return;
+    }
     const wasActive = this.plugin.settings.activeSessionId === sessionId;
     sessions.splice(index, 1);
     if (!sessions.length) {
@@ -1482,6 +1582,10 @@ export class CodexView extends ItemView {
     if (this.editorSummaryRun) this.cancelEditorSummaryRun("用户输入抢占摘要");
     if (this.running || (!text && !this.attachments.length && !this.selectedSkill)) return;
     let session = this.ensureSession();
+    if (this.isKnowledgeBaseSession(session)) {
+      await this.sendKnowledgeBaseMessage(session, text);
+      return;
+    }
     try {
       const status = await this.plugin.ensureCodexConnected();
       this.applyStatus();
@@ -1549,6 +1653,109 @@ export class CodexView extends ItemView {
       this.clearActiveRun();
       new Notice(`Codex 发送失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      this.applyStatus();
+    }
+  }
+
+  private async sendKnowledgeBaseMessage(session: StoredSession, text: string): Promise<void> {
+    const manager = this.plugin.getKnowledgeBaseManager();
+    if (!manager) {
+      new Notice("知识库管理未初始化");
+      return;
+    }
+    if (!text && !this.attachments.length) return;
+    const turnAttachments = [...this.attachments];
+    const userMessage: ChatMessage = {
+      id: newId("msg"),
+      role: "user",
+      text: text || "(附件)",
+      attachments: turnAttachments,
+      images: turnAttachments.filter((item) => item.type === "image"),
+      createdAt: Date.now()
+    };
+    await this.plugin.externalizeMessageText(userMessage, userMessage.text);
+    const assistantMessage: ChatMessage = {
+      id: newId("msg"),
+      role: "assistant",
+      title: "知识库管理",
+      itemType: "knowledgeBase",
+      status: "running",
+      text: "正在识别命令并执行...",
+      createdAt: Date.now()
+    };
+    session.messages.push(userMessage, assistantMessage);
+    session.title = "知识库管理";
+    session.updatedAt = Date.now();
+    this.inputEl.value = "";
+    this.attachments = [];
+    this.selectedSkill = null;
+    this.running = true;
+    this.renderTabs();
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    await this.plugin.saveSettings(true);
+
+    try {
+      const result = await manager.handleUserMessage(text, turnAttachments);
+      assistantMessage.status = result.status === "success" ? "completed" : "failed";
+      assistantMessage.text = result.message;
+      if (result.status === "failed") new Notice(`知识库管理失败：${result.message}`);
+    } finally {
+      this.running = false;
+      session.updatedAt = Date.now();
+      await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+      await this.plugin.saveSettings(true);
+      this.renderMessages({ forceBottom: true });
+      this.renderToolbar();
+      this.applyStatus();
+    }
+  }
+
+  private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> {
+    const session = this.ensureSession();
+    if (!this.isKnowledgeBaseSession(session)) {
+      await this.plugin.activateKnowledgeBaseChannel();
+    }
+    const active = this.ensureSession();
+    const userMessage: ChatMessage = {
+      id: newId("msg"),
+      role: "user",
+      text: label,
+      createdAt: Date.now()
+    };
+    const assistantMessage: ChatMessage = {
+      id: newId("msg"),
+      role: "assistant",
+      title: "知识库管理",
+      itemType: "knowledgeBase",
+      status: "running",
+      text: "正在执行...",
+      createdAt: Date.now()
+    };
+    active.messages.push(userMessage, assistantMessage);
+    active.updatedAt = Date.now();
+    this.running = true;
+    this.renderTabs();
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    await this.plugin.saveSettings(true);
+    try {
+      const message = await runner();
+      assistantMessage.status = "completed";
+      assistantMessage.text = message;
+      new Notice(label);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assistantMessage.status = "failed";
+      assistantMessage.text = message;
+      new Notice(`知识库管理失败：${message}`);
+    } finally {
+      this.running = false;
+      active.updatedAt = Date.now();
+      await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+      await this.plugin.saveSettings(true);
+      this.renderMessages({ forceBottom: true });
+      this.renderToolbar();
       this.applyStatus();
     }
   }
@@ -2223,6 +2430,7 @@ export class CodexView extends ItemView {
 
   private prewarmActiveThread(): void {
     const session = this.ensureSession();
+    if (this.isKnowledgeBaseSession(session)) return;
     if (session.threadId || this.running) return;
     if (this.threadPrewarmPromise && this.threadPrewarmSessionId === session.id) return;
     this.threadPrewarmSessionId = session.id;
@@ -2740,10 +2948,15 @@ export class CodexView extends ItemView {
   }
 
   private ensureSession(): StoredSession {
+    ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath());
     const activeId = this.plugin.settings.activeSessionId;
     const active = this.plugin.settings.sessions.find((session) => session.id === activeId);
     if (active) return active;
     return this.createSession();
+  }
+
+  private isKnowledgeBaseSession(session: StoredSession): boolean {
+    return isKnowledgeBaseSession(session, this.plugin.settings.knowledgeBase.sessionId);
   }
 
   private createSession(title = "新会话"): StoredSession {
@@ -2791,6 +3004,31 @@ export class CodexView extends ItemView {
         });
       }
       this.renderAttachments();
+    };
+    input.click();
+  }
+
+  private pickKnowledgeBaseFiles(): void {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain";
+    input.onchange = () => {
+      const files = Array.from(input.files ?? []);
+      const attachments: StoredAttachment[] = [];
+      for (const file of files) {
+        const filePath = (file as File & { path?: string }).path;
+        if (!filePath) continue;
+        attachments.push({
+          type: "file",
+          name: file.name,
+          path: filePath
+        });
+      }
+      void this.runKnowledgeBaseShortcut("文件收藏", async () => {
+        const paths = await this.plugin.getKnowledgeBaseManager()?.captureExternalFiles(attachments);
+        return paths?.length ? `已收藏文件：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未选择文件。";
+      });
     };
     input.click();
   }

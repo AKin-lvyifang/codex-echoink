@@ -1,12 +1,16 @@
+import * as fsp from "fs/promises";
+import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
-import { getActiveApiProvider, normalizeSettingsData, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
+import { ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
+import { KnowledgeBaseManager } from "./knowledge-base/manager";
+import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "./knowledge-base/report";
 
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
@@ -14,6 +18,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   lastStatus: CodexStatusSnapshot | null = null;
   private view: CodexView | null = null;
   private editorActions: EditorActionController | null = null;
+  private knowledgeBase: KnowledgeBaseManager | null = null;
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,6 +73,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.addSettingTab(new CodexSettingTab(this));
     this.editorActions = new EditorActionController(this);
     this.editorActions.register();
+    this.knowledgeBase = new KnowledgeBaseManager(this);
+    this.knowledgeBase.register();
 
     if (this.settings.autoOpen) {
       this.app.workspace.onLayoutReady(() => void this.activateView());
@@ -81,6 +88,7 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async onunload(): Promise<void> {
     this.editorActions?.cancelActiveCandidate("canceled", false);
+    this.knowledgeBase?.unload();
     await this.saveSettings(true);
     await this.codex?.disconnect();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CODEX);
@@ -97,6 +105,14 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     await this.app.workspace.revealLeaf(leaf);
     this.view?.focusInput();
+  }
+
+  async activateKnowledgeBaseChannel(): Promise<void> {
+    const session = ensureKnowledgeBaseSession(this.settings, this.getVaultPath());
+    this.settings.activeSessionId = session.id;
+    await this.saveSettings(true);
+    await this.activateView();
+    this.view?.refreshActiveSession();
   }
 
   applyComposerDefaultsToView(): void {
@@ -136,7 +152,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         providerMode: this.settings.providerMode,
         activeApiProvider: getActiveApiProvider(this.settings),
         vaultPath: this.getVaultPath(),
-        onNotification: (notification) => this.view?.handleCodexNotification(notification),
+        onNotification: (notification) => this.handleCodexNotification(notification),
         onServerRequest: (request) => this.handleServerRequest(request)
       });
     }
@@ -196,13 +212,42 @@ export default class CodexForObsidianPlugin extends Plugin {
     const data = (await this.loadData()) ?? {};
     const normalized = normalizeSettingsData(data);
     this.settings = normalized.settings;
+    const sessionCountBefore = this.settings.sessions.length;
+    const knowledgeSessionBefore = this.settings.knowledgeBase.sessionId;
+    const knowledgeRulesMigrated = await this.applyKnowledgeBaseRulesFileDefault(data);
+    ensureKnowledgeBaseSession(this.settings, this.getVaultPath());
+    const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     let rawMigrated = 0;
     try {
       rawMigrated = await externalizeLargeMessages(this.getVaultPath(), this.settings);
     } catch (error) {
       console.error("Codex raw message migration failed", error);
     }
-    if (normalized.changed || rawMigrated > 0) await this.saveSettings(true);
+    const knowledgeSessionChanged = sessionCountBefore !== this.settings.sessions.length || knowledgeSessionBefore !== this.settings.knowledgeBase.sessionId;
+    if (normalized.changed || rawMigrated > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
+  }
+
+  private async applyKnowledgeBaseRulesFileDefault(data: any): Promise<boolean> {
+    const rawSettings = data?.knowledgeBase;
+    const hasExplicitRules = rawSettings
+      && (typeof rawSettings.useCustomRulesFile === "boolean" || typeof rawSettings.rulesFilePath === "string");
+    if (hasExplicitRules) return false;
+
+    const vaultPath = this.getVaultPath();
+    const agentsPath = path.join(vaultPath, "AGENTS.md");
+    const claudePath = path.join(vaultPath, "CLAUDE.md");
+    const [agents, claude] = await Promise.all([
+      fsp.readFile(agentsPath, "utf8").catch(() => ""),
+      fsp.readFile(claudePath, "utf8").catch(() => "")
+    ]);
+    if (!agents || !claude) return false;
+    const agentsLooksLikeCodexMemory = /codex-memory|CODEX-MEMORY|项目级上下文管理/.test(agents);
+    const claudeLooksLikeKnowledgeRules = /知识库|Raw Sources|Ingest|Lint|Wiki/.test(claude);
+    if (!agentsLooksLikeCodexMemory || !claudeLooksLikeKnowledgeRules) return false;
+
+    this.settings.knowledgeBase.useCustomRulesFile = true;
+    this.settings.knowledgeBase.rulesFilePath = "CLAUDE.md";
+    return true;
   }
 
   async saveSettings(force = false): Promise<void> {
@@ -244,6 +289,26 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async readRawMessageText(rawRef: string): Promise<string> {
     return readRawText(this.getVaultPath(), rawRef);
+  }
+
+  getKnowledgeBaseManager(): KnowledgeBaseManager | null {
+    return this.knowledgeBase;
+  }
+
+  private async recoverKnowledgeBaseLintStatus(): Promise<boolean> {
+    const settings = this.settings.knowledgeBase;
+    if (settings.lastRunStatus !== "failed" || !settings.lastReportPath) return false;
+    const report = await readKnowledgeBaseReportExcerpt(this.getVaultPath(), settings.lastReportPath, 2000);
+    if (!report || !isLintOnlyKnowledgeBaseReport(report)) return false;
+    settings.lastRunStatus = "success";
+    settings.lastError = "";
+    settings.lastSummary = `体检报告已生成。上次 Codex 返回失败状态，但 lint-only 报告文件存在，已恢复为成功。\n\n${report}`.slice(0, 1000);
+    return true;
+  }
+
+  private handleCodexNotification(notification: any): void {
+    if (this.knowledgeBase?.handleCodexNotification(notification)) return;
+    this.view?.handleCodexNotification(notification);
   }
 
   private async flushSettingsSave(): Promise<void> {

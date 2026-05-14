@@ -56,9 +56,13 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+export type StoredSessionKind = "chat" | "knowledge-base";
+export const KNOWLEDGE_BASE_SESSION_TITLE = "知识库管理";
+
 export interface StoredSession {
   id: string;
   title: string;
+  kind?: StoredSessionKind;
   threadId?: string;
   cwd: string;
   messages: ChatMessage[];
@@ -67,9 +71,53 @@ export interface StoredSession {
   updatedAt: number;
 }
 
-export type SettingsTab = "general" | "providers" | "resources" | "editorActions";
+export type SettingsTab = "general" | "providers" | "resources" | "editorActions" | "knowledgeBase";
 export type ProviderMode = "codex-login" | "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
+export type AgentBackendMode = "codex-cli" | "opencode";
+export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
+export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
+export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
+
+export interface OpenCodeSettings {
+  cliPath: string;
+  serverUrl: string;
+  autoStart: boolean;
+  hostname: string;
+  port: number;
+  providerId: string;
+  modelId: string;
+  agent: string;
+  textEnabled: boolean;
+  imageEnabled: boolean;
+  pdfEnabled: boolean;
+  lastConnectedAt: number;
+  lastError: string;
+}
+
+export interface KnowledgeBaseProcessedSource {
+  path: string;
+  size: number;
+  mtime: number;
+  digestedAt: number;
+}
+
+export interface KnowledgeBaseSettings {
+  enabled: boolean;
+  sessionId: string;
+  backend: KnowledgeBaseBackendMode;
+  useCustomRulesFile: boolean;
+  rulesFilePath: string;
+  scheduleEnabled: boolean;
+  scheduleTime: string;
+  catchUpOnStartup: boolean;
+  lastRunAt: number;
+  lastRunStatus: KnowledgeBaseRunStatus;
+  lastReportPath: string;
+  lastError: string;
+  lastSummary: string;
+  processedSources: Record<string, KnowledgeBaseProcessedSource>;
+}
 
 export interface ApiProviderConfig {
   id: string;
@@ -102,6 +150,7 @@ export interface WorkspaceResourceCache {
 export interface CodexForObsidianSettings {
   settingsVersion: number;
   settingsTab: SettingsTab;
+  agentBackend: AgentBackendMode;
   cliPath: string;
   proxyEnabled: boolean;
   proxyUrl: string;
@@ -118,6 +167,8 @@ export interface CodexForObsidianSettings {
   showContext: boolean;
   resourceManagementTab: ResourceManagementTab;
   editorActions: EditorAiActionSettings;
+  opencode: OpenCodeSettings;
+  knowledgeBase: KnowledgeBaseSettings;
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
@@ -269,8 +320,9 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 14,
+  settingsVersion: 17,
   settingsTab: "general",
+  agentBackend: "codex-cli",
   cliPath: "",
   proxyEnabled: false,
   proxyUrl: "http://127.0.0.1:7890",
@@ -304,6 +356,37 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     actions: DEFAULT_EDITOR_ACTIONS,
     styles: DEFAULT_EDITOR_STYLES
   },
+  opencode: {
+    cliPath: "",
+    serverUrl: "",
+    autoStart: true,
+    hostname: "127.0.0.1",
+    port: 4096,
+    providerId: "",
+    modelId: "",
+    agent: "build",
+    textEnabled: true,
+    imageEnabled: false,
+    pdfEnabled: false,
+    lastConnectedAt: 0,
+    lastError: ""
+  },
+  knowledgeBase: {
+    enabled: false,
+    sessionId: "",
+    backend: "default",
+    useCustomRulesFile: false,
+    rulesFilePath: "AGENTS.md",
+    scheduleEnabled: false,
+    scheduleTime: "09:00",
+    catchUpOnStartup: true,
+    lastRunAt: 0,
+    lastRunStatus: "idle",
+    lastReportPath: "",
+    lastError: "",
+    lastSummary: "",
+    processedSources: {}
+  },
   workspaceResources: {
     plugins: {},
     mcpServers: {},
@@ -320,16 +403,24 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     ...DEFAULT_SETTINGS,
     ...data,
     settingsTab: normalizeSettingsTab(data?.settingsTab),
+    agentBackend: normalizeAgentBackendMode(data?.agentBackend),
     providerMode: normalizeProviderMode(data?.providerMode),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(data?.apiProviders),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
+    opencode: normalizeOpenCodeSettings(data?.opencode),
+    knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
-    sessions: Array.isArray(data?.sessions) ? data.sessions : [],
+    sessions: normalizeStoredSessions(data?.sessions),
     activeSessionId: typeof data?.activeSessionId === "string" ? data.activeSessionId : ""
   };
+
+  if (settings.knowledgeBase.sessionId) {
+    const session = settings.sessions.find((item) => item.id === settings.knowledgeBase.sessionId);
+    if (session) session.kind = "knowledge-base";
+  }
 
   if (previousVersion < 1) {
     if (!data?.defaultModel) settings.defaultModel = DEFAULT_SETTINGS.defaultModel;
@@ -397,6 +488,41 @@ export function removeApiProvider(settings: Pick<CodexForObsidianSettings, "prov
     if (!next) settings.providerMode = "codex-login";
   }
   return true;
+}
+
+export function isKnowledgeBaseSession(session: Pick<StoredSession, "kind" | "title" | "id"> | null | undefined, knowledgeBaseSessionId = ""): boolean {
+  if (!session) return false;
+  return session.kind === "knowledge-base" || Boolean(knowledgeBaseSessionId && session.id === knowledgeBaseSessionId);
+}
+
+export function ensureKnowledgeBaseSession(
+  settings: Pick<CodexForObsidianSettings, "sessions" | "knowledgeBase" | "activeSessionId">,
+  cwd: string,
+  idFactory: () => string = () => newId("session")
+): StoredSession {
+  let session = settings.sessions.find((item) => isKnowledgeBaseSession(item, settings.knowledgeBase.sessionId));
+  if (!session) {
+    session = {
+      id: idFactory(),
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    settings.sessions.unshift(session);
+  }
+  session.kind = "knowledge-base";
+  session.title = KNOWLEDGE_BASE_SESSION_TITLE;
+  session.cwd = cwd;
+  settings.knowledgeBase.sessionId = session.id;
+  const currentIndex = settings.sessions.findIndex((item) => item.id === session.id);
+  if (currentIndex > 0) {
+    settings.sessions.splice(currentIndex, 1);
+    settings.sessions.unshift(session);
+  }
+  return session;
 }
 
 export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">): string {
@@ -589,11 +715,122 @@ function normalizeResourceManagementTab(value: any): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: any): SettingsTab {
-  return value === "providers" || value === "resources" || value === "editorActions" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  return value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 function normalizeProviderMode(value: any): ProviderMode {
   return value === "custom-api" ? "custom-api" : DEFAULT_SETTINGS.providerMode;
+}
+
+function normalizeAgentBackendMode(value: any): AgentBackendMode {
+  return value === "opencode" ? "opencode" : DEFAULT_SETTINGS.agentBackend;
+}
+
+function normalizeKnowledgeBaseBackendMode(value: any): KnowledgeBaseBackendMode {
+  return value === "codex-cli" || value === "opencode" ? value : "default";
+}
+
+function normalizeKnowledgeBaseRunStatus(value: any): KnowledgeBaseRunStatus {
+  return value === "running" || value === "success" || value === "failed" || value === "canceled" ? value : "idle";
+}
+
+function normalizeKnowledgeBaseRulesPath(value: any, fallback: string): string {
+  const raw = normalizeText(value, fallback).replace(/\\/g, "/").trim();
+  const withoutLeadingSlash = raw.replace(/^\/+/, "");
+  const clean = withoutLeadingSlash
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/");
+  return clean || fallback;
+}
+
+function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
+  const fallback = DEFAULT_SETTINGS.opencode;
+  return {
+    cliPath: normalizeOptionalText(value?.cliPath),
+    serverUrl: normalizeOptionalText(value?.serverUrl),
+    autoStart: typeof value?.autoStart === "boolean" ? value.autoStart : fallback.autoStart,
+    hostname: normalizeText(value?.hostname, fallback.hostname),
+    port: normalizePositiveInteger(value?.port, fallback.port, 1024, 65535),
+    providerId: normalizeOptionalText(value?.providerId),
+    modelId: normalizeOptionalText(value?.modelId),
+    agent: normalizeText(value?.agent, fallback.agent),
+    textEnabled: value?.textEnabled !== false,
+    imageEnabled: value?.imageEnabled === true,
+    pdfEnabled: value?.pdfEnabled === true,
+    lastConnectedAt: normalizeNonNegativeNumber(value?.lastConnectedAt),
+    lastError: normalizeOptionalText(value?.lastError)
+  };
+}
+
+function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
+  const fallback = DEFAULT_SETTINGS.knowledgeBase;
+  return {
+    enabled: value?.enabled === true,
+    sessionId: normalizeOptionalText(value?.sessionId),
+    backend: normalizeKnowledgeBaseBackendMode(value?.backend),
+    useCustomRulesFile: value?.useCustomRulesFile === true,
+    rulesFilePath: normalizeKnowledgeBaseRulesPath(value?.rulesFilePath, fallback.rulesFilePath),
+    scheduleEnabled: value?.scheduleEnabled === true,
+    scheduleTime: normalizeScheduleTime(value?.scheduleTime, fallback.scheduleTime),
+    catchUpOnStartup: value?.catchUpOnStartup !== false,
+    lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
+    lastRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastRunStatus),
+    lastReportPath: normalizeOptionalText(value?.lastReportPath),
+    lastError: normalizeOptionalText(value?.lastError),
+    lastSummary: normalizeOptionalText(value?.lastSummary),
+    processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources)
+  };
+}
+
+function normalizeStoredSessions(value: any): StoredSession[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((session: any): StoredSession | null => {
+      const id = normalizeOptionalText(session?.id);
+      if (!id) return null;
+      const messages = Array.isArray(session?.messages) ? session.messages : [];
+      const kind = session?.kind === "knowledge-base" ? "knowledge-base" as const : undefined;
+      return {
+        id,
+        title: normalizeText(session?.title, kind === "knowledge-base" ? KNOWLEDGE_BASE_SESSION_TITLE : "新会话"),
+        ...(kind ? { kind } : {}),
+        threadId: normalizeOptionalText(session?.threadId) || undefined,
+        cwd: normalizeOptionalText(session?.cwd),
+        messages,
+        tokenUsage: session?.tokenUsage,
+        createdAt: normalizeNonNegativeNumber(session?.createdAt),
+        updatedAt: normalizeNonNegativeNumber(session?.updatedAt)
+      };
+    })
+    .filter((session): session is StoredSession => Boolean(session));
+}
+
+function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, KnowledgeBaseProcessedSource> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value)
+    .map(([key, item]: [string, any]) => {
+      const path = normalizeOptionalText(item?.path || key);
+      if (!path) return null;
+      return [
+        path,
+        {
+          path,
+          size: normalizeNonNegativeNumber(item?.size),
+          mtime: normalizeNonNegativeNumber(item?.mtime),
+          digestedAt: normalizeNonNegativeNumber(item?.digestedAt)
+        }
+      ] as const;
+    })
+    .filter((item): item is readonly [string, KnowledgeBaseProcessedSource] => Boolean(item))
+    .sort((left, right) => right[1].digestedAt - left[1].digestedAt)
+    .slice(0, 1000);
+  return Object.fromEntries(entries);
+}
+
+function normalizeScheduleTime(value: any, fallback: string): string {
+  const text = normalizeOptionalText(value);
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(text) ? text : fallback;
 }
 
 function normalizeEditorActionConfigs(value: any, defaults: EditorAiActionConfig[], previousVersion: number): EditorAiActionConfig[] {
@@ -699,6 +936,10 @@ function shouldMigrateEditorStyleInstruction(id: string, value: string, previous
 function normalizeText(value: any, fallback: string): string {
   const text = typeof value === "string" ? value.trim() : "";
   return text || fallback;
+}
+
+function normalizeOptionalText(value: any): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function normalizePositiveInteger(value: any, fallback: number, min: number, max: number): number {
