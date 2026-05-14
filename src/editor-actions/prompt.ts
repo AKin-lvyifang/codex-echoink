@@ -21,6 +21,7 @@ export function resolveEditorActionStyle(settings: EditorAiActionSettings, style
 
 export function buildEditorActionPrompt(input: EditorActionPromptInput): string {
   const modeLabel = input.modeLabel ?? "";
+  const translateAction = isTranslateAction(input.action.id);
   const articleUnderstanding = input.snapshot.articleUnderstanding ?? input.snapshot.noteSummary ?? "";
   const variables: Record<string, string> = {
     action: input.action.label,
@@ -39,7 +40,7 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
     `你正在 Obsidian 笔记中执行「${input.action.label}」。`,
     `当前文件：${input.snapshot.fileName} (${input.snapshot.filePath})`,
     modeLabel ? `写作质量：${modeLabel}` : "",
-    `写作风格：${variables.style}`,
+    translateAction ? "" : `写作风格：${variables.style}`,
     articleUnderstanding ? "当前文章理解：" : "",
     articleUnderstandingNotice,
     articleUnderstanding ? fenceContext(articleUnderstanding) : "",
@@ -56,6 +57,7 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
     "任务要求：",
     renderedTemplate,
     input.action.id === "continue" ? "续写时不要重复原文，只返回应该追加在选中文字后面的正文。" : "",
+    translateAction ? "翻译时只返回英文译文，不要附带中文原文、解释、注释或多个版本。" : "",
     "",
     "输出规则：",
     EDITOR_ACTION_OUTPUT_RULES
@@ -64,6 +66,7 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
 
 export function buildEditorActionReviewPrompt(input: EditorActionPromptInput & { candidateText: string }): string {
   const modeLabel = input.modeLabel ?? "严格";
+  const translateAction = isTranslateAction(input.action.id);
   const articleUnderstanding = input.snapshot.articleUnderstanding ?? input.snapshot.noteSummary ?? "";
   const articleUnderstandingNotice = articleUnderstanding && input.snapshot.articleUnderstandingState === "reusable"
     ? "注意：这份文章理解来自稍早版本。当前选区和前后文优先，文章理解只用于主题、风格、事实边界。"
@@ -72,7 +75,7 @@ export function buildEditorActionReviewPrompt(input: EditorActionPromptInput & {
     `你正在审校 Obsidian 笔记中的「${input.action.label}」候选。`,
     `当前文件：${input.snapshot.fileName} (${input.snapshot.filePath})`,
     `写作质量：${modeLabel}`,
-    `写作风格：${input.style.label}：${input.style.instruction}`,
+    translateAction ? "" : `写作风格：${input.style.label}：${input.style.instruction}`,
     articleUnderstanding ? "当前文章理解：" : "",
     articleUnderstandingNotice,
     articleUnderstanding ? fenceContext(articleUnderstanding) : "",
@@ -90,11 +93,19 @@ export function buildEditorActionReviewPrompt(input: EditorActionPromptInput & {
     fenceContext(input.candidateText),
     "",
     "审校要求：",
-    "1. 检查候选是否保留事实、贴合文章风格、和前后文自然衔接。",
-    "2. 检查是否重复原文、编造硬事实、破坏 Markdown 或输出多个版本。",
-    "3. 如果候选没有问题，原样返回。",
-    "4. 如果有问题，只返回修正后的最终候选正文。",
-    input.action.id === "continue" ? "5. 续写只能返回追加在选中文字后面的正文，不要重复原文，也不要改写后文。" : "",
+    ...(translateAction ? [
+      "1. 检查候选是否准确翻译为自然英文。",
+      "2. 检查是否保留原文事实、数字、专有名词、Markdown 和语气。",
+      "3. 不要恢复中文原文，不要新增解释，不要输出多个版本。",
+      "4. 如果候选没有问题，原样返回。",
+      "5. 如果有问题，只返回修正后的最终英文译文。"
+    ] : [
+      "1. 检查候选是否保留事实、贴合文章风格、和前后文自然衔接。",
+      "2. 检查是否重复原文、编造硬事实、破坏 Markdown 或输出多个版本。",
+      "3. 如果候选没有问题，原样返回。",
+      "4. 如果有问题，只返回修正后的最终候选正文。",
+      input.action.id === "continue" ? "5. 续写只能返回追加在选中文字后面的正文，不要重复原文，也不要改写后文。" : ""
+    ]),
     "",
     "输出规则：",
     EDITOR_ACTION_OUTPUT_RULES
@@ -111,4 +122,8 @@ function renderTemplate(template: string, variables: Record<string, string>): st
 
 function fenceContext(value: string): string {
   return value ? `<<<\n${value}\n>>>` : "<<<\n\n>>>";
+}
+
+function isTranslateAction(actionId: string): boolean {
+  return actionId === "translate";
 }

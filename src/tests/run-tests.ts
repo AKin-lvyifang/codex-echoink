@@ -114,7 +114,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 17);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 18);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -135,7 +135,7 @@ assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsBefore, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsAfter, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 45000);
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.articleUnderstandingCache, {});
-assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue"]);
+assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue", "translate"]);
 assert.equal(DEFAULT_SETTINGS.opencode.autoStart, true);
 assert.equal(DEFAULT_SETTINGS.opencode.hostname, "127.0.0.1");
 assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
@@ -372,7 +372,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 17);
+assert.equal(migratedSettings.settings.settingsVersion, 18);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -399,7 +399,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 17);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 18);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -412,7 +412,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 17);
+assert.equal(workspaceResources.settings.settingsVersion, 18);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -511,7 +511,7 @@ const knowledgeBaseSettings = normalizeSettingsData({
     }
   }
 }).settings;
-assert.equal(knowledgeBaseSettings.settingsVersion, 17);
+assert.equal(knowledgeBaseSettings.settingsVersion, 18);
 assert.equal(knowledgeBaseSettings.agentBackend, "opencode");
 assert.equal(knowledgeBaseSettings.opencode.serverUrl, "http://127.0.0.1:4096/");
 assert.equal(knowledgeBaseSettings.opencode.autoStart, false);
@@ -567,7 +567,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 17);
+assert.equal(apiProviderSettings.settings.settingsVersion, 18);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -626,12 +626,13 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 17);
+assert.equal(editorActionSettings.settingsVersion, 18);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.editorActions.qualityMode, "fast");
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
 assert.equal(editorActionSettings.defaultMode, "plan");
 assert.equal(enabledEditorActionConfigs(editorActionSettings.editorActions).some((action) => action.id === "rewrite"), false);
+assert.equal(enabledEditorActionConfigs(editorActionSettings.editorActions).some((action) => action.id === "translate"), true);
 assert.equal(resolveEditorActionStyle(editorActionSettings.editorActions).id, "clear");
 
 const migratedFastEditorActions = normalizeSettingsData({
@@ -721,6 +722,17 @@ assert.ok(continuePrompt.includes("不要重复原文"));
 assert.ok(continuePrompt.includes("追加在选中文字后面"));
 assert.ok(!continuePrompt.includes("追加或替换"));
 assert.ok(continuePrompt.includes("不要擅自修改未选中的内容"));
+const translateAction = DEFAULT_SETTINGS.editorActions.actions.find((action) => action.id === "translate")!;
+const translatePrompt = buildEditorActionPrompt({
+  action: translateAction,
+  style: resolveEditorActionStyle(DEFAULT_SETTINGS.editorActions),
+  snapshot: selectionSnapshot
+});
+assert.ok(translatePrompt.includes("翻译成英文"));
+assert.ok(translatePrompt.includes("只返回英文译文"));
+assert.ok(translatePrompt.includes("保留 Markdown 格式"));
+assert.ok(!translatePrompt.includes("写作风格："));
+assert.equal((translatePrompt.match(/\[SELECTED\]/g) ?? []).length, 1);
 assert.equal(buildEditorActionUserInput(rewritePrompt)[0].type, "text");
 const promptWithSummary = buildEditorActionPrompt({
   action: rewriteAction,
@@ -772,7 +784,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 17);
+assert.equal(legacyEditorActionSettings.settingsVersion, 18);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));
@@ -789,6 +801,7 @@ assert.equal(customPromptSettings.editorActions.actions.find((action) => action.
 
 assert.equal(cleanEditorActionOutput("```markdown\n候选正文\n```"), "候选正文");
 assert.equal(cleanEditorActionOutput("改写如下：\n候选正文"), "候选正文");
+assert.equal(cleanEditorActionOutput("翻译如下：\nTranslated text"), "Translated text");
 assert.equal(cleanEditorActionOutput("当然可以，以下是扩写后的内容：\n\n- 保留列表\n- 继续表达"), "- 保留列表\n- 继续表达");
 assert.equal(cleanEditorActionOutput("我先确认一下上下文。\n<codex-candidate>\n真正应该写入笔记的正文\n</codex-candidate>"), "真正应该写入笔记的正文");
 assert.equal(cleanEditorActionOutput("思考过程：我先分析选区。\n最终输出：\n候选正文"), "候选正文");
@@ -1027,6 +1040,11 @@ const confirmedContinueCandidate = confirmEditorActionCandidate("hello world", c
 assert.equal(confirmedContinueCandidate.ok, true);
 assert.equal(confirmedContinueCandidate.ok ? confirmedContinueCandidate.text : "", "hello world again");
 assert.deepEqual(editorActionCandidateReplacementRange(continueCandidate), { fromOffset: 11, toOffset: 11 });
+const translateCandidate = { ...candidate, id: "candidate-3", actionId: "translate", candidateText: "world" };
+const confirmedTranslateCandidate = confirmEditorActionCandidate("hello world", translateCandidate);
+assert.equal(confirmedTranslateCandidate.ok, true);
+assert.equal(confirmedTranslateCandidate.ok ? confirmedTranslateCandidate.text : "", "hello world");
+assert.deepEqual(editorActionCandidateReplacementRange(translateCandidate), { fromOffset: 6, toOffset: 11 });
 const conflictedCandidate = confirmEditorActionCandidate("hello there", candidate);
 assert.equal(conflictedCandidate.ok, false);
 assert.match(conflictedCandidate.ok ? "" : conflictedCandidate.reason, /原文已变化/);

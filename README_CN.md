@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian v0.3.0 写作上下文 Harness。" src="docs/images/obsidian-codex-writing-harness-v0.3.0.png">
+  <img width="1024" alt="Codex for Obsidian v0.4.0 自动化知识库运维。" src="docs/images/obsidian-codex-knowledge-v0.4.0.png">
 </a>
 
 <p align="center">
@@ -17,14 +17,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.3.0-0EA5E9?style=flat-square" alt="版本 v0.3.0">
+    <img src="https://img.shields.io/badge/version-v0.4.0-0EA5E9?style=flat-square" alt="版本 v0.4.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.3.0/obsidian-codex-0.3.0.zip"><strong>下载 v0.3.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip"><strong>下载 v0.4.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">最新 Release</a>
 </p>
@@ -48,6 +48,15 @@
 - 大输出和原始详情默认折叠，避免对话被日志淹没。
 - 支持 Agent / Plan 模式、模型选择、思考强度、速度和文件权限模式。
 
+### 知识库自动化运维
+
+- 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
+- 聊天框是主入口：输入 `/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
+- 默认读取 `AGENTS.md`，也支持改成自定义 Markdown 规则文件，例如 `CLAUDE.md`。
+- 支持把公众号、网页、文本资料先收进 Raw Sources。
+- 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
+- 支持手动运行，也支持 Obsidian 打开时的每日维护。
+
 ### 本地优先集成
 
 - 复用本机 Codex CLI 登录状态。
@@ -56,19 +65,49 @@
 - 支持为插件启动的 Codex 子进程配置本地代理。
 - 插件、MCP、Skills 开关只作用于当前 vault，不改 Codex 全局配置。
 
+### OpenCode API 模式
+
+- 保留原来的 Codex CLI 模式，适合复用本机 Codex 登录态。
+- 新增 OpenCode API 模式，适合用本机 OpenCode 做知识库任务。
+- 可检测或连接 OpenCode server，刷新可用模型，并选择当前 OpenCode 模型。
+- 可刷新并选择 OpenCode Agent，让不同知识库工作流使用不同 Agent 配置。
+
 ### 写作上下文 Harness
 
-- 在编辑区对选中文字执行改写、扩写和续写。
+- 在编辑区对选中文字执行改写、扩写、续写和翻译成英文。
 - 支持 `快速`、`质量`、`严格` 三档写作质量模式。
 - 用可见的“文章理解”替代隐藏后台摘要，不再偷偷抢链路。
 - 侧栏写作上下文面板会展示当前笔记、模型、理解状态和结构化文章理解。
-- 小幅连续改写、扩写、续写会复用已有文章理解，避免每次都重新理解全文。
+- 小幅连续改写、扩写、续写或翻译会复用已有文章理解，避免每次都重新理解全文。
 - 返回灰色候选，按 `Enter` 接受，按 `Esc` 取消。
 
 这个功能仍处于实验阶段，默认关闭；但 v0.3.0 已经把它升级成更完整、可见、可控的写作流程。
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.4.0
+
+**新功能：** 知识库自动化运维，用来在 Obsidian 里维护当前 vault。
+
+**更新内容：**
+
+- 新增绑定当前 vault 的常驻知识库频道。
+- 新增命令模板：`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`。
+- 新增公众号、网页和文件收藏入口，把资料先收进 Raw Sources。
+- 新增知识库操作指南文件设置。默认 `AGENTS.md`，也可以改成自定义 Markdown 文件。
+- 新增 OpenCode 模型选择和 OpenCode Agent 选择。
+- 新增编辑区选中文字翻译成英文。
+- 优化知识库设置页对齐、运行状态说明和规则文件选择。
+- 保留安全边界：不自动改写、删除或归档已有 Raw 正文。
+
+**使用方法：**
+
+1. 打开 Codex 侧栏里的 `知识库` 频道。
+2. 在设置页选择知识库后端：`Codex CLI` 或 `OpenCode API`。
+3. 如果使用 OpenCode 模式，先在本机安装 OpenCode，再刷新并选择模型和 Agent。
+4. 在知识库频道输入 `/check 断链检查`、`/maintain 处理新增 raw`、`/outputs 整理本周输出`。
+5. 用快捷入口收藏公众号、网页或文件资料。
 
 ### v0.3.0
 
@@ -128,16 +167,17 @@
 <a id="安装"></a>
 ## 安装
 
-1. 先安装并登录 Codex CLI。
-2. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.3.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.3.0/obsidian-codex-0.3.0.zip)。
-3. 解压后得到 `obsidian-codex` 文件夹。
-4. 放到你的 vault 插件目录：
+1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
+2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.4.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip)。
+4. 解压后得到 `obsidian-codex` 文件夹。
+5. 放到你的 vault 插件目录：
 
 ```text
 <vault>/.obsidian/plugins/obsidian-codex/
 ```
 
-5. 重启 Obsidian，在第三方插件里启用 `Codex for Obsidian`。
+6. 重启 Obsidian，在第三方插件里启用 `Codex for Obsidian`。
 
 插件文件夹里应包含：
 
@@ -155,9 +195,13 @@ obsidian-codex/
 2. 让 Codex 检查、总结、改写或管理当前 vault 里的文件。
 3. 需要时附加笔记、文件、图片、skills 或 MCP 工具。
 4. 通过过程卡片查看命令、编辑、上下文用量和结果证据。
+5. 需要维护知识库时，打开 `知识库` 常驻频道。
+6. 先用 `/check` 做安全体检，再用 `/maintain` 或 `/outputs` 写入结构化知识。
 
 <a id="截图"></a>
 ## 截图
+
+![Codex for Obsidian 知识库自动化流程](docs/images/obsidian-codex-knowledge-usage-v0.4.0.png)
 
 ![Codex for Obsidian 侧栏演示](docs/images/obsidian-codex-vault-answer.png)
 
@@ -186,8 +230,9 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 <a id="使用要求"></a>
 ## 使用要求
 
-- 必须先在本机安装并登录 Codex CLI。自定义 API Provider 仍通过 `codex app-server` 调用，插件不会直连第三方 API。
-- 自定义 API Provider 需要兼容 OpenAI Responses API，例如 `/v1/responses`；只支持 `/v1/chat/completions` 的通用 OpenAI 格式通常不可用。
+- Codex CLI 模式需要先在本机安装并登录 Codex CLI。
+- OpenCode API 模式需要先在本机安装 OpenCode。插件可以连接或启动 OpenCode server，但不会静默安装 OpenCode。
+- Codex CLI 模式下的自定义 API Provider 需要兼容 OpenAI Responses API，例如 `/v1/responses`；只支持 `/v1/chat/completions` 的通用 OpenAI 格式通常不可用。
 - 自定义 API key 会保存在 Obsidian 插件数据里，只建议在可信本机使用。
 - Codex CLI 路径留空时会从 `PATH` 和常见安装目录自动查找；找不到时可在插件设置页手动填写。
 

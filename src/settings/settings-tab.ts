@@ -515,7 +515,7 @@ export class CodexSettingTab extends PluginSettingTab {
       "terminal"
     );
 
-    this.decorateSetting(new Setting(container).setName("启用写作操作").setDesc("开启后，编辑区选中文字右键可选择改写、扩写、续写。").addToggle((toggle) =>
+    this.decorateSetting(new Setting(container).setName("启用写作操作").setDesc("开启后，编辑区选中文字右键可选择改写、扩写、续写、翻译成英文。").addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
         await this.plugin.saveSettings();
@@ -587,7 +587,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const head = row.createDiv({ cls: "codex-api-provider-head" });
       const title = head.createDiv({ cls: "codex-api-provider-title" });
       const icon = title.createSpan({ cls: "codex-resource-row-icon" });
-      setIcon(icon, "sparkles");
+      setIcon(icon, editorActionIcon(action.id));
       title.createSpan({ text: action.label || action.id });
       title.createSpan({ cls: "codex-resource-row-meta", text: action.enabled ? "已启用" : "已关闭" });
       const toggleWrap = head.createDiv({ cls: "codex-api-provider-actions" });
@@ -1335,6 +1335,13 @@ const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; label: s
 
 function normalizeEditorActionQualityModeForUi(value: string): EditorActionQualityMode {
   return value === "fast" || value === "quality" || value === "strict" ? value : "quality";
+}
+
+function editorActionIcon(actionId: string): string {
+  if (actionId === "expand") return "text";
+  if (actionId === "continue") return "forward";
+  if (actionId === "translate") return "languages";
+  return "sparkles";
 }
 
 function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {

@@ -70,6 +70,12 @@ export default class CodexForObsidianPlugin extends Plugin {
       editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "continue")
     });
 
+    this.addCommand({
+      id: "editor-action-translate",
+      name: "翻译选中文字为英文",
+      editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "translate")
+    });
+
     this.addSettingTab(new CodexSettingTab(this));
     this.editorActions = new EditorActionController(this);
     this.editorActions.register();

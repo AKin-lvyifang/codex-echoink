@@ -136,7 +136,7 @@ export function upsertArticleUnderstandingCache(
 
 export function buildArticleUnderstandingPrompt(source: EditorActionSummarySource): string {
   return [
-    "请为这篇 Obsidian 笔记生成一份“文章理解”，供后续局部改写、扩写、续写使用。",
+    "请为这篇 Obsidian 笔记生成一份“文章理解”，供后续局部改写、扩写、续写、翻译使用。",
     "你只需要理解文章，不要生成改写正文。",
     "要求：",
     "1. 不要新增原文没有的信息。",
@@ -181,7 +181,7 @@ export function makeArticleUnderstandingFingerprint(text: string): ArticleUnders
 
 export function buildEditorActionSummaryPrompt(source: EditorActionSummarySource): string {
   return [
-    "请为这篇 Obsidian 笔记生成一份简洁摘要，用于后续局部改写、扩写、续写时理解全文语境。",
+    "请为这篇 Obsidian 笔记生成一份简洁摘要，用于后续局部改写、扩写、续写、翻译时理解全文语境。",
     "要求：",
     "1. 只返回摘要正文，不解释。",
     "2. 控制在 300-500 字以内。",

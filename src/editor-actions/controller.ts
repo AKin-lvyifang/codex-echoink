@@ -180,10 +180,9 @@ export class EditorActionController {
       setEditorActionCandidate(editor, null);
       editor.replaceRange(candidate.candidateText, editor.offsetToPos(range.fromOffset), editor.offsetToPos(range.toOffset), "codex-editor-action");
       this.active = null;
-      const isContinue = candidate.actionId === "continue";
-      const message = isContinue ? "已续写" : "已替换";
+      const message = confirmedActionMessage(candidate.actionId);
       this.plugin.getCodexView()?.setEditorActionStatus({ status: "confirmed", message });
-      new Notice(isContinue ? "已插入 Codex 续写" : "已替换为 Codex 候选");
+      new Notice(confirmedActionNotice(candidate.actionId));
     } finally {
       this.confirming = false;
     }
@@ -194,5 +193,18 @@ export class EditorActionController {
 function actionIcon(actionId: string): string {
   if (actionId === "expand") return "text";
   if (actionId === "continue") return "forward";
+  if (actionId === "translate") return "languages";
   return "wand-sparkles";
+}
+
+function confirmedActionMessage(actionId: string): string {
+  if (actionId === "continue") return "已续写";
+  if (actionId === "translate") return "已翻译";
+  return "已替换";
+}
+
+function confirmedActionNotice(actionId: string): string {
+  if (actionId === "continue") return "已插入 Codex 续写";
+  if (actionId === "translate") return "已替换为英文译文";
+  return "已替换为 Codex 候选";
 }

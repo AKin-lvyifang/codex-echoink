@@ -282,6 +282,20 @@ const DEFAULT_EDITOR_ACTIONS: EditorAiActionConfig[] = [
       "4. 不要总结解释，不要输出多个版本。",
       "5. 只返回续写候选正文。"
     ].join("\n")
+  },
+  {
+    id: "translate",
+    label: "翻译成英文",
+    enabled: true,
+    promptTemplate: [
+      "请把选中文字翻译成英文。",
+      "要求：",
+      "1. 只返回英文译文，不要保留中文原文。",
+      "2. 准确保留原文含义、事实、数字、专有名词和语气。",
+      "3. 保留 Markdown 结构、链接、列表、加粗、代码片段和换行。",
+      "4. 不要解释，不要输出多个版本。",
+      "5. 如果原文已有英文，保持自然英文表达，可轻微润色但不要新增信息。"
+    ].join("\n")
   }
 ];
 
@@ -321,7 +335,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 17,
+  settingsVersion: 18,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
