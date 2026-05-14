@@ -1059,6 +1059,7 @@ body.theme-light .codex-code-wrapper pre {
   min-width: 0;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .codex-rules-file-value {
@@ -1093,7 +1094,8 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-rules-file-note {
-  grid-column: 2;
+  grid-column: 1 / -1;
+  margin-top: 0;
 }
 
 .codex-editor-actions-section {
