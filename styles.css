@@ -1054,6 +1054,48 @@ body.theme-light .codex-code-wrapper pre {
   resize: vertical;
 }
 
+.codex-rules-file-picker {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.codex-rules-file-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.codex-rules-file-value span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-rules-file-icon,
+.codex-rules-file-icon svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.codex-rules-file-note {
+  grid-column: 2;
+}
+
 .codex-editor-actions-section {
   display: grid;
   gap: 8px;

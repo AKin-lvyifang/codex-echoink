@@ -706,6 +706,21 @@ export function filterEnabledSkills(skills: CodexSkill[], overrides: Record<stri
   return skills.filter((skill) => resourceEnabled(overrides, skill.path || skill.name, skill.enabled !== false));
 }
 
+export function getKnowledgeBaseRulesFileChoices(paths: string[]): string[] {
+  const seen = new Set<string>();
+  for (const item of paths) {
+    const raw = String(item ?? "").replace(/\\/g, "/").trim();
+    if (raw.split("/").some((part) => part === "..")) continue;
+    const clean = normalizeKnowledgeBaseRulesPath(item, "");
+    if (!clean || !/\.md$/i.test(clean)) continue;
+    seen.add(clean);
+  }
+  return Array.from(seen).sort((left, right) => {
+    const byRank = rulesFileChoiceRank(left) - rulesFileChoiceRank(right);
+    return byRank || left.localeCompare(right);
+  });
+}
+
 export function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -742,6 +757,13 @@ function normalizeKnowledgeBaseRulesPath(value: any, fallback: string): string {
     .filter((part) => part && part !== "." && part !== "..")
     .join("/");
   return clean || fallback;
+}
+
+function rulesFileChoiceRank(value: string): number {
+  const upper = value.toUpperCase();
+  if (upper === "AGENTS.MD") return 0;
+  if (upper === "CLAUDE.MD") return 1;
+  return value.includes("/") ? 3 : 2;
 }
 
 function normalizeOpenCodeSettings(value: any): OpenCodeSettings {

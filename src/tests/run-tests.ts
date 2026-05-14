@@ -36,6 +36,7 @@ import {
   getActiveApiProvider,
   ensureModelChoices,
   filterEnabledSkills,
+  getKnowledgeBaseRulesFileChoices,
   ensureKnowledgeBaseSession,
   providerModelLabel,
   providerConnectionLabel,
@@ -87,7 +88,7 @@ import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
-import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "../knowledge-base/report";
+import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -138,6 +139,10 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, "AGENTS.md");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
+assert.deepEqual(
+  getKnowledgeBaseRulesFileChoices(["docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
+  ["AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
+);
 const freshInstallEditorActions = normalizeSettingsData({}).settings.editorActions;
 assert.equal(freshInstallEditorActions.qualityMode, "quality");
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "fast").contextCharsBefore, 500);
@@ -1247,6 +1252,10 @@ try {
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
   assert.equal(isLintOnlyKnowledgeBaseReport(reportExcerpt!), true);
   assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n执行 Ingest + Lint"), false);
+  const recoveredSummary = recoveredLintReportSummary(secondDiscovery.reportPath);
+  assert.ok(recoveredSummary.includes(secondDiscovery.reportPath));
+  assert.ok(!recoveredSummary.includes("created:"));
+  assert.ok(!recoveredSummary.includes("# 体检报告"));
   assert.equal(await readKnowledgeBaseReportExcerpt(kbVault, "outputs/missing.md"), null);
 } finally {
   await rm(kbVault, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
+import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFile, type FuzzyMatch } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { detectCodexCommand } from "../core/codex-service";
 import { detectOpenCodeCommand } from "../core/opencode-models";
@@ -15,6 +15,7 @@ import {
   ensureModelChoices,
   getActiveApiProvider,
   getApiProviderModels,
+  getKnowledgeBaseRulesFileChoices,
   newId,
   providerModelLabel,
   providerConnectionLabel,
@@ -268,7 +269,6 @@ export class CodexSettingTab extends PluginSettingTab {
     summary.createDiv({ cls: "codex-resource-note", text: `操作指南：${settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md"}${settings.useCustomRulesFile ? "（自定义）" : "（默认）"}` });
     if (settings.lastReportPath) summary.createDiv({ cls: "codex-resource-note", text: `最近报告：${settings.lastReportPath}` });
     if (settings.lastError) summary.createDiv({ cls: "codex-resource-error", text: settings.lastError });
-    if (settings.lastSummary) summary.createDiv({ cls: "codex-resource-note", text: settings.lastSummary.slice(0, 180) });
 
     const actions = summary.createDiv({ cls: "codex-api-provider-actions" });
     const openChannel = actions.createEl("button", { cls: "codex-resource-tab", text: "打开知识库频道", attr: { type: "button" } });
@@ -277,7 +277,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.display();
     };
 
-    this.decorateSetting(new Setting(wrapper).setName("启用知识库管理").addToggle((toggle) =>
+    this.decorateSetting(new Setting(wrapper).setName("启用知识库管理").setDesc("开启后，插件才会按下面的每日自动维护和启动补跑设置自动运行；关闭后不会自动跑任务，但仍可打开右侧知识库频道手动对话、收集和维护。").addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
         await this.plugin.saveSettings();
@@ -308,11 +308,7 @@ export class CodexSettingTab extends PluginSettingTab {
         this.display();
       })
     ), "file-cog");
-    this.addProviderText(wrapper, "知识库操作指南文件", settings.rulesFilePath, settings.useCustomRulesFile ? "CLAUDE.md" : "AGENTS.md", async (value) => {
-      settings.rulesFilePath = sanitizeRelativeSettingsPath(value.trim() || (settings.useCustomRulesFile ? "CLAUDE.md" : "AGENTS.md"));
-      await this.plugin.saveSettings();
-      this.display();
-    });
+    this.addKnowledgeBaseRulesFilePicker(wrapper);
 
     this.decorateSetting(new Setting(wrapper).setName("每日自动维护").setDesc("仅在 Obsidian 打开时运行；错过后下次打开可补跑。").addToggle((toggle) =>
       toggle.setValue(settings.scheduleEnabled).onChange(async (value) => {
@@ -775,6 +771,68 @@ export class CodexSettingTab extends PluginSettingTab {
     input.onchange = () => void onChange(input.value);
   }
 
+  private addKnowledgeBaseRulesFilePicker(container: HTMLElement): void {
+    const settings = this.plugin.settings.knowledgeBase;
+    const currentPath = settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md";
+    const field = container.createDiv({ cls: "codex-api-provider-field" });
+    field.createDiv({ cls: "codex-api-provider-label", text: "知识库操作指南文件" });
+    const picker = field.createDiv({ cls: "codex-rules-file-picker" });
+    const valueButton = picker.createEl("button", {
+      cls: "codex-rules-file-value",
+      attr: { type: "button", title: "从当前 Vault 选择 Markdown 文件" }
+    });
+    const valueIcon = valueButton.createSpan({ cls: "codex-rules-file-icon" });
+    setIcon(valueIcon, "file-cog");
+    valueButton.createSpan({ text: currentPath });
+    valueButton.onclick = () => this.openKnowledgeBaseRulesFilePicker();
+
+    const chooseButton = picker.createEl("button", {
+      cls: "codex-resource-tab",
+      text: "选择文件",
+      attr: { type: "button" }
+    });
+    chooseButton.onclick = () => this.openKnowledgeBaseRulesFilePicker();
+
+    const resetButton = picker.createEl("button", {
+      cls: "codex-resource-tab",
+      text: "使用 AGENTS.md",
+      attr: { type: "button" }
+    });
+    resetButton.disabled = !settings.useCustomRulesFile && currentPath === "AGENTS.md";
+    resetButton.onclick = async () => {
+      settings.useCustomRulesFile = false;
+      settings.rulesFilePath = "AGENTS.md";
+      await this.plugin.saveSettings();
+      this.display();
+    };
+
+    field.createDiv({
+      cls: "codex-resource-note codex-rules-file-note",
+      text: settings.useCustomRulesFile
+        ? "已启用自定义指南。任务只读取这个文件，不合并 AGENTS.md。"
+        : "默认读取 Vault 根目录 AGENTS.md；选择文件后会自动启用自定义指南。"
+    });
+  }
+
+  private openKnowledgeBaseRulesFilePicker(): void {
+    const filesByPath = new Map(this.app.vault.getMarkdownFiles().map((file) => [file.path, file]));
+    const files = getKnowledgeBaseRulesFileChoices(Array.from(filesByPath.keys()))
+      .map((filePath) => filesByPath.get(filePath))
+      .filter((file): file is TFile => file instanceof TFile);
+    if (!files.length) {
+      new Notice("当前 Vault 没有可选的 Markdown 文件。");
+      return;
+    }
+    new KnowledgeBaseRulesFileSuggestModal(this.app, files, async (file) => {
+      const settings = this.plugin.settings.knowledgeBase;
+      settings.useCustomRulesFile = true;
+      settings.rulesFilePath = sanitizeRelativeSettingsPath(file.path);
+      await this.plugin.saveSettings();
+      new Notice(`已选择知识库指南：${settings.rulesFilePath}`);
+      this.display();
+    }).open();
+  }
+
   private addProviderTextArea(
     container: HTMLElement,
     label: string,
@@ -1080,6 +1138,34 @@ function detectOpenCodePath(customPath: string): string {
 
 function agentBackendLabel(value: AgentBackendMode): string {
   return value === "opencode" ? "OpenCode API" : "Codex CLI";
+}
+
+class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
+  constructor(app: App, private readonly files: TFile[], private readonly onChoose: (file: TFile) => Promise<void>) {
+    super(app);
+    this.setPlaceholder("选择知识库操作指南 Markdown 文件");
+    this.emptyStateText = "当前 Vault 没有匹配的 Markdown 文件";
+    this.limit = 40;
+  }
+
+  getItems(): TFile[] {
+    return this.files;
+  }
+
+  getItemText(file: TFile): string {
+    return file.path;
+  }
+
+  renderSuggestion(item: FuzzyMatch<TFile>, el: HTMLElement): void {
+    const path = item.item.path;
+    const name = path.split("/").pop() ?? path;
+    el.createDiv({ cls: "suggestion-title", text: name });
+    el.createDiv({ cls: "suggestion-note", text: path });
+  }
+
+  onChooseItem(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
+    void this.onChoose(file);
+  }
 }
 
 function normalizeAgentBackendForUi(value: string): AgentBackendMode {

@@ -11,7 +11,7 @@ import type { StoredAttachment } from "../settings/settings";
 import type { CodexNotification, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
-import { readKnowledgeBaseReportExcerpt } from "./report";
+import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBasePrompt } from "./prompt";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
@@ -309,7 +309,7 @@ export class KnowledgeBaseManager {
           settings.lastRunStatus = "success";
           settings.lastReportPath = discovery.reportPath;
           settings.lastError = "";
-          settings.lastSummary = `体检报告已生成。Codex 返回了失败状态，但报告文件存在，已按体检完成处理。\n\n${reportExcerpt}`.slice(0, 1000);
+          settings.lastSummary = recoveredLintReportSummary(discovery.reportPath);
           await this.plugin.saveSettings(true);
           new Notice("知识库体检完成，Codex 状态有警告");
           return {
