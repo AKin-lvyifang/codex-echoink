@@ -21,6 +21,7 @@ export interface KnowledgeBaseDashboardDirectory {
 
 export type KnowledgeBaseDashboardHealthStatus = "healthy" | "risk" | "bad";
 export type KnowledgeBaseDashboardCheckStatus = "success" | "failed" | "none";
+export type KnowledgeBaseDashboardCheckFreshnessStatus = "fresh" | "stale" | "missing";
 
 export interface KnowledgeBaseDashboardHealth {
   status: KnowledgeBaseDashboardHealthStatus;
@@ -29,6 +30,14 @@ export interface KnowledgeBaseDashboardHealth {
   reasons: string[];
   lastCheckAt: number;
   streakDays: number;
+}
+
+export interface KnowledgeBaseDashboardCheckFreshness {
+  status: KnowledgeBaseDashboardCheckFreshnessStatus;
+  label: string;
+  lastCheckAt: number;
+  daysSinceCheck: number;
+  reasons: string[];
 }
 
 export interface KnowledgeBaseDashboardWikiGroup {
@@ -85,6 +94,7 @@ export interface KnowledgeBaseDashboardSnapshot {
     todayCount: number;
   };
   health: KnowledgeBaseDashboardHealth;
+  checkFreshness: KnowledgeBaseDashboardCheckFreshness;
   checkHeatmap: KnowledgeBaseDashboardHeatmapDay[];
   warnings: string[];
 }
@@ -138,6 +148,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     inboxCount: inbox.fileCount,
     warnings
   });
+  const checkFreshness = buildCheckFreshness(settings.healthHistory ?? [], generatedAt, Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt));
 
   return {
     generatedAt,
@@ -185,6 +196,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
       todayCount: inboxTodayCount
     },
     health,
+    checkFreshness,
     checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt)),
     warnings
   };
@@ -342,7 +354,6 @@ interface HealthInput {
 function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const critical: string[] = [];
   const risk: string[] = [];
-  const freshness: string[] = [];
   if (!input.rulesFileExists) critical.push("规则文件缺失");
   if (!input.rawExists) critical.push("raw 目录缺失");
   if (!input.wikiExists) critical.push("wiki 目录缺失");
@@ -354,13 +365,6 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const latestCheckAt = Math.max(latestHistory?.at ?? 0, input.latestExternalCheckAt);
   const latestCheckFailed = Boolean(latestHistory && latestHistory.status === "failed" && latestHistory.at >= input.latestExternalCheckAt);
   if (latestCheckFailed) critical.push("最近体检失败");
-  if (!latestCheckAt) {
-    freshness.push("没有体检记录，建议运行 /check");
-  } else {
-    const days = daysBetweenDateKeys(formatLocalDateKey(latestCheckAt), formatLocalDateKey(input.generatedAt));
-    if (days >= 5) freshness.push(`${days} 天未体检`);
-    else if (days >= 3) freshness.push(`${days} 天未体检`);
-  }
 
   if (input.rawChangedCount > 20) critical.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
   else if (input.rawChangedCount > 5) risk.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
@@ -386,11 +390,10 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
     staleItems: input.latestReportFindings.staleItems
   });
   const scoreStatus: KnowledgeBaseDashboardHealthStatus = critical.length || score < 60 ? "bad" : risk.length || score < 85 ? "risk" : "healthy";
-  const freshnessStatus: KnowledgeBaseDashboardHealthStatus = freshness.some((item) => item.startsWith("5") || /^[6-9]\d* 天/.test(item)) ? "bad" : freshness.length ? "risk" : "healthy";
-  const status = worseHealthStatus(scoreStatus, freshnessStatus);
+  const status = scoreStatus;
   const label = status === "healthy" ? "健康" : status === "risk" ? "有风险" : "需处理";
   const scoreReasons = [...critical, ...risk];
-  const reasons = scoreReasons.length || freshness.length ? [...scoreReasons, ...freshness] : ["体检结果正常，待处理数量在安全范围"];
+  const reasons = scoreReasons.length ? scoreReasons : ["知识库结构正常，待处理数量在安全范围"];
   return {
     status,
     label,
@@ -401,16 +404,43 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   };
 }
 
+function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0): KnowledgeBaseDashboardCheckFreshness {
+  const normalized = normalizeHealthHistory(history);
+  const latestHistory = latestHealthEntry(normalized);
+  const latestCheckAt = Math.max(latestHistory?.at ?? 0, externalCheckAt);
+  if (!latestCheckAt) {
+    return {
+      status: "missing",
+      label: "无记录",
+      lastCheckAt: 0,
+      daysSinceCheck: -1,
+      reasons: ["没有体检记录；这只代表缺少确认，不代表知识库已经坏了"]
+    };
+  }
+  const days = daysBetweenDateKeys(formatLocalDateKey(latestCheckAt), formatLocalDateKey(generatedAt));
+  if (days >= 3) {
+    return {
+      status: "stale",
+      label: "建议体检",
+      lastCheckAt: latestCheckAt,
+      daysSinceCheck: days,
+      reasons: [`${days} 天未体检；如 Raw/Inbox 没有积压，健康分不受影响`]
+    };
+  }
+  return {
+    status: "fresh",
+    label: "已确认",
+    lastCheckAt: latestCheckAt,
+    daysSinceCheck: days,
+    reasons: [days === 0 ? "今天已确认" : `${days} 天前已确认`]
+  };
+}
+
 function healthScore(input: { criticalCount: number; riskCount: number; rawChangedCount: number; inboxCount: number; brokenLinks: number; orphanPages: number; staleItems: number }): number {
   const rawPenalty = input.rawChangedCount > 20 ? 20 : input.rawChangedCount > 5 ? 10 : 0;
   const inboxPenalty = input.inboxCount > 30 ? 20 : input.inboxCount > 10 ? 10 : 0;
   const reportPenalty = Math.min(24, input.brokenLinks * 6) + Math.min(12, input.orphanPages * 4) + Math.min(8, input.staleItems * 2);
   return Math.max(0, Math.min(100, 100 - input.criticalCount * 24 - input.riskCount * 2 - rawPenalty - inboxPenalty - reportPenalty));
-}
-
-function worseHealthStatus(left: KnowledgeBaseDashboardHealthStatus, right: KnowledgeBaseDashboardHealthStatus): KnowledgeBaseDashboardHealthStatus {
-  const rank: Record<KnowledgeBaseDashboardHealthStatus, number> = { healthy: 0, risk: 1, bad: 2 };
-  return rank[left] >= rank[right] ? left : right;
 }
 
 function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: number): KnowledgeBaseDashboardWikiGroup[] {

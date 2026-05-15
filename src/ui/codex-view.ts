@@ -983,7 +983,7 @@ export class CodexView extends ItemView {
     const overview = section.createDiv({ cls: "codex-kb-dashboard-health-overview" });
     const status = overview.createDiv({ cls: `codex-kb-dashboard-health-badge codex-kb-health-${snapshot.health.status}` });
     status.createSpan({ cls: "codex-kb-status-dot" });
-    status.createSpan({ text: snapshot.health.label });
+    status.createSpan({ text: `健康 ${snapshot.health.label}` });
 
     const score = overview.createDiv({ cls: "codex-kb-dashboard-score" });
     score.createSpan({ cls: "codex-kb-dashboard-score-label", text: `健康分 ${snapshot.health.score}` });
@@ -991,8 +991,13 @@ export class CodexView extends ItemView {
     const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill codex-kb-health-${snapshot.health.status}` });
     fill.style.width = `${Math.max(0, Math.min(100, snapshot.health.score))}%`;
 
+    const freshness = overview.createDiv({ cls: `codex-kb-dashboard-health-badge codex-kb-freshness-${snapshot.checkFreshness.status}` });
+    freshness.createSpan({ cls: "codex-kb-status-dot" });
+    freshness.createSpan({ text: `体检 ${snapshot.checkFreshness.label}` });
+
     const facts = section.createDiv({ cls: "codex-kb-dashboard-facts" });
-    this.addKnowledgeDashboardFact(facts, "最近体检", snapshot.health.lastCheckAt ? formatAbsoluteTime(snapshot.health.lastCheckAt) : "无记录");
+    this.addKnowledgeDashboardFact(facts, "最近体检", snapshot.checkFreshness.lastCheckAt ? formatAbsoluteTime(snapshot.checkFreshness.lastCheckAt) : "无记录");
+    this.addKnowledgeDashboardFact(facts, "新鲜度", snapshot.checkFreshness.daysSinceCheck >= 0 ? `${snapshot.checkFreshness.daysSinceCheck} 天前确认` : "无记录");
     this.addKnowledgeDashboardFact(facts, "连续体检", snapshot.health.streakDays ? `${snapshot.health.streakDays} 天` : "0 天");
     this.addKnowledgeDashboardFact(facts, "最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at));
     this.addKnowledgeDashboardFact(facts, "Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失");
@@ -1000,6 +1005,9 @@ export class CodexView extends ItemView {
     const reasons = section.createDiv({ cls: "codex-kb-dashboard-reasons" });
     for (const reason of snapshot.health.reasons) {
       reasons.createDiv({ cls: "codex-kb-dashboard-reason", text: reason });
+    }
+    for (const reason of snapshot.checkFreshness.reasons) {
+      reasons.createDiv({ cls: "codex-kb-dashboard-reason codex-kb-dashboard-reason-muted", text: reason });
     }
   }
 

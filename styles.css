@@ -1481,6 +1481,18 @@ body.theme-light .codex-code-wrapper pre {
   background: var(--color-red);
 }
 
+.codex-kb-freshness-fresh .codex-kb-status-dot {
+  background: var(--color-green);
+}
+
+.codex-kb-freshness-stale .codex-kb-status-dot {
+  background: var(--color-orange);
+}
+
+.codex-kb-freshness-missing .codex-kb-status-dot {
+  background: var(--text-faint);
+}
+
 .codex-kb-dashboard-muted,
 .codex-kb-dashboard-error {
   min-width: 0;
@@ -1552,7 +1564,7 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-kb-dashboard-health-overview {
   display: grid;
-  grid-template-columns: max-content minmax(120px, 1fr);
+  grid-template-columns: max-content minmax(120px, 1fr) max-content;
   gap: 10px;
   align-items: center;
   min-width: 0;
@@ -1634,6 +1646,10 @@ body.theme-light .codex-code-wrapper pre {
   background: var(--background-primary);
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.codex-kb-dashboard-reason-muted {
+  color: var(--text-faint);
 }
 
 .codex-kb-dashboard-table {

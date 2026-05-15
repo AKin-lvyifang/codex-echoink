@@ -1495,7 +1495,8 @@ try {
   await writeFile(path.join(dashboardVault, "AGENTS.md"), "# Rules\n", "utf8");
   await writeFile(path.join(dashboardVault, "raw", "index.md"), "# Raw\n", "utf8");
   await writeFile(path.join(dashboardVault, "raw", "articles", "old.md"), "# Old\n", "utf8");
-  await writeFile(path.join(dashboardVault, "raw", "articles", "new.md"), "# New\n", "utf8");
+  const newPath = path.join(dashboardVault, "raw", "articles", "new.md");
+  await writeFile(newPath, "# New\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "index.md"), "# Wiki\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), "# AI\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "today.md"), "# Today\n", "utf8");
@@ -1514,6 +1515,7 @@ try {
   await utimes(path.join(dashboardVault, "wiki", "content", "old.md"), threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "inbox", "old.md"), threeDaysAgo, threeDaysAgo);
   const oldStat = await stat(oldPath);
+  const newStat = await stat(newPath);
   const dashboardSettings = normalizeSettingsData({
     settingsVersion: 19,
     knowledgeBase: {
@@ -1550,8 +1552,13 @@ try {
   assert.equal(dashboard.health.label, "健康");
   assert.equal(dashboard.health.streakDays, 2);
   assert.equal(dashboard.health.lastCheckAt, today.getTime());
+  assert.equal(dashboard.checkFreshness.status, "fresh");
+  assert.equal(dashboard.checkFreshness.label, "已确认");
   assert.equal(dashboard.checkHeatmap.at(-1)?.status, "success");
   assert.equal(dashboard.checkHeatmap.length, 14);
+
+  await utimes(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), threeDaysAgo, threeDaysAgo);
+  await utimes(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), threeDaysAgo, threeDaysAgo);
 
   const riskSettings = normalizeSettingsData({
     settingsVersion: 19,
@@ -1566,8 +1573,29 @@ try {
     }
   }).settings.knowledgeBase;
   const riskDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, riskSettings);
-  assert.notEqual(riskDashboard.health.status, "bad");
+  assert.equal(riskDashboard.health.status, "healthy");
   assert.ok(!riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
+  assert.equal(riskDashboard.checkFreshness.status, "stale");
+  assert.ok(riskDashboard.checkFreshness.reasons.some((reason) => reason.includes("3 天未体检")));
+
+  const staleNoNewSettings = normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(threeDaysAgo), status: "success", at: threeDaysAgo.getTime() }
+      ],
+      processedSources: {
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 },
+        "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, digestedAt: 101 }
+      }
+    }
+  }).settings.knowledgeBase;
+  const staleNoNewDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, staleNoNewSettings);
+  assert.equal(staleNoNewDashboard.raw.changedCount, 0);
+  assert.equal(staleNoNewDashboard.health.status, "healthy");
+  assert.equal(staleNoNewDashboard.health.score, 100);
+  assert.equal(staleNoNewDashboard.checkFreshness.status, "stale");
 
   const missingRulesSettings = normalizeSettingsData({
     settingsVersion: 19,
@@ -1587,7 +1615,8 @@ try {
   const legacyDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({ settingsVersion: 19 }).settings.knowledgeBase);
   assert.notEqual(legacyDashboard.health.status, "bad");
   assert.ok(!legacyDashboard.health.reasons.includes("从未体检"));
-  assert.equal(legacyDashboard.checkHeatmap.at(-1)?.status, "success");
+  assert.equal(legacyDashboard.checkFreshness.status, "stale");
+  assert.equal(legacyDashboard.checkHeatmap.at(-1)?.status, "none");
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
 }
@@ -1649,6 +1678,7 @@ try {
   assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("过时/草稿 1 处")));
   assert.ok(!externalDashboard.health.reasons.includes("从未体检"));
   assert.equal(externalDashboard.health.lastCheckAt, externalToday.getTime());
+  assert.equal(externalDashboard.checkFreshness.status, "fresh");
   assert.equal(externalDashboard.checkHeatmap.at(-1)?.status, "success");
 } finally {
   await rm(externalMaintenanceVault, { recursive: true, force: true });
