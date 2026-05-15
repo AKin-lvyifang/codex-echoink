@@ -49,7 +49,9 @@
 ### Knowledge Base Operations
 
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
-- Treats chat as the main control surface: type `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
+- Treats chat as the main control surface: type `/init`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
+- Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
+- Shows a pinned Knowledge status panel above the channel: rules file, initialization state, Raw/Wiki/Outputs/Inbox counts, changed Raw files, latest report, and manual refresh.
 - Reads `AGENTS.md` by default, or a custom Markdown rules file such as `CLAUDE.md` when configured.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
@@ -103,8 +105,10 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 1. Open the `Knowledge` channel in the Codex sidebar.
 2. In settings, choose `Codex CLI` or `OpenCode API` as the knowledge base backend.
 3. For OpenCode mode, install OpenCode locally, then refresh and select a model and Agent.
-4. Type `/check broken links`, `/maintain new raw sources`, or `/outputs weekly notes` in the knowledge channel.
-5. Use the capture shortcuts to collect WeChat articles, web pages, or files into Raw Sources.
+4. For a new vault, type `/init` to preview the LLM Wiki setup; type `/init confirm` only after reviewing it.
+5. Use the pinned status panel to check rules, Raw changes, latest report, and Inbox/Outputs counts.
+6. Type `/check broken links`, `/maintain new raw sources`, or `/outputs weekly notes` in the knowledge channel.
+7. Use the capture shortcuts to collect WeChat articles, web pages, or files into Raw Sources.
 
 ### v0.3.0
 
@@ -191,7 +195,7 @@ obsidian-codex/
 3. Attach notes, files, images, skills, or MCP tools when needed.
 4. Review the process cards for commands, edits, context usage, and evidence.
 5. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
-6. Start with `/check` for a safe health check, then use `/maintain` or `/outputs` when you want it to write structured knowledge.
+6. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/maintain` or `/outputs` when you want it to write structured knowledge.
 
 ## Screenshots
 

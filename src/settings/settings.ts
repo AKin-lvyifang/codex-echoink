@@ -78,6 +78,7 @@ export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type AgentBackendMode = "codex-cli" | "opencode";
 export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
+export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 
 export interface OpenCodeSettings {
@@ -117,7 +118,16 @@ export interface KnowledgeBaseSettings {
   lastReportPath: string;
   lastError: string;
   lastSummary: string;
+  initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
+}
+
+export interface KnowledgeBaseInitializationSettings {
+  status: KnowledgeBaseInitStatus;
+  initializedAt: number;
+  rulesFilePath: string;
+  templateVersion: string;
+  lastPreviewSummary: string;
 }
 
 export interface ApiProviderConfig {
@@ -335,7 +345,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 18,
+  settingsVersion: 19,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -400,6 +410,13 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastReportPath: "",
     lastError: "",
     lastSummary: "",
+    initialization: {
+      status: "not-started",
+      initializedAt: 0,
+      rulesFilePath: "",
+      templateVersion: "v0.5",
+      lastPreviewSummary: ""
+    },
     processedSources: {}
   },
   workspaceResources: {
@@ -801,6 +818,10 @@ function normalizeKnowledgeBaseRunStatus(value: any): KnowledgeBaseRunStatus {
   return value === "running" || value === "success" || value === "failed" || value === "canceled" ? value : "idle";
 }
 
+function normalizeKnowledgeBaseInitStatus(value: any): KnowledgeBaseInitStatus {
+  return value === "preview-ready" || value === "initialized" || value === "failed" ? value : "not-started";
+}
+
 function normalizeKnowledgeBaseRulesPath(value: any, fallback: string): string {
   const raw = normalizeText(value, fallback).replace(/\\/g, "/").trim();
   const withoutLeadingSlash = raw.replace(/^\/+/, "");
@@ -853,7 +874,19 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
+    initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
     processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources)
+  };
+}
+
+function normalizeKnowledgeBaseInitialization(value: any): KnowledgeBaseInitializationSettings {
+  const fallback = DEFAULT_SETTINGS.knowledgeBase.initialization;
+  return {
+    status: normalizeKnowledgeBaseInitStatus(value?.status),
+    initializedAt: normalizeNonNegativeNumber(value?.initializedAt),
+    rulesFilePath: normalizeKnowledgeBaseRulesPath(value?.rulesFilePath, fallback.rulesFilePath),
+    templateVersion: normalizeText(value?.templateVersion, fallback.templateVersion),
+    lastPreviewSummary: normalizeOptionalText(value?.lastPreviewSummary)
   };
 }
 

@@ -13,6 +13,8 @@ import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
+import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
+import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
 import { buildKnowledgeBasePrompt } from "./prompt";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 
@@ -29,6 +31,7 @@ type CodexKbWaiter = {
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed";
   message: string;
+  followUpCommand?: string;
 }
 
 const MAX_ATTACHED_SOURCES = 20;
@@ -46,6 +49,14 @@ export class KnowledgeBaseManager {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   register(): void {
+    this.plugin.addCommand({
+      id: "knowledge-base-initialize",
+      name: "知识库：初始化 LLM Wiki",
+      callback: async () => {
+        await this.plugin.activateKnowledgeBaseChannel();
+        this.plugin.getCodexView()?.fillKnowledgeBaseCommand("/init ");
+      }
+    });
     this.plugin.addCommand({
       id: "knowledge-base-maintain-now",
       name: "知识库：立即维护",
@@ -99,6 +110,10 @@ export class KnowledgeBaseManager {
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  async getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> {
+    return buildKnowledgeBaseDashboardSnapshot(this.plugin.getVaultPath(), this.plugin.settings.knowledgeBase);
   }
 
   async cancelMaintenance(): Promise<void> {
@@ -169,6 +184,19 @@ export class KnowledgeBaseManager {
       if (command.intent === "help") {
         return { status: "success", message: knowledgeBaseHelpText() };
       }
+      if (command.intent === "init") {
+        if (command.confirm) {
+          const preview = await this.previewInitialization();
+          const result = await this.executeInitialization(preview);
+          return {
+            status: "success",
+            message: result.summary,
+            followUpCommand: "/check 初始化后体检当前 vault，只报告问题，不移动文件，不删除文件。"
+          };
+        }
+        const preview = await this.previewInitialization();
+        return { status: "success", message: preview.summary };
+      }
       if (command.intent === "cancel") {
         await this.cancelMaintenance();
         return { status: "success", message: "已请求取消当前知识库任务。" };
@@ -208,11 +236,42 @@ export class KnowledgeBaseManager {
         message: paths.length ? `已收集到：\n${paths.map((item) => `- ${item}`).join("\n")}` : "没有可收集的内容。"
       };
     } catch (error) {
+      if (command.intent === "init") {
+        this.plugin.settings.knowledgeBase.initialization.status = "failed";
+        await this.plugin.saveSettings(true);
+      }
       return {
         status: "failed",
         message: error instanceof Error ? error.message : String(error)
       };
     }
+  }
+
+  async previewInitialization(): Promise<KnowledgeBaseInitializationPreview> {
+    const preview = await buildKnowledgeBaseInitializationPreview(this.plugin.getVaultPath());
+    const init = this.plugin.settings.knowledgeBase.initialization;
+    init.status = "preview-ready";
+    init.rulesFilePath = preview.rulesFilePath;
+    init.templateVersion = preview.templateVersion;
+    init.lastPreviewSummary = preview.summary.slice(0, 2000);
+    await this.plugin.saveSettings(true);
+    return preview;
+  }
+
+  async executeInitialization(preview: KnowledgeBaseInitializationPreview): Promise<{ summary: string; rulesFilePath: string }> {
+    const result = await executeKnowledgeBaseInitialization(this.plugin.getVaultPath(), preview);
+    const settings = this.plugin.settings.knowledgeBase;
+    settings.initialization.status = "initialized";
+    settings.initialization.initializedAt = Date.now();
+    settings.initialization.rulesFilePath = result.rulesFilePath;
+    settings.initialization.templateVersion = result.templateVersion;
+    settings.initialization.lastPreviewSummary = preview.summary.slice(0, 2000);
+    if (result.rulesFilePath !== "CLAUDE.kb-template.md") {
+      settings.useCustomRulesFile = result.rulesFilePath !== "AGENTS.md";
+      settings.rulesFilePath = result.rulesFilePath;
+    }
+    await this.plugin.saveSettings(true);
+    return { summary: result.summary, rulesFilePath: result.rulesFilePath };
   }
 
   async runMaintenance(mode: KnowledgeBaseRunMode = "maintain", userRequest = ""): Promise<KnowledgeBaseRunResult> {
@@ -337,6 +396,7 @@ export class KnowledgeBaseManager {
       this.activeCodexRun = null;
       this.activeOpenCode = null;
       this.running = false;
+      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
     }
   }
 

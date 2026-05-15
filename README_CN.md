@@ -51,7 +51,9 @@
 ### 知识库自动化运维
 
 - 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
-- 聊天框是主入口：输入 `/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
+- 聊天框是主入口：输入 `/init`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
+- 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
+- 知识库频道顶部新增常驻状态面板：展示规则文件、初始化状态、Raw/Wiki/Outputs/Inbox 数量、新增 Raw、最新报告和手动刷新。
 - 默认读取 `AGENTS.md`，也支持改成自定义 Markdown 规则文件，例如 `CLAUDE.md`。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
@@ -106,8 +108,10 @@
 1. 打开 Codex 侧栏里的 `知识库` 频道。
 2. 在设置页选择知识库后端：`Codex CLI` 或 `OpenCode API`。
 3. 如果使用 OpenCode 模式，先在本机安装 OpenCode，再刷新并选择模型和 Agent。
-4. 在知识库频道输入 `/check 断链检查`、`/maintain 处理新增 raw`、`/outputs 整理本周输出`。
-5. 用快捷入口收藏公众号、网页或文件资料。
+4. 新 vault 可先输入 `/init` 预览初始化方案；确认无误后输入 `/init confirm`。
+5. 通过顶部状态面板查看规则、Raw 新增、最新报告、Inbox/Outputs 数量。
+6. 在知识库频道输入 `/check 断链检查`、`/maintain 处理新增 raw`、`/outputs 整理本周输出`。
+7. 用快捷入口收藏公众号、网页或文件资料。
 
 ### v0.3.0
 
@@ -196,7 +200,7 @@ obsidian-codex/
 3. 需要时附加笔记、文件、图片、skills 或 MCP 工具。
 4. 通过过程卡片查看命令、编辑、上下文用量和结果证据。
 5. 需要维护知识库时，打开 `知识库` 常驻频道。
-6. 先用 `/check` 做安全体检，再用 `/maintain` 或 `/outputs` 写入结构化知识。
+6. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再用 `/maintain` 或 `/outputs` 写入结构化知识。
 
 <a id="截图"></a>
 ## 截图

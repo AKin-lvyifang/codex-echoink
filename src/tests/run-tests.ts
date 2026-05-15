@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
@@ -94,6 +94,8 @@ import {
 import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
+import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
@@ -114,7 +116,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 18);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 19);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -148,6 +150,8 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, "AGENTS.md");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(
   getKnowledgeBaseRulesFileChoices(["docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   ["AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
@@ -201,6 +205,10 @@ assert.deepEqual(parseKnowledgeBaseCommand("/maintain 只处理今天新增").in
 assert.deepEqual(parseKnowledgeBaseCommand("/outputs 提炼最近发布稿").intent, "process-outputs");
 assert.deepEqual(parseKnowledgeBaseCommand("/inbox 只归类不沉淀").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("/journal 今天完成知识库命令优化").intent, "journal");
+assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
+assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
+assert.deepEqual((parseKnowledgeBaseCommand("/初始化 确认") as any).confirm, true);
+assert.deepEqual((parseKnowledgeBaseCommand("/init 先预览，不确认") as any).confirm, false);
 assert.deepEqual(parseKnowledgeBaseCommand("写日记：今天测试知识库频道").intent, "journal");
 assert.deepEqual(parseKnowledgeBaseCommand("处理 inbox").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-outputs");
@@ -372,7 +380,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 18);
+assert.equal(migratedSettings.settings.settingsVersion, 19);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -399,7 +407,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 18);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 19);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -412,7 +420,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 18);
+assert.equal(workspaceResources.settings.settingsVersion, 19);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -506,12 +514,19 @@ const knowledgeBaseSettings = normalizeSettingsData({
     lastReportPath: "outputs/kb-maintenance.md",
     lastError: "",
     lastSummary: "已维护",
+    initialization: {
+      status: "initialized",
+      initializedAt: 123,
+      rulesFilePath: "CLAUDE.md",
+      templateVersion: "v0.4",
+      lastPreviewSummary: "旧预览"
+    },
     processedSources: {
       "raw/demo.md": { size: 12, mtime: 100, digestedAt: 200 }
     }
   }
 }).settings;
-assert.equal(knowledgeBaseSettings.settingsVersion, 18);
+assert.equal(knowledgeBaseSettings.settingsVersion, 19);
 assert.equal(knowledgeBaseSettings.agentBackend, "opencode");
 assert.equal(knowledgeBaseSettings.opencode.serverUrl, "http://127.0.0.1:4096/");
 assert.equal(knowledgeBaseSettings.opencode.autoStart, false);
@@ -523,6 +538,9 @@ assert.equal(knowledgeBaseSettings.knowledgeBase.rulesFilePath, "CLAUDE.md");
 assert.equal(knowledgeBaseSettings.knowledgeBase.scheduleTime, "23:30");
 assert.equal(knowledgeBaseSettings.knowledgeBase.catchUpOnStartup, false);
 assert.equal(knowledgeBaseSettings.knowledgeBase.processedSources["raw/demo.md"].path, "raw/demo.md");
+assert.equal(knowledgeBaseSettings.knowledgeBase.initialization.status, "initialized");
+assert.equal(knowledgeBaseSettings.knowledgeBase.initialization.rulesFilePath, "CLAUDE.md");
+assert.equal(knowledgeBaseSettings.knowledgeBase.initialization.templateVersion, "v0.4");
 
 const invalidKnowledgeBaseSettings = normalizeSettingsData({
   settingsVersion: 14,
@@ -567,7 +585,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 18);
+assert.equal(apiProviderSettings.settings.settingsVersion, 19);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -626,7 +644,7 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 18);
+assert.equal(editorActionSettings.settingsVersion, 19);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.editorActions.qualityMode, "fast");
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
@@ -784,7 +802,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 18);
+assert.equal(legacyEditorActionSettings.settingsVersion, 19);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));
@@ -1312,6 +1330,97 @@ try {
   await rm(kbVault, { recursive: true, force: true });
 }
 
+const initVault = await mkdtemp(path.join(tmpdir(), "codex-kb-init-"));
+try {
+  await writeFile(path.join(initVault, "old-note.md"), "# Old note\n\n项目资料", "utf8");
+  const preview = await buildKnowledgeBaseInitializationPreview(initVault);
+  assert.equal(preview.status, "preview-ready");
+  assert.equal(preview.rulesFilePath, "AGENTS.md");
+  assert.ok(preview.summary.includes("将生成规则文件：AGENTS.md"));
+  assert.ok(preview.directories.includes("raw/articles"));
+  assert.ok(preview.directories.includes("wiki/ai-intelligence"));
+  assert.ok(preview.suggestions.some((item) => item.path === "old-note.md" && item.target === "projects"));
+  assert.equal(await fileExists(path.join(initVault, "AGENTS.md")), false);
+
+  const result = await executeKnowledgeBaseInitialization(initVault, preview, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(result.rulesFilePath, "AGENTS.md");
+  assert.equal(await fileExists(path.join(initVault, "raw", "articles")), true);
+  assert.equal(await fileExists(path.join(initVault, "wiki", "index.md")), true);
+  assert.equal(await fileExists(path.join(initVault, "outputs", ".ingest-tracker.md")), true);
+  assert.ok((await readFile(path.join(initVault, "AGENTS.md"), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
+  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("不可变"));
+} finally {
+  await rm(initVault, { recursive: true, force: true });
+}
+
+const initVaultWithAgents = await mkdtemp(path.join(tmpdir(), "codex-kb-init-agents-"));
+try {
+  await writeFile(path.join(initVaultWithAgents, "AGENTS.md"), "# Existing agents\n", "utf8");
+  const preview = await buildKnowledgeBaseInitializationPreview(initVaultWithAgents);
+  assert.equal(preview.rulesFilePath, "CLAUDE.md");
+  await executeKnowledgeBaseInitialization(initVaultWithAgents, preview, new Date("2026-05-15T08:00:00.000Z"));
+  assert.ok((await readFile(path.join(initVaultWithAgents, "AGENTS.md"), "utf8")).includes("Existing agents"));
+  assert.ok((await readFile(path.join(initVaultWithAgents, "CLAUDE.md"), "utf8")).includes("LLM Wiki"));
+} finally {
+  await rm(initVaultWithAgents, { recursive: true, force: true });
+}
+
+const initVaultWithBothRules = await mkdtemp(path.join(tmpdir(), "codex-kb-init-both-"));
+try {
+  await writeFile(path.join(initVaultWithBothRules, "AGENTS.md"), "# Existing agents\n", "utf8");
+  await writeFile(path.join(initVaultWithBothRules, "CLAUDE.md"), "# Existing claude\n", "utf8");
+  const preview = await buildKnowledgeBaseInitializationPreview(initVaultWithBothRules);
+  assert.equal(preview.rulesFilePath, "CLAUDE.kb-template.md");
+  await executeKnowledgeBaseInitialization(initVaultWithBothRules, preview, new Date("2026-05-15T08:00:00.000Z"));
+  assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.md"), "utf8")).includes("Existing claude"));
+  assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.kb-template.md"), "utf8")).includes("LLM Wiki"));
+} finally {
+  await rm(initVaultWithBothRules, { recursive: true, force: true });
+}
+
+const dashboardVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-"));
+try {
+  await mkdir(path.join(dashboardVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(dashboardVault, "wiki", "ai-intelligence"), { recursive: true });
+  await mkdir(path.join(dashboardVault, "outputs"), { recursive: true });
+  await mkdir(path.join(dashboardVault, "inbox"), { recursive: true });
+  await writeFile(path.join(dashboardVault, "AGENTS.md"), "# Rules\n", "utf8");
+  await writeFile(path.join(dashboardVault, "raw", "index.md"), "# Raw\n", "utf8");
+  await writeFile(path.join(dashboardVault, "raw", "articles", "old.md"), "# Old\n", "utf8");
+  await writeFile(path.join(dashboardVault, "raw", "articles", "new.md"), "# New\n", "utf8");
+  await writeFile(path.join(dashboardVault, "wiki", "index.md"), "# Wiki\n", "utf8");
+  await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), "# AI\n", "utf8");
+  await writeFile(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), "# Tracker\n", "utf8");
+  await writeFile(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), "# Report\n", "utf8");
+  await writeFile(path.join(dashboardVault, "inbox", "idea.md"), "# Idea\n", "utf8");
+  const oldPath = path.join(dashboardVault, "raw", "articles", "old.md");
+  const oldStat = await stat(oldPath);
+  const dashboardSettings = normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      lastRunStatus: "success",
+      lastRunAt: 123,
+      lastReportPath: "outputs/kb-maintenance-2026-05-15.md",
+      processedSources: {
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 }
+      }
+    }
+  }).settings.knowledgeBase;
+  const dashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, dashboardSettings);
+  assert.equal(dashboard.rulesFileExists, true);
+  assert.equal(dashboard.tracker.exists, true);
+  assert.equal(dashboard.lastRun.reportExists, true);
+  assert.equal(dashboard.raw.changedCount, 1);
+  assert.equal(dashboard.wiki.indexExists, true);
+  assert.equal(dashboard.wiki.domainCount, 1);
+  assert.equal(dashboard.outputs.latestReportPath, "outputs/kb-maintenance-2026-05-15.md");
+  assert.equal(dashboard.inbox.fileCount, 1);
+} finally {
+  await rm(dashboardVault, { recursive: true, force: true });
+}
+
 const tempVault = await mkdtemp(path.join(tmpdir(), "codex-raw-store-"));
 try {
   const largeText = Array.from({ length: 20_000 }, (_, index) => `line ${index}`).join("\n");
@@ -1446,5 +1555,9 @@ assert.equal(parsedDiff[0].lines.some((line) => line.text.startsWith("+++")), tr
 assert.equal(parsedDiff[0].lines.filter((line) => line.type === "add").some((line) => line.text.startsWith("++")), false);
 
 assert.ok(SETTINGS_GEAR_ICON_PATHS[0].includes("M12.22"));
+
+async function fileExists(filePath: string): Promise<boolean> {
+  return stat(filePath).then(() => true, () => false);
+}
 
 console.log("All tests passed");

@@ -30,6 +30,7 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
+import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 
@@ -70,6 +71,7 @@ export class CodexView extends ItemView {
   private headerUsageTextEl!: HTMLElement;
   private usagePanelEl!: HTMLElement;
   private tabBarEl!: HTMLElement;
+  private knowledgeDashboardEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -129,6 +131,11 @@ export class CodexView extends ItemView {
   private editorActionPrewarmPromise: Promise<string | null> | null = null;
   private editorSummaryRun: EditorSummaryRunWaiter | null = null;
   private editorSummaryTimeout: number | null = null;
+  private knowledgeDashboardSnapshot: KnowledgeBaseDashboardSnapshot | null = null;
+  private knowledgeDashboardExpanded = false;
+  private knowledgeDashboardLoading = false;
+  private knowledgeDashboardError = "";
+  private knowledgeDashboardRequestId = 0;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -157,6 +164,8 @@ export class CodexView extends ItemView {
     this.applyStatus();
     this.renderTabs();
     this.renderMessages({ forceBottom: true });
+    this.renderKnowledgeDashboard();
+    void this.refreshKnowledgeDashboard();
     this.prewarmActiveThread();
     this.prewarmEditorActionThread();
     void this.refreshHeaderRateLimits();
@@ -185,8 +194,14 @@ export class CodexView extends ItemView {
     this.renderTabs();
     this.renderMessages({ forceBottom: true });
     this.renderToolbar();
+    this.renderKnowledgeDashboard();
+    void this.refreshKnowledgeDashboard();
     this.updateInputPlaceholder();
     this.focusInput();
+  }
+
+  refreshKnowledgeBaseDashboard(): void {
+    void this.refreshKnowledgeDashboard(true);
   }
 
   handleCodexNotification(notification: CodexNotification): void {
@@ -476,6 +491,7 @@ export class CodexView extends ItemView {
     });
 
     this.tabBarEl = this.rootEl.createDiv({ cls: "codex-tabs" });
+    this.knowledgeDashboardEl = this.rootEl.createDiv({ cls: "codex-kb-dashboard" });
     this.messagesEl = this.rootEl.createDiv({ cls: "codex-messages" });
     this.virtualListEl = this.messagesEl.createDiv({ cls: "codex-virtual-list" });
     this.registerDomEvent(this.messagesEl, "scroll", () => this.scheduleRenderMessages({ fromScroll: true }));
@@ -751,6 +767,8 @@ export class CodexView extends ItemView {
         this.renderTabs();
         this.renderMessages({ forceBottom: true });
         this.renderToolbar();
+        this.renderKnowledgeDashboard();
+        void this.refreshKnowledgeDashboard();
         this.updateInputPlaceholder();
         this.prewarmActiveThread();
       };
@@ -772,6 +790,8 @@ export class CodexView extends ItemView {
       this.renderTabs();
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
+      this.renderKnowledgeDashboard();
+      void this.refreshKnowledgeDashboard();
       this.updateInputPlaceholder();
       this.prewarmActiveThread();
     };
@@ -823,6 +843,124 @@ export class CodexView extends ItemView {
       this.messagesEl.scrollTop = scrollTopForVirtualBottom(virtual.totalHeight, viewportHeight);
     } else if (options.fromScroll || options.preserveScroll) {
       this.messagesEl.scrollTop = previousScrollTop;
+    }
+  }
+
+  private renderKnowledgeDashboard(): void {
+    if (!this.knowledgeDashboardEl) return;
+    const session = this.ensureSession();
+    const visible = this.isKnowledgeBaseSession(session);
+    this.knowledgeDashboardEl.empty();
+    this.knowledgeDashboardEl.toggleClass("is-visible", visible);
+    if (!visible) return;
+
+    const snapshot = this.knowledgeDashboardSnapshot;
+    const hasWarning = Boolean(this.knowledgeDashboardError || snapshot?.warnings.length);
+    this.knowledgeDashboardEl.toggleClass("has-warning", hasWarning);
+    this.knowledgeDashboardEl.toggleClass("is-loading", this.knowledgeDashboardLoading);
+
+    const header = this.knowledgeDashboardEl.createDiv({ cls: "codex-kb-dashboard-header" });
+    const title = header.createDiv({ cls: "codex-kb-dashboard-title" });
+    const titleIcon = title.createSpan({ cls: "codex-kb-dashboard-icon" });
+    setIcon(titleIcon, "database");
+    title.createSpan({ text: "知识库状态" });
+
+    const summary = header.createDiv({ cls: "codex-kb-dashboard-summary" });
+    if (snapshot) {
+      this.addKnowledgeDashboardMetric(summary, "规则", snapshot.rulesFileExists ? snapshot.rulesFilePath : "缺失");
+      this.addKnowledgeDashboardMetric(summary, "Raw", `${snapshot.raw.fileCount} / 新 ${snapshot.raw.changedCount}`);
+      this.addKnowledgeDashboardMetric(summary, "Wiki", `${snapshot.wiki.fileCount}`);
+      this.addKnowledgeDashboardMetric(summary, "报告", snapshot.outputs.latestReportExists ? "有" : "无");
+    } else {
+      summary.createSpan({ cls: "codex-kb-dashboard-muted", text: this.knowledgeDashboardError || "等待扫描" });
+    }
+
+    const actions = header.createDiv({ cls: "codex-kb-dashboard-actions" });
+    const refresh = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: "刷新知识库状态", "aria-label": "刷新知识库状态" } });
+    setIcon(refresh, this.knowledgeDashboardLoading ? "loader-circle" : "refresh-cw");
+    refresh.disabled = this.knowledgeDashboardLoading;
+    refresh.onclick = () => void this.refreshKnowledgeDashboard(true);
+    const toggle = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: this.knowledgeDashboardExpanded ? "收起状态详情" : "展开状态详情", "aria-label": this.knowledgeDashboardExpanded ? "收起状态详情" : "展开状态详情" } });
+    setIcon(toggle, this.knowledgeDashboardExpanded ? "chevron-up" : "chevron-down");
+    toggle.onclick = () => {
+      this.knowledgeDashboardExpanded = !this.knowledgeDashboardExpanded;
+      this.renderKnowledgeDashboard();
+    };
+
+    if (this.knowledgeDashboardError) {
+      this.knowledgeDashboardEl.createDiv({ cls: "codex-kb-dashboard-error", text: this.knowledgeDashboardError });
+    }
+    if (!snapshot || !this.knowledgeDashboardExpanded) return;
+
+    const details = this.knowledgeDashboardEl.createDiv({ cls: "codex-kb-dashboard-details" });
+    this.addKnowledgeDashboardCard(details, "概览", [
+      ["Vault", snapshot.vaultName],
+      ["初始化", knowledgeInitStatusLabel(snapshot.initialization.status)],
+      ["最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at)],
+      ["Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失"]
+    ]);
+    this.addKnowledgeDashboardCard(details, "Raw", [
+      ["文件", `${snapshot.raw.fileCount} 个`],
+      ["新增", `${snapshot.raw.changedCount} 个`],
+      ["大小", formatBytes(snapshot.raw.totalSize)],
+      ["最近", formatRecentFiles(snapshot.raw.recentFiles)]
+    ]);
+    this.addKnowledgeDashboardCard(details, "Wiki", [
+      ["页面", `${snapshot.wiki.fileCount} 个`],
+      ["领域", `${snapshot.wiki.domainCount} 个`],
+      ["索引", snapshot.wiki.indexExists ? "存在" : "缺失"],
+      ["最近", formatRecentFiles(snapshot.wiki.recentFiles)]
+    ]);
+    this.addKnowledgeDashboardCard(details, "Outputs / Inbox", [
+      ["报告", snapshot.outputs.latestReportPath || "无"],
+      ["Outputs", `${snapshot.outputs.fileCount} 个`],
+      ["Inbox", `${snapshot.inbox.fileCount} 个`],
+      ["警告", snapshot.warnings.length ? snapshot.warnings.join("，") : "无"]
+    ]);
+  }
+
+  private async refreshKnowledgeDashboard(force = false): Promise<void> {
+    if (!this.knowledgeDashboardEl) return;
+    const session = this.ensureSession();
+    if (!this.isKnowledgeBaseSession(session)) {
+      this.renderKnowledgeDashboard();
+      return;
+    }
+    if (this.knowledgeDashboardLoading && !force) return;
+    const manager = this.plugin.getKnowledgeBaseManager();
+    if (!manager) return;
+    const requestId = ++this.knowledgeDashboardRequestId;
+    this.knowledgeDashboardLoading = true;
+    this.knowledgeDashboardError = "";
+    this.renderKnowledgeDashboard();
+    try {
+      const snapshot = await manager.getDashboardSnapshot();
+      if (requestId !== this.knowledgeDashboardRequestId) return;
+      this.knowledgeDashboardSnapshot = snapshot;
+    } catch (error) {
+      if (requestId !== this.knowledgeDashboardRequestId) return;
+      this.knowledgeDashboardError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (requestId === this.knowledgeDashboardRequestId) {
+        this.knowledgeDashboardLoading = false;
+        this.renderKnowledgeDashboard();
+      }
+    }
+  }
+
+  private addKnowledgeDashboardMetric(container: HTMLElement, label: string, value: string): void {
+    const metric = container.createSpan({ cls: "codex-kb-dashboard-metric" });
+    metric.createSpan({ cls: "codex-kb-dashboard-metric-label", text: label });
+    metric.createSpan({ cls: "codex-kb-dashboard-metric-value", text: value });
+  }
+
+  private addKnowledgeDashboardCard(container: HTMLElement, title: string, rows: Array<[string, string]>): void {
+    const card = container.createDiv({ cls: "codex-kb-dashboard-card" });
+    card.createDiv({ cls: "codex-kb-dashboard-card-title", text: title });
+    for (const [label, value] of rows) {
+      const row = card.createDiv({ cls: "codex-kb-dashboard-row" });
+      row.createSpan({ cls: "codex-kb-dashboard-row-label", text: label });
+      row.createSpan({ cls: "codex-kb-dashboard-row-value", text: value });
     }
   }
 
@@ -1320,6 +1458,7 @@ export class CodexView extends ItemView {
     event.preventDefault();
     const menu = new Menu();
     const commands = [
+      { title: "初始化", icon: "sparkles", text: "/init " },
       { title: "体检", icon: "stethoscope", text: "/check " },
       { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
       { title: "写日记", icon: "calendar-plus", text: "/journal " },
@@ -1337,7 +1476,7 @@ export class CodexView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
-  private fillKnowledgeBaseCommand(command: string): void {
+  fillKnowledgeBaseCommand(command: string): void {
     this.inputEl.value = command;
     this.inputEl.setSelectionRange(command.length, command.length);
     this.focusInput();
@@ -1697,6 +1836,9 @@ export class CodexView extends ItemView {
       const result = await manager.handleUserMessage(text, turnAttachments);
       assistantMessage.status = result.status === "success" ? "completed" : "failed";
       assistantMessage.text = result.message;
+      if (result.followUpCommand) {
+        this.fillKnowledgeBaseCommand(result.followUpCommand);
+      }
       if (result.status === "failed") new Notice(`知识库管理失败：${result.message}`);
     } finally {
       this.running = false;
@@ -1706,6 +1848,7 @@ export class CodexView extends ItemView {
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
       this.applyStatus();
+      void this.refreshKnowledgeDashboard(true);
     }
   }
 
@@ -1755,6 +1898,7 @@ export class CodexView extends ItemView {
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
       this.applyStatus();
+      void this.refreshKnowledgeDashboard(true);
     }
   }
 
@@ -3308,10 +3452,34 @@ function labelForDiffKind(kind: string): string {
   return labels[kind] ?? "改动";
 }
 
-function formatBytes(charCount: number): string {
-  if (charCount < 1024) return `${charCount} 字`;
-  if (charCount < 1024 * 1024) return `${Math.round(charCount / 1024)} KB`;
-  return `${(charCount / 1024 / 1024).toFixed(1)} MB`;
+function knowledgeInitStatusLabel(status: string): string {
+  if (status === "preview-ready") return "已预览";
+  if (status === "initialized") return "已初始化";
+  if (status === "failed") return "初始化失败";
+  return "未初始化";
+}
+
+function knowledgeRunStatusLabel(status: string, at: number): string {
+  const labels: Record<string, string> = {
+    idle: "未运行",
+    running: "运行中",
+    success: "成功",
+    failed: "失败",
+    canceled: "已取消"
+  };
+  const label = labels[status] ?? status;
+  return at ? `${label} · ${formatRelativeTime(at)}` : label;
+}
+
+function formatRecentFiles(files: KnowledgeBaseDashboardFile[]): string {
+  if (!files.length) return "无";
+  return files.slice(0, 3).map((file) => file.path.split("/").pop() || file.path).join("，");
+}
+
+function formatBytes(byteCount: number): string {
+  if (byteCount < 1024) return `${byteCount} B`;
+  if (byteCount < 1024 * 1024) return `${Math.round(byteCount / 1024)} KB`;
+  return `${(byteCount / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function countLines(text: string): number {

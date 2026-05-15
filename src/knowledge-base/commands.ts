@@ -1,10 +1,11 @@
-export type KnowledgeBaseCommandIntent = "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "cancel" | "collect" | "help";
+export type KnowledgeBaseCommandIntent = "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "cancel" | "collect" | "help";
 export type KnowledgeBaseCommandTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 
 export interface KnowledgeBaseCommand {
   intent: KnowledgeBaseCommandIntent;
   target?: KnowledgeBaseCommandTarget;
   reason: string;
+  confirm?: boolean;
 }
 
 const URL_PATTERN = /https?:\/\/\S+/i;
@@ -53,6 +54,7 @@ export function knowledgeBaseHelpText(): string {
     "这是知识库管理频道。我可以在这里执行：",
     "",
     "- `只体检一下`：只生成体检报告，不消化 raw。",
+    "- `/init`：预览 LLM Wiki 初始化方案；`/init confirm` 才会创建目录和规则文件。",
     "- `维护知识库`：增量消化 raw，更新 wiki、索引和报告。",
     "- `/check ...`：体检知识库，可在后面追加限制条件。",
     "- `/maintain ...`：增量维护 raw -> wiki。",
@@ -73,6 +75,7 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
   const command = match[1];
   if (command === "help" || command === "帮助") return { intent: "help", reason: "slash-help" };
   if (command === "cancel" || command === "stop" || command === "取消") return { intent: "cancel", reason: "slash-cancel" };
+  if (command === "init" || command === "初始化") return { intent: "init", reason: "slash-init", confirm: isInitConfirmCommand(normalized) };
   if (command === "check" || command === "lint" || command === "doctor" || command === "体检" || command === "检查") return { intent: "lint", reason: "slash-lint" };
   if (command === "maintain" || command === "ingest" || command === "digest" || command === "维护") return { intent: "maintain", reason: "slash-maintain" };
   if (command === "outputs" || command === "output" || command === "处理outputs" || command === "处理输出") return { intent: "process-outputs", reason: "slash-outputs" };
@@ -80,4 +83,9 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
   if (command === "journal" || command === "daily" || command === "diary" || command === "日记") return { intent: "journal", target: "journal", reason: "slash-journal" };
   if (command === "reingest" || command === "redigest" || command === "重新提炼") return { intent: "reingest", reason: "slash-reingest" };
   return null;
+}
+
+function isInitConfirmCommand(normalized: string): boolean {
+  const tail = normalized.replace(/^\/(?:init|初始化)(?:[\s:：?？]+)?/u, "").trim();
+  return tail === "confirm" || tail === "确认" || tail === "执行" || tail === "开始" || tail === "apply";
 }

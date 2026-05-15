@@ -284,6 +284,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const summary = wrapper.createDiv({ cls: "codex-api-provider-row" });
     summary.createDiv({ cls: "codex-editor-actions-heading", text: "运行状态" });
     summary.createDiv({ cls: "codex-resource-note", text: `最近状态：${knowledgeStatusLabel(settings.lastRunStatus)}${settings.lastRunAt ? ` · ${new Date(settings.lastRunAt).toLocaleString()}` : ""}` });
+    summary.createDiv({ cls: "codex-resource-note", text: `初始化：${knowledgeInitStatusLabel(settings.initialization.status)}${settings.initialization.rulesFilePath ? ` · ${settings.initialization.rulesFilePath}` : ""}` });
     summary.createDiv({ cls: "codex-resource-note", text: `操作指南：${settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md"}${settings.useCustomRulesFile ? "（自定义）" : "（默认）"}` });
     if (settings.lastReportPath) summary.createDiv({ cls: "codex-resource-note", text: `最近报告：${settings.lastReportPath}` });
     if (settings.lastError) summary.createDiv({ cls: "codex-resource-error", text: settings.lastError });
@@ -292,6 +293,12 @@ export class CodexSettingTab extends PluginSettingTab {
     const openChannel = actions.createEl("button", { cls: "codex-resource-tab", text: "打开知识库频道", attr: { type: "button" } });
     openChannel.onclick = async () => {
       await this.plugin.activateKnowledgeBaseChannel();
+      this.display();
+    };
+    const initChannel = actions.createEl("button", { cls: "codex-resource-tab", text: "初始化知识库", attr: { type: "button" } });
+    initChannel.onclick = async () => {
+      await this.plugin.activateKnowledgeBaseChannel();
+      this.plugin.getCodexView()?.fillKnowledgeBaseCommand("/init ");
       this.display();
     };
 
@@ -1404,6 +1411,13 @@ function knowledgeStatusLabel(value: string): string {
   if (value === "failed") return "失败";
   if (value === "canceled") return "已取消";
   return "未运行";
+}
+
+function knowledgeInitStatusLabel(value: string): string {
+  if (value === "preview-ready") return "已生成预览";
+  if (value === "initialized") return "已初始化";
+  if (value === "failed") return "失败";
+  return "未初始化";
 }
 
 function pluginInstallDir(plugin: CodexForObsidianPlugin): string {
