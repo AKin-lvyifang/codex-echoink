@@ -51,7 +51,7 @@
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
 - Treats chat as the main control surface: type `/init`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
-- Shows a pinned Knowledge status panel above the channel: rules file, initialization state, Raw/Wiki/Outputs/Inbox counts, changed Raw files, latest report, and manual refresh.
+- Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a 14-day check heatmap.
 - Reads `AGENTS.md` by default, or a custom Markdown rules file such as `CLAUDE.md` when configured.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
@@ -106,7 +106,7 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 2. In settings, choose `Codex CLI` or `OpenCode API` as the knowledge base backend.
 3. For OpenCode mode, install OpenCode locally, then refresh and select a model and Agent.
 4. For a new vault, type `/init` to preview the LLM Wiki setup; type `/init confirm` only after reviewing it.
-5. Use the pinned status panel to check rules, Raw changes, latest report, and Inbox/Outputs counts.
+5. Use the pinned health dashboard to check rules, Raw/Wiki/Inbox counts, risk reasons, folder updates, and recent `/check` history.
 6. Type `/check broken links`, `/maintain new raw sources`, or `/outputs weekly notes` in the knowledge channel.
 7. Use the capture shortcuts to collect WeChat articles, web pages, or files into Raw Sources.
 

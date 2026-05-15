@@ -80,6 +80,7 @@ export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
+export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -104,6 +105,12 @@ export interface KnowledgeBaseProcessedSource {
   digestedAt: number;
 }
 
+export interface KnowledgeBaseHealthHistoryEntry {
+  date: string;
+  status: KnowledgeBaseHealthCheckStatus;
+  at: number;
+}
+
 export interface KnowledgeBaseSettings {
   enabled: boolean;
   sessionId: string;
@@ -120,6 +127,7 @@ export interface KnowledgeBaseSettings {
   lastSummary: string;
   initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
+  healthHistory: KnowledgeBaseHealthHistoryEntry[];
 }
 
 export interface KnowledgeBaseInitializationSettings {
@@ -345,7 +353,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 19,
+  settingsVersion: 20,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -417,7 +425,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
       templateVersion: "v0.5",
       lastPreviewSummary: ""
     },
-    processedSources: {}
+    processedSources: {},
+    healthHistory: []
   },
   workspaceResources: {
     plugins: {},
@@ -875,7 +884,8 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
-    processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources)
+    processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources),
+    healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory)
   };
 }
 
@@ -933,6 +943,44 @@ function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, Know
     .sort((left, right) => right[1].digestedAt - left[1].digestedAt)
     .slice(0, 1000);
   return Object.fromEntries(entries);
+}
+
+function normalizeKnowledgeBaseHealthHistory(value: any): KnowledgeBaseHealthHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  const byDate = new Map<string, KnowledgeBaseHealthHistoryEntry>();
+  for (const item of value) {
+    const date = normalizeOptionalText(item?.date);
+    const status = normalizeKnowledgeBaseHealthCheckStatus(item?.status);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) continue;
+    byDate.set(date, {
+      date,
+      status,
+      at: normalizeNonNegativeNumber(item?.at)
+    });
+  }
+  return Array.from(byDate.values())
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(-90);
+}
+
+function normalizeKnowledgeBaseHealthCheckStatus(value: any): KnowledgeBaseHealthCheckStatus | null {
+  return value === "success" || value === "failed" ? value : null;
+}
+
+export function recordKnowledgeBaseHealthCheck(settings: KnowledgeBaseSettings, status: KnowledgeBaseHealthCheckStatus, at = Date.now()): void {
+  const date = formatLocalDateKey(at);
+  settings.healthHistory = normalizeKnowledgeBaseHealthHistory([
+    ...(settings.healthHistory ?? []).filter((entry) => entry.date !== date),
+    { date, status, at }
+  ]);
+}
+
+function formatLocalDateKey(value: number): string {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function normalizeScheduleTime(value: any, fallback: string): string {

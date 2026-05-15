@@ -855,8 +855,12 @@ export class CodexView extends ItemView {
     if (!visible) return;
 
     const snapshot = this.knowledgeDashboardSnapshot;
-    const hasWarning = Boolean(this.knowledgeDashboardError || snapshot?.warnings.length);
+    const healthStatus = snapshot?.health.status ?? "unknown";
+    const hasWarning = Boolean(this.knowledgeDashboardError || healthStatus === "risk" || healthStatus === "bad" || snapshot?.warnings.length);
     this.knowledgeDashboardEl.toggleClass("has-warning", hasWarning);
+    this.knowledgeDashboardEl.toggleClass("health-healthy", healthStatus === "healthy");
+    this.knowledgeDashboardEl.toggleClass("health-risk", healthStatus === "risk");
+    this.knowledgeDashboardEl.toggleClass("health-bad", healthStatus === "bad");
     this.knowledgeDashboardEl.toggleClass("is-loading", this.knowledgeDashboardLoading);
 
     const header = this.knowledgeDashboardEl.createDiv({ cls: "codex-kb-dashboard-header" });
@@ -867,20 +871,22 @@ export class CodexView extends ItemView {
 
     const summary = header.createDiv({ cls: "codex-kb-dashboard-summary" });
     if (snapshot) {
-      this.addKnowledgeDashboardMetric(summary, "规则", snapshot.rulesFileExists ? snapshot.rulesFilePath : "缺失");
-      this.addKnowledgeDashboardMetric(summary, "Raw", `${snapshot.raw.fileCount} / 新 ${snapshot.raw.changedCount}`);
+      this.addKnowledgeDashboardRulesMetric(summary, snapshot);
+      this.addKnowledgeDashboardMetric(summary, "Raw", `${snapshot.raw.fileCount}`);
       this.addKnowledgeDashboardMetric(summary, "Wiki", `${snapshot.wiki.fileCount}`);
-      this.addKnowledgeDashboardMetric(summary, "报告", snapshot.outputs.latestReportExists ? "有" : "无");
+      this.addKnowledgeDashboardMetric(summary, "Inbox", `${snapshot.inbox.fileCount}`);
+      this.addKnowledgeDashboardHealthMetric(summary, snapshot.health.status, snapshot.health.label);
     } else {
       summary.createSpan({ cls: "codex-kb-dashboard-muted", text: this.knowledgeDashboardError || "等待扫描" });
     }
 
     const actions = header.createDiv({ cls: "codex-kb-dashboard-actions" });
-    const refresh = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: "刷新知识库状态", "aria-label": "刷新知识库状态" } });
+    const refresh = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: "刷新状态", "aria-label": "刷新状态" } });
     setIcon(refresh, this.knowledgeDashboardLoading ? "loader-circle" : "refresh-cw");
     refresh.disabled = this.knowledgeDashboardLoading;
     refresh.onclick = () => void this.refreshKnowledgeDashboard(true);
-    const toggle = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: this.knowledgeDashboardExpanded ? "收起状态详情" : "展开状态详情", "aria-label": this.knowledgeDashboardExpanded ? "收起状态详情" : "展开状态详情" } });
+    const toggleTitle = this.knowledgeDashboardExpanded ? "收起详情" : "展开详情";
+    const toggle = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: toggleTitle, "aria-label": toggleTitle } });
     setIcon(toggle, this.knowledgeDashboardExpanded ? "chevron-up" : "chevron-down");
     toggle.onclick = () => {
       this.knowledgeDashboardExpanded = !this.knowledgeDashboardExpanded;
@@ -893,30 +899,10 @@ export class CodexView extends ItemView {
     if (!snapshot || !this.knowledgeDashboardExpanded) return;
 
     const details = this.knowledgeDashboardEl.createDiv({ cls: "codex-kb-dashboard-details" });
-    this.addKnowledgeDashboardCard(details, "概览", [
-      ["Vault", snapshot.vaultName],
-      ["初始化", knowledgeInitStatusLabel(snapshot.initialization.status)],
-      ["最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at)],
-      ["Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失"]
-    ]);
-    this.addKnowledgeDashboardCard(details, "Raw", [
-      ["文件", `${snapshot.raw.fileCount} 个`],
-      ["新增", `${snapshot.raw.changedCount} 个`],
-      ["大小", formatBytes(snapshot.raw.totalSize)],
-      ["最近", formatRecentFiles(snapshot.raw.recentFiles)]
-    ]);
-    this.addKnowledgeDashboardCard(details, "Wiki", [
-      ["页面", `${snapshot.wiki.fileCount} 个`],
-      ["领域", `${snapshot.wiki.domainCount} 个`],
-      ["索引", snapshot.wiki.indexExists ? "存在" : "缺失"],
-      ["最近", formatRecentFiles(snapshot.wiki.recentFiles)]
-    ]);
-    this.addKnowledgeDashboardCard(details, "Outputs / Inbox", [
-      ["报告", snapshot.outputs.latestReportPath || "无"],
-      ["Outputs", `${snapshot.outputs.fileCount} 个`],
-      ["Inbox", `${snapshot.inbox.fileCount} 个`],
-      ["警告", snapshot.warnings.length ? snapshot.warnings.join("，") : "无"]
-    ]);
+    this.renderKnowledgeDashboardHealth(details, snapshot);
+    this.renderKnowledgeDashboardWiki(details, snapshot);
+    this.renderKnowledgeDashboardQueues(details, snapshot);
+    this.renderKnowledgeDashboardHeatmap(details, snapshot);
   }
 
   private async refreshKnowledgeDashboard(force = false): Promise<void> {
@@ -954,13 +940,123 @@ export class CodexView extends ItemView {
     metric.createSpan({ cls: "codex-kb-dashboard-metric-value", text: value });
   }
 
-  private addKnowledgeDashboardCard(container: HTMLElement, title: string, rows: Array<[string, string]>): void {
-    const card = container.createDiv({ cls: "codex-kb-dashboard-card" });
-    card.createDiv({ cls: "codex-kb-dashboard-card-title", text: title });
-    for (const [label, value] of rows) {
-      const row = card.createDiv({ cls: "codex-kb-dashboard-row" });
-      row.createSpan({ cls: "codex-kb-dashboard-row-label", text: label });
-      row.createSpan({ cls: "codex-kb-dashboard-row-value", text: value });
+  private addKnowledgeDashboardRulesMetric(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
+    const button = container.createEl("button", {
+      cls: "codex-kb-dashboard-metric codex-kb-dashboard-rule",
+      attr: {
+        type: "button",
+        title: snapshot.rulesFileExists ? `打开规则文件：${snapshot.rulesFilePath}` : "规则文件缺失，点击查看提示",
+        "aria-label": snapshot.rulesFileExists ? `打开规则文件 ${snapshot.rulesFilePath}` : "规则文件缺失"
+      }
+    });
+    button.toggleClass("is-missing", !snapshot.rulesFileExists);
+    button.createSpan({ cls: "codex-kb-dashboard-metric-label", text: "规则" });
+    button.createSpan({ cls: "codex-kb-dashboard-metric-value", text: snapshot.rulesFileExists ? snapshot.rulesFilePath : "缺失" });
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.openKnowledgeDashboardRulesFile(snapshot);
+    };
+  }
+
+  private addKnowledgeDashboardHealthMetric(container: HTMLElement, status: string, label: string): void {
+    const metric = container.createSpan({ cls: `codex-kb-dashboard-metric codex-kb-dashboard-health codex-kb-health-${status}` });
+    metric.createSpan({ cls: "codex-kb-status-dot" });
+    metric.createSpan({ cls: "codex-kb-dashboard-metric-value", text: label });
+  }
+
+  private async openKnowledgeDashboardRulesFile(snapshot: KnowledgeBaseDashboardSnapshot): Promise<void> {
+    if (!snapshot.rulesFileExists) {
+      new Notice(`知识库规则文件缺失：${snapshot.rulesFilePath}。请到设置里修正规则文件。`);
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(normalizePath(snapshot.rulesFilePath));
+    if (file instanceof TFile) {
+      await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
+      return;
+    }
+    new Notice(`没有在当前 Obsidian 仓库找到：${snapshot.rulesFilePath}`);
+  }
+
+  private renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
+    const section = this.addKnowledgeDashboardSection(container, "健康概览");
+    const overview = section.createDiv({ cls: "codex-kb-dashboard-health-overview" });
+    const status = overview.createDiv({ cls: `codex-kb-dashboard-health-badge codex-kb-health-${snapshot.health.status}` });
+    status.createSpan({ cls: "codex-kb-status-dot" });
+    status.createSpan({ text: snapshot.health.label });
+
+    const score = overview.createDiv({ cls: "codex-kb-dashboard-score" });
+    score.createSpan({ cls: "codex-kb-dashboard-score-label", text: `健康分 ${snapshot.health.score}` });
+    const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
+    const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill codex-kb-health-${snapshot.health.status}` });
+    fill.style.width = `${Math.max(0, Math.min(100, snapshot.health.score))}%`;
+
+    const facts = section.createDiv({ cls: "codex-kb-dashboard-facts" });
+    this.addKnowledgeDashboardFact(facts, "最近体检", snapshot.health.lastCheckAt ? formatAbsoluteTime(snapshot.health.lastCheckAt) : "无记录");
+    this.addKnowledgeDashboardFact(facts, "连续体检", snapshot.health.streakDays ? `${snapshot.health.streakDays} 天` : "0 天");
+    this.addKnowledgeDashboardFact(facts, "最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at));
+    this.addKnowledgeDashboardFact(facts, "Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失");
+
+    const reasons = section.createDiv({ cls: "codex-kb-dashboard-reasons" });
+    for (const reason of snapshot.health.reasons) {
+      reasons.createDiv({ cls: "codex-kb-dashboard-reason", text: reason });
+    }
+  }
+
+  private renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
+    const rows = snapshot.wiki.groups.length
+      ? snapshot.wiki.groups.map((group) => [group.label, `${group.totalCount}`, group.todayCount ? `+${group.todayCount}` : "-"])
+      : [["无一级目录", "0", "-"]];
+    this.addKnowledgeDashboardTable(container, "Wiki 状态", ["一级目录", "总数量", "今日更新"], rows);
+  }
+
+  private renderKnowledgeDashboardQueues(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
+    this.addKnowledgeDashboardTable(container, "Raw / Inbox 状态", ["区域", "总数量", "今日新增", "待处理"], [
+      ["Raw", `${snapshot.raw.fileCount}`, snapshot.raw.todayCount ? `+${snapshot.raw.todayCount}` : "-", `${snapshot.raw.changedCount}`],
+      ["Inbox", `${snapshot.inbox.fileCount}`, snapshot.inbox.todayCount ? `+${snapshot.inbox.todayCount}` : "-", `${snapshot.inbox.fileCount}`]
+    ]);
+  }
+
+  private renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
+    const section = this.addKnowledgeDashboardSection(container, "体检热力图");
+    const heatmap = section.createDiv({ cls: "codex-kb-dashboard-heatmap" });
+    for (const day of snapshot.checkHeatmap) {
+      const cell = heatmap.createSpan({
+        cls: `codex-kb-heatmap-cell is-${day.status}`,
+        attr: { title: `${day.date} · ${knowledgeHeatmapStatusLabel(day.status)}`, "aria-label": `${day.date} ${knowledgeHeatmapStatusLabel(day.status)}` }
+      });
+      cell.createSpan({ text: day.date.slice(8) });
+    }
+    const legend = section.createDiv({ cls: "codex-kb-dashboard-legend" });
+    for (const [status, label] of [["success", "成功"], ["failed", "失败"], ["none", "无记录"]] as Array<[string, string]>) {
+      const item = legend.createSpan({ cls: "codex-kb-dashboard-legend-item" });
+      item.createSpan({ cls: `codex-kb-legend-dot is-${status}` });
+      item.createSpan({ text: label });
+    }
+  }
+
+  private addKnowledgeDashboardSection(container: HTMLElement, title: string): HTMLElement {
+    const section = container.createDiv({ cls: "codex-kb-dashboard-section" });
+    section.createDiv({ cls: "codex-kb-dashboard-section-title", text: title });
+    return section;
+  }
+
+  private addKnowledgeDashboardFact(container: HTMLElement, label: string, value: string): void {
+    const fact = container.createDiv({ cls: "codex-kb-dashboard-fact" });
+    fact.createSpan({ cls: "codex-kb-dashboard-fact-label", text: label });
+    fact.createSpan({ cls: "codex-kb-dashboard-fact-value", text: value });
+  }
+
+  private addKnowledgeDashboardTable(container: HTMLElement, title: string, columns: string[], rows: string[][]): void {
+    const section = this.addKnowledgeDashboardSection(container, title);
+    const table = section.createEl("table", { cls: "codex-kb-dashboard-table" });
+    const thead = table.createEl("thead");
+    const headRow = thead.createEl("tr");
+    for (const column of columns) headRow.createEl("th", { text: column });
+    const tbody = table.createEl("tbody");
+    for (const row of rows) {
+      const tr = tbody.createEl("tr");
+      for (const cell of row) tr.createEl("td", { text: cell });
     }
   }
 
@@ -3469,6 +3565,21 @@ function knowledgeRunStatusLabel(status: string, at: number): string {
   };
   const label = labels[status] ?? status;
   return at ? `${label} · ${formatRelativeTime(at)}` : label;
+}
+
+function knowledgeHeatmapStatusLabel(status: string): string {
+  if (status === "success") return "成功";
+  if (status === "failed") return "失败";
+  return "无记录";
+}
+
+function formatAbsoluteTime(value: number): string {
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function formatRecentFiles(files: KnowledgeBaseDashboardFile[]): string {

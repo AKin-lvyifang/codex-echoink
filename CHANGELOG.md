@@ -7,7 +7,7 @@
 1. 新增 LLM Wiki 初始化向导：`/init` 只生成预览，`/init confirm` 才创建目录和规则文件。
 2. 初始化规则文件优先生成 `AGENTS.md`；已有 `AGENTS.md` 时生成 `CLAUDE.md`；两者都存在时生成 `CLAUDE.kb-template.md`。
 3. 初始化只创建模板，不删除、不覆盖、不移动已有笔记。
-4. 知识库频道新增顶部状态面板，展示规则文件、初始化状态、Raw/Wiki/Outputs/Inbox 概览、最新报告和刷新入口。
+4. 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态；展开后展示健康分、Wiki 一级目录表、Raw/Inbox 表和 14 天体检热力图。
 
 ## v0.4.0 - 2026-05-15
 

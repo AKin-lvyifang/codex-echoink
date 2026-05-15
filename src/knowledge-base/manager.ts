@@ -7,7 +7,7 @@ import type CodexForObsidianPlugin from "../main";
 import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../agent/types";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
-import type { StoredAttachment } from "../settings/settings";
+import { recordKnowledgeBaseHealthCheck, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
@@ -349,6 +349,7 @@ export class KnowledgeBaseManager {
       settings.lastRunStatus = "success";
       settings.lastReportPath = discovery.reportPath;
       settings.lastSummary = output.trim().slice(0, 1000) || `知识库${labelForRunMode(mode)}完成`;
+      if (mode === "lint") recordKnowledgeBaseHealthCheck(settings, "success");
       await this.plugin.saveSettings(true);
       new Notice(`知识库${labelForRunMode(mode)}完成`);
       return {
@@ -369,6 +370,7 @@ export class KnowledgeBaseManager {
           settings.lastReportPath = discovery.reportPath;
           settings.lastError = "";
           settings.lastSummary = recoveredLintReportSummary(discovery.reportPath);
+          recordKnowledgeBaseHealthCheck(settings, "success");
           await this.plugin.saveSettings(true);
           new Notice("知识库体检完成，Codex 状态有警告");
           return {
@@ -383,6 +385,7 @@ export class KnowledgeBaseManager {
       settings.lastRunStatus = "failed";
       settings.lastError = message;
       if (discovery?.reportPath) settings.lastReportPath = discovery.reportPath;
+      if (mode === "lint") recordKnowledgeBaseHealthCheck(settings, "failed");
       await this.plugin.saveSettings(true);
       new Notice(`知识库${labelForRunMode(mode)}失败：${message}`);
       return {

@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
@@ -51,6 +51,7 @@ import {
   KNOWLEDGE_BASE_SESSION_TITLE,
   isKnowledgeBaseSession,
   normalizeSettingsData,
+  recordKnowledgeBaseHealthCheck,
   removeApiProvider,
   resolveEditorActionModeConfig,
   validateApiProvider,
@@ -116,7 +117,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 19);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 20);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -152,6 +153,7 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
+assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(
   getKnowledgeBaseRulesFileChoices(["docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   ["AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
@@ -177,6 +179,25 @@ const freshInstallEditorActions = normalizeSettingsData({}).settings.editorActio
 assert.equal(freshInstallEditorActions.qualityMode, "quality");
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "fast").contextCharsBefore, 500);
 assert.equal(resolveEditorActionModeConfig(freshInstallEditorActions, "quality").contextCharsBefore, 1000);
+const migratedKnowledgeBaseSettings = normalizeSettingsData({
+  settingsVersion: 19,
+  knowledgeBase: {
+    healthHistory: [
+      { date: "2026-05-15", status: "success", at: 1778803200000 },
+      { date: "bad", status: "success", at: 1 },
+      { date: "2026-05-16", status: "unknown", at: 2 }
+    ]
+  }
+}).settings.knowledgeBase;
+assert.deepEqual(migratedKnowledgeBaseSettings.healthHistory, [
+  { date: "2026-05-15", status: "success", at: 1778803200000 }
+]);
+recordKnowledgeBaseHealthCheck(migratedKnowledgeBaseSettings, "failed", 1778889600000);
+assert.deepEqual(migratedKnowledgeBaseSettings.healthHistory.at(-1), {
+  date: "2026-05-16",
+  status: "failed",
+  at: 1778889600000
+});
 
 const sessionSettings = normalizeSettingsData({
   settingsVersion: 16,
@@ -380,7 +401,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 19);
+assert.equal(migratedSettings.settings.settingsVersion, 20);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -407,7 +428,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 19);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 20);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -420,7 +441,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 19);
+assert.equal(workspaceResources.settings.settingsVersion, 20);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -526,7 +547,7 @@ const knowledgeBaseSettings = normalizeSettingsData({
     }
   }
 }).settings;
-assert.equal(knowledgeBaseSettings.settingsVersion, 19);
+assert.equal(knowledgeBaseSettings.settingsVersion, 20);
 assert.equal(knowledgeBaseSettings.agentBackend, "opencode");
 assert.equal(knowledgeBaseSettings.opencode.serverUrl, "http://127.0.0.1:4096/");
 assert.equal(knowledgeBaseSettings.opencode.autoStart, false);
@@ -585,7 +606,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 19);
+assert.equal(apiProviderSettings.settings.settingsVersion, 20);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -644,7 +665,7 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 19);
+assert.equal(editorActionSettings.settingsVersion, 20);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.editorActions.qualityMode, "fast");
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
@@ -802,7 +823,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 19);
+assert.equal(legacyEditorActionSettings.settingsVersion, 20);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));
@@ -1379,10 +1400,25 @@ try {
   await rm(initVaultWithBothRules, { recursive: true, force: true });
 }
 
+function daysAgoDateForTest(daysAgo: number): Date {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date;
+}
+
+function formatDateKeyForTest(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const dashboardVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-"));
 try {
   await mkdir(path.join(dashboardVault, "raw", "articles"), { recursive: true });
   await mkdir(path.join(dashboardVault, "wiki", "ai-intelligence"), { recursive: true });
+  await mkdir(path.join(dashboardVault, "wiki", "content"), { recursive: true });
   await mkdir(path.join(dashboardVault, "outputs"), { recursive: true });
   await mkdir(path.join(dashboardVault, "inbox"), { recursive: true });
   await writeFile(path.join(dashboardVault, "AGENTS.md"), "# Rules\n", "utf8");
@@ -1391,10 +1427,21 @@ try {
   await writeFile(path.join(dashboardVault, "raw", "articles", "new.md"), "# New\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "index.md"), "# Wiki\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), "# AI\n", "utf8");
+  await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "today.md"), "# Today\n", "utf8");
+  await writeFile(path.join(dashboardVault, "wiki", "content", "old.md"), "# Content\n", "utf8");
   await writeFile(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), "# Tracker\n", "utf8");
   await writeFile(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), "# Report\n", "utf8");
   await writeFile(path.join(dashboardVault, "inbox", "idea.md"), "# Idea\n", "utf8");
+  await writeFile(path.join(dashboardVault, "inbox", "old.md"), "# Old idea\n", "utf8");
+  const today = daysAgoDateForTest(0);
+  const yesterday = daysAgoDateForTest(1);
+  const twoDaysAgo = daysAgoDateForTest(2);
+  const threeDaysAgo = daysAgoDateForTest(3);
   const oldPath = path.join(dashboardVault, "raw", "articles", "old.md");
+  await utimes(oldPath, threeDaysAgo, threeDaysAgo);
+  await utimes(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), threeDaysAgo, threeDaysAgo);
+  await utimes(path.join(dashboardVault, "wiki", "content", "old.md"), threeDaysAgo, threeDaysAgo);
+  await utimes(path.join(dashboardVault, "inbox", "old.md"), threeDaysAgo, threeDaysAgo);
   const oldStat = await stat(oldPath);
   const dashboardSettings = normalizeSettingsData({
     settingsVersion: 19,
@@ -1403,6 +1450,11 @@ try {
       lastRunStatus: "success",
       lastRunAt: 123,
       lastReportPath: "outputs/kb-maintenance-2026-05-15.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(twoDaysAgo), status: "failed", at: twoDaysAgo.getTime() },
+        { date: formatDateKeyForTest(yesterday), status: "success", at: yesterday.getTime() },
+        { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ],
       processedSources: {
         "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 }
       }
@@ -1413,10 +1465,57 @@ try {
   assert.equal(dashboard.tracker.exists, true);
   assert.equal(dashboard.lastRun.reportExists, true);
   assert.equal(dashboard.raw.changedCount, 1);
+  assert.equal(dashboard.raw.todayCount, 1);
   assert.equal(dashboard.wiki.indexExists, true);
-  assert.equal(dashboard.wiki.domainCount, 1);
+  assert.equal(dashboard.wiki.domainCount, 2);
+  assert.deepEqual(dashboard.wiki.groups.map((group) => [group.path, group.totalCount, group.todayCount]), [
+    ["wiki/ai-intelligence", 2, 1],
+    ["wiki/content", 1, 0]
+  ]);
   assert.equal(dashboard.outputs.latestReportPath, "outputs/kb-maintenance-2026-05-15.md");
-  assert.equal(dashboard.inbox.fileCount, 1);
+  assert.equal(dashboard.inbox.fileCount, 2);
+  assert.equal(dashboard.inbox.todayCount, 1);
+  assert.equal(dashboard.health.status, "healthy");
+  assert.equal(dashboard.health.label, "健康");
+  assert.equal(dashboard.health.streakDays, 2);
+  assert.equal(dashboard.health.lastCheckAt, today.getTime());
+  assert.equal(dashboard.checkHeatmap.at(-1)?.status, "success");
+  assert.equal(dashboard.checkHeatmap.length, 14);
+
+  const riskSettings = normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(threeDaysAgo), status: "success", at: threeDaysAgo.getTime() }
+      ],
+      processedSources: {
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 }
+      }
+    }
+  }).settings.knowledgeBase;
+  const riskDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, riskSettings);
+  assert.equal(riskDashboard.health.status, "risk");
+  assert.ok(riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
+
+  const missingRulesSettings = normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      useCustomRulesFile: true,
+      rulesFilePath: "missing.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ]
+    }
+  }).settings.knowledgeBase;
+  const missingRulesDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, missingRulesSettings);
+  assert.equal(missingRulesDashboard.health.status, "bad");
+  assert.ok(missingRulesDashboard.health.reasons.includes("规则文件缺失"));
+
+  const legacyDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({ settingsVersion: 19 }).settings.knowledgeBase);
+  assert.equal(legacyDashboard.health.status, "bad");
+  assert.ok(legacyDashboard.health.reasons.includes("从未体检"));
+  assert.equal(legacyDashboard.checkHeatmap.every((day) => day.status === "none"), true);
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
 }
