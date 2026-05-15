@@ -101,6 +101,7 @@ import { buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
+import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -1274,13 +1275,16 @@ assert.equal(staleMessages[1].status, "completed");
 const kbVault = await mkdtemp(path.join(tmpdir(), "codex-kb-"));
 try {
   await mkdir(path.join(kbVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(kbVault, "raw", "articles", "demo.assets"), { recursive: true });
   await mkdir(path.join(kbVault, "raw", "attachments"), { recursive: true });
   await writeFile(path.join(kbVault, "raw", "articles", "demo.md"), "# Demo\n\n正文", "utf8");
+  await writeFile(path.join(kbVault, "raw", "articles", "demo.assets", "image.png"), Buffer.from([1, 2, 3]));
   await writeFile(path.join(kbVault, "raw", "attachments", "image.png"), Buffer.from([1, 2, 3]));
   await writeFile(path.join(kbVault, "raw", "attachments", "paper.pdf"), Buffer.from("%PDF-1.7"));
   await writeFile(path.join(kbVault, "raw", "attachments", "doc.docx"), Buffer.from("PK"));
   await writeFile(path.join(kbVault, "raw", "index.md"), "# Raw Index\n", "utf8");
   await writeFile(path.join(kbVault, "raw", "ignore.csv"), "a,b", "utf8");
+  await writeFile(path.join(kbVault, "raw", "articles", "demo.base.md"), "# Base\n", "utf8");
   const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
     "raw/articles/demo.md",
@@ -1298,6 +1302,15 @@ try {
   assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
   assert.equal(secondDiscovery.changedSources.length, 3);
   assert.ok(secondDiscovery.reportPath.startsWith("outputs/kb-maintenance-"));
+  await mkdir(path.join(kbVault, "outputs"), { recursive: true });
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 共 1 个文件",
+    "- demo.md"
+  ].join("\n"), "utf8");
+  const trackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(trackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
 
   const kbPrompt = buildKnowledgeBasePrompt({
     vaultPath: kbVault,
@@ -1319,6 +1332,10 @@ try {
   assert.ok(kbPrompt.includes("raw/index.md"));
   assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
   assert.ok(kbPrompt.includes("raw/index.md 只允许做索引更新"));
+  assert.ok(kbPrompt.includes("find"));
+  assert.ok(kbPrompt.includes("跳过 raw/ 中以 .base 结尾"));
+  assert.ok(kbPrompt.includes("3-5 句核心要点"));
+  assert.ok(kbPrompt.includes("断链、孤儿页面、过时或 draft"));
   assert.ok(kbPrompt.includes(secondDiscovery.reportPath));
   const outputsPrompt = buildKnowledgeBasePrompt({
     vaultPath: kbVault,
@@ -1336,7 +1353,6 @@ try {
   assert.ok(outputsPrompt.includes("处理 outputs"));
   assert.ok(outputsPrompt.includes("长期复用价值"));
   assert.ok(outputsPrompt.includes("用户原始指令：/outputs 只提炼长期方法论"));
-  await mkdir(path.join(kbVault, "outputs"), { recursive: true });
   await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
   const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
@@ -1398,6 +1414,61 @@ try {
   assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.kb-template.md"), "utf8")).includes("LLM Wiki"));
 } finally {
   await rm(initVaultWithBothRules, { recursive: true, force: true });
+}
+
+const rulesRepairVault = await mkdtemp(path.join(tmpdir(), "codex-kb-rules-repair-"));
+try {
+  const created = await repairKnowledgeBaseRulesFile(rulesRepairVault, {
+    useCustomRulesFile: false,
+    rulesFilePath: "AGENTS.md"
+  }, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(created.status, "created");
+  assert.equal(created.rulesFilePath, "AGENTS.md");
+  const createdRules = await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8");
+  assert.ok(createdRules.includes("LLM Wiki"));
+  assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
+  assert.ok(createdRules.includes("禁止改写 `raw/` 原文"));
+
+  const ok = await repairKnowledgeBaseRulesFile(rulesRepairVault, {
+    useCustomRulesFile: false,
+    rulesFilePath: "AGENTS.md"
+  }, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(ok.status, "ok");
+  assert.equal(await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8"), createdRules);
+} finally {
+  await rm(rulesRepairVault, { recursive: true, force: true });
+}
+
+const customRulesRepairVault = await mkdtemp(path.join(tmpdir(), "codex-kb-custom-rules-repair-"));
+try {
+  const customCreated = await repairKnowledgeBaseRulesFile(customRulesRepairVault, {
+    useCustomRulesFile: true,
+    rulesFilePath: "CLAUDE.md"
+  }, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(customCreated.status, "created");
+  assert.equal(customCreated.rulesFilePath, "CLAUDE.md");
+  assert.equal(await fileExists(path.join(customRulesRepairVault, "AGENTS.md")), false);
+  assert.ok((await readFile(path.join(customRulesRepairVault, "CLAUDE.md"), "utf8")).includes("LLM Wiki"));
+} finally {
+  await rm(customRulesRepairVault, { recursive: true, force: true });
+}
+
+const patchRulesRepairVault = await mkdtemp(path.join(tmpdir(), "codex-kb-patch-rules-repair-"));
+try {
+  await writeFile(path.join(patchRulesRepairVault, "CLAUDE.md"), "# Existing rules\n\n只写团队协作偏好。", "utf8");
+  const patched = await repairKnowledgeBaseRulesFile(patchRulesRepairVault, {
+    useCustomRulesFile: true,
+    rulesFilePath: "CLAUDE.md"
+  }, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(patched.status, "patched");
+  assert.ok(patched.missingRules.includes("raw/ 只读边界"));
+  const patchedRules = await readFile(path.join(patchRulesRepairVault, "CLAUDE.md"), "utf8");
+  assert.ok(patchedRules.startsWith("# Existing rules"));
+  assert.ok(patchedRules.includes("obsidian-codex-kb-minimum-rules:start"));
+  assert.ok(patchedRules.includes("`raw/` 是不可变原始资料区，只读"));
+  assert.ok(patchedRules.includes("把维护报告写入 `outputs/`"));
+} finally {
+  await rm(patchRulesRepairVault, { recursive: true, force: true });
 }
 
 function daysAgoDateForTest(daysAgo: number): Date {
@@ -1495,8 +1566,8 @@ try {
     }
   }).settings.knowledgeBase;
   const riskDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, riskSettings);
-  assert.equal(riskDashboard.health.status, "risk");
-  assert.ok(riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
+  assert.notEqual(riskDashboard.health.status, "bad");
+  assert.ok(!riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
 
   const missingRulesSettings = normalizeSettingsData({
     settingsVersion: 19,
@@ -1510,14 +1581,77 @@ try {
   }).settings.knowledgeBase;
   const missingRulesDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, missingRulesSettings);
   assert.equal(missingRulesDashboard.health.status, "bad");
+  assert.equal(missingRulesDashboard.health.label, "需处理");
   assert.ok(missingRulesDashboard.health.reasons.includes("规则文件缺失"));
 
   const legacyDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({ settingsVersion: 19 }).settings.knowledgeBase);
-  assert.equal(legacyDashboard.health.status, "bad");
-  assert.ok(legacyDashboard.health.reasons.includes("从未体检"));
-  assert.equal(legacyDashboard.checkHeatmap.every((day) => day.status === "none"), true);
+  assert.notEqual(legacyDashboard.health.status, "bad");
+  assert.ok(!legacyDashboard.health.reasons.includes("从未体检"));
+  assert.equal(legacyDashboard.checkHeatmap.at(-1)?.status, "success");
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
+}
+
+const externalMaintenanceVault = await mkdtemp(path.join(tmpdir(), "codex-kb-external-"));
+try {
+  await mkdir(path.join(externalMaintenanceVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  await mkdir(path.join(externalMaintenanceVault, "wiki"), { recursive: true });
+  await mkdir(path.join(externalMaintenanceVault, "outputs"), { recursive: true });
+  await mkdir(path.join(externalMaintenanceVault, "inbox"), { recursive: true });
+  await writeFile(path.join(externalMaintenanceVault, "AGENTS.md"), "# Rules\n", "utf8");
+  await writeFile(path.join(externalMaintenanceVault, "raw", "index.md"), "# Raw\n", "utf8");
+  await writeFile(path.join(externalMaintenanceVault, "wiki", "index.md"), "# Wiki\n", "utf8");
+  const processedRaw = path.join(externalMaintenanceVault, "raw", "articles", "GitHub项目收集", "old.md");
+  const newRaw = path.join(externalMaintenanceVault, "raw", "articles", "GitHub项目收集", "new.md");
+  await writeFile(processedRaw, "# Old\n", "utf8");
+  await writeFile(newRaw, "# New\n", "utf8");
+  const trackerPath = path.join(externalMaintenanceVault, "outputs", ".ingest-tracker.md");
+  await writeFile(trackerPath, [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/GitHub项目收集/ — 共 1 个文件",
+    "",
+    "2026-05-15 处理新增：",
+    "- old.md",
+    "  → 已消化为 [[Old]]"
+  ].join("\n"), "utf8");
+  const reportPath = path.join(externalMaintenanceVault, "outputs", "kb-maintenance-2026-05-15.md");
+  await writeFile(reportPath, [
+    "# 每日知识库维护报告 — 2026-05-15",
+    "",
+    "### 体检发现",
+    "- 断链：1 处实质性断链",
+    "- 孤儿页面：0",
+    "- 过时/草稿内容：1 处",
+    "- 索引链接：全部有效",
+    "",
+    "### 状态",
+    "完成。"
+  ].join("\n"), "utf8");
+  const externalToday = daysAgoDateForTest(0);
+  const externalYesterday = daysAgoDateForTest(1);
+  const externalOld = daysAgoDateForTest(2);
+  await utimes(processedRaw, externalOld, externalOld);
+  await utimes(trackerPath, externalYesterday, externalYesterday);
+  await utimes(newRaw, externalToday, externalToday);
+  await utimes(reportPath, externalToday, externalToday);
+  const externalDashboard = await buildKnowledgeBaseDashboardSnapshot(externalMaintenanceVault, normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      lastReportPath: "outputs/kb-maintenance-2026-05-15.md"
+    }
+  }).settings.knowledgeBase);
+  assert.equal(externalDashboard.raw.changedCount, 1);
+  assert.equal(externalDashboard.tracker.trackedCount, 1);
+  assert.ok(externalDashboard.health.score >= 80);
+  assert.equal(externalDashboard.health.status, "risk");
+  assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("断链 1 处")));
+  assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("过时/草稿 1 处")));
+  assert.ok(!externalDashboard.health.reasons.includes("从未体检"));
+  assert.equal(externalDashboard.health.lastCheckAt, externalToday.getTime());
+  assert.equal(externalDashboard.checkHeatmap.at(-1)?.status, "success");
+} finally {
+  await rm(externalMaintenanceVault, { recursive: true, force: true });
 }
 
 const tempVault = await mkdtemp(path.join(tmpdir(), "codex-raw-store-"));

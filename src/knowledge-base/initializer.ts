@@ -263,7 +263,7 @@ async function writeFileIfMissing(vaultPath: string, relativePath: string, conte
   createdFiles.push(relativePath);
 }
 
-function buildKnowledgeBaseRulesTemplate(now: Date): string {
+export function buildKnowledgeBaseRulesTemplate(now: Date): string {
   const stamp = formatDateTime(now);
   return [
     "---",

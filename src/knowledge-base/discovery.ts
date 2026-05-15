@@ -2,6 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-models";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseSource } from "./types";
+import { readKnowledgeBaseTrackerSnapshot } from "./tracker";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -15,8 +16,9 @@ export async function discoverKnowledgeBaseSources(vaultPath: string, processed:
     const stat = await fsp.stat(file);
     const relativePath = normalizeSlashes(path.relative(vaultPath, file));
     if (relativePath === "raw/index.md") continue;
+    const lowerPath = relativePath.toLowerCase();
+    if (lowerPath.endsWith(".base") || lowerPath.endsWith(".base.md") || lowerPath.includes(".assets/")) continue;
     const mime = mimeForKnowledgeFile(file);
-    const previous = processed[relativePath];
     sources.push({
       relativePath,
       absolutePath: file,
@@ -24,16 +26,30 @@ export async function discoverKnowledgeBaseSources(vaultPath: string, processed:
       mtime: stat.mtimeMs,
       mime,
       modality: requiredModalityForMime(mime),
-      changed: !previous || previous.size !== stat.size || previous.mtime !== stat.mtimeMs
+      changed: true
     });
   }
+  const trackerPath = path.join(vaultPath, "outputs", ".ingest-tracker.md");
+  const trackerSnapshot = await readKnowledgeBaseTrackerSnapshot(vaultPath, "outputs/.ingest-tracker.md", sources.map((source) => ({
+    path: source.relativePath,
+    size: source.size,
+    mtime: source.mtime
+  })));
+  const mergedProcessed = { ...processed, ...trackerSnapshot.processedSources };
+  const resolvedSources = sources.map((source) => {
+    const previous = mergedProcessed[source.relativePath];
+    return {
+      ...source,
+      changed: !previous || previous.size !== source.size || previous.mtime !== source.mtime
+    };
+  });
   const today = formatDateForFile(new Date());
   return {
     vaultPath,
-    sources,
-    changedSources: sources.filter((source) => source.changed),
+    sources: resolvedSources,
+    changedSources: resolvedSources.filter((source) => source.changed),
     reportPath: `outputs/kb-maintenance-${today}.md`,
-    trackerPath: path.join(vaultPath, "outputs", ".ingest-tracker.md")
+    trackerPath
   };
 }
 

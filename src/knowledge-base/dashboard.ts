@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
+import { readKnowledgeBaseTrackerSnapshot } from "./tracker";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -90,6 +91,7 @@ export interface KnowledgeBaseDashboardSnapshot {
 
 const MAX_DASHBOARD_FILES = 3000;
 const RECENT_FILE_LIMIT = 6;
+const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
 export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
@@ -105,8 +107,11 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const trackerExists = await exists(path.join(vaultPath, trackerPath));
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
   const wikiIndexExists = await exists(path.join(vaultPath, "wiki/index.md"));
-  const rawContentFiles = raw.files.filter((file) => file.path !== "raw/index.md");
-  const rawChangedCount = countChangedProcessed(rawContentFiles, processedSources);
+  const rawContentFiles = raw.files.filter(isRawProcessingSource);
+  const trackerSnapshot = await readKnowledgeBaseTrackerSnapshot(vaultPath, trackerPath, rawContentFiles);
+  const mergedProcessedSources = { ...processedSources, ...trackerSnapshot.processedSources };
+  const reportFindings = await readReportFindings(vaultPath, reportPath);
+  const rawChangedCount = countChangedProcessed(rawContentFiles, mergedProcessedSources);
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
@@ -122,6 +127,8 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const health = buildHealth({
     settings,
     generatedAt,
+    latestExternalCheckAt: Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt),
+    latestReportFindings: reportFindings,
     rulesFileExists,
     rawExists: raw.exists,
     wikiExists: wiki.exists,
@@ -154,7 +161,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     tracker: {
       path: trackerPath,
       exists: trackerExists,
-      trackedCount: Object.keys(processedSources).length
+      trackedCount: Object.keys(mergedProcessedSources).length
     },
     raw: {
       ...stripLimited(raw),
@@ -178,7 +185,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
       todayCount: inboxTodayCount
     },
     health,
-    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt),
+    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt)),
     warnings
   };
 }
@@ -259,6 +266,50 @@ function countChangedProcessed(files: KnowledgeBaseDashboardFile[], processed: R
   }).length;
 }
 
+interface ReportFindings {
+  checkedAt: number;
+  brokenLinks: number;
+  orphanPages: number;
+  staleItems: number;
+  indexInvalid: boolean;
+}
+
+async function readReportFindings(vaultPath: string, reportPath: string): Promise<ReportFindings> {
+  const empty: ReportFindings = { checkedAt: 0, brokenLinks: 0, orphanPages: 0, staleItems: 0, indexInvalid: false };
+  const normalized = normalizeRelativePath(reportPath, "");
+  if (!normalized) return empty;
+  const absolute = path.join(vaultPath, normalized);
+  const [text, stat] = await Promise.all([
+    fsp.readFile(absolute, "utf8").catch(() => ""),
+    fsp.stat(absolute).catch(() => null)
+  ]);
+  if (!text.trim() || !stat) return empty;
+  return {
+    checkedAt: stat.mtimeMs,
+    brokenLinks: firstNumber(text, [
+      /(?:实质性断链|硬断链|断链)[：:]\s*(\d+)/i,
+      /(?:实质性断链|硬断链|断链)[^\d\n]*(\d+)\s*处/i
+    ]),
+    orphanPages: firstNumber(text, [
+      /孤儿页面[：:]\s*(\d+)/i,
+      /孤儿页面[^\d\n]*(\d+)\s*个/i
+    ]),
+    staleItems: firstNumber(text, [
+      /(?:过时\/草稿内容|过时内容|过时或草稿内容)[：:]\s*(\d+)/i,
+      /(?:过时|draft|草稿)[^\d\n]*(\d+)\s*处/i
+    ]),
+    indexInvalid: /索引链接[：:](?!\s*全部有效)/.test(text) || /wiki\/index\.md[^\n]*(缺失|无效|不存在)/i.test(text)
+  };
+}
+
+function firstNumber(text: string, patterns: RegExp[]): number {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return Number(match[1]) || 0;
+  }
+  return 0;
+}
+
 async function resolveLatestReportPath(vaultPath: string, configuredPath: string, outputFiles: KnowledgeBaseDashboardFile[]): Promise<string> {
   const normalized = normalizeRelativePath(configuredPath, "");
   if (normalized && await exists(path.join(vaultPath, normalized))) return normalized;
@@ -276,6 +327,8 @@ async function countImmediateDirectories(root: string): Promise<number> {
 interface HealthInput {
   settings: KnowledgeBaseSettings;
   generatedAt: number;
+  latestExternalCheckAt: number;
+  latestReportFindings: ReportFindings;
   rulesFileExists: boolean;
   rawExists: boolean;
   wikiExists: boolean;
@@ -289,6 +342,7 @@ interface HealthInput {
 function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const critical: string[] = [];
   const risk: string[] = [];
+  const freshness: string[] = [];
   if (!input.rulesFileExists) critical.push("规则文件缺失");
   if (!input.rawExists) critical.push("raw 目录缺失");
   if (!input.wikiExists) critical.push("wiki 目录缺失");
@@ -296,14 +350,16 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   if (!input.trackerExists) critical.push("tracker 缺失");
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
-  const latestCheck = latestHealthEntry(history);
-  if (!latestCheck) {
-    critical.push("从未体检");
+  const latestHistory = latestHealthEntry(history);
+  const latestCheckAt = Math.max(latestHistory?.at ?? 0, input.latestExternalCheckAt);
+  const latestCheckFailed = Boolean(latestHistory && latestHistory.status === "failed" && latestHistory.at >= input.latestExternalCheckAt);
+  if (latestCheckFailed) critical.push("最近体检失败");
+  if (!latestCheckAt) {
+    freshness.push("没有体检记录，建议运行 /check");
   } else {
-    if (latestCheck.status === "failed") critical.push("最近体检失败");
-    const days = daysBetweenDateKeys(latestCheck.date, formatLocalDateKey(input.generatedAt));
-    if (latestCheck.status === "success" && days >= 5) critical.push(`${days} 天未体检`);
-    else if (latestCheck.status === "success" && days >= 3) risk.push(`${days} 天未体检`);
+    const days = daysBetweenDateKeys(formatLocalDateKey(latestCheckAt), formatLocalDateKey(input.generatedAt));
+    if (days >= 5) freshness.push(`${days} 天未体检`);
+    else if (days >= 3) freshness.push(`${days} 天未体检`);
   }
 
   if (input.rawChangedCount > 20) critical.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
@@ -312,27 +368,49 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   if (input.inboxCount > 30) critical.push(`Inbox 积压 ${input.inboxCount} 个`);
   else if (input.inboxCount > 10) risk.push(`Inbox 积压 ${input.inboxCount} 个`);
 
+  if (input.latestReportFindings.indexInvalid) critical.push("索引链接异常");
+  if (input.latestReportFindings.brokenLinks > 0) risk.push(`断链 ${input.latestReportFindings.brokenLinks} 处`);
+  if (input.latestReportFindings.orphanPages > 0) risk.push(`孤儿页面 ${input.latestReportFindings.orphanPages} 个`);
+  if (input.latestReportFindings.staleItems > 0) risk.push(`过时/草稿 ${input.latestReportFindings.staleItems} 处`);
+
   const nonCriticalWarnings = input.warnings.filter((warning) => !critical.includes(warning));
   if (nonCriticalWarnings.length) risk.push(`存在警告：${nonCriticalWarnings.join("，")}`);
 
-  const status: KnowledgeBaseDashboardHealthStatus = critical.length ? "bad" : risk.length ? "risk" : "healthy";
+  const score = healthScore({
+    criticalCount: critical.length,
+    riskCount: risk.length,
+    rawChangedCount: input.rawChangedCount,
+    inboxCount: input.inboxCount,
+    brokenLinks: input.latestReportFindings.brokenLinks,
+    orphanPages: input.latestReportFindings.orphanPages,
+    staleItems: input.latestReportFindings.staleItems
+  });
+  const scoreStatus: KnowledgeBaseDashboardHealthStatus = critical.length || score < 60 ? "bad" : risk.length || score < 85 ? "risk" : "healthy";
+  const freshnessStatus: KnowledgeBaseDashboardHealthStatus = freshness.some((item) => item.startsWith("5") || /^[6-9]\d* 天/.test(item)) ? "bad" : freshness.length ? "risk" : "healthy";
+  const status = worseHealthStatus(scoreStatus, freshnessStatus);
   const label = status === "healthy" ? "健康" : status === "risk" ? "有风险" : "需处理";
-  const reasons = critical.length ? critical : risk.length ? risk : ["2 天内完成体检，待处理数量正常"];
-  const score = healthScore(critical.length, risk.length, input.rawChangedCount, input.inboxCount);
+  const scoreReasons = [...critical, ...risk];
+  const reasons = scoreReasons.length || freshness.length ? [...scoreReasons, ...freshness] : ["体检结果正常，待处理数量在安全范围"];
   return {
     status,
     label,
     score,
     reasons,
-    lastCheckAt: latestCheck?.at ?? 0,
-    streakDays: countHealthStreakDays(history),
+    lastCheckAt: latestCheckAt,
+    streakDays: countHealthStreakDays(history, input.latestExternalCheckAt),
   };
 }
 
-function healthScore(criticalCount: number, riskCount: number, rawChangedCount: number, inboxCount: number): number {
-  const rawPenalty = rawChangedCount > 20 ? 20 : rawChangedCount > 5 ? 10 : 0;
-  const inboxPenalty = inboxCount > 30 ? 20 : inboxCount > 10 ? 10 : 0;
-  return Math.max(0, Math.min(100, 100 - criticalCount * 24 - riskCount * 12 - rawPenalty - inboxPenalty));
+function healthScore(input: { criticalCount: number; riskCount: number; rawChangedCount: number; inboxCount: number; brokenLinks: number; orphanPages: number; staleItems: number }): number {
+  const rawPenalty = input.rawChangedCount > 20 ? 20 : input.rawChangedCount > 5 ? 10 : 0;
+  const inboxPenalty = input.inboxCount > 30 ? 20 : input.inboxCount > 10 ? 10 : 0;
+  const reportPenalty = Math.min(24, input.brokenLinks * 6) + Math.min(12, input.orphanPages * 4) + Math.min(8, input.staleItems * 2);
+  return Math.max(0, Math.min(100, 100 - input.criticalCount * 24 - input.riskCount * 2 - rawPenalty - inboxPenalty - reportPenalty));
+}
+
+function worseHealthStatus(left: KnowledgeBaseDashboardHealthStatus, right: KnowledgeBaseDashboardHealthStatus): KnowledgeBaseDashboardHealthStatus {
+  const rank: Record<KnowledgeBaseDashboardHealthStatus, number> = { healthy: 0, risk: 1, bad: 2 };
+  return rank[left] >= rank[right] ? left : right;
 }
 
 function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: number): KnowledgeBaseDashboardWikiGroup[] {
@@ -359,9 +437,13 @@ function isSameLocalDay(leftMs: number, rightMs: number): boolean {
   return formatLocalDateKey(leftMs) === formatLocalDateKey(rightMs);
 }
 
-function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number): KnowledgeBaseDashboardHeatmapDay[] {
+function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0): KnowledgeBaseDashboardHeatmapDay[] {
   const normalized = normalizeHealthHistory(history);
   const byDate = new Map(normalized.map((entry) => [entry.date, entry.status]));
+  if (externalCheckAt) {
+    const externalDate = formatLocalDateKey(externalCheckAt);
+    if (!byDate.has(externalDate)) byDate.set(externalDate, "success");
+  }
   const days: KnowledgeBaseDashboardHeatmapDay[] = [];
   for (let offset = 13; offset >= 0; offset -= 1) {
     const date = shiftDate(formatLocalDateKey(generatedAt), -offset);
@@ -373,13 +455,17 @@ function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generated
   return days;
 }
 
-function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[]): number {
+function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], externalCheckAt = 0): number {
   const normalized = normalizeHealthHistory(history);
-  const latest = latestHealthEntry(normalized);
-  if (!latest || latest.status !== "success") return 0;
   const byDate = new Map(normalized.map((entry) => [entry.date, entry.status]));
+  if (externalCheckAt) {
+    const externalDate = formatLocalDateKey(externalCheckAt);
+    if (!byDate.has(externalDate)) byDate.set(externalDate, "success");
+  }
+  const latest = Array.from(byDate.entries()).sort((left, right) => left[0].localeCompare(right[0])).at(-1);
+  if (!latest || latest[1] !== "success") return 0;
   let count = 0;
-  let cursor = latest.date;
+  let cursor = latest[0];
   while (byDate.get(cursor) === "success") {
     count += 1;
     cursor = shiftDate(cursor, -1);
@@ -420,6 +506,14 @@ function formatLocalDateKey(value: number): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isRawProcessingSource(file: KnowledgeBaseDashboardFile): boolean {
+  if (file.path === "raw/index.md") return false;
+  const lower = file.path.toLowerCase();
+  if (lower.endsWith(".base") || lower.endsWith(".base.md")) return false;
+  if (lower.includes(".assets/")) return false;
+  return RAW_PROCESSING_EXTENSIONS.has(path.extname(lower));
 }
 
 function buildWarnings(input: { rulesFileExists: boolean; rawExists: boolean; wikiExists: boolean; trackerExists: boolean; lastError: string; scanLimited: boolean }): string[] {

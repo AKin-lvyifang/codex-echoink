@@ -1504,8 +1504,9 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-kb-dashboard-button {
-  width: 28px;
-  height: 26px;
+  width: 32px;
+  height: 28px;
+  padding: 0 !important;
   border-radius: 6px;
   color: var(--text-muted);
   background: var(--background-primary);
@@ -1513,8 +1514,9 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-kb-dashboard-button svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   stroke-width: 2.2;
 }
 

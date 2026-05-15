@@ -42,6 +42,7 @@ import {
   type SettingsTab
 } from "./settings";
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
+import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -1026,12 +1027,37 @@ export class CodexSettingTab extends PluginSettingTab {
       this.display();
     };
 
+    const repairButton = picker.createEl("button", {
+      cls: "codex-resource-tab",
+      text: "检查并修复",
+      attr: { type: "button", title: "检查指南文件是否缺失必要知识库规则；缺失时自动创建或补齐" }
+    });
+    repairButton.onclick = () => void this.repairKnowledgeBaseRulesFile();
+
     field.createDiv({
       cls: "codex-resource-note codex-rules-file-note",
       text: settings.useCustomRulesFile
         ? "已启用自定义指南。任务只读取这个文件，不合并 AGENTS.md。"
         : "默认读取 Vault 根目录 AGENTS.md；选择文件后会自动启用自定义指南。"
     });
+  }
+
+  private async repairKnowledgeBaseRulesFile(): Promise<void> {
+    const settings = this.plugin.settings.knowledgeBase;
+    try {
+      const result = await repairKnowledgeBaseRulesFile(this.plugin.getVaultPath(), settings);
+      if (settings.useCustomRulesFile) settings.rulesFilePath = result.rulesFilePath;
+      else settings.rulesFilePath = "AGENTS.md";
+      await this.plugin.saveSettings();
+      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+      const detail = result.status === "patched" && result.missingRules.length
+        ? `，补齐 ${result.missingRules.length} 项`
+        : "";
+      new Notice(`${result.summary}${detail}`);
+      this.display();
+    } catch (error) {
+      new Notice(`修复失败：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private openKnowledgeBaseRulesFilePicker(): void {
