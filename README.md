@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian v0.4.0 automated knowledge base operations." src="docs/images/obsidian-codex-knowledge-v0.4.0.png">
+  <img width="1024" alt="Codex for Obsidian v0.4.1 automated knowledge base operations." src="docs/images/obsidian-codex-knowledge-v0.4.1.png">
 </a>
 
 <p align="center">
@@ -16,14 +16,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.4.0-0EA5E9?style=flat-square" alt="Version v0.4.0">
+    <img src="https://img.shields.io/badge/version-v0.4.1-0EA5E9?style=flat-square" alt="Version v0.4.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip"><strong>Download v0.4.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip"><strong>Download v0.4.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">Latest Release</a>
 </p>
@@ -51,10 +51,12 @@
 ### Knowledge Base Operations
 
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
-- Treats chat as the main control surface: type `/init`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
+- Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
-- Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a 14-day check heatmap.
-- Reads `AGENTS.md` by default, or a custom Markdown rules file such as `CLAUDE.md` when configured.
+- Answers read-only knowledge questions with `/ask`, searching Wiki notes first and separating Vault evidence from external or model-based supplements.
+- Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
+- Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Codex/OpenCode.
+- Optionally recommends [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) for longer-lived knowledge context; your Agent installs the skill and runs its bootstrap in the workspace, while the plugin does not bundle the skill or modify your `AGENTS.md`.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
 - Supports manual runs and daily maintenance when Obsidian is open.
@@ -66,6 +68,7 @@
 - Optionally supports OpenAI Responses API-compatible custom providers, including multiple models per provider.
 - Supports local proxy settings for the Codex child process.
 - Keeps plugin, MCP, and skill switches scoped to the current vault instead of rewriting global Codex config.
+- Adds search to the current-vault plugin, MCP, and skill switches, with long labels clipped cleanly so the enable checkbox stays reachable.
 
 ### OpenCode API Mode
 
@@ -87,6 +90,28 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 
 ## What's New
 
+### v0.4.1
+
+**New feature:** Knowledge channel refinements for querying, visibility, and day-to-day control.
+
+**What changed:**
+
+- Added `/ask` for read-only knowledge questions. It searches `wiki/` first, sends the most relevant notes as context, and asks the Agent to distinguish Vault evidence from supplemental information.
+- Added automatic question detection in the Knowledge channel, so natural questions such as `Harness Engineering 和 Vibe Coding 有什么关系？` enter the read-only ask flow.
+- Upgraded the Knowledge health heatmap from a short recent strip to a full-year GitHub-style view with month labels, weekday labels, success states, and failed checks.
+- Added Codex CLI model and reasoning-effort controls directly in the Knowledge channel composer. The Knowledge task no longer has to use a hard-coded reasoning level.
+- Added search boxes to the current-vault `Plugins`, `MCP`, and `Skills` capability tabs. Search covers name, id/path, metadata, and description, and multiple words work as an AND filter.
+- Fixed long capability rows by clipping names, paths, and descriptions with ellipses, so the right-side checkbox remains visible and clickable.
+- Kept `LLM-WIKI.md` as the default knowledge rules file, with `AGENTS.md` preserved as a compatibility option and runtime background.
+
+**How to use:**
+
+1. Open the `Knowledge` channel.
+2. Type `/ask your question`, or just ask a question in the Knowledge channel.
+3. Use the bottom model button in Codex CLI mode to choose the model and reasoning effort for Knowledge tasks.
+4. Expand the health dashboard to review the full-year check heatmap.
+5. Open plugin settings, go to current-vault capability management, then search within `Plugins`, `MCP`, or `Skills` before toggling items.
+
 ### v0.4.0
 
 **New feature:** Knowledge Base Operations for automated Obsidian vault maintenance.
@@ -96,7 +121,8 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 - Added a persistent knowledge base channel bound to the current vault.
 - Added command templates: `/check`, `/maintain`, `/outputs`, `/journal`, and `/inbox`.
 - Added WeChat, web page, and file capture entry points for Raw Sources.
-- Added configurable knowledge base rules file. `AGENTS.md` is the default; a custom Markdown file can replace it.
+- Added configurable knowledge base rules file. `LLM-WIKI.md` is the default; a custom Markdown file can replace it.
+- Added an optional `codex-memory-lite` recommendation in settings for users who want long-term memory across knowledge-base runs.
 - Added OpenCode model selection and OpenCode Agent selection for OpenCode API mode.
 - Added selected-text translation to English from the editor context menu.
 - Improved the knowledge base settings page alignment, status copy, and rules-file picker.
@@ -171,7 +197,7 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`obsidian-codex-0.4.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip) from [the latest release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest).
+3. Download [`obsidian-codex-0.4.1.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip) from [the latest release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest).
 4. Unzip it and get the `obsidian-codex` folder.
 5. Move it into your vault plugin directory:
 
@@ -198,7 +224,7 @@ obsidian-codex/
 4. Attach notes, files, images, skills, or MCP tools when needed; attachments are context only.
 5. Review the process cards for commands, edits, context usage, and evidence.
 6. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
-7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/maintain` or `/outputs` when you want it to write structured knowledge.
+7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/ask`, `/maintain`, or `/outputs` depending on whether you want an answer, a maintenance run, or structured knowledge output.
 
 ## Screenshots
 

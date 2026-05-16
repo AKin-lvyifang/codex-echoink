@@ -1007,11 +1007,14 @@ export class CodexView extends ItemView {
     this.addKnowledgeDashboardFact(facts, "最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at));
     this.addKnowledgeDashboardFact(facts, "Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失");
 
+    const healthReasons = snapshot.health.status === "healthy" ? [] : snapshot.health.reasons;
+    const freshnessReasons = snapshot.checkFreshness.status === "fresh" ? [] : snapshot.checkFreshness.reasons;
+    if (!healthReasons.length && !freshnessReasons.length) return;
     const reasons = section.createDiv({ cls: "codex-kb-dashboard-reasons" });
-    for (const reason of snapshot.health.reasons) {
+    for (const reason of healthReasons) {
       reasons.createDiv({ cls: "codex-kb-dashboard-reason", text: reason });
     }
-    for (const reason of snapshot.checkFreshness.reasons) {
+    for (const reason of freshnessReasons) {
       reasons.createDiv({ cls: "codex-kb-dashboard-reason codex-kb-dashboard-reason-muted", text: reason });
     }
   }
@@ -1045,20 +1048,51 @@ export class CodexView extends ItemView {
 
   private renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
     const section = this.addKnowledgeDashboardSection(container, "体检热力图");
+    const year = heatmapYear(snapshot);
+    const completedChecks = snapshot.checkHeatmap.filter((day) => day.status === "success" || day.status === "failed").length;
+    section.createDiv({ cls: "codex-kb-heatmap-summary", text: `${year} 年 ${completedChecks} 次体检` });
     const heatmap = section.createDiv({ cls: "codex-kb-dashboard-heatmap" });
+    const grid = heatmap.createDiv({ cls: "codex-kb-heatmap-grid" });
+    const yearStart = new Date(year, 0, 1, 12, 0, 0, 0);
+    const weekCount = Math.max(1, ...snapshot.checkHeatmap.map((day) => heatmapWeekIndex(day.date, yearStart) + 1));
+    grid.style.setProperty("--codex-kb-heatmap-weeks", String(weekCount));
+
+    const monthStarts = new Set<string>();
     for (const day of snapshot.checkHeatmap) {
-      const cell = heatmap.createSpan({
+      if (day.date.endsWith("-01")) monthStarts.add(day.date);
+    }
+    for (const dateKey of monthStarts) {
+      const date = parseHeatmapDateKey(dateKey);
+      if (!date) continue;
+      const label = grid.createDiv({ cls: "codex-kb-heatmap-month", text: HEATMAP_MONTH_LABELS[date.getMonth()] });
+      label.style.gridColumn = `${heatmapWeekIndex(dateKey, yearStart) + 2}`;
+      label.style.gridRow = "1";
+    }
+    for (const [weekday, label] of [[1, "Mon"], [3, "Wed"], [5, "Fri"]] as Array<[number, string]>) {
+      const dayLabel = grid.createDiv({ cls: "codex-kb-heatmap-weekday", text: label });
+      dayLabel.style.gridColumn = "1";
+      dayLabel.style.gridRow = `${weekday + 2}`;
+    }
+
+    for (const day of snapshot.checkHeatmap) {
+      const date = parseHeatmapDateKey(day.date);
+      if (!date) continue;
+      const cell = grid.createSpan({
         cls: `codex-kb-heatmap-cell is-${day.status}`,
         attr: { title: `${day.date} · ${knowledgeHeatmapStatusLabel(day.status)}`, "aria-label": `${day.date} ${knowledgeHeatmapStatusLabel(day.status)}` }
       });
-      cell.createSpan({ text: day.date.slice(8) });
+      cell.style.gridColumn = `${heatmapWeekIndex(day.date, yearStart) + 2}`;
+      cell.style.gridRow = `${date.getDay() + 2}`;
     }
     const legend = section.createDiv({ cls: "codex-kb-dashboard-legend" });
-    for (const [status, label] of [["success", "成功"], ["failed", "失败"], ["none", "无记录"]] as Array<[string, string]>) {
-      const item = legend.createSpan({ cls: "codex-kb-dashboard-legend-item" });
-      item.createSpan({ cls: `codex-kb-legend-dot is-${status}` });
-      item.createSpan({ text: label });
-    }
+    legend.createSpan({ cls: "codex-kb-dashboard-legend-label", text: "Less" });
+    legend.createSpan({ cls: "codex-kb-legend-dot is-none" });
+    legend.createSpan({ cls: "codex-kb-legend-dot is-success is-low" });
+    legend.createSpan({ cls: "codex-kb-legend-dot is-success" });
+    legend.createSpan({ cls: "codex-kb-dashboard-legend-label", text: "More" });
+    const failed = legend.createSpan({ cls: "codex-kb-dashboard-legend-item" });
+    failed.createSpan({ cls: "codex-kb-legend-dot is-failed" });
+    failed.createSpan({ text: "失败" });
   }
 
   private addKnowledgeDashboardSection(container: HTMLElement, title: string): HTMLElement {
@@ -1477,6 +1511,19 @@ export class CodexView extends ItemView {
       const fileButton = this.createComposerIconButton(left, "file-plus", "文件收藏");
       fileButton.onclick = () => this.pickKnowledgeBaseFiles();
 
+      if (this.resolvedKnowledgeBackend() === "codex-cli") {
+        const modelButton = right.createEl("button", {
+          cls: "codex-composer-model-button",
+          attr: { type: "button", "aria-label": "知识库模型和思考强度", title: this.currentKnowledgeComposerSummaryTitle() }
+        });
+        const modelIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
+        setIcon(modelIcon, "zap");
+        modelButton.createSpan({ cls: "codex-composer-model-text", text: this.currentComposerSummary() });
+        const modelChevron = modelButton.createSpan({ cls: "codex-composer-chevron" });
+        setIcon(modelChevron, "chevron-down");
+        modelButton.onclick = (event) => this.openKnowledgeModelMenu(event);
+      }
+
       const kbChip = right.createEl("button", { cls: "codex-composer-model-button codex-kb-channel-chip", attr: { type: "button", title: "知识库常用命令" } });
       const kbIcon = kbChip.createSpan({ cls: "codex-composer-model-icon" });
       setIcon(kbIcon, "library");
@@ -1689,6 +1736,7 @@ export class CodexView extends ItemView {
     event.preventDefault();
     const menu = new Menu();
     const commands = [
+      { title: "提问", icon: "search", text: "/ask " },
       { title: "初始化", icon: "sparkles", text: "/init " },
       { title: "体检", icon: "stethoscope", text: "/check " },
       { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
@@ -1702,6 +1750,46 @@ export class CodexView extends ItemView {
           .setTitle(command.title)
           .setIcon(command.icon)
           .onClick(() => this.fillKnowledgeBaseCommand(command.text))
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private openKnowledgeModelMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const menu = new Menu();
+    const providerModels = this.activeProviderModels();
+    const effectiveModel = this.effectiveModel();
+    const models = providerModels.length
+      ? ensureModelChoices([], ...providerModels)
+      : ensureModelChoices(this.plugin.lastStatus?.models ?? [], this.selectedModel, this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel);
+    menu.addItem((item) => item.setTitle("知识库模型").setIsLabel(true));
+    for (const model of models) {
+      menu.addItem((item) =>
+        item
+          .setTitle(model.displayName || model.model)
+          .setIcon("box")
+          .setChecked(effectiveModel === model.model)
+          .onClick(() => {
+            this.selectedModel = model.model;
+            this.persistComposerDefaults();
+            this.renderToolbar();
+          })
+      );
+    }
+    menu.addSeparator();
+    menu.addItem((item) => item.setTitle("思考强度").setIsLabel(true));
+    for (const effort of ["low", "medium", "high", "xhigh"] as ReasoningEffort[]) {
+      menu.addItem((item) =>
+        item
+          .setTitle(labelFor(effort))
+          .setIcon("brain")
+          .setChecked(this.selectedReasoning === effort)
+          .onClick(() => {
+            this.selectedReasoning = effort;
+            this.persistComposerDefaults();
+            this.renderToolbar();
+          })
       );
     }
     menu.showAtMouseEvent(event);
@@ -1793,6 +1881,10 @@ export class CodexView extends ItemView {
 
   private currentComposerSummaryTitle(): string {
     return `模型：${this.effectiveModel()}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
+  }
+
+  private currentKnowledgeComposerSummaryTitle(): string {
+    return `知识库模型：${this.effectiveModel()}\n思考强度：${labelFor(this.selectedReasoning)}`;
   }
 
   private persistComposerDefaults(): void {
@@ -2788,6 +2880,11 @@ export class CodexView extends ItemView {
     return provider ? getApiProviderModels(provider) : [];
   }
 
+  private resolvedKnowledgeBackend(): "codex-cli" | "opencode" {
+    const configured = this.plugin.settings.knowledgeBase.backend;
+    return configured === "default" ? this.plugin.settings.agentBackend : configured;
+  }
+
   private effectiveModel(): string {
     const providerModels = this.activeProviderModels();
     if (providerModels.length) {
@@ -3754,6 +3851,26 @@ function knowledgeRunStatusLabel(status: string, at: number): string {
   };
   const label = labels[status] ?? status;
   return at ? `${label} · ${formatRelativeTime(at)}` : label;
+}
+
+const HEATMAP_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function heatmapYear(snapshot: KnowledgeBaseDashboardSnapshot): number {
+  const firstDate = snapshot.checkHeatmap[0] ? parseHeatmapDateKey(snapshot.checkHeatmap[0].date) : null;
+  return firstDate?.getFullYear() ?? new Date(snapshot.generatedAt).getFullYear();
+}
+
+function heatmapWeekIndex(dateKey: string, yearStart: Date): number {
+  const date = parseHeatmapDateKey(dateKey);
+  if (!date) return 0;
+  const daysFromYearStart = Math.round((date.getTime() - yearStart.getTime()) / 86400000);
+  return Math.floor((daysFromYearStart + yearStart.getDay()) / 7);
+}
+
+function parseHeatmapDateKey(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
 }
 
 function knowledgeHeatmapStatusLabel(status: string): string {

@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseSettings } from "../settings/settings";
+import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./constants";
 import { buildKnowledgeBaseRulesTemplate, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "./initializer";
 
 export type KnowledgeBaseRulesRepairStatus = "created" | "patched" | "ok";
@@ -75,7 +76,7 @@ export function detectMissingKnowledgeBaseRules(content: string): string[] {
 }
 
 export function resolveKnowledgeBaseRulesFilePath(settings: RulesSettings): string {
-  const rawPath = settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md";
+  const rawPath = settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE;
   const clean = normalizeRulesPath(rawPath);
   if (!/\.md$/i.test(clean)) throw new Error("知识库指南必须是当前 Vault 内的 Markdown 文件。");
   return clean;
@@ -134,7 +135,7 @@ function normalizeRulesPath(value: string): string {
     .split("/")
     .filter((part) => part && part !== "." && part !== "..")
     .join("/");
-  return clean || "AGENTS.md";
+  return clean || DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
 }
 
 async function exists(filePath: string): Promise<boolean> {

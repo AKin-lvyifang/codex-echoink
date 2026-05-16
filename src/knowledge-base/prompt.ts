@@ -1,4 +1,6 @@
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource } from "./types";
+import { AGENTS_RULES_FILE } from "./constants";
+import { formatAskMatchesForPrompt, type KnowledgeBaseAskMatch } from "./query";
 
 export interface KnowledgeBasePromptInput {
   vaultPath: string;
@@ -20,7 +22,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     : "- 本轮没有检测到新增或变更 raw 文件；请执行体检并生成 no-op 维护报告。";
   const task = taskForMode(input.mode);
   const rulesMode = input.useCustomRulesFile
-    ? `自定义规则文件：${input.rulesFilePath}。只读取这个文件，不读取、不合并 AGENTS.md。`
+    ? `自定义规则文件：${input.rulesFilePath}。知识库结构以这个文件为准；不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
     : `默认规则文件：${input.rulesFilePath}。如果存在，必须读取；如果不存在，按本提示的安全边界执行。`;
   return [
     "你正在 Obsidian Vault 内执行知识库维护任务。",
@@ -69,6 +71,56 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "- 对图片/PDF 的理解必须基于模型实际读取到的内容；如果不能读取，写明失败原因，不要编造。",
     "",
     "开始执行。"
+  ].join("\n");
+}
+
+export interface KnowledgeBaseAskPromptInput {
+  vaultPath: string;
+  userRequest: string;
+  rulesFilePath: string;
+  rulesFileExists: boolean;
+  useCustomRulesFile: boolean;
+  matches: KnowledgeBaseAskMatch[];
+}
+
+export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput): string {
+  const rulesMode = input.useCustomRulesFile
+    ? `自定义规则文件：${input.rulesFilePath}。知识库结构以这个文件为准；不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
+    : `默认规则文件：${input.rulesFilePath}。如果存在，必须读取；如果不存在，按本提示的安全边界执行。`;
+  return [
+    "你正在 Obsidian Vault 内回答知识库问题。",
+    "",
+    "必须使用中文，先给结论，再给依据。",
+    "这是只读问答任务：不要创建、修改、删除或移动任何文件。",
+    "",
+    "## 用户问题",
+    input.userRequest.trim(),
+    "",
+    "## Vault",
+    input.vaultPath,
+    "",
+    "## 必读文件状态",
+    `- 知识库操作指南：${rulesMode}`,
+    `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，必须读取" : "不存在"}`,
+    "",
+    "## 相关 wiki 笔记",
+    formatAskMatchesForPrompt(input.matches),
+    "",
+    "## 回答规则",
+    "- 先检查并优先引用上面的 wiki 笔记；如果已附带文件，请读取文件确认上下文，不要只看摘录。",
+    "- wiki 是优先依据，不是唯一依据；可以使用可用搜索工具、外部资料或模型已有知识补充。",
+    "- 必须区分“来自 Vault 的依据”和“补充信息 / 推断”。",
+    "- 如果没有命中相关 wiki 笔记，明确说明“未找到相关 wiki 笔记”，再基于可用搜索或通用知识回答。",
+    "- 不确定的信息要明确标注，不要编造来源。",
+    "- 引用 Vault 内容时写出 wiki 相对路径；引用外部搜索时写出来源名称或链接。",
+    "",
+    "## 输出格式",
+    "1. 一眼结论",
+    "2. Vault 依据",
+    "3. 补充信息",
+    "4. 不确定 / 下一步",
+    "",
+    "开始回答。"
   ].join("\n");
 }
 

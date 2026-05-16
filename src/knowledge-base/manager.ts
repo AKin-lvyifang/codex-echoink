@@ -8,14 +8,17 @@ import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../age
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
 import { recordKnowledgeBaseHealthCheck, type StoredAttachment } from "../settings/settings";
-import type { CodexNotification, UserInput } from "../types/app-server";
+import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
+import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
-import { buildKnowledgeBasePrompt } from "./prompt";
+import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
+import { findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
+import { buildCodexKnowledgeTurnOptions } from "./turn-options";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 
 type CodexKbWaiter = {
@@ -222,6 +225,9 @@ export class KnowledgeBaseManager {
           ].filter(Boolean).join("\n")
         };
       }
+      if (command.intent === "ask") {
+        return await this.answerQuestion(text);
+      }
       if (command.intent === "journal") {
         const paths = await this.captureChatInput("journal", text, attachments);
         return {
@@ -266,10 +272,8 @@ export class KnowledgeBaseManager {
     settings.initialization.rulesFilePath = result.rulesFilePath;
     settings.initialization.templateVersion = result.templateVersion;
     settings.initialization.lastPreviewSummary = preview.summary.slice(0, 2000);
-    if (result.rulesFilePath !== "CLAUDE.kb-template.md") {
-      settings.useCustomRulesFile = result.rulesFilePath !== "AGENTS.md";
-      settings.rulesFilePath = result.rulesFilePath;
-    }
+    settings.useCustomRulesFile = result.rulesFilePath !== AGENTS_RULES_FILE;
+    settings.rulesFilePath = result.rulesFilePath;
     await this.plugin.saveSettings(true);
     return { summary: result.summary, rulesFilePath: result.rulesFilePath };
   }
@@ -403,6 +407,47 @@ export class KnowledgeBaseManager {
     }
   }
 
+  private async answerQuestion(text: string): Promise<KnowledgeBaseChatResult> {
+    if (this.running) {
+      return { status: "failed", message: "已有知识库任务正在运行" };
+    }
+    this.running = true;
+    try {
+      const question = stripAskCommand(text);
+      const rules = await this.resolveRulesFile();
+      if (rules.useCustomRulesFile && !rules.exists) {
+        throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
+      }
+      const matches = await findKnowledgeBaseAskMatches(this.plugin.getVaultPath(), question);
+      const prompt = buildKnowledgeBaseAskPrompt({
+        vaultPath: this.plugin.getVaultPath(),
+        userRequest: question,
+        rulesFilePath: rules.relativePath,
+        rulesFileExists: rules.exists,
+        useCustomRulesFile: rules.useCustomRulesFile,
+        matches
+      });
+      const backend = this.resolveKnowledgeBackend();
+      const output = backend === "opencode"
+        ? await this.runOpenCodeKnowledgeTask(prompt, matches, "read-only")
+        : await this.runCodexKnowledgeTask(prompt, matches, "read-only");
+      return {
+        status: "success",
+        message: output.trim() || (matches.length ? "Agent 未返回回答。" : "未找到相关 wiki 笔记，Agent 未返回回答。")
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      };
+    } finally {
+      this.activeCodexRun = null;
+      this.activeOpenCode = null;
+      this.running = false;
+      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+    }
+  }
+
   handleCodexNotification(notification: CodexNotification): boolean {
     const waiter = this.codexWaiter;
     if (!waiter) return false;
@@ -432,26 +477,16 @@ export class KnowledgeBaseManager {
     return true;
   }
 
-  private async runCodexKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[]): Promise<string> {
+  private async runCodexKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[], permission: PermissionMode = "workspace-write"): Promise<string> {
     const status = await this.plugin.ensureCodexConnected(false, { silent: true });
     if (!status.connected || !this.plugin.codex) throw new Error(status.errors[0] || "Codex 未连接");
-    const model = this.plugin.settings.defaultModel || status.models[0]?.model || "gpt-5.5";
-    const writableRoots = [
-      path.join(this.plugin.getVaultPath(), "wiki"),
-      path.join(this.plugin.getVaultPath(), "outputs"),
-      path.join(this.plugin.getVaultPath(), "raw", "index.md")
-    ];
-    const started = await this.plugin.codex.startThread({
-      model,
-      reasoning: "high",
-      serviceTier: this.plugin.settings.defaultServiceTier,
-      permission: "workspace-write",
-      mode: "agent",
-      mcpEnabled: this.plugin.settings.mcpEnabled,
-      persistExtendedHistory: false,
-      requestTimeoutMs: 60000,
-      writableRoots
+    const options = buildCodexKnowledgeTurnOptions({
+      settings: this.plugin.settings,
+      availableModels: status.models,
+      vaultPath: this.plugin.getVaultPath(),
+      permission
     });
+    const started = await this.plugin.codex.startThread(options);
     const result = new Promise<string>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.codexWaiter = null;
@@ -459,23 +494,13 @@ export class KnowledgeBaseManager {
       }, CODEX_KB_TIMEOUT_MS);
       this.codexWaiter = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, timer };
     });
-    const turnId = await this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), {
-      model,
-      reasoning: "high",
-      serviceTier: this.plugin.settings.defaultServiceTier,
-      permission: "workspace-write",
-      mode: "agent",
-      mcpEnabled: this.plugin.settings.mcpEnabled,
-      persistExtendedHistory: false,
-      requestTimeoutMs: 60000,
-      writableRoots
-    });
+    const turnId = await this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), options);
     this.activeCodexRun = { threadId: started.threadId, turnId };
     if (this.codexWaiter) this.codexWaiter.turnId = turnId;
     return result;
   }
 
-  private async runOpenCodeKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[]): Promise<string> {
+  private async runOpenCodeKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[], permission: PermissionMode = "workspace-write"): Promise<string> {
     const backend = new OpenCodeBackend({
       ...this.plugin.settings.opencode,
       vaultPath: this.plugin.getVaultPath()
@@ -498,8 +523,9 @@ export class KnowledgeBaseManager {
       }
       await this.plugin.saveSettings();
       const session = await backend.startSession({
-        title: "Obsidian 知识库维护",
+        title: permission === "read-only" ? "Obsidian 知识库问答" : "Obsidian 知识库维护",
         agent: this.plugin.settings.opencode.agent,
+        permission,
         ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {})
       });
       this.activeOpenCode = { backend, sessionId: session.sessionId };
@@ -509,8 +535,8 @@ export class KnowledgeBaseManager {
         agent: this.plugin.settings.opencode.agent,
         ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
         tools: {
-          write: true,
-          edit: true,
+          write: permission !== "read-only",
+          edit: permission !== "read-only",
           read: true,
           bash: false
         }
@@ -535,14 +561,14 @@ export class KnowledgeBaseManager {
     return [
       `后端：${backend}`,
       backend === "opencode" && opencode.providerId && opencode.modelId ? `模型：${opencode.providerId}/${opencode.modelId}` : "",
-      `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : "AGENTS.md"}`,
+      `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : AGENTS_RULES_FILE}`,
       reportPath ? `报告：${reportPath}` : ""
     ].filter(Boolean).join("\n");
   }
 
   private async resolveRulesFile(): Promise<{ relativePath: string; absolutePath: string; exists: boolean; useCustomRulesFile: boolean }> {
     const settings = this.plugin.settings.knowledgeBase;
-    const relativePath = normalizeRulesPath(settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md");
+    const relativePath = normalizeRulesPath(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE);
     const absolutePath = path.join(this.plugin.getVaultPath(), relativePath);
     return {
       relativePath,
@@ -924,7 +950,7 @@ function labelForRunMode(mode: KnowledgeBaseRunMode): string {
 }
 
 function normalizeRulesPath(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/") || "AGENTS.md";
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/") || AGENTS_RULES_FILE;
 }
 
 function extractFirstUrl(value: string): string | null {

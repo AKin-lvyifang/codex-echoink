@@ -1,5 +1,6 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
 import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
+import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "../knowledge-base/constants";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
@@ -408,8 +409,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     enabled: false,
     sessionId: "",
     backend: "default",
-    useCustomRulesFile: false,
-    rulesFilePath: "AGENTS.md",
+    useCustomRulesFile: true,
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE,
     scheduleEnabled: false,
     scheduleTime: "09:00",
     catchUpOnStartup: true,
@@ -864,8 +865,9 @@ function normalizeKnowledgeBaseRulesPath(value: any, fallback: string): string {
 
 function rulesFileChoiceRank(value: string): number {
   const upper = value.toUpperCase();
-  if (upper === "AGENTS.MD") return 0;
-  if (upper === "CLAUDE.MD") return 1;
+  if (upper === DEFAULT_KNOWLEDGE_BASE_RULES_FILE.toUpperCase()) return 0;
+  if (upper === AGENTS_RULES_FILE.toUpperCase()) return 1;
+  if (upper === LEGACY_CLAUDE_RULES_FILE.toUpperCase()) return 2;
   return value.includes("/") ? 3 : 2;
 }
 

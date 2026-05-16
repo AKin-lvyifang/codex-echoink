@@ -30,6 +30,7 @@ import {
   snapshotFromWorkspaceResourceCache,
   updateWorkspaceResourceCache
 } from "../core/workspace-resources";
+import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
   getApiProviderModels,
@@ -98,11 +99,21 @@ import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEdito
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
-import { buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
+import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
+import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
+
+function cssRuleBody(styles: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, "m").exec(styles);
+  assert.ok(match, `Missing CSS rule: ${selector}`);
+  return match[1];
+}
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -149,16 +160,17 @@ assert.equal(DEFAULT_SETTINGS.opencode.imageEnabled, false);
 assert.equal(DEFAULT_SETTINGS.opencode.pdfEnabled, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.enabled, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.backend, "default");
-assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, false);
-assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, "AGENTS.md");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, true);
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
+assert.equal(CODEX_MEMORY_LITE_URL, "https://github.com/AKin-lvyifang/codex-memory-lite");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(
-  getKnowledgeBaseRulesFileChoices(["docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
-  ["AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
+  getKnowledgeBaseRulesFileChoices([DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
+  [DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
 );
 const openCodeChoice = { providerId: "deepseek", modelId: "deepseek-reasoner" };
 assert.equal(openCodeModelChoiceValue(openCodeChoice), "deepseek\u0000deepseek-reasoner");
@@ -246,6 +258,8 @@ assert.deepEqual(parseKnowledgeBaseCommand("/maintain 只处理今天新增").in
 assert.deepEqual(parseKnowledgeBaseCommand("/outputs 提炼最近发布稿").intent, "process-outputs");
 assert.deepEqual(parseKnowledgeBaseCommand("/inbox 只归类不沉淀").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("/journal 今天完成知识库命令优化").intent, "journal");
+assert.deepEqual(parseKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
+assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
 assert.deepEqual((parseKnowledgeBaseCommand("/初始化 确认") as any).confirm, true);
@@ -256,7 +270,7 @@ assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-ou
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
-assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "help");
+assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "ask");
 
 const kbRouteItems = new Set<string>();
 const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
@@ -505,6 +519,16 @@ const stagedWithMcp = mergeWorkspaceResourceSnapshot(stagedResources, "mcp", [{ 
 assert.equal(stagedWithMcp.plugins.length, 1);
 assert.equal(stagedWithMcp.mcpServers.length, 1);
 assert.equal(stagedWithMcp.skills.length, 0);
+const searchableResourceRows = [
+  { key: "browser-use@openai-bundled", name: "Browser Use", meta: "Engineering · openai-bundled · 已安装", desc: "Control the in-app browser with Codex" },
+  { key: "paper", name: "paper", meta: "3 个工具 · loggedIn", desc: "来自 Codex MCP 配置" },
+  { key: "/Users/demo/.codex/skills/fix-bug/SKILL.md", name: "/fix-bug", meta: "repo · /Users/demo/.codex/skills/fix-bug/SKILL.md", desc: "处理缺陷、回归、崩溃" }
+];
+assert.deepEqual(filterWorkspaceResourceRows(searchableResourceRows, "browser").map((item) => item.name), ["Browser Use"]);
+assert.deepEqual(filterWorkspaceResourceRows(searchableResourceRows, "loggedin").map((item) => item.name), ["paper"]);
+assert.deepEqual(filterWorkspaceResourceRows(searchableResourceRows, "缺陷").map((item) => item.name), ["/fix-bug"]);
+assert.deepEqual(filterWorkspaceResourceRows(searchableResourceRows, "repo fix").map((item) => item.name), ["/fix-bug"]);
+assert.deepEqual(filterWorkspaceResourceRows(searchableResourceRows, "  ").map((item) => item.name), searchableResourceRows.map((item) => item.name));
 const cachedResources = updateWorkspaceResourceCache(undefined, "mcp", [{ name: "paper", tools: { read: { schema: "large" } } }], null);
 assert.equal(loadedTabsFromWorkspaceResourceCache(cachedResources).mcp, true);
 assert.equal(snapshotFromWorkspaceResourceCache(cachedResources).mcpServers[0].name, "paper");
@@ -523,6 +547,48 @@ assert.equal(
   normalizeSettingsData({ settingsVersion: 5, workspaceResourceCache: cachedResources }).settings.workspaceResourceCache.mcp?.items[0].name,
   "paper"
 );
+
+const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
+const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
+const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-content");
+const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
+const resourceSearchInputCss = cssRuleBody(settingsStyles, ".codex-resource-search-input");
+assert.match(resourceRowCss, /min-width:\s*0;/);
+assert.match(resourceRowCss, /width:\s*100%;/);
+assert.match(resourceRowCss, /box-sizing:\s*border-box;/);
+assert.match(resourceRowContentCss, /overflow:\s*hidden;/);
+assert.match(resourceRowNameCss, /overflow:\s*hidden;/);
+assert.match(resourceRowNameCss, /text-overflow:\s*ellipsis;/);
+assert.match(resourceRowNameCss, /white-space:\s*nowrap;/);
+assert.match(resourceSearchInputCss, /width:\s*100%;/);
+assert.match(resourceSearchInputCss, /min-width:\s*0;/);
+
+const codexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
+  settings: normalizeSettingsData({
+    settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+    defaultModel: "selected-kb-model",
+    defaultReasoning: "medium",
+    defaultServiceTier: "fast",
+    mcpEnabled: false
+  }).settings,
+  availableModels: [{ model: "gpt-5.5" }],
+  vaultPath: "/vault",
+  permission: "read-only"
+});
+assert.equal(codexKnowledgeOptions.model, "selected-kb-model");
+assert.equal(codexKnowledgeOptions.reasoning, "medium");
+assert.equal(codexKnowledgeOptions.serviceTier, "fast");
+assert.equal(codexKnowledgeOptions.permission, "read-only");
+assert.deepEqual(codexKnowledgeOptions.writableRoots, undefined);
+const writableCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
+  settings: normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, defaultModel: "", defaultReasoning: "xhigh" }).settings,
+  availableModels: [{ model: "gpt-5.5" }],
+  vaultPath: "/vault",
+  permission: "workspace-write"
+});
+assert.equal(writableCodexKnowledgeOptions.model, "gpt-5.5");
+assert.equal(writableCodexKnowledgeOptions.reasoning, "xhigh");
+assert.deepEqual(writableCodexKnowledgeOptions.writableRoots?.slice(0, 3), ["/vault/wiki", "/vault/outputs", "/vault/raw/index.md"]);
 
 const knowledgeBaseSettings = normalizeSettingsData({
   settingsVersion: 14,
@@ -1296,6 +1362,8 @@ try {
   await mkdir(path.join(kbVault, "raw", "articles"), { recursive: true });
   await mkdir(path.join(kbVault, "raw", "articles", "demo.assets"), { recursive: true });
   await mkdir(path.join(kbVault, "raw", "attachments"), { recursive: true });
+  await mkdir(path.join(kbVault, "wiki", "ai-intelligence", "concepts"), { recursive: true });
+  await mkdir(path.join(kbVault, "wiki", "product-method", "concepts"), { recursive: true });
   await writeFile(path.join(kbVault, "raw", "articles", "demo.md"), "# Demo\n\n正文", "utf8");
   await writeFile(path.join(kbVault, "raw", "articles", "demo.assets", "image.png"), Buffer.from([1, 2, 3]));
   await writeFile(path.join(kbVault, "raw", "attachments", "image.png"), Buffer.from([1, 2, 3]));
@@ -1304,6 +1372,13 @@ try {
   await writeFile(path.join(kbVault, "raw", "index.md"), "# Raw Index\n", "utf8");
   await writeFile(path.join(kbVault, "raw", "ignore.csv"), "a,b", "utf8");
   await writeFile(path.join(kbVault, "raw", "articles", "demo.base.md"), "# Base\n", "utf8");
+  await writeFile(path.join(kbVault, "wiki", "ai-intelligence", "concepts", "harness-engineering.md"), [
+    "# Harness Engineering",
+    "",
+    "Harness Engineering 把 Vibe Coding 从一次性生成变成可验证、可回放、可审计的工程系统。",
+    "它强调规则、测试、回链和 Agent 协作记录。"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(kbVault, "wiki", "product-method", "concepts", "roadmap.md"), "# Roadmap\n\n产品路线规划。", "utf8");
   const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
     "raw/articles/demo.md",
@@ -1336,7 +1411,7 @@ try {
     mode: "maintain",
     reportPath: secondDiscovery.reportPath,
     sources: secondDiscovery.changedSources,
-    rulesFilePath: "CLAUDE.md",
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE,
     rulesFileExists: true,
     useCustomRulesFile: true,
     hasRawIndex: true,
@@ -1344,9 +1419,10 @@ try {
     hasTracker: false
   });
   assert.ok(kbPrompt.includes("执行 Ingest + Lint"));
-  assert.ok(kbPrompt.includes("自定义规则文件：CLAUDE.md"));
-  assert.ok(kbPrompt.includes("不读取、不合并 AGENTS.md"));
-  assert.ok(kbPrompt.includes("CLAUDE.md: 存在，必须读取"));
+  assert.ok(kbPrompt.includes(`自定义规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
+  assert.ok(kbPrompt.includes("知识库结构以这个文件为准"));
+  assert.ok(kbPrompt.includes("不要把 AGENTS.md 当作知识库规则合并"));
+  assert.ok(kbPrompt.includes(`${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}: 存在，必须读取`));
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
   assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
@@ -1372,6 +1448,31 @@ try {
   assert.ok(outputsPrompt.includes("处理 outputs"));
   assert.ok(outputsPrompt.includes("长期复用价值"));
   assert.ok(outputsPrompt.includes("用户原始指令：/outputs 只提炼长期方法论"));
+  assert.equal(stripAskCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), "Harness Engineering 和 Vibe Coding 有什么关系？");
+  const askMatches = await findKnowledgeBaseAskMatches(kbVault, "Harness Engineering 和 Vibe Coding 有什么关系？");
+  assert.equal(askMatches[0]?.relativePath, "wiki/ai-intelligence/concepts/harness-engineering.md");
+  assert.ok(askMatches[0]?.excerpt.includes("Vibe Coding"));
+  const askPrompt = buildKnowledgeBaseAskPrompt({
+    vaultPath: kbVault,
+    userRequest: "Harness Engineering 和 Vibe Coding 有什么关系？",
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE,
+    rulesFileExists: true,
+    useCustomRulesFile: true,
+    matches: askMatches
+  });
+  assert.ok(askPrompt.includes("只读问答任务"));
+  assert.ok(askPrompt.includes("wiki 是优先依据，不是唯一依据"));
+  assert.ok(askPrompt.includes("可以使用可用搜索工具、外部资料或模型已有知识补充"));
+  assert.ok(askPrompt.includes("必须区分“来自 Vault 的依据”和“补充信息 / 推断”"));
+  assert.ok(askPrompt.includes("wiki/ai-intelligence/concepts/harness-engineering.md"));
+  assert.ok(buildKnowledgeBaseAskPrompt({
+    vaultPath: kbVault,
+    userRequest: "完全没有命中的问题",
+    rulesFilePath: "AGENTS.md",
+    rulesFileExists: false,
+    useCustomRulesFile: false,
+    matches: []
+  }).includes("未找到相关 wiki 笔记"));
   await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
   const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
@@ -1391,19 +1492,19 @@ try {
   await writeFile(path.join(initVault, "old-note.md"), "# Old note\n\n项目资料", "utf8");
   const preview = await buildKnowledgeBaseInitializationPreview(initVault);
   assert.equal(preview.status, "preview-ready");
-  assert.equal(preview.rulesFilePath, "AGENTS.md");
-  assert.ok(preview.summary.includes("将生成规则文件：AGENTS.md"));
+  assert.equal(preview.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
+  assert.ok(preview.summary.includes(`将生成规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
   assert.ok(preview.directories.includes("raw/articles"));
   assert.ok(preview.directories.includes("wiki/ai-intelligence"));
   assert.ok(preview.suggestions.some((item) => item.path === "old-note.md" && item.target === "projects"));
-  assert.equal(await fileExists(path.join(initVault, "AGENTS.md")), false);
+  assert.equal(await fileExists(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), false);
 
   const result = await executeKnowledgeBaseInitialization(initVault, preview, new Date("2026-05-15T08:00:00.000Z"));
-  assert.equal(result.rulesFilePath, "AGENTS.md");
+  assert.equal(result.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   assert.equal(await fileExists(path.join(initVault, "raw", "articles")), true);
   assert.equal(await fileExists(path.join(initVault, "wiki", "index.md")), true);
   assert.equal(await fileExists(path.join(initVault, "outputs", ".ingest-tracker.md")), true);
-  assert.ok((await readFile(path.join(initVault, "AGENTS.md"), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
   assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
   assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("不可变"));
 } finally {
@@ -1414,10 +1515,10 @@ const initVaultWithAgents = await mkdtemp(path.join(tmpdir(), "codex-kb-init-age
 try {
   await writeFile(path.join(initVaultWithAgents, "AGENTS.md"), "# Existing agents\n", "utf8");
   const preview = await buildKnowledgeBaseInitializationPreview(initVaultWithAgents);
-  assert.equal(preview.rulesFilePath, "CLAUDE.md");
+  assert.equal(preview.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   await executeKnowledgeBaseInitialization(initVaultWithAgents, preview, new Date("2026-05-15T08:00:00.000Z"));
   assert.ok((await readFile(path.join(initVaultWithAgents, "AGENTS.md"), "utf8")).includes("Existing agents"));
-  assert.ok((await readFile(path.join(initVaultWithAgents, "CLAUDE.md"), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVaultWithAgents, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
 } finally {
   await rm(initVaultWithAgents, { recursive: true, force: true });
 }
@@ -1427,10 +1528,10 @@ try {
   await writeFile(path.join(initVaultWithBothRules, "AGENTS.md"), "# Existing agents\n", "utf8");
   await writeFile(path.join(initVaultWithBothRules, "CLAUDE.md"), "# Existing claude\n", "utf8");
   const preview = await buildKnowledgeBaseInitializationPreview(initVaultWithBothRules);
-  assert.equal(preview.rulesFilePath, "CLAUDE.kb-template.md");
+  assert.equal(preview.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   await executeKnowledgeBaseInitialization(initVaultWithBothRules, preview, new Date("2026-05-15T08:00:00.000Z"));
   assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.md"), "utf8")).includes("Existing claude"));
-  assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.kb-template.md"), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVaultWithBothRules, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
 } finally {
   await rm(initVaultWithBothRules, { recursive: true, force: true });
 }
@@ -1462,26 +1563,26 @@ const customRulesRepairVault = await mkdtemp(path.join(tmpdir(), "codex-kb-custo
 try {
   const customCreated = await repairKnowledgeBaseRulesFile(customRulesRepairVault, {
     useCustomRulesFile: true,
-    rulesFilePath: "CLAUDE.md"
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(customCreated.status, "created");
-  assert.equal(customCreated.rulesFilePath, "CLAUDE.md");
+  assert.equal(customCreated.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   assert.equal(await fileExists(path.join(customRulesRepairVault, "AGENTS.md")), false);
-  assert.ok((await readFile(path.join(customRulesRepairVault, "CLAUDE.md"), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(customRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
 } finally {
   await rm(customRulesRepairVault, { recursive: true, force: true });
 }
 
 const patchRulesRepairVault = await mkdtemp(path.join(tmpdir(), "codex-kb-patch-rules-repair-"));
 try {
-  await writeFile(path.join(patchRulesRepairVault, "CLAUDE.md"), "# Existing rules\n\n只写团队协作偏好。", "utf8");
+  await writeFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# Existing rules\n\n只写团队协作偏好。", "utf8");
   const patched = await repairKnowledgeBaseRulesFile(patchRulesRepairVault, {
     useCustomRulesFile: true,
-    rulesFilePath: "CLAUDE.md"
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(patched.status, "patched");
   assert.ok(patched.missingRules.includes("raw/ 只读边界"));
-  const patchedRules = await readFile(path.join(patchRulesRepairVault, "CLAUDE.md"), "utf8");
+  const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
   assert.ok(patchedRules.includes("obsidian-codex-kb-minimum-rules:start"));
   assert.ok(patchedRules.includes("`raw/` 是不可变原始资料区，只读"));
@@ -1512,6 +1613,7 @@ try {
   await mkdir(path.join(dashboardVault, "outputs"), { recursive: true });
   await mkdir(path.join(dashboardVault, "inbox"), { recursive: true });
   await writeFile(path.join(dashboardVault, "AGENTS.md"), "# Rules\n", "utf8");
+  await writeFile(path.join(dashboardVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
   await writeFile(path.join(dashboardVault, "raw", "index.md"), "# Raw\n", "utf8");
   await writeFile(path.join(dashboardVault, "raw", "articles", "old.md"), "# Old\n", "utf8");
   const newPath = path.join(dashboardVault, "raw", "articles", "new.md");
@@ -1576,8 +1678,11 @@ try {
   assert.equal(dashboard.checkFreshness.status, "fresh");
   assert.equal(dashboard.checkFreshness.label, "新鲜");
   assert.equal(dashboard.checkFreshness.score, 100);
-  assert.equal(dashboard.checkHeatmap.at(-1)?.status, "success");
-  assert.equal(dashboard.checkHeatmap.length, 14);
+  assert.equal(dashboard.checkHeatmap[0]?.date, `${today.getFullYear()}-01-01`);
+  assert.equal(dashboard.checkHeatmap.at(-1)?.date, `${today.getFullYear()}-12-31`);
+  assert.equal(dashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(today))?.status, "success");
+  assert.ok(dashboard.checkHeatmap.length >= 365);
+  assert.ok(dashboard.checkHeatmap.length <= 366);
 
   await utimes(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), threeDaysAgo, threeDaysAgo);
@@ -1653,6 +1758,7 @@ try {
   await mkdir(path.join(externalMaintenanceVault, "outputs"), { recursive: true });
   await mkdir(path.join(externalMaintenanceVault, "inbox"), { recursive: true });
   await writeFile(path.join(externalMaintenanceVault, "AGENTS.md"), "# Rules\n", "utf8");
+  await writeFile(path.join(externalMaintenanceVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
   await writeFile(path.join(externalMaintenanceVault, "raw", "index.md"), "# Raw\n", "utf8");
   await writeFile(path.join(externalMaintenanceVault, "wiki", "index.md"), "# Wiki\n", "utf8");
   const processedRaw = path.join(externalMaintenanceVault, "raw", "articles", "GitHub项目收集", "old.md");
@@ -1704,7 +1810,7 @@ try {
   assert.ok(!externalDashboard.health.reasons.includes("从未体检"));
   assert.equal(externalDashboard.health.lastCheckAt, externalToday.getTime());
   assert.equal(externalDashboard.checkFreshness.status, "fresh");
-  assert.equal(externalDashboard.checkHeatmap.at(-1)?.status, "success");
+  assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(externalToday))?.status, "success");
 } finally {
   await rm(externalMaintenanceVault, { recursive: true, force: true });
 }

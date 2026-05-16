@@ -9,6 +9,7 @@ import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
+import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
 import { KnowledgeBaseManager } from "./knowledge-base/manager";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "./knowledge-base/report";
 
@@ -242,19 +243,19 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (hasExplicitRules) return false;
 
     const vaultPath = this.getVaultPath();
-    const agentsPath = path.join(vaultPath, "AGENTS.md");
-    const claudePath = path.join(vaultPath, "CLAUDE.md");
-    const [agents, claude] = await Promise.all([
+    const agentsPath = path.join(vaultPath, AGENTS_RULES_FILE);
+    const llmWikiPath = path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
+    const [agents, llmWiki] = await Promise.all([
       fsp.readFile(agentsPath, "utf8").catch(() => ""),
-      fsp.readFile(claudePath, "utf8").catch(() => "")
+      fsp.readFile(llmWikiPath, "utf8").catch(() => "")
     ]);
-    if (!agents || !claude) return false;
+    if (!agents || !llmWiki) return false;
     const agentsLooksLikeCodexMemory = /codex-memory|CODEX-MEMORY|项目级上下文管理/.test(agents);
-    const claudeLooksLikeKnowledgeRules = /知识库|Raw Sources|Ingest|Lint|Wiki/.test(claude);
-    if (!agentsLooksLikeCodexMemory || !claudeLooksLikeKnowledgeRules) return false;
+    const llmWikiLooksLikeKnowledgeRules = /知识库|Raw Sources|Ingest|Lint|Wiki/.test(llmWiki);
+    if (!agentsLooksLikeCodexMemory || !llmWikiLooksLikeKnowledgeRules) return false;
 
     this.settings.knowledgeBase.useCustomRulesFile = true;
-    this.settings.knowledgeBase.rulesFilePath = "CLAUDE.md";
+    this.settings.knowledgeBase.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
     return true;
   }
 

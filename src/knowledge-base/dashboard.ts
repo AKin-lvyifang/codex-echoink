@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
+import { AGENTS_RULES_FILE } from "./constants";
 import { readKnowledgeBaseTrackerSnapshot } from "./tracker";
 
 export interface KnowledgeBaseDashboardFile {
@@ -107,7 +108,7 @@ const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", "
 
 export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
-  const rulesFilePath = normalizeRelativePath(settings.useCustomRulesFile ? settings.rulesFilePath : "AGENTS.md", "AGENTS.md");
+  const rulesFilePath = normalizeRelativePath(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE, AGENTS_RULES_FILE);
   const processedSources = settings.processedSources ?? {};
   const raw = await scanDashboardDirectory(vaultPath, "raw", { skipHidden: true });
   const wiki = await scanDashboardDirectory(vaultPath, "wiki", { skipHidden: true });
@@ -477,13 +478,16 @@ function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generated
     const externalDate = formatLocalDateKey(externalCheckAt);
     if (!byDate.has(externalDate)) byDate.set(externalDate, "success");
   }
+  const year = new Date(generatedAt).getFullYear();
+  const cursor = parseDateKey(`${year}-01-01`);
   const days: KnowledgeBaseDashboardHeatmapDay[] = [];
-  for (let offset = 13; offset >= 0; offset -= 1) {
-    const date = shiftDate(formatLocalDateKey(generatedAt), -offset);
+  while (cursor.getFullYear() === year) {
+    const date = formatLocalDateKey(cursor.getTime());
     days.push({
       date,
       status: byDate.get(date) ?? "none"
     });
+    cursor.setDate(cursor.getDate() + 1);
   }
   return days;
 }

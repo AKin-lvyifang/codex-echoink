@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian v0.4.0 自动化知识库运维。" src="docs/images/obsidian-codex-knowledge-v0.4.0.png">
+  <img width="1024" alt="Codex for Obsidian v0.4.1 自动化知识库运维。" src="docs/images/obsidian-codex-knowledge-v0.4.1.png">
 </a>
 
 <p align="center">
@@ -17,14 +17,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.4.0-0EA5E9?style=flat-square" alt="版本 v0.4.0">
+    <img src="https://img.shields.io/badge/version-v0.4.1-0EA5E9?style=flat-square" alt="版本 v0.4.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip"><strong>下载 v0.4.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip"><strong>下载 v0.4.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">最新 Release</a>
 </p>
@@ -53,10 +53,12 @@
 ### 知识库自动化运维
 
 - 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
-- 聊天框是主入口：输入 `/init`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
+- 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
 - 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
-- 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和 14 天体检热力图。
-- 默认读取 `AGENTS.md`，也支持改成自定义 Markdown 规则文件，例如 `CLAUDE.md`。
+- 支持 `/ask` 只读问答：先检索 Wiki 相关笔记，再回答问题，并区分 Vault 依据和外部/模型补充。
+- 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
+- 默认读取 `LLM-WIKI.md` 作为知识库规则真源；`AGENTS.md` 只保留 Agent 运行层背景。
+- 可选推荐 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 来增强跨会话长期记忆；由你的 Agent 安装这个 Skill，并在工作区运行 bootstrap，插件不内置这套 Skills，也不会修改你的 `AGENTS.md`。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
 - 支持手动运行，也支持 Obsidian 打开时的每日维护。
@@ -68,6 +70,7 @@
 - 可选配置 OpenAI Responses API 兼容的自定义 Provider，并为同一个 Provider 保存多个模型。
 - 支持为插件启动的 Codex 子进程配置本地代理。
 - 插件、MCP、Skills 开关只作用于当前 vault，不改 Codex 全局配置。
+- 当前 vault 的插件、MCP、Skills 开关支持搜索；长路径和长描述会自动省略，右侧勾选框保持可见可点。
 
 ### OpenCode API 模式
 
@@ -90,6 +93,28 @@
 <a id="更新说明"></a>
 ## 更新说明
 
+### v0.4.1
+
+**新功能：** 知识库频道增强，让提问、体检可视化和能力开关更好用。
+
+**更新内容：**
+
+- 新增 `/ask` 只读问答。它会先检索 `wiki/` 里的相关笔记，把命中的笔记作为上下文，再要求 Agent 区分“来自 Vault 的依据”和“补充信息 / 推断”。
+- 支持自然问题自动进入问答流程，例如直接输入 `Harness Engineering 和 Vibe Coding 有什么关系？`，不用必须记住命令。
+- 知识库健康热力图从最近短周期升级为 GitHub 风格年度视图，带月份、星期、成功和失败状态。
+- Codex CLI 模式下，知识库频道底部可以直接选择模型和思考强度；知识库任务不再固定使用同一个强度。
+- 当前 vault 的能力管理页新增搜索栏，`插件`、`MCP`、`Skills` 三个标签都可以搜名称、id/路径、元信息和描述；多个词会同时匹配。
+- 修复 Skills 等长文本把列表撑太宽的问题：名称、路径和描述写不下时用省略号，右侧勾选框不会被挤出去。
+- 默认知识库规则文件保持为 `LLM-WIKI.md`，`AGENTS.md` 仍作为兼容选项和运行层背景。
+
+**使用方法：**
+
+1. 打开 Codex 侧栏里的 `知识库` 频道。
+2. 输入 `/ask 你的问题`，或者直接在知识库频道里问问题。
+3. 使用 Codex CLI 模式时，在输入框右下角选择模型和思考强度。
+4. 展开知识库健康仪表盘，查看年度体检热力图。
+5. 进入插件设置的当前 vault 能力管理，在 `插件`、`MCP` 或 `Skills` 标签下搜索后再勾选。
+
 ### v0.4.0
 
 **新功能：** 知识库自动化运维，用来在 Obsidian 里维护当前 vault。
@@ -99,7 +124,8 @@
 - 新增绑定当前 vault 的常驻知识库频道。
 - 新增命令模板：`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`。
 - 新增公众号、网页和文件收藏入口，把资料先收进 Raw Sources。
-- 新增知识库操作指南文件设置。默认 `AGENTS.md`，也可以改成自定义 Markdown 文件。
+- 新增知识库操作指南文件设置。默认 `LLM-WIKI.md`，也可以改成自定义 Markdown 文件。
+- 设置页新增 `codex-memory-lite` 可选推荐，用于需要长期记忆的知识库维护工作流。
 - 新增 OpenCode 模型选择和 OpenCode Agent 选择。
 - 新增编辑区选中文字翻译成英文。
 - 优化知识库设置页对齐、运行状态说明和规则文件选择。
@@ -175,7 +201,7 @@
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.4.0.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.0/obsidian-codex-0.4.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.4.1.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip)。
 4. 解压后得到 `obsidian-codex` 文件夹。
 5. 放到你的 vault 插件目录：
 
@@ -203,7 +229,7 @@ obsidian-codex/
 4. 需要时附加笔记、文件、图片、skills 或 MCP 工具；附件只作为上下文。
 5. 通过过程卡片查看命令、编辑、上下文用量和结果证据。
 6. 需要维护知识库时，打开 `知识库` 常驻频道。
-7. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再用 `/maintain` 或 `/outputs` 写入结构化知识。
+7. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再按需要用 `/ask` 提问、`/maintain` 维护，或用 `/outputs` 写入结构化知识。
 
 <a id="截图"></a>
 ## 截图

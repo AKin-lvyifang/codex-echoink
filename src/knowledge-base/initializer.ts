@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
 
 export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.5";
 
@@ -194,11 +195,7 @@ function formatKnowledgeBaseInitializationResult(input: Omit<KnowledgeBaseInitia
 }
 
 async function chooseRulesFilePath(vaultPath: string): Promise<string> {
-  const hasAgents = await exists(path.join(vaultPath, "AGENTS.md"));
-  if (!hasAgents) return "AGENTS.md";
-  const hasClaude = await exists(path.join(vaultPath, "CLAUDE.md"));
-  if (!hasClaude) return "CLAUDE.md";
-  return "CLAUDE.kb-template.md";
+  return DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
 }
 
 async function scanInitializationSuggestions(vaultPath: string): Promise<KnowledgeBaseInitializationSuggestion[]> {
@@ -425,7 +422,7 @@ function formatDate(date: Date): string {
 }
 
 function assertAllowedRulesFilePath(relativePath: string): void {
-  if (relativePath === "AGENTS.md" || relativePath === "CLAUDE.md" || relativePath === "CLAUDE.kb-template.md") return;
+  if (relativePath === DEFAULT_KNOWLEDGE_BASE_RULES_FILE || relativePath === AGENTS_RULES_FILE || relativePath === LEGACY_CLAUDE_RULES_FILE || relativePath === "CLAUDE.kb-template.md") return;
   throw new Error("初始化规则文件路径不合法。");
 }
 
