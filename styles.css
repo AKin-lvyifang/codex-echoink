@@ -1489,8 +1489,25 @@ body.theme-light .codex-code-wrapper pre {
   background: var(--color-orange);
 }
 
+.codex-kb-freshness-bad .codex-kb-status-dot {
+  background: var(--color-red);
+}
+
 .codex-kb-freshness-missing .codex-kb-status-dot {
-  background: var(--text-faint);
+  background: var(--color-red);
+}
+
+.codex-kb-dashboard-score-fill.codex-kb-freshness-fresh {
+  background: var(--color-green);
+}
+
+.codex-kb-dashboard-score-fill.codex-kb-freshness-stale {
+  background: var(--color-orange);
+}
+
+.codex-kb-dashboard-score-fill.codex-kb-freshness-bad,
+.codex-kb-dashboard-score-fill.codex-kb-freshness-missing {
+  background: var(--color-red);
 }
 
 .codex-kb-dashboard-muted,
@@ -1563,11 +1580,28 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-kb-dashboard-health-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.codex-kb-dashboard-meter-row {
   display: grid;
-  grid-template-columns: max-content minmax(120px, 1fr) max-content;
-  gap: 10px;
+  grid-template-columns: 76px minmax(120px, 1fr) max-content;
+  gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.codex-kb-dashboard-meter-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .codex-kb-dashboard-health-badge {
@@ -1768,7 +1802,7 @@ body.theme-light .codex-code-wrapper pre {
     max-width: 112px;
   }
 
-  .codex-kb-dashboard-health-overview,
+  .codex-kb-dashboard-meter-row,
   .codex-kb-dashboard-score,
   .codex-kb-dashboard-facts {
     grid-template-columns: 1fr;

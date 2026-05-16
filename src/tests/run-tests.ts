@@ -1509,6 +1509,8 @@ try {
   const yesterday = daysAgoDateForTest(1);
   const twoDaysAgo = daysAgoDateForTest(2);
   const threeDaysAgo = daysAgoDateForTest(3);
+  await utimes(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), twoDaysAgo, twoDaysAgo);
+  await utimes(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), twoDaysAgo, twoDaysAgo);
   const oldPath = path.join(dashboardVault, "raw", "articles", "old.md");
   await utimes(oldPath, threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), threeDaysAgo, threeDaysAgo);
@@ -1554,6 +1556,7 @@ try {
   assert.equal(dashboard.health.lastCheckAt, today.getTime());
   assert.equal(dashboard.checkFreshness.status, "fresh");
   assert.equal(dashboard.checkFreshness.label, "已确认");
+  assert.equal(dashboard.checkFreshness.score, 100);
   assert.equal(dashboard.checkHeatmap.at(-1)?.status, "success");
   assert.equal(dashboard.checkHeatmap.length, 14);
 
@@ -1576,7 +1579,9 @@ try {
   assert.equal(riskDashboard.health.status, "healthy");
   assert.ok(!riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
   assert.equal(riskDashboard.checkFreshness.status, "stale");
-  assert.ok(riskDashboard.checkFreshness.reasons.some((reason) => reason.includes("3 天未体检")));
+  assert.equal(riskDashboard.checkFreshness.label, "建议体检");
+  assert.equal(riskDashboard.checkFreshness.score, 76);
+  assert.ok(riskDashboard.checkFreshness.reasons.some((reason) => reason.includes("3 天前确认")));
 
   const staleNoNewSettings = normalizeSettingsData({
     settingsVersion: 19,
@@ -1596,6 +1601,7 @@ try {
   assert.equal(staleNoNewDashboard.health.status, "healthy");
   assert.equal(staleNoNewDashboard.health.score, 100);
   assert.equal(staleNoNewDashboard.checkFreshness.status, "stale");
+  assert.equal(staleNoNewDashboard.checkFreshness.score, 76);
 
   const missingRulesSettings = normalizeSettingsData({
     settingsVersion: 19,

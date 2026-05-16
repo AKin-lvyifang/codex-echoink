@@ -21,7 +21,7 @@ export interface KnowledgeBaseDashboardDirectory {
 
 export type KnowledgeBaseDashboardHealthStatus = "healthy" | "risk" | "bad";
 export type KnowledgeBaseDashboardCheckStatus = "success" | "failed" | "none";
-export type KnowledgeBaseDashboardCheckFreshnessStatus = "fresh" | "stale" | "missing";
+export type KnowledgeBaseDashboardCheckFreshnessStatus = "fresh" | "stale" | "bad" | "missing";
 
 export interface KnowledgeBaseDashboardHealth {
   status: KnowledgeBaseDashboardHealthStatus;
@@ -35,6 +35,7 @@ export interface KnowledgeBaseDashboardHealth {
 export interface KnowledgeBaseDashboardCheckFreshness {
   status: KnowledgeBaseDashboardCheckFreshnessStatus;
   label: string;
+  score: number;
   lastCheckAt: number;
   daysSinceCheck: number;
   reasons: string[];
@@ -412,27 +413,23 @@ function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generat
     return {
       status: "missing",
       label: "无记录",
+      score: 0,
       lastCheckAt: 0,
       daysSinceCheck: -1,
       reasons: ["没有体检记录；这只代表缺少确认，不代表知识库已经坏了"]
     };
   }
   const days = daysBetweenDateKeys(formatLocalDateKey(latestCheckAt), formatLocalDateKey(generatedAt));
-  if (days >= 3) {
-    return {
-      status: "stale",
-      label: "建议体检",
-      lastCheckAt: latestCheckAt,
-      daysSinceCheck: days,
-      reasons: [`${days} 天未体检；如 Raw/Inbox 没有积压，健康分不受影响`]
-    };
-  }
+  const score = Math.max(0, Math.min(100, 100 - days * 8));
+  const status: KnowledgeBaseDashboardCheckFreshnessStatus = score >= 80 ? "fresh" : score >= 50 ? "stale" : "bad";
+  const label = status === "fresh" ? "已确认" : status === "stale" ? "建议体检" : "需体检";
   return {
-    status: "fresh",
-    label: "已确认",
+    status,
+    label,
+    score,
     lastCheckAt: latestCheckAt,
     daysSinceCheck: days,
-    reasons: [days === 0 ? "今天已确认" : `${days} 天前已确认`]
+    reasons: [days === 0 ? "今天已确认" : `${days} 天前确认；这不影响知识库健康分`]
   };
 }
 

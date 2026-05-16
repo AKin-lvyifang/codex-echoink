@@ -981,19 +981,20 @@ export class CodexView extends ItemView {
   private renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
     const section = this.addKnowledgeDashboardSection(container, "健康概览");
     const overview = section.createDiv({ cls: "codex-kb-dashboard-health-overview" });
-    const status = overview.createDiv({ cls: `codex-kb-dashboard-health-badge codex-kb-health-${snapshot.health.status}` });
-    status.createSpan({ cls: "codex-kb-status-dot" });
-    status.createSpan({ text: `健康 ${snapshot.health.label}` });
-
-    const score = overview.createDiv({ cls: "codex-kb-dashboard-score" });
-    score.createSpan({ cls: "codex-kb-dashboard-score-label", text: `健康分 ${snapshot.health.score}` });
-    const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
-    const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill codex-kb-health-${snapshot.health.status}` });
-    fill.style.width = `${Math.max(0, Math.min(100, snapshot.health.score))}%`;
-
-    const freshness = overview.createDiv({ cls: `codex-kb-dashboard-health-badge codex-kb-freshness-${snapshot.checkFreshness.status}` });
-    freshness.createSpan({ cls: "codex-kb-status-dot" });
-    freshness.createSpan({ text: `体检 ${snapshot.checkFreshness.label}` });
+    this.addKnowledgeDashboardMeter(
+      overview,
+      "知识库健康",
+      snapshot.health.score,
+      `codex-kb-health-${snapshot.health.status}`,
+      snapshot.health.label
+    );
+    this.addKnowledgeDashboardMeter(
+      overview,
+      "体检新鲜度",
+      snapshot.checkFreshness.score,
+      `codex-kb-freshness-${snapshot.checkFreshness.status}`,
+      snapshot.checkFreshness.label
+    );
 
     const facts = section.createDiv({ cls: "codex-kb-dashboard-facts" });
     this.addKnowledgeDashboardFact(facts, "最近体检", snapshot.checkFreshness.lastCheckAt ? formatAbsoluteTime(snapshot.checkFreshness.lastCheckAt) : "无记录");
@@ -1009,6 +1010,19 @@ export class CodexView extends ItemView {
     for (const reason of snapshot.checkFreshness.reasons) {
       reasons.createDiv({ cls: "codex-kb-dashboard-reason codex-kb-dashboard-reason-muted", text: reason });
     }
+  }
+
+  private addKnowledgeDashboardMeter(container: HTMLElement, label: string, scoreValue: number, statusClass: string, statusLabel: string): void {
+    const row = container.createDiv({ cls: "codex-kb-dashboard-meter-row" });
+    row.createDiv({ cls: "codex-kb-dashboard-meter-label", text: label });
+    const score = row.createDiv({ cls: "codex-kb-dashboard-score" });
+    score.createSpan({ cls: "codex-kb-dashboard-score-label", text: `${scoreValue}` });
+    const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
+    const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill ${statusClass}` });
+    fill.style.width = `${Math.max(0, Math.min(100, scoreValue))}%`;
+    const status = row.createDiv({ cls: `codex-kb-dashboard-health-badge ${statusClass}` });
+    status.createSpan({ cls: "codex-kb-status-dot" });
+    status.createSpan({ text: statusLabel });
   }
 
   private renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
