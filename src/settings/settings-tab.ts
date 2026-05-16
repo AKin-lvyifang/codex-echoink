@@ -71,7 +71,7 @@ export class CodexSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Codex for Obsidian 设置" });
+    containerEl.createEl("h2", { text: "Codex EchoInk 设置" });
 
     const status = this.plugin.lastStatus;
     const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
@@ -1521,7 +1521,7 @@ function knowledgeInitStatusLabel(value: string): string {
 
 function pluginInstallDir(plugin: CodexForObsidianPlugin): string {
   const dir = (plugin.manifest as any).dir;
-  return dir ? `${dir}/` : ".obsidian/plugins/obsidian-codex/";
+  return dir ? `${dir}/` : ".obsidian/plugins/codex-echoink/";
 }
 
 function formatQueryParams(params?: Record<string, string>): string {

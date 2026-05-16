@@ -16,8 +16,10 @@ export interface KnowledgeBaseRulesRepairResult {
 
 type RulesSettings = Pick<KnowledgeBaseSettings, "useCustomRulesFile" | "rulesFilePath">;
 
-const MINIMUM_RULES_MARKER = "<!-- obsidian-codex-kb-minimum-rules:start -->";
-const MINIMUM_RULES_END_MARKER = "<!-- obsidian-codex-kb-minimum-rules:end -->";
+const TEMPLATE_MARKERS = ["template: codex-echoink-llm-wiki", "template: obsidian-codex-llm-wiki"];
+const MINIMUM_RULES_MARKER = "<!-- codex-echoink-kb-minimum-rules:start -->";
+const MINIMUM_RULES_END_MARKER = "<!-- codex-echoink-kb-minimum-rules:end -->";
+const LEGACY_MINIMUM_RULES_MARKER = "<!-- obsidian-codex-kb-minimum-rules:start -->";
 
 const MINIMUM_RULE_CHECKS: Array<{ label: string; patterns: RegExp[] }> = [
   { label: "raw/ 只读边界", patterns: [/raw\//i, /(只读|不可变|禁止修改|禁止改写|不得修改)/] },
@@ -69,7 +71,7 @@ export async function repairKnowledgeBaseRulesFile(
 }
 
 export function detectMissingKnowledgeBaseRules(content: string): string[] {
-  if (content.includes("template: obsidian-codex-llm-wiki") || content.includes(MINIMUM_RULES_MARKER)) return [];
+  if (TEMPLATE_MARKERS.some((marker) => content.includes(marker)) || content.includes(MINIMUM_RULES_MARKER) || content.includes(LEGACY_MINIMUM_RULES_MARKER)) return [];
   return MINIMUM_RULE_CHECKS
     .filter((check) => !check.patterns.every((pattern) => pattern.test(content)))
     .map((check) => check.label);

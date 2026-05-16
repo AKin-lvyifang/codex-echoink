@@ -1,12 +1,16 @@
-<a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian v0.4.1 automated knowledge base operations." src="docs/images/obsidian-codex-knowledge-v0.4.1.png">
+<a href="https://github.com/AKin-lvyifang/codex-echoink">
+  <img width="1024" alt="Codex EchoInk v0.5.0 automated knowledge base operations." src="docs/images/codex-echoink-knowledge-v0.5.0.png">
 </a>
+
+<h1 align="center">Codex EchoInk</h1>
 
 <p align="center">
   <a href="#features">Features</a> ·
+  <a href="#why-echoink">Why EchoInk</a> ·
   <a href="#whats-new">What's New</a> ·
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#privacy-and-permissions">Privacy</a> ·
   <a href="#screenshots">Screenshots</a> ·
   <a href="#development">Development</a> ·
   <a href="#license">License</a> ·
@@ -14,18 +18,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.4.1-0EA5E9?style=flat-square" alt="Version v0.4.1">
+    <img src="https://img.shields.io/badge/version-v0.5.0-0EA5E9?style=flat-square" alt="Version v0.5.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip"><strong>Download v0.4.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip"><strong>Download v0.5.0</strong></a>
   ·
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">Latest Release</a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
 
 ---
@@ -88,7 +92,29 @@
 
 This feature is still experimental and disabled by default, but v0.3.0 makes it a much more deliberate writing workflow.
 
+## Why EchoInk
+
+Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
+
+- `Ink` is the record: notes, clippings, drafts, sources, and conversations.
+- `Codex` is the knowledge base: structured wiki pages, indexes, reports, and traceable source links.
+- `Echo` is the activation layer: vault-aware questions, maintenance runs, writing help, and future inspiration workflows.
+
+The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
+
 ## What's New
+
+### v0.5.0
+
+**Community-ready release:** renamed the plugin to `Codex EchoInk`, prepared the `codex-echoink` community plugin id, and added clearer privacy and permission disclosures for Obsidian review.
+
+**What changed:**
+
+- Renamed the plugin from `Codex for Obsidian` / `obsidian-codex` to `Codex EchoInk` / `codex-echoink`.
+- Updated install paths, release links, packaging output, and visible repository references for the new community name.
+- Kept compatibility with large raw message files stored by older manual installs under `.obsidian/plugins/obsidian-codex/raw`.
+- Added privacy and permission notes covering Codex CLI, OpenCode, model providers, local API keys, and vault write boundaries.
+- Prepared release assets for community installation: `main.js`, `manifest.json`, `styles.css`, and `codex-echoink-0.5.0.zip`.
 
 ### v0.4.1
 
@@ -180,7 +206,7 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 **How to use:**
 
 1. Download the latest release package.
-2. Install the `obsidian-codex` plugin folder.
+2. Install the `codex-echoink` plugin folder.
 3. Use the plugin without browsing internal project documents.
 
 ### v0.1.1
@@ -197,20 +223,20 @@ This feature is still experimental and disabled by default, but v0.3.0 makes it 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`obsidian-codex-0.4.1.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip) from [the latest release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest).
-4. Unzip it and get the `obsidian-codex` folder.
+3. Download [`codex-echoink-0.5.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
 ```text
-<vault>/.obsidian/plugins/obsidian-codex/
+<vault>/.obsidian/plugins/codex-echoink/
 ```
 
-6. Restart Obsidian and enable `Codex for Obsidian` in Community plugins.
+6. Restart Obsidian and enable `Codex EchoInk` in Community plugins.
 
 The plugin folder should contain:
 
 ```text
-obsidian-codex/
+codex-echoink/
   main.js
   manifest.json
   styles.css
@@ -226,11 +252,20 @@ obsidian-codex/
 6. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
 7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/ask`, `/maintain`, or `/outputs` depending on whether you want an answer, a maintenance run, or structured knowledge output.
 
+## Privacy and permissions
+
+- Codex EchoInk is desktop-only because it calls local command-line tools.
+- Codex CLI mode uses your local Codex CLI login and may send selected prompts, attachments, and chosen file context to the model provider configured in Codex.
+- OpenCode API mode connects to a local or user-configured OpenCode server. The plugin can start or stop `opencode serve`, but it does not silently install OpenCode.
+- Custom API provider keys are stored in Obsidian plugin data on your local machine. Use them only on a trusted device.
+- The plugin does not upload your whole vault by default. Ordinary chat requires choosing a workspace folder, and attached notes are turn context only.
+- Knowledge base writes happen through explicit commands or enabled maintenance settings, and Raw sources are treated as read-only except for indexes and tracker files.
+
 ## Screenshots
 
-![Codex for Obsidian knowledge base workflow](docs/images/obsidian-codex-knowledge-usage-v0.4.0.png)
+![Codex EchoInk knowledge base workflow](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 
-![Codex for Obsidian sidebar demo](docs/images/obsidian-codex-vault-answer.png)
+![Codex EchoInk sidebar demo](docs/images/codex-echoink-vault-answer.png)
 
 ## Development
 
@@ -263,6 +298,6 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 
 ## License
 
-Codex for Obsidian is open source under the [MIT License](LICENSE).
+Codex EchoInk is open source under the [MIT License](LICENSE).
 
 You may use, copy, modify, merge, publish, distribute, sublicense, and sell copies of this software as permitted by the MIT License, as long as the copyright and license notice are included. The software is provided "as is", without warranty of any kind.

@@ -266,7 +266,7 @@ export function buildKnowledgeBaseRulesTemplate(now: Date): string {
     "---",
     `created: ${stamp}`,
     `updated: ${stamp}`,
-    "template: obsidian-codex-llm-wiki",
+    "template: codex-echoink-llm-wiki",
     `template_version: ${KNOWLEDGE_BASE_TEMPLATE_VERSION}`,
     "---",
     "",
@@ -376,18 +376,18 @@ function buildTrackerTemplate(now: Date): string {
   return [
     "---",
     `created: ${formatDateTime(now)}`,
-    "source: obsidian-codex",
+    "source: codex-echoink",
     "---",
     "",
     "# Ingest Tracker",
     "",
-    "<!-- obsidian-codex-kb:start -->",
+    "<!-- codex-echoink-kb:start -->",
     "",
-    `## Obsidian Codex 处理记录（${formatDateTime(now)}）`,
+    `## Codex EchoInk 处理记录（${formatDateTime(now)}）`,
     "",
     "- 暂无",
     "",
-    "<!-- obsidian-codex-kb:end -->",
+    "<!-- codex-echoink-kb:end -->",
     ""
   ].join("\n");
 }

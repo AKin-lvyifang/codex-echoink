@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.5.0 - 2026-05-17
+
+版本号：`v0.5.0`
+
+社区上架准备版：插件正式更名为 `Codex EchoInk`，社区插件 id 改为 `codex-echoink`。
+
+更新内容：
+
+1. 插件名称从 `Codex for Obsidian` 改为 `Codex EchoInk`。
+2. 插件 id 从 `obsidian-codex` 改为 `codex-echoink`，避开 Obsidian 官方命名限制。
+3. README、README_CN、安装路径、Release 链接和打包产物统一切换到 `codex-echoink`。
+4. 兼容旧手动安装版放在 `.obsidian/plugins/obsidian-codex/raw` 下的大型原文缓存。
+5. 新增隐私与权限说明，明确 Codex CLI、OpenCode、模型服务、自定义 API key 和知识库写入边界。
+6. Release 资产准备为社区下载格式：`main.js`、`manifest.json`、`styles.css` 和 `codex-echoink-0.5.0.zip`。
+
+使用说明：
+
+1. 在最新 Release 下载 `codex-echoink-0.5.0.zip`，或等待 Obsidian 社区审核通过后从社区插件安装。
+2. 手动安装路径为 `<vault>/.obsidian/plugins/codex-echoink/`。
+3. 如果从旧手动安装版迁移，保留旧 `.obsidian/plugins/obsidian-codex/` 目录可让大型原文缓存继续兜底读取。
+
 ## v0.4.1 - 2026-05-17
 
 版本号：`v0.4.1`
@@ -105,7 +126,7 @@ Bug 修复：修复 Codex 账号重新登录后，插件因为找不到 Codex De
 使用说明：
 
 1. 下载最新 Release 安装包。
-2. 安装 `obsidian-codex` 插件文件夹。
+2. 安装 `codex-echoink` 插件文件夹。
 3. 直接使用插件，不需要阅读内部项目文档。
 
 ## v0.1.1 - 2026-04-29

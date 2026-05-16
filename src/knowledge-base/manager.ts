@@ -893,7 +893,7 @@ async function ensureFallbackReport(vaultPath: string, reportPath: string, input
   const lines = [
     "---",
     `created: ${new Date(input.startedAt).toISOString()}`,
-    "source: obsidian-codex",
+    "source: codex-echoink",
     "---",
     "",
     `# 知识库${labelForRunMode(input.mode)}报告 — ${formatDateForTitle(new Date(input.startedAt))}`,
@@ -911,8 +911,8 @@ async function ensureFallbackReport(vaultPath: string, reportPath: string, input
 async function writeKnowledgeBaseTracker(vaultPath: string, processed: Record<string, { path: string; size: number; mtime: number; digestedAt: number }>, updatedAt: number): Promise<void> {
   const tracker = path.join(vaultPath, "outputs", ".ingest-tracker.md");
   await fsp.mkdir(path.dirname(tracker), { recursive: true });
-  const markerStart = "<!-- obsidian-codex-kb:start -->";
-  const markerEnd = "<!-- obsidian-codex-kb:end -->";
+  const markerStart = "<!-- codex-echoink-kb:start -->";
+  const markerEnd = "<!-- codex-echoink-kb:end -->";
   const current = await fsp.readFile(tracker, "utf8").catch(() => "---\nupdated: \n---\n\n# Ingest Tracker\n");
   const entries = Object.values(processed)
     .sort((left, right) => left.path.localeCompare(right.path))
@@ -920,7 +920,7 @@ async function writeKnowledgeBaseTracker(vaultPath: string, processed: Record<st
   const block = [
     markerStart,
     "",
-    `## Obsidian Codex 处理记录（${new Date(updatedAt).toISOString()}）`,
+    `## Codex EchoInk 处理记录（${new Date(updatedAt).toISOString()}）`,
     "",
     ...(entries.length ? entries : ["- 暂无"]),
     "",

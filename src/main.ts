@@ -215,6 +215,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     return adapter.basePath || adapter.path || "";
   }
 
+  getPluginDataDirName(): string {
+    const dir = (this.manifest as any).dir;
+    return typeof dir === "string" && dir.trim() ? dir : this.manifest.id;
+  }
+
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) ?? {};
     const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
@@ -228,7 +233,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     let rawMigrated = 0;
     try {
-      rawMigrated = await externalizeLargeMessages(this.getVaultPath(), this.settings);
+      rawMigrated = await externalizeLargeMessages(this.getVaultPath(), this.settings, this.getPluginDataDirName());
     } catch (error) {
       console.error("Codex raw message migration failed", error);
     }
@@ -279,7 +284,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const write = prepareRawMessage(message, fullText);
     if (!write) return;
     let tracked: Promise<void>;
-    tracked = writeRawText(this.getVaultPath(), write.rawRef, write.text)
+    tracked = writeRawText(this.getVaultPath(), write.rawRef, write.text, this.getPluginDataDirName())
       .catch((error) => {
         console.error("Codex raw message write failed", error);
         if (message.rawRef === write.rawRef) {
@@ -297,7 +302,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async readRawMessageText(rawRef: string): Promise<string> {
-    return readRawText(this.getVaultPath(), rawRef);
+    return readRawText(this.getVaultPath(), rawRef, this.getPluginDataDirName());
   }
 
   getKnowledgeBaseManager(): KnowledgeBaseManager | null {

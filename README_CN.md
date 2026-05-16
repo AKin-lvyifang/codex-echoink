@@ -1,12 +1,16 @@
-<a href="https://github.com/AKin-lvyifang/obsidian-codex">
-  <img width="1024" alt="Codex for Obsidian v0.4.1 自动化知识库运维。" src="docs/images/obsidian-codex-knowledge-v0.4.1.png">
+<a href="https://github.com/AKin-lvyifang/codex-echoink">
+  <img width="1024" alt="Codex EchoInk v0.5.0 自动化知识库运维。" src="docs/images/codex-echoink-knowledge-v0.5.0.png">
 </a>
+
+<h1 align="center">Codex EchoInk</h1>
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
+  <a href="#为什么叫-echoink">命名</a> ·
   <a href="#更新说明">更新说明</a> ·
   <a href="#安装">安装</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#隐私与权限">隐私与权限</a> ·
   <a href="#截图">截图</a> ·
   <a href="#本地开发">本地开发</a> ·
   <a href="#使用要求">使用要求</a> ·
@@ -15,18 +19,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.4.1-0EA5E9?style=flat-square" alt="版本 v0.4.1">
+    <img src="https://img.shields.io/badge/version-v0.5.0-0EA5E9?style=flat-square" alt="版本 v0.5.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip"><strong>下载 v0.4.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip"><strong>下载 v0.5.0</strong></a>
   ·
-  <a href="https://github.com/AKin-lvyifang/obsidian-codex/releases/latest">最新 Release</a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
 
 ---
@@ -90,8 +94,31 @@
 
 这个功能仍处于实验阶段，默认关闭；但 v0.3.0 已经把它升级成更完整、可见、可控的写作流程。
 
+<a id="为什么叫-echoink"></a>
+## 为什么叫 EchoInk
+
+Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄本（Codex，知识库）”，并在未来产生“回响（Echo，灵感激活）”。
+
+- `Ink` 是记录：笔记、摘录、草稿、资料和对话。
+- `Codex` 是知识库：结构化 wiki、索引、报告和可追溯来源。
+- `Echo` 是激活：知识库问答、维护任务、写作辅助，以及未来的灵感触发。
+
+它对应 Obsidian 的核心链路：先记录，再整理，最后被自己的知识重新启发。
+
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.5.0
+
+**社区上架准备版：** 插件正式更名为 `Codex EchoInk`，社区插件 id 改为 `codex-echoink`，并补齐 Obsidian 审核需要的隐私和权限说明。
+
+**更新内容：**
+
+- 插件从 `Codex for Obsidian` / `obsidian-codex` 更名为 `Codex EchoInk` / `codex-echoink`。
+- 安装路径、Release 链接、打包产物和公开仓库引用都切换到新名称。
+- 兼容旧手动安装版放在 `.obsidian/plugins/obsidian-codex/raw` 下的大型原文缓存。
+- 新增隐私与权限说明，覆盖 Codex CLI、OpenCode、模型服务、自定义 API key 和知识库写入边界。
+- 准备社区安装所需 Release 资产：`main.js`、`manifest.json`、`styles.css` 和 `codex-echoink-0.5.0.zip`。
 
 ### v0.4.1
 
@@ -183,7 +210,7 @@
 **使用方法：**
 
 1. 下载最新 Release 安装包。
-2. 安装 `obsidian-codex` 插件文件夹。
+2. 安装 `codex-echoink` 插件文件夹。
 3. 直接使用插件，不需要阅读内部项目文档。
 
 ### v0.1.1
@@ -201,20 +228,20 @@
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/obsidian-codex/releases/latest) 下载 [`obsidian-codex-0.4.1.zip`](https://github.com/AKin-lvyifang/obsidian-codex/releases/download/v0.4.1/obsidian-codex-0.4.1.zip)。
-4. 解压后得到 `obsidian-codex` 文件夹。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip)。
+4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
 ```text
-<vault>/.obsidian/plugins/obsidian-codex/
+<vault>/.obsidian/plugins/codex-echoink/
 ```
 
-6. 重启 Obsidian，在第三方插件里启用 `Codex for Obsidian`。
+6. 重启 Obsidian，在第三方插件里启用 `Codex EchoInk`。
 
 插件文件夹里应包含：
 
 ```text
-obsidian-codex/
+codex-echoink/
   main.js
   manifest.json
   styles.css
@@ -231,12 +258,22 @@ obsidian-codex/
 6. 需要维护知识库时，打开 `知识库` 常驻频道。
 7. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再按需要用 `/ask` 提问、`/maintain` 维护，或用 `/outputs` 写入结构化知识。
 
+<a id="隐私与权限"></a>
+## 隐私与权限
+
+- Codex EchoInk 仅支持桌面端，因为它会调用本机命令行工具。
+- Codex CLI 模式复用本机 Codex CLI 登录态，可能把你选择的 prompt、附件和文件上下文发送给 Codex 配置的模型服务。
+- OpenCode API 模式连接本机或用户配置的 OpenCode server；插件可以启动或停止 `opencode serve`，但不会静默安装 OpenCode。
+- 自定义 API Provider 的 key 会保存在本机 Obsidian 插件数据中，只建议在可信设备上使用。
+- 插件默认不会上传整个 vault。普通会话必须先选择工作区文件夹，附加笔记只作为当前轮上下文。
+- 知识库写入只会通过显式命令或已启用的维护设置触发；Raw 原始资料默认只读，例外是索引和 tracker。
+
 <a id="截图"></a>
 ## 截图
 
-![Codex for Obsidian 知识库自动化流程](docs/images/obsidian-codex-knowledge-usage-v0.4.0.png)
+![Codex EchoInk 知识库自动化流程](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 
-![Codex for Obsidian 侧栏演示](docs/images/obsidian-codex-vault-answer.png)
+![Codex EchoInk 侧栏演示](docs/images/codex-echoink-vault-answer.png)
 
 <a id="本地开发"></a>
 ## 本地开发
@@ -272,6 +309,6 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 <a id="许可证"></a>
 ## 许可证
 
-Codex for Obsidian 使用 [MIT License](LICENSE) 开源。
+Codex EchoInk 使用 [MIT License](LICENSE) 开源。
 
 在保留版权声明和许可证声明的前提下，你可以按照 MIT License 允许的范围使用、复制、修改、合并、发布、分发、再授权或销售本软件。本软件按“现状”提供，不提供任何形式的担保。

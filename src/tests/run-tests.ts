@@ -21,7 +21,7 @@ import {
 } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
-import { externalizeLargeMessages, prepareRawMessage, readRawText } from "../core/raw-message-store";
+import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText } from "../core/raw-message-store";
 import {
   emptyWorkspaceResourceSnapshot,
   loadedTabsFromWorkspaceResourceCache,
@@ -107,6 +107,13 @@ import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recovere
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
+
+const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
+assert.equal(manifest.id, "codex-echoink");
+assert.equal(manifest.name, "Codex EchoInk");
+assert.equal(manifest.version, "0.5.0");
+assert.equal(manifest.author, "AKin-lvyifang");
+assert.equal(manifest.id.includes("obsidian"), false);
 
 function cssRuleBody(styles: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -363,7 +370,7 @@ try {
     timestamp: 1700000000000,
     index: 1
   });
-  const expectedPath = path.join(clipboardVault, ".obsidian", "plugins", "obsidian-codex", "clipboard", "clipboard-1700000000000-1.png");
+  const expectedPath = path.join(clipboardVault, ".obsidian", "plugins", "codex-echoink", "clipboard", "clipboard-1700000000000-1.png");
   assert.deepEqual(attachment, {
     type: "image",
     name: "clipboard-1700000000000-1.png",
@@ -372,6 +379,22 @@ try {
   assert.deepEqual(await readFile(expectedPath), Buffer.from([1, 2, 3]));
 } finally {
   await rm(clipboardVault, { recursive: true, force: true });
+}
+
+const legacyRawVault = await mkdtemp(path.join(tmpdir(), "codex-legacy-raw-"));
+try {
+  assert.equal(pluginDataDir(legacyRawVault), path.join(legacyRawVault, ".obsidian", "plugins", "codex-echoink"));
+  assert.equal(pluginDataDir(legacyRawVault, "custom-plugin-dir"), path.join(legacyRawVault, ".obsidian", "plugins", "custom-plugin-dir"));
+  const legacyRawPath = path.join(legacyRawVault, ".obsidian", "plugins", "obsidian-codex", "raw", "legacy.txt");
+  await mkdir(path.dirname(legacyRawPath), { recursive: true });
+  await writeFile(legacyRawPath, "legacy raw text", "utf8");
+  assert.equal(await readRawText(legacyRawVault, "raw/legacy.txt", "codex-echoink"), "legacy raw text");
+  const currentRawPath = path.join(legacyRawVault, ".obsidian", "plugins", "codex-echoink", "raw", "legacy.txt");
+  await mkdir(path.dirname(currentRawPath), { recursive: true });
+  await writeFile(currentRawPath, "current raw text", "utf8");
+  assert.equal(await readRawText(legacyRawVault, "raw/legacy.txt", "codex-echoink"), "current raw text");
+} finally {
+  await rm(legacyRawVault, { recursive: true, force: true });
 }
 
 assert.equal(contextPercent(50, 100), 50);
@@ -1584,7 +1607,7 @@ try {
   assert.ok(patched.missingRules.includes("raw/ 只读边界"));
   const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
-  assert.ok(patchedRules.includes("obsidian-codex-kb-minimum-rules:start"));
+  assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
   assert.ok(patchedRules.includes("`raw/` 是不可变原始资料区，只读"));
   assert.ok(patchedRules.includes("把维护报告写入 `outputs/`"));
 } finally {

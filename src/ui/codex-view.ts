@@ -431,7 +431,7 @@ export class CodexView extends ItemView {
     const title = header.createDiv({ cls: "codex-title" });
     const icon = title.createSpan({ cls: "codex-title-icon codex-title-icon-codex", attr: { "aria-hidden": "true" } });
     setIcon(icon, "bot");
-    title.createSpan({ cls: "codex-title-text", text: "Codex" });
+    title.createSpan({ cls: "codex-title-text", text: "EchoInk" });
     const headerActions = header.createDiv({ cls: "codex-header-actions" });
     this.editorActionStatusEl = headerActions.createDiv({
       cls: "codex-status-chip codex-editor-action-status is-idle",
@@ -2261,8 +2261,6 @@ export class CodexView extends ItemView {
         : request.snapshot;
       const contextChars = request.snapshot.beforeContext.length + request.snapshot.afterContext.length;
       const debugMessage = `${request.modeConfig.label} · 模型 ${model} · 上下文 ${contextChars} 字 · 超时 ${Math.round(timeoutMs / 1000)}s`;
-      console.debug("[obsidian-codex] editor action", debugMessage);
-
       let result = await this.runEditorActionPromptTurn({
         prompt: buildEditorActionPrompt({ action: request.action, style: request.style, snapshot, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label }),
         actionLabel: request.action.label,
@@ -3528,7 +3526,7 @@ export class CodexView extends ItemView {
     if (!files.length) return;
     event.preventDefault();
     try {
-      const pasted = await saveClipboardImageAttachments(files, { vaultPath: this.plugin.getVaultPath() });
+      const pasted = await saveClipboardImageAttachments(files, { vaultPath: this.plugin.getVaultPath(), pluginDir: this.plugin.getPluginDataDirName() });
       this.attachments.push(...pasted);
       this.renderAttachments();
     } catch (error) {

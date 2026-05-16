@@ -48,24 +48,24 @@ export function imageExtensionForMime(mimeType: string, fileName = ""): string |
   return mimeExtension || "png";
 }
 
-export async function saveClipboardImageAttachment(file: File, options: { vaultPath: string; timestamp?: number; index?: number }): Promise<StoredAttachment> {
+export async function saveClipboardImageAttachment(file: File, options: { vaultPath: string; pluginDir?: string; timestamp?: number; index?: number }): Promise<StoredAttachment> {
   const vaultPath = options.vaultPath.trim();
   if (!vaultPath) throw new Error("缺少 Obsidian 仓库路径");
   const timestamp = options.timestamp ?? Date.now();
   const index = options.index ?? 0;
   const extension = imageExtensionForMime(file.type, file.name) ?? "png";
   const name = `clipboard-${timestamp}-${index}.${extension}`;
-  const target = path.join(pluginDataDir(vaultPath), "clipboard", name);
+  const target = path.join(pluginDataDir(vaultPath, options.pluginDir), "clipboard", name);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, Buffer.from(await file.arrayBuffer()));
   return { type: "image", name, path: target };
 }
 
-export async function saveClipboardImageAttachments(files: File[], options: { vaultPath: string; timestamp?: number }): Promise<StoredAttachment[]> {
+export async function saveClipboardImageAttachments(files: File[], options: { vaultPath: string; pluginDir?: string; timestamp?: number }): Promise<StoredAttachment[]> {
   const timestamp = options.timestamp ?? Date.now();
   const attachments: StoredAttachment[] = [];
   for (let index = 0; index < files.length; index += 1) {
-    attachments.push(await saveClipboardImageAttachment(files[index], { vaultPath: options.vaultPath, timestamp, index }));
+    attachments.push(await saveClipboardImageAttachment(files[index], { vaultPath: options.vaultPath, pluginDir: options.pluginDir, timestamp, index }));
   }
   return attachments;
 }

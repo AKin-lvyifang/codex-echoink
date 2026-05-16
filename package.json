@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-codex",
-  "version": "0.4.1",
-  "description": "Codex for Obsidian",
+  "name": "codex-echoink",
+  "version": "0.5.0",
+  "description": "Codex EchoInk",
   "main": "dist/main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
@@ -15,7 +15,7 @@
     "obsidian",
     "codex"
   ],
-  "author": "Codex for Obsidian contributors",
+  "author": "AKin-lvyifang",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.15.3",
