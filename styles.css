@@ -1588,7 +1588,7 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-kb-dashboard-meter-row {
   display: grid;
-  grid-template-columns: 76px minmax(120px, 1fr) max-content;
+  grid-template-columns: 76px minmax(120px, 1fr) 42px;
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -1608,6 +1608,7 @@ body.theme-light .codex-code-wrapper pre {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  justify-content: flex-start;
   min-width: 0;
   color: var(--text-normal);
   font-size: 12px;

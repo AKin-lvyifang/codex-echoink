@@ -1555,7 +1555,7 @@ try {
   assert.equal(dashboard.health.streakDays, 2);
   assert.equal(dashboard.health.lastCheckAt, today.getTime());
   assert.equal(dashboard.checkFreshness.status, "fresh");
-  assert.equal(dashboard.checkFreshness.label, "已确认");
+  assert.equal(dashboard.checkFreshness.label, "新鲜");
   assert.equal(dashboard.checkFreshness.score, 100);
   assert.equal(dashboard.checkHeatmap.at(-1)?.status, "success");
   assert.equal(dashboard.checkHeatmap.length, 14);
@@ -1579,7 +1579,7 @@ try {
   assert.equal(riskDashboard.health.status, "healthy");
   assert.ok(!riskDashboard.health.reasons.some((reason) => reason.includes("3 天未体检")));
   assert.equal(riskDashboard.checkFreshness.status, "stale");
-  assert.equal(riskDashboard.checkFreshness.label, "建议体检");
+  assert.equal(riskDashboard.checkFreshness.label, "待检");
   assert.equal(riskDashboard.checkFreshness.score, 76);
   assert.ok(riskDashboard.checkFreshness.reasons.some((reason) => reason.includes("3 天前确认")));
 
@@ -1615,7 +1615,7 @@ try {
   }).settings.knowledgeBase;
   const missingRulesDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, missingRulesSettings);
   assert.equal(missingRulesDashboard.health.status, "bad");
-  assert.equal(missingRulesDashboard.health.label, "需处理");
+  assert.equal(missingRulesDashboard.health.label, "异常");
   assert.ok(missingRulesDashboard.health.reasons.includes("规则文件缺失"));
 
   const legacyDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({ settingsVersion: 19 }).settings.knowledgeBase);

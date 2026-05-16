@@ -392,7 +392,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   });
   const scoreStatus: KnowledgeBaseDashboardHealthStatus = critical.length || score < 60 ? "bad" : risk.length || score < 85 ? "risk" : "healthy";
   const status = scoreStatus;
-  const label = status === "healthy" ? "健康" : status === "risk" ? "有风险" : "需处理";
+  const label = status === "healthy" ? "健康" : status === "risk" ? "风险" : "异常";
   const scoreReasons = [...critical, ...risk];
   const reasons = scoreReasons.length ? scoreReasons : ["知识库结构正常，待处理数量在安全范围"];
   return {
@@ -412,7 +412,7 @@ function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generat
   if (!latestCheckAt) {
     return {
       status: "missing",
-      label: "无记录",
+      label: "无检",
       score: 0,
       lastCheckAt: 0,
       daysSinceCheck: -1,
@@ -422,7 +422,7 @@ function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generat
   const days = daysBetweenDateKeys(formatLocalDateKey(latestCheckAt), formatLocalDateKey(generatedAt));
   const score = Math.max(0, Math.min(100, 100 - days * 8));
   const status: KnowledgeBaseDashboardCheckFreshnessStatus = score >= 80 ? "fresh" : score >= 50 ? "stale" : "bad";
-  const label = status === "fresh" ? "已确认" : status === "stale" ? "建议体检" : "需体检";
+  const label = status === "fresh" ? "新鲜" : status === "stale" ? "待检" : "过期";
   return {
     status,
     label,
