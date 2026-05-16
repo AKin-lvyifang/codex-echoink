@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.5.0-0EA5E9?style=flat-square" alt="版本 v0.5.0">
+    <img src="https://img.shields.io/badge/version-v0.5.1-0EA5E9?style=flat-square" alt="版本 v0.5.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.0/codex-echoink-0.5.0.zip"><strong>下载 v0.5.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip"><strong>下载 v0.5.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -107,6 +107,10 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.5.1
+
+**社区审核修复版：** 移除 `manifest.json` 描述里冗余的 `Obsidian` 字样，满足社区自动检查。
 
 ### v0.5.0
 
@@ -228,7 +232,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.0/codex-echoink-0.5.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 

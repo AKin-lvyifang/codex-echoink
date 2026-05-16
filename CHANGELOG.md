@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.5.1 - 2026-05-17
+
+版本号：`v0.5.1`
+
+社区审核修复版：修正自动检查指出的 manifest 描述问题。
+
+更新内容：
+
+1. `manifest.json` 描述移除冗余的 `Obsidian` 字样，满足社区自动检查要求。
+2. 保持 `main.js`、`manifest.json`、`styles.css` 和 zip 资产完整发布。
+
+使用说明：
+
+1. 在最新 Release 下载 `codex-echoink-0.5.1.zip`，或等待 Obsidian 社区审核通过后从社区插件安装。
+2. 手动安装路径仍为 `<vault>/.obsidian/plugins/codex-echoink/`。
+
 ## v0.5.0 - 2026-05-17
 
 版本号：`v0.5.0`

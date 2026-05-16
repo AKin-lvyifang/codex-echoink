@@ -111,7 +111,7 @@ import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "0.5.0");
+assert.equal(manifest.version, "0.5.1");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
