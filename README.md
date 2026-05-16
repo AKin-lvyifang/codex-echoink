@@ -106,7 +106,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 ### v0.5.1
 
-**Community review fix:** removed the redundant word `Obsidian` from `manifest.json` description to satisfy automated community checks.
+**Community review fix:** removed the redundant word `Obsidian` from `manifest.json` description and dropped the legacy `main` manifest field to satisfy automated community checks.
 
 ### v0.5.0
 

@@ -110,7 +110,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 ### v0.5.1
 
-**社区审核修复版：** 移除 `manifest.json` 描述里冗余的 `Obsidian` 字样，满足社区自动检查。
+**社区审核修复版：** 移除 `manifest.json` 描述里冗余的 `Obsidian` 字样，并删除旧的 `main` manifest 字段，满足社区自动检查。
 
 ### v0.5.0
 

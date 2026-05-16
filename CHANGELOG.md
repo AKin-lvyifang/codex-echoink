@@ -9,7 +9,8 @@
 更新内容：
 
 1. `manifest.json` 描述移除冗余的 `Obsidian` 字样，满足社区自动检查要求。
-2. 保持 `main.js`、`manifest.json`、`styles.css` 和 zip 资产完整发布。
+2. `manifest.json` 移除新社区 schema 不再接受的 `main` 字段；Release 仍保留 `main.js` 资产。
+3. 保持 `main.js`、`manifest.json`、`styles.css` 和 zip 资产完整发布。
 
 使用说明：
 

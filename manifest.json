@@ -3,7 +3,6 @@
   "name": "Codex EchoInk",
   "version": "0.5.1",
   "minAppVersion": "1.4.5",
-  "main": "main.js",
   "description": "Use Codex CLI or OpenCode to manage knowledge, ask vault questions, and review local agent work.",
   "author": "AKin-lvyifang",
   "isDesktopOnly": true
