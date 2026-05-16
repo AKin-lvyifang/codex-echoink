@@ -1027,9 +1027,9 @@ export class CodexView extends ItemView {
 
   private renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
     const rows = snapshot.wiki.groups.length
-      ? snapshot.wiki.groups.map((group) => [group.label, `${group.totalCount}`, group.todayCount ? `+${group.todayCount}` : "-"])
-      : [["无一级目录", "0", "-"]];
-    this.addKnowledgeDashboardTable(container, "Wiki 状态", ["一级目录", "总数量", "今日更新"], rows);
+      ? snapshot.wiki.groups.map((group) => [group.label, `${group.totalCount}`, `${group.sharePercent}%`, group.todayCount ? `+${group.todayCount}` : "-"])
+      : [["无一级目录", "0", "-", "-"]];
+    this.addKnowledgeDashboardTable(container, "Wiki 状态", ["一级目录", "总数量", "占比", "今日更新"], rows);
   }
 
   private renderKnowledgeDashboardQueues(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {

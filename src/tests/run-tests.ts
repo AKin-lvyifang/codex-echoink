@@ -1543,9 +1543,9 @@ try {
   assert.equal(dashboard.raw.todayCount, 1);
   assert.equal(dashboard.wiki.indexExists, true);
   assert.equal(dashboard.wiki.domainCount, 2);
-  assert.deepEqual(dashboard.wiki.groups.map((group) => [group.path, group.totalCount, group.todayCount]), [
-    ["wiki/ai-intelligence", 2, 1],
-    ["wiki/content", 1, 0]
+  assert.deepEqual(dashboard.wiki.groups.map((group) => [group.path, group.totalCount, group.sharePercent, group.todayCount]), [
+    ["wiki/ai-intelligence", 2, 67, 1],
+    ["wiki/content", 1, 33, 0]
   ]);
   assert.equal(dashboard.outputs.latestReportPath, "outputs/kb-maintenance-2026-05-15.md");
   assert.equal(dashboard.inbox.fileCount, 2);

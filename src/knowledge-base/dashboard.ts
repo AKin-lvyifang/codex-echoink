@@ -45,6 +45,7 @@ export interface KnowledgeBaseDashboardWikiGroup {
   path: string;
   label: string;
   totalCount: number;
+  sharePercent: number;
   todayCount: number;
 }
 
@@ -448,12 +449,17 @@ function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: numbe
     const folder = parts[1];
     if (!folder || folder.startsWith(".")) continue;
     const groupPath = `wiki/${folder}`;
-    const group = groups.get(groupPath) ?? { path: groupPath, label: folder, totalCount: 0, todayCount: 0 };
+    const group = groups.get(groupPath) ?? { path: groupPath, label: folder, totalCount: 0, sharePercent: 0, todayCount: 0 };
     group.totalCount += 1;
     if (isSameLocalDay(file.mtime, generatedAt)) group.todayCount += 1;
     groups.set(groupPath, group);
   }
-  return Array.from(groups.values()).sort((left, right) => left.path.localeCompare(right.path));
+  const result = Array.from(groups.values()).sort((left, right) => left.path.localeCompare(right.path));
+  const total = result.reduce((sum, group) => sum + group.totalCount, 0);
+  for (const group of result) {
+    group.sharePercent = total ? Math.round((group.totalCount / total) * 100) : 0;
+  }
+  return result;
 }
 
 function countFilesChangedToday(files: KnowledgeBaseDashboardFile[], generatedAt: number): number {
