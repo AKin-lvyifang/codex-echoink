@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { ItemView, MarkdownView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
@@ -537,7 +539,7 @@ export class CodexView extends ItemView {
     const session = this.ensureSession();
     this.inputEl.setAttr("placeholder", this.isKnowledgeBaseSession(session)
       ? "知识库管理：输入“只体检一下 / 维护知识库 / 收集这个链接 / 记一下...”"
-      : "问 Codex，让它管理当前 Obsidian 仓库");
+      : session.cwd ? `问 Codex，当前工作区：${workspaceDisplayName(session.cwd)}` : "先选择工作区，再问 Codex");
   }
 
   private applyStatus(): void {
@@ -813,6 +815,8 @@ export class CodexView extends ItemView {
       welcome.createDiv({ cls: "codex-welcome-title", text: this.isKnowledgeBaseSession(session) ? "知识库管理" : "What's new?" });
       if (this.isKnowledgeBaseSession(session)) {
         welcome.createDiv({ cls: "codex-resource-note", text: "在这里输入自然语言命令，例如：只体检一下、维护知识库、收集这个链接、记一下。" });
+      } else if (!session.cwd) {
+        welcome.createDiv({ cls: "codex-resource-note", text: "普通会话需要先选择工作区；添加笔记只作为本轮上下文。" });
       }
       return;
     }
@@ -1486,6 +1490,7 @@ export class CodexView extends ItemView {
         this.persistComposerDefaults();
         this.renderToolbar();
       }, "权限", "codex-permission-control");
+      this.addWorkspaceButton(left, session);
 
       this.contextEl = right.createDiv({ cls: "codex-context-meter", attr: { title: "上下文容量" } });
       this.contextRingEl = this.contextEl.createSpan({ cls: "codex-context-ring", attr: { "aria-hidden": "true" } });
@@ -1541,18 +1546,38 @@ export class CodexView extends ItemView {
     select.onchange = () => onChange(select.value as T);
   }
 
+  private addWorkspaceButton(container: HTMLElement, session: StoredSession): void {
+    const workspacePath = normalizeWorkspacePath(session.cwd);
+    const valid = workspacePath ? workspaceDirectoryExists(workspacePath) : false;
+    const title = workspacePath
+      ? `工作区：${workspacePath}${valid ? "" : "\n文件夹不存在，请重新选择"}`
+      : "选择文件夹作为本会话工作区";
+    const button = container.createEl("button", {
+      cls: "codex-composer-model-button codex-workspace-button",
+      attr: { type: "button", title, "aria-label": "选择工作区" }
+    });
+    button.toggleClass("is-missing", !workspacePath);
+    button.toggleClass("is-invalid", Boolean(workspacePath && !valid));
+    const icon = button.createSpan({ cls: "codex-composer-model-icon" });
+    setIcon(icon, workspacePath ? "folder-open" : "folder-plus");
+    button.createSpan({ cls: "codex-composer-model-text", text: workspacePath ? workspaceDisplayName(workspacePath) : "选工作区" });
+    const chevron = button.createSpan({ cls: "codex-composer-chevron" });
+    setIcon(chevron, "chevron-down");
+    button.onclick = (event) => this.openWorkspaceMenu(event, session);
+  }
+
   private openAddMenu(event: MouseEvent): void {
     event.preventDefault();
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle("添加当前笔记")
+        .setTitle("添加当前笔记（只作上下文）")
         .setIcon("file-text")
         .onClick(() => this.attachActiveFile())
     );
     menu.addItem((item) =>
       item
-        .setTitle("添加文件")
+        .setTitle("添加文件（只作上下文）")
         .setIcon("folder")
         .onClick(() => this.pickFiles(false))
     );
@@ -1570,6 +1595,94 @@ export class CodexView extends ItemView {
         .onClick(() => this.toggleMcpPanel())
     );
     menu.showAtMouseEvent(event);
+  }
+
+  private openWorkspaceMenu(event: MouseEvent, session: StoredSession): void {
+    event.preventDefault();
+    const workspacePath = normalizeWorkspacePath(session.cwd);
+    const menu = new Menu();
+    if (workspacePath) {
+      menu.addItem((item) => item.setTitle(workspacePath).setIcon("folder-open").setIsLabel(true));
+      menu.addSeparator();
+    }
+    menu.addItem((item) =>
+      item
+        .setTitle(workspacePath ? "更换工作区" : "选择工作区")
+        .setIcon("folder-plus")
+        .onClick(() => void this.chooseChatWorkspace(session))
+    );
+    if (workspacePath) {
+      menu.addItem((item) =>
+        item
+          .setTitle("在 Finder 显示")
+          .setIcon("external-link")
+          .onClick(() => {
+            if (!showItemInFinder(workspacePath)) new Notice("无法打开这个文件夹");
+          })
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("清除工作区")
+          .setIcon("x")
+          .onClick(() => void this.clearChatWorkspace(session))
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private async chooseChatWorkspace(session: StoredSession): Promise<boolean> {
+    if (this.running) {
+      new Notice("当前会话运行中，结束后再切换工作区");
+      return false;
+    }
+    const pickedPath = await pickWorkspaceDirectory(session.cwd);
+    const selectedPath = pickedPath === undefined
+      ? await textInputModal(this.app, "选择工作区", "文件夹路径", session.cwd)
+      : pickedPath;
+    if (!selectedPath) return false;
+    const workspacePath = normalizeWorkspacePath(selectedPath);
+    if (!workspaceDirectoryExists(workspacePath)) {
+      new Notice("请选择一个存在的文件夹作为工作区");
+      return false;
+    }
+    const changed = normalizeWorkspacePath(session.cwd) !== workspacePath;
+    session.cwd = workspacePath;
+    if (changed) {
+      delete session.threadId;
+      delete session.tokenUsage;
+    }
+    session.updatedAt = Date.now();
+    await this.plugin.saveSettings(true);
+    this.renderToolbar();
+    this.updateInputPlaceholder();
+    this.renderMessages();
+    this.prewarmActiveThread();
+    new Notice(changed ? `工作区已设为：${workspaceDisplayName(workspacePath)}，下一轮将开启新线程` : `工作区已设为：${workspaceDisplayName(workspacePath)}`);
+    return true;
+  }
+
+  private async clearChatWorkspace(session: StoredSession): Promise<void> {
+    if (this.running) {
+      new Notice("当前会话运行中，结束后再清除工作区");
+      return;
+    }
+    session.cwd = "";
+    delete session.threadId;
+    delete session.tokenUsage;
+    session.updatedAt = Date.now();
+    await this.plugin.saveSettings(true);
+    this.renderToolbar();
+    this.updateInputPlaceholder();
+    this.renderMessages();
+    new Notice("已清除工作区");
+  }
+
+  private async ensureChatWorkspaceSelected(session: StoredSession): Promise<boolean> {
+    const workspacePath = normalizeWorkspacePath(session.cwd);
+    if (workspacePath && workspaceDirectoryExists(workspacePath)) return true;
+    const picked = await this.chooseChatWorkspace(session);
+    if (!picked) new Notice("普通会话需要先选择一个文件夹作为工作区");
+    return picked;
   }
 
   private openKnowledgeCommandMenu(event: MouseEvent): void {
@@ -1842,6 +1955,8 @@ export class CodexView extends ItemView {
       return;
     }
     try {
+      const workspaceReady = await this.ensureChatWorkspaceSelected(session);
+      if (!workspaceReady) return;
       const status = await this.plugin.ensureCodexConnected();
       this.applyStatus();
       if (!status.connected) throw new Error("Codex 未连接");
@@ -1871,7 +1986,7 @@ export class CodexView extends ItemView {
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
 
-      const turnOptions = this.currentTurnOptions();
+      const turnOptions = this.currentTurnOptions(session);
       this.running = true;
       this.turnStartedAt = Date.now();
       this.ensureThinkingMessage(session, "连接中", "正在连接 Codex...");
@@ -2653,8 +2768,10 @@ export class CodexView extends ItemView {
     });
   }
 
-  private currentTurnOptions() {
+  private currentTurnOptions(session?: StoredSession) {
+    const cwd = session && !this.isKnowledgeBaseSession(session) ? normalizeWorkspacePath(session.cwd) : "";
     return {
+      ...(cwd ? { cwd } : {}),
       model: this.effectiveModel(),
       reasoning: this.selectedReasoning,
       serviceTier: this.selectedServiceTier,
@@ -2692,6 +2809,7 @@ export class CodexView extends ItemView {
     const session = this.ensureSession();
     if (this.isKnowledgeBaseSession(session)) return;
     if (session.threadId || this.running) return;
+    if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return;
     if (this.threadPrewarmPromise && this.threadPrewarmSessionId === session.id) return;
     this.threadPrewarmSessionId = session.id;
     this.threadPrewarmPromise = this.startThreadForSession(session)
@@ -2706,9 +2824,10 @@ export class CodexView extends ItemView {
 
   private async startThreadForSession(session: StoredSession): Promise<boolean> {
     if (session.threadId) return true;
+    if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return false;
     const status = await this.plugin.ensureCodexConnected();
     if (!status.connected || !this.plugin.codex || session.threadId) return Boolean(session.threadId);
-    const started = await this.plugin.codex.startThread(this.currentTurnOptions());
+    const started = await this.plugin.codex.startThread(this.currentTurnOptions(session));
     session.threadId = started.threadId;
     await this.plugin.saveSettings();
     return true;
@@ -3223,7 +3342,7 @@ export class CodexView extends ItemView {
     const session: StoredSession = {
       id: newId("session"),
       title,
-      cwd: this.plugin.getVaultPath(),
+      cwd: "",
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -3476,10 +3595,58 @@ function summarizeAttachmentFile(attachment: StoredAttachment, vaultPath: string
   return normalizeProcessFileRef(attachment.path, vaultPath);
 }
 
+async function pickWorkspaceDirectory(defaultPath: string): Promise<string | null | undefined> {
+  if (!Platform.isDesktopApp) return undefined;
+  const electron = electronModule();
+  const dialog = electron?.remote?.dialog ?? electron?.dialog;
+  if (!dialog?.showOpenDialog) return undefined;
+  const result = await dialog.showOpenDialog({
+    title: "选择 Codex 工作区",
+    defaultPath: normalizeWorkspacePath(defaultPath) || undefined,
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (result?.canceled) return null;
+  return result?.filePaths?.[0] ?? null;
+}
+
+function workspaceDirectoryExists(value: string): boolean {
+  const workspacePath = normalizeWorkspacePath(value);
+  if (!workspacePath) return false;
+  try {
+    return fs.statSync(workspacePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWorkspacePath(value: string | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const withoutFileProtocol = raw.replace(/^file:\/\//, "");
+  try {
+    return path.resolve(decodeURI(withoutFileProtocol));
+  } catch {
+    return path.resolve(withoutFileProtocol);
+  }
+}
+
+function workspaceDisplayName(workspacePath: string): string {
+  const normalized = normalizeWorkspacePath(workspacePath);
+  return path.basename(normalized) || normalized;
+}
+
+function electronModule(): any {
+  const electronRequire = (window as any).require ?? (globalThis as any).require;
+  try {
+    return electronRequire?.("electron");
+  } catch {
+    return null;
+  }
+}
+
 function showItemInFinder(filePath: string): boolean {
   if (!Platform.isDesktopApp || !filePath) return false;
-  const electronRequire = (window as any).require ?? (globalThis as any).require;
-  const shell = electronRequire?.("electron")?.shell;
+  const shell = electronModule()?.shell;
   if (!shell?.showItemInFolder) return false;
   shell.showItemInFolder(filePath);
   return true;

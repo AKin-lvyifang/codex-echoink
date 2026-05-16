@@ -90,6 +90,7 @@ export function buildAttachmentContext(attachments: StoredAttachment[]): string 
   const lines = files.map((file) => `- ${file.name}: ${file.path}`);
   return [
     "用户已附带以下文件作为本轮上下文。",
+    "这些附件只作为上下文，不代表本轮工作区；如需读写文件，必须以会话工作区为准。",
     "如果用户说“当前笔记”“这个文档”“已添加的笔记”，优先指这些文件；请直接读取这些路径，不要再猜测当前文档。",
     ...lines
   ].join("\n");

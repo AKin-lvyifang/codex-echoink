@@ -2689,6 +2689,15 @@ body.theme-light .codex-container {
   text-overflow: ellipsis;
 }
 
+.codex-workspace-button {
+  max-width: 132px;
+}
+
+.codex-workspace-button.is-missing,
+.codex-workspace-button.is-invalid {
+  color: var(--text-error);
+}
+
 .codex-context-meter {
   min-width: 48px;
   padding: 0 6px;
@@ -2762,6 +2771,10 @@ body.theme-light .codex-container {
   .codex-composer-model-button {
     max-width: 96px;
     padding: 0 6px;
+  }
+
+  .codex-workspace-button {
+    max-width: 112px;
   }
 }
 

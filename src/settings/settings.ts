@@ -353,7 +353,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 20,
+  settingsVersion: 21,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -564,6 +564,27 @@ export function ensureKnowledgeBaseSession(
     settings.sessions.unshift(session);
   }
   return session;
+}
+
+export function clearLegacyChatWorkspaceDefaults(
+  settings: Pick<CodexForObsidianSettings, "sessions" | "knowledgeBase">,
+  vaultPath: string,
+  previousVersion: number
+): number {
+  if (previousVersion >= 21) return 0;
+  const normalizedVaultPath = normalizeComparablePath(vaultPath);
+  if (!normalizedVaultPath) return 0;
+
+  let changed = 0;
+  for (const session of settings.sessions) {
+    if (isKnowledgeBaseSession(session, settings.knowledgeBase.sessionId)) continue;
+    if (normalizeComparablePath(session.cwd) !== normalizedVaultPath) continue;
+    session.cwd = "";
+    delete session.threadId;
+    delete session.tokenUsage;
+    changed += 1;
+  }
+  return changed;
 }
 
 export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">): string {
@@ -1095,6 +1116,13 @@ function normalizeText(value: any, fallback: string): string {
 
 function normalizeOptionalText(value: any): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeComparablePath(value: any): string {
+  return normalizeOptionalText(value)
+    .replace(/^file:\/\//, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
 }
 
 function normalizePositiveInteger(value: any, fallback: number, min: number, max: number): number {

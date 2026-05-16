@@ -32,11 +32,13 @@
 
 ## Features
 
-### Vault-native Codex Workspace
+### Session-scoped Codex Workspace
 
 - Opens Codex in the Obsidian sidebar.
-- Uses the current vault as the working directory.
-- Lets Codex read notes, inspect folders, edit documents, and run local commands.
+- Requires a folder picker for ordinary chat sessions before sending.
+- Treats attached notes as turn context only; attaching a note does not make the whole vault the workspace.
+- Keeps the `Knowledge` channel bound to the current vault for Raw, Wiki, Outputs, and Inbox maintenance.
+- Lets Codex read files, inspect folders, edit documents, and run local commands.
 - Keeps the workflow inside Obsidian instead of bouncing between apps.
 
 ### Agent-style Process Timeline
@@ -191,11 +193,12 @@ obsidian-codex/
 ## Quick Start
 
 1. Open the Codex sidebar from the ribbon icon or command palette.
-2. Ask Codex to inspect, summarize, rewrite, or manage files in the current vault.
-3. Attach notes, files, images, skills, or MCP tools when needed.
-4. Review the process cards for commands, edits, context usage, and evidence.
-5. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
-6. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/maintain` or `/outputs` when you want it to write structured knowledge.
+2. Choose a folder as the workspace in an ordinary chat session.
+3. Ask Codex to inspect, summarize, rewrite, or manage files in that workspace.
+4. Attach notes, files, images, skills, or MCP tools when needed; attachments are context only.
+5. Review the process cards for commands, edits, context usage, and evidence.
+6. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
+7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/maintain` or `/outputs` when you want it to write structured knowledge.
 
 ## Screenshots
 

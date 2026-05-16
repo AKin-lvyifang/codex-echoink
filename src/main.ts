@@ -3,7 +3,7 @@ import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
-import { ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
+import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
@@ -216,12 +216,14 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) ?? {};
+    const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
     const normalized = normalizeSettingsData(data);
     this.settings = normalized.settings;
     const sessionCountBefore = this.settings.sessions.length;
     const knowledgeSessionBefore = this.settings.knowledgeBase.sessionId;
     const knowledgeRulesMigrated = await this.applyKnowledgeBaseRulesFileDefault(data);
     ensureKnowledgeBaseSession(this.settings, this.getVaultPath());
+    const legacyChatWorkspacesCleared = clearLegacyChatWorkspaceDefaults(this.settings, this.getVaultPath(), previousVersion);
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     let rawMigrated = 0;
     try {
@@ -230,7 +232,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       console.error("Codex raw message migration failed", error);
     }
     const knowledgeSessionChanged = sessionCountBefore !== this.settings.sessions.length || knowledgeSessionBefore !== this.settings.knowledgeBase.sessionId;
-    if (normalized.changed || rawMigrated > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
+    if (normalized.changed || rawMigrated > 0 || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
   }
 
   private async applyKnowledgeBaseRulesFileDefault(data: any): Promise<boolean> {

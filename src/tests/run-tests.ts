@@ -49,6 +49,7 @@ import {
   providerModelLabel,
   providerConnectionLabel,
   KNOWLEDGE_BASE_SESSION_TITLE,
+  clearLegacyChatWorkspaceDefaults,
   isKnowledgeBaseSession,
   normalizeSettingsData,
   recordKnowledgeBaseHealthCheck,
@@ -118,7 +119,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 20);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 21);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -217,6 +218,24 @@ assert.equal(sessionSettings.sessions[0].id, "kb-fixed");
 assert.equal(isKnowledgeBaseSession(kbSession), true);
 assert.equal(ensureKnowledgeBaseSession(sessionSettings, "/vault-next", () => "kb-new").id, "kb-fixed");
 assert.equal(kbSession.cwd, "/vault-next");
+assert.equal(clearLegacyChatWorkspaceDefaults(sessionSettings, "/vault", 21), 0);
+
+const legacyWorkspaceSettings = normalizeSettingsData({
+  settingsVersion: 20,
+  knowledgeBase: { sessionId: "kb-old" },
+  sessions: [
+    { id: "chat-vault", title: "普通会话", cwd: "/vault", threadId: "old-thread", tokenUsage: { total: { totalTokens: 1 } }, messages: [], createdAt: 1, updatedAt: 1 },
+    { id: "chat-external", title: "外部项目", cwd: "/project", messages: [], createdAt: 1, updatedAt: 1 },
+    { id: "kb-old", title: KNOWLEDGE_BASE_SESSION_TITLE, kind: "knowledge-base", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 }
+  ],
+  activeSessionId: "chat-vault"
+}).settings;
+assert.equal(clearLegacyChatWorkspaceDefaults(legacyWorkspaceSettings, "/vault", 20), 1);
+assert.equal(legacyWorkspaceSettings.sessions.find((session) => session.id === "chat-vault")?.cwd, "");
+assert.equal(legacyWorkspaceSettings.sessions.find((session) => session.id === "chat-vault")?.threadId, undefined);
+assert.equal(legacyWorkspaceSettings.sessions.find((session) => session.id === "chat-vault")?.tokenUsage, undefined);
+assert.equal(legacyWorkspaceSettings.sessions.find((session) => session.id === "chat-external")?.cwd, "/project");
+assert.equal(legacyWorkspaceSettings.sessions.find((session) => session.id === "kb-old")?.cwd, "/vault");
 
 assert.deepEqual(parseKnowledgeBaseCommand("只体检一下").intent, "lint");
 assert.deepEqual(parseKnowledgeBaseCommand("帮我维护并消化今天的 raw").intent, "maintain");
@@ -402,7 +421,7 @@ const migratedSettings = normalizeSettingsData({
   proxyEnabled: true,
   proxyUrl: "http://127.0.0.1:7890"
 });
-assert.equal(migratedSettings.settings.settingsVersion, 20);
+assert.equal(migratedSettings.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(migratedSettings.settings.defaultReasoning, "high");
 assert.equal(migratedSettings.settings.defaultServiceTier, "fast");
 assert.equal(migratedSettings.settings.proxyEnabled, true);
@@ -429,7 +448,7 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultReasoning: "low",
   defaultServiceTier: "fast"
 });
-assert.equal(migratedDefaultModelSettings.settings.settingsVersion, 20);
+assert.equal(migratedDefaultModelSettings.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
@@ -442,7 +461,7 @@ const workspaceResources = normalizeSettingsData({
     skills: { "/home/demo/.codex/skills/answer/SKILL.md": false }
   }
 });
-assert.equal(workspaceResources.settings.settingsVersion, 20);
+assert.equal(workspaceResources.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.plugins, "browser-use@openai-bundled", true), false);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.mcpServers, "paper", false), true);
 assert.equal(resourceEnabled(workspaceResources.settings.workspaceResources.skills, "missing", true), true);
@@ -548,7 +567,7 @@ const knowledgeBaseSettings = normalizeSettingsData({
     }
   }
 }).settings;
-assert.equal(knowledgeBaseSettings.settingsVersion, 20);
+assert.equal(knowledgeBaseSettings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(knowledgeBaseSettings.agentBackend, "opencode");
 assert.equal(knowledgeBaseSettings.opencode.serverUrl, "http://127.0.0.1:4096/");
 assert.equal(knowledgeBaseSettings.opencode.autoStart, false);
@@ -607,7 +626,7 @@ const apiProviderSettings = normalizeSettingsData({
     }
   ]
 });
-assert.equal(apiProviderSettings.settings.settingsVersion, 20);
+assert.equal(apiProviderSettings.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
 assert.equal(apiProviderSettings.settings.settingsTab, "general");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
@@ -666,7 +685,7 @@ const editorActionSettings = normalizeSettingsData({
     styles: [{ id: "clear", label: "清楚", instruction: "表达清楚。" }]
   }
 }).settings;
-assert.equal(editorActionSettings.settingsVersion, 20);
+assert.equal(editorActionSettings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(editorActionSettings.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(editorActionSettings.editorActions.qualityMode, "fast");
 assert.equal(editorActionSettings.defaultPermission, "workspace-write");
@@ -824,7 +843,7 @@ const legacyEditorActionSettings = normalizeSettingsData({
 }).settings;
 const migratedRewrite = legacyEditorActionSettings.editorActions.actions.find((action) => action.id === "rewrite")!;
 const migratedXhs = legacyEditorActionSettings.editorActions.styles.find((style) => style.id === "xiaohongshu")!;
-assert.equal(legacyEditorActionSettings.settingsVersion, 20);
+assert.equal(legacyEditorActionSettings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.ok(migratedRewrite.promptTemplate.includes("明显不同"));
 assert.ok(migratedRewrite.promptTemplate.includes("不要只替换一两个词"));
 assert.ok(migratedXhs.instruction.includes("生活化"));

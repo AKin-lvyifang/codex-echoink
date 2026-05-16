@@ -47,6 +47,7 @@ export interface CodexCommandResolveOptions {
 }
 
 export interface TurnOptions {
+  cwd?: string;
   model: string;
   reasoning: ReasoningEffort;
   serviceTier: ServiceTierChoice;
@@ -252,11 +253,12 @@ export class CodexService {
   async startThread(options: TurnOptions): Promise<{ threadId: string; title: string }> {
     const client = this.requireClient();
     const scopedConfig = await this.buildThreadConfig(options);
+    const cwd = this.resolveTurnCwd(options);
     const result = await client.request(
       "thread/start",
       {
         model: options.model || null,
-        cwd: this.options.vaultPath,
+        cwd,
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
         ...(scopedConfig ? { config: scopedConfig } : {}),
@@ -276,12 +278,13 @@ export class CodexService {
   async resumeThread(threadId: string, options: TurnOptions): Promise<void> {
     const client = this.requireClient();
     const scopedConfig = await this.buildThreadConfig(options);
+    const cwd = this.resolveTurnCwd(options);
     await client.request(
       "thread/resume",
       {
         threadId,
         model: options.model || null,
-        cwd: this.options.vaultPath,
+        cwd,
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
         ...(scopedConfig ? { config: scopedConfig } : {}),
@@ -294,23 +297,28 @@ export class CodexService {
 
   async startTurn(threadId: string, input: UserInput[], options: TurnOptions): Promise<string> {
     const client = this.requireClient();
+    const cwd = this.resolveTurnCwd(options);
     const collaborationMode = buildCollaborationMode(options.mode, options.model || "gpt-5.5", options.reasoning);
     const result = await client.request(
       "turn/start",
       {
         threadId,
         input,
-        cwd: this.options.vaultPath,
+        cwd,
         model: options.model || null,
         effort: options.reasoning,
         serviceTier: normalizeServiceTier(options.serviceTier),
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
-        sandboxPolicy: buildSandboxPolicy(options.permission, this.options.vaultPath, options.writableRoots),
+        sandboxPolicy: buildSandboxPolicy(options.permission, cwd, options.writableRoots),
         ...(collaborationMode ? { collaborationMode } : {})
       },
       options.requestTimeoutMs ?? 60000
     );
     return result?.turn?.id ?? "";
+  }
+
+  private resolveTurnCwd(options: TurnOptions): string {
+    return options.cwd?.trim() || this.options.vaultPath;
   }
 
   async steerTurn(threadId: string, turnId: string, input: UserInput[]): Promise<void> {
