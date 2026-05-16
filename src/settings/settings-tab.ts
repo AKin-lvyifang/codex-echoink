@@ -71,7 +71,7 @@ export class CodexSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Codex EchoInk 设置" });
+    new Setting(containerEl).setName("Codex EchoInk 设置").setHeading();
 
     const status = this.plugin.lastStatus;
     const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
