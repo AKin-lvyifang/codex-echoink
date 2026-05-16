@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip"><strong>Download v0.5.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.0/codex-echoink-0.5.0.zip"><strong>Download v0.5.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -223,7 +223,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.5.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/v0.5.0/codex-echoink-0.5.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.5.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.0/codex-echoink-0.5.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
