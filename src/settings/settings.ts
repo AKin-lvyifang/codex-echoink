@@ -84,6 +84,7 @@ export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachm
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
 export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
+export type ReviewPromptTemplateKey = "productJudgement" | "bugTriage" | "largeFeature" | "reworkPrevention";
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -151,12 +152,16 @@ export interface ReviewReportState {
   lastSummary: string;
 }
 
+export type ReviewPromptTemplates = Record<ReviewPromptTemplateKey, string>;
+
 export interface WeeklyReviewSettings {
   enabled: boolean;
   knowledgeBaseEnabled: boolean;
   agentChatEnabled: boolean;
   scheduleTime: string;
   catchUpOnStartup: boolean;
+  outputDir: string;
+  promptTemplates: ReviewPromptTemplates;
   reports: {
     knowledgeBase: ReviewReportState;
     agentChat: ReviewReportState;
@@ -354,6 +359,15 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
   { id: "xiaohongshu", label: "小红书", instruction: "生活化、有画面感、有分享欲，适合笔记正文；可以增强情绪和场景，但避免夸张标题党、口水词和虚假承诺。" }
 ];
 
+export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
+
+export const DEFAULT_REVIEW_PROMPT_TEMPLATES: ReviewPromptTemplates = {
+  productJudgement: "先不要实现。\n\n请先判断这个需求是否成立：\n1. 真实目标是什么？\n2. 可能有哪些错误假设？\n3. 哪些部分值得做，哪些不值得做？\n4. 如果要做，验收标准是什么？\n5. 哪些问题必须先确认？",
+  bugTriage: "请按 bug 排查方式处理：\n\n1. 先复现或确认现象。\n2. 找到相关代码链路。\n3. 说明根因，不要只猜。\n4. 给修复方案。\n5. 修复后跑验证。\n6. 最后告诉我证据。",
+  largeFeature: "这个任务可能会很大。\n\n先拆成：\n1. 产品目标\n2. 用户路径\n3. 技术边界\n4. 风险点\n5. 验收标准\n\n拆完后先给我看，不要直接写代码。",
+  reworkPrevention: "在执行前，请先指出：\n1. 这个需求里最可能导致返工的地方。\n2. 哪些判断如果错了，后面会重做。\n3. 你建议先验证哪 3 件事。"
+};
+
 export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode, EditorActionModeConfig> = {
   fast: {
     mode: "fast",
@@ -379,7 +393,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 22,
+  settingsVersion: 23,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -460,6 +474,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     agentChatEnabled: true,
     scheduleTime: "21:00",
     catchUpOnStartup: true,
+    outputDir: DEFAULT_REVIEW_OUTPUT_DIR,
+    promptTemplates: DEFAULT_REVIEW_PROMPT_TEMPLATES,
     reports: {
       knowledgeBase: {
         lastRunAt: 0,
@@ -971,28 +987,41 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
 
 function normalizeReviewSettings(value: any): WeeklyReviewSettings {
   const fallback = DEFAULT_SETTINGS.review;
+  const outputDir = normalizeReviewOutputDir(value?.outputDir, fallback.outputDir);
   return {
-    enabled: value?.enabled === true,
+    enabled: false,
     knowledgeBaseEnabled: typeof value?.knowledgeBaseEnabled === "boolean" ? value.knowledgeBaseEnabled : fallback.knowledgeBaseEnabled,
     agentChatEnabled: typeof value?.agentChatEnabled === "boolean" ? value.agentChatEnabled : fallback.agentChatEnabled,
     scheduleTime: normalizeScheduleTime(value?.scheduleTime, fallback.scheduleTime),
     catchUpOnStartup: value?.catchUpOnStartup !== false,
+    outputDir,
+    promptTemplates: normalizeReviewPromptTemplates(value?.promptTemplates),
     reports: {
-      knowledgeBase: normalizeReviewReportState(value?.reports?.knowledgeBase),
-      agentChat: normalizeReviewReportState(value?.reports?.agentChat)
+      knowledgeBase: normalizeReviewReportState(value?.reports?.knowledgeBase, outputDir),
+      agentChat: normalizeReviewReportState(value?.reports?.agentChat, outputDir)
     }
   };
 }
 
-function normalizeReviewReportState(value: any): ReviewReportState {
+function normalizeReviewReportState(value: any, outputDir = DEFAULT_REVIEW_OUTPUT_DIR): ReviewReportState {
   return {
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
     lastRunStatus: normalizeReviewRunStatus(value?.lastRunStatus),
     lastRangeKey: normalizeReviewRangeKey(value?.lastRangeKey),
-    lastMarkdownPath: normalizeReviewOutputPath(value?.lastMarkdownPath, ".md"),
-    lastHtmlPath: normalizeReviewOutputPath(value?.lastHtmlPath, ".html"),
+    lastMarkdownPath: normalizeReviewOutputPath(value?.lastMarkdownPath, ".md", outputDir),
+    lastHtmlPath: normalizeReviewOutputPath(value?.lastHtmlPath, ".html", outputDir),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary)
+  };
+}
+
+function normalizeReviewPromptTemplates(value: any): ReviewPromptTemplates {
+  const fallback = DEFAULT_REVIEW_PROMPT_TEMPLATES;
+  return {
+    productJudgement: normalizeText(value?.productJudgement, fallback.productJudgement),
+    bugTriage: normalizeText(value?.bugTriage, fallback.bugTriage),
+    largeFeature: normalizeText(value?.largeFeature, fallback.largeFeature),
+    reworkPrevention: normalizeText(value?.reworkPrevention, fallback.reworkPrevention)
   };
 }
 
@@ -1001,12 +1030,22 @@ function normalizeReviewRangeKey(value: any): string {
   return /^\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
-function normalizeReviewOutputPath(value: any, extension: ".md" | ".html"): string {
+export function normalizeReviewOutputDir(value: any, fallback = DEFAULT_REVIEW_OUTPUT_DIR): string {
+  const raw = normalizeText(value, fallback).replace(/\\/g, "/").replace(/^\/+/, "");
+  const clean = raw
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/");
+  return clean || fallback;
+}
+
+function normalizeReviewOutputPath(value: any, extension: ".md" | ".html", outputDir = DEFAULT_REVIEW_OUTPUT_DIR): string {
   const raw = normalizeOptionalText(value).replace(/\\/g, "/").replace(/^\/+/, "");
   if (!raw.endsWith(extension)) return "";
   const parts = raw.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return "";
-  return raw.startsWith("outputs/obsidian-weekly-review/") ? raw : "";
+  const allowedDirs = Array.from(new Set([outputDir, DEFAULT_REVIEW_OUTPUT_DIR].map((item) => normalizeReviewOutputDir(item)).filter(Boolean)));
+  return allowedDirs.some((dir) => raw.startsWith(`${dir}/`)) ? raw : "";
 }
 
 function normalizeKnowledgeBaseInitialization(value: any): KnowledgeBaseInitializationSettings {

@@ -1,4 +1,5 @@
 import type { ReviewReportKind, WeeklyReviewSettings } from "../settings/settings";
+import { DEFAULT_REVIEW_OUTPUT_DIR, normalizeReviewOutputDir } from "../settings/settings";
 
 export interface ReviewRange {
   startAt: number;
@@ -6,8 +7,6 @@ export interface ReviewRange {
   startDate: string;
   endDate: string;
 }
-
-const REVIEW_HTML_DIR = "outputs/obsidian-weekly-review";
 
 export function currentReviewRange(now = new Date()): ReviewRange {
   const start = startOfLocalWeek(now);
@@ -50,11 +49,15 @@ export function reviewRangeKey(range: Pick<ReviewRange, "startDate" | "endDate">
   return `${range.startDate}-to-${range.endDate}`;
 }
 
-export function isReviewHtmlPath(value: string): boolean {
+export function isReviewHtmlPath(value: string, outputDir = DEFAULT_REVIEW_OUTPUT_DIR): boolean {
   const normalized = value.replace(/\\/g, "/").replace(/^\/+/, "");
   if (!normalized.endsWith(".html")) return false;
   if (normalized.split("/").some((part) => part === ".." || part === "." || !part)) return false;
-  return normalized.startsWith(`${REVIEW_HTML_DIR}/`);
+  const allowedDirs = Array.from(new Set([
+    normalizeReviewOutputDir(outputDir, DEFAULT_REVIEW_OUTPUT_DIR),
+    DEFAULT_REVIEW_OUTPUT_DIR
+  ]));
+  return allowedDirs.some((dir) => normalized.startsWith(`${dir}/`));
 }
 
 function startOfLocalWeek(date: Date): Date {

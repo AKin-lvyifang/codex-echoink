@@ -2126,11 +2126,15 @@ export class CodexView extends ItemView {
       return;
     }
     if (!text && !this.attachments.length) return;
+    const runId = newId("kb-run");
+    this.activeRunId = runId;
+    this.activeRunSessionId = session.id;
     const turnAttachments = [...this.attachments];
     const userMessage: ChatMessage = {
       id: newId("msg"),
       role: "user",
       text: text || "(附件)",
+      runId,
       attachments: turnAttachments,
       images: turnAttachments.filter((item) => item.type === "image"),
       createdAt: Date.now()
@@ -2143,6 +2147,7 @@ export class CodexView extends ItemView {
       itemType: "knowledgeBase",
       status: "running",
       text: "正在识别命令并执行...",
+      runId,
       createdAt: Date.now()
     };
     session.messages.push(userMessage, assistantMessage);
@@ -2161,6 +2166,7 @@ export class CodexView extends ItemView {
       const result = await manager.handleUserMessage(text, turnAttachments);
       assistantMessage.status = result.status === "success" ? "completed" : "failed";
       assistantMessage.text = result.message;
+      this.moveMessageToEnd(session, assistantMessage.id);
       if (result.followUpCommand) {
         this.fillKnowledgeBaseCommand(result.followUpCommand);
       }
@@ -2169,6 +2175,7 @@ export class CodexView extends ItemView {
       this.running = false;
       session.updatedAt = Date.now();
       await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+      this.clearActiveRun();
       await this.plugin.saveSettings(true);
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
@@ -3232,6 +3239,13 @@ export class CodexView extends ItemView {
     session.updatedAt = Date.now();
     this.renderMessagesIfActive(session);
     void this.plugin.saveSettings();
+  }
+
+  private moveMessageToEnd(session: StoredSession, messageId: string): void {
+    const index = session.messages.findIndex((message) => message.id === messageId);
+    if (index < 0 || index === session.messages.length - 1) return;
+    const [message] = session.messages.splice(index, 1);
+    session.messages.push(message);
   }
 
   private updateContext(tokenUsage: TokenUsage | undefined, persist: boolean): void {

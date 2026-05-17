@@ -3,6 +3,7 @@ import * as path from "path";
 import { Notice, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ReviewReportKind, ReviewReportState } from "../settings/settings";
+import { normalizeReviewOutputDir } from "../settings/settings";
 import {
   REVIEW_OUTPUT_DIR,
   buildReviewDocuments,
@@ -43,10 +44,6 @@ export class ReviewManager {
       name: "复盘：打开最近 HTML 看板",
       callback: () => void this.openLatestHtml()
     });
-    this.plugin.app.workspace.onLayoutReady(() => {
-      this.armSchedule();
-      void this.runCatchUpIfNeeded();
-    });
   }
 
   unload(): void {
@@ -79,11 +76,14 @@ export class ReviewManager {
           maintenanceReports: await this.readMaintenanceReports(range)
         })
         : collectAgentChatReviewEvidence(this.plugin.settings, range);
-      const documents = buildReviewDocuments(kind, range, evidence);
-      const outputDir = path.join(this.plugin.getVaultPath(), REVIEW_OUTPUT_DIR);
+      const outputPath = normalizeReviewOutputDir(this.plugin.settings.review.outputDir, REVIEW_OUTPUT_DIR);
+      const documents = buildReviewDocuments(kind, range, evidence, {
+        promptTemplates: this.plugin.settings.review.promptTemplates
+      });
+      const outputDir = path.join(this.plugin.getVaultPath(), outputPath);
       await fsp.mkdir(outputDir, { recursive: true });
-      const markdownPath = normalizePath(`${REVIEW_OUTPUT_DIR}/${documents.markdownFileName}`);
-      const htmlPath = normalizePath(`${REVIEW_OUTPUT_DIR}/${documents.htmlFileName}`);
+      const markdownPath = normalizePath(`${outputPath}/${documents.markdownFileName}`);
+      const htmlPath = normalizePath(`${outputPath}/${documents.htmlFileName}`);
       await fsp.writeFile(path.join(this.plugin.getVaultPath(), markdownPath), documents.markdown, "utf8");
       await fsp.writeFile(path.join(this.plugin.getVaultPath(), htmlPath), documents.html, "utf8");
       state.lastRunAt = Date.now();

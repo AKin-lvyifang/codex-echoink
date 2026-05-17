@@ -33,6 +33,8 @@ import {
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_REVIEW_OUTPUT_DIR,
+  DEFAULT_REVIEW_PROMPT_TEMPLATES,
   getApiProviderModels,
   getActiveApiProvider,
   ensureModelChoices,
@@ -55,6 +57,7 @@ import {
   normalizeSettingsData,
   recordKnowledgeBaseHealthCheck,
   removeApiProvider,
+  normalizeReviewOutputDir,
   resolveEditorActionModeConfig,
   validateApiProvider,
   resourceEnabled
@@ -99,6 +102,7 @@ import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEdito
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
+import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
@@ -144,6 +148,14 @@ assert.ok(workspace.writableRoots?.includes("/vault"));
 assert.equal(buildSandboxPolicy("read-only", "/vault").type, "readOnly");
 assert.equal(buildSandboxPolicy("danger-full-access", "/vault").type, "dangerFullAccess");
 assert.deepEqual(buildSandboxPolicy("workspace-write", "/vault", ["/vault/wiki", "/vault/outputs"]).writableRoots?.slice(0, 2), ["/vault/wiki", "/vault/outputs"]);
+const kbTurnOptions = buildCodexKnowledgeTurnOptions({
+  settings: DEFAULT_SETTINGS,
+  availableModels: [{ model: "gpt-test" }],
+  vaultPath: "/vault",
+  permission: "workspace-write"
+});
+assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "journal")));
+assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "inbox")));
 
 assert.equal(normalizeServiceTier("standard"), null);
 assert.equal(normalizeServiceTier("fast"), "fast");
@@ -152,7 +164,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 22);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 23);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -294,6 +306,7 @@ assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, tr
 assert.deepEqual((parseKnowledgeBaseCommand("/初始化 确认") as any).confirm, true);
 assert.deepEqual((parseKnowledgeBaseCommand("/init 先预览，不确认") as any).confirm, false);
 assert.deepEqual(parseKnowledgeBaseCommand("写日记：今天测试知识库频道").intent, "journal");
+assert.equal(stripJournalPrefix("/journal 写一下今天的日记。"), "写一下今天的日记。");
 assert.deepEqual(parseKnowledgeBaseCommand("处理 inbox").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-outputs");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
@@ -359,7 +372,8 @@ assert.equal(kbEvidence.dashboard.healthScore, 96);
 assert.equal(kbEvidence.maintenanceReports[0].path, "outputs/kb-maintenance-2026-05-17.md");
 assert.equal(reportBaseName("knowledge-base", reviewEvidenceRange), "knowledge-base-review-2026-05-11-to-2026-05-17");
 assert.equal(reportBaseName("agent-chat", reviewEvidenceRange), "agent-chat-review-2026-05-11-to-2026-05-17");
-assert.equal(REVIEW_OUTPUT_DIR, "outputs/obsidian-weekly-review");
+assert.equal(REVIEW_OUTPUT_DIR, "outputs");
+assert.equal(DEFAULT_REVIEW_OUTPUT_DIR, "outputs");
 const agentDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, agentEvidence);
 assert.ok(agentDocs.markdown.startsWith("---\ncreated:"));
 assert.ok(agentDocs.markdown.includes("[打开同名 HTML 看板](./agent-chat-review-2026-05-11-to-2026-05-17.html)"));
@@ -367,6 +381,13 @@ assert.ok(agentDocs.markdown.includes("### 4.2 问题决策"));
 assert.ok(agentDocs.markdown.includes("### 6.2 坏习惯"));
 assert.ok(agentDocs.html.includes("<h1>Agent 对话使用周复盘</h1>"));
 assert.ok(agentDocs.html.includes("请先判断这个需求是否成立"));
+const customPromptTemplates = {
+  ...DEFAULT_REVIEW_PROMPT_TEMPLATES,
+  bugTriage: "自定义 Bug 排查模板"
+};
+const customPromptDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, agentEvidence, { promptTemplates: customPromptTemplates });
+assert.ok(customPromptDocs.markdown.includes("自定义 Bug 排查模板"));
+assert.ok(customPromptDocs.html.includes("自定义 Bug 排查模板"));
 const kbDocs = buildReviewDocuments("knowledge-base", reviewEvidenceRange, kbEvidence);
 assert.ok(kbDocs.markdown.includes("# 知识库使用周复盘"));
 assert.ok(kbDocs.markdown.includes("raw 12；wiki 8；outputs 4；inbox 1"));
@@ -710,7 +731,7 @@ const writableCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
 });
 assert.equal(writableCodexKnowledgeOptions.model, "gpt-5.5");
 assert.equal(writableCodexKnowledgeOptions.reasoning, "xhigh");
-assert.deepEqual(writableCodexKnowledgeOptions.writableRoots?.slice(0, 3), ["/vault/wiki", "/vault/outputs", "/vault/raw/index.md"]);
+assert.deepEqual(writableCodexKnowledgeOptions.writableRoots, ["/vault/wiki", "/vault/outputs", "/vault/journal", "/vault/01-日记", "/vault/inbox", "/vault/raw/index.md"]);
 
 const knowledgeBaseSettings = normalizeSettingsData({
   settingsVersion: 14,
@@ -814,11 +835,13 @@ const migratedReviewSettings = normalizeSettingsData({
     }
   }
 }).settings;
-assert.equal(migratedReviewSettings.review.enabled, true);
+assert.equal(migratedReviewSettings.review.enabled, false);
 assert.equal(migratedReviewSettings.review.knowledgeBaseEnabled, false);
 assert.equal(migratedReviewSettings.review.agentChatEnabled, true);
 assert.equal(migratedReviewSettings.review.scheduleTime, "22:30");
 assert.equal(migratedReviewSettings.review.catchUpOnStartup, false);
+assert.equal(migratedReviewSettings.review.outputDir, "outputs");
+assert.equal(migratedReviewSettings.review.promptTemplates.bugTriage, DEFAULT_REVIEW_PROMPT_TEMPLATES.bugTriage);
 assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastRunStatus, "success");
 assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastHtmlPath.endsWith(".html"), true);
 assert.equal(migratedReviewSettings.review.reports.agentChat.lastRunStatus, "failed");
@@ -831,6 +854,8 @@ const invalidReviewSettings = normalizeSettingsData({
     agentChatEnabled: 1,
     scheduleTime: "25:99",
     catchUpOnStartup: "bad",
+    outputDir: "../bad//reports",
+    promptTemplates: { bugTriage: "" },
     reports: {
       knowledgeBase: { lastRunStatus: "bad", lastRunAt: -1, lastHtmlPath: "../bad.html" },
       agentChat: { lastRunStatus: "success", lastMarkdownPath: "outputs/ok.md" }
@@ -842,9 +867,13 @@ assert.equal(invalidReviewSettings.knowledgeBaseEnabled, true);
 assert.equal(invalidReviewSettings.agentChatEnabled, true);
 assert.equal(invalidReviewSettings.scheduleTime, "21:00");
 assert.equal(invalidReviewSettings.catchUpOnStartup, true);
+assert.equal(invalidReviewSettings.outputDir, "bad/reports");
+assert.equal(invalidReviewSettings.promptTemplates.bugTriage, DEFAULT_REVIEW_PROMPT_TEMPLATES.bugTriage);
 assert.equal(invalidReviewSettings.reports.knowledgeBase.lastRunStatus, "idle");
 assert.equal(invalidReviewSettings.reports.knowledgeBase.lastHtmlPath, "");
 assert.equal(invalidReviewSettings.reports.agentChat.lastRunStatus, "success");
+assert.equal(invalidReviewSettings.reports.agentChat.lastMarkdownPath, "outputs/ok.md");
+assert.equal(normalizeReviewOutputDir("/reports/weekly/../safe"), "reports/weekly/safe");
 
 const reviewRange = currentReviewRange(new Date("2026-05-17T20:30:00+08:00"));
 assert.equal(reviewRange.startDate, "2026-05-11");
@@ -867,6 +896,9 @@ assert.equal(shouldRunScheduledReview({
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.html"), true);
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.md"), false);
 assert.equal(isReviewHtmlPath("../outputs/obsidian-weekly-review/bad.html"), false);
+assert.equal(isReviewHtmlPath("reviews/agent-chat-review-2026-05-11-to-2026-05-17.html", "reviews"), true);
+assert.equal(isReviewHtmlPath("outputs/agent-chat-review-2026-05-11-to-2026-05-17.html", "reviews"), true);
+assert.equal(isReviewHtmlPath("other/agent-chat-review-2026-05-11-to-2026-05-17.html", "reviews"), false);
 
 const reviewHtml = renderReviewHtml({
   title: "Codex 使用效率周复盘",
@@ -1735,6 +1767,44 @@ try {
   await rm(kbVault, { recursive: true, force: true });
 }
 
+const journalVault = await mkdtemp(path.join(tmpdir(), "codex-kb-journal-"));
+try {
+  await mkdir(path.join(journalVault, "journal", "daily", "2026-05"), { recursive: true });
+  await mkdir(path.join(journalVault, "journal", "monthly", "2026"), { recursive: true });
+  await writeFile(path.join(journalVault, "journal", "daily", "2026-05", "2026-05-09-周六.md"), "# 2026-05-09 周六\n\n## 🚶 行动轨迹\n", "utf8");
+  await writeFile(path.join(journalVault, "journal", "daily", "2026-05-18.md"), "# Wrong flat note\n", "utf8");
+  const target = await resolveJournalDailyTarget(journalVault, "/journal 写一下今天的日记。", new Date(2026, 4, 18, 9, 0, 0));
+  assert.equal(target.relativePath, "journal/daily/2026-05/2026-05-18-周一.md");
+  assert.ok(target.samplePaths.includes("journal/daily/2026-05/2026-05-09-周六.md"));
+  assert.ok(target.templateDirectories.includes("journal/monthly/2026"));
+  await ensureJournalTargetFolders(journalVault, target);
+  assert.equal(await fileExists(path.join(journalVault, "journal", "daily", "2026-05")), true);
+  assert.equal(await fileExists(path.join(journalVault, "journal", "weekly")), true);
+  const journalPrompt = buildKnowledgeBaseJournalPrompt({
+    vaultPath: journalVault,
+    userRequest: "写一下今天的日记。",
+    target,
+    generatedAt: new Date(2026, 4, 18, 9, 1, 0)
+  });
+  assert.ok(journalPrompt.includes("Codex Obsidian Daily Journal"));
+  assert.ok(journalPrompt.includes("journal/daily/2026-05/2026-05-18-周一.md"));
+  assert.ok(journalPrompt.includes("不要写到扁平路径 journal/daily/YYYY-MM-DD.md"));
+  assert.ok(journalPrompt.includes("只做增量更新"));
+  const yesterdayTarget = await resolveJournalDailyTarget(journalVault, "写日记：昨天的内容", new Date(2026, 4, 18, 9, 0, 0));
+  assert.equal(yesterdayTarget.relativePath, "journal/daily/2026-05/2026-05-17-周日.md");
+} finally {
+  await rm(journalVault, { recursive: true, force: true });
+}
+
+const emptyJournalVault = await mkdtemp(path.join(tmpdir(), "codex-kb-empty-journal-"));
+try {
+  const target = await resolveJournalDailyTarget(emptyJournalVault, "写日记", new Date(2026, 4, 18, 9, 0, 0));
+  assert.equal(target.relativePath, "journal/daily/2026-05/2026-05-18-周一.md");
+  assert.ok(target.templateDirectories.includes("journal/quarterly"));
+} finally {
+  await rm(emptyJournalVault, { recursive: true, force: true });
+}
+
 const initVault = await mkdtemp(path.join(tmpdir(), "codex-kb-init-"));
 try {
   await writeFile(path.join(initVault, "old-note.md"), "# Old note\n\n项目资料", "utf8");
@@ -1744,6 +1814,7 @@ try {
   assert.ok(preview.summary.includes(`将生成规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
   assert.ok(preview.directories.includes("raw/articles"));
   assert.ok(preview.directories.includes("wiki/ai-intelligence"));
+  assert.ok(preview.directories.includes("journal/monthly"));
   assert.ok(preview.suggestions.some((item) => item.path === "old-note.md" && item.target === "projects"));
   assert.equal(await fileExists(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), false);
 

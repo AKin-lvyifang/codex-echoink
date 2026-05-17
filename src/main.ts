@@ -327,7 +327,7 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async openReviewHtmlPreview(relativePath: string): Promise<void> {
     const normalized = relativePath.replace(/\\/g, "/");
-    if (!isReviewHtmlPath(normalized)) {
+    if (!isReviewHtmlPath(normalized, this.settings.review.outputDir)) {
       new Notice("只能打开 EchoInk 生成的复盘 HTML");
       return;
     }
@@ -354,7 +354,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private handleCodexNotification(notification: any): void {
-    if (this.knowledgeBase?.handleCodexNotification(notification)) return;
+    if (this.knowledgeBase?.handleCodexNotification(notification)) {
+      this.view?.handleCodexNotification(notification);
+      return;
+    }
     this.view?.handleCodexNotification(notification);
   }
 

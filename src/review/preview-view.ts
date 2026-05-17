@@ -27,7 +27,7 @@ export class ReviewPreviewView extends ItemView {
 
   async openHtml(relativePath: string): Promise<void> {
     const normalized = normalizePath(relativePath);
-    if (!isReviewHtmlPath(normalized)) {
+    if (!isReviewHtmlPath(normalized, this.plugin.settings.review.outputDir)) {
       new Notice("只能打开 EchoInk 生成的复盘 HTML");
       return;
     }

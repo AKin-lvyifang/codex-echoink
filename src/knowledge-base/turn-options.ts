@@ -14,6 +14,9 @@ export function buildCodexKnowledgeTurnOptions(input: {
     ? [
       path.join(input.vaultPath, "wiki"),
       path.join(input.vaultPath, "outputs"),
+      path.join(input.vaultPath, "journal"),
+      path.join(input.vaultPath, "01-日记"),
+      path.join(input.vaultPath, "inbox"),
       path.join(input.vaultPath, "raw", "index.md")
     ]
     : undefined;

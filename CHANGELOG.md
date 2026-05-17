@@ -10,6 +10,17 @@
 4. HTML 固定复用 `Codex 使用效率周复盘` 看板模板，只替换数据。
 5. EchoInk 内置 HTML 预览，不依赖 Obsidian 官方 Web viewer 打开本地 HTML。
 
+优化知识库日记：
+
+1. `/journal` 按当前 `journal/` 体系写入 daily 月份目录，例如 `journal/daily/YYYY-MM/YYYY-MM-DD-周X.md`。
+2. 新 vault 首次写日记时自动创建 `journal/daily`、weekly、monthly、quarterly、yearly 目录。
+3. 写日记默认走 Codex 工作日记提示词，参考最近日记格式并总结当天真实 Codex 工作。
+
+优化知识库频道过程展示：
+
+1. Codex CLI 知识库任务会复用普通 Agent 对话栏的过程卡片，展示思考、命令、文件改动、工具调用和最终结果。
+2. 知识库任务的最终结果会移动到本轮过程之后，方便先看执行链路，再看产物路径和结论。
+
 ## v0.5.1 - 2026-05-17
 
 版本号：`v0.5.1`

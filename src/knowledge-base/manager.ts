@@ -16,6 +16,7 @@ import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "./re
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
+import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
 import { findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
@@ -229,13 +230,9 @@ export class KnowledgeBaseManager {
         return await this.answerQuestion(text);
       }
       if (command.intent === "journal") {
-        const paths = await this.captureChatInput("journal", text, attachments);
-        return {
-          status: "success",
-          message: paths.length ? `已写入日记：\n${paths.map((item) => `- ${item}`).join("\n")}` : "没有可写入日记的内容。"
-        };
+        return await this.writeDailyJournal(text, attachments);
       }
-      const target = command.target ?? (attachments.length ? "raw-attachments" : "inbox");
+      const target = command.target === "journal" ? "inbox" : command.target ?? (attachments.length ? "raw-attachments" : "inbox");
       const paths = await this.captureChatInput(target, text, attachments);
       return {
         status: "success",
@@ -448,6 +445,53 @@ export class KnowledgeBaseManager {
     }
   }
 
+  private async writeDailyJournal(text: string, attachments: StoredAttachment[]): Promise<KnowledgeBaseChatResult> {
+    if (this.running) {
+      return { status: "failed", message: "已有知识库任务正在运行" };
+    }
+    this.running = true;
+    try {
+      const vaultPath = this.plugin.getVaultPath();
+      const copiedAttachments = await this.copyAttachmentsToRaw(attachments);
+      const request = stripJournalPrefix(text).trim() || "写日记";
+      const target = await resolveJournalDailyTarget(vaultPath, text);
+      await ensureJournalTargetFolders(vaultPath, target);
+      const prompt = buildKnowledgeBaseJournalPrompt({
+        vaultPath,
+        userRequest: copiedAttachments.length
+          ? [
+            request,
+            "",
+            "本次附带附件已复制到 raw/attachments：",
+            ...copiedAttachments.map((item) => `- ${item}`)
+          ].join("\n")
+          : request,
+        target
+      });
+      const backend = this.resolveKnowledgeBackend();
+      const output = backend === "opencode"
+        ? await this.runOpenCodeKnowledgeTask(prompt, [], "workspace-write")
+        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write");
+      if (!await exists(target.absolutePath)) {
+        throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
+      }
+      return {
+        status: "success",
+        message: [`已写入日记：`, `- ${target.relativePath}`, output.trim() ? `\n${output.trim().slice(0, 800)}` : ""].filter(Boolean).join("\n")
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      };
+    } finally {
+      this.activeCodexRun = null;
+      this.activeOpenCode = null;
+      this.running = false;
+      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+    }
+  }
+
   handleCodexNotification(notification: CodexNotification): boolean {
     const waiter = this.codexWaiter;
     if (!waiter) return false;
@@ -634,15 +678,11 @@ export class KnowledgeBaseManager {
     return this.copyFilesToRaw(files);
   }
 
-  private async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments" | "journal", text: string, attachments: StoredAttachment[]): Promise<string[]> {
+  private async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments", text: string, attachments: StoredAttachment[]): Promise<string[]> {
     const paths: string[] = [];
     const copiedAttachments = await this.copyAttachmentsToRaw(attachments);
     paths.push(...copiedAttachments);
     const trimmed = text.trim();
-    if (target === "journal" && trimmed) {
-      paths.push(await this.writeJournalEntry(trimmed));
-      return paths;
-    }
     if (target === "raw-articles" && trimmed && !copiedAttachments.length) {
       paths.push(...await this.captureRawArticleInput(trimmed));
       return paths;
@@ -687,37 +727,6 @@ export class KnowledgeBaseManager {
     ].join("\n");
     const absolute = path.join(dir, fileName);
     await fsp.writeFile(absolute, body, "utf8");
-    return normalizePath(path.relative(vaultPath, absolute));
-  }
-
-  private async writeJournalEntry(value: string): Promise<string> {
-    const journalText = stripJournalPrefix(value).trim();
-    if (!journalText) throw new Error("请在“写日记：”后面输入日记内容。");
-    const vaultPath = this.plugin.getVaultPath();
-    const now = new Date();
-    const date = formatDateForTitle(now);
-    const dir = path.join(vaultPath, "journal", "daily");
-    await fsp.mkdir(dir, { recursive: true });
-    const absolute = path.join(dir, `${date}.md`);
-    const entry = [
-      "",
-      `## ${now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`,
-      "",
-      journalText,
-      ""
-    ].join("\n");
-    const header = [
-      "---",
-      `created: ${now.toISOString()}`,
-      "source: knowledge-base-channel",
-      "---",
-      "",
-      `# ${date}`,
-      ""
-    ].join("\n");
-    const existsAlready = await exists(absolute);
-    if (existsAlready) await fsp.appendFile(absolute, entry, "utf8");
-    else await fsp.writeFile(absolute, `${header}${entry}`, "utf8");
     return normalizePath(path.relative(vaultPath, absolute));
   }
 
@@ -967,10 +976,6 @@ function isWeChatUrl(value: string): boolean {
 
 function stripCollectPrefix(value: string): string {
   return value.replace(/^(收集|收藏|剪藏|保存到\s*raw|网页收藏|公众号收集)[:：\s]*/i, "").trim();
-}
-
-function stripJournalPrefix(value: string): string {
-  return value.replace(/^(\/journal|\/daily|\/diary|\/日记|写日记|记日记|日报|journal)[:：\s]*/i, "").trim();
 }
 
 function extractArticleMarkdown(html: string, url: string): { title: string; markdown: string } {
