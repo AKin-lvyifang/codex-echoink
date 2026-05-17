@@ -12,7 +12,7 @@ import {
   type KnowledgeBaseDashboardEvidence,
   type KnowledgeBaseMaintenanceReportEvidence
 } from "./report";
-import { currentReviewRange, latestScheduledReviewRange, reviewRangeKey, shouldRunScheduledReview, type ReviewRange } from "./schedule";
+import { latestScheduledReviewRange, reviewRangeForMode, reviewRangeKey, shouldRunScheduledReview, type ReviewRange } from "./schedule";
 
 export interface ReviewRunResult {
   status: "success" | "failed";
@@ -53,7 +53,7 @@ export class ReviewManager {
     }
   }
 
-  async runReview(kind: ReviewReportKind, range: ReviewRange = currentReviewRange()): Promise<ReviewRunResult> {
+  async runReview(kind: ReviewReportKind, range?: ReviewRange): Promise<ReviewRunResult> {
     if (this.running) {
       new Notice("复盘周报正在生成");
       return {
@@ -65,21 +65,20 @@ export class ReviewManager {
       };
     }
     this.running = true;
+    const targetRange = range ?? reviewRangeForMode(this.plugin.settings.review.rangeMode);
     const state = this.stateForKind(kind);
     state.lastRunStatus = "running";
     state.lastError = "";
     await this.plugin.saveSettings(true);
     try {
       const evidence = kind === "knowledge-base"
-        ? collectKnowledgeBaseReviewEvidence(this.plugin.settings, range, {
+        ? collectKnowledgeBaseReviewEvidence(this.plugin.settings, targetRange, {
           dashboard: await this.readKnowledgeDashboardEvidence(),
-          maintenanceReports: await this.readMaintenanceReports(range)
+          maintenanceReports: await this.readMaintenanceReports(targetRange)
         })
-        : collectAgentChatReviewEvidence(this.plugin.settings, range);
+        : collectAgentChatReviewEvidence(this.plugin.settings, targetRange);
       const outputPath = normalizeReviewOutputDir(this.plugin.settings.review.outputDir, REVIEW_OUTPUT_DIR);
-      const documents = buildReviewDocuments(kind, range, evidence, {
-        promptTemplates: this.plugin.settings.review.promptTemplates
-      });
+      const documents = buildReviewDocuments(kind, targetRange, evidence);
       const outputDir = path.join(this.plugin.getVaultPath(), outputPath);
       await fsp.mkdir(outputDir, { recursive: true });
       const markdownPath = normalizePath(`${outputPath}/${documents.markdownFileName}`);
@@ -88,13 +87,14 @@ export class ReviewManager {
       await fsp.writeFile(path.join(this.plugin.getVaultPath(), htmlPath), documents.html, "utf8");
       state.lastRunAt = Date.now();
       state.lastRunStatus = "success";
-      state.lastRangeKey = reviewRangeKey(range);
+      state.lastRangeKey = reviewRangeKey(targetRange);
       state.lastMarkdownPath = markdownPath;
       state.lastHtmlPath = htmlPath;
       state.lastError = "";
       state.lastSummary = documents.summary.slice(0, 1000);
       await this.plugin.saveSettings(true);
       new Notice(`已生成${kindLabel(kind)}周报：${markdownPath}`);
+      if (this.plugin.settings.review.openHtmlAfterRun) await this.plugin.openReviewHtmlPreview(htmlPath);
       return { status: "success", markdownPath, htmlPath, summary: state.lastSummary };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -34,7 +34,6 @@ import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
   DEFAULT_REVIEW_OUTPUT_DIR,
-  DEFAULT_REVIEW_PROMPT_TEMPLATES,
   getApiProviderModels,
   getActiveApiProvider,
   ensureModelChoices,
@@ -123,6 +122,7 @@ import {
   currentReviewRange,
   isReviewHtmlPath,
   latestScheduledReviewRange,
+  reviewRangeForMode,
   reviewRangeKey,
   shouldRunScheduledReview
 } from "../review/schedule";
@@ -164,7 +164,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 23);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 24);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -381,13 +381,6 @@ assert.ok(agentDocs.markdown.includes("### 4.2 问题决策"));
 assert.ok(agentDocs.markdown.includes("### 6.2 坏习惯"));
 assert.ok(agentDocs.html.includes("<h1>Agent 对话使用周复盘</h1>"));
 assert.ok(agentDocs.html.includes("请先判断这个需求是否成立"));
-const customPromptTemplates = {
-  ...DEFAULT_REVIEW_PROMPT_TEMPLATES,
-  bugTriage: "自定义 Bug 排查模板"
-};
-const customPromptDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, agentEvidence, { promptTemplates: customPromptTemplates });
-assert.ok(customPromptDocs.markdown.includes("自定义 Bug 排查模板"));
-assert.ok(customPromptDocs.html.includes("自定义 Bug 排查模板"));
 const kbDocs = buildReviewDocuments("knowledge-base", reviewEvidenceRange, kbEvidence);
 assert.ok(kbDocs.markdown.includes("# 知识库使用周复盘"));
 assert.ok(kbDocs.markdown.includes("raw 12；wiki 8；outputs 4；inbox 1"));
@@ -841,7 +834,8 @@ assert.equal(migratedReviewSettings.review.agentChatEnabled, true);
 assert.equal(migratedReviewSettings.review.scheduleTime, "22:30");
 assert.equal(migratedReviewSettings.review.catchUpOnStartup, false);
 assert.equal(migratedReviewSettings.review.outputDir, "outputs");
-assert.equal(migratedReviewSettings.review.promptTemplates.bugTriage, DEFAULT_REVIEW_PROMPT_TEMPLATES.bugTriage);
+assert.equal(migratedReviewSettings.review.rangeMode, "previous-week");
+assert.equal(migratedReviewSettings.review.openHtmlAfterRun, false);
 assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastRunStatus, "success");
 assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastHtmlPath.endsWith(".html"), true);
 assert.equal(migratedReviewSettings.review.reports.agentChat.lastRunStatus, "failed");
@@ -855,7 +849,8 @@ const invalidReviewSettings = normalizeSettingsData({
     scheduleTime: "25:99",
     catchUpOnStartup: "bad",
     outputDir: "../bad//reports",
-    promptTemplates: { bugTriage: "" },
+    rangeMode: "bad",
+    openHtmlAfterRun: "bad",
     reports: {
       knowledgeBase: { lastRunStatus: "bad", lastRunAt: -1, lastHtmlPath: "../bad.html" },
       agentChat: { lastRunStatus: "success", lastMarkdownPath: "outputs/ok.md" }
@@ -868,7 +863,8 @@ assert.equal(invalidReviewSettings.agentChatEnabled, true);
 assert.equal(invalidReviewSettings.scheduleTime, "21:00");
 assert.equal(invalidReviewSettings.catchUpOnStartup, true);
 assert.equal(invalidReviewSettings.outputDir, "bad/reports");
-assert.equal(invalidReviewSettings.promptTemplates.bugTriage, DEFAULT_REVIEW_PROMPT_TEMPLATES.bugTriage);
+assert.equal(invalidReviewSettings.rangeMode, "previous-week");
+assert.equal(invalidReviewSettings.openHtmlAfterRun, false);
 assert.equal(invalidReviewSettings.reports.knowledgeBase.lastRunStatus, "idle");
 assert.equal(invalidReviewSettings.reports.knowledgeBase.lastHtmlPath, "");
 assert.equal(invalidReviewSettings.reports.agentChat.lastRunStatus, "success");
@@ -879,6 +875,12 @@ const reviewRange = currentReviewRange(new Date("2026-05-17T20:30:00+08:00"));
 assert.equal(reviewRange.startDate, "2026-05-11");
 assert.equal(reviewRange.endDate, "2026-05-17");
 assert.equal(reviewRangeKey(reviewRange), "2026-05-11-to-2026-05-17");
+const previousWeekRange = reviewRangeForMode("previous-week", new Date("2026-05-18T09:00:00+08:00"));
+assert.equal(previousWeekRange.startDate, "2026-05-11");
+assert.equal(previousWeekRange.endDate, "2026-05-17");
+const currentWeekRange = reviewRangeForMode("current-week", new Date("2026-05-18T09:00:00+08:00"));
+assert.equal(currentWeekRange.startDate, "2026-05-18");
+assert.equal(currentWeekRange.endDate, "2026-05-18");
 const scheduledReviewRange = latestScheduledReviewRange(new Date("2026-05-18T09:00:00+08:00"), "21:00");
 assert.equal(scheduledReviewRange?.startDate, "2026-05-11");
 assert.equal(scheduledReviewRange?.endDate, "2026-05-17");

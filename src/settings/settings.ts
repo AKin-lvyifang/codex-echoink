@@ -84,7 +84,7 @@ export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachm
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
 export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
-export type ReviewPromptTemplateKey = "productJudgement" | "bugTriage" | "largeFeature" | "reworkPrevention";
+export type ReviewRangeMode = "previous-week" | "current-week";
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -152,8 +152,6 @@ export interface ReviewReportState {
   lastSummary: string;
 }
 
-export type ReviewPromptTemplates = Record<ReviewPromptTemplateKey, string>;
-
 export interface WeeklyReviewSettings {
   enabled: boolean;
   knowledgeBaseEnabled: boolean;
@@ -161,7 +159,8 @@ export interface WeeklyReviewSettings {
   scheduleTime: string;
   catchUpOnStartup: boolean;
   outputDir: string;
-  promptTemplates: ReviewPromptTemplates;
+  rangeMode: ReviewRangeMode;
+  openHtmlAfterRun: boolean;
   reports: {
     knowledgeBase: ReviewReportState;
     agentChat: ReviewReportState;
@@ -361,13 +360,6 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
 
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
-export const DEFAULT_REVIEW_PROMPT_TEMPLATES: ReviewPromptTemplates = {
-  productJudgement: "先不要实现。\n\n请先判断这个需求是否成立：\n1. 真实目标是什么？\n2. 可能有哪些错误假设？\n3. 哪些部分值得做，哪些不值得做？\n4. 如果要做，验收标准是什么？\n5. 哪些问题必须先确认？",
-  bugTriage: "请按 bug 排查方式处理：\n\n1. 先复现或确认现象。\n2. 找到相关代码链路。\n3. 说明根因，不要只猜。\n4. 给修复方案。\n5. 修复后跑验证。\n6. 最后告诉我证据。",
-  largeFeature: "这个任务可能会很大。\n\n先拆成：\n1. 产品目标\n2. 用户路径\n3. 技术边界\n4. 风险点\n5. 验收标准\n\n拆完后先给我看，不要直接写代码。",
-  reworkPrevention: "在执行前，请先指出：\n1. 这个需求里最可能导致返工的地方。\n2. 哪些判断如果错了，后面会重做。\n3. 你建议先验证哪 3 件事。"
-};
-
 export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode, EditorActionModeConfig> = {
   fast: {
     mode: "fast",
@@ -393,7 +385,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 23,
+  settingsVersion: 24,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -475,7 +467,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     scheduleTime: "21:00",
     catchUpOnStartup: true,
     outputDir: DEFAULT_REVIEW_OUTPUT_DIR,
-    promptTemplates: DEFAULT_REVIEW_PROMPT_TEMPLATES,
+    rangeMode: "previous-week",
+    openHtmlAfterRun: false,
     reports: {
       knowledgeBase: {
         lastRunAt: 0,
@@ -995,7 +988,8 @@ function normalizeReviewSettings(value: any): WeeklyReviewSettings {
     scheduleTime: normalizeScheduleTime(value?.scheduleTime, fallback.scheduleTime),
     catchUpOnStartup: value?.catchUpOnStartup !== false,
     outputDir,
-    promptTemplates: normalizeReviewPromptTemplates(value?.promptTemplates),
+    rangeMode: normalizeReviewRangeMode(value?.rangeMode, fallback.rangeMode),
+    openHtmlAfterRun: value?.openHtmlAfterRun === true,
     reports: {
       knowledgeBase: normalizeReviewReportState(value?.reports?.knowledgeBase, outputDir),
       agentChat: normalizeReviewReportState(value?.reports?.agentChat, outputDir)
@@ -1015,14 +1009,8 @@ function normalizeReviewReportState(value: any, outputDir = DEFAULT_REVIEW_OUTPU
   };
 }
 
-function normalizeReviewPromptTemplates(value: any): ReviewPromptTemplates {
-  const fallback = DEFAULT_REVIEW_PROMPT_TEMPLATES;
-  return {
-    productJudgement: normalizeText(value?.productJudgement, fallback.productJudgement),
-    bugTriage: normalizeText(value?.bugTriage, fallback.bugTriage),
-    largeFeature: normalizeText(value?.largeFeature, fallback.largeFeature),
-    reworkPrevention: normalizeText(value?.reworkPrevention, fallback.reworkPrevention)
-  };
+function normalizeReviewRangeMode(value: any, fallback: ReviewRangeMode): ReviewRangeMode {
+  return value === "current-week" || value === "previous-week" ? value : fallback;
 }
 
 function normalizeReviewRangeKey(value: any): string {

@@ -15,7 +15,6 @@ import {
 import { filterWorkspaceResourceRows, type WorkspaceResourceSearchRow } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
-  DEFAULT_REVIEW_PROMPT_TEMPLATES,
   ensureModelChoices,
   getActiveApiProvider,
   getApiProviderModels,
@@ -41,7 +40,6 @@ import {
   type EditorAiActionConfig,
   type EditorAiStyleConfig,
   type KnowledgeBaseBackendMode,
-  type ReviewPromptTemplateKey,
   type ReviewReportKind,
   type ResourceManagementTab,
   type SettingsTab
@@ -451,12 +449,10 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addReviewPath(paths, "Agent Markdown", settings.reports.agentChat.lastMarkdownPath);
     this.addReviewPath(paths, "Agent HTML", settings.reports.agentChat.lastHtmlPath);
 
-    const templates = wrapper.createDiv({ cls: "codex-api-provider-row" });
-    templates.createDiv({ cls: "codex-editor-actions-heading", text: "提示词模板" });
-    this.addReviewTemplate(templates, "产品判断类", "productJudgement");
-    this.addReviewTemplate(templates, "Bug 排查类", "bugTriage");
-    this.addReviewTemplate(templates, "大功能类", "largeFeature");
-    this.addReviewTemplate(templates, "防止返工类", "reworkPrevention");
+    const reviewOptions = wrapper.createDiv({ cls: "codex-api-provider-row" });
+    reviewOptions.createDiv({ cls: "codex-editor-actions-heading", text: "周报设置" });
+    this.addReviewRangeMode(reviewOptions);
+    this.addReviewOpenAfterRun(reviewOptions);
   }
 
   private addReviewPath(container: HTMLElement, label: string, value: string): void {
@@ -482,17 +478,28 @@ export class CodexSettingTab extends PluginSettingTab {
     };
   }
 
-  private addReviewTemplate(container: HTMLElement, label: string, key: ReviewPromptTemplateKey): void {
-    this.addProviderTextArea(
-      container,
-      label,
-      this.plugin.settings.review.promptTemplates[key],
-      DEFAULT_REVIEW_PROMPT_TEMPLATES[key],
-      async (value) => {
-        this.plugin.settings.review.promptTemplates[key] = value.trim() || DEFAULT_REVIEW_PROMPT_TEMPLATES[key];
+  private addReviewRangeMode(container: HTMLElement): void {
+    const settings = this.plugin.settings.review;
+    this.decorateSetting(new Setting(container).setName("统计周期").addDropdown((dropdown) => {
+      dropdown
+        .addOption("previous-week", "上一完整周")
+        .addOption("current-week", "本周至今")
+        .setValue(settings.rangeMode)
+        .onChange(async (value) => {
+          settings.rangeMode = value === "current-week" ? "current-week" : "previous-week";
+          await this.plugin.saveSettings();
+        });
+    }), "calendar-days");
+  }
+
+  private addReviewOpenAfterRun(container: HTMLElement): void {
+    const settings = this.plugin.settings.review;
+    this.decorateSetting(new Setting(container).setName("生成后打开 HTML").addToggle((toggle) =>
+      toggle.setValue(settings.openHtmlAfterRun).onChange(async (value) => {
+        settings.openHtmlAfterRun = value;
         await this.plugin.saveSettings();
-      }
-    );
+      })
+    ), "panel-right-open");
   }
 
   private addStatusActions(container: HTMLElement): void {

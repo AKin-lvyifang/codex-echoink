@@ -1,9 +1,7 @@
 import {
   DEFAULT_REVIEW_OUTPUT_DIR,
-  DEFAULT_REVIEW_PROMPT_TEMPLATES,
   type ChatMessage,
   type CodexForObsidianSettings,
-  type ReviewPromptTemplates,
   type ReviewReportKind,
   type StoredSession
 } from "../settings/settings";
@@ -13,10 +11,6 @@ import { renderReviewHtml, type ReviewHtmlData } from "./review-html-template";
 import { reviewRangeKey, type ReviewRange } from "./schedule";
 
 export const REVIEW_OUTPUT_DIR = DEFAULT_REVIEW_OUTPUT_DIR;
-
-export interface BuildReviewDocumentOptions {
-  promptTemplates?: ReviewPromptTemplates;
-}
 
 export interface ReviewPromptSample {
   scene: string;
@@ -148,13 +142,13 @@ export function reportBaseName(kind: ReviewReportKind, range: ReviewRange): stri
   return `${kind === "knowledge-base" ? "knowledge-base" : "agent-chat"}-review-${reviewRangeKey(range)}`;
 }
 
-export function buildReviewDocuments(kind: ReviewReportKind, range: ReviewRange, evidence: ReviewEvidence, options: BuildReviewDocumentOptions = {}): { baseName: string; markdown: string; html: string; markdownFileName: string; htmlFileName: string; summary: string } {
+export function buildReviewDocuments(kind: ReviewReportKind, range: ReviewRange, evidence: ReviewEvidence): { baseName: string; markdown: string; html: string; markdownFileName: string; htmlFileName: string; summary: string } {
   const baseName = reportBaseName(kind, range);
   const htmlFileName = `${baseName}.html`;
   const markdownFileName = `${baseName}.md`;
   const data = kind === "knowledge-base"
-    ? buildKnowledgeBaseHtmlData(range, evidence as KnowledgeBaseReviewEvidence, options.promptTemplates)
-    : buildAgentChatHtmlData(range, evidence as AgentChatReviewEvidence, options.promptTemplates);
+    ? buildKnowledgeBaseHtmlData(range, evidence as KnowledgeBaseReviewEvidence)
+    : buildAgentChatHtmlData(range, evidence as AgentChatReviewEvidence);
   const html = renderReviewHtml(data);
   const markdown = buildReviewMarkdown(data, htmlFileName);
   return {
@@ -167,7 +161,7 @@ export function buildReviewDocuments(kind: ReviewReportKind, range: ReviewRange,
   };
 }
 
-function buildAgentChatHtmlData(range: ReviewRange, evidence: AgentChatReviewEvidence, promptTemplates?: ReviewPromptTemplates): ReviewHtmlData {
+function buildAgentChatHtmlData(range: ReviewRange, evidence: AgentChatReviewEvidence): ReviewHtmlData {
   const promptRows = splitPromptSamples(evidence.promptSamples);
   const hasPromptSamples = evidence.promptSamples.length > 0;
   return {
@@ -218,7 +212,7 @@ function buildAgentChatHtmlData(range: ReviewRange, evidence: AgentChatReviewEvi
       { habit: "一句话启动大任务", problem: "容易让 Agent 先做后校准。", correction: "先让 Agent 拆目标和风险。" },
       { habit: "长线程继续追加", problem: "上下文越来越重。", correction: "按阶段重开会话。" }
     ],
-    templates: reviewPromptTemplateBlocks(promptTemplates),
+    templates: defaultPromptTemplates(),
     checklist: defaultChecklist(evidence.failedMessageCount, evidence.longSessionCount),
     finalJudgement: evidence.sessionCount
       ? "本周普通 Agent 对话已经有可复盘证据。重点不是增加使用次数，而是压低长线程、失败后追加和验收后置。"
@@ -226,7 +220,7 @@ function buildAgentChatHtmlData(range: ReviewRange, evidence: AgentChatReviewEvi
   };
 }
 
-function buildKnowledgeBaseHtmlData(range: ReviewRange, evidence: KnowledgeBaseReviewEvidence, promptTemplates?: ReviewPromptTemplates): ReviewHtmlData {
+function buildKnowledgeBaseHtmlData(range: ReviewRange, evidence: KnowledgeBaseReviewEvidence): ReviewHtmlData {
   const commandTotal = Object.values(evidence.commandCounts).reduce((sum, value) => sum + value, 0);
   const reportPaths = uniqueCompact([
     ...evidence.maintenanceReports.map((report) => report.path),
@@ -288,7 +282,7 @@ function buildKnowledgeBaseHtmlData(range: ReviewRange, evidence: KnowledgeBaseR
       { habit: "命令太泛", problem: "容易让维护任务越界。", correction: "选择明确命令并追加限制。" },
       { habit: "不看最近报告", problem: "容易重复体检或忽略风险。", correction: "先打开最近报告，再决定下一步。" }
     ],
-    templates: reviewPromptTemplateBlocks(promptTemplates),
+    templates: defaultPromptTemplates(),
     checklist: [
       { item: "raw/wiki/outputs/inbox 健康信号", judgement: formatKnowledgeBaseDirectorySignal(evidence.dashboard) },
       { item: "wiki 是否健康", judgement: evidence.dashboard.healthScore === undefined ? "健康分未知。" : `健康分：${evidence.dashboard.healthScore}。` },
@@ -406,12 +400,12 @@ function splitPromptSamples(samples: ReviewPromptSample[]): { high: ReviewHtmlDa
   return { high, low };
 }
 
-function reviewPromptTemplateBlocks(value: ReviewPromptTemplates = DEFAULT_REVIEW_PROMPT_TEMPLATES): ReviewHtmlData["templates"] {
+function defaultPromptTemplates(): ReviewHtmlData["templates"] {
   return [
-    { title: "产品判断类", body: value.productJudgement },
-    { title: "Bug 排查类", body: value.bugTriage },
-    { title: "大功能类", body: value.largeFeature },
-    { title: "防止返工类", body: value.reworkPrevention }
+    { title: "产品判断类", body: "先不要实现。\n\n请先判断这个需求是否成立：\n1. 真实目标是什么？\n2. 可能有哪些错误假设？\n3. 哪些部分值得做，哪些不值得做？\n4. 如果要做，验收标准是什么？\n5. 哪些问题必须先确认？" },
+    { title: "Bug 排查类", body: "请按 bug 排查方式处理：\n\n1. 先复现或确认现象。\n2. 找到相关代码链路。\n3. 说明根因，不要只猜。\n4. 给修复方案。\n5. 修复后跑验证。\n6. 最后告诉我证据。" },
+    { title: "大功能类", body: "这个任务可能会很大。\n\n先拆成：\n1. 产品目标\n2. 用户路径\n3. 技术边界\n4. 风险点\n5. 验收标准\n\n拆完后先给我看，不要直接写代码。" },
+    { title: "防止返工类", body: "在执行前，请先指出：\n1. 这个需求里最可能导致返工的地方。\n2. 哪些判断如果错了，后面会重做。\n3. 你建议先验证哪 3 件事。" }
   ];
 }
 

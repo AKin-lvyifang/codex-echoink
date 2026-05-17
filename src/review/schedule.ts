@@ -1,4 +1,4 @@
-import type { ReviewReportKind, WeeklyReviewSettings } from "../settings/settings";
+import type { ReviewRangeMode, ReviewReportKind, WeeklyReviewSettings } from "../settings/settings";
 import { DEFAULT_REVIEW_OUTPUT_DIR, normalizeReviewOutputDir } from "../settings/settings";
 
 export interface ReviewRange {
@@ -15,6 +15,21 @@ export function currentReviewRange(now = new Date()): ReviewRange {
     endAt: now.getTime(),
     startDate: formatLocalDate(start),
     endDate: formatLocalDate(now)
+  };
+}
+
+export function reviewRangeForMode(mode: ReviewRangeMode, now = new Date()): ReviewRange {
+  if (mode === "current-week") return currentReviewRange(now);
+  const currentStart = startOfLocalWeek(now);
+  const previousEnd = new Date(currentStart);
+  previousEnd.setMilliseconds(-1);
+  previousEnd.setHours(23, 59, 59, 999);
+  const previousStart = startOfLocalWeek(previousEnd);
+  return {
+    startAt: previousStart.getTime(),
+    endAt: previousEnd.getTime(),
+    startDate: formatLocalDate(previousStart),
+    endDate: formatLocalDate(previousEnd)
   };
 }
 
