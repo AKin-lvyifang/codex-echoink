@@ -1062,6 +1062,24 @@ body.theme-light .codex-code-wrapper pre {
   margin-left: var(--codex-kb-icon-text-indent);
 }
 
+.codex-kb-command-guide {
+  margin-left: var(--codex-kb-detail-indent);
+}
+
+.codex-kb-command-row {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.codex-kb-command-row code {
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+
 .codex-api-provider-label {
   color: var(--text-muted);
   font-size: 12px;

@@ -1,12 +1,31 @@
-export type KnowledgeBaseCommandIntent = "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "cancel" | "collect" | "help";
+export type KnowledgeBaseCommandIntent = "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "cancel" | "collect" | "help";
 export type KnowledgeBaseCommandTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
+export type KnowledgeBaseReviewCommandKind = "knowledge-base" | "agent-chat";
 
 export interface KnowledgeBaseCommand {
   intent: KnowledgeBaseCommandIntent;
   target?: KnowledgeBaseCommandTarget;
+  reviewKind?: KnowledgeBaseReviewCommandKind;
   reason: string;
   confirm?: boolean;
 }
+
+export interface KnowledgeBaseCommandGuide {
+  command: string;
+  description: string;
+}
+
+export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
+  { command: "/ask ...", description: "对知识库发问" },
+  { command: "/check ...", description: "只体检知识库" },
+  { command: "/maintain ...", description: "维护 raw 到 wiki" },
+  { command: "/outputs ...", description: "处理 outputs 并提炼长期价值" },
+  { command: "/inbox ...", description: "整理收件箱" },
+  { command: "/journal ...", description: "写日记" },
+  { command: "/week", description: "写知识库周报；/week agent 写 Agent 周报" },
+  { command: "/init", description: "预览初始化；/init confirm 才执行" },
+  { command: "/help", description: "显示这份命令说明" }
+];
 
 const URL_PATTERN = /https?:\/\/\S+/i;
 
@@ -34,6 +53,9 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
   if (/写日记|记日记|日报|daily journal|journal/.test(normalized)) {
     return { intent: "journal", target: "journal", reason: "journal" };
   }
+  if (/写周报|周报|weekly review/.test(normalized)) {
+    return { intent: "review", reviewKind: reviewKindFromText(normalized), reason: "review" };
+  }
   if (/维护|消化|整理|沉淀|更新知识库|ingest|digest|maintain/.test(normalized)) {
     return { intent: "maintain", reason: "maintain" };
   }
@@ -54,22 +76,11 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
 
 export function knowledgeBaseHelpText(): string {
   return [
-    "这是知识库管理频道。我可以在这里执行：",
+    "知识库管理频道快捷命令：",
     "",
-    "- `只体检一下`：只生成体检报告，不消化 raw。",
-    "- `/init`：预览 LLM Wiki 初始化方案；`/init confirm` 才会创建目录和规则文件。",
-    "- `维护知识库`：增量消化 raw，更新 wiki、索引和报告。",
-    "- `/check ...`：体检知识库，可在后面追加限制条件。",
-    "- `/maintain ...`：增量维护 raw -> wiki。",
-    "- `/outputs ...`：处理 outputs，把长期价值内容提炼回 wiki。",
-    "- `/inbox ...`：整理收件箱并写报告。",
-    "- `/ask ...`：先检索 wiki 相关笔记，再回答问题；可以补充外部搜索或模型知识，但会区分来源。",
-    "- `/journal ...`：按当前 journal 体系写入 daily 月份目录。",
-    "- `写日记：...`：按当前 journal 体系写入 daily 月份目录。",
-    "- `处理 inbox`：整理收件箱并写报告。",
-    "- `收集这个链接 https://...`：写入 raw/articles/手动收集。",
-    "- `记一下：...`：写入 inbox。",
-    "- 附上图片或 PDF 后输入 `收集这个附件`：复制到 raw/attachments。"
+    ...KNOWLEDGE_BASE_COMMAND_GUIDE.map((item) => `- \`${item.command}\`：${item.description}`),
+    "",
+    "自然语言也支持：只体检一下、维护知识库、写周报、写日记、收集这个链接、记一下。"
   ].join("\n");
 }
 
@@ -85,9 +96,17 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
   if (command === "outputs" || command === "output" || command === "处理outputs" || command === "处理输出") return { intent: "process-outputs", reason: "slash-outputs" };
   if (command === "inbox" || command === "处理inbox" || command === "收件箱") return { intent: "process-inbox", reason: "slash-inbox" };
   if (command === "journal" || command === "daily" || command === "diary" || command === "日记") return { intent: "journal", target: "journal", reason: "slash-journal" };
+  if (command === "week" || command === "weekly" || command === "review" || command === "reviews" || command === "写周报") {
+    return { intent: "review", reviewKind: reviewKindFromText(normalized), reason: "slash-review" };
+  }
   if (command === "ask" || command === "query" || command === "问" || command === "查询") return { intent: "ask", reason: "slash-ask" };
   if (command === "reingest" || command === "redigest" || command === "重新提炼") return { intent: "reingest", reason: "slash-reingest" };
   return null;
+}
+
+function reviewKindFromText(normalized: string): KnowledgeBaseReviewCommandKind {
+  if (/\bagent\b|\bchat\b|对话|普通|非知识库/.test(normalized)) return "agent-chat";
+  return "knowledge-base";
 }
 
 function isInitConfirmCommand(normalized: string): boolean {

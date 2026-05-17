@@ -46,6 +46,7 @@ import {
 } from "./settings";
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { KNOWLEDGE_BASE_COMMAND_GUIDE } from "../knowledge-base/commands";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { confirmModal } from "../ui/modals";
 
@@ -313,6 +314,8 @@ export class CodexSettingTab extends PluginSettingTab {
       this.display();
     };
 
+    this.addKnowledgeBaseCommandGuide(wrapper);
+
     this.decorateSetting(new Setting(wrapper).setName("启用知识库管理").setDesc("开启后，插件才会按下面的每日自动维护和启动补跑设置自动运行；关闭后不会自动跑任务，但仍可打开右侧知识库频道手动对话、收集和维护。").addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
@@ -420,6 +423,16 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-resource-note",
       text: "维护、体检、收集链接、记录想法、收集图片/PDF 都在右侧“知识库管理”频道里用自然语言执行；设置页只负责配置和状态。"
     });
+  }
+
+  private addKnowledgeBaseCommandGuide(container: HTMLElement): void {
+    const section = container.createDiv({ cls: "codex-api-provider-row codex-kb-command-guide" });
+    section.createDiv({ cls: "codex-editor-actions-heading", text: "快捷命令" });
+    for (const item of KNOWLEDGE_BASE_COMMAND_GUIDE) {
+      const row = section.createDiv({ cls: "codex-kb-command-row" });
+      row.createEl("code", { text: item.command });
+      row.createSpan({ text: item.description });
+    }
   }
 
   private renderReviewSettings(container: HTMLElement): void {

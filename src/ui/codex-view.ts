@@ -814,7 +814,7 @@ export class CodexView extends ItemView {
       const welcome = this.virtualListEl.createDiv({ cls: "codex-welcome" });
       welcome.createDiv({ cls: "codex-welcome-title", text: this.isKnowledgeBaseSession(session) ? "知识库管理" : "What's new?" });
       if (this.isKnowledgeBaseSession(session)) {
-        welcome.createDiv({ cls: "codex-resource-note", text: "在这里输入自然语言命令，例如：只体检一下、维护知识库、收集这个链接、记一下。" });
+        welcome.createDiv({ cls: "codex-resource-note", text: "输入 /help 查看命令；也可以直接说只体检一下、维护知识库、写周报、收集这个链接。" });
       } else if (!session.cwd) {
         welcome.createDiv({ cls: "codex-resource-note", text: "普通会话需要先选择工作区；添加笔记只作为本轮上下文。" });
       }
@@ -1740,6 +1740,7 @@ export class CodexView extends ItemView {
       { title: "初始化", icon: "sparkles", text: "/init " },
       { title: "体检", icon: "stethoscope", text: "/check " },
       { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
+      { title: "写周报", icon: "bar-chart-3", text: "/week " },
       { title: "写日记", icon: "calendar-plus", text: "/journal " },
       { title: "处理 inbox", icon: "inbox", text: "/inbox " },
       { title: "维护知识库", icon: "library", text: "/maintain " }

@@ -7,7 +7,7 @@ import type CodexForObsidianPlugin from "../main";
 import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../agent/types";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
-import { recordKnowledgeBaseHealthCheck, type StoredAttachment } from "../settings/settings";
+import { recordKnowledgeBaseHealthCheck, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
@@ -229,6 +229,9 @@ export class KnowledgeBaseManager {
       if (command.intent === "ask") {
         return await this.answerQuestion(text);
       }
+      if (command.intent === "review") {
+        return await this.runWeeklyReview(command.reviewKind ?? "knowledge-base");
+      }
       if (command.intent === "journal") {
         return await this.writeDailyJournal(text, attachments);
       }
@@ -259,6 +262,28 @@ export class KnowledgeBaseManager {
     init.lastPreviewSummary = preview.summary.slice(0, 2000);
     await this.plugin.saveSettings(true);
     return preview;
+  }
+
+  private async runWeeklyReview(kind: ReviewReportKind): Promise<KnowledgeBaseChatResult> {
+    const manager = this.plugin.getReviewManager();
+    if (!manager) {
+      return { status: "failed", message: "复盘管理器未初始化。" };
+    }
+    const result = await manager.runReview(kind);
+    if (result.status !== "success") {
+      return {
+        status: "failed",
+        message: `${reviewKindLabel(kind)}生成失败：${result.error || "未知错误"}`
+      };
+    }
+    return {
+      status: "success",
+      message: [
+        `${reviewKindLabel(kind)}已生成。`,
+        `Markdown：${result.markdownPath}`,
+        `HTML：${result.htmlPath}`
+      ].join("\n")
+    };
   }
 
   async executeInitialization(preview: KnowledgeBaseInitializationPreview): Promise<{ summary: string; rulesFilePath: string }> {
@@ -956,6 +981,10 @@ function labelForRunMode(mode: KnowledgeBaseRunMode): string {
   if (mode === "outputs") return "outputs 处理";
   if (mode === "inbox") return "收件箱处理";
   return "维护";
+}
+
+function reviewKindLabel(kind: ReviewReportKind): string {
+  return kind === "knowledge-base" ? "知识库周报" : "Agent 周报";
 }
 
 function normalizeRulesPath(value: string): string {

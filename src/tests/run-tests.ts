@@ -103,7 +103,7 @@ import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
-import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
@@ -300,6 +300,13 @@ assert.deepEqual(parseKnowledgeBaseCommand("/outputs 提炼最近发布稿").int
 assert.deepEqual(parseKnowledgeBaseCommand("/inbox 只归类不沉淀").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("/journal 今天完成知识库命令优化").intent, "journal");
 assert.deepEqual(parseKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
+assert.deepEqual(parseKnowledgeBaseCommand("/week").intent, "review");
+assert.deepEqual(parseKnowledgeBaseCommand("/week").reviewKind, "knowledge-base");
+assert.deepEqual(parseKnowledgeBaseCommand("/week agent").reviewKind, "agent-chat");
+assert.deepEqual(parseKnowledgeBaseCommand("/写周报").reviewKind, "knowledge-base");
+assert.deepEqual(parseKnowledgeBaseCommand("写周报").reviewKind, "knowledge-base");
+assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/week"));
+assert.ok(knowledgeBaseHelpText().includes("`/week`：写知识库周报"));
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
