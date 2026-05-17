@@ -12,14 +12,19 @@ import { EditorActionController } from "./editor-actions/controller";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
 import { KnowledgeBaseManager } from "./knowledge-base/manager";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "./knowledge-base/report";
+import { ReviewManager } from "./review/manager";
+import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "./review/preview-view";
+import { isReviewHtmlPath } from "./review/schedule";
 
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
   lastStatus: CodexStatusSnapshot | null = null;
   private view: CodexView | null = null;
+  private reviewPreviewView: ReviewPreviewView | null = null;
   private editorActions: EditorActionController | null = null;
   private knowledgeBase: KnowledgeBaseManager | null = null;
+  private review: ReviewManager | null = null;
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -32,6 +37,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.registerView(VIEW_TYPE_CODEX, (leaf: WorkspaceLeaf) => {
       this.view = new CodexView(leaf, this);
       return this.view;
+    });
+    this.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => {
+      this.reviewPreviewView = new ReviewPreviewView(leaf, this);
+      return this.reviewPreviewView;
     });
 
     this.addRibbonIcon("bot", "打开 Codex 侧栏", () => {
@@ -82,6 +91,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.editorActions.register();
     this.knowledgeBase = new KnowledgeBaseManager(this);
     this.knowledgeBase.register();
+    this.review = new ReviewManager(this);
+    this.review.register();
 
     if (this.settings.autoOpen) {
       this.app.workspace.onLayoutReady(() => void this.activateView());
@@ -96,6 +107,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async onunload(): Promise<void> {
     this.editorActions?.cancelActiveCandidate("canceled", false);
     this.knowledgeBase?.unload();
+    this.review?.unload();
     await this.saveSettings(true);
     await this.codex?.disconnect();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CODEX);
@@ -307,6 +319,27 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   getKnowledgeBaseManager(): KnowledgeBaseManager | null {
     return this.knowledgeBase;
+  }
+
+  getReviewManager(): ReviewManager | null {
+    return this.review;
+  }
+
+  async openReviewHtmlPreview(relativePath: string): Promise<void> {
+    const normalized = relativePath.replace(/\\/g, "/");
+    if (!isReviewHtmlPath(normalized)) {
+      new Notice("只能打开 EchoInk 生成的复盘 HTML");
+      return;
+    }
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_REVIEW_PREVIEW)[0];
+    if (!leaf) {
+      const rightLeaf = this.app.workspace.getRightLeaf(false);
+      if (!rightLeaf) throw new Error("无法创建复盘预览页");
+      leaf = rightLeaf;
+      await leaf.setViewState({ type: VIEW_TYPE_REVIEW_PREVIEW, active: true });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    await this.reviewPreviewView?.openHtml(normalized);
   }
 
   private async recoverKnowledgeBaseLintStatus(): Promise<boolean> {

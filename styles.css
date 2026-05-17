@@ -3462,3 +3462,29 @@ body.theme-light .codex-container {
   color: var(--text-faint);
   font-size: 12px;
 }
+
+.codex-review-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  padding: 10px;
+}
+
+.codex-review-preview-title {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-review-preview-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: #fffdf8;
+}

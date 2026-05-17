@@ -107,6 +107,21 @@ import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recovere
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
+import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
+import {
+  REVIEW_OUTPUT_DIR,
+  buildReviewDocuments,
+  collectAgentChatReviewEvidence,
+  collectKnowledgeBaseReviewEvidence,
+  reportBaseName
+} from "../review/report";
+import {
+  currentReviewRange,
+  isReviewHtmlPath,
+  latestScheduledReviewRange,
+  reviewRangeKey,
+  shouldRunScheduledReview
+} from "../review/schedule";
 
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
@@ -137,7 +152,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 21);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 22);
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -175,6 +190,13 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
+assert.equal(DEFAULT_SETTINGS.review.enabled, false);
+assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
+assert.equal(DEFAULT_SETTINGS.review.agentChatEnabled, true);
+assert.equal(DEFAULT_SETTINGS.review.scheduleTime, "21:00");
+assert.equal(DEFAULT_SETTINGS.review.catchUpOnStartup, true);
+assert.equal(DEFAULT_SETTINGS.review.reports.knowledgeBase.lastRunStatus, "idle");
+assert.equal(DEFAULT_SETTINGS.review.reports.agentChat.lastRunStatus, "idle");
 assert.deepEqual(
   getKnowledgeBaseRulesFileChoices([DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   [DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
@@ -278,6 +300,83 @@ assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.c
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
 assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "ask");
+
+const reviewEvidenceSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    sessionId: "kb-review",
+    lastRunAt: Date.parse("2026-05-17T08:00:00+08:00"),
+    lastRunStatus: "success",
+    lastReportPath: "outputs/kb-maintenance-2026-05-17.md",
+    lastSummary: "知识库体检完成"
+  },
+  sessions: [
+    {
+      id: "kb-review",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: "/vault",
+      messages: [
+        { id: "kb-u-1", role: "user", text: "/check 只看断链", createdAt: Date.parse("2026-05-17T08:00:00+08:00") },
+        { id: "kb-a-1", role: "assistant", itemType: "knowledgeBase", status: "completed", text: "完成", createdAt: Date.parse("2026-05-17T08:02:00+08:00") },
+        { id: "kb-u-2", role: "user", text: "/ask 知识库状态怎么样？", createdAt: Date.parse("2026-05-17T09:00:00+08:00") }
+      ],
+      createdAt: Date.parse("2026-05-17T08:00:00+08:00"),
+      updatedAt: Date.parse("2026-05-17T09:00:00+08:00")
+    },
+    {
+      id: "chat-review",
+      title: "普通 Agent 对话",
+      cwd: "/project",
+      tokenUsage: { total: { totalTokens: 12345 }, last: { totalTokens: 345 }, modelContextWindow: 200000 },
+      messages: [
+        { id: "chat-u-1", role: "user", text: "请先判断这个需求是否成立，再给验收标准。", createdAt: Date.parse("2026-05-17T10:00:00+08:00") },
+        { id: "chat-a-1", role: "assistant", text: "结论", createdAt: Date.parse("2026-05-17T10:01:00+08:00") },
+        { id: "chat-p-1", role: "tool", itemType: "commandExecution", status: "completed", text: "npm test", createdAt: Date.parse("2026-05-17T10:02:00+08:00") },
+        { id: "chat-s-1", role: "system", itemType: "contextCompaction", text: "压缩", createdAt: Date.parse("2026-05-17T10:03:00+08:00") }
+      ],
+      createdAt: Date.parse("2026-05-17T10:00:00+08:00"),
+      updatedAt: Date.parse("2026-05-17T10:03:00+08:00")
+    }
+  ]
+}).settings;
+const reviewEvidenceRange = currentReviewRange(new Date("2026-05-17T21:00:00+08:00"));
+const agentEvidence = collectAgentChatReviewEvidence(reviewEvidenceSettings, reviewEvidenceRange);
+assert.equal(agentEvidence.sessionCount, 1);
+assert.equal(agentEvidence.userMessageCount, 1);
+assert.equal(agentEvidence.totalTokens, 12345);
+assert.equal(agentEvidence.contextCompactionCount, 1);
+assert.equal(agentEvidence.toolEventCount, 1);
+assert.equal(agentEvidence.promptSamples[0].text, "请先判断这个需求是否成立，再给验收标准。");
+const kbEvidence = collectKnowledgeBaseReviewEvidence(reviewEvidenceSettings, reviewEvidenceRange, {
+  dashboard: { healthScore: 96, rawCount: 12, wikiCount: 8, outputsCount: 4, inboxCount: 1, latestReportPath: "outputs/kb-maintenance-2026-05-17.md" },
+  maintenanceReports: [{ path: "outputs/kb-maintenance-2026-05-17.md", excerpt: "一眼结论：健康。" }]
+});
+assert.equal(kbEvidence.messageCount, 3);
+assert.equal(kbEvidence.commandCounts.lint, 1);
+assert.equal(kbEvidence.commandCounts.ask, 1);
+assert.equal(kbEvidence.dashboard.healthScore, 96);
+assert.equal(kbEvidence.maintenanceReports[0].path, "outputs/kb-maintenance-2026-05-17.md");
+assert.equal(reportBaseName("knowledge-base", reviewEvidenceRange), "knowledge-base-review-2026-05-11-to-2026-05-17");
+assert.equal(reportBaseName("agent-chat", reviewEvidenceRange), "agent-chat-review-2026-05-11-to-2026-05-17");
+assert.equal(REVIEW_OUTPUT_DIR, "outputs/obsidian-weekly-review");
+const agentDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, agentEvidence);
+assert.ok(agentDocs.markdown.startsWith("---\ncreated:"));
+assert.ok(agentDocs.markdown.includes("[打开同名 HTML 看板](./agent-chat-review-2026-05-11-to-2026-05-17.html)"));
+assert.ok(agentDocs.markdown.includes("### 4.2 问题决策"));
+assert.ok(agentDocs.markdown.includes("### 6.2 坏习惯"));
+assert.ok(agentDocs.html.includes("<h1>Agent 对话使用周复盘</h1>"));
+assert.ok(agentDocs.html.includes("请先判断这个需求是否成立"));
+const kbDocs = buildReviewDocuments("knowledge-base", reviewEvidenceRange, kbEvidence);
+assert.ok(kbDocs.markdown.includes("# 知识库使用周复盘"));
+assert.ok(kbDocs.markdown.includes("raw 12；wiki 8；outputs 4；inbox 1"));
+assert.ok(kbDocs.markdown.includes("outputs/kb-maintenance-2026-05-17.md"));
+assert.ok(kbDocs.html.includes("<h1>知识库使用周复盘</h1>"));
+const emptyAgentDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, collectAgentChatReviewEvidence(normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  sessions: []
+}).settings, reviewEvidenceRange));
+assert.ok(emptyAgentDocs.html.includes("<span class=\"pill\">提示词质量</span><h3>待观察</h3>"));
 
 const kbRouteItems = new Set<string>();
 const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
@@ -688,6 +787,132 @@ assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.useCustomRulesFile, fals
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.rulesFilePath, "bad/path.md");
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.scheduleTime, "09:00");
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.lastRunStatus, "idle");
+
+const migratedReviewSettings = normalizeSettingsData({
+  settingsVersion: 21,
+  review: {
+    enabled: true,
+    knowledgeBaseEnabled: false,
+    agentChatEnabled: true,
+    scheduleTime: "22:30",
+    catchUpOnStartup: false,
+    reports: {
+      knowledgeBase: {
+        lastRunAt: 10,
+        lastRunStatus: "success",
+        lastRangeKey: "2026-05-11-to-2026-05-17",
+        lastMarkdownPath: "outputs/obsidian-weekly-review/knowledge-base-review-2026-05-11-to-2026-05-17.md",
+        lastHtmlPath: "outputs/obsidian-weekly-review/knowledge-base-review-2026-05-11-to-2026-05-17.html",
+        lastSummary: "已生成"
+      },
+      agentChat: {
+        lastRunAt: 11,
+        lastRunStatus: "failed",
+        lastRangeKey: "2026-05-11-to-2026-05-17",
+        lastError: "失败"
+      }
+    }
+  }
+}).settings;
+assert.equal(migratedReviewSettings.review.enabled, true);
+assert.equal(migratedReviewSettings.review.knowledgeBaseEnabled, false);
+assert.equal(migratedReviewSettings.review.agentChatEnabled, true);
+assert.equal(migratedReviewSettings.review.scheduleTime, "22:30");
+assert.equal(migratedReviewSettings.review.catchUpOnStartup, false);
+assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastRunStatus, "success");
+assert.equal(migratedReviewSettings.review.reports.knowledgeBase.lastHtmlPath.endsWith(".html"), true);
+assert.equal(migratedReviewSettings.review.reports.agentChat.lastRunStatus, "failed");
+
+const invalidReviewSettings = normalizeSettingsData({
+  settingsVersion: 21,
+  review: {
+    enabled: "yes",
+    knowledgeBaseEnabled: "no",
+    agentChatEnabled: 1,
+    scheduleTime: "25:99",
+    catchUpOnStartup: "bad",
+    reports: {
+      knowledgeBase: { lastRunStatus: "bad", lastRunAt: -1, lastHtmlPath: "../bad.html" },
+      agentChat: { lastRunStatus: "success", lastMarkdownPath: "outputs/ok.md" }
+    }
+  }
+}).settings.review;
+assert.equal(invalidReviewSettings.enabled, false);
+assert.equal(invalidReviewSettings.knowledgeBaseEnabled, true);
+assert.equal(invalidReviewSettings.agentChatEnabled, true);
+assert.equal(invalidReviewSettings.scheduleTime, "21:00");
+assert.equal(invalidReviewSettings.catchUpOnStartup, true);
+assert.equal(invalidReviewSettings.reports.knowledgeBase.lastRunStatus, "idle");
+assert.equal(invalidReviewSettings.reports.knowledgeBase.lastHtmlPath, "");
+assert.equal(invalidReviewSettings.reports.agentChat.lastRunStatus, "success");
+
+const reviewRange = currentReviewRange(new Date("2026-05-17T20:30:00+08:00"));
+assert.equal(reviewRange.startDate, "2026-05-11");
+assert.equal(reviewRange.endDate, "2026-05-17");
+assert.equal(reviewRangeKey(reviewRange), "2026-05-11-to-2026-05-17");
+const scheduledReviewRange = latestScheduledReviewRange(new Date("2026-05-18T09:00:00+08:00"), "21:00");
+assert.equal(scheduledReviewRange?.startDate, "2026-05-11");
+assert.equal(scheduledReviewRange?.endDate, "2026-05-17");
+assert.equal(shouldRunScheduledReview(DEFAULT_SETTINGS.review, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), false);
+assert.equal(shouldRunScheduledReview({ ...DEFAULT_SETTINGS.review, enabled: true }, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), true);
+assert.equal(shouldRunScheduledReview({ ...DEFAULT_SETTINGS.review, enabled: true, knowledgeBaseEnabled: false }, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), false);
+assert.equal(shouldRunScheduledReview({
+  ...DEFAULT_SETTINGS.review,
+  enabled: true,
+  reports: {
+    ...DEFAULT_SETTINGS.review.reports,
+    knowledgeBase: { ...DEFAULT_SETTINGS.review.reports.knowledgeBase, lastRangeKey: "2026-05-11-to-2026-05-17" }
+  }
+}, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), false);
+assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.html"), true);
+assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.md"), false);
+assert.equal(isReviewHtmlPath("../outputs/obsidian-weekly-review/bad.html"), false);
+
+const reviewHtml = renderReviewHtml({
+  title: "Codex 使用效率周复盘",
+  periodLabel: "2026-05-11 至 2026-05-17",
+  scopeLabel: "测试口径",
+  verdict: "一眼结论：测试周报。",
+  metrics: [
+    { label: "有效线程", value: "2" },
+    { label: "剔除线程", value: "1" },
+    { label: "消息数", value: "4" },
+    { label: "失败数", value: "0" }
+  ],
+  scores: [
+    { label: "方向选择", rating: "好", description: "目标集中。" },
+    { label: "执行效率", rating: "中", description: "有长线程。" },
+    { label: "提示词质量", rating: "中上", description: "样本清楚。" },
+    { label: "决策质量", rating: "中上", description: "有证据。" },
+    { label: "token 使用效率", rating: "中", description: "可优化。" },
+    { label: "使用方式", rating: "好", description: "能复盘。" }
+  ],
+  distribution: [{ label: "普通 Agent 对话", countLabel: "2 会话 / 4 消息", value: 100, description: "测试分布。" }],
+  highQualityPrompts: [{ scene: "测试", excerpt: "请先判断", judgement: "高质量", reason: "验收前置。" }],
+  lowEfficiencyPrompts: [{ scene: "测试", excerpt: "做一下", problem: "过泛", impact: "易返工", correction: "补验收。" }],
+  goodDecisions: [{ decision: "先做测试", evaluation: "降低回归。" }],
+  problemDecisions: [{ decision: "长线程", problem: "上下文重", correction: "拆阶段。" }],
+  reworkItems: [{ item: "返工", surfaceCause: "标准晚", deepCause: "没模板", correction: "固定模板。" }],
+  goodHabits: [{ habit: "看证据", evaluation: "稳定。" }],
+  badHabits: [{ habit: "提示过短", problem: "范围不清", correction: "补背景。" }],
+  templates: [{ title: "产品判断类", body: "先不要实现。" }],
+  checklist: [{ item: "是否前置验收", judgement: "是。" }],
+  finalJudgement: "最终判断：模板稳定。"
+});
+assert.ok(reviewHtml.startsWith("<!doctype html><html lang=\"zh-CN\">"));
+assert.ok(reviewHtml.includes(`<style>\n${REVIEW_HTML_CSS}\n</style>`));
+let lastHeadingIndex = -1;
+for (const heading of REVIEW_SECTION_HEADINGS) {
+  const index = reviewHtml.indexOf(`<h2>${heading}</h2>`);
+  assert.ok(index > lastHeadingIndex, `Missing or misordered heading: ${heading}`);
+  lastHeadingIndex = index;
+}
+for (const cls of ["hero", "grid", "score", "barrow", "wide", "low", "decision", "baddecision", "templates"]) {
+  assert.ok(reviewHtml.includes(`class="${cls}`) || reviewHtml.includes(`class="${cls}"`), `Missing template class: ${cls}`);
+}
+assert.ok(reviewHtml.includes("card note"), "Missing template class: note");
+assert.equal((reviewHtml.match(/class="tr"/g) ?? []).length >= 8, true);
+assert.equal(reviewHtml.includes("purple"), false);
 
 const apiProviderSettings = normalizeSettingsData({
   settingsVersion: 5,

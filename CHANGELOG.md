@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+新增复盘周报：
+
+1. 设置页新增 `复盘`，可分别启用知识库周报和 Agent 对话周报。
+2. 默认每周日 21:00 自动生成，错过后下次打开 Obsidian 补跑。
+3. 周报写入 `outputs/obsidian-weekly-review/`，同时生成 Markdown 和同名 HTML。
+4. HTML 固定复用 `Codex 使用效率周复盘` 看板模板，只替换数据。
+5. EchoInk 内置 HTML 预览，不依赖 Obsidian 官方 Web viewer 打开本地 HTML。
+
 ## v0.5.1 - 2026-05-17
 
 版本号：`v0.5.1`

@@ -67,6 +67,14 @@
 - 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
 - 支持手动运行，也支持 Obsidian 打开时的每日维护。
 
+### 复盘周报
+
+- 设置页新增 `复盘`，默认关闭自动任务。
+- 可分别启用 `知识库周报` 和 `Agent 对话周报`。
+- 默认每周日 21:00 生成；错过后下次打开 Obsidian 自动补跑。
+- 周报写入 `outputs/obsidian-weekly-review/`，同时生成 Markdown 和同名 HTML。
+- HTML 使用固定看板模板，只替换数据，并通过 EchoInk 内置预览打开。
+
 ### 本地优先集成
 
 - 复用本机 Codex CLI 登录状态。

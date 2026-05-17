@@ -39,12 +39,14 @@ import {
   type EditorAiActionConfig,
   type EditorAiStyleConfig,
   type KnowledgeBaseBackendMode,
+  type ReviewReportKind,
   type ResourceManagementTab,
   type SettingsTab
 } from "./settings";
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
+import { REVIEW_OUTPUT_DIR } from "../review/report";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -104,6 +106,10 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     if (this.plugin.settings.settingsTab === "knowledgeBase") {
       this.renderKnowledgeBaseSettings(containerEl);
+      return;
+    }
+    if (this.plugin.settings.settingsTab === "review") {
+      this.renderReviewSettings(containerEl);
       return;
     }
 
@@ -413,6 +419,90 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-resource-note",
       text: "维护、体检、收集链接、记录想法、收集图片/PDF 都在右侧“知识库管理”频道里用自然语言执行；设置页只负责配置和状态。"
     });
+  }
+
+  private renderReviewSettings(container: HTMLElement): void {
+    const settings = this.plugin.settings.review;
+    const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-review-settings" });
+    const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
+    const title = header.createDiv({ cls: "codex-resource-manager-title" });
+    const icon = title.createSpan({ cls: "codex-setting-icon" });
+    setIcon(icon, "bar-chart-3");
+    title.createSpan({ text: "复盘" });
+
+    wrapper.createDiv({
+      cls: "codex-resource-warning",
+      text: "复盘周报只统计当前 Obsidian 插件内的知识库频道和普通 Agent 对话。HTML 使用固定模板生成，只替换数据，不让模型自由发挥版式。"
+    });
+    wrapper.createDiv({
+      cls: "codex-resource-note",
+      text: `输出目录：${REVIEW_OUTPUT_DIR}。Markdown 会链接同名 HTML；HTML 通过 EchoInk 内置预览打开。`
+    });
+
+    const summary = wrapper.createDiv({ cls: "codex-api-provider-row" });
+    summary.createDiv({ cls: "codex-editor-actions-heading", text: "运行状态" });
+    this.addReviewStatus(summary, "知识库", settings.reports.knowledgeBase);
+    this.addReviewStatus(summary, "Agent 对话", settings.reports.agentChat);
+    const actions = summary.createDiv({ cls: "codex-api-provider-actions" });
+    this.addReviewAction(actions, "生成知识库周报", "knowledge-base");
+    this.addReviewAction(actions, "生成 Agent 对话周报", "agent-chat");
+    const openLatest = actions.createEl("button", { cls: "codex-resource-tab", text: "打开最近 HTML", attr: { type: "button" } });
+    openLatest.onclick = () => void this.plugin.getReviewManager()?.openLatestHtml();
+
+    this.decorateSetting(new Setting(wrapper).setName("启用复盘自动任务").setDesc("开启后，每周日按下方时间自动生成已启用的周报；错过后下次打开 Obsidian 补跑。").addToggle((toggle) =>
+      toggle.setValue(settings.enabled).onChange(async (value) => {
+        settings.enabled = value;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    ), "calendar-clock");
+
+    this.decorateSetting(new Setting(wrapper).setName("知识库周报").setDesc("统计知识库频道、知识库状态、维护报告和健康信号。").addToggle((toggle) =>
+      toggle.setValue(settings.knowledgeBaseEnabled).onChange(async (value) => {
+        settings.knowledgeBaseEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "library");
+
+    this.decorateSetting(new Setting(wrapper).setName("Agent 对话周报").setDesc("统计非知识库频道的普通 Agent 对话、token 证据、失败/中断和提示词样本。").addToggle((toggle) =>
+      toggle.setValue(settings.agentChatEnabled).onChange(async (value) => {
+        settings.agentChatEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "bot");
+
+    this.addProviderText(wrapper, "每周运行时间", settings.scheduleTime, "21:00", async (value) => {
+      settings.scheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : settings.scheduleTime;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+
+    this.decorateSetting(new Setting(wrapper).setName("启动补跑").setDesc("错过周日运行时间后，下次打开 Obsidian 自动补跑最近一周。").addToggle((toggle) =>
+      toggle.setValue(settings.catchUpOnStartup).onChange(async (value) => {
+        settings.catchUpOnStartup = value;
+        await this.plugin.saveSettings();
+      })
+    ), "history");
+  }
+
+  private addReviewStatus(container: HTMLElement, label: string, state: { lastRunAt: number; lastRunStatus: string; lastMarkdownPath: string; lastHtmlPath: string; lastError: string; lastSummary: string }): void {
+    container.createDiv({
+      cls: state.lastRunStatus === "failed" ? "codex-resource-error" : "codex-resource-note",
+      text: `${label}：${reviewStatusLabel(state.lastRunStatus)}${state.lastRunAt ? ` · ${new Date(state.lastRunAt).toLocaleString()}` : ""}`
+    });
+    if (state.lastMarkdownPath) container.createDiv({ cls: "codex-resource-note", text: `${label} Markdown：${state.lastMarkdownPath}` });
+    if (state.lastHtmlPath) container.createDiv({ cls: "codex-resource-note", text: `${label} HTML：${state.lastHtmlPath}` });
+    if (state.lastSummary) container.createDiv({ cls: "codex-resource-note", text: state.lastSummary });
+    if (state.lastError) container.createDiv({ cls: "codex-resource-error", text: state.lastError });
+  }
+
+  private addReviewAction(container: HTMLElement, label: string, kind: ReviewReportKind): void {
+    const button = container.createEl("button", { cls: "codex-resource-tab", text: label, attr: { type: "button" } });
+    button.onclick = async () => {
+      button.disabled = true;
+      await this.plugin.getReviewManager()?.runReview(kind);
+      this.display();
+    };
   }
 
   private addStatusActions(container: HTMLElement): void {
@@ -1430,7 +1520,8 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: string }> = [
   { id: "providers", label: "API Provider", icon: "key-round" },
   { id: "resources", label: "工作区能力", icon: "blocks" },
   { id: "editorActions", label: "写作操作", icon: "wand-sparkles" },
-  { id: "knowledgeBase", label: "知识库管理", icon: "library" }
+  { id: "knowledgeBase", label: "知识库管理", icon: "library" },
+  { id: "review", label: "复盘", icon: "bar-chart-3" }
 ];
 
 const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; label: string; icon: string; desc: string }> = [
@@ -1509,6 +1600,13 @@ function knowledgeStatusLabel(value: string): string {
   if (value === "success") return "成功";
   if (value === "failed") return "失败";
   if (value === "canceled") return "已取消";
+  return "未运行";
+}
+
+function reviewStatusLabel(value: string): string {
+  if (value === "running") return "生成中";
+  if (value === "success") return "成功";
+  if (value === "failed") return "失败";
   return "未运行";
 }
 

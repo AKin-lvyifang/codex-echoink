@@ -65,6 +65,14 @@
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
 - Supports manual runs and daily maintenance when Obsidian is open.
 
+### Weekly Reviews
+
+- Adds a `Review` settings tab, with scheduled automation disabled by default.
+- Lets you enable `Knowledge` and `Agent chat` weekly reviews separately.
+- Runs by default every Sunday at 21:00, with catch-up the next time Obsidian opens.
+- Writes Markdown and matching HTML files to `outputs/obsidian-weekly-review/`.
+- Uses a fixed HTML dashboard template and opens it through EchoInk's built-in preview.
+
 ### Local-first Integration
 
 - Reuses your local Codex CLI login state.

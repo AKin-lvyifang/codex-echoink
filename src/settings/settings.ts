@@ -73,7 +73,7 @@ export interface StoredSession {
   updatedAt: number;
 }
 
-export type SettingsTab = "general" | "providers" | "resources" | "editorActions" | "knowledgeBase";
+export type SettingsTab = "general" | "providers" | "resources" | "editorActions" | "knowledgeBase" | "review";
 export type ProviderMode = "codex-login" | "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type AgentBackendMode = "codex-cli" | "opencode";
@@ -82,6 +82,8 @@ export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" |
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
+export type ReviewReportKind = "knowledge-base" | "agent-chat";
+export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -139,6 +141,28 @@ export interface KnowledgeBaseInitializationSettings {
   lastPreviewSummary: string;
 }
 
+export interface ReviewReportState {
+  lastRunAt: number;
+  lastRunStatus: ReviewRunStatus;
+  lastRangeKey: string;
+  lastMarkdownPath: string;
+  lastHtmlPath: string;
+  lastError: string;
+  lastSummary: string;
+}
+
+export interface WeeklyReviewSettings {
+  enabled: boolean;
+  knowledgeBaseEnabled: boolean;
+  agentChatEnabled: boolean;
+  scheduleTime: string;
+  catchUpOnStartup: boolean;
+  reports: {
+    knowledgeBase: ReviewReportState;
+    agentChat: ReviewReportState;
+  };
+}
+
 export interface ApiProviderConfig {
   id: string;
   name: string;
@@ -189,6 +213,7 @@ export interface CodexForObsidianSettings {
   editorActions: EditorAiActionSettings;
   opencode: OpenCodeSettings;
   knowledgeBase: KnowledgeBaseSettings;
+  review: WeeklyReviewSettings;
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
@@ -354,7 +379,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 21,
+  settingsVersion: 22,
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -429,6 +454,33 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     processedSources: {},
     healthHistory: []
   },
+  review: {
+    enabled: false,
+    knowledgeBaseEnabled: true,
+    agentChatEnabled: true,
+    scheduleTime: "21:00",
+    catchUpOnStartup: true,
+    reports: {
+      knowledgeBase: {
+        lastRunAt: 0,
+        lastRunStatus: "idle",
+        lastRangeKey: "",
+        lastMarkdownPath: "",
+        lastHtmlPath: "",
+        lastError: "",
+        lastSummary: ""
+      },
+      agentChat: {
+        lastRunAt: 0,
+        lastRunStatus: "idle",
+        lastRangeKey: "",
+        lastMarkdownPath: "",
+        lastHtmlPath: "",
+        lastError: "",
+        lastSummary: ""
+      }
+    }
+  },
   workspaceResources: {
     plugins: {},
     mcpServers: {},
@@ -453,6 +505,7 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
     opencode: normalizeOpenCodeSettings(data?.opencode),
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
+    review: normalizeReviewSettings(data?.review),
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: normalizeStoredSessions(data?.sessions),
@@ -830,7 +883,7 @@ function normalizeResourceManagementTab(value: any): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: any): SettingsTab {
-  return value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  return value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 function normalizeProviderMode(value: any): ProviderMode {
@@ -847,6 +900,10 @@ function normalizeKnowledgeBaseBackendMode(value: any): KnowledgeBaseBackendMode
 
 function normalizeKnowledgeBaseRunStatus(value: any): KnowledgeBaseRunStatus {
   return value === "running" || value === "success" || value === "failed" || value === "canceled" ? value : "idle";
+}
+
+function normalizeReviewRunStatus(value: any): ReviewRunStatus {
+  return value === "running" || value === "success" || value === "failed" ? value : "idle";
 }
 
 function normalizeKnowledgeBaseInitStatus(value: any): KnowledgeBaseInitStatus {
@@ -910,6 +967,46 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources),
     healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory)
   };
+}
+
+function normalizeReviewSettings(value: any): WeeklyReviewSettings {
+  const fallback = DEFAULT_SETTINGS.review;
+  return {
+    enabled: value?.enabled === true,
+    knowledgeBaseEnabled: typeof value?.knowledgeBaseEnabled === "boolean" ? value.knowledgeBaseEnabled : fallback.knowledgeBaseEnabled,
+    agentChatEnabled: typeof value?.agentChatEnabled === "boolean" ? value.agentChatEnabled : fallback.agentChatEnabled,
+    scheduleTime: normalizeScheduleTime(value?.scheduleTime, fallback.scheduleTime),
+    catchUpOnStartup: value?.catchUpOnStartup !== false,
+    reports: {
+      knowledgeBase: normalizeReviewReportState(value?.reports?.knowledgeBase),
+      agentChat: normalizeReviewReportState(value?.reports?.agentChat)
+    }
+  };
+}
+
+function normalizeReviewReportState(value: any): ReviewReportState {
+  return {
+    lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
+    lastRunStatus: normalizeReviewRunStatus(value?.lastRunStatus),
+    lastRangeKey: normalizeReviewRangeKey(value?.lastRangeKey),
+    lastMarkdownPath: normalizeReviewOutputPath(value?.lastMarkdownPath, ".md"),
+    lastHtmlPath: normalizeReviewOutputPath(value?.lastHtmlPath, ".html"),
+    lastError: normalizeOptionalText(value?.lastError),
+    lastSummary: normalizeOptionalText(value?.lastSummary)
+  };
+}
+
+function normalizeReviewRangeKey(value: any): string {
+  const text = normalizeOptionalText(value);
+  return /^\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function normalizeReviewOutputPath(value: any, extension: ".md" | ".html"): string {
+  const raw = normalizeOptionalText(value).replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!raw.endsWith(extension)) return "";
+  const parts = raw.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return "";
+  return raw.startsWith("outputs/obsidian-weekly-review/") ? raw : "";
 }
 
 function normalizeKnowledgeBaseInitialization(value: any): KnowledgeBaseInitializationSettings {
