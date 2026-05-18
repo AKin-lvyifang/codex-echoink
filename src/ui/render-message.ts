@@ -1,5 +1,6 @@
 import { Component, normalizePath, setIcon, TFile } from "obsidian";
 import type { App } from "obsidian";
+import { splitVaultNoteLinkSegments, type VaultNoteLinkSegment } from "../core/vault-note-links";
 
 export function renderRichText(app: App, component: Component, container: HTMLElement, text: string): void {
   container.empty();
@@ -48,7 +49,7 @@ function renderLine(app: App, component: Component, container: HTMLElement, line
   const trimmed = line.trim();
   if (/^>\s+/.test(trimmed)) {
     const callout = container.createDiv({ cls: "codex-message-callout" });
-    renderInline(callout, trimmed.replace(/^>\s+/, ""));
+    renderInline(app, component, callout, trimmed.replace(/^>\s+/, ""));
     return;
   }
 
@@ -65,14 +66,14 @@ function renderLine(app: App, component: Component, container: HTMLElement, line
     if (task) {
       const box = row.createSpan({ cls: `codex-message-checkbox ${task[1].trim() ? "is-checked" : ""}` });
       if (task[1].trim()) box.setText("✓");
-      renderInline(row.createSpan(), task[2]);
+      renderInline(app, component, row.createSpan(), task[2]);
     } else if (/^\d+\.\s+/.test(trimmed)) {
       const number = trimmed.match(/^(\d+)\.\s+/)?.[1] ?? "1";
       row.createSpan({ cls: "codex-message-number", text: `${number}.` });
-      renderInline(row.createSpan(), trimmed.replace(/^\d+\.\s+/, ""));
+      renderInline(app, component, row.createSpan(), trimmed.replace(/^\d+\.\s+/, ""));
     } else {
       row.createSpan({ cls: "codex-message-bullet", text: "•" });
-      renderInline(row.createSpan(), trimmed.replace(/^[-*]\s+/, ""));
+      renderInline(app, component, row.createSpan(), trimmed.replace(/^[-*]\s+/, ""));
     }
     return;
   }
@@ -89,7 +90,7 @@ function renderLine(app: App, component: Component, container: HTMLElement, line
 
   for (const paragraphText of splitReadableParagraphs(line)) {
     const paragraph = container.createEl("p");
-    renderInline(paragraph, paragraphText);
+    renderInline(app, component, paragraph, paragraphText);
   }
 }
 
@@ -103,18 +104,68 @@ function resolveImageSrc(app: App, rawPath: string): string {
   return cleaned;
 }
 
-function renderInline(container: HTMLElement, text: string): void {
+function renderInline(app: App, component: Component, container: HTMLElement, text: string): void {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
   for (const part of parts) {
     if (!part) continue;
     if (part.startsWith("`") && part.endsWith("`")) {
-      container.createEl("code", { text: part.slice(1, -1) });
+      const code = part.slice(1, -1);
+      if (!renderSingleVaultNoteLink(app, component, container, code)) container.createEl("code", { text: code });
     } else if (part.startsWith("**") && part.endsWith("**")) {
-      container.createEl("strong", { text: part.slice(2, -2) });
+      const strong = container.createEl("strong");
+      renderLinkedText(app, component, strong, part.slice(2, -2));
     } else {
-      container.appendText(part);
+      renderLinkedText(app, component, container, part);
     }
   }
+}
+
+function renderLinkedText(app: App, component: Component, container: HTMLElement, text: string): void {
+  for (const segment of splitVaultNoteLinkSegments(text, vaultBasePath(app))) {
+    if (segment.kind === "text") {
+      container.appendText(segment.text);
+      continue;
+    }
+    if (!renderVaultNoteLink(app, component, container, segment)) container.appendText(segment.original);
+  }
+}
+
+function renderSingleVaultNoteLink(app: App, component: Component, container: HTMLElement, text: string): boolean {
+  const segments = splitVaultNoteLinkSegments(text, vaultBasePath(app));
+  if (segments.length !== 1 || segments[0].kind !== "noteLink") return false;
+  return renderVaultNoteLink(app, component, container, segments[0]);
+}
+
+function renderVaultNoteLink(app: App, component: Component, container: HTMLElement, segment: Extract<VaultNoteLinkSegment, { kind: "noteLink" }>): boolean {
+  const targetPath = normalizePath(segment.targetPath);
+  const file = app.vault.getAbstractFileByPath(targetPath);
+  if (!(file instanceof TFile)) return false;
+  const link = container.createEl("a", {
+    cls: "codex-message-note-link",
+    text: segment.text,
+    attr: {
+      href: "#",
+      title: segment.title,
+      "data-path": targetPath
+    }
+  });
+  component.registerDomEvent(link, "click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const current = app.vault.getAbstractFileByPath(targetPath);
+    if (current instanceof TFile) await app.workspace.getLeaf("tab").openFile(current, { active: true });
+  });
+  return true;
+}
+
+function vaultBasePath(app: App): string {
+  const adapter = app.vault.adapter as any;
+  const basePath = typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
+  return typeof basePath === "string" ? normalizeFsPath(basePath) : "";
+}
+
+function normalizeFsPath(value: string): string {
+  return value.replace(/\\/g, "/");
 }
 
 function renderCodeBlock(container: HTMLElement, code: string, language: string): void {

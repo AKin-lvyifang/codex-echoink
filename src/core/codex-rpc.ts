@@ -48,14 +48,39 @@ export class CodexRpcClient {
       if (this.stderrLines.length > 30) this.stderrLines.shift();
     });
 
-    this.proc.on("exit", () => {
+    this.proc.on("exit", (code, signal) => {
+      const wasDisposed = this.disposed;
       this.proc = null;
-      this.rejectAll(new Error("Codex app-server 已退出"));
+      const message = [
+        "Codex app-server 已退出",
+        typeof code === "number" ? `退出码 ${code}` : "",
+        signal ? `信号 ${signal}` : ""
+      ].filter(Boolean).join("，");
+      const error = new Error(message);
+      this.rejectAll(error);
+      if (!wasDisposed) {
+        this.emitNotification("error", {
+          message,
+          code: "APP_SERVER_EXIT",
+          exitCode: typeof code === "number" ? code : undefined,
+          signal: signal ?? undefined,
+          stderr: this.getRecentStderr()
+        });
+      }
     });
 
     this.proc.on("error", (error) => {
+      const wasDisposed = this.disposed;
       this.proc = null;
-      this.rejectAll(formatProcessError(error, this.launch.command));
+      const formatted = formatProcessError(error, this.launch.command);
+      this.rejectAll(formatted);
+      if (!wasDisposed) {
+        this.emitNotification("error", {
+          message: formatted.message,
+          code: processErrorCode(error),
+          stderr: this.getRecentStderr()
+        });
+      }
     });
   }
 
@@ -167,7 +192,7 @@ export class CodexRpcClient {
       this.pending.delete(message.id);
       if (pending.timer) clearTimeout(pending.timer);
       if (message.error) {
-        pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
+        pending.reject(formatJsonRpcError(message.error));
       } else {
         pending.resolve(message.result);
       }
@@ -180,10 +205,14 @@ export class CodexRpcClient {
     }
 
     if (message.method) {
-      const handlers = this.notificationHandlers.get(message.method);
-      if (!handlers) return;
-      for (const handler of handlers) handler(message.params);
+      this.emitNotification(message.method, message.params);
     }
+  }
+
+  private emitNotification(method: string, params?: any): void {
+    const handlers = this.notificationHandlers.get(method);
+    if (!handlers) return;
+    for (const handler of handlers) handler(params);
   }
 
   private async handleServerRequest(message: { id: number | string; method: string; params: any }): Promise<void> {
@@ -219,7 +248,31 @@ export class CodexRpcClient {
 }
 
 function formatProcessError(error: unknown, command: string): Error {
-  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const code = processErrorCode(error);
   if (code === "ENOENT") return new Error(`找不到 Codex CLI：${command}`);
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function processErrorCode(error: unknown): string {
+  return typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+}
+
+export function formatJsonRpcError(error: any): Error {
+  const code = error?.code !== undefined ? String(error.code) : "";
+  const message = typeof error?.message === "string" && error.message.trim() ? error.message.trim() : "JSON-RPC 请求失败";
+  const data = error?.data !== undefined ? safeStringify(error.data) : "";
+  return new Error([
+    "JSON-RPC 错误",
+    code ? `错误码：${code}` : "",
+    `消息：${message}`,
+    data ? `数据：${data}` : ""
+  ].filter(Boolean).join("\n"));
+}
+
+function safeStringify(value: any): string {
+  try {
+    return typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

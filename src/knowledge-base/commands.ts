@@ -1,4 +1,4 @@
-export type KnowledgeBaseCommandIntent = "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "cancel" | "collect" | "help";
+export type KnowledgeBaseCommandIntent = "chat" | "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "cancel" | "collect" | "help";
 export type KnowledgeBaseCommandTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseReviewCommandKind = "knowledge-base" | "agent-chat";
 
@@ -68,10 +68,11 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
   if (/记一下|记录|想法|灵感|inbox|memo|note/.test(normalized)) {
     return { intent: "collect", target: "inbox", reason: "idea" };
   }
-  if (looksLikeKnowledgeQuestion(text)) {
-    return { intent: "ask", reason: "question" };
-  }
-  return { intent: "help", reason: "unknown" };
+  return { intent: "chat", reason: "ordinary-chat" };
+}
+
+export function shouldHandleKnowledgeBaseCommand(text: string, attachmentCount = 0): boolean {
+  return parseKnowledgeBaseCommand(text, attachmentCount).intent !== "chat";
 }
 
 export function knowledgeBaseHelpText(): string {
@@ -112,11 +113,4 @@ function reviewKindFromText(normalized: string): KnowledgeBaseReviewCommandKind 
 function isInitConfirmCommand(normalized: string): boolean {
   const tail = normalized.replace(/^\/(?:init|初始化)(?:[\s:：?？]+)?/u, "").trim();
   return tail === "confirm" || tail === "确认" || tail === "执行" || tail === "开始" || tail === "apply";
-}
-
-function looksLikeKnowledgeQuestion(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return false;
-  if (/[?？]$/.test(normalized)) return true;
-  return /(什么|为何|为什么|怎么|怎样|如何|是否|是不是|能不能|有没有|关系|区别|怎么看|是谁|哪一个|哪些|多少|where|what|why|how|should|could|can)/i.test(normalized);
 }

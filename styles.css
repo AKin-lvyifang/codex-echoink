@@ -396,6 +396,18 @@ body.theme-light .codex-code-wrapper pre {
   font-size: 13px;
 }
 
+.codex-message-note-link {
+  color: color-mix(in srgb, var(--interactive-accent) 82%, var(--text-normal));
+  font-weight: 560;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.codex-message-note-link:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
 .codex-message-table {
   width: 100%;
   margin: 8px 0;

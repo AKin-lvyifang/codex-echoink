@@ -23,7 +23,10 @@ import {
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
+import { formatJsonRpcError } from "../core/codex-rpc";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText } from "../core/raw-message-store";
+import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
+import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "../ui/turn-watchdog";
 import {
   emptyWorkspaceResourceSnapshot,
   loadedTabsFromWorkspaceResourceCache,
@@ -65,6 +68,7 @@ import {
 } from "../settings/settings";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
+import { formatOpenCodeError } from "../core/opencode-errors";
 import {
   detectOpenCodeCommand,
   ensureOpenCodeModelSupportsFiles,
@@ -105,8 +109,9 @@ import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
+import { formatKnowledgeBaseCodexFailureSignal } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
-import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
@@ -170,6 +175,29 @@ const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
 assert.ok(workspace.writableRoots?.includes("/vault"));
 
+const reportLinkSegments = splitVaultNoteLinkSegments(
+  "报告已写入：[outputs/kb-maintenance-2026-05-19.md]\n(/vault/outputs/kb-maintenance-2026-05-19.md)",
+  "/vault"
+);
+assert.equal(reportLinkSegments.filter((segment) => segment.kind === "noteLink").length, 2);
+assert.deepEqual(reportLinkSegments.filter((segment) => segment.kind === "noteLink").map((segment) => segment.text), [
+  "kb-maintenance-2026-05-19",
+  "kb-maintenance-2026-05-19"
+]);
+assert.ok(reportLinkSegments.some((segment) => segment.kind === "noteLink" && segment.original.includes("/vault/outputs/kb-maintenance-2026-05-19.md")));
+const bareReportLink = splitVaultNoteLinkSegments("报告： outputs/kb-maintenance-2026-05-19.md。", "/vault");
+assert.equal(bareReportLink.find((segment) => segment.kind === "noteLink")?.text, "kb-maintenance-2026-05-19");
+assert.equal(bareReportLink.find((segment) => segment.kind === "noteLink")?.title, "/vault/outputs/kb-maintenance-2026-05-19.md");
+const markdownReportLink = splitVaultNoteLinkSegments("报告：[打开报告](outputs/kb-maintenance-2026-05-19.md)", "/vault");
+assert.equal(markdownReportLink.find((segment) => segment.kind === "noteLink")?.text, "打开报告");
+assert.equal(markdownReportLink.find((segment) => segment.kind === "noteLink")?.targetPath, "outputs/kb-maintenance-2026-05-19.md");
+const aliasReportLink = splitVaultNoteLinkSegments("报告：[[outputs/kb-maintenance-2026-05-19.md|今日体检报告]]", "/vault");
+assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.text, "今日体检报告");
+assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.targetPath, "outputs/kb-maintenance-2026-05-19.md");
+const indexLinks = splitVaultNoteLinkSegments("依据：raw/index.md 和 wiki/index.md", "/vault");
+assert.deepEqual(indexLinks.filter((segment) => segment.kind === "noteLink").map((segment) => segment.text), ["raw/index", "wiki/index"]);
+assert.deepEqual(splitVaultNoteLinkSegments("不是笔记：src/ui/render-message.ts", "/vault"), [{ kind: "text", text: "不是笔记：src/ui/render-message.ts" }]);
+
 assert.equal(buildSandboxPolicy("read-only", "/vault").type, "readOnly");
 assert.equal(buildSandboxPolicy("danger-full-access", "/vault").type, "dangerFullAccess");
 assert.deepEqual(buildSandboxPolicy("workspace-write", "/vault", ["/vault/wiki", "/vault/outputs"]).writableRoots?.slice(0, 2), ["/vault/wiki", "/vault/outputs"]);
@@ -181,6 +209,21 @@ const kbTurnOptions = buildCodexKnowledgeTurnOptions({
 });
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "journal")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "inbox")));
+assert.equal(turnWatchdogTimeoutForSession(false), CHAT_TURN_WATCHDOG_MS);
+assert.equal(turnWatchdogTimeoutForSession(true), null);
+assert.ok(turnWatchdogTimeoutText(CHAT_TURN_WATCHDOG_MS).includes("重新连接 Codex"));
+const kbFailureSignal = formatKnowledgeBaseCodexFailureSignal("turn/completed", {
+  turn: {
+    id: "turn-1",
+    threadId: "thread-1",
+    status: "failed",
+    error: { code: "rate_limit_exceeded", message: "model service timed out" }
+  }
+}, "Codex 知识库任务失败");
+assert.match(kbFailureSignal, /错误信号：turn\/completed/);
+assert.match(kbFailureSignal, /状态：failed/);
+assert.match(kbFailureSignal, /错误码：rate_limit_exceeded/);
+assert.match(kbFailureSignal, /原始消息：model service timed out/);
 
 assert.equal(normalizeServiceTier("standard"), null);
 assert.equal(normalizeServiceTier("fast"), "fast");
@@ -345,7 +388,9 @@ assert.deepEqual(parseKnowledgeBaseCommand("/写周报").reviewKind, "knowledge-
 assert.deepEqual(parseKnowledgeBaseCommand("写周报").reviewKind, "knowledge-base");
 assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/week"));
 assert.ok(knowledgeBaseHelpText().includes("`/week`：写知识库周报"));
-assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
+assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
+assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
+assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
 assert.deepEqual((parseKnowledgeBaseCommand("/初始化 确认") as any).confirm, true);
@@ -357,7 +402,7 @@ assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-ou
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
-assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "ask");
+assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "chat");
 
 const reviewEvidenceSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
@@ -777,6 +822,7 @@ const processIconCss = cssRuleBody(settingsStyles, ".codex-process-icon");
 const processEditIconCss = cssRuleBody(settingsStyles, ".codex-process-kind-edit .codex-process-icon");
 const settingsStatusErrorCss = cssRuleBody(settingsStyles, ".codex-settings-status-error");
 const settingsStatusErrorBodyCss = cssRuleBody(settingsStyles, ".codex-settings-status-error-body");
+const messageNoteLinkCss = cssRuleBody(settingsStyles, ".codex-message-note-link");
 assert.match(resourceRowCss, /min-width:\s*0;/);
 assert.match(resourceRowCss, /width:\s*100%;/);
 assert.match(resourceRowCss, /box-sizing:\s*border-box;/);
@@ -793,6 +839,9 @@ assert.match(processIconCss, /color:\s*color-mix\(in srgb,\s*var\(--interactive-
 assert.match(processEditIconCss, /color:\s*var\(--text-accent\);/);
 assert.match(settingsStatusErrorCss, /var\(--text-error\)/);
 assert.match(settingsStatusErrorBodyCss, /white-space:\s*pre-wrap;/);
+assert.match(messageNoteLinkCss, /color:\s*color-mix\(in srgb,\s*var\(--interactive-accent\)/);
+assert.match(messageNoteLinkCss, /text-decoration:\s*none;/);
+assert.match(messageNoteLinkCss, /cursor:\s*pointer;/);
 assert.match(settingsStyles, /codex-process-kind-search\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-view\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-run\s+\.codex-process-icon/);
@@ -1628,6 +1677,10 @@ assert.match(proxyDiagnostic.text, /模型 自动/);
 assert.equal(diagnoseCodexError("request timed out after 60000ms").kind, "timeout");
 assert.equal(diagnoseCodexError("spawn codex ENOENT").kind, "missing-cli");
 assert.equal(diagnoseCodexError("app-server exited with code 1").kind, "app-server");
+assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: { status: 504 } }).message, /错误码：-32000/);
+assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: { status: 504 } }).message, /status/);
+assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /错误码：upstream_timeout/);
+assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /状态：504/);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {

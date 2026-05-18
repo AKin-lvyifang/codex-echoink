@@ -13,6 +13,7 @@ import type { CodexNotification, PermissionMode, UserInput } from "../types/app-
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
+import { formatKnowledgeBaseCodexFailureSignal } from "./failure";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
@@ -30,7 +31,6 @@ type CodexKbWaiter = {
   text: string;
   resolve: (text: string) => void;
   reject: (error: Error) => void;
-  timer: number;
   model: string;
 };
 
@@ -42,7 +42,6 @@ export interface KnowledgeBaseChatResult {
 }
 
 const MAX_ATTACHED_SOURCES = 20;
-const CODEX_KB_TIMEOUT_MS = 10 * 60 * 1000;
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
 const URL_PATTERN = /https?:\/\/[^\s<>"')]+/i;
 
@@ -107,7 +106,6 @@ export class KnowledgeBaseManager {
       this.scheduleTimer = null;
     }
     if (this.codexWaiter) {
-      window.clearTimeout(this.codexWaiter.timer);
       this.codexWaiter.reject(new Error("知识库任务已取消"));
       this.codexWaiter = null;
     }
@@ -131,7 +129,6 @@ export class KnowledgeBaseManager {
       return;
     }
     if (this.codexWaiter) {
-      window.clearTimeout(this.codexWaiter.timer);
       this.codexWaiter.reject(new Error("知识库任务已取消"));
       this.codexWaiter = null;
     }
@@ -190,6 +187,9 @@ export class KnowledgeBaseManager {
     try {
       if (command.intent === "help") {
         return { status: "success", message: knowledgeBaseHelpText() };
+      }
+      if (command.intent === "chat") {
+        return { status: "success", message: "这条消息会按普通 Agent 对话处理；需要查询知识库时请使用 `/ask ...`。" };
       }
       if (command.intent === "init") {
         if (command.confirm) {
@@ -564,21 +564,24 @@ export class KnowledgeBaseManager {
     if (ids.itemId && ids.turnId && ids.turnId === waiter.turnId) waiter.itemIds.add(ids.itemId);
     if (route.collectAssistantDelta) waiter.text += params?.delta ?? "";
     if (method === "turn/completed") {
-      window.clearTimeout(waiter.timer);
       this.codexWaiter = null;
-      if (params?.turn?.status === "failed") waiter.reject(new Error(this.formatCodexDiagnostic("Codex 知识库任务失败", waiter.model)));
+      if (params?.turn?.status === "failed") {
+        waiter.reject(new Error(this.formatCodexDiagnostic(formatKnowledgeBaseCodexFailureSignal(method, params, "Codex 知识库任务失败"), waiter.model)));
+      }
       else waiter.resolve(waiter.text);
     }
     if (method === "error") {
-      window.clearTimeout(waiter.timer);
       this.codexWaiter = null;
-      waiter.reject(new Error(this.formatCodexDiagnostic(params?.message ?? "Codex 知识库任务失败", waiter.model)));
+      waiter.reject(new Error(this.formatCodexDiagnostic(formatKnowledgeBaseCodexFailureSignal(method, params, "Codex 知识库任务失败"), waiter.model)));
     }
     return true;
   }
 
   private async runCodexKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[], permission: PermissionMode = "workspace-write"): Promise<string> {
-    const status = await this.plugin.ensureCodexConnected(false, { silent: true });
+    let status = await this.plugin.ensureCodexConnected(false, { silent: true });
+    if (!status.connected) {
+      status = await this.plugin.ensureCodexConnected(true, { silent: true }).catch(() => status);
+    }
     if (!status.connected || !this.plugin.codex) throw new Error(this.formatCodexDiagnostic(status.errors[0] || "Codex 未连接", this.plugin.settings.defaultModel));
     const options = buildCodexKnowledgeTurnOptions({
       settings: this.plugin.settings,
@@ -586,17 +589,25 @@ export class KnowledgeBaseManager {
       vaultPath: this.plugin.getVaultPath(),
       permission
     });
-    const started = await this.plugin.codex.startThread(options);
+    let started: { threadId: string; title: string };
+    try {
+      started = await this.plugin.codex.startThread(options);
+    } catch (error) {
+      status = await this.plugin.ensureCodexConnected(true, { silent: true }).catch(() => status);
+      if (!status.connected || !this.plugin.codex) throw error;
+      started = await this.plugin.codex.startThread(options);
+    }
     const result = new Promise<string>((resolve, reject) => {
-      const timer = window.setTimeout(() => {
-        this.codexWaiter = null;
-        reject(new Error(this.formatCodexDiagnostic("Codex 知识库任务超时", options.model)));
-      }, CODEX_KB_TIMEOUT_MS);
-      this.codexWaiter = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, timer, model: options.model };
+      this.codexWaiter = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, model: options.model };
     });
-    const turnId = await this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), options);
-    this.activeCodexRun = { threadId: started.threadId, turnId };
-    if (this.codexWaiter) this.codexWaiter.turnId = turnId;
+    try {
+      const turnId = await this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), options);
+      this.activeCodexRun = { threadId: started.threadId, turnId };
+      if (this.codexWaiter) this.codexWaiter.turnId = turnId;
+    } catch (error) {
+      this.codexWaiter = null;
+      throw error;
+    }
     return result;
   }
 

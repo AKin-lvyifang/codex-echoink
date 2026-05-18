@@ -26,6 +26,7 @@ import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-st
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
 import { openImageOverlay, renderRichText } from "./render-message";
+import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput } from "../editor-actions/prompt";
 import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
@@ -33,6 +34,7 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
+import { shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 
@@ -223,12 +225,15 @@ export class CodexView extends ItemView {
     if (this.handleEditorActionNotification(method, params)) return;
     if (method === "turn/started") {
       const session = this.activeRunSession();
+      const knowledgeSession = this.isKnowledgeBaseSession(session);
       this.running = true;
       this.activeTurnId = params?.turn?.id ?? "";
       this.turnStartedAt = Date.now();
       this.attachTurnIdToRun(session, this.activeTurnId);
       this.ensureThinkingMessage(session, "生成中", "正在生成回复...");
-      this.armTurnWatchdog();
+      const timeoutMs = turnWatchdogTimeoutForSession(knowledgeSession);
+      if (timeoutMs === null) this.clearTurnWatchdog();
+      else this.armTurnWatchdog(timeoutMs, turnWatchdogTimeoutText(timeoutMs));
       this.applyStatus();
       return;
     }
@@ -551,7 +556,7 @@ export class CodexView extends ItemView {
     if (!this.inputEl) return;
     const session = this.ensureSession();
     this.inputEl.setAttr("placeholder", this.isKnowledgeBaseSession(session)
-      ? "知识库管理：输入“只体检一下 / 维护知识库 / 收集这个链接 / 记一下...”"
+      ? "普通对话直接输入；查知识库用 /ask；管理用 /check /maintain"
       : session.cwd ? `问 Codex，当前工作区：${workspaceDisplayName(session.cwd)}` : "先选择工作区，再问 Codex");
   }
 
@@ -2241,12 +2246,13 @@ export class CodexView extends ItemView {
     if (this.editorSummaryRun) this.cancelEditorSummaryRun("用户输入抢占摘要");
     if (this.running || (!text && !this.attachments.length && !this.selectedSkill)) return;
     let session = this.ensureSession();
-    if (this.isKnowledgeBaseSession(session)) {
+    const knowledgeSession = this.isKnowledgeBaseSession(session);
+    if (knowledgeSession && shouldHandleKnowledgeBaseCommand(text, this.attachments.length)) {
       await this.sendKnowledgeBaseMessage(session, text);
       return;
     }
     try {
-      const workspaceReady = await this.ensureChatWorkspaceSelected(session);
+      const workspaceReady = knowledgeSession ? true : await this.ensureChatWorkspaceSelected(session);
       if (!workspaceReady) return;
       const status = await this.plugin.ensureCodexConnected();
       this.applyStatus();
@@ -2367,6 +2373,11 @@ export class CodexView extends ItemView {
       assistantMessage.status = result.status === "success" ? "completed" : "failed";
       assistantMessage.text = result.message;
       assistantMessage.citations = result.citations;
+      if (result.status === "failed") {
+        this.finishThinkingMessage(session, "失败");
+        this.finishRunningProcessMessages(session, "error");
+        this.finishPlanMessage(session);
+      }
       this.moveMessageToEnd(session, assistantMessage.id);
       if (result.followUpCommand) {
         this.fillKnowledgeBaseCommand(result.followUpCommand);
@@ -2375,6 +2386,7 @@ export class CodexView extends ItemView {
     } finally {
       this.running = false;
       session.updatedAt = Date.now();
+      this.clearTurnWatchdog();
       await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
       this.clearActiveRun();
       await this.plugin.saveSettings(true);
@@ -2826,11 +2838,11 @@ export class CodexView extends ItemView {
     void this.plugin.saveSettings();
   }
 
-  private armTurnWatchdog(timeoutMs = 5 * 60 * 1000): void {
+  private armTurnWatchdog(timeoutMs = CHAT_TURN_WATCHDOG_MS, timeoutText?: string): void {
     this.clearTurnWatchdog();
     this.turnWatchdog = window.setTimeout(() => {
-      if (!this.running) return;
       this.turnWatchdog = null;
+      if (!this.running) return;
       const timedOutThreadId = this.editorActionThreadId;
       const timedOutTurnId = this.activeTurnId;
       this.running = false;
@@ -2849,13 +2861,17 @@ export class CodexView extends ItemView {
       }
       this.activeTurnId = "";
       const session = this.activeRunSession();
+      const knowledgeSession = this.isKnowledgeBaseSession(session);
+      if (knowledgeSession && session.threadId && timedOutTurnId) {
+        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(() => undefined);
+      }
       this.finishThinkingMessage(session, "失败");
       this.finishRunningProcessMessages(session, "error");
       this.addMessageToSession(session, {
         role: "system",
         title: "响应超时",
         itemType: "error",
-        text: "这轮回复超过 5 分钟没有完成，已停止等待。可以重试或重新连接 Codex。"
+        text: timeoutText ?? turnWatchdogTimeoutText(timeoutMs)
       });
       this.clearActiveRun();
       this.applyStatus();

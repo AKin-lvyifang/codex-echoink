@@ -45,6 +45,13 @@
 2. Windows WebSocket、代理拒绝、CLI 缺失、超时和 app-server 退出会显示具体原因、当前上下文、建议处理和原始错误。
 3. README 增加 Windows `responses_websocket` / `os error 10061` 排障说明。
 
+同版本补充修复：
+
+1. 知识库频道里的普通输入默认改回普通 Agent 对话；只有显式 `/ask`、`/query`、`/问`、`/查询` 才进入知识库只读问答。
+2. 知识库频道输入框文案改为区分普通对话、`/ask` 查询和 `/check` / `/maintain` 管理命令。
+3. 知识库任务失败时保留更完整的 app-server、JSON-RPC、OpenCode 和 turn 错误信息，便于定位断流、超时和后端失败。
+4. 知识库回复里的本地笔记路径和报告路径会渲染成可点击链接，方便直接打开对应 Vault 文件。
+
 ## v0.5.1 - 2026-05-17
 
 版本号：`v0.5.1`

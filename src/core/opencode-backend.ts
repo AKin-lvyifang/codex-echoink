@@ -3,6 +3,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions } from "../agent/types";
+import { formatOpenCodeError } from "./opencode-errors";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
 
 export interface OpenCodeBackendOptions {
@@ -276,18 +277,6 @@ async function unwrapOpenCodeResult<T>(promise: Promise<{ data: T; error: undefi
   const result = await promise;
   if (result.error) throw new Error(`${fallback}：${formatOpenCodeError(result.error)}`);
   return result.data as T;
-}
-
-function formatOpenCodeError(error: any): string {
-  if (!error) return "未知错误";
-  if (typeof error === "string") return error;
-  if (typeof error?.message === "string") return error.message;
-  if (typeof error?.data?.message === "string") return error.data.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 async function nodeFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
