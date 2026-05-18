@@ -16,13 +16,12 @@ export interface KnowledgeBaseRulesRepairResult {
 
 type RulesSettings = Pick<KnowledgeBaseSettings, "useCustomRulesFile" | "rulesFilePath">;
 
-const TEMPLATE_MARKERS = ["template: codex-echoink-llm-wiki", "template: obsidian-codex-llm-wiki"];
 const MINIMUM_RULES_MARKER = "<!-- codex-echoink-kb-minimum-rules:start -->";
 const MINIMUM_RULES_END_MARKER = "<!-- codex-echoink-kb-minimum-rules:end -->";
-const LEGACY_MINIMUM_RULES_MARKER = "<!-- obsidian-codex-kb-minimum-rules:start -->";
 
 const MINIMUM_RULE_CHECKS: Array<{ label: string; patterns: RegExp[] }> = [
-  { label: "raw/ 只读边界", patterns: [/raw\//i, /(只读|不可变|禁止修改|禁止改写|不得修改)/] },
+  { label: "raw/ 管理只读边界", patterns: [/raw\//i, /(知识库管理|维护任务|维护动作|维护、提炼、体检)/, /(只读|禁止删除|禁止移动|禁止改写|不修改正文)/] },
+  { label: "raw/ 普通对话授权边界", patterns: [/raw\//i, /(普通 Agent 对话|普通对话)/, /(明确要求|用户指令|按用户)/] },
   { label: "wiki/ 长期知识区", patterns: [/wiki\//i, /(结构化知识|长期知识|主要工作区|可读写|读写)/] },
   { label: "wiki/index.md 索引入口", patterns: [/wiki\/index\.md/i] },
   { label: "outputs/.ingest-tracker.md 追踪记录", patterns: [/outputs\/\.ingest-tracker\.md|ingest-tracker/i] },
@@ -60,7 +59,8 @@ export async function repairKnowledgeBaseRulesFile(
     };
   }
 
-  const patched = `${current.trimEnd()}\n\n${buildKnowledgeBaseMinimumRulesBlock(now)}`;
+  const minimumBlock = buildKnowledgeBaseMinimumRulesBlock(now);
+  const patched = replaceMinimumRulesBlock(current, minimumBlock) ?? `${current.trimEnd()}\n\n${minimumBlock}`;
   await fsp.writeFile(absolutePath, patched, "utf8");
   return {
     status: "patched",
@@ -71,7 +71,6 @@ export async function repairKnowledgeBaseRulesFile(
 }
 
 export function detectMissingKnowledgeBaseRules(content: string): string[] {
-  if (TEMPLATE_MARKERS.some((marker) => content.includes(marker)) || content.includes(MINIMUM_RULES_MARKER) || content.includes(LEGACY_MINIMUM_RULES_MARKER)) return [];
   return MINIMUM_RULE_CHECKS
     .filter((check) => !check.patterns.every((pattern) => pattern.test(content)))
     .map((check) => check.label);
@@ -95,7 +94,8 @@ function buildKnowledgeBaseMinimumRulesBlock(now: Date): string {
     "",
     "### 目录职责",
     "",
-    "- `raw/` 是不可变原始资料区，只读；除 `raw/index.md` 外，禁止修改、改写或删除其中内容。",
+    "- `raw/` 是原始资料与待整理来源区；知识库管理任务中只读，除 `raw/index.md` 外不修改正文。",
+    "- 普通 Agent 对话中，如果用户明确要求整理 `raw/`，例如移动、删除、合并、重命名或重新归类 raw 文件，可以按用户指令和当前权限执行。",
     "- `wiki/` 是长期结构化知识区，是 Agent 的主要读写工作区。",
     "- `wiki/index.md` 是知识库入口；领域索引使用 `wiki/<领域>/00-索引.md`。",
     "- `outputs/` 用来保存维护报告、协作产物和 `outputs/.ingest-tracker.md`。",
@@ -112,13 +112,21 @@ function buildKnowledgeBaseMinimumRulesBlock(now: Date): string {
     "",
     "### 安全边界",
     "",
-    "- 禁止删除文件。",
-    "- 禁止改写 `raw/` 原文。",
+    "- 知识库维护、提炼、体检任务中禁止删除、移动或改写 `raw/` 原文。",
+    "- 不要把知识库管理任务的 raw 只读边界扩展成普通 Agent 对话的全局限制。",
     "- 无法判断归属领域时先跳过并在报告中说明。",
     "- 默认中文回复；先结论，再依据；不编造来源。",
     "",
     MINIMUM_RULES_END_MARKER
   ].join("\n");
+}
+
+function replaceMinimumRulesBlock(content: string, replacement: string): string | null {
+  const start = content.indexOf(MINIMUM_RULES_MARKER);
+  const end = content.indexOf(MINIMUM_RULES_END_MARKER);
+  if (start < 0 || end < start) return null;
+  const endWithMarker = end + MINIMUM_RULES_END_MARKER.length;
+  return `${content.slice(0, start).trimEnd()}\n\n${replacement}\n\n${content.slice(endWithMarker).trimStart()}`.trimEnd();
 }
 
 function resolveVaultFilePath(vaultPath: string, relativePath: string): string {

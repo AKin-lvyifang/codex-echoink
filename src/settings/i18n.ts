@@ -104,7 +104,7 @@ const ZH_CN = {
   },
   knowledge: {
     title: "知识库管理",
-    safety: "安全边界：允许写 wiki/ 和 outputs/；禁止修改 raw/ 原始资料、删除文件或自动归档。OpenCode 模式需要先外部安装 OpenCode。",
+    safety: "知识库管理边界：维护、提炼、体检时允许写 wiki/ 和 outputs/，raw/ 正文只读；普通 Agent 对话可按你的明确指令整理 raw。OpenCode 模式需要先外部安装 OpenCode。",
     statusHeading: "运行状态",
     recentStatus: (status: string, time: string) => `最近状态：${status}${time ? ` · ${time}` : ""}`,
     initialization: (status: string, path: string) => `初始化：${status}${path ? ` · ${path}` : ""}`,
@@ -431,7 +431,7 @@ const EN: SettingsCopy = {
   },
   knowledge: {
     title: "Knowledge",
-    safety: "Safety: can write wiki/ and outputs/; never changes raw/ sources, deletes files, or auto-archives. OpenCode mode requires OpenCode installed separately.",
+    safety: "Knowledge management boundary: maintenance, digest, and lint runs can write wiki/ and outputs/, while raw/ source bodies stay read-only. Ordinary Agent chat can organize raw when you explicitly ask. OpenCode mode requires OpenCode installed separately.",
     statusHeading: "Run status",
     recentStatus: (status, time) => `Latest: ${status}${time ? ` · ${time}` : ""}`,
     initialization: (status, path) => `Initialization: ${status}${path ? ` · ${path}` : ""}`,

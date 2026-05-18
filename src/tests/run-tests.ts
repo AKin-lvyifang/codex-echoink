@@ -118,6 +118,7 @@ import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-rou
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
 import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
 import {
@@ -382,13 +383,22 @@ assert.deepEqual(parseKnowledgeBaseCommand("/outputs 提炼最近发布稿").int
 assert.deepEqual(parseKnowledgeBaseCommand("/inbox 只归类不沉淀").intent, "process-inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("/journal 今天完成知识库命令优化").intent, "journal");
 assert.deepEqual(parseKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？").intent, "ask");
+assert.deepEqual(parseKnowledgeBaseCommand("/clear").intent, "clear");
+assert.deepEqual(parseKnowledgeBaseCommand("/history").intent, "history");
+assert.deepEqual(parseKnowledgeBaseCommand("/历史").intent, "history");
+assert.deepEqual(parseKnowledgeBaseCommand("停止").intent, "cancel");
+assert.deepEqual(parseKnowledgeBaseCommand("停止当前知识库任务").intent, "cancel");
+assert.deepEqual(parseKnowledgeBaseCommand("请写一段较长的测试回复，主题是停止按钮验证。只输出文字，不读取或修改文件。").intent, "chat");
 assert.deepEqual(parseKnowledgeBaseCommand("/week").intent, "review");
 assert.deepEqual(parseKnowledgeBaseCommand("/week").reviewKind, "knowledge-base");
 assert.deepEqual(parseKnowledgeBaseCommand("/week agent").reviewKind, "agent-chat");
 assert.deepEqual(parseKnowledgeBaseCommand("/写周报").reviewKind, "knowledge-base");
 assert.deepEqual(parseKnowledgeBaseCommand("写周报").reviewKind, "knowledge-base");
 assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/week"));
+assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/clear"));
+assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/history"));
 assert.ok(knowledgeBaseHelpText().includes("`/week`：写知识库周报"));
+assert.ok(knowledgeBaseHelpText().includes("`/clear`：清空当前页面"));
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
 assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
@@ -408,6 +418,53 @@ assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.c
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
 assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "chat");
+
+const hiddenHistorySettings = normalizeSettingsData({
+  sessions: [
+    {
+      id: "kb-history",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: "/vault",
+      threadId: "thread-old",
+      messagesHiddenBefore: 20,
+      tokenUsage: { total: { totalTokens: 99 } },
+      messages: [
+        { id: "old-user", role: "user", text: "/help", createdAt: 10 },
+        { id: "old-assistant", role: "assistant", text: "帮助", createdAt: 20 },
+        { id: "new-user", role: "user", text: "新问题", createdAt: 21 }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  ],
+  activeSessionId: "kb-history",
+  knowledgeBase: { sessionId: "kb-history" }
+}).settings;
+const normalizedHistorySession = hiddenHistorySettings.sessions[0];
+assert.equal(normalizedHistorySession.messagesHiddenBefore, 20);
+assert.deepEqual(getVisibleKnowledgeBaseMessages(normalizedHistorySession).map((message) => message.id), ["new-user"]);
+assert.deepEqual(getHiddenKnowledgeBaseMessages(normalizedHistorySession).map((message) => message.id), ["old-user", "old-assistant"]);
+
+const clearableHistorySession = {
+  ...normalizedHistorySession,
+  threadId: "thread-old",
+  tokenUsage: { total: { totalTokens: 99 } },
+  messagesHiddenBefore: undefined,
+  messages: [...normalizedHistorySession.messages]
+};
+const clearResult = clearKnowledgeBaseVisibleHistory(clearableHistorySession, 15);
+assert.equal(clearResult.hiddenCount, 3);
+assert.equal(clearableHistorySession.messages.length, 3);
+assert.equal(clearableHistorySession.threadId, undefined);
+assert.equal(clearableHistorySession.tokenUsage, undefined);
+assert.equal(clearableHistorySession.messagesHiddenBefore, 21);
+assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), []);
+assert.deepEqual(getHiddenKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
+restoreKnowledgeBaseVisibleHistory(clearableHistorySession);
+assert.equal(clearableHistorySession.messagesHiddenBefore, undefined);
+assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
+assert.equal(clearableHistorySession.threadId, undefined);
 
 const reviewEvidenceSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
@@ -1925,7 +1982,9 @@ try {
   assert.ok(kbPrompt.includes(`${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}: 存在，必须读取`));
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
+  assert.ok(kbPrompt.includes("只适用于本次知识库管理任务"));
   assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
+  assert.ok(kbPrompt.includes("禁止删除、移动或合并 raw/ 中的文件"));
   assert.ok(kbPrompt.includes("raw/index.md 只允许做索引更新"));
   assert.ok(kbPrompt.includes("find"));
   assert.ok(kbPrompt.includes("跳过 raw/ 中以 .base 结尾"));
@@ -2115,9 +2174,13 @@ try {
   assert.equal(await fileExists(path.join(initVault, "raw", "articles")), true);
   assert.equal(await fileExists(path.join(initVault, "wiki", "index.md")), true);
   assert.equal(await fileExists(path.join(initVault, "outputs", ".ingest-tracker.md")), true);
-  assert.ok((await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
+  const initializedRules = await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
+  assert.ok(initializedRules.includes("LLM Wiki"));
+  assert.ok(initializedRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
+  assert.ok(initializedRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(initializedRules.includes("普通 Agent 对话不默认检索知识库"));
   assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
-  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("不可变"));
+  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("普通 Agent 对话可按用户明确指令整理 raw 文件"));
 } finally {
   await rm(initVault, { recursive: true, force: true });
 }
@@ -2158,7 +2221,8 @@ try {
   const createdRules = await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8");
   assert.ok(createdRules.includes("LLM Wiki"));
   assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
-  assert.ok(createdRules.includes("禁止改写 `raw/` 原文"));
+  assert.ok(createdRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(createdRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
 
   const ok = await repairKnowledgeBaseRulesFile(rulesRepairVault, {
     useCustomRulesFile: false,
@@ -2192,14 +2256,43 @@ try {
     rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(patched.status, "patched");
-  assert.ok(patched.missingRules.includes("raw/ 只读边界"));
+  assert.ok(patched.missingRules.includes("raw/ 管理只读边界"));
+  assert.ok(patched.missingRules.includes("raw/ 普通对话授权边界"));
   const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
   assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
-  assert.ok(patchedRules.includes("`raw/` 是不可变原始资料区，只读"));
+  assert.ok(patchedRules.includes("`raw/` 是原始资料与待整理来源区"));
+  assert.ok(patchedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
   assert.ok(patchedRules.includes("把维护报告写入 `outputs/`"));
 } finally {
   await rm(patchRulesRepairVault, { recursive: true, force: true });
+}
+
+const replaceMinimumRulesVault = await mkdtemp(path.join(tmpdir(), "codex-kb-replace-min-rules-"));
+try {
+  await writeFile(path.join(replaceMinimumRulesVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), [
+    "# Existing rules",
+    "",
+    "<!-- codex-echoink-kb-minimum-rules:start -->",
+    "",
+    "## Codex 知识库最小运行规则",
+    "",
+    "- `raw/` 是不可变原始资料区，只读。",
+    "- 禁止删除文件。",
+    "",
+    "<!-- codex-echoink-kb-minimum-rules:end -->"
+  ].join("\n"), "utf8");
+  const replaced = await repairKnowledgeBaseRulesFile(replaceMinimumRulesVault, {
+    useCustomRulesFile: true,
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
+  }, new Date("2026-05-15T08:00:00.000Z"));
+  assert.equal(replaced.status, "patched");
+  const replacedRules = await readFile(path.join(replaceMinimumRulesVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
+  assert.equal((replacedRules.match(/codex-echoink-kb-minimum-rules:start/g) ?? []).length, 1);
+  assert.ok(replacedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
+  assert.ok(!replacedRules.includes("不可变原始资料区"));
+} finally {
+  await rm(replaceMinimumRulesVault, { recursive: true, force: true });
 }
 
 function daysAgoDateForTest(daysAgo: number): Date {

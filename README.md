@@ -164,7 +164,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 **What changed:**
 
 - Added `/ask` for read-only knowledge questions. It searches `wiki/` first, sends the most relevant notes as context, and asks the Agent to distinguish Vault evidence from supplemental information.
-- Added automatic question detection in the Knowledge channel, so natural questions such as `Harness Engineering 和 Vibe Coding 有什么关系？` enter the read-only ask flow.
+- Kept read-only Knowledge Q&A behind explicit `/ask`; ordinary natural-language messages stay as normal Agent chat in current 0.5.2 behavior.
 - Upgraded the Knowledge health heatmap from a short recent strip to a full-year GitHub-style view with month labels, weekday labels, success states, and failed checks.
 - Added Codex CLI model and reasoning-effort controls directly in the Knowledge channel composer. The Knowledge task no longer has to use a hard-coded reasoning level.
 - Added search boxes to the current-vault `Plugins`, `MCP`, and `Skills` capability tabs. Search covers name, id/path, metadata, and description, and multiple words work as an AND filter.
@@ -174,7 +174,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 **How to use:**
 
 1. Open the `Knowledge` channel.
-2. Type `/ask your question`, or just ask a question in the Knowledge channel.
+2. Type `/ask your question` when you want the Knowledge channel to search vault sources.
 3. Use the bottom model button in Codex CLI mode to choose the model and reasoning effort for Knowledge tasks.
 4. Expand the health dashboard to review the full-year check heatmap.
 5. Open plugin settings, go to current-vault capability management, then search within `Plugins`, `MCP`, or `Skills` before toggling items.
@@ -313,7 +313,7 @@ Try these steps:
 - OpenCode API mode connects to a local or user-configured OpenCode server. The plugin can start or stop `opencode serve`, but it does not silently install OpenCode.
 - Custom API provider keys are stored in Obsidian plugin data on your local machine. Use them only on a trusted device.
 - The plugin does not upload your whole vault by default. Ordinary chat requires choosing a workspace folder, and attached notes are turn context only.
-- Knowledge base writes happen through explicit commands or enabled maintenance settings, and Raw sources are treated as read-only except for indexes and tracker files.
+- Knowledge management runs keep Raw source bodies read-only and only update indexes or trackers. In ordinary Agent chat, Raw file organization follows your explicit instruction and the active permission mode.
 
 ## Screenshots
 

@@ -70,6 +70,7 @@ export interface StoredSession {
   threadId?: string;
   cwd: string;
   messages: ChatMessage[];
+  messagesHiddenBefore?: number;
   tokenUsage?: TokenUsage;
   createdAt: number;
   updatedAt: number;
@@ -459,7 +460,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
       status: "not-started",
       initializedAt: 0,
       rulesFilePath: "",
-      templateVersion: "v0.5",
+      templateVersion: "v0.6",
       lastPreviewSummary: ""
     },
     processedSources: {},
@@ -1081,12 +1082,18 @@ function normalizeStoredSessions(value: any): StoredSession[] {
         threadId: normalizeOptionalText(session?.threadId) || undefined,
         cwd: normalizeOptionalText(session?.cwd),
         messages,
+        messagesHiddenBefore: normalizeOptionalPositiveNumber(session?.messagesHiddenBefore),
         tokenUsage: session?.tokenUsage,
         createdAt: normalizeNonNegativeNumber(session?.createdAt),
         updatedAt: normalizeNonNegativeNumber(session?.updatedAt)
       };
     })
     .filter((session): session is StoredSession => Boolean(session));
+}
+
+function normalizeOptionalPositiveNumber(value: any): number | undefined {
+  const normalized = normalizeNonNegativeNumber(value);
+  return normalized > 0 ? normalized : undefined;
 }
 
 function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, KnowledgeBaseProcessedSource> {

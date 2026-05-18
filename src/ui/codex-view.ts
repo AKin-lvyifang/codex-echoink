@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ItemView, MarkdownView, Menu, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, Menu, Modal, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
 import { DEFAULT_SETTINGS, ensureKnowledgeBaseSession, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
@@ -35,8 +35,9 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
-import { shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
@@ -821,6 +822,9 @@ export class CodexView extends ItemView {
   private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
     const session = this.ensureSession();
     this.settleStaleMessages(session);
+    const knowledgeSession = this.isKnowledgeBaseSession(session);
+    const messages = knowledgeSession ? getVisibleKnowledgeBaseMessages(session) : session.messages;
+    const hiddenCount = knowledgeSession ? getHiddenKnowledgeBaseMessages(session).length : 0;
     if (this.virtualSessionId !== session.id) {
       this.virtualSessionId = session.id;
       this.virtualRowHeights.clear();
@@ -828,18 +832,22 @@ export class CodexView extends ItemView {
     const previousScrollTop = this.messagesEl.scrollTop;
     const shouldPinBottom = Boolean(options.forceBottom) || (!options.fromScroll && this.isMessagesNearBottom());
     this.virtualListEl.empty();
-    if (session.messages.length === 0) {
+    if (messages.length === 0) {
       this.virtualListEl.style.height = "100%";
       const welcome = this.virtualListEl.createDiv({ cls: "codex-welcome" });
-      welcome.createDiv({ cls: "codex-welcome-title", text: this.isKnowledgeBaseSession(session) ? "知识库管理" : "What's new?" });
-      if (this.isKnowledgeBaseSession(session)) {
-        welcome.createDiv({ cls: "codex-resource-note", text: "输入 /help 查看命令；也可以直接说只体检一下、维护知识库、写周报、收集这个链接。" });
+      welcome.createDiv({ cls: "codex-welcome-title", text: knowledgeSession ? "知识库管理" : "What's new?" });
+      if (knowledgeSession) {
+        welcome.createDiv({ cls: "codex-resource-note", text: hiddenCount ? `当前页面已清空，隐藏 ${hiddenCount} 条本地历史；输入 /history 查看。` : "输入 /help 查看命令；也可以直接说只体检一下、维护知识库、写周报、收集这个链接。" });
+        if (hiddenCount) {
+          const historyButton = welcome.createEl("button", { cls: "codex-kb-history-inline-button", text: "查看历史", attr: { type: "button" } });
+          historyButton.onclick = () => this.openKnowledgeBaseHistory(session);
+        }
       } else if (!session.cwd) {
         welcome.createDiv({ cls: "codex-resource-note", text: "普通会话需要先选择工作区；添加笔记只作为本轮上下文。" });
       }
       return;
     }
-    const rows = this.buildVirtualRows(session.messages);
+    const rows = this.buildVirtualRows(messages);
     const rowIds = rows.map((row) => row.id);
     this.pruneVirtualHeights(rowIds);
     const viewportHeight = Math.max(1, this.messagesEl.clientHeight);
@@ -1908,6 +1916,45 @@ export class CodexView extends ItemView {
     new Notice("已清除工作区");
   }
 
+  private async clearKnowledgeBasePage(session: StoredSession): Promise<void> {
+    if (!this.isKnowledgeBaseSession(session)) return;
+    if (this.running || this.plugin.getKnowledgeBaseManager()?.isRunning) {
+      new Notice("知识库任务运行中，结束后再清空页面");
+      return;
+    }
+    const result = clearKnowledgeBaseVisibleHistory(session);
+    this.inputEl.value = "";
+    this.skillMenuEl.removeClass("is-visible");
+    this.attachments = [];
+    this.selectedSkill = null;
+    this.resetVirtualWindow();
+    await this.plugin.saveSettings(true);
+    this.renderTabs();
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    this.updateInputPlaceholder();
+    new Notice(result.hiddenCount ? `已清空当前页面，${result.hiddenCount} 条历史仍可在 /history 查看` : "已开启新的知识库上下文");
+  }
+
+  private openKnowledgeBaseHistory(session: StoredSession): void {
+    if (!this.isKnowledgeBaseSession(session)) return;
+    const hiddenMessages = getHiddenKnowledgeBaseMessages(session);
+    if (!hiddenMessages.length) {
+      new Notice("没有被隐藏的知识库历史");
+      return;
+    }
+    new KnowledgeBaseHistoryModal(this.app, hiddenMessages, () => void this.restoreKnowledgeBaseHistory(session)).open();
+  }
+
+  private async restoreKnowledgeBaseHistory(session: StoredSession): Promise<void> {
+    restoreKnowledgeBaseVisibleHistory(session);
+    this.resetVirtualWindow();
+    await this.plugin.saveSettings(true);
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    new Notice("历史已恢复显示；模型上下文仍会从新线程开始");
+  }
+
   private async ensureChatWorkspaceSelected(session: StoredSession): Promise<boolean> {
     const workspacePath = normalizeWorkspacePath(session.cwd);
     if (workspacePath && workspaceDirectoryExists(workspacePath)) return true;
@@ -1937,6 +1984,19 @@ export class CodexView extends ItemView {
           .onClick(() => this.fillKnowledgeBaseCommand(command.text))
       );
     }
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("历史")
+        .setIcon("history")
+        .onClick(() => this.openKnowledgeBaseHistory(this.ensureSession()))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("清空页面")
+        .setIcon("eraser")
+        .onClick(() => this.fillKnowledgeBaseCommand("/clear"))
+    );
     menu.showAtMouseEvent(event);
   }
 
@@ -2251,10 +2311,24 @@ export class CodexView extends ItemView {
   private async sendMessage(): Promise<void> {
     const text = this.inputEl.value.trim();
     if (this.editorSummaryRun) this.cancelEditorSummaryRun("用户输入抢占摘要");
-    if (this.running || (!text && !this.attachments.length && !this.selectedSkill)) return;
+    if (!text && !this.attachments.length && !this.selectedSkill) return;
     let session = this.ensureSession();
     const knowledgeSession = this.isKnowledgeBaseSession(session);
-    if (knowledgeSession && shouldHandleKnowledgeBaseCommand(text, this.attachments.length)) {
+    const knowledgeCommand = knowledgeSession ? parseKnowledgeBaseCommand(text, this.attachments.length) : null;
+    if (knowledgeSession) {
+      if (knowledgeCommand?.intent === "clear") {
+        await this.clearKnowledgeBasePage(session);
+        return;
+      }
+      if (knowledgeCommand?.intent === "history") {
+        this.inputEl.value = "";
+        this.skillMenuEl.removeClass("is-visible");
+        this.openKnowledgeBaseHistory(session);
+        return;
+      }
+    }
+    if (this.running) return;
+    if (knowledgeSession && knowledgeCommand && knowledgeCommand.intent !== "chat") {
       await this.sendKnowledgeBaseMessage(session, text);
       return;
     }
@@ -3773,6 +3847,63 @@ export class CodexView extends ItemView {
       new Notice("粘贴图片失败");
     }
   }
+}
+
+class KnowledgeBaseHistoryModal extends Modal {
+  constructor(
+    app: any,
+    private readonly messages: ChatMessage[],
+    private readonly restore: () => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("codex-kb-history-modal");
+    contentEl.createEl("h2", { text: "知识库历史" });
+    contentEl.createDiv({ cls: "codex-resource-note", text: `本地保留 ${this.messages.length} 条隐藏记录。恢复显示不会恢复旧模型上下文。` });
+
+    const actions = contentEl.createDiv({ cls: "codex-kb-history-actions" });
+    const restoreButton = actions.createEl("button", { cls: "mod-cta", text: "恢复显示", attr: { type: "button" } });
+    restoreButton.onclick = () => {
+      this.restore();
+      this.close();
+    };
+
+    const list = contentEl.createDiv({ cls: "codex-kb-history-list" });
+    const shown = this.messages.slice(-120).reverse();
+    if (shown.length < this.messages.length) {
+      list.createDiv({ cls: "codex-kb-history-more", text: `仅展示最近 ${shown.length} 条；更早记录仍保留在本地。` });
+    }
+    for (const message of shown) {
+      const row = list.createDiv({ cls: "codex-kb-history-row" });
+      const meta = row.createDiv({ cls: "codex-kb-history-meta" });
+      meta.createSpan({ text: roleLabel(message.role) });
+      meta.createSpan({ text: formatAbsoluteTime(message.createdAt) });
+      if (message.title) meta.createSpan({ text: message.title });
+      row.createDiv({ cls: "codex-kb-history-text", text: compactHistoryText(message) });
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    this.contentEl.removeClass("codex-kb-history-modal");
+  }
+}
+
+function roleLabel(role: ChatMessage["role"]): string {
+  if (role === "user") return "我";
+  if (role === "assistant") return "EchoInk";
+  if (role === "tool") return "工具";
+  return "系统";
+}
+
+function compactHistoryText(message: ChatMessage): string {
+  const text = (displayTextForMessage(message) || message.previewText || "").replace(/\s+/g, " ").trim();
+  if (!text) return "(空消息)";
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
 }
 
 function labelFor(value: string): string {

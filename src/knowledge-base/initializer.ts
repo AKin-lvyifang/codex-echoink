@@ -3,7 +3,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
 
-export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.5";
+export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.6";
 
 export type KnowledgeBaseInitializationStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseInitializationTarget = "raw/articles" | "raw/attachments" | "inbox" | "projects" | "outputs" | "journal" | "wiki-review" | "ignore";
@@ -277,12 +277,19 @@ export function buildKnowledgeBaseRulesTemplate(now: Date): string {
     "# LLM Wiki 知识库规则",
     "",
     "> Obsidian 是知识工作台，Agent 是维护者，Wiki 是长期知识库。",
+    "> 本文件描述知识库结构和知识库管理任务的边界，不是普通 Agent 对话的全局禁止清单。",
+    "",
+    "## 适用范围",
+    "",
+    "- 当用户运行 `/check`、`/maintain`、`/outputs`、`/inbox`、自动维护、初始化修复等知识库管理动作时，必须按本文的知识库管理边界执行。",
+    "- 当用户在普通 Agent 对话中明确要求整理 `raw/`，例如移动、删除、合并、重命名或重新归类 raw 文件时，可以按用户指令和当前权限执行；不要因为维护任务的 raw 只读边界而拒绝。",
+    "- 删除、覆盖、大范围移动这类高风险操作，按当前工具的确认/审批机制处理，并在执行后说明改了哪些文件。",
     "",
     "## 架构",
     "",
     "| 层 | 文件夹 | 角色 | 默认权限 |",
     "|---|---|---|---|",
-    "| Raw Sources | `raw/` | 不可变原始资料 | 只读，除 `raw/index.md` 外不改写 |",
+    "| Raw Sources | `raw/` | 原始资料与待整理来源 | 知识库管理时只读；普通对话可按用户明确指令整理 |",
     "| Wiki | `wiki/` | AI 维护的结构化知识 | 可读写 |",
     "| Projects | `projects/` | 项目资料、PRD、会议记录 | 用户主导，Agent 辅助 |",
     "| Outputs | `outputs/` | 协作产物、草稿、报告 | 可读写 |",
@@ -294,7 +301,7 @@ export function buildKnowledgeBaseRulesTemplate(now: Date): string {
     "",
     "## Ingest",
     "",
-    "发现 `raw/` 中的新资料时：",
+    "运行知识库管理动作，并发现 `raw/` 中的新资料时：",
     "",
     "1. 读取来源资料。",
     "2. 判断领域，生成或更新 `wiki/<领域>/` 笔记。",
@@ -302,11 +309,14 @@ export function buildKnowledgeBaseRulesTemplate(now: Date): string {
     "4. 更新 `wiki/index.md`、领域 `00-索引.md`、`raw/index.md`。",
     "5. 更新 `outputs/.ingest-tracker.md`。",
     "",
-    "禁止改写 `raw/` 原文，禁止删除文件，禁止自动归档。",
+    "知识库管理动作中禁止改写 `raw/` 原文，禁止删除、移动或自动归档 raw 文件；只允许更新 `raw/index.md` 索引。",
+    "普通 Agent 对话中，如果用户明确要求整理 raw 文件，可以移动、删除、合并或重命名，但这不属于自动 Ingest。",
     "",
     "## Query",
     "",
-    "回答知识库问题时先看 `wiki/index.md`，再读取相关领域索引和页面。回答要给来源链接；没有来源时要明说。",
+    "只有用户显式使用 `/ask`，或明确要求查询知识库 / 本地 Vault 依据时，才按知识库 Query 规则执行。",
+    "知识库 Query 先看 `wiki/index.md`，再读取相关领域索引和页面。回答要给来源链接；没有来源时要明说。",
+    "普通 Agent 对话不默认检索知识库，也不要因为本文件存在而把普通问题改写成知识库问答。",
     "",
     "## Lint",
     "",
@@ -364,7 +374,7 @@ function buildRawIndexTemplate(now: Date): string {
     "",
     "# 原始资料索引",
     "",
-    "> 不可变的原始资料层。AI 只读原文，从这里消化后输出到 wiki/。",
+    "> 原始资料层。知识库维护时只读原文，从这里消化后输出到 wiki/；普通 Agent 对话可按用户明确指令整理 raw 文件。",
     "",
     "## articles/",
     "",

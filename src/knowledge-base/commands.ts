@@ -1,4 +1,4 @@
-export type KnowledgeBaseCommandIntent = "chat" | "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "cancel" | "collect" | "help";
+export type KnowledgeBaseCommandIntent = "chat" | "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "clear" | "history" | "cancel" | "collect" | "help";
 export type KnowledgeBaseCommandTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseReviewCommandKind = "knowledge-base" | "agent-chat";
 
@@ -23,6 +23,8 @@ export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
   { command: "/inbox ...", description: "整理收件箱" },
   { command: "/journal ...", description: "写日记" },
   { command: "/week", description: "写知识库周报；/week agent 写 Agent 周报" },
+  { command: "/clear", description: "清空当前页面，保留本地历史并开启新上下文" },
+  { command: "/history", description: "查看被清空隐藏的本地历史" },
   { command: "/init", description: "预览初始化；/init confirm 才执行" },
   { command: "/help", description: "显示这份命令说明" }
 ];
@@ -35,7 +37,7 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
   const slashCommand = parseSlashKnowledgeBaseCommand(normalized);
   if (slashCommand) return slashCommand;
 
-  if (/取消|停止|中断|\bcancel\b|\bstop\b/.test(normalized)) {
+  if (isCancelRequest(normalized)) {
     return { intent: "cancel", reason: "cancel" };
   }
   if (/只体检|体检|检查|扫描|lint|health|doctor/.test(normalized)) {
@@ -90,6 +92,8 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
   if (!match) return null;
   const command = match[1];
   if (command === "help" || command === "帮助") return { intent: "help", reason: "slash-help" };
+  if (command === "clear" || command === "清空") return { intent: "clear", reason: "slash-clear" };
+  if (command === "history" || command === "历史") return { intent: "history", reason: "slash-history" };
   if (command === "cancel" || command === "stop" || command === "取消") return { intent: "cancel", reason: "slash-cancel" };
   if (command === "init" || command === "初始化") return { intent: "init", reason: "slash-init", confirm: isInitConfirmCommand(normalized) };
   if (command === "check" || command === "lint" || command === "doctor" || command === "体检" || command === "检查") return { intent: "lint", reason: "slash-lint" };
@@ -108,6 +112,15 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
 function reviewKindFromText(normalized: string): KnowledgeBaseReviewCommandKind {
   if (/\bagent\b|\bchat\b|对话|普通|非知识库/.test(normalized)) return "agent-chat";
   return "knowledge-base";
+}
+
+function isCancelRequest(normalized: string): boolean {
+  const compact = normalized.replace(/\s+/g, "");
+  if (/^(cancel|stop)$/i.test(normalized)) return true;
+  if (/^(取消|停止|中断)$/.test(compact)) return true;
+  if (/^(请|帮我)?(取消|停止|中断)(当前|这次|本次)?(知识库)?(任务|维护|运行|执行)$/.test(compact)) return true;
+  if (/^(cancel|stop)\s+(current\s+)?(knowledge\s+base\s+)?(task|run|maintenance)$/i.test(normalized)) return true;
+  return false;
 }
 
 function isInitConfirmCommand(normalized: string): boolean {
