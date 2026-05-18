@@ -46,12 +46,13 @@ export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string, writ
   };
 }
 
-export function buildCollaborationMode(mode: UiMode, model: string, effort: ReasoningEffort) {
+export function buildCollaborationMode(mode: UiMode, model: string | null | undefined, effort: ReasoningEffort) {
   if (mode !== "plan") return null;
+  const trimmedModel = typeof model === "string" ? model.trim() : "";
   return {
     mode: "plan",
     settings: {
-      model,
+      ...(trimmedModel ? { model: trimmedModel } : {}),
       reasoning_effort: effort,
       developer_instructions: null
     }
@@ -161,7 +162,7 @@ export function basename(filePath: string): string {
   return path.basename(filePath);
 }
 
-export function normalizeProcessFileRef(rawPath: string, vaultPath: string): ProcessFileRef {
+export function normalizeProcessFileRef(rawPath: string, vaultPath: string, basePath?: string): ProcessFileRef {
   const cleaned = cleanCandidatePath(rawPath);
   const normalizedVault = path.resolve(vaultPath || "/");
   if (!cleaned) {
@@ -199,6 +200,9 @@ export function normalizeProcessFileRef(rawPath: string, vaultPath: string): Pro
   }
 
   const displayPath = normalizeSlashes(cleaned.replace(/^\.\//, ""));
+  if (basePath && looksLikePath(displayPath)) {
+    return normalizeProcessFileRef(path.resolve(basePath, displayPath), vaultPath);
+  }
   return {
     name: path.basename(displayPath),
     path: displayPath,
@@ -208,7 +212,7 @@ export function normalizeProcessFileRef(rawPath: string, vaultPath: string): Pro
   };
 }
 
-export function extractProcessFileRefs(value: unknown, vaultPath: string): ProcessFileRef[] {
+export function extractProcessFileRefs(value: unknown, vaultPath: string, basePath?: string): ProcessFileRef[] {
   const text = collectSearchableText(value);
   const candidates = new Set<string>();
   for (const match of text.matchAll(/(?:^|[\s"'`([{])((?:\.{1,2}\/)?(?:[\w\u4e00-\u9fa5@+.-]+\/)+[\w\u4e00-\u9fa5@+.-]+\.[\w.-]+)/g)) {
@@ -221,7 +225,7 @@ export function extractProcessFileRefs(value: unknown, vaultPath: string): Proce
   const seen = new Set<string>();
   const refs: ProcessFileRef[] = [];
   for (const candidate of candidates) {
-    const ref = normalizeProcessFileRef(candidate, vaultPath);
+    const ref = normalizeProcessFileRef(candidate, vaultPath, basePath);
     const key = `${ref.kind}:${ref.path}`;
     if (!ref.openable || seen.has(key)) continue;
     seen.add(key);
@@ -230,8 +234,8 @@ export function extractProcessFileRefs(value: unknown, vaultPath: string): Proce
   return refs.slice(0, 8);
 }
 
-export function summarizeProcessEvent(itemType: string, payload: any, vaultPath: string): ProcessEventSummary {
-  const files = extractProcessFileRefs(payload, vaultPath);
+export function summarizeProcessEvent(itemType: string, payload: any, vaultPath: string, basePath?: string): ProcessEventSummary {
+  const files = extractProcessFileRefs(payload, vaultPath, basePath);
   if (itemType === "reasoning") {
     const text = reasoningTextFromPayload(payload);
     const running = payload?.status === "running" || payload?.status === "in_progress" || payload?.status === "inProgress";
@@ -286,7 +290,7 @@ export function summarizeProcessEvent(itemType: string, payload: any, vaultPath:
     const command = commandSummary(commandText);
     return {
       title: command.title,
-      detail: compactText(commandText || payload?.status || "执行命令"),
+      detail: command.detail || compactText(commandText || payload?.status || "执行命令"),
       files,
       defaultOpen: false,
       kind: command.kind
@@ -301,17 +305,35 @@ export function summarizeProcessEvent(itemType: string, payload: any, vaultPath:
   };
 }
 
+export function processGroupStateId(items: Array<{ id?: string; runId?: string }>): string {
+  const first = items[0];
+  const last = items[items.length - 1];
+  return `group-${first?.runId ?? "none"}-${first?.id ?? "process"}-${last?.id ?? first?.id ?? "process"}-${items.length}`;
+}
+
 export function reasoningTextFromPayload(payload: any): string {
   return joinTextFragments([payload?.text, payload?.summary, payload?.content]);
 }
 
-function commandSummary(command: string): { title: string; kind: ProcessEventSummary["kind"] } {
+function commandSummary(command: string): { title: string; detail: string; kind: ProcessEventSummary["kind"] } {
   const trimmed = command.trim();
-  if (/\b(rg|grep|find|fd)\b/.test(trimmed)) return { title: "搜索文件", kind: "search" };
-  if (/\b(sed|cat|less|head|tail|nl|wc|ls)\b/.test(trimmed)) return { title: "查看文件", kind: "view" };
-  if (/\b(apply_patch)\b/.test(trimmed)) return { title: "编辑文件", kind: "edit" };
-  if (/\b(python|node|npm|pnpm|yarn|swift|xcodebuild|tsc|eslint|vitest|jest|pytest|cargo|go test)\b/.test(trimmed)) return { title: "运行检查", kind: "run" };
-  return { title: "使用命令", kind: "command" };
+  const targetName = commandTargetName(trimmed);
+  if (/\b(rg|grep|find|fd)\b/.test(trimmed)) return { title: "搜索文件", detail: targetName ? `搜索 ${targetName}` : "搜索文件", kind: "search" };
+  if (/\b(sed|cat|less|head|tail|nl|wc|ls)\b/.test(trimmed)) return { title: "查看文件", detail: targetName ? `Read ${targetName}` : "Read files", kind: "view" };
+  if (/\b(apply_patch)\b/.test(trimmed)) return { title: "编辑文件", detail: "已编辑文件", kind: "edit" };
+  if (/\b(python|node|npm|pnpm|yarn|swift|xcodebuild|tsc|eslint|vitest|jest|pytest|cargo|go test)\b/.test(trimmed)) return { title: "运行检查", detail: `已运行 ${compactCommand(trimmed)}`, kind: "run" };
+  return { title: "使用命令", detail: `已运行 ${compactCommand(trimmed)}`, kind: "command" };
+}
+
+function commandTargetName(command: string): string {
+  const refs = extractProcessFileRefs(command, "");
+  if (!refs.length) return "";
+  return refs[refs.length - 1].name;
+}
+
+function compactCommand(command: string): string {
+  const firstLine = command.split(/\r?\n/)[0]?.trim() ?? "";
+  return firstLine.length > 96 ? `${firstLine.slice(0, 95)}…` : firstLine;
 }
 
 function collectSearchableText(value: unknown): string {

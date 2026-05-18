@@ -1,47 +1,85 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
-import type { KnowledgeBaseSource } from "./types";
+import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeBaseEvidenceStatus, KnowledgeBaseSource } from "./types";
 
 export interface KnowledgeBaseAskMatch extends KnowledgeBaseSource {
+  bucket: KnowledgeBaseCitationBucket;
   title: string;
   score: number;
   excerpt: string;
+  excerptLines: string[];
+  relevance: Exclude<KnowledgeBaseEvidenceStatus, "none">;
+  reason: string;
 }
 
 const WIKI_MATCH_LIMIT = 8;
 const MAX_FILE_CHARS = 120_000;
-const MAX_EXCERPT_CHARS = 1400;
+const MAX_EXCERPT_LINES = 4;
+
+const ASK_SOURCE_ROOTS: Array<{ bucket: KnowledgeBaseCitationBucket; dir: string }> = [
+  { bucket: "wiki", dir: "wiki" },
+  { bucket: "journal", dir: "journal" },
+  { bucket: "outputs", dir: "outputs" }
+];
 
 export async function findKnowledgeBaseAskMatches(vaultPath: string, question: string, limit = WIKI_MATCH_LIMIT): Promise<KnowledgeBaseAskMatch[]> {
-  const wikiRoot = path.join(vaultPath, "wiki");
-  const files = await listMarkdownFiles(wikiRoot).catch(() => []);
   const terms = extractSearchTerms(question);
   const matches: KnowledgeBaseAskMatch[] = [];
-  for (const absolutePath of files) {
-    const relativePath = normalizeRelativePath(path.relative(vaultPath, absolutePath));
-    const stat = await fsp.stat(absolutePath).catch(() => null);
-    if (!stat?.isFile()) continue;
-    const raw = await fsp.readFile(absolutePath, "utf8").catch(() => "");
-    const text = raw.slice(0, MAX_FILE_CHARS);
-    const title = titleForWikiFile(relativePath, text);
-    const score = scoreWikiNote(question, terms, relativePath, title, text);
-    if (score <= 0) continue;
-    matches.push({
-      relativePath,
-      absolutePath,
-      size: stat.size,
-      mtime: stat.mtimeMs,
-      mime: "text/markdown",
-      modality: "text",
-      changed: false,
-      title,
-      score,
-      excerpt: buildExcerpt(text, terms)
-    });
+  for (const root of ASK_SOURCE_ROOTS) {
+    const files = await listMarkdownFiles(path.join(vaultPath, root.dir)).catch(() => []);
+    for (const absolutePath of files) {
+      const relativePath = normalizeRelativePath(path.relative(vaultPath, absolutePath));
+      const stat = await fsp.stat(absolutePath).catch(() => null);
+      if (!stat?.isFile()) continue;
+      const raw = await fsp.readFile(absolutePath, "utf8").catch(() => "");
+      const text = raw.slice(0, MAX_FILE_CHARS);
+      const title = titleForKnowledgeFile(relativePath, text);
+      const score = scoreKnowledgeNote(question, terms, relativePath, title, text);
+      if (score <= 0) continue;
+      const excerptLines = buildExcerptLines(text, terms);
+      const relevance = relevanceForMatch(root.bucket, score);
+      matches.push({
+        relativePath,
+        absolutePath,
+        size: stat.size,
+        mtime: stat.mtimeMs,
+        mime: "text/markdown",
+        modality: "text",
+        changed: false,
+        bucket: root.bucket,
+        title,
+        score,
+        excerpt: excerptLines.join("\n"),
+        excerptLines,
+        relevance,
+        reason: reasonForMatch(root.bucket, score, question, terms, relativePath, title, text)
+      });
+    }
   }
   return matches
     .sort((left, right) => right.score - left.score || left.relativePath.localeCompare(right.relativePath))
     .slice(0, limit);
+}
+
+export function buildKnowledgeBaseCitationSummary(matches: KnowledgeBaseAskMatch[]): KnowledgeBaseCitationSummary {
+  const counts: Record<KnowledgeBaseCitationBucket, number> = { wiki: 0, journal: 0, outputs: 0 };
+  const citations: KnowledgeBaseCitation[] = matches.map((match) => {
+    counts[match.bucket] += 1;
+    return {
+      bucket: match.bucket,
+      title: match.title,
+      path: match.relativePath,
+      excerptLines: match.excerptLines.slice(0, MAX_EXCERPT_LINES),
+      relevance: match.relevance,
+      reason: match.reason,
+      score: match.score
+    };
+  });
+  return {
+    status: evidenceStatusForCitations(citations),
+    counts,
+    citations
+  };
 }
 
 export function stripAskCommand(text: string): string {
@@ -49,13 +87,16 @@ export function stripAskCommand(text: string): string {
 }
 
 export function formatAskMatchesForPrompt(matches: KnowledgeBaseAskMatch[]): string {
-  if (!matches.length) return "- 未找到相关 wiki 笔记。";
+  if (!matches.length) return "- 未找到相关本地来源。";
   return matches.map((match, index) => {
     return [
       `### ${index + 1}. ${match.relativePath}`,
+      `来源集合：${bucketLabel(match.bucket)}`,
       `标题：${match.title}`,
       `相关度：${match.score}`,
-      "摘录：",
+      `证据强度：${match.relevance === "strong" ? "强证据" : "弱相关"}`,
+      `为什么相关：${match.reason}`,
+      "引用片段：",
       match.excerpt || "（无可用摘录）"
     ].join("\n");
   }).join("\n\n");
@@ -95,7 +136,7 @@ function extractSearchTerms(question: string): string[] {
   return Array.from(terms).slice(0, 80);
 }
 
-function scoreWikiNote(question: string, terms: string[], relativePath: string, title: string, text: string): number {
+function scoreKnowledgeNote(question: string, terms: string[], relativePath: string, title: string, text: string): number {
   const normalizedQuestion = normalizeForSearch(question);
   const normalizedPath = normalizeForSearch(relativePath);
   const normalizedTitle = normalizeForSearch(title);
@@ -113,18 +154,25 @@ function scoreWikiNote(question: string, terms: string[], relativePath: string, 
   return score;
 }
 
-function buildExcerpt(text: string, terms: string[]): string {
-  const clean = text.replace(/\r/g, "").trim();
-  if (!clean) return "";
-  const lower = clean.toLowerCase();
-  const term = terms.find((item) => lower.includes(item.toLowerCase()));
-  const index = term ? lower.indexOf(term.toLowerCase()) : 0;
-  const start = Math.max(0, index - Math.floor(MAX_EXCERPT_CHARS / 3));
-  const excerpt = clean.slice(start, start + MAX_EXCERPT_CHARS).trim();
-  return `${start > 0 ? "..." : ""}${excerpt}${start + MAX_EXCERPT_CHARS < clean.length ? "..." : ""}`;
+function buildExcerptLines(text: string, terms: string[]): string[] {
+  const lines = text.replace(/\r/g, "").split("\n").map((line) => line.trimEnd());
+  const nonEmpty = lines.findIndex((line) => line.trim());
+  if (nonEmpty < 0) return [];
+  const hitIndex = lines.findIndex((line) => lineMatchesTerms(line, terms));
+  const start = Math.max(0, (hitIndex >= 0 ? hitIndex : nonEmpty) - 1);
+  const excerpt = lines
+    .slice(start, start + MAX_EXCERPT_LINES)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (excerpt.length >= 2 || start + MAX_EXCERPT_LINES >= lines.length) return excerpt;
+  for (let index = start + MAX_EXCERPT_LINES; index < lines.length && excerpt.length < 2; index++) {
+    const line = lines[index].trim();
+    if (line) excerpt.push(line);
+  }
+  return excerpt;
 }
 
-function titleForWikiFile(relativePath: string, text: string): string {
+function titleForKnowledgeFile(relativePath: string, text: string): string {
   const heading = text.match(/^#\s+(.+)$/m)?.[1]?.trim();
   if (heading) return heading;
   return path.basename(relativePath).replace(/\.(md|markdown)$/i, "");
@@ -149,6 +197,49 @@ function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
+function relevanceForMatch(bucket: KnowledgeBaseCitationBucket, score: number): Exclude<KnowledgeBaseEvidenceStatus, "none"> {
+  if (bucket === "wiki" && score >= 32) return "strong";
+  if (score >= 72) return "strong";
+  return "weak";
+}
+
+function evidenceStatusForCitations(citations: KnowledgeBaseCitation[]): KnowledgeBaseEvidenceStatus {
+  if (!citations.length) return "none";
+  return citations.some((citation) => citation.relevance === "strong") ? "strong" : "weak";
+}
+
+function reasonForMatch(bucket: KnowledgeBaseCitationBucket, score: number, question: string, terms: string[], relativePath: string, title: string, text: string): string {
+  const normalizedQuestion = normalizeForSearch(question);
+  const normalizedPath = normalizeForSearch(relativePath);
+  const normalizedTitle = normalizeForSearch(title);
+  const normalizedText = normalizeForSearch(text);
+  const matchedTerms = terms.filter((term) => normalizedText.includes(normalizeForSearch(term)));
+  const titleOrPathHit = terms.some((term) => {
+    const normalizedTerm = normalizeForSearch(term);
+    return normalizedPath.includes(normalizedTerm) || normalizedTitle.includes(normalizedTerm);
+  });
+  if (normalizedQuestion.length >= 4 && normalizedText.includes(normalizedQuestion)) return "问题原文在正文中直接出现。";
+  if (titleOrPathHit && matchedTerms.length >= 2) return "标题或路径与正文同时命中问题关键词。";
+  if (bucket === "wiki" && matchedTerms.length >= 2) return "Wiki 笔记正文多处命中问题关键词。";
+  if (matchedTerms.length >= 2) return "正文命中多个问题关键词，可作为背景依据。";
+  if (titleOrPathHit) return "标题或路径命中问题关键词。";
+  return score >= 32 ? "正文命中问题关键词。" : "只有少量关键词命中，相关性较弱。";
+}
+
+function lineMatchesTerms(line: string, terms: string[]): boolean {
+  const normalizedLine = normalizeForSearch(line);
+  return terms.some((term) => {
+    const normalizedTerm = normalizeForSearch(term);
+    return normalizedTerm && normalizedLine.includes(normalizedTerm);
+  });
+}
+
+function bucketLabel(bucket: KnowledgeBaseCitationBucket): string {
+  if (bucket === "wiki") return "Wiki";
+  if (bucket === "journal") return "Journal";
+  return "Outputs";
+}
+
 function isStopWord(value: string): boolean {
   return new Set([
     "什么",
@@ -167,7 +258,29 @@ function isStopWord(value: string): boolean {
     "what",
     "why",
     "how",
+    "answer",
+    "base",
+    "check",
+    "citation",
+    "citations",
+    "context",
+    "evidence",
+    "file",
+    "files",
+    "knowledge",
+    "local",
+    "note",
+    "notes",
+    "question",
+    "related",
+    "source",
+    "sources",
     "should",
+    "test",
+    "testing",
+    "totally",
+    "unrelated",
+    "vault",
     "could",
     "can",
     "the",

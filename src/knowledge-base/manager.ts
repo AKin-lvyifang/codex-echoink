@@ -5,9 +5,10 @@ import { execFile } from "child_process";
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../agent/types";
+import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
-import { recordKnowledgeBaseHealthCheck, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
+import { providerConnectionLabel, recordKnowledgeBaseHealthCheck, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
@@ -18,9 +19,9 @@ import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapsho
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
-import { findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
+import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
-import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
+import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 
 type CodexKbWaiter = {
   threadId: string;
@@ -30,11 +31,13 @@ type CodexKbWaiter = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
   timer: number;
+  model: string;
 };
 
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed";
   message: string;
+  citations?: KnowledgeBaseCitationSummary;
   followUpCommand?: string;
 }
 
@@ -441,6 +444,7 @@ export class KnowledgeBaseManager {
         throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
       }
       const matches = await findKnowledgeBaseAskMatches(this.plugin.getVaultPath(), question);
+      const citations = buildKnowledgeBaseCitationSummary(matches);
       const prompt = buildKnowledgeBaseAskPrompt({
         vaultPath: this.plugin.getVaultPath(),
         userRequest: question,
@@ -455,7 +459,8 @@ export class KnowledgeBaseManager {
         : await this.runCodexKnowledgeTask(prompt, matches, "read-only");
       return {
         status: "success",
-        message: output.trim() || (matches.length ? "Agent 未返回回答。" : "未找到相关 wiki 笔记，Agent 未返回回答。")
+        message: formatAskAnswer(output, citations),
+        citations
       };
     } catch (error) {
       return {
@@ -479,8 +484,10 @@ export class KnowledgeBaseManager {
       const vaultPath = this.plugin.getVaultPath();
       const copiedAttachments = await this.copyAttachmentsToRaw(attachments);
       const request = stripJournalPrefix(text).trim() || "写日记";
+      const backend = this.resolveKnowledgeBackend();
       const target = await resolveJournalDailyTarget(vaultPath, text);
       await ensureJournalTargetFolders(vaultPath, target);
+      const openCodeHistory = backend === "opencode" ? await this.collectOpenCodeJournalHistory(target) : null;
       const prompt = buildKnowledgeBaseJournalPrompt({
         vaultPath,
         userRequest: copiedAttachments.length
@@ -491,9 +498,10 @@ export class KnowledgeBaseManager {
             ...copiedAttachments.map((item) => `- ${item}`)
           ].join("\n")
           : request,
-        target
+        target,
+        backend,
+        openCodeHistory
       });
-      const backend = this.resolveKnowledgeBackend();
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, [], "workspace-write")
         : await this.runCodexKnowledgeTask(prompt, [], "workspace-write");
@@ -517,6 +525,29 @@ export class KnowledgeBaseManager {
     }
   }
 
+  private async collectOpenCodeJournalHistory(target: { evidenceWindow: { startMs: number; endMs: number } }) {
+    const backend = new OpenCodeBackend({
+      ...this.plugin.settings.opencode,
+      vaultPath: this.plugin.getVaultPath()
+    });
+    try {
+      await backend.connect();
+      this.plugin.settings.opencode.lastConnectedAt = Date.now();
+      this.plugin.settings.opencode.lastError = "";
+      await this.plugin.saveSettings();
+      return await backend.collectHistoryMessages({
+        startMs: target.evidenceWindow.startMs,
+        endMs: target.evidenceWindow.endMs
+      });
+    } catch (error) {
+      this.plugin.settings.opencode.lastError = error instanceof Error ? error.message : String(error);
+      await this.plugin.saveSettings();
+      throw error;
+    } finally {
+      await backend.disconnect();
+    }
+  }
+
   handleCodexNotification(notification: CodexNotification): boolean {
     const waiter = this.codexWaiter;
     if (!waiter) return false;
@@ -535,20 +566,20 @@ export class KnowledgeBaseManager {
     if (method === "turn/completed") {
       window.clearTimeout(waiter.timer);
       this.codexWaiter = null;
-      if (params?.turn?.status === "failed") waiter.reject(new Error("Codex 知识库任务失败"));
+      if (params?.turn?.status === "failed") waiter.reject(new Error(this.formatCodexDiagnostic("Codex 知识库任务失败", waiter.model)));
       else waiter.resolve(waiter.text);
     }
     if (method === "error") {
       window.clearTimeout(waiter.timer);
       this.codexWaiter = null;
-      waiter.reject(new Error(params?.message ?? "Codex 知识库任务失败"));
+      waiter.reject(new Error(this.formatCodexDiagnostic(params?.message ?? "Codex 知识库任务失败", waiter.model)));
     }
     return true;
   }
 
   private async runCodexKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[], permission: PermissionMode = "workspace-write"): Promise<string> {
     const status = await this.plugin.ensureCodexConnected(false, { silent: true });
-    if (!status.connected || !this.plugin.codex) throw new Error(status.errors[0] || "Codex 未连接");
+    if (!status.connected || !this.plugin.codex) throw new Error(this.formatCodexDiagnostic(status.errors[0] || "Codex 未连接", this.plugin.settings.defaultModel));
     const options = buildCodexKnowledgeTurnOptions({
       settings: this.plugin.settings,
       availableModels: status.models,
@@ -559,9 +590,9 @@ export class KnowledgeBaseManager {
     const result = new Promise<string>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.codexWaiter = null;
-        reject(new Error("Codex 知识库任务超时"));
+        reject(new Error(this.formatCodexDiagnostic("Codex 知识库任务超时", options.model)));
       }, CODEX_KB_TIMEOUT_MS);
-      this.codexWaiter = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, timer };
+      this.codexWaiter = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, timer, model: options.model };
     });
     const turnId = await this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), options);
     this.activeCodexRun = { threadId: started.threadId, turnId };
@@ -633,6 +664,15 @@ export class KnowledgeBaseManager {
       `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : AGENTS_RULES_FILE}`,
       reportPath ? `报告：${reportPath}` : ""
     ].filter(Boolean).join("\n");
+  }
+
+  private formatCodexDiagnostic(error: unknown, model: string): string {
+    return diagnoseCodexError(error, {
+      model,
+      providerLabel: providerConnectionLabel(this.plugin.settings),
+      proxyEnabled: this.plugin.settings.proxyEnabled,
+      proxyUrl: this.plugin.settings.proxyUrl
+    }).text;
   }
 
   private async resolveRulesFile(): Promise<{ relativePath: string; absolutePath: string; exists: boolean; useCustomRulesFile: boolean }> {
@@ -914,6 +954,14 @@ function selectOpenCodeModel(models: AgentModelInfo[], providerId: string, model
   const configured = models.find((model) => model.providerId === providerId && model.modelId === modelId);
   if (configured) return configured;
   return models.find((model) => required.every((modality) => model.inputModalities.includes(modality))) ?? models[0] ?? null;
+}
+
+function formatAskAnswer(output: string, citations: KnowledgeBaseCitationSummary): string {
+  const text = output.trim();
+  if (!text) return citations.status === "none" ? "未找到相关本地依据，Agent 未返回回答。" : "Agent 未返回回答。";
+  if (citations.status !== "none") return text;
+  if (/未找到相关本地依据|无本地依据|未找到相关本地来源|未找到相关\s*(wiki|Wiki)\s*笔记/.test(text)) return text;
+  return `未找到相关本地依据。\n\n${text}`;
 }
 
 async function ensureKnowledgeBaseFolders(vaultPath: string): Promise<void> {

@@ -60,7 +60,7 @@
 - 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
 - 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
 - 支持 `/ask` 只读问答：先检索 Wiki 相关笔记，再回答问题，并区分 Vault 依据和外部/模型补充。
-- 支持 `/journal` 写日记：按当前 `journal/` 体系自动写入 daily 月份目录，并沿用最近日记格式。
+- 支持 `/journal` 写日记：按当前 `journal/` 体系自动写入 daily 月份目录，并沿用最近日记格式；当天窗口为目标日 `00:00` 到次日 `06:00` 前，Codex CLI 读取 Codex sessions，OpenCode API 读取 OpenCode 聊天记录。
 - Codex CLI 知识库任务会展示与普通 Agent 对话一致的过程卡片：思考、命令、文件改动、工具调用和最终结果。
 - 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
 - 默认读取 `LLM-WIKI.md` 作为知识库规则真源；`AGENTS.md` 只保留 Agent 运行层背景。
@@ -271,6 +271,20 @@ codex-echoink/
 5. 通过过程卡片查看命令、编辑、上下文用量和结果证据。
 6. 需要维护知识库时，打开 `知识库` 常驻频道。
 7. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再按需要用 `/ask` 提问、`/maintain` 维护，或用 `/outputs` 写入结构化知识。
+
+<a id="故障排查"></a>
+## 故障排查
+
+### Windows WebSocket 或 `os error 10061`
+
+如果 Codex CLI 日志里出现 `responses_websocket`、`wss://chatgpt.com/backend-api/codex/responses`、`actively refused` 或 `os error 10061`，通常是 Codex CLI 的 ChatGPT 登录态 WebSocket 连接被系统、代理或网络拒绝。
+
+可以按这个顺序处理：
+
+1. 把插件默认模型设为 `自动`，或手动选择非 `gpt-5.5` 模型。
+2. 如果当前网络需要本地代理，在插件设置里启用本地代理，并填写例如 `http://127.0.0.1:7890`。
+3. 在设置页重连 Codex，或重启 Obsidian。
+4. 如果仍失败，请提供插件新的详细错误和脱敏后的 Codex CLI 日志。
 
 <a id="隐私与权限"></a>
 ## 隐私与权限

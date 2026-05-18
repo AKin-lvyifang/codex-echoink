@@ -18,7 +18,8 @@ import type {
 } from "../types/app-server";
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, parseFileChangeDiff, serializeFileChanges, type ParsedDiffFile } from "../core/diff-summary";
-import { basename, buildUserInput, contextUsageView, filterSkills, getSlashQuery, normalizeProcessFileRef, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
+import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
+import { basename, buildUserInput, contextUsageView, filterSkills, getSlashQuery, normalizeProcessFileRef, processGroupStateId, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse, type RateLimitWindowView } from "../core/rate-limits";
 import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-store";
@@ -33,6 +34,7 @@ import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActio
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 
@@ -95,6 +97,7 @@ export class CodexView extends ItemView {
   private activeItemMessages = new Map<string, string>();
   private openProcessGroups = new Map<string, boolean>();
   private openProcessItems = new Map<string, boolean>();
+  private openKnowledgeBaseCitations = new Map<string, boolean>();
   private renderScheduled = false;
   private pendingRenderForceBottom = false;
   private pendingRenderFromScroll = false;
@@ -206,6 +209,15 @@ export class CodexView extends ItemView {
     void this.refreshKnowledgeDashboard(true);
   }
 
+  private diagnoseCodexFailure(error: unknown, model = this.effectiveModel()): CodexErrorDiagnostic {
+    return diagnoseCodexError(error, {
+      model,
+      providerLabel: providerConnectionLabel(this.plugin.settings),
+      proxyEnabled: this.plugin.settings.proxyEnabled,
+      proxyUrl: this.plugin.settings.proxyUrl
+    });
+  }
+
   handleCodexNotification(notification: CodexNotification): void {
     const { method, params } = notification;
     if (this.handleEditorActionNotification(method, params)) return;
@@ -312,7 +324,8 @@ export class CodexView extends ItemView {
     }
     if (method === "error") {
       const session = this.activeRunSession();
-      if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error(params?.message ?? "Codex 出错了"));
+      const diagnostic = this.diagnoseCodexFailure(params?.message ?? "Codex 出错了");
+      if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error(diagnostic.text));
       this.running = false;
       this.activeTurnId = "";
       this.clearTurnWatchdog();
@@ -320,9 +333,9 @@ export class CodexView extends ItemView {
       this.finishRunningProcessMessages(session, "error");
       this.addMessageToSession(session, {
         role: "system",
-        text: params?.message ?? "Codex 出错了",
+        text: diagnostic.text,
         itemType: "error",
-        title: "错误"
+        title: diagnostic.title
       });
       this.clearActiveRun();
       this.applyStatus();
@@ -365,7 +378,7 @@ export class CodexView extends ItemView {
       return true;
     }
     if (method === "error") {
-      this.rejectEditorActionRun(new Error(params?.message ?? "Codex 出错了"));
+      this.rejectEditorActionRun(new Error(this.diagnoseCodexFailure(params?.message ?? "Codex 出错了").text));
       this.running = false;
       this.activeTurnId = "";
       this.clearTurnWatchdog();
@@ -409,7 +422,7 @@ export class CodexView extends ItemView {
     }
     if (method === "error") {
       const runId = this.editorSummaryRun?.runId;
-      this.rejectEditorSummaryRun(new Error(params?.message ?? "摘要生成失败"));
+      this.rejectEditorSummaryRun(new Error(this.diagnoseCodexFailure(params?.message ?? "摘要生成失败").text));
       this.releaseEditorSummaryRunLock(runId);
       return true;
     }
@@ -1174,6 +1187,82 @@ export class CodexView extends ItemView {
     }
     renderRichText(this.app, this, content, displayTextForMessage(message));
     if (message.rawRef) this.renderRawMessageExpander(content, message);
+    if (message.citations) this.renderKnowledgeBaseCitations(wrapper, message.id, message.citations);
+  }
+
+  private renderKnowledgeBaseCitations(container: HTMLElement, messageId: string, citations: KnowledgeBaseCitationSummary): void {
+    const stateKey = `kb-citations:${messageId}`;
+    const details = container.createEl("details", { cls: `codex-kb-citations codex-kb-citations-${citations.status}` });
+    details.open = this.openKnowledgeBaseCitations.get(stateKey) ?? false;
+    details.ontoggle = () => {
+      this.openKnowledgeBaseCitations.set(stateKey, details.open);
+      this.scheduleMeasureVirtualRows();
+    };
+    const summary = details.createEl("summary", { cls: "codex-kb-citations-summary" });
+    summary.createSpan({ cls: "codex-kb-citations-title", text: "本次来源" });
+    const buckets = summary.createSpan({ cls: "codex-kb-citation-buckets" });
+    for (const bucket of ["wiki", "journal", "outputs"] as KnowledgeBaseCitationBucket[]) {
+      buckets.createSpan({ cls: `codex-kb-source-count codex-kb-source-${bucket}`, text: `${kbBucketLabel(bucket)} ${citations.counts[bucket] ?? 0}` });
+    }
+    summary.createSpan({ cls: `codex-kb-evidence-status codex-kb-evidence-${citations.status}`, text: kbEvidenceStatusLabel(citations.status) });
+
+    const body = details.createDiv({ cls: "codex-kb-citations-body" });
+    if (!citations.citations.length) {
+      body.createDiv({ cls: "codex-kb-no-evidence", text: "没有命中文件，也没有引用片段；不会显示伪来源。" });
+      return;
+    }
+    for (const citation of citations.citations) this.renderKnowledgeBaseCitationItem(body, citation);
+  }
+
+  private renderKnowledgeBaseCitationItem(container: HTMLElement, citation: KnowledgeBaseCitation): void {
+    const item = container.createDiv({ cls: `codex-kb-citation-item codex-kb-citation-${citation.bucket}` });
+    const header = item.createDiv({ cls: "codex-kb-citation-header" });
+    header.createSpan({ cls: `codex-kb-citation-badge codex-kb-source-${citation.bucket}`, text: kbBucketLabel(citation.bucket) });
+    const title = header.createEl("button", {
+      cls: "codex-kb-citation-title",
+      text: citation.title || citation.path,
+      attr: {
+        type: "button",
+        title: `打开 ${citation.path}`
+      }
+    });
+    title.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.openKnowledgeBaseCitation(citation);
+    };
+    header.createSpan({ cls: `codex-kb-citation-relevance codex-kb-evidence-${citation.relevance}`, text: citation.relevance === "strong" ? "强证据" : "弱相关" });
+    const open = header.createEl("button", {
+      cls: "codex-kb-citation-open",
+      text: "打开",
+      attr: {
+        type: "button",
+        title: citation.path
+      }
+    });
+    open.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.openKnowledgeBaseCitation(citation);
+    };
+    item.createDiv({ cls: "codex-kb-citation-path", text: citation.path });
+    const quote = item.createDiv({ cls: "codex-kb-citation-quote" });
+    for (const line of citation.excerptLines.length ? citation.excerptLines : ["无可用引用片段"]) {
+      quote.createDiv({ cls: "codex-kb-citation-line", text: line });
+    }
+    item.createDiv({ cls: "codex-kb-citation-reason", text: `为什么相关：${citation.reason}` });
+  }
+
+  private async openKnowledgeBaseCitation(citation: KnowledgeBaseCitation): Promise<void> {
+    const normalized = normalizePath(citation.path);
+    const file = this.app.vault.getAbstractFileByPath(normalized);
+    if (file instanceof TFile) {
+      await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
+      return;
+    }
+    const absolute = path.join(this.plugin.getVaultPath(), normalized);
+    if (showItemInFinder(absolute)) return;
+    new Notice(`没有在当前 Obsidian 仓库找到：${citation.path}`);
   }
 
   private renderProcessGroup(container: HTMLElement, messages: ChatMessage[]): void {
@@ -1250,6 +1339,7 @@ export class CodexView extends ItemView {
     details.toggleClass("is-completed", message.status === "completed");
     details.toggleClass("is-error", message.status === "error" || message.status === "failed");
     details.toggleClass("is-nested", nested);
+    if (message.processKind) details.toggleClass(`codex-process-kind-${message.processKind}`, true);
     const defaultOpen = !nested && (message.itemType === "reasoning" || message.itemType === "plan" || message.status === "error" || message.status === "failed");
     details.open = this.openProcessItems.get(message.id) ?? defaultOpen;
     let body: HTMLElement | null = null;
@@ -1265,18 +1355,26 @@ export class CodexView extends ItemView {
     };
     const summary = details.createEl("summary", { cls: "codex-process-summary" });
     const icon = summary.createSpan({ cls: "codex-structured-icon codex-process-icon" });
-    setIcon(icon, iconForItemType(message.itemType));
+    setIcon(icon, iconForProcessMessage(message));
     const main = summary.createDiv({ cls: "codex-process-main" });
-    main.createSpan({ cls: "codex-structured-title codex-process-title", text: titleForItemType(message) });
-    if (message.itemType === "fileChange" && message.diffSummary) this.renderDiffStats(main, message.diffSummary);
-    if (message.details) main.createDiv({ cls: "codex-process-detail", text: message.details });
-    if (message.files?.length) this.renderProcessFileChips(main.createDiv({ cls: "codex-process-files" }), message.files);
+    if (message.itemType === "fileChange" && message.diffSummary?.files.length) {
+      this.renderProcessEditSummary(main, message);
+    } else {
+      main.createSpan({ cls: "codex-structured-title codex-process-title", text: titleForItemType(message) });
+      if (message.itemType === "fileChange" && message.diffSummary) this.renderDiffStats(main, message.diffSummary);
+      if (message.details) main.createDiv({ cls: "codex-process-detail", text: message.details });
+      if (message.itemType === "fileChange" && message.files?.length) this.renderProcessFileChips(main.createDiv({ cls: "codex-process-files" }), message.files);
+    }
     if (message.status) summary.createSpan({ cls: "codex-structured-status", text: labelForStatus(message.status) });
     if (details.open) renderBody();
   }
 
   private renderProcessBody(body: HTMLElement, message: ChatMessage): void {
     const fallback = message.status === "running" ? "正在接收过程内容..." : "暂无内容";
+    if (message.itemType === "commandExecution") {
+      this.renderCommandExecutionBody(body, message, fallback);
+      return;
+    }
     if (message.itemType === "fileChange" && message.diffSummary) {
       this.renderFileChangeBody(body, message, fallback);
       return;
@@ -1304,7 +1402,7 @@ export class CodexView extends ItemView {
         return;
       }
       if (message.diffSummary) this.renderDiffOverview(body, message.diffSummary);
-      this.renderDiffFiles(body, files);
+      this.renderDiffFiles(body, files, message.files ?? []);
     };
     if (message.rawRef) {
       body.createDiv({ cls: "codex-process-raw-loading", text: "正在加载文件改动..." });
@@ -1320,6 +1418,31 @@ export class CodexView extends ItemView {
     renderDiff(displayTextForMessage(message) || fallback);
   }
 
+  private renderCommandExecutionBody(body: HTMLElement, message: ChatMessage, fallback: string): void {
+    const renderShell = (text: string) => {
+      body.empty();
+      const shell = body.createDiv({ cls: "codex-shell-block" });
+      shell.createDiv({ cls: "codex-shell-label", text: "Shell" });
+      shell.createEl("pre", { cls: "codex-shell-output", text: shellTranscript(text || fallback) });
+    };
+    if (message.rawRef) {
+      body.createDiv({ cls: "codex-process-raw-loading", text: "正在加载命令输出..." });
+      void this.loadRawText(message)
+        .then((text) => {
+          renderShell(text);
+          this.scheduleMeasureVirtualRows();
+        })
+        .catch((error) => {
+          body.empty();
+          body.createDiv({ cls: "codex-process-raw-loading", text: `命令输出加载失败：${error instanceof Error ? error.message : String(error)}` });
+          renderShell(displayTextForMessage(message) || fallback);
+          this.scheduleMeasureVirtualRows();
+        });
+      return;
+    }
+    renderShell(displayTextForMessage(message) || fallback);
+  }
+
   private renderDiffOverview(container: HTMLElement, summary: DiffSummary): void {
     const row = container.createDiv({ cls: "codex-diff-overview" });
     row.createSpan({ cls: "codex-diff-overview-title", text: diffSummaryLabel(summary) });
@@ -1332,8 +1455,12 @@ export class CodexView extends ItemView {
     stats.createSpan({ cls: "codex-diff-stat codex-diff-stat-remove", text: `-${summary.removed}` });
   }
 
-  private renderDiffFiles(container: HTMLElement, files: ParsedDiffFile[]): void {
+  private renderDiffFiles(container: HTMLElement, files: ParsedDiffFile[], refs: ProcessFileRef[]): void {
     const list = container.createDiv({ cls: "codex-diff-files" });
+    if (files.length === 1) {
+      this.renderDiffFileBody(list, files[0]);
+      return;
+    }
     files.forEach((file, index) => {
       const details = list.createEl("details", { cls: "codex-diff-file" });
       details.open = files.length === 1 || index === 0;
@@ -1341,25 +1468,19 @@ export class CodexView extends ItemView {
       const renderRows = () => {
         if (rendered) return;
         rendered = true;
-        const body = details.createDiv({ cls: "codex-diff-file-body" });
-        if (!file.lines.length) {
-          body.createDiv({ cls: "codex-diff-empty", text: "没有可展示的 diff 内容" });
-          return;
-        }
-        for (const line of file.lines) {
-          const row = body.createDiv({ cls: `codex-diff-line codex-diff-line-${line.type}` });
-          row.createSpan({ cls: "codex-diff-line-no codex-diff-line-old", text: line.oldLine === null ? "" : String(line.oldLine) });
-          row.createSpan({ cls: "codex-diff-line-no codex-diff-line-new", text: line.newLine === null ? "" : String(line.newLine) });
-          row.createSpan({ cls: "codex-diff-marker", text: line.marker });
-          row.createSpan({ cls: "codex-diff-content", text: line.text || " " });
-        }
+        this.renderDiffFileBody(details, file);
       };
       details.ontoggle = () => {
         if (details.open) renderRows();
       };
       const summary = details.createEl("summary", { cls: "codex-diff-file-summary" });
       const main = summary.createSpan({ cls: "codex-diff-file-main" });
-      main.createSpan({ cls: "codex-diff-file-path", text: file.path });
+      const ref = findProcessFileRef(refs, file.path);
+      if (ref) {
+        this.renderProcessFileTextLink(main, ref, file.path, "codex-diff-file-path");
+      } else {
+        main.createSpan({ cls: "codex-diff-file-path", text: file.path });
+      }
       if (file.previousPath) main.createSpan({ cls: "codex-diff-file-previous", text: `原路径 ${file.previousPath}` });
       summary.createSpan({ cls: "codex-diff-file-kind", text: labelForDiffKind(file.kind) });
       const stats = summary.createSpan({ cls: "codex-diff-file-stats" });
@@ -1367,6 +1488,59 @@ export class CodexView extends ItemView {
       stats.createSpan({ cls: "codex-diff-stat codex-diff-stat-remove", text: `-${file.removed}` });
       if (details.open) renderRows();
     });
+  }
+
+  private renderDiffFileBody(container: HTMLElement, file: ParsedDiffFile): void {
+    const body = container.createDiv({ cls: "codex-diff-file-body" });
+    if (!file.lines.length) {
+      body.createDiv({ cls: "codex-diff-empty", text: "没有可展示的 diff 内容" });
+      return;
+    }
+    for (const line of file.lines) {
+      const row = body.createDiv({ cls: `codex-diff-line codex-diff-line-${line.type}` });
+      row.createSpan({ cls: "codex-diff-line-no codex-diff-line-old", text: line.oldLine === null ? "" : String(line.oldLine) });
+      row.createSpan({ cls: "codex-diff-line-no codex-diff-line-new", text: line.newLine === null ? "" : String(line.newLine) });
+      row.createSpan({ cls: "codex-diff-marker", text: line.marker });
+      row.createSpan({ cls: "codex-diff-content", text: line.text || " " });
+    }
+  }
+
+  private renderProcessEditSummary(container: HTMLElement, message: ChatMessage): void {
+    const list = container.createDiv({ cls: "codex-process-edit-list" });
+    for (const file of message.diffSummary?.files ?? []) {
+      const row = list.createDiv({ cls: "codex-process-edit-row" });
+      row.createSpan({ cls: "codex-process-edit-prefix", text: "已编辑 " });
+      const ref = findProcessFileRef(message.files ?? [], file.path) ?? normalizeProcessFileRef(file.path, this.plugin.getVaultPath());
+      this.renderProcessFileTextLink(row, ref, basename(file.path), "codex-process-edit-file");
+      row.createSpan({ cls: "codex-diff-stat codex-diff-stat-add", text: ` +${file.added}` });
+      row.createSpan({ cls: "codex-diff-stat codex-diff-stat-remove", text: ` -${file.removed}` });
+    }
+  }
+
+  private renderProcessFileTextLink(container: HTMLElement, file: ProcessFileRef, label: string, extraClass = ""): HTMLElement {
+    const link = container.createEl("span", {
+      cls: `codex-process-file-link codex-process-file-link-${file.kind} ${extraClass}`.trim(),
+      text: label,
+      attr: {
+        role: "button",
+        tabindex: file.openable ? "0" : "-1",
+        title: file.openable ? file.displayPath : `${file.displayPath}（无法打开）`,
+        "aria-label": `打开 ${label}`
+      }
+    });
+    link.toggleClass("is-disabled", !file.openable);
+    link.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.openProcessFile(file);
+    };
+    link.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.openProcessFile(file);
+    };
+    return link;
   }
 
   private renderDeferredRawText(container: HTMLElement, message: ChatMessage, fallback: string): void {
@@ -1484,8 +1658,6 @@ export class CodexView extends ItemView {
     this.toolbarEl.empty();
     this.renderAttachments();
 
-    const model = this.plugin.lastStatus?.models.find((item) => item.isDefault)?.model || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel;
-    if (!this.selectedModel) this.selectedModel = this.plugin.settings.defaultModel || model;
     const session = this.ensureSession();
     const knowledgeSession = this.isKnowledgeBaseSession(session);
     const knowledgeRunning = knowledgeSession && (this.running || Boolean(this.plugin.getKnowledgeBaseManager()?.isRunning));
@@ -1765,6 +1937,19 @@ export class CodexView extends ItemView {
       ? ensureModelChoices([], ...providerModels)
       : ensureModelChoices(this.plugin.lastStatus?.models ?? [], this.selectedModel, this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel);
     menu.addItem((item) => item.setTitle("知识库模型").setIsLabel(true));
+    if (!providerModels.length) {
+      menu.addItem((item) =>
+        item
+          .setTitle("自动")
+          .setIcon("wand-sparkles")
+          .setChecked(!this.selectedModel)
+          .onClick(() => {
+            this.selectedModel = "";
+            this.persistComposerDefaults();
+            this.renderToolbar();
+          })
+      );
+    }
     for (const model of models) {
       menu.addItem((item) =>
         item
@@ -1811,6 +1996,19 @@ export class CodexView extends ItemView {
       ? ensureModelChoices([], ...providerModels)
       : ensureModelChoices(this.plugin.lastStatus?.models ?? [], this.selectedModel, this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel);
     menu.addItem((item) => item.setTitle("模型").setIsLabel(true));
+    if (!providerModels.length) {
+      menu.addItem((item) =>
+        item
+          .setTitle("自动")
+          .setIcon("wand-sparkles")
+          .setChecked(!this.selectedModel)
+          .onClick(() => {
+            this.selectedModel = "";
+            this.persistComposerDefaults();
+            this.renderToolbar();
+          })
+      );
+    }
     if (models.length) {
       for (const model of models) {
         menu.addItem((item) =>
@@ -1826,7 +2024,7 @@ export class CodexView extends ItemView {
         );
       }
     } else {
-      menu.addItem((item) => item.setTitle(this.selectedModel || DEFAULT_SETTINGS.defaultModel).setIcon("box").setChecked(true));
+      menu.addItem((item) => item.setTitle(this.selectedModel || "自动").setIcon("box").setChecked(true));
     }
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("思考强度").setIsLabel(true));
@@ -1881,11 +2079,11 @@ export class CodexView extends ItemView {
   }
 
   private currentComposerSummaryTitle(): string {
-    return `模型：${this.effectiveModel()}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
+    return `模型：${this.effectiveModel() || "自动"}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
   }
 
   private currentKnowledgeComposerSummaryTitle(): string {
-    return `知识库模型：${this.effectiveModel()}\n思考强度：${labelFor(this.selectedReasoning)}`;
+    return `知识库模型：${this.effectiveModel() || "自动"}\n思考强度：${labelFor(this.selectedReasoning)}`;
   }
 
   private persistComposerDefaults(): void {
@@ -2052,7 +2250,7 @@ export class CodexView extends ItemView {
       if (!workspaceReady) return;
       const status = await this.plugin.ensureCodexConnected();
       this.applyStatus();
-      if (!status.connected) throw new Error("Codex 未连接");
+      if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
       session = this.ensureSession();
       const runId = newId("run");
       this.activeRunId = runId;
@@ -2103,18 +2301,19 @@ export class CodexView extends ItemView {
       this.attachTurnIdToRun(session, this.activeTurnId);
       await this.plugin.saveSettings();
     } catch (error) {
+      const diagnostic = this.diagnoseCodexFailure(error);
       this.running = false;
       this.activeTurnId = "";
       this.clearTurnWatchdog();
       this.finishThinkingMessage(session, "失败");
       this.addMessageToSession(session, {
         role: "system",
-        title: "发送失败",
+        title: diagnostic.title,
         itemType: "error",
-        text: error instanceof Error ? error.message : String(error)
+        text: diagnostic.text
       });
       this.clearActiveRun();
-      new Notice(`Codex 发送失败：${error instanceof Error ? error.message : String(error)}`);
+      new Notice(`Codex 发送失败：${diagnostic.title}`);
     } finally {
       this.applyStatus();
     }
@@ -2167,6 +2366,7 @@ export class CodexView extends ItemView {
       const result = await manager.handleUserMessage(text, turnAttachments);
       assistantMessage.status = result.status === "success" ? "completed" : "failed";
       assistantMessage.text = result.message;
+      assistantMessage.citations = result.citations;
       this.moveMessageToEnd(session, assistantMessage.id);
       if (result.followUpCommand) {
         this.fillKnowledgeBaseCommand(result.followUpCommand);
@@ -2255,7 +2455,7 @@ export class CodexView extends ItemView {
       this.setEditorActionStatus({ status: "connecting", actionLabel: request.action.label, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label, filePath: request.source.filePath, model: request.modeConfig.model, startedAt: requestStartedAt });
       const status = await this.withEditorActionTimeout(this.plugin.ensureCodexConnected(false, { silent: true }), timeoutMs, "写作操作连接超时");
       this.applyStatus();
-      if (!status.connected) throw new Error("Codex 未连接");
+      if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
 
       const availableModels = status.models.map((model) => model.model);
       const model = this.effectiveEditorActionModel(availableModels, request.modeConfig.model);
@@ -2299,7 +2499,8 @@ export class CodexView extends ItemView {
       this.prewarmEditorActionThread();
       return result;
     } catch (error) {
-      this.rejectEditorActionRun(error instanceof Error ? error : new Error(String(error)));
+      const diagnostic = this.diagnoseCodexFailure(error);
+      this.rejectEditorActionRun(new Error(diagnostic.text));
       this.running = false;
       this.activeTurnId = "";
       this.editorActionActiveTimeoutMs = 0;
@@ -2307,7 +2508,7 @@ export class CodexView extends ItemView {
       this.clearActiveRun();
       this.editorActionCurrentItemIds.clear();
       this.applyStatus();
-      this.setArticleUnderstandingPanelState({ ...this.articleUnderstandingPanelState, status: "failed", error: error instanceof Error ? error.message : String(error) });
+      this.setArticleUnderstandingPanelState({ ...this.articleUnderstandingPanelState, status: "failed", error: diagnostic.text });
       this.prewarmEditorActionThread();
       throw error;
     } finally {
@@ -2432,7 +2633,7 @@ export class CodexView extends ItemView {
       if (this.editorActionThreadId && this.activeTurnId) {
         void this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(() => undefined);
       }
-      this.rejectEditorActionRun(error instanceof Error ? error : new Error(String(error)));
+      this.rejectEditorActionRun(new Error(this.diagnoseCodexFailure(error, input.model).text));
       this.releaseEditorActionRunLock(runId);
       throw error;
     }
@@ -2896,7 +3097,7 @@ export class CodexView extends ItemView {
     if (providerModels.length) {
       return providerModels.includes(this.selectedModel) ? this.selectedModel : providerModels[0];
     }
-    return this.selectedModel || this.plugin.settings.defaultModel || this.plugin.lastStatus?.models[0]?.model || DEFAULT_SETTINGS.defaultModel;
+    return this.selectedModel || this.plugin.settings.defaultModel || "";
   }
 
   private effectiveEditorActionModel(availableModels: string[] = [], configuredModel = this.plugin.settings.editorActions.model): string {
@@ -2967,7 +3168,7 @@ export class CodexView extends ItemView {
     let messageId = this.activeItemMessages.get(itemId);
     let message = messageId ? session.messages.find((item) => item.id === messageId) : null;
     const summaryPayload = { ...payload, status: payload?.status ?? "running" };
-    const summary = summarizeProcessEvent(itemType, summaryPayload, this.plugin.getVaultPath());
+    const summary = summarizeProcessEvent(itemType, summaryPayload, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     if (!message) {
       message = {
         id: itemId || newId("process"),
@@ -3055,7 +3256,7 @@ export class CodexView extends ItemView {
       if (isProcessItemType(message.itemType) && message.status === "running") {
         message.status = status;
         if (message.text) void this.plugin.externalizeMessageText(message, message.text);
-        if (message.itemType === "reasoning") this.refreshProcessSummary(message, status);
+        if (message.itemType === "reasoning") this.refreshProcessSummary(message, status, session);
       }
     }
     this.renderMessagesIfActive(session);
@@ -3152,7 +3353,7 @@ export class CodexView extends ItemView {
   }
 
   private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: any, diffSummary?: DiffSummary): Promise<void> {
-    const summary = summarizeProcessEvent(itemType, { ...payload, status }, this.plugin.getVaultPath());
+    const summary = summarizeProcessEvent(itemType, { ...payload, status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     const existingId = this.activeItemMessages.get(id);
     const existing = existingId ? session.messages.find((item) => item.id === existingId) : null;
     if (existing) {
@@ -3196,14 +3397,14 @@ export class CodexView extends ItemView {
     const existing = existingId ? session.messages.find((item) => item.id === existingId) : session.messages.find((item) => item.id === id);
     if (!existing) return;
     existing.status = status;
-    if (existing.itemType === "reasoning") this.refreshProcessSummary(existing, status);
+    if (existing.itemType === "reasoning") this.refreshProcessSummary(existing, status, session);
     session.updatedAt = Date.now();
     this.renderMessagesIfActive(session);
   }
 
-  private refreshProcessSummary(message: ChatMessage, status: string): void {
+  private refreshProcessSummary(message: ChatMessage, status: string, session: StoredSession): void {
     if (!message.itemType) return;
-    const summary = summarizeProcessEvent(message.itemType, { text: message.text, status }, this.plugin.getVaultPath());
+    const summary = summarizeProcessEvent(message.itemType, { text: message.text, status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     message.title = summary.title;
     if (summary.detail) message.details = summary.detail;
     message.processKind = summary.kind;
@@ -3569,6 +3770,18 @@ function labelFor(value: string): string {
   return labels[value] ?? value;
 }
 
+function kbBucketLabel(bucket: KnowledgeBaseCitationBucket): string {
+  if (bucket === "wiki") return "Wiki";
+  if (bucket === "journal") return "Journal";
+  return "Outputs";
+}
+
+function kbEvidenceStatusLabel(status: KnowledgeBaseCitationSummary["status"]): string {
+  if (status === "strong") return "强证据";
+  if (status === "weak") return "弱相关";
+  return "无本地依据";
+}
+
 function isProcessItemType(itemType?: string): boolean {
   return itemType === "reasoning" || itemType === "commandExecution" || itemType === "fileChange" || itemType === "mcpToolCall" || itemType === "dynamicToolCall" || itemType === "collabAgentToolCall" || itemType === "plan";
 }
@@ -3592,8 +3805,7 @@ function processGroupRowId(messages: ChatMessage[]): string {
 }
 
 function processGroupId(messages: ChatMessage[]): string {
-  const first = messages[0];
-  return `group-${first?.runId ?? first?.id ?? "process"}`;
+  return processGroupStateId(messages);
 }
 
 function processGroupTitle(messages: ChatMessage[]): string {
@@ -3626,6 +3838,27 @@ function processGroupStatus(messages: ChatMessage[]): string {
   if (messages.some((message) => message.status === "error" || message.status === "failed")) return "有失败";
   if (messages.some((message) => message.status === "interrupted")) return "未完成";
   return "完成";
+}
+
+function findProcessFileRef(refs: ProcessFileRef[], filePath: string): ProcessFileRef | null {
+  const normalizedPath = normalizePath(filePath);
+  const fileName = basename(filePath);
+  return (
+    refs.find((ref) => ref.path === filePath || ref.displayPath === filePath || ref.absolutePath === filePath) ??
+    refs.find((ref) => normalizePath(ref.path) === normalizedPath || normalizePath(ref.displayPath) === normalizedPath) ??
+    refs.find((ref) => ref.name === fileName) ??
+    null
+  );
+}
+
+function shellTranscript(text: string): string {
+  const trimmed = text.trimEnd();
+  if (!trimmed) return "$";
+  const lines = trimmed.split(/\r?\n/);
+  const command = lines.shift()?.trim() ?? "";
+  const output = lines.join("\n").trim();
+  if (!output) return `$ ${command}`;
+  return `$ ${command}\n\n${output}`;
 }
 
 function roleForProcessItem(itemType: string): ChatMessage["role"] {
@@ -3775,6 +4008,7 @@ function compactReasoningLabel(value: ReasoningEffort): string {
 }
 
 function shortModelLabel(value: string): string {
+  if (!value.trim()) return "自动";
   return value
     .replace(/^gpt-/i, "")
     .replace(/-/g, " ")
@@ -3795,6 +4029,20 @@ function formatDurationSeconds(totalSeconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function iconForProcessMessage(message: ChatMessage): string {
+  const processIcons: Record<string, string> = {
+    search: "search",
+    view: "book-open",
+    edit: "pencil",
+    run: "terminal",
+    command: "terminal",
+    tool: "blocks"
+  };
+  const processIcon = processIcons[message.processKind ?? ""];
+  if (processIcon) return processIcon;
+  return iconForItemType(message.itemType);
 }
 
 function iconForItemType(itemType?: string): string {

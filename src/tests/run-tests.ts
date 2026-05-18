@@ -16,11 +16,13 @@ import {
   getSlashQuery,
   normalizeProcessFileRef,
   normalizeServiceTier,
+  processGroupStateId,
   reasoningTextFromPayload,
   summarizeProcessEvent
 } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
+import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText } from "../core/raw-message-store";
 import {
   emptyWorkspaceResourceSnapshot,
@@ -61,6 +63,7 @@ import {
   validateApiProvider,
   resourceEnabled
 } from "../settings/settings";
+import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
 import {
   detectOpenCodeCommand,
@@ -104,7 +107,7 @@ import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitializa
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "../knowledge-base/commands";
-import { findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
+import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
@@ -134,6 +137,28 @@ assert.equal(manifest.version, "0.5.1");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
+function assertI18nShapeMatches(reference: unknown, candidate: unknown, pathLabel = "copy"): void {
+  if (typeof reference === "function") {
+    assert.equal(typeof candidate, "function", `${pathLabel} should be a function`);
+    return;
+  }
+  if (Array.isArray(reference)) {
+    assert.equal(Array.isArray(candidate), true, `${pathLabel} should be an array`);
+    assert.equal((candidate as unknown[]).length, reference.length, `${pathLabel} array length`);
+    reference.forEach((item, index) => assertI18nShapeMatches(item, (candidate as unknown[])[index], `${pathLabel}[${index}]`));
+    return;
+  }
+  if (reference && typeof reference === "object") {
+    assert.equal(Boolean(candidate && typeof candidate === "object" && !Array.isArray(candidate)), true, `${pathLabel} should be an object`);
+    assert.deepEqual(Object.keys(candidate as Record<string, unknown>).sort(), Object.keys(reference as Record<string, unknown>).sort(), `${pathLabel} keys`);
+    for (const key of Object.keys(reference as Record<string, unknown>)) {
+      assertI18nShapeMatches((reference as Record<string, unknown>)[key], (candidate as Record<string, unknown>)[key], `${pathLabel}.${key}`);
+    }
+    return;
+  }
+  assert.equal(typeof candidate, typeof reference, `${pathLabel} primitive type`);
+}
+
 function cssRuleBody(styles: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, "m").exec(styles);
@@ -161,10 +186,11 @@ assert.equal(normalizeServiceTier("standard"), null);
 assert.equal(normalizeServiceTier("fast"), "fast");
 assert.equal(normalizeServiceTier("flex"), "flex");
 
-assert.equal(DEFAULT_SETTINGS.defaultModel, "gpt-5.5");
+assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 24);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 25);
+assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
@@ -209,6 +235,18 @@ assert.equal(DEFAULT_SETTINGS.review.scheduleTime, "21:00");
 assert.equal(DEFAULT_SETTINGS.review.catchUpOnStartup, true);
 assert.equal(DEFAULT_SETTINGS.review.reports.knowledgeBase.lastRunStatus, "idle");
 assert.equal(DEFAULT_SETTINGS.review.reports.agentChat.lastRunStatus, "idle");
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "en" }).settings.settingsLanguage, "en");
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "fr" }).settings.settingsLanguage, "zh-CN");
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "en" }).changed, false);
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "fr" }).changed, true);
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).changed, true);
+assert.deepEqual(SETTINGS_LANGUAGE_OPTIONS, ["zh-CN", "en"]);
+assert.deepEqual(Object.keys(SETTINGS_COPY).sort(), SETTINGS_LANGUAGE_OPTIONS.slice().sort());
+assertI18nShapeMatches(SETTINGS_COPY["zh-CN"], SETTINGS_COPY.en);
+assert.equal(settingsCopy("en").general.settingsLanguage, "Settings language");
+assert.equal(settingsCopy("en").tabs.knowledgeBase, "Knowledge");
+assert.equal(settingsCopy("en").knowledge.dailyMaintenance, "Automatic maintenance");
+assert.equal(settingsCopy("en").knowledge.repairSummary("patched", DEFAULT_KNOWLEDGE_BASE_RULES_FILE), `Knowledge guide updated: ${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`);
 assert.deepEqual(
   getKnowledgeBaseRulesFileChoices([DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   [DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
@@ -435,6 +473,13 @@ assert.deepEqual(buildCollaborationMode("plan", "gpt-5.4", "high"), {
     developer_instructions: null
   }
 });
+assert.deepEqual(buildCollaborationMode("plan", "", "high"), {
+  mode: "plan",
+  settings: {
+    reasoning_effort: "high",
+    developer_instructions: null
+  }
+});
 
 assert.equal(getSlashQuery("/"), "");
 assert.equal(getSlashQuery("帮我 /answer"), "answer");
@@ -550,6 +595,14 @@ const vaultFile = normalizeProcessFileRef("/vault/notes/a.md", "/vault");
 assert.equal(vaultFile.kind, "vault");
 assert.equal(vaultFile.path, "notes/a.md");
 assert.equal(vaultFile.name, "a.md");
+const relativeVaultFile = normalizeProcessFileRef("notes/a.md", "/vault", "/vault");
+assert.equal(relativeVaultFile.kind, "vault");
+assert.equal(relativeVaultFile.path, "notes/a.md");
+assert.equal(relativeVaultFile.absolutePath, path.normalize("/vault/notes/a.md"));
+const relativeExternalFile = normalizeProcessFileRef("src/a.ts", "/vault", "/tmp/workspace");
+assert.equal(relativeExternalFile.kind, "external");
+assert.equal(relativeExternalFile.path, path.normalize("/tmp/workspace/src/a.ts"));
+assert.equal(relativeExternalFile.absolutePath, path.normalize("/tmp/workspace/src/a.ts"));
 const externalFile = normalizeProcessFileRef("/tmp/out.txt", "/vault");
 assert.equal(externalFile.kind, "external");
 assert.equal(externalFile.path, "/tmp/out.txt");
@@ -564,8 +617,16 @@ assert.equal(summarizeProcessEvent("commandExecution", { command: "npm run build
 assert.equal(summarizeProcessEvent("commandExecution", { command: "rg -n foo docs" }, "/vault").kind, "search");
 assert.equal(summarizeProcessEvent("commandExecution", { command: "sed -n '1,20p' src/ui/codex-view.ts" }, "/vault").kind, "view");
 assert.equal(summarizeProcessEvent("commandExecution", { command: "npm run build" }, "/vault").kind, "run");
+assert.equal(summarizeProcessEvent("commandExecution", { command: "sed -n '1,20p' .codex-memory/current.md" }, "/vault").detail, "Read current.md");
+assert.equal(summarizeProcessEvent("commandExecution", { command: "rg -n foo docs/sample.md" }, "/vault").detail, "搜索 sample.md");
+assert.equal(summarizeProcessEvent("commandExecution", { command: "npm run typecheck" }, "/vault").detail, "已运行 npm run typecheck");
 assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/sample.md" }] }, "/vault").title, "编辑文件");
 assert.equal(summarizeProcessEvent("fileChange", { changes: [{ path: "docs/sample.md" }] }, "/vault").kind, "edit");
+assert.equal(processGroupStateId([{ id: "a", runId: "run-1" }, { id: "b", runId: "run-1" }]), "group-run-1-a-b-2");
+assert.notEqual(
+  processGroupStateId([{ id: "a", runId: "run-1" }, { id: "b", runId: "run-1" }]),
+  processGroupStateId([{ id: "c", runId: "run-1" }, { id: "d", runId: "run-1" }])
+);
 assert.equal(reasoningTextFromPayload({ summary: ["先确认附件", "再读取文件"], content: ["检查结构"] }), "先确认附件\n再读取文件\n检查结构");
 assert.equal(summarizeProcessEvent("reasoning", { text: "确认当前文档", status: "running" }, "/vault").title, "正在思考");
 assert.equal(summarizeProcessEvent("reasoning", { summary: ["确认完成"] }, "/vault").title, "已思考");
@@ -593,7 +654,7 @@ const persistedComposerSettings = normalizeSettingsData({
   defaultPermission: "read-only",
   defaultMode: "plan"
 });
-assert.equal(persistedComposerSettings.settings.defaultModel, "gpt-5.5");
+assert.equal(persistedComposerSettings.settings.defaultModel, "");
 assert.equal(persistedComposerSettings.settings.defaultReasoning, "xhigh");
 assert.equal(persistedComposerSettings.settings.defaultServiceTier, "flex");
 assert.equal(persistedComposerSettings.settings.defaultPermission, "read-only");
@@ -606,9 +667,24 @@ const migratedDefaultModelSettings = normalizeSettingsData({
   defaultServiceTier: "fast"
 });
 assert.equal(migratedDefaultModelSettings.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
-assert.equal(migratedDefaultModelSettings.settings.defaultModel, "gpt-5.5");
+assert.equal(migratedDefaultModelSettings.settings.defaultModel, "");
 assert.equal(migratedDefaultModelSettings.settings.defaultReasoning, "high");
 assert.equal(migratedDefaultModelSettings.changed, true);
+
+const customDefaultModelSettings = normalizeSettingsData({
+  settingsVersion: 24,
+  defaultModel: "custom-stable-model",
+  apiProviders: [{
+    id: "provider_demo",
+    name: "Demo API",
+    baseUrl: "https://api.example.com/v1",
+    model: "gpt-5.4",
+    models: ["gpt-5.4", "gpt-5.5"],
+    apiKey: "test-key-demo"
+  }]
+});
+assert.equal(customDefaultModelSettings.settings.defaultModel, "custom-stable-model");
+assert.deepEqual(getApiProviderModels(customDefaultModelSettings.settings.apiProviders[0]), ["gpt-5.4", "gpt-5.5"]);
 
 const workspaceResources = normalizeSettingsData({
   settingsVersion: 4,
@@ -696,6 +772,11 @@ const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
 const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-content");
 const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
 const resourceSearchInputCss = cssRuleBody(settingsStyles, ".codex-resource-search-input");
+const processFileLinkCss = cssRuleBody(settingsStyles, ".codex-process-file-link");
+const processIconCss = cssRuleBody(settingsStyles, ".codex-process-icon");
+const processEditIconCss = cssRuleBody(settingsStyles, ".codex-process-kind-edit .codex-process-icon");
+const settingsStatusErrorCss = cssRuleBody(settingsStyles, ".codex-settings-status-error");
+const settingsStatusErrorBodyCss = cssRuleBody(settingsStyles, ".codex-settings-status-error-body");
 assert.match(resourceRowCss, /min-width:\s*0;/);
 assert.match(resourceRowCss, /width:\s*100%;/);
 assert.match(resourceRowCss, /box-sizing:\s*border-box;/);
@@ -705,6 +786,16 @@ assert.match(resourceRowNameCss, /text-overflow:\s*ellipsis;/);
 assert.match(resourceRowNameCss, /white-space:\s*nowrap;/);
 assert.match(resourceSearchInputCss, /width:\s*100%;/);
 assert.match(resourceSearchInputCss, /min-width:\s*0;/);
+assert.match(processFileLinkCss, /background:\s*transparent;/);
+assert.match(processFileLinkCss, /border:\s*0;/);
+assert.doesNotMatch(processFileLinkCss, /box-shadow:\s*var\(/);
+assert.match(processIconCss, /color:\s*color-mix\(in srgb,\s*var\(--interactive-accent\)/);
+assert.match(processEditIconCss, /color:\s*var\(--text-accent\);/);
+assert.match(settingsStatusErrorCss, /var\(--text-error\)/);
+assert.match(settingsStatusErrorBodyCss, /white-space:\s*pre-wrap;/);
+assert.match(settingsStyles, /codex-process-kind-search\s+\.codex-process-icon/);
+assert.match(settingsStyles, /codex-process-kind-view\s+\.codex-process-icon/);
+assert.match(settingsStyles, /codex-process-kind-run\s+\.codex-process-icon/);
 
 const codexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
   settings: normalizeSettingsData({
@@ -723,9 +814,23 @@ assert.equal(codexKnowledgeOptions.reasoning, "medium");
 assert.equal(codexKnowledgeOptions.serviceTier, "fast");
 assert.equal(codexKnowledgeOptions.permission, "read-only");
 assert.deepEqual(codexKnowledgeOptions.writableRoots, undefined);
+const autoCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
+  settings: normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, defaultModel: "" }).settings,
+  availableModels: [{ model: "gpt-5.4", isDefault: true }, { model: "gpt-5.5" }],
+  vaultPath: "/vault",
+  permission: "read-only"
+});
+assert.equal(autoCodexKnowledgeOptions.model, "gpt-5.4");
+const emptyCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
+  settings: normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, defaultModel: "" }).settings,
+  availableModels: [],
+  vaultPath: "/vault",
+  permission: "read-only"
+});
+assert.equal(emptyCodexKnowledgeOptions.model, "");
 const writableCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
   settings: normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, defaultModel: "", defaultReasoning: "xhigh" }).settings,
-  availableModels: [{ model: "gpt-5.5" }],
+  availableModels: [{ model: "gpt-5.5", isDefault: true }],
   vaultPath: "/vault",
   permission: "workspace-write"
 });
@@ -1504,6 +1609,40 @@ const loginLaunch = buildCodexLaunchConfig({
   }
 });
 assert.deepEqual(loginLaunch.args, ["app-server", "--listen", "stdio://"]);
+const websocketDiagnostic = diagnoseCodexError(
+  "failed to connect to websocket: No connection could be made because the target machine actively refused it. (os error 10061) url: wss://chatgpt.com/backend-api/codex/responses transport=\"responses_websocket\"",
+  { model: "gpt-5.5", providerLabel: "Codex 登录态", proxyEnabled: false, proxyUrl: "http://127.0.0.1:7890" }
+);
+assert.equal(websocketDiagnostic.kind, "websocket");
+assert.match(websocketDiagnostic.text, /Codex WebSocket 连接失败/);
+assert.match(websocketDiagnostic.text, /gpt-5\.5/);
+assert.match(websocketDiagnostic.text, /启用本地代理/);
+assert.match(websocketDiagnostic.text, /原始错误/);
+const proxyDiagnostic = diagnoseCodexError(
+  "connect ECONNREFUSED 127.0.0.1:7890",
+  { model: "", providerLabel: "Codex 登录态", proxyEnabled: true, proxyUrl: "http://127.0.0.1:7890" }
+);
+assert.equal(proxyDiagnostic.kind, "proxy");
+assert.match(proxyDiagnostic.text, /代理连接失败/);
+assert.match(proxyDiagnostic.text, /模型 自动/);
+assert.equal(diagnoseCodexError("request timed out after 60000ms").kind, "timeout");
+assert.equal(diagnoseCodexError("spawn codex ENOENT").kind, "missing-cli");
+assert.equal(diagnoseCodexError("app-server exited with code 1").kind, "app-server");
+assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
+assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
+const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {
+  model: "",
+  providerLabel: "Codex login",
+  proxyEnabled: false,
+  proxyUrl: "http://127.0.0.1:7890",
+  language: "en"
+});
+assert.equal(missingCliEnglishDiagnostic.kind, "missing-cli");
+assert.match(missingCliEnglishDiagnostic.text, /Codex CLI not found/);
+assert.match(missingCliEnglishDiagnostic.text, /Possible cause/);
+assert.match(missingCliEnglishDiagnostic.text, /Model Auto/);
+assert.doesNotMatch(missingCliEnglishDiagnostic.text, /可能原因|建议处理|当前上下文|原始错误/);
+assert.match(diagnoseCodexError(websocketDiagnostic.text, { language: "en" }).text, /Suggested fix/);
 assert.throws(
   () => resolveCodexCommand("/definitely/missing/codex"),
   /找不到 Codex CLI/
@@ -1653,6 +1792,8 @@ try {
   await mkdir(path.join(kbVault, "raw", "attachments"), { recursive: true });
   await mkdir(path.join(kbVault, "wiki", "ai-intelligence", "concepts"), { recursive: true });
   await mkdir(path.join(kbVault, "wiki", "product-method", "concepts"), { recursive: true });
+  await mkdir(path.join(kbVault, "journal", "daily", "2026-05"), { recursive: true });
+  await mkdir(path.join(kbVault, "outputs", "notes"), { recursive: true });
   await writeFile(path.join(kbVault, "raw", "articles", "demo.md"), "# Demo\n\n正文", "utf8");
   await writeFile(path.join(kbVault, "raw", "articles", "demo.assets", "image.png"), Buffer.from([1, 2, 3]));
   await writeFile(path.join(kbVault, "raw", "attachments", "image.png"), Buffer.from([1, 2, 3]));
@@ -1668,6 +1809,18 @@ try {
     "它强调规则、测试、回链和 Agent 协作记录。"
   ].join("\n"), "utf8");
   await writeFile(path.join(kbVault, "wiki", "product-method", "concepts", "roadmap.md"), "# Roadmap\n\n产品路线规划。", "utf8");
+  await writeFile(path.join(kbVault, "journal", "daily", "2026-05", "2026-05-18-周一.md"), [
+    "# 2026-05-18 周一",
+    "",
+    "今天复盘节奏偏慢。",
+    "Vibe Coding 讨论只作为当天工作背景。"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(kbVault, "outputs", "notes", "vibe-coding-review.md"), [
+    "# Vibe Coding 复盘",
+    "",
+    "这份输出记录了 Vibe Coding 的阶段性复盘。",
+    "它不是稳定知识结论，只适合作为 Outputs 背景。"
+  ].join("\n"), "utf8");
   const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
     "raw/articles/demo.md",
@@ -1741,6 +1894,42 @@ try {
   const askMatches = await findKnowledgeBaseAskMatches(kbVault, "Harness Engineering 和 Vibe Coding 有什么关系？");
   assert.equal(askMatches[0]?.relativePath, "wiki/ai-intelligence/concepts/harness-engineering.md");
   assert.ok(askMatches[0]?.excerpt.includes("Vibe Coding"));
+  assert.equal(askMatches[0]?.bucket, "wiki");
+  assert.equal(askMatches[0]?.relevance, "strong");
+  assert.ok(askMatches[0]?.excerptLines.length >= 2);
+  assert.ok(askMatches[0]?.excerptLines.length <= 4);
+  assert.ok(askMatches.some((match) => match.bucket === "journal"));
+  assert.ok(askMatches.some((match) => match.bucket === "outputs"));
+  const askCitations = buildKnowledgeBaseCitationSummary(askMatches);
+  assert.equal(askCitations.status, "strong");
+  assert.ok(askCitations.counts.wiki >= 1);
+  assert.ok(askCitations.counts.journal >= 1);
+  assert.ok(askCitations.counts.outputs >= 1);
+  assert.equal(askCitations.citations[0]?.path, "wiki/ai-intelligence/concepts/harness-engineering.md");
+  const weakAskMatches = await findKnowledgeBaseAskMatches(kbVault, "节奏安排");
+  const weakCitations = buildKnowledgeBaseCitationSummary(weakAskMatches);
+  assert.equal(weakCitations.status, "weak");
+  assert.equal(weakCitations.counts.journal, 1);
+  assert.equal(weakCitations.counts.wiki, 0);
+  const emptyCitations = buildKnowledgeBaseCitationSummary([]);
+  assert.equal(emptyCitations.status, "none");
+  assert.equal(emptyCitations.counts.wiki, 0);
+  await writeFile(path.join(kbVault, "journal", "daily", "2026-05", "2026-05-19-周二.md"), [
+    "# 2026-05-19 周二",
+    "",
+    "Daily Check List",
+    "本地 evidence 和 local note 只是流程词，不代表具体知识命中。"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(kbVault, "outputs", "notes", "local-evidence-check.md"), [
+    "# Local evidence check",
+    "",
+    "This file mentions local evidence check as generic testing wording."
+  ].join("\n"), "utf8");
+  const unrelatedMatches = await findKnowledgeBaseAskMatches(kbVault, "zqxjv-178293 totally unrelated local evidence check");
+  const unrelatedCitations = buildKnowledgeBaseCitationSummary(unrelatedMatches);
+  assert.equal(unrelatedMatches.length, 0);
+  assert.equal(unrelatedCitations.status, "none");
+  assert.deepEqual(unrelatedCitations.counts, { wiki: 0, journal: 0, outputs: 0 });
   const askPrompt = buildKnowledgeBaseAskPrompt({
     vaultPath: kbVault,
     userRequest: "Harness Engineering 和 Vibe Coding 有什么关系？",
@@ -1750,10 +1939,13 @@ try {
     matches: askMatches
   });
   assert.ok(askPrompt.includes("只读问答任务"));
-  assert.ok(askPrompt.includes("wiki 是优先依据，不是唯一依据"));
+  assert.ok(askPrompt.includes("Wiki 是优先依据"));
+  assert.ok(askPrompt.includes("Journal / Outputs 只作为背景或过程依据"));
   assert.ok(askPrompt.includes("可以使用可用搜索工具、外部资料或模型已有知识补充"));
   assert.ok(askPrompt.includes("必须区分“来自 Vault 的依据”和“补充信息 / 推断”"));
   assert.ok(askPrompt.includes("wiki/ai-intelligence/concepts/harness-engineering.md"));
+  assert.ok(askPrompt.includes("来源集合：Wiki"));
+  assert.ok(askPrompt.includes("引用片段"));
   assert.ok(buildKnowledgeBaseAskPrompt({
     vaultPath: kbVault,
     userRequest: "完全没有命中的问题",
@@ -1761,7 +1953,7 @@ try {
     rulesFileExists: false,
     useCustomRulesFile: false,
     matches: []
-  }).includes("未找到相关 wiki 笔记"));
+  }).includes("未找到相关本地来源"));
   await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
   const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
@@ -1786,6 +1978,9 @@ try {
   assert.equal(target.relativePath, "journal/daily/2026-05/2026-05-18-周一.md");
   assert.ok(target.samplePaths.includes("journal/daily/2026-05/2026-05-09-周六.md"));
   assert.ok(target.templateDirectories.includes("journal/monthly/2026"));
+  assert.equal(target.evidenceWindow.label, "2026-05-18 00:00 - 2026-05-19 06:00");
+  assert.ok(target.codexSessionGlobs.some((item) => item.endsWith("/2026/05/18/*.jsonl")));
+  assert.ok(target.codexSessionGlobs.some((item) => item.endsWith("/2026/05/19/*.jsonl")));
   await ensureJournalTargetFolders(journalVault, target);
   assert.equal(await fileExists(path.join(journalVault, "journal", "daily", "2026-05")), true);
   assert.equal(await fileExists(path.join(journalVault, "journal", "weekly")), true);
@@ -1799,6 +1994,36 @@ try {
   assert.ok(journalPrompt.includes("journal/daily/2026-05/2026-05-18-周一.md"));
   assert.ok(journalPrompt.includes("不要写到扁平路径 journal/daily/YYYY-MM-DD.md"));
   assert.ok(journalPrompt.includes("只做增量更新"));
+  assert.ok(journalPrompt.includes("2026-05-18 00:00 - 2026-05-19 06:00"));
+  assert.ok(journalPrompt.includes("不要再使用 00:00-02:30 旧口径"));
+  assert.ok(journalPrompt.includes("2026/05/19/*.jsonl"));
+  const openCodeJournalPrompt = buildKnowledgeBaseJournalPrompt({
+    vaultPath: journalVault,
+    userRequest: "写一下今天的日记。",
+    target,
+    backend: "opencode",
+    openCodeHistory: {
+      serverUrl: "http://127.0.0.1:4096",
+      sessionsScanned: 3,
+      sessionsMatched: 1,
+      truncated: false,
+      messages: [{
+        sessionId: "ses_1",
+        sessionTitle: "OpenCode 知识库维护",
+        directory: journalVault,
+        role: "user",
+        createdAt: new Date(2026, 4, 19, 1, 30, 0).getTime(),
+        createdAtLabel: "2026-05-19 01:30",
+        modelLabel: "anthropic/claude",
+        text: "处理 journal 后端切换"
+      }]
+    },
+    generatedAt: new Date(2026, 4, 18, 9, 1, 0)
+  });
+  assert.ok(openCodeJournalPrompt.includes("记录来源：OpenCode API"));
+  assert.ok(openCodeJournalPrompt.includes("session.list"));
+  assert.ok(openCodeJournalPrompt.includes("处理 journal 后端切换"));
+  assert.ok(openCodeJournalPrompt.includes("不要再读取 Codex sessions 当作主证据"));
   const yesterdayTarget = await resolveJournalDailyTarget(journalVault, "写日记：昨天的内容", new Date(2026, 4, 18, 9, 0, 0));
   assert.equal(yesterdayTarget.relativePath, "journal/daily/2026-05/2026-05-17-周日.md");
 } finally {

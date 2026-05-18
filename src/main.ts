@@ -2,8 +2,9 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
+import { diagnoseCodexError } from "./core/codex-diagnostics";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
-import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
+import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
@@ -185,18 +186,27 @@ export default class CodexForObsidianPlugin extends Plugin {
           rateLimitsByLimitId: nextStatus.rateLimitsByLimitId ?? previousStatus?.rateLimitsByLimitId ?? null
         };
       } catch (error) {
+        const diagnostic = diagnoseCodexError(error, {
+          model: this.settings.defaultModel,
+          providerLabel: providerConnectionLabel(this.settings, this.settings.settingsLanguage),
+          proxyEnabled: this.settings.proxyEnabled,
+          proxyUrl: this.settings.proxyUrl,
+          language: this.settings.settingsLanguage
+        });
         this.lastStatus = {
           connected: false,
-          accountLabel: "未连接",
+          accountLabel: this.settings.settingsLanguage === "en" ? "Disconnected" : "未连接",
           loggedIn: false,
           models: [],
           skills: [],
           mcpServers: [],
           rateLimits: null,
           rateLimitsByLimitId: null,
-          errors: [error instanceof Error ? error.message : String(error)]
+          errors: [diagnostic.text]
         };
-        if (!options.silent) new Notice(`Codex 连接失败：${this.lastStatus.errors[0]}`);
+        if (!options.silent) {
+          new Notice(this.settings.settingsLanguage === "en" ? `Codex failed: ${diagnostic.title}` : `Codex 连接失败：${diagnostic.title}`);
+        }
       }
       return this.lastStatus!;
     })().finally(() => {

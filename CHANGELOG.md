@@ -14,12 +14,19 @@
 
 1. `/journal` 按当前 `journal/` 体系写入 daily 月份目录，例如 `journal/daily/YYYY-MM/YYYY-MM-DD-周X.md`。
 2. 新 vault 首次写日记时自动创建 `journal/daily`、weekly、monthly、quarterly、yearly 目录。
-3. 写日记默认走 Codex 工作日记提示词，参考最近日记格式并总结当天真实 Codex 工作。
+3. 写日记默认走 Codex 工作日记提示词，参考最近日记格式，只增量更新目标日记。
+4. 当天记录窗口固定为目标日 `00:00` 到次日 `06:00` 前；Codex CLI 后端读取 Codex sessions，OpenCode API 后端读取 OpenCode 聊天记录。
 
 优化知识库频道过程展示：
 
 1. Codex CLI 知识库任务会复用普通 Agent 对话栏的过程卡片，展示思考、命令、文件改动、工具调用和最终结果。
 2. 知识库任务的最终结果会移动到本轮过程之后，方便先看执行链路，再看产物路径和结论。
+
+修复 Codex 连接诊断：
+
+1. 默认模型改为 `自动`，旧的 `gpt-5.5` 默认设置会迁移为自动。
+2. Windows WebSocket、代理拒绝、CLI 缺失、超时和 app-server 退出会显示具体原因、当前上下文、建议处理和原始错误。
+3. README 增加 Windows `responses_websocket` / `os error 10061` 排障说明。
 
 ## v0.5.1 - 2026-05-17
 

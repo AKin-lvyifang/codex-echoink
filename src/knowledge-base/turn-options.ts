@@ -5,11 +5,11 @@ import type { TurnOptions } from "../core/codex-service";
 
 export function buildCodexKnowledgeTurnOptions(input: {
   settings: Pick<CodexForObsidianSettings, "defaultModel" | "defaultReasoning" | "defaultServiceTier" | "mcpEnabled">;
-  availableModels: Array<Pick<CodexModel, "model">>;
+  availableModels: Array<Pick<CodexModel, "model" | "isDefault">>;
   vaultPath: string;
   permission: PermissionMode;
 }): TurnOptions {
-  const model = input.settings.defaultModel || input.availableModels[0]?.model || "gpt-5.5";
+  const model = input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
   const writableRoots = input.permission === "workspace-write"
     ? [
       path.join(input.vaultPath, "wiki"),

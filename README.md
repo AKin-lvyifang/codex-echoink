@@ -58,7 +58,7 @@
 - Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
 - Answers read-only knowledge questions with `/ask`, searching Wiki notes first and separating Vault evidence from external or model-based supplements.
-- Writes daily journals with `/journal`, following the current `journal/` folder layout and recent note format.
+- Writes daily journals with `/journal`, following the current `journal/` folder layout and recent note format; the workday window is `00:00` through before next-day `06:00`, with Codex CLI reading Codex sessions and OpenCode API reading OpenCode chat history.
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
 - Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Codex/OpenCode.
@@ -265,6 +265,19 @@ codex-echoink/
 5. Review the process cards for commands, edits, context usage, and evidence.
 6. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
 7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/ask`, `/maintain`, or `/outputs` depending on whether you want an answer, a maintenance run, or structured knowledge output.
+
+## Troubleshooting
+
+### Windows WebSocket or `os error 10061`
+
+If Codex CLI logs mention `responses_websocket`, `wss://chatgpt.com/backend-api/codex/responses`, `actively refused`, or `os error 10061`, the failure is usually in the Codex CLI ChatGPT-login WebSocket connection.
+
+Try these steps:
+
+1. Set the plugin default model to `Auto`, or choose a model other than `gpt-5.5`.
+2. If your network requires a local proxy, enable the plugin proxy setting and enter a URL such as `http://127.0.0.1:7890`.
+3. Reconnect Codex from the settings page, or restart Obsidian.
+4. If it still fails, share the new detailed plugin error and the relevant Codex CLI log lines with account details removed.
 
 ## Privacy and permissions
 
