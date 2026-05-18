@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.5.1-0EA5E9?style=flat-square" alt="Version v0.5.1">
+    <img src="https://img.shields.io/badge/version-v0.5.2-0EA5E9?style=flat-square" alt="Version v0.5.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip"><strong>Download v0.5.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip"><strong>Download v0.5.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -57,7 +57,7 @@
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
 - Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
-- Answers read-only knowledge questions with `/ask`, searching Wiki notes first and separating Vault evidence from external or model-based supplements.
+- Answers read-only knowledge questions with `/ask`, searching Wiki first and then using Journal / Outputs as background evidence, while separating Vault evidence from external or model-based supplements.
 - Writes daily journals with `/journal`, following the current `journal/` folder layout and recent note format; the workday window is `00:00` through before next-day `06:00`, with Codex CLI reading Codex sessions and OpenCode API reading OpenCode chat history.
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
@@ -113,6 +113,29 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v0.5.2
+
+**Knowledge workflow and Windows diagnostics update:** adds weekly review reports, improves `/journal`, makes Knowledge runs easier to inspect, and fixes the bad `gpt-5.5` default that could trigger Windows WebSocket failures.
+
+**New features:**
+
+- Added Knowledge and Agent chat weekly reviews, with scheduled or manual runs and Markdown + HTML output in `outputs/obsidian-weekly-review/`.
+- Added an EchoInk HTML preview for generated weekly review reports.
+- Added `/week` and `/week agent` shortcuts in the Knowledge channel.
+- Upgraded `/journal` to write into the current `journal/daily/YYYY-MM/YYYY-MM-DD-周X.md` layout, create missing journal folders, and use a fixed `00:00` to next-day `06:00` work window.
+- Added OpenCode chat-history collection for `/journal` when the Knowledge backend uses OpenCode API.
+- Expanded `/ask` evidence from `wiki/` to `wiki/`, `journal/`, and `outputs/`, with citation buckets, excerpt lines, relevance, and match reasons.
+- Added a settings language switch for Chinese / English settings UI.
+
+**Fixes:**
+
+- Changed the Codex CLI default model to `Auto`; existing saved `gpt-5.5` defaults are migrated to `Auto`.
+- Removed remaining hard-coded `gpt-5.5` fallback paths from Knowledge tasks and Plan mode.
+- Added detailed Codex diagnostics for WebSocket, proxy refusal, missing CLI, timeout, and app-server exit errors.
+- Added Windows `responses_websocket` / `os error 10061` troubleshooting guidance.
+- Simplified Review settings so manual report generation has confirmation and clearer output paths.
+- Shows Codex CLI Knowledge runs through the normal process timeline, so reasoning, commands, file edits, and final results stay in one visible flow.
 
 ### v0.5.1
 
@@ -237,7 +260,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.5.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.5.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 

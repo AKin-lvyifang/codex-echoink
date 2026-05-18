@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.5.1-0EA5E9?style=flat-square" alt="版本 v0.5.1">
+    <img src="https://img.shields.io/badge/version-v0.5.2-0EA5E9?style=flat-square" alt="版本 v0.5.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip"><strong>下载 v0.5.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip"><strong>下载 v0.5.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -59,7 +59,7 @@
 - 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
 - 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
 - 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
-- 支持 `/ask` 只读问答：先检索 Wiki 相关笔记，再回答问题，并区分 Vault 依据和外部/模型补充。
+- 支持 `/ask` 只读问答：先检索 Wiki，再把 Journal / Outputs 作为背景依据，并区分 Vault 依据和外部/模型补充。
 - 支持 `/journal` 写日记：按当前 `journal/` 体系自动写入 daily 月份目录，并沿用最近日记格式；当天窗口为目标日 `00:00` 到次日 `06:00` 前，Codex CLI 读取 Codex sessions，OpenCode API 读取 OpenCode 聊天记录。
 - Codex CLI 知识库任务会展示与普通 Agent 对话一致的过程卡片：思考、命令、文件改动、工具调用和最终结果。
 - 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
@@ -117,6 +117,29 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.5.2
+
+**知识库工作流与 Windows 诊断更新：** 新增周报复盘，优化 `/journal`，让知识库运行过程更可见，并修复容易触发 Windows WebSocket 失败的 `gpt-5.5` 默认模型问题。
+
+**新功能：**
+
+- 新增知识库周报和 Agent 对话周报，支持定时或手动生成，并输出 Markdown + HTML 到 `outputs/obsidian-weekly-review/`。
+- 新增 EchoInk 内置 HTML 预览，用来打开生成的周报。
+- 知识库频道新增 `/week` 和 `/week agent` 快捷命令。
+- `/journal` 改为写入当前 `journal/daily/YYYY-MM/YYYY-MM-DD-周X.md` 结构，自动创建缺失的 journal 目录，并固定使用目标日 `00:00` 到次日 `06:00` 前作为工作窗口。
+- 知识库后端使用 OpenCode API 时，`/journal` 会读取 OpenCode 聊天记录作为当天证据。
+- `/ask` 的本地依据从 `wiki/` 扩展到 `wiki/`、`journal/` 和 `outputs/`，并带上来源集合、引用片段、证据强度和命中原因。
+- 设置页新增中文 / English 显示语言切换。
+
+**修复：**
+
+- Codex CLI 默认模型改为 `自动`；旧用户保存的 `gpt-5.5` 默认值会迁移为 `自动`。
+- 移除知识库任务和 Plan 模式里残留的 `gpt-5.5` 硬编码兜底。
+- 新增 WebSocket、代理拒绝、CLI 缺失、超时和 app-server 退出的详细诊断。
+- README 增加 Windows `responses_websocket` / `os error 10061` 排障说明。
+- 复盘设置页精简为确认后生成，并显示更清楚的输出路径。
+- Codex CLI 知识库任务会进入普通过程时间线，思考、命令、文件改动和最终结果都在同一条链路里展示。
 
 ### v0.5.1
 
@@ -242,7 +265,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.1/codex-echoink-0.5.1.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
