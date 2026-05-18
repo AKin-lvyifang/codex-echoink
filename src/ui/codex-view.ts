@@ -25,6 +25,7 @@ import { formatRateLimitUsage, normalizeRateLimitResponse, type RateLimitWindowV
 import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-store";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
+import { composerIsBusy, composerPrimaryActionForState } from "./composer-state";
 import { openImageOverlay, renderRichText } from "./render-message";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
@@ -1665,7 +1666,8 @@ export class CodexView extends ItemView {
 
     const session = this.ensureSession();
     const knowledgeSession = this.isKnowledgeBaseSession(session);
-    const knowledgeRunning = knowledgeSession && (this.running || Boolean(this.plugin.getKnowledgeBaseManager()?.isRunning));
+    const knowledgeManager = this.plugin.getKnowledgeBaseManager();
+    const knowledgeTaskRunning = knowledgeSession && Boolean(knowledgeManager?.isRunning);
 
     const row = this.toolbarEl.createDiv({ cls: "codex-composer-row" });
     const left = row.createDiv({ cls: "codex-composer-left" });
@@ -1704,7 +1706,7 @@ export class CodexView extends ItemView {
       const kbChip = right.createEl("button", { cls: "codex-composer-model-button codex-kb-channel-chip", attr: { type: "button", title: "知识库常用命令" } });
       const kbIcon = kbChip.createSpan({ cls: "codex-composer-model-icon" });
       setIcon(kbIcon, "library");
-      kbChip.createSpan({ cls: "codex-composer-model-text", text: knowledgeRunning ? "知识库运行中" : "知识库命令" });
+      kbChip.createSpan({ cls: "codex-composer-model-text", text: knowledgeTaskRunning ? "知识库运行中" : "知识库命令" });
       const chevron = kbChip.createSpan({ cls: "codex-composer-chevron" });
       setIcon(chevron, "chevron-down");
       kbChip.onclick = (event) => this.openKnowledgeCommandMenu(event);
@@ -1736,15 +1738,20 @@ export class CodexView extends ItemView {
       micButton.onclick = () => new Notice("语音输入暂未接入");
     }
 
-    const busy = this.running || knowledgeRunning;
+    const composerState = {
+      viewRunning: this.running,
+      knowledgeTaskRunning
+    };
+    const busy = composerIsBusy(composerState);
     const sendButton = row.createEl("button", {
       cls: "codex-send-button codex-composer-send-button",
       attr: { type: "button", "aria-label": busy ? "停止" : "发送", title: busy ? "停止" : "发送" }
     });
     setIcon(sendButton, busy ? "square" : "send-horizontal");
     sendButton.onclick = () => {
-      if (knowledgeRunning && knowledgeSession) void this.plugin.getKnowledgeBaseManager()?.cancelMaintenance();
-      else if (this.running) void this.stopTurn();
+      const action = composerPrimaryActionForState(composerState);
+      if (action === "cancel-knowledge-task") void knowledgeManager?.cancelMaintenance();
+      else if (action === "stop-turn") void this.stopTurn();
       else void this.sendMessage();
     };
     if (!knowledgeSession) this.updateContext(session.tokenUsage, false);

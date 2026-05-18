@@ -80,6 +80,7 @@ import {
   resolveOpenCodeCommand
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
+import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import {
@@ -391,6 +392,10 @@ assert.ok(knowledgeBaseHelpText().includes("`/week`：写知识库周报"));
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
 assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false }), "stop-turn");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false }), "send");
+assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
 assert.deepEqual((parseKnowledgeBaseCommand("/初始化 确认") as any).confirm, true);

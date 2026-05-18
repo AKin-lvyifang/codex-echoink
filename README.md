@@ -137,6 +137,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 - Simplified Review settings so manual report generation has confirmation and clearer output paths.
 - Shows Codex CLI Knowledge runs through the normal process timeline, so reasoning, commands, file edits, and final results stay in one visible flow.
 - In the Knowledge channel, ordinary messages now stay as normal Agent chat. Only explicit `/ask`, `/query`, `/问`, or `/查询` commands trigger Knowledge Q&A.
+- The Knowledge channel primary button now stops ordinary Agent chat when that chat is running, instead of canceling Knowledge maintenance by mistake.
 - Knowledge failures now keep more complete app-server, JSON-RPC, OpenCode, and turn error details for easier troubleshooting.
 - Local vault note paths and report paths in Knowledge replies render as clickable note links.
 
