@@ -2,6 +2,17 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
+
+export type JournalEvidenceBackend = "codex-cli" | "opencode";
+
+export interface JournalEvidenceWindow {
+  start: Date;
+  end: Date;
+  startMs: number;
+  endMs: number;
+  label: string;
+}
 
 export interface JournalDailyTarget {
   targetDate: Date;
@@ -15,7 +26,9 @@ export interface JournalDailyTarget {
   absolutePath: string;
   templateDirectories: string[];
   samplePaths: string[];
+  evidenceWindow: JournalEvidenceWindow;
   codexSessionsPath: string;
+  codexSessionGlobs: string[];
 }
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -35,6 +48,7 @@ export async function resolveJournalDailyTarget(vaultPath: string, userRequest: 
   const layout = await detectJournalLayout(vaultPath);
   const dailyDir = layout.useMonthFolders ? `${layout.dailyRootPath}/${monthKey}` : layout.dailyRootPath;
   const relativePath = normalizeSlashes(`${dailyDir}/${dateKey}-${weekday}.md`);
+  const evidenceWindow = buildJournalEvidenceWindow(targetDate);
   return {
     targetDate,
     dateKey,
@@ -47,7 +61,9 @@ export async function resolveJournalDailyTarget(vaultPath: string, userRequest: 
     absolutePath: path.join(vaultPath, relativePath),
     templateDirectories: buildJournalTemplateDirectories(layout.rootPath, layout.dailyRootPath, monthKey, yearKey),
     samplePaths: await collectRecentJournalSamples(vaultPath, layout.dailyRootPath, relativePath),
-    codexSessionsPath: path.join(os.homedir(), ".codex", "sessions")
+    evidenceWindow,
+    codexSessionsPath: path.join(os.homedir(), ".codex", "sessions"),
+    codexSessionGlobs: buildCodexSessionGlobs(evidenceWindow)
   };
 }
 
@@ -62,13 +78,18 @@ export function buildKnowledgeBaseJournalPrompt(input: {
   vaultPath: string;
   userRequest: string;
   target: JournalDailyTarget;
+  backend?: JournalEvidenceBackend;
+  openCodeHistory?: OpenCodeHistorySnapshot | null;
   generatedAt?: Date;
 }): string {
   const generatedAt = input.generatedAt ?? new Date();
+  const backend = input.backend ?? "codex-cli";
+  const sourceLabel = backend === "opencode" ? "OpenCode API" : "Codex CLI";
+  const workLabel = backend === "opencode" ? "OpenCode" : "Codex";
   return [
     "你正在执行 Codex Obsidian Daily Journal。",
     "",
-    "这个任务默认不是生活散文，而是把方哥当天在 Codex 里实际推进的工作写进 Obsidian 日记。",
+    `这个任务默认不是生活散文，而是把方哥当天在 ${workLabel} 里实际推进的工作写进 Obsidian 日记。`,
     "必须使用中文，先给结论，再给关键依据；不要写空话，不要把命令流水账原样塞进去。",
     "",
     "## 用户原始指令",
@@ -82,6 +103,8 @@ export function buildKnowledgeBaseJournalPrompt(input: {
     `- 文件：${input.target.relativePath}`,
     `- 日记根目录：${input.target.rootPath}`,
     `- Daily 根目录：${input.target.dailyRootPath}`,
+    `- 记录来源：${sourceLabel}`,
+    `- 当天窗口：${input.target.evidenceWindow.label}（起始含，结束不含）`,
     "",
     "## 当前 journal 目录模板",
     ...input.target.templateDirectories.map((dir) => `- ${dir}`),
@@ -91,10 +114,13 @@ export function buildKnowledgeBaseJournalPrompt(input: {
       ? input.target.samplePaths.map((sample) => `- ${sample}`)
       : ["- 未找到历史样本；使用下面的兜底格式。"]),
     "",
+    "## 当天记录读取规则",
+    ...buildJournalEvidenceInstructions(backend, input.target, input.openCodeHistory),
+    "",
     "## 执行步骤",
     `1. 先读取最近日记样本，沿用它们的 YAML、标题、分节和语气。`,
-    `2. 读取 Codex 会话记录：${input.target.codexSessionsPath}/${input.target.dateKey.replace(/-/g, "/")}/*.jsonl。`,
-    "3. 如果目标日凌晨 00:00-02:30 仍是前一段连续工作，可合并进前一天；否则严格按目标日期写。",
+    `2. 按“当天记录读取规则”提取 ${workLabel} 在目标窗口内的有效工作记录。`,
+    "3. 当天窗口固定为目标日 00:00 到次日 06:00 前；不要再使用 00:00-02:30 旧口径。",
     "4. 补看当天 Obsidian Vault、当前工作目录和相关 outputs 里真实新增或更新的关键文件，避免只看聊天。",
     "5. 如果目标日记已存在，只做增量更新；保留用户原文，不要删旧内容，不要重复写同一件事。",
     "6. 如果目标日记不存在，创建父目录并写入目标文件；不要写到扁平路径 journal/daily/YYYY-MM-DD.md。",
@@ -137,6 +163,69 @@ export function buildKnowledgeBaseJournalPrompt(input: {
   ].join("\n");
 }
 
+export function buildJournalEvidenceWindow(targetDate: Date): JournalEvidenceWindow {
+  const start = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0, 0);
+  const end = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate() + 1, 6, 0, 0, 0);
+  return {
+    start,
+    end,
+    startMs: start.getTime(),
+    endMs: end.getTime(),
+    label: `${formatDateTimeDisplay(start)} - ${formatDateTimeDisplay(end)}`
+  };
+}
+
+function buildJournalEvidenceInstructions(backend: JournalEvidenceBackend, target: JournalDailyTarget, openCodeHistory?: OpenCodeHistorySnapshot | null): string[] {
+  if (backend === "opencode") {
+    return [
+      "- 当前知识库后端是 OpenCode API，所以“当天记录”必须按 OpenCode 聊天记录理解，不要再读取 Codex sessions 当作主证据。",
+      "- 插件已在执行前通过 OpenCode API 的 `session.list` / `session.messages` 读取目标窗口内记录；优先使用下面的 OpenCode 证据摘要。",
+      "- 如果摘要为空，说明 OpenCode 在该窗口内没有可用聊天记录；新用户首次写日记时仍要按 journal 模板创建目标文件，但内容要短，不要编造。",
+      "- 如需复核本机原始记录，可参考 OpenCode 本地库 `~/.opencode/opencode.db` 的 `sessions` / `messages` 表，但不要把它当成 Codex 记录。",
+      "",
+      "### OpenCode 当天聊天记录摘要",
+      ...formatOpenCodeHistoryForPrompt(openCodeHistory, target.evidenceWindow)
+    ];
+  }
+  return [
+    "- 当前知识库后端是 Codex CLI，所以“当天记录”默认读取 Codex 会话记录。",
+    "- 读取下面两个日期目录，并只保留目标窗口内的消息、工具调用、文件变更和最终产物：",
+    ...target.codexSessionGlobs.map((glob) => `  - ${glob}`),
+    `- 过滤窗口：${target.evidenceWindow.label}（起始含，结束不含）。`,
+    "- 不要把命令和 JSONL 原样抄进日记，要先消化成正常人能读懂的工作进展。"
+  ];
+}
+
+function formatOpenCodeHistoryForPrompt(snapshot: OpenCodeHistorySnapshot | null | undefined, window: JournalEvidenceWindow): string[] {
+  if (!snapshot) {
+    return [
+      `- 未读取到 OpenCode API 摘要；目标窗口仍是 ${window.label}。`,
+      "- 如果你无法复核 OpenCode 历史，只能基于用户本次指令、最近日记样本和真实文件变更写短版。"
+    ];
+  }
+  const lines = [
+    `- OpenCode Server：${snapshot.serverUrl || "未知"}`,
+    `- 扫描会话：${snapshot.sessionsScanned} 个；命中会话：${snapshot.sessionsMatched} 个；命中消息：${snapshot.messages.length} 条。`,
+    snapshot.truncated ? "- 摘要已截断，只能使用已提供的证据，不要猜未提供内容。" : ""
+  ].filter(Boolean);
+  if (!snapshot.messages.length) {
+    lines.push("- 该窗口内没有 OpenCode 聊天记录。");
+    return lines;
+  }
+  for (const message of snapshot.messages) {
+    lines.push(
+      [
+        `- ${message.createdAtLabel} ${message.role} · ${message.sessionTitle || message.sessionId}`,
+        message.modelLabel ? `  模型：${message.modelLabel}` : "",
+        message.directory ? `  工作区：${message.directory}` : "",
+        "  内容：",
+        ...message.text.split(/\r?\n/).filter(Boolean).map((line) => `  ${line}`)
+      ].filter(Boolean).join("\n")
+    );
+  }
+  return lines;
+}
+
 function parseJournalTargetDate(userRequest: string, now: Date): Date {
   const normalized = userRequest.trim();
   const explicit = normalized.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/);
@@ -155,6 +244,11 @@ function localDate(year: number, month: number, day: number, sourceTime: Date): 
 
 function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
+}
+
+function buildCodexSessionGlobs(window: JournalEvidenceWindow): string[] {
+  return [window.start, addDays(window.start, 1)]
+    .map((date) => path.join(os.homedir(), ".codex", "sessions", String(date.getFullYear()), pad(date.getMonth() + 1), pad(date.getDate()), "*.jsonl"));
 }
 
 async function detectJournalLayout(vaultPath: string): Promise<{ rootPath: string; dailyRootPath: string; useMonthFolders: boolean }> {
@@ -257,6 +351,10 @@ function formatDate(date: Date): string {
 
 function formatDateTimeLocal(date: Date): string {
   return `${formatDate(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatDateTimeDisplay(date: Date): string {
+  return `${formatDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function pad(value: number): string {

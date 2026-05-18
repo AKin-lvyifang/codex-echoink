@@ -298,7 +298,7 @@ export class CodexService {
   async startTurn(threadId: string, input: UserInput[], options: TurnOptions): Promise<string> {
     const client = this.requireClient();
     const cwd = this.resolveTurnCwd(options);
-    const collaborationMode = buildCollaborationMode(options.mode, options.model || "gpt-5.5", options.reasoning);
+    const collaborationMode = buildCollaborationMode(options.mode, options.model, options.reasoning);
     const result = await client.request(
       "turn/start",
       {

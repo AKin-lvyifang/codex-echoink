@@ -1,6 +1,7 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
 import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "../knowledge-base/constants";
+import type { KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
@@ -52,6 +53,7 @@ export interface ChatMessage {
   status?: string;
   details?: string;
   diffSummary?: DiffSummary;
+  citations?: KnowledgeBaseCitationSummary;
   attachments?: StoredAttachment[];
   files?: ProcessFileRef[];
   images?: StoredAttachment[];
@@ -85,6 +87,7 @@ export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
 export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
 export type ReviewRangeMode = "previous-week" | "current-week";
+export type SettingsLanguage = "zh-CN" | "en";
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -197,6 +200,7 @@ export interface WorkspaceResourceCache {
 
 export interface CodexForObsidianSettings {
   settingsVersion: number;
+  settingsLanguage: SettingsLanguage;
   settingsTab: SettingsTab;
   agentBackend: AgentBackendMode;
   cliPath: string;
@@ -385,7 +389,8 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 24,
+  settingsVersion: 25,
+  settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
   cliPath: "",
@@ -395,7 +400,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   activeApiProviderId: "",
   apiProviders: [],
   mcpEnabled: false,
-  defaultModel: "gpt-5.5",
+  defaultModel: "",
   defaultReasoning: "high",
   defaultServiceTier: "fast",
   defaultPermission: "workspace-write",
@@ -502,9 +507,11 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
 
 export function normalizeSettingsData(data: any): { settings: CodexForObsidianSettings; changed: boolean } {
   const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
+  const normalizedLanguage = normalizeSettingsLanguage(data?.settingsLanguage);
   const settings: CodexForObsidianSettings = {
     ...DEFAULT_SETTINGS,
     ...data,
+    settingsLanguage: normalizedLanguage,
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     agentBackend: normalizeAgentBackendMode(data?.agentBackend),
     providerMode: normalizeProviderMode(data?.providerMode),
@@ -553,9 +560,14 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     }
   }
 
+  if (previousVersion < 25 && settings.defaultModel === "gpt-5.5") {
+    settings.defaultModel = "";
+  }
+
   normalizeApiProviderSelection(settings);
   settings.settingsVersion = DEFAULT_SETTINGS.settingsVersion;
-  return { settings, changed: previousVersion !== DEFAULT_SETTINGS.settingsVersion };
+  const languageChanged = data?.settingsLanguage !== normalizedLanguage;
+  return { settings, changed: previousVersion !== DEFAULT_SETTINGS.settingsVersion || languageChanged };
 }
 
 export function getActiveApiProvider(settings: Pick<CodexForObsidianSettings, "activeApiProviderId" | "apiProviders">): ApiProviderConfig | null {
@@ -566,18 +578,18 @@ export function getApiProviderModels(provider: Pick<ApiProviderConfig, "model"> 
   return normalizeModelList([...(provider.models ?? []), provider.model]);
 }
 
-export function providerModelLabel(provider: Pick<ApiProviderConfig, "model"> & Partial<Pick<ApiProviderConfig, "models">>): string {
+export function providerModelLabel(provider: Pick<ApiProviderConfig, "model"> & Partial<Pick<ApiProviderConfig, "models">>, language: SettingsLanguage = "zh-CN"): string {
   const models = getApiProviderModels(provider);
-  if (!models.length) return "未设置模型";
-  return models.length === 1 ? models[0] : `${models[0]} 等 ${models.length} 个`;
+  if (!models.length) return language === "en" ? "No model set" : "未设置模型";
+  return models.length === 1 ? models[0] : language === "en" ? `${models[0]} + ${models.length - 1} more` : `${models[0]} 等 ${models.length} 个`;
 }
 
-export function validateApiProvider(provider: Pick<ApiProviderConfig, "name" | "baseUrl" | "model" | "apiKey"> & Partial<Pick<ApiProviderConfig, "models">>): string[] {
+export function validateApiProvider(provider: Pick<ApiProviderConfig, "name" | "baseUrl" | "model" | "apiKey"> & Partial<Pick<ApiProviderConfig, "models">>, language: SettingsLanguage = "zh-CN"): string[] {
   const errors: string[] = [];
-  if (!provider.name.trim()) errors.push("名称不能为空");
-  if (!provider.baseUrl.trim()) errors.push("Base URL 不能为空");
-  if (!getApiProviderModels(provider).length) errors.push("模型不能为空");
-  if (!provider.apiKey.trim()) errors.push("API key 不能为空");
+  if (!provider.name.trim()) errors.push(language === "en" ? "Name is required" : "名称不能为空");
+  if (!provider.baseUrl.trim()) errors.push(language === "en" ? "Base URL is required" : "Base URL 不能为空");
+  if (!getApiProviderModels(provider).length) errors.push(language === "en" ? "Model is required" : "模型不能为空");
+  if (!provider.apiKey.trim()) errors.push(language === "en" ? "API key is required" : "API key 不能为空");
   return errors;
 }
 
@@ -650,10 +662,11 @@ export function clearLegacyChatWorkspaceDefaults(
   return changed;
 }
 
-export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">): string {
-  if (settings.providerMode !== "custom-api") return "Codex 登录态";
+export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">, language: SettingsLanguage = "zh-CN"): string {
+  if (settings.providerMode !== "custom-api") return language === "en" ? "Codex login" : "Codex 登录态";
   const provider = getActiveApiProvider(settings);
-  return provider ? `自定义 API：${provider.name} · ${providerModelLabel(provider)}` : "自定义 API 未配置";
+  if (!provider) return language === "en" ? "Custom API not configured" : "自定义 API 未配置";
+  return language === "en" ? `Custom API: ${provider.name} · ${providerModelLabel(provider, language)}` : `自定义 API：${provider.name} · ${providerModelLabel(provider, language)}`;
 }
 
 export function ensureModelChoices(models: CodexModel[], ...preferredModels: Array<string | null | undefined>): CodexModel[] {
@@ -856,18 +869,20 @@ export function parseOpenCodeModelChoiceValue(value: string): { providerId: stri
   return { providerId: providerId.trim(), modelId: modelId.trim() };
 }
 
-export function openCodeModelCapabilityLabel(model: Pick<AgentModelInfo, "inputModalities">): string {
-  return `文本 ${model.inputModalities.includes("text") ? "✓" : "×"} · 图片 ${model.inputModalities.includes("image") ? "✓" : "×"} · PDF ${model.inputModalities.includes("pdf") ? "✓" : "×"}`;
+export function openCodeModelCapabilityLabel(model: Pick<AgentModelInfo, "inputModalities">, language: SettingsLanguage = "zh-CN"): string {
+  return language === "en"
+    ? `Text ${model.inputModalities.includes("text") ? "✓" : "×"} · Images ${model.inputModalities.includes("image") ? "✓" : "×"} · PDF ${model.inputModalities.includes("pdf") ? "✓" : "×"}`
+    : `文本 ${model.inputModalities.includes("text") ? "✓" : "×"} · 图片 ${model.inputModalities.includes("image") ? "✓" : "×"} · PDF ${model.inputModalities.includes("pdf") ? "✓" : "×"}`;
 }
 
-export function openCodeModelChoiceLabel(model: Pick<AgentModelInfo, "displayName" | "providerId" | "modelId" | "inputModalities">): string {
-  return `${model.displayName || `${model.providerId}/${model.modelId}`} · ${openCodeModelCapabilityLabel(model)}`;
+export function openCodeModelChoiceLabel(model: Pick<AgentModelInfo, "displayName" | "providerId" | "modelId" | "inputModalities">, language: SettingsLanguage = "zh-CN"): string {
+  return `${model.displayName || `${model.providerId}/${model.modelId}`} · ${openCodeModelCapabilityLabel(model, language)}`;
 }
 
-export function openCodeAgentModeLabel(agent: Pick<AgentProfileInfo, "mode">): string {
-  if (agent.mode === "primary") return "主 Agent";
-  if (agent.mode === "all") return "通用 Agent";
-  return "子 Agent";
+export function openCodeAgentModeLabel(agent: Pick<AgentProfileInfo, "mode">, language: SettingsLanguage = "zh-CN"): string {
+  if (agent.mode === "primary") return language === "en" ? "Primary agent" : "主 Agent";
+  if (agent.mode === "all") return language === "en" ? "Universal agent" : "通用 Agent";
+  return language === "en" ? "Subagent" : "子 Agent";
 }
 
 export function openCodeAgentChoiceValue(agent: Pick<AgentProfileInfo, "name">): string {
@@ -879,8 +894,8 @@ export function parseOpenCodeAgentChoiceValue(value: string): string | null {
   return agent ? agent : null;
 }
 
-export function openCodeAgentChoiceLabel(agent: Pick<AgentProfileInfo, "name" | "mode" | "native">): string {
-  return `${agent.name} · ${openCodeAgentModeLabel(agent)}${agent.native ? " · 内置" : ""}`;
+export function openCodeAgentChoiceLabel(agent: Pick<AgentProfileInfo, "name" | "mode" | "native">, language: SettingsLanguage = "zh-CN"): string {
+  return `${agent.name} · ${openCodeAgentModeLabel(agent, language)}${agent.native ? (language === "en" ? " · Built-in" : " · 内置") : ""}`;
 }
 
 export function newId(prefix: string): string {
@@ -893,6 +908,10 @@ function normalizeResourceManagementTab(value: any): ResourceManagementTab {
 
 function normalizeSettingsTab(value: any): SettingsTab {
   return value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+}
+
+export function normalizeSettingsLanguage(value: any): SettingsLanguage {
+  return value === "en" ? "en" : DEFAULT_SETTINGS.settingsLanguage;
 }
 
 function normalizeProviderMode(value: any): ProviderMode {
