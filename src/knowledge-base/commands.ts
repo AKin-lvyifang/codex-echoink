@@ -24,7 +24,7 @@ export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
   { command: "/journal ...", description: "写日记" },
   { command: "/week", description: "写知识库周报；/week agent 写 Agent 周报" },
   { command: "/clear", description: "清空当前页面，保留本地历史并开启新上下文" },
-  { command: "/history", description: "查看被清空隐藏的本地历史" },
+  { command: "/history", description: "按天查看知识库历史" },
   { command: "/init", description: "预览初始化；/init confirm 才执行" },
   { command: "/help", description: "显示这份命令说明" }
 ];

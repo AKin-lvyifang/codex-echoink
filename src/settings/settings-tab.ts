@@ -325,6 +325,7 @@ export class CodexSettingTab extends PluginSettingTab {
     };
 
     this.addKnowledgeBaseCommandGuide(wrapper);
+    this.addKnowledgeBaseStoragePanel(wrapper);
 
     this.decorateSetting(new Setting(wrapper).setName(copy.knowledge.enabled).setDesc(copy.knowledge.enabledDesc).addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
@@ -444,6 +445,50 @@ export class CodexSettingTab extends PluginSettingTab {
       row.createEl("code", { text: item.command });
       row.createSpan({ text: item.description });
     }
+  }
+
+  private addKnowledgeBaseStoragePanel(container: HTMLElement): void {
+    const copy = this.copy;
+    const section = container.createDiv({ cls: "codex-api-provider-row codex-kb-storage-panel" });
+    section.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.storageHeading });
+    const statsEl = section.createDiv({ cls: "codex-resource-note", text: copy.knowledge.storageLoading });
+    void this.plugin.getKnowledgeBaseStorageStats()
+      .then((stats) => {
+        statsEl.setText(copy.knowledge.storageStats(
+          formatStorageBytes(stats.dataJsonBytes),
+          formatStorageBytes(stats.historyBytes),
+          formatStorageBytes(stats.rawBytes),
+          stats.messageCount,
+          stats.dayCount
+        ));
+      })
+      .catch((error) => {
+        statsEl.setText(copy.common.readFailed(error instanceof Error ? error.message : String(error)));
+      });
+    const actions = section.createDiv({ cls: "codex-api-provider-actions" });
+    const rebuild = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.rebuildHistory, attr: { type: "button" } });
+    rebuild.onclick = async () => {
+      rebuild.disabled = true;
+      await this.plugin.rebuildKnowledgeBaseHistoryIndex();
+      new Notice(copy.knowledge.historyRebuilt);
+      this.display();
+    };
+    const exportButton = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.exportHistory, attr: { type: "button" } });
+    exportButton.onclick = async () => {
+      exportButton.disabled = true;
+      const exported = await this.plugin.exportKnowledgeBaseHistory();
+      new Notice(copy.knowledge.historyExported(exported));
+      this.display();
+    };
+    const compact = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.compactHistory, attr: { type: "button" } });
+    compact.onclick = async () => {
+      const accepted = await confirmModal(this.app, copy.knowledge.compactHistory, "只压缩旧日期的过程记录，不删除用户与助手正文。", "压缩", "取消");
+      if (!accepted) return;
+      compact.disabled = true;
+      const count = await this.plugin.compactOldKnowledgeBaseProcessHistory();
+      new Notice(copy.knowledge.historyCompacted(count));
+      this.display();
+    };
   }
 
   private renderReviewSettings(container: HTMLElement): void {
@@ -1681,6 +1726,12 @@ function knowledgeInitStatusLabel(value: string, copy: SettingsCopy = settingsCo
 function pluginInstallDir(plugin: CodexForObsidianPlugin): string {
   const dir = (plugin.manifest as any).dir;
   return dir ? `${dir}/` : ".obsidian/plugins/codex-echoink/";
+}
+
+function formatStorageBytes(value: number): string {
+  if (value < 1024) return `${value}B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)}KB`;
+  return `${(value / 1024 / 1024).toFixed(1)}MB`;
 }
 
 function formatQueryParams(params?: Record<string, string>): string {

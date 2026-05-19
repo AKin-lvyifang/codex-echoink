@@ -71,6 +71,7 @@ export interface StoredSession {
   cwd: string;
   messages: ChatMessage[];
   messagesHiddenBefore?: number;
+  historyActiveDate?: string;
   tokenUsage?: TokenUsage;
   createdAt: number;
   updatedAt: number;
@@ -1083,6 +1084,7 @@ function normalizeStoredSessions(value: any): StoredSession[] {
         cwd: normalizeOptionalText(session?.cwd),
         messages,
         messagesHiddenBefore: normalizeOptionalPositiveNumber(session?.messagesHiddenBefore),
+        historyActiveDate: normalizeOptionalText(session?.historyActiveDate) || undefined,
         tokenUsage: session?.tokenUsage,
         createdAt: normalizeNonNegativeNumber(session?.createdAt),
         updatedAt: normalizeNonNegativeNumber(session?.updatedAt)

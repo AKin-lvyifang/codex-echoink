@@ -1046,13 +1046,68 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-kb-history-modal {
-  max-height: min(72vh, 720px);
+  max-height: min(78vh, 760px);
 }
 
 .codex-kb-history-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   justify-content: flex-end;
   margin: 14px 0 10px;
+}
+
+.codex-kb-history-layout {
+  display: grid;
+  grid-template-columns: minmax(132px, 180px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 360px;
+}
+
+.codex-kb-history-days {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(58vh, 560px);
+  overflow: auto;
+}
+
+.codex-kb-history-day {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.codex-kb-history-day.is-active,
+.codex-resource-tab.is-active {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.codex-kb-history-day span,
+.codex-kb-history-day small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-kb-history-day small {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.codex-kb-history-main {
+  min-width: 0;
 }
 
 .codex-kb-history-list {
@@ -1091,6 +1146,16 @@ body.theme-light .codex-code-wrapper pre {
 .codex-kb-history-more {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .codex-kb-history-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .codex-kb-history-days {
+    max-height: 140px;
+  }
 }
 
 .codex-resource-tabs {

@@ -37,7 +37,8 @@ import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, re
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
-import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
+import type { KnowledgeBaseHistoryDaySummary } from "../knowledge-base/history-store";
+import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages } from "../knowledge-base/session-history";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
@@ -210,6 +211,13 @@ export class CodexView extends ItemView {
   }
 
   refreshKnowledgeBaseDashboard(): void {
+    void this.refreshKnowledgeDashboard(true);
+  }
+
+  refreshAfterBackgroundKnowledgeMessage(): void {
+    this.renderTabs();
+    this.renderMessages({ forceBottom: this.isMessagesNearBottom() });
+    this.renderKnowledgeDashboard();
     void this.refreshKnowledgeDashboard(true);
   }
 
@@ -1936,23 +1944,44 @@ export class CodexView extends ItemView {
     new Notice(result.hiddenCount ? `已清空当前页面，${result.hiddenCount} 条历史仍可在 /history 查看` : "已开启新的知识库上下文");
   }
 
-  private openKnowledgeBaseHistory(session: StoredSession): void {
+  private async openKnowledgeBaseHistory(session: StoredSession): Promise<void> {
     if (!this.isKnowledgeBaseSession(session)) return;
-    const hiddenMessages = getHiddenKnowledgeBaseMessages(session);
-    if (!hiddenMessages.length) {
-      new Notice("没有被隐藏的知识库历史");
+    await this.plugin.saveSettings(true);
+    const index = await this.plugin.readKnowledgeBaseHistoryIndex().catch((error) => {
+      console.error("Codex knowledge history read failed", error);
+      return null;
+    });
+    const historySession = index?.sessions.find((item) => item.sessionId === session.id);
+    const days = historySession?.days ?? [];
+    if (!days.length) {
+      new Notice("没有知识库历史");
       return;
     }
-    new KnowledgeBaseHistoryModal(this.app, hiddenMessages, () => void this.restoreKnowledgeBaseHistory(session)).open();
+    new KnowledgeBaseHistoryModal(
+      this.app,
+      days,
+      (date) => this.plugin.readKnowledgeBaseHistoryDay(session.id, date),
+      (date) => this.restoreKnowledgeBaseHistoryDate(session, date)
+    ).open();
   }
 
-  private async restoreKnowledgeBaseHistory(session: StoredSession): Promise<void> {
-    restoreKnowledgeBaseVisibleHistory(session);
+  private async restoreKnowledgeBaseHistoryDate(session: StoredSession, date: string): Promise<void> {
+    const messages = await this.plugin.readKnowledgeBaseHistoryDay(session.id, date);
+    if (!messages.length) {
+      new Notice("这一天没有可恢复的历史");
+      return;
+    }
+    session.messages = messages;
+    session.historyActiveDate = date;
+    delete session.messagesHiddenBefore;
+    delete session.threadId;
+    delete session.tokenUsage;
+    session.updatedAt = Date.now();
     this.resetVirtualWindow();
     await this.plugin.saveSettings(true);
     this.renderMessages({ forceBottom: true });
     this.renderToolbar();
-    new Notice("历史已恢复显示；模型上下文仍会从新线程开始");
+    new Notice("已把这一天恢复到页面显示；模型上下文会从新线程开始");
   }
 
   private async ensureChatWorkspaceSelected(session: StoredSession): Promise<boolean> {
@@ -2323,7 +2352,7 @@ export class CodexView extends ItemView {
       if (knowledgeCommand?.intent === "history") {
         this.inputEl.value = "";
         this.skillMenuEl.removeClass("is-visible");
-        this.openKnowledgeBaseHistory(session);
+        await this.openKnowledgeBaseHistory(session);
         return;
       }
     }
@@ -3849,13 +3878,24 @@ export class CodexView extends ItemView {
   }
 }
 
+type KnowledgeBaseHistoryFilter = "all" | "user" | "assistant" | "process" | "failed";
+
 class KnowledgeBaseHistoryModal extends Modal {
+  private activeDate = "";
+  private activeFilter: KnowledgeBaseHistoryFilter = "all";
+  private messages: ChatMessage[] = [];
+  private dateListEl: HTMLElement | null = null;
+  private filterEl: HTMLElement | null = null;
+  private listEl: HTMLElement | null = null;
+
   constructor(
     app: any,
-    private readonly messages: ChatMessage[],
-    private readonly restore: () => void
+    private readonly days: KnowledgeBaseHistoryDaySummary[],
+    private readonly loadDay: (date: string) => Promise<ChatMessage[]>,
+    private readonly restoreDay: (date: string) => Promise<void>
   ) {
     super(app);
+    this.activeDate = days[0]?.date ?? "";
   }
 
   onOpen(): void {
@@ -3863,34 +3903,115 @@ class KnowledgeBaseHistoryModal extends Modal {
     contentEl.empty();
     contentEl.addClass("codex-kb-history-modal");
     contentEl.createEl("h2", { text: "知识库历史" });
-    contentEl.createDiv({ cls: "codex-resource-note", text: `本地保留 ${this.messages.length} 条隐藏记录。恢复显示不会恢复旧模型上下文。` });
+    contentEl.createDiv({ cls: "codex-resource-note", text: "按天查看历史记录。恢复显示只恢复可见内容，不恢复旧模型上下文。" });
 
-    const actions = contentEl.createDiv({ cls: "codex-kb-history-actions" });
-    const restoreButton = actions.createEl("button", { cls: "mod-cta", text: "恢复显示", attr: { type: "button" } });
-    restoreButton.onclick = () => {
-      this.restore();
-      this.close();
-    };
-
-    const list = contentEl.createDiv({ cls: "codex-kb-history-list" });
-    const shown = this.messages.slice(-120).reverse();
-    if (shown.length < this.messages.length) {
-      list.createDiv({ cls: "codex-kb-history-more", text: `仅展示最近 ${shown.length} 条；更早记录仍保留在本地。` });
-    }
-    for (const message of shown) {
-      const row = list.createDiv({ cls: "codex-kb-history-row" });
-      const meta = row.createDiv({ cls: "codex-kb-history-meta" });
-      meta.createSpan({ text: roleLabel(message.role) });
-      meta.createSpan({ text: formatAbsoluteTime(message.createdAt) });
-      if (message.title) meta.createSpan({ text: message.title });
-      row.createDiv({ cls: "codex-kb-history-text", text: compactHistoryText(message) });
-    }
+    const layout = contentEl.createDiv({ cls: "codex-kb-history-layout" });
+    this.dateListEl = layout.createDiv({ cls: "codex-kb-history-days" });
+    const main = layout.createDiv({ cls: "codex-kb-history-main" });
+    this.filterEl = main.createDiv({ cls: "codex-kb-history-actions" });
+    this.listEl = main.createDiv({ cls: "codex-kb-history-list" });
+    this.renderDates();
+    this.renderFilters();
+    void this.selectDate(this.activeDate);
   }
 
   onClose(): void {
     this.contentEl.empty();
     this.contentEl.removeClass("codex-kb-history-modal");
   }
+
+  private renderDates(): void {
+    if (!this.dateListEl) return;
+    this.dateListEl.empty();
+    for (const day of this.days) {
+      const button = this.dateListEl.createEl("button", {
+        cls: `codex-kb-history-day ${day.date === this.activeDate ? "is-active" : ""}`.trim(),
+        attr: { type: "button" }
+      });
+      button.createSpan({ text: day.date });
+      button.createEl("small", { text: `${day.messageCount} 条` });
+      button.onclick = () => void this.selectDate(day.date);
+    }
+  }
+
+  private renderFilters(): void {
+    if (!this.filterEl) return;
+    this.filterEl.empty();
+    const labels: Record<KnowledgeBaseHistoryFilter, string> = {
+      all: "全部",
+      user: "我",
+      assistant: "回复",
+      process: "过程",
+      failed: "失败"
+    };
+    for (const filter of Object.keys(labels) as KnowledgeBaseHistoryFilter[]) {
+      const button = this.filterEl.createEl("button", {
+        cls: `codex-resource-tab ${filter === this.activeFilter ? "is-active" : ""}`.trim(),
+        text: labels[filter],
+        attr: { type: "button" }
+      });
+      button.onclick = () => {
+        this.activeFilter = filter;
+        this.renderFilters();
+        this.renderMessages();
+      };
+    }
+    const restoreButton = this.filterEl.createEl("button", { cls: "mod-cta", text: "恢复当天到页面", attr: { type: "button" } });
+    restoreButton.onclick = async () => {
+      await this.restoreDay(this.activeDate);
+      this.close();
+    };
+  }
+
+  private async selectDate(date: string): Promise<void> {
+    if (!date) return;
+    this.activeDate = date;
+    this.renderDates();
+    if (this.listEl) {
+      this.listEl.empty();
+      this.listEl.createDiv({ cls: "codex-kb-history-more", text: "读取中..." });
+    }
+    try {
+      this.messages = await this.loadDay(date);
+    } catch (error) {
+      console.error("Codex knowledge history day read failed", error);
+      this.messages = [];
+      if (this.listEl) {
+        this.listEl.empty();
+        this.listEl.createDiv({ cls: "codex-kb-history-more", text: "读取失败" });
+      }
+      return;
+    }
+    this.renderMessages();
+  }
+
+  private renderMessages(): void {
+    if (!this.listEl) return;
+    this.listEl.empty();
+    const filtered = this.messages.filter((message) => historyMessageMatchesFilter(message, this.activeFilter));
+    if (!filtered.length) {
+      this.listEl.createDiv({ cls: "codex-kb-history-more", text: "这一天没有符合筛选的记录。" });
+      return;
+    }
+    for (const message of filtered) {
+      const row = this.listEl.createDiv({ cls: "codex-kb-history-row" });
+      const meta = row.createDiv({ cls: "codex-kb-history-meta" });
+      meta.createSpan({ text: roleLabel(message.role) });
+      meta.createSpan({ text: formatAbsoluteTime(message.createdAt) });
+      if (message.title) meta.createSpan({ text: message.title });
+      if (message.status) meta.createSpan({ text: message.status });
+      row.createDiv({ cls: "codex-kb-history-text", text: compactHistoryText(message) });
+    }
+  }
+}
+
+function historyMessageMatchesFilter(message: ChatMessage, filter: KnowledgeBaseHistoryFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "user") return message.role === "user";
+  if (filter === "assistant") return message.role === "assistant";
+  if (filter === "process") return Boolean(message.itemType) && message.role !== "user" && message.role !== "assistant";
+  if (filter === "failed") return message.status === "failed" || message.status === "error";
+  return true;
 }
 
 function roleLabel(role: ChatMessage["role"]): string {

@@ -8,7 +8,7 @@ import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../age
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
-import { providerConnectionLabel, recordKnowledgeBaseHealthCheck, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
+import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseHealthCheck, type ChatMessage, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
@@ -21,6 +21,8 @@ import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitializa
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
+import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
+import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
 import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 
@@ -48,6 +50,7 @@ const URL_PATTERN = /https?:\/\/[^\s<>"')]+/i;
 export class KnowledgeBaseManager {
   private running = false;
   private scheduleTimer: number | null = null;
+  private schedulerStartedAt = 0;
   private codexWaiter: CodexKbWaiter | null = null;
   private activeCodexRun: { threadId: string; turnId: string } | null = null;
   private activeOpenCode: { backend: OpenCodeBackend; sessionId: string } | null = null;
@@ -95,6 +98,7 @@ export class KnowledgeBaseManager {
     });
     this.plugin.addRibbonIcon("library", "知识库管理", () => void this.plugin.activateKnowledgeBaseChannel());
     this.plugin.app.workspace.onLayoutReady(() => {
+      this.schedulerStartedAt = Date.now();
       this.armSchedule();
       void this.runCatchUpIfNeeded();
     });
@@ -711,15 +715,33 @@ export class KnowledgeBaseManager {
 
   private async runScheduledIfDue(forceCatchUp = false): Promise<void> {
     const settings = this.plugin.settings.knowledgeBase;
-    if (!settings.enabled || !settings.scheduleEnabled || this.running) return;
-    const now = new Date();
-    const [hour, minute] = settings.scheduleTime.split(":").map((item) => Number(item));
-    const scheduled = new Date(now);
-    scheduled.setHours(hour, minute, 0, 0);
-    const last = settings.lastRunAt ? new Date(settings.lastRunAt) : null;
-    const alreadyRanToday = Boolean(last && last.toDateString() === now.toDateString());
-    if (alreadyRanToday) return;
-    if (forceCatchUp || now >= scheduled) await this.runMaintenance("maintain");
+    if (this.running) return;
+    if (shouldRunScheduledKnowledgeBaseMaintenance(settings, new Date(), this.schedulerStartedAt, forceCatchUp)) {
+      const result = await this.runMaintenance("maintain");
+      await this.appendScheduledMaintenanceMessage(result);
+    }
+  }
+
+  private async appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void> {
+    const session = ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath());
+    const reportText = result.reportPath
+      ? await readKnowledgeBaseReportExcerpt(this.plugin.getVaultPath(), result.reportPath, 3000).catch(() => null)
+      : null;
+    const message: ChatMessage = {
+      id: newId("msg"),
+      role: "assistant",
+      title: "每日知识库维护",
+      itemType: "knowledgeBase",
+      status: result.status === "success" ? "completed" : "failed",
+      text: buildScheduledKnowledgeBaseMessage(result, reportText ?? ""),
+      createdAt: Date.now()
+    };
+    await this.plugin.externalizeMessageText(message, message.text);
+    session.messages.push(message);
+    session.title = "知识库管理";
+    session.updatedAt = message.createdAt;
+    await this.plugin.saveSettings(true);
+    this.plugin.getCodexView()?.refreshAfterBackgroundKnowledgeMessage();
   }
 
   async captureText(target: "inbox" | "raw-articles"): Promise<void> {

@@ -124,6 +124,8 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const trackerSnapshot = await readKnowledgeBaseTrackerSnapshot(vaultPath, trackerPath, rawContentFiles);
   const mergedProcessedSources = { ...processedSources, ...trackerSnapshot.processedSources };
   const reportFindings = await readReportFindings(vaultPath, reportPath);
+  const latestExternalCheckAt = Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt);
+  const externalHealthHistory = buildExternalHealthHistory(outputs.files, latestExternalCheckAt);
   const rawChangedCount = countChangedProcessed(rawContentFiles, mergedProcessedSources);
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
@@ -140,7 +142,8 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const health = buildHealth({
     settings,
     generatedAt,
-    latestExternalCheckAt: Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt),
+    latestExternalCheckAt,
+    externalHealthHistory,
     latestReportFindings: reportFindings,
     rulesFileExists,
     rawExists: raw.exists,
@@ -151,7 +154,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     inboxCount: inbox.fileCount,
     warnings
   });
-  const checkFreshness = buildCheckFreshness(settings.healthHistory ?? [], generatedAt, Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt));
+  const checkFreshness = buildCheckFreshness(settings.healthHistory ?? [], generatedAt, latestExternalCheckAt);
 
   return {
     generatedAt,
@@ -200,7 +203,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     },
     health,
     checkFreshness,
-    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt)),
+    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, externalHealthHistory),
     warnings
   };
 }
@@ -343,6 +346,7 @@ interface HealthInput {
   settings: KnowledgeBaseSettings;
   generatedAt: number;
   latestExternalCheckAt: number;
+  externalHealthHistory: KnowledgeBaseHealthHistoryEntry[];
   latestReportFindings: ReportFindings;
   rulesFileExists: boolean;
   rawExists: boolean;
@@ -403,7 +407,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
     score,
     reasons,
     lastCheckAt: latestCheckAt,
-    streakDays: countHealthStreakDays(history, input.latestExternalCheckAt),
+    streakDays: countHealthStreakDays(history, input.externalHealthHistory),
   };
 }
 
@@ -471,13 +475,32 @@ function isSameLocalDay(leftMs: number, rightMs: number): boolean {
   return formatLocalDateKey(leftMs) === formatLocalDateKey(rightMs);
 }
 
-function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0): KnowledgeBaseDashboardHeatmapDay[] {
-  const normalized = normalizeHealthHistory(history);
-  const byDate = new Map(normalized.map((entry) => [entry.date, entry.status]));
-  if (externalCheckAt) {
-    const externalDate = formatLocalDateKey(externalCheckAt);
-    if (!byDate.has(externalDate)) byDate.set(externalDate, "success");
+function buildExternalHealthHistory(outputFiles: KnowledgeBaseDashboardFile[], externalCheckAt = 0): KnowledgeBaseHealthHistoryEntry[] {
+  const entries: KnowledgeBaseHealthHistoryEntry[] = [];
+  for (const file of outputFiles) {
+    const match = file.path.match(/^outputs\/kb-maintenance-(\d{4}-\d{2}-\d{2})\.md$/i);
+    if (!match?.[1]) continue;
+    entries.push({ date: match[1], status: "success", at: file.mtime });
   }
+  if (externalCheckAt) {
+    entries.push({ date: formatLocalDateKey(externalCheckAt), status: "success", at: externalCheckAt });
+  }
+  return normalizeHealthHistory(entries);
+}
+
+function statusByCheckDate(history: KnowledgeBaseHealthHistoryEntry[], externalHistory: KnowledgeBaseHealthHistoryEntry[]): Map<string, KnowledgeBaseDashboardCheckStatus> {
+  const byDate = new Map<string, KnowledgeBaseDashboardCheckStatus>();
+  for (const entry of normalizeHealthHistory(externalHistory)) {
+    byDate.set(entry.date, entry.status);
+  }
+  for (const entry of normalizeHealthHistory(history)) {
+    byDate.set(entry.date, entry.status);
+  }
+  return byDate;
+}
+
+function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalHistory: KnowledgeBaseHealthHistoryEntry[] = []): KnowledgeBaseDashboardHeatmapDay[] {
+  const byDate = statusByCheckDate(history, externalHistory);
   const year = new Date(generatedAt).getFullYear();
   const cursor = parseDateKey(`${year}-01-01`);
   const days: KnowledgeBaseDashboardHeatmapDay[] = [];
@@ -492,13 +515,8 @@ function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generated
   return days;
 }
 
-function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], externalCheckAt = 0): number {
-  const normalized = normalizeHealthHistory(history);
-  const byDate = new Map(normalized.map((entry) => [entry.date, entry.status]));
-  if (externalCheckAt) {
-    const externalDate = formatLocalDateKey(externalCheckAt);
-    if (!byDate.has(externalDate)) byDate.set(externalDate, "success");
-  }
+function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], externalHistory: KnowledgeBaseHealthHistoryEntry[] = []): number {
+  const byDate = statusByCheckDate(history, externalHistory);
   const latest = Array.from(byDate.entries()).sort((left, right) => left[0].localeCompare(right[0])).at(-1);
   if (!latest || latest[1] !== "success") return 0;
   let count = 0;

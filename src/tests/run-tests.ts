@@ -115,8 +115,20 @@ import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowle
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
+import {
+  collectKnowledgeBaseStorageStats,
+  filterKnowledgeBaseMessagesForDate,
+  latestKnowledgeBaseMessageDate,
+  migrateKnowledgeBaseHistory,
+  persistAndCompactKnowledgeBaseHistory,
+  readKnowledgeBaseHistoryDay,
+  readKnowledgeBaseHistoryIndex,
+  rebuildKnowledgeBaseHistoryIndex
+} from "../knowledge-base/history-store";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
+import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
+import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
@@ -273,6 +285,34 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
+const scheduledKnowledgeBaseBase = {
+  enabled: true,
+  scheduleEnabled: true,
+  scheduleTime: "09:00",
+  catchUpOnStartup: true,
+  lastRunAt: 0
+};
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  scheduledKnowledgeBaseBase,
+  new Date("2026-05-19T08:30:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime(),
+  true
+), false);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  scheduledKnowledgeBaseBase,
+  new Date("2026-05-19T09:01:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime()
+), true);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  { ...scheduledKnowledgeBaseBase, catchUpOnStartup: false },
+  new Date("2026-05-19T10:00:00+08:00"),
+  new Date("2026-05-19T10:00:00+08:00").getTime()
+), false);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  { ...scheduledKnowledgeBaseBase, lastRunAt: new Date("2026-05-19T01:17:00+08:00").getTime() },
+  new Date("2026-05-19T09:01:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime()
+), false);
 assert.equal(DEFAULT_SETTINGS.review.enabled, false);
 assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
 assert.equal(DEFAULT_SETTINGS.review.agentChatEnabled, true);
@@ -464,6 +504,29 @@ assert.deepEqual(getHiddenKnowledgeBaseMessages(clearableHistorySession).map((me
 restoreKnowledgeBaseVisibleHistory(clearableHistorySession);
 assert.equal(clearableHistorySession.messagesHiddenBefore, undefined);
 assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
+
+const may18 = new Date(2026, 4, 18, 23, 0, 0).getTime();
+const may19 = new Date(2026, 4, 19, 1, 0, 0).getTime();
+const crossDayHistorySession = normalizeSettingsData({
+  sessions: [{
+    id: "kb-cross-day",
+    title: KNOWLEDGE_BASE_SESSION_TITLE,
+    kind: "knowledge-base",
+    cwd: "/vault",
+    historyActiveDate: "2026-05-19",
+    messages: [
+      { id: "day-18", role: "user", text: "旧日", createdAt: may18 },
+      { id: "day-19", role: "assistant", text: "今日", createdAt: may19 }
+    ],
+    createdAt: may18,
+    updatedAt: may19
+  }],
+  knowledgeBase: { sessionId: "kb-cross-day" }
+}).settings.sessions[0];
+assert.equal(crossDayHistorySession.historyActiveDate, "2026-05-19");
+assert.equal(latestKnowledgeBaseMessageDate(crossDayHistorySession.messages), "2026-05-19");
+assert.deepEqual(filterKnowledgeBaseMessagesForDate(crossDayHistorySession.messages, "2026-05-18").map((message) => message.id), ["day-18"]);
+assert.deepEqual(getVisibleKnowledgeBaseMessages(crossDayHistorySession).map((message) => message.id), ["day-19"]);
 assert.equal(clearableHistorySession.threadId, undefined);
 
 const reviewEvidenceSettings = normalizeSettingsData({
@@ -2081,6 +2144,69 @@ try {
   assert.ok(!recoveredSummary.includes("created:"));
   assert.ok(!recoveredSummary.includes("# 体检报告"));
   assert.equal(await readKnowledgeBaseReportExcerpt(kbVault, "outputs/missing.md"), null);
+  const scheduledReportText = [
+    "---",
+    "type: kb-maintenance-report",
+    "---",
+    "",
+    "# 知识库维护报告 - 2026-05-19",
+    "",
+    "## 一眼结论",
+    "",
+    "无变化。",
+    "",
+    "本轮没有新增 raw。",
+    "",
+    "## 体检发现",
+    "",
+    "断链 0。"
+  ].join("\n");
+  assert.equal(extractKnowledgeBaseReportConclusion(scheduledReportText), "无变化。 本轮没有新增 raw。");
+  const scheduledMessage = buildScheduledKnowledgeBaseMessage({
+    status: "success",
+    reportPath: "outputs/kb-maintenance-2026-05-19.md",
+    summary: "fallback",
+    processedSources: []
+  }, scheduledReportText);
+  assert.ok(scheduledMessage.includes("每日维护执行完毕。"));
+  assert.ok(scheduledMessage.includes("- 状态：成功"));
+  assert.ok(scheduledMessage.includes("- 报告：outputs/kb-maintenance-2026-05-19.md"));
+  assert.ok(scheduledMessage.includes("- 摘要：无变化。 本轮没有新增 raw。"));
+
+  const historySettings = normalizeSettingsData({
+    sessions: [{
+      id: "kb-history-store",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: kbVault,
+      messages: [
+        { id: "h-18-user", role: "user", text: "旧日问题", createdAt: new Date(2026, 4, 18, 10, 0, 0).getTime() },
+        { id: "h-18-assistant", role: "assistant", text: "旧日回答", createdAt: new Date(2026, 4, 18, 10, 1, 0).getTime() },
+        { id: "h-19-user", role: "user", text: "今日问题", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() },
+        { id: "h-19-process", role: "system", itemType: "reasoning", title: "思考", text: "过程", status: "completed", createdAt: new Date(2026, 4, 19, 9, 0, 1).getTime() }
+      ],
+      createdAt: new Date(2026, 4, 18, 10, 0, 0).getTime(),
+      updatedAt: new Date(2026, 4, 19, 9, 0, 1).getTime()
+    }],
+    activeSessionId: "kb-history-store",
+    knowledgeBase: { sessionId: "kb-history-store" }
+  }).settings;
+  const migrationResult = await migrateKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
+  assert.equal(migrationResult.activeDate, "2026-05-19");
+  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-19-user", "h-19-process"]);
+  const historyIndex = await readKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
+  assert.equal(historyIndex.sessions[0]?.dayCount, 2);
+  assert.equal(historyIndex.sessions[0]?.messageCount, 4);
+  assert.deepEqual((await readKnowledgeBaseHistoryDay(kbVault, "codex-echoink", "kb-history-store", "2026-05-18")).map((message) => message.id), ["h-18-user", "h-18-assistant"]);
+  historySettings.sessions[0].messages.push({ id: "h-20-user", role: "user", text: "新日问题", createdAt: new Date(2026, 4, 20, 8, 0, 0).getTime() });
+  await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
+  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-20-user"]);
+  const rebuiltHistoryIndex = await rebuildKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
+  assert.equal(rebuiltHistoryIndex.sessions[0]?.dayCount, 3);
+  assert.equal(rebuiltHistoryIndex.sessions[0]?.messageCount, 5);
+  const storageStats = await collectKnowledgeBaseStorageStats(kbVault, "codex-echoink");
+  assert.equal(storageStats.messageCount, 5);
+  assert.equal(storageStats.dayCount, 3);
 } finally {
   await rm(kbVault, { recursive: true, force: true });
 }
@@ -2341,6 +2467,10 @@ try {
   await utimes(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "wiki", "content", "old.md"), threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "inbox", "old.md"), threeDaysAgo, threeDaysAgo);
+  const historicalReportDate = formatDateKeyForTest(threeDaysAgo);
+  const historicalReportPath = path.join(dashboardVault, "outputs", `kb-maintenance-${historicalReportDate}.md`);
+  await writeFile(historicalReportPath, "# Historical Report\n", "utf8");
+  await utimes(historicalReportPath, threeDaysAgo, threeDaysAgo);
   const oldStat = await stat(oldPath);
   const newStat = await stat(newPath);
   const dashboardSettings = normalizeSettingsData({
@@ -2385,6 +2515,7 @@ try {
   assert.equal(dashboard.checkHeatmap[0]?.date, `${today.getFullYear()}-01-01`);
   assert.equal(dashboard.checkHeatmap.at(-1)?.date, `${today.getFullYear()}-12-31`);
   assert.equal(dashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(today))?.status, "success");
+  assert.equal(dashboard.checkHeatmap.find((day) => day.date === historicalReportDate)?.status, "success");
   assert.ok(dashboard.checkHeatmap.length >= 365);
   assert.ok(dashboard.checkHeatmap.length <= 366);
 
@@ -2495,10 +2626,14 @@ try {
   const externalToday = daysAgoDateForTest(0);
   const externalYesterday = daysAgoDateForTest(1);
   const externalOld = daysAgoDateForTest(2);
+  const externalOldReportDate = formatDateKeyForTest(externalOld);
+  const externalOldReportPath = path.join(externalMaintenanceVault, "outputs", `kb-maintenance-${externalOldReportDate}.md`);
+  await writeFile(externalOldReportPath, "# Earlier maintenance\n", "utf8");
   await utimes(processedRaw, externalOld, externalOld);
   await utimes(trackerPath, externalYesterday, externalYesterday);
   await utimes(newRaw, externalToday, externalToday);
   await utimes(reportPath, externalToday, externalToday);
+  await utimes(externalOldReportPath, externalOld, externalOld);
   const externalDashboard = await buildKnowledgeBaseDashboardSnapshot(externalMaintenanceVault, normalizeSettingsData({
     settingsVersion: 19,
     knowledgeBase: {
@@ -2515,6 +2650,7 @@ try {
   assert.equal(externalDashboard.health.lastCheckAt, externalToday.getTime());
   assert.equal(externalDashboard.checkFreshness.status, "fresh");
   assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(externalToday))?.status, "success");
+  assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === externalOldReportDate)?.status, "success");
 } finally {
   await rm(externalMaintenanceVault, { recursive: true, force: true });
 }

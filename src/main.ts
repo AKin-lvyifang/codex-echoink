@@ -11,6 +11,18 @@ import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
+import {
+  collectKnowledgeBaseStorageStats,
+  compactOldKnowledgeBaseProcessHistory,
+  exportKnowledgeBaseHistory,
+  migrateKnowledgeBaseHistory,
+  persistAndCompactKnowledgeBaseHistory,
+  readKnowledgeBaseHistoryDay,
+  readKnowledgeBaseHistoryIndex,
+  rebuildKnowledgeBaseHistoryIndex,
+  type KnowledgeBaseHistoryIndex,
+  type KnowledgeBaseStorageStats
+} from "./knowledge-base/history-store";
 import { KnowledgeBaseManager } from "./knowledge-base/manager";
 import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "./knowledge-base/report";
 import { ReviewManager } from "./review/manager";
@@ -254,13 +266,19 @@ export default class CodexForObsidianPlugin extends Plugin {
     const legacyChatWorkspacesCleared = clearLegacyChatWorkspaceDefaults(this.settings, this.getVaultPath(), previousVersion);
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     let rawMigrated = 0;
+    let historyMigrated = false;
     try {
       rawMigrated = await externalizeLargeMessages(this.getVaultPath(), this.settings, this.getPluginDataDirName());
     } catch (error) {
       console.error("Codex raw message migration failed", error);
     }
+    try {
+      historyMigrated = (await migrateKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName(), this.settings)).changed;
+    } catch (error) {
+      console.error("Codex knowledge history migration failed", error);
+    }
     const knowledgeSessionChanged = sessionCountBefore !== this.settings.sessions.length || knowledgeSessionBefore !== this.settings.knowledgeBase.sessionId;
-    if (normalized.changed || rawMigrated > 0 || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
+    if (normalized.changed || rawMigrated > 0 || historyMigrated || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
   }
 
   private async applyKnowledgeBaseRulesFileDefault(data: any): Promise<boolean> {
@@ -327,6 +345,30 @@ export default class CodexForObsidianPlugin extends Plugin {
     return readRawText(this.getVaultPath(), rawRef, this.getPluginDataDirName());
   }
 
+  async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
+    return readKnowledgeBaseHistoryIndex(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
+  async readKnowledgeBaseHistoryDay(sessionId: string, date: string): Promise<ChatMessage[]> {
+    return readKnowledgeBaseHistoryDay(this.getVaultPath(), this.getPluginDataDirName(), sessionId, date);
+  }
+
+  async rebuildKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
+    return rebuildKnowledgeBaseHistoryIndex(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
+  async getKnowledgeBaseStorageStats(): Promise<KnowledgeBaseStorageStats> {
+    return collectKnowledgeBaseStorageStats(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
+  async exportKnowledgeBaseHistory(): Promise<string> {
+    return exportKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
+  async compactOldKnowledgeBaseProcessHistory(): Promise<number> {
+    return compactOldKnowledgeBaseProcessHistory(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
   getKnowledgeBaseManager(): KnowledgeBaseManager | null {
     return this.knowledgeBase;
   }
@@ -374,6 +416,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private async flushSettingsSave(): Promise<void> {
     const run = this.saveQueue.then(async () => {
       await this.flushRawWrites();
+      await this.flushKnowledgeBaseHistory();
       await this.saveData(this.settings);
     });
     this.saveQueue = run.catch(() => undefined);
@@ -383,6 +426,14 @@ export default class CodexForObsidianPlugin extends Plugin {
   private async flushRawWrites(): Promise<void> {
     const pending = Array.from(this.rawWrites);
     if (pending.length) await Promise.allSettled(pending);
+  }
+
+  private async flushKnowledgeBaseHistory(): Promise<void> {
+    try {
+      await persistAndCompactKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName(), this.settings);
+    } catch (error) {
+      console.error("Codex knowledge history save failed", error);
+    }
   }
 
   private async loadSkills(force: boolean): Promise<CodexSkill[]> {
