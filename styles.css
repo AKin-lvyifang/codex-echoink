@@ -1623,6 +1623,22 @@ body.theme-light .codex-code-wrapper pre {
   white-space: nowrap;
 }
 
+.codex-header-history {
+  gap: 5px;
+  padding: 0 9px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.codex-header-history:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.codex-header-history.is-hidden {
+  display: none;
+}
+
 .codex-status-chip.is-ok .codex-header-status-icon {
   color: var(--color-green);
 }
@@ -1865,17 +1881,6 @@ body.theme-light .codex-code-wrapper pre {
   border-radius: 6px;
   color: var(--text-muted);
   background: var(--background-primary);
-}
-
-.codex-kb-dashboard-history {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: auto;
-  padding: 0 8px !important;
-  font-size: 11.5px;
-  font-weight: 650;
 }
 
 .codex-kb-dashboard-button svg {
@@ -2431,6 +2436,14 @@ body.theme-light .codex-code-wrapper pre {
 
 @container (max-width: 560px) {
   .codex-header-actions .codex-status-chip:not(.codex-header-status) {
+    display: none;
+  }
+
+  .codex-header-actions .codex-status-chip.codex-header-history:not(.codex-header-status):not(.is-hidden) {
+    display: inline-flex;
+  }
+
+  .codex-header-history .codex-header-status-text {
     display: none;
   }
 

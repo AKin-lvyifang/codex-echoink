@@ -75,6 +75,7 @@ export class CodexView extends ItemView {
   private headerStatusTextEl!: HTMLElement;
   private editorActionStatusEl!: HTMLElement;
   private editorActionStatusTextEl!: HTMLElement;
+  private headerHistoryEl!: HTMLButtonElement;
   private articleUnderstandingPanelEl!: HTMLElement;
   private headerUsageEl!: HTMLButtonElement;
   private headerUsageTextEl!: HTMLElement;
@@ -481,6 +482,19 @@ export class CodexView extends ItemView {
       if (this.articleUnderstandingPanelVisible) void this.refreshArticleUnderstandingPanelSourceState();
       this.renderArticleUnderstandingPanel();
     };
+    this.headerHistoryEl = headerActions.createEl("button", {
+      cls: "codex-status-chip codex-header-history is-hidden",
+      attr: { type: "button", title: "查看知识库历史", "aria-label": "查看知识库历史" }
+    });
+    const historyIcon = this.headerHistoryEl.createSpan({ cls: "codex-header-status-icon" });
+    setIcon(historyIcon, "history");
+    this.headerHistoryEl.createSpan({ cls: "codex-header-status-text", text: "历史" });
+    this.headerHistoryEl.onclick = (event) => {
+      event.stopPropagation();
+      const session = this.ensureSession();
+      if (!this.isKnowledgeBaseSession(session)) return;
+      void this.openKnowledgeBaseHistory(session);
+    };
     this.headerStatusEl = headerActions.createDiv({ cls: "codex-header-status codex-status-chip" });
     const statusIcon = this.headerStatusEl.createSpan({ cls: "codex-header-status-icon" });
     setIcon(statusIcon, "activity");
@@ -568,6 +582,14 @@ export class CodexView extends ItemView {
     this.inputEl.setAttr("placeholder", this.isKnowledgeBaseSession(session)
       ? "普通对话直接输入；查知识库用 /ask；管理用 /check /maintain"
       : session.cwd ? `问 Codex，当前工作区：${workspaceDisplayName(session.cwd)}` : "先选择工作区，再问 Codex");
+    this.renderHeaderHistory();
+  }
+
+  private renderHeaderHistory(): void {
+    if (!this.headerHistoryEl) return;
+    const visible = this.isKnowledgeBaseSession(this.ensureSession());
+    this.headerHistoryEl.toggleClass("is-hidden", !visible);
+    this.headerHistoryEl.setAttr("aria-hidden", visible ? "false" : "true");
   }
 
   private applyStatus(): void {
@@ -920,14 +942,6 @@ export class CodexView extends ItemView {
     }
 
     const actions = header.createDiv({ cls: "codex-kb-dashboard-actions" });
-    const history = actions.createEl("button", {
-      cls: "codex-kb-dashboard-button codex-kb-dashboard-history",
-      attr: { type: "button", title: "查看历史", "aria-label": "查看历史" }
-    });
-    const historyIcon = history.createSpan({ cls: "codex-kb-dashboard-action-icon" });
-    setIcon(historyIcon, "history");
-    history.createSpan({ text: "历史" });
-    history.onclick = () => this.openKnowledgeBaseHistory(session);
     const refresh = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: "刷新状态", "aria-label": "刷新状态" } });
     setIcon(refresh, this.knowledgeDashboardLoading ? "loader-circle" : "refresh-cw");
     refresh.disabled = this.knowledgeDashboardLoading;
