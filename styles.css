@@ -1049,12 +1049,30 @@ body.theme-light .codex-code-wrapper pre {
   max-height: min(78vh, 760px);
 }
 
+.codex-kb-history-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.codex-kb-history-header h2 {
+  margin: 0;
+}
+
+.codex-kb-history-summary,
+.codex-kb-history-current-day {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .codex-kb-history-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
-  margin: 14px 0 10px;
+  margin: 0 0 8px;
 }
 
 .codex-kb-history-layout {
@@ -1108,6 +1126,10 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-kb-history-main {
   min-width: 0;
+}
+
+.codex-kb-history-current-day {
+  margin-bottom: 8px;
 }
 
 .codex-kb-history-list {
@@ -1843,6 +1865,17 @@ body.theme-light .codex-code-wrapper pre {
   border-radius: 6px;
   color: var(--text-muted);
   background: var(--background-primary);
+}
+
+.codex-kb-dashboard-history {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: auto;
+  padding: 0 8px !important;
+  font-size: 11.5px;
+  font-weight: 650;
 }
 
 .codex-kb-dashboard-button svg {

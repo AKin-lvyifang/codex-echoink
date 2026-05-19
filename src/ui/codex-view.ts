@@ -920,6 +920,14 @@ export class CodexView extends ItemView {
     }
 
     const actions = header.createDiv({ cls: "codex-kb-dashboard-actions" });
+    const history = actions.createEl("button", {
+      cls: "codex-kb-dashboard-button codex-kb-dashboard-history",
+      attr: { type: "button", title: "查看历史", "aria-label": "查看历史" }
+    });
+    const historyIcon = history.createSpan({ cls: "codex-kb-dashboard-action-icon" });
+    setIcon(historyIcon, "history");
+    history.createSpan({ text: "历史" });
+    history.onclick = () => this.openKnowledgeBaseHistory(session);
     const refresh = actions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: "刷新状态", "aria-label": "刷新状态" } });
     setIcon(refresh, this.knowledgeDashboardLoading ? "loader-circle" : "refresh-cw");
     refresh.disabled = this.knowledgeDashboardLoading;
@@ -3885,6 +3893,7 @@ class KnowledgeBaseHistoryModal extends Modal {
   private activeFilter: KnowledgeBaseHistoryFilter = "all";
   private messages: ChatMessage[] = [];
   private dateListEl: HTMLElement | null = null;
+  private activeDateEl: HTMLElement | null = null;
   private filterEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
 
@@ -3902,13 +3911,15 @@ class KnowledgeBaseHistoryModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("codex-kb-history-modal");
-    contentEl.createEl("h2", { text: "知识库历史" });
-    contentEl.createDiv({ cls: "codex-resource-note", text: "按天查看历史记录。恢复显示只恢复可见内容，不恢复旧模型上下文。" });
+    const header = contentEl.createDiv({ cls: "codex-kb-history-header" });
+    header.createEl("h2", { text: "历史" });
+    header.createDiv({ cls: "codex-kb-history-summary", text: `${this.days.length} 天记录 · 按天聚合` });
 
     const layout = contentEl.createDiv({ cls: "codex-kb-history-layout" });
     this.dateListEl = layout.createDiv({ cls: "codex-kb-history-days" });
     const main = layout.createDiv({ cls: "codex-kb-history-main" });
     this.filterEl = main.createDiv({ cls: "codex-kb-history-actions" });
+    this.activeDateEl = main.createDiv({ cls: "codex-kb-history-current-day" });
     this.listEl = main.createDiv({ cls: "codex-kb-history-list" });
     this.renderDates();
     this.renderFilters();
@@ -3956,7 +3967,7 @@ class KnowledgeBaseHistoryModal extends Modal {
         this.renderMessages();
       };
     }
-    const restoreButton = this.filterEl.createEl("button", { cls: "mod-cta", text: "恢复当天到页面", attr: { type: "button" } });
+    const restoreButton = this.filterEl.createEl("button", { cls: "mod-cta", text: "恢复显示", attr: { type: "button", title: "只恢复可见内容，不恢复旧模型上下文" } });
     restoreButton.onclick = async () => {
       await this.restoreDay(this.activeDate);
       this.close();
@@ -3989,6 +4000,9 @@ class KnowledgeBaseHistoryModal extends Modal {
     if (!this.listEl) return;
     this.listEl.empty();
     const filtered = this.messages.filter((message) => historyMessageMatchesFilter(message, this.activeFilter));
+    if (this.activeDateEl) {
+      this.activeDateEl.setText(`${this.activeDate} · ${filtered.length}/${this.messages.length} 条`);
+    }
     if (!filtered.length) {
       this.listEl.createDiv({ cls: "codex-kb-history-more", text: "这一天没有符合筛选的记录。" });
       return;
@@ -3996,8 +4010,8 @@ class KnowledgeBaseHistoryModal extends Modal {
     for (const message of filtered) {
       const row = this.listEl.createDiv({ cls: "codex-kb-history-row" });
       const meta = row.createDiv({ cls: "codex-kb-history-meta" });
-      meta.createSpan({ text: roleLabel(message.role) });
       meta.createSpan({ text: formatAbsoluteTime(message.createdAt) });
+      meta.createSpan({ text: roleLabel(message.role) });
       if (message.title) meta.createSpan({ text: message.title });
       if (message.status) meta.createSpan({ text: message.status });
       row.createDiv({ cls: "codex-kb-history-text", text: compactHistoryText(message) });

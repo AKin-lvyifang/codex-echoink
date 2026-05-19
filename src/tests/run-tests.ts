@@ -938,16 +938,22 @@ assert.equal(
 );
 
 const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
+const codexViewSource = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
 const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
 const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-content");
 const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
 const resourceSearchInputCss = cssRuleBody(settingsStyles, ".codex-resource-search-input");
+const knowledgeDashboardHistoryCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-history");
 const processFileLinkCss = cssRuleBody(settingsStyles, ".codex-process-file-link");
 const processIconCss = cssRuleBody(settingsStyles, ".codex-process-icon");
 const processEditIconCss = cssRuleBody(settingsStyles, ".codex-process-kind-edit .codex-process-icon");
 const settingsStatusErrorCss = cssRuleBody(settingsStyles, ".codex-settings-status-error");
 const settingsStatusErrorBodyCss = cssRuleBody(settingsStyles, ".codex-settings-status-error-body");
 const messageNoteLinkCss = cssRuleBody(settingsStyles, ".codex-message-note-link");
+assert.match(codexViewSource, /codex-kb-dashboard-history/);
+assert.match(codexViewSource, /title: "查看历史"/);
+assert.match(knowledgeDashboardHistoryCss, /gap:\s*4px;/);
+assert.match(knowledgeDashboardHistoryCss, /padding:\s*0 8px(?:\s*!important)?;/);
 assert.match(resourceRowCss, /min-width:\s*0;/);
 assert.match(resourceRowCss, /width:\s*100%;/);
 assert.match(resourceRowCss, /box-sizing:\s*border-box;/);
