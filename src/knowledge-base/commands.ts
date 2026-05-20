@@ -18,7 +18,7 @@ export interface KnowledgeBaseCommandGuide {
 export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
   { command: "/ask ...", description: "对知识库发问" },
   { command: "/check ...", description: "只体检知识库" },
-  { command: "/maintain ...", description: "维护 raw 到 wiki" },
+  { command: "/maintain ...", description: "维护 raw 到 wiki，并整理知识区结构" },
   { command: "/outputs ...", description: "处理 outputs 并提炼长期价值" },
   { command: "/inbox ...", description: "整理收件箱" },
   { command: "/journal ...", description: "写日记" },

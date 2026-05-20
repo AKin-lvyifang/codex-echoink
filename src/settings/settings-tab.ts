@@ -52,6 +52,7 @@ import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { confirmModal } from "../ui/modals";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
+import { buildSetupCheck, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -67,6 +68,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private openCodeAgentsLoaded = false;
   private openCodeAgentsLoading = false;
   private openCodeAgentsError = "";
+  private setupChecking = false;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
@@ -86,21 +88,26 @@ export class CodexSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(copy.title).setHeading();
 
     const status = this.plugin.lastStatus;
+    const setupCheck = buildSetupCheck(this.plugin.settings, status, this.detectSetupPlatform());
     const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
-    this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
-    this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
-    this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
-    this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
-    this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
-    this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
-    this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
-    this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
-    this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
-    this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
-    this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
-    this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
-    this.addStatusErrors(statusBox, status?.errors ?? []);
-    this.addStatusActions(statusBox);
+    if (this.shouldShowSetupGuide(setupCheck)) {
+      this.renderSetupGuide(statusBox, setupCheck);
+    } else {
+      this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
+      this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
+      this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
+      this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
+      this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
+      this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
+      this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
+      this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
+      this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
+      this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
+      this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
+      this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
+      this.addStatusErrors(statusBox, status?.errors ?? []);
+      this.addStatusActions(statusBox);
+    }
 
     this.renderTopTabs(containerEl);
     if (this.plugin.settings.settingsTab === "providers") {
@@ -573,6 +580,122 @@ export class CodexSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       })
     ), "panel-right-open");
+  }
+
+  private shouldShowSetupGuide(check: SetupCheckResult): boolean {
+    return this.plugin.settings.setup.completedAt <= 0 || check.status === "blocking";
+  }
+
+  private renderSetupGuide(container: HTMLElement, check: SetupCheckResult): void {
+    const copy = this.copy;
+    container.addClass("codex-setup-guide");
+    container.toggleClass("is-ready", check.canStart);
+    container.toggleClass("is-blocking", !check.canStart);
+
+    const header = container.createDiv({ cls: "codex-setup-header" });
+    const icon = header.createSpan({ cls: "codex-settings-status-icon" });
+    setIcon(icon, check.canStart ? "rocket" : "wrench");
+    const title = header.createDiv({ cls: "codex-setup-title" });
+    title.createDiv({
+      cls: "codex-setup-heading",
+      text: this.setupChecking
+        ? copy.setup.checking
+        : check.canStart
+          ? copy.setup.readyTitle
+          : copy.setup.blockedTitle(check.blockingCount)
+    });
+    title.createDiv({
+      cls: "codex-setup-subtitle",
+      text: check.canStart ? copy.setup.readyDesc : copy.setup.blockedDesc
+    });
+
+    const list = container.createDiv({ cls: "codex-setup-list" });
+    for (const requirement of check.requirements) {
+      const row = list.createDiv({ cls: `codex-setup-item is-${requirement.status}` });
+      const statusIcon = row.createSpan({ cls: "codex-setup-item-icon" });
+      setIcon(statusIcon, setupRequirementIcon(requirement.status));
+      const body = row.createDiv({ cls: "codex-setup-item-body" });
+      body.createDiv({ cls: "codex-setup-item-title", text: requirement.title });
+      body.createDiv({ cls: "codex-setup-item-message", text: requirement.message });
+      if (requirement.actions.length) {
+        const actions = body.createDiv({ cls: "codex-setup-item-actions" });
+        for (const action of requirement.actions) this.addSetupActionButton(actions, action);
+      }
+    }
+
+    const actions = container.createDiv({ cls: "codex-settings-status-actions codex-setup-actions" });
+    const refresh = actions.createEl("button", {
+      cls: "codex-resource-refresh",
+      text: this.setupChecking ? copy.setup.checkingButton : copy.setup.recheck,
+      attr: { type: "button" }
+    });
+    refresh.disabled = this.setupChecking;
+    refresh.onclick = () => void this.runSetupCheck();
+    if (check.canStart) {
+      const start = actions.createEl("button", {
+        cls: "codex-setup-start",
+        text: copy.setup.start,
+        attr: { type: "button" }
+      });
+      start.disabled = this.setupChecking;
+      start.onclick = () => void this.completeSetupAndStart();
+    }
+
+    if (this.plugin.settings.setup.lastCheckedAt > 0) {
+      container.createDiv({ cls: "codex-setup-last-checked", text: copy.setup.lastChecked(formatSetupTime(this.plugin.settings.setup.lastCheckedAt)) });
+    }
+  }
+
+  private addSetupActionButton(container: HTMLElement, action: SetupAction): void {
+    const button = container.createEl("button", { cls: "codex-setup-action", text: action.label, attr: { type: "button" } });
+    button.onclick = async () => {
+      if (action.kind === "open-url") {
+        window.open(action.value);
+        return;
+      }
+      await navigator.clipboard.writeText(action.value);
+      const original = action.label;
+      button.setText(this.copy.setup.copied);
+      window.setTimeout(() => button.setText(original), 1200);
+    };
+  }
+
+  private async runSetupCheck(): Promise<void> {
+    if (this.setupChecking) return;
+    this.setupChecking = true;
+    this.display();
+    try {
+      await this.plugin.reconnectCodex({ refreshLogin: true });
+      const check = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
+      if (check.knowledgeBackend === "opencode" || check.requirements.some((item) => item.id === "opencode-cli" && item.status === "ok")) {
+        await this.refreshOpenCodeRuntimeOptions({ models: true, agents: true });
+      }
+      this.plugin.settings.setup.lastCheckedAt = Date.now();
+      await this.plugin.saveSettings(true);
+    } finally {
+      this.setupChecking = false;
+      this.display();
+    }
+  }
+
+  private async completeSetupAndStart(): Promise<void> {
+    const check = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
+    if (!check.canStart) {
+      new Notice(this.copy.setup.startBlocked);
+      return;
+    }
+    this.plugin.settings.setup = completeSetupState(this.plugin.settings.setup, Date.now(), this.plugin.manifest.version);
+    await this.plugin.saveSettings(true);
+    await this.plugin.activateView();
+    this.display();
+  }
+
+  private detectSetupPlatform(): SetupPlatform {
+    return {
+      os: process.platform,
+      codexCommand: detectCodexCommand(this.plugin.settings.cliPath),
+      openCodeCommand: detectOpenCodeCommand(this.plugin.settings.opencode.cliPath)
+    };
   }
 
   private addStatusActions(container: HTMLElement): void {
@@ -1669,6 +1792,21 @@ function detectCliPath(customPath: string, copy: SettingsCopy = settingsCopy("zh
 function detectOpenCodePath(customPath: string, copy: SettingsCopy = settingsCopy("zh-CN")): string {
   const found = detectOpenCodeCommand(customPath);
   return found ? copy.common.detected(found) : copy.common.notDetectedManual;
+}
+
+function setupRequirementIcon(status: string): string {
+  if (status === "ok") return "check-circle-2";
+  if (status === "warning") return "circle-alert";
+  return "circle-x";
+}
+
+function formatSetupTime(value: number): string {
+  if (!value) return "";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return String(value);
+  }
 }
 
 function agentBackendLabel(value: AgentBackendMode, copy: SettingsCopy = settingsCopy("zh-CN")): string {

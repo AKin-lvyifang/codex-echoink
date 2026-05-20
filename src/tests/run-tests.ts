@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
@@ -60,12 +60,14 @@ import {
   isKnowledgeBaseSession,
   normalizeSettingsData,
   recordKnowledgeBaseHealthCheck,
+  recordKnowledgeBaseMaintenanceRun,
   removeApiProvider,
   normalizeReviewOutputDir,
   resolveEditorActionModeConfig,
   validateApiProvider,
   resourceEnabled
 } from "../settings/settings";
+import { buildSetupCheck, completeSetupState } from "../settings/setup-check";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
@@ -112,15 +114,18 @@ import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitializa
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { formatKnowledgeBaseCodexFailureSignal } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
+import { diffRawSnapshot } from "../knowledge-base/raw-integrity";
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import {
+  compactKnowledgeBaseMessagesToActiveDay,
   collectKnowledgeBaseStorageStats,
   filterKnowledgeBaseMessagesForDate,
   latestKnowledgeBaseMessageDate,
   migrateKnowledgeBaseHistory,
   persistAndCompactKnowledgeBaseHistory,
+  persistKnowledgeBaseHistoryMessages,
   readKnowledgeBaseHistoryDay,
   readKnowledgeBaseHistoryIndex,
   rebuildKnowledgeBaseHistoryIndex
@@ -129,6 +134,7 @@ import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recovere
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
+import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
@@ -205,6 +211,11 @@ assert.equal(bareReportLink.find((segment) => segment.kind === "noteLink")?.titl
 const markdownReportLink = splitVaultNoteLinkSegments("报告：[打开报告](outputs/kb-maintenance-2026-05-19.md)", "/vault");
 assert.equal(markdownReportLink.find((segment) => segment.kind === "noteLink")?.text, "打开报告");
 assert.equal(markdownReportLink.find((segment) => segment.kind === "noteLink")?.targetPath, "outputs/kb-maintenance-2026-05-19.md");
+const encodedWikiLink = splitVaultNoteLinkSegments(
+  "[GitHub 2026-05-19 热门项目简报.md](/vault/wiki/ai-intelligence/references/GitHub%202026-05-19%20热门项目简报.md)",
+  "/vault"
+);
+assert.equal(encodedWikiLink.find((segment) => segment.kind === "noteLink")?.targetPath, "wiki/ai-intelligence/references/GitHub 2026-05-19 热门项目简报.md");
 const aliasReportLink = splitVaultNoteLinkSegments("报告：[[outputs/kb-maintenance-2026-05-19.md|今日体检报告]]", "/vault");
 assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.text, "今日体检报告");
 assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.targetPath, "outputs/kb-maintenance-2026-05-19.md");
@@ -221,8 +232,18 @@ const kbTurnOptions = buildCodexKnowledgeTurnOptions({
   vaultPath: "/vault",
   permission: "workspace-write"
 });
-assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "journal")));
+assert.ok(!kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw")));
+assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "inbox")));
+assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "projects")));
+const journalTurnOptions = buildCodexKnowledgeTurnOptions({
+  settings: DEFAULT_SETTINGS,
+  availableModels: [{ model: "gpt-test" }],
+  vaultPath: "/vault",
+  permission: "workspace-write",
+  writeScope: "journal"
+});
+assert.deepEqual(journalTurnOptions.writableRoots, ["/vault/journal", "/vault/01-日记"]);
 assert.equal(turnWatchdogTimeoutForSession(false), CHAT_TURN_WATCHDOG_MS);
 assert.equal(turnWatchdogTimeoutForSession(true), null);
 assert.ok(turnWatchdogTimeoutText(CHAT_TURN_WATCHDOG_MS).includes("重新连接 Codex"));
@@ -246,7 +267,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 25);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 26);
 assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
@@ -275,6 +296,8 @@ assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
 assert.equal(DEFAULT_SETTINGS.opencode.textEnabled, true);
 assert.equal(DEFAULT_SETTINGS.opencode.imageEnabled, false);
 assert.equal(DEFAULT_SETTINGS.opencode.pdfEnabled, false);
+assert.equal(DEFAULT_SETTINGS.setup.completedAt, 0);
+assert.equal(DEFAULT_SETTINGS.setup.lastCheckedAt, 0);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.enabled, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.backend, "default");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, true);
@@ -285,6 +308,7 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
+assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
 const scheduledKnowledgeBaseBase = {
   enabled: true,
   scheduleEnabled: true,
@@ -370,11 +394,27 @@ const migratedKnowledgeBaseSettings = normalizeSettingsData({
 assert.deepEqual(migratedKnowledgeBaseSettings.healthHistory, [
   { date: "2026-05-15", status: "success", at: 1778803200000 }
 ]);
+assert.deepEqual(migratedKnowledgeBaseSettings.maintenanceHistory, [
+  { date: "2026-05-15", status: "success", at: 1778803200000, mode: "lint", reportPath: "" }
+]);
 recordKnowledgeBaseHealthCheck(migratedKnowledgeBaseSettings, "failed", 1778889600000);
 assert.deepEqual(migratedKnowledgeBaseSettings.healthHistory.at(-1), {
   date: "2026-05-16",
   status: "failed",
   at: 1778889600000
+});
+recordKnowledgeBaseMaintenanceRun(migratedKnowledgeBaseSettings, {
+  status: "success",
+  mode: "maintain",
+  at: 1778976000000,
+  reportPath: "outputs/kb-maintenance-2026-05-17.md"
+});
+assert.deepEqual(migratedKnowledgeBaseSettings.maintenanceHistory.at(-1), {
+  date: "2026-05-17",
+  status: "success",
+  at: 1778976000000,
+  mode: "maintain",
+  reportPath: "outputs/kb-maintenance-2026-05-17.md"
 });
 
 const sessionSettings = normalizeSettingsData({
@@ -528,6 +568,48 @@ assert.equal(latestKnowledgeBaseMessageDate(crossDayHistorySession.messages), "2
 assert.deepEqual(filterKnowledgeBaseMessagesForDate(crossDayHistorySession.messages, "2026-05-18").map((message) => message.id), ["day-18"]);
 assert.deepEqual(getVisibleKnowledgeBaseMessages(crossDayHistorySession).map((message) => message.id), ["day-19"]);
 assert.equal(clearableHistorySession.threadId, undefined);
+
+const may21 = new Date(2026, 4, 21, 10, 0, 0).getTime();
+const activeHistoryWithTodaySession = normalizeSettingsData({
+  sessions: [{
+    id: "kb-active-with-today",
+    title: KNOWLEDGE_BASE_SESSION_TITLE,
+    kind: "knowledge-base",
+    cwd: "/vault",
+    historyActiveDate: "2026-05-19",
+    messages: [
+      { id: "recent-19", role: "assistant", text: "最近一天详情", createdAt: may19 },
+      { id: "today-21", role: "user", text: "/maintain", createdAt: may21 }
+    ],
+    createdAt: may19,
+    updatedAt: may21
+  }],
+  knowledgeBase: { sessionId: "kb-active-with-today" }
+}).settings.sessions[0];
+compactKnowledgeBaseMessagesToActiveDay(activeHistoryWithTodaySession, may21);
+assert.equal(activeHistoryWithTodaySession.historyActiveDate, "2026-05-19");
+assert.deepEqual(activeHistoryWithTodaySession.messages.map((message) => message.id), ["recent-19", "today-21"]);
+assert.deepEqual(getVisibleKnowledgeBaseMessages(activeHistoryWithTodaySession, may21).map((message) => message.id), ["recent-19", "today-21"]);
+
+const alreadySwitchedToTodaySession = normalizeSettingsData({
+  sessions: [{
+    id: "kb-already-today",
+    title: KNOWLEDGE_BASE_SESSION_TITLE,
+    kind: "knowledge-base",
+    cwd: "/vault",
+    historyActiveDate: "2026-05-21",
+    messages: [
+      { id: "recent-19", role: "assistant", text: "最近一天详情", createdAt: may19 },
+      { id: "today-21", role: "user", text: "/maintain", createdAt: may21 }
+    ],
+    createdAt: may19,
+    updatedAt: may21
+  }],
+  knowledgeBase: { sessionId: "kb-already-today" }
+}).settings.sessions[0];
+compactKnowledgeBaseMessagesToActiveDay(alreadySwitchedToTodaySession, may21);
+assert.equal(alreadySwitchedToTodaySession.historyActiveDate, "2026-05-19");
+assert.deepEqual(getVisibleKnowledgeBaseMessages(alreadySwitchedToTodaySession, may21).map((message) => message.id), ["recent-19", "today-21"]);
 
 const reviewEvidenceSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
@@ -1017,7 +1099,24 @@ const writableCodexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
 });
 assert.equal(writableCodexKnowledgeOptions.model, "gpt-5.5");
 assert.equal(writableCodexKnowledgeOptions.reasoning, "xhigh");
-assert.deepEqual(writableCodexKnowledgeOptions.writableRoots, ["/vault/wiki", "/vault/outputs", "/vault/journal", "/vault/01-日记", "/vault/inbox", "/vault/raw/index.md"]);
+assert.deepEqual(writableCodexKnowledgeOptions.writableRoots, ["/vault/raw/index.md", "/vault/wiki", "/vault/outputs", "/vault/inbox", "/vault/projects"]);
+const rawMoveRewrite = [{ from: "raw/articles/GitHub项目收集", to: "raw/articles/github-trending", kind: "directory" as const }];
+assert.deepEqual(
+  diffRawSnapshot(
+    new Map([["raw/articles/GitHub项目收集/demo.md", "hash-a"], ["raw/index.md", "index-before"]]),
+    new Map([["raw/articles/github-trending/demo.md", "hash-a"], ["raw/index.md", "index-after"]]),
+    rawMoveRewrite
+  ),
+  []
+);
+assert.deepEqual(
+  diffRawSnapshot(
+    new Map([["raw/articles/GitHub项目收集/demo.md", "hash-a"]]),
+    new Map([["raw/articles/github-trending/demo.md", "hash-b"]]),
+    rawMoveRewrite
+  ),
+  ["raw/articles/GitHub项目收集/demo.md -> raw/articles/github-trending/demo.md 内容被改写"]
+);
 
 const knowledgeBaseSettings = normalizeSettingsData({
   settingsVersion: 14,
@@ -1849,6 +1948,13 @@ assert.equal(resolveCodexCommand("", {
   envPath: "/custom/bin",
   exists: (candidate) => candidate === "/custom/bin/codex"
 }), "/custom/bin/codex");
+assert.equal(resolveCodexCommand("", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  platform: "win32",
+  appData: "C:\\Users\\demo\\AppData\\Roaming",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd"
+}), "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd");
 
 assert.equal(detectOpenCodeCommand("~/bin/opencode", {
   home: "/Users/demo",
@@ -1860,9 +1966,116 @@ assert.equal(detectOpenCodeCommand("", {
   envPath: "/custom/bin",
   exists: (candidate) => candidate === "/custom/bin/opencode"
 }), "/custom/bin/opencode");
+assert.equal(detectOpenCodeCommand("", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  platform: "win32",
+  appData: "C:\\Users\\demo\\AppData\\Roaming",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd"
+}), "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd");
 assert.throws(() => resolveOpenCodeCommand("/definitely/missing/opencode", {
   exists: () => false
 }), /找不到 OpenCode CLI/);
+
+const setupDisconnectedStatus = {
+  connected: false,
+  accountLabel: "未连接",
+  loggedIn: false,
+  models: [],
+  skills: [],
+  mcpServers: [],
+  rateLimits: null,
+  rateLimitsByLimitId: null,
+  errors: []
+};
+const setupConnectedStatus = {
+  ...setupDisconnectedStatus,
+  connected: true,
+  accountLabel: "ChatGPT：demo@example.com",
+  loggedIn: true
+};
+const setupMissingCodex = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: null,
+  openCodeCommand: null
+});
+assert.equal(setupMissingCodex.status, "blocking");
+assert.equal(setupMissingCodex.canStart, false);
+assert.ok(setupMissingCodex.requirements.some((item) => item.id === "codex-cli" && item.status === "blocking"));
+assert.ok(setupMissingCodex.requirements.find((item) => item.id === "codex-cli")?.actions.some((action) => action.value.includes("@openai/codex")));
+
+const setupCodexInstalledNotLoggedIn = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
+  openCodeCommand: null
+});
+assert.equal(setupCodexInstalledNotLoggedIn.status, "blocking");
+assert.equal(setupCodexInstalledNotLoggedIn.canStart, false);
+assert.ok(setupCodexInstalledNotLoggedIn.requirements.some((item) => item.id === "codex-cli" && item.status === "ok"));
+assert.ok(setupCodexInstalledNotLoggedIn.requirements.some((item) => item.id === "codex-login" && item.status === "blocking"));
+assert.ok(setupCodexInstalledNotLoggedIn.requirements.find((item) => item.id === "codex-login")?.actions.some((action) => action.value === "codex"));
+
+const setupCodexOnly = buildSetupCheck(DEFAULT_SETTINGS, setupConnectedStatus, {
+  os: "darwin",
+  codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
+  openCodeCommand: null
+});
+assert.equal(setupCodexOnly.canStart, true);
+assert.equal(setupCodexOnly.requirements.find((item) => item.id === "opencode-cli")?.status, "warning");
+
+const setupOpenCodeRequired = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "opencode" }
+}, setupConnectedStatus, {
+  os: "win32",
+  codexCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+  openCodeCommand: null
+});
+assert.equal(setupOpenCodeRequired.status, "blocking");
+assert.equal(setupOpenCodeRequired.canStart, false);
+assert.ok(setupOpenCodeRequired.requirements.some((item) => item.id === "opencode-cli" && item.status === "blocking"));
+
+const setupOpenCodeServerFailed = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "opencode" },
+  opencode: {
+    ...DEFAULT_SETTINGS.opencode,
+    lastConnectedAt: 0,
+    lastError: "opencode serve failed"
+  }
+}, setupConnectedStatus, {
+  os: "darwin",
+  codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
+  openCodeCommand: "/opt/homebrew/bin/opencode"
+});
+assert.equal(setupOpenCodeServerFailed.status, "blocking");
+assert.equal(setupOpenCodeServerFailed.canStart, false);
+assert.ok(setupOpenCodeServerFailed.requirements.some((item) => item.id === "opencode-server" && item.status === "blocking"));
+assert.match(setupOpenCodeServerFailed.requirements.find((item) => item.id === "opencode-server")?.message ?? "", /opencode serve failed/);
+
+const setupOpenCodeReady = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "opencode" },
+  opencode: {
+    ...DEFAULT_SETTINGS.opencode,
+    providerId: "anthropic",
+    modelId: "claude-sonnet-4-20250514",
+    agent: "build",
+    lastConnectedAt: 1700000000000,
+    lastError: ""
+  }
+}, setupConnectedStatus, {
+  os: "win32",
+  codexCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+  openCodeCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd"
+});
+assert.equal(setupOpenCodeReady.status, "ok");
+assert.equal(setupOpenCodeReady.canStart, true);
+const setupCompleted = completeSetupState(DEFAULT_SETTINGS.setup, 1700000001234, "0.5.3");
+assert.equal(setupCompleted.completedAt, 1700000001234);
+assert.equal(setupCompleted.lastCheckedAt, 1700000001234);
+assert.equal(setupCompleted.dismissedVersion, "0.5.3");
+
 assert.equal(mimeForKnowledgeFile("/vault/raw/a.md"), "text/markdown");
 assert.equal(mimeForKnowledgeFile("/vault/raw/a.pdf"), "application/pdf");
 assert.equal(mimeForKnowledgeFile("/vault/raw/a.docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
@@ -2022,7 +2235,7 @@ try {
   });
   assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
   assert.equal(secondDiscovery.changedSources.length, 3);
-  assert.ok(secondDiscovery.reportPath.startsWith("outputs/kb-maintenance-"));
+  assert.ok(secondDiscovery.reportPath.startsWith("outputs/maintenance/kb-maintenance-"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
   await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
     "# Ingest Tracker",
@@ -2030,6 +2243,10 @@ try {
     "## raw/articles/ — 共 1 个文件",
     "- demo.md"
   ].join("\n"), "utf8");
+  const trackerGraceBase = new Date(Date.now() - 10000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), trackerGraceBase, trackerGraceBase);
+  const trackerGraceRawTime = new Date(trackerGraceBase.getTime() + 1500);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), trackerGraceRawTime, trackerGraceRawTime);
   const trackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.equal(trackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
 
@@ -2045,7 +2262,7 @@ try {
     hasWikiIndex: true,
     hasTracker: false
   });
-  assert.ok(kbPrompt.includes("执行 Ingest + Lint"));
+  assert.ok(kbPrompt.includes("执行 Ingest + Structure Normalize + Lint"));
   assert.ok(kbPrompt.includes(`自定义规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
   assert.ok(kbPrompt.includes("知识库结构以这个文件为准"));
   assert.ok(kbPrompt.includes("不要把 AGENTS.md 当作知识库规则合并"));
@@ -2053,9 +2270,11 @@ try {
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
   assert.ok(kbPrompt.includes("只适用于本次知识库管理任务"));
-  assert.ok(kbPrompt.includes("禁止修改 raw/ 中的原始资料正文"));
-  assert.ok(kbPrompt.includes("禁止删除、移动或合并 raw/ 中的文件"));
-  assert.ok(kbPrompt.includes("raw/index.md 只允许做索引更新"));
+  assert.ok(kbPrompt.includes("raw/ 源文件正文只读"));
+  assert.ok(kbPrompt.includes("raw 路径整理由插件在任务结束后执行确定性移动"));
+  assert.ok(kbPrompt.includes("Structure Normalize"));
+  assert.ok(kbPrompt.includes("低风险自动执行"));
+  assert.ok(kbPrompt.includes("不确定或会断链的改动只写进报告"));
   assert.ok(kbPrompt.includes("find"));
   assert.ok(kbPrompt.includes("跳过 raw/ 中以 .base 结尾"));
   assert.ok(kbPrompt.includes("3-5 句核心要点"));
@@ -2141,6 +2360,7 @@ try {
     useCustomRulesFile: false,
     matches: []
   }).includes("未找到相关本地来源"));
+  await mkdir(path.dirname(path.join(kbVault, secondDiscovery.reportPath)), { recursive: true });
   await writeFile(path.join(kbVault, secondDiscovery.reportPath), "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。", "utf8");
   const reportExcerpt = await readKnowledgeBaseReportExcerpt(kbVault, secondDiscovery.reportPath);
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
@@ -2214,8 +2434,143 @@ try {
   const storageStats = await collectKnowledgeBaseStorageStats(kbVault, "codex-echoink");
   assert.equal(storageStats.messageCount, 5);
   assert.equal(storageStats.dayCount, 3);
+
+  const recoveredHistorySession = {
+    id: "kb-history-recover",
+    title: KNOWLEDGE_BASE_SESSION_TITLE,
+    kind: "knowledge-base" as const,
+    cwd: kbVault,
+    historyActiveDate: "2026-05-21",
+    messages: [
+      { id: "recover-21", role: "user" as const, text: "/maintain", createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime() }
+    ],
+    createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime(),
+    updatedAt: new Date(2026, 4, 21, 10, 0, 0).getTime()
+  };
+  await persistKnowledgeBaseHistoryMessages(kbVault, "codex-echoink", recoveredHistorySession, [
+    { id: "recover-19", role: "assistant", text: "最近一天详情", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() }
+  ]);
+  const recoverySettings = normalizeSettingsData({
+    sessions: [recoveredHistorySession],
+    activeSessionId: "kb-history-recover",
+    knowledgeBase: { sessionId: "kb-history-recover" }
+  }).settings;
+  await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", recoverySettings);
+  assert.equal(recoverySettings.sessions[0].historyActiveDate, "2026-05-19");
+  assert.deepEqual(recoverySettings.sessions[0].messages.map((message) => message.id), ["recover-19", "recover-21"]);
 } finally {
   await rm(kbVault, { recursive: true, force: true });
+}
+
+const structureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-"));
+try {
+  await mkdir(path.join(structureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  await mkdir(path.join(structureVault, "raw", "articles", "微信公众号", "2026-05-19 Hermes agent 昨晚又更新了.assets"), { recursive: true });
+  await mkdir(path.join(structureVault, "raw", "clippings", "文章"), { recursive: true });
+  await mkdir(path.join(structureVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await mkdir(path.join(structureVault, "outputs"), { recursive: true });
+  await mkdir(path.join(structureVault, "inbox", "Clippings"), { recursive: true });
+  await mkdir(path.join(structureVault, "inbox", "桌面 TodoList 调研"), { recursive: true });
+  await mkdir(path.join(structureVault, "projects", "demo", "10-沉淀"), { recursive: true });
+  await mkdir(path.join(structureVault, "projects", "demo", "20-实践"), { recursive: true });
+  const githubRaw = "# GitHub\n\n原文正文\n\n原始路径记录：raw/articles/GitHub项目收集/2026-05-19 GitHub 热门项目简报.md";
+  const wechatRaw = "# Hermes\n\n公众号正文";
+  await writeFile(path.join(structureVault, "raw", "articles", "GitHub项目收集", "2026-05-19 GitHub 热门项目简报.md"), githubRaw, "utf8");
+  await writeFile(path.join(structureVault, "raw", "articles", "微信公众号", "2026-05-19 Hermes agent 昨晚又更新了.md"), wechatRaw, "utf8");
+  await writeFile(path.join(structureVault, "raw", "articles", "微信公众号", "2026-05-19 Hermes agent 昨晚又更新了.assets", "cover.png"), Buffer.from([1, 2, 3]));
+  await writeFile(path.join(structureVault, "raw", "策略信号系统介绍.md"), "# 策略\n\n原文不能改", "utf8");
+  await writeFile(path.join(structureVault, "raw", "index.md"), [
+    "# Raw",
+    "",
+    "### GitHub 项目收集 (articles/GitHub项目收集/)",
+    "",
+    "- [[raw/articles/GitHub项目收集/2026-05-19 GitHub 热门项目简报]]",
+    "- [[raw/articles/微信公众号/2026-05-19 Hermes agent 昨晚又更新了]]",
+    "- `raw/策略信号系统介绍.md`"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(structureVault, "wiki", "ai-intelligence", "references", "github.md"), [
+    "# GitHub",
+    "",
+    "来源：[[raw/articles/GitHub项目收集/2026-05-19 GitHub 热门项目简报]]"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(structureVault, "outputs", ".ingest-tracker.md"), [
+    "# Tracker",
+    "",
+    "- `raw/articles/GitHub项目收集/2026-05-19 GitHub 热门项目简报.md`",
+    "- `raw/策略信号系统介绍.md`"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(structureVault, "outputs", "kb-maintenance-2026-05-19.md"), "# 维护报告", "utf8");
+  await writeFile(path.join(structureVault, "outputs", "knowledge-base-review-2026-05-11-to-2026-05-17.md"), "# 周报", "utf8");
+  await writeFile(path.join(structureVault, "outputs", "obsidian-codex-v041-xhs-post.md"), "# 小红书", "utf8");
+  await writeFile(path.join(structureVault, "outputs", "global-instructions-2026-05-10.md"), "# instructions", "utf8");
+  await writeFile(path.join(structureVault, "outputs", "old-wiki-merge-2026-05-19.md"), "# migration", "utf8");
+  await writeFile(path.join(structureVault, "inbox", "Clippings", "clip.md"), "# clip", "utf8");
+  await writeFile(path.join(structureVault, "inbox", "skills-local-audit.md"), "# skills", "utf8");
+  await writeFile(path.join(structureVault, "inbox", "日常记录.md"), "# idea", "utf8");
+  await writeFile(path.join(structureVault, "inbox", "桌面 TodoList 调研", "00-汇总报告.md"), "# todo", "utf8");
+  await writeFile(path.join(structureVault, "projects", "demo", "10-沉淀", "insight.md"), "# insight", "utf8");
+  await writeFile(path.join(structureVault, "projects", "demo", "20-实践", "run.md"), "# run", "utf8");
+  await writeFile(path.join(structureVault, "projects", "demo", "00-项目总览.md"), [
+    "# Demo",
+    "",
+    "### 10-沉淀",
+    "- [[10-沉淀/insight|insight]]",
+    "### 20-实践",
+    "- [[20-实践/run|run]]"
+  ].join("\n"), "utf8");
+  await writeFile(path.join(structureVault, "projects", "多 Agent 方案讨论 APP：项目初步启动.md"), "# project", "utf8");
+
+  const result = await normalizeKnowledgeBaseStructure(structureVault, {
+    lastReportPath: "outputs/kb-maintenance-2026-05-19.md"
+  });
+  assert.equal(await readFile(path.join(structureVault, "raw", "articles", "github-trending", "2026-05-19 GitHub 热门项目简报.md"), "utf8"), githubRaw);
+  assert.equal(await readFile(path.join(structureVault, "raw", "articles", "wechat-official-accounts", "2026-05-19 Hermes agent 昨晚又更新了.md"), "utf8"), wechatRaw);
+  assert.equal(await fileExists(path.join(structureVault, "raw", "articles", "wechat-official-accounts", "2026-05-19 Hermes agent 昨晚又更新了.assets", "cover.png")), true);
+  assert.equal(await readFile(path.join(structureVault, "raw", "articles", "investment", "策略信号系统介绍.md"), "utf8"), "# 策略\n\n原文不能改");
+  assert.equal(await fileExists(path.join(structureVault, "raw", "articles", "GitHub项目收集")), false);
+  assert.ok((await readFile(path.join(structureVault, "wiki", "ai-intelligence", "references", "github.md"), "utf8")).includes("[[raw/articles/github-trending/2026-05-19 GitHub 热门项目简报]]"));
+  assert.ok((await readFile(path.join(structureVault, "raw", "index.md"), "utf8")).includes("articles/github-trending/"));
+  const trackerAfter = await readFile(path.join(structureVault, "outputs", ".ingest-tracker.md"), "utf8");
+  assert.ok(trackerAfter.includes("raw/articles/github-trending/2026-05-19 GitHub 热门项目简报.md"));
+  assert.ok(trackerAfter.includes("raw/articles/investment/策略信号系统介绍.md"));
+  assert.ok(!trackerAfter.includes("raw/articles/GitHub项目收集"));
+  assert.equal(await fileExists(path.join(structureVault, "outputs", "maintenance", "kb-maintenance-2026-05-19.md")), true);
+  assert.equal(result.updatedLastReportPath, "outputs/maintenance/kb-maintenance-2026-05-19.md");
+  assert.equal(await fileExists(path.join(structureVault, "outputs", "reviews", "knowledge-base-review-2026-05-11-to-2026-05-17.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "outputs", "publishing", "xiaohongshu", "obsidian-codex-v041-xhs-post.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "outputs", "instructions", "global-instructions-2026-05-10.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "outputs", "migrations", "old-wiki-merge-2026-05-19.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "inbox", "clippings", "clip.md")), true);
+  assert.ok((await readdir(path.join(structureVault, "inbox"))).includes("clippings"));
+  assert.ok(!(await readdir(path.join(structureVault, "inbox"))).includes("Clippings"));
+  assert.equal(await fileExists(path.join(structureVault, "inbox", "research", "skills-local-audit.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "inbox", "ideas", "日常记录.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "inbox", "research", "desktop-todolist", "00-汇总报告.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "projects", "demo", "insights", "insight.md")), true);
+  assert.equal(await fileExists(path.join(structureVault, "projects", "demo", "execution", "run.md")), true);
+  const projectOverviewAfter = await readFile(path.join(structureVault, "projects", "demo", "00-项目总览.md"), "utf8");
+  assert.ok(projectOverviewAfter.includes("[[insights/insight|insight]]"));
+  assert.ok(projectOverviewAfter.includes("[[execution/run|run]]"));
+  assert.ok(result.moves.some((move) => move.from === "raw/articles/GitHub项目收集"));
+  assert.ok(result.moves.some((move) => move.from === "raw/articles/微信公众号"));
+  assert.ok(result.moves.some((move) => move.from === "projects/demo/10-沉淀"));
+  assert.ok(result.remainingRootNotes.includes("projects/多 Agent 方案讨论 APP：项目初步启动.md"));
+} finally {
+  await rm(structureVault, { recursive: true, force: true });
+}
+
+const collisionStructureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-collision-"));
+try {
+  await mkdir(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  await mkdir(path.join(collisionStructureVault, "raw", "articles", "github-trending"), { recursive: true });
+  await writeFile(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md"), "# old", "utf8");
+  await writeFile(path.join(collisionStructureVault, "raw", "articles", "github-trending", "b.md"), "# target", "utf8");
+  const result = await normalizeKnowledgeBaseStructure(collisionStructureVault);
+  assert.equal(await fileExists(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md")), true);
+  assert.ok(result.skipped.some((item) => item.from === "raw/articles/GitHub项目收集" && /冲突/.test(item.reason)));
+  assert.ok(result.risks.some((item) => item.includes("raw/articles/GitHub项目收集")));
+} finally {
+  await rm(collisionStructureVault, { recursive: true, force: true });
 }
 
 const journalVault = await mkdtemp(path.join(tmpdir(), "codex-kb-journal-"));
@@ -2311,9 +2666,11 @@ try {
   assert.ok(initializedRules.includes("LLM Wiki"));
   assert.ok(initializedRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
   assert.ok(initializedRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(initializedRules.includes("Structure Normalize"));
+  assert.ok(initializedRules.includes("正文只读、路径可整理"));
   assert.ok(initializedRules.includes("普通 Agent 对话不默认检索知识库"));
   assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
-  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("普通 Agent 对话可按用户明确指令整理 raw 文件"));
+  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("正文只读、路径可整理"));
 } finally {
   await rm(initVault, { recursive: true, force: true });
 }
@@ -2355,6 +2712,7 @@ try {
   assert.ok(createdRules.includes("LLM Wiki"));
   assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
   assert.ok(createdRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(createdRules.includes("Structure Normalize"));
   assert.ok(createdRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
 
   const ok = await repairKnowledgeBaseRulesFile(rulesRepairVault, {
@@ -2389,14 +2747,16 @@ try {
     rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(patched.status, "patched");
-  assert.ok(patched.missingRules.includes("raw/ 管理只读边界"));
+  assert.ok(patched.missingRules.includes("raw/ 正文只读路径整理边界"));
   assert.ok(patched.missingRules.includes("raw/ 普通对话授权边界"));
+  assert.ok(patched.missingRules.includes("Structure Normalize 阶段"));
   const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
   assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
   assert.ok(patchedRules.includes("`raw/` 是原始资料与待整理来源区"));
+  assert.ok(patchedRules.includes("正文只读、路径可整理"));
   assert.ok(patchedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
-  assert.ok(patchedRules.includes("把维护报告写入 `outputs/`"));
+  assert.ok(patchedRules.includes("把维护报告写入 `outputs/maintenance/`"));
 } finally {
   await rm(patchRulesRepairVault, { recursive: true, force: true });
 }
@@ -2467,6 +2827,7 @@ try {
   const yesterday = daysAgoDateForTest(1);
   const twoDaysAgo = daysAgoDateForTest(2);
   const threeDaysAgo = daysAgoDateForTest(3);
+  const fourDaysAgo = daysAgoDateForTest(4);
   await utimes(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), twoDaysAgo, twoDaysAgo);
   await utimes(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), twoDaysAgo, twoDaysAgo);
   const oldPath = path.join(dashboardVault, "raw", "articles", "old.md");
@@ -2478,6 +2839,7 @@ try {
   const historicalReportPath = path.join(dashboardVault, "outputs", `kb-maintenance-${historicalReportDate}.md`);
   await writeFile(historicalReportPath, "# Historical Report\n", "utf8");
   await utimes(historicalReportPath, threeDaysAgo, threeDaysAgo);
+  const reportlessMaintenanceDate = formatDateKeyForTest(fourDaysAgo);
   const oldStat = await stat(oldPath);
   const newStat = await stat(newPath);
   const dashboardSettings = normalizeSettingsData({
@@ -2491,6 +2853,9 @@ try {
         { date: formatDateKeyForTest(twoDaysAgo), status: "failed", at: twoDaysAgo.getTime() },
         { date: formatDateKeyForTest(yesterday), status: "success", at: yesterday.getTime() },
         { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ],
+      maintenanceHistory: [
+        { date: reportlessMaintenanceDate, status: "success", at: fourDaysAgo.getTime(), mode: "maintain", reportPath: "" }
       ],
       processedSources: {
         "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 }
@@ -2522,7 +2887,8 @@ try {
   assert.equal(dashboard.checkHeatmap[0]?.date, `${today.getFullYear()}-01-01`);
   assert.equal(dashboard.checkHeatmap.at(-1)?.date, `${today.getFullYear()}-12-31`);
   assert.equal(dashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(today))?.status, "success");
-  assert.equal(dashboard.checkHeatmap.find((day) => day.date === historicalReportDate)?.status, "success");
+  assert.equal(dashboard.checkHeatmap.find((day) => day.date === historicalReportDate)?.status, "none");
+  assert.equal(dashboard.checkHeatmap.find((day) => day.date === reportlessMaintenanceDate)?.status, "success");
   assert.ok(dashboard.checkHeatmap.length >= 365);
   assert.ok(dashboard.checkHeatmap.length <= 366);
 
@@ -2587,7 +2953,7 @@ try {
   const legacyDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({ settingsVersion: 19 }).settings.knowledgeBase);
   assert.notEqual(legacyDashboard.health.status, "bad");
   assert.ok(!legacyDashboard.health.reasons.includes("从未体检"));
-  assert.equal(legacyDashboard.checkFreshness.status, "stale");
+  assert.equal(legacyDashboard.checkFreshness.status, "missing");
   assert.equal(legacyDashboard.checkHeatmap.at(-1)?.status, "none");
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
@@ -2634,6 +3000,7 @@ try {
   const externalYesterday = daysAgoDateForTest(1);
   const externalOld = daysAgoDateForTest(2);
   const externalOldReportDate = formatDateKeyForTest(externalOld);
+  const externalReportlessDate = formatDateKeyForTest(externalYesterday);
   const externalOldReportPath = path.join(externalMaintenanceVault, "outputs", `kb-maintenance-${externalOldReportDate}.md`);
   await writeFile(externalOldReportPath, "# Earlier maintenance\n", "utf8");
   await utimes(processedRaw, externalOld, externalOld);
@@ -2644,7 +3011,11 @@ try {
   const externalDashboard = await buildKnowledgeBaseDashboardSnapshot(externalMaintenanceVault, normalizeSettingsData({
     settingsVersion: 19,
     knowledgeBase: {
-      lastReportPath: "outputs/kb-maintenance-2026-05-15.md"
+      lastReportPath: "outputs/kb-maintenance-2026-05-15.md",
+      maintenanceHistory: [
+        { date: externalReportlessDate, status: "success", at: externalYesterday.getTime(), mode: "maintain", reportPath: "" },
+        { date: formatDateKeyForTest(externalToday), status: "success", at: externalToday.getTime(), mode: "lint", reportPath: "outputs/kb-maintenance-2026-05-15.md" }
+      ]
     }
   }).settings.knowledgeBase);
   assert.equal(externalDashboard.raw.changedCount, 1);
@@ -2657,7 +3028,8 @@ try {
   assert.equal(externalDashboard.health.lastCheckAt, externalToday.getTime());
   assert.equal(externalDashboard.checkFreshness.status, "fresh");
   assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === formatDateKeyForTest(externalToday))?.status, "success");
-  assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === externalOldReportDate)?.status, "success");
+  assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === externalReportlessDate)?.status, "success");
+  assert.equal(externalDashboard.checkHeatmap.find((day) => day.date === externalOldReportDate)?.status, "none");
 } finally {
   await rm(externalMaintenanceVault, { recursive: true, force: true });
 }

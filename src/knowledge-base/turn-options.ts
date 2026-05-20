@@ -8,18 +8,10 @@ export function buildCodexKnowledgeTurnOptions(input: {
   availableModels: Array<Pick<CodexModel, "model" | "isDefault">>;
   vaultPath: string;
   permission: PermissionMode;
+  writeScope?: "knowledge-base" | "journal";
 }): TurnOptions {
   const model = input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
-  const writableRoots = input.permission === "workspace-write"
-    ? [
-      path.join(input.vaultPath, "wiki"),
-      path.join(input.vaultPath, "outputs"),
-      path.join(input.vaultPath, "journal"),
-      path.join(input.vaultPath, "01-日记"),
-      path.join(input.vaultPath, "inbox"),
-      path.join(input.vaultPath, "raw", "index.md")
-    ]
-    : undefined;
+  const writableRoots = input.permission === "workspace-write" ? writableRootsForScope(input.vaultPath, input.writeScope ?? "knowledge-base") : undefined;
   return {
     model,
     reasoning: input.settings.defaultReasoning,
@@ -31,4 +23,20 @@ export function buildCodexKnowledgeTurnOptions(input: {
     requestTimeoutMs: 60000,
     ...(writableRoots ? { writableRoots } : {})
   };
+}
+
+function writableRootsForScope(vaultPath: string, scope: "knowledge-base" | "journal"): string[] {
+  if (scope === "journal") {
+    return [
+      path.join(vaultPath, "journal"),
+      path.join(vaultPath, "01-日记")
+    ];
+  }
+  return [
+    path.join(vaultPath, "raw", "index.md"),
+    path.join(vaultPath, "wiki"),
+    path.join(vaultPath, "outputs"),
+    path.join(vaultPath, "inbox"),
+    path.join(vaultPath, "projects")
+  ];
 }

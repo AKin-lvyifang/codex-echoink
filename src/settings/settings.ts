@@ -86,6 +86,7 @@ export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" |
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
+export type KnowledgeBaseMaintenanceMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox" | "unknown";
 export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
 export type ReviewRangeMode = "previous-week" | "current-week";
@@ -107,6 +108,12 @@ export interface OpenCodeSettings {
   lastError: string;
 }
 
+export interface SetupSettings {
+  completedAt: number;
+  lastCheckedAt: number;
+  dismissedVersion: string;
+}
+
 export interface KnowledgeBaseProcessedSource {
   path: string;
   size: number;
@@ -118,6 +125,11 @@ export interface KnowledgeBaseHealthHistoryEntry {
   date: string;
   status: KnowledgeBaseHealthCheckStatus;
   at: number;
+}
+
+export interface KnowledgeBaseMaintenanceHistoryEntry extends KnowledgeBaseHealthHistoryEntry {
+  mode: KnowledgeBaseMaintenanceMode;
+  reportPath: string;
 }
 
 export interface KnowledgeBaseSettings {
@@ -137,6 +149,7 @@ export interface KnowledgeBaseSettings {
   initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
   healthHistory: KnowledgeBaseHealthHistoryEntry[];
+  maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
 }
 
 export interface KnowledgeBaseInitializationSettings {
@@ -219,6 +232,7 @@ export interface CodexForObsidianSettings {
   defaultMode: UiMode;
   autoOpen: boolean;
   showContext: boolean;
+  setup: SetupSettings;
   resourceManagementTab: ResourceManagementTab;
   editorActions: EditorAiActionSettings;
   opencode: OpenCodeSettings;
@@ -391,7 +405,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 25,
+  settingsVersion: 26,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -409,6 +423,11 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultMode: "agent",
   autoOpen: false,
   showContext: true,
+  setup: {
+    completedAt: 0,
+    lastCheckedAt: 0,
+    dismissedVersion: ""
+  },
   resourceManagementTab: "plugins",
   editorActions: {
     enabled: false,
@@ -461,11 +480,12 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
       status: "not-started",
       initializedAt: 0,
       rulesFilePath: "",
-      templateVersion: "v0.6",
+      templateVersion: "v0.7",
       lastPreviewSummary: ""
     },
     processedSources: {},
-    healthHistory: []
+    healthHistory: [],
+    maintenanceHistory: []
   },
   review: {
     enabled: false,
@@ -519,6 +539,7 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     providerMode: normalizeProviderMode(data?.providerMode),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(data?.apiProviders),
+    setup: normalizeSetupSettings(data?.setup),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
     opencode: normalizeOpenCodeSettings(data?.opencode),
@@ -977,6 +998,14 @@ function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
   };
 }
 
+function normalizeSetupSettings(value: any): SetupSettings {
+  return {
+    completedAt: normalizeNonNegativeNumber(value?.completedAt),
+    lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
+    dismissedVersion: normalizeOptionalText(value?.dismissedVersion)
+  };
+}
+
 function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
   const fallback = DEFAULT_SETTINGS.knowledgeBase;
   return {
@@ -995,7 +1024,8 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     lastSummary: normalizeOptionalText(value?.lastSummary),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
     processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources),
-    healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory)
+    healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory),
+    maintenanceHistory: normalizeKnowledgeBaseMaintenanceHistory(value?.maintenanceHistory, value?.healthHistory)
   };
 }
 
@@ -1138,8 +1168,40 @@ function normalizeKnowledgeBaseHealthHistory(value: any): KnowledgeBaseHealthHis
     .slice(-90);
 }
 
+function normalizeKnowledgeBaseMaintenanceHistory(value: any, legacyHealthHistory?: any): KnowledgeBaseMaintenanceHistoryEntry[] {
+  const byDate = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
+  const add = (item: any, legacyMode: KnowledgeBaseMaintenanceMode) => {
+    const date = normalizeOptionalText(item?.date);
+    const status = normalizeKnowledgeBaseHealthCheckStatus(item?.status);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) return;
+    const at = normalizeNonNegativeNumber(item?.at);
+    const current = byDate.get(date);
+    if (current && current.at > at) return;
+    byDate.set(date, {
+      date,
+      status,
+      at,
+      mode: normalizeKnowledgeBaseMaintenanceMode(item?.mode) ?? legacyMode,
+      reportPath: normalizeOptionalText(item?.reportPath)
+    });
+  };
+  if (Array.isArray(legacyHealthHistory)) {
+    for (const item of legacyHealthHistory) add(item, "lint");
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) add(item, "unknown");
+  }
+  return Array.from(byDate.values())
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(-180);
+}
+
 function normalizeKnowledgeBaseHealthCheckStatus(value: any): KnowledgeBaseHealthCheckStatus | null {
   return value === "success" || value === "failed" ? value : null;
+}
+
+function normalizeKnowledgeBaseMaintenanceMode(value: any): KnowledgeBaseMaintenanceMode | null {
+  return value === "maintain" || value === "lint" || value === "reingest" || value === "outputs" || value === "inbox" || value === "unknown" ? value : null;
 }
 
 export function recordKnowledgeBaseHealthCheck(settings: KnowledgeBaseSettings, status: KnowledgeBaseHealthCheckStatus, at = Date.now()): void {
@@ -1148,6 +1210,19 @@ export function recordKnowledgeBaseHealthCheck(settings: KnowledgeBaseSettings, 
     ...(settings.healthHistory ?? []).filter((entry) => entry.date !== date),
     { date, status, at }
   ]);
+}
+
+export function recordKnowledgeBaseMaintenanceRun(
+  settings: KnowledgeBaseSettings,
+  input: { status: KnowledgeBaseHealthCheckStatus; mode: KnowledgeBaseMaintenanceMode; at?: number; reportPath?: string }
+): void {
+  const at = input.at ?? Date.now();
+  const date = formatLocalDateKey(at);
+  settings.maintenanceHistory = normalizeKnowledgeBaseMaintenanceHistory([
+    ...(settings.maintenanceHistory ?? []).filter((entry) => entry.date !== date),
+    { date, status: input.status, at, mode: input.mode, reportPath: input.reportPath ?? "" }
+  ], settings.healthHistory);
+  if (input.mode === "lint") recordKnowledgeBaseHealthCheck(settings, input.status, at);
 }
 
 function formatLocalDateKey(value: number): string {

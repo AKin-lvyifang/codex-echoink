@@ -137,9 +137,9 @@ function renderSingleVaultNoteLink(app: App, component: Component, container: HT
 }
 
 function renderVaultNoteLink(app: App, component: Component, container: HTMLElement, segment: Extract<VaultNoteLinkSegment, { kind: "noteLink" }>): boolean {
-  const targetPath = normalizePath(segment.targetPath);
-  const file = app.vault.getAbstractFileByPath(targetPath);
-  if (!(file instanceof TFile)) return false;
+  const resolved = resolveVaultNoteFile(app, segment.targetPath);
+  if (!resolved && !isHiddenVaultMarkdownPath(segment.targetPath)) return false;
+  const targetPath = resolved?.targetPath ?? normalizePath(segment.targetPath);
   const link = container.createEl("a", {
     cls: "codex-message-note-link",
     text: segment.text,
@@ -154,8 +154,53 @@ function renderVaultNoteLink(app: App, component: Component, container: HTMLElem
     event.stopPropagation();
     const current = app.vault.getAbstractFileByPath(targetPath);
     if (current instanceof TFile) await app.workspace.getLeaf("tab").openFile(current, { active: true });
+    else await openHiddenVaultMarkdown(app, targetPath);
   });
   return true;
+}
+
+function resolveVaultNoteFile(app: App, targetPath: string): { file: TFile; targetPath: string } | null {
+  for (const candidate of knowledgeBaseLinkTargetCandidates(targetPath)) {
+    const normalized = normalizePath(candidate);
+    const file = app.vault.getAbstractFileByPath(normalized);
+    if (file instanceof TFile) return { file, targetPath: normalized };
+  }
+  return null;
+}
+
+function knowledgeBaseLinkTargetCandidates(targetPath: string): string[] {
+  const normalized = normalizePath(targetPath);
+  const candidates = [normalized];
+  const basename = normalized.split("/").pop() ?? "";
+  if (/^outputs\/kb-maintenance-.+\.md$/i.test(normalized)) candidates.push(`outputs/maintenance/${basename}`);
+  if (/^outputs\/knowledge-base-review-.+\.md$/i.test(normalized)) candidates.push(`outputs/reviews/${basename}`);
+  if (/^outputs\/old-wiki-merge-.+\.md$/i.test(normalized)) candidates.push(`outputs/migrations/${basename}`);
+  if (/^outputs\/[^/]+instructions[^/]*\.md$/i.test(normalized)) candidates.push(`outputs/instructions/${basename}`);
+  if (/^outputs\/[^/]*xhs[^/]*\.md$/i.test(normalized)) candidates.push(`outputs/publishing/xiaohongshu/${basename}`);
+  return candidates;
+}
+
+function isHiddenVaultMarkdownPath(targetPath: string): boolean {
+  return /(^|\/)\.[^/]+\.md$/i.test(normalizePath(targetPath));
+}
+
+async function openHiddenVaultMarkdown(app: App, targetPath: string): Promise<void> {
+  const normalized = normalizePath(targetPath);
+  const exists = await app.vault.adapter.exists(normalized).catch(() => false);
+  if (!exists) return;
+  const basePath = vaultBasePath(app);
+  const absolutePath = basePath ? `${basePath}/${normalized}` : "";
+  const shell = electronModule()?.shell;
+  if (absolutePath && shell?.openPath) await shell.openPath(absolutePath);
+}
+
+function electronModule(): any {
+  const electronRequire = (window as any).require ?? (globalThis as any).require;
+  try {
+    return electronRequire?.("electron");
+  } catch {
+    return null;
+  }
 }
 
 function vaultBasePath(app: App): string {

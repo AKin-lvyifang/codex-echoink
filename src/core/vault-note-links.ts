@@ -112,7 +112,7 @@ function resolveVaultNoteCandidate(value: string, basePath: string): string {
 }
 
 function normalizeVaultNoteCandidate(value: string): string {
-  const withoutAlias = value.split("|")[0].split("#")[0].trim().replace(/^\.\//, "");
+  const withoutAlias = decodeUriPath(value.split("|")[0].split("#")[0].trim().replace(/^\.\//, ""));
   if (!/\.md$/i.test(withoutAlias) || /^https?:\/\//i.test(withoutAlias) || withoutAlias.startsWith("/")) return "";
   const normalized = normalizeVaultPath(withoutAlias);
   const root = normalized.split("/")[0] || "";
@@ -121,8 +121,8 @@ function normalizeVaultNoteCandidate(value: string): string {
 }
 
 function relativePathForAbsoluteVaultNote(absolutePath: string, basePath: string): string {
-  const normalizedAbsolute = normalizeFsPath(absolutePath);
-  const base = normalizeFsPath(basePath).replace(/\/$/, "");
+  const normalizedAbsolute = normalizeFsPath(decodeUriPath(absolutePath));
+  const base = normalizeFsPath(decodeUriPath(basePath)).replace(/\/$/, "");
   const prefix = `${base}/`;
   if (!normalizedAbsolute.startsWith(prefix)) return "";
   return normalizeVaultNoteCandidate(normalizedAbsolute.slice(prefix.length));
@@ -150,6 +150,14 @@ function normalizeVaultPath(value: string): string {
 
 function normalizeFsPath(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+function decodeUriPath(value: string): string {
+  try {
+    return decodeURI(value);
+  } catch {
+    return value;
+  }
 }
 
 function escapeRegExp(value: string): string {

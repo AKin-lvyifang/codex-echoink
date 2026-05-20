@@ -52,6 +52,19 @@ const ZH_CN = {
     refreshSuccess: (account: string) => `Codex 已刷新：${account}`,
     refreshFailed: (error: string) => `Codex 连接失败：${error}`
   },
+  setup: {
+    blockedTitle: (count: number) => `启动前还差 ${count} 项`,
+    blockedDesc: "按下面提示安装或登录后，点击重新检测。",
+    readyTitle: "环境已就绪",
+    readyDesc: "必要环境已通过，可以开始使用 Codex EchoInk。",
+    checking: "正在重新检测",
+    recheck: "重新检测",
+    checkingButton: "检测中",
+    start: "Start",
+    copied: "已复制",
+    startBlocked: "环境还没通过，请先重新检测。",
+    lastChecked: (time: string) => `上次检测：${time}`
+  },
   tabs: {
     general: "基础设置",
     providers: "API Provider",
@@ -389,6 +402,19 @@ const EN: SettingsCopy = {
     diagnostics: "Connection diagnostic",
     refreshSuccess: (account) => `Codex refreshed: ${account}`,
     refreshFailed: (error) => `Codex failed: ${error}`
+  },
+  setup: {
+    blockedTitle: (count) => `${count} item${count === 1 ? "" : "s"} before startup`,
+    blockedDesc: "Install or sign in using the steps below, then run the check again.",
+    readyTitle: "Environment ready",
+    readyDesc: "Required runtime checks passed. You can start using Codex EchoInk.",
+    checking: "Checking environment",
+    recheck: "Run check again",
+    checkingButton: "Checking",
+    start: "Start",
+    copied: "Copied",
+    startBlocked: "The environment is not ready yet. Run the check again first.",
+    lastChecked: (time) => `Last checked: ${time}`
   },
   tabs: {
     general: "General",

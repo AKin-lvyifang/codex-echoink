@@ -176,16 +176,18 @@ export class ReviewManager {
 
   private async readMaintenanceReports(range: ReviewRange): Promise<KnowledgeBaseMaintenanceReportEvidence[]> {
     const outputsDir = path.join(this.plugin.getVaultPath(), "outputs");
-    const entries = await fsp.readdir(outputsDir, { withFileTypes: true }).catch(() => []);
+    const entries = [
+      ...await readMaintenanceReportEntries(outputsDir, "outputs"),
+      ...await readMaintenanceReportEntries(path.join(outputsDir, "maintenance"), "outputs/maintenance")
+    ];
     const reports: Array<KnowledgeBaseMaintenanceReportEvidence & { mtime: number }> = [];
     for (const entry of entries) {
-      if (!entry.isFile() || !/^kb-maintenance-\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) continue;
-      const absolute = path.join(outputsDir, entry.name);
+      const absolute = path.join(this.plugin.getVaultPath(), entry.path);
       const stat = await fsp.stat(absolute).catch(() => null);
       if (!stat || stat.mtimeMs < range.startAt || stat.mtimeMs > range.endAt + 24 * 60 * 60 * 1000) continue;
       const excerpt = (await fsp.readFile(absolute, "utf8").catch(() => "")).trim().slice(0, 1000);
       reports.push({
-        path: normalizePath(`outputs/${entry.name}`),
+        path: normalizePath(entry.path),
         excerpt,
         mtime: stat.mtimeMs
       });
@@ -195,6 +197,13 @@ export class ReviewManager {
       .slice(0, 5)
       .map(({ path, excerpt }) => ({ path, excerpt }));
   }
+}
+
+async function readMaintenanceReportEntries(dir: string, relativeDir: string): Promise<Array<{ path: string }>> {
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isFile() && /^kb-maintenance-\d{4}-\d{2}-\d{2}\.md$/.test(entry.name))
+    .map((entry) => ({ path: `${relativeDir}/${entry.name}` }));
 }
 
 function kindLabel(kind: ReviewReportKind): string {

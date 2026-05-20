@@ -8,6 +8,9 @@ import type { AgentInputModality, AgentModelInfo, AgentProfileInfo, AgentPromptP
 export interface OpenCodeCommandResolveOptions {
   home?: string;
   envPath?: string;
+  platform?: NodeJS.Platform | string;
+  appData?: string;
+  programData?: string;
   exists?: (candidate: string) => boolean;
 }
 
@@ -19,7 +22,13 @@ export function detectOpenCodeCommand(customPath: string, options: OpenCodeComma
     const expanded = expandHome(custom, home);
     return exists(expanded) ? expanded : null;
   }
-  return openCodeCommandCandidates(home, options.envPath ?? process.env.PATH ?? "").find((candidate) => exists(candidate)) ?? null;
+  return openCodeCommandCandidates(
+    home,
+    options.envPath ?? process.env.PATH ?? "",
+    options.platform ?? process.platform,
+    options.appData ?? process.env.APPDATA ?? "",
+    options.programData ?? process.env.ProgramData ?? "C:\\ProgramData"
+  ).find((candidate) => exists(candidate)) ?? null;
 }
 
 export function resolveOpenCodeCommand(customPath: string, options: OpenCodeCommandResolveOptions = {}): string {
@@ -29,11 +38,20 @@ export function resolveOpenCodeCommand(customPath: string, options: OpenCodeComm
   throw new Error(`找不到 OpenCode CLI：${expanded}。请先安装 OpenCode，或在设置里填写正确路径。`);
 }
 
-export function openCodeCommandCandidates(home: string, envPath: string): string[] {
+export function openCodeCommandCandidates(home: string, envPath: string, platform: NodeJS.Platform | string = process.platform, appData = process.env.APPDATA ?? "", programData = process.env.ProgramData ?? "C:\\ProgramData"): string[] {
+  const windowsCandidates = platform === "win32"
+    ? [
+      appData ? path.win32.join(appData, "npm", "opencode.cmd") : "",
+      appData ? path.win32.join(appData, "npm", "opencode.ps1") : "",
+      path.win32.join(home, "scoop", "shims", "opencode.cmd"),
+      path.win32.join(programData, "chocolatey", "bin", "opencode.exe")
+    ].filter(Boolean)
+    : [];
   return [
     path.join(home, ".npm-global", "bin", "opencode"),
     path.join(home, ".bun", "bin", "opencode"),
     path.join(home, ".local", "bin", "opencode"),
+    ...windowsCandidates,
     "/opt/homebrew/bin/opencode",
     "/usr/local/bin/opencode",
     ...String(envPath || "")

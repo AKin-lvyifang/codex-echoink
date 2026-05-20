@@ -12,6 +12,8 @@ export interface KnowledgeBaseTrackerSnapshot {
   updatedAt: number;
 }
 
+const TRACKER_MTIME_GRACE_MS = 5000;
+
 export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, trackerPath: string, files: KnowledgeBaseTrackableFile[]): Promise<KnowledgeBaseTrackerSnapshot> {
   const absolute = path.join(vaultPath, trackerPath);
   const [text, stat] = await Promise.all([
@@ -25,7 +27,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
 
   function mark(relativePath: string): void {
     const file = byPath.get(normalizeRelativePath(relativePath));
-    if (!file || file.mtime > trackerMtime + 1000) return;
+    if (!file || file.mtime > trackerMtime + TRACKER_MTIME_GRACE_MS) return;
     processedSources[file.path] = { size: file.size, mtime: file.mtime };
   }
 
@@ -50,7 +52,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
     const sectionSignalsProcessed = /全部|已处理|处理时间|处理新增|已消化|知识库重建|共\s*\d+\s*个文件/.test(`${heading}\n${body}`);
     if (sectionSignalsProcessed) {
       for (const file of files) {
-        if (file.path.startsWith(prefix) && file.mtime <= trackerMtime + 1000) mark(file.path);
+        if (file.path.startsWith(prefix) && file.mtime <= trackerMtime + TRACKER_MTIME_GRACE_MS) mark(file.path);
       }
     }
   }

@@ -48,7 +48,7 @@ export async function discoverKnowledgeBaseSources(vaultPath: string, processed:
     vaultPath,
     sources: resolvedSources,
     changedSources: resolvedSources.filter((source) => source.changed),
-    reportPath: `outputs/kb-maintenance-${today}.md`,
+    reportPath: `outputs/maintenance/kb-maintenance-${today}.md`,
     trackerPath
   };
 }

@@ -8,7 +8,7 @@ import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../age
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
-import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseHealthCheck, type ChatMessage, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
+import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
@@ -21,10 +21,12 @@ import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitializa
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
+import { diffRawSnapshot, snapshotRawFiles } from "./raw-integrity";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
+import { normalizeKnowledgeBaseStructure, rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
-import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
+import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource, StructureNormalizationPathRewrite, StructureNormalizationResult } from "./types";
 
 type CodexKbWaiter = {
   threadId: string;
@@ -325,18 +327,19 @@ export class KnowledgeBaseManager {
     await this.plugin.saveSettings(true);
 
     const startedAt = Date.now();
-    const rawBefore = await snapshotRawFiles(this.plugin.getVaultPath());
+    const vaultPath = this.plugin.getVaultPath();
+    const rawBefore = await snapshotRawFiles(vaultPath);
     let discovery: KnowledgeBaseDiscovery | null = null;
     try {
-      discovery = await discoverKnowledgeBaseSources(this.plugin.getVaultPath(), settings.processedSources);
-      await ensureKnowledgeBaseFolders(this.plugin.getVaultPath());
+      discovery = await discoverKnowledgeBaseSources(vaultPath, settings.processedSources);
+      await ensureKnowledgeBaseFolders(vaultPath);
       const rules = await this.resolveRulesFile();
       if (rules.useCustomRulesFile && !rules.exists) {
         throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
       }
       const promptSources = selectSourcesForRunMode(mode, discovery);
       const prompt = buildKnowledgeBasePrompt({
-        vaultPath: this.plugin.getVaultPath(),
+        vaultPath,
         mode,
         userRequest,
         reportPath: discovery.reportPath,
@@ -344,8 +347,8 @@ export class KnowledgeBaseManager {
         rulesFilePath: rules.relativePath,
         rulesFileExists: rules.exists,
         useCustomRulesFile: rules.useCustomRulesFile,
-        hasRawIndex: await exists(path.join(this.plugin.getVaultPath(), "raw", "index.md")),
-        hasWikiIndex: await exists(path.join(this.plugin.getVaultPath(), "wiki", "index.md")),
+        hasRawIndex: await exists(path.join(vaultPath, "raw", "index.md")),
+        hasWikiIndex: await exists(path.join(vaultPath, "wiki", "index.md")),
         hasTracker: await exists(discovery.trackerPath)
       });
 
@@ -353,16 +356,27 @@ export class KnowledgeBaseManager {
       const sources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, sources)
-        : await this.runCodexKnowledgeTask(prompt, sources);
+        : await this.runCodexKnowledgeTask(prompt, sources, "workspace-write", "knowledge-base");
 
-      const rawAfter = await snapshotRawFiles(this.plugin.getVaultPath());
-      const rawChanges = diffRawSnapshot(rawBefore, rawAfter);
+      const structure = mode === "maintain"
+        ? await normalizeKnowledgeBaseStructure(vaultPath, { lastReportPath: settings.lastReportPath || discovery.reportPath })
+        : undefined;
+      if (structure?.pathRewrites.length) {
+        settings.processedSources = rewriteProcessedSources(settings.processedSources, structure.pathRewrites);
+      }
+      const reportPath = structure ? rewriteKnowledgeBaseRelativePath(discovery.reportPath, structure.pathRewrites) : discovery.reportPath;
+      const rawAfter = await snapshotRawFiles(vaultPath);
+      const rawChanges = diffRawSnapshot(rawBefore, rawAfter, structure?.pathRewrites ?? []);
       if (rawChanges.length) {
-        throw new Error(`知识库任务试图修改 raw/：${rawChanges.slice(0, 5).join("，")}`);
+        throw new Error(`知识库任务试图改写 raw/ 正文：${rawChanges.slice(0, 5).join("，")}`);
       }
 
+      const processedChangedSources = await normalizeProcessedSources(vaultPath, discovery.changedSources, structure?.pathRewrites ?? []);
+      if (mode === "maintain" && structure?.pathRewrites.length) {
+        settings.processedSources = await syncRewrittenRawProcessedSourceStats(vaultPath, settings.processedSources, structure.pathRewrites);
+      }
       if (mode === "maintain" || mode === "reingest") {
-        for (const source of discovery.changedSources) {
+        for (const source of processedChangedSources) {
           settings.processedSources[source.relativePath] = {
             path: source.relativePath,
             size: source.size,
@@ -370,26 +384,28 @@ export class KnowledgeBaseManager {
             digestedAt: startedAt
           };
         }
-        await writeKnowledgeBaseTracker(this.plugin.getVaultPath(), settings.processedSources, startedAt);
+        await writeKnowledgeBaseTracker(vaultPath, settings.processedSources, startedAt);
       }
-      await ensureFallbackReport(this.plugin.getVaultPath(), discovery.reportPath, {
+      await ensureFallbackReport(vaultPath, reportPath, {
         mode,
         output,
-        sources: discovery.changedSources,
+        sources: processedChangedSources,
         startedAt
       });
+      if (structure) await appendStructureNormalizationReport(vaultPath, reportPath, structure);
       settings.lastRunAt = Date.now();
       settings.lastRunStatus = "success";
-      settings.lastReportPath = discovery.reportPath;
-      settings.lastSummary = output.trim().slice(0, 1000) || `知识库${labelForRunMode(mode)}完成`;
-      if (mode === "lint") recordKnowledgeBaseHealthCheck(settings, "success");
+      settings.lastReportPath = reportPath;
+      settings.lastSummary = buildMaintenanceSummary(output, mode, structure);
+      recordKnowledgeBaseMaintenanceRun(settings, { status: "success", mode, reportPath });
       await this.plugin.saveSettings(true);
       new Notice(`知识库${labelForRunMode(mode)}完成`);
       return {
         status: "success",
-        reportPath: discovery.reportPath,
+        reportPath,
         summary: settings.lastSummary,
-        processedSources: discovery.changedSources
+        processedSources: processedChangedSources,
+        structure
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -403,7 +419,7 @@ export class KnowledgeBaseManager {
           settings.lastReportPath = discovery.reportPath;
           settings.lastError = "";
           settings.lastSummary = recoveredLintReportSummary(discovery.reportPath);
-          recordKnowledgeBaseHealthCheck(settings, "success");
+          recordKnowledgeBaseMaintenanceRun(settings, { status: "success", mode, reportPath: discovery.reportPath });
           await this.plugin.saveSettings(true);
           new Notice("知识库体检完成，Codex 状态有警告");
           return {
@@ -418,7 +434,7 @@ export class KnowledgeBaseManager {
       settings.lastRunStatus = "failed";
       settings.lastError = message;
       if (discovery?.reportPath) settings.lastReportPath = discovery.reportPath;
-      if (mode === "lint") recordKnowledgeBaseHealthCheck(settings, "failed");
+      recordKnowledgeBaseMaintenanceRun(settings, { status: "failed", mode, reportPath: discovery?.reportPath ?? "" });
       await this.plugin.saveSettings(true);
       new Notice(`知识库${labelForRunMode(mode)}失败：${message}`);
       return {
@@ -460,7 +476,7 @@ export class KnowledgeBaseManager {
       const backend = this.resolveKnowledgeBackend();
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, matches, "read-only")
-        : await this.runCodexKnowledgeTask(prompt, matches, "read-only");
+        : await this.runCodexKnowledgeTask(prompt, matches, "read-only", "knowledge-base");
       return {
         status: "success",
         message: formatAskAnswer(output, citations),
@@ -508,7 +524,7 @@ export class KnowledgeBaseManager {
       });
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, [], "workspace-write")
-        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write");
+        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write", "journal");
       if (!await exists(target.absolutePath)) {
         throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
       }
@@ -581,7 +597,12 @@ export class KnowledgeBaseManager {
     return true;
   }
 
-  private async runCodexKnowledgeTask(prompt: string, sources: KnowledgeBaseSource[], permission: PermissionMode = "workspace-write"): Promise<string> {
+  private async runCodexKnowledgeTask(
+    prompt: string,
+    sources: KnowledgeBaseSource[],
+    permission: PermissionMode = "workspace-write",
+    writeScope: "knowledge-base" | "journal" = "knowledge-base"
+  ): Promise<string> {
     let status = await this.plugin.ensureCodexConnected(false, { silent: true });
     if (!status.connected) {
       status = await this.plugin.ensureCodexConnected(true, { silent: true }).catch(() => status);
@@ -591,7 +612,8 @@ export class KnowledgeBaseManager {
       settings: this.plugin.settings,
       availableModels: status.models,
       vaultPath: this.plugin.getVaultPath(),
-      permission
+      permission,
+      writeScope
     });
     let started: { threadId: string; title: string };
     try {
@@ -999,6 +1021,11 @@ function formatAskAnswer(output: string, citations: KnowledgeBaseCitationSummary
 
 async function ensureKnowledgeBaseFolders(vaultPath: string): Promise<void> {
   await fsp.mkdir(path.join(vaultPath, "outputs"), { recursive: true });
+  await fsp.mkdir(path.join(vaultPath, "outputs", "maintenance"), { recursive: true });
+  await fsp.mkdir(path.join(vaultPath, "outputs", "reviews"), { recursive: true });
+  await fsp.mkdir(path.join(vaultPath, "outputs", "publishing", "xiaohongshu"), { recursive: true });
+  await fsp.mkdir(path.join(vaultPath, "outputs", "instructions"), { recursive: true });
+  await fsp.mkdir(path.join(vaultPath, "outputs", "migrations"), { recursive: true });
   await fsp.mkdir(path.join(vaultPath, "wiki"), { recursive: true });
 }
 
@@ -1021,6 +1048,49 @@ async function ensureFallbackReport(vaultPath: string, reportPath: string, input
     ""
   ];
   await fsp.writeFile(absolute, lines.join("\n"), "utf8");
+}
+
+async function appendStructureNormalizationReport(vaultPath: string, reportPath: string, structure: StructureNormalizationResult): Promise<void> {
+  const absolute = path.join(vaultPath, reportPath);
+  const current = await fsp.readFile(absolute, "utf8").catch(() => "");
+  const markerStart = "<!-- codex-echoink-structure:start -->";
+  const markerEnd = "<!-- codex-echoink-structure:end -->";
+  const lines = [
+    markerStart,
+    "",
+    "## 结构整理",
+    "",
+    `一眼结论：自动移动 ${structure.moves.length} 项，更新引用 ${structure.updatedLinks.reduce((sum, item) => sum + item.replacements, 0)} 处，跳过风险项 ${structure.skipped.length} 项。`,
+    "",
+    "### 已自动整理",
+    ...(structure.moves.length
+      ? structure.moves.slice(0, 30).map((move) => `- ${move.from} -> ${move.to}（${move.reason}）`)
+      : ["- 无"]),
+    structure.moves.length > 30 ? `- 其余 ${structure.moves.length - 30} 项略。` : "",
+    "",
+    "### 引用同步",
+    ...(structure.updatedLinks.length
+      ? structure.updatedLinks.slice(0, 30).map((item) => `- ${item.path}：${item.replacements} 处`)
+      : ["- 无"]),
+    structure.updatedLinks.length > 30 ? `- 其余 ${structure.updatedLinks.length - 30} 个文件略。` : "",
+    "",
+    "### 跳过 / 需确认",
+    ...(structure.skipped.length
+      ? structure.skipped.map((item) => `- ${item.from}${item.to ? ` -> ${item.to}` : ""}：${item.reason}`)
+      : ["- 无"]),
+    "",
+    "### 残留结构问题",
+    ...(structure.remainingRootNotes.length ? ["- 根目录散落笔记：", ...structure.remainingRootNotes.map((item) => `  - ${item}`)] : ["- 根目录散落笔记：无"]),
+    ...(structure.remainingChineseDirs.length ? ["- 中文目录残留：", ...structure.remainingChineseDirs.map((item) => `  - ${item}`)] : ["- 中文目录残留：无"]),
+    "",
+    markerEnd,
+    ""
+  ].filter((line) => line !== "").join("\n");
+  const pattern = new RegExp(`${escapeRegExp(markerStart)}[\\s\\S]*?${escapeRegExp(markerEnd)}`);
+  const next = pattern.test(current)
+    ? current.replace(pattern, lines.trimEnd())
+    : `${current.trimEnd()}\n\n${lines}`;
+  await fsp.writeFile(absolute, next, "utf8");
 }
 
 async function writeKnowledgeBaseTracker(vaultPath: string, processed: Record<string, { path: string; size: number; mtime: number; digestedAt: number }>, updatedAt: number): Promise<void> {
@@ -1054,6 +1124,72 @@ function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: Knowledg
     return [...discovery.sources].sort((left, right) => right.mtime - left.mtime).slice(0, MAX_ATTACHED_SOURCES);
   }
   return discovery.changedSources;
+}
+
+async function normalizeProcessedSources(vaultPath: string, sources: KnowledgeBaseSource[], rewrites: StructureNormalizationPathRewrite[]): Promise<KnowledgeBaseSource[]> {
+  if (!rewrites.length) return sources;
+  const normalized: KnowledgeBaseSource[] = [];
+  for (const source of sources) {
+    const relativePath = rewriteKnowledgeBaseRelativePath(source.relativePath, rewrites);
+    const absolutePath = path.join(vaultPath, relativePath);
+    const stat = await fsp.stat(absolutePath).catch(() => null);
+    normalized.push({
+      ...source,
+      relativePath,
+      absolutePath,
+      ...(stat ? { size: stat.size, mtime: stat.mtimeMs } : {})
+    });
+  }
+  return normalized;
+}
+
+function rewriteProcessedSources(
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  rewrites: StructureNormalizationPathRewrite[]
+): Record<string, KnowledgeBaseProcessedSource> {
+  if (!rewrites.length) return processed;
+  const next: Record<string, KnowledgeBaseProcessedSource> = {};
+  for (const [key, source] of Object.entries(processed ?? {})) {
+    const rewritten = rewriteKnowledgeBaseRelativePath(source.path || key, rewrites);
+    next[rewritten] = { ...source, path: rewritten };
+  }
+  return next;
+}
+
+async function syncRewrittenRawProcessedSourceStats(
+  vaultPath: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  rewrites: StructureNormalizationPathRewrite[]
+): Promise<Record<string, KnowledgeBaseProcessedSource>> {
+  if (!rewrites.length) return processed;
+  const next: Record<string, KnowledgeBaseProcessedSource> = {};
+  for (const [key, source] of Object.entries(processed ?? {})) {
+    const relativePath = source.path || key;
+    if (!isRewrittenRawPath(relativePath, rewrites)) {
+      next[key] = source;
+      continue;
+    }
+    const stat = await fsp.stat(path.join(vaultPath, relativePath)).catch(() => null);
+    next[key] = stat?.isFile()
+      ? { ...source, path: relativePath, size: stat.size, mtime: stat.mtimeMs }
+      : source;
+  }
+  return next;
+}
+
+function isRewrittenRawPath(relativePath: string, rewrites: StructureNormalizationPathRewrite[]): boolean {
+  const normalized = normalizePath(relativePath);
+  return rewrites.some((rewrite) => {
+    if (!rewrite.to.startsWith("raw/")) return false;
+    return normalized === rewrite.to || normalized.startsWith(`${rewrite.to}/`);
+  });
+}
+
+function buildMaintenanceSummary(output: string, mode: KnowledgeBaseRunMode, structure?: StructureNormalizationResult): string {
+  const base = output.trim().slice(0, 800) || `知识库${labelForRunMode(mode)}完成`;
+  if (!structure) return base;
+  const line = `结构整理：移动 ${structure.moves.length} 项，更新引用 ${structure.updatedLinks.reduce((sum, item) => sum + item.replacements, 0)} 处，跳过 ${structure.skipped.length} 项。`;
+  return `${base}\n${line}`.slice(0, 1000);
 }
 
 function labelForRunMode(mode: KnowledgeBaseRunMode): string {
@@ -1152,40 +1288,6 @@ function execFilePromise(command: string, args: string[], options: { maxBuffer: 
       resolve({ stdout, stderr });
     });
   });
-}
-
-async function snapshotRawFiles(vaultPath: string): Promise<Map<string, string>> {
-  const rawDir = path.join(vaultPath, "raw");
-  const files = await walkFiles(rawDir).catch(() => []);
-  const snapshot = new Map<string, string>();
-  for (const file of files) {
-    const stat = await fsp.stat(file);
-    snapshot.set(normalizePath(path.relative(vaultPath, file)), `${stat.size}:${Math.round(stat.mtimeMs)}`);
-  }
-  return snapshot;
-}
-
-function diffRawSnapshot(before: Map<string, string>, after: Map<string, string>): string[] {
-  const changed: string[] = [];
-  for (const [file, value] of after) {
-    if (before.get(file) !== value) changed.push(file);
-  }
-  for (const file of before.keys()) {
-    if (!after.has(file)) changed.push(file);
-  }
-  return changed.filter((file) => file !== "raw/index.md");
-}
-
-async function walkFiles(dir: string): Promise<string[]> {
-  const result: string[] = [];
-  const entries = await fsp.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) result.push(...await walkFiles(full));
-    else if (entry.isFile()) result.push(full);
-  }
-  return result;
 }
 
 async function exists(filePath: string): Promise<boolean> {

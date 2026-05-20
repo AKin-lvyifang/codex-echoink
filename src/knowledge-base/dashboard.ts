@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
+import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
 import { readKnowledgeBaseTrackerSnapshot } from "./tracker";
 
@@ -124,8 +124,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const trackerSnapshot = await readKnowledgeBaseTrackerSnapshot(vaultPath, trackerPath, rawContentFiles);
   const mergedProcessedSources = { ...processedSources, ...trackerSnapshot.processedSources };
   const reportFindings = await readReportFindings(vaultPath, reportPath);
-  const latestExternalCheckAt = Math.max(reportFindings.checkedAt, trackerSnapshot.updatedAt);
-  const externalHealthHistory = buildExternalHealthHistory(outputs.files, latestExternalCheckAt);
+  const maintenanceHistory = normalizeMaintenanceHistory(settings.maintenanceHistory ?? [], settings.healthHistory ?? []);
   const rawChangedCount = countChangedProcessed(rawContentFiles, mergedProcessedSources);
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
@@ -142,8 +141,8 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const health = buildHealth({
     settings,
     generatedAt,
-    latestExternalCheckAt,
-    externalHealthHistory,
+    latestExternalCheckAt: 0,
+    maintenanceHistory,
     latestReportFindings: reportFindings,
     rulesFileExists,
     rawExists: raw.exists,
@@ -154,7 +153,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     inboxCount: inbox.fileCount,
     warnings
   });
-  const checkFreshness = buildCheckFreshness(settings.healthHistory ?? [], generatedAt, latestExternalCheckAt);
+  const checkFreshness = buildCheckFreshness(settings.healthHistory ?? [], generatedAt, 0, maintenanceHistory);
 
   return {
     generatedAt,
@@ -203,7 +202,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     },
     health,
     checkFreshness,
-    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, externalHealthHistory),
+    checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, maintenanceHistory),
     warnings
   };
 }
@@ -332,7 +331,7 @@ async function resolveLatestReportPath(vaultPath: string, configuredPath: string
   const normalized = normalizeRelativePath(configuredPath, "");
   if (normalized && await exists(path.join(vaultPath, normalized))) return normalized;
   const latest = outputFiles
-    .filter((file) => /^outputs\/kb-maintenance-.+\.md$/i.test(file.path))
+    .filter((file) => /^outputs\/(?:maintenance\/)?kb-maintenance-.+\.md$/i.test(file.path))
     .sort((left, right) => right.mtime - left.mtime)[0];
   return latest?.path ?? normalized;
 }
@@ -346,7 +345,7 @@ interface HealthInput {
   settings: KnowledgeBaseSettings;
   generatedAt: number;
   latestExternalCheckAt: number;
-  externalHealthHistory: KnowledgeBaseHealthHistoryEntry[];
+  maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
   latestReportFindings: ReportFindings;
   rulesFileExists: boolean;
   rawExists: boolean;
@@ -369,8 +368,11 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
   const latestHistory = latestHealthEntry(history);
-  const latestCheckAt = Math.max(latestHistory?.at ?? 0, input.latestExternalCheckAt);
-  const latestCheckFailed = Boolean(latestHistory && latestHistory.status === "failed" && latestHistory.at >= input.latestExternalCheckAt);
+  const latestMaintenance = latestMaintenanceEntry(input.maintenanceHistory);
+  const latestRecordedAt = Math.max(latestHistory?.at ?? 0, latestMaintenance?.at ?? 0);
+  const latestRecordedStatus = latestMaintenance && latestMaintenance.at >= (latestHistory?.at ?? 0) ? latestMaintenance.status : latestHistory?.status;
+  const latestCheckAt = Math.max(latestRecordedAt, input.latestExternalCheckAt);
+  const latestCheckFailed = Boolean(latestRecordedStatus === "failed" && latestRecordedAt >= input.latestExternalCheckAt);
   if (latestCheckFailed) critical.push("最近体检失败");
 
   if (input.rawChangedCount > 20) critical.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
@@ -407,14 +409,15 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
     score,
     reasons,
     lastCheckAt: latestCheckAt,
-    streakDays: countHealthStreakDays(history, input.externalHealthHistory),
+    streakDays: countHealthStreakDays(history, input.maintenanceHistory),
   };
 }
 
-function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0): KnowledgeBaseDashboardCheckFreshness {
+function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0, maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[] = []): KnowledgeBaseDashboardCheckFreshness {
   const normalized = normalizeHealthHistory(history);
   const latestHistory = latestHealthEntry(normalized);
-  const latestCheckAt = Math.max(latestHistory?.at ?? 0, externalCheckAt);
+  const latestMaintenance = latestMaintenanceEntry(maintenanceHistory);
+  const latestCheckAt = Math.max(latestHistory?.at ?? 0, latestMaintenance?.at ?? 0, externalCheckAt);
   if (!latestCheckAt) {
     return {
       status: "missing",
@@ -475,22 +478,31 @@ function isSameLocalDay(leftMs: number, rightMs: number): boolean {
   return formatLocalDateKey(leftMs) === formatLocalDateKey(rightMs);
 }
 
-function buildExternalHealthHistory(outputFiles: KnowledgeBaseDashboardFile[], externalCheckAt = 0): KnowledgeBaseHealthHistoryEntry[] {
-  const entries: KnowledgeBaseHealthHistoryEntry[] = [];
-  for (const file of outputFiles) {
-    const match = file.path.match(/^outputs\/kb-maintenance-(\d{4}-\d{2}-\d{2})\.md$/i);
-    if (!match?.[1]) continue;
-    entries.push({ date: match[1], status: "success", at: file.mtime });
+function normalizeMaintenanceHistory(history: KnowledgeBaseMaintenanceHistoryEntry[], legacyHistory: KnowledgeBaseHealthHistoryEntry[]): KnowledgeBaseMaintenanceHistoryEntry[] {
+  const byDate = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
+  const add = (entry: KnowledgeBaseMaintenanceHistoryEntry) => {
+    if (!isKnowledgeBaseHeatmapMode(entry.mode)) return;
+    const current = byDate.get(entry.date);
+    if (current && current.at > entry.at) return;
+    byDate.set(entry.date, entry);
+  };
+  for (const entry of normalizeHealthHistory(legacyHistory)) {
+    add({ ...entry, mode: "lint", reportPath: "" });
   }
-  if (externalCheckAt) {
-    entries.push({ date: formatLocalDateKey(externalCheckAt), status: "success", at: externalCheckAt });
+  for (const entry of history) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || (entry.status !== "success" && entry.status !== "failed")) continue;
+    add(entry);
   }
-  return normalizeHealthHistory(entries);
+  return Array.from(byDate.values()).sort((left, right) => left.date.localeCompare(right.date));
 }
 
-function statusByCheckDate(history: KnowledgeBaseHealthHistoryEntry[], externalHistory: KnowledgeBaseHealthHistoryEntry[]): Map<string, KnowledgeBaseDashboardCheckStatus> {
+function isKnowledgeBaseHeatmapMode(mode: string): boolean {
+  return mode === "lint" || mode === "maintain" || mode === "reingest";
+}
+
+function statusByCheckDate(history: KnowledgeBaseHealthHistoryEntry[], maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[]): Map<string, KnowledgeBaseDashboardCheckStatus> {
   const byDate = new Map<string, KnowledgeBaseDashboardCheckStatus>();
-  for (const entry of normalizeHealthHistory(externalHistory)) {
+  for (const entry of normalizeMaintenanceHistory(maintenanceHistory, [])) {
     byDate.set(entry.date, entry.status);
   }
   for (const entry of normalizeHealthHistory(history)) {
@@ -499,8 +511,8 @@ function statusByCheckDate(history: KnowledgeBaseHealthHistoryEntry[], externalH
   return byDate;
 }
 
-function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalHistory: KnowledgeBaseHealthHistoryEntry[] = []): KnowledgeBaseDashboardHeatmapDay[] {
-  const byDate = statusByCheckDate(history, externalHistory);
+function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[] = []): KnowledgeBaseDashboardHeatmapDay[] {
+  const byDate = statusByCheckDate(history, maintenanceHistory);
   const year = new Date(generatedAt).getFullYear();
   const cursor = parseDateKey(`${year}-01-01`);
   const days: KnowledgeBaseDashboardHeatmapDay[] = [];
@@ -515,8 +527,8 @@ function buildCheckHeatmap(history: KnowledgeBaseHealthHistoryEntry[], generated
   return days;
 }
 
-function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], externalHistory: KnowledgeBaseHealthHistoryEntry[] = []): number {
-  const byDate = statusByCheckDate(history, externalHistory);
+function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[] = []): number {
+  const byDate = statusByCheckDate(history, maintenanceHistory);
   const latest = Array.from(byDate.entries()).sort((left, right) => left[0].localeCompare(right[0])).at(-1);
   if (!latest || latest[1] !== "success") return 0;
   let count = 0;
@@ -526,6 +538,11 @@ function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], exter
     cursor = shiftDate(cursor, -1);
   }
   return count;
+}
+
+function latestMaintenanceEntry(history: KnowledgeBaseMaintenanceHistoryEntry[]): KnowledgeBaseMaintenanceHistoryEntry | null {
+  const normalized = normalizeMaintenanceHistory(history, []);
+  return normalized.length ? normalized[normalized.length - 1] : null;
 }
 
 function latestHealthEntry(history: KnowledgeBaseHealthHistoryEntry[]): KnowledgeBaseHealthHistoryEntry | null {

@@ -43,6 +43,9 @@ export interface CodexLaunchConfig {
 export interface CodexCommandResolveOptions {
   home?: string;
   envPath?: string;
+  platform?: NodeJS.Platform | string;
+  appData?: string;
+  programData?: string;
   exists?: (candidate: string) => boolean;
 }
 
@@ -433,7 +436,13 @@ export function detectCodexCommand(customPath: string, options: CodexCommandReso
     const expanded = expandHome(custom, home);
     return exists(expanded) ? expanded : null;
   }
-  return codexCommandCandidates(home, options.envPath ?? process.env.PATH ?? "").find((candidate) => exists(candidate)) ?? null;
+  return codexCommandCandidateList(
+    home,
+    options.envPath ?? process.env.PATH ?? "",
+    options.platform ?? process.platform,
+    options.appData ?? process.env.APPDATA ?? "",
+    options.programData ?? process.env.ProgramData ?? "C:\\ProgramData"
+  ).find((candidate) => exists(candidate)) ?? null;
 }
 
 export function buildCodexLaunchConfig(options: {
@@ -514,9 +523,25 @@ function buildEnv(proxyEnabled: boolean, proxyUrl: string): NodeJS.ProcessEnv {
 }
 
 function codexCommandCandidates(home: string, envPath: string): string[] {
+  const platform = process.platform;
+  const appData = process.env.APPDATA || "";
+  const programData = process.env.ProgramData || "C:\\ProgramData";
+  return codexCommandCandidateList(home, envPath, platform, appData, programData);
+}
+
+function codexCommandCandidateList(home: string, envPath: string, platform: string, appData: string, programData: string): string[] {
+  const windowsCandidates = platform === "win32"
+    ? [
+      appData ? path.win32.join(appData, "npm", "codex.cmd") : "",
+      appData ? path.win32.join(appData, "npm", "codex.ps1") : "",
+      path.win32.join(home, "scoop", "shims", "codex.cmd"),
+      path.win32.join(programData, "chocolatey", "bin", "codex.exe")
+    ].filter(Boolean)
+    : [];
   return [
     path.join(home, ".npm-global", "bin", "codex"),
     ...codexAppCommandCandidates(home),
+    ...windowsCandidates,
     "/opt/homebrew/bin/codex",
     "/usr/local/bin/codex",
     ...String(envPath || "")

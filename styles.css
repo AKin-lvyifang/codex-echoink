@@ -911,6 +911,122 @@ body.theme-light .codex-code-wrapper pre {
   margin-left: 0;
 }
 
+.codex-setup-guide {
+  gap: 10px;
+}
+
+.codex-setup-header {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.codex-setup-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.codex-setup-heading {
+  color: var(--text-normal);
+  font-weight: 700;
+}
+
+.codex-setup-subtitle,
+.codex-setup-last-checked {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.codex-setup-list {
+  display: grid;
+  gap: 8px;
+}
+
+.codex-setup-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+
+.codex-setup-item.is-blocking {
+  border-color: color-mix(in srgb, var(--text-error) 35%, var(--background-modifier-border));
+}
+
+.codex-setup-item.is-warning {
+  border-color: color-mix(in srgb, var(--text-warning) 40%, var(--background-modifier-border));
+}
+
+.codex-setup-item-icon {
+  display: inline-flex;
+  margin-top: 1px;
+  color: var(--text-muted);
+}
+
+.codex-setup-item.is-ok .codex-setup-item-icon {
+  color: var(--text-success);
+}
+
+.codex-setup-item.is-warning .codex-setup-item-icon {
+  color: var(--text-warning);
+}
+
+.codex-setup-item.is-blocking .codex-setup-item-icon {
+  color: var(--text-error);
+}
+
+.codex-setup-item-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.codex-setup-item-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.codex-setup-item-title {
+  color: var(--text-normal);
+  font-weight: 700;
+}
+
+.codex-setup-item-message {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.codex-setup-item-actions,
+.codex-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.codex-setup-action,
+.codex-setup-start {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.codex-setup-start {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+}
+
 .codex-settings-tabs {
   display: flex;
   flex-wrap: wrap;

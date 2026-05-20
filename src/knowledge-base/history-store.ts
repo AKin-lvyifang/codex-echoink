@@ -89,14 +89,39 @@ export function latestKnowledgeBaseMessageDate(messages: ChatMessage[]): string 
   return latest ? localDateKeyForTimestamp(latest) : "";
 }
 
+export function activeKnowledgeBaseHistoryDate(messages: ChatMessage[], currentActiveDate = "", now = Date.now()): string {
+  const dates = sortedKnowledgeBaseMessageDates(messages);
+  if (!dates.length) return "";
+  const today = localDateKeyForTimestamp(now);
+  const latestBeforeToday = [...dates].filter((date) => date < today).at(-1) ?? "";
+  if (latestBeforeToday) {
+    if (currentActiveDate && currentActiveDate < today && dates.includes(currentActiveDate) && currentActiveDate >= latestBeforeToday) return currentActiveDate;
+    return latestBeforeToday;
+  }
+  return dates.at(-1) ?? "";
+}
+
+export function activeKnowledgeBaseMessageDates(messages: ChatMessage[], currentActiveDate = "", now = Date.now()): Set<string> {
+  const dates = new Set(sortedKnowledgeBaseMessageDates(messages));
+  const activeDate = activeKnowledgeBaseHistoryDate(messages, currentActiveDate, now);
+  const today = localDateKeyForTimestamp(now);
+  const activeDates = new Set<string>();
+  if (activeDate) activeDates.add(activeDate);
+  if (dates.has(today)) activeDates.add(today);
+  if (!activeDates.size && dates.size) activeDates.add([...dates].at(-1) ?? "");
+  activeDates.delete("");
+  return activeDates;
+}
+
 export function filterKnowledgeBaseMessagesForDate(messages: ChatMessage[], date: string): ChatMessage[] {
   if (!date) return [];
   return messages.filter((message) => localDateKeyForTimestamp(message.createdAt) === date);
 }
 
-export function compactKnowledgeBaseMessagesToActiveDay(session: StoredSession): boolean {
-  const activeDate = latestKnowledgeBaseMessageDate(session.messages);
-  const activeMessages = filterKnowledgeBaseMessagesForDate(session.messages, activeDate);
+export function compactKnowledgeBaseMessagesToActiveDay(session: StoredSession, now = Date.now()): boolean {
+  const activeDate = activeKnowledgeBaseHistoryDate(session.messages, session.historyActiveDate, now);
+  const activeDates = activeKnowledgeBaseMessageDates(session.messages, activeDate, now);
+  const activeMessages = session.messages.filter((message) => activeDates.has(localDateKeyForTimestamp(message.createdAt)));
   const changed = activeDate !== (session as any).historyActiveDate || activeMessages.length !== session.messages.length;
   session.messages = activeMessages.slice(-KNOWLEDGE_BASE_ACTIVE_DAY_MESSAGE_LIMIT);
   (session as any).historyActiveDate = activeDate || undefined;
@@ -131,15 +156,17 @@ export async function migrateKnowledgeBaseHistory(
 export async function persistAndCompactKnowledgeBaseHistory(
   vaultPath: string,
   pluginDir: string,
-  settings: CodexForObsidianSettings
+  settings: CodexForObsidianSettings,
+  now = Date.now()
 ): Promise<KnowledgeBaseHistoryMutationResult> {
   const session = settings.sessions.find((item) => isKnowledgeBaseSession(item, settings.knowledgeBase.sessionId));
   if (!session || !session.messages.length) return { changed: false, messageCount: 0, activeDate: "" };
+  const hydrated = await hydrateActiveKnowledgeBaseHistoryDate(vaultPath, pluginDir, session, now);
   const messageCount = session.messages.length;
   await persistKnowledgeBaseHistoryMessages(vaultPath, pluginDir, session, session.messages);
-  const changed = compactKnowledgeBaseMessagesToActiveDay(session);
+  const changed = compactKnowledgeBaseMessagesToActiveDay(session, now);
   return {
-    changed,
+    changed: hydrated || changed,
     messageCount,
     activeDate: (session as any).historyActiveDate ?? ""
   };
@@ -306,6 +333,33 @@ function groupMessagesByDate(messages: ChatMessage[]): Map<string, ChatMessage[]
   return grouped;
 }
 
+async function hydrateActiveKnowledgeBaseHistoryDate(
+  vaultPath: string,
+  pluginDir: string,
+  session: StoredSession,
+  now: number
+): Promise<boolean> {
+  const today = localDateKeyForTimestamp(now);
+  const activeDates = activeKnowledgeBaseMessageDates(session.messages, session.historyActiveDate, now);
+  if ([...activeDates].some((date) => date && date !== today)) return false;
+  const index = await readKnowledgeBaseHistoryIndex(vaultPath, pluginDir);
+  const historySession = index.sessions.find((item) => item.sessionId === session.id);
+  const historyDate = [...(historySession?.days ?? [])]
+    .map((day) => day.date)
+    .filter((date) => date < today && !session.messages.some((message) => localDateKeyForTimestamp(message.createdAt) === date))
+    .sort((left, right) => right.localeCompare(left))[0];
+  if (!historyDate) return false;
+  const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, historyDate).catch(() => []);
+  if (!messages.length) return false;
+  session.messages = mergeHistoryMessages(session.messages, messages);
+  session.historyActiveDate = historyDate;
+  return true;
+}
+
+function sortedKnowledgeBaseMessageDates(messages: ChatMessage[]): string[] {
+  return [...new Set(messages.map((message) => localDateKeyForTimestamp(message.createdAt)))].sort();
+}
+
 function mergeHistoryMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const latest = new Map<string, ChatMessage>();
   const order = new Map<string, number>();
@@ -353,7 +407,7 @@ async function updateKnowledgeBaseHistoryIndex(
     sessionId: session.id,
     title: session.title || "知识库管理",
     kind: "knowledge-base",
-    activeDate: latestKnowledgeBaseMessageDate(session.messages) || days[0]?.date || "",
+    activeDate: activeKnowledgeBaseHistoryDate(session.messages, session.historyActiveDate) || days[0]?.date || "",
     messageCount,
     dayCount: days.length,
     updatedAt: Math.max(session.updatedAt || 0, ...days.map((day) => day.lastMessageAt)),

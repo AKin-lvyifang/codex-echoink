@@ -43,5 +43,41 @@ export interface KnowledgeBaseRunResult {
   reportPath: string;
   summary: string;
   processedSources: KnowledgeBaseSource[];
+  structure?: StructureNormalizationResult;
   error?: string;
+}
+
+export interface StructureNormalizationMove {
+  from: string;
+  to: string;
+  kind: "file" | "directory";
+  reason: string;
+}
+
+export interface StructureNormalizationSkipped {
+  from: string;
+  to?: string;
+  reason: string;
+}
+
+export interface StructureNormalizationUpdatedLink {
+  path: string;
+  replacements: number;
+}
+
+export interface StructureNormalizationPathRewrite {
+  from: string;
+  to: string;
+  kind: "file" | "directory";
+}
+
+export interface StructureNormalizationResult {
+  moves: StructureNormalizationMove[];
+  skipped: StructureNormalizationSkipped[];
+  updatedLinks: StructureNormalizationUpdatedLink[];
+  remainingRootNotes: string[];
+  remainingChineseDirs: string[];
+  risks: string[];
+  pathRewrites: StructureNormalizationPathRewrite[];
+  updatedLastReportPath?: string;
 }
