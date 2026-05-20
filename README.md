@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.5.2-0EA5E9?style=flat-square" alt="Version v0.5.2">
+    <img src="https://img.shields.io/badge/version-v0.6.0-0EA5E9?style=flat-square" alt="Version v0.6.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip"><strong>Download v0.5.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip"><strong>Download v0.6.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -115,6 +115,24 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 ## What's New
 
+### v0.6.0
+
+**Setup guide and knowledge maintenance update:** adds a first-run environment guide, safer rechecks, a clear `Start` step, and stronger Knowledge maintenance boundaries.
+
+**New features:**
+
+- Added a first-run setup guide in settings for Codex CLI, Codex login, OpenCode CLI, OpenCode server, models, and Agent readiness.
+- Added install commands, copy buttons, and documentation links when a required runtime is missing.
+- Added `Run check again` to re-detect CLI paths, refresh Codex login, and reconnect or start OpenCode when needed.
+- Added `Start` as an explicit setup completion step. It opens the EchoInk sidebar without sending a message or running a Knowledge task.
+
+**Fixes and maintenance:**
+
+- Added Windows path detection for Codex CLI and OpenCode CLI.
+- Upgraded Knowledge history to day-based archive storage with settings tools for indexing, export, and compaction.
+- Tightened Knowledge maintenance so Agent tasks cannot directly rewrite Raw source bodies; raw path normalization is handled by plugin-side checks.
+- Improved Knowledge maintenance reports, dashboard state, local note links, and history entry placement.
+
 ### v0.5.2
 
 **Knowledge workflow and Windows diagnostics update:** adds weekly review reports, improves `/journal`, makes Knowledge runs easier to inspect, and fixes the bad `gpt-5.5` default that could trigger Windows WebSocket failures.
@@ -165,7 +183,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 **What changed:**
 
 - Added `/ask` for read-only knowledge questions. It searches `wiki/` first, sends the most relevant notes as context, and asks the Agent to distinguish Vault evidence from supplemental information.
-- Kept read-only Knowledge Q&A behind explicit `/ask`; ordinary natural-language messages stay as normal Agent chat in current 0.5.2 behavior.
+- Kept read-only Knowledge Q&A behind explicit `/ask`; ordinary natural-language messages stay as normal Agent chat in current behavior.
 - Upgraded the Knowledge health heatmap from a short recent strip to a full-year GitHub-style view with month labels, weekday labels, success states, and failed checks.
 - Added Codex CLI model and reasoning-effort controls directly in the Knowledge channel composer. The Knowledge task no longer has to use a hard-coded reasoning level.
 - Added search boxes to the current-vault `Plugins`, `MCP`, and `Skills` capability tabs. Search covers name, id/path, metadata, and description, and multiple words work as an AND filter.
@@ -265,7 +283,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.5.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.6.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 

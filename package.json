@@ -1,6 +1,6 @@
 {
   "name": "codex-echoink",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Codex EchoInk",
   "main": "dist/main.js",
   "scripts": {

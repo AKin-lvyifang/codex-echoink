@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.5.2-0EA5E9?style=flat-square" alt="版本 v0.5.2">
+    <img src="https://img.shields.io/badge/version-v0.6.0-0EA5E9?style=flat-square" alt="版本 v0.6.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip"><strong>下载 v0.5.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip"><strong>下载 v0.6.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -119,6 +119,24 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 <a id="更新说明"></a>
 ## 更新说明
 
+### v0.6.0
+
+**启动向导与知识库维护更新：** 新增首次启动环境检测、重新检测和明确的 `Start` 入口，同时强化知识库维护边界。
+
+**新功能：**
+
+- 设置页新增首次启动向导，检测 Codex CLI、Codex 登录态、OpenCode CLI、OpenCode server、模型和 Agent。
+- 缺少必要运行环境时，会显示安装命令、复制按钮和官方文档入口。
+- 新增 `重新检测`，可重新探测 CLI 路径、刷新 Codex 登录态，并在需要时连接或启动 OpenCode。
+- 新增 `Start` 作为明确完成步骤。点击后只打开 EchoInk 侧栏，不自动发送消息，也不自动跑知识库任务。
+
+**修复与维护：**
+
+- Codex CLI 和 OpenCode CLI 自动探测补充 Windows 常见安装路径。
+- 知识库历史升级为按天归档，并在设置页提供索引、导出和压缩工具。
+- 知识库维护不再让 Agent 直接改写 Raw 原始正文；raw 路径归一由插件侧校验处理。
+- 优化知识库维护报告、dashboard 状态、本地笔记链接和历史入口位置。
+
 ### v0.5.2
 
 **知识库工作流与 Windows 诊断更新：** 新增周报复盘，优化 `/journal`，让知识库运行过程更可见，并修复容易触发 Windows WebSocket 失败的 `gpt-5.5` 默认模型问题。
@@ -169,7 +187,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 **更新内容：**
 
 - 新增 `/ask` 只读问答。它会先检索 `wiki/` 里的相关笔记，把命中的笔记作为上下文，再要求 Agent 区分“来自 Vault 的依据”和“补充信息 / 推断”。
-- 当前 0.5.2 行为下，知识库只读问答必须显式使用 `/ask`；普通自然语言会按普通 Agent 对话处理。
+- 当前行为下，知识库只读问答必须显式使用 `/ask`；普通自然语言会按普通 Agent 对话处理。
 - 知识库健康热力图从最近短周期升级为 GitHub 风格年度视图，带月份、星期、成功和失败状态。
 - Codex CLI 模式下，知识库频道底部可以直接选择模型和思考强度；知识库任务不再固定使用同一个强度。
 - 当前 vault 的能力管理页新增搜索栏，`插件`、`MCP`、`Skills` 三个标签都可以搜名称、id/路径、元信息和描述；多个词会同时匹配。
@@ -270,7 +288,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.5.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.5.2/codex-echoink-0.5.2.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.6.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
