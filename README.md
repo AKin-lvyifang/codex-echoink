@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.5.0 automated knowledge base operations." src="docs/images/codex-echoink-knowledge-v0.5.0.png">
+  <img width="1024" alt="Codex EchoInk v0.6.0 setup guide and knowledge maintenance workflow." src="docs/images/codex-echoink-hero-v0.6.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -36,6 +36,16 @@
 
 ## Features
 
+### First-run Setup Guide
+
+<img width="1024" alt="Codex EchoInk first-run setup guide checks Codex CLI, Codex login, OpenCode, server, and models before Start." src="docs/images/codex-echoink-setup-guide-v0.6.0.png">
+
+- Checks Codex CLI, Codex login, OpenCode CLI, OpenCode server, models, and Agent readiness before the user starts.
+- Shows missing requirements first, with install commands, copy buttons, and documentation links.
+- Lets users click `Run check again` after installing or logging in, then shows `Start` only when blocking checks are clear.
+- `Start` opens the EchoInk sidebar and records setup completion; it does not send a message or run a Knowledge task.
+- Keeps setup explicit: no silent installs, no surprise background Agent work.
+
 ### Session-scoped Codex Workspace
 
 - Opens Codex in the Obsidian sidebar.
@@ -54,6 +64,8 @@
 
 ### Knowledge Base Operations
 
+<img width="1024" alt="Codex EchoInk knowledge maintenance keeps Raw sources protected while ingesting, normalizing, writing Wiki pages, and producing reports." src="docs/images/codex-echoink-knowledge-maintenance-v0.6.0.png">
+
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
 - Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
@@ -66,6 +78,7 @@
 - Optionally recommends [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) for longer-lived knowledge context; your Agent installs the skill and runs its bootstrap in the workspace, while the plugin does not bundle the skill or modify your `AGENTS.md`.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
+- Runs `/maintain` as an ingest, structure-normalize, and lint workflow, with plugin-side checks protecting Raw source bodies.
 - Supports manual runs and daily maintenance when Obsidian is open.
 
 ### Weekly Reviews

@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.5.0 自动化知识库运维。" src="docs/images/codex-echoink-knowledge-v0.5.0.png">
+  <img width="1024" alt="Codex EchoInk v0.6.0 启动向导与知识库维护工作流。" src="docs/images/codex-echoink-hero-v0.6.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -38,6 +38,16 @@
 <a id="功能特性"></a>
 ## 功能特性
 
+### 首次启动向导
+
+<img width="1024" alt="Codex EchoInk 首次启动向导会在 Start 前检测 Codex CLI、Codex 登录态、OpenCode、server 和模型。" src="docs/images/codex-echoink-setup-guide-v0.6.0.png">
+
+- 开始使用前先检测 Codex CLI、Codex 登录态、OpenCode CLI、OpenCode server、模型和 Agent。
+- 缺少必要环境时，优先显示缺失项、安装命令、复制按钮和官方文档入口。
+- 用户安装或登录后点击 `重新检测`，阻断项清除后才显示 `Start`。
+- `Start` 只打开 EchoInk 侧栏并记录 setup 完成状态，不会自动发送消息，也不会自动跑知识库任务。
+- 整个安装过程保持显式：不静默安装，不做意外后台 Agent 工作。
+
 ### 会话级 Codex 工作区
 
 - 在 Obsidian 侧栏中打开 Codex。
@@ -56,6 +66,8 @@
 
 ### 知识库自动化运维
 
+<img width="1024" alt="Codex EchoInk 知识库维护会保护 Raw 原始资料，并执行 ingest、normalize、wiki 和 report 工作流。" src="docs/images/codex-echoink-knowledge-maintenance-v0.6.0.png">
+
 - 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
 - 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
 - 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
@@ -68,6 +80,7 @@
 - 可选推荐 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 来增强跨会话长期记忆；由你的 Agent 安装这个 Skill，并在工作区运行 bootstrap，插件不内置这套 Skills，也不会修改你的 `AGENTS.md`。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
+- `/maintain` 会按 ingest、结构整理和 lint 工作流执行，并由插件侧校验保护 Raw 原始正文。
 - 支持手动运行，也支持 Obsidian 打开时的每日维护。
 
 ### 复盘周报
