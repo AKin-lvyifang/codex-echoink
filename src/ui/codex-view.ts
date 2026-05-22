@@ -26,6 +26,7 @@ import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-st
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "./composer-state";
+import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
 import { openImageOverlay, renderRichText } from "./render-message";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
@@ -1229,9 +1230,23 @@ export class CodexView extends ItemView {
       this.renderProcessMessage(content, message);
       return;
     }
-    renderRichText(this.app, this, content, displayTextForMessage(message));
+    const displayText = displayTextForMessage(message);
+    if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
+      renderRichText(this.app, this, content, displayText);
+    }
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.citations) this.renderKnowledgeBaseCitations(wrapper, message.id, message.citations);
+  }
+
+  private renderKnowledgeBaseResultContent(container: HTMLElement, message: ChatMessage, text: string): boolean {
+    const result = extractKnowledgeBaseResultTitle(message.itemType, text);
+    if (!result) return false;
+    const title = container.createDiv({ cls: `codex-kb-result-title codex-kb-result-title-${result.status}` });
+    const icon = title.createSpan({ cls: "codex-kb-result-title-icon" });
+    setIcon(icon, result.status === "success" ? "badge-check" : "triangle-alert");
+    title.createSpan({ cls: "codex-kb-result-title-text", text: result.title });
+    if (result.body.trim()) renderRichText(this.app, this, container.createDiv({ cls: "codex-kb-result-body" }), result.body);
+    return true;
   }
 
   private renderKnowledgeBaseCitations(container: HTMLElement, messageId: string, citations: KnowledgeBaseCitationSummary): void {

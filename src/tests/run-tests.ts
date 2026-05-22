@@ -83,6 +83,7 @@ import {
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
+import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import {
@@ -1032,6 +1033,10 @@ const processEditIconCss = cssRuleBody(settingsStyles, ".codex-process-kind-edit
 const settingsStatusErrorCss = cssRuleBody(settingsStyles, ".codex-settings-status-error");
 const settingsStatusErrorBodyCss = cssRuleBody(settingsStyles, ".codex-settings-status-error-body");
 const messageNoteLinkCss = cssRuleBody(settingsStyles, ".codex-message-note-link");
+const knowledgeBaseResultTitleCss = cssRuleBody(settingsStyles, ".codex-kb-result-title");
+const knowledgeBaseResultBodyCss = cssRuleBody(settingsStyles, ".codex-kb-result-body");
+const knowledgeBaseResultSuccessCss = cssRuleBody(settingsStyles, ".codex-kb-result-title-success");
+const knowledgeBaseResultFailedCss = cssRuleBody(settingsStyles, ".codex-kb-result-title-failed");
 assert.match(codexViewSource, /codex-header-history/);
 assert.match(codexViewSource, /title: "查看知识库历史"/);
 assert.doesNotMatch(codexViewSource, /codex-kb-dashboard-history/);
@@ -1056,9 +1061,29 @@ assert.match(settingsStatusErrorBodyCss, /white-space:\s*pre-wrap;/);
 assert.match(messageNoteLinkCss, /color:\s*color-mix\(in srgb,\s*var\(--interactive-accent\)/);
 assert.match(messageNoteLinkCss, /text-decoration:\s*none;/);
 assert.match(messageNoteLinkCss, /cursor:\s*pointer;/);
+assert.match(knowledgeBaseResultTitleCss, /display:\s*inline-flex;/);
+assert.match(knowledgeBaseResultTitleCss, /border-left:\s*3px solid var\(--interactive-accent\);/);
+assert.match(knowledgeBaseResultBodyCss, /min-width:\s*0;/);
+assert.match(knowledgeBaseResultSuccessCss, /var\(--color-green\)/);
+assert.match(knowledgeBaseResultFailedCss, /var\(--text-error\)/);
+assert.match(codexViewSource, /renderKnowledgeBaseResultContent/);
+assert.match(codexViewSource, /codex-kb-result-title/);
+assert.match(codexViewSource, /codex-kb-result-body/);
 assert.match(settingsStyles, /codex-process-kind-search\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-view\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-run\s+\.codex-process-icon/);
+
+assert.deepEqual(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库维护完成。\n报告：outputs/maintenance/kb-maintenance.md"), {
+  title: "知识库维护完成。",
+  body: "报告：outputs/maintenance/kb-maintenance.md",
+  status: "success"
+});
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库体检完成。\n报告：x")?.status, "success");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库重新提炼完成。\n报告：x")?.status, "success");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "每日维护执行完毕。\n简短报告：")?.status, "success");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库维护失败：Agent 失败\n报告：x")?.status, "failed");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "方哥，按 wiki 证据看没有命中。"), null);
+assert.equal(extractKnowledgeBaseResultTitle("assistant", "知识库维护完成。\n报告：x"), null);
 
 const codexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
   settings: normalizeSettingsData({
@@ -2455,7 +2480,7 @@ try {
     activeSessionId: "kb-history-recover",
     knowledgeBase: { sessionId: "kb-history-recover" }
   }).settings;
-  await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", recoverySettings);
+  await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", recoverySettings, new Date(2026, 4, 21, 12, 0, 0).getTime());
   assert.equal(recoverySettings.sessions[0].historyActiveDate, "2026-05-19");
   assert.deepEqual(recoverySettings.sessions[0].messages.map((message) => message.id), ["recover-19", "recover-21"]);
 } finally {
