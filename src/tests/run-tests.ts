@@ -84,6 +84,7 @@ import {
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
+import { formatMessageHeaderTime } from "../ui/message-time";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
 import {
@@ -163,6 +164,9 @@ assert.equal(manifest.version, "0.6.0");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
+assert.equal(formatMessageHeaderTime(Date.parse("2026-05-22T08:29:00+08:00")), "星期五08:29");
+assert.equal(formatMessageHeaderTime(0), "");
+
 function assertI18nShapeMatches(reference: unknown, candidate: unknown, pathLabel = "copy"): void {
   if (typeof reference === "function") {
     assert.equal(typeof candidate, "function", `${pathLabel} should be a function`);
@@ -220,6 +224,9 @@ assert.equal(encodedWikiLink.find((segment) => segment.kind === "noteLink")?.tar
 const aliasReportLink = splitVaultNoteLinkSegments("报告：[[outputs/kb-maintenance-2026-05-19.md|今日体检报告]]", "/vault");
 assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.text, "今日体检报告");
 assert.equal(aliasReportLink.find((segment) => segment.kind === "noteLink")?.targetPath, "outputs/kb-maintenance-2026-05-19.md");
+const bareWikiTitleLinks = splitVaultNoteLinkSegments("主要新增页面包括：\n• [[GitHub 2026-05-24 热门项目简报]]", "/vault");
+assert.equal(bareWikiTitleLinks.find((segment) => segment.kind === "noteLink")?.text, "GitHub 2026-05-24 热门项目简报");
+assert.equal(bareWikiTitleLinks.find((segment) => segment.kind === "noteLink")?.targetPath, "GitHub 2026-05-24 热门项目简报.md");
 const indexLinks = splitVaultNoteLinkSegments("依据：raw/index.md 和 wiki/index.md", "/vault");
 assert.deepEqual(indexLinks.filter((segment) => segment.kind === "noteLink").map((segment) => segment.text), ["raw/index", "wiki/index"]);
 assert.deepEqual(splitVaultNoteLinkSegments("不是笔记：src/ui/render-message.ts", "/vault"), [{ kind: "text", text: "不是笔记：src/ui/render-message.ts" }]);
@@ -1141,6 +1148,13 @@ assert.deepEqual(
     rawMoveRewrite
   ),
   ["raw/articles/GitHub项目收集/demo.md -> raw/articles/github-trending/demo.md 内容被改写"]
+);
+assert.deepEqual(
+  diffRawSnapshot(
+    new Map([["raw/articles/github-trending/old.md", "hash-old"]]),
+    new Map([["raw/articles/github-trending/old.md", "hash-old"], ["raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md", "hash-new"]])
+  ),
+  []
 );
 
 const knowledgeBaseSettings = normalizeSettingsData({
@@ -2584,12 +2598,28 @@ try {
   await rm(structureVault, { recursive: true, force: true });
 }
 
+const mergeStructureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-merge-"));
+try {
+  await mkdir(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  await mkdir(path.join(mergeStructureVault, "raw", "articles", "github-trending"), { recursive: true });
+  await writeFile(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集", "2026-05-25 GitHub 热门项目简报.md"), "# new", "utf8");
+  await writeFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-24 GitHub 热门项目简报.md"), "# old", "utf8");
+  const result = await normalizeKnowledgeBaseStructure(mergeStructureVault);
+  assert.equal(await readFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-25 GitHub 热门项目简报.md"), "utf8"), "# new");
+  assert.equal(await readFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-24 GitHub 热门项目简报.md"), "utf8"), "# old");
+  assert.equal(await fileExists(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集")), false);
+  assert.ok(result.moves.some((move) => move.from === "raw/articles/GitHub项目收集" && move.to === "raw/articles/github-trending"));
+  assert.ok(!result.skipped.some((item) => item.from === "raw/articles/GitHub项目收集"));
+} finally {
+  await rm(mergeStructureVault, { recursive: true, force: true });
+}
+
 const collisionStructureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-collision-"));
 try {
   await mkdir(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
   await mkdir(path.join(collisionStructureVault, "raw", "articles", "github-trending"), { recursive: true });
   await writeFile(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md"), "# old", "utf8");
-  await writeFile(path.join(collisionStructureVault, "raw", "articles", "github-trending", "b.md"), "# target", "utf8");
+  await writeFile(path.join(collisionStructureVault, "raw", "articles", "github-trending", "a.md"), "# target", "utf8");
   const result = await normalizeKnowledgeBaseStructure(collisionStructureVault);
   assert.equal(await fileExists(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md")), true);
   assert.ok(result.skipped.some((item) => item.from === "raw/articles/GitHub项目收集" && /冲突/.test(item.reason)));

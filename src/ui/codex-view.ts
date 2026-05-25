@@ -27,6 +27,7 @@ import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom 
 import { renderSettingsGearIcon } from "./codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "./composer-state";
 import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
+import { formatMessageHeaderTime } from "./message-time";
 import { openImageOverlay, renderRichText } from "./render-message";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
@@ -1208,7 +1209,18 @@ export class CodexView extends ItemView {
     const wrapper = container.createDiv({ cls: `codex-message codex-message-${message.role}` });
     wrapper.toggleClass("codex-message-streaming", message.status === "running");
     wrapper.toggleClass(`codex-message-type-${message.itemType ?? "text"}`, true);
-    if (message.title) wrapper.createDiv({ cls: "codex-message-title", text: message.title });
+    if (message.title) {
+      const title = wrapper.createDiv({ cls: "codex-message-title" });
+      title.createSpan({ cls: "codex-message-title-label", text: message.title });
+      const time = formatMessageHeaderTime(message.createdAt);
+      if (time) {
+        title.createSpan({
+          cls: "codex-message-title-time",
+          text: time,
+          attr: { title: formatAbsoluteTime(message.createdAt) }
+        });
+      }
+    }
     if (message.attachments?.length) {
       this.renderUserAttachmentChips(wrapper.createDiv({ cls: "codex-message-attachments" }), message.attachments);
     }

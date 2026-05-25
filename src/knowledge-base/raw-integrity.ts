@@ -41,10 +41,6 @@ export function diffRawSnapshot(before: RawSnapshot, after: RawSnapshot, rewrite
     }
     if (afterHash !== hash) changed.push(`${label} 内容被改写`);
   }
-  for (const [file] of sortedSnapshotEntries(after)) {
-    if (isRawIndex(file) || expectedAfterPaths.has(file) || before.has(file)) continue;
-    changed.push(`${file} 新增或内容异常`);
-  }
   return changed;
 }
 

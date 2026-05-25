@@ -163,10 +163,24 @@ async function applyMoveCandidate(vaultPath: string, candidate: MoveCandidate, r
     addSkip(result, { from, to, reason: "源类型不匹配，跳过" });
     return;
   }
-  const caseOnlyMove = await exists(toAbs) && isCaseOnlyMove(fromAbs, toAbs);
-  if (await exists(toAbs) && !caseOnlyMove) {
-    addSkip(result, { from, to, reason: "目标路径已存在，存在同名冲突，跳过" });
-    return;
+  const targetExists = await exists(toAbs);
+  const caseOnlyMove = targetExists && isCaseOnlyMove(fromAbs, toAbs);
+  const shouldMergeDirectory = targetExists && !caseOnlyMove && candidate.kind === "directory";
+  if (targetExists && !caseOnlyMove) {
+    if (!shouldMergeDirectory) {
+      addSkip(result, { from, to, reason: "目标路径已存在，存在同名冲突，跳过" });
+      return;
+    }
+    const targetStat = await fsp.stat(toAbs).catch(() => null);
+    if (!targetStat?.isDirectory()) {
+      addSkip(result, { from, to, reason: "目标路径已存在但不是文件夹，跳过" });
+      return;
+    }
+    const conflicts = await findDirectoryMergeConflicts(fromAbs, toAbs);
+    if (conflicts.length) {
+      addSkip(result, { from, to, reason: `目标目录存在同名冲突：${conflicts.slice(0, 3).join("，")}` });
+      return;
+    }
   }
   const assetMove = await companionAssetMove(vaultPath, candidate);
   if (assetMove?.blockedReason) {
@@ -175,6 +189,7 @@ async function applyMoveCandidate(vaultPath: string, candidate: MoveCandidate, r
   }
   await fsp.mkdir(path.dirname(toAbs), { recursive: true });
   if (caseOnlyMove) await renameCaseOnly(fromAbs, toAbs);
+  else if (shouldMergeDirectory) await mergeDirectoryContents(fromAbs, toAbs);
   else await fsp.rename(fromAbs, toAbs);
   if (assetMove?.fromAbs && assetMove.toAbs) {
     await fsp.mkdir(path.dirname(assetMove.toAbs), { recursive: true });
@@ -188,6 +203,48 @@ async function applyMoveCandidate(vaultPath: string, candidate: MoveCandidate, r
   const move: StructureNormalizationMove = { from, to, kind: candidate.kind, reason: candidate.reason };
   result.moves.push(move);
   result.pathRewrites.push({ from, to, kind: candidate.kind });
+}
+
+async function findDirectoryMergeConflicts(fromAbs: string, toAbs: string, base = ""): Promise<string[]> {
+  const conflicts: string[] = [];
+  const entries = await fsp.readdir(fromAbs, { withFileTypes: true });
+  for (const entry of entries) {
+    const fromEntry = path.join(fromAbs, entry.name);
+    const toEntry = path.join(toAbs, entry.name);
+    const relative = normalizeSlashes(path.join(base, entry.name));
+    const targetStat = await fsp.stat(toEntry).catch(() => null);
+    if (entry.isDirectory()) {
+      if (!targetStat) continue;
+      if (!targetStat.isDirectory()) {
+        conflicts.push(relative);
+        continue;
+      }
+      conflicts.push(...await findDirectoryMergeConflicts(fromEntry, toEntry, relative));
+      continue;
+    }
+    if (entry.isFile()) {
+      if (targetStat) conflicts.push(relative);
+      continue;
+    }
+    conflicts.push(relative);
+  }
+  return conflicts;
+}
+
+async function mergeDirectoryContents(fromAbs: string, toAbs: string): Promise<void> {
+  await fsp.mkdir(toAbs, { recursive: true });
+  const entries = await fsp.readdir(fromAbs, { withFileTypes: true });
+  for (const entry of entries) {
+    const fromEntry = path.join(fromAbs, entry.name);
+    const toEntry = path.join(toAbs, entry.name);
+    const targetStat = await fsp.stat(toEntry).catch(() => null);
+    if (entry.isDirectory() && targetStat?.isDirectory()) {
+      await mergeDirectoryContents(fromEntry, toEntry);
+      continue;
+    }
+    await fsp.rename(fromEntry, toEntry);
+  }
+  await fsp.rmdir(fromAbs);
 }
 
 async function renameCaseOnly(fromAbs: string, toAbs: string): Promise<void> {

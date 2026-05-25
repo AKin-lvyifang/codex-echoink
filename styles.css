@@ -247,8 +247,18 @@ body.theme-light .codex-container {
 .codex-message-title {
   margin: 0 0 5px;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
   font-size: 12px;
   font-weight: 700;
+}
+
+.codex-message-title-time {
+  color: var(--text-faint);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .codex-message-content {
@@ -2384,6 +2394,10 @@ body.theme-light .codex-code-wrapper pre {
 .codex-message-title {
   margin-bottom: 7px;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
   font-size: 12px;
   font-weight: 700;
 }

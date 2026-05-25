@@ -165,6 +165,9 @@ function resolveVaultNoteFile(app: App, targetPath: string): { file: TFile; targ
     const file = app.vault.getAbstractFileByPath(normalized);
     if (file instanceof TFile) return { file, targetPath: normalized };
   }
+  const linkpath = normalizePath(targetPath).replace(/\.md$/i, "");
+  const linkedFile = app.metadataCache.getFirstLinkpathDest(linkpath, "");
+  if (linkedFile instanceof TFile) return { file: linkedFile, targetPath: linkedFile.path };
   return null;
 }
 

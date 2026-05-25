@@ -45,13 +45,15 @@ function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string
     });
   }
 
-  const wikiLinkPattern = /\[\[([^\]\n\r|]+?\.md(?:#[^\]\n\r|]+)?)(?:\|([^\]\n\r]+))?\]\]/gi;
+  const wikiLinkPattern = /\[\[([^\]\n\r|]+?)(?:\|([^\]\n\r]+))?\]\]/gi;
   for (const match of text.matchAll(wikiLinkPattern)) {
-    const targetPath = resolveVaultNoteCandidate(match[1], basePath);
+    const start = match.index ?? 0;
+    if (start > 0 && text[start - 1] === "!") continue;
+    const targetPath = normalizeWikiLinkCandidate(match[1], basePath);
     if (!targetPath) continue;
     candidates.push({
-      start: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
+      start,
+      end: start + match[0].length,
       label: cleanLinkLabel(match[2] ?? "") || displayNameForVaultNote(targetPath),
       targetPath,
       title: titleForVaultNote(targetPath, basePath)
@@ -109,6 +111,17 @@ function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string
 function resolveVaultNoteCandidate(value: string, basePath: string): string {
   const cleaned = value.trim();
   return relativePathForAbsoluteVaultNote(cleaned, basePath) || normalizeVaultNoteCandidate(cleaned);
+}
+
+function normalizeWikiLinkCandidate(value: string, basePath: string): string {
+  const cleaned = value.trim();
+  if (!cleaned || /^https?:\/\//i.test(cleaned) || cleaned.startsWith("/")) return "";
+  const relative = relativePathForAbsoluteVaultNote(cleaned, basePath);
+  if (relative) return relative;
+  const withoutHeading = decodeUriPath(cleaned.split("#")[0].trim().replace(/^\.\//, ""));
+  if (!withoutHeading || /^https?:\/\//i.test(withoutHeading) || withoutHeading.startsWith("/")) return "";
+  const withExtension = /\.md$/i.test(withoutHeading) ? withoutHeading : `${withoutHeading}.md`;
+  return normalizeVaultNoteCandidate(withExtension);
 }
 
 function normalizeVaultNoteCandidate(value: string): string {
