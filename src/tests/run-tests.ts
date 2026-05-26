@@ -522,6 +522,8 @@ assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRun
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "send");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: true }), "resume-queue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: true }), "enqueue");
