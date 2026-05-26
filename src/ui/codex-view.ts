@@ -29,7 +29,7 @@ import { composerIsBusy, composerPrimaryActionForState, type ComposerPrimaryActi
 import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
 import { formatMessageHeaderTime } from "./message-time";
 import { openImageOverlay, renderRichText } from "./render-message";
-import { RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
+import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput } from "../editor-actions/prompt";
@@ -1889,6 +1889,7 @@ export class CodexView extends ItemView {
     const handle = row.createSpan({ cls: "codex-turn-queue-handle", attr: { "aria-hidden": "true" } });
     setIcon(handle, "grip-vertical");
     row.ondragstart = (event) => {
+      event.stopPropagation();
       this.draggedQueueItemId = item.id;
       event.dataTransfer?.setData("text/plain", item.id);
       event.dataTransfer?.setDragImage(row, 12, 12);
@@ -1898,11 +1899,16 @@ export class CodexView extends ItemView {
     };
     row.ondragover = (event) => {
       event.preventDefault();
+      event.stopPropagation();
       row.addClass("is-drag-over");
     };
-    row.ondragleave = () => row.removeClass("is-drag-over");
+    row.ondragleave = (event) => {
+      event.stopPropagation();
+      row.removeClass("is-drag-over");
+    };
     row.ondrop = (event) => {
       event.preventDefault();
+      event.stopPropagation();
       row.removeClass("is-drag-over");
       const sourceId = event.dataTransfer?.getData("text/plain") || this.draggedQueueItemId;
       if (!sourceId || sourceId === item.id) return;
@@ -2604,17 +2610,20 @@ export class CodexView extends ItemView {
   }
 
   private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> {
-    if (succeeded) {
+    const settlement = this.turnQueue.settleSessionQueue(sessionId, succeeded);
+    if (settlement === "continue") {
       await this.startNextQueuedTurn(sessionId);
-    } else {
-      this.pauseQueueForSession(sessionId);
     }
     this.renderQueue();
     this.renderToolbar();
   }
 
   private async startNextQueuedTurn(sessionId: string): Promise<void> {
-    if (this.queueStartInProgress || this.running || this.plugin.getKnowledgeBaseManager()?.isRunning) return;
+    if (!canStartQueuedTurn({
+      queueStartInProgress: this.queueStartInProgress,
+      viewRunning: this.running,
+      knowledgeTaskRunning: Boolean(this.plugin.getKnowledgeBaseManager()?.isRunning)
+    })) return;
     const item = this.turnQueue.dequeueNext(sessionId);
     if (!item) {
       this.renderQueue();

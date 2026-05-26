@@ -3,6 +3,7 @@ import type { StoredAttachment } from "../settings/settings";
 import type { CodexSkill } from "../types/app-server";
 
 export type QueuedTurnKind = "chat" | "knowledge-base";
+export type QueueSettlement = "continue" | "paused" | "idle";
 
 export interface QueuedTurnItem {
   id: string;
@@ -15,9 +16,19 @@ export interface QueuedTurnItem {
   createdAt: number;
 }
 
+export interface QueueStartState {
+  queueStartInProgress: boolean;
+  viewRunning: boolean;
+  knowledgeTaskRunning: boolean;
+}
+
 interface SessionTurnQueue {
   paused: boolean;
   items: QueuedTurnItem[];
+}
+
+export function canStartQueuedTurn(state: QueueStartState): boolean {
+  return !state.queueStartInProgress && !state.viewRunning && !state.knowledgeTaskRunning;
 }
 
 export class RuntimeTurnQueue {
@@ -74,6 +85,13 @@ export class RuntimeTurnQueue {
   resumeSessionQueue(sessionId: string): void {
     const queue = this.sessions.get(sessionId);
     if (queue) queue.paused = false;
+  }
+
+  settleSessionQueue(sessionId: string, succeeded: boolean): QueueSettlement {
+    if (succeeded) return this.hasQueuedItems(sessionId) ? "continue" : "idle";
+    if (!this.hasQueuedItems(sessionId)) return "idle";
+    this.pauseSessionQueue(sessionId);
+    return "paused";
   }
 
   isSessionQueuePaused(sessionId: string): boolean {

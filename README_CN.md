@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.7.0 任务队列，支持对话排队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+  <img width="1024" alt="Codex EchoInk 任务队列，支持对话排队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.7.0-0EA5E9?style=flat-square" alt="版本 v0.7.0">
+    <img src="https://img.shields.io/badge/version-v0.7.1-0EA5E9?style=flat-square" alt="版本 v0.7.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip"><strong>下载 v0.7.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip"><strong>下载 v0.7.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -142,6 +142,17 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.7.1
+
+**稳定性更新：** 任务队列在成功、失败、停止和知识库任务并发场景下更可控。
+
+**更新内容：**
+
+- 任务成功后，只有队列里还有下一条才继续执行。
+- 任务失败或手动停止后，队列会暂停并保留剩余任务，等待手动继续。
+- 普通任务、知识库任务或队列启动中时，不会并发启动下一条排队任务。
+- 拖动队列卡片时，事件只留在队列区域，不会误触发输入框附件拖放。
 
 ### v0.7.0
 
@@ -334,7 +345,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 

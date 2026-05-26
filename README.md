@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.7.0 turn queue for queued chat, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+  <img width="1024" alt="Codex EchoInk turn queue for queued chat, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.7.0-0EA5E9?style=flat-square" alt="Version v0.7.0">
+    <img src="https://img.shields.io/badge/version-v0.7.1-0EA5E9?style=flat-square" alt="Version v0.7.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip"><strong>Download v0.7.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip"><strong>Download v0.7.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -138,6 +138,17 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v0.7.1
+
+**Stability update:** Turn Queue now handles success, failure, stop, and Knowledge task concurrency more predictably.
+
+**What changed:**
+
+- Successful tasks continue the queue only when another item is waiting.
+- Failed or stopped tasks pause the queue and keep remaining work for manual resume.
+- Queued turns no longer start while an ordinary turn, Knowledge task, or queue startup is already in progress.
+- Dragging queue cards stays inside the queue UI instead of leaking into the composer attachment drop area.
 
 ### v0.7.0
 
@@ -329,7 +340,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.7.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.7.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 

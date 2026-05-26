@@ -83,7 +83,7 @@ import {
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
-import { RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
+import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
 import { formatMessageHeaderTime } from "../ui/message-time";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
@@ -161,7 +161,7 @@ import {
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "0.7.0");
+assert.equal(manifest.version, "0.7.1");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
@@ -525,6 +525,10 @@ assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRun
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "send");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: true }), "resume-queue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: true }), "enqueue");
+assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: false }), true);
+assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
+assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
+assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: true }), false);
 
 function queuedTurn(id: string, sessionId: string, text: string): QueuedTurnItem {
   return {
@@ -569,6 +573,18 @@ assert.equal(queue.hasQueuedItems("s1"), false);
 queue.enqueue(queuedTurn("d", "s1", "deleted session item"));
 queue.clearSessionQueue("s1");
 assert.equal(queue.hasQueuedItems("s1"), false);
+const settlementQueue = new RuntimeTurnQueue();
+assert.equal(settlementQueue.settleSessionQueue("s1", true), "idle");
+assert.equal(settlementQueue.settleSessionQueue("s1", false), "idle");
+settlementQueue.enqueue(queuedTurn("settle-a", "s1", "next after success"));
+assert.equal(settlementQueue.settleSessionQueue("s1", true), "continue");
+assert.equal(settlementQueue.isSessionQueuePaused("s1"), false);
+settlementQueue.enqueue(queuedTurn("settle-b", "s2", "pause after failure"));
+assert.equal(settlementQueue.settleSessionQueue("s2", false), "paused");
+assert.equal(settlementQueue.isSessionQueuePaused("s2"), true);
+assert.equal(settlementQueue.dequeueNext("s2"), null);
+settlementQueue.resumeSessionQueue("s2");
+assert.equal(settlementQueue.dequeueNext("s2")?.id, "settle-b");
 assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
