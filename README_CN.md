@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 任务队列，支持对话排队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+  <img width="1024" alt="Codex EchoInk 0.7.2 任务队列和输入菜单海报，展示 3 个稳定性更新。" src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.7.1-0EA5E9?style=flat-square" alt="版本 v0.7.1">
+    <img src="https://img.shields.io/badge/version-v0.7.2-0EA5E9?style=flat-square" alt="版本 v0.7.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip"><strong>下载 v0.7.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip"><strong>下载 v0.7.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -66,7 +66,7 @@
 
 ### 任务队列
 
-<img width="1024" alt="Codex EchoInk 任务队列展示排队卡片、运行中入队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+<img width="1024" alt="Codex EchoInk 任务队列和输入菜单展示 3 个队列入口稳定性更新。" src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
 
 - 当前 Agent 任务还在跑时，可以继续把后续任务加入队列。
 - 队列按会话隔离，普通对话和知识库频道互不混用。
@@ -142,6 +142,16 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.7.2
+
+**稳定性更新：** 任务队列和输入菜单的收起行为更可控。
+
+**更新内容：**
+
+- 点击输入区里非 Skill 菜单、非知识库命令菜单的位置时，会收起输入菜单。
+- 点击 Skill 菜单或知识库命令菜单本身时，不会误关闭菜单。
+- 补充输入菜单收起逻辑的单元测试，降低队列入口交互回归风险。
 
 ### v0.7.1
 
@@ -345,7 +355,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
@@ -402,7 +412,7 @@ codex-echoink/
 <a id="截图"></a>
 ## 截图
 
-![Codex EchoInk 任务队列](docs/images/codex-echoink-turn-queue-v0.7.0.png)
+![Codex EchoInk 任务队列和输入菜单](docs/images/codex-echoink-turn-queue-v0.7.2.png)
 
 ![Codex EchoInk 知识库自动化流程](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 

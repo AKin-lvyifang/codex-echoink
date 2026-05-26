@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk turn queue for queued chat, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+  <img width="1024" alt="Codex EchoInk 0.7.2 turn queue and composer menus poster with three stability updates." src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.7.1-0EA5E9?style=flat-square" alt="Version v0.7.1">
+    <img src="https://img.shields.io/badge/version-v0.7.2-0EA5E9?style=flat-square" alt="Version v0.7.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip"><strong>Download v0.7.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip"><strong>Download v0.7.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -64,7 +64,7 @@
 
 ### Turn Queue
 
-<img width="1024" alt="Codex EchoInk turn queue shows queued cards, enqueue while running, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+<img width="1024" alt="Codex EchoInk turn queue and composer menus show three stability updates for queue entry interaction." src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
 
 - Queue follow-up tasks while the current Agent turn is still running.
 - Keeps queues scoped to each session, so ordinary chat and Knowledge channel work do not mix.
@@ -138,6 +138,16 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v0.7.2
+
+**Stability update:** Turn Queue and composer menus now close more predictably.
+
+**What changed:**
+
+- Clicking inside the composer area but outside Skill and Knowledge command menus now closes the open composer menus.
+- Clicking a Skill or Knowledge command menu no longer closes that menu by mistake.
+- Added regression coverage for composer menu containment, keeping the queue entry UI stable.
 
 ### v0.7.1
 
@@ -340,7 +350,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.7.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.1/codex-echoink-0.7.1.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.7.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
@@ -393,7 +403,7 @@ Try these steps:
 
 ## Screenshots
 
-![Codex EchoInk turn queue](docs/images/codex-echoink-turn-queue-v0.7.0.png)
+![Codex EchoInk turn queue and composer menus](docs/images/codex-echoink-turn-queue-v0.7.2.png)
 
 ![Codex EchoInk knowledge base workflow](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 

@@ -82,6 +82,7 @@ import {
   resolveOpenCodeCommand
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
+import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
@@ -161,7 +162,7 @@ import {
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "0.7.1");
+assert.equal(manifest.version, "0.7.2");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
@@ -531,6 +532,15 @@ assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: fals
 assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: true }), false);
+const menuTarget = {} as Node;
+const rootOnlyTarget = {} as Node;
+const outsideTarget = {} as Node;
+const fakeRoot = { contains: (target: Node | null) => target === menuTarget || target === rootOnlyTarget };
+const fakeMenu = { contains: (target: Node | null) => target === menuTarget };
+assert.equal(shouldCloseComposerMenusForClick(menuTarget, fakeRoot, [fakeMenu]), false);
+assert.equal(shouldCloseComposerMenusForClick(rootOnlyTarget, fakeRoot, [fakeMenu]), true);
+assert.equal(shouldCloseComposerMenusForClick(outsideTarget, fakeRoot, [fakeMenu]), true);
+assert.equal(shouldCloseComposerMenusForClick(null, fakeRoot, [fakeMenu]), false);
 
 function queuedTurn(id: string, sessionId: string, text: string): QueuedTurnItem {
   return {

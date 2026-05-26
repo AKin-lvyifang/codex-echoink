@@ -25,6 +25,7 @@ import { formatRateLimitUsage, normalizeRateLimitResponse, type RateLimitWindowV
 import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-store";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
+import { shouldCloseComposerMenusForClick } from "./composer-menu";
 import { composerIsBusy, composerPrimaryActionForState, type ComposerPrimaryActionState } from "./composer-state";
 import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
 import { formatMessageHeaderTime } from "./message-time";
@@ -545,10 +546,12 @@ export class CodexView extends ItemView {
     this.usagePanelEl = header.createDiv({ cls: "codex-usage-panel" });
     this.articleUnderstandingPanelEl = header.createDiv({ cls: "codex-article-panel" });
     this.registerDomEvent(document, "click", (event) => {
-      if (!this.rootEl.contains(event.target as Node)) {
+      const target = event.target instanceof Node ? event.target : null;
+      if (!target) return;
+      if (!this.rootEl.contains(target)) {
         this.usagePanelEl.removeClass("is-visible");
-        this.closeComposerMenus();
       }
+      if (shouldCloseComposerMenusForClick(target, this.rootEl, [this.skillMenuEl, this.knowledgeCommandMenuEl])) this.closeComposerMenus();
     });
 
     this.tabBarEl = this.rootEl.createDiv({ cls: "codex-tabs" });
