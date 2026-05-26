@@ -117,7 +117,7 @@ import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJou
 import { formatKnowledgeBaseCodexFailureSignal } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { diffRawSnapshot } from "../knowledge-base/raw-integrity";
-import { KNOWLEDGE_BASE_COMMAND_GUIDE, knowledgeBaseHelpText, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { KNOWLEDGE_BASE_COMMAND_GUIDE, getTrailingSlashQuery, knowledgeBaseHelpText, knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import {
@@ -487,6 +487,15 @@ assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/clear")
 assert.ok(KNOWLEDGE_BASE_COMMAND_GUIDE.some((item) => item.command === "/history"));
 assert.ok(knowledgeBaseHelpText().includes("`/week`：写知识库周报"));
 assert.ok(knowledgeBaseHelpText().includes("`/clear`：清空当前页面"));
+assert.equal(getTrailingSlashQuery("/"), "");
+assert.equal(getTrailingSlashQuery("/ma"), "ma");
+assert.equal(knowledgeCommandQueryForInput("/", true), "");
+assert.equal(knowledgeCommandQueryForInput("/", false), null);
+assert.deepEqual(knowledgeCommandOptions("ma").map((item) => item.text), ["/maintain "]);
+assert.deepEqual(knowledgeCommandOptions("").map((item) => item.text), ["/ask ", "/check ", "/maintain ", "/outputs ", "/inbox ", "/journal ", "/week ", "/clear", "/history", "/init ", "/help"]);
+assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/maintain "));
+assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/history"));
+assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/clear"));
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
 assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);

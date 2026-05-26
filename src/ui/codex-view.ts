@@ -19,7 +19,7 @@ import type {
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, parseFileChangeDiff, serializeFileChanges, type ParsedDiffFile } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
-import { basename, buildUserInput, contextUsageView, filterSkills, getSlashQuery, normalizeProcessFileRef, processGroupStateId, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
+import { basename, buildUserInput, contextUsageView, filterSkills, normalizeProcessFileRef, processGroupStateId, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse, type RateLimitWindowView } from "../core/rate-limits";
 import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-store";
@@ -37,7 +37,7 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
-import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, type KnowledgeBaseCommandOption } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeBaseHistoryDaySummary } from "../knowledge-base/history-store";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages } from "../knowledge-base/session-history";
@@ -92,6 +92,7 @@ export class CodexView extends ItemView {
   private contextRingEl!: HTMLElement;
   private contextValueEl!: HTMLElement;
   private skillMenuEl!: HTMLElement;
+  private knowledgeCommandMenuEl!: HTMLElement;
   private mcpPanelEl!: HTMLElement;
   private attachmentsEl!: HTMLElement;
   private running = false;
@@ -533,7 +534,10 @@ export class CodexView extends ItemView {
     this.usagePanelEl = header.createDiv({ cls: "codex-usage-panel" });
     this.articleUnderstandingPanelEl = header.createDiv({ cls: "codex-article-panel" });
     this.registerDomEvent(document, "click", (event) => {
-      if (!this.rootEl.contains(event.target as Node)) this.usagePanelEl.removeClass("is-visible");
+      if (!this.rootEl.contains(event.target as Node)) {
+        this.usagePanelEl.removeClass("is-visible");
+        this.closeComposerMenus();
+      }
     });
 
     this.tabBarEl = this.rootEl.createDiv({ cls: "codex-tabs" });
@@ -570,6 +574,7 @@ export class CodexView extends ItemView {
     });
 
     this.skillMenuEl = inputWrap.createDiv({ cls: "codex-skill-menu" });
+    this.knowledgeCommandMenuEl = inputWrap.createDiv({ cls: "codex-knowledge-command-menu" });
     this.toolbarEl = inputWrap.createDiv({ cls: "codex-toolbar" });
     this.mcpPanelEl = this.rootEl.createDiv({ cls: "codex-mcp-panel" });
     this.renderToolbar();
@@ -1741,6 +1746,10 @@ export class CodexView extends ItemView {
     const addButton = this.createComposerIconButton(left, "plus", "添加内容");
     addButton.onclick = (event) => this.openAddMenu(event);
 
+    const skillButton = this.createComposerIconButton(left, "hammer", this.selectedSkill ? `Skill：${this.selectedSkill.name}` : "选择 Skill");
+    skillButton.toggleClass("is-active", Boolean(this.selectedSkill));
+    skillButton.onclick = (event) => this.openSkillMenu(event);
+
     if (knowledgeSession) {
       const wechatButton = this.createComposerIconButton(left, "newspaper", "公众号收集");
       wechatButton.onclick = () => this.runKnowledgeBaseShortcut("公众号收集", async () => {
@@ -1829,6 +1838,31 @@ export class CodexView extends ItemView {
     });
     setIcon(button, iconName);
     return button;
+  }
+
+  private closeComposerMenus(): void {
+    this.skillMenuEl?.removeClass("is-visible");
+    this.knowledgeCommandMenuEl?.removeClass("is-visible");
+  }
+
+  private openSkillMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.knowledgeCommandMenuEl.removeClass("is-visible");
+    if (this.skillMenuEl.hasClass("is-visible")) {
+      this.skillMenuEl.removeClass("is-visible");
+      return;
+    }
+    const skills = this.plugin.lastStatus?.skills ?? [];
+    if (!skills.length && !this.skillsRequested) {
+      this.skillsRequested = true;
+      this.skillMenuEl.empty();
+      this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
+      this.skillMenuEl.addClass("is-visible");
+      void this.plugin.ensureSkillsLoaded().then(() => this.renderSkillMatches());
+      return;
+    }
+    this.renderSkillMatches();
   }
 
   private addComposerSelect<T extends string>(container: HTMLElement, iconName: string, values: T[], selected: T, onChange: (value: T) => void, label: string, extraClass = ""): void {
@@ -1981,7 +2015,7 @@ export class CodexView extends ItemView {
     }
     const result = clearKnowledgeBaseVisibleHistory(session);
     this.inputEl.value = "";
-    this.skillMenuEl.removeClass("is-visible");
+    this.closeComposerMenus();
     this.attachments = [];
     this.selectedSkill = null;
     this.resetVirtualWindow();
@@ -2044,17 +2078,7 @@ export class CodexView extends ItemView {
   private openKnowledgeCommandMenu(event: MouseEvent): void {
     event.preventDefault();
     const menu = new Menu();
-    const commands = [
-      { title: "提问", icon: "search", text: "/ask " },
-      { title: "初始化", icon: "sparkles", text: "/init " },
-      { title: "体检", icon: "stethoscope", text: "/check " },
-      { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
-      { title: "写周报", icon: "bar-chart-3", text: "/week " },
-      { title: "写日记", icon: "calendar-plus", text: "/journal " },
-      { title: "处理 inbox", icon: "inbox", text: "/inbox " },
-      { title: "维护知识库", icon: "library", text: "/maintain " }
-    ];
-    for (const command of commands) {
+    for (const command of knowledgeCommandOptions()) {
       menu.addItem((item) =>
         item
           .setTitle(command.title)
@@ -2062,19 +2086,6 @@ export class CodexView extends ItemView {
           .onClick(() => this.fillKnowledgeBaseCommand(command.text))
       );
     }
-    menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle("历史")
-        .setIcon("history")
-        .onClick(() => this.openKnowledgeBaseHistory(this.ensureSession()))
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle("清空页面")
-        .setIcon("eraser")
-        .onClick(() => this.fillKnowledgeBaseCommand("/clear"))
-    );
     menu.showAtMouseEvent(event);
   }
 
@@ -2134,6 +2145,7 @@ export class CodexView extends ItemView {
   fillKnowledgeBaseCommand(command: string): void {
     this.inputEl.value = command;
     this.inputEl.setSelectionRange(command.length, command.length);
+    this.closeComposerMenus();
     this.focusInput();
   }
 
@@ -2331,14 +2343,25 @@ export class CodexView extends ItemView {
   private renderAttachments(): void {
     if (!this.attachmentsEl) return;
     this.attachmentsEl.empty();
-    const all = [...(this.selectedSkill ? [{ type: "file" as const, name: `/${this.selectedSkill.name}`, path: this.selectedSkill.path }] : []), ...this.attachments];
-    this.attachmentsEl.toggleClass("is-empty", all.length === 0);
-    for (const item of all) {
+    this.attachmentsEl.toggleClass("is-empty", !this.selectedSkill && this.attachments.length === 0);
+    if (this.selectedSkill) {
+      const chip = this.attachmentsEl.createDiv({ cls: "codex-skill-token" });
+      const icon = chip.createSpan({ cls: "codex-skill-token-icon" });
+      setIcon(icon, "box");
+      chip.createSpan({ cls: "codex-skill-token-name", text: this.selectedSkill.name });
+      const remove = chip.createEl("button", { attr: { type: "button", "aria-label": `移除 Skill：${this.selectedSkill.name}`, title: "移除 Skill" } });
+      setIcon(remove, "x");
+      remove.onclick = () => {
+        this.selectedSkill = null;
+        this.renderAttachments();
+        this.renderToolbar();
+      };
+    }
+    for (const item of this.attachments) {
       const chip = this.attachmentsEl.createDiv({ cls: "codex-attachment-chip" });
       chip.createSpan({ text: item.name });
       const remove = chip.createEl("button", { text: "×", attr: { type: "button" } });
       remove.onclick = () => {
-        if (this.selectedSkill?.path === item.path) this.selectedSkill = null;
         this.attachments = this.attachments.filter((attachment) => attachment.path !== item.path);
         this.renderAttachments();
       };
@@ -2346,44 +2369,61 @@ export class CodexView extends ItemView {
   }
 
   private onInputChanged(): void {
-    const query = getSlashQuery(this.inputEl.value);
+    this.skillMenuEl.removeClass("is-visible");
+    const query = knowledgeCommandQueryForInput(this.inputEl.value, this.isKnowledgeBaseSession(this.ensureSession()));
     if (query === null) {
-      this.skillMenuEl.removeClass("is-visible");
+      this.knowledgeCommandMenuEl.removeClass("is-visible");
       return;
     }
-    const skills = this.plugin.lastStatus?.skills ?? [];
-    if (!skills.length && !this.skillsRequested) {
-      this.skillsRequested = true;
-      this.skillMenuEl.empty();
-      this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
-      this.skillMenuEl.addClass("is-visible");
-      void this.plugin.ensureSkillsLoaded().then(() => {
-        const activeQuery = getSlashQuery(this.inputEl.value);
-        if (activeQuery !== null) this.renderSkillMatches(activeQuery);
-      });
-      return;
-    }
-    this.renderSkillMatches(query);
+    this.renderKnowledgeCommandMatches(query);
   }
 
-  private renderSkillMatches(query: string): void {
+  private renderSkillMatches(query = ""): void {
     this.skillMenuEl.empty();
     const enabledSkills = filterEnabledSkills(this.plugin.lastStatus?.skills ?? [], this.plugin.settings.workspaceResources.skills);
     const matches = filterSkills(enabledSkills, query);
     for (const skill of matches) {
       const item = this.skillMenuEl.createDiv({ cls: "codex-skill-item" });
-      item.createDiv({ cls: "codex-skill-name", text: `/${skill.name}` });
+      item.toggleClass("is-selected", this.selectedSkill?.path === skill.path);
+      const heading = item.createDiv({ cls: "codex-skill-heading" });
+      const icon = heading.createSpan({ cls: "codex-skill-icon" });
+      setIcon(icon, "box");
+      heading.createDiv({ cls: "codex-skill-name", text: skill.name });
       item.createDiv({ cls: "codex-skill-desc", text: skill.description || skill.path });
       item.onclick = () => {
         this.selectedSkill = skill;
-        this.inputEl.value = this.inputEl.value.replace(/(?:^|\s)\/([^\s/]*)$/, "").trimStart();
         this.skillMenuEl.removeClass("is-visible");
         this.renderAttachments();
+        this.renderToolbar();
         this.inputEl.focus();
       };
     }
     if (matches.length === 0) this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "没有匹配的 skill" });
     this.skillMenuEl.addClass("is-visible");
+  }
+
+  private renderKnowledgeCommandMatches(query: string): void {
+    this.knowledgeCommandMenuEl.empty();
+    const matches = knowledgeCommandOptions(query);
+    for (const command of matches) {
+      this.knowledgeCommandMenuEl.appendChild(this.createKnowledgeCommandItem(command));
+    }
+    if (matches.length === 0) this.knowledgeCommandMenuEl.createDiv({ cls: "codex-skill-empty", text: "没有匹配的知识库命令" });
+    this.knowledgeCommandMenuEl.addClass("is-visible");
+  }
+
+  private createKnowledgeCommandItem(command: KnowledgeBaseCommandOption): HTMLElement {
+    const item = document.createElement("div");
+    item.addClass("codex-command-item");
+    const icon = item.createSpan({ cls: "codex-command-icon" });
+    setIcon(icon, command.icon);
+    const body = item.createDiv({ cls: "codex-command-body" });
+    const heading = body.createDiv({ cls: "codex-command-heading" });
+    heading.createSpan({ cls: "codex-command-text", text: command.text.trim() });
+    heading.createSpan({ cls: "codex-command-title", text: command.title });
+    body.createDiv({ cls: "codex-command-desc", text: command.description });
+    item.onclick = () => this.fillKnowledgeBaseCommand(command.text);
+    return item;
   }
 
   private async sendMessage(): Promise<void> {
@@ -2400,7 +2440,7 @@ export class CodexView extends ItemView {
       }
       if (knowledgeCommand?.intent === "history") {
         this.inputEl.value = "";
-        this.skillMenuEl.removeClass("is-visible");
+        this.closeComposerMenus();
         await this.openKnowledgeBaseHistory(session);
         return;
       }

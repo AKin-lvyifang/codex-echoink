@@ -15,6 +15,27 @@ export interface KnowledgeBaseCommandGuide {
   description: string;
 }
 
+export interface KnowledgeBaseCommandOption {
+  title: string;
+  icon: string;
+  text: string;
+  description: string;
+}
+
+export const KNOWLEDGE_BASE_COMMAND_OPTIONS: KnowledgeBaseCommandOption[] = [
+  { title: "提问", icon: "search", text: "/ask ", description: "对知识库发问" },
+  { title: "体检", icon: "stethoscope", text: "/check ", description: "只体检知识库" },
+  { title: "维护知识库", icon: "library", text: "/maintain ", description: "维护 raw 到 wiki，并整理知识区结构" },
+  { title: "处理 outputs", icon: "archive-restore", text: "/outputs ", description: "处理 outputs 并提炼长期价值" },
+  { title: "处理 inbox", icon: "inbox", text: "/inbox ", description: "整理收件箱" },
+  { title: "写日记", icon: "calendar-plus", text: "/journal ", description: "写日记" },
+  { title: "写周报", icon: "bar-chart-3", text: "/week ", description: "写知识库周报；加 agent 写 Agent 周报" },
+  { title: "清空页面", icon: "eraser", text: "/clear", description: "清空当前页面，保留本地历史并开启新上下文" },
+  { title: "历史", icon: "history", text: "/history", description: "按天查看知识库历史" },
+  { title: "初始化", icon: "sparkles", text: "/init ", description: "预览初始化；加 confirm 才执行" },
+  { title: "帮助", icon: "circle-help", text: "/help", description: "显示知识库命令说明" }
+];
+
 export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
   { command: "/ask ...", description: "对知识库发问" },
   { command: "/check ...", description: "只体检知识库" },
@@ -30,6 +51,27 @@ export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
 ];
 
 const URL_PATTERN = /https?:\/\/\S+/i;
+
+export function getTrailingSlashQuery(text: string): string | null {
+  const match = text.match(/(?:^|\s)\/([^\s/]*)$/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+export function knowledgeCommandQueryForInput(text: string, isKnowledgeBaseSession: boolean): string | null {
+  if (!isKnowledgeBaseSession) return null;
+  return getTrailingSlashQuery(text);
+}
+
+export function knowledgeCommandOptions(query = ""): KnowledgeBaseCommandOption[] {
+  const normalized = query.trim().toLowerCase();
+  return KNOWLEDGE_BASE_COMMAND_OPTIONS.filter((item) => {
+    if (!normalized) return true;
+    const command = item.text.trim().replace(/^\//, "").toLowerCase();
+    return command.includes(normalized)
+      || item.title.toLowerCase().includes(normalized)
+      || item.description.toLowerCase().includes(normalized);
+  });
+}
 
 export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): KnowledgeBaseCommand {
   const normalized = text.trim().toLowerCase();
