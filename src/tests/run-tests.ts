@@ -83,6 +83,7 @@ import {
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
+import { RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
 import { formatMessageHeaderTime } from "../ui/message-time";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput, resolveEditorActionStyle } from "../editor-actions/prompt";
@@ -160,7 +161,7 @@ import {
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "0.6.0");
+assert.equal(manifest.version, "0.7.0");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
@@ -244,6 +245,24 @@ assert.ok(!kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "inbox")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "projects")));
+const queuedKbTurnOptions = buildCodexKnowledgeTurnOptions({
+  settings: DEFAULT_SETTINGS,
+  availableModels: [{ model: "gpt-test" }],
+  vaultPath: "/vault",
+  permission: "read-only",
+  overrides: {
+    model: "gpt-queued",
+    reasoning: "low",
+    serviceTier: "standard",
+    mcpEnabled: true,
+    workspaceResources: { plugins: { "plugin-a": true }, mcpServers: {}, skills: { "skill-a": true } }
+  }
+});
+assert.equal(queuedKbTurnOptions.model, "gpt-queued");
+assert.equal(queuedKbTurnOptions.reasoning, "low");
+assert.equal(queuedKbTurnOptions.serviceTier, "standard");
+assert.equal(queuedKbTurnOptions.mcpEnabled, true);
+assert.deepEqual(queuedKbTurnOptions.workspaceResources?.skills, { "skill-a": true });
 const journalTurnOptions = buildCodexKnowledgeTurnOptions({
   settings: DEFAULT_SETTINGS,
   availableModels: [{ model: "gpt-test" }],
@@ -499,9 +518,57 @@ assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/clear"));
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
 assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
-assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false }), "stop-turn");
-assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true }), "cancel-knowledge-task");
-assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false }), "send");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "stop-turn");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: false }), "enqueue");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "send");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: true }), "resume-queue");
+assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: true }), "enqueue");
+
+function queuedTurn(id: string, sessionId: string, text: string): QueuedTurnItem {
+  return {
+    id,
+    sessionId,
+    text,
+    attachments: [],
+    skill: null,
+    turnOptions: {
+      model: "gpt-test",
+      reasoning: "high",
+      serviceTier: "fast",
+      permission: "workspace-write",
+      mode: "agent",
+      mcpEnabled: false,
+      workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
+    },
+    kind: "chat",
+    createdAt: Date.now()
+  };
+}
+
+const queue = new RuntimeTurnQueue();
+queue.enqueue(queuedTurn("a", "s1", "first"));
+queue.enqueue(queuedTurn("b", "s1", "second"));
+queue.enqueue(queuedTurn("c", "s2", "other session"));
+assert.deepEqual(queue.itemsForSession("s1").map((item) => item.id), ["a", "b"]);
+assert.deepEqual(queue.itemsForSession("s2").map((item) => item.id), ["c"]);
+assert.equal(queue.hasQueuedItems("s1"), true);
+assert.equal(queue.hasQueuedItems("missing"), false);
+assert.equal(queue.reorderQueuedItem("s1", "b", 0), true);
+assert.deepEqual(queue.itemsForSession("s1").map((item) => item.id), ["b", "a"]);
+assert.equal(queue.removeQueuedItem("s1", "a"), true);
+assert.deepEqual(queue.itemsForSession("s1").map((item) => item.id), ["b"]);
+queue.pauseSessionQueue("s1");
+assert.equal(queue.isSessionQueuePaused("s1"), true);
+assert.equal(queue.dequeueNext("s1"), null);
+queue.resumeSessionQueue("s1");
+assert.equal(queue.isSessionQueuePaused("s1"), false);
+assert.equal(queue.dequeueNext("s1")?.id, "b");
+assert.equal(queue.hasQueuedItems("s1"), false);
+queue.enqueue(queuedTurn("d", "s1", "deleted session item"));
+queue.clearSessionQueue("s1");
+assert.equal(queue.hasQueuedItems("s1"), false);
 assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);

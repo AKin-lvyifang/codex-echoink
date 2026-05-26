@@ -9,18 +9,20 @@ export function buildCodexKnowledgeTurnOptions(input: {
   vaultPath: string;
   permission: PermissionMode;
   writeScope?: "knowledge-base" | "journal";
+  overrides?: Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources">;
 }): TurnOptions {
-  const model = input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
+  const model = input.overrides?.model || input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
   const writableRoots = input.permission === "workspace-write" ? writableRootsForScope(input.vaultPath, input.writeScope ?? "knowledge-base") : undefined;
   return {
     model,
-    reasoning: input.settings.defaultReasoning,
-    serviceTier: input.settings.defaultServiceTier,
+    reasoning: input.overrides?.reasoning ?? input.settings.defaultReasoning,
+    serviceTier: input.overrides?.serviceTier ?? input.settings.defaultServiceTier,
     permission: input.permission,
     mode: "agent",
-    mcpEnabled: input.settings.mcpEnabled,
+    mcpEnabled: input.overrides?.mcpEnabled ?? input.settings.mcpEnabled,
     persistExtendedHistory: false,
     requestTimeoutMs: 60000,
+    workspaceResources: input.overrides?.workspaceResources,
     ...(writableRoots ? { writableRoots } : {})
   };
 }
