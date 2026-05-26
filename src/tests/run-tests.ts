@@ -761,6 +761,26 @@ const skills = [
 ];
 assert.equal(filterSkills(skills, "fix").length, 1);
 assert.equal(filterSkills(skills, "").length, 2);
+const manySkills = Array.from({ length: 15 }, (_, index) => ({
+  name: `skill-${String(15 - index).padStart(2, "0")}`,
+  description: "test skill",
+  path: `/skills/${index}`,
+  enabled: true
+}));
+const filteredManySkills = filterSkills(manySkills, "");
+assert.equal(filteredManySkills.length, 15);
+assert.deepEqual(
+  filteredManySkills.map((skill) => skill.name),
+  ["skill-01", "skill-02", "skill-03", "skill-04", "skill-05", "skill-06", "skill-07", "skill-08", "skill-09", "skill-10", "skill-11", "skill-12", "skill-13", "skill-14", "skill-15"]
+);
+assert.deepEqual(
+  filterSkills([
+    { name: "ask-claude", description: "Ask Claude", path: "/skills/ask-claude-a", enabled: true },
+    { name: "ask-claude", description: "Ask Claude", path: "/skills/ask-claude-b", enabled: true },
+    { name: "ask-gemini", description: "Ask Gemini", path: "/skills/ask-gemini", enabled: true }
+  ], "").map((skill) => skill.name),
+  ["ask-claude", "ask-gemini"]
+);
 
 const input = buildUserInput(
   "你好",

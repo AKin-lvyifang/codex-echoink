@@ -104,14 +104,20 @@ export function getSlashQuery(text: string): string | null {
 
 export function filterSkills(skills: CodexSkill[], query: string): CodexSkill[] {
   const q = query.trim().toLowerCase();
+  const seen = new Set<string>();
   return skills
     .filter((skill) => skill.enabled !== false)
     .filter((skill) => {
       if (!q) return true;
       return skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q);
     })
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 12);
+    .filter((skill) => {
+      const key = skill.name.trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase(), "en") || a.path.localeCompare(b.path));
 }
 
 export function contextPercent(totalTokens?: number, contextWindow?: number | null): number {

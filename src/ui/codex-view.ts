@@ -1853,13 +1853,12 @@ export class CodexView extends ItemView {
       this.skillMenuEl.removeClass("is-visible");
       return;
     }
-    const skills = this.plugin.lastStatus?.skills ?? [];
-    if (!skills.length && !this.skillsRequested) {
+    if (!this.skillsRequested) {
       this.skillsRequested = true;
       this.skillMenuEl.empty();
       this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
       this.skillMenuEl.addClass("is-visible");
-      void this.plugin.ensureSkillsLoaded().then(() => this.renderSkillMatches());
+      void this.plugin.ensureSkillsLoaded(true).then(() => this.renderSkillMatches());
       return;
     }
     this.renderSkillMatches();
