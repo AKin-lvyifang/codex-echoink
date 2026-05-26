@@ -19,16 +19,17 @@ import type {
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, parseFileChangeDiff, serializeFileChanges, type ParsedDiffFile } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
-import { basename, buildUserInput, contextUsageView, filterSkills, getSlashQuery, normalizeProcessFileRef, processGroupStateId, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
+import { basename, buildUserInput, contextUsageView, filterSkills, normalizeProcessFileRef, processGroupStateId, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse, type RateLimitWindowView } from "../core/rate-limits";
 import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-store";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
-import { composerIsBusy, composerPrimaryActionForState } from "./composer-state";
+import { composerIsBusy, composerPrimaryActionForState, type ComposerPrimaryActionState } from "./composer-state";
 import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
 import { formatMessageHeaderTime } from "./message-time";
 import { openImageOverlay, renderRichText } from "./render-message";
+import { RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, buildEditorActionUserInput } from "../editor-actions/prompt";
@@ -37,7 +38,7 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
-import { parseKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, type KnowledgeBaseCommandOption } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeBaseHistoryDaySummary } from "../knowledge-base/history-store";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages } from "../knowledge-base/session-history";
@@ -92,10 +93,13 @@ export class CodexView extends ItemView {
   private contextRingEl!: HTMLElement;
   private contextValueEl!: HTMLElement;
   private skillMenuEl!: HTMLElement;
+  private knowledgeCommandMenuEl!: HTMLElement;
   private mcpPanelEl!: HTMLElement;
   private attachmentsEl!: HTMLElement;
+  private queueEl!: HTMLElement;
   private running = false;
   private activeRunId = "";
+  private activeRunKind: "chat" | "knowledge-base" | "";
   private activeRunSessionId = "";
   private activeTurnId = "";
   private turnStartedAt = 0;
@@ -149,6 +153,9 @@ export class CodexView extends ItemView {
   private knowledgeDashboardLoading = false;
   private knowledgeDashboardError = "";
   private knowledgeDashboardRequestId = 0;
+  private readonly turnQueue = new RuntimeTurnQueue();
+  private queueStartInProgress = false;
+  private draggedQueueItemId = "";
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -157,6 +164,7 @@ export class CodexView extends ItemView {
     this.selectedServiceTier = plugin.settings.defaultServiceTier;
     this.selectedPermission = plugin.settings.defaultPermission;
     this.selectedMode = plugin.settings.defaultMode;
+    this.activeRunKind = "";
   }
 
   getViewType(): string {
@@ -253,6 +261,7 @@ export class CodexView extends ItemView {
     if (method === "turn/completed") {
       const session = this.activeRunSession();
       const failed = params?.turn?.status === "failed";
+      const shouldAdvanceQueue = this.activeRunKind === "chat";
       if (this.editorActionRun?.runId === this.activeRunId) {
         if (failed) {
           this.rejectEditorActionRun(new Error("Codex 写作任务失败"));
@@ -271,6 +280,7 @@ export class CodexView extends ItemView {
       this.clearActiveRun();
       this.applyStatus();
       void this.plugin.saveSettings(true);
+      if (shouldAdvanceQueue) void this.afterTurnSettled(session.id, !failed);
       return;
     }
     if (method === "account/rateLimits/updated") {
@@ -342,6 +352,7 @@ export class CodexView extends ItemView {
     }
     if (method === "error") {
       const session = this.activeRunSession();
+      const shouldPauseQueue = this.activeRunKind === "chat";
       const diagnostic = this.diagnoseCodexFailure(params?.message ?? "Codex 出错了");
       if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error(diagnostic.text));
       this.running = false;
@@ -357,6 +368,7 @@ export class CodexView extends ItemView {
       });
       this.clearActiveRun();
       this.applyStatus();
+      if (shouldPauseQueue) void this.afterTurnSettled(session.id, false);
     }
   }
 
@@ -533,7 +545,10 @@ export class CodexView extends ItemView {
     this.usagePanelEl = header.createDiv({ cls: "codex-usage-panel" });
     this.articleUnderstandingPanelEl = header.createDiv({ cls: "codex-article-panel" });
     this.registerDomEvent(document, "click", (event) => {
-      if (!this.rootEl.contains(event.target as Node)) this.usagePanelEl.removeClass("is-visible");
+      if (!this.rootEl.contains(event.target as Node)) {
+        this.usagePanelEl.removeClass("is-visible");
+        this.closeComposerMenus();
+      }
     });
 
     this.tabBarEl = this.rootEl.createDiv({ cls: "codex-tabs" });
@@ -543,6 +558,7 @@ export class CodexView extends ItemView {
     this.registerDomEvent(this.messagesEl, "scroll", () => this.scheduleRenderMessages({ fromScroll: true }));
 
     const inputWrap = this.rootEl.createDiv({ cls: "codex-input-wrap" });
+    this.queueEl = inputWrap.createDiv({ cls: "codex-turn-queue" });
     this.attachmentsEl = inputWrap.createDiv({ cls: "codex-attachments" });
     this.inputEl = inputWrap.createEl("textarea", {
       cls: "codex-input",
@@ -570,6 +586,7 @@ export class CodexView extends ItemView {
     });
 
     this.skillMenuEl = inputWrap.createDiv({ cls: "codex-skill-menu" });
+    this.knowledgeCommandMenuEl = inputWrap.createDiv({ cls: "codex-knowledge-command-menu" });
     this.toolbarEl = inputWrap.createDiv({ cls: "codex-toolbar" });
     this.mcpPanelEl = this.rootEl.createDiv({ cls: "codex-mcp-panel" });
     this.renderToolbar();
@@ -1726,6 +1743,7 @@ export class CodexView extends ItemView {
 
   private renderToolbar(): void {
     if (!this.toolbarEl) return;
+    this.renderQueue();
     this.toolbarEl.empty();
     this.renderAttachments();
 
@@ -1740,6 +1758,10 @@ export class CodexView extends ItemView {
 
     const addButton = this.createComposerIconButton(left, "plus", "添加内容");
     addButton.onclick = (event) => this.openAddMenu(event);
+
+    const skillButton = this.createComposerIconButton(left, "hammer", this.selectedSkill ? `Skill：${this.selectedSkill.name}` : "选择 Skill");
+    skillButton.toggleClass("is-active", Boolean(this.selectedSkill));
+    skillButton.onclick = (event) => this.openSkillMenu(event);
 
     if (knowledgeSession) {
       const wechatButton = this.createComposerIconButton(left, "newspaper", "公众号收集");
@@ -1805,21 +1827,105 @@ export class CodexView extends ItemView {
 
     const composerState = {
       viewRunning: this.running,
-      knowledgeTaskRunning
+      knowledgeTaskRunning,
+      hasDraft: this.hasComposerDraft(),
+      hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
     };
     const busy = composerIsBusy(composerState);
+    const action = composerPrimaryActionForState(composerState);
+    const sendButtonView = composerActionButtonView(action);
     const sendButton = row.createEl("button", {
       cls: "codex-send-button codex-composer-send-button",
-      attr: { type: "button", "aria-label": busy ? "停止" : "发送", title: busy ? "停止" : "发送" }
+      attr: { type: "button", "aria-label": sendButtonView.label, title: sendButtonView.title }
     });
-    setIcon(sendButton, busy ? "square" : "send-horizontal");
+    sendButton.toggleClass("is-queue-action", action === "enqueue" || action === "resume-queue");
+    setIcon(sendButton, sendButtonView.icon);
     sendButton.onclick = () => {
-      const action = composerPrimaryActionForState(composerState);
-      if (action === "cancel-knowledge-task") void knowledgeManager?.cancelMaintenance();
+      if (action === "cancel-knowledge-task") {
+        this.pauseQueueForSession(session.id);
+        void knowledgeManager?.cancelMaintenance();
+      }
       else if (action === "stop-turn") void this.stopTurn();
+      else if (action === "enqueue") void this.enqueueComposerDraft();
+      else if (action === "resume-queue") void this.resumeQueuedTurns(session.id);
       else void this.sendMessage();
     };
     if (!knowledgeSession) this.updateContext(session.tokenUsage, false);
+  }
+
+  private renderQueue(): void {
+    if (!this.queueEl) return;
+    const session = this.ensureSession();
+    const items = this.turnQueue.itemsForSession(session.id);
+    const paused = this.turnQueue.isSessionQueuePaused(session.id);
+    this.queueEl.empty();
+    this.queueEl.toggleClass("is-visible", Boolean(items.length));
+    this.queueEl.toggleClass("is-paused", paused);
+    if (!items.length) return;
+
+    const header = this.queueEl.createDiv({ cls: "codex-turn-queue-header" });
+    const title = header.createDiv({ cls: "codex-turn-queue-title" });
+    const titleIcon = title.createSpan({ cls: "codex-turn-queue-title-icon" });
+    setIcon(titleIcon, paused ? "pause-circle" : "list-ordered");
+    title.createSpan({ text: paused ? `队列已暂停 · ${items.length}` : `队列 · ${items.length}` });
+
+    const canResume = !this.running && !this.plugin.getKnowledgeBaseManager()?.isRunning;
+    if (canResume) {
+      const resume = header.createEl("button", {
+        cls: "codex-turn-queue-resume",
+        attr: { type: "button", title: "继续队列", "aria-label": "继续队列" }
+      });
+      setIcon(resume, "play");
+      resume.onclick = () => void this.resumeQueuedTurns(session.id);
+    }
+
+    const list = this.queueEl.createDiv({ cls: "codex-turn-queue-list" });
+    items.forEach((item, index) => this.renderQueuedTurnItem(list, item, index));
+  }
+
+  private renderQueuedTurnItem(container: HTMLElement, item: QueuedTurnItem, index: number): void {
+    const row = container.createDiv({ cls: "codex-turn-queue-item", attr: { draggable: "true" } });
+    row.dataset.queueItemId = item.id;
+    const handle = row.createSpan({ cls: "codex-turn-queue-handle", attr: { "aria-hidden": "true" } });
+    setIcon(handle, "grip-vertical");
+    row.ondragstart = (event) => {
+      this.draggedQueueItemId = item.id;
+      event.dataTransfer?.setData("text/plain", item.id);
+      event.dataTransfer?.setDragImage(row, 12, 12);
+    };
+    row.ondragend = () => {
+      this.draggedQueueItemId = "";
+    };
+    row.ondragover = (event) => {
+      event.preventDefault();
+      row.addClass("is-drag-over");
+    };
+    row.ondragleave = () => row.removeClass("is-drag-over");
+    row.ondrop = (event) => {
+      event.preventDefault();
+      row.removeClass("is-drag-over");
+      const sourceId = event.dataTransfer?.getData("text/plain") || this.draggedQueueItemId;
+      if (!sourceId || sourceId === item.id) return;
+      this.turnQueue.reorderQueuedItem(item.sessionId, sourceId, index);
+      this.renderQueue();
+    };
+
+    const body = row.createDiv({ cls: "codex-turn-queue-body" });
+    body.createDiv({ cls: "codex-turn-queue-preview", text: queuedTurnPreview(item) });
+    body.createDiv({ cls: "codex-turn-queue-meta", text: queuedTurnMeta(item) });
+
+    const remove = row.createEl("button", {
+      cls: "codex-turn-queue-remove",
+      attr: { type: "button", title: "删除队列项", "aria-label": "删除队列项" }
+    });
+    setIcon(remove, "x");
+    remove.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.turnQueue.removeQueuedItem(item.sessionId, item.id);
+      this.renderQueue();
+      this.renderToolbar();
+    };
   }
 
   private createComposerIconButton(container: HTMLElement, iconName: string, title: string): HTMLButtonElement {
@@ -1829,6 +1935,30 @@ export class CodexView extends ItemView {
     });
     setIcon(button, iconName);
     return button;
+  }
+
+  private closeComposerMenus(): void {
+    this.skillMenuEl?.removeClass("is-visible");
+    this.knowledgeCommandMenuEl?.removeClass("is-visible");
+  }
+
+  private openSkillMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.knowledgeCommandMenuEl.removeClass("is-visible");
+    if (this.skillMenuEl.hasClass("is-visible")) {
+      this.skillMenuEl.removeClass("is-visible");
+      return;
+    }
+    if (!this.skillsRequested) {
+      this.skillsRequested = true;
+      this.skillMenuEl.empty();
+      this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
+      this.skillMenuEl.addClass("is-visible");
+      void this.plugin.ensureSkillsLoaded(true).then(() => this.renderSkillMatches());
+      return;
+    }
+    this.renderSkillMatches();
   }
 
   private addComposerSelect<T extends string>(container: HTMLElement, iconName: string, values: T[], selected: T, onChange: (value: T) => void, label: string, extraClass = ""): void {
@@ -1981,7 +2111,7 @@ export class CodexView extends ItemView {
     }
     const result = clearKnowledgeBaseVisibleHistory(session);
     this.inputEl.value = "";
-    this.skillMenuEl.removeClass("is-visible");
+    this.closeComposerMenus();
     this.attachments = [];
     this.selectedSkill = null;
     this.resetVirtualWindow();
@@ -2044,17 +2174,7 @@ export class CodexView extends ItemView {
   private openKnowledgeCommandMenu(event: MouseEvent): void {
     event.preventDefault();
     const menu = new Menu();
-    const commands = [
-      { title: "提问", icon: "search", text: "/ask " },
-      { title: "初始化", icon: "sparkles", text: "/init " },
-      { title: "体检", icon: "stethoscope", text: "/check " },
-      { title: "处理 outputs", icon: "archive-restore", text: "/outputs " },
-      { title: "写周报", icon: "bar-chart-3", text: "/week " },
-      { title: "写日记", icon: "calendar-plus", text: "/journal " },
-      { title: "处理 inbox", icon: "inbox", text: "/inbox " },
-      { title: "维护知识库", icon: "library", text: "/maintain " }
-    ];
-    for (const command of commands) {
+    for (const command of knowledgeCommandOptions()) {
       menu.addItem((item) =>
         item
           .setTitle(command.title)
@@ -2062,19 +2182,6 @@ export class CodexView extends ItemView {
           .onClick(() => this.fillKnowledgeBaseCommand(command.text))
       );
     }
-    menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle("历史")
-        .setIcon("history")
-        .onClick(() => this.openKnowledgeBaseHistory(this.ensureSession()))
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle("清空页面")
-        .setIcon("eraser")
-        .onClick(() => this.fillKnowledgeBaseCommand("/clear"))
-    );
     menu.showAtMouseEvent(event);
   }
 
@@ -2134,6 +2241,7 @@ export class CodexView extends ItemView {
   fillKnowledgeBaseCommand(command: string): void {
     this.inputEl.value = command;
     this.inputEl.setSelectionRange(command.length, command.length);
+    this.closeComposerMenus();
     this.focusInput();
   }
 
@@ -2288,6 +2396,7 @@ export class CodexView extends ItemView {
       new Notice("知识库管理频道不能删除");
       return;
     }
+    this.turnQueue.clearSessionQueue(sessionId);
     const wasActive = this.plugin.settings.activeSessionId === sessionId;
     sessions.splice(index, 1);
     if (!sessions.length) {
@@ -2331,14 +2440,25 @@ export class CodexView extends ItemView {
   private renderAttachments(): void {
     if (!this.attachmentsEl) return;
     this.attachmentsEl.empty();
-    const all = [...(this.selectedSkill ? [{ type: "file" as const, name: `/${this.selectedSkill.name}`, path: this.selectedSkill.path }] : []), ...this.attachments];
-    this.attachmentsEl.toggleClass("is-empty", all.length === 0);
-    for (const item of all) {
+    this.attachmentsEl.toggleClass("is-empty", !this.selectedSkill && this.attachments.length === 0);
+    if (this.selectedSkill) {
+      const chip = this.attachmentsEl.createDiv({ cls: "codex-skill-token" });
+      const icon = chip.createSpan({ cls: "codex-skill-token-icon" });
+      setIcon(icon, "box");
+      chip.createSpan({ cls: "codex-skill-token-name", text: this.selectedSkill.name });
+      const remove = chip.createEl("button", { attr: { type: "button", "aria-label": `移除 Skill：${this.selectedSkill.name}`, title: "移除 Skill" } });
+      setIcon(remove, "x");
+      remove.onclick = () => {
+        this.selectedSkill = null;
+        this.renderAttachments();
+        this.renderToolbar();
+      };
+    }
+    for (const item of this.attachments) {
       const chip = this.attachmentsEl.createDiv({ cls: "codex-attachment-chip" });
       chip.createSpan({ text: item.name });
       const remove = chip.createEl("button", { text: "×", attr: { type: "button" } });
       remove.onclick = () => {
-        if (this.selectedSkill?.path === item.path) this.selectedSkill = null;
         this.attachments = this.attachments.filter((attachment) => attachment.path !== item.path);
         this.renderAttachments();
       };
@@ -2346,39 +2466,33 @@ export class CodexView extends ItemView {
   }
 
   private onInputChanged(): void {
-    const query = getSlashQuery(this.inputEl.value);
+    this.skillMenuEl.removeClass("is-visible");
+    this.renderToolbar();
+    const query = knowledgeCommandQueryForInput(this.inputEl.value, this.isKnowledgeBaseSession(this.ensureSession()));
     if (query === null) {
-      this.skillMenuEl.removeClass("is-visible");
+      this.knowledgeCommandMenuEl.removeClass("is-visible");
       return;
     }
-    const skills = this.plugin.lastStatus?.skills ?? [];
-    if (!skills.length && !this.skillsRequested) {
-      this.skillsRequested = true;
-      this.skillMenuEl.empty();
-      this.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
-      this.skillMenuEl.addClass("is-visible");
-      void this.plugin.ensureSkillsLoaded().then(() => {
-        const activeQuery = getSlashQuery(this.inputEl.value);
-        if (activeQuery !== null) this.renderSkillMatches(activeQuery);
-      });
-      return;
-    }
-    this.renderSkillMatches(query);
+    this.renderKnowledgeCommandMatches(query);
   }
 
-  private renderSkillMatches(query: string): void {
+  private renderSkillMatches(query = ""): void {
     this.skillMenuEl.empty();
     const enabledSkills = filterEnabledSkills(this.plugin.lastStatus?.skills ?? [], this.plugin.settings.workspaceResources.skills);
     const matches = filterSkills(enabledSkills, query);
     for (const skill of matches) {
       const item = this.skillMenuEl.createDiv({ cls: "codex-skill-item" });
-      item.createDiv({ cls: "codex-skill-name", text: `/${skill.name}` });
+      item.toggleClass("is-selected", this.selectedSkill?.path === skill.path);
+      const heading = item.createDiv({ cls: "codex-skill-heading" });
+      const icon = heading.createSpan({ cls: "codex-skill-icon" });
+      setIcon(icon, "box");
+      heading.createDiv({ cls: "codex-skill-name", text: skill.name });
       item.createDiv({ cls: "codex-skill-desc", text: skill.description || skill.path });
       item.onclick = () => {
         this.selectedSkill = skill;
-        this.inputEl.value = this.inputEl.value.replace(/(?:^|\s)\/([^\s/]*)$/, "").trimStart();
         this.skillMenuEl.removeClass("is-visible");
         this.renderAttachments();
+        this.renderToolbar();
         this.inputEl.focus();
       };
     }
@@ -2386,63 +2500,219 @@ export class CodexView extends ItemView {
     this.skillMenuEl.addClass("is-visible");
   }
 
-  private async sendMessage(): Promise<void> {
-    const text = this.inputEl.value.trim();
-    if (this.editorSummaryRun) this.cancelEditorSummaryRun("用户输入抢占摘要");
-    if (!text && !this.attachments.length && !this.selectedSkill) return;
-    let session = this.ensureSession();
-    const knowledgeSession = this.isKnowledgeBaseSession(session);
-    const knowledgeCommand = knowledgeSession ? parseKnowledgeBaseCommand(text, this.attachments.length) : null;
-    if (knowledgeSession) {
-      if (knowledgeCommand?.intent === "clear") {
-        await this.clearKnowledgeBasePage(session);
-        return;
-      }
-      if (knowledgeCommand?.intent === "history") {
-        this.inputEl.value = "";
-        this.skillMenuEl.removeClass("is-visible");
-        await this.openKnowledgeBaseHistory(session);
-        return;
-      }
+  private renderKnowledgeCommandMatches(query: string): void {
+    this.knowledgeCommandMenuEl.empty();
+    const matches = knowledgeCommandOptions(query);
+    for (const command of matches) {
+      this.knowledgeCommandMenuEl.appendChild(this.createKnowledgeCommandItem(command));
     }
-    if (this.running) return;
-    if (knowledgeSession && knowledgeCommand && knowledgeCommand.intent !== "chat") {
-      await this.sendKnowledgeBaseMessage(session, text);
+    if (matches.length === 0) this.knowledgeCommandMenuEl.createDiv({ cls: "codex-skill-empty", text: "没有匹配的知识库命令" });
+    this.knowledgeCommandMenuEl.addClass("is-visible");
+  }
+
+  private hasComposerDraft(): boolean {
+    return Boolean(this.inputEl?.value.trim() || this.attachments.length || this.selectedSkill);
+  }
+
+  private clearComposerDraft(): void {
+    this.inputEl.value = "";
+    this.closeComposerMenus();
+    this.attachments = [];
+    this.selectedSkill = null;
+  }
+
+  private composerStateForSession(session: StoredSession): ComposerPrimaryActionState {
+    const knowledgeManager = this.plugin.getKnowledgeBaseManager();
+    return {
+      viewRunning: this.running,
+      knowledgeTaskRunning: this.isKnowledgeBaseSession(session) && Boolean(knowledgeManager?.isRunning),
+      hasDraft: this.hasComposerDraft(),
+      hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
+    };
+  }
+
+  private pauseQueueForSession(sessionId: string): void {
+    if (!this.turnQueue.hasQueuedItems(sessionId)) return;
+    this.turnQueue.pauseSessionQueue(sessionId);
+    this.renderQueue();
+    this.renderToolbar();
+  }
+
+  private sessionById(sessionId: string): StoredSession | null {
+    return this.plugin.settings.sessions.find((session) => session.id === sessionId) ?? null;
+  }
+
+  private createKnowledgeCommandItem(command: KnowledgeBaseCommandOption): HTMLElement {
+    const item = document.createElement("div");
+    item.addClass("codex-command-item");
+    const icon = item.createSpan({ cls: "codex-command-icon" });
+    setIcon(icon, command.icon);
+    const body = item.createDiv({ cls: "codex-command-body" });
+    const heading = body.createDiv({ cls: "codex-command-heading" });
+    heading.createSpan({ cls: "codex-command-text", text: command.text.trim() });
+    heading.createSpan({ cls: "codex-command-title", text: command.title });
+    body.createDiv({ cls: "codex-command-desc", text: command.description });
+    item.onclick = () => this.fillKnowledgeBaseCommand(command.text);
+    return item;
+  }
+
+  private async sendMessage(): Promise<void> {
+    if (this.editorSummaryRun) this.cancelEditorSummaryRun("用户输入抢占摘要");
+    const session = this.ensureSession();
+    const action = composerPrimaryActionForState(this.composerStateForSession(session));
+    if (action === "enqueue") {
+      await this.enqueueComposerDraft();
       return;
     }
+    if (action === "resume-queue") {
+      await this.resumeQueuedTurns(session.id);
+      return;
+    }
+    if (action === "stop-turn") {
+      await this.stopTurn();
+      return;
+    }
+    if (action === "cancel-knowledge-task") {
+      this.pauseQueueForSession(session.id);
+      await this.plugin.getKnowledgeBaseManager()?.cancelMaintenance();
+      return;
+    }
+    const item = await this.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: true });
+    if (!item) return;
+    const outcome = await this.startQueuedTurnItem(item, "composer");
+    if (outcome !== "running") await this.afterTurnSettled(item.sessionId, outcome === "completed");
+  }
+
+  private async enqueueComposerDraft(): Promise<void> {
+    const item = await this.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: false });
+    if (!item) return;
+    this.turnQueue.enqueue(item);
+    this.clearComposerDraft();
+    this.renderQueue();
+    this.renderToolbar();
+    new Notice("已加入队列");
+    if (!this.running && !this.plugin.getKnowledgeBaseManager()?.isRunning && !this.turnQueue.isSessionQueuePaused(item.sessionId)) {
+      void this.startNextQueuedTurn(item.sessionId);
+    }
+  }
+
+  private async resumeQueuedTurns(sessionId: string): Promise<void> {
+    this.turnQueue.resumeSessionQueue(sessionId);
+    this.renderQueue();
+    this.renderToolbar();
+    await this.startNextQueuedTurn(sessionId);
+  }
+
+  private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> {
+    if (succeeded) {
+      await this.startNextQueuedTurn(sessionId);
+    } else {
+      this.pauseQueueForSession(sessionId);
+    }
+    this.renderQueue();
+    this.renderToolbar();
+  }
+
+  private async startNextQueuedTurn(sessionId: string): Promise<void> {
+    if (this.queueStartInProgress || this.running || this.plugin.getKnowledgeBaseManager()?.isRunning) return;
+    const item = this.turnQueue.dequeueNext(sessionId);
+    if (!item) {
+      this.renderQueue();
+      this.renderToolbar();
+      return;
+    }
+    this.queueStartInProgress = true;
+    this.renderQueue();
+    this.renderToolbar();
+    let outcome: "running" | "completed" | "failed" = "failed";
     try {
-      const workspaceReady = knowledgeSession ? true : await this.ensureChatWorkspaceSelected(session);
-      if (!workspaceReady) return;
+      outcome = await this.startQueuedTurnItem(item, "queue");
+    } finally {
+      this.queueStartInProgress = false;
+    }
+    if (outcome !== "running") await this.afterTurnSettled(item.sessionId, outcome === "completed");
+  }
+
+  private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
+    let session = this.ensureSession();
+    const text = this.inputEl.value.trim();
+    const attachments = this.attachments.map((attachment) => ({ ...attachment }));
+    const skill = this.selectedSkill ? { ...this.selectedSkill } : null;
+    if (!text && !attachments.length && !skill) return null;
+    const knowledgeSession = this.isKnowledgeBaseSession(session);
+    const knowledgeCommand = knowledgeSession ? parseKnowledgeBaseCommand(text, attachments.length) : null;
+    if (knowledgeSession && knowledgeCommand && isLocalKnowledgeBaseCommand(knowledgeCommand.intent)) {
+      if (!options.allowLocalKnowledgeCommands) {
+        new Notice("本地命令不能排队；当前任务结束后再操作");
+        return null;
+      }
+      if (knowledgeCommand.intent === "clear") {
+        await this.clearKnowledgeBasePage(session);
+        return null;
+      }
+      if (knowledgeCommand.intent === "history") {
+        this.clearComposerDraft();
+        await this.openKnowledgeBaseHistory(session);
+        return null;
+      }
+    }
+    const kind = knowledgeSession && knowledgeCommand && knowledgeCommand.intent !== "chat" ? "knowledge-base" : "chat";
+    if (kind === "chat" && !knowledgeSession) {
+      const workspaceReady = await this.ensureChatWorkspaceSelected(session);
+      if (!workspaceReady) return null;
+      session = this.ensureSession();
+    }
+    return {
+      id: newId("queued-turn"),
+      sessionId: session.id,
+      text,
+      attachments,
+      skill,
+      turnOptions: this.currentTurnOptions(session),
+      kind,
+      createdAt: Date.now()
+    };
+  }
+
+  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+    const session = this.sessionById(item.sessionId);
+    if (!session) {
+      new Notice("队列所属会话已不存在");
+      return "failed";
+    }
+    if (item.kind === "knowledge-base") return await this.startKnowledgeBaseTurn(session, item, source);
+    return await this.startChatTurn(session, item, source);
+  }
+
+  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "failed"> {
+    try {
       const status = await this.plugin.ensureCodexConnected();
       this.applyStatus();
       if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
-      session = this.ensureSession();
       const runId = newId("run");
       this.activeRunId = runId;
+      this.activeRunKind = "chat";
       this.activeRunSessionId = session.id;
-      const turnAttachments = [...this.attachments];
+      const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
       const userMessage: ChatMessage = {
         id: newId("msg"),
         role: "user",
-        text: text || "(附件)",
+        text: item.text || "(附件)",
         runId,
         attachments: turnAttachments,
-        images: turnAttachments.filter((item) => item.type === "image"),
+        images: turnAttachments.filter((attachment) => attachment.type === "image"),
         createdAt: Date.now()
       };
       await this.plugin.externalizeMessageText(userMessage, userMessage.text);
       session.messages.push(userMessage);
       session.updatedAt = Date.now();
-      if (session.title === "新会话" && text) session.title = text.slice(0, 20);
-      this.inputEl.value = "";
-      const turnSkill = this.selectedSkill;
-      this.attachments = [];
-      this.selectedSkill = null;
+      if (session.title === "新会话" && item.text) session.title = item.text.slice(0, 20);
+      if (source === "composer") this.clearComposerDraft();
       this.renderTabs();
-      this.renderMessages({ forceBottom: true });
+      this.renderMessagesIfActive(session);
       this.renderToolbar();
 
-      const turnOptions = this.currentTurnOptions(session);
+      const turnOptions = item.turnOptions;
       this.running = true;
       this.turnStartedAt = Date.now();
       this.ensureThinkingMessage(session, "连接中", "正在连接 Codex...");
@@ -2461,10 +2731,11 @@ export class CodexView extends ItemView {
           session.threadId = started.threadId;
         });
       }
-      const input = buildUserInput(text, turnAttachments, turnSkill);
+      const input = buildUserInput(item.text, turnAttachments, item.skill);
       this.activeTurnId = await this.plugin.codex!.startTurn(session.threadId, input, turnOptions);
       this.attachTurnIdToRun(session, this.activeTurnId);
       await this.plugin.saveSettings();
+      return "running";
     } catch (error) {
       const diagnostic = this.diagnoseCodexFailure(error);
       this.running = false;
@@ -2479,29 +2750,31 @@ export class CodexView extends ItemView {
       });
       this.clearActiveRun();
       new Notice(`Codex 发送失败：${diagnostic.title}`);
+      return "failed";
     } finally {
       this.applyStatus();
     }
   }
 
-  private async sendKnowledgeBaseMessage(session: StoredSession, text: string): Promise<void> {
+  private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
     const manager = this.plugin.getKnowledgeBaseManager();
     if (!manager) {
       new Notice("知识库管理未初始化");
-      return;
+      return "failed";
     }
-    if (!text && !this.attachments.length) return;
+    if (!item.text && !item.attachments.length) return "failed";
     const runId = newId("kb-run");
     this.activeRunId = runId;
+    this.activeRunKind = "knowledge-base";
     this.activeRunSessionId = session.id;
-    const turnAttachments = [...this.attachments];
+    const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
     const userMessage: ChatMessage = {
       id: newId("msg"),
       role: "user",
-      text: text || "(附件)",
+      text: item.text || "(附件)",
       runId,
       attachments: turnAttachments,
-      images: turnAttachments.filter((item) => item.type === "image"),
+      images: turnAttachments.filter((attachment) => attachment.type === "image"),
       createdAt: Date.now()
     };
     await this.plugin.externalizeMessageText(userMessage, userMessage.text);
@@ -2518,17 +2791,17 @@ export class CodexView extends ItemView {
     session.messages.push(userMessage, assistantMessage);
     session.title = "知识库管理";
     session.updatedAt = Date.now();
-    this.inputEl.value = "";
-    this.attachments = [];
-    this.selectedSkill = null;
+    if (source === "composer") this.clearComposerDraft();
     this.running = true;
     this.renderTabs();
-    this.renderMessages({ forceBottom: true });
+    this.renderMessagesIfActive(session);
     this.renderToolbar();
     await this.plugin.saveSettings(true);
 
+    let succeeded = false;
     try {
-      const result = await manager.handleUserMessage(text, turnAttachments);
+      const result = await manager.handleUserMessage(item.text, turnAttachments, knowledgeBaseTurnOverrides(item.turnOptions));
+      succeeded = result.status === "success";
       assistantMessage.status = result.status === "success" ? "completed" : "failed";
       assistantMessage.text = result.message;
       assistantMessage.citations = result.citations;
@@ -2539,7 +2812,7 @@ export class CodexView extends ItemView {
       }
       this.moveMessageToEnd(session, assistantMessage.id);
       if (result.followUpCommand) {
-        this.fillKnowledgeBaseCommand(result.followUpCommand);
+        if (session.id === this.plugin.settings.activeSessionId) this.fillKnowledgeBaseCommand(result.followUpCommand);
       }
       if (result.status === "failed") new Notice(`知识库管理失败：${result.message}`);
     } finally {
@@ -2554,6 +2827,7 @@ export class CodexView extends ItemView {
       this.applyStatus();
       void this.refreshKnowledgeDashboard(true);
     }
+    return succeeded ? "completed" : "failed";
   }
 
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> {
@@ -2973,6 +3247,7 @@ export class CodexView extends ItemView {
       return;
     }
     const session = this.activeRunSession();
+    this.pauseQueueForSession(session.id);
     if (!session.threadId || !this.activeTurnId) return;
     await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(() => undefined);
     if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error("写作操作已中断"));
@@ -3021,6 +3296,7 @@ export class CodexView extends ItemView {
       this.activeTurnId = "";
       const session = this.activeRunSession();
       const knowledgeSession = this.isKnowledgeBaseSession(session);
+      const shouldPauseQueue = this.activeRunKind === "chat";
       if (knowledgeSession && session.threadId && timedOutTurnId) {
         void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(() => undefined);
       }
@@ -3035,6 +3311,7 @@ export class CodexView extends ItemView {
       this.clearActiveRun();
       this.applyStatus();
       void this.plugin.saveSettings(true);
+      if (shouldPauseQueue) void this.afterTurnSettled(session.id, false);
     }, timeoutMs);
   }
 
@@ -3722,6 +3999,7 @@ export class CodexView extends ItemView {
 
   private clearActiveRun(): void {
     this.activeRunId = "";
+    this.activeRunKind = "";
     this.activeRunSessionId = "";
     this.activeTurnId = "";
     this.editorActionActiveTimeoutMs = 0;
@@ -4335,6 +4613,43 @@ function compactReasoningLabel(value: ReasoningEffort): string {
     xhigh: "超高"
   };
   return labels[value] ?? value;
+}
+
+function composerActionButtonView(action: ReturnType<typeof composerPrimaryActionForState>): { icon: string; label: string; title: string } {
+  if (action === "enqueue") return { icon: "list-plus", label: "入队发送", title: "加入队列，当前任务结束后发送" };
+  if (action === "resume-queue") return { icon: "play", label: "继续队列", title: "继续队列" };
+  if (action === "stop-turn" || action === "cancel-knowledge-task") return { icon: "square", label: "停止", title: "停止当前任务" };
+  return { icon: "send-horizontal", label: "发送", title: "发送" };
+}
+
+function isLocalKnowledgeBaseCommand(intent: string): boolean {
+  return intent === "clear" || intent === "history";
+}
+
+function queuedTurnPreview(item: QueuedTurnItem): string {
+  const text = item.text.trim() || (item.attachments.length ? "(附件)" : "");
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+}
+
+function queuedTurnMeta(item: QueuedTurnItem): string {
+  const parts = [
+    item.kind === "knowledge-base" ? "知识库" : "对话",
+    item.turnOptions.model ? shortModelLabel(item.turnOptions.model) : "自动",
+    compactReasoningLabel(item.turnOptions.reasoning)
+  ];
+  if (item.skill) parts.push(`Skill ${item.skill.name}`);
+  if (item.attachments.length) parts.push(`${item.attachments.length} 个附件`);
+  return parts.join(" · ");
+}
+
+function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"]) {
+  return {
+    model: turnOptions.model,
+    reasoning: turnOptions.reasoning,
+    serviceTier: turnOptions.serviceTier,
+    mcpEnabled: turnOptions.mcpEnabled,
+    workspaceResources: turnOptions.workspaceResources
+  };
 }
 
 function shortModelLabel(value: string): string {

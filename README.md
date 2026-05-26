@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.6.0 setup guide and knowledge maintenance workflow." src="docs/images/codex-echoink-hero-v0.6.0.png">
+  <img width="1024" alt="Codex EchoInk v0.7.0 turn queue for queued chat, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.6.0-0EA5E9?style=flat-square" alt="Version v0.6.0">
+    <img src="https://img.shields.io/badge/version-v0.7.0-0EA5E9?style=flat-square" alt="Version v0.7.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip"><strong>Download v0.6.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip"><strong>Download v0.7.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -61,6 +61,17 @@
 - Shows file chips for touched files, with vault files opening back in Obsidian.
 - Keeps large outputs and raw details folded away so the conversation stays readable.
 - Supports Agent / Plan mode, model selection, reasoning effort, speed, and file permission modes.
+
+### Turn Queue
+
+<img width="1024" alt="Codex EchoInk turn queue shows queued cards, enqueue while running, pause and resume, and serial knowledge commands." src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+
+- Queue follow-up tasks while the current Agent turn is still running.
+- Keeps queues scoped to each session, so ordinary chat and Knowledge channel work do not mix.
+- Captures the exact text, attachments, Skill, model, permissions, mode, and workspace at enqueue time.
+- Shows queued cards above the composer, with delete and drag-to-reorder for work that has not started.
+- Runs the next item only after the current task succeeds; stop or failure pauses the queue until you resume it.
+- Keeps Knowledge commands such as `/ask`, `/maintain`, and `/journal` serial, so they do not run on top of each other.
 
 ### Knowledge Base Operations
 
@@ -127,6 +138,28 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v0.7.0
+
+**New feature:** Turn Queue for ordinary chat and Knowledge channel tasks.
+
+**What changed:**
+
+- Added a session-scoped queue above the composer.
+- While a task is running, a non-empty composer changes the primary button to `Enqueue`.
+- With an empty composer, the same button still stops the current task.
+- Queue items capture text, attachments, selected Skill, model, permission, mode, and workspace at enqueue time.
+- Successful tasks advance to the next queued item automatically.
+- Failed or stopped tasks pause the queue and keep the remaining items for manual resume.
+- Knowledge commands such as `/ask`, `/maintain`, and `/journal` now run serially through the queue.
+
+**How to use:**
+
+1. Start a chat or Knowledge command.
+2. Type the next task while the current one is running.
+3. Click `Enqueue`.
+4. Reorder or delete waiting items above the composer.
+5. If a task is stopped or fails, click `Resume queue` when you are ready.
 
 ### v0.6.0
 
@@ -296,7 +329,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.6.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.7.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
@@ -348,6 +381,8 @@ Try these steps:
 - Knowledge management runs keep Raw source bodies read-only and only update indexes or trackers. In ordinary Agent chat, Raw file organization follows your explicit instruction and the active permission mode.
 
 ## Screenshots
+
+![Codex EchoInk turn queue](docs/images/codex-echoink-turn-queue-v0.7.0.png)
 
 ![Codex EchoInk knowledge base workflow](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 

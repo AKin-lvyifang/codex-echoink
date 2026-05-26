@@ -629,6 +629,60 @@ body.theme-light .codex-code-wrapper pre {
   cursor: pointer;
 }
 
+.codex-skill-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(280px, 100%);
+  padding: 4px 7px;
+  border: 1px solid rgba(var(--codex-brand-rgb), 0.28);
+  border-radius: 7px;
+  color: var(--interactive-accent);
+  background: rgba(var(--codex-brand-rgb), 0.08);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.codex-skill-token-icon,
+.codex-skill-token button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.codex-skill-token-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.codex-skill-token-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-skill-token button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.codex-skill-token button:hover {
+  background: rgba(var(--codex-brand-rgb), 0.12);
+}
+
+.codex-skill-token button svg {
+  width: 13px;
+  height: 13px;
+}
+
 .codex-input {
   flex: 1 1 auto;
   width: 100%;
@@ -776,6 +830,7 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-skill-menu,
+.codex-knowledge-command-menu,
 .codex-mcp-panel {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -783,7 +838,8 @@ body.theme-light .codex-code-wrapper pre {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
-.codex-skill-menu {
+.codex-skill-menu,
+.codex-knowledge-command-menu {
   display: none;
   position: absolute;
   left: 0;
@@ -795,18 +851,55 @@ body.theme-light .codex-code-wrapper pre {
   margin-bottom: 4px;
 }
 
-.codex-skill-menu.is-visible {
+.codex-skill-menu.is-visible,
+.codex-knowledge-command-menu.is-visible {
   display: block;
 }
 
-.codex-skill-item {
+.codex-skill-item,
+.codex-command-item {
   padding: 8px 10px;
   border-bottom: 1px solid var(--background-modifier-border);
   cursor: pointer;
 }
 
-.codex-skill-item:hover {
+.codex-skill-item:hover,
+.codex-skill-item.is-selected,
+.codex-command-item:hover {
   background: var(--background-modifier-hover);
+}
+
+.codex-skill-heading,
+.codex-command-item,
+.codex-command-heading {
+  display: flex;
+  align-items: center;
+}
+
+.codex-skill-heading,
+.codex-command-heading {
+  gap: 7px;
+}
+
+.codex-skill-icon,
+.codex-command-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--interactive-accent);
+}
+
+.codex-skill-icon svg,
+.codex-command-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.codex-command-item {
+  gap: 10px;
+}
+
+.codex-command-body {
+  min-width: 0;
 }
 
 .codex-skill-name {
@@ -814,10 +907,27 @@ body.theme-light .codex-code-wrapper pre {
   font-weight: 700;
 }
 
+.codex-command-text {
+  color: var(--text-normal);
+  font-weight: 750;
+}
+
+.codex-command-title {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .codex-skill-desc,
+.codex-command-desc,
 .codex-skill-empty {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.codex-command-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .codex-mcp-panel {
@@ -3104,6 +3214,131 @@ body.theme-light .codex-container {
   border-radius: 18px;
 }
 
+.codex-turn-queue {
+  display: none;
+  gap: 6px;
+  padding: 8px 8px 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.codex-turn-queue.is-visible {
+  display: grid;
+}
+
+.codex-turn-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codex-turn-queue-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.codex-turn-queue-title-icon,
+.codex-turn-queue-handle,
+.codex-turn-queue-resume,
+.codex-turn-queue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.codex-turn-queue-title-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.codex-turn-queue-resume,
+.codex-turn-queue-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.codex-turn-queue-resume:hover,
+.codex-turn-queue-remove:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.codex-turn-queue-list {
+  display: grid;
+  gap: 5px;
+  max-height: 142px;
+  overflow-y: auto;
+}
+
+.codex-turn-queue-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--codex-soft-bg);
+}
+
+.codex-turn-queue-item.is-drag-over {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.codex-turn-queue-handle {
+  color: var(--text-faint);
+  cursor: grab;
+}
+
+.codex-turn-queue-handle svg,
+.codex-turn-queue-resume svg,
+.codex-turn-queue-remove svg {
+  width: 15px;
+  height: 15px;
+}
+
+.codex-turn-queue-body {
+  min-width: 0;
+}
+
+.codex-turn-queue-preview,
+.codex-turn-queue-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-turn-queue-preview {
+  color: var(--text-normal);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.codex-turn-queue-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.codex-turn-queue.is-paused .codex-turn-queue-title {
+  color: var(--text-warning);
+}
+
 .codex-toolbar {
   display: flex;
   flex-direction: row;
@@ -3179,6 +3414,7 @@ body.theme-light .codex-container {
 }
 
 .codex-composer-icon-button:hover,
+.codex-composer-icon-button.is-active,
 .codex-composer-model-button:hover,
 .codex-composer-select:hover,
 .codex-context-meter:hover {
@@ -3290,6 +3526,10 @@ body.theme-light .codex-container {
   color: var(--text-muted);
   background: transparent !important;
   box-shadow: none !important;
+}
+
+.codex-composer-send-button.codex-send-button.is-queue-action {
+  color: var(--interactive-accent);
 }
 
 .codex-composer-send-button.codex-send-button:hover {

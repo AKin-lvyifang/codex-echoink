@@ -6,6 +6,7 @@ import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentInputModality, AgentModelInfo, AgentPromptPart } from "../agent/types";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
+import type { TurnOptions } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
 import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
@@ -44,6 +45,8 @@ export interface KnowledgeBaseChatResult {
   citations?: KnowledgeBaseCitationSummary;
   followUpCommand?: string;
 }
+
+export type KnowledgeBaseTurnOptionOverrides = Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources">;
 
 const MAX_ATTACHED_SOURCES = 20;
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
@@ -188,7 +191,7 @@ export class KnowledgeBaseManager {
     }
   }
 
-  async handleUserMessage(text: string, attachments: StoredAttachment[] = []): Promise<KnowledgeBaseChatResult> {
+  async handleUserMessage(text: string, attachments: StoredAttachment[] = [], turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
     const command = parseKnowledgeBaseCommand(text, attachments.length);
     try {
       if (command.intent === "help") {
@@ -216,7 +219,7 @@ export class KnowledgeBaseManager {
       }
       if (command.intent === "lint" || command.intent === "maintain" || command.intent === "reingest" || command.intent === "process-outputs" || command.intent === "process-inbox") {
         const mode = command.intent === "process-inbox" ? "inbox" : command.intent === "process-outputs" ? "outputs" : command.intent;
-        const result = await this.runMaintenance(mode, text);
+        const result = await this.runMaintenance(mode, text, turnOptionOverrides);
         if (result.status === "success") {
           return {
             status: "success",
@@ -236,13 +239,13 @@ export class KnowledgeBaseManager {
         };
       }
       if (command.intent === "ask") {
-        return await this.answerQuestion(text);
+        return await this.answerQuestion(text, turnOptionOverrides);
       }
       if (command.intent === "review") {
         return await this.runWeeklyReview(command.reviewKind ?? "knowledge-base");
       }
       if (command.intent === "journal") {
-        return await this.writeDailyJournal(text, attachments);
+        return await this.writeDailyJournal(text, attachments, turnOptionOverrides);
       }
       const target = command.target === "journal" ? "inbox" : command.target ?? (attachments.length ? "raw-attachments" : "inbox");
       const paths = await this.captureChatInput(target, text, attachments);
@@ -309,7 +312,7 @@ export class KnowledgeBaseManager {
     return { summary: result.summary, rulesFilePath: result.rulesFilePath };
   }
 
-  async runMaintenance(mode: KnowledgeBaseRunMode = "maintain", userRequest = ""): Promise<KnowledgeBaseRunResult> {
+  async runMaintenance(mode: KnowledgeBaseRunMode = "maintain", userRequest = "", turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseRunResult> {
     if (this.running) {
       new Notice("知识库维护正在运行");
       return {
@@ -356,7 +359,7 @@ export class KnowledgeBaseManager {
       const sources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, sources)
-        : await this.runCodexKnowledgeTask(prompt, sources, "workspace-write", "knowledge-base");
+        : await this.runCodexKnowledgeTask(prompt, sources, "workspace-write", "knowledge-base", turnOptionOverrides);
 
       const structure = mode === "maintain"
         ? await normalizeKnowledgeBaseStructure(vaultPath, { lastReportPath: settings.lastReportPath || discovery.reportPath })
@@ -452,7 +455,7 @@ export class KnowledgeBaseManager {
     }
   }
 
-  private async answerQuestion(text: string): Promise<KnowledgeBaseChatResult> {
+  private async answerQuestion(text: string, turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
     if (this.running) {
       return { status: "failed", message: "已有知识库任务正在运行" };
     }
@@ -476,7 +479,7 @@ export class KnowledgeBaseManager {
       const backend = this.resolveKnowledgeBackend();
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, matches, "read-only")
-        : await this.runCodexKnowledgeTask(prompt, matches, "read-only", "knowledge-base");
+        : await this.runCodexKnowledgeTask(prompt, matches, "read-only", "knowledge-base", turnOptionOverrides);
       return {
         status: "success",
         message: formatAskAnswer(output, citations),
@@ -495,7 +498,7 @@ export class KnowledgeBaseManager {
     }
   }
 
-  private async writeDailyJournal(text: string, attachments: StoredAttachment[]): Promise<KnowledgeBaseChatResult> {
+  private async writeDailyJournal(text: string, attachments: StoredAttachment[], turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
     if (this.running) {
       return { status: "failed", message: "已有知识库任务正在运行" };
     }
@@ -524,7 +527,7 @@ export class KnowledgeBaseManager {
       });
       const output = backend === "opencode"
         ? await this.runOpenCodeKnowledgeTask(prompt, [], "workspace-write")
-        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write", "journal");
+        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write", "journal", turnOptionOverrides);
       if (!await exists(target.absolutePath)) {
         throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
       }
@@ -601,7 +604,8 @@ export class KnowledgeBaseManager {
     prompt: string,
     sources: KnowledgeBaseSource[],
     permission: PermissionMode = "workspace-write",
-    writeScope: "knowledge-base" | "journal" = "knowledge-base"
+    writeScope: "knowledge-base" | "journal" = "knowledge-base",
+    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides
   ): Promise<string> {
     let status = await this.plugin.ensureCodexConnected(false, { silent: true });
     if (!status.connected) {
@@ -613,7 +617,8 @@ export class KnowledgeBaseManager {
       availableModels: status.models,
       vaultPath: this.plugin.getVaultPath(),
       permission,
-      writeScope
+      writeScope,
+      overrides: turnOptionOverrides
     });
     let started: { threadId: string; title: string };
     try {

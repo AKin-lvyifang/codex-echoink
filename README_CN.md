@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v0.6.0 启动向导与知识库维护工作流。" src="docs/images/codex-echoink-hero-v0.6.0.png">
+  <img width="1024" alt="Codex EchoInk v0.7.0 任务队列，支持对话排队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.6.0-0EA5E9?style=flat-square" alt="版本 v0.6.0">
+    <img src="https://img.shields.io/badge/version-v0.7.0-0EA5E9?style=flat-square" alt="版本 v0.7.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip"><strong>下载 v0.6.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip"><strong>下载 v0.7.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -63,6 +63,17 @@
 - 被处理的文件会显示为文件 chip，vault 内文件可回到 Obsidian 打开。
 - 大输出和原始详情默认折叠，避免对话被日志淹没。
 - 支持 Agent / Plan 模式、模型选择、思考强度、速度和文件权限模式。
+
+### 任务队列
+
+<img width="1024" alt="Codex EchoInk 任务队列展示排队卡片、运行中入队、暂停继续和知识库命令串行。" src="docs/images/codex-echoink-turn-queue-v0.7.0.png">
+
+- 当前 Agent 任务还在跑时，可以继续把后续任务加入队列。
+- 队列按会话隔离，普通对话和知识库频道互不混用。
+- 入队时会锁定文本、附件、Skill、模型、权限、模式和工作区。
+- 输入框上方显示排队卡片，未执行任务可以删除，也可以拖动改顺序。
+- 当前任务成功后才自动执行下一条；停止或失败后队列暂停，等你手动继续。
+- `/ask`、`/maintain`、`/journal` 等知识库命令会串行执行，避免并发污染上下文。
 
 ### 知识库自动化运维
 
@@ -131,6 +142,28 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.7.0
+
+**新功能：** 普通对话和知识库频道都支持任务队列。
+
+**更新内容：**
+
+- 输入框上方新增会话级队列。
+- 当前任务运行中，输入框有内容时，主按钮变成 `入队发送`。
+- 当前任务运行中，输入框为空时，主按钮仍然是停止当前任务。
+- 队列项会锁定入队时的文本、附件、Skill、模型、权限、模式和工作区。
+- 任务成功后自动执行下一条。
+- 任务失败或手动停止后，队列暂停并保留剩余任务，可手动继续。
+- `/ask`、`/maintain`、`/journal` 等知识库命令通过队列串行执行。
+
+**使用方法：**
+
+1. 先发送一个普通对话或知识库命令。
+2. 当前任务还在跑时，继续输入下一条任务。
+3. 点击 `入队发送`。
+4. 在输入框上方调整顺序或删除未执行任务。
+5. 如果任务停止或失败，点击 `继续队列` 恢复后续任务。
 
 ### v0.6.0
 
@@ -301,7 +334,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.6.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.6.0/codex-echoink-0.6.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.0/codex-echoink-0.7.0.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
@@ -357,6 +390,8 @@ codex-echoink/
 
 <a id="截图"></a>
 ## 截图
+
+![Codex EchoInk 任务队列](docs/images/codex-echoink-turn-queue-v0.7.0.png)
 
 ![Codex EchoInk 知识库自动化流程](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 
