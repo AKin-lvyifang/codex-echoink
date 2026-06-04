@@ -8,7 +8,7 @@ export function buildCodexKnowledgeTurnOptions(input: {
   availableModels: Array<Pick<CodexModel, "model" | "isDefault">>;
   vaultPath: string;
   permission: PermissionMode;
-  writeScope?: "knowledge-base" | "journal";
+  writeScope?: "knowledge-base" | "knowledge-lint" | "journal";
   overrides?: Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources">;
 }): TurnOptions {
   const model = input.overrides?.model || input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
@@ -27,11 +27,16 @@ export function buildCodexKnowledgeTurnOptions(input: {
   };
 }
 
-function writableRootsForScope(vaultPath: string, scope: "knowledge-base" | "journal"): string[] {
+function writableRootsForScope(vaultPath: string, scope: "knowledge-base" | "knowledge-lint" | "journal"): string[] {
   if (scope === "journal") {
     return [
       path.join(vaultPath, "journal"),
       path.join(vaultPath, "01-日记")
+    ];
+  }
+  if (scope === "knowledge-lint") {
+    return [
+      path.join(vaultPath, "outputs")
     ];
   }
   return [

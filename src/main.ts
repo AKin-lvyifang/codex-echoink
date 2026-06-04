@@ -17,14 +17,18 @@ import {
   exportKnowledgeBaseHistory,
   migrateKnowledgeBaseHistory,
   persistAndCompactKnowledgeBaseHistory,
+  pruneKnowledgeBaseHistoryByRetention,
   readKnowledgeBaseHistoryDay,
   readKnowledgeBaseHistoryIndex,
   rebuildKnowledgeBaseHistoryIndex,
+  removeKnowledgeBaseHistory,
+  removeKnowledgeBaseHistoryDays,
   type KnowledgeBaseHistoryIndex,
+  type KnowledgeBaseHistoryRemovalResult,
   type KnowledgeBaseStorageStats
 } from "./knowledge-base/history-store";
 import { KnowledgeBaseManager } from "./knowledge-base/manager";
-import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt } from "./knowledge-base/report";
+import { readKnowledgeBaseReportExcerpt, shouldRecoverKnowledgeBaseLintFailure } from "./knowledge-base/report";
 import { ReviewManager } from "./review/manager";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "./review/preview-view";
 import { isReviewHtmlPath } from "./review/schedule";
@@ -115,6 +119,9 @@ export default class CodexForObsidianPlugin extends Plugin {
         window.setTimeout(() => void this.ensureCodexConnected(false, { silent: true }), 800);
       });
     }
+    this.app.workspace.onLayoutReady(() => {
+      window.setTimeout(() => void this.pruneKnowledgeBaseHistoryByRetention(), 1200);
+    });
   }
 
   async onunload(): Promise<void> {
@@ -197,6 +204,7 @@ export default class CodexForObsidianPlugin extends Plugin {
           rateLimits: nextStatus.rateLimits ?? previousStatus?.rateLimits ?? null,
           rateLimitsByLimitId: nextStatus.rateLimitsByLimitId ?? previousStatus?.rateLimitsByLimitId ?? null
         };
+        if (this.lastStatus.connected) void this.archivePendingKnowledgeBaseThreads();
       } catch (error) {
         const diagnostic = diagnoseCodexError(error, {
           model: this.settings.defaultModel,
@@ -369,6 +377,24 @@ export default class CodexForObsidianPlugin extends Plugin {
     return compactOldKnowledgeBaseProcessHistory(this.getVaultPath(), this.getPluginDataDirName());
   }
 
+  async removeKnowledgeBaseHistory(): Promise<KnowledgeBaseHistoryRemovalResult> {
+    return removeKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName());
+  }
+
+  async removeKnowledgeBaseHistoryDays(dates: string[]): Promise<KnowledgeBaseHistoryRemovalResult> {
+    return removeKnowledgeBaseHistoryDays(this.getVaultPath(), this.getPluginDataDirName(), dates);
+  }
+
+  async pruneKnowledgeBaseHistoryByRetention(): Promise<KnowledgeBaseHistoryRemovalResult> {
+    const retentionDays = this.settings.knowledgeBase.historyRetentionDays;
+    return pruneKnowledgeBaseHistoryByRetention(this.getVaultPath(), this.getPluginDataDirName(), retentionDays);
+  }
+
+  async archivePendingKnowledgeBaseThreads(): Promise<number> {
+    if (!this.knowledgeBase) return 0;
+    return this.knowledgeBase.archivePendingCodexKnowledgeThreads();
+  }
+
   getKnowledgeBaseManager(): KnowledgeBaseManager | null {
     return this.knowledgeBase;
   }
@@ -398,7 +424,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const settings = this.settings.knowledgeBase;
     if (settings.lastRunStatus !== "failed" || !settings.lastReportPath) return false;
     const report = await readKnowledgeBaseReportExcerpt(this.getVaultPath(), settings.lastReportPath, 2000);
-    if (!report || !isLintOnlyKnowledgeBaseReport(report)) return false;
+    if (!shouldRecoverKnowledgeBaseLintFailure(settings.lastError, report)) return false;
     settings.lastRunStatus = "success";
     settings.lastError = "";
     settings.lastSummary = `体检报告已生成。上次 Codex 返回失败状态，但 lint-only 报告文件存在，已恢复为成功。\n\n${report}`.slice(0, 1000);
@@ -407,7 +433,7 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   private handleCodexNotification(notification: any): void {
     if (this.knowledgeBase?.handleCodexNotification(notification)) {
-      this.view?.handleCodexNotification(notification);
+      this.view?.handleKnowledgeBaseCodexNotification(notification);
       return;
     }
     this.view?.handleCodexNotification(notification);

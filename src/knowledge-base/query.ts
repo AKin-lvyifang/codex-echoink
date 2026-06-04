@@ -1,6 +1,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeBaseEvidenceStatus, KnowledgeBaseSource } from "./types";
+import { contentFingerprint } from "./raw-integrity";
 
 export interface KnowledgeBaseAskMatch extends KnowledgeBaseSource {
   bucket: KnowledgeBaseCitationBucket;
@@ -43,6 +44,7 @@ export async function findKnowledgeBaseAskMatches(vaultPath: string, question: s
         absolutePath,
         size: stat.size,
         mtime: stat.mtimeMs,
+        fingerprint: contentFingerprint(Buffer.from(raw)),
         mime: "text/markdown",
         modality: "text",
         changed: false,

@@ -12,19 +12,15 @@ export interface KnowledgeBaseCodexRoute {
 
 export function routeKnowledgeBaseCodexNotification(method: string, params: any, state: KnowledgeBaseCodexRouteState): KnowledgeBaseCodexRoute {
   const ids = extractKnowledgeBaseNotificationIds(params);
-  const exact = Boolean(
-    (ids.threadId && ids.threadId === state.threadId) ||
-    (ids.turnId && ids.turnId === state.turnId) ||
-    (ids.itemId && state.itemIds.has(ids.itemId))
-  );
+  const exact = isKnowledgeBaseScopedNotification(method, ids, state);
   const orphanAssistantItem = Boolean(
     ids.itemId &&
     !ids.threadId &&
     !ids.turnId &&
-    (method === "item/started" || method === "item/agentMessage/delta")
+    method === "item/started" &&
+    !state.turnId
   );
-  const unscopedError = method === "error" && !ids.threadId && !ids.turnId && !ids.itemId;
-  const swallow = exact || orphanAssistantItem || unscopedError;
+  const swallow = exact || orphanAssistantItem;
   return {
     swallow,
     collectAssistantDelta: swallow && method === "item/agentMessage/delta",
@@ -45,4 +41,23 @@ function firstString(...values: any[]): string {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+function isKnowledgeBaseScopedNotification(
+  method: string,
+  ids: { threadId: string; turnId: string; itemId: string },
+  state: KnowledgeBaseCodexRouteState
+): boolean {
+  if (ids.itemId && state.itemIds.has(ids.itemId)) {
+    if (!ids.threadId && !ids.turnId) return !state.turnId;
+    if (ids.turnId) return state.turnId ? ids.turnId === state.turnId : ids.threadId === state.threadId;
+    return ids.threadId === state.threadId;
+  }
+  if (ids.turnId) {
+    if (state.turnId) return ids.turnId === state.turnId;
+    return method === "turn/started" && ids.threadId === state.threadId;
+  }
+  if (!ids.threadId || ids.threadId !== state.threadId) return false;
+  if (method.startsWith("turn/") && state.turnId) return false;
+  return true;
 }

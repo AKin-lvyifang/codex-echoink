@@ -3,7 +3,10 @@ import type { KnowledgeBaseRunResult } from "./types";
 export function buildScheduledKnowledgeBaseMessage(result: KnowledgeBaseRunResult, reportText = ""): string {
   const status = result.status === "success" ? "成功" : result.status === "canceled" ? "已取消" : "失败";
   const summary = result.status === "success"
-    ? extractKnowledgeBaseReportConclusion(reportText) || compactScheduledSummary(result.summary)
+    ? compactScheduledSummary([
+      extractKnowledgeBaseReportConclusion(reportText) || compactScheduledSummary(result.summary),
+      externalRawAdditionsSummary(result.externalRawAdditions)
+    ].filter(Boolean).join(" "))
     : compactScheduledSummary(result.error || result.summary || "未知错误");
   return [
     result.status === "success" ? "每日维护执行完毕。" : result.status === "canceled" ? "每日维护已取消。" : "每日维护执行失败。",
@@ -13,6 +16,11 @@ export function buildScheduledKnowledgeBaseMessage(result: KnowledgeBaseRunResul
     result.reportPath ? `- 报告：${result.reportPath}` : "",
     summary ? `- 摘要：${summary}` : ""
   ].filter(Boolean).join("\n");
+}
+
+function externalRawAdditionsSummary(additions: string[] | undefined): string {
+  if (!additions?.length) return "";
+  return `运行中新出现 ${additions.length} 个 raw，已保留，留到下次 /maintain。`;
 }
 
 export function extractKnowledgeBaseReportConclusion(text: string): string {

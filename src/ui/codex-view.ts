@@ -26,7 +26,7 @@ import { displayTextForMessage, isLargeRawMessage } from "../core/raw-message-st
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
 import { renderSettingsGearIcon } from "./codex-icon";
 import { shouldCloseComposerMenusForClick } from "./composer-menu";
-import { composerIsBusy, composerPrimaryActionForState, type ComposerPrimaryActionState } from "./composer-state";
+import { composerIsBusy, composerPrimaryActionForState, composerStateForRuntimeState, type ComposerPrimaryActionState } from "./composer-state";
 import { extractKnowledgeBaseResultTitle } from "./knowledge-base-result-title";
 import { formatMessageHeaderTime } from "./message-time";
 import { openImageOverlay, renderRichText } from "./render-message";
@@ -39,7 +39,7 @@ import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../edito
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../editor-actions/summary-cache";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../editor-actions/output";
-import { knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, type KnowledgeBaseCommandOption } from "../knowledge-base/commands";
+import { knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent, type KnowledgeBaseCommandOption } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeBaseHistoryDaySummary } from "../knowledge-base/history-store";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages } from "../knowledge-base/session-history";
@@ -71,6 +71,48 @@ interface ArticleUnderstandingPanelState {
   model?: string;
   usedInLastRun?: boolean;
   error?: string;
+}
+
+interface RectLike {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING = 16;
+const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS = 360;
+
+export function isKnowledgeDashboardHealthTooltipHoverPoint(
+  triggerRect: RectLike,
+  panelRect: RectLike,
+  x: number,
+  y: number,
+  padding = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING
+): boolean {
+  if (isPointInExpandedRect(triggerRect, x, y, padding) || isPointInExpandedRect(panelRect, x, y, padding)) return true;
+
+  const bridgeLeft = Math.min(triggerRect.left, panelRect.left) - padding;
+  const bridgeRight = Math.max(triggerRect.right, panelRect.right) + padding;
+  let bridgeTop: number;
+  let bridgeBottom: number;
+
+  if (panelRect.top >= triggerRect.bottom) {
+    bridgeTop = triggerRect.bottom - padding;
+    bridgeBottom = panelRect.top + padding;
+  } else if (triggerRect.top >= panelRect.bottom) {
+    bridgeTop = panelRect.bottom - padding;
+    bridgeBottom = triggerRect.top + padding;
+  } else {
+    bridgeTop = Math.min(triggerRect.top, panelRect.top) - padding;
+    bridgeBottom = Math.max(triggerRect.bottom, panelRect.bottom) + padding;
+  }
+
+  return x >= bridgeLeft && x <= bridgeRight && y >= bridgeTop && y <= bridgeBottom;
+}
+
+function isPointInExpandedRect(rect: RectLike, x: number, y: number, padding: number): boolean {
+  return x >= rect.left - padding && x <= rect.right + padding && y >= rect.top - padding && y <= rect.bottom + padding;
 }
 
 export class CodexView extends ItemView {
@@ -154,6 +196,9 @@ export class CodexView extends ItemView {
   private knowledgeDashboardLoading = false;
   private knowledgeDashboardError = "";
   private knowledgeDashboardRequestId = 0;
+  private knowledgeDashboardTooltipPanels: HTMLElement[] = [];
+  private knowledgeDashboardTooltipCloseTimers = new Set<number>();
+  private knowledgeDashboardTooltipCleanups: Array<() => void> = [];
   private readonly turnQueue = new RuntimeTurnQueue();
   private queueStartInProgress = false;
   private draggedQueueItemId = "";
@@ -197,6 +242,7 @@ export class CodexView extends ItemView {
     this.clearTurnWatchdog();
     this.clearEditorActionStatusTimers();
     this.clearEditorSummaryTimers();
+    this.clearKnowledgeDashboardHealthTooltips();
     this.rejectEditorActionRun(new Error("Codex 侧栏已关闭"));
     this.rejectEditorSummaryRun(new Error("Codex 侧栏已关闭"));
     await this.plugin.saveSettings(true);
@@ -373,6 +419,12 @@ export class CodexView extends ItemView {
     }
   }
 
+  handleKnowledgeBaseCodexNotification(notification: CodexNotification): boolean {
+    if (this.activeRunKind !== "knowledge-base") return false;
+    this.handleCodexNotification(notification);
+    return true;
+  }
+
   private handleEditorActionNotification(method: string, params: any): boolean {
     if (this.handleEditorSummaryNotification(method, params)) return true;
     const isActiveEditorAction = this.isEditorActionRunActive();
@@ -468,6 +520,7 @@ export class CodexView extends ItemView {
   }
 
   private render(): void {
+    this.clearKnowledgeDashboardHealthTooltips();
     this.contentEl.empty();
     this.rootEl = this.contentEl.createDiv({ cls: "codex-container" });
 
@@ -931,6 +984,7 @@ export class CodexView extends ItemView {
 
   private renderKnowledgeDashboard(): void {
     if (!this.knowledgeDashboardEl) return;
+    this.clearKnowledgeDashboardHealthTooltips();
     const session = this.ensureSession();
     const visible = this.isKnowledgeBaseSession(session);
     this.knowledgeDashboardEl.empty();
@@ -958,7 +1012,7 @@ export class CodexView extends ItemView {
       this.addKnowledgeDashboardMetric(summary, "Raw", `${snapshot.raw.fileCount}`);
       this.addKnowledgeDashboardMetric(summary, "Wiki", `${snapshot.wiki.fileCount}`);
       this.addKnowledgeDashboardMetric(summary, "Inbox", `${snapshot.inbox.fileCount}`);
-      this.addKnowledgeDashboardHealthMetric(summary, snapshot.health.status, snapshot.health.label);
+      this.addKnowledgeDashboardHealthMetric(summary, snapshot.health);
     } else {
       summary.createSpan({ cls: "codex-kb-dashboard-muted", text: this.knowledgeDashboardError || "等待扫描" });
     }
@@ -1042,10 +1096,12 @@ export class CodexView extends ItemView {
     };
   }
 
-  private addKnowledgeDashboardHealthMetric(container: HTMLElement, status: string, label: string): void {
+  private addKnowledgeDashboardHealthMetric(container: HTMLElement, health: KnowledgeBaseDashboardSnapshot["health"]): void {
+    const { status, label } = health;
     const metric = container.createSpan({ cls: `codex-kb-dashboard-metric codex-kb-dashboard-health codex-kb-health-${status}` });
     metric.createSpan({ cls: "codex-kb-status-dot" });
     metric.createSpan({ cls: "codex-kb-dashboard-metric-value", text: label });
+    this.addKnowledgeDashboardHealthTooltip(metric, health, "summary");
   }
 
   private async openKnowledgeDashboardRulesFile(snapshot: KnowledgeBaseDashboardSnapshot): Promise<void> {
@@ -1069,7 +1125,8 @@ export class CodexView extends ItemView {
       "知识库健康",
       snapshot.health.score,
       `codex-kb-health-${snapshot.health.status}`,
-      snapshot.health.label
+      snapshot.health.label,
+      snapshot.health
     );
     this.addKnowledgeDashboardMeter(
       overview,
@@ -1098,17 +1155,262 @@ export class CodexView extends ItemView {
     }
   }
 
-  private addKnowledgeDashboardMeter(container: HTMLElement, label: string, scoreValue: number, statusClass: string, statusLabel: string): void {
+  private addKnowledgeDashboardMeter(
+    container: HTMLElement,
+    label: string,
+    scoreValue: number,
+    statusClass: string,
+    statusLabel: string,
+    healthTooltip?: KnowledgeBaseDashboardSnapshot["health"]
+  ): void {
     const row = container.createDiv({ cls: "codex-kb-dashboard-meter-row" });
     row.createDiv({ cls: "codex-kb-dashboard-meter-label", text: label });
     const score = row.createDiv({ cls: "codex-kb-dashboard-score" });
-    score.createSpan({ cls: "codex-kb-dashboard-score-label", text: `${scoreValue}` });
+    const scoreValueEl = score.createSpan({ cls: "codex-kb-dashboard-score-value" });
+    scoreValueEl.createSpan({ cls: "codex-kb-dashboard-score-label", text: `${scoreValue}` });
+    if (healthTooltip) this.addKnowledgeDashboardHealthTooltip(scoreValueEl, healthTooltip, "meter");
     const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
     const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill ${statusClass}` });
     fill.style.width = `${Math.max(0, Math.min(100, scoreValue))}%`;
     const status = row.createDiv({ cls: `codex-kb-dashboard-health-badge ${statusClass}` });
     status.createSpan({ cls: "codex-kb-status-dot" });
     status.createSpan({ text: statusLabel });
+  }
+
+  private addKnowledgeDashboardHealthTooltip(container: HTMLElement, health: KnowledgeBaseDashboardSnapshot["health"], placement: "summary" | "meter"): void {
+    const placementClass = placement === "summary" ? "codex-kb-health-tooltip-placement-summary" : "codex-kb-health-tooltip-placement-meter";
+    const wrapper = container.createSpan({ cls: `codex-kb-health-tooltip ${placementClass}` });
+    const tooltipId = newId("codex-kb-health-tooltip");
+    const button = wrapper.createEl("button", {
+      cls: "codex-kb-health-tooltip-trigger",
+      text: "!",
+      attr: {
+        type: "button",
+        tabindex: "0",
+        title: "健康分解释",
+        "aria-label": "解释知识库健康分",
+        "aria-describedby": tooltipId,
+        "aria-expanded": "false"
+      }
+    });
+    const bridge = document.body.createDiv({ cls: "codex-kb-health-tooltip-bridge" });
+    const panel = document.body.createDiv({ cls: "codex-kb-health-tooltip-panel", attr: { id: tooltipId, role: "tooltip" } });
+    this.knowledgeDashboardTooltipPanels.push(bridge);
+    this.knowledgeDashboardTooltipPanels.push(panel);
+    panel.createDiv({ cls: "codex-kb-health-tooltip-title", text: "健康分解释" });
+    panel.createDiv({ cls: "codex-kb-health-tooltip-summary", text: `当前 ${health.score} 分，状态：${health.label}。` });
+    const reasons = panel.createDiv({ cls: "codex-kb-health-tooltip-reasons" });
+    const scoreReasons = health.scoreReasons ?? [];
+    if (scoreReasons.length) {
+      for (const reason of scoreReasons) {
+        reasons.createDiv({ cls: "codex-kb-health-tooltip-reason", text: knowledgeDashboardHealthReasonText(reason) });
+      }
+    } else {
+      reasons.createDiv({ cls: "codex-kb-health-tooltip-reason codex-kb-health-tooltip-reason-muted", text: "暂无扣分项" });
+    }
+    const note = panel.createDiv({ cls: "codex-kb-health-tooltip-note" });
+    note.createDiv({ text: health.scoreCheckNote || "体检成功只代表检查完成；健康分反映检查发现的结构问题。" });
+    note.createDiv({ text: health.scoreThresholdText || "85+ 健康，60-84 风险，低于 60 异常。" });
+
+    let closeTimer: number | undefined;
+    let lastTooltipPointer: { x: number; y: number } | null = null;
+    const rememberTooltipPointer = (event: MouseEvent) => {
+      lastTooltipPointer = { x: event.clientX, y: event.clientY };
+    };
+    const hidePanelStyles = () => {
+      bridge.style.pointerEvents = "none";
+      bridge.style.visibility = "hidden";
+      panel.style.opacity = "0";
+      panel.style.pointerEvents = "none";
+      panel.style.transform = "translateY(-3px)";
+      panel.style.visibility = "hidden";
+      button.setAttribute("aria-expanded", "false");
+    };
+    const showPanelStyles = () => {
+      bridge.style.pointerEvents = "auto";
+      bridge.style.visibility = "visible";
+      panel.style.opacity = "1";
+      panel.style.pointerEvents = "auto";
+      panel.style.transform = "translateY(0)";
+      panel.style.visibility = "visible";
+      button.setAttribute("aria-expanded", "true");
+    };
+    hidePanelStyles();
+    const clearCloseTimer = () => {
+      if (!closeTimer) return;
+      window.clearTimeout(closeTimer);
+      this.knowledgeDashboardTooltipCloseTimers.delete(closeTimer);
+      closeTimer = undefined;
+    };
+    const openPanel = () => {
+      clearCloseTimer();
+      this.positionKnowledgeDashboardHealthTooltip(button, panel, bridge, placement);
+      wrapper.addClass("is-tooltip-open");
+      bridge.addClass("is-visible");
+      panel.addClass("is-visible");
+      showPanelStyles();
+    };
+    const closePanel = () => {
+      clearCloseTimer();
+      wrapper.removeClass("is-tooltip-open");
+      wrapper.removeClass("is-click-open");
+      bridge.removeClass("is-visible");
+      panel.removeClass("is-visible");
+      hidePanelStyles();
+    };
+    const scheduleClose = (delayMs = 160) => {
+      clearCloseTimer();
+      closeTimer = window.setTimeout(closePanelIfPointerOutside, delayMs);
+      this.knowledgeDashboardTooltipCloseTimers.add(closeTimer);
+    };
+    const isPointerInsideTooltip = (event: MouseEvent) => isKnowledgeDashboardHealthTooltipHoverPoint(
+      button.getBoundingClientRect(),
+      panel.getBoundingClientRect(),
+      event.clientX,
+      event.clientY
+    );
+    const isTooltipTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Node)) return false;
+      return button.contains(target) || panel.contains(target) || bridge.contains(target);
+    };
+    const isPointerCurrentlyInsideTooltip = () => {
+      if (!lastTooltipPointer) return false;
+      const elementAtPointer = document.elementFromPoint(lastTooltipPointer.x, lastTooltipPointer.y);
+      if (isTooltipTarget(elementAtPointer)) return true;
+      return isKnowledgeDashboardHealthTooltipHoverPoint(
+        button.getBoundingClientRect(),
+        panel.getBoundingClientRect(),
+        lastTooltipPointer.x,
+        lastTooltipPointer.y
+      );
+    };
+    const closePanelIfPointerOutside = () => {
+      if (closeTimer) this.knowledgeDashboardTooltipCloseTimers.delete(closeTimer);
+      closeTimer = undefined;
+      if (isPointerCurrentlyInsideTooltip()) return;
+      closePanel();
+    };
+    const closeOnOutsidePointerDown = (event: MouseEvent) => {
+      if (!wrapper.hasClass("is-tooltip-open")) return;
+      if (isTooltipTarget(event.target)) return;
+      closePanel();
+    };
+    const trackOpenTooltipPointer = (event: MouseEvent) => {
+      if (!wrapper.hasClass("is-tooltip-open")) return;
+      rememberTooltipPointer(event);
+    };
+    const scheduleCloseIfOutside = (event: MouseEvent, delayMs = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS) => {
+      rememberTooltipPointer(event);
+      if (wrapper.hasClass("is-click-open")) {
+        clearCloseTimer();
+        return;
+      }
+      if (isTooltipTarget(event.relatedTarget) || isPointerInsideTooltip(event)) {
+        clearCloseTimer();
+        return;
+      }
+      scheduleClose(delayMs);
+    };
+    const repositionOpenPanel = () => {
+      if (!wrapper.hasClass("is-tooltip-open")) return;
+      this.positionKnowledgeDashboardHealthTooltip(button, panel, bridge, placement);
+    };
+    window.addEventListener("resize", repositionOpenPanel);
+    window.addEventListener("scroll", repositionOpenPanel, true);
+    window.addEventListener("pointermove", trackOpenTooltipPointer, { passive: true });
+    window.addEventListener("mousemove", trackOpenTooltipPointer, { passive: true });
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    document.addEventListener("mousedown", closeOnOutsidePointerDown, true);
+    this.knowledgeDashboardTooltipCleanups.push(() => window.removeEventListener("resize", repositionOpenPanel));
+    this.knowledgeDashboardTooltipCleanups.push(() => window.removeEventListener("scroll", repositionOpenPanel, true));
+    this.knowledgeDashboardTooltipCleanups.push(() => window.removeEventListener("pointermove", trackOpenTooltipPointer));
+    this.knowledgeDashboardTooltipCleanups.push(() => window.removeEventListener("mousemove", trackOpenTooltipPointer));
+    this.knowledgeDashboardTooltipCleanups.push(() => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true));
+    this.knowledgeDashboardTooltipCleanups.push(() => document.removeEventListener("mousedown", closeOnOutsidePointerDown, true));
+    const openPanelFromPointer = (event: MouseEvent) => {
+      rememberTooltipPointer(event);
+      openPanel();
+    };
+    const openPanelFromClick = (event: MouseEvent) => {
+      rememberTooltipPointer(event);
+      openPanel();
+      wrapper.addClass("is-click-open");
+    };
+    button.onpointerdown = openPanelFromClick;
+    button.onmousedown = openPanelFromClick;
+    button.onmouseenter = openPanelFromPointer;
+    button.onpointerenter = openPanelFromPointer;
+    button.onmouseover = openPanelFromPointer;
+    button.onmouseleave = (event) => scheduleCloseIfOutside(event);
+    button.onpointerleave = (event) => scheduleCloseIfOutside(event);
+    button.onfocus = openPanel;
+    button.onblur = (event) => {
+      if (isTooltipTarget(event.relatedTarget)) return;
+      if (wrapper.hasClass("is-click-open")) return;
+      scheduleClose();
+    };
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openPanelFromClick(event);
+    };
+    panel.onmouseenter = openPanelFromPointer;
+    panel.onpointerenter = openPanelFromPointer;
+    panel.onmouseleave = (event) => scheduleCloseIfOutside(event);
+    panel.onpointerleave = (event) => scheduleCloseIfOutside(event);
+    bridge.onmouseenter = openPanelFromPointer;
+    bridge.onpointerenter = openPanelFromPointer;
+    bridge.onmouseleave = (event) => scheduleCloseIfOutside(event);
+    bridge.onpointerleave = (event) => scheduleCloseIfOutside(event);
+  }
+
+  private clearKnowledgeDashboardHealthTooltips(): void {
+    for (const timer of this.knowledgeDashboardTooltipCloseTimers) {
+      window.clearTimeout(timer);
+    }
+    this.knowledgeDashboardTooltipCloseTimers.clear();
+    for (const cleanup of this.knowledgeDashboardTooltipCleanups) {
+      cleanup();
+    }
+    this.knowledgeDashboardTooltipCleanups = [];
+    for (const panel of this.knowledgeDashboardTooltipPanels) {
+      panel.remove();
+    }
+    this.knowledgeDashboardTooltipPanels = [];
+  }
+
+  private positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTMLElement, bridge: HTMLElement, placement: "summary" | "meter"): void {
+    const trigger = button.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 12;
+    const gap = 8;
+    const width = Math.min(320, Math.max(220, viewportWidth - margin * 2));
+    panel.style.width = `${width}px`;
+    const panelHeight = panel.getBoundingClientRect().height || 220;
+    const preferredLeft = placement === "meter" ? trigger.left : trigger.right - width;
+    const left = Math.max(margin, Math.min(preferredLeft, viewportWidth - width - margin));
+    const preferredTop = trigger.bottom + gap;
+    const top = preferredTop + panelHeight > viewportHeight - margin
+      ? Math.max(margin, trigger.top - panelHeight - gap)
+      : preferredTop;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+    const panelRect = panel.getBoundingClientRect();
+    const bridgePadding = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING;
+    const bridgeLeft = Math.max(0, Math.min(trigger.left, panelRect.left) - bridgePadding);
+    const bridgeRight = Math.min(viewportWidth, Math.max(trigger.right, panelRect.right) + bridgePadding);
+    const panelBelowTrigger = panelRect.top >= trigger.bottom;
+    const bridgeTop = panelBelowTrigger
+      ? Math.max(0, trigger.bottom - bridgePadding)
+      : Math.max(0, panelRect.bottom - bridgePadding);
+    const bridgeBottom = panelBelowTrigger
+      ? Math.min(viewportHeight, panelRect.top + bridgePadding)
+      : Math.min(viewportHeight, trigger.top + bridgePadding);
+    bridge.style.left = `${Math.round(bridgeLeft)}px`;
+    bridge.style.top = `${Math.round(Math.min(bridgeTop, bridgeBottom))}px`;
+    bridge.style.width = `${Math.max(16, Math.round(bridgeRight - bridgeLeft))}px`;
+    bridge.style.height = `${Math.max(10, Math.round(Math.abs(bridgeBottom - bridgeTop)))}px`;
   }
 
   private renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
@@ -1119,9 +1421,9 @@ export class CodexView extends ItemView {
   }
 
   private renderKnowledgeDashboardQueues(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
-    this.addKnowledgeDashboardTable(container, "Raw / Inbox 状态", ["区域", "总数量", "今日新增", "待处理"], [
-      ["Raw", `${snapshot.raw.fileCount}`, snapshot.raw.todayCount ? `+${snapshot.raw.todayCount}` : "-", `${snapshot.raw.changedCount}`],
-      ["Inbox", `${snapshot.inbox.fileCount}`, snapshot.inbox.todayCount ? `+${snapshot.inbox.todayCount}` : "-", `${snapshot.inbox.fileCount}`]
+    this.addKnowledgeDashboardTable(container, "Raw / Inbox 状态", ["区域", "总数量", "今日新增", "待处理", "待校准"], [
+      ["Raw", `${snapshot.raw.fileCount}`, snapshot.raw.todayCount ? `+${snapshot.raw.todayCount}` : "-", `${snapshot.raw.digestStatus.pending + snapshot.raw.digestStatus.changed}`, `${snapshot.raw.digestStatus.calibration}`],
+      ["Inbox", `${snapshot.inbox.fileCount}`, snapshot.inbox.todayCount ? `+${snapshot.inbox.todayCount}` : "-", `${snapshot.inbox.fileCount}`, "-"]
     ]);
   }
 
@@ -1275,7 +1577,7 @@ export class CodexView extends ItemView {
     if (!result) return false;
     const title = container.createDiv({ cls: `codex-kb-result-title codex-kb-result-title-${result.status}` });
     const icon = title.createSpan({ cls: "codex-kb-result-title-icon" });
-    setIcon(icon, result.status === "success" ? "badge-check" : "triangle-alert");
+    setIcon(icon, result.status === "success" ? "badge-check" : result.status === "canceled" ? "circle-slash" : "triangle-alert");
     title.createSpan({ cls: "codex-kb-result-title-text", text: result.title });
     if (result.body.trim()) renderRichText(this.app, this, container.createDiv({ cls: "codex-kb-result-body" }), result.body);
     return true;
@@ -1753,7 +2055,7 @@ export class CodexView extends ItemView {
     const session = this.ensureSession();
     const knowledgeSession = this.isKnowledgeBaseSession(session);
     const knowledgeManager = this.plugin.getKnowledgeBaseManager();
-    const knowledgeTaskRunning = knowledgeSession && Boolean(knowledgeManager?.isRunning);
+    const knowledgeTaskRunning = Boolean(knowledgeManager?.isRunning);
 
     const row = this.toolbarEl.createDiv({ cls: "codex-composer-row" });
     const left = row.createDiv({ cls: "codex-composer-left" });
@@ -1828,12 +2130,12 @@ export class CodexView extends ItemView {
       micButton.onclick = () => new Notice("语音输入暂未接入");
     }
 
-    const composerState = {
+    const composerState = composerStateForRuntimeState({
       viewRunning: this.running,
-      knowledgeTaskRunning,
+      globalKnowledgeTaskRunning: knowledgeTaskRunning,
       hasDraft: this.hasComposerDraft(),
       hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
-    };
+    });
     const busy = composerIsBusy(composerState);
     const action = composerPrimaryActionForState(composerState);
     const sendButtonView = composerActionButtonView(action);
@@ -2532,12 +2834,12 @@ export class CodexView extends ItemView {
 
   private composerStateForSession(session: StoredSession): ComposerPrimaryActionState {
     const knowledgeManager = this.plugin.getKnowledgeBaseManager();
-    return {
+    return composerStateForRuntimeState({
       viewRunning: this.running,
-      knowledgeTaskRunning: this.isKnowledgeBaseSession(session) && Boolean(knowledgeManager?.isRunning),
+      globalKnowledgeTaskRunning: Boolean(knowledgeManager?.isRunning),
       hasDraft: this.hasComposerDraft(),
       hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
-    };
+    });
   }
 
   private pauseQueueForSession(sessionId: string): void {
@@ -2588,7 +2890,7 @@ export class CodexView extends ItemView {
     }
     const item = await this.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: true });
     if (!item) return;
-    const outcome = await this.startQueuedTurnItem(item, "composer");
+    const outcome = await this.startQueuedTurnItemSafely(item, "composer");
     if (outcome !== "running") await this.afterTurnSettled(item.sessionId, outcome === "completed");
   }
 
@@ -2638,7 +2940,7 @@ export class CodexView extends ItemView {
     this.renderToolbar();
     let outcome: "running" | "completed" | "failed" = "failed";
     try {
-      outcome = await this.startQueuedTurnItem(item, "queue");
+      outcome = await this.startQueuedTurnItemSafely(item, "queue");
     } finally {
       this.queueStartInProgress = false;
     }
@@ -2694,6 +2996,16 @@ export class CodexView extends ItemView {
     }
     if (item.kind === "knowledge-base") return await this.startKnowledgeBaseTurn(session, item, source);
     return await this.startChatTurn(session, item, source);
+  }
+
+  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+    try {
+      return await this.startQueuedTurnItem(item, source);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(`任务收口失败：${message}`);
+      return "failed";
+    }
   }
 
   private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "failed"> {
@@ -2808,18 +3120,22 @@ export class CodexView extends ItemView {
     this.renderTabs();
     this.renderMessagesIfActive(session);
     this.renderToolbar();
-    await this.plugin.saveSettings(true);
-
     let succeeded = false;
+    let turnError: unknown = null;
     try {
+      await this.plugin.saveSettings(true);
       const result = await manager.handleUserMessage(item.text, turnAttachments, knowledgeBaseTurnOverrides(item.turnOptions));
       succeeded = result.status === "success";
-      assistantMessage.status = result.status === "success" ? "completed" : "failed";
+      assistantMessage.status = knowledgeBaseMessageStatusFromResult(result.status);
       assistantMessage.text = result.message;
       assistantMessage.citations = result.citations;
       if (result.status === "failed") {
         this.finishThinkingMessage(session, "失败");
         this.finishRunningProcessMessages(session, "error");
+        this.finishPlanMessage(session);
+      } else if (result.status === "canceled") {
+        this.finishThinkingMessage(session, "已取消");
+        this.finishRunningProcessMessages(session, "interrupted");
         this.finishPlanMessage(session);
       }
       this.moveMessageToEnd(session, assistantMessage.id);
@@ -2827,18 +3143,33 @@ export class CodexView extends ItemView {
         if (session.id === this.plugin.settings.activeSessionId) this.fillKnowledgeBaseCommand(result.followUpCommand);
       }
       if (result.status === "failed") new Notice(`知识库管理失败：${result.message}`);
+      if (result.status === "canceled") new Notice("知识库管理已取消");
+    } catch (error) {
+      turnError = error;
+      assistantMessage.status = "failed";
+      assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
     } finally {
       this.running = false;
       session.updatedAt = Date.now();
       this.clearTurnWatchdog();
-      await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
       this.clearActiveRun();
-      await this.plugin.saveSettings(true);
+      try {
+        await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+        await this.plugin.saveSettings(true);
+        await this.plugin.archivePendingKnowledgeBaseThreads().catch((error) => console.warn("Codex knowledge thread archive failed", error));
+      } catch (error) {
+        turnError = turnError ?? error;
+        assistantMessage.status = "failed";
+        assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
+        await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
+        await this.plugin.saveSettings(true).catch(() => undefined);
+      }
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
       this.applyStatus();
       void this.refreshKnowledgeDashboard(true);
     }
+    if (turnError) throw turnError;
     return succeeded ? "completed" : "failed";
   }
 
@@ -2885,6 +3216,7 @@ export class CodexView extends ItemView {
       active.updatedAt = Date.now();
       await this.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
       await this.plugin.saveSettings(true);
+      await this.plugin.archivePendingKnowledgeBaseThreads().catch((error) => console.warn("Codex knowledge thread archive failed", error));
       this.renderMessages({ forceBottom: true });
       this.renderToolbar();
       this.applyStatus();
@@ -4217,7 +4549,9 @@ export class CodexView extends ItemView {
   }
 }
 
-type KnowledgeBaseHistoryFilter = "all" | "user" | "assistant" | "process" | "failed";
+type KnowledgeBaseHistoryCommandFilter = "ask" | "lint" | "maintain" | "reingest" | "calibrate" | "outputs" | "inbox" | "journal" | "review" | "collect";
+type KnowledgeBaseHistoryStatusFilter = "completed" | "canceled" | "failed";
+type KnowledgeBaseHistoryFilter = "all" | "user" | "assistant" | "process" | KnowledgeBaseHistoryCommandFilter | KnowledgeBaseHistoryStatusFilter;
 
 class KnowledgeBaseHistoryModal extends Modal {
   private activeDate = "";
@@ -4284,6 +4618,18 @@ class KnowledgeBaseHistoryModal extends Modal {
       user: "我",
       assistant: "回复",
       process: "过程",
+      ask: "提问",
+      lint: "体检",
+      maintain: "维护",
+      reingest: "重提炼",
+      calibrate: "校准",
+      outputs: "outputs",
+      inbox: "inbox",
+      journal: "日记",
+      review: "周报",
+      collect: "收集",
+      completed: "成功",
+      canceled: "取消",
       failed: "失败"
     };
     for (const filter of Object.keys(labels) as KnowledgeBaseHistoryFilter[]) {
@@ -4330,7 +4676,8 @@ class KnowledgeBaseHistoryModal extends Modal {
   private renderMessages(): void {
     if (!this.listEl) return;
     this.listEl.empty();
-    const filtered = this.messages.filter((message) => historyMessageMatchesFilter(message, this.activeFilter));
+    const commandByRunId = buildHistoryCommandByRunId(this.messages);
+    const filtered = this.messages.filter((message) => historyMessageMatchesFilter(message, this.activeFilter, commandByRunId));
     if (this.activeDateEl) {
       this.activeDateEl.setText(`${this.activeDate} · ${filtered.length}/${this.messages.length} 条`);
     }
@@ -4350,13 +4697,46 @@ class KnowledgeBaseHistoryModal extends Modal {
   }
 }
 
-function historyMessageMatchesFilter(message: ChatMessage, filter: KnowledgeBaseHistoryFilter): boolean {
+function historyMessageMatchesFilter(message: ChatMessage, filter: KnowledgeBaseHistoryFilter, commandByRunId: Map<string, KnowledgeBaseHistoryCommandFilter>): boolean {
   if (filter === "all") return true;
   if (filter === "user") return message.role === "user";
   if (filter === "assistant") return message.role === "assistant";
   if (filter === "process") return Boolean(message.itemType) && message.role !== "user" && message.role !== "assistant";
+  if (isHistoryCommandFilter(filter)) return historyCommandForMessage(message, commandByRunId) === filter;
+  if (filter === "completed") return message.status === "completed";
+  if (filter === "canceled") return message.status === "canceled" || message.status === "interrupted";
   if (filter === "failed") return message.status === "failed" || message.status === "error";
   return true;
+}
+
+function buildHistoryCommandByRunId(messages: ChatMessage[]): Map<string, KnowledgeBaseHistoryCommandFilter> {
+  const map = new Map<string, KnowledgeBaseHistoryCommandFilter>();
+  for (const message of messages) {
+    if (message.role !== "user" || !message.runId) continue;
+    const command = historyCommandFilterForIntent(parseKnowledgeBaseCommand(message.text, message.attachments?.length ?? 0).intent);
+    if (command) map.set(message.runId, command);
+  }
+  return map;
+}
+
+function historyCommandForMessage(message: ChatMessage, commandByRunId: Map<string, KnowledgeBaseHistoryCommandFilter>): KnowledgeBaseHistoryCommandFilter | null {
+  if (message.runId) {
+    const command = commandByRunId.get(message.runId);
+    if (command) return command;
+  }
+  return message.role === "user" ? historyCommandFilterForIntent(parseKnowledgeBaseCommand(message.text, message.attachments?.length ?? 0).intent) : null;
+}
+
+function historyCommandFilterForIntent(intent: KnowledgeBaseCommandIntent): KnowledgeBaseHistoryCommandFilter | null {
+  if (intent === "ask" || intent === "journal" || intent === "review" || intent === "collect" || intent === "reingest" || intent === "maintain" || intent === "calibrate") return intent;
+  if (intent === "lint") return "lint";
+  if (intent === "process-outputs") return "outputs";
+  if (intent === "process-inbox") return "inbox";
+  return null;
+}
+
+function isHistoryCommandFilter(value: KnowledgeBaseHistoryFilter): value is KnowledgeBaseHistoryCommandFilter {
+  return value === "ask" || value === "lint" || value === "maintain" || value === "reingest" || value === "calibrate" || value === "outputs" || value === "inbox" || value === "journal" || value === "review" || value === "collect";
 }
 
 function roleLabel(role: ChatMessage["role"]): string {
@@ -4456,7 +4836,7 @@ function processGroupDetail(messages: ChatMessage[]): string {
 function processGroupStatus(messages: ChatMessage[]): string {
   if (messages.some((message) => message.status === "running")) return "进行中";
   if (messages.some((message) => message.status === "error" || message.status === "failed")) return "有失败";
-  if (messages.some((message) => message.status === "interrupted")) return "未完成";
+  if (messages.some((message) => message.status === "interrupted" || message.status === "canceled")) return "未完成";
   return "完成";
 }
 
@@ -4634,6 +5014,18 @@ function composerActionButtonView(action: ReturnType<typeof composerPrimaryActio
   return { icon: "send-horizontal", label: "发送", title: "发送" };
 }
 
+function appendSettlementFailure(text: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const note = `任务收口失败：${message}`;
+  return text.trim() ? `${text}\n\n${note}` : note;
+}
+
+function knowledgeBaseMessageStatusFromResult(status: "success" | "failed" | "canceled"): string {
+  if (status === "success") return "completed";
+  if (status === "canceled") return "canceled";
+  return "failed";
+}
+
 function isLocalKnowledgeBaseCommand(intent: string): boolean {
   return intent === "clear" || intent === "history";
 }
@@ -4735,6 +5127,7 @@ function labelForStatus(status: string): string {
     completed: "完成",
     error: "失败",
     failed: "失败",
+    canceled: "已取消",
     blocked: "等待确认",
     interrupted: "中断"
   };
@@ -4769,6 +5162,17 @@ function knowledgeRunStatusLabel(status: string, at: number): string {
   };
   const label = labels[status] ?? status;
   return at ? `${label} · ${formatRelativeTime(at)}` : label;
+}
+
+function knowledgeDashboardHealthReasonText(reason: KnowledgeBaseDashboardSnapshot["health"]["scoreReasons"][number]): string {
+  return `${reason.label}${knowledgeDashboardHealthReasonCountText(reason)}：${reason.explanation}`;
+}
+
+function knowledgeDashboardHealthReasonCountText(reason: KnowledgeBaseDashboardSnapshot["health"]["scoreReasons"][number]): string {
+  if (reason.count <= 0) return "";
+  if (reason.label === "断链" || reason.label === "过时/草稿") return ` ${reason.count} 处`;
+  if (reason.label === "Raw 待提炼" || reason.label === "Raw 状态待校准" || reason.label === "Inbox 积压" || reason.label === "孤儿页面" || reason.label === "警告") return ` ${reason.count} 个`;
+  return "";
 }
 
 const HEATMAP_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

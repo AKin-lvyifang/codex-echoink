@@ -9,9 +9,17 @@ export interface KnowledgeBaseSource {
   absolutePath: string;
   size: number;
   mtime: number;
+  fingerprint: string;
   mime: string;
   modality: AgentInputModality;
   changed: boolean;
+}
+
+export interface KnowledgeBaseRawDigestStatus {
+  digested: number;
+  pending: number;
+  changed: number;
+  calibration: number;
 }
 
 export interface KnowledgeBaseCitation {
@@ -44,6 +52,7 @@ export interface KnowledgeBaseRunResult {
   summary: string;
   processedSources: KnowledgeBaseSource[];
   structure?: StructureNormalizationResult;
+  externalRawAdditions?: string[];
   error?: string;
 }
 

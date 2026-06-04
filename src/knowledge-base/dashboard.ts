@@ -3,12 +3,16 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
-import { readKnowledgeBaseTrackerSnapshot } from "./tracker";
+import { rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
+import { readKnowledgeBaseTrackerHints } from "./tracker";
+import type { KnowledgeBaseRawDigestStatus } from "./types";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
   size: number;
   mtime: number;
+  fingerprint?: string;
+  rawDigest?: RawDigestFrontmatterRecord | null;
 }
 
 export interface KnowledgeBaseDashboardDirectory {
@@ -24,11 +28,22 @@ export type KnowledgeBaseDashboardHealthStatus = "healthy" | "risk" | "bad";
 export type KnowledgeBaseDashboardCheckStatus = "success" | "failed" | "none";
 export type KnowledgeBaseDashboardCheckFreshnessStatus = "fresh" | "stale" | "bad" | "missing";
 
+export interface KnowledgeBaseDashboardHealthScoreReason {
+  label: string;
+  count: number;
+  penalty: number;
+  explanation: string;
+}
+
 export interface KnowledgeBaseDashboardHealth {
   status: KnowledgeBaseDashboardHealthStatus;
   label: string;
   score: number;
   reasons: string[];
+  scoreSummary: string;
+  scoreReasons: KnowledgeBaseDashboardHealthScoreReason[];
+  scoreCheckNote: string;
+  scoreThresholdText: string;
   lastCheckAt: number;
   streakDays: number;
 }
@@ -82,6 +97,7 @@ export interface KnowledgeBaseDashboardSnapshot {
   raw: KnowledgeBaseDashboardDirectory & {
     changedCount: number;
     todayCount: number;
+    digestStatus: KnowledgeBaseRawDigestStatus;
   };
   wiki: KnowledgeBaseDashboardDirectory & {
     indexExists: boolean;
@@ -105,6 +121,10 @@ export interface KnowledgeBaseDashboardSnapshot {
 const MAX_DASHBOARD_FILES = 3000;
 const RECENT_FILE_LIMIT = 6;
 const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+const HEALTH_SCORE_THRESHOLD_TEXT = "85+ 健康，60-84 风险，低于 60 异常。";
+const HEALTH_SCORE_CHECK_NOTE = "体检成功只代表检查完成；健康分反映检查发现的结构问题。";
+const CRITICAL_HEALTH_PENALTY = 24;
+const RISK_HEALTH_PENALTY = 2;
 
 export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
@@ -120,12 +140,15 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const trackerExists = await exists(path.join(vaultPath, trackerPath));
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
   const wikiIndexExists = await exists(path.join(vaultPath, "wiki/index.md"));
-  const rawContentFiles = raw.files.filter(isRawProcessingSource);
-  const trackerSnapshot = await readKnowledgeBaseTrackerSnapshot(vaultPath, trackerPath, rawContentFiles);
-  const mergedProcessedSources = { ...processedSources, ...trackerSnapshot.processedSources };
+  const rawSourceFiles = raw.files.filter(isRawProcessingSource);
+  const rawContentFiles = await attachRawFingerprints(vaultPath, rawSourceFiles);
+  const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles);
+  const registry = await readRawDigestRegistry(vaultPath);
+  const rawDigestStatus = buildRawDigestStatus(rawContentFiles, processedSources, registry.entries, trackerHints.paths);
+  const mergedProcessedSources = authoritativeProcessedSources(rawContentFiles, processedSources, registry.entries);
   const reportFindings = await readReportFindings(vaultPath, reportPath);
   const maintenanceHistory = normalizeMaintenanceHistory(settings.maintenanceHistory ?? [], settings.healthHistory ?? []);
-  const rawChangedCount = countChangedProcessed(rawContentFiles, mergedProcessedSources);
+  const rawChangedCount = rawDigestStatus.pending + rawDigestStatus.changed;
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
@@ -150,6 +173,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     wikiIndexExists,
     trackerExists,
     rawChangedCount,
+    rawDigestStatus,
     inboxCount: inbox.fileCount,
     warnings
   });
@@ -180,9 +204,10 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
       trackedCount: Object.keys(mergedProcessedSources).length
     },
     raw: {
-      ...stripLimited(raw),
+      ...stripLimited(raw, rawContentFiles),
       changedCount: rawChangedCount,
-      todayCount: rawTodayCount
+      todayCount: rawTodayCount,
+      digestStatus: rawDigestStatus
     },
     wiki: {
       ...stripLimited(wiki),
@@ -265,22 +290,93 @@ async function scanDashboardDirectory(vaultPath: string, relativeDir: string, op
   };
 }
 
-function stripLimited(input: DashboardScanResult): KnowledgeBaseDashboardDirectory {
+function stripLimited(input: DashboardScanResult, files: KnowledgeBaseDashboardFile[] = input.files): KnowledgeBaseDashboardDirectory {
+  const recentFiles = files === input.files
+    ? input.recentFiles
+    : [...files].sort((left, right) => right.mtime - left.mtime).slice(0, RECENT_FILE_LIMIT);
   return {
     path: input.path,
     exists: input.exists,
-    fileCount: input.fileCount,
+    fileCount: files.length,
     folderCount: input.folderCount,
-    totalSize: input.totalSize,
-    recentFiles: input.recentFiles
+    totalSize: files.reduce((sum, file) => sum + file.size, 0),
+    recentFiles
   };
 }
 
-function countChangedProcessed(files: KnowledgeBaseDashboardFile[], processed: Record<string, { size: number; mtime: number }>): number {
-  return files.filter((file) => {
+async function attachRawFingerprints(vaultPath: string, files: KnowledgeBaseDashboardFile[]): Promise<KnowledgeBaseDashboardFile[]> {
+  const result: KnowledgeBaseDashboardFile[] = [];
+  for (const file of files) {
+    const content = await fsp.readFile(path.join(vaultPath, file.path)).catch(() => null);
+    result.push({
+      ...file,
+      ...(content ? {
+        fingerprint: rawDigestFingerprint(file.path, content),
+        rawDigest: rawDigestRecordFromMarkdown(content)
+      } : {})
+    });
+  }
+  return result;
+}
+
+function buildRawDigestStatus(
+  files: KnowledgeBaseDashboardFile[],
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  registryEntries: Record<string, RawDigestRegistryEntry>,
+  trackerHints: Set<string>
+): KnowledgeBaseRawDigestStatus {
+  const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0 };
+  for (const file of files) {
+    if (!file.fingerprint) {
+      status.pending += 1;
+      continue;
+    }
     const previous = processed[file.path];
-    return !previous || previous.size !== file.size || previous.mtime !== file.mtime;
-  }).length;
+    const registry = registryEntries[file.path];
+    const trusted = rawDigestRecordIsTrusted(file.rawDigest ?? null, file.fingerprint)
+      || registry?.fingerprint === file.fingerprint
+      || previous?.fingerprint === file.fingerprint;
+    if (trusted) {
+      status.digested += 1;
+      continue;
+    }
+    const changed = Boolean(
+      (file.rawDigest?.fingerprint && file.rawDigest.fingerprint !== file.fingerprint)
+      || (registry?.fingerprint && registry.fingerprint !== file.fingerprint)
+      || (previous?.fingerprint && previous.fingerprint !== file.fingerprint)
+    );
+    if (changed) {
+      status.changed += 1;
+      continue;
+    }
+    if (previous || trackerHints.has(file.path) || file.rawDigest?.processed) {
+      status.calibration += 1;
+      continue;
+    }
+    status.pending += 1;
+  }
+  return status;
+}
+
+function authoritativeProcessedSources(
+  files: KnowledgeBaseDashboardFile[],
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  registryEntries: Record<string, RawDigestRegistryEntry>
+): Record<string, { size: number; mtime: number; fingerprint?: string }> {
+  const result: Record<string, { size: number; mtime: number; fingerprint?: string }> = {};
+  for (const file of files) {
+    if (!file.fingerprint) continue;
+    const previous = processed[file.path];
+    const registry = registryEntries[file.path];
+    if (
+      rawDigestRecordIsTrusted(file.rawDigest ?? null, file.fingerprint)
+      || registry?.fingerprint === file.fingerprint
+      || previous?.fingerprint === file.fingerprint
+    ) {
+      result[file.path] = { size: file.size, mtime: file.mtime, fingerprint: file.fingerprint };
+    }
+  }
+  return result;
 }
 
 interface ReportFindings {
@@ -304,14 +400,19 @@ async function readReportFindings(vaultPath: string, reportPath: string): Promis
   return {
     checkedAt: stat.mtimeMs,
     brokenLinks: firstNumber(text, [
+      /\|\s*全\s*wiki\s*(?:实质性断链|硬断链|断链)出现次数\s*\|\s*(\d+)\s*\|/i,
+      /(?:实质性断链|硬断链|断链)出现次数[^\d\n]*(\d+)/i,
       /(?:实质性断链|硬断链|断链)[：:]\s*(\d+)/i,
       /(?:实质性断链|硬断链|断链)[^\d\n]*(\d+)\s*处/i
     ]),
     orphanPages: firstNumber(text, [
+      /\|\s*孤儿页面\s*\|\s*(\d+)\s*\|/i,
       /孤儿页面[：:]\s*(\d+)/i,
       /孤儿页面[^\d\n]*(\d+)\s*个/i
     ]),
     staleItems: firstNumber(text, [
+      /\|\s*draft\s*\/\s*TODO\s*\/\s*待补等命中文件\s*\|\s*(\d+)\s*\|/i,
+      /draft\s*\/\s*TODO\s*\/\s*待补等命中文件[^\d\n]*(\d+)/i,
       /(?:过时\/草稿内容|过时内容|过时或草稿内容)[：:]\s*(\d+)/i,
       /(?:过时|draft|草稿)[^\d\n]*(\d+)\s*处/i
     ]),
@@ -331,7 +432,7 @@ async function resolveLatestReportPath(vaultPath: string, configuredPath: string
   const normalized = normalizeRelativePath(configuredPath, "");
   if (normalized && await exists(path.join(vaultPath, normalized))) return normalized;
   const latest = outputFiles
-    .filter((file) => /^outputs\/(?:maintenance\/)?kb-maintenance-.+\.md$/i.test(file.path))
+    .filter((file) => /^outputs\/(?:maintenance\/)?kb-(?:maintenance|check)-.+\.md$/i.test(file.path))
     .sort((left, right) => right.mtime - left.mtime)[0];
   return latest?.path ?? normalized;
 }
@@ -353,6 +454,7 @@ interface HealthInput {
   wikiIndexExists: boolean;
   trackerExists: boolean;
   rawChangedCount: number;
+  rawDigestStatus: KnowledgeBaseRawDigestStatus;
   inboxCount: number;
   warnings: string[];
 }
@@ -360,11 +462,30 @@ interface HealthInput {
 function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const critical: string[] = [];
   const risk: string[] = [];
-  if (!input.rulesFileExists) critical.push("规则文件缺失");
-  if (!input.rawExists) critical.push("raw 目录缺失");
-  if (!input.wikiExists) critical.push("wiki 目录缺失");
-  if (!input.wikiIndexExists) critical.push("wiki/index.md 缺失");
-  if (!input.trackerExists) critical.push("tracker 缺失");
+  const scoreReasons: KnowledgeBaseDashboardHealthScoreReason[] = [];
+  const addReason = (
+    severity: "critical" | "risk",
+    reason: string,
+    label: string,
+    count: number,
+    explanation: string,
+    extraPenalty = 0
+  ) => {
+    if (severity === "critical") critical.push(reason);
+    else risk.push(reason);
+    scoreReasons.push({
+      label,
+      count,
+      penalty: (severity === "critical" ? CRITICAL_HEALTH_PENALTY : RISK_HEALTH_PENALTY) + extraPenalty,
+      explanation
+    });
+  };
+
+  if (!input.rulesFileExists) addReason("critical", "规则文件缺失", "规则文件缺失", 1, "说明知识库边界规则无法确认。");
+  if (!input.rawExists) addReason("critical", "raw 目录缺失", "raw 目录缺失", 1, "说明原始来源区不可用。");
+  if (!input.wikiExists) addReason("critical", "wiki 目录缺失", "wiki 目录缺失", 1, "说明沉淀后的知识区不可用。");
+  if (!input.wikiIndexExists) addReason("critical", "wiki/index.md 缺失", "wiki/index.md 缺失", 1, "说明知识库入口页不存在。");
+  if (!input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
   const latestHistory = latestHealthEntry(history);
@@ -373,41 +494,75 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const latestRecordedStatus = latestMaintenance && latestMaintenance.at >= (latestHistory?.at ?? 0) ? latestMaintenance.status : latestHistory?.status;
   const latestCheckAt = Math.max(latestRecordedAt, input.latestExternalCheckAt);
   const latestCheckFailed = Boolean(latestRecordedStatus === "failed" && latestRecordedAt >= input.latestExternalCheckAt);
-  if (latestCheckFailed) critical.push("最近体检失败");
+  if (latestCheckFailed) addReason("critical", "最近体检失败", "最近体检失败", 1, "说明最近一次维护或体检没有成功完成。");
 
-  if (input.rawChangedCount > 20) critical.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
-  else if (input.rawChangedCount > 5) risk.push(`Raw 待提炼 ${input.rawChangedCount} 个`);
+  const rawPenalty = input.rawChangedCount > 20 ? 20 : input.rawChangedCount > 5 ? 10 : 0;
+  if (input.rawChangedCount > 20) {
+    addReason("critical", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "说明仍有来源未被确认消化或登记。", rawPenalty);
+  } else if (input.rawChangedCount > 5) {
+    addReason("risk", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "说明仍有来源未被确认消化或登记。", rawPenalty);
+  }
+  if (input.rawDigestStatus.calibration > 0) {
+    addReason("risk", `Raw 状态待校准 ${input.rawDigestStatus.calibration} 个`, "Raw 状态待校准", input.rawDigestStatus.calibration, "说明历史记录显示可能已提炼，但还缺少可信机器标记。", input.rawDigestStatus.calibration > 20 ? 8 : 2);
+  }
 
-  if (input.inboxCount > 30) critical.push(`Inbox 积压 ${input.inboxCount} 个`);
-  else if (input.inboxCount > 10) risk.push(`Inbox 积压 ${input.inboxCount} 个`);
+  const inboxPenalty = input.inboxCount > 30 ? 20 : input.inboxCount > 10 ? 10 : 0;
+  if (input.inboxCount > 30) {
+    addReason("critical", `Inbox 积压 ${input.inboxCount} 个`, "Inbox 积压", input.inboxCount, "说明临时输入区积压较多，尚未整理归位。", inboxPenalty);
+  } else if (input.inboxCount > 10) {
+    addReason("risk", `Inbox 积压 ${input.inboxCount} 个`, "Inbox 积压", input.inboxCount, "说明临时输入区积压较多，尚未整理归位。", inboxPenalty);
+  }
 
-  if (input.latestReportFindings.indexInvalid) critical.push("索引链接异常");
-  if (input.latestReportFindings.brokenLinks > 0) risk.push(`断链 ${input.latestReportFindings.brokenLinks} 处`);
-  if (input.latestReportFindings.orphanPages > 0) risk.push(`孤儿页面 ${input.latestReportFindings.orphanPages} 个`);
-  if (input.latestReportFindings.staleItems > 0) risk.push(`过时/草稿 ${input.latestReportFindings.staleItems} 处`);
+  if (input.latestReportFindings.indexInvalid) addReason("critical", "索引链接异常", "索引链接异常", 1, "说明核心索引中存在不可用链接。");
+  if (input.latestReportFindings.brokenLinks > 0) {
+    addReason(
+      "risk",
+      `断链 ${input.latestReportFindings.brokenLinks} 处`,
+      "断链",
+      input.latestReportFindings.brokenLinks,
+      "说明 wiki 中有链接目标不存在。",
+      Math.min(24, input.latestReportFindings.brokenLinks * 6)
+    );
+  }
+  if (input.latestReportFindings.orphanPages > 0) {
+    addReason(
+      "risk",
+      `孤儿页面 ${input.latestReportFindings.orphanPages} 个`,
+      "孤儿页面",
+      input.latestReportFindings.orphanPages,
+      "说明页面缺少有效入口或引用。",
+      Math.min(12, input.latestReportFindings.orphanPages * 4)
+    );
+  }
+  if (input.latestReportFindings.staleItems > 0) {
+    addReason(
+      "risk",
+      `过时/草稿 ${input.latestReportFindings.staleItems} 处`,
+      "过时/草稿",
+      input.latestReportFindings.staleItems,
+      "说明存在待补、TODO、draft 等内容。",
+      Math.min(8, input.latestReportFindings.staleItems * 2)
+    );
+  }
 
   const nonCriticalWarnings = input.warnings.filter((warning) => !critical.includes(warning));
-  if (nonCriticalWarnings.length) risk.push(`存在警告：${nonCriticalWarnings.join("，")}`);
+  if (nonCriticalWarnings.length) addReason("risk", `存在警告：${nonCriticalWarnings.join("，")}`, "警告", nonCriticalWarnings.length, "说明存在需要人工确认的结构风险。");
 
-  const score = healthScore({
-    criticalCount: critical.length,
-    riskCount: risk.length,
-    rawChangedCount: input.rawChangedCount,
-    inboxCount: input.inboxCount,
-    brokenLinks: input.latestReportFindings.brokenLinks,
-    orphanPages: input.latestReportFindings.orphanPages,
-    staleItems: input.latestReportFindings.staleItems
-  });
-  const scoreStatus: KnowledgeBaseDashboardHealthStatus = critical.length || score < 60 ? "bad" : risk.length || score < 85 ? "risk" : "healthy";
+  const score = healthScore(scoreReasons);
+  const scoreStatus = healthStatusForScore(score, critical.length > 0);
   const status = scoreStatus;
   const label = status === "healthy" ? "健康" : status === "risk" ? "风险" : "异常";
-  const scoreReasons = [...critical, ...risk];
-  const reasons = scoreReasons.length ? scoreReasons : ["知识库结构正常，待处理数量在安全范围"];
+  const reasonTexts = [...critical, ...risk];
+  const reasons = reasonTexts.length ? reasonTexts : ["知识库结构正常，待处理数量在安全范围"];
   return {
     status,
     label,
     score,
     reasons,
+    scoreSummary: healthScoreSummary(score, status, critical.length > 0),
+    scoreReasons,
+    scoreCheckNote: HEALTH_SCORE_CHECK_NOTE,
+    scoreThresholdText: HEALTH_SCORE_THRESHOLD_TEXT,
     lastCheckAt: latestCheckAt,
     streakDays: countHealthStreakDays(history, input.maintenanceHistory),
   };
@@ -442,11 +597,22 @@ function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generat
   };
 }
 
-function healthScore(input: { criticalCount: number; riskCount: number; rawChangedCount: number; inboxCount: number; brokenLinks: number; orphanPages: number; staleItems: number }): number {
-  const rawPenalty = input.rawChangedCount > 20 ? 20 : input.rawChangedCount > 5 ? 10 : 0;
-  const inboxPenalty = input.inboxCount > 30 ? 20 : input.inboxCount > 10 ? 10 : 0;
-  const reportPenalty = Math.min(24, input.brokenLinks * 6) + Math.min(12, input.orphanPages * 4) + Math.min(8, input.staleItems * 2);
-  return Math.max(0, Math.min(100, 100 - input.criticalCount * 24 - input.riskCount * 2 - rawPenalty - inboxPenalty - reportPenalty));
+function healthScore(reasons: KnowledgeBaseDashboardHealthScoreReason[]): number {
+  const totalPenalty = reasons.reduce((sum, reason) => sum + reason.penalty, 0);
+  return Math.max(0, Math.min(100, 100 - totalPenalty));
+}
+
+function healthStatusForScore(score: number, hasCritical: boolean): KnowledgeBaseDashboardHealthStatus {
+  if (hasCritical || score < 60) return "bad";
+  if (score < 85) return "risk";
+  return "healthy";
+}
+
+function healthScoreSummary(score: number, status: KnowledgeBaseDashboardHealthStatus, hasCritical: boolean): string {
+  if (status === "bad" && hasCritical && score >= 60) return `当前 ${score} 分，存在关键问题，显示异常。`;
+  if (score < 60) return `当前 ${score} 分，低于 60，显示异常。`;
+  if (score < 85) return `当前 ${score} 分，位于 60-84，显示风险。`;
+  return `当前 ${score} 分，达到 85+，显示健康。`;
 }
 
 function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: number): KnowledgeBaseDashboardWikiGroup[] {

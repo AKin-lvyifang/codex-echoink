@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { pluginDataDir, rawStorageDir } from "../core/raw-message-store";
+import { pluginDataDir, rawStorageDir, resolveRawRef } from "../core/raw-message-store";
 import { isKnowledgeBaseSession, type ChatMessage, type CodexForObsidianSettings, type StoredSession } from "../settings/settings";
 
 export const KNOWLEDGE_BASE_HISTORY_VERSION = 1;
@@ -55,6 +55,11 @@ export interface KnowledgeBaseHistoryMutationResult {
   changed: boolean;
   messageCount: number;
   activeDate: string;
+}
+
+export interface KnowledgeBaseHistoryRemovalResult {
+  removedDayCount: number;
+  removedMessageCount: number;
 }
 
 export function knowledgeBaseHistoryRoot(vaultPath: string, pluginDir: string): string {
@@ -318,8 +323,60 @@ export async function compactOldKnowledgeBaseProcessHistory(vaultPath: string, p
   return changedCount;
 }
 
-export async function removeKnowledgeBaseHistory(vaultPath: string, pluginDir: string): Promise<void> {
+export async function removeKnowledgeBaseHistory(vaultPath: string, pluginDir: string): Promise<KnowledgeBaseHistoryRemovalResult> {
+  const index = await readKnowledgeBaseHistoryIndex(vaultPath, pluginDir);
+  let removedMessageCount = 0;
+  for (const session of index.sessions) {
+    for (const day of session.days) {
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => []);
+      removedMessageCount += messages.length || day.messageCount;
+      await removeHistoryRawRefs(vaultPath, pluginDir, messages);
+    }
+  }
   await rm(knowledgeBaseHistoryRoot(vaultPath, pluginDir), { recursive: true, force: true });
+  return {
+    removedDayCount: index.sessions.reduce((sum, session) => sum + session.dayCount, 0),
+    removedMessageCount
+  };
+}
+
+export async function removeKnowledgeBaseHistoryDays(
+  vaultPath: string,
+  pluginDir: string,
+  dates: string[],
+  sessionId?: string
+): Promise<KnowledgeBaseHistoryRemovalResult> {
+  const targets = new Set(dates.map((date) => date.trim()).filter(isHistoryDateKey));
+  if (!targets.size) return { removedDayCount: 0, removedMessageCount: 0 };
+  const index = await readKnowledgeBaseHistoryIndex(vaultPath, pluginDir);
+  const sessions = sessionId ? index.sessions.filter((session) => session.sessionId === sessionId) : index.sessions;
+  let removedDayCount = 0;
+  let removedMessageCount = 0;
+  for (const session of sessions) {
+    for (const day of session.days) {
+      if (!targets.has(day.date)) continue;
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => []);
+      removedMessageCount += messages.length || day.messageCount;
+      await removeHistoryRawRefs(vaultPath, pluginDir, messages);
+      await rm(knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.sessionId, day.date), { force: true });
+      removedDayCount += 1;
+    }
+  }
+  if (removedDayCount) await rebuildKnowledgeBaseHistoryIndex(vaultPath, pluginDir);
+  return { removedDayCount, removedMessageCount };
+}
+
+export async function pruneKnowledgeBaseHistoryByRetention(
+  vaultPath: string,
+  pluginDir: string,
+  retentionDays: number,
+  now = Date.now()
+): Promise<KnowledgeBaseHistoryRemovalResult> {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return { removedDayCount: 0, removedMessageCount: 0 };
+  const cutoff = localDateKeyForTimestamp(now - Math.max(1, Math.round(retentionDays)) * 24 * 60 * 60 * 1000);
+  const index = await readKnowledgeBaseHistoryIndex(vaultPath, pluginDir);
+  const dates = [...new Set(index.sessions.flatMap((session) => session.days.map((day) => day.date)).filter((date) => date < cutoff))];
+  return removeKnowledgeBaseHistoryDays(vaultPath, pluginDir, dates);
 }
 
 function groupMessagesByDate(messages: ChatMessage[]): Map<string, ChatMessage[]> {
@@ -512,6 +569,19 @@ function sanitizeHistoryPathPart(value: string): string {
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function isHistoryDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+async function removeHistoryRawRefs(vaultPath: string, pluginDir: string, messages: ChatMessage[]): Promise<void> {
+  const refs = [...new Set(messages.map((message) => message.rawRef).filter((ref): ref is string => Boolean(ref)))];
+  for (const rawRef of refs) {
+    await rm(resolveRawRef(vaultPath, rawRef, pluginDir), { force: true }).catch((error) => {
+      if (!isNotFoundError(error)) throw error;
+    });
+  }
 }
 
 function isNotFoundError(error: unknown): boolean {

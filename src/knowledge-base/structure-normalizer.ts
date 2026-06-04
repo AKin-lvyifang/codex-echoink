@@ -11,6 +11,7 @@ import type {
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
+  includeRawMoves?: boolean;
 }
 
 interface MoveCandidate {
@@ -58,7 +59,12 @@ export async function normalizeKnowledgeBaseStructure(
     risks: [],
     pathRewrites: []
   };
-  const candidates = await buildMoveCandidates(vaultPath);
+  if (options.includeRawMoves === true) {
+    result.risks.push("raw 自动移动已显式开启；执行前应确认 Obsidian 元数据自动更新规则不会改写 raw frontmatter。");
+  } else {
+    await recordSkippedRawMoveCandidates(vaultPath, result);
+  }
+  const candidates = await buildMoveCandidates(vaultPath, options);
   const seen = new Set<string>();
   for (const candidate of candidates) {
     if (seen.has(candidate.from)) continue;
@@ -91,12 +97,30 @@ export function rewriteKnowledgeBaseRelativePath(relativePath: string, rewrites:
   return next;
 }
 
-async function buildMoveCandidates(vaultPath: string): Promise<MoveCandidate[]> {
+async function buildMoveCandidates(vaultPath: string, options: StructureNormalizationOptions): Promise<MoveCandidate[]> {
   return [
-    ...FIXED_MOVES,
+    ...FIXED_MOVES.filter((candidate) => options.includeRawMoves === true || !isRawMoveCandidate(candidate)),
     ...await outputMoveCandidates(vaultPath),
     ...await projectPhaseMoveCandidates(vaultPath)
   ];
+}
+
+async function recordSkippedRawMoveCandidates(vaultPath: string, result: StructureNormalizationResult): Promise<void> {
+  for (const candidate of FIXED_MOVES) {
+    if (!isRawMoveCandidate(candidate)) continue;
+    const from = normalizeSlashes(candidate.from);
+    const to = normalizeSlashes(candidate.to);
+    if (!await exists(path.join(vaultPath, from))) continue;
+    addSkip(result, {
+      from,
+      to,
+      reason: "raw 自动移动已关闭，避免 Obsidian 元数据规则改写原始资料"
+    });
+  }
+}
+
+function isRawMoveCandidate(candidate: MoveCandidate): boolean {
+  return normalizeSlashes(candidate.from).startsWith("raw/") || normalizeSlashes(candidate.to).startsWith("raw/");
 }
 
 async function outputMoveCandidates(vaultPath: string): Promise<MoveCandidate[]> {
@@ -107,8 +131,8 @@ async function outputMoveCandidates(vaultPath: string): Promise<MoveCandidate[]>
     if (entry.name === ".DS_Store" || entry.name === ".ingest-tracker.md") continue;
     const from = `outputs/${entry.name}`;
     if (entry.isDirectory() && ["maintenance", "reviews", "publishing", "instructions", "migrations"].includes(entry.name)) continue;
-    if (entry.isFile() && /^kb-maintenance-\d{4}-\d{2}-\d{2}\.md$/i.test(entry.name)) {
-      candidates.push({ from, to: `outputs/maintenance/${entry.name}`, kind: "file", reason: "维护报告归入 maintenance" });
+    if (entry.isFile() && /^kb-(?:maintenance|check)-\d{4}-\d{2}-\d{2}\.md$/i.test(entry.name)) {
+      candidates.push({ from, to: `outputs/maintenance/${entry.name}`, kind: "file", reason: "维护/体检报告归入 maintenance" });
       continue;
     }
     if (entry.isFile() && /^knowledge-base-review-/i.test(entry.name)) {

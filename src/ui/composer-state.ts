@@ -7,14 +7,34 @@ export interface ComposerPrimaryActionState {
   hasQueuedItems?: boolean;
 }
 
+export interface ComposerRuntimeActionState {
+  viewRunning: boolean;
+  globalKnowledgeTaskRunning: boolean;
+  hasDraft?: boolean;
+  hasQueuedItems?: boolean;
+}
+
+export function composerStateForRuntimeState(state: ComposerRuntimeActionState): ComposerPrimaryActionState {
+  return {
+    viewRunning: state.viewRunning,
+    knowledgeTaskRunning: state.globalKnowledgeTaskRunning,
+    hasDraft: state.hasDraft,
+    hasQueuedItems: state.hasQueuedItems
+  };
+}
+
+export function composerPrimaryActionForRuntimeState(state: ComposerRuntimeActionState): ComposerPrimaryAction {
+  return composerPrimaryActionForState(composerStateForRuntimeState(state));
+}
+
 export function composerIsBusy(state: ComposerPrimaryActionState): boolean {
   return state.viewRunning || state.knowledgeTaskRunning;
 }
 
 export function composerPrimaryActionForState(state: ComposerPrimaryActionState): ComposerPrimaryAction {
   if (composerIsBusy(state) && state.hasDraft) return "enqueue";
-  if (state.knowledgeTaskRunning) return "cancel-knowledge-task";
   if (state.viewRunning) return "stop-turn";
+  if (state.knowledgeTaskRunning) return "cancel-knowledge-task";
   if (state.hasQueuedItems && state.hasDraft) return "enqueue";
   if (state.hasQueuedItems) return "resume-queue";
   return "send";

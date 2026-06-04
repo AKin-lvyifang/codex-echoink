@@ -14,12 +14,13 @@ export interface KnowledgeBasePromptInput {
   hasRawIndex: boolean;
   hasWikiIndex: boolean;
   hasTracker: boolean;
+  remainingSourceCount?: number;
 }
 
 export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): string {
   const sourceLines = input.sources.length
     ? input.sources.map((source) => `- ${source.relativePath} | ${source.mime} | ${Math.round(source.size / 1024)} KB | ${source.changed ? "新增/变更" : "已处理"}`).join("\n")
-    : "- 本轮没有检测到新增或变更 raw 文件；请执行体检并生成 no-op 维护报告。";
+    : "- 本轮没有检测到新增或变更 raw 文件；请执行体检并生成 no-op 体检报告。";
   const task = taskForMode(input.mode);
   const rulesMode = input.useCustomRulesFile
     ? `自定义规则文件：${input.rulesFilePath}。知识库结构以这个文件为准；不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
@@ -47,7 +48,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "## 标准执行步骤",
     "1. Discover 增量检测：读取 raw/index.md；用 find 列出 raw/、inbox/、outputs/、projects/ 下知识区文件及修改时间，重点对比 raw/ 与 outputs/.ingest-tracker.md。跳过 raw/ 中以 .base 结尾的辅助文件。",
     "2. Ingest 消化：只处理新增/变更资料；从 wiki/index.md 中选择最匹配领域；写入 wiki/<领域>/ 的 concepts/、guides/、references/ 等合适子文件夹。",
-    "3. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径整理由插件在任务结束后执行确定性移动，不要直接移动、重命名或改写 raw 源文件。",
+    "3. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径只记录建议或风险，不要移动、重命名或改写 raw 源文件。",
     "4. Wiki 笔记格式：包含 frontmatter（created/updated/tags）、raw 原文回链、3-5 句核心要点、关键概念和术语、与既有 wiki 概念的双向链接。",
     "5. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md、raw/index.md、projects/00-索引.md 和 outputs/.ingest-tracker.md。",
     "6. Lint 体检：扫描 wiki/ 下 [[链接]]，检查断链、孤儿页面、过时或 draft 内容、根目录散落普通笔记、中文目录残留，以及 wiki/index.md 链接有效性。",
@@ -55,23 +56,29 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "",
     "## 本轮 raw 来源",
     sourceLines,
+    input.remainingSourceCount
+      ? `- 批次限制：本轮只处理上面列出的 ${input.sources.length} 个 raw；其余 ${input.remainingSourceCount} 个保留到下次 /maintain，不要标记为已消化。`
+      : "",
     "",
     "## 知识库管理写入边界",
     "- 以下边界只适用于本次知识库管理任务；不要把它扩展成普通 Agent 对话的全局限制。",
     "- 可以写入和整理：wiki/、outputs/、inbox/、projects/；raw/index.md 可更新索引。",
     "- 不纳入每日自动整理：journal/、work/、templates/、testing/、顶层 assets/。",
-    "- raw/ 源文件正文只读：不得写入、覆盖、格式化、补 frontmatter、改 updated 字段、移动或重命名 raw 源文件及对应 .assets 附件目录。",
-    "- raw 路径允许结构整理，但只能由插件的 Structure Normalize 在 Agent 结束后执行；你只需要在报告中说明建议或风险。",
+    "- raw/ 源文件内容边界：正文、标题、路径、来源内容和 .assets 附件目录都不可由 Agent 改写；Agent 不得写入、覆盖、格式化、补 frontmatter、改 updated 字段、移动或重命名 raw 源文件。",
+    "- 只有 EchoInk 插件后处理阶段可以写入 raw Markdown 的托管元属性：已处理、提炼状态、提炼时间、提炼指纹、提炼报告、提炼证据；Agent 不要直接写这些属性。",
+    "- raw 路径不在每日维护中自动整理；你只需要在报告中说明建议或风险。",
+    "- 如果任务运行期间出现了本轮来源列表外的新 raw 文件，只在报告中记录风险；不要消化、移动、重命名或写入 tracker。",
     "- 禁止删除 raw/，禁止自动归档 raw/，禁止合并 raw/ 原文。",
     "- 低风险自动执行：只移动 wiki/outputs/inbox/projects 文件或目录；目标目录规则明确；无同名冲突；引用和 tracker 可自动同步。",
     "- 不确定或会断链的改动只写进报告：目标目录不确定、同名冲突、附件不匹配、跨出知识区、涉及删除/合并/归档、涉及 journal/work/templates/testing/assets。",
-    "- 文件移动后必须同步 wiki 中旧 raw 链接、raw/index.md、wiki/index.md、领域 00-索引.md、outputs/.ingest-tracker.md、projects/00-索引.md。",
+    "- wiki/、outputs/、inbox/、projects/ 文件移动后必须同步相关索引、引用和 tracker；raw 文件路径只记录风险，不自动移动。",
     "",
     "## 输出要求",
-    `- 维护报告必须写入：${input.reportPath}`,
+    `- ${input.mode === "lint" ? "体检报告" : "维护报告"}必须写入：${input.reportPath}`,
     "- 报告包含：一眼结论、新增/变更文件、已消化、结构整理、体检发现、索引更新、风险/需确认。",
     "- 如果本轮消化了 raw 文件，必须更新 outputs/.ingest-tracker.md。",
     "- 消化后的 wiki 页面必须包含 raw 来源回链。",
+    "- 每个本轮 raw 都要在非索引正文页留下结构层证据：新建页可用顶部 `> 来源：[[raw/...]]` + 后续正文；聚合页要按日期或来源独立写小节。只写报告、tracker、索引或来源清单不算消化。",
     "- 对图片/PDF 的理解必须基于模型实际读取到的内容；如果不能读取，写明失败原因，不要编造。",
     "",
     "开始执行。"

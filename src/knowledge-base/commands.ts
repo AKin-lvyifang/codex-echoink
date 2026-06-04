@@ -1,4 +1,4 @@
-export type KnowledgeBaseCommandIntent = "chat" | "init" | "maintain" | "lint" | "reingest" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "clear" | "history" | "cancel" | "collect" | "help";
+export type KnowledgeBaseCommandIntent = "chat" | "init" | "maintain" | "lint" | "reingest" | "calibrate" | "process-outputs" | "process-inbox" | "journal" | "ask" | "review" | "clear" | "history" | "cancel" | "collect" | "help";
 export type KnowledgeBaseCommandTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseReviewCommandKind = "knowledge-base" | "agent-chat";
 
@@ -26,6 +26,7 @@ export const KNOWLEDGE_BASE_COMMAND_OPTIONS: KnowledgeBaseCommandOption[] = [
   { title: "提问", icon: "search", text: "/ask ", description: "对知识库发问" },
   { title: "体检", icon: "stethoscope", text: "/check ", description: "只体检知识库" },
   { title: "维护知识库", icon: "library", text: "/maintain ", description: "维护 raw 到 wiki，并整理知识区结构" },
+  { title: "校准 raw 状态", icon: "badge-check", text: "/calibrate ", description: "只在登记表校准已提炼 raw" },
   { title: "处理 outputs", icon: "archive-restore", text: "/outputs ", description: "处理 outputs 并提炼长期价值" },
   { title: "处理 inbox", icon: "inbox", text: "/inbox ", description: "整理收件箱" },
   { title: "写日记", icon: "calendar-plus", text: "/journal ", description: "写日记" },
@@ -40,6 +41,7 @@ export const KNOWLEDGE_BASE_COMMAND_GUIDE: KnowledgeBaseCommandGuide[] = [
   { command: "/ask ...", description: "对知识库发问" },
   { command: "/check ...", description: "只体检知识库" },
   { command: "/maintain ...", description: "维护 raw 到 wiki，并整理知识区结构" },
+  { command: "/calibrate ...", description: "校准 raw 提炼状态，只登记不重提炼" },
   { command: "/outputs ...", description: "处理 outputs 并提炼长期价值" },
   { command: "/inbox ...", description: "整理收件箱" },
   { command: "/journal ...", description: "写日记" },
@@ -88,6 +90,9 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
   if (/重新提炼|重新消化|重新整理|重提炼|reingest|redigest|re-digest/.test(normalized)) {
     return { intent: "reingest", reason: "reingest" };
   }
+  if (/校准.*raw|raw.*校准|状态校准|打标|标记已处理|calibrate/.test(normalized)) {
+    return { intent: "calibrate", reason: "calibrate" };
+  }
   if (/处理\s*outputs|整理\s*outputs|处理输出|整理输出|outputs\s*to\s*wiki|process\s*outputs/.test(normalized)) {
     return { intent: "process-outputs", reason: "process-outputs" };
   }
@@ -103,11 +108,12 @@ export function parseKnowledgeBaseCommand(text: string, attachmentCount = 0): Kn
   if (/维护|消化|整理|沉淀|更新知识库|ingest|digest|maintain/.test(normalized)) {
     return { intent: "maintain", reason: "maintain" };
   }
-  if (attachmentCount > 0) {
-    return { intent: "collect", target: "raw-attachments", reason: "attachment" };
-  }
-  if (URL_PATTERN.test(text) || /链接|网页|文章|公众号|收集|剪藏|保存到 raw|archive|clip/.test(normalized)) {
-    return { intent: "collect", target: "raw-articles", reason: "source" };
+  if (isSourceCollectRequest(normalized)) {
+    return {
+      intent: "collect",
+      target: attachmentCount > 0 && !URL_PATTERN.test(text) ? "raw-attachments" : "raw-articles",
+      reason: "source"
+    };
   }
   if (/记一下|记录|想法|灵感|inbox|memo|note/.test(normalized)) {
     return { intent: "collect", target: "inbox", reason: "idea" };
@@ -140,6 +146,7 @@ function parseSlashKnowledgeBaseCommand(normalized: string): KnowledgeBaseComman
   if (command === "init" || command === "初始化") return { intent: "init", reason: "slash-init", confirm: isInitConfirmCommand(normalized) };
   if (command === "check" || command === "lint" || command === "doctor" || command === "体检" || command === "检查") return { intent: "lint", reason: "slash-lint" };
   if (command === "maintain" || command === "ingest" || command === "digest" || command === "维护") return { intent: "maintain", reason: "slash-maintain" };
+  if (command === "calibrate" || command === "校准" || command === "打标") return { intent: "calibrate", reason: "slash-calibrate" };
   if (command === "outputs" || command === "output" || command === "处理outputs" || command === "处理输出") return { intent: "process-outputs", reason: "slash-outputs" };
   if (command === "inbox" || command === "处理inbox" || command === "收件箱") return { intent: "process-inbox", reason: "slash-inbox" };
   if (command === "journal" || command === "daily" || command === "diary" || command === "日记") return { intent: "journal", target: "journal", reason: "slash-journal" };
@@ -163,6 +170,12 @@ function isCancelRequest(normalized: string): boolean {
   if (/^(请|帮我)?(取消|停止|中断)(当前|这次|本次)?(知识库)?(任务|维护|运行|执行)$/.test(compact)) return true;
   if (/^(cancel|stop)\s+(current\s+)?(knowledge\s+base\s+)?(task|run|maintenance)$/i.test(normalized)) return true;
   return false;
+}
+
+function isSourceCollectRequest(normalized: string): boolean {
+  if (/保存到\s*raw/.test(normalized)) return true;
+  if (/\b(archive|clip)\b/.test(normalized)) return true;
+  return /收集|收藏|剪藏|保存|归档|导入|抓取/.test(normalized);
 }
 
 function isInitConfirmCommand(normalized: string): boolean {

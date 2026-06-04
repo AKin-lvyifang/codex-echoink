@@ -407,7 +407,7 @@ codex-echoink/
 - OpenCode API 模式连接本机或用户配置的 OpenCode server；插件可以启动或停止 `opencode serve`，但不会静默安装 OpenCode。
 - 自定义 API Provider 的 key 会保存在本机 Obsidian 插件数据中，只建议在可信设备上使用。
 - 插件默认不会上传整个 vault。普通会话必须先选择工作区文件夹，附加笔记只作为当前轮上下文。
-- 知识库管理任务会保持 Raw 正文只读，只更新索引或 tracker；普通 Agent 对话中，Raw 文件整理按你的明确指令和当前权限执行。
+- 知识库管理任务会保护 Raw 来源内容：正文、标题、路径和对应 `.assets` 附件目录不可改；Markdown raw 的提炼指纹按正文计算，EchoInk 插件后处理阶段会写入 `已处理`、`提炼状态`、`提炼指纹` 等托管元属性，避免已提炼资料被重复消化。普通 Agent 对话中，Raw 文件整理按你的明确指令和当前权限执行。
 
 <a id="截图"></a>
 ## 截图

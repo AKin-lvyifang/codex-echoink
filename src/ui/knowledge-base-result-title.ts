@@ -1,4 +1,4 @@
-export type KnowledgeBaseResultTitleStatus = "success" | "failed";
+export type KnowledgeBaseResultTitleStatus = "success" | "failed" | "canceled";
 
 export interface KnowledgeBaseResultTitle {
   title: string;
@@ -20,6 +20,9 @@ export function extractKnowledgeBaseResultTitle(itemType: string | undefined, te
   if (isFailedKnowledgeBaseResultTitle(firstLine)) {
     return { title: firstLine, body, status: "failed" };
   }
+  if (isCanceledKnowledgeBaseResultTitle(firstLine)) {
+    return { title: firstLine, body, status: "canceled" };
+  }
   return null;
 }
 
@@ -28,5 +31,9 @@ function isSuccessfulKnowledgeBaseResultTitle(value: string): boolean {
 }
 
 function isFailedKnowledgeBaseResultTitle(value: string): boolean {
-  return /^知识库[^\n。]{1,40}失败：.+$/.test(value) || value === "每日维护执行失败。" || value === "每日维护已取消。";
+  return /^知识库[^\n。]{1,40}失败：.+$/.test(value) || value === "每日维护执行失败。";
+}
+
+function isCanceledKnowledgeBaseResultTitle(value: string): boolean {
+  return /^知识库[^\n。]{1,40}已取消。$/.test(value) || value === "每日维护已取消。";
 }

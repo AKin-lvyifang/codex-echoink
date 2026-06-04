@@ -66,9 +66,9 @@
 
 优化知识库维护：
 
-1. `/maintain` 收敛为 `Ingest + Structure Normalize + Lint`，维护后会整理 raw、wiki、outputs、inbox、projects 结构并输出报告。
-2. 知识库维护不再直接给 Agent 整个 `raw/` 写权限；raw 正文完整性由插件做确定性校验。
-3. raw 路径归一会同步 tracker，纯路径移动不再误报正文被改写。
+1. `/maintain` 收敛为 `Ingest + Structure Normalize + Lint`，维护后会整理 wiki、outputs、inbox、projects 结构并输出报告。
+2. 知识库维护不再直接给 Agent 整个 `raw/` 写权限；raw 整文件完整性由插件做确定性校验。
+3. raw 路径归一只写入报告风险，维护任务不自动移动或重命名 raw 文件、来源目录和附件目录。
 4. 维护报告、dashboard、历史入口和过程渲染补齐了更多可见状态，排查失败更直接。
 
 修复：

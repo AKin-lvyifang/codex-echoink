@@ -50,7 +50,7 @@ import {
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
-import { confirmModal } from "../ui/modals";
+import { confirmModal, textInputModal } from "../ui/modals";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
 import { buildSetupCheck, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
 
@@ -472,6 +472,21 @@ export class CodexSettingTab extends PluginSettingTab {
       .catch((error) => {
         statsEl.setText(copy.common.readFailed(error instanceof Error ? error.message : String(error)));
       });
+    this.decorateSetting(new Setting(section)
+      .setName(copy.knowledge.retentionDays)
+      .setDesc(copy.knowledge.retentionDaysDesc)
+      .addDropdown((dropdown) => {
+        const options = [7, 30, 90, 0];
+        for (const days of options) {
+          dropdown.addOption(String(days), days === 0 ? copy.knowledge.retentionForever : copy.knowledge.retentionDaysOption(days));
+        }
+        dropdown.setValue(String(this.plugin.settings.knowledgeBase.historyRetentionDays));
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeHistoryRetentionForUi(value);
+          await this.plugin.saveSettings();
+          this.display();
+        });
+      }), "calendar-clock");
     const actions = section.createDiv({ cls: "codex-api-provider-actions" });
     const rebuild = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.rebuildHistory, attr: { type: "button" } });
     rebuild.onclick = async () => {
@@ -494,6 +509,38 @@ export class CodexSettingTab extends PluginSettingTab {
       compact.disabled = true;
       const count = await this.plugin.compactOldKnowledgeBaseProcessHistory();
       new Notice(copy.knowledge.historyCompacted(count));
+      this.display();
+    };
+    const prune = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.pruneHistory, attr: { type: "button" } });
+    prune.onclick = async () => {
+      const accepted = await confirmModal(this.app, copy.knowledge.pruneHistory, copy.knowledge.retentionDaysDesc, copy.knowledge.pruneHistory, "取消");
+      if (!accepted) return;
+      prune.disabled = true;
+      const result = await this.plugin.pruneKnowledgeBaseHistoryByRetention();
+      new Notice(copy.knowledge.historyPruned(result.removedDayCount, result.removedMessageCount));
+      this.display();
+    };
+    const deleteDate = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.deleteHistoryDate, attr: { type: "button" } });
+    deleteDate.onclick = async () => {
+      const input = await textInputModal(this.app, copy.knowledge.deleteHistoryDate, copy.knowledge.deleteHistoryDatePrompt);
+      if (!input) return;
+      const dates = parseHistoryDateSelection(input);
+      if (!dates.length) {
+        new Notice(copy.knowledge.deleteHistoryDateInvalid);
+        return;
+      }
+      deleteDate.disabled = true;
+      const result = await this.plugin.removeKnowledgeBaseHistoryDays(dates);
+      new Notice(copy.knowledge.historyPruned(result.removedDayCount, result.removedMessageCount));
+      this.display();
+    };
+    const clear = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.clearHistory, attr: { type: "button" } });
+    clear.onclick = async () => {
+      const accepted = await confirmModal(this.app, copy.knowledge.clearHistory, copy.knowledge.clearHistoryConfirm, copy.knowledge.clearHistory, "取消");
+      if (!accepted) return;
+      clear.disabled = true;
+      const result = await this.plugin.removeKnowledgeBaseHistory();
+      new Notice(copy.knowledge.historyCleared(result.removedDayCount, result.removedMessageCount));
       this.display();
     };
   }
@@ -1851,6 +1898,53 @@ function normalizeAgentBackendForUi(value: string): AgentBackendMode {
 
 function normalizeKnowledgeBackendForUi(value: string): KnowledgeBaseBackendMode {
   return value === "codex-cli" || value === "opencode" ? value : "default";
+}
+
+function normalizeKnowledgeHistoryRetentionForUi(value: string): number {
+  const parsed = Number(value);
+  return parsed === 7 || parsed === 30 || parsed === 90 || parsed === 0 ? parsed : DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays;
+}
+
+function parseHistoryDateSelection(value: string): string[] {
+  const dates = new Set<string>();
+  for (const part of value.split(/[,\s，、]+/).map((item) => item.trim()).filter(Boolean)) {
+    const rangeMatch = part.match(/^(\d{4}-\d{2}-\d{2})(?:\.\.|~|至|到)(\d{4}-\d{2}-\d{2})$/);
+    if (rangeMatch) {
+      for (const date of expandHistoryDateRange(rangeMatch[1], rangeMatch[2])) dates.add(date);
+      continue;
+    }
+    if (isHistoryDateKey(part)) dates.add(part);
+  }
+  return [...dates].sort();
+}
+
+function expandHistoryDateRange(start: string, end: string): string[] {
+  const startMs = historyDateKeyToUtcMs(start);
+  const endMs = historyDateKeyToUtcMs(end);
+  if (startMs === null || endMs === null || startMs > endMs) return [];
+  const dates: string[] = [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  for (let current = startMs; current <= endMs && dates.length <= 366; current += dayMs) {
+    dates.push(historyDateKeyFromUtcMs(current));
+  }
+  return dates;
+}
+
+function historyDateKeyToUtcMs(value: string): number | null {
+  if (!isHistoryDateKey(value)) return null;
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  const ms = Date.UTC(year, month - 1, day);
+  const normalized = historyDateKeyFromUtcMs(ms);
+  return normalized === value ? ms : null;
+}
+
+function historyDateKeyFromUtcMs(value: number): string {
+  const date = new Date(value);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function isHistoryDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function knowledgeStatusLabel(value: string, copy: SettingsCopy = settingsCopy("zh-CN")): string {

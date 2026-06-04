@@ -1,3 +1,9 @@
+export const KNOWLEDGE_BASE_CANCEL_ERROR = "知识库任务已取消";
+
+export function isKnowledgeBaseCancelError(message: string): boolean {
+  return message.trim() === KNOWLEDGE_BASE_CANCEL_ERROR;
+}
+
 export function formatKnowledgeBaseCodexFailureSignal(method: string, params: any, fallbackMessage: string): string {
   const status = firstString(params?.turn?.status, params?.status, params?.error?.status, params?.turn?.error?.status);
   const code = firstString(params?.code, params?.error?.code, params?.turn?.error?.code, params?.exitCode);

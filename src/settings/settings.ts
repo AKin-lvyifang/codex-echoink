@@ -87,6 +87,8 @@ export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initial
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
 export type KnowledgeBaseMaintenanceMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox" | "unknown";
+export type KnowledgeBaseManagedThreadKind = KnowledgeBaseMaintenanceMode | "ask" | "journal" | "review";
+export type KnowledgeBaseManagedThreadArchiveState = "running" | "pending-archive" | "archived" | "archive-failed";
 export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
 export type ReviewRangeMode = "previous-week" | "current-week";
@@ -118,7 +120,12 @@ export interface KnowledgeBaseProcessedSource {
   path: string;
   size: number;
   mtime: number;
+  fingerprint?: string;
   digestedAt: number;
+  reportPath?: string;
+  evidencePaths?: string[];
+  runId?: string;
+  confidence?: "verified" | "repaired";
 }
 
 export interface KnowledgeBaseHealthHistoryEntry {
@@ -130,6 +137,19 @@ export interface KnowledgeBaseHealthHistoryEntry {
 export interface KnowledgeBaseMaintenanceHistoryEntry extends KnowledgeBaseHealthHistoryEntry {
   mode: KnowledgeBaseMaintenanceMode;
   reportPath: string;
+}
+
+export interface KnowledgeBaseManagedThread {
+  threadId: string;
+  runId: string;
+  kind: KnowledgeBaseManagedThreadKind;
+  vaultPath: string;
+  archiveState: KnowledgeBaseManagedThreadArchiveState;
+  createdAt: number;
+  settledAt: number;
+  archivedAt: number;
+  attempts: number;
+  lastError: string;
 }
 
 export interface KnowledgeBaseSettings {
@@ -146,6 +166,8 @@ export interface KnowledgeBaseSettings {
   lastReportPath: string;
   lastError: string;
   lastSummary: string;
+  historyRetentionDays: number;
+  managedThreads: Record<string, KnowledgeBaseManagedThread>;
   initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
   healthHistory: KnowledgeBaseHealthHistoryEntry[];
@@ -405,7 +427,7 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 26,
+  settingsVersion: 27,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -476,6 +498,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastReportPath: "",
     lastError: "",
     lastSummary: "",
+    historyRetentionDays: 30,
+    managedThreads: {},
     initialization: {
       status: "not-started",
       initializedAt: 0,
@@ -1022,6 +1046,8 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
+    historyRetentionDays: normalizeKnowledgeBaseHistoryRetentionDays(value?.historyRetentionDays, fallback.historyRetentionDays),
+    managedThreads: normalizeKnowledgeBaseManagedThreads(value?.managedThreads),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
     processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources),
     healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory),
@@ -1134,14 +1160,26 @@ function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, Know
     .map(([key, item]: [string, any]) => {
       const path = normalizeOptionalText(item?.path || key);
       if (!path) return null;
+      const fingerprint = normalizeOptionalText(item?.fingerprint);
+      const source: KnowledgeBaseProcessedSource = {
+        path,
+        size: normalizeNonNegativeNumber(item?.size),
+        mtime: normalizeNonNegativeNumber(item?.mtime),
+        digestedAt: normalizeNonNegativeNumber(item?.digestedAt)
+      };
+      if (fingerprint) source.fingerprint = fingerprint;
+      const reportPath = normalizeOptionalText(item?.reportPath);
+      if (reportPath) source.reportPath = reportPath;
+      const evidencePaths = Array.isArray(item?.evidencePaths)
+        ? item.evidencePaths.map(normalizeOptionalText).filter(Boolean)
+        : [];
+      if (evidencePaths.length) source.evidencePaths = evidencePaths;
+      const runId = normalizeOptionalText(item?.runId);
+      if (runId) source.runId = runId;
+      if (item?.confidence === "verified" || item?.confidence === "repaired") source.confidence = item.confidence;
       return [
         path,
-        {
-          path,
-          size: normalizeNonNegativeNumber(item?.size),
-          mtime: normalizeNonNegativeNumber(item?.mtime),
-          digestedAt: normalizeNonNegativeNumber(item?.digestedAt)
-        }
+        source
       ] as const;
     })
     .filter((item): item is readonly [string, KnowledgeBaseProcessedSource] => Boolean(item))
@@ -1202,6 +1240,44 @@ function normalizeKnowledgeBaseHealthCheckStatus(value: any): KnowledgeBaseHealt
 
 function normalizeKnowledgeBaseMaintenanceMode(value: any): KnowledgeBaseMaintenanceMode | null {
   return value === "maintain" || value === "lint" || value === "reingest" || value === "outputs" || value === "inbox" || value === "unknown" ? value : null;
+}
+
+function normalizeKnowledgeBaseManagedThreadKind(value: any): KnowledgeBaseManagedThreadKind {
+  const maintenanceMode = normalizeKnowledgeBaseMaintenanceMode(value);
+  if (maintenanceMode) return maintenanceMode;
+  return value === "ask" || value === "journal" || value === "review" ? value : "unknown";
+}
+
+function normalizeKnowledgeBaseManagedThreadArchiveState(value: any): KnowledgeBaseManagedThreadArchiveState {
+  return value === "running" || value === "pending-archive" || value === "archived" || value === "archive-failed" ? value : "pending-archive";
+}
+
+function normalizeKnowledgeBaseHistoryRetentionDays(value: any, fallback: number): number {
+  const normalized = normalizePositiveInteger(value, fallback, 0, 3650);
+  return normalized === 0 || normalized === 7 || normalized === 30 || normalized === 90 ? normalized : fallback;
+}
+
+function normalizeKnowledgeBaseManagedThreads(value: any): Record<string, KnowledgeBaseManagedThread> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries: Array<[string, KnowledgeBaseManagedThread]> = [];
+  for (const [key, raw] of Object.entries(value)) {
+    const item = raw as any;
+    const threadId = normalizeOptionalText(item?.threadId || key);
+    if (!threadId) continue;
+    entries.push([threadId, {
+      threadId,
+      runId: normalizeOptionalText(item?.runId),
+      kind: normalizeKnowledgeBaseManagedThreadKind(item?.kind),
+      vaultPath: normalizeOptionalText(item?.vaultPath),
+      archiveState: normalizeKnowledgeBaseManagedThreadArchiveState(item?.archiveState),
+      createdAt: normalizeNonNegativeNumber(item?.createdAt),
+      settledAt: normalizeNonNegativeNumber(item?.settledAt),
+      archivedAt: normalizeNonNegativeNumber(item?.archivedAt),
+      attempts: normalizePositiveInteger(item?.attempts, 0, 0, 1000),
+      lastError: normalizeOptionalText(item?.lastError)
+    }]);
+  }
+  return Object.fromEntries(entries.slice(-200));
 }
 
 export function recordKnowledgeBaseHealthCheck(settings: KnowledgeBaseSettings, status: KnowledgeBaseHealthCheckStatus, at = Date.now()): void {

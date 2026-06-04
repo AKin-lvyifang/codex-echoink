@@ -1,7 +1,9 @@
 import * as assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
 import { buildDiffSummary, parseFileChangeDiff, serializeFileChanges } from "../core/diff-summary";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../core/virtual-window";
@@ -65,11 +67,12 @@ import {
   normalizeReviewOutputDir,
   resolveEditorActionModeConfig,
   validateApiProvider,
-  resourceEnabled
+  resourceEnabled,
+  type ChatMessage
 } from "../settings/settings";
 import { buildSetupCheck, completeSetupState } from "../settings/setup-check";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
-import { buildCodexLaunchConfig, resolveCodexCommand } from "../core/codex-service";
+import { buildCodexLaunchConfig, CodexService, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
 import {
   detectOpenCodeCommand,
@@ -83,7 +86,8 @@ import {
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
-import { composerIsBusy, composerPrimaryActionForState } from "../ui/composer-state";
+import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
+import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
 import { formatMessageHeaderTime } from "../ui/message-time";
@@ -116,9 +120,12 @@ import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
-import { formatKnowledgeBaseCodexFailureSignal } from "../knowledge-base/failure";
+import { KnowledgeBaseManager } from "../knowledge-base/manager";
+import { formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
-import { diffRawSnapshot } from "../knowledge-base/raw-integrity";
+import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "../knowledge-base/raw-digest";
+import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
+import type { RawSnapshotEntry } from "../knowledge-base/raw-integrity";
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, getTrailingSlashQuery, knowledgeBaseHelpText, knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
@@ -130,11 +137,13 @@ import {
   migrateKnowledgeBaseHistory,
   persistAndCompactKnowledgeBaseHistory,
   persistKnowledgeBaseHistoryMessages,
+  pruneKnowledgeBaseHistoryByRetention,
   readKnowledgeBaseHistoryDay,
   readKnowledgeBaseHistoryIndex,
+  removeKnowledgeBaseHistoryDays,
   rebuildKnowledgeBaseHistoryIndex
 } from "../knowledge-base/history-store";
-import { isLintOnlyKnowledgeBaseReport, readKnowledgeBaseReportExcerpt, recoveredLintReportSummary } from "../knowledge-base/report";
+import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
@@ -142,6 +151,7 @@ import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-nor
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
+import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "../knowledge-base/types";
 import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
 import {
   REVIEW_OUTPUT_DIR,
@@ -158,6 +168,8 @@ import {
   reviewRangeKey,
   shouldRunScheduledReview
 } from "../review/schedule";
+
+const execFile = promisify(execFileCallback);
 
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
@@ -246,6 +258,68 @@ assert.ok(!kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "inbox")));
 assert.ok(kbTurnOptions.writableRoots?.includes(path.join("/vault", "projects")));
+const kbLintTurnOptions = buildCodexKnowledgeTurnOptions({
+  settings: DEFAULT_SETTINGS,
+  availableModels: [{ model: "gpt-test" }],
+  vaultPath: "/vault",
+  permission: "workspace-write",
+  writeScope: "knowledge-lint"
+});
+assert.deepEqual(kbLintTurnOptions.writableRoots, [path.join("/vault", "outputs")]);
+const codexThreadRequests: Array<{ method: string; params: any }> = [];
+const codexService = new CodexService({
+  cliPath: "",
+  proxyEnabled: false,
+  proxyUrl: "",
+  providerMode: "codex-login",
+  activeApiProvider: null,
+  vaultPath: "/vault",
+  onNotification: () => undefined,
+  onServerRequest: async () => ({})
+});
+(codexService as any).client = {
+  isAlive: () => true,
+  request: async (method: string, params: any) => {
+    codexThreadRequests.push({ method, params });
+    if (method === "thread/start") return { thread: { id: "thread-kb", name: "KB" } };
+    if (method === "thread/resume") return {};
+    if (method === "turn/start") return { turn: { id: "turn-kb" } };
+    throw new Error(`unexpected request: ${method}`);
+  }
+};
+await codexService.startThread(kbTurnOptions);
+const codexThreadStartParams = codexThreadRequests.find((request) => request.method === "thread/start")?.params;
+assert.equal(codexThreadStartParams?.sandboxPolicy?.type, "workspaceWrite");
+assert.ok(!codexThreadStartParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw")));
+assert.ok(codexThreadStartParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
+await codexService.resumeThread("thread-kb", kbTurnOptions);
+const codexThreadResumeParams = codexThreadRequests.find((request) => request.method === "thread/resume")?.params;
+assert.equal(codexThreadResumeParams?.sandboxPolicy?.type, "workspaceWrite");
+assert.ok(!codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw")));
+assert.ok(codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
+await codexService.startTurn("thread-kb", [{ type: "text", text: "lint", text_elements: [] }], kbLintTurnOptions);
+const codexTurnStartParams = codexThreadRequests.find((request) => request.method === "turn/start")?.params;
+assert.equal(codexTurnStartParams?.sandbox, "workspace-write");
+assert.equal(codexTurnStartParams?.sandboxPolicy?.type, "workspaceWrite");
+assert.deepEqual(codexTurnStartParams?.sandboxPolicy?.writableRoots?.slice(0, 1), [path.join("/vault", "outputs")]);
+assert.ok(!codexTurnStartParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw")));
+const archiveCalls: Array<{ command: string; args: string[]; cwd: string | undefined }> = [];
+const archiveService = new CodexService({
+  cliPath: process.execPath,
+  proxyEnabled: false,
+  proxyUrl: "",
+  providerMode: "codex-login",
+  activeApiProvider: null,
+  vaultPath: "/vault",
+  onNotification: () => undefined,
+  onServerRequest: async () => ({}),
+  processRunner: async (command, args, options) => {
+    archiveCalls.push({ command, args, cwd: options.cwd });
+    return { stdout: "", stderr: "" };
+  }
+});
+await archiveService.archiveThread("thread-kb");
+assert.deepEqual(archiveCalls, [{ command: process.execPath, args: ["archive", "thread-kb"], cwd: "/vault" }]);
 const queuedKbTurnOptions = buildCodexKnowledgeTurnOptions({
   settings: DEFAULT_SETTINGS,
   availableModels: [{ model: "gpt-test" }],
@@ -295,7 +369,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 26);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 27);
 assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
@@ -333,10 +407,12 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, DEFAULT_KNOWLEDGE_BAS
 assert.equal(CODEX_MEMORY_LITE_URL, "https://github.com/AKin-lvyifang/codex-memory-lite");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays, 30);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
+assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.managedThreads, {});
 const scheduledKnowledgeBaseBase = {
   enabled: true,
   scheduleEnabled: true,
@@ -365,6 +441,11 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   new Date("2026-05-19T09:01:00+08:00"),
   new Date("2026-05-19T08:00:00+08:00").getTime()
 ), false);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  { ...scheduledKnowledgeBaseBase, lastRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastRunStatus: "running" },
+  new Date("2026-05-19T09:01:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime()
+), true);
 assert.equal(DEFAULT_SETTINGS.review.enabled, false);
 assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
 assert.equal(DEFAULT_SETTINGS.review.agentChatEnabled, true);
@@ -496,7 +577,13 @@ assert.deepEqual(parseKnowledgeBaseCommand("/history").intent, "history");
 assert.deepEqual(parseKnowledgeBaseCommand("/历史").intent, "history");
 assert.deepEqual(parseKnowledgeBaseCommand("停止").intent, "cancel");
 assert.deepEqual(parseKnowledgeBaseCommand("停止当前知识库任务").intent, "cancel");
+assert.equal(isKnowledgeBaseCancelError("知识库任务已取消"), true);
+assert.equal(isKnowledgeBaseCancelError("用户取消"), false);
 assert.deepEqual(parseKnowledgeBaseCommand("请写一段较长的测试回复，主题是停止按钮验证。只输出文字，不读取或修改文件。").intent, "chat");
+assert.deepEqual(parseKnowledgeBaseCommand("当前文件的提炼太精简了，你可以再深入提炼一下。", 1).intent, "chat");
+assert.equal(shouldHandleKnowledgeBaseCommand("当前文件的提炼太精简了，你可以再深入提炼一下。", 1), false);
+assert.deepEqual(parseKnowledgeBaseCommand("这篇文章里第二个例子怎么理解？").intent, "chat");
+assert.deepEqual(parseKnowledgeBaseCommand("", 1).intent, "chat");
 assert.deepEqual(parseKnowledgeBaseCommand("/week").intent, "review");
 assert.deepEqual(parseKnowledgeBaseCommand("/week").reviewKind, "knowledge-base");
 assert.deepEqual(parseKnowledgeBaseCommand("/week agent").reviewKind, "agent-chat");
@@ -512,7 +599,7 @@ assert.equal(getTrailingSlashQuery("/ma"), "ma");
 assert.equal(knowledgeCommandQueryForInput("/", true), "");
 assert.equal(knowledgeCommandQueryForInput("/", false), null);
 assert.deepEqual(knowledgeCommandOptions("ma").map((item) => item.text), ["/maintain "]);
-assert.deepEqual(knowledgeCommandOptions("").map((item) => item.text), ["/ask ", "/check ", "/maintain ", "/outputs ", "/inbox ", "/journal ", "/week ", "/clear", "/history", "/init ", "/help"]);
+assert.deepEqual(knowledgeCommandOptions("").map((item) => item.text), ["/ask ", "/check ", "/maintain ", "/calibrate ", "/outputs ", "/inbox ", "/journal ", "/week ", "/clear", "/history", "/init ", "/help"]);
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/maintain "));
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/history"));
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/clear"));
@@ -521,13 +608,16 @@ assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Codi
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: false }), "enqueue");
-assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "send");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: true }), "resume-queue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: true }), "enqueue");
+assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: false, globalKnowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
+assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: false, globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: true, globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: false }), true);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
@@ -597,6 +687,251 @@ assert.equal(settlementQueue.isSessionQueuePaused("s2"), true);
 assert.equal(settlementQueue.dequeueNext("s2"), null);
 settlementQueue.resumeSessionQueue("s2");
 assert.equal(settlementQueue.dequeueNext("s2")?.id, "settle-b");
+const throwingQueueViewQueue = new RuntimeTurnQueue();
+throwingQueueViewQueue.enqueue(queuedTurn("throw-a", "throw-session", "failing queued turn"));
+throwingQueueViewQueue.enqueue(queuedTurn("throw-b", "throw-session", "remaining queued turn"));
+const throwingQueueView: any = {
+  queueStartInProgress: false,
+  running: false,
+  plugin: { getKnowledgeBaseManager: () => ({ isRunning: false }) },
+  turnQueue: throwingQueueViewQueue,
+  renderQueue: () => undefined,
+  renderToolbar: () => undefined,
+  startQueuedTurnItem: async () => {
+    throw new Error("post-run save failed");
+  },
+  startQueuedTurnItemSafely: (CodexView.prototype as any).startQueuedTurnItemSafely,
+  startNextQueuedTurn: (CodexView.prototype as any).startNextQueuedTurn,
+  afterTurnSettled: (CodexView.prototype as any).afterTurnSettled
+};
+let throwingQueueViewError: unknown = null;
+try {
+  await throwingQueueView.startNextQueuedTurn("throw-session");
+} catch (error) {
+  throwingQueueViewError = error;
+}
+assert.equal(throwingQueueViewError, null);
+assert.equal(throwingQueueView.queueStartInProgress, false);
+assert.equal(throwingQueueViewQueue.isSessionQueuePaused("throw-session"), true);
+assert.deepEqual(throwingQueueViewQueue.itemsForSession("throw-session").map((item) => item.id), ["throw-b"]);
+const backgroundKnowledgeNotificationSession = {
+  id: "chat-during-background-kb",
+  title: "普通会话",
+  kind: "chat" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const backgroundKnowledgeNotificationView: any = {
+  activeRunKind: "chat",
+  activeRunId: "chat-run",
+  activeRunSessionId: backgroundKnowledgeNotificationSession.id,
+  activeTurnId: "chat-turn",
+  activeItemMessages: new Map(),
+  plugin: {
+    settings: {
+      sessions: [backgroundKnowledgeNotificationSession],
+      activeSessionId: backgroundKnowledgeNotificationSession.id
+    },
+    getVaultPath: () => "/vault",
+    saveSettings: async () => undefined
+  },
+  ensureSession: () => backgroundKnowledgeNotificationSession,
+  handleKnowledgeBaseCodexNotification: (CodexView.prototype as any).handleKnowledgeBaseCodexNotification,
+  handleCodexNotification: (CodexView.prototype as any).handleCodexNotification,
+  handleEditorActionNotification: () => false,
+  activeRunSession: (CodexView.prototype as any).activeRunSession,
+  isKnowledgeBaseSession: () => false,
+  markThinkingAsStreaming: () => undefined,
+  appendItemDelta: (CodexView.prototype as any).appendItemDelta,
+  renderMessagesIfActive: () => undefined,
+  applyStatus: () => undefined,
+  diagnoseCodexFailure: () => ({ title: "失败", text: "失败" })
+};
+const backgroundKnowledgeForwarded = backgroundKnowledgeNotificationView.handleKnowledgeBaseCodexNotification({
+  method: "item/agentMessage/delta",
+  params: { threadId: "kb-thread", turnId: "kb-turn", itemId: "kb-item", delta: "后台维护输出" }
+} as any);
+assert.equal(backgroundKnowledgeForwarded, false);
+assert.equal(backgroundKnowledgeNotificationSession.messages.length, 0);
+const foregroundKnowledgeNotificationSession = {
+  ...backgroundKnowledgeNotificationSession,
+  id: "foreground-kb-session",
+  kind: "knowledge-base" as const,
+  messages: [] as any[]
+};
+const foregroundKnowledgeNotificationView: any = {
+  ...backgroundKnowledgeNotificationView,
+  activeRunKind: "knowledge-base",
+  activeRunId: "kb-run",
+  activeRunSessionId: foregroundKnowledgeNotificationSession.id,
+  activeTurnId: "kb-turn",
+  activeItemMessages: new Map(),
+  plugin: {
+    settings: {
+      sessions: [foregroundKnowledgeNotificationSession],
+      activeSessionId: foregroundKnowledgeNotificationSession.id
+    },
+    getVaultPath: () => "/vault",
+    saveSettings: async () => undefined
+  },
+  ensureSession: () => foregroundKnowledgeNotificationSession,
+  isKnowledgeBaseSession: () => true
+};
+const foregroundKnowledgeForwarded = foregroundKnowledgeNotificationView.handleKnowledgeBaseCodexNotification({
+  method: "item/agentMessage/delta",
+  params: { threadId: "kb-thread", turnId: "kb-turn", itemId: "kb-item", delta: "前台知识库输出" }
+} as any);
+assert.equal(foregroundKnowledgeForwarded, true);
+assert.equal(foregroundKnowledgeNotificationSession.messages.length, 1);
+assert.equal(foregroundKnowledgeNotificationSession.messages[0].text, "前台知识库输出");
+const knowledgeFinalizeSession = {
+  id: "kb-finalize-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const knowledgeFinalizeItem: QueuedTurnItem = {
+  ...queuedTurn("kb-finalize-item", knowledgeFinalizeSession.id, "/check final save"),
+  kind: "knowledge-base"
+};
+let knowledgeFinalizeSaveCalls = 0;
+let knowledgeFinalizeRenderMessagesCalls = 0;
+let knowledgeFinalizeToolbarCalls = 0;
+let knowledgeFinalizeApplyStatusCalls = 0;
+const knowledgeFinalizeView: any = {
+  plugin: {
+    settings: { activeSessionId: knowledgeFinalizeSession.id },
+	    getKnowledgeBaseManager: () => ({
+	      handleUserMessage: async () => ({ status: "success", message: "体检完成" })
+	    }),
+	    externalizeMessageText: async () => undefined,
+	    archivePendingKnowledgeBaseThreads: async () => 0,
+	    saveSettings: async () => {
+	      knowledgeFinalizeSaveCalls += 1;
+	      if (knowledgeFinalizeSaveCalls === 2) throw new Error("final save failed");
+	    }
+  },
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map(),
+  running: false,
+  renderTabs: () => undefined,
+  renderMessagesIfActive: () => undefined,
+  renderToolbar: () => { knowledgeFinalizeToolbarCalls += 1; },
+  renderMessages: () => { knowledgeFinalizeRenderMessagesCalls += 1; },
+  applyStatus: () => { knowledgeFinalizeApplyStatusCalls += 1; },
+  refreshKnowledgeDashboard: async () => undefined,
+  clearTurnWatchdog: () => undefined,
+  clearActiveRun: (CodexView.prototype as any).clearActiveRun,
+  moveMessageToEnd: (CodexView.prototype as any).moveMessageToEnd,
+  finishThinkingMessage: () => undefined,
+  finishRunningProcessMessages: () => undefined,
+  finishPlanMessage: () => undefined,
+  startKnowledgeBaseTurn: (CodexView.prototype as any).startKnowledgeBaseTurn
+};
+let knowledgeFinalizeError: unknown = null;
+try {
+  await knowledgeFinalizeView.startKnowledgeBaseTurn(knowledgeFinalizeSession, knowledgeFinalizeItem, "queue");
+} catch (error) {
+  knowledgeFinalizeError = error;
+}
+assert.match(knowledgeFinalizeError instanceof Error ? knowledgeFinalizeError.message : String(knowledgeFinalizeError), /final save failed/);
+assert.equal(knowledgeFinalizeView.running, false);
+assert.equal(knowledgeFinalizeSession.messages.at(-1)?.status, "failed");
+assert.equal(knowledgeFinalizeRenderMessagesCalls > 0, true);
+assert.equal(knowledgeFinalizeToolbarCalls > 1, true);
+assert.equal(knowledgeFinalizeApplyStatusCalls > 0, true);
+assert.equal(knowledgeFinalizeSaveCalls, 3);
+const knowledgeInitialSaveFailureSession = {
+  id: "kb-initial-save-failure-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const knowledgeInitialSaveFailureItem: QueuedTurnItem = {
+  ...queuedTurn("kb-initial-save-failure-item", knowledgeInitialSaveFailureSession.id, "/check initial save"),
+  kind: "knowledge-base"
+};
+let knowledgeInitialSaveCalls = 0;
+let knowledgeInitialHandleCalls = 0;
+const knowledgeInitialSaveFailureView: any = {
+  ...knowledgeFinalizeView,
+  plugin: {
+    settings: { activeSessionId: knowledgeInitialSaveFailureSession.id },
+	    getKnowledgeBaseManager: () => ({
+	      handleUserMessage: async () => {
+	        knowledgeInitialHandleCalls += 1;
+	        return { status: "success", message: "不应执行" };
+	      }
+	    }),
+	    externalizeMessageText: async () => undefined,
+	    archivePendingKnowledgeBaseThreads: async () => 0,
+	    saveSettings: async () => {
+	      knowledgeInitialSaveCalls += 1;
+	      if (knowledgeInitialSaveCalls === 1) throw new Error("initial save failed");
+	    }
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map()
+};
+let knowledgeInitialSaveFailureError: unknown = null;
+try {
+  await knowledgeInitialSaveFailureView.startKnowledgeBaseTurn(knowledgeInitialSaveFailureSession, knowledgeInitialSaveFailureItem, "queue");
+} catch (error) {
+  knowledgeInitialSaveFailureError = error;
+}
+assert.match(knowledgeInitialSaveFailureError instanceof Error ? knowledgeInitialSaveFailureError.message : String(knowledgeInitialSaveFailureError), /initial save failed/);
+assert.equal(knowledgeInitialSaveFailureView.running, false);
+assert.equal(knowledgeInitialHandleCalls, 0);
+assert.equal(knowledgeInitialSaveFailureSession.messages.at(-1)?.status, "failed");
+const knowledgeCanceledSession = {
+  id: "kb-canceled-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const knowledgeCanceledView: any = {
+  ...knowledgeFinalizeView,
+  plugin: {
+    settings: { activeSessionId: knowledgeCanceledSession.id },
+	    getKnowledgeBaseManager: () => ({
+	      handleUserMessage: async () => ({ status: "canceled", message: "知识库体检已取消。\n原因：用户取消" })
+	    }),
+	    externalizeMessageText: async () => undefined,
+	    archivePendingKnowledgeBaseThreads: async () => 0,
+	    saveSettings: async () => undefined
+	  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map()
+};
+const knowledgeCanceledOutcome = await knowledgeCanceledView.startKnowledgeBaseTurn(knowledgeCanceledSession, {
+  ...queuedTurn("kb-canceled-item", knowledgeCanceledSession.id, "/check cancel"),
+  kind: "knowledge-base"
+}, "queue");
+assert.equal(knowledgeCanceledOutcome, "failed");
+assert.equal(knowledgeCanceledSession.messages.at(-1)?.status, "canceled");
+assert.match(knowledgeCanceledSession.messages.at(-1)?.text ?? "", /已取消/);
 assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
@@ -609,6 +944,7 @@ assert.deepEqual(parseKnowledgeBaseCommand("处理 outputs").intent, "process-ou
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个链接 https://example.com/a").target, "raw-articles");
 assert.deepEqual(parseKnowledgeBaseCommand("记一下：这个想法很重要").target, "inbox");
 assert.deepEqual(parseKnowledgeBaseCommand("收集这个 PDF", 1).target, "raw-attachments");
+assert.deepEqual(parseKnowledgeBaseCommand("这是当前笔记上下文，请帮我总结", 1).intent, "chat");
 assert.deepEqual(parseKnowledgeBaseCommand("今天知识库状态怎么样").intent, "chat");
 
 const hiddenHistorySettings = normalizeSettingsData({
@@ -802,31 +1138,74 @@ const emptyAgentDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, c
 assert.ok(emptyAgentDocs.html.includes("<span class=\"pill\">提示词质量</span><h3>待观察</h3>"));
 
 const kbRouteItems = new Set<string>();
+const unknownOrphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "unknown-item", delta: "其他任务输出" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(unknownOrphanDelta.swallow, false);
+assert.equal(unknownOrphanDelta.collectAssistantDelta, false);
 const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(orphanStarted.swallow, true);
-assert.equal(orphanStarted.rememberItemId, "item-1");
-kbRouteItems.add(orphanStarted.rememberItemId!);
+assert.equal(orphanStarted.swallow, false);
+assert.equal(orphanStarted.rememberItemId, undefined);
 const orphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-1", delta: "报告" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(orphanDelta.swallow, true);
-assert.equal(orphanDelta.collectAssistantDelta, true);
+assert.equal(orphanDelta.swallow, false);
+assert.equal(orphanDelta.collectAssistantDelta, false);
+const orphanBeforeTurnStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-before-turn" } }, {
+  threadId: "thread-kb",
+  turnId: "",
+  itemIds: kbRouteItems
+});
+assert.equal(orphanBeforeTurnStarted.swallow, true);
+assert.equal(orphanBeforeTurnStarted.rememberItemId, "item-before-turn");
+kbRouteItems.add(orphanBeforeTurnStarted.rememberItemId!);
+const delayedOrphanDeltaAfterTurnKnown = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-before-turn", delta: "可能是其他任务输出" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(delayedOrphanDeltaAfterTurnKnown.swallow, false);
+assert.equal(delayedOrphanDeltaAfterTurnKnown.collectAssistantDelta, false);
+const rememberedItemDifferentThread = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { threadId: "thread-other", itemId: "item-before-turn", delta: "其他 thread 输出" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(rememberedItemDifferentThread.swallow, false);
+assert.equal(rememberedItemDifferentThread.collectAssistantDelta, false);
 assert.equal(routeKnowledgeBaseCodexNotification("thread/tokenUsage/updated", { threadId: "thread-other" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
+  itemIds: kbRouteItems
+}).swallow, false);
+assert.equal(routeKnowledgeBaseCodexNotification("turn/completed", { threadId: "thread-kb", turn: { id: "turn-other", status: "failed" } }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+}).swallow, false);
+assert.equal(routeKnowledgeBaseCodexNotification("turn/started", { threadId: "thread-kb", turn: { id: "turn-new" } }, {
+  threadId: "thread-kb",
+  turnId: "",
+  itemIds: kbRouteItems
+}).swallow, true);
+assert.equal(routeKnowledgeBaseCodexNotification("turn/completed", { threadId: "thread-kb", turn: { id: "turn-new", status: "completed" } }, {
+  threadId: "thread-kb",
+  turnId: "",
   itemIds: kbRouteItems
 }).swallow, false);
 assert.equal(routeKnowledgeBaseCodexNotification("error", { message: "failed" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
   itemIds: kbRouteItems
-}).swallow, true);
+}).swallow, false);
 
 assert.deepEqual(buildCollaborationMode("agent", "gpt-5.4", "high"), null);
 assert.deepEqual(buildCollaborationMode("plan", "gpt-5.4", "high"), {
@@ -1158,6 +1537,16 @@ const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-c
 const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
 const resourceSearchInputCss = cssRuleBody(settingsStyles, ".codex-resource-search-input");
 const headerHistoryCss = cssRuleBody(settingsStyles, ".codex-header-history");
+const knowledgeBaseDashboardCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard");
+const knowledgeBaseDashboardVisibleCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard.is-visible");
+const knowledgeBaseDashboardHeaderCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-header");
+const knowledgeBaseDashboardSummaryCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-summary");
+const knowledgeBaseDashboardDetailsCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-details");
+const knowledgeBaseHealthTooltipCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip");
+const knowledgeBaseHealthTooltipTriggerCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-trigger");
+const knowledgeBaseHealthTooltipPanelCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-panel");
+const knowledgeBaseHealthTooltipBridgeCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-bridge");
+const knowledgeBaseHealthTooltipBridgeVisibleCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-bridge.is-visible");
 const processFileLinkCss = cssRuleBody(settingsStyles, ".codex-process-file-link");
 const processIconCss = cssRuleBody(settingsStyles, ".codex-process-icon");
 const processEditIconCss = cssRuleBody(settingsStyles, ".codex-process-kind-edit .codex-process-icon");
@@ -1173,6 +1562,35 @@ assert.match(codexViewSource, /title: "查看知识库历史"/);
 assert.doesNotMatch(codexViewSource, /codex-kb-dashboard-history/);
 assert.match(headerHistoryCss, /gap:\s*5px;/);
 assert.match(headerHistoryCss, /padding:\s*0 9px;/);
+assert.match(knowledgeBaseDashboardCss, /flex:\s*0 1 auto;/);
+assert.match(knowledgeBaseDashboardCss, /max-height:\s*min\(420px,\s*48vh\);/);
+assert.match(knowledgeBaseDashboardCss, /overflow:\s*visible;/);
+assert.match(knowledgeBaseDashboardVisibleCss, /display:\s*flex;/);
+assert.match(knowledgeBaseDashboardVisibleCss, /flex-direction:\s*column;/);
+assert.match(knowledgeBaseDashboardHeaderCss, /flex:\s*0 0 auto;/);
+assert.match(knowledgeBaseDashboardSummaryCss, /overflow:\s*visible;/);
+assert.match(knowledgeBaseDashboardDetailsCss, /flex:\s*1 1 auto;/);
+assert.match(knowledgeBaseDashboardDetailsCss, /min-height:\s*0;/);
+assert.match(knowledgeBaseDashboardDetailsCss, /overflow-y:\s*auto;/);
+assert.match(knowledgeBaseDashboardDetailsCss, /overscroll-behavior:\s*contain;/);
+assert.match(knowledgeBaseHealthTooltipCss, /position:\s*relative;/);
+assert.match(knowledgeBaseHealthTooltipCss, /display:\s*inline-flex;/);
+assert.match(knowledgeBaseHealthTooltipTriggerCss, /width:\s*16px;/);
+assert.match(knowledgeBaseHealthTooltipTriggerCss, /height:\s*16px;/);
+assert.match(knowledgeBaseHealthTooltipTriggerCss, /line-height:\s*1;/);
+assert.match(knowledgeBaseHealthTooltipPanelCss, /position:\s*fixed;/);
+assert.match(knowledgeBaseHealthTooltipPanelCss, /z-index:\s*99999;/);
+assert.match(knowledgeBaseHealthTooltipPanelCss, /width:\s*320px;/);
+assert.match(knowledgeBaseHealthTooltipPanelCss, /max-width:\s*320px;/);
+assert.match(knowledgeBaseHealthTooltipPanelCss, /white-space:\s*normal;/);
+assert.match(knowledgeBaseHealthTooltipBridgeCss, /position:\s*fixed;/);
+assert.match(knowledgeBaseHealthTooltipBridgeCss, /z-index:\s*99998;/);
+assert.match(knowledgeBaseHealthTooltipBridgeCss, /pointer-events:\s*none;/);
+assert.match(knowledgeBaseHealthTooltipBridgeVisibleCss, /pointer-events:\s*auto;/);
+assert.match(knowledgeBaseHealthTooltipBridgeVisibleCss, /visibility:\s*visible;/);
+assert.match(settingsStyles, /\.codex-kb-health-tooltip-panel\.is-visible/);
+assert.doesNotMatch(settingsStyles, /\.codex-kb-health-tooltip:hover\s+\.codex-kb-health-tooltip-panel/);
+assert.doesNotMatch(settingsStyles, /\.codex-kb-health-tooltip:focus-within\s+\.codex-kb-health-tooltip-panel/);
 assert.match(resourceRowCss, /min-width:\s*0;/);
 assert.match(resourceRowCss, /width:\s*100%;/);
 assert.match(resourceRowCss, /box-sizing:\s*border-box;/);
@@ -1197,6 +1615,77 @@ assert.match(knowledgeBaseResultTitleCss, /border-left:\s*3px solid var\(--inter
 assert.match(knowledgeBaseResultBodyCss, /min-width:\s*0;/);
 assert.match(knowledgeBaseResultSuccessCss, /var\(--color-green\)/);
 assert.match(knowledgeBaseResultFailedCss, /var\(--text-error\)/);
+assert.match(codexViewSource, /addKnowledgeDashboardHealthTooltip/);
+assert.match(codexViewSource, /positionKnowledgeDashboardHealthTooltip/);
+assert.match(codexViewSource, /clearKnowledgeDashboardHealthTooltips/);
+assert.match(codexViewSource, /document\.body\.createDiv/);
+assert.match(codexViewSource, /codex-kb-health-tooltip-bridge/);
+assert.match(codexViewSource, /panel\.addClass\("is-visible"\)/);
+assert.match(codexViewSource, /bridge\.addClass\("is-visible"\)/);
+assert.match(codexViewSource, /panel\.removeClass\("is-visible"\)/);
+assert.match(codexViewSource, /bridge\.removeClass\("is-visible"\)/);
+assert.match(codexViewSource, /panel\.style\.visibility\s*=\s*"visible"/);
+assert.match(codexViewSource, /panel\.style\.opacity\s*=\s*"1"/);
+assert.match(codexViewSource, /panel\.style\.pointerEvents\s*=\s*"auto"/);
+assert.match(codexViewSource, /panel\.style\.visibility\s*=\s*"hidden"/);
+assert.match(codexViewSource, /button\.setAttribute\("aria-expanded",\s*"true"\)/);
+assert.match(codexViewSource, /button\.setAttribute\("aria-expanded",\s*"false"\)/);
+assert.match(codexViewSource, /const openPanelFromClick/);
+assert.match(codexViewSource, /button\.onpointerdown\s*=\s*openPanelFromClick/);
+assert.match(codexViewSource, /button\.onmousedown\s*=\s*openPanelFromClick/);
+assert.match(codexViewSource, /button\.onmousedown/);
+assert.match(codexViewSource, /button\.onmouseleave/);
+assert.match(codexViewSource, /button\.onpointerenter/);
+assert.match(codexViewSource, /button\.onpointerleave/);
+assert.match(codexViewSource, /button\.onmouseover/);
+assert.match(codexViewSource, /panel\.onmouseenter/);
+assert.match(codexViewSource, /panel\.onpointerenter/);
+assert.match(codexViewSource, /panel\.onpointerleave/);
+assert.match(codexViewSource, /isKnowledgeDashboardHealthTooltipHoverPoint/);
+assert.match(codexViewSource, /scheduleCloseIfOutside/);
+assert.match(codexViewSource, /wrapper\.hasClass\("is-click-open"\)/);
+assert.match(codexViewSource, /window\.addEventListener\("resize"/);
+assert.match(codexViewSource, /window\.addEventListener\("scroll",\s*repositionOpenPanel,\s*true/);
+assert.match(codexViewSource, /window\.addEventListener\("pointermove",\s*trackOpenTooltipPointer/);
+assert.match(codexViewSource, /window\.addEventListener\("mousemove",\s*trackOpenTooltipPointer/);
+assert.match(codexViewSource, /document\.addEventListener\("pointerdown",\s*closeOnOutsidePointerDown,\s*true/);
+assert.match(codexViewSource, /document\.addEventListener\("mousedown",\s*closeOnOutsidePointerDown,\s*true/);
+assert.match(codexViewSource, /window\.removeEventListener\("resize"/);
+assert.match(codexViewSource, /window\.removeEventListener\("scroll",\s*repositionOpenPanel,\s*true/);
+assert.match(codexViewSource, /window\.removeEventListener\("pointermove",\s*trackOpenTooltipPointer/);
+assert.match(codexViewSource, /window\.removeEventListener\("mousemove",\s*trackOpenTooltipPointer/);
+assert.match(codexViewSource, /document\.removeEventListener\("pointerdown",\s*closeOnOutsidePointerDown,\s*true/);
+assert.match(codexViewSource, /document\.removeEventListener\("mousedown",\s*closeOnOutsidePointerDown,\s*true/);
+assert.doesNotMatch(codexViewSource, /window\.addEventListener\("mousemove",\s*(?:close|schedule|.*Close)/);
+assert.doesNotMatch(codexViewSource, /scheduleClose\(3500\)/);
+assert.match(codexViewSource, /lastTooltipPointer/);
+assert.match(codexViewSource, /rememberTooltipPointer/);
+assert.match(codexViewSource, /isPointerCurrentlyInsideTooltip/);
+assert.match(codexViewSource, /closePanelIfPointerOutside/);
+assert.match(codexViewSource, /closeOnOutsidePointerDown/);
+assert.match(codexViewSource, /document\.elementFromPoint/);
+assert.match(codexViewSource, /bridge\.onmouseenter/);
+assert.match(codexViewSource, /bridge\.onpointerenter/);
+assert.match(codexViewSource, /event\.relatedTarget/);
+assert.match(codexViewSource, /isTooltipTarget/);
+assert.match(codexViewSource, /aria-describedby/);
+assert.match(codexViewSource, /aria-expanded/);
+assert.match(codexViewSource, /codex-kb-health-tooltip-placement-summary/);
+assert.match(codexViewSource, /codex-kb-health-tooltip-placement-meter/);
+assert.match(codexViewSource, /codex-kb-health-tooltip-trigger/);
+assert.match(codexViewSource, /"aria-label": "解释知识库健康分"/);
+assert.match(codexViewSource, /健康分解释/);
+assert.match(codexViewSource, /暂无扣分项/);
+assert.match(codexViewSource, /scoreThresholdText/);
+assert.match(codexViewSource, /体检成功只代表检查完成/);
+const healthTooltipTriggerRect = { left: 100, right: 116, top: 100, bottom: 116 };
+const healthTooltipBelowPanelRect = { left: 80, right: 320, top: 124, bottom: 260 };
+const healthTooltipAbovePanelRect = { left: 80, right: 320, top: 20, bottom: 92 };
+assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRect, healthTooltipBelowPanelRect, 108, 120), true);
+assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRect, healthTooltipBelowPanelRect, 78, 120), true);
+assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRect, healthTooltipBelowPanelRect, 40, 120), false);
+assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRect, healthTooltipAbovePanelRect, 108, 96), true);
+assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRect, healthTooltipAbovePanelRect, 40, 96), false);
 assert.match(codexViewSource, /renderKnowledgeBaseResultContent/);
 assert.match(codexViewSource, /codex-kb-result-title/);
 assert.match(codexViewSource, /codex-kb-result-body/);
@@ -1213,6 +1702,8 @@ assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库体检�
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库重新提炼完成。\n报告：x")?.status, "success");
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "每日维护执行完毕。\n简短报告：")?.status, "success");
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库维护失败：Agent 失败\n报告：x")?.status, "failed");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库体检已取消。\n原因：用户取消")?.status, "canceled");
+assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "每日维护已取消。")?.status, "canceled");
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "方哥，按 wiki 证据看没有命中。"), null);
 assert.equal(extractKnowledgeBaseResultTitle("assistant", "知识库维护完成。\n报告：x"), null);
 
@@ -1257,29 +1748,285 @@ assert.equal(writableCodexKnowledgeOptions.model, "gpt-5.5");
 assert.equal(writableCodexKnowledgeOptions.reasoning, "xhigh");
 assert.deepEqual(writableCodexKnowledgeOptions.writableRoots, ["/vault/raw/index.md", "/vault/wiki", "/vault/outputs", "/vault/inbox", "/vault/projects"]);
 const rawMoveRewrite = [{ from: "raw/articles/GitHub项目收集", to: "raw/articles/github-trending", kind: "directory" as const }];
+const rawSnapshotEntry = (fingerprint: string, mtimeMs = 100): RawSnapshotEntry => ({ fingerprint, mtimeMs });
 assert.deepEqual(
   diffRawSnapshot(
-    new Map([["raw/articles/GitHub项目收集/demo.md", "hash-a"], ["raw/index.md", "index-before"]]),
-    new Map([["raw/articles/github-trending/demo.md", "hash-a"], ["raw/index.md", "index-after"]]),
+    new Map([["raw/articles/GitHub项目收集/demo.md", rawSnapshotEntry("hash-a")], ["raw/index.md", rawSnapshotEntry("index-before")]]),
+    new Map([["raw/articles/github-trending/demo.md", rawSnapshotEntry("hash-a")], ["raw/index.md", rawSnapshotEntry("index-after")]]),
     rawMoveRewrite
   ),
   []
 );
 assert.deepEqual(
   diffRawSnapshot(
-    new Map([["raw/articles/GitHub项目收集/demo.md", "hash-a"]]),
-    new Map([["raw/articles/github-trending/demo.md", "hash-b"]]),
+    new Map([["raw/articles/GitHub项目收集/demo.md", rawSnapshotEntry("hash-a")]]),
+    new Map([["raw/articles/github-trending/demo.md", rawSnapshotEntry("hash-b")]]),
     rawMoveRewrite
   ),
-  ["raw/articles/GitHub项目收集/demo.md -> raw/articles/github-trending/demo.md 内容被改写"]
+  ["raw/articles/GitHub项目收集/demo.md -> raw/articles/github-trending/demo.md 文件内容被改写"]
 );
 assert.deepEqual(
   diffRawSnapshot(
-    new Map([["raw/articles/github-trending/old.md", "hash-old"]]),
-    new Map([["raw/articles/github-trending/old.md", "hash-old"], ["raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md", "hash-new"]])
+    new Map([["raw/articles/GitHub项目收集/demo.md", rawSnapshotEntry("hash-a", 100)]]),
+    new Map([["raw/articles/github-trending/demo.md", rawSnapshotEntry("hash-a", 200)]]),
+    rawMoveRewrite
+  ),
+  ["raw/articles/GitHub项目收集/demo.md -> raw/articles/github-trending/demo.md 文件元数据被改写"]
+);
+assert.deepEqual(
+  diffRawSnapshot(
+    new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("hash-a", 1000), mode: 0o100644, identity: "1:2:1" }]]),
+    new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("hash-a", 1004.9), mode: 0o100644, identity: "1:2:1" }]])
   ),
   []
 );
+assert.deepEqual(
+  diffRawSnapshot(
+    new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")]]),
+    new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")], ["raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md", rawSnapshotEntry("hash-new")]])
+  ),
+  ["raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md 文件新增或被移动到 raw/"]
+);
+const rawSafeAddClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")]]),
+  new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")], ["raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md", { ...rawSnapshotEntry("hash-new"), kind: "file" as const, nlink: 1 }]])
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawSafeAddClassification.blockingChanges), []);
+assert.deepEqual(rawSnapshotChangeMessages(rawSafeAddClassification.externalAdditions), [
+  "raw/articles/GitHub项目收集/2026-05-25 GitHub 热门项目简报.md 文件新增或被移动到 raw/"
+]);
+const rawUnsafeAddClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")]]),
+  new Map([["raw/articles/github-trending/old.md", rawSnapshotEntry("hash-old")], ["raw/articles/linked.md", { ...rawSnapshotEntry("hash-link"), kind: "symlink" as const }]])
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawUnsafeAddClassification.blockingChanges), [
+  "raw/articles/linked.md 文件新增或被移动到 raw/"
+]);
+assert.deepEqual(rawSnapshotChangeMessages(rawUnsafeAddClassification.externalAdditions), []);
+const rawMetadataClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("hash-a", 100), kind: "file" as const, mode: 0o100644, identity: "1:2:1" }]]),
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("hash-a", 500), kind: "file" as const, mode: 0o100644, identity: "1:2:1" }]])
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawMetadataClassification.blockingChanges), [
+  "raw/articles/demo.md 文件元数据被改写"
+]);
+assert.deepEqual(rawSnapshotChangeMessages(rawMetadataClassification.externalAdditions), []);
+const rawManagedFrontmatterClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 100), kind: "file" as const, mode: 0o100644, identity: "1:2:1" }]]),
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 500), kind: "file" as const, mode: 0o100644, identity: "1:2:1" }]]),
+  [],
+  { allowedManagedFrontmatterPaths: new Set(["raw/articles/demo.md"]) }
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawManagedFrontmatterClassification.blockingChanges), []);
+const rawManagedFrontmatterIdentityClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 100), kind: "file" as const, mode: 0o100644, identity: "1:2:1" }]]),
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 500), kind: "file" as const, mode: 0o100644, identity: "1:3:1" }]]),
+  [],
+  { allowedManagedFrontmatterPaths: new Set(["raw/articles/demo.md"]) }
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawManagedFrontmatterIdentityClassification.blockingChanges), []);
+const rawManagedFrontmatterHardlinkClassification = classifyRawSnapshotChanges(
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 100), kind: "file" as const, mode: 0o100644, identity: "1:2:1", nlink: 1 }]]),
+  new Map([["raw/articles/demo.md", { ...rawSnapshotEntry("canonical-a", 500), kind: "file" as const, mode: 0o100644, identity: "1:3:2", nlink: 2 }]]),
+  [],
+  { allowedManagedFrontmatterPaths: new Set(["raw/articles/demo.md"]) }
+);
+assert.deepEqual(rawSnapshotChangeMessages(rawManagedFrontmatterHardlinkClassification.blockingChanges), [
+  "raw/articles/demo.md 文件身份被改写"
+]);
+const rawDigestMarkdownBefore = Buffer.from("---\ntags:\n  - ai\n提炼状态: 旧状态\n---\n\n# Demo\n\n正文", "utf8");
+const rawDigestEntry = {
+  rawPath: "raw/articles/demo.md",
+  fingerprint: rawDigestFingerprint("raw/articles/demo.md", rawDigestMarkdownBefore),
+  size: rawDigestMarkdownBefore.length,
+  mtime: 100,
+  digestedAt: Date.parse("2026-06-04T00:00:00.000Z"),
+  runId: "test-run",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-06-04.md",
+  evidencePaths: ["wiki/ai-intelligence/references/demo.md"],
+  confidence: "verified" as const
+};
+const rawDigestMarkdownAfter = applyRawDigestFrontmatter(rawDigestMarkdownBefore, rawDigestEntry);
+assert.equal(rawDigestFingerprint("raw/articles/demo.md", rawDigestMarkdownAfter), rawDigestEntry.fingerprint);
+assert.ok(rawDigestMarkdownAfter.toString("utf8").includes("tags:\n  - ai"));
+assert.ok(rawDigestMarkdownAfter.toString("utf8").includes("已处理: true"));
+assert.ok(rawDigestMarkdownAfter.toString("utf8").includes("# Demo\n\n正文"));
+const rawDigestExternalFrontmatterChange = Buffer.from(rawDigestMarkdownAfter.toString("utf8").replace("tags:\n  - ai", "tags:\n  - ai\nupdated: 2026-06-04T01:30:00+08:00"), "utf8");
+assert.equal(rawDigestFingerprint("raw/articles/demo.md", rawDigestExternalFrontmatterChange), rawDigestEntry.fingerprint);
+const rawDigestRecord = rawDigestRecordFromMarkdown(rawDigestMarkdownAfter);
+assert.equal(rawDigestRecordIsTrusted(rawDigestRecord, rawDigestEntry.fingerprint), true);
+const rawDigestManualOnly = Buffer.from("---\n已处理: true\n提炼状态: 已提炼\n提炼指纹: sha256:1:abc\n---\n\n# Demo\n", "utf8");
+assert.equal(rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(rawDigestManualOnly), "sha256:1:abc"), false);
+const rawRestoreVault = await mkdtemp(path.join(tmpdir(), "codex-raw-restore-"));
+try {
+  await mkdir(path.join(rawRestoreVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(rawRestoreVault, "raw", "articles", ".assets"), { recursive: true });
+  const rawArticlePath = path.join(rawRestoreVault, "raw", "articles", "source.md");
+  const rawAssetPath = path.join(rawRestoreVault, "raw", "articles", ".assets", "image.png");
+  const rawNewDirPath = path.join(rawRestoreVault, "raw", "articles", "empty-added");
+  const rawNewPath = path.join(rawRestoreVault, "raw", "articles", "new.md");
+  const rawSymlinkPath = path.join(rawRestoreVault, "raw", "articles", "linked.md");
+  const rawOriginal = "---\nupdated: 2026-05-24T23:35\n---\n\n原文正文";
+  const rawAssetOriginal = "asset-before";
+  await writeFile(rawArticlePath, rawOriginal, "utf8");
+  await writeFile(rawAssetPath, rawAssetOriginal, "utf8");
+  const rawOriginalTime = new Date("2026-05-24T15:35:00.000Z");
+  await utimes(rawArticlePath, rawOriginalTime, rawOriginalTime);
+  await utimes(rawAssetPath, rawOriginalTime, rawOriginalTime);
+  const rawContentBefore = await snapshotRawFileContents(rawRestoreVault);
+  const rawFingerprintBefore = fingerprintRawContentSnapshot(rawContentBefore);
+  await utimes(rawArticlePath, new Date(rawOriginalTime.getTime() + 5000), new Date(rawOriginalTime.getTime() + 5000));
+  const rawMetadataAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawFingerprintBefore, rawMetadataAfter), [
+    "raw/articles/source.md 文件元数据被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawContentBefore, rawFingerprintBefore, rawMetadataAfter);
+  assert.equal(Math.round((await stat(rawArticlePath)).mtimeMs), Math.round(rawOriginalTime.getTime()));
+  const rawExternalTarget = path.join(rawRestoreVault, "outside-target.md");
+  await writeFile(rawExternalTarget, "outside should stay unchanged", "utf8");
+  await rm(rawArticlePath, { force: true });
+  await symlink(rawExternalTarget, rawArticlePath);
+  const rawSymlinkReplacementAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawFingerprintBefore, rawSymlinkReplacementAfter), [
+    "raw/articles/source.md 文件内容被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawContentBefore, rawFingerprintBefore, rawSymlinkReplacementAfter);
+  assert.equal((await lstat(rawArticlePath)).isSymbolicLink(), false);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.equal(await readFile(rawExternalTarget, "utf8"), "outside should stay unchanged");
+  const rawHardlinkTarget = path.join(rawRestoreVault, "outside-hardlink-target.md");
+  await writeFile(rawHardlinkTarget, "hardlink should stay unchanged", "utf8");
+  await rm(rawArticlePath, { force: true });
+  await link(rawHardlinkTarget, rawArticlePath);
+  const rawHardlinkReplacementAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawFingerprintBefore, rawHardlinkReplacementAfter), [
+    "raw/articles/source.md 文件内容被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawContentBefore, rawFingerprintBefore, rawHardlinkReplacementAfter);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.equal(await readFile(rawHardlinkTarget, "utf8"), "hardlink should stay unchanged");
+  assert.equal((await stat(rawArticlePath)).ino === (await stat(rawHardlinkTarget)).ino, false);
+  const rawSameHardlinkTarget = path.join(rawRestoreVault, "outside-same-hardlink-target.md");
+  await writeFile(rawSameHardlinkTarget, rawOriginal, "utf8");
+  await utimes(rawSameHardlinkTarget, rawOriginalTime, rawOriginalTime);
+  await rm(rawArticlePath, { force: true });
+  await link(rawSameHardlinkTarget, rawArticlePath);
+  const rawSameHardlinkAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawFingerprintBefore, rawSameHardlinkAfter), [
+    "raw/articles/source.md 文件身份被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawContentBefore, rawFingerprintBefore, rawSameHardlinkAfter);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.equal(await readFile(rawSameHardlinkTarget, "utf8"), rawOriginal);
+  assert.equal((await stat(rawArticlePath)).ino === (await stat(rawSameHardlinkTarget)).ino, false);
+  await writeFile(rawArticlePath, rawOriginal.replace("2026-05-24T23:35", "2026-05-27T01:16"), "utf8");
+  await writeFile(rawAssetPath, "asset-after", "utf8");
+  await mkdir(rawNewDirPath, { recursive: true });
+  await writeFile(rawNewPath, "# new raw", "utf8");
+  await writeFile(path.join(rawRestoreVault, "raw", "articles", ".DS_Store"), "agent metadata", "utf8");
+  await symlink(rawArticlePath, rawSymlinkPath);
+  const rawFingerprintAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  const rawChanges = diffRawSnapshot(rawFingerprintBefore, rawFingerprintAfter);
+  assert.deepEqual(rawChanges, [
+    "raw/articles/.assets/image.png 文件内容被改写",
+    "raw/articles/source.md 文件内容被改写",
+    "raw/articles/.DS_Store 文件新增或被移动到 raw/",
+    "raw/articles/empty-added 文件新增或被移动到 raw/",
+    "raw/articles/linked.md 文件新增或被移动到 raw/",
+    "raw/articles/new.md 文件新增或被移动到 raw/"
+  ]);
+  assert.equal(isRawIntegrityErrorMessage(formatRawIntegrityError(rawChanges, true)), true);
+  await restoreRawSnapshot(rawRestoreVault, rawContentBefore, rawFingerprintBefore, rawFingerprintAfter);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.equal(await readFile(rawAssetPath, "utf8"), rawAssetOriginal);
+  assert.equal(Math.round((await stat(rawArticlePath)).mtimeMs), Math.round(rawOriginalTime.getTime()));
+  assert.equal(Math.round((await stat(rawAssetPath)).mtimeMs), Math.round(rawOriginalTime.getTime()));
+  assert.equal(await fileExists(path.join(rawRestoreVault, "raw", "articles", ".DS_Store")), false);
+  assert.equal(await fileExists(rawNewDirPath), false);
+  assert.equal(await fileExists(rawNewPath), false);
+  assert.equal(await lstat(rawSymlinkPath).then(() => true, () => false), false);
+  const rawModeBeforeContent = await snapshotRawFileContents(rawRestoreVault);
+  const rawModeBefore = fingerprintRawContentSnapshot(rawModeBeforeContent);
+  await chmod(rawArticlePath, 0o600);
+  const rawModeAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawModeBefore, rawModeAfter), [
+    "raw/articles/source.md 文件权限被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawModeBeforeContent, rawModeBefore, rawModeAfter);
+  assert.equal((await stat(rawArticlePath)).mode & 0o777, (rawModeBeforeContent.get("raw/articles/source.md") as any).mode & 0o777);
+  const rawDirPath = path.join(rawRestoreVault, "raw", "articles");
+  await utimes(rawDirPath, rawOriginalTime, rawOriginalTime);
+  const rawDirStatBefore = await stat(rawDirPath);
+  const rawDirModeBeforeContent = await snapshotRawFileContents(rawRestoreVault);
+  const rawDirModeBefore = fingerprintRawContentSnapshot(rawDirModeBeforeContent);
+  await chmod(rawDirPath, 0o700);
+  const rawDirModeAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawDirModeBefore, rawDirModeAfter), [
+    "raw/articles 文件权限被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawDirModeBeforeContent, rawDirModeBefore, rawDirModeAfter);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.equal(await readFile(rawAssetPath, "utf8"), rawAssetOriginal);
+  const rawDirStatAfter = await stat(rawDirPath);
+  assert.equal(rawDirStatAfter.mode & 0o777, (rawDirModeBeforeContent.get("raw/articles") as any).mode & 0o777);
+  assert.ok(Math.abs(rawDirStatAfter.mtimeMs - rawDirStatBefore.mtimeMs) <= 5);
+  const rawRootPath = path.join(rawRestoreVault, "raw");
+  const rawRootModeBeforeContent = await snapshotRawFileContents(rawRestoreVault);
+  const rawRootModeBefore = fingerprintRawContentSnapshot(rawRootModeBeforeContent);
+  await chmod(rawRootPath, 0o700);
+  const rawRootModeAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawRootModeBefore, rawRootModeAfter), [
+    "raw 文件权限被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawRootModeBeforeContent, rawRootModeBefore, rawRootModeAfter);
+  assert.equal((await stat(rawRootPath)).mode & 0o777, (rawRootModeBeforeContent.get("raw") as any).mode & 0o777);
+  const rawEmptyIdentityDir = path.join(rawRestoreVault, "raw", "articles", "identity-empty");
+  await mkdir(rawEmptyIdentityDir, { recursive: true });
+  const rawEmptyDirBeforeContent = await snapshotRawFileContents(rawRestoreVault);
+  const rawEmptyDirBefore = fingerprintRawContentSnapshot(rawEmptyDirBeforeContent);
+  await rm(rawEmptyIdentityDir, { recursive: true, force: true });
+  await mkdir(rawEmptyIdentityDir, { recursive: true });
+  await chmod(rawEmptyIdentityDir, (rawEmptyDirBeforeContent.get("raw/articles/identity-empty") as any).mode & 0o777);
+  const rawEmptyDirAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.deepEqual(diffRawSnapshot(rawEmptyDirBefore, rawEmptyDirAfter), [
+    "raw/articles/identity-empty 文件身份被改写"
+  ]);
+  await restoreRawSnapshot(rawRestoreVault, rawEmptyDirBeforeContent, rawEmptyDirBefore, rawEmptyDirAfter);
+  assert.equal((await stat(rawEmptyIdentityDir)).isDirectory(), true);
+  const rawRootExternalTarget = path.join(rawRestoreVault, "outside-raw-root");
+  await mkdir(rawRootExternalTarget, { recursive: true });
+  await rm(rawRootPath, { recursive: true, force: true });
+  await symlink(rawRootExternalTarget, rawRootPath);
+  const rawRootSymlinkAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
+  assert.ok(diffRawSnapshot(rawRootModeBefore, rawRootSymlinkAfter).includes("raw 文件内容被改写"));
+  await restoreRawSnapshot(rawRestoreVault, rawRootModeBeforeContent, rawRootModeBefore, rawRootSymlinkAfter);
+  assert.equal((await lstat(rawRootPath)).isSymbolicLink(), false);
+  assert.equal(await readFile(rawArticlePath, "utf8"), rawOriginal);
+  assert.deepEqual(await readdir(rawRootExternalTarget), []);
+} finally {
+  await rm(rawRestoreVault, { recursive: true, force: true });
+}
+
+const rawMissingVault = await mkdtemp(path.join(tmpdir(), "codex-raw-missing-"));
+try {
+  assert.equal((await snapshotRawFileContents(rawMissingVault)).size, 0);
+  const missingRawDiscovery = await discoverKnowledgeBaseSources(rawMissingVault, {});
+  assert.equal(missingRawDiscovery.sources.length, 0);
+} finally {
+  await rm(rawMissingVault, { recursive: true, force: true });
+}
+
+const rawUnreadableVault = await mkdtemp(path.join(tmpdir(), "codex-raw-unreadable-"));
+const rawUnreadableDir = path.join(rawUnreadableVault, "raw", "locked");
+try {
+  await mkdir(rawUnreadableDir, { recursive: true });
+  await chmod(rawUnreadableDir, 0);
+  await assert.rejects(() => snapshotRawFileContents(rawUnreadableVault));
+  await assert.rejects(() => discoverKnowledgeBaseSources(rawUnreadableVault, {}));
+} finally {
+  await chmod(rawUnreadableDir, 0o700).catch(() => undefined);
+  await rm(rawUnreadableVault, { recursive: true, force: true });
+}
 
 const knowledgeBaseSettings = normalizeSettingsData({
   settingsVersion: 14,
@@ -2382,36 +3129,267 @@ try {
     "这份输出记录了 Vibe Coding 的阶段性复盘。",
     "它不是稳定知识结论，只适合作为 Outputs 背景。"
   ].join("\n"), "utf8");
+  await mkdir(path.join(kbVault, "raw", "clippings"), { recursive: true });
+  await writeFile(path.join(kbVault, "raw", "clippings", "clip.md"), "# Clip\n\n正文", "utf8");
   const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
     "raw/articles/demo.md",
     "raw/attachments/doc.docx",
     "raw/attachments/image.png",
-    "raw/attachments/paper.pdf"
+    "raw/attachments/paper.pdf",
+    "raw/clippings/clip.md"
   ]);
-  assert.equal(firstDiscovery.changedSources.length, 4);
+  assert.equal(firstDiscovery.changedSources.length, 5);
   assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("image.png"))?.modality, "image");
   assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("paper.pdf"))?.modality, "pdf");
   const demoSource = firstDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")!;
   const secondDiscovery = await discoverKnowledgeBaseSources(kbVault, {
     [demoSource.relativePath]: { size: demoSource.size, mtime: demoSource.mtime }
   });
-  assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
-  assert.equal(secondDiscovery.changedSources.length, 3);
+  assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  assert.equal(secondDiscovery.changedSources.length, 5);
   assert.ok(secondDiscovery.reportPath.startsWith("outputs/maintenance/kb-maintenance-"));
+  const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
+  assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
   await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
     "# Ingest Tracker",
     "",
+    "## raw/articles/、raw/clippings/ — 已处理",
+    "- demo.md",
+    "- clip.md"
+  ].join("\n"), "utf8");
+  const multiPrefixTrackerBase = new Date(Date.now() - 20_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), multiPrefixTrackerBase, multiPrefixTrackerBase);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), new Date(multiPrefixTrackerBase.getTime() + 1000), new Date(multiPrefixTrackerBase.getTime() + 1000));
+  await utimes(path.join(kbVault, "raw", "clippings", "clip.md"), new Date(multiPrefixTrackerBase.getTime() + 1000), new Date(multiPrefixTrackerBase.getTime() + 1000));
+  const multiPrefixTrackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(multiPrefixTrackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  assert.equal(multiPrefixTrackerDiscovery.sources.find((source) => source.relativePath === "raw/clippings/clip.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
     "## raw/articles/ — 共 1 个文件",
-    "- demo.md"
+    "- demo.md：已处理"
   ].join("\n"), "utf8");
   const trackerGraceBase = new Date(Date.now() - 10000);
   await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), trackerGraceBase, trackerGraceBase);
   const trackerGraceRawTime = new Date(trackerGraceBase.getTime() + 1500);
   await utimes(path.join(kbVault, "raw", "articles", "demo.md"), trackerGraceRawTime, trackerGraceRawTime);
   const trackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
-  assert.equal(trackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, false);
+  assert.equal(trackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await writeFile(path.join(kbVault, "raw", "articles", "unlisted.md"), "# Unlisted\n\n正文", "utf8");
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 共 1 个文件",
+    "- demo.md：已处理"
+  ].join("\n"), "utf8");
+  const partialSectionTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), partialSectionTrackerTime, partialSectionTrackerTime);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), new Date(partialSectionTrackerTime.getTime() - 1000), new Date(partialSectionTrackerTime.getTime() - 1000));
+  await utimes(path.join(kbVault, "raw", "articles", "unlisted.md"), new Date(partialSectionTrackerTime.getTime() - 1000), new Date(partialSectionTrackerTime.getTime() - 1000));
+  const partialSectionDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(partialSectionDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  assert.equal(partialSectionDiscovery.sources.find((source) => source.relativePath === "raw/articles/unlisted.md")?.changed, true);
+  await rm(path.join(kbVault, "raw", "articles", "unlisted.md"), { force: true });
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 已处理",
+    "- demo.md"
+  ].join("\n"), "utf8");
+  const relativeTrackerBase = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), relativeTrackerBase, relativeTrackerBase);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), new Date(relativeTrackerBase.getTime() + 30_000), new Date(relativeTrackerBase.getTime() + 30_000));
+  const relativeTrackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(relativeTrackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## 风险 / 待处理",
+    `- \`raw/articles/demo.md\` | size=${Buffer.byteLength("# Demo\n\n正文", "utf8")} | mtime=100 | fingerprint=${contentFingerprint(Buffer.from("# Demo\n\n正文"))} | digested=2026-05-25T15:57:45.294Z`,
+    "",
+    "<!-- codex-echoink-kb:start -->",
+    "",
+    "## Codex EchoInk 处理记录（2026-05-25T15:57:45.294Z）",
+    "",
+    "",
+    "<!-- codex-echoink-kb:end -->"
+  ].join("\n"), "utf8");
+  const riskSectionTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), riskSectionTrackerTime, riskSectionTrackerTime);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), new Date(riskSectionTrackerTime.getTime() + 30_000), new Date(riskSectionTrackerTime.getTime() + 30_000));
+  const riskSectionDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(riskSectionDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "<!-- codex-echoink-kb:start -->",
+    "",
+    "## Codex EchoInk 处理记录（2026-05-25T15:57:45.294Z）",
+    "",
+    `- \`raw/articles/demo.md\` | size=${Buffer.byteLength("# Demo\n\n正文", "utf8")} | mtime=100 | digested=2026-05-25T15:57:45.294Z`,
+    "",
+    "<!-- codex-echoink-kb:end -->"
+  ].join("\n"), "utf8");
+  const legacyTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), legacyTrackerTime, legacyTrackerTime);
+  const metadataDriftTime = new Date(legacyTrackerTime.getTime() + 30_000);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), metadataDriftTime, metadataDriftTime);
+  const legacyMetadataDriftDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(legacyMetadataDriftDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "<!-- codex-echoink-kb:start -->",
+    "",
+    "## Codex EchoInk 处理记录（2026-05-25T15:57:45.294Z）",
+    "",
+    `- \`raw/articles/demo.md\` | size=${Buffer.byteLength("# Demo\n\n正文", "utf8")} | mtime=100 | fingerprint=${contentFingerprint(Buffer.from("# Demo\n\n正文"))} | digested=2026-05-25T15:57:45.294Z`,
+    "",
+    "<!-- codex-echoink-kb:end -->"
+  ].join("\n"), "utf8");
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), legacyTrackerTime, legacyTrackerTime);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), metadataDriftTime, metadataDriftTime);
+  const metadataDriftDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  const metadataDriftSource = metadataDriftDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md");
+  assert.equal(metadataDriftSource?.fingerprint, contentFingerprint(Buffer.from("# Demo\n\n正文")));
+  assert.match(metadataDriftSource?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  assert.equal(metadataDriftSource?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 已处理",
+    "",
+    `- demo.md | size=${Buffer.byteLength("# Demo\n\n正文", "utf8")} | fingerprint=${contentFingerprint(Buffer.from("# Demo\n\n正文"))}`
+  ].join("\n"), "utf8");
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), legacyTrackerTime, legacyTrackerTime);
+  await utimes(path.join(kbVault, "raw", "articles", "demo.md"), metadataDriftTime, metadataDriftTime);
+  const relativeFingerprintDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(relativeFingerprintDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await rm(path.join(kbVault, "outputs", ".ingest-tracker.md"), { force: true });
+  const externalTrackerPath = path.join(path.dirname(kbVault), "external-ingest-tracker.md");
+  await rm(externalTrackerPath, { force: true });
+  await writeFile(externalTrackerPath, [
+    "# External Tracker",
+    "",
+    "<!-- codex-echoink-kb:start -->",
+    "",
+    "## Codex EchoInk 处理记录（2026-05-25T15:57:45.294Z）",
+    "",
+    `- \`raw/articles/demo.md\` | size=${Buffer.byteLength("# Demo\n\n正文", "utf8")} | mtime=100 | fingerprint=${contentFingerprint(Buffer.from("# Demo\n\n正文"))} | digested=2026-05-25T15:57:45.294Z`,
+    "",
+    "<!-- codex-echoink-kb:end -->"
+  ].join("\n"), "utf8");
+  await symlink(externalTrackerPath, path.join(kbVault, "outputs", ".ingest-tracker.md"));
+  const symlinkTrackerDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(symlinkTrackerDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  await rm(path.join(kbVault, "outputs", ".ingest-tracker.md"), { force: true });
+  await rm(externalTrackerPath, { force: true });
+  const riskNamedRawPath = path.join(kbVault, "raw", "articles", "AI 风险管理.md");
+  await writeFile(riskNamedRawPath, "# Risk\n\n正文", "utf8");
+  const riskNamedRawStat = await stat(riskNamedRawPath);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "<!-- codex-echoink-kb:start -->",
+    "",
+    "## Codex EchoInk 处理记录（2026-05-25T15:57:45.294Z）",
+    "",
+    `- \`raw/articles/AI 风险管理.md\` | size=${riskNamedRawStat.size} | mtime=100 | fingerprint=${contentFingerprint(Buffer.from("# Risk\n\n正文"))} | digested=2026-05-25T15:57:45.294Z`,
+    "",
+    "<!-- codex-echoink-kb:end -->"
+  ].join("\n"), "utf8");
+  const riskTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), riskTrackerTime, riskTrackerTime);
+  await utimes(riskNamedRawPath, new Date(riskTrackerTime.getTime() + 30_000), new Date(riskTrackerTime.getTime() + 30_000));
+  const riskNamedDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(riskNamedDiscovery.sources.find((source) => source.relativePath === "raw/articles/AI 风险管理.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 已处理",
+    "",
+    "- AI 风险管理.md"
+  ].join("\n"), "utf8");
+  const riskNameSectionTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), riskNameSectionTrackerTime, riskNameSectionTrackerTime);
+  await utimes(riskNamedRawPath, new Date(riskNameSectionTrackerTime.getTime() - 1000), new Date(riskNameSectionTrackerTime.getTime() - 1000));
+  const riskNameSectionDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(riskNameSectionDiscovery.sources.find((source) => source.relativePath === "raw/articles/AI 风险管理.md")?.changed, true);
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/ — 已处理",
+    "",
+    "- AI 风险管理.md：已处理"
+  ].join("\n"), "utf8");
+  const riskNameColonTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), riskNameColonTrackerTime, riskNameColonTrackerTime);
+  await utimes(riskNamedRawPath, new Date(riskNameColonTrackerTime.getTime() - 1000), new Date(riskNameColonTrackerTime.getTime() - 1000));
+  const riskNameColonDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(riskNameColonDiscovery.sources.find((source) => source.relativePath === "raw/articles/AI 风险管理.md")?.changed, true);
+  await mkdir(path.join(kbVault, "raw", "articles", "风险管理"), { recursive: true });
+  const riskDirRawPath = path.join(kbVault, "raw", "articles", "风险管理", "demo.md");
+  await writeFile(riskDirRawPath, "# Risk Dir\n\n正文", "utf8");
+  await writeFile(path.join(kbVault, "outputs", ".ingest-tracker.md"), [
+    "# Ingest Tracker",
+    "",
+    "## raw/articles/风险管理/ — 已处理",
+    "",
+    "- demo.md"
+  ].join("\n"), "utf8");
+  const riskDirTrackerTime = new Date(Date.now() - 60_000);
+  await utimes(path.join(kbVault, "outputs", ".ingest-tracker.md"), riskDirTrackerTime, riskDirTrackerTime);
+  await utimes(riskDirRawPath, new Date(riskDirTrackerTime.getTime() - 1000), new Date(riskDirTrackerTime.getTime() - 1000));
+  const riskDirDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(riskDirDiscovery.sources.find((source) => source.relativePath === "raw/articles/风险管理/demo.md")?.changed, true);
+  await rm(path.join(kbVault, "outputs", ".ingest-tracker.md"), { force: true });
+  const changedByFingerprintDiscovery = await discoverKnowledgeBaseSources(kbVault, {
+    "raw/articles/demo.md": {
+      size: metadataDriftSource!.size,
+      mtime: metadataDriftSource!.mtime,
+      fingerprint: contentFingerprint(Buffer.from("# demo\n\n正文"))
+    }
+  });
+  assert.equal(changedByFingerprintDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
+  const frontmatterTrustedPath = "raw/articles/frontmatter-trusted.md";
+  const frontmatterTrustedBefore = Buffer.from("# Frontmatter Trusted\n\n正文", "utf8");
+  const frontmatterTrustedFingerprint = rawDigestFingerprint(frontmatterTrustedPath, frontmatterTrustedBefore);
+  await writeFile(path.join(kbVault, frontmatterTrustedPath), applyRawDigestFrontmatter(frontmatterTrustedBefore, {
+    rawPath: frontmatterTrustedPath,
+    fingerprint: frontmatterTrustedFingerprint,
+    size: frontmatterTrustedBefore.length,
+    mtime: 100,
+    digestedAt: Date.parse("2026-06-04T01:00:00.000Z"),
+    runId: "frontmatter-trusted",
+    reportPath: "outputs/maintenance/kb-maintenance-2026-06-04.md",
+    evidencePaths: ["wiki/ai-intelligence/references/frontmatter-trusted.md"],
+    confidence: "verified"
+  }), "utf8");
+  const frontmatterTrustedDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(frontmatterTrustedDiscovery.sources.find((source) => source.relativePath === frontmatterTrustedPath)?.changed, false);
+  const docSourceForRegistry = frontmatterTrustedDiscovery.sources.find((source) => source.relativePath === "raw/attachments/doc.docx")!;
+  await writeFile(path.join(kbVault, "outputs", ".raw-digest-registry.json"), JSON.stringify({
+    schemaVersion: 1,
+    updatedAt: "2026-06-04T01:00:00.000Z",
+    entries: {
+      "raw/attachments/doc.docx": {
+        rawPath: "raw/attachments/doc.docx",
+        fingerprint: docSourceForRegistry.fingerprint,
+        size: docSourceForRegistry.size,
+        mtime: docSourceForRegistry.mtime,
+        digestedAt: Date.parse("2026-06-04T01:00:00.000Z"),
+        runId: "registry-trusted",
+        reportPath: "outputs/maintenance/kb-maintenance-2026-06-04.md",
+        evidencePaths: ["wiki/ai-intelligence/references/doc.md"],
+        confidence: "verified"
+      }
+    }
+  }, null, 2), "utf8");
+  const registryTrustedDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
+  assert.equal(registryTrustedDiscovery.sources.find((source) => source.relativePath === "raw/attachments/doc.docx")?.changed, false);
 
   const kbPrompt = buildKnowledgeBasePrompt({
     vaultPath: kbVault,
@@ -2433,8 +3411,11 @@ try {
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
   assert.ok(kbPrompt.includes("只适用于本次知识库管理任务"));
-  assert.ok(kbPrompt.includes("raw/ 源文件正文只读"));
-  assert.ok(kbPrompt.includes("raw 路径整理由插件在任务结束后执行确定性移动"));
+  assert.ok(kbPrompt.includes("raw/ 源文件内容边界"));
+  assert.ok(kbPrompt.includes("只有 EchoInk 插件后处理阶段可以写入 raw Markdown 的托管元属性"));
+  assert.ok(kbPrompt.includes("raw 路径不在每日维护中自动整理"));
+  assert.ok(kbPrompt.includes("本轮来源列表外的新 raw 文件"));
+  assert.ok(kbPrompt.includes("非索引正文页留下结构层证据"));
   assert.ok(kbPrompt.includes("Structure Normalize"));
   assert.ok(kbPrompt.includes("低风险自动执行"));
   assert.ok(kbPrompt.includes("不确定或会断链的改动只写进报告"));
@@ -2529,11 +3510,92 @@ try {
   assert.equal(reportExcerpt, "---\nmode: lint-only\n---\n# 体检报告\n\n这是一份已经生成的报告。");
   assert.equal(isLintOnlyKnowledgeBaseReport(reportExcerpt!), true);
   assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n执行 Ingest + Lint"), false);
+  assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n不是 lint-only。"), false);
+  assert.equal(isLintOnlyKnowledgeBaseReport("# Check\n\nnot lint-only."), false);
+  assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n不是只执行体检，而是执行 Ingest + Lint。"), false);
+  assert.equal(isLintOnlyKnowledgeBaseReport("# 维护报告\n\n并非只执行 Lint，而是执行维护。"), false);
   const recoveredSummary = recoveredLintReportSummary(secondDiscovery.reportPath);
   assert.ok(recoveredSummary.includes(secondDiscovery.reportPath));
   assert.ok(!recoveredSummary.includes("created:"));
   assert.ok(!recoveredSummary.includes("# 体检报告"));
+  assert.equal(shouldRecoverKnowledgeBaseLintFailure("Codex 连接失败", reportExcerpt), true);
+  assert.equal(shouldRecoverKnowledgeBaseLintFailure(formatRawIntegrityError(["raw/articles/demo.md 文件内容被改写"], true), reportExcerpt), false);
   assert.equal(await readKnowledgeBaseReportExcerpt(kbVault, "outputs/missing.md"), null);
+  const staleFallbackPath = "outputs/maintenance/kb-maintenance-stale.md";
+  await writeFile(path.join(kbVault, staleFallbackPath), "# 旧报告\n\n上一轮结果", "utf8");
+  const fallbackStartedAt = Date.now() - 30_000;
+  await utimes(path.join(kbVault, staleFallbackPath), new Date(fallbackStartedAt - 60_000), new Date(fallbackStartedAt - 60_000));
+  await ensureKnowledgeBaseFallbackReport(kbVault, staleFallbackPath, {
+    mode: "lint",
+    output: "本轮体检结果",
+    sources: [],
+    startedAt: fallbackStartedAt
+  });
+  const fallbackText = await readFile(path.join(kbVault, staleFallbackPath), "utf8");
+  assert.ok(fallbackText.includes("fallback: true"));
+  assert.ok(fallbackText.includes("本轮体检结果"));
+  assert.ok(!fallbackText.includes("上一轮结果"));
+  assert.equal(await readFreshKnowledgeBaseReportExcerpt(kbVault, staleFallbackPath, fallbackStartedAt), fallbackText.trim().slice(0, 1000).trim());
+  const nearStaleFallbackPath = "outputs/maintenance/kb-maintenance-near-stale.md";
+  await writeFile(path.join(kbVault, nearStaleFallbackPath), "# 近邻旧报告\n\n不应复用", "utf8");
+  const nearStaleTime = new Date(fallbackStartedAt - 10);
+  await utimes(path.join(kbVault, nearStaleFallbackPath), nearStaleTime, nearStaleTime);
+  const nearStalePreviousMtime = await readKnowledgeBaseReportMtime(kbVault, nearStaleFallbackPath);
+  assert.equal(await readFreshKnowledgeBaseReportExcerpt(kbVault, nearStaleFallbackPath, fallbackStartedAt, { previousMtimeMs: nearStalePreviousMtime }), null);
+  await ensureKnowledgeBaseFallbackReport(kbVault, nearStaleFallbackPath, {
+    mode: "lint",
+    output: "近邻本轮结果",
+    sources: [],
+    startedAt: fallbackStartedAt,
+    previousMtimeMs: nearStalePreviousMtime
+  });
+  const nearStaleText = await readFile(path.join(kbVault, nearStaleFallbackPath), "utf8");
+  assert.ok(nearStaleText.includes("近邻本轮结果"));
+  assert.ok(!nearStaleText.includes("不应复用"));
+  const symlinkFallbackPath = "outputs/maintenance/kb-maintenance-symlink.md";
+  const symlinkOutsideTarget = path.join(kbVault, "outside-report-target.md");
+  await writeFile(symlinkOutsideTarget, "# Outside\n\n不能被报告写入污染", "utf8");
+  await symlink(symlinkOutsideTarget, path.join(kbVault, symlinkFallbackPath));
+  await ensureKnowledgeBaseFallbackReport(kbVault, symlinkFallbackPath, {
+    mode: "lint",
+    output: "symlink 本轮结果",
+    sources: [],
+    startedAt: fallbackStartedAt
+  });
+  assert.equal(await readFile(symlinkOutsideTarget, "utf8"), "# Outside\n\n不能被报告写入污染");
+  assert.equal((await lstat(path.join(kbVault, symlinkFallbackPath))).isSymbolicLink(), false);
+  const symlinkFallbackText = await readFile(path.join(kbVault, symlinkFallbackPath), "utf8");
+  assert.ok(symlinkFallbackText.includes("symlink 本轮结果"));
+  const traversalReportOutside = path.join(path.dirname(kbVault), "kb-report-traversal.md");
+  await rm(traversalReportOutside, { force: true });
+  await assert.rejects(
+    () => ensureKnowledgeBaseFallbackReport(kbVault, "../kb-report-traversal.md", {
+      mode: "lint",
+      output: "不应写出 Vault",
+      sources: [],
+      startedAt: fallbackStartedAt
+    }),
+    /知识库报告路径越界/
+  );
+  assert.equal(await fileExists(traversalReportOutside), false);
+  const freshFallbackPath = "outputs/maintenance/kb-maintenance-fresh.md";
+  const freshLintOnlyReport = "---\nmode: lint-only\n---\n# 新报告\n\nAgent 已写入";
+  await writeFile(path.join(kbVault, freshFallbackPath), freshLintOnlyReport, "utf8");
+  await utimes(path.join(kbVault, freshFallbackPath), new Date(fallbackStartedAt + 10_000), new Date(fallbackStartedAt + 10_000));
+  const freshPreviousMtime = fallbackStartedAt - 10_000;
+  await ensureKnowledgeBaseFallbackReport(kbVault, freshFallbackPath, {
+    mode: "lint",
+    output: "不应覆盖",
+    sources: [],
+    startedAt: fallbackStartedAt,
+    previousMtimeMs: freshPreviousMtime
+  });
+  assert.equal(await readFile(path.join(kbVault, freshFallbackPath), "utf8"), freshLintOnlyReport);
+  const staleRecoveredPath = "outputs/maintenance/kb-maintenance-stale-recovered.md";
+  await writeFile(path.join(kbVault, staleRecoveredPath), "# 旧体检报告\n\n上一轮报告", "utf8");
+  await utimes(path.join(kbVault, staleRecoveredPath), new Date(fallbackStartedAt - 10_000), new Date(fallbackStartedAt - 10_000));
+  assert.equal(await readFreshKnowledgeBaseReportExcerpt(kbVault, staleRecoveredPath, fallbackStartedAt), null);
+  assert.equal(await readFreshKnowledgeBaseReportExcerpt(kbVault, freshFallbackPath, fallbackStartedAt), freshLintOnlyReport);
   const scheduledReportText = [
     "---",
     "type: kb-maintenance-report",
@@ -2562,6 +3624,309 @@ try {
   assert.ok(scheduledMessage.includes("- 状态：成功"));
   assert.ok(scheduledMessage.includes("- 报告：outputs/kb-maintenance-2026-05-19.md"));
   assert.ok(scheduledMessage.includes("- 摘要：无变化。 本轮没有新增 raw。"));
+  const scheduledConcurrentRawMessage = buildScheduledKnowledgeBaseMessage({
+    status: "success",
+    reportPath: "outputs/kb-maintenance-2026-06-03.md",
+    summary: "fallback",
+    processedSources: [],
+    externalRawAdditions: ["raw/articles/GitHub项目收集/2026-06-03 GitHub 热门项目简报.md"]
+  }, scheduledReportText);
+  assert.ok(scheduledConcurrentRawMessage.includes("运行中新出现 1 个 raw，已保留，留到下次 /maintain。"));
+
+  const scheduledAppendFailureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-scheduled-append-failure-"));
+  try {
+    const scheduledAppendSettings = normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      knowledgeBase: {
+        enabled: true,
+        scheduleEnabled: true,
+        catchUpOnStartup: true,
+        scheduleTime: "00:00"
+      },
+      sessions: [{
+        id: "kb-scheduled-existing",
+        title: KNOWLEDGE_BASE_SESSION_TITLE,
+        kind: "knowledge-base",
+        cwd: scheduledAppendFailureVault,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }]
+    }).settings;
+    scheduledAppendSettings.knowledgeBase.sessionId = "kb-scheduled-existing";
+    let scheduledAppendSaveCalls = 0;
+    const scheduledAppendRawRef = "raw/scheduled-orphan.txt";
+    const scheduledAppendRawPath = path.join(pluginDataDir(scheduledAppendFailureVault), scheduledAppendRawRef);
+    const scheduledAppendManager = new KnowledgeBaseManager({
+      settings: scheduledAppendSettings,
+      getVaultPath: () => scheduledAppendFailureVault,
+      saveSettings: async () => {
+        scheduledAppendSaveCalls += 1;
+        if (scheduledAppendSaveCalls === 1) throw new Error("scheduled message save failed");
+      },
+      getPluginDataDirName: () => "codex-echoink",
+      externalizeMessageText: async (message: ChatMessage) => {
+        message.rawRef = scheduledAppendRawRef;
+        await mkdir(path.dirname(scheduledAppendRawPath), { recursive: true });
+        await writeFile(scheduledAppendRawPath, "orphan scheduled message", "utf8");
+      },
+      getCodexView: () => ({
+        refreshAfterBackgroundKnowledgeMessage: () => {
+          throw new Error("should not refresh unsaved scheduled message");
+        },
+        refreshKnowledgeBaseDashboard: () => undefined
+	      }),
+	      getReviewManager: () => null,
+	      pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+	      activateKnowledgeBaseChannel: async () => undefined,
+	      addCommand: () => undefined,
+      addRibbonIcon: () => undefined,
+      registerInterval: () => undefined,
+      app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+    } as any);
+    (scheduledAppendManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
+      scheduledAppendSettings.knowledgeBase.lastRunAt = Date.now();
+      scheduledAppendSettings.knowledgeBase.lastRunStatus = "success";
+      scheduledAppendSettings.knowledgeBase.lastError = "";
+      return {
+        status: "success",
+        reportPath: "",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    };
+    await (scheduledAppendManager as any).runScheduledIfDue(true);
+    assert.equal(scheduledAppendSettings.knowledgeBase.lastRunStatus, "success");
+    assert.match(scheduledAppendSettings.knowledgeBase.lastError, /自动维护消息保存失败：scheduled message save failed/);
+    assert.equal(scheduledAppendSettings.sessions.length, 1);
+    assert.equal(scheduledAppendSettings.sessions[0].messages.length, 0);
+    assert.equal(scheduledAppendSaveCalls, 2);
+    assert.equal(await fileExists(scheduledAppendRawPath), false);
+  } finally {
+    await rm(scheduledAppendFailureVault, { recursive: true, force: true });
+  }
+
+  const scheduledAppendRefreshFailureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-scheduled-refresh-failure-"));
+  try {
+    const scheduledRefreshSettings = normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      knowledgeBase: {
+        enabled: true,
+        scheduleEnabled: true,
+        catchUpOnStartup: true,
+        scheduleTime: "00:00"
+      },
+      sessions: [{
+        id: "kb-scheduled-refresh",
+        title: KNOWLEDGE_BASE_SESSION_TITLE,
+        kind: "knowledge-base",
+        cwd: scheduledAppendRefreshFailureVault,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }]
+    }).settings;
+    scheduledRefreshSettings.knowledgeBase.sessionId = "kb-scheduled-refresh";
+    let scheduledRefreshSaveCalls = 0;
+    const scheduledRefreshManager = new KnowledgeBaseManager({
+      settings: scheduledRefreshSettings,
+      getVaultPath: () => scheduledAppendRefreshFailureVault,
+      saveSettings: async () => {
+        scheduledRefreshSaveCalls += 1;
+      },
+      externalizeMessageText: async () => undefined,
+      getCodexView: () => ({
+        refreshAfterBackgroundKnowledgeMessage: () => {
+          throw new Error("scheduled dashboard refresh failed");
+        },
+        refreshKnowledgeBaseDashboard: () => undefined
+	      }),
+	      getReviewManager: () => null,
+	      pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+	      activateKnowledgeBaseChannel: async () => undefined,
+	      addCommand: () => undefined,
+      addRibbonIcon: () => undefined,
+      registerInterval: () => undefined,
+      app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+    } as any);
+    (scheduledRefreshManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
+      scheduledRefreshSettings.knowledgeBase.lastRunAt = Date.now();
+      scheduledRefreshSettings.knowledgeBase.lastRunStatus = "success";
+      scheduledRefreshSettings.knowledgeBase.lastError = "";
+      return {
+        status: "success",
+        reportPath: "",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    };
+    const warnBeforeScheduledRefreshFailureTest = console.warn;
+    const scheduledRefreshWarnings: unknown[][] = [];
+    try {
+      console.warn = (...args: unknown[]) => {
+        scheduledRefreshWarnings.push(args);
+      };
+      await (scheduledRefreshManager as any).runScheduledIfDue(true);
+    } finally {
+      console.warn = warnBeforeScheduledRefreshFailureTest;
+    }
+    assert.equal(scheduledRefreshSettings.knowledgeBase.lastRunStatus, "success");
+    assert.equal(scheduledRefreshSettings.knowledgeBase.lastError, "");
+    assert.equal(scheduledRefreshSettings.sessions.length, 1);
+    assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);
+    assert.equal(scheduledRefreshSettings.sessions[0].messages[0].status, "completed");
+    assert.equal(scheduledRefreshSaveCalls, 1);
+    assert.equal(scheduledRefreshWarnings.length, 1);
+    assert.equal(scheduledRefreshWarnings[0][0], "每日维护消息刷新失败");
+  } finally {
+    await rm(scheduledAppendRefreshFailureVault, { recursive: true, force: true });
+  }
+
+  const scheduledAppendConcurrentSessionVault = await mkdtemp(path.join(tmpdir(), "codex-kb-scheduled-append-concurrent-"));
+  try {
+    const scheduledConcurrentSettings = normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      knowledgeBase: {
+        enabled: true,
+        scheduleEnabled: true,
+        catchUpOnStartup: true,
+        scheduleTime: "00:00"
+      },
+      sessions: [{
+        id: "kb-scheduled-concurrent",
+        title: KNOWLEDGE_BASE_SESSION_TITLE,
+        kind: "knowledge-base",
+        cwd: scheduledAppendConcurrentSessionVault,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }]
+    }).settings;
+    scheduledConcurrentSettings.knowledgeBase.sessionId = "kb-scheduled-concurrent";
+    let scheduledConcurrentSaveCalls = 0;
+    const scheduledConcurrentManager = new KnowledgeBaseManager({
+      settings: scheduledConcurrentSettings,
+      getVaultPath: () => scheduledAppendConcurrentSessionVault,
+      saveSettings: async () => {
+        scheduledConcurrentSaveCalls += 1;
+        if (scheduledConcurrentSaveCalls === 1) throw new Error("scheduled message save failed");
+      },
+      externalizeMessageText: async () => {
+        scheduledConcurrentSettings.sessions.push({
+          id: "manual-session-created-during-scheduled-message",
+          title: "手动会话",
+          kind: "chat",
+          cwd: scheduledAppendConcurrentSessionVault,
+          messages: [{ id: "manual-message", role: "user", text: "用户同时发了一条消息", createdAt: Date.now() }],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      },
+      getCodexView: () => ({
+        refreshAfterBackgroundKnowledgeMessage: () => {
+          throw new Error("should not refresh unsaved scheduled message");
+        },
+        refreshKnowledgeBaseDashboard: () => undefined
+	      }),
+	      getReviewManager: () => null,
+	      pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+	      activateKnowledgeBaseChannel: async () => undefined,
+	      addCommand: () => undefined,
+      addRibbonIcon: () => undefined,
+      registerInterval: () => undefined,
+      app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+    } as any);
+    (scheduledConcurrentManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
+      scheduledConcurrentSettings.knowledgeBase.lastRunAt = Date.now();
+      scheduledConcurrentSettings.knowledgeBase.lastRunStatus = "success";
+      scheduledConcurrentSettings.knowledgeBase.lastError = "";
+      return {
+        status: "success",
+        reportPath: "",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    };
+    await (scheduledConcurrentManager as any).runScheduledIfDue(true);
+    assert.equal(scheduledConcurrentSettings.knowledgeBase.lastRunStatus, "success");
+    assert.match(scheduledConcurrentSettings.knowledgeBase.lastError, /自动维护消息保存失败：scheduled message save failed/);
+    assert.equal(scheduledConcurrentSettings.sessions.some((session) => session.id === "manual-session-created-during-scheduled-message"), true);
+    assert.equal(scheduledConcurrentSettings.sessions.find((session) => session.id === "kb-scheduled-concurrent")?.messages.length, 0);
+    assert.equal(scheduledConcurrentSaveCalls, 2);
+  } finally {
+    await rm(scheduledAppendConcurrentSessionVault, { recursive: true, force: true });
+  }
+
+  const scheduledAppendConcurrentSameSessionVault = await mkdtemp(path.join(tmpdir(), "codex-kb-scheduled-append-same-session-"));
+  try {
+    const scheduledSameSessionSettings = normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      knowledgeBase: {
+        enabled: true,
+        scheduleEnabled: true,
+        catchUpOnStartup: true,
+        scheduleTime: "00:00"
+      },
+      sessions: [{
+        id: "kb-scheduled-same-session",
+        title: KNOWLEDGE_BASE_SESSION_TITLE,
+        kind: "knowledge-base",
+        cwd: scheduledAppendConcurrentSameSessionVault,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }]
+    }).settings;
+    scheduledSameSessionSettings.knowledgeBase.sessionId = "kb-scheduled-same-session";
+    let scheduledSameSessionSaveCalls = 0;
+    const manualMessageCreatedAt = Date.now() + 60_000;
+    const scheduledSameSessionManager = new KnowledgeBaseManager({
+      settings: scheduledSameSessionSettings,
+      getVaultPath: () => scheduledAppendConcurrentSameSessionVault,
+      saveSettings: async () => {
+        scheduledSameSessionSaveCalls += 1;
+        if (scheduledSameSessionSaveCalls === 1) throw new Error("scheduled message save failed");
+      },
+      externalizeMessageText: async () => {
+        const session = scheduledSameSessionSettings.sessions.find((item) => item.id === "kb-scheduled-same-session");
+        assert.ok(session);
+        session.messages.push({ id: "manual-message-same-session", role: "user", text: "用户同时在知识库频道发消息", createdAt: manualMessageCreatedAt });
+        session.updatedAt = manualMessageCreatedAt;
+      },
+      getCodexView: () => ({
+        refreshAfterBackgroundKnowledgeMessage: () => {
+          throw new Error("should not refresh unsaved scheduled message");
+        },
+        refreshKnowledgeBaseDashboard: () => undefined
+	      }),
+	      getReviewManager: () => null,
+	      pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+	      activateKnowledgeBaseChannel: async () => undefined,
+	      addCommand: () => undefined,
+      addRibbonIcon: () => undefined,
+      registerInterval: () => undefined,
+      app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+    } as any);
+    (scheduledSameSessionManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
+      scheduledSameSessionSettings.knowledgeBase.lastRunAt = Date.now();
+      scheduledSameSessionSettings.knowledgeBase.lastRunStatus = "success";
+      scheduledSameSessionSettings.knowledgeBase.lastError = "";
+      return {
+        status: "success",
+        reportPath: "",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    };
+    await (scheduledSameSessionManager as any).runScheduledIfDue(true);
+    const session = scheduledSameSessionSettings.sessions.find((item) => item.id === "kb-scheduled-same-session");
+    assert.ok(session);
+    assert.deepEqual(session.messages.map((message) => message.id), ["manual-message-same-session"]);
+    assert.equal(session.updatedAt, manualMessageCreatedAt);
+    assert.equal(scheduledSameSessionSaveCalls, 2);
+  } finally {
+    await rm(scheduledAppendConcurrentSameSessionVault, { recursive: true, force: true });
+  }
 
   const historySettings = normalizeSettingsData({
     sessions: [{
@@ -2597,6 +3962,14 @@ try {
   const storageStats = await collectKnowledgeBaseStorageStats(kbVault, "codex-echoink");
   assert.equal(storageStats.messageCount, 5);
   assert.equal(storageStats.dayCount, 3);
+  const removedMay18 = await removeKnowledgeBaseHistoryDays(kbVault, "codex-echoink", ["2026-05-18"]);
+  assert.equal(removedMay18.removedDayCount, 1);
+  assert.equal(removedMay18.removedMessageCount, 2);
+  const afterRemoveMay18 = await readKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
+  assert.deepEqual(afterRemoveMay18.sessions[0]?.days.map((day) => day.date), ["2026-05-20", "2026-05-19"]);
+  const prunedHistory = await pruneKnowledgeBaseHistoryByRetention(kbVault, "codex-echoink", 7, new Date(2026, 4, 28, 12, 0, 0).getTime());
+  assert.equal(prunedHistory.removedDayCount, 2);
+  assert.deepEqual((await readKnowledgeBaseHistoryIndex(kbVault, "codex-echoink")).sessions[0]?.days.map((day) => day.date) ?? [], []);
 
   const recoveredHistorySession = {
     id: "kb-history-recover",
@@ -2623,6 +3996,3066 @@ try {
   assert.deepEqual(recoverySettings.sessions[0].messages.map((message) => message.id), ["recover-19", "recover-21"]);
 } finally {
   await rm(kbVault, { recursive: true, force: true });
+}
+
+const maintenanceStartSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-start-save-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStartSaveFailureVault, { failSaveCall: 1 });
+  let thrown: unknown = null;
+  let result: Awaited<ReturnType<KnowledgeBaseManager["runMaintenance"]>> | null = null;
+  try {
+    result = await manager.runMaintenance("maintain", "/maintain 测试保存失败");
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown, null);
+  assert.equal(result?.status, "failed");
+  assert.match(result?.error ?? "", /saveSettings failed at call 1/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+} finally {
+  await rm(maintenanceStartSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceVaultPathFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-vault-path-failure-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceVaultPathFailureVault, {
+    throwOnGetVaultPath: true
+  });
+  let thrown: unknown = null;
+  let result: Awaited<ReturnType<KnowledgeBaseManager["runMaintenance"]>> | null = null;
+  try {
+    result = await manager.runMaintenance("lint", "/check 测试 vault 路径读取失败");
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown, null);
+  assert.equal(result?.status, "failed");
+  assert.match(result?.error ?? "", /vault path unavailable/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.match(settings.knowledgeBase.lastError, /vault path unavailable/);
+} finally {
+  await rm(maintenanceVaultPathFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceFailureStatusSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-failure-save-failure-");
+try {
+  const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceFailureStatusSaveFailureVault, {
+    failSaveCall: 2,
+    beforeAgentReturn: async () => {
+      throw new Error("Agent failed before report");
+    }
+  });
+  let thrown: unknown = null;
+  let result: Awaited<ReturnType<KnowledgeBaseManager["runMaintenance"]>> | null = null;
+  try {
+    result = await manager.runMaintenance("maintain", "/maintain 测试失败状态保存也失败");
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown, null);
+  assert.equal(result?.status, "failed");
+  assert.match(result?.error ?? "", /Agent failed before report/);
+  assert.match(result?.error ?? "", /状态保存失败：saveSettings failed at call 2/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastError.includes("状态保存失败：saveSettings failed at call 2"), true);
+  assert.equal(saveCalls(), 3);
+} finally {
+  await rm(maintenanceFailureStatusSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceCancelSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-cancel-save-failure-");
+try {
+  const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceCancelSaveFailureVault, { failSaveCall: 1 });
+  (manager as any).running = true;
+  let thrown: unknown = null;
+  try {
+    await manager.cancelMaintenance();
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown, null);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /状态保存失败：saveSettings failed at call 1/);
+  assert.equal(saveCalls(), 2);
+} finally {
+  await rm(maintenanceCancelSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceCancelDuringInitialSaveVault = await createMaintenanceVaultForTest("codex-kb-maintain-cancel-initial-save-");
+try {
+  const codexTaskCalls: Array<{ permission: string; writeScope: string }> = [];
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceCancelDuringInitialSaveVault, {
+    cancelViaManagerBeforeSaveCall: 1,
+    codexTaskCalls
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试初始保存期间取消");
+  assert.equal(result.status, "canceled");
+  assert.deepEqual(codexTaskCalls, []);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+} finally {
+  await rm(maintenanceCancelDuringInitialSaveVault, { recursive: true, force: true });
+}
+
+const maintenanceFinalSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-final-save-");
+try {
+  await mkdir(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings"), { recursive: true });
+  await writeFile(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings", "clip.md"), "# Clip\n", "utf8");
+  await writeFile(path.join(maintenanceFinalSaveFailureVault, "inbox", "skills-local-audit.md"), "# Skills\n", "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceFinalSaveFailureVault, {
+    failSaveCall: 2,
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceFinalSaveFailureVault, "raw", "index.md"), "# Raw\n\n- [[raw/articles/new]]\n", "utf8");
+      await writeFile(path.join(maintenanceFinalSaveFailureVault, "wiki", "agent-temp.md"), "# Temp\n\n来源：[[raw/articles/new]]\n\n核心要点：本轮新增正文已经进入临时知识页。\n", "utf8");
+      const reportPath = path.join(maintenanceFinalSaveFailureVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试最终保存失败");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /saveSettings failed at call 2/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(result.processedSources.length, 0);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".ingest-tracker.md")), false);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings", "clip.md")), true);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "skills-local-audit.md")), true);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "research", "skills-local-audit.md")), false);
+  assert.equal(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "index.md"), "utf8"), "# Raw\n");
+  assert.equal(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "articles", "new.md"), "utf8"), "# New\n\n正文");
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".raw-digest-registry.json")), false);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "wiki", "agent-temp.md")), false);
+} finally {
+  await rm(maintenanceFinalSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceDirectoryReplacedRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-dir-replaced-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceDirectoryReplacedRollbackVault, {
+    beforeAgentReturn: async () => {
+      await rm(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki"), { recursive: true, force: true });
+      await writeFile(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki"), "# Bad replacement\n", "utf8");
+      throw new Error("Agent replaced managed directory");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试目录替换回滚");
+  assert.equal(result.status, "failed");
+  assert.equal((await stat(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki"))).isDirectory(), true);
+  assert.equal(await readFile(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
+} finally {
+  await rm(maintenanceDirectoryReplacedRollbackVault, { recursive: true, force: true });
+}
+
+const maintenanceRootSymlinkAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-root-symlink-after-agent-");
+try {
+  const externalWikiTarget = path.join(maintenanceRootSymlinkAfterAgentVault, "outside-wiki-target");
+  await mkdir(externalWikiTarget, { recursive: true });
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRootSymlinkAfterAgentVault, {
+    beforeAgentReturn: async () => {
+      await rm(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"), { recursive: true, force: true });
+      await symlink(externalWikiTarget, path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"));
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 替换写入根为 symlink");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
+  assert.equal((await lstat(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"))).isDirectory(), true);
+  assert.equal(await readFile(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
+  assert.deepEqual(await readdir(externalWikiTarget), []);
+} finally {
+  await rm(maintenanceRootSymlinkAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceSpecialFileAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-special-after-agent-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceSpecialFileAfterAgentVault, {
+    beforeAgentReturn: async () => {
+      await execFile("mkfifo", [path.join(maintenanceSpecialFileAfterAgentVault, "wiki", "agent.pipe")]);
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增特殊文件");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含特殊文件/);
+  assert.equal(await fileExists(path.join(maintenanceSpecialFileAfterAgentVault, "wiki", "agent.pipe")), false);
+} finally {
+  await rm(maintenanceSpecialFileAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceHardlinkAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-hardlink-after-agent-");
+try {
+  const externalWikiTarget = path.join(maintenanceHardlinkAfterAgentVault, "outside-wiki-hardlink.md");
+  const hardlinkPath = path.join(maintenanceHardlinkAfterAgentVault, "wiki", "ai-intelligence", "references", "agent-hardlink.md");
+  await writeFile(externalWikiTarget, "# External wiki hardlink\n\n不应进入知识库写入区", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHardlinkAfterAgentVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.dirname(hardlinkPath), { recursive: true });
+      await link(externalWikiTarget, hardlinkPath);
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增 hardlink 不继续");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含 hardlink/);
+  assert.equal(await readFile(externalWikiTarget, "utf8"), "# External wiki hardlink\n\n不应进入知识库写入区");
+  assert.equal(await fileExists(hardlinkPath), false);
+} finally {
+  await rm(maintenanceHardlinkAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceFailurePreservesUntouchedFilesVault = await createMaintenanceVaultForTest("codex-kb-maintain-preserve-untouched-");
+try {
+  const untouchedWikiPath = path.join(maintenanceFailurePreservesUntouchedFilesVault, "wiki", "index.md");
+  const untouchedWikiBefore = await stat(untouchedWikiPath);
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceFailurePreservesUntouchedFilesVault, {
+    beforeAgentReturn: async () => {
+      throw new Error("Agent failed without touching files");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试失败不重写未改文件");
+  assert.equal(result.status, "failed");
+  const untouchedWikiAfter = await stat(untouchedWikiPath);
+  assert.equal(await readFile(untouchedWikiPath, "utf8"), "# Wiki\n");
+  assert.equal(untouchedWikiAfter.ino, untouchedWikiBefore.ino);
+  assert.equal(Math.round(untouchedWikiAfter.mtimeMs), Math.round(untouchedWikiBefore.mtimeMs));
+} finally {
+  await rm(maintenanceFailurePreservesUntouchedFilesVault, { recursive: true, force: true });
+}
+
+const maintenanceRawViolationRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-violation-rollback-");
+try {
+  const rawPath = path.join(maintenanceRawViolationRollbackVault, "raw", "articles", "new.md");
+  const rawTextBefore = await readFile(rawPath, "utf8");
+  const rawStatBefore = await stat(rawPath);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceRawViolationRollbackVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(rawPath, "# New\n\nAgent 不该改 raw 正文", "utf8");
+      await writeFile(path.join(maintenanceRawViolationRollbackVault, "wiki", "agent-temp.md"), "# Temp\n", "utf8");
+      const reportPath = path.join(maintenanceRawViolationRollbackVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "# Bad Report\n", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 raw 违规全量回滚");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
+  assert.match(result.error ?? "", /文件内容被改写/);
+  assert.equal(await readFile(rawPath, "utf8"), rawTextBefore);
+  assert.ok(Math.abs((await stat(rawPath)).mtimeMs - rawStatBefore.mtimeMs) <= 5);
+  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "wiki", "agent-temp.md")), false);
+  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`)), false);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "outputs", ".ingest-tracker.md")), false);
+} finally {
+  await rm(maintenanceRawViolationRollbackVault, { recursive: true, force: true });
+}
+
+const maintenanceRawViolationPreservesConcurrentAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-preserve-concurrent-add-");
+try {
+  const rawPath = path.join(maintenanceRawViolationPreservesConcurrentAddVault, "raw", "articles", "new.md");
+  const concurrentRaw = path.join(maintenanceRawViolationPreservesConcurrentAddVault, "raw", "articles", "external-concurrent.md");
+  const rawTextBefore = await readFile(rawPath, "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawViolationPreservesConcurrentAddVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(rawPath, "# New\n\nAgent 不该改 raw 正文", "utf8");
+      await writeFile(concurrentRaw, "# External\n\n外部自动化同时新增 raw", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试恢复既有 raw 但不删除并发新增 raw");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
+  assert.equal(await readFile(rawPath, "utf8"), rawTextBefore);
+  assert.equal(await readFile(concurrentRaw, "utf8"), "# External\n\n外部自动化同时新增 raw");
+} finally {
+  await rm(maintenanceRawViolationPreservesConcurrentAddVault, { recursive: true, force: true });
+}
+
+const maintenanceUnsafeRawAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-unsafe-raw-add-");
+try {
+  const externalTarget = path.join(maintenanceUnsafeRawAddVault, "outside.md");
+  const rawSymlink = path.join(maintenanceUnsafeRawAddVault, "raw", "articles", "unsafe-link.md");
+  await writeFile(externalTarget, "# Outside\n", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceUnsafeRawAddVault, {
+    beforeAgentReturn: async () => {
+      await symlink(externalTarget, rawSymlink);
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 unsafe raw 新增仍失败");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
+  assert.match(result.error ?? "", /unsafe-link\.md 文件新增或被移动到 raw\//);
+  assert.equal(await fileExists(rawSymlink), false);
+  assert.equal(await readFile(externalTarget, "utf8"), "# Outside\n");
+} finally {
+  await rm(maintenanceUnsafeRawAddVault, { recursive: true, force: true });
+}
+
+const maintenanceRawUnreadableOnErrorVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-unreadable-error-");
+try {
+  const rawDir = path.join(maintenanceRawUnreadableOnErrorVault, "raw");
+  const rawFile = path.join(maintenanceRawUnreadableOnErrorVault, "raw", "articles", "new.md");
+  const rawModeBefore = (await stat(rawDir)).mode & 0o777;
+  const rawFileBefore = await stat(rawFile);
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawUnreadableOnErrorVault, {
+    beforeAgentReturn: async () => {
+      await chmod(rawDir, 0o000);
+      throw new Error("Agent failed after raw chmod");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试失败时 raw 不可读也要恢复");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
+  assert.match(result.error ?? "", /文件权限被改写/);
+  assert.equal((await stat(rawDir)).mode & 0o777, rawModeBefore);
+  assert.equal((await stat(rawFile)).ino, rawFileBefore.ino);
+} finally {
+  await chmod(path.join(maintenanceRawUnreadableOnErrorVault, "raw"), 0o755).catch(() => undefined);
+  await rm(maintenanceRawUnreadableOnErrorVault, { recursive: true, force: true });
+}
+
+const maintenanceLateCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-late-cancel-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLateCancelVault, {
+    cancelBeforeSaveCall: 2,
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceLateCancelVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceLateCancelVault, "wiki", "ai-intelligence", "references", "late-cancel.md"), [
+        "# Late Cancel",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经进入取消窗口测试页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceLateCancelVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试最终保存窗口取消");
+  assert.equal(result.status, "canceled");
+  assert.equal(result.processedSources.length, 0);
+  assert.match(result.error ?? "", /用户取消/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /用户取消/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(await fileExists(path.join(maintenanceLateCancelVault, "outputs", ".ingest-tracker.md")), false);
+} finally {
+  await rm(maintenanceLateCancelVault, { recursive: true, force: true });
+}
+
+const maintenanceHandleCanceledVault = await createMaintenanceVaultForTest("codex-kb-maintain-handle-canceled-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHandleCanceledVault);
+  (manager as any).runMaintenance = async () => ({
+    status: "canceled",
+    reportPath: "outputs/maintenance/kb-maintenance-cancel.md",
+    summary: "",
+    processedSources: [],
+    error: "用户取消"
+  });
+  const result = await manager.handleUserMessage("/check 测试取消返回");
+  assert.equal(result.status, "canceled");
+  assert.match(result.message, /知识库体检已取消/);
+  assert.doesNotMatch(result.message, /失败/);
+} finally {
+  await rm(maintenanceHandleCanceledVault, { recursive: true, force: true });
+}
+
+const maintenanceLintScopeVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-scope-");
+try {
+  const codexTaskCalls: Array<{ permission: string; writeScope: string }> = [];
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintScopeVault, { codexTaskCalls });
+  const result = await manager.runMaintenance("lint", "/check 测试权限边界");
+  assert.equal(result.status, "success");
+  assert.deepEqual(codexTaskCalls.map((call) => ({ permission: call.permission, writeScope: call.writeScope })), [
+    { permission: "workspace-write", writeScope: "knowledge-lint" }
+  ]);
+} finally {
+  await rm(maintenanceLintScopeVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeLintScopeVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-lint-scope-");
+try {
+  const openCodeTaskCalls: Array<{ permission: string }> = [];
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeLintScopeVault, { agentBackend: "opencode", openCodeTaskCalls });
+  const result = await manager.runMaintenance("lint", "/check 测试 OpenCode 权限边界");
+  assert.equal(result.status, "success");
+  assert.deepEqual(openCodeTaskCalls, [{ permission: "read-only" }]);
+} finally {
+  await rm(maintenanceOpenCodeLintScopeVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeCancelBeforePromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-before-prompt-");
+try {
+  let managerForHook: KnowledgeBaseManager | null = null;
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    onListModels: async () => {
+      await managerForHook?.cancelMaintenance();
+    }
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelBeforePromptVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true
+  });
+  managerForHook = manager;
+  const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 前取消");
+  assert.equal(result.status, "canceled");
+  assert.equal(result.processedSources.length, 0);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 0);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeCancelBeforePromptVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeCancelDuringPromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-during-prompt-");
+try {
+  let managerForHook: KnowledgeBaseManager | null = null;
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    abortCalls: [],
+    onSendPrompt: async () => {
+      await managerForHook?.cancelMaintenance();
+    },
+    sendPromptError: new Error("OpenCode aborted")
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelDuringPromptVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true
+  });
+  managerForHook = manager;
+  const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 中取消");
+  assert.equal(result.status, "canceled");
+  assert.equal(result.processedSources.length, 0);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 1);
+  assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
+  assert.equal(settings.opencode.lastError, "");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeCancelDuringPromptVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeStalledPromptTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-stalled-prompt-timeout-");
+try {
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    abortCalls: [],
+    onSendPrompt: async () => await new Promise(() => undefined)
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeStalledPromptTimeoutVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true
+  });
+  const result = await Promise.race([
+    manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死超时", { opencodeTaskTimeoutMs: 10 } as any),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
+  assert.match((result as KnowledgeBaseRunResult).error ?? "", /OpenCode.*长时间没有返回/);
+  assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
+  assert.equal((manager as any).activeOpenCode, null);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeStalledPromptTimeoutVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeStalledPromptCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-stalled-prompt-cancel-");
+try {
+  let managerForHook: KnowledgeBaseManager | null = null;
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    abortCalls: [],
+    onSendPrompt: async () => {
+      await managerForHook?.cancelMaintenance();
+      await new Promise(() => undefined);
+    }
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeStalledPromptCancelVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true
+  });
+  managerForHook = manager;
+  const result = await Promise.race([
+    manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死时取消"),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.equal((result as KnowledgeBaseRunResult).status, "canceled");
+  assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
+  assert.equal(settings.opencode.lastError, "");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeStalledPromptCancelVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexCancelDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-cancel-start-turn-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  const interruptCalls: Array<{ threadId: string; turnId: string }> = [];
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexCancelDuringStartTurnVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-cancel", title: "KB" }),
+      startTurn: async () => {
+        (manager as any).cancelRequested = true;
+        return "turn-cancel";
+      },
+      interruptTurn: async (threadId: string, turnId: string) => {
+        interruptCalls.push({ threadId, turnId });
+      }
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  let errorMessage = "";
+  try {
+    await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  } catch (error) {
+    errorMessage = error instanceof Error ? error.message : String(error);
+  }
+  assert.equal(isKnowledgeBaseCancelError(errorMessage), true);
+  assert.deepEqual(interruptCalls, [{ threadId: "thread-cancel", turnId: "turn-cancel" }]);
+  assert.equal((manager as any).codexWaiter, null);
+} finally {
+  await rm(maintenanceCodexCancelDuringStartTurnVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexArchiveVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-archive-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const archivedThreadIds: string[] = [];
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexArchiveVault,
+    saveSettings: async () => undefined,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-archive", title: "KB" }),
+	      setThreadName: async () => undefined,
+	      startTurn: async () => {
+	        queueMicrotask(() => {
+	          manager.handleCodexNotification({
+	            method: "turn/started",
+	            params: { threadId: "thread-archive", turn: { id: "turn-archive" } }
+	          } as any);
+	          manager.handleCodexNotification({
+	            method: "item/agentMessage/delta",
+	            params: { threadId: "thread-archive", turnId: "turn-archive", itemId: "item-archive", delta: "归档输出" }
+	          } as any);
+          manager.handleCodexNotification({
+            method: "turn/completed",
+            params: { threadId: "thread-archive", turn: { id: "turn-archive", status: "completed" } }
+          } as any);
+        });
+        return "turn-archive";
+      },
+      interruptTurn: async () => undefined,
+      archiveThread: async (threadId: string) => {
+        archivedThreadIds.push(threadId);
+      }
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "ask"), "归档输出");
+  assert.equal(settings.knowledgeBase.managedThreads["thread-archive"]?.archiveState, "pending-archive");
+  await manager.archivePendingCodexKnowledgeThreads();
+  assert.deepEqual(archivedThreadIds, ["thread-archive"]);
+  assert.equal(settings.knowledgeBase.managedThreads["thread-archive"]?.archiveState, "archived");
+} finally {
+  await rm(maintenanceCodexArchiveVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexStaleRunningThreadVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stale-running-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  settings.knowledgeBase.managedThreads["thread-stale-running"] = {
+    threadId: "thread-stale-running",
+    runId: "run-stale-running",
+    kind: "maintain",
+    vaultPath: maintenanceCodexStaleRunningThreadVault,
+    archiveState: "running",
+    createdAt: Date.now() - 60_000,
+    settledAt: 0,
+    archivedAt: 0,
+    attempts: 0,
+    lastError: ""
+  };
+  let saveCalls = 0;
+  const manager = new KnowledgeBaseManager({
+    settings,
+    getVaultPath: () => maintenanceCodexStaleRunningThreadVault,
+    saveSettings: async () => {
+      saveCalls += 1;
+    },
+    codex: null
+  } as any);
+  assert.equal(await manager.archivePendingCodexKnowledgeThreads(), 0);
+  assert.equal(settings.knowledgeBase.managedThreads["thread-stale-running"]?.archiveState, "pending-archive");
+  assert.match(settings.knowledgeBase.managedThreads["thread-stale-running"]?.lastError ?? "", /running/);
+  assert.equal(saveCalls, 1);
+} finally {
+  await rm(maintenanceCodexStaleRunningThreadVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexOldCompletedDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-old-completed-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexOldCompletedDuringStartTurnVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-reused", title: "KB" }),
+      startTurn: async () => {
+        assert.equal(manager.handleCodexNotification({
+          method: "turn/completed",
+          params: { threadId: "thread-reused", turn: { id: "turn-old", status: "completed" } }
+        } as any), false);
+        return "turn-new";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal((manager as any).codexWaiter?.turnId, "turn-new");
+  assert.equal(manager.handleCodexNotification({
+    method: "item/agentMessage/delta",
+    params: { threadId: "thread-reused", turnId: "turn-new", itemId: "item-new", delta: "新任务输出" }
+  } as any), true);
+  assert.equal(manager.handleCodexNotification({
+    method: "turn/completed",
+    params: { threadId: "thread-reused", turn: { id: "turn-new", status: "completed" } }
+  } as any), true);
+  assert.equal(await taskPromise, "新任务输出");
+} finally {
+  await rm(maintenanceCodexOldCompletedDuringStartTurnVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexFastCompletionDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-fast-completed-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexFastCompletionDuringStartTurnVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-fast", title: "KB" }),
+      startTurn: async () => {
+        assert.equal(manager.handleCodexNotification({
+          method: "turn/started",
+          params: { threadId: "thread-fast", turn: { id: "turn-fast" } }
+        } as any), true);
+        assert.equal(manager.handleCodexNotification({
+          method: "item/agentMessage/delta",
+          params: { threadId: "thread-fast", turnId: "turn-fast", itemId: "item-fast", delta: "快速输出" }
+        } as any), true);
+        assert.equal(manager.handleCodexNotification({
+          method: "turn/completed",
+          params: { threadId: "thread-fast", turn: { id: "turn-fast", status: "completed" } }
+        } as any), true);
+        return "turn-fast";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  const result = await Promise.race([
+    taskPromise,
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 50))
+  ]);
+  assert.equal(result, "快速输出");
+} finally {
+  await rm(maintenanceCodexFastCompletionDuringStartTurnVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexRetryingErrorVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-retrying-error-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexRetryingErrorVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-retry", title: "KB" }),
+      startTurn: async () => "turn-retry",
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(manager.handleCodexNotification({
+    method: "error",
+    params: {
+      threadId: "thread-retry",
+      turnId: "turn-retry",
+      willRetry: true,
+      error: { message: "Reconnecting... 1/5" }
+    }
+  } as any), true);
+  assert.notEqual((manager as any).codexWaiter, null);
+  assert.equal(manager.handleCodexNotification({
+    method: "item/agentMessage/delta",
+    params: { threadId: "thread-retry", turnId: "turn-retry", itemId: "item-retry", delta: "重连后输出" }
+  } as any), true);
+  assert.equal(manager.handleCodexNotification({
+    method: "turn/completed",
+    params: { threadId: "thread-retry", turn: { id: "turn-retry", status: "completed" } }
+  } as any), true);
+  assert.equal(await taskPromise, "重连后输出");
+} finally {
+  await rm(maintenanceCodexRetryingErrorVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexRetryingErrorDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-retrying-start-turn-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexRetryingErrorDuringStartTurnVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-retry-start", title: "KB" }),
+      startTurn: async () => {
+        assert.equal(manager.handleCodexNotification({
+          method: "error",
+          params: {
+            threadId: "thread-retry-start",
+            turnId: "turn-retry-start",
+            willRetry: true,
+            error: { message: "Reconnecting... 1/5" }
+          }
+        } as any), true);
+        return "turn-retry-start";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal((manager as any).codexWaiter?.pendingTerminal, undefined);
+  assert.equal(manager.handleCodexNotification({
+    method: "item/agentMessage/delta",
+    params: { threadId: "thread-retry-start", turnId: "turn-retry-start", itemId: "item-retry-start", delta: "启动后输出" }
+  } as any), true);
+  assert.equal(manager.handleCodexNotification({
+    method: "turn/completed",
+    params: { threadId: "thread-retry-start", turn: { id: "turn-retry-start", status: "completed" } }
+  } as any), true);
+  assert.equal(await taskPromise, "启动后输出");
+} finally {
+  await rm(maintenanceCodexRetryingErrorDuringStartTurnVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexStalledTurnTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stalled-turn-timeout-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  const interruptCalls: Array<{ threadId: string; turnId: string }> = [];
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexStalledTurnTimeoutVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-stalled", title: "KB" }),
+      startTurn: async () => "turn-stalled",
+      interruptTurn: async (threadId: string, turnId: string) => {
+        interruptCalls.push({ threadId, turnId });
+      }
+    }
+  };
+  const manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", { codexInactivityTimeoutMs: 10 });
+  const result = await Promise.race([
+    taskPromise.then(() => "resolved", (error: unknown) => error instanceof Error ? error.message : String(error)),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.match(String(result), /长时间没有收到 Codex 终态/);
+  assert.deepEqual(interruptCalls, [{ threadId: "thread-stalled", turnId: "turn-stalled" }]);
+  assert.equal((manager as any).codexWaiter, null);
+} finally {
+  await rm(maintenanceCodexStalledTurnTimeoutVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexStalledStartTurnTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stalled-start-turn-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexStalledStartTurnTimeoutVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-stalled-start", title: "KB" }),
+      startTurn: async () => new Promise<string>(() => undefined),
+      interruptTurn: async () => undefined
+    }
+  };
+  const manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", { codexInactivityTimeoutMs: 10 });
+  const result = await Promise.race([
+    taskPromise.then(() => "resolved", (error: unknown) => error instanceof Error ? error.message : String(error)),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.match(String(result), /长时间没有收到 Codex turn id/);
+  assert.equal(settings.knowledgeBase.managedThreads["thread-stalled-start"]?.archiveState, "pending-archive");
+  assert.equal((manager as any).codexWaiter, null);
+} finally {
+  await rm(maintenanceCodexStalledStartTurnTimeoutVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexOldStartedCompletedDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-old-started-completed-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexOldStartedCompletedDuringStartTurnVault,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-reused", title: "KB" }),
+      startTurn: async () => {
+        assert.equal(manager.handleCodexNotification({
+          method: "turn/started",
+          params: { threadId: "thread-reused", turn: { id: "turn-old" } }
+        } as any), true);
+        assert.equal(manager.handleCodexNotification({
+          method: "item/agentMessage/delta",
+          params: { threadId: "thread-reused", turnId: "turn-old", itemId: "item-old", delta: "旧任务输出" }
+        } as any), true);
+        assert.equal(manager.handleCodexNotification({
+          method: "turn/completed",
+          params: { threadId: "thread-reused", turn: { id: "turn-old", status: "completed" } }
+        } as any), true);
+        return "turn-new";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal((manager as any).codexWaiter?.turnId, "turn-new");
+  assert.equal(manager.handleCodexNotification({
+    method: "item/agentMessage/delta",
+    params: { threadId: "thread-reused", turnId: "turn-new", itemId: "item-new", delta: "新任务输出" }
+  } as any), true);
+  assert.equal(manager.handleCodexNotification({
+    method: "turn/completed",
+    params: { threadId: "thread-reused", turn: { id: "turn-new", status: "completed" } }
+  } as any), true);
+  assert.equal(await taskPromise, "新任务输出");
+} finally {
+  await rm(maintenanceCodexOldStartedCompletedDuringStartTurnVault, { recursive: true, force: true });
+}
+
+const maintenanceLintDoesNotCreateWikiVault = await mkdtemp(path.join(tmpdir(), "codex-kb-maintain-lint-no-wiki-"));
+try {
+  await mkdir(path.join(maintenanceLintDoesNotCreateWikiVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.dirname(path.join(maintenanceLintDoesNotCreateWikiVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), { recursive: true });
+  await writeFile(path.join(maintenanceLintDoesNotCreateWikiVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(maintenanceLintDoesNotCreateWikiVault, "raw", "articles", "new.md"), "# New\n\n正文", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintDoesNotCreateWikiVault);
+  const result = await manager.runMaintenance("lint", "/check 测试不创建 wiki");
+  assert.equal(result.status, "success");
+  assert.equal(await fileExists(path.join(maintenanceLintDoesNotCreateWikiVault, "wiki")), false);
+  assert.equal(await fileExists(path.join(maintenanceLintDoesNotCreateWikiVault, "outputs", "maintenance")), true);
+} finally {
+  await rm(maintenanceLintDoesNotCreateWikiVault, { recursive: true, force: true });
+}
+
+const maintenanceLintDoesNotOverwriteDailyMaintainReportVault = await createMaintenanceVaultForTest("codex-kb-lint-preserve-maintain-report-");
+try {
+  const today = new Date();
+  const maintainReportPath = knowledgeReportAbsolutePathForTest(maintenanceLintDoesNotOverwriteDailyMaintainReportVault, "maintain", today);
+  const checkReportPath = knowledgeReportAbsolutePathForTest(maintenanceLintDoesNotOverwriteDailyMaintainReportVault, "lint", today);
+  const maintainReportText = "# 知识库维护报告\n\n本轮维护已经消化 raw/articles/new.md。";
+  await mkdir(path.dirname(maintainReportPath), { recursive: true });
+  await writeFile(maintainReportPath, maintainReportText, "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintDoesNotOverwriteDailyMaintainReportVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.dirname(checkReportPath), { recursive: true });
+      await writeFile(checkReportPath, "---\nmode: lint-only\n---\n# 体检报告\n\n只执行 Lint 体检。", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试不覆盖同日维护报告");
+  assert.equal(result.status, "success");
+  assert.ok(result.reportPath.includes(`/kb-check-${formatDateKeyForTest(today)}.md`));
+  assert.equal(settings.knowledgeBase.lastReportPath, `outputs/maintenance/${knowledgeReportFileNameForTest("lint", today)}`);
+  assert.equal(await readFile(maintainReportPath, "utf8"), maintainReportText);
+  assert.ok((await readFile(checkReportPath, "utf8")).includes("mode: lint-only"));
+} finally {
+  await rm(maintenanceLintDoesNotOverwriteDailyMaintainReportVault, { recursive: true, force: true });
+}
+
+const maintenanceDashboardRefreshFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-dashboard-refresh-failure-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceDashboardRefreshFailureVault, {
+    throwOnDashboardRefresh: true
+  });
+  const warnBeforeDashboardRefreshFailureTest = console.warn;
+  let thrown: unknown = null;
+  let result: Awaited<ReturnType<KnowledgeBaseManager["runMaintenance"]>> | null = null;
+  try {
+    console.warn = () => undefined;
+    result = await manager.runMaintenance("lint", "/check 测试 dashboard 刷新失败不污染任务结果");
+  } catch (error) {
+    thrown = error;
+  } finally {
+    console.warn = warnBeforeDashboardRefreshFailureTest;
+  }
+  assert.equal(thrown, null);
+  assert.equal(result?.status, "success");
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.lastError, "");
+} finally {
+  await rm(maintenanceDashboardRefreshFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceOutputsSymlinkVault = await mkdtemp(path.join(tmpdir(), "codex-kb-maintain-outputs-symlink-"));
+try {
+  await mkdir(path.join(maintenanceOutputsSymlinkVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.dirname(path.join(maintenanceOutputsSymlinkVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), { recursive: true });
+  await writeFile(path.join(maintenanceOutputsSymlinkVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(maintenanceOutputsSymlinkVault, "raw", "articles", "new.md"), "# New\n\n正文", "utf8");
+  const externalOutputsTarget = path.join(maintenanceOutputsSymlinkVault, "outside-outputs-target");
+  await mkdir(externalOutputsTarget, { recursive: true });
+  await symlink(externalOutputsTarget, path.join(maintenanceOutputsSymlinkVault, "outputs"));
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceOutputsSymlinkVault);
+  const result = await manager.runMaintenance("lint", "/check 测试 outputs symlink 不外写");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
+  assert.equal((await lstat(path.join(maintenanceOutputsSymlinkVault, "outputs"))).isSymbolicLink(), true);
+  assert.deepEqual(await readdir(externalOutputsTarget), []);
+  assert.equal(await fileExists(path.join(externalOutputsTarget, "maintenance")), false);
+} finally {
+  await rm(maintenanceOutputsSymlinkVault, { recursive: true, force: true });
+}
+
+const maintenanceOutputsSpecialFileVault = await mkdtemp(path.join(tmpdir(), "codex-kb-maintain-outputs-special-"));
+try {
+  await mkdir(path.join(maintenanceOutputsSpecialFileVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(maintenanceOutputsSpecialFileVault, "outputs"), { recursive: true });
+  await mkdir(path.dirname(path.join(maintenanceOutputsSpecialFileVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), { recursive: true });
+  await writeFile(path.join(maintenanceOutputsSpecialFileVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(maintenanceOutputsSpecialFileVault, "raw", "articles", "new.md"), "# New\n\n正文", "utf8");
+  await execFile("mkfifo", [path.join(maintenanceOutputsSpecialFileVault, "outputs", "agent.pipe")]);
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceOutputsSpecialFileVault);
+  const result = await manager.runMaintenance("lint", "/check 测试 outputs special file 不继续");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含特殊文件/);
+} finally {
+  await rm(maintenanceOutputsSpecialFileVault, { recursive: true, force: true });
+}
+
+const maintenanceRawRootSymlinkVault = await mkdtemp(path.join(tmpdir(), "codex-kb-maintain-raw-root-symlink-"));
+try {
+  await mkdir(path.dirname(path.join(maintenanceRawRootSymlinkVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), { recursive: true });
+  await writeFile(path.join(maintenanceRawRootSymlinkVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  const externalRawTarget = path.join(maintenanceRawRootSymlinkVault, "outside-raw-target");
+  await mkdir(path.join(externalRawTarget, "articles"), { recursive: true });
+  await writeFile(path.join(externalRawTarget, "articles", "external.md"), "# External\n\n不应作为 Vault raw 扫描", "utf8");
+  await symlink(externalRawTarget, path.join(maintenanceRawRootSymlinkVault, "raw"));
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawRootSymlinkVault);
+  const result = await manager.runMaintenance("lint", "/check 测试 raw 根 symlink 不扫描外部");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /raw\/ 不是普通目录/);
+  assert.equal(await fileExists(path.join(maintenanceRawRootSymlinkVault, "outputs")), false);
+} finally {
+  await rm(maintenanceRawRootSymlinkVault, { recursive: true, force: true });
+}
+
+const maintenanceRawChildSymlinkVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-child-symlink-");
+try {
+  const externalRawTarget = path.join(maintenanceRawChildSymlinkVault, "outside-raw.md");
+  await writeFile(externalRawTarget, "# External\n\n不应作为 raw 证据", "utf8");
+  await symlink(externalRawTarget, path.join(maintenanceRawChildSymlinkVault, "raw", "articles", "linked.md"));
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawChildSymlinkVault);
+  const result = await manager.runMaintenance("lint", "/check 测试 raw 子 symlink 不继续");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /raw\/ 不能包含 symlink/);
+  assert.equal(await readFile(externalRawTarget, "utf8"), "# External\n\n不应作为 raw 证据");
+  assert.equal(await fileExists(path.join(maintenanceRawChildSymlinkVault, "outputs", "maintenance")), false);
+} finally {
+  await rm(maintenanceRawChildSymlinkVault, { recursive: true, force: true });
+}
+
+const maintenanceRawHardlinkVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-hardlink-");
+try {
+  const externalHardlinkTarget = path.join(maintenanceRawHardlinkVault, "outside-hardlink.md");
+  const rawHardlinkPath = path.join(maintenanceRawHardlinkVault, "raw", "articles", "hardlinked.md");
+  await writeFile(externalHardlinkTarget, "# External hardlink\n\n共享 inode 不应作为 raw 证据", "utf8");
+  await link(externalHardlinkTarget, rawHardlinkPath);
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawHardlinkVault);
+  const result = await manager.runMaintenance("lint", "/check 测试 raw hardlink 不继续");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /raw\/ 不能包含 hardlink/);
+  assert.equal(await readFile(externalHardlinkTarget, "utf8"), "# External hardlink\n\n共享 inode 不应作为 raw 证据");
+  assert.equal(await fileExists(path.join(maintenanceRawHardlinkVault, "outputs", "maintenance")), false);
+} finally {
+  await rm(maintenanceRawHardlinkVault, { recursive: true, force: true });
+}
+
+const maintenanceLintWrongReportVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-wrong-report-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintWrongReportVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintWrongReportVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "# 维护报告\n\n执行 Ingest + Structure Normalize + Lint。", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试错误报告不复用");
+  assert.equal(result.status, "success");
+  const reportText = await readFile(path.join(maintenanceLintWrongReportVault, result.reportPath), "utf8");
+  assert.ok(reportText.includes("mode: lint-only"));
+  assert.ok(reportText.includes("fallback: true"));
+  assert.ok(reportText.includes("不是 lint-only 体检报告"));
+  assert.ok(!reportText.includes("执行 Ingest + Structure Normalize + Lint"));
+} finally {
+  await rm(maintenanceLintWrongReportVault, { recursive: true, force: true });
+}
+
+const maintenanceLintSemanticReportMetadataVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-semantic-metadata-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSemanticReportMetadataVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSemanticReportMetadataVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "mode: check",
+        "---",
+        "",
+        "# 体检报告",
+        "",
+        "本轮只执行 Lint 体检，不做新增消化。"
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试语义 lint 报告补齐 mode");
+  assert.equal(result.status, "success");
+  const reportText = await readFile(path.join(maintenanceLintSemanticReportMetadataVault, result.reportPath), "utf8");
+  assert.ok(reportText.includes("mode: lint-only"));
+  assert.equal(reportText.includes("mode: check"), false);
+  assert.equal((reportText.match(/^mode:/gm) ?? []).length, 1);
+  assert.ok(reportText.includes("本轮只执行 Lint 体检"));
+  assert.equal(reportText.includes("fallback: true"), false);
+} finally {
+  await rm(maintenanceLintSemanticReportMetadataVault, { recursive: true, force: true });
+}
+
+const maintenanceLintSuccessDropsExtraOutputsVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-drop-extra-outputs-");
+try {
+  await mkdir(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes"), { recursive: true });
+  await writeFile(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"), "# Existing\n", "utf8");
+  const existingOutputBefore = await stat(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"));
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSuccessDropsExtraOutputsVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSuccessDropsExtraOutputsVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      await writeFile(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "extra.md"), "# Extra\n", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试成功只保留报告");
+  assert.equal(result.status, "success");
+  assert.equal(await fileExists(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md")), true);
+  assert.equal(await fileExists(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "extra.md")), false);
+  const existingOutputAfter = await stat(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"));
+  assert.equal(existingOutputAfter.ino, existingOutputBefore.ino);
+  assert.equal(Math.round(existingOutputAfter.mtimeMs), Math.round(existingOutputBefore.mtimeMs));
+  assert.ok((await readFile(path.join(maintenanceLintSuccessDropsExtraOutputsVault, result.reportPath), "utf8")).includes("mode: lint-only"));
+} finally {
+  await rm(maintenanceLintSuccessDropsExtraOutputsVault, { recursive: true, force: true });
+}
+
+const maintenanceLintRecoveredReportVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-report-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      throw new Error("Codex turn reported failed after report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试失败状态恢复报告");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 0);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.lastError, "");
+  assert.ok((await readFile(path.join(maintenanceLintRecoveredReportVault, result.reportPath), "utf8")).includes("mode: lint-only"));
+} finally {
+  await rm(maintenanceLintRecoveredReportVault, { recursive: true, force: true });
+}
+
+const maintenanceLintRecoveredReportSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-save-failure-");
+try {
+  const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportSaveFailureVault, {
+    failSaveCall: 2,
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportSaveFailureVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      throw new Error("Codex turn reported failed after report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试恢复成功但保存失败");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 2/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportSaveFailureVault, result.reportPath)), false);
+  assert.equal(saveCalls(), 3);
+} finally {
+  await rm(maintenanceLintRecoveredReportSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceLintRecoveredReportCommitFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-commit-failure-");
+try {
+  let reportDirectory = "";
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportCommitFailureVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportCommitFailureVault, "lint");
+      reportDirectory = path.dirname(reportPath);
+      await mkdir(reportDirectory, { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      await chmod(reportDirectory, 0o555);
+      throw new Error("Codex turn reported failed after report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试恢复报告提交失败仍然收口");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /Codex turn reported failed after report/);
+  assert.match(result.error ?? "", /体检报告恢复失败/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+} finally {
+  await chmod(path.join(maintenanceLintRecoveredReportCommitFailureVault, "outputs", "maintenance"), 0o755).catch(() => undefined);
+  await rm(maintenanceLintRecoveredReportCommitFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceLintRecoveredReportCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-cancel-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportCancelVault, {
+    cancelBeforeSaveCall: 2,
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportCancelVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      throw new Error("Codex turn reported failed after report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试恢复报告前取消");
+  assert.equal(result.status, "canceled");
+  assert.match(result.error ?? "", /用户取消/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportCancelVault, result.reportPath)), false);
+} finally {
+  await rm(maintenanceLintRecoveredReportCancelVault, { recursive: true, force: true });
+}
+
+const maintenanceLintFinalSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-final-save-failure-");
+try {
+  const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceLintFinalSaveFailureVault, {
+    failSaveCall: 2
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试最终保存失败不误恢复");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /saveSettings failed at call 2/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+  assert.equal(await fileExists(path.join(maintenanceLintFinalSaveFailureVault, result.reportPath)), false);
+  assert.equal(saveCalls(), 3);
+} finally {
+  await rm(maintenanceLintFinalSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceLateCancelSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-late-cancel-save-failure-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLateCancelSaveFailureVault, {
+    cancelBeforeSaveCall: 2,
+    failSaveCall: 2
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试最终保存窗口取消且保存失败");
+  assert.equal(result.status, "canceled");
+  assert.match(result.error ?? "", /用户取消/);
+  assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 2/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /状态保存失败：saveSettings failed at call 2/);
+  assert.equal(await fileExists(path.join(maintenanceLateCancelSaveFailureVault, result.reportPath)), false);
+} finally {
+  await rm(maintenanceLateCancelSaveFailureVault, { recursive: true, force: true });
+}
+
+const maintenanceCancelStatusSaveRetryVault = await createMaintenanceVaultForTest("codex-kb-maintain-cancel-status-save-retry-");
+try {
+  const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceCancelStatusSaveRetryVault, {
+    cancelBeforeSaveCall: 2,
+    failSaveCall: 3
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试取消状态保存失败后重试");
+  assert.equal(result.status, "canceled");
+  assert.match(result.error ?? "", /用户取消/);
+  assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 3/);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /状态保存失败：saveSettings failed at call 3/);
+  assert.equal(saveCalls(), 4);
+  assert.equal(await fileExists(path.join(maintenanceCancelStatusSaveRetryVault, result.reportPath)), false);
+} finally {
+  await rm(maintenanceCancelStatusSaveRetryVault, { recursive: true, force: true });
+}
+
+const maintenanceLintSymlinkAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-symlink-after-agent-");
+try {
+  const externalOutputTarget = path.join(maintenanceLintSymlinkAfterAgentVault, "outside-output-target");
+  await mkdir(externalOutputTarget, { recursive: true });
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSymlinkAfterAgentVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSymlinkAfterAgentVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      await symlink(externalOutputTarget, path.join(maintenanceLintSymlinkAfterAgentVault, "outputs", "agent-link"));
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试 Agent 新增 symlink 不误恢复");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
+  assert.equal(await fileExists(path.join(maintenanceLintSymlinkAfterAgentVault, result.reportPath)), false);
+  assert.equal(await fileExists(path.join(maintenanceLintSymlinkAfterAgentVault, "outputs", "agent-link")), false);
+  assert.deepEqual(await readdir(externalOutputTarget), []);
+} finally {
+  await rm(maintenanceLintSymlinkAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceLintConcurrentRawVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-concurrent-raw-");
+try {
+  const concurrentRaw = path.join(maintenanceLintConcurrentRawVault, "raw", "articles", "external.md");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintConcurrentRawVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(concurrentRaw, "# External\n\n外部自动化新增 raw", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试并发 raw 新增不被删除");
+  assert.equal(result.status, "success");
+  assert.equal(result.error, undefined);
+  assert.equal(await readFile(concurrentRaw, "utf8"), "# External\n\n外部自动化新增 raw");
+  assert.equal(await fileExists(path.join(maintenanceLintConcurrentRawVault, result.reportPath)), true);
+  assert.ok((await readFile(path.join(maintenanceLintConcurrentRawVault, result.reportPath), "utf8")).includes("raw/articles/external.md"));
+} finally {
+  await rm(maintenanceLintConcurrentRawVault, { recursive: true, force: true });
+}
+
+const maintenanceLintRecoveredReportDropsExtraOutputsVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-drop-extra-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportDropsExtraOutputsVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportDropsExtraOutputsVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
+      await mkdir(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp"), { recursive: true });
+      await writeFile(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp", "extra.md"), "# Extra\n", "utf8");
+      throw new Error("Codex turn reported failed after report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试失败恢复只保留报告");
+  assert.equal(result.status, "success");
+  assert.ok((await readFile(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, result.reportPath), "utf8")).includes("mode: lint-only"));
+  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp", "extra.md")), false);
+} finally {
+  await rm(maintenanceLintRecoveredReportDropsExtraOutputsVault, { recursive: true, force: true });
+}
+
+const maintenanceLintFailedReportRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-failed-report-rollback-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintFailedReportRollbackVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintFailedReportRollbackVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "# 维护报告\n\n不是 lint-only。", "utf8");
+      throw new Error("Codex turn failed without lint-only report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试失败报告回滚");
+  assert.equal(result.status, "failed");
+  assert.equal(await fileExists(path.join(maintenanceLintFailedReportRollbackVault, result.reportPath)), false);
+} finally {
+  await rm(maintenanceLintFailedReportRollbackVault, { recursive: true, force: true });
+}
+
+const maintenanceLintFailurePreservesNonOutputVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-preserve-non-output-");
+try {
+  await mkdir(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox"), { recursive: true });
+  await mkdir(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo"), { recursive: true });
+  await writeFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox", "idea.md"), "# Idea\n", "utf8");
+  await writeFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo", "brief.md"), "# Brief\n", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintFailurePreservesNonOutputVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintFailurePreservesNonOutputVault, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "# 维护报告\n\n不是 lint-only。", "utf8");
+      throw new Error("Codex turn failed without lint-only report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试失败只回滚 outputs");
+  assert.equal(result.status, "failed");
+  assert.equal(await fileExists(path.join(maintenanceLintFailurePreservesNonOutputVault, result.reportPath)), false);
+  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "raw", "index.md"), "utf8"), "# Raw\n");
+  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
+  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox", "idea.md"), "utf8"), "# Idea\n");
+  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo", "brief.md"), "utf8"), "# Brief\n");
+} finally {
+  await rm(maintenanceLintFailurePreservesNonOutputVault, { recursive: true, force: true });
+}
+
+const maintenanceFailureRemovesDsStoreVault = await createMaintenanceVaultForTest("codex-kb-maintain-ds-store-rollback-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceFailureRemovesDsStoreVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceFailureRemovesDsStoreVault, "wiki", ".DS_Store"), "agent metadata", "utf8");
+      throw new Error("Agent failed after metadata write");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试失败回滚 DS_Store");
+  assert.equal(result.status, "failed");
+  assert.equal(await fileExists(path.join(maintenanceFailureRemovesDsStoreVault, "wiki", ".DS_Store")), false);
+} finally {
+  await rm(maintenanceFailureRemovesDsStoreVault, { recursive: true, force: true });
+}
+
+const maintenanceTrackerSymlinkCreatedByAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-symlink-");
+try {
+  const trackerSecretPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outside-tracker-secret.md");
+  await writeFile(trackerSecretPath, "# Secret Tracker Target\n\nSECRET-TRACKER-CONTENT", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerSymlinkCreatedByAgentVault, {
+    beforeAgentReturn: async () => {
+      const trackerPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+      await mkdir(path.dirname(trackerPath), { recursive: true });
+      await rm(trackerPath, { force: true });
+      await symlink(trackerSecretPath, trackerPath);
+      await mkdir(path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references", "tracker-symlink.md"), [
+        "# Tracker Symlink",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经进入 tracker symlink 测试页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain tracker symlink 不读外部目标");
+  assert.equal(result.status, "success");
+  const trackerPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+  assert.equal((await lstat(trackerPath)).isSymbolicLink(), false);
+  const trackerText = await readFile(trackerPath, "utf8");
+  assert.ok(!trackerText.includes("SECRET-TRACKER-CONTENT"));
+  assert.equal(await readFile(trackerSecretPath, "utf8"), "# Secret Tracker Target\n\nSECRET-TRACKER-CONTENT");
+} finally {
+  await rm(maintenanceTrackerSymlinkCreatedByAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceTrackerHardlinkCreatedByAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-hardlink-");
+try {
+  const trackerSecretPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outside-tracker-hardlink.md");
+  await writeFile(trackerSecretPath, "# Secret Tracker Hardlink\n\nSECRET-HARDLINK-TRACKER-CONTENT", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerHardlinkCreatedByAgentVault, {
+    beforeAgentReturn: async () => {
+      const trackerPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+      await mkdir(path.dirname(trackerPath), { recursive: true });
+      await rm(trackerPath, { force: true });
+      await link(trackerSecretPath, trackerPath);
+      await mkdir(path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references", "tracker-hardlink.md"), [
+        "# Tracker Hardlink",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经进入 tracker hardlink 测试页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain tracker hardlink 不读外部目标");
+  assert.equal(result.status, "success");
+  const trackerPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+  assert.equal((await lstat(trackerPath)).nlink, 1);
+  const trackerText = await readFile(trackerPath, "utf8");
+  assert.ok(!trackerText.includes("SECRET-HARDLINK-TRACKER-CONTENT"));
+  assert.equal(await readFile(trackerSecretPath, "utf8"), "# Secret Tracker Hardlink\n\nSECRET-HARDLINK-TRACKER-CONTENT");
+} finally {
+  await rm(maintenanceTrackerHardlinkCreatedByAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceNoEvidenceVault = await createMaintenanceVaultForTest("codex-kb-maintain-no-evidence-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceNoEvidenceVault);
+  settings.knowledgeBase.lastSummary = "旧成功摘要不应残留";
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 未写报告不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出本轮来源证据/);
+  assert.equal(settings.knowledgeBase.lastSummary, "");
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceNoEvidenceVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceNoEvidenceVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceNoEvidenceVault, { recursive: true, force: true });
+}
+
+const maintenanceReportOnlyVault = await createMaintenanceVaultForTest("codex-kb-maintain-report-only-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceReportOnlyVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceReportOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 只写报告不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceReportOnlyVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceReportOnlyVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceReportOnlyVault, { recursive: true, force: true });
+}
+
+const maintenanceIndexOnlyVault = await createMaintenanceVaultForTest("codex-kb-maintain-index-only-");
+try {
+  await writeFile(path.join(maintenanceIndexOnlyVault, "raw", "index.md"), [
+    "# Raw",
+    "",
+    "- [[raw/articles/new]]",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceIndexOnlyVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceIndexOnlyVault, "raw", "index.md"), [
+        "# Raw",
+        "",
+        "- [[raw/articles/new]]",
+        "",
+        "Agent updated raw index only",
+        ""
+      ].join("\n"), "utf8");
+      await writeFile(path.join(maintenanceIndexOnlyVault, "wiki", "index.md"), [
+        "# Wiki",
+        "",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceIndexOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 只改索引不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceIndexOnlyVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceIndexOnlyVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceIndexOnlyVault, { recursive: true, force: true });
+}
+
+const maintenanceStaleLinkOnlyVault = await createMaintenanceVaultForTest("codex-kb-maintain-stale-link-only-");
+try {
+  await mkdir(path.join(maintenanceStaleLinkOnlyVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceStaleLinkOnlyVault, "wiki", "ai-intelligence", "references", "stale-link.md"), [
+    "# Stale Link",
+    "",
+    "历史来源：[[raw/articles/new]]",
+    "",
+    "旧正文，没有本轮消化。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStaleLinkOnlyVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceStaleLinkOnlyVault, "wiki", "ai-intelligence", "references", "stale-link.md"), [
+        "# Stale Link",
+        "",
+        "历史来源：[[raw/articles/new]]",
+        "",
+        "旧正文，没有本轮消化。",
+        "",
+        "Agent 只补了一条无关备注。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceStaleLinkOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 未新增来源证据不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceStaleLinkOnlyVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceStaleLinkOnlyVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceStaleLinkOnlyVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingPageNewEvidenceVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-new-evidence-");
+try {
+  await mkdir(path.join(maintenanceExistingPageNewEvidenceVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceExistingPageNewEvidenceVault, "wiki", "ai-intelligence", "references", "existing-page.md"), [
+    "# Existing Page",
+    "",
+    "历史来源：[[raw/articles/new]]",
+    "",
+    "旧正文。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingPageNewEvidenceVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceExistingPageNewEvidenceVault, "wiki", "ai-intelligence", "references", "existing-page.md"), [
+        "# Existing Page",
+        "",
+        "历史来源：[[raw/articles/new]]",
+        "",
+        "旧正文。",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经消化进既有页面。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceExistingPageNewEvidenceVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 在既有正文页新增本轮来源证据");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const tracker = await readFile(path.join(maintenanceExistingPageNewEvidenceVault, "outputs", ".ingest-tracker.md"), "utf8");
+  assert.ok(tracker.includes("raw/articles/new.md"));
+} finally {
+  await rm(maintenanceExistingPageNewEvidenceVault, { recursive: true, force: true });
+}
+
+const maintenanceStandardWikiPageDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-standard-wiki-page-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStandardWikiPageDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceStandardWikiPageDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceStandardWikiPageDigestVault, "wiki", "ai-intelligence", "references", "standard-page.md"), [
+        "---",
+        "created: 2026-06-03",
+        "updated: 2026-06-03T15:42",
+        "---",
+        "",
+        "# Standard Page",
+        "",
+        "> 来源：[[raw/articles/new]]",
+        "",
+        "## 核心要点",
+        "",
+        "这份资料已经按标准 Wiki 页面格式消化进正文，来源行和正文之间允许有标题分隔。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceStandardWikiPageDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 标准 wiki 页顶部来源加正文可提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceStandardWikiPageDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceStandardWikiPageDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceLegacyDigestBackfillVault = await createMaintenanceVaultForTest("codex-kb-maintain-legacy-digest-backfill-");
+try {
+  await mkdir(path.join(maintenanceLegacyDigestBackfillVault, "wiki", "knowledge-workflow", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceLegacyDigestBackfillVault, "wiki", "knowledge-workflow", "references", "legacy-page.md"), [
+    "# Legacy Page",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份旧资料已经有正文消化证据，本轮只需要为旧 processed 记录补齐 fingerprint。",
+    ""
+  ].join("\n"), "utf8");
+  const rawStat = await stat(path.join(maintenanceLegacyDigestBackfillVault, "raw", "articles", "new.md"));
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyDigestBackfillVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceLegacyDigestBackfillVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]：旧正文页已复核，本轮补齐 fingerprint。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  settings.knowledgeBase.processedSources["raw/articles/new.md"] = {
+    path: "raw/articles/new.md",
+    size: rawStat.size,
+    mtime: rawStat.mtimeMs,
+    digestedAt: 100
+  };
+  const result = await manager.runMaintenance("maintain", "/maintain 旧 processed 记录补 fingerprint");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceLegacyDigestBackfillVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceLegacyDigestBackfillVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingDigestRepairVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-digest-repair-");
+try {
+  const rawPath = path.join(maintenanceExistingDigestRepairVault, "raw", "articles", "new.md");
+  const rawTime = new Date(Date.now() - 60_000);
+  await utimes(rawPath, rawTime, rawTime);
+  await mkdir(path.join(maintenanceExistingDigestRepairVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  const pagePath = path.join(maintenanceExistingDigestRepairVault, "wiki", "ai-intelligence", "references", "existing-digest.md");
+  await writeFile(pagePath, [
+    "# Existing Digest",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份资料已经在上一次失败前写出正文证据，本轮可以据此修复 tracker 状态。",
+    ""
+  ].join("\n"), "utf8");
+  const pageTime = new Date(Date.now() - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingDigestRepairVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceExistingDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]：已存在正文消化证据，本轮修复 tracker。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 已有正文证据修复 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceExistingDigestRepairVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceExistingDigestRepairVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingDigestOlderThanRawVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-digest-older-than-raw-");
+try {
+  const rawPath = path.join(maintenanceExistingDigestOlderThanRawVault, "raw", "articles", "new.md");
+  await mkdir(path.join(maintenanceExistingDigestOlderThanRawVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  const pagePath = path.join(maintenanceExistingDigestOlderThanRawVault, "wiki", "ai-intelligence", "references", "old-digest.md");
+  await writeFile(pagePath, [
+    "# Old Digest",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份旧正文早于 raw 当前版本，不能用来修复 tracker。",
+    ""
+  ].join("\n"), "utf8");
+  const baseTime = Date.now();
+  const pageTime = new Date(baseTime - 120_000);
+  const rawTime = new Date(baseTime - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  await utimes(rawPath, rawTime, rawTime);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingDigestOlderThanRawVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceExistingDigestOlderThanRawVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]：旧正文页早于 raw，不能修复 tracker。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 旧正文早于 raw 不能修复 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceExistingDigestOlderThanRawVault, "outputs", ".ingest-tracker.md")), false);
+} finally {
+  await rm(maintenanceExistingDigestOlderThanRawVault, { recursive: true, force: true });
+}
+
+const maintenanceLegacyMetadataDriftRepairVault = await createMaintenanceVaultForTest("codex-kb-maintain-legacy-metadata-drift-repair-");
+try {
+  const rawPath = path.join(maintenanceLegacyMetadataDriftRepairVault, "raw", "articles", "new.md");
+  const rawTime = new Date(Date.now() - 60_000);
+  await utimes(rawPath, rawTime, rawTime);
+  await mkdir(path.join(maintenanceLegacyMetadataDriftRepairVault, "wiki", "knowledge-workflow", "references"), { recursive: true });
+  const pagePath = path.join(maintenanceLegacyMetadataDriftRepairVault, "wiki", "knowledge-workflow", "references", "legacy-drift-page.md");
+  await writeFile(pagePath, [
+    "# Legacy Drift Page",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份旧 processed 记录没有 fingerprint 且元数据漂移，但已有晚于 raw 的正文消化证据，可以修复 tracker。",
+    ""
+  ].join("\n"), "utf8");
+  const pageTime = new Date(Date.now() - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  const rawStat = await stat(rawPath);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyMetadataDriftRepairVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceLegacyMetadataDriftRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]：已有晚于 raw 的正文证据，本轮修复漂移的旧 processed 记录。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  settings.knowledgeBase.processedSources["raw/articles/new.md"] = {
+    path: "raw/articles/new.md",
+    size: rawStat.size,
+    mtime: rawStat.mtimeMs - 10_000,
+    digestedAt: 100
+  };
+  const result = await manager.runMaintenance("maintain", "/maintain 旧 processed 元数据漂移但已有晚于 raw 的正文证据可修复");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceLegacyMetadataDriftRepairVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceLegacyMetadataDriftRepairVault, { recursive: true, force: true });
+}
+
+const maintenanceLegacyDigestMtimeDriftVault = await createMaintenanceVaultForTest("codex-kb-maintain-legacy-digest-mtime-drift-");
+try {
+  await mkdir(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "knowledge-workflow", "references"), { recursive: true });
+  const legacyDigestMtimeDriftPage = path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "knowledge-workflow", "references", "legacy-page.md");
+  await writeFile(legacyDigestMtimeDriftPage, [
+    "# Legacy Page",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份旧资料已有正文，但 raw 元数据漂移时不能直接复用旧证据。",
+    ""
+  ].join("\n"), "utf8");
+  const legacyDigestMtimeDriftRaw = path.join(maintenanceLegacyDigestMtimeDriftVault, "raw", "articles", "new.md");
+  const rawStat = await stat(legacyDigestMtimeDriftRaw);
+  const legacyPageTime = new Date(Date.now() - 120_000);
+  const legacyRawTime = new Date(Date.now() - 10_000);
+  await utimes(legacyDigestMtimeDriftPage, legacyPageTime, legacyPageTime);
+  await utimes(legacyDigestMtimeDriftRaw, legacyRawTime, legacyRawTime);
+  const driftedRawStat = await stat(legacyDigestMtimeDriftRaw);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyDigestMtimeDriftVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "ai-intelligence", "references", "partial.md"), [
+        "# Partial",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceLegacyDigestMtimeDriftVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  settings.knowledgeBase.processedSources["raw/articles/new.md"] = {
+    path: "raw/articles/new.md",
+    size: driftedRawStat.size,
+    mtime: driftedRawStat.mtimeMs - 10_000,
+    digestedAt: 100
+  };
+  const result = await manager.runMaintenance("maintain", "/maintain raw 元数据漂移不能复用旧正文证据");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.equal(await fileExists(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "ai-intelligence", "references", "partial.md")), false);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), ["raw/articles/new.md"]);
+  assert.equal(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint, undefined);
+} finally {
+  await rm(maintenanceLegacyDigestMtimeDriftVault, { recursive: true, force: true });
+}
+
+const maintenanceDatedAggregateDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-dated-aggregate-digest-");
+try {
+  await rm(path.join(maintenanceDatedAggregateDigestVault, "raw", "articles", "new.md"), { force: true });
+  await mkdir(path.join(maintenanceDatedAggregateDigestVault, "raw", "articles", "Reddit社区洞察"), { recursive: true });
+  await writeFile(path.join(maintenanceDatedAggregateDigestVault, "raw", "articles", "Reddit社区洞察", "2026-05-27 Reddit ObsidianMD 插件机会雷达日报.md"), "# 2026-05-27\n\n正文", "utf8");
+  await writeFile(path.join(maintenanceDatedAggregateDigestVault, "raw", "articles", "Reddit社区洞察", "2026-05-28 Reddit ObsidianMD 插件机会雷达日报.md"), "# 2026-05-28\n\n正文", "utf8");
+  await mkdir(path.join(maintenanceDatedAggregateDigestVault, "wiki", "knowledge-workflow", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceDatedAggregateDigestVault, "wiki", "knowledge-workflow", "references", "reddit-aggregate.md"), [
+    "# Reddit Aggregate",
+    "",
+    "> 来源：",
+    "> - [[raw/articles/Reddit社区洞察/2026-05-26 Reddit ObsidianMD 插件机会雷达日报]]",
+    "",
+    "## 日报结论 2026-05-26",
+    "",
+    "旧结论。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceDatedAggregateDigestVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceDatedAggregateDigestVault, "wiki", "knowledge-workflow", "references", "reddit-aggregate.md"), [
+        "# Reddit Aggregate",
+        "",
+        "> 来源：",
+        "> - [[raw/articles/Reddit社区洞察/2026-05-26 Reddit ObsidianMD 插件机会雷达日报]]",
+        "> - [[raw/articles/Reddit社区洞察/2026-05-27 Reddit ObsidianMD 插件机会雷达日报]]",
+        "> - [[raw/articles/Reddit社区洞察/2026-05-28 Reddit ObsidianMD 插件机会雷达日报]]",
+        "",
+        "## 日报结论 2026-05-26",
+        "",
+        "旧结论。",
+        "",
+        "## 日报结论 2026-05-27",
+        "",
+        "今天的新信号已经按日期独立消化进聚合页正文。",
+        "",
+        "## 日报结论 2026-05-28",
+        "",
+        "今天的新信号也已经按日期独立消化进聚合页正文。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceDatedAggregateDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/Reddit社区洞察/2026-05-27 Reddit ObsidianMD 插件机会雷达日报]]",
+        "- [[raw/articles/Reddit社区洞察/2026-05-28 Reddit ObsidianMD 插件机会雷达日报]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 既有聚合页按日期新增来源和正文");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 2);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/Reddit社区洞察/2026-05-27 Reddit ObsidianMD 插件机会雷达日报.md"]?.fingerprint);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/Reddit社区洞察/2026-05-28 Reddit ObsidianMD 插件机会雷达日报.md"]?.fingerprint);
+} finally {
+  await rm(maintenanceDatedAggregateDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceDuplicateDigestLineVault = await createMaintenanceVaultForTest("codex-kb-maintain-duplicate-digest-line-");
+try {
+  await mkdir(path.join(maintenanceDuplicateDigestLineVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceDuplicateDigestLineVault, "wiki", "ai-intelligence", "references", "duplicate-digest.md"), [
+    "# Duplicate Digest",
+    "",
+    "核心要点：这句模板摘要已经在旧段落出现。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceDuplicateDigestLineVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceDuplicateDigestLineVault, "wiki", "ai-intelligence", "references", "duplicate-digest.md"), [
+        "# Duplicate Digest",
+        "",
+        "核心要点：这句模板摘要已经在旧段落出现。",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：这句模板摘要已经在旧段落出现。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceDuplicateDigestLineVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 新增的重复模板摘要也算本轮消化");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceDuplicateDigestLineVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceDuplicateDigestLineVault, { recursive: true, force: true });
+}
+
+const maintenanceInsertedDuplicateSourceBlockVault = await createMaintenanceVaultForTest("codex-kb-maintain-inserted-duplicate-source-block-");
+try {
+  await mkdir(path.join(maintenanceInsertedDuplicateSourceBlockVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(maintenanceInsertedDuplicateSourceBlockVault, "wiki", "ai-intelligence", "references", "inserted-duplicate-source.md"), [
+    "# Inserted Duplicate Source",
+    "",
+    "来源：[[raw/articles/new]]",
+    "旧正文。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceInsertedDuplicateSourceBlockVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(path.join(maintenanceInsertedDuplicateSourceBlockVault, "wiki", "ai-intelligence", "references", "inserted-duplicate-source.md"), [
+        "# Inserted Duplicate Source",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经插入到旧来源块之前。",
+        "",
+        "来源：[[raw/articles/new]]",
+        "旧正文。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceInsertedDuplicateSourceBlockVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 插入到旧重复来源块前的新证据也要识别");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceInsertedDuplicateSourceBlockVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceInsertedDuplicateSourceBlockVault, { recursive: true, force: true });
+}
+
+const maintenanceSourceLinkStubVault = await createMaintenanceVaultForTest("codex-kb-maintain-source-link-stub-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourceLinkStubVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceSourceLinkStubVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceSourceLinkStubVault, "wiki", "ai-intelligence", "references", "source-link-stub.md"), [
+        "# Source Link Stub",
+        "",
+        "来源：[[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceSourceLinkStubVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 只建来源链接空壳页不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceSourceLinkStubVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceSourceLinkStubVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceSourceLinkStubVault, { recursive: true, force: true });
+}
+
+const maintenanceMarkdownSourceLabelStubVault = await createMaintenanceVaultForTest("codex-kb-maintain-markdown-link-label-stub-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceMarkdownSourceLabelStubVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceMarkdownSourceLabelStubVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceMarkdownSourceLabelStubVault, "wiki", "ai-intelligence", "references", "markdown-link-label-stub.md"), [
+        "# Markdown Link Label Stub",
+        "",
+        "来源：[这是一篇特别长特别长但仍只是标题的资料](raw/articles/new.md)",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceMarkdownSourceLabelStubVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [这是一篇特别长特别长但仍只是标题的资料](raw/articles/new.md)",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Markdown 来源链接标题不能冒充摘要");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceMarkdownSourceLabelStubVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceMarkdownSourceLabelStubVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceMarkdownSourceLabelStubVault, { recursive: true, force: true });
+}
+
+const maintenanceFrontmatterOnlyDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-frontmatter-only-digest-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceFrontmatterOnlyDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceFrontmatterOnlyDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceFrontmatterOnlyDigestVault, "wiki", "ai-intelligence", "references", "frontmatter-only-digest.md"), [
+        "---",
+        "source: raw/articles/new.md",
+        "summary: 核心要点：这段只在 frontmatter 元数据里，不能证明正文已经消化。",
+        "---",
+        "# Frontmatter Only Digest",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceFrontmatterOnlyDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- raw/articles/new.md",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain frontmatter 元数据不能冒充正文消化");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceFrontmatterOnlyDigestVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceFrontmatterOnlyDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceFrontmatterOnlyDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceCodeBlockOnlyDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-code-block-only-digest-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceCodeBlockOnlyDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceCodeBlockOnlyDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceCodeBlockOnlyDigestVault, "wiki", "ai-intelligence", "references", "code-block-only-digest.md"), [
+        "# Code Block Only Digest",
+        "",
+        "```markdown",
+        "来源：[[raw/articles/new]]",
+        "核心要点：这段只在代码块示例里，不能证明正文已经消化。",
+        "```",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceCodeBlockOnlyDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 代码块示例不能冒充正文消化");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceCodeBlockOnlyDigestVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceCodeBlockOnlyDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceCodeBlockOnlyDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceSeparatedDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-separated-digest-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSeparatedDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceSeparatedDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceSeparatedDigestVault, "wiki", "ai-intelligence", "references", "separated-digest.md"), [
+        "# Separated Digest",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "",
+        "## 无关段落",
+        "核心要点：这行只是另一个段落的正文，不能证明来源已经被消化。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceSeparatedDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 来源和正文跨段不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceSeparatedDigestVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceSeparatedDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceSeparatedDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceSourceExtraExtensionVault = await createMaintenanceVaultForTest("codex-kb-maintain-source-extra-extension-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourceExtraExtensionVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceSourceExtraExtensionVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceSourceExtraExtensionVault, "wiki", "ai-intelligence", "references", "extra-extension.md"), [
+        "# Extra Extension",
+        "",
+        "本轮来源：[[raw/articles/new.md.bak]]",
+        "核心要点：这里只提到了另一个更长文件名，不能证明 new.md 已经被消化。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceSourceExtraExtensionVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new.md.bak]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 更长扩展名路径不能冒充来源");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /raw\/articles\/new\.md/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceSourceExtraExtensionVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceSourceExtraExtensionVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+} finally {
+  await rm(maintenanceSourceExtraExtensionVault, { recursive: true, force: true });
+}
+
+const maintenanceEncodedSourceLinkVault = await createMaintenanceVaultForTest("codex-kb-maintain-encoded-source-");
+try {
+  await rm(path.join(maintenanceEncodedSourceLinkVault, "raw", "articles", "new.md"), { force: true });
+  await writeFile(path.join(maintenanceEncodedSourceLinkVault, "raw", "articles", "AI 笔记.md"), "# AI 笔记\n\n带空格和中文文件名。", "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceEncodedSourceLinkVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceEncodedSourceLinkVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceEncodedSourceLinkVault, "wiki", "ai-intelligence", "references", "encoded-source.md"), [
+        "# Encoded Source",
+        "",
+        "来源：[AI 笔记](raw/articles/AI%20%E7%AC%94%E8%AE%B0.md)",
+        "核心要点：URL 编码来源链接已经消化进知识页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceEncodedSourceLinkVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [AI 笔记](raw/articles/AI%20%E7%AC%94%E8%AE%B0.md)",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain URL 编码来源链接可以提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/AI 笔记.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceEncodedSourceLinkVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceEncodedSourceLinkVault, { recursive: true, force: true });
+}
+
+const maintenanceLowercaseEncodedSourceLinkVault = await createMaintenanceVaultForTest("codex-kb-maintain-lowercase-encoded-source-");
+try {
+  await rm(path.join(maintenanceLowercaseEncodedSourceLinkVault, "raw", "articles", "new.md"), { force: true });
+  await writeFile(path.join(maintenanceLowercaseEncodedSourceLinkVault, "raw", "articles", "AI 笔记.md"), "# AI 笔记\n\n带空格和中文文件名。", "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLowercaseEncodedSourceLinkVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceLowercaseEncodedSourceLinkVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceLowercaseEncodedSourceLinkVault, "wiki", "ai-intelligence", "references", "lowercase-encoded-source.md"), [
+        "# Lowercase Encoded Source",
+        "",
+        "来源：[AI 笔记](raw/articles/AI%20%e7%ac%94%e8%ae%b0.md)",
+        "核心要点：小写 URL 编码来源链接已经消化进知识页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceLowercaseEncodedSourceLinkVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [AI 笔记](raw/articles/AI%20%e7%ac%94%e8%ae%b0.md)",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 小写 URL 编码来源链接可以提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/AI 笔记.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceLowercaseEncodedSourceLinkVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceLowercaseEncodedSourceLinkVault, { recursive: true, force: true });
+}
+
+const maintenanceBareSourceDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-bare-source-digest-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBareSourceDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceBareSourceDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceBareSourceDigestVault, "wiki", "ai-intelligence", "references", "bare-source-digest.md"), [
+        "# Bare Source Digest",
+        "",
+        "- raw/articles/new.md：核心要点：裸路径来源行自身已经包含本轮消化正文。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceBareSourceDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- raw/articles/new.md：已纳入维护",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 裸路径来源行摘要可以提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceBareSourceDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceBareSourceDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceBareSourceAfterColonVault = await createMaintenanceVaultForTest("codex-kb-maintain-bare-source-after-colon-");
+try {
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBareSourceAfterColonVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceBareSourceAfterColonVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceBareSourceAfterColonVault, "wiki", "ai-intelligence", "references", "bare-source-after-colon.md"), [
+        "# Bare Source After Colon",
+        "",
+        "来源：raw/articles/new.md：核心要点：中文冒号后的裸路径来源行已经包含本轮消化正文。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceBareSourceAfterColonVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- raw/articles/new.md：已纳入维护",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 中文冒号后的裸路径来源行可以提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceBareSourceAfterColonVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceBareSourceAfterColonVault, { recursive: true, force: true });
+}
+
+const maintenanceAbsoluteSourcePathVault = await createMaintenanceVaultForTest("codex-kb-maintain-absolute-source-path-");
+try {
+  const absoluteRawPath = path.join(maintenanceAbsoluteSourcePathVault, "raw", "articles", "new.md");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceAbsoluteSourcePathVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceAbsoluteSourcePathVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceAbsoluteSourcePathVault, "wiki", "ai-intelligence", "references", "absolute-source-path.md"), [
+        "# Absolute Source Path",
+        "",
+        `来源：${absoluteRawPath}`,
+        "核心要点：绝对路径来源行已经消化进知识页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceAbsoluteSourcePathVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        `- ${absoluteRawPath}`,
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 绝对路径来源行可以提交 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceAbsoluteSourcePathVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceAbsoluteSourcePathVault, { recursive: true, force: true });
+}
+
+const maintenancePartialBatchDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-partial-batch-digest-");
+try {
+  await writeFile(path.join(maintenancePartialBatchDigestVault, "raw", "articles", "second.md"), "# Second\n\n第二份正文", "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenancePartialBatchDigestVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenancePartialBatchDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenancePartialBatchDigestVault, "wiki", "ai-intelligence", "references", "partial-batch.md"), [
+        "# Partial Batch",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：第一份新增正文已经消化进批次页面。",
+        "",
+        "本轮来源：[[raw/articles/second]]",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenancePartialBatchDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        "- [[raw/articles/second]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 只消化批次部分 raw 不能提交 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenancePartialBatchDigestVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenancePartialBatchDigestVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/second.md"), true);
+} finally {
+  await rm(maintenancePartialBatchDigestVault, { recursive: true, force: true });
+}
+
+const maintenanceSourcePrefixVault = await createMaintenanceVaultForTest("codex-kb-maintain-source-prefix-");
+try {
+  await writeFile(path.join(maintenanceSourcePrefixVault, "raw", "articles", "newer.md"), "# Newer\n\n更长文件名正文", "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourcePrefixVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceSourcePrefixVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceSourcePrefixVault, "wiki", "ai-intelligence", "references", "newer-only.md"), [
+        "# Newer Only",
+        "",
+        "本轮来源：[[raw/articles/newer]]",
+        "核心要点：只消化了更长文件名资料。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceSourcePrefixVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/newer]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain raw 路径前缀不能冒充来源");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /raw\/articles\/new\.md/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await fileExists(path.join(maintenanceSourcePrefixVault, "outputs", ".ingest-tracker.md")), false);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceSourcePrefixVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/newer.md"), true);
+} finally {
+  await rm(maintenanceSourcePrefixVault, { recursive: true, force: true });
+}
+
+const maintenanceSuccessVault = await createMaintenanceVaultForTest("codex-kb-maintain-success-");
+try {
+  const rawBeforeMaintain = await readFile(path.join(maintenanceSuccessVault, "raw", "articles", "new.md"));
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSuccessVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references", "maintain-success.md"), [
+        "# Maintain Success",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经消化进成功路径知识页。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceSuccessVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试成功提交");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  const processed = settings.knowledgeBase.processedSources["raw/articles/new.md"];
+  assert.ok(processed);
+  assert.match(processed.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  assert.ok(processed.fingerprint);
+  const processedFingerprint = processed.fingerprint;
+  const rawAfterMaintain = await readFile(path.join(maintenanceSuccessVault, "raw", "articles", "new.md"));
+  assert.notDeepEqual(rawAfterMaintain, rawBeforeMaintain);
+  assert.ok(rawAfterMaintain.toString("utf8").includes(rawBeforeMaintain.toString("utf8")));
+  const rawDigestAfterMaintain = rawDigestRecordFromMarkdown(rawAfterMaintain);
+  assert.equal(rawDigestRecordIsTrusted(rawDigestAfterMaintain, processedFingerprint), true);
+  assert.deepEqual(rawDigestAfterMaintain?.evidencePaths, ["wiki/ai-intelligence/references/maintain-success.md"]);
+  assert.equal(rawDigestFingerprint("raw/articles/new.md", rawAfterMaintain), processedFingerprint);
+  const rawRegistryAfterMaintain = await readRawDigestRegistry(maintenanceSuccessVault);
+  assert.equal(rawRegistryAfterMaintain.entries["raw/articles/new.md"]?.fingerprint, processedFingerprint);
+  const tracker = await readFile(path.join(maintenanceSuccessVault, "outputs", ".ingest-tracker.md"), "utf8");
+  assert.ok(tracker.includes("raw/articles/new.md"));
+  assert.ok(tracker.includes(`fingerprint=${processedFingerprint}`));
+  assert.ok((await readFile(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references", "maintain-success.md"), "utf8")).includes("[[raw/articles/new]]"));
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceSuccessVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+} finally {
+  await rm(maintenanceSuccessVault, { recursive: true, force: true });
+}
+
+const maintenanceConcurrentRawAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-concurrent-raw-add-");
+try {
+  const concurrentRaw = path.join(maintenanceConcurrentRawAddVault, "raw", "articles", "GitHub项目收集", "2026-06-03 GitHub 热门项目简报.md");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceConcurrentRawAddVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.dirname(concurrentRaw), { recursive: true });
+      await writeFile(concurrentRaw, "# 2026-06-03 GitHub 热门项目简报\n\n外部自动化新增。", "utf8");
+      await mkdir(path.join(maintenanceConcurrentRawAddVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceConcurrentRawAddVault, "wiki", "ai-intelligence", "references", "maintain-concurrent.md"), [
+        "# Maintain Concurrent",
+        "",
+        "- [[raw/articles/new]]：核心要点：本轮原始资料已经提炼，运行中新出现的 GitHub raw 留到下次维护。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceConcurrentRawAddVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试外部自动化并发新增 raw");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.equal(result.processedSources[0]?.relativePath, "raw/articles/new.md");
+  assert.equal(Object.keys(settings.knowledgeBase.processedSources).includes("raw/articles/GitHub项目收集/2026-06-03 GitHub 热门项目简报.md"), false);
+  assert.equal(await readFile(concurrentRaw, "utf8"), "# 2026-06-03 GitHub 热门项目简报\n\n外部自动化新增。");
+  const tracker = await readFile(path.join(maintenanceConcurrentRawAddVault, "outputs", ".ingest-tracker.md"), "utf8");
+  assert.ok(tracker.includes("raw/articles/new.md"));
+  assert.ok(!tracker.includes("raw/articles/GitHub项目收集/2026-06-03 GitHub 热门项目简报.md"));
+  const report = await readFile(path.join(maintenanceConcurrentRawAddVault, result.reportPath), "utf8");
+  assert.ok(report.includes("## 运行中新出现的 raw"));
+  assert.ok(report.includes("raw/articles/GitHub项目收集/2026-06-03 GitHub 热门项目简报.md"));
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceConcurrentRawAddVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), false);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/GitHub项目收集/2026-06-03 GitHub 热门项目简报.md"), true);
+} finally {
+  await rm(maintenanceConcurrentRawAddVault, { recursive: true, force: true });
+}
+
+const rawDigestCalibrationVault = await createMaintenanceVaultForTest("codex-kb-raw-digest-calibration-");
+try {
+  const rawBeforeCalibration = await readFile(path.join(rawDigestCalibrationVault, "raw", "articles", "new.md"));
+  const knownRawPath = path.join(rawDigestCalibrationVault, "raw", "articles", "known.md");
+  await writeFile(knownRawPath, "# Known\n\n这份历史 raw 已在 settings 中登记，校准时应补 Obsidian 元属性。", "utf8");
+  const knownRawBeforeCalibration = await readFile(knownRawPath);
+  const knownRawStat = await stat(knownRawPath);
+  const knownRawFingerprint = rawDigestFingerprint("raw/articles/known.md", knownRawBeforeCalibration);
+  const driftRawPath = path.join(rawDigestCalibrationVault, "raw", "articles", "drift.md");
+  await writeFile(driftRawPath, "# Drift\n\n这份 raw 的 mtime 漂移了，但 Wiki 已有精确来源证据。", "utf8");
+  const driftRawStat = await stat(driftRawPath);
+  const legacyWholeRawPath = path.join(rawDigestCalibrationVault, "raw", "articles", "legacy-whole.md");
+  await writeFile(legacyWholeRawPath, [
+    "---",
+    "created: 2026-06-04",
+    "---",
+    "",
+    "# Legacy Whole",
+    "",
+    "这份 raw 的旧记录使用整文件指纹；新规则应迁移为正文指纹。"
+  ].join("\n"), "utf8");
+  const legacyWholeBeforeCalibration = await readFile(legacyWholeRawPath);
+  const legacyWholeStat = await stat(legacyWholeRawPath);
+  const legacyWholeDigestFingerprint = rawDigestFingerprint("raw/articles/legacy-whole.md", legacyWholeBeforeCalibration);
+  const legacyWholeFileFingerprint = contentFingerprint(legacyWholeBeforeCalibration);
+  await mkdir(path.join(rawDigestCalibrationVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(rawDigestCalibrationVault, "wiki", "ai-intelligence", "references", "calibrated.md"), [
+    "# Calibrated",
+    "",
+    "> 来源：[[raw/articles/new]]",
+    "> 来源：[[raw/articles/drift]]",
+    "> 来源：[[raw/articles/legacy-whole]]",
+    "",
+    "## 核心要点",
+    "",
+    "这份历史 raw 已经有强正文证据，本轮只做状态校准，不重新提炼。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(rawDigestCalibrationVault);
+  settings.knowledgeBase.processedSources["raw/articles/known.md"] = {
+    path: "raw/articles/known.md",
+    size: knownRawStat.size,
+    mtime: knownRawStat.mtimeMs,
+    fingerprint: knownRawFingerprint,
+    digestedAt: Date.now() - 86_400_000,
+    reportPath: "outputs/maintenance/kb-maintenance-old.md",
+    evidencePaths: ["wiki/ai-intelligence/references/calibrated.md"],
+    runId: "old-run",
+    confidence: "verified"
+  };
+  settings.knowledgeBase.processedSources["raw/articles/drift.md"] = {
+    path: "raw/articles/drift.md",
+    size: driftRawStat.size,
+    mtime: driftRawStat.mtimeMs - 60_000,
+    digestedAt: Date.now() - 86_400_000
+  };
+  settings.knowledgeBase.processedSources["raw/articles/legacy-whole.md"] = {
+    path: "raw/articles/legacy-whole.md",
+    size: legacyWholeStat.size,
+    mtime: legacyWholeStat.mtimeMs,
+    fingerprint: legacyWholeFileFingerprint,
+    digestedAt: Date.now() - 86_400_000
+  };
+  const result = await manager.calibrateRawDigestStatus();
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 4);
+  const processed = settings.knowledgeBase.processedSources["raw/articles/new.md"];
+  assert.ok(processed);
+  assert.equal(processed.confidence, "repaired");
+  assert.ok(processed.fingerprint);
+  const processedFingerprint = processed.fingerprint;
+  const rawAfterCalibration = await readFile(path.join(rawDigestCalibrationVault, "raw", "articles", "new.md"));
+  assert.notDeepEqual(rawAfterCalibration, rawBeforeCalibration);
+  assert.ok(rawAfterCalibration.toString("utf8").includes(rawBeforeCalibration.toString("utf8")));
+  const rawDigestAfterCalibration = rawDigestRecordFromMarkdown(rawAfterCalibration);
+  assert.equal(rawDigestRecordIsTrusted(rawDigestAfterCalibration, processedFingerprint), true);
+  assert.deepEqual(rawDigestAfterCalibration?.evidencePaths, ["wiki/ai-intelligence/references/calibrated.md"]);
+  const knownProcessed = settings.knowledgeBase.processedSources["raw/articles/known.md"];
+  assert.ok(knownProcessed);
+  const knownRawAfterCalibration = await readFile(knownRawPath);
+  assert.ok(knownRawAfterCalibration.toString("utf8").includes(knownRawBeforeCalibration.toString("utf8")));
+  assert.equal(rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(knownRawAfterCalibration), knownProcessed.fingerprint ?? ""), true);
+  assert.equal(rawDigestFingerprint("raw/articles/known.md", knownRawAfterCalibration), knownRawFingerprint);
+  const driftProcessed = settings.knowledgeBase.processedSources["raw/articles/drift.md"];
+  assert.ok(driftProcessed);
+  assert.equal(rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(await readFile(driftRawPath)), driftProcessed.fingerprint ?? ""), true);
+  const legacyWholeProcessed = settings.knowledgeBase.processedSources["raw/articles/legacy-whole.md"];
+  assert.ok(legacyWholeProcessed);
+  assert.equal(legacyWholeProcessed.fingerprint, legacyWholeDigestFingerprint);
+  assert.equal(rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(await readFile(legacyWholeRawPath)), legacyWholeDigestFingerprint), true);
+  const registry = await readRawDigestRegistry(rawDigestCalibrationVault);
+  assert.equal(registry.entries["raw/articles/new.md"]?.fingerprint, processedFingerprint);
+  assert.equal(registry.entries["raw/articles/known.md"]?.fingerprint, knownRawFingerprint);
+  assert.equal(registry.entries["raw/articles/drift.md"]?.fingerprint, driftProcessed.fingerprint);
+  assert.equal(registry.entries["raw/articles/legacy-whole.md"]?.fingerprint, legacyWholeDigestFingerprint);
+  const rediscovered = await discoverKnowledgeBaseSources(rawDigestCalibrationVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), false);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/known.md"), false);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/drift.md"), false);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/legacy-whole.md"), false);
+  const report = await readFile(path.join(rawDigestCalibrationVault, result.reportPath), "utf8");
+  assert.ok(report.includes("mode: raw-digest-calibration"));
+  assert.ok(report.includes("raw/articles/new.md"));
+  assert.ok(report.includes("raw/articles/known.md"));
+} finally {
+  await rm(rawDigestCalibrationVault, { recursive: true, force: true });
+}
+
+const maintenanceBatchLimitVault = await createMaintenanceVaultForTest("codex-kb-maintain-batch-limit-");
+try {
+  await rm(path.join(maintenanceBatchLimitVault, "raw", "articles", "new.md"), { force: true });
+  for (let index = 1; index <= 25; index++) {
+    await writeFile(path.join(maintenanceBatchLimitVault, "raw", "articles", `batch-${String(index).padStart(2, "0")}.md`), `# Batch ${index}\n\n正文 ${index}`, "utf8");
+  }
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBatchLimitVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceBatchLimitVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceBatchLimitVault, "wiki", "ai-intelligence", "references", "maintain-batch.md"), [
+        "# Maintain Batch",
+        "",
+        ...Array.from({ length: 20 }, (_, index) => `- [[raw/articles/batch-${String(index + 1).padStart(2, "0")}]]：核心要点：第 ${index + 1} 份资料已经提炼进批量维护页。`),
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceBatchLimitVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        ...Array.from({ length: 20 }, (_, index) => `- [[raw/articles/batch-${String(index + 1).padStart(2, "0")}]]`),
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试批次上限");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 20);
+  assert.equal(Object.keys(settings.knowledgeBase.processedSources).length, 20);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceBatchLimitVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 5);
+} finally {
+  await rm(maintenanceBatchLimitVault, { recursive: true, force: true });
+}
+
+const maintenanceReplicaVault = await createMaintenanceVaultForTest("codex-kb-maintain-replica-");
+try {
+  const stableRawPath = path.join(maintenanceReplicaVault, "raw", "articles", "stable.md");
+  const legacyRawPath = path.join(maintenanceReplicaVault, "raw", "articles", "legacy.md");
+  const newRawPath = path.join(maintenanceReplicaVault, "raw", "articles", "new.md");
+  await writeFile(stableRawPath, "# Stable\n\n已处理正文", "utf8");
+  await writeFile(legacyRawPath, "# Legacy\n\n旧记录没有 fingerprint", "utf8");
+  await writeFile(newRawPath, "# New\n\n本轮新增正文", "utf8");
+  const oldTime = new Date(Date.now() - 86_400_000);
+  await utimes(stableRawPath, oldTime, oldTime);
+  await utimes(legacyRawPath, oldTime, oldTime);
+  await utimes(newRawPath, oldTime, oldTime);
+  const stableStat = await stat(stableRawPath);
+  const legacyStat = await stat(legacyRawPath);
+  const rawSourceBefore = new Map(await Promise.all(
+    [stableRawPath, legacyRawPath, newRawPath].map(async (filePath) => {
+      const fileStat = await stat(filePath);
+      return [filePath, {
+        text: await readFile(filePath, "utf8"),
+        mtime: Math.round(fileStat.mtimeMs),
+        mode: fileStat.mode & 0o777
+      }] as const;
+    })
+  ));
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceReplicaVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.join(maintenanceReplicaVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(maintenanceReplicaVault, "raw", "index.md"), [
+        "# Raw",
+        "",
+        "- [[raw/articles/stable]]",
+        "- [[raw/articles/legacy]]",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+      await writeFile(path.join(maintenanceReplicaVault, "wiki", "ai-intelligence", "references", "maintain-replica.md"), [
+        "# Maintain Replica",
+        "",
+        "来源：[[raw/articles/legacy]]、[[raw/articles/new]]",
+        "核心要点：legacy 与 new 两份资料已经合并进副本验收页。",
+        ""
+      ].join("\n"), "utf8");
+      await writeFile(path.join(maintenanceReplicaVault, "wiki", "index.md"), [
+        "# Wiki",
+        "",
+        "- [[wiki/ai-intelligence/references/maintain-replica]]",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(maintenanceReplicaVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/legacy]]",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  settings.knowledgeBase.processedSources = {
+    "raw/articles/stable.md": {
+      path: "raw/articles/stable.md",
+      size: stableStat.size,
+      mtime: stableStat.mtimeMs,
+      fingerprint: contentFingerprint(Buffer.from("# Stable\n\n已处理正文")),
+      digestedAt: oldTime.getTime()
+    },
+    "raw/articles/legacy.md": {
+      path: "raw/articles/legacy.md",
+      size: legacyStat.size,
+      mtime: legacyStat.mtimeMs,
+      digestedAt: oldTime.getTime()
+    }
+  };
+  const result = await manager.runMaintenance("maintain", "/maintain 副本验收成功路径");
+  assert.equal(result.status, "success");
+  assert.deepEqual(result.processedSources.map((source) => source.relativePath).sort(), [
+    "raw/articles/legacy.md",
+    "raw/articles/new.md"
+  ]);
+  for (const [filePath, before] of rawSourceBefore) {
+    const afterStat = await stat(filePath);
+    assert.equal(afterStat.mode & 0o777, before.mode);
+    const afterContent = await readFile(filePath);
+    if (filePath === stableRawPath) {
+      assert.equal(afterContent.toString("utf8"), before.text);
+      assert.equal(Math.round(afterStat.mtimeMs), before.mtime);
+      continue;
+    }
+    const relativeRawPath = path.relative(maintenanceReplicaVault, filePath).split(path.sep).join("/");
+    const processed = settings.knowledgeBase.processedSources[relativeRawPath];
+    assert.ok(processed);
+    assert.ok(afterContent.toString("utf8").includes(before.text));
+    assert.equal(rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(afterContent), processed.fingerprint ?? ""), true);
+    assert.equal(rawDigestFingerprint(relativeRawPath, afterContent), processed.fingerprint);
+  }
+  assert.ok((await readFile(path.join(maintenanceReplicaVault, "raw", "index.md"), "utf8")).includes("[[raw/articles/new]]"));
+  assert.ok((await readFile(path.join(maintenanceReplicaVault, "wiki", "ai-intelligence", "references", "maintain-replica.md"), "utf8")).includes("[[raw/articles/legacy]]"));
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/legacy.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+  const tracker = await readFile(path.join(maintenanceReplicaVault, "outputs", ".ingest-tracker.md"), "utf8");
+  assert.ok(tracker.includes("raw/articles/stable.md"));
+  assert.ok(tracker.includes("raw/articles/legacy.md"));
+  assert.ok(tracker.includes("raw/articles/new.md"));
+  assert.ok(tracker.includes(`fingerprint=${settings.knowledgeBase.processedSources["raw/articles/legacy.md"].fingerprint}`));
+  assert.ok(tracker.includes(`fingerprint=${settings.knowledgeBase.processedSources["raw/articles/new.md"].fingerprint}`));
+  const rawDigestRegistry = JSON.parse(await readFile(path.join(maintenanceReplicaVault, "outputs", ".raw-digest-registry.json"), "utf8"));
+  assert.equal(rawDigestRegistry.entries["raw/articles/legacy.md"].fingerprint, settings.knowledgeBase.processedSources["raw/articles/legacy.md"].fingerprint);
+  assert.equal(rawDigestRegistry.entries["raw/articles/new.md"].fingerprint, settings.knowledgeBase.processedSources["raw/articles/new.md"].fingerprint);
+  assert.deepEqual(rawDigestRegistry.entries["raw/articles/legacy.md"].evidencePaths, ["wiki/ai-intelligence/references/maintain-replica.md"]);
+  const rediscovered = await discoverKnowledgeBaseSources(maintenanceReplicaVault, settings.knowledgeBase.processedSources);
+  assert.equal(rediscovered.changedSources.length, 0);
+  const dashboard = await buildKnowledgeBaseDashboardSnapshot(maintenanceReplicaVault, settings.knowledgeBase);
+  assert.equal(dashboard.raw.changedCount, 0);
+} finally {
+  await rm(maintenanceReplicaVault, { recursive: true, force: true });
 }
 
 const structureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-"));
@@ -2684,7 +7117,8 @@ try {
   await writeFile(path.join(structureVault, "projects", "多 Agent 方案讨论 APP：项目初步启动.md"), "# project", "utf8");
 
   const result = await normalizeKnowledgeBaseStructure(structureVault, {
-    lastReportPath: "outputs/kb-maintenance-2026-05-19.md"
+    lastReportPath: "outputs/kb-maintenance-2026-05-19.md",
+    includeRawMoves: true
   });
   assert.equal(await readFile(path.join(structureVault, "raw", "articles", "github-trending", "2026-05-19 GitHub 热门项目简报.md"), "utf8"), githubRaw);
   assert.equal(await readFile(path.join(structureVault, "raw", "articles", "wechat-official-accounts", "2026-05-19 Hermes agent 昨晚又更新了.md"), "utf8"), wechatRaw);
@@ -2722,13 +7156,32 @@ try {
   await rm(structureVault, { recursive: true, force: true });
 }
 
+const defaultStructureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-default-"));
+try {
+  await mkdir(path.join(defaultStructureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  await mkdir(path.join(defaultStructureVault, "wiki"), { recursive: true });
+  await mkdir(path.join(defaultStructureVault, "outputs"), { recursive: true });
+  await mkdir(path.join(defaultStructureVault, "inbox", "Clippings"), { recursive: true });
+  await mkdir(path.join(defaultStructureVault, "projects"), { recursive: true });
+  await writeFile(path.join(defaultStructureVault, "raw", "articles", "GitHub项目收集", "demo.md"), "# raw\n\n正文", "utf8");
+  await writeFile(path.join(defaultStructureVault, "inbox", "Clippings", "clip.md"), "# clip", "utf8");
+  const result = await normalizeKnowledgeBaseStructure(defaultStructureVault);
+  assert.equal(await fileExists(path.join(defaultStructureVault, "raw", "articles", "GitHub项目收集", "demo.md")), true);
+  assert.equal(await fileExists(path.join(defaultStructureVault, "raw", "articles", "github-trending", "demo.md")), false);
+  assert.equal(await fileExists(path.join(defaultStructureVault, "inbox", "clippings", "clip.md")), true);
+  assert.ok(!result.moves.some((move) => move.from.startsWith("raw/")));
+  assert.ok(result.skipped.some((item) => item.from === "raw/articles/GitHub项目收集" && /raw 自动移动已关闭/.test(item.reason)));
+} finally {
+  await rm(defaultStructureVault, { recursive: true, force: true });
+}
+
 const mergeStructureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-merge-"));
 try {
   await mkdir(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
   await mkdir(path.join(mergeStructureVault, "raw", "articles", "github-trending"), { recursive: true });
   await writeFile(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集", "2026-05-25 GitHub 热门项目简报.md"), "# new", "utf8");
   await writeFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-24 GitHub 热门项目简报.md"), "# old", "utf8");
-  const result = await normalizeKnowledgeBaseStructure(mergeStructureVault);
+  const result = await normalizeKnowledgeBaseStructure(mergeStructureVault, { includeRawMoves: true });
   assert.equal(await readFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-25 GitHub 热门项目简报.md"), "utf8"), "# new");
   assert.equal(await readFile(path.join(mergeStructureVault, "raw", "articles", "github-trending", "2026-05-24 GitHub 热门项目简报.md"), "utf8"), "# old");
   assert.equal(await fileExists(path.join(mergeStructureVault, "raw", "articles", "GitHub项目收集")), false);
@@ -2744,7 +7197,7 @@ try {
   await mkdir(path.join(collisionStructureVault, "raw", "articles", "github-trending"), { recursive: true });
   await writeFile(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md"), "# old", "utf8");
   await writeFile(path.join(collisionStructureVault, "raw", "articles", "github-trending", "a.md"), "# target", "utf8");
-  const result = await normalizeKnowledgeBaseStructure(collisionStructureVault);
+  const result = await normalizeKnowledgeBaseStructure(collisionStructureVault, { includeRawMoves: true });
   assert.equal(await fileExists(path.join(collisionStructureVault, "raw", "articles", "GitHub项目收集", "a.md")), true);
   assert.ok(result.skipped.some((item) => item.from === "raw/articles/GitHub项目收集" && /冲突/.test(item.reason)));
   assert.ok(result.risks.some((item) => item.includes("raw/articles/GitHub项目收集")));
@@ -2844,12 +7297,13 @@ try {
   const initializedRules = await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(initializedRules.includes("LLM Wiki"));
   assert.ok(initializedRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
-  assert.ok(initializedRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(initializedRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
   assert.ok(initializedRules.includes("Structure Normalize"));
-  assert.ok(initializedRules.includes("正文只读、路径可整理"));
+  assert.ok(initializedRules.includes("托管元属性"));
+  assert.ok(initializedRules.includes("`raw/` 只更新 `raw/index.md`，不移动原始资料"));
   assert.ok(initializedRules.includes("普通 Agent 对话不默认检索知识库"));
   assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
-  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("正文只读、路径可整理"));
+  assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("插件可写托管元属性，不自动移动"));
 } finally {
   await rm(initVault, { recursive: true, force: true });
 }
@@ -2890,7 +7344,8 @@ try {
   const createdRules = await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8");
   assert.ok(createdRules.includes("LLM Wiki"));
   assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
-  assert.ok(createdRules.includes("知识库管理动作中禁止改写 `raw/` 原文"));
+  assert.ok(createdRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
+  assert.ok(createdRules.includes("托管元属性"));
   assert.ok(createdRules.includes("Structure Normalize"));
   assert.ok(createdRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
 
@@ -2926,14 +7381,15 @@ try {
     rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(patched.status, "patched");
-  assert.ok(patched.missingRules.includes("raw/ 正文只读路径整理边界"));
+  assert.ok(patched.missingRules.includes("raw/ 内容保护与托管元属性边界"));
   assert.ok(patched.missingRules.includes("raw/ 普通对话授权边界"));
   assert.ok(patched.missingRules.includes("Structure Normalize 阶段"));
   const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
   assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
   assert.ok(patchedRules.includes("`raw/` 是原始资料与待整理来源区"));
-  assert.ok(patchedRules.includes("正文只读、路径可整理"));
+  assert.ok(patchedRules.includes("只有 EchoInk 插件后处理阶段可以写入托管元属性"));
+  assert.ok(patchedRules.includes("raw 路径归一只写入报告风险"));
   assert.ok(patchedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
   assert.ok(patchedRules.includes("把维护报告写入 `outputs/maintenance/`"));
 } finally {
@@ -2981,6 +7437,15 @@ function formatDateKeyForTest(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function knowledgeReportFileNameForTest(mode: KnowledgeBaseRunMode, value = new Date()): string {
+  const prefix = mode === "lint" ? "kb-check" : "kb-maintenance";
+  return `${prefix}-${formatDateKeyForTest(value)}.md`;
+}
+
+function knowledgeReportAbsolutePathForTest(vaultPath: string, mode: KnowledgeBaseRunMode, value = new Date()): string {
+  return path.join(vaultPath, "outputs", "maintenance", knowledgeReportFileNameForTest(mode, value));
+}
+
 const dashboardVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-"));
 try {
   await mkdir(path.join(dashboardVault, "raw", "articles"), { recursive: true });
@@ -2994,6 +7459,8 @@ try {
   await writeFile(path.join(dashboardVault, "raw", "articles", "old.md"), "# Old\n", "utf8");
   const newPath = path.join(dashboardVault, "raw", "articles", "new.md");
   await writeFile(newPath, "# New\n", "utf8");
+  await mkdir(path.join(dashboardVault, "raw", "articles", "new.assets"), { recursive: true });
+  await writeFile(path.join(dashboardVault, "raw", "articles", "new.assets", "image.png"), Buffer.from("asset"));
   await writeFile(path.join(dashboardVault, "wiki", "index.md"), "# Wiki\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "00-索引.md"), "# AI\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "today.md"), "# Today\n", "utf8");
@@ -3045,6 +7512,7 @@ try {
   assert.equal(dashboard.rulesFileExists, true);
   assert.equal(dashboard.tracker.exists, true);
   assert.equal(dashboard.lastRun.reportExists, true);
+  assert.equal(dashboard.raw.fileCount, 2);
   assert.equal(dashboard.raw.changedCount, 1);
   assert.equal(dashboard.raw.todayCount, 1);
   assert.equal(dashboard.wiki.indexExists, true);
@@ -3102,8 +7570,8 @@ try {
         { date: formatDateKeyForTest(threeDaysAgo), status: "success", at: threeDaysAgo.getTime() }
       ],
       processedSources: {
-        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, digestedAt: 100 },
-        "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, digestedAt: 101 }
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# Old\n")), digestedAt: 100 },
+        "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# New\n")), digestedAt: 101 }
       }
     }
   }).settings.knowledgeBase;
@@ -3111,6 +7579,10 @@ try {
   assert.equal(staleNoNewDashboard.raw.changedCount, 0);
   assert.equal(staleNoNewDashboard.health.status, "healthy");
   assert.equal(staleNoNewDashboard.health.score, 100);
+  assert.equal(staleNoNewDashboard.health.scoreSummary, "当前 100 分，达到 85+，显示健康。");
+  assert.deepEqual(staleNoNewDashboard.health.scoreReasons, []);
+  assert.equal(staleNoNewDashboard.health.scoreCheckNote, "体检成功只代表检查完成；健康分反映检查发现的结构问题。");
+  assert.equal(staleNoNewDashboard.health.scoreThresholdText, "85+ 健康，60-84 风险，低于 60 异常。");
   assert.equal(staleNoNewDashboard.checkFreshness.status, "stale");
   assert.equal(staleNoNewDashboard.checkFreshness.score, 76);
 
@@ -3134,6 +7606,109 @@ try {
   assert.ok(!legacyDashboard.health.reasons.includes("从未体检"));
   assert.equal(legacyDashboard.checkFreshness.status, "missing");
   assert.equal(legacyDashboard.checkHeatmap.at(-1)?.status, "none");
+
+  await mkdir(path.join(dashboardVault, "outputs", "maintenance"), { recursive: true });
+  await writeFile(path.join(dashboardVault, "outputs", "maintenance", "kb-check-2026-06-03.md"), [
+    "# KB Check 2026-06-03",
+    "",
+    "| 项目 | 结果 |",
+    "|---|---:|",
+    "| 全 wiki 硬断链出现次数 | 40 |",
+    "| 全 wiki 唯一断链目标 | 25 |",
+    "| 孤儿页面 | 19 |",
+    "| draft / TODO / 待补等命中文件 | 10 |",
+    "| `wiki/index.md` 断链 | 0 |"
+  ].join("\n"), "utf8");
+  const tableReportDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      lastReportPath: "outputs/maintenance/kb-check-2026-06-03.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ],
+      processedSources: {
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# Old\n")), digestedAt: 100 },
+        "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# New\n")), digestedAt: 101 }
+      }
+    }
+  }).settings.knowledgeBase);
+  assert.equal(tableReportDashboard.raw.changedCount, 0);
+  assert.equal(tableReportDashboard.health.status, "bad");
+  assert.equal(tableReportDashboard.health.score, 50);
+  assert.ok(tableReportDashboard.health.reasons.includes("断链 40 处"));
+  assert.ok(tableReportDashboard.health.reasons.includes("孤儿页面 19 个"));
+  assert.ok(tableReportDashboard.health.reasons.includes("过时/草稿 10 处"));
+
+  for (let index = 0; index < 93; index += 1) {
+    await writeFile(path.join(dashboardVault, "raw", "articles", `pending-${String(index).padStart(2, "0")}.md`), `# Pending ${index}\n`, "utf8");
+  }
+  const lowScoreDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      lastReportPath: "outputs/maintenance/kb-check-2026-06-03.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ],
+      processedSources: {
+        "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# Old\n")), digestedAt: 100 },
+        "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# New\n")), digestedAt: 101 }
+      }
+    }
+  }).settings.knowledgeBase);
+  assert.equal(lowScoreDashboard.checkFreshness.status, "fresh");
+  assert.equal(lowScoreDashboard.raw.changedCount, 93);
+  assert.equal(lowScoreDashboard.health.score, 6);
+  assert.equal(lowScoreDashboard.health.status, "bad");
+  assert.equal(lowScoreDashboard.health.label, "异常");
+  assert.equal(lowScoreDashboard.health.scoreSummary, "当前 6 分，低于 60，显示异常。");
+  assert.equal(lowScoreDashboard.health.scoreCheckNote, "体检成功只代表检查完成；健康分反映检查发现的结构问题。");
+  assert.deepEqual(lowScoreDashboard.health.scoreReasons.map((reason) => reason.label), ["Raw 待提炼", "断链", "孤儿页面", "过时/草稿"]);
+  assert.deepEqual(lowScoreDashboard.health.scoreReasons.map((reason) => reason.count), [93, 40, 19, 10]);
+  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "Raw 待提炼" && reason.explanation.includes("来源未被确认消化或登记")));
+  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "断链" && reason.explanation.includes("链接目标不存在")));
+  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "孤儿页面" && reason.explanation.includes("缺少有效入口或引用")));
+  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "过时/草稿" && reason.explanation.includes("待补、TODO、draft")));
+
+  const thresholdRiskReportPath = path.join(dashboardVault, "outputs", "maintenance", "kb-check-2026-06-04.md");
+  await writeFile(thresholdRiskReportPath, [
+    "# KB Check 2026-06-04",
+    "",
+    "| 项目 | 结果 |",
+    "|---|---:|",
+    "| 全 wiki 硬断链出现次数 | 3 |",
+    "| 孤儿页面 | 0 |",
+    "| draft / TODO / 待补等命中文件 | 0 |"
+  ].join("\n"), "utf8");
+  const thresholdRiskProcessedSources: Record<string, { size: number; mtime: number; fingerprint: string; digestedAt: number }> = {
+    "raw/articles/old.md": { size: oldStat.size, mtime: oldStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# Old\n")), digestedAt: 100 },
+    "raw/articles/new.md": { size: newStat.size, mtime: newStat.mtimeMs, fingerprint: contentFingerprint(Buffer.from("# New\n")), digestedAt: 101 }
+  };
+  for (let index = 0; index < 93; index += 1) {
+    const relativePath = `raw/articles/pending-${String(index).padStart(2, "0")}.md`;
+    const fileStat = await stat(path.join(dashboardVault, relativePath));
+    thresholdRiskProcessedSources[relativePath] = {
+      size: fileStat.size,
+      mtime: fileStat.mtimeMs,
+      fingerprint: contentFingerprint(Buffer.from(`# Pending ${index}\n`)),
+      digestedAt: 102 + index
+    };
+  }
+  const thresholdRiskDashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardVault, normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      rulesFilePath: "AGENTS.md",
+      lastReportPath: "outputs/maintenance/kb-check-2026-06-04.md",
+      healthHistory: [
+        { date: formatDateKeyForTest(today), status: "success", at: today.getTime() }
+      ],
+      processedSources: thresholdRiskProcessedSources
+    }
+  }).settings.knowledgeBase);
+  assert.equal(thresholdRiskDashboard.health.score, 80);
+  assert.equal(thresholdRiskDashboard.health.status, "risk");
+  assert.equal(thresholdRiskDashboard.health.label, "风险");
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
 }
@@ -3198,9 +7773,12 @@ try {
     }
   }).settings.knowledgeBase);
   assert.equal(externalDashboard.raw.changedCount, 1);
-  assert.equal(externalDashboard.tracker.trackedCount, 1);
+  assert.equal(externalDashboard.raw.digestStatus.pending, 1);
+  assert.equal(externalDashboard.raw.digestStatus.calibration, 1);
+  assert.equal(externalDashboard.tracker.trackedCount, 0);
   assert.ok(externalDashboard.health.score >= 80);
   assert.equal(externalDashboard.health.status, "risk");
+  assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("Raw 状态待校准 1 个")));
   assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("断链 1 处")));
   assert.ok(externalDashboard.health.reasons.some((reason) => reason.includes("过时/草稿 1 处")));
   assert.ok(!externalDashboard.health.reasons.includes("从未体检"));
@@ -3347,6 +7925,97 @@ assert.equal(parsedDiff[0].lines.some((line) => line.text.startsWith("+++")), tr
 assert.equal(parsedDiff[0].lines.filter((line) => line.type === "add").some((line) => line.text.startsWith("++")), false);
 
 assert.ok(SETTINGS_GEAR_ICON_PATHS[0].includes("M12.22"));
+
+async function createMaintenanceVaultForTest(prefix: string): Promise<string> {
+  const vaultPath = await mkdtemp(path.join(tmpdir(), prefix));
+  await mkdir(path.join(vaultPath, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(vaultPath, "wiki"), { recursive: true });
+  await mkdir(path.dirname(path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)), { recursive: true });
+  await writeFile(path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(vaultPath, "raw", "index.md"), "# Raw\n", "utf8");
+  await writeFile(path.join(vaultPath, "wiki", "index.md"), "# Wiki\n", "utf8");
+  await writeFile(path.join(vaultPath, "raw", "articles", "new.md"), "# New\n\n正文", "utf8");
+  return vaultPath;
+}
+
+function makeKnowledgeBaseManagerForTest(
+  vaultPath: string,
+  options: {
+    failSaveCall?: number;
+    cancelBeforeSaveCall?: number;
+    cancelViaManagerBeforeSaveCall?: number;
+    agentBackend?: "codex-cli" | "opencode";
+    beforeAgentReturn?: () => Promise<void>;
+    codexTaskCalls?: Array<{ permission: string; writeScope: string }>;
+    openCodeTaskCalls?: Array<{ permission: string }>;
+    useRealOpenCodeTask?: boolean;
+    throwOnDashboardRefresh?: boolean;
+    throwOnGetVaultPath?: boolean;
+  } = {}
+) {
+  const settings = normalizeSettingsData({
+    settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+    agentBackend: options.agentBackend ?? "codex-cli",
+    knowledgeBase: {
+      backend: "default",
+      useCustomRulesFile: true,
+      rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
+    }
+  }).settings;
+  let saveCalls = 0;
+  let manager: KnowledgeBaseManager | null = null;
+  const plugin = {
+    settings,
+    getVaultPath: () => {
+      if (options.throwOnGetVaultPath) throw new Error("vault path unavailable");
+      return vaultPath;
+    },
+    saveSettings: async () => {
+      saveCalls += 1;
+      if (options.cancelViaManagerBeforeSaveCall === saveCalls && manager) {
+        await manager.cancelMaintenance();
+      }
+      if (options.cancelBeforeSaveCall === saveCalls && manager) {
+        (manager as any).cancelRequested = true;
+      }
+      if (options.failSaveCall === saveCalls) {
+        throw new Error(`saveSettings failed at call ${saveCalls}`);
+      }
+    },
+    getCodexView: () => ({
+      refreshKnowledgeBaseDashboard: () => {
+        if (options.throwOnDashboardRefresh) throw new Error("dashboard refresh failed");
+      }
+    }),
+    getReviewManager: () => null,
+    externalizeMessageText: async () => undefined,
+    pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+    activateKnowledgeBaseChannel: async () => undefined,
+    addCommand: () => undefined,
+    addRibbonIcon: () => undefined,
+    registerInterval: () => undefined,
+    app: {
+      workspace: {
+        onLayoutReady: () => undefined,
+        getActiveFile: () => null
+      }
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  (manager as any).runCodexKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string, writeScope: string) => {
+    options.codexTaskCalls?.push({ permission, writeScope });
+    await options.beforeAgentReturn?.();
+    return "Agent 输出：维护完成。";
+  };
+  if (!options.useRealOpenCodeTask) {
+    (manager as any).runOpenCodeKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string) => {
+      options.openCodeTaskCalls?.push({ permission });
+      await options.beforeAgentReturn?.();
+      return "Agent 输出：维护完成。";
+    };
+  }
+  return { manager, settings, saveCalls: () => saveCalls };
+}
 
 async function fileExists(filePath: string): Promise<boolean> {
   return stat(filePath).then(() => true, () => false);

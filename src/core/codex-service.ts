@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { execFile } from "child_process";
 import { Notice } from "obsidian";
 import type {
   CodexModel,
@@ -33,12 +34,19 @@ export interface CodexServiceOptions {
   vaultPath: string;
   onNotification: (notification: CodexNotification) => void;
   onServerRequest: (request: CodexServerRequest) => Promise<any>;
+  processRunner?: CodexProcessRunner;
 }
 
 export interface CodexLaunchConfig {
   args: string[];
   env: NodeJS.ProcessEnv;
 }
+
+export type CodexProcessRunner = (
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxBuffer: number }
+) => Promise<{ stdout: string; stderr: string }>;
 
 export interface CodexCommandResolveOptions {
   home?: string;
@@ -257,6 +265,7 @@ export class CodexService {
     const client = this.requireClient();
     const scopedConfig = await this.buildThreadConfig(options);
     const cwd = this.resolveTurnCwd(options);
+    const sandboxPolicy = buildSandboxPolicy(options.permission, cwd, options.writableRoots);
     const result = await client.request(
       "thread/start",
       {
@@ -264,6 +273,7 @@ export class CodexService {
         cwd,
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
+        sandboxPolicy,
         ...(scopedConfig ? { config: scopedConfig } : {}),
         serviceTier: normalizeServiceTier(options.serviceTier),
         experimentalRawEvents: false,
@@ -282,6 +292,7 @@ export class CodexService {
     const client = this.requireClient();
     const scopedConfig = await this.buildThreadConfig(options);
     const cwd = this.resolveTurnCwd(options);
+    const sandboxPolicy = buildSandboxPolicy(options.permission, cwd, options.writableRoots);
     await client.request(
       "thread/resume",
       {
@@ -290,6 +301,7 @@ export class CodexService {
         cwd,
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
+        sandboxPolicy,
         ...(scopedConfig ? { config: scopedConfig } : {}),
         serviceTier: normalizeServiceTier(options.serviceTier),
         persistExtendedHistory: options.persistExtendedHistory !== false
@@ -312,6 +324,7 @@ export class CodexService {
         effort: options.reasoning,
         serviceTier: normalizeServiceTier(options.serviceTier),
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
+        sandbox: options.permission,
         sandboxPolicy: buildSandboxPolicy(options.permission, cwd, options.writableRoots),
         ...(collaborationMode ? { collaborationMode } : {})
       },
@@ -337,6 +350,29 @@ export class CodexService {
   async setThreadName(threadId: string, name: string): Promise<void> {
     const client = this.requireClient();
     await client.request("thread/name/set", { threadId, name }, 10000);
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    const id = threadId.trim();
+    if (!id) throw new Error("缺少 Codex threadId，无法归档");
+    const command = resolveCodexCommand(this.options.cliPath);
+    const launch = buildCodexLaunchConfig({
+      proxyEnabled: this.options.proxyEnabled,
+      proxyUrl: this.options.proxyUrl,
+      providerMode: this.options.providerMode,
+      activeApiProvider: this.options.activeApiProvider
+    });
+    const runner = this.options.processRunner ?? execFilePromise;
+    try {
+      await runner(command, ["archive", id], {
+        cwd: this.options.vaultPath,
+        env: launch.env,
+        timeoutMs: 15000,
+        maxBuffer: 1024 * 1024
+      });
+    } catch (error) {
+      throw new Error(`Codex thread 归档失败：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async login(): Promise<any> {
@@ -491,6 +527,28 @@ function customApiProviderEnvKey(providerId: string): string {
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function execFilePromise(
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxBuffer: number }
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      timeout: options.timeoutMs,
+      maxBuffer: options.maxBuffer
+    }, (error, stdout, stderr) => {
+      if (error) {
+        const message = [error.message, stderr ? `stderr: ${stderr}` : ""].filter(Boolean).join("\n");
+        reject(new Error(message));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
 }
 
 function buildEnv(proxyEnabled: boolean, proxyUrl: string): NodeJS.ProcessEnv {
