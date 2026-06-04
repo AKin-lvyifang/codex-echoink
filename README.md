@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 0.7.2 turn queue and composer menus poster with three stability updates." src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
+  <img width="1024" alt="Codex EchoInk 0.8.0 Knowledge Safety poster showing Raw Protected, Local History, and Threads Archived." src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.7.2-0EA5E9?style=flat-square" alt="Version v0.7.2">
+    <img src="https://img.shields.io/badge/version-v0.8.0-0EA5E9?style=flat-square" alt="Version v0.8.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip"><strong>Download v0.7.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip"><strong>Download v0.8.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -75,7 +75,7 @@
 
 ### Knowledge Base Operations
 
-<img width="1024" alt="Codex EchoInk knowledge maintenance keeps Raw sources protected while ingesting, normalizing, writing Wiki pages, and producing reports." src="docs/images/codex-echoink-knowledge-maintenance-v0.6.0.png">
+<img width="1024" alt="Codex EchoInk Knowledge Safety shows Raw Protected, Local History, and Threads Archived." src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
 
 - Adds a persistent `Knowledge` channel for maintaining the current Obsidian vault.
 - Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
@@ -90,6 +90,8 @@
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
 - Runs `/maintain` as an ingest, structure-normalize, and lint workflow, with plugin-side checks protecting Raw source bodies.
+- Preserves Knowledge history in the plugin's local `history/` folder, so `/history` can still show records after Codex archived threads are removed.
+- Archives background Codex threads created by Knowledge commands after local history is saved, reducing clutter in Codex Desktop's recent conversation list.
 - Supports manual runs and daily maintenance when Obsidian is open.
 
 ### Weekly Reviews
@@ -138,6 +140,24 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v0.8.0
+
+**Knowledge safety update:** Raw sources, local history, and background Codex threads are now handled as separate layers.
+
+**What changed:**
+
+- Strengthened Raw source protection across `/check`, `/maintain`, and `/calibrate raw`, including safer rollback when a task fails or is canceled.
+- Kept Knowledge history readable from the plugin's local `history/` store instead of relying on Codex Desktop archived conversations.
+- Archived background Codex threads created by Knowledge commands after task results are saved, reducing recent-list clutter in Codex Desktop.
+- Made Knowledge task cancellation, retrying errors, timeouts, and status saves easier to recover from and easier to understand in the UI.
+- Updated the dashboard Raw count to focus on actual source notes instead of counting `.assets/` image files as Raw notes.
+
+**How to use:**
+
+1. Run `/check` for a read-only health check.
+2. Run `/maintain` to process changed Raw sources.
+3. Use `/history` to browse local Knowledge history; removing Codex archived conversations does not remove plugin history.
 
 ### v0.7.2
 
@@ -350,7 +370,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.7.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-0.8.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
@@ -404,6 +424,8 @@ Try these steps:
 ## Screenshots
 
 ![Codex EchoInk turn queue and composer menus](docs/images/codex-echoink-turn-queue-v0.7.2.png)
+
+![Codex EchoInk Knowledge Safety](docs/images/codex-echoink-knowledge-safety-v0.8.0.png)
 
 ![Codex EchoInk knowledge base workflow](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 

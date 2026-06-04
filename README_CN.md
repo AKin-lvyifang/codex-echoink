@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 0.7.2 任务队列和输入菜单海报，展示 3 个稳定性更新。" src="docs/images/codex-echoink-turn-queue-v0.7.2.png">
+  <img width="1024" alt="Codex EchoInk 0.8.0 知识库安全海报，展示 Raw 保护、本地历史和后台会话归档。" src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.7.2-0EA5E9?style=flat-square" alt="版本 v0.7.2">
+    <img src="https://img.shields.io/badge/version-v0.8.0-0EA5E9?style=flat-square" alt="版本 v0.8.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip"><strong>下载 v0.7.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip"><strong>下载 v0.8.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -77,7 +77,7 @@
 
 ### 知识库自动化运维
 
-<img width="1024" alt="Codex EchoInk 知识库维护会保护 Raw 原始资料，并执行 ingest、normalize、wiki 和 report 工作流。" src="docs/images/codex-echoink-knowledge-maintenance-v0.6.0.png">
+<img width="1024" alt="Codex EchoInk 知识库安全展示 Raw 保护、本地历史和后台会话归档。" src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
 
 - 新增常驻 `知识库` 频道，用来维护当前打开的 Obsidian vault。
 - 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
@@ -92,6 +92,8 @@
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
 - `/maintain` 会按 ingest、结构整理和 lint 工作流执行，并由插件侧校验保护 Raw 原始正文。
+- 知识库历史保存在插件本地 `history/` 目录，删除 Codex 已归档会话后仍可通过 `/history` 查看记录。
+- 知识库命令产生的后台 Codex 会话会在本地历史保存后自动归档，减少对 Codex Desktop 最近会话列表的污染。
 - 支持手动运行，也支持 Obsidian 打开时的每日维护。
 
 ### 复盘周报
@@ -142,6 +144,24 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v0.8.0
+
+**知识库安全更新：** Raw 原始资料、本地历史和后台 Codex 会话现在分层处理。
+
+**更新内容：**
+
+- 强化 `/check`、`/maintain`、`/calibrate raw` 的 Raw 保护，任务失败或取消时更容易回滚到干净状态。
+- 知识库历史优先读插件本地 `history/`，不再依赖 Codex Desktop 已归档会话。
+- 知识库命令创建的后台 Codex 会话会在结果保存后归档，减少 Codex Desktop 最近会话列表被挤占。
+- 取消、重试错误、超时和状态保存失败的处理更稳定，UI 里的失败原因更容易看懂。
+- dashboard 的 Raw 数量改为统计真实素材源，不再把 `.assets/` 图片附件算作 Raw 笔记。
+
+**使用方法：**
+
+1. 用 `/check` 做只读体检。
+2. 用 `/maintain` 处理变更的 Raw 来源。
+3. 用 `/history` 查看本地历史；删除 Codex 已归档会话不会删除插件历史。
 
 ### v0.7.2
 
@@ -355,7 +375,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.7.2.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.7.2/codex-echoink-0.7.2.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.8.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
@@ -413,6 +433,8 @@ codex-echoink/
 ## 截图
 
 ![Codex EchoInk 任务队列和输入菜单](docs/images/codex-echoink-turn-queue-v0.7.2.png)
+
+![Codex EchoInk 知识库安全](docs/images/codex-echoink-knowledge-safety-v0.8.0.png)
 
 ![Codex EchoInk 知识库自动化流程](docs/images/codex-echoink-knowledge-usage-v0.5.0.png)
 
