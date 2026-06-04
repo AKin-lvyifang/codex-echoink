@@ -5,6 +5,8 @@ export interface KnowledgeBaseDailyScheduleState {
   catchUpOnStartup: boolean;
   lastRunAt: number;
   lastRunStatus?: "idle" | "running" | "success" | "failed" | "canceled";
+  lastScheduledRunAt?: number;
+  lastScheduledRunStatus?: "idle" | "running" | "success" | "failed" | "canceled";
 }
 
 export function shouldRunScheduledKnowledgeBaseMaintenance(
@@ -16,8 +18,8 @@ export function shouldRunScheduledKnowledgeBaseMaintenance(
   if (!settings.enabled || !settings.scheduleEnabled) return false;
   const scheduled = scheduledTimeForToday(settings.scheduleTime, now);
   if (!scheduled || now.getTime() < scheduled.getTime()) return false;
-  const last = settings.lastRunAt ? new Date(settings.lastRunAt) : null;
-  if (last && last.toDateString() === now.toDateString() && settings.lastRunStatus !== "running") return false;
+  const lastScheduled = settings.lastScheduledRunAt ? new Date(settings.lastScheduledRunAt) : null;
+  if (lastScheduled && lastScheduled.toDateString() === now.toDateString() && settings.lastScheduledRunStatus !== "running") return false;
   if (forceCatchUp) return settings.catchUpOnStartup;
   if (schedulerStartedAt > scheduled.getTime() && !settings.catchUpOnStartup) return false;
   return true;

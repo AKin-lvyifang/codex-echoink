@@ -163,6 +163,8 @@ export interface KnowledgeBaseSettings {
   catchUpOnStartup: boolean;
   lastRunAt: number;
   lastRunStatus: KnowledgeBaseRunStatus;
+  lastScheduledRunAt: number;
+  lastScheduledRunStatus: KnowledgeBaseRunStatus;
   lastReportPath: string;
   lastError: string;
   lastSummary: string;
@@ -495,6 +497,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     catchUpOnStartup: true,
     lastRunAt: 0,
     lastRunStatus: "idle",
+    lastScheduledRunAt: 0,
+    lastScheduledRunStatus: "idle",
     lastReportPath: "",
     lastError: "",
     lastSummary: "",
@@ -1043,6 +1047,8 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
     catchUpOnStartup: value?.catchUpOnStartup !== false,
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
     lastRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastRunStatus),
+    lastScheduledRunAt: normalizeNonNegativeNumber(value?.lastScheduledRunAt),
+    lastScheduledRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastScheduledRunStatus),
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),

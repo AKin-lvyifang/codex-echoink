@@ -407,6 +407,8 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, DEFAULT_KNOWLEDGE_BAS
 assert.equal(CODEX_MEMORY_LITE_URL, "https://github.com/AKin-lvyifang/codex-memory-lite");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.scheduleTime, "09:00");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.sessionId, "");
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.lastScheduledRunAt, 0);
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.lastScheduledRunStatus, "idle");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays, 30);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
@@ -440,12 +442,22 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, lastRunAt: new Date("2026-05-19T01:17:00+08:00").getTime() },
   new Date("2026-05-19T09:01:00+08:00"),
   new Date("2026-05-19T08:00:00+08:00").getTime()
+), true);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastScheduledRunStatus: "success" },
+  new Date("2026-05-19T09:01:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime()
 ), false);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-  { ...scheduledKnowledgeBaseBase, lastRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastRunStatus: "running" },
+  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastScheduledRunStatus: "running" },
   new Date("2026-05-19T09:01:00+08:00"),
   new Date("2026-05-19T08:00:00+08:00").getTime()
 ), true);
+assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+  { ...scheduledKnowledgeBaseBase, scheduleTime: "09:20" },
+  new Date("2026-05-19T09:00:00+08:00"),
+  new Date("2026-05-19T08:00:00+08:00").getTime()
+), false);
 assert.equal(DEFAULT_SETTINGS.review.enabled, false);
 assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
 assert.equal(DEFAULT_SETTINGS.review.agentChatEnabled, true);
@@ -2056,6 +2068,8 @@ const knowledgeBaseSettings = normalizeSettingsData({
     catchUpOnStartup: false,
     lastRunAt: 20,
     lastRunStatus: "success",
+    lastScheduledRunAt: 30,
+    lastScheduledRunStatus: "failed",
     lastReportPath: "outputs/kb-maintenance.md",
     lastError: "",
     lastSummary: "已维护",
@@ -2082,6 +2096,8 @@ assert.equal(knowledgeBaseSettings.knowledgeBase.useCustomRulesFile, true);
 assert.equal(knowledgeBaseSettings.knowledgeBase.rulesFilePath, "CLAUDE.md");
 assert.equal(knowledgeBaseSettings.knowledgeBase.scheduleTime, "23:30");
 assert.equal(knowledgeBaseSettings.knowledgeBase.catchUpOnStartup, false);
+assert.equal(knowledgeBaseSettings.knowledgeBase.lastScheduledRunAt, 30);
+assert.equal(knowledgeBaseSettings.knowledgeBase.lastScheduledRunStatus, "failed");
 assert.equal(knowledgeBaseSettings.knowledgeBase.processedSources["raw/demo.md"].path, "raw/demo.md");
 assert.equal(knowledgeBaseSettings.knowledgeBase.initialization.status, "initialized");
 assert.equal(knowledgeBaseSettings.knowledgeBase.initialization.rulesFilePath, "CLAUDE.md");
@@ -2103,6 +2119,7 @@ assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.useCustomRulesFile, fals
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.rulesFilePath, "bad/path.md");
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.scheduleTime, "09:00");
 assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.lastRunStatus, "idle");
+assert.equal(invalidKnowledgeBaseSettings.knowledgeBase.lastScheduledRunStatus, "idle");
 
 const migratedReviewSettings = normalizeSettingsData({
   settingsVersion: 21,
@@ -3697,6 +3714,8 @@ try {
     };
     await (scheduledAppendManager as any).runScheduledIfDue(true);
     assert.equal(scheduledAppendSettings.knowledgeBase.lastRunStatus, "success");
+    assert.equal(scheduledAppendSettings.knowledgeBase.lastScheduledRunStatus, "success");
+    assert.ok(scheduledAppendSettings.knowledgeBase.lastScheduledRunAt > 0);
     assert.match(scheduledAppendSettings.knowledgeBase.lastError, /自动维护消息保存失败：scheduled message save failed/);
     assert.equal(scheduledAppendSettings.sessions.length, 1);
     assert.equal(scheduledAppendSettings.sessions[0].messages.length, 0);
@@ -3771,6 +3790,8 @@ try {
       console.warn = warnBeforeScheduledRefreshFailureTest;
     }
     assert.equal(scheduledRefreshSettings.knowledgeBase.lastRunStatus, "success");
+    assert.equal(scheduledRefreshSettings.knowledgeBase.lastScheduledRunStatus, "success");
+    assert.ok(scheduledRefreshSettings.knowledgeBase.lastScheduledRunAt > 0);
     assert.equal(scheduledRefreshSettings.knowledgeBase.lastError, "");
     assert.equal(scheduledRefreshSettings.sessions.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);

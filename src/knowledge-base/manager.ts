@@ -1486,7 +1486,12 @@ export class KnowledgeBaseManager {
     const settings = this.plugin.settings.knowledgeBase;
     if (this.running) return;
     if (shouldRunScheduledKnowledgeBaseMaintenance(settings, new Date(), this.schedulerStartedAt, forceCatchUp)) {
+      const scheduledStartedAt = Date.now();
+      settings.lastScheduledRunAt = scheduledStartedAt;
+      settings.lastScheduledRunStatus = "running";
       const result = await this.runMaintenance("maintain");
+      settings.lastScheduledRunAt = scheduledStartedAt;
+      settings.lastScheduledRunStatus = result.status;
       await this.appendScheduledMaintenanceMessage(result);
     }
   }
