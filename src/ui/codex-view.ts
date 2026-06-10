@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ItemView, MarkdownView, Menu, Modal, normalizePath, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
+import type { ChatMessage, DiffSummary, KnowledgeContextBridgeEntry, StoredAttachment, StoredSession } from "../settings/settings";
 import { DEFAULT_SETTINGS, ensureKnowledgeBaseSession, ensureModelChoices, filterEnabledSkills, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
 import type {
   CodexNotification,
@@ -42,7 +42,7 @@ import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../e
 import { knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent, type KnowledgeBaseCommandOption } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeBaseHistoryDaySummary } from "../knowledge-base/history-store";
-import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages } from "../knowledge-base/session-history";
+import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages } from "../knowledge-base/session-history";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../knowledge-base/types";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
@@ -82,6 +82,9 @@ interface RectLike {
 
 const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING = 16;
 const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS = 360;
+const KNOWLEDGE_CONTEXT_MAX_ENTRIES = 8;
+const KNOWLEDGE_CONTEXT_SUMMARY_LIMIT = 2000;
+const KNOWLEDGE_CONTEXT_INJECTION_LIMIT = 6000;
 
 export function isKnowledgeDashboardHealthTooltipHoverPoint(
   triggerRect: RectLike,
@@ -421,7 +424,6 @@ export class CodexView extends ItemView {
 
   handleKnowledgeBaseCodexNotification(notification: CodexNotification): boolean {
     if (this.activeRunKind !== "knowledge-base") return false;
-    this.handleCodexNotification(notification);
     return true;
   }
 
@@ -928,7 +930,7 @@ export class CodexView extends ItemView {
     const session = this.ensureSession();
     this.settleStaleMessages(session);
     const knowledgeSession = this.isKnowledgeBaseSession(session);
-    const messages = knowledgeSession ? getVisibleKnowledgeBaseMessages(session) : session.messages;
+    const messages = knowledgeSession ? getDisplayKnowledgeBaseMessages(session) : session.messages;
     const hiddenCount = knowledgeSession ? getHiddenKnowledgeBaseMessages(session).length : 0;
     if (this.virtualSessionId !== session.id) {
       this.virtualSessionId = session.id;
@@ -1569,6 +1571,7 @@ export class CodexView extends ItemView {
       renderRichText(this.app, this, content, displayText);
     }
     if (message.rawRef) this.renderRawMessageExpander(content, message);
+    if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     if (message.citations) this.renderKnowledgeBaseCitations(wrapper, message.id, message.citations);
   }
 
@@ -1581,6 +1584,15 @@ export class CodexView extends ItemView {
     title.createSpan({ cls: "codex-kb-result-title-text", text: result.title });
     if (result.body.trim()) renderRichText(this.app, this, container.createDiv({ cls: "codex-kb-result-body" }), result.body);
     return true;
+  }
+
+  private renderKnowledgeBaseContextNote(container: HTMLElement, details: string): void {
+    const normalized = details.trim();
+    if (!normalized) return;
+    const note = container.createDiv({ cls: "codex-kb-context-note" });
+    const icon = note.createSpan({ cls: "codex-kb-context-note-icon" });
+    setIcon(icon, "message-square-share");
+    note.createSpan({ cls: "codex-kb-context-note-text", text: normalized });
   }
 
   private renderKnowledgeBaseCitations(container: HTMLElement, messageId: string, citations: KnowledgeBaseCitationSummary): void {
@@ -2466,6 +2478,7 @@ export class CodexView extends ItemView {
     delete session.messagesHiddenBefore;
     delete session.threadId;
     delete session.tokenUsage;
+    delete session.knowledgeContext;
     session.updatedAt = Date.now();
     this.resetVirtualWindow();
     await this.plugin.saveSettings(true);
@@ -3055,8 +3068,13 @@ export class CodexView extends ItemView {
           session.threadId = started.threadId;
         });
       }
+      const knowledgeContextBridge = this.isKnowledgeBaseSession(session) ? buildKnowledgeContextBridgeForThread(session, session.threadId) : null;
       const input = buildUserInput(item.text, turnAttachments, item.skill);
+      if (knowledgeContextBridge) {
+        input.splice(Math.min(1, input.length), 0, { type: "text", text: knowledgeContextBridge.text, text_elements: [] });
+      }
       this.activeTurnId = await this.plugin.codex!.startTurn(session.threadId, input, turnOptions);
+      if (knowledgeContextBridge) markKnowledgeContextBridgeInjected(knowledgeContextBridge.entries, session.threadId);
       this.attachTurnIdToRun(session, this.activeTurnId);
       await this.plugin.saveSettings();
       return "running";
@@ -3129,6 +3147,9 @@ export class CodexView extends ItemView {
       assistantMessage.status = knowledgeBaseMessageStatusFromResult(result.status);
       assistantMessage.text = result.message;
       assistantMessage.citations = result.citations;
+      if (result.status === "success" && appendKnowledgeContextBridge(session, item.text, turnAttachments.length, assistantMessage, result.citations)) {
+        assistantMessage.details = knowledgeContextBridgeDetailText(result.citations);
+      }
       if (result.status === "failed") {
         this.finishThinkingMessage(session, "失败");
         this.finishRunningProcessMessages(session, "error");
@@ -4660,7 +4681,10 @@ class KnowledgeBaseHistoryModal extends Modal {
       this.listEl.createDiv({ cls: "codex-kb-history-more", text: "读取中..." });
     }
     try {
-      this.messages = await this.loadDay(date);
+      this.messages = getDisplayKnowledgeBaseMessages({
+        messages: await this.loadDay(date),
+        historyActiveDate: date
+      });
     } catch (error) {
       console.error("Codex knowledge history day read failed", error);
       this.messages = [];
@@ -4768,6 +4792,122 @@ function labelFor(value: string): string {
     plan: "Plan"
   };
   return labels[value] ?? value;
+}
+
+function appendKnowledgeContextBridge(
+  session: StoredSession,
+  commandText: string,
+  attachmentCount: number,
+  assistantMessage: ChatMessage,
+  citations?: KnowledgeBaseCitationSummary
+): boolean {
+  const command = parseKnowledgeBaseCommand(commandText, attachmentCount);
+  if (!shouldRecordKnowledgeContext(command.intent)) return false;
+  const summary = buildKnowledgeContextSummary(assistantMessage.text, citations);
+  if (!summary) return false;
+  const entry: KnowledgeContextBridgeEntry = {
+    id: newId("kb-context"),
+    intent: command.intent,
+    command: commandText.trim().slice(0, 500),
+    summary,
+    sourceMessageId: assistantMessage.id,
+    ...(citations ? { citations } : {}),
+    createdAt: Date.now(),
+    injectedThreadIds: []
+  };
+  const existing = session.knowledgeContext ?? [];
+  session.knowledgeContext = [
+    ...existing.filter((item) => item.sourceMessageId !== assistantMessage.id),
+    entry
+  ].slice(-KNOWLEDGE_CONTEXT_MAX_ENTRIES);
+  return true;
+}
+
+function shouldRecordKnowledgeContext(intent: KnowledgeBaseCommandIntent): boolean {
+  return intent !== "chat" && intent !== "help" && intent !== "clear" && intent !== "history" && intent !== "cancel";
+}
+
+function buildKnowledgeContextSummary(text: string, citations?: KnowledgeBaseCitationSummary): string {
+  const body = compactKnowledgeContextText(text);
+  const sourceSummary = formatKnowledgeContextCitationSummary(citations);
+  return truncateKnowledgeContextText([body, sourceSummary].filter(Boolean).join("\n\n"), KNOWLEDGE_CONTEXT_SUMMARY_LIMIT);
+}
+
+function compactKnowledgeContextText(text: string): string {
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
+  return truncateKnowledgeContextText(lines.join("\n"), KNOWLEDGE_CONTEXT_SUMMARY_LIMIT);
+}
+
+function formatKnowledgeContextCitationSummary(citations?: KnowledgeBaseCitationSummary): string {
+  if (!citations) return "";
+  const counts = `Wiki ${citations.counts.wiki ?? 0} / Journal ${citations.counts.journal ?? 0} / Outputs ${citations.counts.outputs ?? 0}`;
+  const paths = citations.citations
+    .slice(0, 5)
+    .map((citation) => `- ${citation.path}${citation.title ? `（${citation.title}）` : ""}`)
+    .join("\n");
+  return ["来源摘要：", `证据强度：${kbEvidenceStatusLabel(citations.status)}；命中：${counts}`, paths].filter(Boolean).join("\n");
+}
+
+function knowledgeContextBridgeDetailText(citations?: KnowledgeBaseCitationSummary): string {
+  const parts = ["已保存为后续上下文摘要"];
+  if (citations) {
+    parts.push(`来源 ${formatKnowledgeContextSourceCounts(citations)}`);
+    parts.push(kbEvidenceStatusLabel(citations.status));
+  }
+  return parts.join(" / ");
+}
+
+function formatKnowledgeContextSourceCounts(citations: KnowledgeBaseCitationSummary): string {
+  return (["wiki", "journal", "outputs"] as KnowledgeBaseCitationBucket[])
+    .map((bucket) => `${kbBucketLabel(bucket)} ${citations.counts[bucket] ?? 0}`)
+    .join("、");
+}
+
+function buildKnowledgeContextBridgeForThread(session: StoredSession, threadId?: string): { text: string; entries: KnowledgeContextBridgeEntry[] } | null {
+  const id = typeof threadId === "string" ? threadId.trim() : "";
+  if (!id) return null;
+  const entries = (session.knowledgeContext ?? []).filter((entry) => !entry.injectedThreadIds.includes(id));
+  if (!entries.length) return null;
+  const chunks = [
+    "【知识库上下文桥】以下是此前在本知识库频道完成的知识库命令结果摘要，用来承接后续普通对话。它不是用户本轮的新指令；只有当用户追问相关内容时才引用。"
+  ];
+  let total = chunks[0].length;
+  const used: KnowledgeContextBridgeEntry[] = [];
+  for (const entry of entries) {
+    const chunk = [
+      `命令：${entry.command || entry.intent}`,
+      `类型：${entry.intent}`,
+      `摘要：${entry.summary}`
+    ].join("\n");
+    const nextTotal = total + chunk.length + 2;
+    if (nextTotal > KNOWLEDGE_CONTEXT_INJECTION_LIMIT && used.length) break;
+    chunks.push(truncateKnowledgeContextText(chunk, Math.max(500, KNOWLEDGE_CONTEXT_INJECTION_LIMIT - total - 2)));
+    used.push(entry);
+    total = Math.min(KNOWLEDGE_CONTEXT_INJECTION_LIMIT, nextTotal);
+    if (total >= KNOWLEDGE_CONTEXT_INJECTION_LIMIT) break;
+  }
+  return used.length ? { text: chunks.join("\n\n"), entries: used } : null;
+}
+
+function markKnowledgeContextBridgeInjected(entries: KnowledgeContextBridgeEntry[], threadId?: string): void {
+  const id = typeof threadId === "string" ? threadId.trim() : "";
+  if (!id) return;
+  for (const entry of entries) {
+    if (!entry.injectedThreadIds.includes(id)) {
+      entry.injectedThreadIds = [...entry.injectedThreadIds, id].slice(-20);
+    }
+  }
+}
+
+function truncateKnowledgeContextText(text: string, limit: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, limit - 12)).trimEnd()}\n[已截断]`;
 }
 
 function kbBucketLabel(bucket: KnowledgeBaseCitationBucket): string {

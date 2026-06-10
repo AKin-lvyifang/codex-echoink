@@ -63,6 +63,17 @@ export interface ChatMessage {
 export type StoredSessionKind = "chat" | "knowledge-base";
 export const KNOWLEDGE_BASE_SESSION_TITLE = "知识库管理";
 
+export interface KnowledgeContextBridgeEntry {
+  id: string;
+  intent: string;
+  command: string;
+  summary: string;
+  sourceMessageId: string;
+  citations?: KnowledgeBaseCitationSummary;
+  createdAt: number;
+  injectedThreadIds: string[];
+}
+
 export interface StoredSession {
   id: string;
   title: string;
@@ -70,6 +81,7 @@ export interface StoredSession {
   threadId?: string;
   cwd: string;
   messages: ChatMessage[];
+  knowledgeContext?: KnowledgeContextBridgeEntry[];
   messagesHiddenBefore?: number;
   historyActiveDate?: string;
   tokenUsage?: TokenUsage;
@@ -1145,6 +1157,7 @@ function normalizeStoredSessions(value: any): StoredSession[] {
         threadId: normalizeOptionalText(session?.threadId) || undefined,
         cwd: normalizeOptionalText(session?.cwd),
         messages,
+        knowledgeContext: normalizeKnowledgeContextBridgeEntries(session?.knowledgeContext),
         messagesHiddenBefore: normalizeOptionalPositiveNumber(session?.messagesHiddenBefore),
         historyActiveDate: normalizeOptionalText(session?.historyActiveDate) || undefined,
         tokenUsage: session?.tokenUsage,
@@ -1153,6 +1166,37 @@ function normalizeStoredSessions(value: any): StoredSession[] {
       };
     })
     .filter((session): session is StoredSession => Boolean(session));
+}
+
+function normalizeKnowledgeContextBridgeEntries(value: any): KnowledgeContextBridgeEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries = value
+    .map((item: any): KnowledgeContextBridgeEntry | null => {
+      const id = normalizeOptionalText(item?.id);
+      const summary = normalizeOptionalText(item?.summary).slice(0, 2000);
+      if (!id || !summary) return null;
+      return {
+        id,
+        intent: normalizeOptionalText(item?.intent) || "unknown",
+        command: normalizeOptionalText(item?.command).slice(0, 500),
+        summary,
+        sourceMessageId: normalizeOptionalText(item?.sourceMessageId),
+        ...(item?.citations ? { citations: item.citations as KnowledgeBaseCitationSummary } : {}),
+        createdAt: normalizeNonNegativeNumber(item?.createdAt),
+        injectedThreadIds: normalizeKnowledgeContextThreadIds(item?.injectedThreadIds)
+      };
+    })
+    .filter((entry): entry is KnowledgeContextBridgeEntry => Boolean(entry))
+    .slice(-8);
+  return entries.length ? entries : undefined;
+}
+
+function normalizeKnowledgeContextThreadIds(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((threadId: any) => normalizeOptionalText(threadId))
+    .filter((threadId): threadId is string => Boolean(threadId));
+  return [...new Set(ids)].slice(-20);
 }
 
 function normalizeOptionalPositiveNumber(value: any): number | undefined {

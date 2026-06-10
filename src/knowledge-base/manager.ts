@@ -37,7 +37,8 @@ type CodexKbWaiter = {
   threadId: string;
   turnId: string;
   itemIds: Set<string>;
-  text: string;
+  assistantItems: Map<string, string>;
+  assistantItemOrder: string[];
   resolve: (text: string) => void;
   reject: (error: Error) => void;
   model: string;
@@ -1108,7 +1109,7 @@ export class KnowledgeBaseManager {
     if (method === "turn/started" && ids.turnId) waiter.turnId = ids.turnId;
     if (route.rememberItemId) waiter.itemIds.add(route.rememberItemId);
     if (ids.itemId && ids.turnId && ids.turnId === waiter.turnId) waiter.itemIds.add(ids.itemId);
-    if (route.collectAssistantDelta) waiter.text += params?.delta ?? "";
+    if (route.collectAssistantDelta) appendCodexWaiterAssistantDelta(waiter, ids.itemId, params?.delta ?? "");
     if (method === "turn/completed") {
       if (waiter.startTurnPending) {
         waiter.pendingTerminal = { method, params };
@@ -1133,7 +1134,7 @@ export class KnowledgeBaseManager {
     if (this.codexWaiter === waiter) this.codexWaiter = null;
     if (method === "turn/completed" && params?.turn?.status !== "failed") {
       if (this.cancelRequested) waiter.reject(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
-      else waiter.resolve(waiter.text);
+      else waiter.resolve(finalCodexWaiterAssistantText(waiter));
       return;
     }
     waiter.reject(new Error(this.formatCodexDiagnostic(formatKnowledgeBaseCodexFailureSignal(method, params, "Codex 知识库任务失败"), waiter.model)));
@@ -1280,7 +1281,7 @@ export class KnowledgeBaseManager {
     const inactivityTimeoutMs = normalizeCodexInactivityTimeoutMs(turnOptionOverrides?.codexInactivityTimeoutMs);
     let waiterRef: CodexKbWaiter | null = null;
     const result = new Promise<string>((resolve, reject) => {
-      waiterRef = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), text: "", resolve, reject, model: options.model, startTurnPending: true, inactivityTimeoutMs, inactivityTimer: null };
+      waiterRef = { threadId: started.threadId, turnId: "", itemIds: new Set<string>(), assistantItems: new Map<string, string>(), assistantItemOrder: [], resolve, reject, model: options.model, startTurnPending: true, inactivityTimeoutMs, inactivityTimer: null };
       this.codexWaiter = waiterRef;
     });
     try {
@@ -1309,7 +1310,8 @@ export class KnowledgeBaseManager {
         const waiter = this.codexWaiter;
         if (waiter.turnId && waiter.turnId !== turnId) {
           waiter.itemIds.clear();
-          waiter.text = "";
+          waiter.assistantItems.clear();
+          waiter.assistantItemOrder = [];
           waiter.pendingTerminal = undefined;
         }
         waiter.turnId = turnId;
@@ -1797,6 +1799,21 @@ function requiredModalities(parts: AgentPromptPart[]): AgentInputModality[] {
     if (part.type === "file") modalities.add(requiredModalityForMime(part.mime));
   }
   return Array.from(modalities);
+}
+
+function appendCodexWaiterAssistantDelta(waiter: CodexKbWaiter, itemId: string, delta: string): void {
+  if (!delta) return;
+  const id = itemId || "__assistant__";
+  if (!waiter.assistantItems.has(id)) waiter.assistantItemOrder.push(id);
+  waiter.assistantItems.set(id, `${waiter.assistantItems.get(id) ?? ""}${delta}`);
+}
+
+function finalCodexWaiterAssistantText(waiter: CodexKbWaiter): string {
+  for (let index = waiter.assistantItemOrder.length - 1; index >= 0; index -= 1) {
+    const text = (waiter.assistantItems.get(waiter.assistantItemOrder[index]) ?? "").trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 function selectOpenCodeModel(models: AgentModelInfo[], providerId: string, modelId: string, required: AgentInputModality[]): AgentModelInfo | null {

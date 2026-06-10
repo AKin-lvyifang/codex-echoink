@@ -338,6 +338,33 @@ body.theme-light .codex-container {
   min-width: 0;
 }
 
+.codex-kb-context-note {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 8px 0 0;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.codex-kb-context-note-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--interactive-accent);
+}
+
+.codex-kb-context-note-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.codex-kb-context-note-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .codex-message-heading {
   margin: 12px 0 8px;
   font-size: 1em;

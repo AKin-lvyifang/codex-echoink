@@ -149,7 +149,7 @@ import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/sc
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
-import { clearKnowledgeBaseVisibleHistory, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
+import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
 import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "../knowledge-base/types";
 import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
@@ -796,8 +796,7 @@ const foregroundKnowledgeForwarded = foregroundKnowledgeNotificationView.handleK
   params: { threadId: "kb-thread", turnId: "kb-turn", itemId: "kb-item", delta: "前台知识库输出" }
 } as any);
 assert.equal(foregroundKnowledgeForwarded, true);
-assert.equal(foregroundKnowledgeNotificationSession.messages.length, 1);
-assert.equal(foregroundKnowledgeNotificationSession.messages[0].text, "前台知识库输出");
+assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
 const knowledgeFinalizeSession = {
   id: "kb-finalize-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -944,6 +943,202 @@ const knowledgeCanceledOutcome = await knowledgeCanceledView.startKnowledgeBaseT
 assert.equal(knowledgeCanceledOutcome, "failed");
 assert.equal(knowledgeCanceledSession.messages.at(-1)?.status, "canceled");
 assert.match(knowledgeCanceledSession.messages.at(-1)?.text ?? "", /已取消/);
+const knowledgeContextBridgeSession = {
+  id: "kb-context-bridge-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const knowledgeContextBridgeView: any = {
+  ...knowledgeFinalizeView,
+  plugin: {
+    settings: { activeSessionId: knowledgeContextBridgeSession.id },
+    getKnowledgeBaseManager: () => ({
+      handleUserMessage: async () => ({
+        status: "success",
+        message: "Alpha 项目来自本地 Wiki，适合继续跟进。",
+        citations: {
+          status: "strong",
+          counts: { wiki: 1, journal: 0, outputs: 0 },
+          citations: [{
+            bucket: "wiki",
+            title: "GitHub 项目雷达",
+            path: "wiki/projects/github-radar.md",
+            excerptLines: ["Alpha 项目近期增长很快。"],
+            relevance: "strong",
+            reason: "命中项目名",
+            score: 3
+          }]
+        }
+      })
+    }),
+    externalizeMessageText: async () => undefined,
+    archivePendingKnowledgeBaseThreads: async () => 0,
+    saveSettings: async () => undefined
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map()
+};
+const knowledgeContextBridgeOutcome = await knowledgeContextBridgeView.startKnowledgeBaseTurn(knowledgeContextBridgeSession, {
+  ...queuedTurn("kb-context-bridge-item", knowledgeContextBridgeSession.id, "/ask 最近有哪些 GitHub 项目？"),
+  kind: "knowledge-base"
+}, "queue");
+assert.equal(knowledgeContextBridgeOutcome, "completed");
+assert.equal((knowledgeContextBridgeSession as any).knowledgeContext?.length, 1);
+assert.equal((knowledgeContextBridgeSession as any).knowledgeContext[0].intent, "ask");
+assert.equal((knowledgeContextBridgeSession as any).knowledgeContext[0].command, "/ask 最近有哪些 GitHub 项目？");
+assert.match((knowledgeContextBridgeSession as any).knowledgeContext[0].summary, /Alpha 项目/);
+assert.match((knowledgeContextBridgeSession as any).knowledgeContext[0].summary, /wiki\/projects\/github-radar\.md/);
+assert.match(knowledgeContextBridgeSession.messages.at(-1)?.details ?? "", /已保存为后续上下文摘要/);
+
+const failedKnowledgeContextSession = {
+  id: "kb-context-failed-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const failedKnowledgeContextView: any = {
+  ...knowledgeContextBridgeView,
+  plugin: {
+    ...knowledgeContextBridgeView.plugin,
+    settings: { activeSessionId: failedKnowledgeContextSession.id },
+    getKnowledgeBaseManager: () => ({
+      handleUserMessage: async () => ({ status: "failed", message: "知识库任务失败" })
+    })
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map()
+};
+await failedKnowledgeContextView.startKnowledgeBaseTurn(failedKnowledgeContextSession, {
+  ...queuedTurn("kb-context-failed-item", failedKnowledgeContextSession.id, "/ask 失败问题"),
+  kind: "knowledge-base"
+}, "queue");
+assert.equal((failedKnowledgeContextSession as any).knowledgeContext, undefined);
+
+const knowledgeContextChatSession = {
+  id: "kb-context-chat-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  threadId: "thread-chat",
+  messages: [] as any[],
+  knowledgeContext: [{
+    id: "ctx-alpha",
+    intent: "ask",
+    command: "/ask Alpha",
+    summary: "Alpha 项目来自本地 Wiki，适合继续跟进。",
+    sourceMessageId: "assistant-alpha",
+    createdAt: 1,
+    injectedThreadIds: [] as string[]
+  }],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+let capturedKnowledgeContextInput: any[] = [];
+const knowledgeContextChatView: any = {
+  plugin: {
+    ensureCodexConnected: async () => ({ connected: true, accountLabel: "Codex", loggedIn: true, models: [], skills: [], mcpServers: [], errors: [] }),
+    codex: {
+      resumeThread: async () => undefined,
+      startThread: async () => ({ threadId: "thread-new", title: "KB" }),
+      startTurn: async (_threadId: string, input: any[]) => {
+        capturedKnowledgeContextInput = input;
+        return "turn-chat";
+      }
+    },
+    externalizeMessageText: async () => undefined,
+    saveSettings: async () => undefined
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  threadPrewarmPromise: null,
+  threadPrewarmSessionId: "",
+  applyStatus: () => undefined,
+  ensureThinkingMessage: () => undefined,
+  armTurnWatchdog: () => undefined,
+  finishThinkingMessage: () => undefined,
+  addMessageToSession: (CodexView.prototype as any).addMessageToSession,
+  clearTurnWatchdog: () => undefined,
+  clearActiveRun: (CodexView.prototype as any).clearActiveRun,
+  attachTurnIdToRun: () => undefined,
+  renderTabs: () => undefined,
+  renderMessagesIfActive: () => undefined,
+  renderToolbar: () => undefined,
+  diagnoseCodexFailure: () => ({ title: "失败", text: "失败" }),
+  isKnowledgeBaseSession: () => true,
+  startChatTurn: (CodexView.prototype as any).startChatTurn
+};
+const knowledgeContextChatOutcome = await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+  ...queuedTurn("kb-context-chat-item", knowledgeContextChatSession.id, "继续讲这个项目"),
+  kind: "chat"
+}, "queue");
+assert.equal(knowledgeContextChatOutcome, "running");
+const injectedKnowledgeContextText = capturedKnowledgeContextInput.map((item) => item.text ?? "").join("\n");
+assert.match(injectedKnowledgeContextText, /Alpha 项目来自本地 Wiki/);
+assert.match(injectedKnowledgeContextText, /继续讲这个项目/);
+assert.deepEqual((knowledgeContextChatSession as any).knowledgeContext[0].injectedThreadIds, ["thread-chat"]);
+
+capturedKnowledgeContextInput = [];
+await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+  ...queuedTurn("kb-context-chat-item-2", knowledgeContextChatSession.id, "再继续"),
+  kind: "chat"
+}, "queue");
+assert.doesNotMatch(capturedKnowledgeContextInput.map((item) => item.text ?? "").join("\n"), /Alpha 项目来自本地 Wiki/);
+
+const knowledgeContextResumeFailureSession = {
+  ...knowledgeContextChatSession,
+  id: "kb-context-resume-failure-session",
+  threadId: "thread-old",
+  messages: [] as any[],
+  knowledgeContext: [{
+    ...(knowledgeContextChatSession as any).knowledgeContext[0],
+    injectedThreadIds: ["thread-old"]
+  }]
+};
+let capturedResumeFailureInput: any[] = [];
+const knowledgeContextResumeFailureView: any = {
+  ...knowledgeContextChatView,
+  plugin: {
+    ...knowledgeContextChatView.plugin,
+    codex: {
+      resumeThread: async () => { throw new Error("resume failed"); },
+      startThread: async () => ({ threadId: "thread-new", title: "KB" }),
+      startTurn: async (_threadId: string, input: any[]) => {
+        capturedResumeFailureInput = input;
+        return "turn-new";
+      }
+    }
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: ""
+};
+await knowledgeContextResumeFailureView.startChatTurn(knowledgeContextResumeFailureSession, {
+  ...queuedTurn("kb-context-resume-failure-item", knowledgeContextResumeFailureSession.id, "新线程继续"),
+  kind: "chat"
+}, "queue");
+assert.equal(knowledgeContextResumeFailureSession.threadId, "thread-new");
+assert.match(capturedResumeFailureInput.map((item) => item.text ?? "").join("\n"), /Alpha 项目来自本地 Wiki/);
+assert.deepEqual((knowledgeContextResumeFailureSession as any).knowledgeContext[0].injectedThreadIds, ["thread-old", "thread-new"]);
 assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
@@ -990,6 +1185,15 @@ const clearableHistorySession = {
   ...normalizedHistorySession,
   threadId: "thread-old",
   tokenUsage: { total: { totalTokens: 99 } },
+  knowledgeContext: [{
+    id: "ctx-old",
+    intent: "ask",
+    command: "/ask old",
+    summary: "旧知识库上下文",
+    sourceMessageId: "old-assistant",
+    createdAt: 12,
+    injectedThreadIds: ["thread-old"]
+  }],
   messagesHiddenBefore: undefined,
   messages: [...normalizedHistorySession.messages]
 };
@@ -998,12 +1202,30 @@ assert.equal(clearResult.hiddenCount, 3);
 assert.equal(clearableHistorySession.messages.length, 3);
 assert.equal(clearableHistorySession.threadId, undefined);
 assert.equal(clearableHistorySession.tokenUsage, undefined);
+assert.equal((clearableHistorySession as any).knowledgeContext, undefined);
 assert.equal(clearableHistorySession.messagesHiddenBefore, 21);
 assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), []);
 assert.deepEqual(getHiddenKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
 restoreKnowledgeBaseVisibleHistory(clearableHistorySession);
 assert.equal(clearableHistorySession.messagesHiddenBefore, undefined);
 assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
+const duplicateKnowledgeRunSession = {
+  id: "kb-duplicate-run-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [
+    { id: "dup-user", role: "user", text: "/ask duplicate", runId: "kb-run-dup", createdAt: 1 },
+    { id: "dup-assistant-1", role: "assistant", title: "回复", itemType: "assistant", text: "过程回答", runId: "kb-run-dup", createdAt: 2 },
+    { id: "dup-tool", role: "tool", title: "查看文件", itemType: "commandExecution", text: "工具输出", runId: "kb-run-dup", status: "completed", createdAt: 3 },
+    { id: "dup-thinking", role: "assistant", title: "生成中", itemType: "thinking", text: "正在生成", runId: "kb-run-dup", status: "running", createdAt: 4 },
+    { id: "dup-final", role: "assistant", title: "知识库管理", itemType: "knowledgeBase", text: "最终答案", runId: "kb-run-dup", status: "completed", createdAt: 5 },
+    { id: "other-assistant", role: "assistant", title: "回复", itemType: "assistant", text: "别的普通回复", runId: "chat-run", createdAt: 6 }
+  ] as any[],
+  createdAt: 1,
+  updatedAt: 6
+};
+assert.deepEqual(getDisplayKnowledgeBaseMessages(duplicateKnowledgeRunSession).map((message) => message.id), ["dup-user", "dup-final", "other-assistant"]);
 
 const may18 = new Date(2026, 4, 18, 23, 0, 0).getTime();
 const may19 = new Date(2026, 4, 19, 1, 0, 0).getTime();
@@ -1571,6 +1793,7 @@ const knowledgeBaseResultSuccessCss = cssRuleBody(settingsStyles, ".codex-kb-res
 const knowledgeBaseResultFailedCss = cssRuleBody(settingsStyles, ".codex-kb-result-title-failed");
 assert.match(codexViewSource, /codex-header-history/);
 assert.match(codexViewSource, /title: "查看知识库历史"/);
+assert.match(codexViewSource, /this\.messages = getDisplayKnowledgeBaseMessages/);
 assert.doesNotMatch(codexViewSource, /codex-kb-dashboard-history/);
 assert.match(headerHistoryCss, /gap:\s*5px;/);
 assert.match(headerHistoryCss, /padding:\s*0 9px;/);
@@ -3796,6 +4019,7 @@ try {
     assert.equal(scheduledRefreshSettings.sessions.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages[0].status, "completed");
+    assert.equal((scheduledRefreshSettings.sessions[0] as any).knowledgeContext, undefined);
     assert.equal(scheduledRefreshSaveCalls, 1);
     assert.equal(scheduledRefreshWarnings.length, 1);
     assert.equal(scheduledRefreshWarnings[0][0], "每日维护消息刷新失败");
@@ -4637,6 +4861,55 @@ try {
   assert.equal(settings.knowledgeBase.managedThreads["thread-archive"]?.archiveState, "archived");
 } finally {
   await rm(maintenanceCodexArchiveVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexFinalAssistantItemVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-final-item-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexFinalAssistantItemVault,
+    saveSettings: async () => undefined,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-final-item", title: "KB" }),
+      startTurn: async () => {
+        queueMicrotask(() => {
+          manager.handleCodexNotification({
+            method: "turn/started",
+            params: { threadId: "thread-final-item", turn: { id: "turn-final-item" } }
+          } as any);
+          manager.handleCodexNotification({
+            method: "item/agentMessage/delta",
+            params: { threadId: "thread-final-item", turnId: "turn-final-item", itemId: "item-process", delta: "方哥，我先核对本地 Wiki。" }
+          } as any);
+          manager.handleCodexNotification({
+            method: "item/agentMessage/delta",
+            params: { threadId: "thread-final-item", turnId: "turn-final-item", itemId: "item-final", delta: "## 一眼结论\n最终答案" }
+          } as any);
+          manager.handleCodexNotification({
+            method: "turn/completed",
+            params: { threadId: "thread-final-item", turn: { id: "turn-final-item", status: "completed" } }
+          } as any);
+        });
+        return "turn-final-item";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "ask"), "## 一眼结论\n最终答案");
+} finally {
+  await rm(maintenanceCodexFinalAssistantItemVault, { recursive: true, force: true });
 }
 
 const maintenanceCodexStaleRunningThreadVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stale-running-");

@@ -19,6 +19,10 @@ export function getVisibleKnowledgeBaseMessages(session: Pick<StoredSession, "me
   return activeMessages.filter((message) => message.createdAt > hiddenBefore);
 }
 
+export function getDisplayKnowledgeBaseMessages(session: Pick<StoredSession, "messages" | "messagesHiddenBefore" | "historyActiveDate">, now = Date.now()): ChatMessage[] {
+  return hideSettledKnowledgeBaseRunInternals(getVisibleKnowledgeBaseMessages(session, now));
+}
+
 export function getHiddenKnowledgeBaseMessages(session: Pick<StoredSession, "messages" | "messagesHiddenBefore" | "historyActiveDate">, now = Date.now()): ChatMessage[] {
   const activeMessages = getActiveKnowledgeBaseMessages(session, now);
   const hiddenBefore = normalizedHiddenBefore(session.messagesHiddenBefore);
@@ -32,6 +36,7 @@ export function clearKnowledgeBaseVisibleHistory(session: StoredSession, now = D
   session.messagesHiddenBefore = hiddenBefore;
   delete session.threadId;
   delete session.tokenUsage;
+  delete session.knowledgeContext;
   session.updatedAt = now;
   return {
     hiddenCount: getHiddenKnowledgeBaseMessages(session).length,
@@ -46,4 +51,17 @@ export function restoreKnowledgeBaseVisibleHistory(session: StoredSession, now =
 
 function normalizedHiddenBefore(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function hideSettledKnowledgeBaseRunInternals(messages: ChatMessage[]): ChatMessage[] {
+  const knowledgeRunIds = new Set(
+    messages
+      .filter((message) => message.itemType === "knowledgeBase" && message.runId)
+      .map((message) => message.runId as string)
+  );
+  if (!knowledgeRunIds.size) return messages;
+  return messages.filter((message) => {
+    if (!message.runId || !knowledgeRunIds.has(message.runId)) return true;
+    return message.role === "user" || message.itemType === "knowledgeBase";
+  });
 }
