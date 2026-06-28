@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 0.8.0 知识库安全海报，展示 Raw 保护、本地历史和后台会话归档。" src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
+  <img width="1024" alt="Codex EchoInk 1.0.0 首页工作台海报，展示日历、知识库健康、活跃热力图、卡片筛选和复制内链。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v0.8.0-0EA5E9?style=flat-square" alt="版本 v0.8.0">
+    <img src="https://img.shields.io/badge/version-v1.0.0-0EA5E9?style=flat-square" alt="版本 v1.0.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip"><strong>下载 v0.8.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip"><strong>下载 v1.0.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -74,6 +74,18 @@
 - 输入框上方显示排队卡片，未执行任务可以删除，也可以拖动改顺序。
 - 当前任务成功后才自动执行下一条；停止或失败后队列暂停，等你手动继续。
 - `/ask`、`/maintain`、`/journal` 等知识库命令会串行执行，避免并发污染上下文。
+
+### 首页工作台
+
+<img width="1024" alt="Codex EchoInk 1.0.0 首页工作台，包含日历、知识库健康、活跃热力图和笔记卡片。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+
+- 可在设置里开启 Obsidian 启动时默认打开 EchoInk 首页。
+- 首页标签页可以关闭，也可以通过 Obsidian 命令重新打开。
+- Ribbon 图标会同时打开 EchoInk 侧栏和首页。
+- 首页展示 Wiki 状态、Raw 待提炼、健康分数、年度体检热力图、日历和关键统计。
+- 笔记卡片流会根据窗口宽度自适应，适合 14 寸笔记本和大屏。
+- 支持按状态、推荐分组、更新时间、相关度和一级文件夹筛选。
+- 每张卡片可复制 Obsidian 内链、相对路径和 Markdown 链接。
 
 ### 知识库自动化运维
 
@@ -144,6 +156,26 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.0.0
+
+**首页工作台更新：** EchoInk 现在可以作为 Obsidian 里的知识库管理首页使用。
+
+**更新内容：**
+
+- 新增可关闭的首页标签页，可在设置里开启默认打开，也可从 Obsidian 命令面板重新打开。
+- Ribbon 图标会同时打开 EchoInk 侧栏和首页。
+- 首页展示 Wiki 健康、Raw 待处理、年度体检热力图、日历、健康分数和关键统计。
+- 新增自适应笔记卡片流，用来查看最近 Wiki 更新和推荐笔记。
+- 支持按标签、更新时间、相关度和一级文件夹筛选卡片。
+- 卡片更多菜单支持复制 Obsidian 内链、相对路径和 Markdown 链接。
+
+**使用方法：**
+
+1. 在 EchoInk 设置里开启启动时打开首页。
+2. 从 Ribbon 图标或 Obsidian 命令面板打开首页。
+3. 用卡片区上方的筛选项聚焦要看的笔记。
+4. 在卡片更多菜单里复制需要的链接格式。
 
 ### v0.8.0
 
@@ -375,7 +407,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-0.8.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-1.0.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 
@@ -431,6 +463,8 @@ codex-echoink/
 
 <a id="截图"></a>
 ## 截图
+
+![Codex EchoInk 首页工作台](docs/images/codex-echoink-home-dashboard-v1.0.0.png)
 
 ![Codex EchoInk 任务队列和输入菜单](docs/images/codex-echoink-turn-queue-v0.7.2.png)
 

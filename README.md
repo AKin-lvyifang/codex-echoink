@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 0.8.0 Knowledge Safety poster showing Raw Protected, Local History, and Threads Archived." src="docs/images/codex-echoink-knowledge-safety-v0.8.0.png">
+  <img width="1024" alt="Codex EchoInk 1.0.0 Home Dashboard poster showing calendar, knowledge health, activity heatmap, card filters, and copy internal link." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v0.8.0-0EA5E9?style=flat-square" alt="Version v0.8.0">
+    <img src="https://img.shields.io/badge/version-v1.0.0-0EA5E9?style=flat-square" alt="Version v1.0.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip"><strong>Download v0.8.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip"><strong>Download v1.0.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -72,6 +72,18 @@
 - Shows queued cards above the composer, with delete and drag-to-reorder for work that has not started.
 - Runs the next item only after the current task succeeds; stop or failure pauses the queue until you resume it.
 - Keeps Knowledge commands such as `/ask`, `/maintain`, and `/journal` serial, so they do not run on top of each other.
+
+### Home Dashboard
+
+<img width="1024" alt="Codex EchoInk 1.0.0 Home Dashboard with calendar, knowledge health, activity heatmap, and note cards." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+
+- Opens an EchoInk Home tab on startup when enabled in settings.
+- Adds an Obsidian command to reopen Home after the tab is closed.
+- Makes the ribbon icon open both the EchoInk sidebar and the Home dashboard.
+- Shows Wiki status, Raw pending work, health score, yearly check heatmap, calendar, and recent activity.
+- Displays a responsive note-card stream that adapts to smaller laptop screens.
+- Filters cards by status, recommendation group, update time, relevance, and first-level folder.
+- Copies Obsidian internal links, relative paths, and Markdown links from each card.
 
 ### Knowledge Base Operations
 
@@ -140,6 +152,26 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.0.0
+
+**Home dashboard update:** EchoInk now opens as a knowledge-base command center inside Obsidian.
+
+**What changed:**
+
+- Added a closable Home tab that can open by default and can be reopened from the Obsidian command palette.
+- Made the ribbon icon open both the EchoInk sidebar and Home dashboard.
+- Added Home status modules for Wiki health, Raw pending work, yearly check heatmap, calendar, health score, and key vault counts.
+- Added a responsive note-card stream for recent Wiki updates and recommendations.
+- Added filters and sorting for tags, update time, relevance, and first-level folders.
+- Added card actions for copying Obsidian internal links, relative paths, and Markdown links.
+
+**How to use:**
+
+1. Enable Home on startup in EchoInk settings.
+2. Open Home from the ribbon icon or the Obsidian command palette.
+3. Use the filters above the cards to focus the knowledge base view.
+4. Use each card menu to copy the link format you need.
 
 ### v0.8.0
 
@@ -370,7 +402,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-0.8.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/0.8.0/codex-echoink-0.8.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-1.0.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 
@@ -422,6 +454,8 @@ Try these steps:
 - Knowledge management runs keep Raw source bodies read-only and only update indexes or trackers. In ordinary Agent chat, Raw file organization follows your explicit instruction and the active permission mode.
 
 ## Screenshots
+
+![Codex EchoInk Home Dashboard](docs/images/codex-echoink-home-dashboard-v1.0.0.png)
 
 ![Codex EchoInk turn queue and composer menus](docs/images/codex-echoink-turn-queue-v0.7.2.png)
 
