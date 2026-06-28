@@ -276,6 +276,13 @@ export class CodexSettingTab extends PluginSettingTab {
       })
     ), "panel-right-open");
 
+    this.decorateSetting(new Setting(containerEl).setName(copy.general.autoOpenHome).addToggle((toggle) =>
+      toggle.setValue(this.plugin.settings.autoOpenHome).onChange(async (value) => {
+        this.plugin.settings.autoOpenHome = value;
+        await this.plugin.saveSettings();
+      })
+    ), "layout-dashboard");
+
     this.decorateSetting(new Setting(containerEl).setName(copy.general.showContext).addToggle((toggle) =>
       toggle.setValue(this.plugin.settings.showContext).onChange(async (value) => {
         this.plugin.settings.showContext = value;

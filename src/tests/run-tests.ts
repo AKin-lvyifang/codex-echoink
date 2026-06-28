@@ -117,7 +117,8 @@ import {
 import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
-import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, type KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { buildHomeCards, buildHomeFolderFilterItems, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { KnowledgeBaseManager } from "../knowledge-base/manager";
@@ -374,6 +375,7 @@ assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
+assert.equal(DEFAULT_SETTINGS.autoOpenHome, false);
 assert.equal(DEFAULT_SETTINGS.editorActions.enabled, false);
 assert.equal(DEFAULT_SETTINGS.editorActions.statusSlotEnabled, true);
 assert.equal(DEFAULT_SETTINGS.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
@@ -470,6 +472,8 @@ assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsV
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "en" }).changed, false);
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, settingsLanguage: "fr" }).changed, true);
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).changed, true);
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, autoOpenHome: true }).settings.autoOpenHome, true);
+assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, autoOpenHome: "yes" }).settings.autoOpenHome, false);
 assert.deepEqual(SETTINGS_LANGUAGE_OPTIONS, ["zh-CN", "en"]);
 assert.deepEqual(Object.keys(SETTINGS_COPY).sort(), SETTINGS_LANGUAGE_OPTIONS.slice().sort());
 assertI18nShapeMatches(SETTINGS_COPY["zh-CN"], SETTINGS_COPY.en);
@@ -1766,11 +1770,19 @@ assert.equal(
 
 const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
 const codexViewSource = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
+const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+const homeViewSource = await readFile(path.join(process.cwd(), "src/home/home-view.ts"), "utf8");
 const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
 const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-content");
 const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
 const resourceSearchInputCss = cssRuleBody(settingsStyles, ".codex-resource-search-input");
 const headerHistoryCss = cssRuleBody(settingsStyles, ".codex-header-history");
+const homePageCss = cssRuleBody(settingsStyles, ".codex-home-page");
+const homeTopGridCss = cssRuleBody(settingsStyles, ".codex-home-top-grid");
+const homeCalendarCss = cssRuleBody(settingsStyles, ".codex-home-calendar");
+const homeHeatmapCss = cssRuleBody(settingsStyles, ".codex-home-heatmap");
+const homeTextLinkCss = cssRuleBody(settingsStyles, ".codex-home-text-link");
+const homeCardGridCss = cssRuleBody(settingsStyles, ".codex-home-card-grid");
 const knowledgeBaseDashboardCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard");
 const knowledgeBaseDashboardVisibleCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard.is-visible");
 const knowledgeBaseDashboardHeaderCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-header");
@@ -1795,6 +1807,141 @@ assert.match(codexViewSource, /codex-header-history/);
 assert.match(codexViewSource, /title: "查看知识库历史"/);
 assert.match(codexViewSource, /this\.messages = getDisplayKnowledgeBaseMessages/);
 assert.doesNotMatch(codexViewSource, /codex-kb-dashboard-history/);
+assert.match(mainPluginSource, /VIEW_TYPE_ECHOINK_HOME/);
+assert.match(mainPluginSource, /id: "open-echoink-home"/);
+assert.match(mainPluginSource, /activateHomeAndSidebar/);
+assert.match(mainPluginSource, /ensureHomeWorkspaceSpace/);
+assert.match(mainPluginSource, /rightSplit\.collapse/);
+assert.match(mainPluginSource, /leftSplit\.collapse/);
+assert.match(homeViewSource, /知识活动日历/);
+assert.match(homeViewSource, /今日复盘/);
+assert.match(homeViewSource, /按相关度/);
+assert.match(homeViewSource, /openRefineCommand/);
+assert.match(homeViewSource, /openReviewCommand/);
+assert.match(homeViewSource, /isSystemHomeCardPath/);
+assert.match(homeViewSource, /basename\.startsWith\(["']\.["']\)/);
+assert.doesNotMatch(homeViewSource, /card\.kind === "raw" \? "提炼" : "复盘"/);
+assert.doesNotMatch(homeViewSource, /"处理"/);
+const homeDashboardFile = (filePath: string, mtime: number): KnowledgeBaseDashboardFile => ({ path: filePath, size: 1, mtime });
+const homeCards = buildHomeCards({
+  raw: {
+    recentFiles: [
+      homeDashboardFile("raw/.secret.md", 1700000000001),
+      homeDashboardFile("raw/index.md", 1700000000002),
+      homeDashboardFile("raw/articles/real-source.md", 1700000000003)
+    ],
+    changedCount: 1,
+    todayCount: 1
+  },
+  wiki: {
+    recentFiles: [
+      homeDashboardFile("wiki/index.md", 1700000000004),
+      homeDashboardFile("wiki/ai/00-索引.md", 1700000000005),
+      homeDashboardFile("wiki/ai/real-page.md", 1700000000006)
+    ],
+    todayCount: 1
+  },
+  inbox: {
+    recentFiles: [
+      homeDashboardFile("inbox/.DS_Store", 1700000000007),
+      homeDashboardFile("inbox/capture.md", 1700000000008)
+    ],
+    todayCount: 1
+  },
+  outputs: {
+    recentFiles: [
+      homeDashboardFile("outputs/.ingest-tracker.md", 1700000000009),
+      homeDashboardFile("outputs/.raw-digest-registry.json", 1700000000010),
+      homeDashboardFile("outputs/maintenance/kb-check-2026-06-28.md", 1700000000011)
+    ]
+  }
+} as unknown as KnowledgeBaseDashboardSnapshot);
+assert.deepEqual(homeCards.map((card) => card.path).sort(), [
+  "inbox/capture.md",
+  "outputs/maintenance/kb-check-2026-06-28.md",
+  "raw/articles/real-source.md",
+  "wiki/ai/real-page.md"
+]);
+assert.equal(isSystemHomeCardPath("outputs/.ingest-tracker.md"), true);
+assert.equal(isSystemHomeCardPath("outputs/.raw-digest-registry.json"), true);
+assert.equal(isSystemHomeCardPath("wiki/ai/00-索引.md"), true);
+assert.equal(isSystemHomeCardPath("raw/articles/real-source.md"), false);
+assert.deepEqual(HOME_CARD_ACTION_LABELS, ["打开", "提炼", "加入复盘"]);
+assert.match(settingsStyles, /\.codex-home-page\s*\{[\s\S]*?max-width:\s*1360px;/);
+assert.match(settingsStyles, /\.codex-home-top-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1\.22fr\)\s*minmax\(430px,\s*0\.78fr\);/);
+assert.match(homeCalendarCss, /grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\);/);
+assert.match(settingsStyles, /\.codex-home-review-metrics\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+assert.match(settingsStyles, /\.codex-home-heatmap-cells\s*\{[\s\S]*?grid-template-columns:\s*repeat\(52,\s*minmax\(5px,\s*1fr\)\);/);
+assert.match(settingsStyles, /\.workspace-leaf-content\[data-type="codex-echoink-home"\]\s+\.view-header\s*\{[\s\S]*?display:\s*none;/);
+assert.match(settingsStyles, /\.codex-home-card-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(360px,\s*100%\),\s*1fr\)\);/);
+assert.doesNotMatch(settingsStyles, /\.codex-home-card-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit,/);
+assert.match(homeTextLinkCss, /min-height:\s*30px;/);
+assert.match(homeTextLinkCss, /padding:\s*0 12px;/);
+assert.match(homeTextLinkCss, /white-space:\s*nowrap;/);
+assert.match(settingsStyles, /\.codex-home-card-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)\s*30px;[\s\S]*?gap:\s*8px;/);
+assert.match(cssRuleBody(settingsStyles, ".codex-home-card-status strong"), /color:\s*inherit;/);
+assert.match(cssRuleBody(settingsStyles, ".codex-home-legend-dot.is-checked"), /background:\s*var\(--color-blue\);/);
+assert.match(settingsStyles, /@container\s+codex-home-card\s*\(max-width:\s*320px\)/);
+assert.match(settingsStyles, /@container\s+codex-home\s*\(max-width:\s*1120px\)/);
+assert.match(settingsStyles, /@container\s+codex-home\s*\(max-width:\s*760px\)/);
+assert.doesNotMatch(settingsStyles, /\.codex-home-card-grid\s+\.codex-home-card:nth-child/);
+assert.match(homeViewSource, /HOME_CARDS_PAGE_SIZE/);
+assert.match(homeViewSource, /显示更多/);
+assert.match(homeViewSource, /openHomeSortMenu/);
+assert.match(homeViewSource, /openHomeFolderMenu/);
+assert.match(homeViewSource, /openHomeCardMenu/);
+assert.match(homeViewSource, /复制链接/);
+assert.match(homeViewSource, /复制 Obsidian 内链/);
+assert.match(homeViewSource, /复制相对路径/);
+assert.match(homeViewSource, /复制 Markdown 链接/);
+assert.match(homeViewSource, /homeCardObsidianLinkToCopy\(card\)/);
+assert.match(homeViewSource, /homeCardPathToCopy\(card\)/);
+assert.match(homeViewSource, /homeCardMarkdownLinkToCopy\(card\)/);
+assert.match(homeViewSource, /按更新时间/);
+assert.match(homeViewSource, /按文件夹/);
+assert.match(homeViewSource, /全部文件夹/);
+assert.match(homeViewSource, /文件夹筛选/);
+assert.deepEqual(HOME_SORT_OPTIONS.map((option) => option.label), ["按相关度", "按更新时间", "按文件夹"]);
+const sortableHomeCards = [
+  { id: "older-b", title: "Older B", path: "wiki/b/older.md", kind: "wiki", summary: "", tags: [], status: "Wiki 笔记", touchedAt: 10 },
+  { id: "newer-a", title: "Newer A", path: "raw/a/newer.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 30 },
+  { id: "middle-a", title: "Middle A", path: "raw/a/middle.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 20 }
+] as const;
+assert.deepEqual(sortHomeCards([...sortableHomeCards], "relevance").map((card) => card.id), ["older-b", "newer-a", "middle-a"]);
+assert.deepEqual(sortHomeCards([...sortableHomeCards], "updated").map((card) => card.id), ["newer-a", "middle-a", "older-b"]);
+assert.deepEqual(sortHomeCards([...sortableHomeCards], "folder").map((card) => card.id), ["newer-a", "middle-a", "older-b"]);
+assert.equal(HOME_FOLDER_ALL, "all");
+assert.equal(homeCardFolderScope("wiki/ai-intelligence/concepts/page.md"), "wiki/ai-intelligence");
+assert.equal(homeCardFolderScope("raw/source.md"), "raw");
+assert.deepEqual(buildHomeFolderFilterItems([...sortableHomeCards]).map((item) => `${item.id}:${item.count}`), [
+  "all:3",
+  "raw/a:2",
+  "wiki/b:1"
+]);
+assert.deepEqual(filterHomeCardsByFolder([...sortableHomeCards], "raw/a").map((card) => card.id), ["newer-a", "middle-a"]);
+assert.equal(homeCardPathToCopy(sortableHomeCards[1]), "raw/a/newer.md");
+assert.equal(homeCardObsidianLinkToCopy(sortableHomeCards[1]), "[[raw/a/newer]]");
+assert.equal(homeCardMarkdownLinkToCopy(sortableHomeCards[1]), "[Newer A](<raw/a/newer.md>)");
+assert.equal(homeCardMarkdownLinkToCopy({ ...sortableHomeCards[1], title: "A [link]" }), "[A \\[link\\]](<raw/a/newer.md>)");
+assert.equal(HOME_CARDS_PAGE_SIZE, 24);
+assert.equal(resolveDefaultHomeFilter([
+  { id: "a", title: "A", path: "wiki/a.md", kind: "wiki", summary: "", tags: [], status: "Wiki 更新", touchedAt: 3 },
+  { id: "b", title: "B", path: "raw/b.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 2 }
+]), "wiki");
+assert.equal(resolveDefaultHomeFilter([
+  { id: "b", title: "B", path: "raw/b.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 2 }
+]), "suggested");
+assert.equal(resolveActiveHomeFilter("all", false, [
+  { id: "b", title: "B", path: "raw/b.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 2 }
+], true), "suggested");
+assert.equal(resolveActiveHomeFilter("all", true, [
+  { id: "b", title: "B", path: "raw/b.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 2 }
+], true), "all");
+assert.equal(resolveActiveHomeFilter(null, false, [], false), "all");
+assert.equal(filterHomeCards([
+  { id: "a", title: "A", path: "wiki/a.md", kind: "wiki", summary: "", tags: [], status: "Wiki 更新", touchedAt: 3 },
+  { id: "b", title: "B", path: "raw/b.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 2 }
+], "wiki").length, 1);
 assert.match(headerHistoryCss, /gap:\s*5px;/);
 assert.match(headerHistoryCss, /padding:\s*0 9px;/);
 assert.match(knowledgeBaseDashboardCss, /flex:\s*0 1 auto;/);
@@ -3348,7 +3495,9 @@ try {
   await writeFile(path.join(kbVault, "raw", "attachments", "paper.pdf"), Buffer.from("%PDF-1.7"));
   await writeFile(path.join(kbVault, "raw", "attachments", "doc.docx"), Buffer.from("PK"));
   await writeFile(path.join(kbVault, "raw", "index.md"), "# Raw Index\n", "utf8");
+  await writeFile(path.join(kbVault, "raw", "index 2.md"), "# Raw Index Copy\n", "utf8");
   await writeFile(path.join(kbVault, "raw", "ignore.csv"), "a,b", "utf8");
+  await writeFile(path.join(kbVault, "raw", "articles", "index 2.md"), "# Article Index Copy\n\n正文", "utf8");
   await writeFile(path.join(kbVault, "raw", "articles", "demo.base.md"), "# Base\n", "utf8");
   await writeFile(path.join(kbVault, "wiki", "ai-intelligence", "concepts", "harness-engineering.md"), [
     "# Harness Engineering",
@@ -3374,12 +3523,13 @@ try {
   const firstDiscovery = await discoverKnowledgeBaseSources(kbVault, {});
   assert.deepEqual(firstDiscovery.sources.map((source) => source.relativePath).sort(), [
     "raw/articles/demo.md",
+    "raw/articles/index 2.md",
     "raw/attachments/doc.docx",
     "raw/attachments/image.png",
     "raw/attachments/paper.pdf",
     "raw/clippings/clip.md"
   ]);
-  assert.equal(firstDiscovery.changedSources.length, 5);
+  assert.equal(firstDiscovery.changedSources.length, 6);
   assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("image.png"))?.modality, "image");
   assert.equal(firstDiscovery.sources.find((source) => source.relativePath.endsWith("paper.pdf"))?.modality, "pdf");
   const demoSource = firstDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")!;
@@ -3387,7 +3537,7 @@ try {
     [demoSource.relativePath]: { size: demoSource.size, mtime: demoSource.mtime }
   });
   assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
-  assert.equal(secondDiscovery.changedSources.length, 5);
+  assert.equal(secondDiscovery.changedSources.length, 6);
   assert.ok(secondDiscovery.reportPath.startsWith("outputs/maintenance/kb-maintenance-"));
   const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
   assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
@@ -4459,6 +4609,26 @@ try {
   assert.equal(await fileExists(hardlinkPath), false);
 } finally {
   await rm(maintenanceHardlinkAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenanceConflictDuplicateAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-conflict-duplicate-after-agent-");
+try {
+  const basePath = path.join(maintenanceConflictDuplicateAfterAgentVault, "wiki", "ai-intelligence", "references", "agent-conflict.md");
+  const duplicatePath = path.join(maintenanceConflictDuplicateAfterAgentVault, "wiki", "ai-intelligence", "references", "agent-conflict 2.md");
+  await mkdir(path.dirname(basePath), { recursive: true });
+  await writeFile(basePath, "# Agent conflict\n\n原始正文", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceConflictDuplicateAfterAgentVault, {
+    beforeAgentReturn: async () => {
+      await writeFile(duplicatePath, "# Agent conflict\n\n冲突副本正文", "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增冲突副本不继续");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /知识库写入区不能包含冲突副本/);
+  assert.equal(await readFile(basePath, "utf8"), "# Agent conflict\n\n原始正文");
+  assert.equal(await fileExists(duplicatePath), false);
+} finally {
+  await rm(maintenanceConflictDuplicateAfterAgentVault, { recursive: true, force: true });
 }
 
 const maintenanceFailurePreservesUntouchedFilesVault = await createMaintenanceVaultForTest("codex-kb-maintain-preserve-untouched-");
@@ -7760,7 +7930,13 @@ try {
   await writeFile(path.join(dashboardVault, "wiki", "ai-intelligence", "today.md"), "# Today\n", "utf8");
   await writeFile(path.join(dashboardVault, "wiki", "content", "old.md"), "# Content\n", "utf8");
   await writeFile(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), "# Tracker\n", "utf8");
-  await writeFile(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), "# Report\n", "utf8");
+  await writeFile(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), [
+    "# Report",
+    "",
+    "本次维护完成 raw、wiki 与 inbox 状态同步。",
+    "",
+    "- 断链：0"
+  ].join("\n"), "utf8");
   await writeFile(path.join(dashboardVault, "inbox", "idea.md"), "# Idea\n", "utf8");
   await writeFile(path.join(dashboardVault, "inbox", "old.md"), "# Old idea\n", "utf8");
   const today = daysAgoDateForTest(0);
@@ -7832,6 +8008,24 @@ try {
   assert.equal(dashboard.checkHeatmap.find((day) => day.date === reportlessMaintenanceDate)?.status, "success");
   assert.ok(dashboard.checkHeatmap.length >= 365);
   assert.ok(dashboard.checkHeatmap.length <= 366);
+  assert.equal(dashboard.outputs.latestReportTitle, "Report");
+  assert.match(dashboard.outputs.latestReportSummary, /raw、wiki 与 inbox 状态同步/);
+  const todayActivity = dashboard.activity.days.find((day) => day.date === formatDateKeyForTest(today));
+  assert.equal(todayActivity?.raw, 1);
+  assert.equal(todayActivity?.wiki, 1);
+  assert.equal(todayActivity?.inbox, 1);
+  assert.equal(todayActivity?.checks, 1);
+  assert.equal(todayActivity?.failures, 0);
+  assert.ok((todayActivity?.total ?? 0) >= 4);
+  assert.deepEqual(dashboard.activity.heatmapRows.map((row) => row.id), ["health", "wiki", "raw", "maintenance"]);
+  assert.equal(dashboard.activity.heatmapRows.every((row) => row.cells.length === 52), true);
+  assert.ok(dashboard.activity.heatmapRows.find((row) => row.id === "raw")?.cells.some((cell) => cell.count > 0 && cell.level !== "none"));
+  assert.ok(dashboard.activity.logs.some((log) => log.label === "体检完成" && log.tone === "green"));
+  assert.ok(dashboard.activity.logs.some((log) => log.label === "Raw 待提炼" && log.tone === "orange"));
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "raw/articles/new.md" && card.status === "Raw 待提炼"));
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "wiki/ai-intelligence/today.md" && card.status === "Wiki 更新"));
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "outputs/kb-maintenance-2026-05-15.md" && card.summary.includes("raw、wiki")));
+  assert.equal(dashboard.recommendations.cards.some((card) => card.path.includes(".ingest-tracker") || card.path.includes(".raw-digest-registry")), false);
 
   await utimes(path.join(dashboardVault, "outputs", ".ingest-tracker.md"), threeDaysAgo, threeDaysAgo);
   await utimes(path.join(dashboardVault, "outputs", "kb-maintenance-2026-05-15.md"), threeDaysAgo, threeDaysAgo);
@@ -8005,6 +8199,29 @@ try {
   assert.equal(thresholdRiskDashboard.health.label, "风险");
 } finally {
   await rm(dashboardVault, { recursive: true, force: true });
+}
+
+const homeAllCardsVault = await mkdtemp(path.join(tmpdir(), "codex-kb-home-all-cards-"));
+try {
+  await mkdir(path.join(homeAllCardsVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(homeAllCardsVault, "wiki", "topic"), { recursive: true });
+  await mkdir(path.join(homeAllCardsVault, "outputs"), { recursive: true });
+  await mkdir(path.join(homeAllCardsVault, "inbox"), { recursive: true });
+  await writeFile(path.join(homeAllCardsVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(homeAllCardsVault, "raw", "index.md"), "# Raw\n", "utf8");
+  await writeFile(path.join(homeAllCardsVault, "wiki", "index.md"), "# Wiki\n", "utf8");
+  await writeFile(path.join(homeAllCardsVault, "outputs", ".ingest-tracker.md"), "# Tracker\n", "utf8");
+  for (let index = 0; index < 48; index += 1) {
+    await writeFile(path.join(homeAllCardsVault, "wiki", "topic", `page-${String(index).padStart(2, "0")}.md`), `# Wiki Page ${index}\n\n第 ${index} 条知识页。`, "utf8");
+  }
+  await writeFile(path.join(homeAllCardsVault, "raw", "articles", "source.md"), "# Source\n\nRaw source", "utf8");
+  const snapshot = await buildKnowledgeBaseDashboardSnapshot(homeAllCardsVault, normalizeSettingsData({ settingsVersion: 27 }).settings.knowledgeBase);
+  assert.ok(snapshot.recommendations.cards.length > 36);
+  assert.equal(snapshot.recommendations.cards.filter((card) => card.kind === "wiki").length, 48);
+  assert.equal(snapshot.recommendations.cards.some((card) => card.path === "wiki/index.md"), false);
+  assert.ok(snapshot.recommendations.cards.every((card) => card.title && card.summary));
+} finally {
+  await rm(homeAllCardsVault, { recursive: true, force: true });
 }
 
 const externalMaintenanceVault = await mkdtemp(path.join(tmpdir(), "codex-kb-external-"));

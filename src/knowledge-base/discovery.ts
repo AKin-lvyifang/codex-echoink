@@ -16,7 +16,7 @@ export async function discoverKnowledgeBaseSources(vaultPath: string, processed:
     if (!SUPPORTED_RAW_EXTENSIONS.has(ext)) continue;
     const stat = await fsp.stat(file);
     const relativePath = normalizeSlashes(path.relative(vaultPath, file));
-    if (relativePath === "raw/index.md") continue;
+    if (isRawRootIndexPath(relativePath)) continue;
     const lowerPath = relativePath.toLowerCase();
     if (lowerPath.endsWith(".base") || lowerPath.endsWith(".base.md") || lowerPath.includes(".assets/")) continue;
     const mime = mimeForKnowledgeFile(file);
@@ -97,6 +97,10 @@ function isSourceChanged(source: KnowledgeBaseSource, previous?: { size: number;
   if (!previous) return true;
   if (previous.fingerprint) return previous.fingerprint !== source.fingerprint;
   return true;
+}
+
+function isRawRootIndexPath(relativePath: string): boolean {
+  return relativePath === "raw/index.md" || /^raw\/index \d+\.md$/i.test(relativePath);
 }
 
 async function walkFiles(dir: string): Promise<string[]> {

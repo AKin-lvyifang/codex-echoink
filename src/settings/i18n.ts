@@ -94,6 +94,7 @@ const ZH_CN = {
     defaultPermission: "默认文件权限",
     defaultMode: "默认模式",
     autoOpen: "启动时自动打开侧栏",
+    autoOpenHome: "启动时自动打开首页",
     showContext: "显示上下文容量",
     reconnect: "重新连接 Codex",
     languageOptions: {
@@ -457,6 +458,7 @@ const EN: SettingsCopy = {
     defaultPermission: "Default file access",
     defaultMode: "Default mode",
     autoOpen: "Open sidebar on startup",
+    autoOpenHome: "Open homepage on startup",
     showContext: "Show context usage",
     reconnect: "Reconnect Codex",
     languageOptions: {

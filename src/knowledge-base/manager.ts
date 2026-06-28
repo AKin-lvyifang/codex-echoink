@@ -2860,6 +2860,9 @@ function assertSafeKnowledgeTransactionRoots(snapshot: KnowledgeTransactionSnaps
     if (entry.kind === "file" && typeof entry.nlink === "number" && entry.nlink > 1) {
       throw new Error(`知识库写入区不能包含 hardlink：${relativePath}`);
     }
+    if (entry.kind === "file" && isKnowledgeConflictDuplicatePath(relativePath, snapshot.entries)) {
+      throw new Error(`知识库写入区不能包含冲突副本：${relativePath}`);
+    }
   }
   for (const root of snapshot.roots) {
     const entry = snapshot.entries.get(root);
@@ -2880,6 +2883,13 @@ async function assertSafeKnowledgeTransactionCurrentState(
   options: { allowedUnsafePaths?: Set<string> } = {}
 ): Promise<void> {
   assertSafeKnowledgeTransactionRoots(await snapshotKnowledgeTransaction(vaultPath, roots), options);
+}
+
+function isKnowledgeConflictDuplicatePath(relativePath: string, entries: Map<string, KnowledgeTransactionSnapshotEntry>): boolean {
+  const normalized = normalizePath(relativePath);
+  const match = /^(.*) \d+(\.md)$/i.exec(normalized);
+  if (!match) return false;
+  return entries.has(`${match[1]}${match[2]}`);
 }
 
 async function snapshotKnowledgeTransaction(vaultPath: string, roots: string[]): Promise<KnowledgeTransactionSnapshot> {

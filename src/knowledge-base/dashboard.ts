@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
+import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
 import { rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
@@ -70,6 +70,57 @@ export interface KnowledgeBaseDashboardHeatmapDay {
   status: KnowledgeBaseDashboardCheckStatus;
 }
 
+export type KnowledgeBaseDashboardActivityLevel = "none" | "low" | "mid" | "high" | "bad";
+export type KnowledgeBaseDashboardCardKind = "raw" | "wiki" | "inbox" | "outputs";
+export type KnowledgeBaseDashboardLogTone = "green" | "blue" | "orange" | "purple" | "red" | "muted";
+
+export interface KnowledgeBaseDashboardActivityDay {
+  date: string;
+  raw: number;
+  wiki: number;
+  inbox: number;
+  outputs: number;
+  checks: number;
+  failures: number;
+  total: number;
+  status: KnowledgeBaseDashboardCheckStatus;
+}
+
+export interface KnowledgeBaseDashboardHeatmapCell {
+  startDate: string;
+  endDate: string;
+  count: number;
+  level: KnowledgeBaseDashboardActivityLevel;
+  status: KnowledgeBaseDashboardCheckStatus;
+}
+
+export interface KnowledgeBaseDashboardHeatmapRow {
+  id: "health" | "wiki" | "raw" | "maintenance";
+  label: string;
+  cells: KnowledgeBaseDashboardHeatmapCell[];
+}
+
+export interface KnowledgeBaseDashboardActivityLog {
+  id: string;
+  label: string;
+  text: string;
+  at: number;
+  tone: KnowledgeBaseDashboardLogTone;
+  path?: string;
+}
+
+export interface KnowledgeBaseDashboardRecommendationCard {
+  id: string;
+  title: string;
+  path: string;
+  kind: KnowledgeBaseDashboardCardKind;
+  summary: string;
+  tags: string[];
+  status: string;
+  touchedAt: number;
+  score: number;
+}
+
 export interface KnowledgeBaseDashboardSnapshot {
   generatedAt: number;
   vaultName: string;
@@ -108,6 +159,9 @@ export interface KnowledgeBaseDashboardSnapshot {
   outputs: KnowledgeBaseDashboardDirectory & {
     latestReportPath: string;
     latestReportExists: boolean;
+    latestReportTitle: string;
+    latestReportSummary: string;
+    latestReportMtime: number;
   };
   inbox: KnowledgeBaseDashboardDirectory & {
     todayCount: number;
@@ -115,11 +169,20 @@ export interface KnowledgeBaseDashboardSnapshot {
   health: KnowledgeBaseDashboardHealth;
   checkFreshness: KnowledgeBaseDashboardCheckFreshness;
   checkHeatmap: KnowledgeBaseDashboardHeatmapDay[];
+  activity: {
+    days: KnowledgeBaseDashboardActivityDay[];
+    heatmapRows: KnowledgeBaseDashboardHeatmapRow[];
+    logs: KnowledgeBaseDashboardActivityLog[];
+  };
+  recommendations: {
+    cards: KnowledgeBaseDashboardRecommendationCard[];
+  };
   warnings: string[];
 }
 
 const MAX_DASHBOARD_FILES = 3000;
-const RECENT_FILE_LIMIT = 6;
+const RECENT_FILE_LIMIT = 18;
+const RECOMMENDATION_PREVIEW_LIMIT = 96;
 const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const HEALTH_SCORE_THRESHOLD_TEXT = "85+ 健康，60-84 风险，低于 60 异常。";
 const HEALTH_SCORE_CHECK_NOTE = "体检成功只代表检查完成；健康分反映检查发现的结构问题。";
@@ -160,6 +223,27 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     trackerExists,
     lastError: settings.lastError,
     scanLimited: raw.limited || wiki.limited || outputs.limited || inbox.limited
+  });
+  const activityDays = buildActivityDays({
+    generatedAt,
+    rawFiles: rawContentFiles,
+    wikiFiles: wiki.files.filter((file) => file.path !== "wiki/index.md"),
+    inboxFiles: inbox.files,
+    outputFiles: visibleDashboardCardFiles(outputs.files),
+    healthHistory: settings.healthHistory ?? [],
+    maintenanceHistory
+  });
+  const recommendationCards = await buildRecommendationCards(vaultPath, {
+    rawFiles: rawContentFiles,
+    wikiFiles: wiki.files,
+    inboxFiles: inbox.files,
+    outputFiles: outputs.files,
+    generatedAt,
+    latestReportPath: reportPath,
+    latestReportSummary: reportFindings.summary,
+    processedSources,
+    registryEntries: registry.entries,
+    trackerHints: trackerHints.paths
   });
   const health = buildHealth({
     settings,
@@ -219,7 +303,10 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     outputs: {
       ...stripLimited(outputs),
       latestReportPath: reportPath,
-      latestReportExists: reportExists
+      latestReportExists: reportExists,
+      latestReportTitle: reportFindings.title,
+      latestReportSummary: reportFindings.summary,
+      latestReportMtime: reportFindings.checkedAt
     },
     inbox: {
       ...stripLimited(inbox),
@@ -228,6 +315,27 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     health,
     checkFreshness,
     checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, maintenanceHistory),
+    activity: {
+      days: activityDays,
+      heatmapRows: buildActivityHeatmapRows(activityDays),
+      logs: buildActivityLogs({
+        generatedAt,
+        rawChangedCount,
+        rawTodayCount,
+        wikiTodayCount,
+        inboxCount: inbox.fileCount,
+        inboxTodayCount,
+        latestReportPath: reportPath,
+        latestReportTitle: reportFindings.title,
+        latestReportMtime: reportFindings.checkedAt,
+        latestMaintenance: latestMaintenanceEntry(maintenanceHistory),
+        health,
+        warnings
+      })
+    },
+    recommendations: {
+      cards: recommendationCards
+    },
     warnings
   };
 }
@@ -327,35 +435,34 @@ function buildRawDigestStatus(
 ): KnowledgeBaseRawDigestStatus {
   const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0 };
   for (const file of files) {
-    if (!file.fingerprint) {
-      status.pending += 1;
-      continue;
-    }
-    const previous = processed[file.path];
-    const registry = registryEntries[file.path];
-    const trusted = rawDigestRecordIsTrusted(file.rawDigest ?? null, file.fingerprint)
-      || registry?.fingerprint === file.fingerprint
-      || previous?.fingerprint === file.fingerprint;
-    if (trusted) {
-      status.digested += 1;
-      continue;
-    }
-    const changed = Boolean(
-      (file.rawDigest?.fingerprint && file.rawDigest.fingerprint !== file.fingerprint)
-      || (registry?.fingerprint && registry.fingerprint !== file.fingerprint)
-      || (previous?.fingerprint && previous.fingerprint !== file.fingerprint)
-    );
-    if (changed) {
-      status.changed += 1;
-      continue;
-    }
-    if (previous || trackerHints.has(file.path) || file.rawDigest?.processed) {
-      status.calibration += 1;
-      continue;
-    }
-    status.pending += 1;
+    status[rawDigestState(file, processed, registryEntries, trackerHints)] += 1;
   }
   return status;
+}
+
+type RawDigestState = keyof KnowledgeBaseRawDigestStatus;
+
+function rawDigestState(
+  file: KnowledgeBaseDashboardFile,
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  registryEntries: Record<string, RawDigestRegistryEntry>,
+  trackerHints: Set<string>
+): RawDigestState {
+  if (!file.fingerprint) return "pending";
+  const previous = processed[file.path];
+  const registry = registryEntries[file.path];
+  const trusted = rawDigestRecordIsTrusted(file.rawDigest ?? null, file.fingerprint)
+    || registry?.fingerprint === file.fingerprint
+    || previous?.fingerprint === file.fingerprint;
+  if (trusted) return "digested";
+  const changed = Boolean(
+    (file.rawDigest?.fingerprint && file.rawDigest.fingerprint !== file.fingerprint)
+    || (registry?.fingerprint && registry.fingerprint !== file.fingerprint)
+    || (previous?.fingerprint && previous.fingerprint !== file.fingerprint)
+  );
+  if (changed) return "changed";
+  if (previous || trackerHints.has(file.path) || file.rawDigest?.processed) return "calibration";
+  return "pending";
 }
 
 function authoritativeProcessedSources(
@@ -379,8 +486,360 @@ function authoritativeProcessedSources(
   return result;
 }
 
+interface ActivityDaysInput {
+  generatedAt: number;
+  rawFiles: KnowledgeBaseDashboardFile[];
+  wikiFiles: KnowledgeBaseDashboardFile[];
+  inboxFiles: KnowledgeBaseDashboardFile[];
+  outputFiles: KnowledgeBaseDashboardFile[];
+  healthHistory: KnowledgeBaseHealthHistoryEntry[];
+  maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
+}
+
+function buildActivityDays(input: ActivityDaysInput): KnowledgeBaseDashboardActivityDay[] {
+  const year = new Date(input.generatedAt).getFullYear();
+  const cursor = parseDateKey(`${year}-01-01`);
+  const byDate = new Map<string, KnowledgeBaseDashboardActivityDay>();
+  while (cursor.getFullYear() === year) {
+    const date = formatLocalDateKey(cursor.getTime());
+    byDate.set(date, { date, raw: 0, wiki: 0, inbox: 0, outputs: 0, checks: 0, failures: 0, total: 0, status: "none" });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const addFiles = (files: KnowledgeBaseDashboardFile[], bucket: "raw" | "wiki" | "inbox" | "outputs") => {
+    for (const file of files) {
+      const day = byDate.get(formatLocalDateKey(file.mtime));
+      if (!day) continue;
+      day[bucket] += 1;
+    }
+  };
+  addFiles(input.rawFiles, "raw");
+  addFiles(visibleDashboardCardFiles(input.wikiFiles), "wiki");
+  addFiles(visibleDashboardCardFiles(input.inboxFiles), "inbox");
+  addFiles(visibleDashboardCardFiles(input.outputFiles), "outputs");
+
+  for (const [date, status] of statusByCheckDate(input.healthHistory, input.maintenanceHistory)) {
+    const day = byDate.get(date);
+    if (!day) continue;
+    day.checks = 1;
+    day.failures = status === "failed" ? 1 : 0;
+    day.status = status;
+  }
+
+  for (const day of byDate.values()) {
+    day.total = day.raw + day.wiki + day.inbox + day.outputs + day.checks;
+  }
+  return Array.from(byDate.values());
+}
+
+function buildActivityHeatmapRows(days: KnowledgeBaseDashboardActivityDay[]): KnowledgeBaseDashboardHeatmapRow[] {
+  return [
+    { id: "health", label: "知识健康度", cells: buildWeeklyCells(days, (day) => day.checks, true) },
+    { id: "wiki", label: "Wiki 变更", cells: buildWeeklyCells(days, (day) => day.wiki, false) },
+    { id: "raw", label: "Raw 变更", cells: buildWeeklyCells(days, (day) => day.raw, false) },
+    { id: "maintenance", label: "维护完成", cells: buildWeeklyCells(days, (day) => day.checks, true) }
+  ];
+}
+
+function buildWeeklyCells(
+  days: KnowledgeBaseDashboardActivityDay[],
+  countForDay: (day: KnowledgeBaseDashboardActivityDay) => number,
+  includeStatus: boolean
+): KnowledgeBaseDashboardHeatmapCell[] {
+  const result: KnowledgeBaseDashboardHeatmapCell[] = [];
+  const cellCount = 52;
+  for (let index = 0; index < cellCount; index += 1) {
+    const start = Math.floor((index * days.length) / cellCount);
+    const end = Math.max(start + 1, Math.floor(((index + 1) * days.length) / cellCount));
+    const slice = days.slice(start, end);
+    const count = slice.reduce((sum, day) => sum + countForDay(day), 0);
+    const failed = includeStatus && slice.some((day) => day.failures > 0);
+    const success = includeStatus && slice.some((day) => day.checks > 0);
+    result.push({
+      startDate: slice[0]?.date ?? "",
+      endDate: slice.at(-1)?.date ?? "",
+      count,
+      level: failed ? "bad" : activityLevelForCount(count),
+      status: failed ? "failed" : success ? "success" : "none"
+    });
+  }
+  return result;
+}
+
+function activityLevelForCount(count: number): KnowledgeBaseDashboardActivityLevel {
+  if (count >= 6) return "high";
+  if (count >= 3) return "mid";
+  if (count >= 1) return "low";
+  return "none";
+}
+
+interface ActivityLogsInput {
+  generatedAt: number;
+  rawChangedCount: number;
+  rawTodayCount: number;
+  wikiTodayCount: number;
+  inboxCount: number;
+  inboxTodayCount: number;
+  latestReportPath: string;
+  latestReportTitle: string;
+  latestReportMtime: number;
+  latestMaintenance: KnowledgeBaseMaintenanceHistoryEntry | null;
+  health: KnowledgeBaseDashboardHealth;
+  warnings: string[];
+}
+
+function buildActivityLogs(input: ActivityLogsInput): KnowledgeBaseDashboardActivityLog[] {
+  const logs: KnowledgeBaseDashboardActivityLog[] = [];
+  const add = (log: Omit<KnowledgeBaseDashboardActivityLog, "id">) => {
+    logs.push({ ...log, id: `${log.label}:${log.at}:${logs.length}` });
+  };
+
+  if (input.latestMaintenance) {
+    const failed = input.latestMaintenance.status === "failed";
+    add({
+      label: failed ? "任务失败" : maintenanceModeDoneLabel(input.latestMaintenance.mode),
+      text: input.latestMaintenance.reportPath || `知识健康度 ${input.health.score}/100`,
+      at: input.latestMaintenance.at,
+      tone: failed ? "red" : "green",
+      path: input.latestMaintenance.reportPath || undefined
+    });
+  }
+  if (input.rawChangedCount > 0) {
+    add({
+      label: "Raw 待提炼",
+      text: `${input.rawChangedCount} 条来源需要进入维护；今日新增 ${input.rawTodayCount} 条。`,
+      at: input.generatedAt,
+      tone: "orange"
+    });
+  }
+  if (input.wikiTodayCount > 0) {
+    add({
+      label: "Wiki 更新",
+      text: `今天更新 ${input.wikiTodayCount} 条结构化知识。`,
+      at: input.generatedAt,
+      tone: "blue"
+    });
+  }
+  if (input.inboxCount > 0) {
+    add({
+      label: "Inbox 待分流",
+      text: `${input.inboxCount} 条临时输入待归位；今日新增 ${input.inboxTodayCount} 条。`,
+      at: input.generatedAt,
+      tone: "purple"
+    });
+  }
+  if (input.latestReportPath && input.latestReportMtime) {
+    add({
+      label: "维护报告",
+      text: input.latestReportTitle || titleFromDashboardPath(input.latestReportPath),
+      at: input.latestReportMtime,
+      tone: input.warnings.length ? "orange" : "blue",
+      path: input.latestReportPath
+    });
+  }
+  if (!logs.length) {
+    add({
+      label: "等待扫描",
+      text: "还没有可展示的知识库行动记录。",
+      at: input.generatedAt,
+      tone: "muted"
+    });
+  }
+  return logs.sort((left, right) => right.at - left.at).slice(0, 6);
+}
+
+function maintenanceModeDoneLabel(mode: KnowledgeBaseMaintenanceMode): string {
+  if (mode === "maintain") return "维护完成";
+  if (mode === "reingest") return "重新提炼完成";
+  if (mode === "outputs") return "输出整理完成";
+  if (mode === "inbox") return "Inbox 整理完成";
+  return "体检完成";
+}
+
+interface RecommendationInput {
+  rawFiles: KnowledgeBaseDashboardFile[];
+  wikiFiles: KnowledgeBaseDashboardFile[];
+  inboxFiles: KnowledgeBaseDashboardFile[];
+  outputFiles: KnowledgeBaseDashboardFile[];
+  generatedAt: number;
+  latestReportPath: string;
+  latestReportSummary: string;
+  processedSources: Record<string, { size: number; mtime: number; fingerprint?: string }>;
+  registryEntries: Record<string, RawDigestRegistryEntry>;
+  trackerHints: Set<string>;
+}
+
+async function buildRecommendationCards(vaultPath: string, input: RecommendationInput): Promise<KnowledgeBaseDashboardRecommendationCard[]> {
+  const candidates: RecommendationCandidate[] = [];
+  const addCandidates = (files: KnowledgeBaseDashboardFile[], kind: KnowledgeBaseDashboardCardKind) => {
+    for (const file of visibleDashboardCardFiles(files)) {
+      const rawState = kind === "raw" ? rawDigestState(file, input.processedSources, input.registryEntries, input.trackerHints) : null;
+      const status = dashboardCardStatus(kind, rawState, file, input.generatedAt);
+      candidates.push({
+        file,
+        kind,
+        rawState,
+        status,
+        score: dashboardCardScore(kind, file, status, input)
+      });
+    }
+  };
+  addCandidates(input.rawFiles, "raw");
+  addCandidates(input.wikiFiles, "wiki");
+  addCandidates(input.inboxFiles, "inbox");
+  addCandidates(input.outputFiles, "outputs");
+  candidates.sort((left, right) => right.score - left.score || right.file.mtime - left.file.mtime);
+  const previewPaths = new Set(candidates.slice(0, RECOMMENDATION_PREVIEW_LIMIT).map((candidate) => candidate.file.path));
+  const cards: KnowledgeBaseDashboardRecommendationCard[] = [];
+  for (const candidate of candidates) {
+    cards.push(await dashboardFileToCard(vaultPath, candidate, input, previewPaths.has(candidate.file.path)));
+  }
+  return cards;
+}
+
+interface RecommendationCandidate {
+  file: KnowledgeBaseDashboardFile;
+  kind: KnowledgeBaseDashboardCardKind;
+  rawState: RawDigestState | null;
+  status: string;
+  score: number;
+}
+
+async function dashboardFileToCard(
+  vaultPath: string,
+  candidate: RecommendationCandidate,
+  input: RecommendationInput,
+  shouldReadPreview: boolean
+): Promise<KnowledgeBaseDashboardRecommendationCard> {
+  const { file, kind, status, score } = candidate;
+  const preview = shouldReadPreview ? await readDashboardTextPreview(vaultPath, file) : "";
+  const reportSummary = kind === "outputs" && file.path === input.latestReportPath ? input.latestReportSummary : "";
+  return {
+    id: `${kind}:${file.path}`,
+    title: markdownTitle(preview, titleFromDashboardPath(file.path)),
+    path: file.path,
+    kind,
+    summary: reportSummary || markdownSummary(preview, dashboardCardFallbackSummary(kind, status)),
+    tags: dashboardCardTags(file.path, kind),
+    status,
+    touchedAt: file.mtime,
+    score
+  };
+}
+
+function dashboardCardStatus(kind: KnowledgeBaseDashboardCardKind, rawState: RawDigestState | null, file: KnowledgeBaseDashboardFile, generatedAt: number): string {
+  if (kind === "raw") {
+    if (rawState === "digested") return "已提炼";
+    if (rawState === "calibration") return "待校准";
+    return "Raw 待提炼";
+  }
+  if (kind === "inbox") return "Inbox 待分流";
+  if (kind === "outputs") return "维护报告";
+  return isSameLocalDay(file.mtime, generatedAt) ? "Wiki 更新" : "Wiki 笔记";
+}
+
+function dashboardCardScore(kind: KnowledgeBaseDashboardCardKind, file: KnowledgeBaseDashboardFile, status: string, input: RecommendationInput): number {
+  const days = Math.max(0, daysBetweenDateKeys(formatLocalDateKey(file.mtime), formatLocalDateKey(input.generatedAt)));
+  const recency = Math.max(0, 30 - Math.min(30, days * 3));
+  if (kind === "raw") return recency + (status === "Raw 待提炼" ? 90 : status === "待校准" ? 58 : 28);
+  if (kind === "inbox") return recency + 70;
+  if (kind === "wiki") return recency + (status === "Wiki 更新" ? 80 : 38);
+  return recency + (file.path === input.latestReportPath ? 62 : 34);
+}
+
+function dashboardCardFallbackSummary(kind: KnowledgeBaseDashboardCardKind, status: string): string {
+  if (kind === "raw") return status === "Raw 待提炼" ? "这条来源还需要确认是否已经沉淀到 Wiki。" : "原始来源已登记，可作为后续引用和复盘依据。";
+  if (kind === "wiki") return "结构化知识页，可作为问答、复盘和关联推荐依据。";
+  if (kind === "inbox") return "临时收集内容，需要判断进入 Raw、Wiki、Journal 还是项目区。";
+  return "近期输出记录，可用于复盘、沉淀和追踪 Agent 工作结果。";
+}
+
+function dashboardCardTags(relativePath: string, kind: KnowledgeBaseDashboardCardKind): string[] {
+  const parts = relativePath.split("/").filter(Boolean);
+  const tags = [kind === "outputs" ? "Output" : kind[0].toUpperCase() + kind.slice(1)];
+  if (parts.length > 1) tags.push(parts[1].replace(/\.(md|markdown)$/i, ""));
+  if (/reddit|github|wechat|公众号|小红书|xhs/i.test(relativePath)) tags.push("来源");
+  return tags.slice(0, 3);
+}
+
+function visibleDashboardCardFiles(files: KnowledgeBaseDashboardFile[]): KnowledgeBaseDashboardFile[] {
+  return files.filter((file) => !isDashboardSystemFile(file.path));
+}
+
+function isDashboardSystemFile(relativePath: string): boolean {
+  const parts = relativePath.split("/").filter(Boolean);
+  const basename = parts.at(-1) ?? relativePath;
+  if (parts.some((part) => part.startsWith("."))) return true;
+  if (basename.startsWith(".")) return true;
+  if (/^(index|raw\/index|wiki\/index)\.(md|markdown|json)$/i.test(relativePath)) return true;
+  if (/^(index|00-索引)\.(md|markdown)$/i.test(basename)) return true;
+  if (/(\.ingest-tracker|\.raw-digest-registry)\.(md|json)$/i.test(basename)) return true;
+  return false;
+}
+
+async function readDashboardTextPreview(vaultPath: string, file: KnowledgeBaseDashboardFile): Promise<string> {
+  const ext = path.extname(file.path).toLowerCase();
+  if (ext !== ".md" && ext !== ".markdown" && ext !== ".txt") return "";
+  if (file.size > 262_144) return "";
+  return fsp.readFile(path.join(vaultPath, file.path), "utf8").catch(() => "");
+}
+
+function markdownTitle(text: string, fallback: string): string {
+  const body = stripFrontmatter(text);
+  for (const line of body.split(/\r?\n/)) {
+    const match = /^#{1,3}\s+(.+)$/.exec(line.trim());
+    if (match?.[1]) return match[1].trim().replace(/\s+#*$/, "") || fallback;
+  }
+  return fallback;
+}
+
+function markdownSummary(text: string, fallback: string): string {
+  const frontmatterSummary = frontmatterTextValue(text, ["summary", "摘要", "description", "描述"]);
+  if (frontmatterSummary) return truncateText(frontmatterSummary, 96);
+  const body = stripFrontmatter(text);
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || /^#{1,6}\s+/.test(line) || /^\|?\s*:?-{3,}/.test(line) || /^\|/.test(line)) continue;
+    const clean = line.replace(/^[-*+]\s+/, "").replace(/^>\s*/, "").trim();
+    if (clean) return truncateText(clean, 96);
+  }
+  return fallback;
+}
+
+function stripFrontmatter(text: string): string {
+  return text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+
+function frontmatterTextValue(text: string, keys: string[]): string {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!match?.[1]) return "";
+  for (const key of keys) {
+    const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "im");
+    const value = pattern.exec(match[1])?.[1]?.trim().replace(/^["']|["']$/g, "");
+    if (value) return value;
+  }
+  return "";
+}
+
+function titleFromDashboardPath(relativePath: string): string {
+  const basename = relativePath.split("/").pop() ?? relativePath;
+  return basename.replace(/\.(md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)$/i, "") || relativePath;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 interface ReportFindings {
   checkedAt: number;
+  title: string;
+  summary: string;
   brokenLinks: number;
   orphanPages: number;
   staleItems: number;
@@ -388,7 +847,7 @@ interface ReportFindings {
 }
 
 async function readReportFindings(vaultPath: string, reportPath: string): Promise<ReportFindings> {
-  const empty: ReportFindings = { checkedAt: 0, brokenLinks: 0, orphanPages: 0, staleItems: 0, indexInvalid: false };
+  const empty: ReportFindings = { checkedAt: 0, title: "", summary: "", brokenLinks: 0, orphanPages: 0, staleItems: 0, indexInvalid: false };
   const normalized = normalizeRelativePath(reportPath, "");
   if (!normalized) return empty;
   const absolute = path.join(vaultPath, normalized);
@@ -399,6 +858,8 @@ async function readReportFindings(vaultPath: string, reportPath: string): Promis
   if (!text.trim() || !stat) return empty;
   return {
     checkedAt: stat.mtimeMs,
+    title: markdownTitle(text, titleFromDashboardPath(normalized)),
+    summary: markdownSummary(text, "最近维护报告已生成，可打开查看完整结果。"),
     brokenLinks: firstNumber(text, [
       /\|\s*全\s*wiki\s*(?:实质性断链|硬断链|断链)出现次数\s*\|\s*(\d+)\s*\|/i,
       /(?:实质性断链|硬断链|断链)出现次数[^\d\n]*(\d+)/i,

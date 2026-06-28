@@ -10,6 +10,7 @@ import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
 import {
   collectKnowledgeBaseStorageStats,
@@ -38,6 +39,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   codex: CodexService | null = null;
   lastStatus: CodexStatusSnapshot | null = null;
   private view: CodexView | null = null;
+  private homeView: EchoInkHomeView | null = null;
   private reviewPreviewView: ReviewPreviewView | null = null;
   private editorActions: EditorActionController | null = null;
   private knowledgeBase: KnowledgeBaseManager | null = null;
@@ -55,13 +57,23 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.view = new CodexView(leaf, this);
       return this.view;
     });
+    this.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => {
+      this.homeView = new EchoInkHomeView(leaf, this);
+      return this.homeView;
+    });
     this.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => {
       this.reviewPreviewView = new ReviewPreviewView(leaf, this);
       return this.reviewPreviewView;
     });
 
-    this.addRibbonIcon("bot", "打开 Codex 侧栏", () => {
-      void this.activateView();
+    this.addRibbonIcon("bot", "打开 EchoInk 首页和 Codex 侧栏", () => {
+      void this.activateHomeAndSidebar();
+    });
+
+    this.addCommand({
+      id: "open-echoink-home",
+      name: "打开 EchoInk 首页",
+      callback: () => void this.activateHomeView()
     });
 
     this.addCommand({
@@ -114,6 +126,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.settings.autoOpen) {
       this.app.workspace.onLayoutReady(() => void this.activateView());
     }
+    if (this.settings.autoOpenHome) {
+      this.app.workspace.onLayoutReady(() => void this.activateHomeView());
+    }
     if (this.settings.editorActions.enabled) {
       this.app.workspace.onLayoutReady(() => {
         window.setTimeout(() => void this.ensureCodexConnected(false, { silent: true }), 800);
@@ -130,7 +145,36 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.review?.unload();
     await this.saveSettings(true);
     await this.codex?.disconnect();
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_ECHOINK_HOME);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CODEX);
+  }
+
+  async activateHomeAndSidebar(): Promise<void> {
+    this.ensureHomeWorkspaceSpace({ keepRightSidebar: true });
+    await this.activateView();
+    await this.activateHomeView({ keepRightSidebar: true });
+  }
+
+  async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> {
+    this.ensureHomeWorkspaceSpace(options);
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME);
+    let leaf = leaves[0];
+    if (!leaf) {
+      leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_HOME, active: true });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    await this.homeView?.refresh();
+  }
+
+  private ensureHomeWorkspaceSpace(options: { keepRightSidebar?: boolean } = {}): void {
+    const { leftSplit, rightSplit } = this.app.workspace;
+    if (options.keepRightSidebar) {
+      if (!leftSplit.collapsed) leftSplit.collapse();
+      return;
+    }
+    if (!rightSplit.collapsed) rightSplit.collapse();
   }
 
   async activateView(): Promise<void> {

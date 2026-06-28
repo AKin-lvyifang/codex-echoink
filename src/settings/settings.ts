@@ -267,6 +267,7 @@ export interface CodexForObsidianSettings {
   defaultPermission: PermissionMode;
   defaultMode: UiMode;
   autoOpen: boolean;
+  autoOpenHome: boolean;
   showContext: boolean;
   setup: SetupSettings;
   resourceManagementTab: ResourceManagementTab;
@@ -458,6 +459,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultPermission: "workspace-write",
   defaultMode: "agent",
   autoOpen: false,
+  autoOpenHome: false,
   showContext: true,
   setup: {
     completedAt: 0,
@@ -577,6 +579,7 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     agentBackend: normalizeAgentBackendMode(data?.agentBackend),
     providerMode: normalizeProviderMode(data?.providerMode),
+    autoOpenHome: data?.autoOpenHome === true,
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(data?.apiProviders),
     setup: normalizeSetupSettings(data?.setup),
