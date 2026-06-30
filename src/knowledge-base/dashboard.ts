@@ -3,7 +3,8 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
-import { rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
+import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
+import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestStatus } from "./types";
 
@@ -180,6 +181,11 @@ export interface KnowledgeBaseDashboardSnapshot {
   warnings: string[];
 }
 
+export interface KnowledgeBaseDashboardOptions {
+  maxRawFingerprintBytes?: number;
+  maxTotalRawFingerprintBytes?: number;
+}
+
 const MAX_DASHBOARD_FILES = 3000;
 const RECENT_FILE_LIMIT = 18;
 const RECOMMENDATION_PREVIEW_LIMIT = 96;
@@ -189,7 +195,7 @@ const HEALTH_SCORE_CHECK_NOTE = "体检成功只代表检查完成；健康分�
 const CRITICAL_HEALTH_PENALTY = 24;
 const RISK_HEALTH_PENALTY = 2;
 
-export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings): Promise<KnowledgeBaseDashboardSnapshot> {
+export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings, options: KnowledgeBaseDashboardOptions = {}): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
   const rulesFilePath = normalizeRelativePath(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE, AGENTS_RULES_FILE);
   const processedSources = settings.processedSources ?? {};
@@ -204,9 +210,18 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
   const wikiIndexExists = await exists(path.join(vaultPath, "wiki/index.md"));
   const rawSourceFiles = raw.files.filter(isRawProcessingSource);
-  const rawContentFiles = await attachRawFingerprints(vaultPath, rawSourceFiles);
-  const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles);
   const registry = await readRawDigestRegistry(vaultPath);
+  const rawContentFiles = await attachRawFingerprints(
+    vaultPath,
+    rawSourceFiles,
+    processedSources,
+    registry.entries,
+    createKnowledgeBaseIoBudget({
+      maxFileBytes: options.maxRawFingerprintBytes,
+      maxTotalBytes: options.maxTotalRawFingerprintBytes
+    })
+  );
+  const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles);
   const rawDigestStatus = buildRawDigestStatus(rawContentFiles, processedSources, registry.entries, trackerHints.paths);
   const mergedProcessedSources = authoritativeProcessedSources(rawContentFiles, processedSources, registry.entries);
   const reportFindings = await readReportFindings(vaultPath, reportPath);
@@ -412,19 +427,51 @@ function stripLimited(input: DashboardScanResult, files: KnowledgeBaseDashboardF
   };
 }
 
-async function attachRawFingerprints(vaultPath: string, files: KnowledgeBaseDashboardFile[]): Promise<KnowledgeBaseDashboardFile[]> {
+async function attachRawFingerprints(
+  vaultPath: string,
+  files: KnowledgeBaseDashboardFile[],
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  registryEntries: Record<string, RawDigestRegistryEntry>,
+  budget: KnowledgeBaseIoBudget
+): Promise<KnowledgeBaseDashboardFile[]> {
   const result: KnowledgeBaseDashboardFile[] = [];
   for (const file of files) {
+    const cachedFingerprint = cachedRawFingerprint(file, processed, registryEntries);
+    if (cachedFingerprint) {
+      result.push({ ...file, fingerprint: cachedFingerprint, rawDigest: null });
+      continue;
+    }
+    if (!shouldReadKnowledgeBaseFileContent(file, budget).ok) {
+      result.push(file);
+      continue;
+    }
     const content = await fsp.readFile(path.join(vaultPath, file.path)).catch(() => null);
     result.push({
       ...file,
-      ...(content ? {
+      ...(content !== null ? {
         fingerprint: rawDigestFingerprint(file.path, content),
         rawDigest: rawDigestRecordFromMarkdown(content)
       } : {})
     });
   }
   return result;
+}
+
+function cachedRawFingerprint(
+  file: KnowledgeBaseDashboardFile,
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  registryEntries: Record<string, RawDigestRegistryEntry>
+): string {
+  const registry = registryEntries[file.path];
+  if (registry?.fingerprint && rawFileMetadataMatches(file, registry)) return registry.fingerprint;
+  if (isRawMarkdownPath(file.path)) return "";
+  const previous = processed[file.path];
+  if (previous?.fingerprint && rawFileMetadataMatches(file, previous)) return previous.fingerprint;
+  return "";
+}
+
+function rawFileMetadataMatches(file: KnowledgeBaseDashboardFile, cached: { size: number; mtime: number }): boolean {
+  return file.size === cached.size && Math.abs(file.mtime - cached.mtime) < 1;
 }
 
 function buildRawDigestStatus(

@@ -15,6 +15,16 @@ export interface KnowledgeBaseSource {
   changed: boolean;
 }
 
+export interface KnowledgeBaseSkippedSource {
+  relativePath: string;
+  absolutePath: string;
+  size: number;
+  mtime: number;
+  mime: string;
+  modality: AgentInputModality;
+  reason: string;
+}
+
 export interface KnowledgeBaseRawDigestStatus {
   digested: number;
   pending: number;
@@ -42,6 +52,7 @@ export interface KnowledgeBaseDiscovery {
   vaultPath: string;
   sources: KnowledgeBaseSource[];
   changedSources: KnowledgeBaseSource[];
+  skippedSources: KnowledgeBaseSkippedSource[];
   reportPath: string;
   trackerPath: string;
 }

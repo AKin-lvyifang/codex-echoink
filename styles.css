@@ -2817,21 +2817,49 @@ body.theme-light .codex-code-wrapper pre {
   font-weight: 620;
 }
 
-.codex-home-nav-icon,
-.codex-home-nav-icon svg {
+.codex-home-month-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.codex-home-month-button:hover,
+.codex-home-month-button:focus-visible {
+  border-color: var(--background-modifier-border);
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.codex-home-month-button svg {
   width: 14px;
   height: 14px;
-  color: var(--text-muted);
 }
 
 .codex-home-today-chip {
+  appearance: none;
   min-width: 42px;
   padding: 4px 10px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   color: var(--text-muted);
+  background: var(--background-primary);
   font-size: 12px;
   text-align: center;
+  cursor: pointer;
+}
+
+.codex-home-today-chip:hover,
+.codex-home-today-chip:focus-visible {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
 }
 
 .codex-home-calendar {

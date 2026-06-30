@@ -118,7 +118,8 @@ import { editorActionStartBlockReason, editorActionStatusFromResult, extractEdit
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, type KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
-import { buildHomeCards, buildHomeFolderFilterItems, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, sortHomeCards } from "../home/home-view";
+import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-tests";
+import { buildHomeCards, buildHomeFolderFilterItems, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { KnowledgeBaseManager } from "../knowledge-base/manager";
@@ -175,13 +176,12 @@ const execFile = promisify(execFileCallback);
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "1.0.0");
+assert.equal(manifest.version, "1.0.1");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
 assert.equal(formatMessageHeaderTime(Date.parse("2026-05-22T08:29:00+08:00")), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
-
 function assertI18nShapeMatches(reference: unknown, candidate: unknown, pathLabel = "copy"): void {
   if (typeof reference === "function") {
     assert.equal(typeof candidate, "function", `${pathLabel} should be a function`);
@@ -1818,6 +1818,14 @@ assert.match(homeViewSource, /今日复盘/);
 assert.match(homeViewSource, /按相关度/);
 assert.match(homeViewSource, /openRefineCommand/);
 assert.match(homeViewSource, /openReviewCommand/);
+assert.equal(calendarMonthLabel(new Date(2026, 6, 1)), "2026年7月");
+assert.equal(calendarMonthLabel(shiftCalendarMonth(new Date(2026, 6, 15), -1)), "2026年6月");
+assert.equal(calendarMonthLabel(shiftCalendarMonth(new Date(2026, 0, 15), -1)), "2025年12月");
+assert.match(homeViewSource, /private calendarMonthOffset = 0/);
+assert.match(homeViewSource, /codex-home-month-button/);
+assert.match(homeViewSource, /this\.shiftCalendarMonth\(-1\)/);
+assert.match(homeViewSource, /this\.shiftCalendarMonth\(1\)/);
+assert.match(homeViewSource, /this\.resetCalendarMonth\(\)/);
 assert.match(homeViewSource, /isSystemHomeCardPath/);
 assert.match(homeViewSource, /basename\.startsWith\(["']\.["']\)/);
 assert.doesNotMatch(homeViewSource, /card\.kind === "raw" \? "提炼" : "复盘"/);
@@ -3806,6 +3814,8 @@ try {
   assert.ok(kbPrompt.includes("raw 路径不在每日维护中自动整理"));
   assert.ok(kbPrompt.includes("本轮来源列表外的新 raw 文件"));
   assert.ok(kbPrompt.includes("非索引正文页留下结构层证据"));
+  assert.ok(kbPrompt.includes("禁止用 `标题 2.md`"));
+  assert.ok(kbPrompt.includes("必须读取并更新原始正式文件"));
   assert.ok(kbPrompt.includes("Structure Normalize"));
   assert.ok(kbPrompt.includes("低风险自动执行"));
   assert.ok(kbPrompt.includes("不确定或会断链的改动只写进报告"));
@@ -4609,6 +4619,68 @@ try {
   assert.equal(await fileExists(hardlinkPath), false);
 } finally {
   await rm(maintenanceHardlinkAfterAgentVault, { recursive: true, force: true });
+}
+
+const maintenancePreexistingConflictDuplicateVault = await createMaintenanceVaultForTest("codex-kb-maintain-preexisting-conflict-duplicate-");
+try {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const basePath = path.join(maintenancePreexistingConflictDuplicateVault, "wiki", "ai-intelligence", "references", "agent-conflict.md");
+  const duplicatePath = path.join(maintenancePreexistingConflictDuplicateVault, "wiki", "ai-intelligence", "references", "agent-conflict 3.md");
+  const reportPath = path.join(maintenancePreexistingConflictDuplicateVault, "outputs", "maintenance", `kb-maintenance-${todayKey}.md`);
+  const evidencePath = path.join(maintenancePreexistingConflictDuplicateVault, "wiki", "ai-intelligence", "references", "existing-page.md");
+  await mkdir(path.dirname(basePath), { recursive: true });
+  await writeFile(basePath, "# Agent conflict\n\n原始正文", "utf8");
+  await writeFile(duplicatePath, "# Agent conflict\n\n历史冲突副本正文", "utf8");
+  await writeFile(evidencePath, [
+    "# Existing Page",
+    "",
+    "历史来源：[[raw/articles/new]]",
+    "",
+    "旧正文。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenancePreexistingConflictDuplicateVault, {
+    beforeAgentReturn: async () => {
+      await mkdir(path.dirname(evidencePath), { recursive: true });
+      await writeFile(evidencePath, [
+        "# Existing Page",
+        "",
+        "历史来源：[[raw/articles/new]]",
+        "",
+        "旧正文。",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：本轮新增正文已经消化进既有页面。",
+        "",
+      ].join("\n"), "utf8");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试预存冲突副本自愈");
+  assert.equal(result.status, "success", result.error);
+  assert.equal(await readFile(basePath, "utf8"), "# Agent conflict\n\n原始正文");
+  assert.equal(await fileExists(duplicatePath), false);
+  const maintenanceEntries = await readdir(path.join(maintenancePreexistingConflictDuplicateVault, "outputs", "maintenance"), { withFileTypes: true });
+  const backupDir = maintenanceEntries.find((entry) => entry.isDirectory() && entry.name.startsWith("conflict-duplicates-"));
+  assert.ok(backupDir);
+  const backupPath = path.join(maintenancePreexistingConflictDuplicateVault, "outputs", "maintenance", backupDir.name, "wiki", "ai-intelligence", "references", "agent-conflict 3.md");
+  assert.equal(await readFile(backupPath, "utf8"), "# Agent conflict\n\n历史冲突副本正文");
+  assert.match(await readFile(reportPath, "utf8"), /冲突副本预检/);
+  assert.match(result.summary, /冲突副本预检：转移 1 个历史数字副本/);
+} finally {
+  await rm(maintenancePreexistingConflictDuplicateVault, { recursive: true, force: true });
 }
 
 const maintenanceConflictDuplicateAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-conflict-duplicate-after-agent-");
@@ -8531,5 +8603,7 @@ function makeKnowledgeBaseManagerForTest(
 async function fileExists(filePath: string): Promise<boolean> {
   return stat(filePath).then(() => true, () => false);
 }
+
+await runKnowledgeBasePerformanceTests();
 
 console.log("All tests passed");

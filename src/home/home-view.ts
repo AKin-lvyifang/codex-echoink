@@ -41,6 +41,7 @@ export class EchoInkHomeView extends ItemView {
   private activeSort: HomeSort = "relevance";
   private activeFolderFilter: HomeFolderFilter = HOME_FOLDER_ALL;
   private visibleCardLimit = HOME_CARDS_PAGE_SIZE;
+  private calendarMonthOffset = 0;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -147,6 +148,26 @@ export class EchoInkHomeView extends ItemView {
     button.onclick = onClick;
   }
 
+  private addCalendarMonthButton(container: HTMLElement, iconName: string, label: string, onClick: () => void): void {
+    const button = container.createEl("button", {
+      cls: "codex-home-month-button",
+      attr: { type: "button", title: label, "aria-label": label }
+    });
+    setIcon(button, iconName);
+    button.onclick = onClick;
+  }
+
+  private shiftCalendarMonth(offset: number): void {
+    this.calendarMonthOffset += offset;
+    this.render();
+  }
+
+  private resetCalendarMonth(): void {
+    if (this.calendarMonthOffset === 0) return;
+    this.calendarMonthOffset = 0;
+    this.render();
+  }
+
   private renderDashboard(container: HTMLElement): void {
     const grid = container.createDiv({ cls: "codex-home-top-grid" });
     const main = grid.createDiv({ cls: "codex-home-main-column" });
@@ -160,23 +181,23 @@ export class EchoInkHomeView extends ItemView {
   private renderCalendar(container: HTMLElement): void {
     const snapshot = this.snapshot;
     const now = snapshot ? new Date(snapshot.generatedAt) : new Date();
+    const visibleMonth = shiftCalendarMonth(now, this.calendarMonthOffset);
     const section = container.createDiv({ cls: "codex-home-panel codex-home-calendar-panel" });
     const head = section.createDiv({ cls: "codex-home-section-head" });
     head.createDiv({ cls: "codex-home-section-title", text: "知识活动日历" });
 
     const monthNav = head.createDiv({ cls: "codex-home-month-nav" });
-    const prev = monthNav.createSpan({ cls: "codex-home-nav-icon" });
-    setIcon(prev, "chevron-left");
-    monthNav.createSpan({ cls: "codex-home-month-label", text: `${now.getFullYear()}年${now.getMonth() + 1}月` });
-    const next = monthNav.createSpan({ cls: "codex-home-nav-icon" });
-    setIcon(next, "chevron-right");
-    head.createSpan({ cls: "codex-home-today-chip", text: "今天" });
+    this.addCalendarMonthButton(monthNav, "chevron-left", "上个月", () => this.shiftCalendarMonth(-1));
+    monthNav.createSpan({ cls: "codex-home-month-label", text: calendarMonthLabel(visibleMonth) });
+    this.addCalendarMonthButton(monthNav, "chevron-right", "下个月", () => this.shiftCalendarMonth(1));
+    const today = head.createEl("button", { cls: "codex-home-today-chip", text: "今天", attr: { type: "button", title: "回到本月" } });
+    today.onclick = () => this.resetCalendarMonth();
 
     const calendar = section.createDiv({ cls: "codex-home-calendar" });
     for (const day of WEEKDAYS) calendar.createDiv({ cls: "codex-home-calendar-weekday", text: day });
 
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = visibleMonth.getFullYear();
+    const month = visibleMonth.getMonth();
     const first = new Date(year, month, 1);
     const firstOffset = (first.getDay() + 6) % 7;
     const displayOffset = firstOffset === 0 ? 7 : firstOffset;
@@ -592,6 +613,14 @@ export function buildHomeCards(snapshot: KnowledgeBaseDashboardSnapshot | null):
   return cards
     .sort((a, b) => b.touchedAt - a.touchedAt)
     .slice(0, 18);
+}
+
+export function shiftCalendarMonth(date: Date, offset: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + offset, 1);
+}
+
+export function calendarMonthLabel(date: Date): string {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`;
 }
 
 function recommendationToHomeCard(card: KnowledgeBaseDashboardRecommendationCard): HomeCard {

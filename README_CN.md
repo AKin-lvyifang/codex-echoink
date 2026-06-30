@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 1.0.0 首页工作台海报，展示日历、知识库健康、活跃热力图、卡片筛选和复制内链。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+  <img width="1024" alt="Codex EchoInk 首页工作台海报，展示日历、知识库健康、活跃热力图、卡片筛选和复制内链。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.0.0-0EA5E9?style=flat-square" alt="版本 v1.0.0">
+    <img src="https://img.shields.io/badge/version-v1.0.1-0EA5E9?style=flat-square" alt="版本 v1.0.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip"><strong>下载 v1.0.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip"><strong>下载 v1.0.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -77,7 +77,7 @@
 
 ### 首页工作台
 
-<img width="1024" alt="Codex EchoInk 1.0.0 首页工作台，包含日历、知识库健康、活跃热力图和笔记卡片。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+<img width="1024" alt="Codex EchoInk 首页工作台，包含日历、知识库健康、活跃热力图和笔记卡片。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 
 - 可在设置里开启 Obsidian 启动时默认打开 EchoInk 首页。
 - 首页标签页可以关闭，也可以通过 Obsidian 命令重新打开。
@@ -156,6 +156,24 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.0.1
+
+**小功能修复版：** 这次主要修首页日历、知识库维护稳定性和大文件读取风险。
+
+**修复内容：**
+
+- 首页日历支持切换上个月、下个月，并可一键回到本月。
+- `/maintain` 会预检 Wiki 数字后缀冲突副本，并转移到 `outputs/maintenance/conflict-duplicates-*`。
+- 知识库维护会阻止用 `标题 2.md` 这类数字后缀绕开同名 Wiki，优先更新正式页或报告冲突。
+- Dashboard、Raw discovery 和 `/ask` 增加文件读取预算，避免大 PDF、图片和超大 Markdown 被完整读入。
+- 超预算 Raw 不会被写入 tracker，也不会被误标记为已处理。
+
+**使用方法：**
+
+1. 安装 `v1.0.1`。
+2. 如果 Wiki 里有数字后缀冲突副本，运行 `/maintain`。
+3. 在维护报告里查看转移记录和未纳入本轮的大文件 Raw。
 
 ### v1.0.0
 
@@ -407,7 +425,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-1.0.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip)。
+3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-1.0.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip)。
 4. 解压后得到 `codex-echoink` 文件夹。
 5. 放到你的 vault 插件目录：
 

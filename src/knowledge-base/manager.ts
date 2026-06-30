@@ -79,6 +79,17 @@ interface KnowledgeTransactionSnapshotEntry {
   mtimeMs: number;
 }
 
+interface KnowledgeConflictDuplicateMove {
+  from: string;
+  to: string;
+  canonical: string;
+}
+
+interface KnowledgeConflictDuplicateCleanup {
+  moved: KnowledgeConflictDuplicateMove[];
+  backupRoot: string;
+}
+
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed" | "canceled";
   message: string;
@@ -604,6 +615,7 @@ export class KnowledgeBaseManager {
     let trackerWritten = false;
     let lintReportRecoveryEligible = false;
     const externalRawAdditionsDuringRun = new Set<string>();
+    let conflictDuplicateCleanup: KnowledgeConflictDuplicateCleanup = { moved: [], backupRoot: "" };
     try {
       vaultPath = this.plugin.getVaultPath();
       settings.lastRunStatus = "running";
@@ -614,6 +626,11 @@ export class KnowledgeBaseManager {
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       const transactionRoots = knowledgeTransactionRootsForMode(mode);
       transactionBefore = await snapshotKnowledgeTransaction(vaultPath, transactionRoots);
+      throwIfKnowledgeBaseCanceled(this.cancelRequested);
+      conflictDuplicateCleanup = await quarantinePreexistingKnowledgeConflictDuplicates(vaultPath, transactionBefore, startedAt, mode);
+      if (conflictDuplicateCleanup.moved.length) {
+        transactionBefore = await snapshotKnowledgeTransaction(vaultPath, transactionRoots);
+      }
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       assertSafeKnowledgeTransactionRoots(transactionBefore);
       trackerBeforeRun = await snapshotOptionalFile(path.join(vaultPath, "outputs", ".ingest-tracker.md"));
@@ -641,6 +658,7 @@ export class KnowledgeBaseManager {
         userRequest,
         reportPath: discovery.reportPath,
         sources: runSources,
+        skippedSources: discovery.skippedSources,
         remainingSourceCount: Math.max(0, promptSources.length - runSources.length),
         rulesFilePath: rules.relativePath,
         rulesFileExists: rules.exists,
@@ -757,6 +775,9 @@ export class KnowledgeBaseManager {
       }
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       if (structure) await appendStructureNormalizationReport(vaultPath, reportPath, structure);
+      if (conflictDuplicateCleanup.moved.length) {
+        await appendConflictDuplicateCleanupReport(vaultPath, reportPath, conflictDuplicateCleanup);
+      }
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       if (externalRawAdditionsDuringRun.size) {
         await appendExternalRawAdditionsReport(vaultPath, reportPath, Array.from(externalRawAdditionsDuringRun));
@@ -772,7 +793,7 @@ export class KnowledgeBaseManager {
       settings.lastRunAt = Date.now();
       settings.lastRunStatus = "success";
       settings.lastReportPath = reportPath;
-      settings.lastSummary = buildMaintenanceSummary(output, mode, structure);
+      settings.lastSummary = buildMaintenanceSummary(output, mode, structure, conflictDuplicateCleanup);
       recordKnowledgeBaseMaintenanceRun(settings, { status: "success", mode, reportPath });
       await this.plugin.saveSettings(true);
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
@@ -1883,6 +1904,31 @@ async function appendStructureNormalizationReport(vaultPath: string, reportPath:
   await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
 }
 
+async function appendConflictDuplicateCleanupReport(vaultPath: string, reportPath: string, cleanup: KnowledgeConflictDuplicateCleanup): Promise<void> {
+  if (!cleanup.moved.length) return;
+  const current = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  const markerStart = "<!-- codex-echoink-conflict-duplicates:start -->";
+  const markerEnd = "<!-- codex-echoink-conflict-duplicates:end -->";
+  const lines = [
+    markerStart,
+    "",
+    "## 冲突副本预检",
+    "",
+    `一眼结论：维护开始前发现 ${cleanup.moved.length} 个数字后缀冲突副本，已从 live 知识区转移到 \`${cleanup.backupRoot}\`，正式页面保留原始无后缀文件。`,
+    "",
+    ...cleanup.moved.slice(0, 40).map((move) => `- ${move.from} -> ${move.to}（正式页：${move.canonical}）`),
+    cleanup.moved.length > 40 ? `- 其余 ${cleanup.moved.length - 40} 个略。` : "",
+    "",
+    markerEnd,
+    ""
+  ].filter((line) => line !== "").join("\n");
+  const pattern = new RegExp(`${escapeRegExp(markerStart)}[\\s\\S]*?${escapeRegExp(markerEnd)}`);
+  const next = pattern.test(current)
+    ? current.replace(pattern, lines.trimEnd())
+    : `${current.trimEnd()}\n\n${lines}`;
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+}
+
 function collectExternalRawAdditions(target: Set<string>, additions: Array<{ file: string }>): void {
   for (const addition of additions) {
     target.add(addition.file);
@@ -2885,6 +2931,48 @@ async function assertSafeKnowledgeTransactionCurrentState(
   assertSafeKnowledgeTransactionRoots(await snapshotKnowledgeTransaction(vaultPath, roots), options);
 }
 
+async function quarantinePreexistingKnowledgeConflictDuplicates(
+  vaultPath: string,
+  snapshot: KnowledgeTransactionSnapshot,
+  startedAt: number,
+  mode: KnowledgeBaseRunMode
+): Promise<KnowledgeConflictDuplicateCleanup> {
+  if (mode === "lint") return { moved: [], backupRoot: "" };
+  const duplicatePaths = Array.from(snapshot.entries.entries())
+    .filter(([relativePath, entry]) => entry.kind === "file" && isKnowledgeConflictDuplicatePath(relativePath, snapshot.entries))
+    .map(([relativePath]) => normalizePath(relativePath))
+    .sort((left, right) => left.localeCompare(right));
+  if (!duplicatePaths.length) return { moved: [], backupRoot: "" };
+
+  const backupRoot = normalizePath(`outputs/maintenance/conflict-duplicates-${formatDateTimeForFile(new Date(startedAt))}`);
+  const moved: KnowledgeConflictDuplicateMove[] = [];
+  for (const from of duplicatePaths) {
+    const canonical = knowledgeConflictDuplicateCanonicalPath(from);
+    if (!canonical) continue;
+    const to = normalizePath(path.join(backupRoot, from));
+    await moveKnowledgeConflictDuplicate(vaultPath, from, to);
+    moved.push({ from, to, canonical });
+  }
+  return { moved, backupRoot };
+}
+
+function knowledgeConflictDuplicateCanonicalPath(relativePath: string): string | null {
+  const normalized = normalizePath(relativePath);
+  const match = /^(.*) \d+(\.md)$/i.exec(normalized);
+  if (!match) return null;
+  return `${match[1]}${match[2]}`;
+}
+
+async function moveKnowledgeConflictDuplicate(vaultPath: string, from: string, to: string): Promise<void> {
+  const fromAbs = path.join(vaultPath, from);
+  const toAbs = path.join(vaultPath, to);
+  await fsp.mkdir(path.dirname(toAbs), { recursive: true });
+  if (await exists(toAbs)) {
+    throw new Error(`冲突副本备份路径已存在，停止移动：${to}`);
+  }
+  await fsp.rename(fromAbs, toAbs);
+}
+
 function isKnowledgeConflictDuplicatePath(relativePath: string, entries: Map<string, KnowledgeTransactionSnapshotEntry>): boolean {
   const normalized = normalizePath(relativePath);
   const match = /^(.*) \d+(\.md)$/i.exec(normalized);
@@ -3154,11 +3242,16 @@ function isRewrittenRawPath(relativePath: string, rewrites: StructureNormalizati
   });
 }
 
-function buildMaintenanceSummary(output: string, mode: KnowledgeBaseRunMode, structure?: StructureNormalizationResult): string {
+function buildMaintenanceSummary(output: string, mode: KnowledgeBaseRunMode, structure?: StructureNormalizationResult, cleanup?: KnowledgeConflictDuplicateCleanup): string {
   const base = output.trim().slice(0, 800) || `知识库${labelForRunMode(mode)}完成`;
-  if (!structure) return base;
-  const line = `结构整理：移动 ${structure.moves.length} 项，更新引用 ${structure.updatedLinks.reduce((sum, item) => sum + item.replacements, 0)} 处，跳过 ${structure.skipped.length} 项。`;
-  return `${base}\n${line}`.slice(0, 1000);
+  const lines = [base];
+  if (structure) {
+    lines.push(`结构整理：移动 ${structure.moves.length} 项，更新引用 ${structure.updatedLinks.reduce((sum, item) => sum + item.replacements, 0)} 处，跳过 ${structure.skipped.length} 项。`);
+  }
+  if (cleanup?.moved.length) {
+    lines.push(`冲突副本预检：转移 ${cleanup.moved.length} 个历史数字副本。`);
+  }
+  return lines.join("\n").slice(0, 1000);
 }
 
 function labelForRunMode(mode: KnowledgeBaseRunMode): string {

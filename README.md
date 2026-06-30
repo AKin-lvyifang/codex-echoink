@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 1.0.0 Home Dashboard poster showing calendar, knowledge health, activity heatmap, card filters, and copy internal link." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+  <img width="1024" alt="Codex EchoInk Home Dashboard poster showing calendar, knowledge health, activity heatmap, card filters, and copy internal link." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.0.0-0EA5E9?style=flat-square" alt="Version v1.0.0">
+    <img src="https://img.shields.io/badge/version-v1.0.1-0EA5E9?style=flat-square" alt="Version v1.0.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip"><strong>Download v1.0.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip"><strong>Download v1.0.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -75,7 +75,7 @@
 
 ### Home Dashboard
 
-<img width="1024" alt="Codex EchoInk 1.0.0 Home Dashboard with calendar, knowledge health, activity heatmap, and note cards." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+<img width="1024" alt="Codex EchoInk Home Dashboard with calendar, knowledge health, activity heatmap, and note cards." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
 
 - Opens an EchoInk Home tab on startup when enabled in settings.
 - Adds an Obsidian command to reopen Home after the tab is closed.
@@ -152,6 +152,24 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.0.1
+
+**Small fixes release:** This update tightens the Home calendar, Knowledge maintenance, and large-file read behavior.
+
+**What changed:**
+
+- Home calendar now supports previous month, next month, and return-to-current-month controls.
+- `/maintain` preflights numbered Wiki conflict duplicates and moves them to `outputs/maintenance/conflict-duplicates-*`.
+- Knowledge maintenance now blocks `Title 2.md` style duplicate Wiki pages, preferring the canonical page or a conflict report.
+- Dashboard, Raw discovery, and `/ask` now use bounded file reads to avoid loading large PDFs, images, and huge Markdown files into memory.
+- Raw files over the read budget are not written to tracker and are not marked as processed.
+
+**How to use:**
+
+1. Install `v1.0.1`.
+2. Run `/maintain` if your Wiki has numbered duplicate pages.
+3. Check the maintenance report for moved duplicates and large Raw files skipped from this run.
 
 ### v1.0.0
 
@@ -402,7 +420,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-1.0.0.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.0/codex-echoink-1.0.0.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
+3. Download [`codex-echoink-1.0.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
 4. Unzip it and get the `codex-echoink` folder.
 5. Move it into your vault plugin directory:
 

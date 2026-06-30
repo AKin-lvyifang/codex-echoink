@@ -2,6 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeBaseEvidenceStatus, KnowledgeBaseSource } from "./types";
 import { contentFingerprint } from "./raw-integrity";
+import { DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES, readKnowledgeBaseTextPrefix } from "./io-budget";
 
 export interface KnowledgeBaseAskMatch extends KnowledgeBaseSource {
   bucket: KnowledgeBaseCitationBucket;
@@ -17,22 +18,29 @@ const WIKI_MATCH_LIMIT = 8;
 const MAX_FILE_CHARS = 120_000;
 const MAX_EXCERPT_LINES = 4;
 
+export interface KnowledgeBaseAskSearchOptions {
+  maxFileReadBytes?: number;
+  maxFilesPerRoot?: number;
+}
+
 const ASK_SOURCE_ROOTS: Array<{ bucket: KnowledgeBaseCitationBucket; dir: string }> = [
   { bucket: "wiki", dir: "wiki" },
   { bucket: "journal", dir: "journal" },
   { bucket: "outputs", dir: "outputs" }
 ];
 
-export async function findKnowledgeBaseAskMatches(vaultPath: string, question: string, limit = WIKI_MATCH_LIMIT): Promise<KnowledgeBaseAskMatch[]> {
+export async function findKnowledgeBaseAskMatches(vaultPath: string, question: string, limit = WIKI_MATCH_LIMIT, options: KnowledgeBaseAskSearchOptions = {}): Promise<KnowledgeBaseAskMatch[]> {
   const terms = extractSearchTerms(question);
   const matches: KnowledgeBaseAskMatch[] = [];
+  const maxFileReadBytes = normalizePositiveLimit(options.maxFileReadBytes, DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES);
+  const maxFilesPerRoot = normalizePositiveLimit(options.maxFilesPerRoot, Number.POSITIVE_INFINITY);
   for (const root of ASK_SOURCE_ROOTS) {
-    const files = await listMarkdownFiles(path.join(vaultPath, root.dir)).catch(() => []);
+    const files = await listMarkdownFiles(path.join(vaultPath, root.dir), maxFilesPerRoot).catch(() => []);
     for (const absolutePath of files) {
       const relativePath = normalizeRelativePath(path.relative(vaultPath, absolutePath));
       const stat = await fsp.stat(absolutePath).catch(() => null);
       if (!stat?.isFile()) continue;
-      const raw = await fsp.readFile(absolutePath, "utf8").catch(() => "");
+      const raw = await readKnowledgeBaseTextPrefix(absolutePath, maxFileReadBytes).then((result) => result.text, () => "");
       const text = raw.slice(0, MAX_FILE_CHARS);
       const title = titleForKnowledgeFile(relativePath, text);
       const score = scoreKnowledgeNote(question, terms, relativePath, title, text);
@@ -104,19 +112,25 @@ export function formatAskMatchesForPrompt(matches: KnowledgeBaseAskMatch[]): str
   }).join("\n\n");
 }
 
-async function listMarkdownFiles(root: string): Promise<string[]> {
+async function listMarkdownFiles(root: string, limit = Number.POSITIVE_INFINITY): Promise<string[]> {
   const entries = await fsp.readdir(root, { withFileTypes: true });
   const files: string[] = [];
   for (const entry of entries) {
+    if (files.length >= limit) break;
     if (entry.name.startsWith(".")) continue;
     const absolutePath = path.join(root, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await listMarkdownFiles(absolutePath));
+      files.push(...await listMarkdownFiles(absolutePath, Math.max(0, limit - files.length)));
       continue;
     }
     if (entry.isFile() && /\.(md|markdown)$/i.test(entry.name)) files.push(absolutePath);
   }
   return files;
+}
+
+function normalizePositiveLimit(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) return fallback;
+  return Math.floor(value);
 }
 
 function extractSearchTerms(question: string): string[] {
