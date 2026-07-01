@@ -2,8 +2,19 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "*"
+    paths:
+      - ".github/workflows/release.yml"
+      - "src/**"
+      - "manifest.json"
+      - "package.json"
+      - "package-lock.json"
+      - "styles.css"
+      - "versions.json"
+      - "esbuild.config.mjs"
   workflow_dispatch:
     inputs:
       tag:
@@ -21,12 +32,25 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+      EVENT_REF_TYPE: ${{ github.ref_type }}
+      EVENT_REF_NAME: ${{ github.ref_name }}
     steps:
       - name: Checkout release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        run: |
+          if [ -n "$REQUESTED_TAG" ]; then
+            release_tag="$REQUESTED_TAG"
+          elif [ "$EVENT_REF_TYPE" = "tag" ]; then
+            release_tag="$EVENT_REF_NAME"
+          else
+            release_tag="$(node -p "require('./manifest.json').version")"
+          fi
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
 
       - name: Set up Node
         uses: actions/setup-node@v4
