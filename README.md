@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip"><strong>Download v1.0.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.0.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -420,14 +420,14 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 1. Install and log in to Codex CLI for Codex CLI mode.
 2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
-3. Download [`codex-echoink-1.0.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip) from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest).
-4. Unzip it and get the `codex-echoink` folder.
-5. Move it into your vault plugin directory:
+3. Install `Codex EchoInk` from Obsidian Community Plugins when available.
+4. For manual install, create this folder in your vault:
 
 ```text
 <vault>/.obsidian/plugins/codex-echoink/
 ```
 
+5. Download `main.js`, `manifest.json`, and `styles.css` from [the latest release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest), then put all three files into that folder.
 6. Restart Obsidian and enable `Codex EchoInk` in Community plugins.
 
 The plugin folder should contain:
@@ -492,7 +492,7 @@ npm run typecheck
 npm run build
 ```
 
-Generate a shareable install package:
+Generate a local manual install package:
 
 ```bash
 npm run package

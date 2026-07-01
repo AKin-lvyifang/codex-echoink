@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip"><strong>下载 v1.0.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.0.1</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -425,14 +425,14 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
 2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
-3. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 [`codex-echoink-1.0.1.zip`](https://github.com/AKin-lvyifang/codex-echoink/releases/download/1.0.1/codex-echoink-1.0.1.zip)。
-4. 解压后得到 `codex-echoink` 文件夹。
-5. 放到你的 vault 插件目录：
+3. 如果 Obsidian 社区插件里已经可用，直接搜索并安装 `Codex EchoInk`。
+4. 如果手动安装，先在你的 vault 里创建插件目录：
 
 ```text
 <vault>/.obsidian/plugins/codex-echoink/
 ```
 
+5. 在 [最新 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css`，把这 3 个文件放进上面的目录。
 6. 重启 Obsidian，在第三方插件里启用 `Codex EchoInk`。
 
 插件文件夹里应包含：
@@ -502,7 +502,7 @@ npm run typecheck
 npm run build
 ```
 
-生成可分享安装包：
+生成本地手动安装包：
 
 ```bash
 npm run package
