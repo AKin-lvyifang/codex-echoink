@@ -21,6 +21,11 @@ on:
         description: "Release tag to rebuild, attest, and update"
         required: true
         type: string
+      skip_tests:
+        description: "Skip npm test for historical release rebuilds"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -62,6 +67,7 @@ jobs:
         run: npm ci
 
       - name: Test
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
         run: npm run test
 
       - name: Typecheck
