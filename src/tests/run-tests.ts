@@ -424,41 +424,42 @@ const scheduledKnowledgeBaseBase = {
   catchUpOnStartup: true,
   lastRunAt: 0
 };
+const scheduledKnowledgeBaseDate = (hour: number, minute: number, second = 0) => new Date(2026, 4, 19, hour, minute, second);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   scheduledKnowledgeBaseBase,
-  new Date("2026-05-19T08:30:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime(),
+  scheduledKnowledgeBaseDate(8, 30),
+  scheduledKnowledgeBaseDate(8, 0).getTime(),
   true
 ), false);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   scheduledKnowledgeBaseBase,
-  new Date("2026-05-19T09:01:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime()
+  scheduledKnowledgeBaseDate(9, 1),
+  scheduledKnowledgeBaseDate(8, 0).getTime()
 ), true);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, catchUpOnStartup: false },
-  new Date("2026-05-19T10:00:00+08:00"),
-  new Date("2026-05-19T10:00:00+08:00").getTime()
+  scheduledKnowledgeBaseDate(10, 0),
+  scheduledKnowledgeBaseDate(10, 0).getTime()
 ), false);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-  { ...scheduledKnowledgeBaseBase, lastRunAt: new Date("2026-05-19T01:17:00+08:00").getTime() },
-  new Date("2026-05-19T09:01:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime()
+  { ...scheduledKnowledgeBaseBase, lastRunAt: scheduledKnowledgeBaseDate(1, 17).getTime() },
+  scheduledKnowledgeBaseDate(9, 1),
+  scheduledKnowledgeBaseDate(8, 0).getTime()
 ), true);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastScheduledRunStatus: "success" },
-  new Date("2026-05-19T09:01:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime()
+  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: scheduledKnowledgeBaseDate(9, 0, 10).getTime(), lastScheduledRunStatus: "success" },
+  scheduledKnowledgeBaseDate(9, 1),
+  scheduledKnowledgeBaseDate(8, 0).getTime()
 ), false);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: new Date("2026-05-19T09:00:10+08:00").getTime(), lastScheduledRunStatus: "running" },
-  new Date("2026-05-19T09:01:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime()
+  { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: scheduledKnowledgeBaseDate(9, 0, 10).getTime(), lastScheduledRunStatus: "running" },
+  scheduledKnowledgeBaseDate(9, 1),
+  scheduledKnowledgeBaseDate(8, 0).getTime()
 ), true);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, scheduleTime: "09:20" },
-  new Date("2026-05-19T09:00:00+08:00"),
-  new Date("2026-05-19T08:00:00+08:00").getTime()
+  scheduledKnowledgeBaseDate(9, 0),
+  scheduledKnowledgeBaseDate(8, 0).getTime()
 ), false);
 assert.equal(DEFAULT_SETTINGS.review.enabled, false);
 assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
