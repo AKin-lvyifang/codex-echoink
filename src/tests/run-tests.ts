@@ -180,7 +180,7 @@ assert.equal(manifest.version, "1.0.1");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
-assert.equal(formatMessageHeaderTime(Date.parse("2026-05-22T08:29:00+08:00")), "星期五08:29");
+assert.equal(formatMessageHeaderTime(new Date(2026, 4, 22, 8, 29).getTime()), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
 function assertI18nShapeMatches(reference: unknown, candidate: unknown, pathLabel = "copy"): void {
   if (typeof reference === "function") {
