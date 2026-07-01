@@ -26,6 +26,11 @@ on:
         required: false
         default: false
         type: boolean
+      make_latest:
+        description: "Mark this release as latest"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -106,7 +111,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          make_latest: true
+          make_latest: ${{ github.event_name != 'workflow_dispatch' || inputs.make_latest == true }}
           fail_on_unmatched_files: true
           overwrite_files: true
           files: |
