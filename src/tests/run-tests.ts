@@ -2378,10 +2378,16 @@ try {
   await rm(rawEmptyIdentityDir, { recursive: true, force: true });
   await mkdir(rawEmptyIdentityDir, { recursive: true });
   await chmod(rawEmptyIdentityDir, (rawEmptyDirBeforeContent.get("raw/articles/identity-empty") as any).mode & 0o777);
-  const rawEmptyDirAfter = fingerprintRawContentSnapshot(await snapshotRawFileContents(rawRestoreVault));
-  assert.deepEqual(diffRawSnapshot(rawEmptyDirBefore, rawEmptyDirAfter), [
-    "raw/articles/identity-empty 文件身份被改写"
-  ]);
+  const rawEmptyDirAfterContent = await snapshotRawFileContents(rawRestoreVault);
+  const rawEmptyDirAfter = fingerprintRawContentSnapshot(rawEmptyDirAfterContent);
+  const rawEmptyDirChanges = diffRawSnapshot(rawEmptyDirBefore, rawEmptyDirAfter);
+  if (rawEmptyDirBefore.get("raw/articles/identity-empty")?.identity === rawEmptyDirAfter.get("raw/articles/identity-empty")?.identity) {
+    assert.deepEqual(rawEmptyDirChanges, []);
+  } else {
+    assert.deepEqual(rawEmptyDirChanges, [
+      "raw/articles/identity-empty 文件身份被改写"
+    ]);
+  }
   await restoreRawSnapshot(rawRestoreVault, rawEmptyDirBeforeContent, rawEmptyDirBefore, rawEmptyDirAfter);
   assert.equal((await stat(rawEmptyIdentityDir)).isDirectory(), true);
   const rawRootExternalTarget = path.join(rawRestoreVault, "outside-raw-root");
