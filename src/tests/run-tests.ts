@@ -176,7 +176,7 @@ const execFile = promisify(execFileCallback);
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "1.0.2");
+assert.equal(manifest.version, "1.0.3");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
@@ -1776,6 +1776,9 @@ assert.equal(
 
 const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
 const codexViewSource = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
+assert.doesNotMatch(codexViewSource, /\.style\./);
+assert.match(codexViewSource, /setCssStyles/);
+assert.match(codexViewSource, /setCssProps/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
 const homeViewSource = await readFile(path.join(process.cwd(), "src/home/home-view.ts"), "utf8");
 const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
@@ -2020,10 +2023,8 @@ assert.match(codexViewSource, /panel\.addClass\("is-visible"\)/);
 assert.match(codexViewSource, /bridge\.addClass\("is-visible"\)/);
 assert.match(codexViewSource, /panel\.removeClass\("is-visible"\)/);
 assert.match(codexViewSource, /bridge\.removeClass\("is-visible"\)/);
-assert.match(codexViewSource, /panel\.style\.visibility\s*=\s*"visible"/);
-assert.match(codexViewSource, /panel\.style\.opacity\s*=\s*"1"/);
-assert.match(codexViewSource, /panel\.style\.pointerEvents\s*=\s*"auto"/);
-assert.match(codexViewSource, /panel\.style\.visibility\s*=\s*"hidden"/);
+assert.match(codexViewSource, /hidePanelState/);
+assert.match(codexViewSource, /showPanelState/);
 assert.match(codexViewSource, /button\.setAttribute\("aria-expanded",\s*"true"\)/);
 assert.match(codexViewSource, /button\.setAttribute\("aria-expanded",\s*"false"\)/);
 assert.match(codexViewSource, /const openPanelFromClick/);
