@@ -21,6 +21,16 @@ on:
         description: "Release tag to rebuild, attest, and update"
         required: true
         type: string
+      skip_tests:
+        description: "Skip npm test for historical release rebuilds"
+        required: false
+        default: false
+        type: boolean
+      make_latest:
+        description: "Mark this release as latest"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -62,6 +72,7 @@ jobs:
         run: npm ci
 
       - name: Test
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
         run: npm run test
 
       - name: Typecheck
@@ -100,7 +111,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          make_latest: true
+          make_latest: ${{ github.event_name != 'workflow_dispatch' || inputs.make_latest == true }}
           fail_on_unmatched_files: true
           overwrite_files: true
           files: |

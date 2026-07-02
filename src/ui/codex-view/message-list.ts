@@ -61,7 +61,7 @@ export class CodexMessageListRenderer {
     const shouldPinBottom = Boolean(env.options.forceBottom) || (!env.options.fromScroll && this.isNearBottom(messagesEl, virtualListEl));
     virtualListEl.empty();
     if (messages.length === 0) {
-      virtualListEl.style.height = "100%";
+      virtualListEl.setCssStyles({ height: "100%" });
       const welcome = virtualListEl.createDiv({ cls: "codex-welcome" });
       welcome.createDiv({ cls: "codex-welcome-title", text: knowledgeSession ? "知识库管理" : "What's new?" });
       if (knowledgeSession) {
@@ -89,7 +89,7 @@ export class CodexMessageListRenderer {
       scrollTop: previousScrollTop,
       viewportHeight
     });
-    virtualListEl.style.height = `${Math.max(virtual.totalHeight, viewportHeight)}px`;
+    virtualListEl.setCssStyles({ height: `${Math.max(virtual.totalHeight, viewportHeight)}px` });
 
     for (const virtualRow of virtual.rows) {
       const row = rows[virtualRow.index];
@@ -97,7 +97,7 @@ export class CodexMessageListRenderer {
       const rowEl = virtualListEl.createDiv({ cls: `codex-virtual-row codex-virtual-row-${row.kind}` });
       rowEl.dataset.rowId = virtualRow.id;
       rowEl.dataset.index = String(virtualRow.index);
-      rowEl.style.transform = `translateY(${virtualRow.top}px)`;
+      rowEl.setCssStyles({ transform: `translateY(${virtualRow.top}px)` });
       this.renderVirtualRow(rowEl, row);
     }
 

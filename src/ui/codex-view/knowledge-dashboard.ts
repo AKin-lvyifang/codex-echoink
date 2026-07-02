@@ -237,7 +237,7 @@ function addKnowledgeDashboardMeter(
   if (healthTooltip) addKnowledgeDashboardHealthTooltip(scoreValueEl, healthTooltip, "meter", tooltipState);
   const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
   const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill ${statusClass}` });
-  fill.style.width = `${Math.max(0, Math.min(100, scoreValue))}%`;
+  fill.setCssStyles({ width: `${Math.max(0, Math.min(100, scoreValue))}%` });
   const status = row.createDiv({ cls: `codex-kb-dashboard-health-badge ${statusClass}` });
   status.createSpan({ cls: "codex-kb-status-dot" });
   status.createSpan({ text: statusLabel });
@@ -288,25 +288,13 @@ function addKnowledgeDashboardHealthTooltip(
   const rememberTooltipPointer = (event: MouseEvent) => {
     lastTooltipPointer = { x: event.clientX, y: event.clientY };
   };
-  const hidePanelStyles = () => {
-    bridge.style.pointerEvents = "none";
-    bridge.style.visibility = "hidden";
-    panel.style.opacity = "0";
-    panel.style.pointerEvents = "none";
-    panel.style.transform = "translateY(-3px)";
-    panel.style.visibility = "hidden";
+  const hidePanelState = () => {
     button.setAttribute("aria-expanded", "false");
   };
-  const showPanelStyles = () => {
-    bridge.style.pointerEvents = "auto";
-    bridge.style.visibility = "visible";
-    panel.style.opacity = "1";
-    panel.style.pointerEvents = "auto";
-    panel.style.transform = "translateY(0)";
-    panel.style.visibility = "visible";
+  const showPanelState = () => {
     button.setAttribute("aria-expanded", "true");
   };
-  hidePanelStyles();
+  hidePanelState();
   const clearCloseTimer = () => {
     if (!closeTimer) return;
     window.clearTimeout(closeTimer);
@@ -319,7 +307,7 @@ function addKnowledgeDashboardHealthTooltip(
     wrapper.addClass("is-tooltip-open");
     bridge.addClass("is-visible");
     panel.addClass("is-visible");
-    showPanelStyles();
+    showPanelState();
   };
   const closePanel = () => {
     clearCloseTimer();
@@ -327,7 +315,7 @@ function addKnowledgeDashboardHealthTooltip(
     wrapper.removeClass("is-click-open");
     bridge.removeClass("is-visible");
     panel.removeClass("is-visible");
-    hidePanelStyles();
+    hidePanelState();
   };
   const scheduleClose = (delayMs = 160) => {
     clearCloseTimer();
@@ -442,7 +430,7 @@ function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTM
   const margin = 12;
   const gap = 8;
   const width = Math.min(320, Math.max(220, viewportWidth - margin * 2));
-  panel.style.width = `${width}px`;
+  panel.setCssStyles({ width: `${width}px` });
   const panelHeight = panel.getBoundingClientRect().height || 220;
   const preferredLeft = placement === "meter" ? trigger.left : trigger.right - width;
   const left = Math.max(margin, Math.min(preferredLeft, viewportWidth - width - margin));
@@ -450,8 +438,10 @@ function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTM
   const top = preferredTop + panelHeight > viewportHeight - margin
     ? Math.max(margin, trigger.top - panelHeight - gap)
     : preferredTop;
-  panel.style.left = `${Math.round(left)}px`;
-  panel.style.top = `${Math.round(top)}px`;
+  panel.setCssStyles({
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`
+  });
   const panelRect = panel.getBoundingClientRect();
   const bridgePadding = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING;
   const bridgeLeft = Math.max(0, Math.min(trigger.left, panelRect.left) - bridgePadding);
@@ -463,10 +453,12 @@ function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTM
   const bridgeBottom = panelBelowTrigger
     ? Math.min(viewportHeight, panelRect.top + bridgePadding)
     : Math.min(viewportHeight, trigger.top + bridgePadding);
-  bridge.style.left = `${Math.round(bridgeLeft)}px`;
-  bridge.style.top = `${Math.round(Math.min(bridgeTop, bridgeBottom))}px`;
-  bridge.style.width = `${Math.max(16, Math.round(bridgeRight - bridgeLeft))}px`;
-  bridge.style.height = `${Math.max(10, Math.round(Math.abs(bridgeBottom - bridgeTop)))}px`;
+  bridge.setCssStyles({
+    left: `${Math.round(bridgeLeft)}px`,
+    top: `${Math.round(Math.min(bridgeTop, bridgeBottom))}px`,
+    width: `${Math.max(16, Math.round(bridgeRight - bridgeLeft))}px`,
+    height: `${Math.max(10, Math.round(Math.abs(bridgeBottom - bridgeTop)))}px`
+  });
 }
 
 function renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot): void {
@@ -492,7 +484,7 @@ function renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: Knowl
   const grid = heatmap.createDiv({ cls: "codex-kb-heatmap-grid" });
   const yearStart = new Date(year, 0, 1, 12, 0, 0, 0);
   const weekCount = Math.max(1, ...snapshot.checkHeatmap.map((day) => heatmapWeekIndex(day.date, yearStart) + 1));
-  grid.style.setProperty("--codex-kb-heatmap-weeks", String(weekCount));
+  grid.setCssProps({ "--codex-kb-heatmap-weeks": String(weekCount) });
 
   const monthStarts = new Set<string>();
   for (const day of snapshot.checkHeatmap) {
@@ -502,13 +494,17 @@ function renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: Knowl
     const date = parseHeatmapDateKey(dateKey);
     if (!date) continue;
     const label = grid.createDiv({ cls: "codex-kb-heatmap-month", text: HEATMAP_MONTH_LABELS[date.getMonth()] });
-    label.style.gridColumn = `${heatmapWeekIndex(dateKey, yearStart) + 2}`;
-    label.style.gridRow = "1";
+    label.setCssStyles({
+      gridColumn: `${heatmapWeekIndex(dateKey, yearStart) + 2}`,
+      gridRow: "1"
+    });
   }
   for (const [weekday, label] of [[1, "Mon"], [3, "Wed"], [5, "Fri"]] as Array<[number, string]>) {
     const dayLabel = grid.createDiv({ cls: "codex-kb-heatmap-weekday", text: label });
-    dayLabel.style.gridColumn = "1";
-    dayLabel.style.gridRow = `${weekday + 2}`;
+    dayLabel.setCssStyles({
+      gridColumn: "1",
+      gridRow: `${weekday + 2}`
+    });
   }
 
   for (const day of snapshot.checkHeatmap) {
@@ -518,8 +514,10 @@ function renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: Knowl
       cls: `codex-kb-heatmap-cell is-${day.status}`,
       attr: { title: `${day.date} · ${knowledgeHeatmapStatusLabel(day.status)}`, "aria-label": `${day.date} ${knowledgeHeatmapStatusLabel(day.status)}` }
     });
-    cell.style.gridColumn = `${heatmapWeekIndex(day.date, yearStart) + 2}`;
-    cell.style.gridRow = `${date.getDay() + 2}`;
+    cell.setCssStyles({
+      gridColumn: `${heatmapWeekIndex(day.date, yearStart) + 2}`,
+      gridRow: `${date.getDay() + 2}`
+    });
   }
   const legend = section.createDiv({ cls: "codex-kb-dashboard-legend" });
   legend.createSpan({ cls: "codex-kb-dashboard-legend-label", text: "Less" });

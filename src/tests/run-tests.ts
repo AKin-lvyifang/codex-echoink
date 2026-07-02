@@ -176,7 +176,7 @@ const execFile = promisify(execFileCallback);
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "1.0.1");
+assert.equal(manifest.version, "1.0.3");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 
@@ -1775,6 +1775,13 @@ const codexViewHeaderSource = await readFile(path.join(process.cwd(), "src/ui/co
 const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/history-modal.ts"), "utf8");
 const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/knowledge-dashboard.ts"), "utf8");
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
+const codexViewUiSources = [
+  codexViewSource,
+  codexViewHeaderSource,
+  codexViewHistoryModalSource,
+  codexViewKnowledgeDashboardSource,
+  codexViewMessageListSource
+].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
 const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
 assert.ok(codexViewModules.includes("history-modal.ts"));
@@ -1786,6 +1793,9 @@ assert.ok(codexViewLineCount <= 2500, `src/ui/codex-view.ts should stay under 25
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
 assert.doesNotMatch(codexViewSource, /private addKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTooltip/);
+assert.doesNotMatch(codexViewUiSources, /\.style\./);
+assert.match(codexViewUiSources, /setCssStyles/);
+assert.match(codexViewUiSources, /setCssProps/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
 const homeViewSource = await readFile(path.join(process.cwd(), "src/home/home-view.ts"), "utf8");
 const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
@@ -1829,6 +1839,9 @@ assert.match(mainPluginSource, /activateHomeAndSidebar/);
 assert.match(mainPluginSource, /ensureHomeWorkspaceSpace/);
 assert.match(mainPluginSource, /rightSplit\.collapse/);
 assert.match(mainPluginSource, /leftSplit\.collapse/);
+assert.equal(/registerView\([^]*?this\.(view|homeView|reviewPreviewView)\s*=/.test(mainPluginSource), false);
+assert.equal(mainPluginSource.includes("detachLeavesOfType("), false);
+assert.equal(mainPluginSource.includes("revealLeaf("), false);
 assert.match(homeViewSource, /知识活动日历/);
 assert.match(homeViewSource, /今日复盘/);
 assert.match(homeViewSource, /按相关度/);
@@ -2030,10 +2043,8 @@ assert.match(codexViewKnowledgeDashboardSource, /panel\.addClass\("is-visible"\)
 assert.match(codexViewKnowledgeDashboardSource, /bridge\.addClass\("is-visible"\)/);
 assert.match(codexViewKnowledgeDashboardSource, /panel\.removeClass\("is-visible"\)/);
 assert.match(codexViewKnowledgeDashboardSource, /bridge\.removeClass\("is-visible"\)/);
-assert.match(codexViewKnowledgeDashboardSource, /panel\.style\.visibility\s*=\s*"visible"/);
-assert.match(codexViewKnowledgeDashboardSource, /panel\.style\.opacity\s*=\s*"1"/);
-assert.match(codexViewKnowledgeDashboardSource, /panel\.style\.pointerEvents\s*=\s*"auto"/);
-assert.match(codexViewKnowledgeDashboardSource, /panel\.style\.visibility\s*=\s*"hidden"/);
+assert.match(codexViewKnowledgeDashboardSource, /hidePanelState/);
+assert.match(codexViewKnowledgeDashboardSource, /showPanelState/);
 assert.match(codexViewKnowledgeDashboardSource, /button\.setAttribute\("aria-expanded",\s*"true"\)/);
 assert.match(codexViewKnowledgeDashboardSource, /button\.setAttribute\("aria-expanded",\s*"false"\)/);
 assert.match(codexViewKnowledgeDashboardSource, /const openPanelFromClick/);

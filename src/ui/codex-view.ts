@@ -2090,7 +2090,7 @@ export class CodexView extends ItemView {
     if (!this.plugin.settings.showContext) return;
     const view = contextUsageView(tokenUsage);
     this.contextValueEl.setText(view.label);
-    this.contextEl.style.setProperty("--codex-context-angle", `${view.angle}deg`);
+    this.contextEl.setCssProps({ "--codex-context-angle": `${view.angle}deg` });
     this.contextEl.setAttr("aria-label", view.title);
     this.contextEl.setAttr("title", view.title);
     this.contextEl.toggleClass("is-empty", view.percent === null);
