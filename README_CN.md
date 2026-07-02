@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.0.1-0EA5E9?style=flat-square" alt="版本 v1.0.1">
+    <img src="https://img.shields.io/badge/version-v1.0.2-0EA5E9?style=flat-square" alt="版本 v1.0.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.0.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.0.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -156,6 +156,21 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.0.2
+
+**审核兼容修复版：** 这次主要修 Obsidian 社区审核发现的源码兼容问题，不改变 EchoInk 核心使用流程。
+
+**修复内容：**
+
+- 调整视图注册方式，不再把 view 实例缓存到插件属性上。
+- 插件卸载时不再强制关闭 EchoInk 面板，避免重载后打乱工作区布局。
+- 移除对高于当前 `minAppVersion` 的 Obsidian API 依赖。
+
+**使用方法：**
+
+1. 安装 `v1.0.2`。
+2. 正常打开 EchoInk 首页、Codex 侧栏或复盘预览即可。
 
 ### v1.0.1
 

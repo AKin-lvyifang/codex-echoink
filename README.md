@@ -20,14 +20,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.0.1-0EA5E9?style=flat-square" alt="Version v1.0.1">
+    <img src="https://img.shields.io/badge/version-v1.0.2-0EA5E9?style=flat-square" alt="Version v1.0.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.0.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.0.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -152,6 +152,21 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.0.2
+
+**Review compatibility release:** This update fixes Obsidian community review findings without changing the core EchoInk workflow.
+
+**What changed:**
+
+- View registration now returns views directly instead of caching view instances on the plugin.
+- Plugin unload no longer forcibly detaches EchoInk leaves, preserving the user's workspace layout.
+- The plugin no longer depends on newer Obsidian APIs than the declared `minAppVersion`.
+
+**How to use:**
+
+1. Install `v1.0.2`.
+2. Open the EchoInk Home, Codex sidebar, or review preview as usual.
 
 ### v1.0.1
 

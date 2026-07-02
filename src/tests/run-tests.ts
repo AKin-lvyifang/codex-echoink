@@ -176,9 +176,14 @@ const execFile = promisify(execFileCallback);
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "1.0.1");
+assert.equal(manifest.version, "1.0.2");
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
+
+const mainSource = await readFile(path.join(process.cwd(), "src", "main.ts"), "utf8");
+assert.equal(/registerView\([^]*?this\.(view|homeView|reviewPreviewView)\s*=/.test(mainSource), false);
+assert.equal(mainSource.includes("detachLeavesOfType("), false);
+assert.equal(mainSource.includes("revealLeaf("), false);
 
 assert.equal(formatMessageHeaderTime(new Date(2026, 4, 22, 8, 29).getTime()), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
