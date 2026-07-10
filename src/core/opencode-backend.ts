@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "child_process";
-import * as http from "node:http";
-import * as https from "node:https";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
-import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions } from "../agent/types";
+import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions, AgentTaskResult } from "../agent/types";
 import { formatOpenCodeError } from "./opencode-errors";
+import { nodeFetch } from "./opencode-fetch";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
+import { buildOpenCodeRunArgs, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "./opencode-run";
 
 export interface OpenCodeBackendOptions {
   cliPath: string;
@@ -43,6 +43,19 @@ export interface OpenCodeHistorySnapshot {
   sessionsMatched: number;
   messages: OpenCodeHistoryMessage[];
   truncated: boolean;
+}
+
+export interface OpenCodeCliTaskOptions {
+  prompt: string;
+  parts?: AgentPromptPart[];
+  model?: {
+    providerId: string;
+    modelId: string;
+  };
+  agent?: string;
+  timeoutMs?: number;
+  abortSignal?: AbortSignal;
+  onRunId?: (runId: string) => void;
 }
 
 interface StartedOpenCodeServer {
@@ -110,6 +123,8 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   async listModels(): Promise<AgentModelInfo[]> {
+    const cliModels = await this.listCliModels().catch(() => []);
+    if (cliModels.length) return cliModels;
     const client = this.requireClient();
     const response = await unwrapOpenCodeResult(client.provider.list({ directory: this.options.vaultPath }), "读取 OpenCode 模型失败");
     return flattenOpenCodeModels(response?.all ?? []);
@@ -243,6 +258,45 @@ export class OpenCodeBackend implements AgentBackend {
     }), "OpenCode 启动异步任务失败");
   }
 
+  async runCliTask(options: OpenCodeCliTaskOptions): Promise<AgentTaskResult> {
+    const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const files = (options.parts ?? []).filter((part) => part.type === "file").map((part) => part.path);
+    const args = buildOpenCodeRunArgs({
+      prompt: options.prompt,
+      directory: this.options.vaultPath,
+      model: options.model,
+      agent: options.agent ?? this.options.agent,
+      files
+    });
+    let lineBuffer = "";
+    let emittedRunId = false;
+    const output = await runOpenCodeCommand({
+      command,
+      args,
+      cwd: this.options.vaultPath,
+      timeoutMs: options.timeoutMs,
+      abortSignal: options.abortSignal,
+      onStdoutChunk: (chunk) => {
+        lineBuffer += chunk;
+        for (;;) {
+          const index = lineBuffer.indexOf("\n");
+          if (index < 0) break;
+          const line = lineBuffer.slice(0, index);
+          lineBuffer = lineBuffer.slice(index + 1);
+          const runId = openCodeRunSessionIdFromLine(line);
+          if (runId && !emittedRunId) {
+            emittedRunId = true;
+            options.onRunId?.(runId);
+          }
+        }
+      }
+    });
+    const parsed = parseOpenCodeRunJsonLines(output);
+    if (parsed.sessionId && !emittedRunId) options.onRunId?.(parsed.sessionId);
+    if (!parsed.text) throw new Error("OpenCode CLI 未返回内容。");
+    return { text: parsed.text, runId: parsed.sessionId, usage: parsed.usage };
+  }
+
   async abort(sessionId: string): Promise<void> {
     await unwrapOpenCodeResult(this.requireClient().session.abort({
       sessionID: sessionId,
@@ -264,6 +318,82 @@ export class OpenCodeBackend implements AgentBackend {
     if (!this.client) throw new Error("OpenCode 未连接");
     return this.client;
   }
+
+  private async listCliModels(): Promise<AgentModelInfo[]> {
+    const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const output = await runOpenCodeCommand({
+      command,
+      args: ["models"],
+      cwd: this.options.vaultPath,
+      timeoutMs: 15000
+    });
+    return parseOpenCodeModelListOutput(output);
+  }
+}
+
+async function runOpenCodeCommand(input: {
+  command: string;
+  args: string[];
+  cwd: string;
+  timeoutMs?: number;
+  abortSignal?: AbortSignal;
+  onStdoutChunk?: (chunk: string) => void;
+}): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      input.abortSignal?.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve(stdout);
+    };
+    const abort = () => {
+      stopOpenCodeServer(child);
+      finish(new Error("Agent 任务已取消。"));
+    };
+    const timer = input.timeoutMs && input.timeoutMs > 0
+      ? setTimeout(() => {
+        stopOpenCodeServer(child);
+        finish(new Error(`OpenCode CLI 执行超时：${input.timeoutMs}ms`));
+      }, input.timeoutMs)
+      : null;
+    input.abortSignal?.addEventListener("abort", abort, { once: true });
+    child.stdout?.on("data", (chunk) => {
+      const value = chunk.toString();
+      stdout += value;
+      input.onStdoutChunk?.(value);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        finish();
+        return;
+      }
+      const parsedError = parseOpenCodeRunFailure(stdout);
+      finish(new Error(parsedError || `OpenCode CLI 已退出：${code ?? signal ?? "unknown"}${stderr.trim() ? `\n${stderr.trim()}` : ""}`));
+    });
+  });
+}
+
+function parseOpenCodeRunFailure(output: string): string {
+  try {
+    parseOpenCodeRunJsonLines(output);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return "";
 }
 
 function openCodePromptText(parts: any[]): string {
@@ -277,66 +407,6 @@ async function unwrapOpenCodeResult<T>(promise: Promise<{ data: T; error: undefi
   const result = await promise;
   if (result.error) throw new Error(`${fallback}：${formatOpenCodeError(result.error)}`);
   return result.data as T;
-}
-
-async function nodeFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-  const transport = url.protocol === "https:" ? https : http;
-  const body = await requestBodyToBuffer(init.body);
-  return new Promise<Response>((resolve, reject) => {
-    const request = transport.request(url, {
-      method: init.method ?? "GET",
-      headers: headersToNode(init.headers),
-      timeout: 120000
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      response.on("end", () => {
-        resolve(new Response(Buffer.concat(chunks), {
-          status: response.statusCode ?? 0,
-          statusText: response.statusMessage,
-          headers: responseHeadersToWeb(response.headers)
-        }));
-      });
-    });
-    request.on("timeout", () => {
-      request.destroy(new Error("OpenCode 请求超时"));
-    });
-    request.on("error", reject);
-    if (body) request.write(body);
-    request.end();
-  });
-}
-
-async function requestBodyToBuffer(body: BodyInit | null | undefined): Promise<Buffer | null> {
-  if (!body) return null;
-  if (typeof body === "string") return Buffer.from(body);
-  if (body instanceof URLSearchParams) return Buffer.from(body.toString());
-  if (body instanceof ArrayBuffer) return Buffer.from(body);
-  if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
-  if (typeof Blob !== "undefined" && body instanceof Blob) return Buffer.from(await body.arrayBuffer());
-  throw new Error("OpenCode 请求体格式暂不支持");
-}
-
-function headersToNode(headers: HeadersInit | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!headers) return result;
-  new Headers(headers).forEach((value, key) => {
-    result[key] = value;
-  });
-  return result;
-}
-
-function responseHeadersToWeb(headers: http.IncomingHttpHeaders): Headers {
-  const result = new Headers();
-  for (const [key, value] of Object.entries(headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) result.append(key, item);
-    } else if (typeof value === "string") {
-      result.set(key, value);
-    }
-  }
-  return result;
 }
 
 function normalizeOpenCodeTimeMs(value: unknown): number {

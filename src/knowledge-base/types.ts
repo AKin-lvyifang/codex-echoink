@@ -1,6 +1,7 @@
 import type { AgentInputModality } from "../agent/types";
 
 export type KnowledgeBaseRunMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox";
+export type KnowledgeBaseCommandUiMode = KnowledgeBaseRunMode | "calibrate";
 export type KnowledgeBaseCitationBucket = "wiki" | "journal" | "outputs";
 export type KnowledgeBaseEvidenceStatus = "strong" | "weak" | "none";
 
@@ -25,11 +26,14 @@ export interface KnowledgeBaseSkippedSource {
   reason: string;
 }
 
+export type KnowledgeBaseRawDigestState = "digested" | "pending" | "changed" | "calibration" | "failed";
+
 export interface KnowledgeBaseRawDigestStatus {
   digested: number;
   pending: number;
   changed: number;
   calibration: number;
+  failed: number;
 }
 
 export interface KnowledgeBaseCitation {
@@ -64,7 +68,16 @@ export interface KnowledgeBaseRunResult {
   processedSources: KnowledgeBaseSource[];
   structure?: StructureNormalizationResult;
   externalRawAdditions?: string[];
+  digestEvidencePaths?: Record<string, string[]>;
+  calibration?: KnowledgeBaseRawCalibrationResult;
   error?: string;
+}
+
+export interface KnowledgeBaseRawCalibrationResult {
+  marked: KnowledgeBaseSource[];
+  review: KnowledgeBaseSource[];
+  changed: KnowledgeBaseSource[];
+  evidencePaths: Record<string, string[]>;
 }
 
 export interface StructureNormalizationMove {

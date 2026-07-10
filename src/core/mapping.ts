@@ -1,7 +1,6 @@
 import * as os from "os";
 import * as path from "path";
 import type {
-  CodexSkill,
   PermissionMode,
   ProcessEventSummary,
   ProcessFileRef,
@@ -13,6 +12,7 @@ import type {
   UserInput
 } from "../types/app-server";
 import type { StoredAttachment } from "../settings/settings";
+import type { EchoInkResource } from "../resources/types";
 
 export const DEFAULT_REPLY_STYLE_INSTRUCTION =
   "回复格式要求：使用中文；先给结论，再给关键依据；短段落；能用列表就用列表；对比、取舍、验收项优先用 Markdown 表格；避免整段长文。";
@@ -59,10 +59,19 @@ export function buildCollaborationMode(mode: UiMode, model: string | null | unde
   };
 }
 
-export function buildUserInput(text: string, attachments: StoredAttachment[], skill?: CodexSkill | null, styleInstruction = DEFAULT_REPLY_STYLE_INSTRUCTION): UserInput[] {
+type UserInputSkill = EchoInkResource | { name: string; description?: string; path?: string; contentPath?: string; source?: string };
+
+export function buildUserInput(text: string, attachments: StoredAttachment[], skill?: UserInputSkill | null, styleInstruction = DEFAULT_REPLY_STYLE_INSTRUCTION): UserInput[] {
   const input: UserInput[] = [];
-  if (skill) {
-    input.push({ type: "skill", name: skill.name, path: skill.path });
+  const codexSkillPath = codexNativeSkillPath(skill);
+  if (skill && codexSkillPath) {
+    input.push({ type: "skill", name: skill.name, path: codexSkillPath });
+  } else if (skill) {
+    input.push({
+      type: "text",
+      text: `本轮选择 EchoInk Skill：/${skill.name}\n${skill.description || skill.contentPath || "无描述"}\n此 Skill 来自 EchoInk 资源目录，只影响当前插件本轮上下文。`,
+      text_elements: []
+    });
   }
   if (styleInstruction.trim()) {
     input.push({ type: "text", text: styleInstruction.trim(), text_elements: [] });
@@ -102,14 +111,14 @@ export function getSlashQuery(text: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
-export function filterSkills(skills: CodexSkill[], query: string): CodexSkill[] {
+export function filterSkills<T extends { name: string; description?: string; path?: string; contentPath?: string; enabled?: boolean }>(skills: T[], query: string): T[] {
   const q = query.trim().toLowerCase();
   const seen = new Set<string>();
   return skills
     .filter((skill) => skill.enabled !== false)
     .filter((skill) => {
       if (!q) return true;
-      return skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q);
+      return skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q) || (skill.path || skill.contentPath || "").toLowerCase().includes(q);
     })
     .filter((skill) => {
       const key = skill.name.trim().toLowerCase();
@@ -117,7 +126,15 @@ export function filterSkills(skills: CodexSkill[], query: string): CodexSkill[] 
       seen.add(key);
       return true;
     })
-    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase(), "en") || a.path.localeCompare(b.path));
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase(), "en") || (a.path || a.contentPath || "").localeCompare(b.path || b.contentPath || ""));
+}
+
+function codexNativeSkillPath(skill?: UserInputSkill | null): string {
+  if (!skill) return "";
+  const legacyPath = "path" in skill && typeof skill.path === "string" ? skill.path : "";
+  if (legacyPath) return legacyPath;
+  if (skill.source !== "codex-import") return "";
+  return typeof skill.contentPath === "string" ? skill.contentPath : "";
 }
 
 export function contextPercent(totalTokens?: number, contextWindow?: number | null): number {

@@ -1,7 +1,8 @@
 import { Menu, Notice, setIcon } from "obsidian";
-import { DEFAULT_SETTINGS, ensureModelChoices, filterEnabledSkills } from "../../settings/settings";
-import { filterSkills } from "../../core/mapping";
-import type { CodexModel, CodexSkill, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
+import { DEFAULT_SETTINGS, ensureModelChoices } from "../../settings/settings";
+import { filterSkillResources } from "../../resources/registry";
+import type { EchoInkResource } from "../../resources/types";
+import type { CodexModel, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
 import { knowledgeCommandOptions, type KnowledgeBaseCommandOption } from "../../knowledge-base/commands";
 import { labelFor } from "./composer";
 
@@ -21,13 +22,12 @@ export interface SkillMenuCallbacks {
 }
 
 export interface SkillMatchesState {
-  skills: CodexSkill[];
-  skillOverrides: Record<string, boolean> | undefined;
-  selectedSkill: CodexSkill | null;
+  skills: EchoInkResource[];
+  selectedSkill: EchoInkResource | null;
 }
 
 export interface SkillMatchesCallbacks {
-  onSelectSkill: (skill: CodexSkill) => void;
+  onSelectSkill: (skill: EchoInkResource) => void;
 }
 
 export interface AddMenuCallbacks {
@@ -269,16 +269,15 @@ export function openSessionMenu(event: MouseEvent, knowledgeSession: boolean, ca
 
 export function renderSkillMatches(container: HTMLElement, query: string, state: SkillMatchesState, callbacks: SkillMatchesCallbacks): void {
   container.empty();
-  const enabledSkills = filterEnabledSkills(state.skills, state.skillOverrides);
-  const matches = filterSkills(enabledSkills, query);
+  const matches = filterSkillResources(state.skills, query);
   for (const skill of matches) {
     const item = container.createDiv({ cls: "codex-skill-item" });
-    item.toggleClass("is-selected", state.selectedSkill?.path === skill.path);
+    item.toggleClass("is-selected", state.selectedSkill?.id === skill.id);
     const heading = item.createDiv({ cls: "codex-skill-heading" });
     const icon = heading.createSpan({ cls: "codex-skill-icon" });
     setIcon(icon, "box");
     heading.createDiv({ cls: "codex-skill-name", text: skill.name });
-    item.createDiv({ cls: "codex-skill-desc", text: skill.description || skill.path });
+    item.createDiv({ cls: "codex-skill-desc", text: skill.description || skill.contentPath || skill.source });
     item.onclick = () => callbacks.onSelectSkill(skill);
   }
   if (matches.length === 0) container.createDiv({ cls: "codex-skill-empty", text: "没有匹配的 skill" });

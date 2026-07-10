@@ -1,6 +1,7 @@
 import { setIcon } from "obsidian";
-import type { StoredAttachment, StoredSession } from "../../settings/settings";
-import type { CodexSkill, PermissionMode, ReasoningEffort } from "../../types/app-server";
+import type { EchoInkResource } from "../../resources/types";
+import type { AgentBackendMode, StoredAttachment, StoredSession } from "../../settings/settings";
+import type { PermissionMode, ReasoningEffort } from "../../types/app-server";
 import { composerPrimaryActionForState, composerStateForRuntimeState } from "../composer-state";
 import type { QueuedTurnItem } from "../turn-queue";
 
@@ -24,10 +25,11 @@ export interface ComposerToolbarState {
   session: StoredSession;
   knowledgeSession: boolean;
   knowledgeTaskRunning: boolean;
-  knowledgeBackend: "codex-cli" | "opencode";
-  selectedSkill: CodexSkill | null;
+  knowledgeBackend: AgentBackendMode;
+  selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
   running: boolean;
+  viewRunKind?: "chat" | "knowledge-base" | "";
   hasDraft: boolean;
   hasQueuedItems: boolean;
   currentComposerSummary: string;
@@ -79,7 +81,7 @@ export interface TurnQueueCallbacks {
 }
 
 export interface ComposerAttachmentsState {
-  selectedSkill: CodexSkill | null;
+  selectedSkill: EchoInkResource | null;
   attachments: StoredAttachment[];
 }
 
@@ -177,6 +179,7 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
 
   const composerState = composerStateForRuntimeState({
     viewRunning: state.running,
+    viewRunKind: state.viewRunKind,
     globalKnowledgeTaskRunning: state.knowledgeTaskRunning,
     hasDraft: state.hasDraft,
     hasQueuedItems: state.hasQueuedItems

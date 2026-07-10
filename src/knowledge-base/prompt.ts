@@ -6,6 +6,7 @@ export interface KnowledgeBasePromptInput {
   vaultPath: string;
   mode: KnowledgeBaseRunMode;
   userRequest?: string;
+  requestedRawPaths?: string[];
   reportPath: string;
   sources: KnowledgeBaseSource[];
   rulesFilePath: string;
@@ -47,17 +48,28 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     `- wiki/index.md: ${input.hasWikiIndex ? "存在，必须读取" : "不存在"}`,
     `- outputs/.ingest-tracker.md: ${input.hasTracker ? "存在，必须读取" : "不存在，可创建或补齐"}`,
     "",
+    "## 四步提炼协议",
+    "提炼不等于摘要。固定协议是：读懂原文 -> 拆出知识 -> 融入 Wiki / Projects -> 回写 Raw 已提炼状态。",
+    "只有 Wiki / Projects 非索引正文页出现结构化知识，并且知识附近保留 raw 来源证据，才算提炼完成。",
+    "报告不能代替 Wiki / Projects 正文；outputs/maintenance 只能记录过程和风险。",
+    "",
     "## 标准执行步骤",
     "1. Discover 增量检测：读取 raw/index.md；用 find 列出 raw/、inbox/、outputs/、projects/ 下知识区文件及修改时间，重点对比 raw/ 与 outputs/.ingest-tracker.md。跳过 raw/ 中以 .base 结尾的辅助文件。",
-    "2. Ingest 消化：只处理新增/变更资料；从 wiki/index.md 中选择最匹配领域；写入 wiki/<领域>/ 的 concepts/、guides/、references/ 等合适子文件夹。",
-    "3. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径只记录建议或风险，不要移动、重命名或改写 raw 源文件。",
-    "4. Wiki 笔记格式：包含 frontmatter（created/updated/tags）、raw 原文回链、3-5 句核心要点、关键概念和术语、与既有 wiki 概念的双向链接。",
-    "5. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md、raw/index.md、projects/00-索引.md 和 outputs/.ingest-tracker.md。",
-    "6. Lint 体检：扫描 wiki/ 下 [[链接]]，检查断链、孤儿页面、过时或 draft 内容、根目录散落普通笔记、中文目录残留，以及 wiki/index.md 链接有效性。",
-    "7. 报告输出：如果没有任何变化，报告写“无变化”；如果无法判断归属领域，跳过并在报告中说明。",
+    "2. 读懂原文：识别主题、来源类型、适用范围和不确定点。",
+    "3. 拆出知识：事实、观点、方法、案例、风险、行动项、问题。",
+    "4. 路由目标页：优先更新已有主题页，优先写入 wiki/projects 正文页；没有稳定承载页才新建。",
+    "5. 融入正文：合并、去重、调整小节，不把摘要贴在页面底部。",
+    "6. 写来源证据：每个 Raw 在目标页留下来源链接和附近实质内容。",
+    "7. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径只记录建议或风险，不要移动、重命名或改写 raw 源文件。",
+    "8. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md、raw/index.md、projects/00-索引.md 和 outputs/.ingest-tracker.md。",
+    "9. Lint 体检：扫描 wiki/ 下 [[链接]]，检查断链、孤儿页面、过时或 draft 内容、根目录散落普通笔记、中文目录残留，以及 wiki/index.md 链接有效性。",
+    "10. 报告输出：列出 Raw、目标页、知识类型、证据位置、失败原因；如果无法判断归属领域，写入“待人工判断”，不要假装完成。",
     "",
     "## 本轮 raw 来源",
     sourceLines,
+    input.requestedRawPaths?.length
+      ? ["", "## 用户指定 Raw", ...input.requestedRawPaths.map((item) => `- ${item}`)].join("\n")
+      : "",
     input.remainingSourceCount
       ? `- 批次限制：本轮只处理上面列出的 ${input.sources.length} 个 raw；其余 ${input.remainingSourceCount} 个保留到下次 /maintain，不要标记为已消化。`
       : "",
@@ -84,7 +96,9 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "- 如果本轮消化了 raw 文件，必须更新 outputs/.ingest-tracker.md。",
     "- 消化后的 wiki 页面必须包含 raw 来源回链。",
     "- 每个本轮 raw 都要在非索引正文页留下结构层证据：新建页可用顶部 `> 来源：[[raw/...]]` + 后续正文；聚合页要按日期或来源独立写小节。只写报告、tracker、索引或来源清单不算消化。",
+    "- 证据块硬要求：来源链接和实质内容必须在同一证据块；来源行后不要空行、标题或分隔线。推荐写成 `- 关键结论：... 来源：[[raw/...]]`，或 `> 来源：[[raw/...]]` 后下一行立刻写正文。",
     "- 对图片/PDF 的理解必须基于模型实际读取到的内容；如果不能读取，写明失败原因，不要编造。",
+    input.mode === "lint" ? "- /check 只体检，不提炼；不要写 Raw 托管属性；不要写 Wiki / Projects 正文；不要更新 outputs/.ingest-tracker.md。" : "",
     "",
     "开始执行。"
   ].join("\n");
@@ -151,9 +165,9 @@ export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput):
 }
 
 function taskForMode(mode: KnowledgeBaseRunMode): string {
-  if (mode === "lint") return "只执行 Lint 体检，不做新增消化。";
-  if (mode === "reingest") return "执行重新提炼：按用户指定资料重新生成或更新 wiki；如果未指定具体资料，只处理最近 raw，不全库重写。";
-  if (mode === "outputs") return "处理 outputs：扫描 outputs/ 中的协作产物，只把有长期复用价值的观点、方法、框架、决策提炼回 wiki；临时报告、发布草稿、一次性过程记录只在报告中说明，不要全量搬运。";
-  if (mode === "inbox") return "处理 inbox：按知识库规则归类 inbox 内容，必要时沉淀到 wiki/journal/outputs；不要删除原文件，处理结果写报告。";
-  return "执行 Ingest + Structure Normalize + Lint：消化新增/变更 raw 资料，整理知识区文件夹结构，更新 wiki、索引、tracker 与维护报告。";
+  if (mode === "lint") return "提炼审计，只体检，不提炼。只验真：不要写 Raw 托管属性，不要写 Wiki / Projects 正文，不要更新 tracker。";
+  if (mode === "reingest") return "强制重新执行四步提炼，旧摘要型产物不算完成。按用户指定资料重新融入 Wiki / Projects；如果未指定具体资料，只处理最近 raw，不全库重写。";
+  if (mode === "outputs") return "处理 outputs：只把长期复用价值提炼进 Wiki / Projects，也就是只把长期价值提炼进 Wiki / Projects，过程稿留在 outputs；临时报告、发布草稿、一次性过程记录只在报告中说明，不要全量搬运。";
+  if (mode === "inbox") return "处理 inbox：分流 inbox，只有可长期复用内容才进入 Wiki / Projects；不要删除原文件，处理结果写报告。";
+  return "执行四步提炼协议：读懂原文、拆出知识、融入 Wiki / Projects、由插件验证后回写 Raw 已提炼状态；同时整理知识区结构、更新索引、tracker 与维护报告。";
 }

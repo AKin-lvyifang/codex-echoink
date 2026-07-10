@@ -1,6 +1,6 @@
 import type { TurnOptions } from "../core/codex-service";
+import type { EchoInkResource } from "../resources/types";
 import type { StoredAttachment } from "../settings/settings";
-import type { CodexSkill } from "../types/app-server";
 
 export type QueuedTurnKind = "chat" | "knowledge-base";
 export type QueueSettlement = "continue" | "paused" | "idle";
@@ -10,7 +10,7 @@ export interface QueuedTurnItem {
   sessionId: string;
   text: string;
   attachments: StoredAttachment[];
-  skill: CodexSkill | null;
+  skill: EchoInkResource | null;
   turnOptions: TurnOptions;
   kind: QueuedTurnKind;
   createdAt: number;

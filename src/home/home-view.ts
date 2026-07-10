@@ -1,4 +1,4 @@
-import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
+import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardRecommendationCard, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 
@@ -26,11 +26,19 @@ const MONTH_LABELS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8
 export const HOME_CARD_ACTION_LABELS = ["打开", "提炼", "加入复盘"] as const;
 export const HOME_CARDS_PAGE_SIZE = 24;
 export const HOME_FOLDER_ALL = "all";
+const HOME_RAW_ACTION_STATUSES = new Set(["Raw 待提炼", "待重新提炼", "提炼失败"]);
 export const HOME_SORT_OPTIONS: ReadonlyArray<{ id: HomeSort; label: string; icon: string }> = [
   { id: "relevance", label: "按相关度", icon: "sparkles" },
   { id: "updated", label: "按更新时间", icon: "clock-3" },
   { id: "folder", label: "按文件夹", icon: "folder-tree" }
 ];
+
+export interface HomeRawBatchPreview {
+  count: number;
+  previewPaths: string[];
+  remainingCount: number;
+  command: string;
+}
 
 export class EchoInkHomeView extends ItemView {
   private snapshot: KnowledgeBaseDashboardSnapshot | null = null;
@@ -124,7 +132,7 @@ export class EchoInkHomeView extends ItemView {
 
     const actions = header.createDiv({ cls: "codex-home-actions" });
     this.addActionButton(actions, "体检", "shield-check", () => void this.runKnowledgeMaintenance("lint"));
-    this.addActionButton(actions, "维护", "wrench", () => void this.runKnowledgeMaintenance("maintain"));
+    this.addActionButton(actions, "维护", "wrench", () => void this.openBatchMaintainCommand());
     this.addActionButton(actions, "收集", "inbox", () => void this.openKnowledgeCommand("/inbox "));
     this.addActionButton(actions, "查看历史", "history", () => void this.openKnowledgeCommand("/history"));
     this.addIconButton(actions, "settings", "插件设置", () => void this.plugin.openWorkspaceResourceSettings());
@@ -500,15 +508,36 @@ export class EchoInkHomeView extends ItemView {
   }
 
   private async openRefineCommand(card: HomeCard): Promise<void> {
-    const command = card.kind === "raw"
-      ? `/maintain 重点处理 ${card.path}`
-      : `/ask 提炼这条知识卡片：${card.path}`;
+    const command = homeRefineCommandForCard(card);
+    if (card.kind === "raw") {
+      await this.submitKnowledgeBaseCommand(command);
+      return;
+    }
     await this.openKnowledgeCommand(command);
   }
 
   private async openReviewCommand(card: HomeCard): Promise<void> {
     const command = `/week 复盘 ${card.path}`;
     await this.openKnowledgeCommand(command);
+  }
+
+  private async openBatchMaintainCommand(): Promise<void> {
+    const preview = buildHomeRawBatchPreview(buildHomeCards(this.snapshot));
+    if (!preview) {
+      await this.submitKnowledgeBaseCommand("/maintain");
+      return;
+    }
+    new HomeRawBatchConfirmModal(this.app, preview, (command) => void this.submitKnowledgeBaseCommand(command)).open();
+  }
+
+  private async submitKnowledgeBaseCommand(command: string): Promise<void> {
+    await this.plugin.activateKnowledgeBaseChannel();
+    const view = this.plugin.getCodexView();
+    if (!view) {
+      new Notice("知识库频道还没有准备好");
+      return;
+    }
+    await view.submitKnowledgeBaseCommand(command);
   }
 
   private openHomeCardMenu(event: MouseEvent, card: HomeCard): void {
@@ -596,6 +625,40 @@ export class EchoInkHomeView extends ItemView {
       return;
     }
     new Notice(`没有在当前 Obsidian 仓库找到：${relativePath}`);
+  }
+}
+
+class HomeRawBatchConfirmModal extends Modal {
+  constructor(
+    app: App,
+    private readonly preview: HomeRawBatchPreview,
+    private readonly onConfirm: (command: string) => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "确认批量提炼" });
+    contentEl.createEl("p", { text: `将处理 ${this.preview.count} 个 Raw，先进入可见知识库任务。` });
+    const list = contentEl.createEl("ul");
+    for (const item of this.preview.previewPaths) {
+      list.createEl("li", { text: item });
+    }
+    if (this.preview.remainingCount > 0) {
+      list.createEl("li", { text: `另有 ${this.preview.remainingCount} 个未展开显示` });
+    }
+    contentEl.createEl("p", { text: `命令：${this.preview.command}` });
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    const cancel = actions.createEl("button", { text: "取消", attr: { type: "button" } });
+    cancel.onclick = () => this.close();
+    const confirm = actions.createEl("button", { text: "开始提炼", cls: "mod-cta", attr: { type: "button" } });
+    confirm.onclick = () => {
+      const command = this.preview.command;
+      this.close();
+      this.onConfirm(command);
+    };
   }
 }
 
@@ -691,9 +754,31 @@ export function filterHomeCards(cards: HomeCard[], filter: HomeFilter): HomeCard
   if (filter === "all") return cards;
   if (filter === "recent") return cards.slice(0, 8);
   if (filter === "stale") return [...cards].sort((a, b) => a.touchedAt - b.touchedAt).slice(0, 8);
-  if (filter === "raw") return cards.filter((card) => card.kind === "raw" && card.status === "Raw 待提炼");
+  if (filter === "raw") return cards.filter(isActionableHomeRawCard);
   if (filter === "wiki") return cards.filter((card) => card.kind === "wiki" && card.status === "Wiki 更新");
   return cards.filter((card) => card.kind === "raw" || card.kind === "inbox").slice(0, 8);
+}
+
+export function homeRefineCommandForCard(card: Pick<HomeCard, "kind" | "path">): string {
+  return card.kind === "raw"
+    ? `/maintain ${card.path}`
+    : `/ask 提炼这条知识卡片：${card.path}`;
+}
+
+export function buildHomeRawBatchPreview(cards: readonly HomeCard[], previewLimit = 20): HomeRawBatchPreview | null {
+  const rawCards = cards.filter(isActionableHomeRawCard);
+  if (!rawCards.length) return null;
+  const previewPaths = rawCards.slice(0, previewLimit).map((card) => card.path);
+  return {
+    count: rawCards.length,
+    previewPaths,
+    remainingCount: Math.max(0, rawCards.length - previewPaths.length),
+    command: "/maintain"
+  };
+}
+
+function isActionableHomeRawCard(card: Pick<HomeCard, "kind" | "status">): boolean {
+  return card.kind === "raw" && HOME_RAW_ACTION_STATUSES.has(card.status);
 }
 
 export function homeCardPathToCopy(card: Pick<HomeCard, "path">): string {

@@ -84,8 +84,9 @@ export function flattenOpenCodeModels(providers: Provider[]): AgentModelInfo[] {
   const models: AgentModelInfo[] = [];
   for (const provider of providers) {
     for (const model of Object.values(provider.models ?? {})) {
+      const id = model.id.startsWith(`${provider.id}/`) ? model.id : `${provider.id}/${model.id}`;
       models.push({
-        id: `${provider.id}/${model.id}`,
+        id,
         providerId: provider.id,
         modelId: model.id,
         displayName: `${provider.name || provider.id} · ${model.name || model.id}`,
@@ -150,6 +151,22 @@ export function ensureOpenCodeModelSupportsFiles(model: AgentModelInfo | null, p
   }
   if (!missing.size) return;
   throw new Error(`当前 OpenCode 模型不支持 ${Array.from(missing).join(" / ")} 输入，请切换支持多模态的模型。`);
+}
+
+export function selectOpenCodeModelForTask(
+  models: AgentModelInfo[],
+  providerId: string,
+  modelId: string,
+  required: AgentInputModality[]
+): AgentModelInfo | null {
+  const configured = models.find((model) => model.providerId === providerId && model.modelId === modelId);
+  if (configured) return configured;
+  const capable = models.filter((model) => required.every((modality) => model.inputModalities.includes(modality)));
+  return capable.find((model) => model.providerId === "opencode")
+    ?? capable[0]
+    ?? models.find((model) => model.providerId === "opencode")
+    ?? models[0]
+    ?? null;
 }
 
 export function toOpenCodePromptPart(part: AgentPromptPart): TextPartInput | FilePartInput {

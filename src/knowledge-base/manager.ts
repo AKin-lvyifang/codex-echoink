@@ -4,18 +4,25 @@ import * as path from "path";
 import { execFile } from "child_process";
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import type { AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart } from "../agent/types";
+import { createAgentTaskRuntime } from "../agent/factory";
+import { getAgentBackendDefinition } from "../agent/registry";
+import { createEchoInkMcpToolBridgeRuntime, runAgentTaskWithToolBridge } from "../agent/tool-bridge";
+import type { AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
+import type { AgentBackendKind, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput } from "../agent/types";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import type { TurnOptions } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
 import { resolveRawRef } from "../core/raw-message-store";
+import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
+import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseManagedThreadKind, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment, type StoredSession } from "../settings/settings";
 import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
-import { formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
+import { transactionSnapshotExistingSourceEvidencePaths, transactionSnapshotRepairableExistingSourceEvidencePaths, verifyDigestEvidence, type KnowledgeTransactionSnapshot, type KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
+import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
 import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, readKnowledgeBaseReportText, recoveredLintReportSummary, writeKnowledgeBaseReportFile } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
@@ -23,11 +30,12 @@ import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitializa
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "./prompt";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
-import { applyRawDigestFrontmatter, isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, RAW_DIGEST_REGISTRY_PATH, writeRawDigestRegistry, type RawDigestConfidence, type RawDigestRegistryEntry } from "./raw-digest";
+import { applyRawDigestFrontmatter, applyRawDigestStatusFrontmatter, isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_STATUS_DIGESTED, RAW_DIGEST_STATUS_PENDING_CALIBRATION, RAW_DIGEST_STATUS_PENDING_REINGEST, writeRawDigestRegistry, type RawDigestConfidence, type RawDigestRegistryEntry } from "./raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawMetadata, restoreRawSnapshot, snapshotRawFileContents, snapshotRawFiles } from "./raw-integrity";
 import type { RawContentSnapshot, RawSnapshot } from "./raw-integrity";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
+import { buildKnowledgeBaseMaintainReportPayload, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import { normalizeKnowledgeBaseStructure, rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
@@ -49,8 +57,15 @@ type CodexKbWaiter = {
 };
 
 type ActiveOpenCodeRun = {
-  backend: OpenCodeBackend;
-  sessionId: string;
+  runtime: AgentTaskRuntime;
+  runId: string;
+  cancel?: (error: Error) => void;
+};
+
+type ActiveHermesRun = {
+  runtime: AgentTaskRuntime;
+  runId: string;
+  abortController: AbortController;
   cancel?: (error: Error) => void;
 };
 
@@ -61,22 +76,6 @@ interface OptionalFileSnapshot {
   atimeMs?: number;
   mtimeMs?: number;
   mode?: number;
-}
-
-interface KnowledgeTransactionSnapshot {
-  vaultPath: string;
-  roots: string[];
-  entries: Map<string, KnowledgeTransactionSnapshotEntry>;
-}
-
-interface KnowledgeTransactionSnapshotEntry {
-  kind: "file" | "directory" | "symlink" | "special";
-  content?: Buffer;
-  target?: string;
-  nlink?: number;
-  mode: number;
-  atimeMs: number;
-  mtimeMs: number;
 }
 
 interface KnowledgeConflictDuplicateMove {
@@ -94,17 +93,20 @@ export interface KnowledgeBaseChatResult {
   status: "success" | "failed" | "canceled";
   message: string;
   citations?: KnowledgeBaseCitationSummary;
+  ui?: KnowledgeBaseMessageUiPayload;
   followUpCommand?: string;
 }
 
 export interface KnowledgeBaseTurnOptionOverrides extends Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources"> {
   codexInactivityTimeoutMs?: number;
   opencodeTaskTimeoutMs?: number;
+  hermesTaskTimeoutMs?: number;
 }
 
 const MAX_ATTACHED_SOURCES = 20;
 const CODEX_KNOWLEDGE_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
 const OPENCODE_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
+const HERMES_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
 const URL_PATTERN = /https?:\/\/[^\s<>"')]+/i;
 
@@ -115,6 +117,7 @@ export class KnowledgeBaseManager {
   private codexWaiter: CodexKbWaiter | null = null;
   private activeCodexRun: { threadId: string; turnId: string; cancel?: (error: Error) => void } | null = null;
   private activeOpenCode: ActiveOpenCodeRun | null = null;
+  private activeHermes: ActiveHermesRun | null = null;
   private cancelRequested = false;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
@@ -184,6 +187,7 @@ export class KnowledgeBaseManager {
     }
     this.activeCodexRun = null;
     this.activeOpenCode = null;
+    this.activeHermes = null;
     this.cancelRequested = false;
   }
 
@@ -195,10 +199,20 @@ export class KnowledgeBaseManager {
     return buildKnowledgeBaseDashboardSnapshot(this.plugin.getVaultPath(), this.plugin.settings.knowledgeBase);
   }
 
+  private refreshKnowledgeBaseSurfaces(): void {
+    const plugin = this.plugin as CodexForObsidianPlugin & { refreshKnowledgeBaseSurfaces?: () => void };
+    if (typeof plugin.refreshKnowledgeBaseSurfaces === "function") {
+      plugin.refreshKnowledgeBaseSurfaces();
+      return;
+    }
+    this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+  }
+
   async cancelMaintenance(): Promise<void> {
     const codexRun = this.activeCodexRun;
     const openCodeRun = this.activeOpenCode;
-    if (!this.running && !this.codexWaiter && !codexRun && !openCodeRun) {
+    const hermesRun = this.activeHermes;
+    if (!this.running && !this.codexWaiter && !codexRun && !openCodeRun && !hermesRun) {
       new Notice("当前没有知识库任务");
       return;
     }
@@ -208,9 +222,14 @@ export class KnowledgeBaseManager {
       await this.plugin.codex.interruptTurn(codexRun.threadId, codexRun.turnId).catch(() => undefined);
     }
     if (codexRun?.cancel) codexRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
-    if (openCodeRun?.sessionId) {
+    if (openCodeRun?.runId) {
       if (openCodeRun.cancel) openCodeRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
-      else void openCodeRun.backend.abort(openCodeRun.sessionId).catch(() => undefined);
+      else void openCodeRun.runtime.abort(openCodeRun.runId).catch(() => undefined);
+    }
+    if (hermesRun?.runId) {
+      hermesRun.abortController.abort();
+      if (hermesRun.cancel) hermesRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
+      else void hermesRun.runtime.abort(hermesRun.runId).catch(() => undefined);
     }
     if (waiter && this.codexWaiter === waiter) {
       waiter.reject(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
@@ -218,6 +237,7 @@ export class KnowledgeBaseManager {
     }
     this.activeCodexRun = null;
     this.activeOpenCode = null;
+    this.activeHermes = null;
     this.plugin.settings.knowledgeBase.lastRunStatus = "canceled";
     this.plugin.settings.knowledgeBase.lastError = "用户取消";
     const saveError = await saveSettingsSafely(this.plugin);
@@ -298,12 +318,14 @@ export class KnowledgeBaseManager {
               "Raw 状态校准完成。",
               result.reportPath ? `报告：${result.reportPath}` : "",
               result.summary ? `\n${result.summary}` : ""
-            ].filter(Boolean).join("\n")
+            ].filter(Boolean).join("\n"),
+            ui: buildKnowledgeBaseMaintainReportPayload("calibrate", result)
           };
         }
         return {
           status: "failed",
-          message: `Raw 状态校准失败：${result.error || "未知错误"}`
+          message: `Raw 状态校准失败：${result.error || "未知错误"}`,
+          ui: buildKnowledgeBaseMaintainReportPayload("calibrate", result)
         };
       }
       if (command.intent === "lint" || command.intent === "maintain" || command.intent === "reingest" || command.intent === "process-outputs" || command.intent === "process-inbox") {
@@ -316,7 +338,8 @@ export class KnowledgeBaseManager {
               `知识库${labelForRunMode(mode)}完成。`,
               result.reportPath ? `报告：${result.reportPath}` : "",
               result.summary ? `\n${result.summary}` : ""
-            ].filter(Boolean).join("\n")
+            ].filter(Boolean).join("\n"),
+            ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
           };
         }
         if (result.status === "canceled") {
@@ -326,7 +349,8 @@ export class KnowledgeBaseManager {
               `知识库${labelForRunMode(mode)}已取消。`,
               result.error ? `原因：${result.error}` : "",
               result.reportPath ? `报告：${result.reportPath}` : ""
-            ].filter(Boolean).join("\n")
+            ].filter(Boolean).join("\n"),
+            ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
           };
         }
         return {
@@ -334,7 +358,8 @@ export class KnowledgeBaseManager {
           message: [
             `知识库${labelForRunMode(mode)}失败：${result.error || "未知错误"}`,
             this.formatFailureContext(result.reportPath)
-          ].filter(Boolean).join("\n")
+          ].filter(Boolean).join("\n"),
+          ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
         };
       }
       if (command.intent === "ask") {
@@ -435,6 +460,7 @@ export class KnowledgeBaseManager {
     const marked: KnowledgeBaseSource[] = [];
     const review: KnowledgeBaseSource[] = [];
     const changed: KnowledgeBaseSource[] = [];
+    const statusUpdates: Array<{ source: KnowledgeBaseSource; status: typeof RAW_DIGEST_STATUS_PENDING_CALIBRATION | typeof RAW_DIGEST_STATUS_PENDING_REINGEST; evidencePaths?: string[] }> = [];
     try {
       vaultPath = this.plugin.getVaultPath();
       settings.lastRunStatus = "running";
@@ -464,6 +490,13 @@ export class KnowledgeBaseManager {
         const previous = processedSourcesBeforeRun[source.relativePath];
         const registryEntry = registryBeforeRun.entries[source.relativePath];
         const existingEvidence = transactionSnapshotExistingSourceEvidencePaths(structureSnapshot, source);
+        const rawDigestRecord = await rawMarkdownDigestFrontmatterRecord(vaultPath, source);
+        if (rawDigestRecord?.fingerprint && rawDigestRecord.fingerprint !== source.fingerprint) {
+          changed.push(source);
+          statusUpdates.push({ source, status: RAW_DIGEST_STATUS_PENDING_REINGEST, evidencePaths: existingEvidence });
+          delete nextProcessedSources[source.relativePath];
+          continue;
+        }
         if (previous?.fingerprint && previous.fingerprint !== source.fingerprint) {
           if (existingEvidence.length && await legacyWholeFileFingerprintMatchesSource(vaultPath, source, previous.fingerprint)) {
             evidencePaths[source.relativePath] = existingEvidence;
@@ -471,6 +504,8 @@ export class KnowledgeBaseManager {
             continue;
           }
           changed.push(source);
+          statusUpdates.push({ source, status: RAW_DIGEST_STATUS_PENDING_REINGEST, evidencePaths: existingEvidence });
+          delete nextProcessedSources[source.relativePath];
           continue;
         }
         if (registryEntry?.fingerprint && registryEntry.fingerprint !== source.fingerprint) {
@@ -480,9 +515,17 @@ export class KnowledgeBaseManager {
             continue;
           }
           changed.push(source);
+          statusUpdates.push({ source, status: RAW_DIGEST_STATUS_PENDING_REINGEST, evidencePaths: existingEvidence });
+          delete nextProcessedSources[source.relativePath];
           continue;
         }
-        if (await rawMarkdownHasTrustedDigestFrontmatter(vaultPath, source)) continue;
+        if (rawDigestRecordIsTrusted(rawDigestRecord, source.fingerprint)) {
+          if (await rawDigestRecordEvidenceExists(vaultPath, rawDigestRecord)) continue;
+          review.push(source);
+          statusUpdates.push({ source, status: RAW_DIGEST_STATUS_PENDING_CALIBRATION, evidencePaths: rawDigestRecord?.evidencePaths ?? [] });
+          delete nextProcessedSources[source.relativePath];
+          continue;
+        }
         const existingMachineEvidence = rawDigestEvidenceFromProcessedSource(previous, source)
           || rawDigestEvidenceFromRegistryEntry(registryEntry, source);
         if (existingMachineEvidence) {
@@ -503,7 +546,11 @@ export class KnowledgeBaseManager {
           marked.push(source);
           continue;
         }
-        if (previous || trackerHints.paths.has(source.relativePath)) review.push(source);
+        if (previous || trackerHints.paths.has(source.relativePath)) {
+          review.push(source);
+          statusUpdates.push({ source, status: RAW_DIGEST_STATUS_PENDING_CALIBRATION });
+          delete nextProcessedSources[source.relativePath];
+        }
       }
       const refreshedMarked = await writeRawDigestMetadataForSources(vaultPath, marked, {
         reportPath,
@@ -511,9 +558,13 @@ export class KnowledgeBaseManager {
         evidencePaths,
         confidence: "repaired"
       });
+      const refreshedStatusUpdates = await writeRawDigestStatusMetadataForSources(vaultPath, statusUpdates, {
+        reportPath,
+        startedAt
+      });
       const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath);
       const rawDigestChanges = classifyRawSnapshotChanges(rawBefore, rawAfterDigestMetadata, [], {
-        allowedManagedFrontmatterPaths: new Set(refreshedMarked.map((source) => source.relativePath))
+        allowedManagedFrontmatterPaths: new Set([...refreshedMarked, ...refreshedStatusUpdates].map((source) => source.relativePath))
       });
       if (rawDigestChanges.blockingChanges.length) {
         const messages = rawSnapshotChangeMessages(rawDigestChanges.blockingChanges);
@@ -553,7 +604,13 @@ export class KnowledgeBaseManager {
         status: "success",
         reportPath,
         summary: settings.lastSummary,
-        processedSources
+        processedSources,
+        calibration: {
+          marked: refreshedMarked,
+          review,
+          changed,
+          evidencePaths
+        }
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -579,7 +636,7 @@ export class KnowledgeBaseManager {
       this.cancelRequested = false;
       if (vaultPath) {
         try {
-          this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+          this.refreshKnowledgeBaseSurfaces();
         } catch (error) {
           console.warn("知识库仪表盘刷新失败", error);
         }
@@ -650,12 +707,14 @@ export class KnowledgeBaseManager {
         throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
       }
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
-      const promptSources = selectSourcesForRunMode(mode, discovery);
+      const requestedRawPaths = extractRequestedRawPaths(userRequest);
+      const promptSources = selectSourcesForRunMode(mode, discovery, userRequest);
       const runSources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
       const prompt = buildKnowledgeBasePrompt({
         vaultPath,
         mode,
         userRequest,
+        requestedRawPaths,
         reportPath: discovery.reportPath,
         sources: runSources,
         skippedSources: discovery.skippedSources,
@@ -669,11 +728,15 @@ export class KnowledgeBaseManager {
       });
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
 
-      const backend = this.resolveKnowledgeBackend();
       lintReportRecoveryEligible = mode === "lint";
-      const output = backend === "opencode"
-        ? await this.runOpenCodeKnowledgeTask(prompt, runSources, mode === "lint" ? "read-only" : "workspace-write", turnOptionOverrides)
-        : await this.runCodexKnowledgeTask(prompt, runSources, "workspace-write", mode === "lint" ? "knowledge-lint" : "knowledge-base", turnOptionOverrides, mode);
+      const output = await this.runKnowledgeAgentTask({
+        prompt,
+        sources: runSources,
+        permission: mode === "lint" ? "read-only" : "workspace-write",
+        codexWriteScope: mode === "lint" ? "knowledge-lint" : "knowledge-base",
+        turnOptionOverrides,
+        managedKind: mode
+      });
       lintReportRecoveryEligible = false;
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
 
@@ -719,10 +782,13 @@ export class KnowledgeBaseManager {
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       let digestEvidencePaths: Record<string, string[]> = {};
       if (mode === "maintain" || mode === "reingest") {
-        await assertFreshMaintenanceReportCoversSources(vaultPath, reportPath, runSources, startedAt, {
-          previousMtimeMs: reportPath === discovery.reportPath ? reportMtimeBefore : null
-        });
-        digestEvidencePaths = await assertKnowledgeStructureDigestsSources(vaultPath, transactionBefore, runSources, {
+        digestEvidencePaths = await verifyDigestEvidence({
+          vaultPath,
+          reportPath,
+          sources: runSources,
+          startedAt,
+          previousReportMtime: reportPath === discovery.reportPath ? reportMtimeBefore : null,
+          transactionBefore,
           processedSourcesBeforeRun
         });
       }
@@ -804,7 +870,8 @@ export class KnowledgeBaseManager {
         summary: settings.lastSummary,
         processedSources: reportedSources,
         structure,
-        externalRawAdditions: Array.from(externalRawAdditionsDuringRun)
+        externalRawAdditions: Array.from(externalRawAdditionsDuringRun),
+        digestEvidencePaths
       };
     } catch (error) {
       let message = error instanceof Error ? error.message : String(error);
@@ -978,10 +1045,11 @@ export class KnowledgeBaseManager {
     } finally {
       this.activeCodexRun = null;
       this.activeOpenCode = null;
+      this.activeHermes = null;
       this.running = false;
       this.cancelRequested = false;
       try {
-        this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+        this.refreshKnowledgeBaseSurfaces();
       } catch (error) {
         console.warn("知识库面板刷新失败", error);
       }
@@ -1010,10 +1078,14 @@ export class KnowledgeBaseManager {
         useCustomRulesFile: rules.useCustomRulesFile,
         matches
       });
-      const backend = this.resolveKnowledgeBackend();
-      const output = backend === "opencode"
-        ? await this.runOpenCodeKnowledgeTask(prompt, matches, "read-only", turnOptionOverrides)
-        : await this.runCodexKnowledgeTask(prompt, matches, "read-only", "knowledge-base", turnOptionOverrides, "ask");
+      const output = await this.runKnowledgeAgentTask({
+        prompt,
+        sources: matches,
+        permission: "read-only",
+        codexWriteScope: "knowledge-base",
+        turnOptionOverrides,
+        managedKind: "ask"
+      });
       return {
         status: "success",
         message: formatAskAnswer(output, citations),
@@ -1027,9 +1099,10 @@ export class KnowledgeBaseManager {
     } finally {
       this.activeCodexRun = null;
       this.activeOpenCode = null;
+      this.activeHermes = null;
       this.running = false;
       this.cancelRequested = false;
-      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+      this.refreshKnowledgeBaseSurfaces();
     }
   }
 
@@ -1061,9 +1134,14 @@ export class KnowledgeBaseManager {
         backend,
         openCodeHistory
       });
-      const output = backend === "opencode"
-        ? await this.runOpenCodeKnowledgeTask(prompt, [], "workspace-write", turnOptionOverrides)
-        : await this.runCodexKnowledgeTask(prompt, [], "workspace-write", "journal", turnOptionOverrides, "journal");
+      const output = await this.runKnowledgeAgentTask({
+        prompt,
+        sources: [],
+        permission: "workspace-write",
+        codexWriteScope: "journal",
+        turnOptionOverrides,
+        managedKind: "journal"
+      });
       if (!await exists(target.absolutePath)) {
         throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
       }
@@ -1079,9 +1157,10 @@ export class KnowledgeBaseManager {
     } finally {
       this.activeCodexRun = null;
       this.activeOpenCode = null;
+      this.activeHermes = null;
       this.running = false;
       this.cancelRequested = false;
-      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+      this.refreshKnowledgeBaseSurfaces();
     }
   }
 
@@ -1222,7 +1301,7 @@ export class KnowledgeBaseManager {
 
   async archivePendingCodexKnowledgeThreads(): Promise<number> {
     let recovered = 0;
-    if (!this.running && !this.codexWaiter && !this.activeCodexRun && !this.activeOpenCode) {
+    if (!this.running && !this.codexWaiter && !this.activeCodexRun && !this.activeOpenCode && !this.activeHermes) {
       recovered = this.recoverStaleRunningCodexKnowledgeThreads("归档前恢复遗留 running 状态");
     }
     const codex = this.plugin.codex;
@@ -1264,6 +1343,61 @@ export class KnowledgeBaseManager {
       recovered += 1;
     }
     return recovered;
+  }
+
+  private async runKnowledgeAgentTask(input: {
+    prompt: string;
+    sources: KnowledgeBaseSource[];
+    permission: PermissionMode;
+    codexWriteScope: "knowledge-base" | "knowledge-lint" | "journal";
+    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
+    managedKind: KnowledgeBaseManagedThreadKind;
+  }): Promise<string> {
+    const backend = this.resolveKnowledgeBackend();
+    const resources = this.prepareKnowledgeAgentResources(backend);
+    const toolBridge = backend === "codex-cli" ? null : await this.prepareKnowledgeAgentToolBridge();
+    const prompt = buildPromptWithPreparedResources(input.prompt, resources);
+    if (backend === "opencode") {
+      return await this.runOpenCodeKnowledgeTask(prompt, input.sources, input.permission, resources, toolBridge, input.turnOptionOverrides);
+    }
+    if (backend === "hermes") {
+      return await this.runHermesKnowledgeTask(input.prompt, input.sources, input.permission, resources, toolBridge, input.turnOptionOverrides);
+    }
+    return await this.runCodexKnowledgeTask(
+      prompt,
+      input.sources,
+      input.permission === "read-only" && input.codexWriteScope !== "knowledge-lint" ? "read-only" : "workspace-write",
+      input.codexWriteScope,
+      input.turnOptionOverrides,
+      input.managedKind
+    );
+  }
+
+  private prepareKnowledgeAgentResources(backend: AgentBackendKind): PreparedAgentResources {
+    const catalog = buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
+    return prepareAgentResources(catalog, {
+      scope: "knowledge",
+      backendCapabilities: getAgentBackendDefinition(backend).capabilities,
+      enabledByScope: this.plugin.settings.resources.enabledByScope,
+      mcpConnections: this.plugin.settings.resources.mcpConnections
+    });
+  }
+
+  private async prepareKnowledgeAgentToolBridge(): Promise<AgentToolBridgeRuntime | null> {
+    const resourceSettings = this.plugin.settings.resources;
+    const catalog = buildEchoInkResourceCatalog({ settings: resourceSettings });
+    const callableTools = await buildCallableMcpToolCatalog({
+      resources: catalog,
+      scope: "knowledge",
+      enabledByScope: resourceSettings.enabledByScope,
+      connections: resourceSettings.mcpConnections,
+      listTools: async (resource) => await this.plugin.listEchoInkMcpTools(resource.id, 10000)
+    });
+    return createEchoInkMcpToolBridgeRuntime({
+      catalog: callableTools,
+      scope: "knowledge",
+      callTool: async (request) => await this.plugin.callEchoInkMcpTool(request)
+    });
   }
 
   private async runCodexKnowledgeTask(
@@ -1365,19 +1499,17 @@ export class KnowledgeBaseManager {
     prompt: string,
     sources: KnowledgeBaseSource[],
     permission: PermissionMode = "workspace-write",
+    resources?: PreparedAgentResources,
+    toolBridge?: AgentToolBridgeRuntime | null,
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides
   ): Promise<string> {
-    const backend = new OpenCodeBackend({
-      ...this.plugin.settings.opencode,
-      vaultPath: this.plugin.getVaultPath()
-    });
+    const runtime = this.createKnowledgeAgentRuntime("opencode");
     try {
-      await backend.connect();
+      await runtime.connect();
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
-      const info = backend.getConnectionInfo();
       this.plugin.settings.opencode.lastConnectedAt = Date.now();
       this.plugin.settings.opencode.lastError = "";
-      const models = await backend.listModels();
+      const models = await runtime.listModels();
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       const parts = buildOpenCodeKnowledgeParts(prompt, sources);
       const selectedModel = selectOpenCodeModel(models, this.plugin.settings.opencode.providerId, this.plugin.settings.opencode.modelId, requiredModalities(parts));
@@ -1391,17 +1523,13 @@ export class KnowledgeBaseManager {
       }
       await this.plugin.saveSettings();
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
-      const session = await backend.startSession({
-        title: permission === "read-only" ? "Obsidian 知识库问答" : "Obsidian 知识库维护",
-        agent: this.plugin.settings.opencode.agent,
+      return await this.sendOpenCodeTaskWithGuards(runtime, {
+        prompt,
+        sources: parts.filter((part) => part.type === "file"),
         permission,
-        ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {})
-      });
-      throwIfKnowledgeBaseCanceled(this.cancelRequested);
-      this.activeOpenCode = { backend, sessionId: session.sessionId };
-      return await this.sendOpenCodePromptWithGuards(backend, {
-        sessionId: session.sessionId,
-        parts,
+        resources,
+        toolBridge,
+        timeoutMs: normalizeOpenCodeTaskTimeoutMs(turnOptionOverrides?.opencodeTaskTimeoutMs),
         agent: this.plugin.settings.opencode.agent,
         ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
         tools: {
@@ -1417,15 +1545,74 @@ export class KnowledgeBaseManager {
       }
       throw error;
     } finally {
-      await backend.disconnect();
+      await runtime.disconnect?.();
     }
   }
 
-  private async sendOpenCodePromptWithGuards(backend: OpenCodeBackend, options: AgentPromptOptions, timeoutMs: number): Promise<string> {
-    const activeRun = this.activeOpenCode;
-    if (!activeRun || activeRun.backend !== backend || activeRun.sessionId !== options.sessionId) {
-      return await backend.sendPrompt(options);
+  private async runHermesKnowledgeTask(
+    prompt: string,
+    _sources: KnowledgeBaseSource[],
+    permission: PermissionMode = "workspace-write",
+    resources?: PreparedAgentResources,
+    toolBridge?: AgentToolBridgeRuntime | null,
+    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides
+  ): Promise<string> {
+    const runtime = this.createKnowledgeAgentRuntime("hermes");
+    try {
+      const status = await runtime.connect();
+      throwIfKnowledgeBaseCanceled(this.cancelRequested);
+      const hermes = this.plugin.settings.agents.hermes;
+      hermes.lastConnectedAt = Date.now();
+      hermes.lastError = "";
+      if (status.version) hermes.version = status.version;
+      const models = await runtime.listModels();
+      throwIfKnowledgeBaseCanceled(this.cancelRequested);
+      const selectedModel = selectAgentModel(models, hermes.providerId, hermes.modelId);
+      if (selectedModel) {
+        hermes.providerId = selectedModel.providerId;
+        hermes.modelId = selectedModel.modelId;
+      }
+      await this.plugin.saveSettings();
+      throwIfKnowledgeBaseCanceled(this.cancelRequested);
+      return await this.sendHermesTaskWithGuards(runtime, {
+        prompt,
+        permission,
+        resources,
+        toolBridge,
+        timeoutMs: normalizeHermesTaskTimeoutMs(turnOptionOverrides?.hermesTaskTimeoutMs),
+        ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
+        profile: hermes.profile,
+        tools: {
+          write: permission !== "read-only",
+          edit: permission !== "read-only",
+          read: true,
+          bash: false
+        }
+      }, normalizeHermesTaskTimeoutMs(turnOptionOverrides?.hermesTaskTimeoutMs));
+    } catch (error) {
+      if (!this.cancelRequested && !isKnowledgeBaseCancelError(error instanceof Error ? error.message : String(error))) {
+        this.plugin.settings.agents.hermes.lastError = error instanceof Error ? error.message : String(error);
+      }
+      throw error;
+    } finally {
+      await runtime.disconnect?.();
     }
+  }
+
+  private createKnowledgeAgentRuntime(backend: AgentBackendKind): AgentTaskRuntime {
+    return createAgentTaskRuntime({
+      backend,
+      settings: this.plugin.settings,
+      vaultPath: this.plugin.getVaultPath()
+    });
+  }
+
+  private async sendHermesTaskWithGuards(runtime: AgentTaskRuntime, input: AgentTaskInput, timeoutMs: number): Promise<string> {
+    const abortController = new AbortController();
+    const localRunId = `hermes-${Date.now()}`;
+    const activeRun: ActiveHermesRun = { runtime, runId: localRunId, abortController };
+    let lastPhase = "starting";
+    this.activeHermes = activeRun;
     return await new Promise<string>((resolve, reject) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout>;
@@ -1433,22 +1620,40 @@ export class KnowledgeBaseManager {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (this.activeOpenCode === activeRun) activeRun.cancel = undefined;
+        if (this.activeHermes === activeRun) this.activeHermes = null;
+        activeRun.cancel = undefined;
         callback();
       };
       const fail = (error: Error): void => finish(() => reject(error));
       timer = setTimeout(() => {
-        void backend.abort(options.sessionId).catch(() => undefined);
-        fail(new Error(`OpenCode 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`));
+        abortController.abort();
+        void runtime.abort(activeRun.runId).catch(() => undefined);
+        fail(new Error(formatAgentTaskFailureContext({
+          backend: "hermes",
+          phase: lastPhase,
+          runId: activeRun.runId,
+          message: `Hermes 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
+        })));
       }, Math.max(1, timeoutMs));
       activeRun.cancel = (error: Error) => {
-        void backend.abort(options.sessionId).catch(() => undefined);
+        abortController.abort();
+        void runtime.abort(activeRun.runId).catch(() => undefined);
         fail(error);
       };
       try {
-        backend.sendPrompt(options).then(
-          (output) => finish(() => resolve(output)),
-          (error) => fail(error instanceof Error ? error : new Error(String(error)))
+        runKnowledgeAgentTask(runtime, {
+          ...input,
+          abortSignal: abortController.signal,
+          onRunId: (runId) => {
+            activeRun.runId = runId;
+            input.onRunId?.(runId);
+          }
+        }, (event) => {
+          lastPhase = event.type;
+          if (event.runId) activeRun.runId = event.runId;
+        }).then(
+          (output) => finish(() => resolve(output.text)),
+          (error) => fail(formatAgentTaskGuardError("hermes", lastPhase, activeRun.runId, error))
         );
       } catch (error) {
         fail(error instanceof Error ? error : new Error(String(error)));
@@ -1456,7 +1661,68 @@ export class KnowledgeBaseManager {
     });
   }
 
-  private resolveKnowledgeBackend(): "codex-cli" | "opencode" {
+  private async sendOpenCodeTaskWithGuards(runtime: AgentTaskRuntime, input: AgentTaskInput, timeoutMs: number): Promise<string> {
+    const abortController = new AbortController();
+    const activeRun: ActiveOpenCodeRun = { runtime, runId: "" };
+    let lastPhase = "starting";
+    this.activeOpenCode = activeRun;
+    return await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.activeOpenCode === activeRun) this.activeOpenCode = null;
+        activeRun.cancel = undefined;
+        callback();
+      };
+      const fail = (error: Error): void => finish(() => reject(error));
+      timer = setTimeout(() => {
+        abortController.abort();
+        const timeoutError = new Error(formatAgentTaskFailureContext({
+          backend: "opencode",
+          phase: lastPhase,
+          runId: activeRun.runId,
+          message: `OpenCode 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
+        }));
+        if (activeRun.runId) {
+          void runtime.abort(activeRun.runId).catch(() => undefined);
+          fail(timeoutError);
+          return;
+        }
+        setTimeout(() => {
+          if (activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
+          fail(timeoutError);
+        }, 20);
+      }, Math.max(1, timeoutMs));
+      activeRun.cancel = (error: Error) => {
+        abortController.abort();
+        if (activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
+        fail(error);
+      };
+      try {
+        runKnowledgeAgentTask(runtime, {
+          ...input,
+          abortSignal: abortController.signal,
+          onRunId: (runId) => {
+            activeRun.runId = runId;
+            input.onRunId?.(runId);
+          }
+        }, (event) => {
+          lastPhase = event.type;
+          if (event.runId) activeRun.runId = event.runId;
+        }).then(
+          (output) => finish(() => resolve(output.text)),
+          (error) => fail(formatAgentTaskGuardError("opencode", lastPhase, activeRun.runId, error))
+        );
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private resolveKnowledgeBackend(): AgentBackendKind {
     const configured = this.plugin.settings.knowledgeBase.backend;
     return configured === "default" ? this.plugin.settings.agentBackend : configured;
   }
@@ -1468,6 +1734,9 @@ export class KnowledgeBaseManager {
     return [
       `后端：${backend}`,
       backend === "opencode" && opencode.providerId && opencode.modelId ? `模型：${opencode.providerId}/${opencode.modelId}` : "",
+      backend === "hermes" && this.plugin.settings.agents.hermes.providerId && this.plugin.settings.agents.hermes.modelId
+        ? `模型：${this.plugin.settings.agents.hermes.providerId}/${this.plugin.settings.agents.hermes.modelId}`
+        : "",
       `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : AGENTS_RULES_FILE}`,
       reportPath ? `报告：${reportPath}` : ""
     ].filter(Boolean).join("\n");
@@ -1516,6 +1785,7 @@ export class KnowledgeBaseManager {
       settings.lastScheduledRunAt = scheduledStartedAt;
       settings.lastScheduledRunStatus = result.status;
       await this.appendScheduledMaintenanceMessage(result);
+      this.refreshKnowledgeBaseSurfaces();
     }
   }
 
@@ -1843,6 +2113,31 @@ function selectOpenCodeModel(models: AgentModelInfo[], providerId: string, model
   return models.find((model) => required.every((modality) => model.inputModalities.includes(modality))) ?? models[0] ?? null;
 }
 
+function selectAgentModel(models: AgentModelInfo[], providerId: string, modelId: string): AgentModelInfo | null {
+  const configured = models.find((model) => model.providerId === providerId && model.modelId === modelId);
+  return configured ?? models[0] ?? null;
+}
+
+async function runKnowledgeAgentTask(runtime: AgentTaskRuntime, input: AgentTaskInput, onEvent?: (event: { type: string; runId?: string }) => void) {
+  return await runAgentTaskWithToolBridge(runtime, input, (event) => {
+    onEvent?.(event);
+  });
+}
+
+function formatAgentTaskGuardError(backend: AgentBackendKind, phase: string, runId: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isKnowledgeBaseCancelError(message)) return error instanceof Error ? error : new Error(message);
+  return new Error(formatAgentTaskFailureContext({ backend, phase, runId, message }));
+}
+
+function buildPromptWithPreparedResources(prompt: string, resources: PreparedAgentResources): string {
+  return [
+    resources.promptPrefix,
+    resources.warnings.length ? `资源提示：\n${resources.warnings.map((item) => `- ${item}`).join("\n")}` : "",
+    prompt
+  ].filter(Boolean).join("\n\n");
+}
+
 function formatAskAnswer(output: string, citations: KnowledgeBaseCitationSummary): string {
   const text = output.trim();
   if (!text) return citations.status === "none" ? "未找到相关本地依据，Agent 未返回回答。" : "Agent 未返回回答。";
@@ -2041,11 +2336,73 @@ async function writeRawDigestMetadataForSources(
   return updated;
 }
 
-async function rawMarkdownHasTrustedDigestFrontmatter(vaultPath: string, source: KnowledgeBaseSource): Promise<boolean> {
-  if (!isRawMarkdownPath(source.relativePath)) return false;
+async function writeRawDigestStatusMetadataForSources(
+  vaultPath: string,
+  updates: Array<{ source: KnowledgeBaseSource; status: typeof RAW_DIGEST_STATUS_PENDING_CALIBRATION | typeof RAW_DIGEST_STATUS_PENDING_REINGEST; evidencePaths?: string[] }>,
+  options: {
+    reportPath: string;
+    startedAt: number;
+  }
+): Promise<KnowledgeBaseSource[]> {
+  if (!updates.length) return [];
+  const registry = await readRawDigestRegistry(vaultPath);
+  const updated: KnowledgeBaseSource[] = [];
+  const seen = new Set<string>();
+  for (const update of updates) {
+    const source = update.source;
+    if (seen.has(source.relativePath)) continue;
+    seen.add(source.relativePath);
+    delete registry.entries[source.relativePath];
+    if (!isRawMarkdownPath(source.relativePath)) continue;
+    const absolutePath = path.join(vaultPath, source.relativePath);
+    const stat = await assertSafeRawDigestTarget(absolutePath, source.relativePath);
+    const content = await fsp.readFile(absolutePath);
+    const fingerprint = rawDigestFingerprint(source.relativePath, content);
+    if (fingerprint !== source.fingerprint) {
+      throw new Error(`raw 已在校准后处理前发生变化，停止写入待处理状态：${source.relativePath}`);
+    }
+    const nextContent = applyRawDigestStatusFrontmatter(content, {
+      status: update.status,
+      fingerprint,
+      reportPath: options.reportPath,
+      evidencePaths: normalizeEvidencePaths(update.evidencePaths ?? []),
+      digestedAt: options.startedAt
+    });
+    const nextFingerprint = rawDigestFingerprint(source.relativePath, nextContent);
+    if (nextFingerprint !== fingerprint) {
+      throw new Error(`raw 待处理状态写入后指纹不稳定：${source.relativePath}`);
+    }
+    if (!nextContent.equals(content)) {
+      await fsp.writeFile(absolutePath, nextContent);
+    }
+    updated.push({
+      ...source,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+      fingerprint
+    });
+  }
+  registry.updatedAt = new Date(options.startedAt).toISOString();
+  await writeRawDigestRegistry(vaultPath, registry);
+  return updated;
+}
+
+async function rawMarkdownDigestFrontmatterRecord(vaultPath: string, source: KnowledgeBaseSource): Promise<ReturnType<typeof rawDigestRecordFromMarkdown> | null> {
+  if (!isRawMarkdownPath(source.relativePath)) return null;
   const content = await fsp.readFile(path.join(vaultPath, source.relativePath)).catch(() => null);
-  if (!content) return false;
-  return rawDigestRecordIsTrusted(rawDigestRecordFromMarkdown(content), source.fingerprint);
+  if (!content) return null;
+  return rawDigestRecordFromMarkdown(content);
+}
+
+async function rawDigestRecordEvidenceExists(vaultPath: string, record: ReturnType<typeof rawDigestRecordFromMarkdown> | null): Promise<boolean> {
+  if (!record?.reportPath || !record.evidencePaths.length) return false;
+  const requiredPaths = [record.reportPath, ...record.evidencePaths].map(normalizePath).filter(Boolean);
+  if (!requiredPaths.length) return false;
+  for (const relativePath of requiredPaths) {
+    const stat = await fsp.lstat(path.join(vaultPath, relativePath)).catch(() => null);
+    if (!stat?.isFile() || stat.nlink > 1) return false;
+  }
+  return true;
 }
 
 async function legacyWholeFileFingerprintMatchesSource(vaultPath: string, source: KnowledgeBaseSource, fingerprint: string): Promise<boolean> {
@@ -2209,8 +2566,13 @@ async function writeFileAtomic(absolutePath: string, content: string | Buffer): 
   }
 }
 
-function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: KnowledgeBaseDiscovery): KnowledgeBaseSource[] {
+export function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: KnowledgeBaseDiscovery, userRequest = ""): KnowledgeBaseSource[] {
   if (mode === "lint" || mode === "inbox" || mode === "outputs") return [];
+  const requestedRawPaths = extractRequestedRawPaths(userRequest);
+  if (requestedRawPaths.length && (mode === "maintain" || mode === "reingest")) {
+    const requested = new Set(requestedRawPaths);
+    return discovery.sources.filter((source) => requested.has(source.relativePath));
+  }
   if (mode === "reingest") {
     const changed = discovery.changedSources;
     if (changed.length) return changed;
@@ -2219,515 +2581,43 @@ function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: Knowledg
   return discovery.changedSources;
 }
 
+export function extractRequestedRawPaths(text: string): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    const normalized = normalizeRequestedRawPath(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  };
+  for (const match of text.matchAll(/\[\[\s*(raw\/[^\]|#\n\r]+)(?:#[^\]|\n\r]+)?(?:\|[^\]\n\r]+)?\s*\]\]/gi)) {
+    add(match[1] ?? "");
+  }
+  for (const match of text.matchAll(/(?:^|[\s"'`([{（，,。；;：:])((?:raw\/)[^\s"'`)\]}）】,，。；;：:]+)(?=$|[\s"'`)\]}）】,，。；;：:])/gi)) {
+    add(match[1] ?? "");
+  }
+  return result;
+}
+
+function normalizeRequestedRawPath(value: string): string {
+  const trimmed = value.trim().replace(/\\/g, "/").replace(/^<|>$/g, "");
+  if (!trimmed || trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed) || trimmed.includes("..")) return "";
+  if (!trimmed.startsWith("raw/")) return "";
+  const withoutHash = trimmed.split("#")[0].trim();
+  const clean = withoutHash.split("/").filter((part) => part && part !== ".").join("/");
+  if (!clean.startsWith("raw/")) return "";
+  if (/[?#]/.test(clean)) return "";
+  if (/\.(md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)$/i.test(clean)) return clean;
+  return `${clean}.md`;
+}
+
 function processedSourcesForRunMode(mode: KnowledgeBaseRunMode, sources: KnowledgeBaseSource[]): KnowledgeBaseSource[] {
   return mode === "maintain" || mode === "reingest" ? sources : [];
-}
-
-async function assertFreshMaintenanceReportCoversSources(
-  vaultPath: string,
-  reportPath: string,
-  sources: KnowledgeBaseSource[],
-  startedAt: number,
-  options: { previousMtimeMs?: number | null } = {}
-): Promise<void> {
-  if (!sources.length) return;
-  const report = await readFreshKnowledgeBaseReportExcerpt(vaultPath, reportPath, startedAt, {
-    previousMtimeMs: options.previousMtimeMs,
-    maxChars: 200_000
-  });
-  if (!report) {
-    throw new Error("知识库维护未写出本轮来源证据，已停止提交 tracker。");
-  }
-  const missing = sources.filter((source) => !maintenanceReportMentionsSource(report, source.relativePath));
-  if (missing.length) {
-    throw new Error(`知识库维护报告缺少本轮来源证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
-  }
-}
-
-async function assertKnowledgeStructureDigestsSources(
-  vaultPath: string,
-  before: KnowledgeTransactionSnapshot | null,
-  sources: KnowledgeBaseSource[],
-  options: { processedSourcesBeforeRun?: Record<string, KnowledgeBaseProcessedSource> } = {}
-): Promise<Record<string, string[]>> {
-  if (!sources.length) return {};
-  if (!before) {
-    throw new Error("知识库维护未写出结构层消化证据，已停止提交 tracker。");
-  }
-  const current = await snapshotKnowledgeTransaction(vaultPath, before.roots);
-  const covered = new Set<string>();
-  const evidencePaths = new Map<string, Set<string>>();
-  const addEvidence = (source: KnowledgeBaseSource, paths: string[]) => {
-    if (!paths.length) return;
-    covered.add(source.relativePath);
-    const bucket = evidencePaths.get(source.relativePath) ?? new Set<string>();
-    for (const item of paths) bucket.add(item);
-    evidencePaths.set(source.relativePath, bucket);
-  };
-  for (const source of sources) {
-    const previous = options.processedSourcesBeforeRun?.[source.relativePath];
-    if (legacyProcessedSourceMatchesCurrent(previous, source)) {
-      addEvidence(source, transactionSnapshotExistingSourceEvidencePaths(before, source));
-    }
-    if (!covered.has(source.relativePath) && processedSourceCanUseRepairableExistingEvidence(previous)) {
-      addEvidence(source, transactionSnapshotRepairableExistingSourceEvidencePaths(before, source));
-    }
-  }
-  for (const [relativePath, currentEntry] of current.entries) {
-    if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (!transactionFileContentChanged(before.entries.get(relativePath), currentEntry)) continue;
-    const beforeEntry = before.entries.get(relativePath);
-    for (const source of sources) {
-      if (transactionFileIntroducesSourceEvidence(beforeEntry, currentEntry, source)) addEvidence(source, [relativePath]);
-    }
-  }
-  const missing = sources.filter((source) => !covered.has(source.relativePath));
-  if (missing.length) {
-    throw new Error(`知识库维护未写出结构层消化证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
-  }
-  return Object.fromEntries(Array.from(evidencePaths.entries()).map(([key, value]) => [key, Array.from(value).sort()]));
-}
-
-function isKnowledgeStructureDigestEvidencePath(relativePath: string): boolean {
-  const normalized = normalizePath(relativePath);
-  if (!(normalized.startsWith("wiki/") || normalized.startsWith("projects/"))) return false;
-  return !isKnowledgeIndexEvidencePath(normalized);
-}
-
-function isKnowledgeIndexEvidencePath(relativePath: string): boolean {
-  const baseName = path.basename(normalizePath(relativePath)).toLowerCase();
-  return baseName === "index.md"
-    || baseName === "readme.md"
-    || baseName === "00-索引.md"
-    || baseName === "索引.md";
-}
-
-function transactionFileContentChanged(
-  before: KnowledgeTransactionSnapshotEntry | undefined,
-  current: KnowledgeTransactionSnapshotEntry
-): boolean {
-  if (current.kind !== "file" || !current.content) return false;
-  if (!before) return true;
-  if (before.kind !== "file" || !before.content) return true;
-  return !before.content.equals(current.content);
-}
-
-function transactionFileIntroducesSourceEvidence(
-  before: KnowledgeTransactionSnapshotEntry | undefined,
-  current: KnowledgeTransactionSnapshotEntry,
-  source: KnowledgeBaseSource
-): boolean {
-  if (current.kind !== "file" || !current.content) return false;
-  const currentText = current.content.toString("utf8");
-  if (!maintenanceReportMentionsSource(currentText, source.relativePath)) return false;
-  const currentLines = normalizedEvidenceLines(currentText);
-  const beforeLines = before?.kind === "file" && before.content
-    ? normalizedEvidenceLines(before.content.toString("utf8"))
-    : [];
-  const introducedLines = introducedEvidenceLineFlags(beforeLines, currentLines);
-  return sourceEvidenceBlocks(currentLines, introducedLines, source.relativePath)
-    .some((block) => (block.hasSource || (block.hasExistingTargetSource && !block.hasOldDigestBeforeNewDigest)) && block.hasDigest)
-    || transactionFileIntroducesPageLevelSourceEvidence(currentLines, introducedLines, source.relativePath, beforeLines.length === 0);
 }
 
 function legacyProcessedSourceMatchesCurrent(previous: KnowledgeBaseProcessedSource | undefined, source: KnowledgeBaseSource): boolean {
   if (!previous || previous.fingerprint) return false;
   return previous.size === source.size && Math.round(previous.mtime) === Math.round(source.mtime);
-}
-
-function processedSourceCanUseRepairableExistingEvidence(previous: KnowledgeBaseProcessedSource | undefined): boolean {
-  return !previous || !previous.fingerprint;
-}
-
-function transactionSnapshotExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): string[] {
-  const paths: string[] = [];
-  for (const [relativePath, entry] of snapshot.entries) {
-    if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (entry.kind !== "file" || !entry.content) continue;
-    const lines = normalizedEvidenceLines(entry.content.toString("utf8"));
-    if (fileHasSourceMentionAndDigest(lines, source.relativePath)) paths.push(relativePath);
-  }
-  return paths;
-}
-
-function transactionSnapshotRepairableExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): string[] {
-  const paths: string[] = [];
-  for (const [relativePath, entry] of snapshot.entries) {
-    if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (entry.kind !== "file" || !entry.content) continue;
-    if (!transactionEntryIsNotOlderThanSource(entry, source)) continue;
-    const lines = normalizedEvidenceLines(entry.content.toString("utf8"));
-    if (fileHasSinglePageLevelSourceEvidence(lines, source.relativePath) || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)) paths.push(relativePath);
-  }
-  return paths;
-}
-
-function transactionEntryIsNotOlderThanSource(entry: KnowledgeTransactionSnapshotEntry, source: KnowledgeBaseSource): boolean {
-  return entry.mtimeMs + 1000 >= source.mtime;
-}
-
-function transactionFileIntroducesPageLevelSourceEvidence(
-  lines: string[],
-  introducedLines: boolean[],
-  relativePath: string,
-  isNewFile: boolean
-): boolean {
-  const introducedSourceLineIndexes = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line, index }) => introducedLines[index] && lineMentionsTargetRawSource(line, relativePath))
-    .map(({ index }) => index);
-  if (!introducedSourceLineIndexes.length) return false;
-  if (isNewFile) {
-    return introducedSourceLineIndexes.some((index) => isPageLevelSourceLine(lines, index)) && fileHasIntroducedDigest(lines, introducedLines);
-  }
-  return fileHasIntroducedDatedDigest(lines, introducedLines, relativePath);
-}
-
-function fileHasSourceMentionAndDigest(lines: string[], relativePath: string): boolean {
-  return lines.some((line) => lineMentionsTargetRawSource(line, relativePath))
-    && lines.some((line) => isSubstantiveDigestLine(line));
-}
-
-function fileHasSinglePageLevelSourceEvidence(lines: string[], relativePath: string): boolean {
-  const sourceIndexes = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line, index }) => isSinglePageLevelSourceLine(lines, index) && lineMentionsTargetRawSource(line, relativePath))
-    .map(({ index }) => index);
-  if (!sourceIndexes.length) return false;
-  const firstSection = lines.findIndex((line) => /^##\s+/.test(line));
-  const pageHeaderEnd = firstSection === -1 ? lines.length : firstSection;
-  const pageLevelRawMentions = lines.slice(0, pageHeaderEnd).filter((line) => mentionsRawSource(line)).length;
-  return pageLevelRawMentions === 1 && fileHasSourceMentionAndDigest(lines, relativePath);
-}
-
-function fileHasDatedAggregateSourceEvidence(lines: string[], relativePath: string): boolean {
-  const sourceDate = extractKnowledgeSourceDate(relativePath);
-  if (!sourceDate) return false;
-  const hasSourceInQuotedList = lines.some((line) => /^>\s*[-*+]\s+/.test(line.trim()) && lineMentionsTargetRawSource(line, relativePath));
-  if (!hasSourceInQuotedList) return false;
-  return lines.some((line, index) => {
-    if (!isSubstantiveDigestLine(line)) return false;
-    return evidenceTextCoversDate(line, sourceDate) || evidenceTextCoversDate(nearestEvidenceHeading(lines, index), sourceDate);
-  });
-}
-
-function fileHasIntroducedDigest(lines: string[], introducedLines: boolean[]): boolean {
-  return lines.some((line, index) => introducedLines[index] && isSubstantiveDigestLine(line));
-}
-
-function fileHasIntroducedDatedDigest(lines: string[], introducedLines: boolean[], relativePath: string): boolean {
-  const sourceDate = extractKnowledgeSourceDate(relativePath);
-  if (!sourceDate) return false;
-  return lines.some((line, index) => {
-    if (!introducedLines[index] || !isSubstantiveDigestLine(line)) return false;
-    return evidenceTextCoversDate(line, sourceDate) || evidenceTextCoversDate(nearestEvidenceHeading(lines, index), sourceDate);
-  });
-}
-
-function lineMentionsTargetRawSource(line: string, relativePath: string): boolean {
-  return mentionsRawSource(line) && maintenanceReportMentionsSource(line, relativePath);
-}
-
-function isPageLevelSourceLine(lines: string[], index: number): boolean {
-  const line = lines[index]?.trim() ?? "";
-  if (!/^>\s*(?:来源[:：]|[-*+]\s+)?/.test(line)) return false;
-  const firstSection = lines.findIndex((item) => /^##\s+/.test(item));
-  return firstSection === -1 || index < firstSection;
-}
-
-function isSinglePageLevelSourceLine(lines: string[], index: number): boolean {
-  const line = lines[index]?.trim() ?? "";
-  if (!/^>\s*来源[:：]/.test(line)) return false;
-  return isPageLevelSourceLine(lines, index);
-}
-
-function extractKnowledgeSourceDate(relativePath: string): string | null {
-  return relativePath.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0] ?? null;
-}
-
-function nearestEvidenceHeading(lines: string[], index: number): string {
-  for (let current = index; current >= 0; current--) {
-    if (/^#{1,6}\s+/.test(lines[current])) return lines[current];
-  }
-  return "";
-}
-
-function evidenceTextCoversDate(text: string, date: string): boolean {
-  if (!text) return false;
-  if (text.includes(date)) return true;
-  const target = Date.parse(`${date}T00:00:00Z`);
-  if (!Number.isFinite(target)) return false;
-  for (const match of text.matchAll(/\b(20\d{2}-\d{2}-\d{2})\s*(?:至|到|~|-|—|–)\s*(20\d{2}-\d{2}-\d{2})\b/g)) {
-    const start = Date.parse(`${match[1]}T00:00:00Z`);
-    const end = Date.parse(`${match[2]}T00:00:00Z`);
-    if (Number.isFinite(start) && Number.isFinite(end) && target >= Math.min(start, end) && target <= Math.max(start, end)) return true;
-  }
-  return false;
-}
-
-function introducedEvidenceLineFlags(beforeLines: string[], currentLines: string[]): boolean[] {
-  if (!currentLines.length) return [];
-  if (!beforeLines.length) return currentLines.map(() => true);
-  const beforeLength = beforeLines.length;
-  const currentLength = currentLines.length;
-  const maxDistance = beforeLength + currentLength;
-  const trace: Array<Map<number, number>> = [];
-  const vector = new Map<number, number>([[1, 0]]);
-  for (let distance = 0; distance <= maxDistance; distance++) {
-    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
-      const goDown = diagonal === -distance
-        || (diagonal !== distance && evidenceVectorValue(vector, diagonal - 1) <= evidenceVectorValue(vector, diagonal + 1));
-      let beforeIndex = goDown
-        ? evidenceVectorValue(vector, diagonal + 1)
-        : evidenceVectorValue(vector, diagonal - 1) + 1;
-      let currentIndex = beforeIndex - diagonal;
-      while (
-        beforeIndex < beforeLength
-        && currentIndex < currentLength
-        && beforeLines[beforeIndex] === currentLines[currentIndex]
-      ) {
-        beforeIndex++;
-        currentIndex++;
-      }
-      vector.set(diagonal, beforeIndex);
-      if (beforeIndex >= beforeLength && currentIndex >= currentLength) {
-        trace.push(new Map(vector));
-        return reconstructIntroducedEvidenceLineFlags(trace, beforeLength, currentLength);
-      }
-    }
-    trace.push(new Map(vector));
-  }
-  return currentLines.map(() => true);
-}
-
-function evidenceVectorValue(vector: Map<number, number>, diagonal: number): number {
-  return vector.get(diagonal) ?? -1;
-}
-
-function reconstructIntroducedEvidenceLineFlags(trace: Array<Map<number, number>>, beforeLength: number, currentLength: number): boolean[] {
-  const introduced = Array.from({ length: currentLength }, () => true);
-  let beforeIndex = beforeLength;
-  let currentIndex = currentLength;
-  for (let distance = trace.length - 1; distance > 0; distance--) {
-    const previousVector = trace[distance - 1];
-    const diagonal = beforeIndex - currentIndex;
-    const previousDiagonal = diagonal === -distance
-      || (diagonal !== distance && evidenceVectorValue(previousVector, diagonal - 1) <= evidenceVectorValue(previousVector, diagonal + 1))
-      ? diagonal + 1
-      : diagonal - 1;
-    const previousBeforeIndex = evidenceVectorValue(previousVector, previousDiagonal);
-    const previousCurrentIndex = previousBeforeIndex - previousDiagonal;
-    while (beforeIndex > previousBeforeIndex && currentIndex > previousCurrentIndex) {
-      beforeIndex--;
-      currentIndex--;
-      introduced[currentIndex] = false;
-    }
-    if (currentIndex === previousCurrentIndex) {
-      beforeIndex--;
-    } else {
-      currentIndex--;
-    }
-  }
-  while (beforeIndex > 0 && currentIndex > 0) {
-    beforeIndex--;
-    currentIndex--;
-    introduced[currentIndex] = false;
-  }
-  return introduced;
-}
-
-function normalizedEvidenceLines(text: string): string[] {
-  return stripNonBodyEvidenceLines(text.replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.trim()));
-}
-
-function stripNonBodyEvidenceLines(lines: string[]): string[] {
-  const stripped = [...lines];
-  if (stripped[0] === "---") {
-    const frontmatterEnd = stripped.findIndex((line, index) => index > 0 && (line === "---" || line === "..."));
-    if (frontmatterEnd > 0) {
-      for (let index = 0; index <= frontmatterEnd; index++) stripped[index] = "";
-    }
-  }
-  let fence: { marker: "`" | "~"; length: number } | null = null;
-  for (let index = 0; index < stripped.length; index++) {
-    const line = stripped[index];
-    const fenceMatch = /^(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      stripped[index] = "";
-      if (fenceMatch && fenceMatch[1][0] === fence.marker && fenceMatch[1].length >= fence.length) fence = null;
-      continue;
-    }
-    if (fenceMatch) {
-      fence = {
-        marker: fenceMatch[1][0] as "`" | "~",
-        length: fenceMatch[1].length
-      };
-      stripped[index] = "";
-    }
-  }
-  return stripped;
-}
-
-function sourceEvidenceBlocks(lines: string[], introducedLines: boolean[], relativePath: string): Array<{ hasSource: boolean; hasDigest: boolean; hasExistingTargetSource: boolean; hasOldDigestBeforeNewDigest: boolean }> {
-  const blocks: Array<{ hasSource: boolean; hasDigest: boolean; hasExistingTargetSource: boolean; hasOldDigestBeforeNewDigest: boolean }> = [];
-  let active: { hasSource: boolean; hasDigest: boolean; hasExistingTargetSource: boolean; hasOldDigestBeforeNewDigest: boolean } | null = null;
-  for (const [index, line] of lines.entries()) {
-    if (isSourceEvidenceBlockBoundary(line)) {
-      if (active) blocks.push(active);
-      active = null;
-      continue;
-    }
-    const introduced = introducedLines[index] ?? true;
-    const mentionsTarget = introduced && maintenanceReportMentionsSource(line, relativePath);
-    const mentionsExistingTarget = !introduced && maintenanceReportMentionsSource(line, relativePath) && mentionsRawSource(line);
-    const mentionsAnyRaw = introduced && mentionsRawSource(line) || mentionsExistingTarget;
-    if (mentionsAnyRaw) {
-      if (active) blocks.push(active);
-      active = {
-        hasSource: mentionsTarget,
-        hasDigest: introduced && isSubstantiveSourceEvidenceLine(line, relativePath),
-        hasExistingTargetSource: mentionsExistingTarget,
-        hasOldDigestBeforeNewDigest: false
-      };
-      continue;
-    }
-    if (active && introduced && isSubstantiveDigestLine(line)) {
-      active.hasDigest = true;
-    } else if (active && !introduced && isSubstantiveDigestLine(line)) {
-      active.hasOldDigestBeforeNewDigest = true;
-    }
-  }
-  if (active) blocks.push(active);
-  return blocks;
-}
-
-function isSourceEvidenceBlockBoundary(line: string): boolean {
-  const normalized = line.trim();
-  return !normalized
-    || /^#{1,6}\s+/.test(normalized)
-    || /^---+$/.test(normalized);
-}
-
-function isSubstantiveSourceEvidenceLine(line: string, relativePath: string): boolean {
-  if (!maintenanceReportMentionsSource(line, relativePath)) return false;
-  const withoutSource = stripRawSourceMentions(line)
-    .replace(/^(本轮)?来源[:：]/, "")
-    .replace(/^[-*+]\s+/, "")
-    .trim();
-  return isSubstantiveDigestLine(withoutSource);
-}
-
-function mentionsRawSource(line: string): boolean {
-  return /\[\[raw\//i.test(line)
-    || /(^|[^A-Za-z0-9_\-.%\u4e00-\u9fff])(?:\/[^\s`)\]）】]+\/)?raw\//i.test(line);
-}
-
-function stripRawSourceMentions(line: string): string {
-  return line
-    .replace(/\[\[raw\/[^\]]+\]\]/gi, "")
-    .replace(/\[[^\]]*\]\(\s*<?(?:\.\/|\/)?raw\/[^)\s>]+>?(?:\s+["'][^"']*["'])?\s*\)/gi, "")
-    .replace(/`raw\/[^`]+`/gi, "")
-    .replace(/(^|[^A-Za-z0-9_\-.%\u4e00-\u9fff])\/[^\s`)\]）】,，;；:：!！?？。]+\/raw\/[^\s`)\]）】,，;；:：!！?？。]+/gi, "$1")
-    .replace(/(^|[^A-Za-z0-9_\-./%\u4e00-\u9fff])raw\/[^\s`)\]）】,，;；:：!！?？。]+/gi, "$1");
-}
-
-function isSubstantiveDigestLine(line: string): boolean {
-  const normalized = line.trim();
-  if (!normalized) return false;
-  if (/^#{1,6}\s+/.test(normalized)) return false;
-  if (/^---+$/.test(normalized)) return false;
-  if (/^[-*+]\s*\[\[?raw\//i.test(normalized)) return false;
-  if (/^[-*+]\s*`?raw\//i.test(normalized)) return false;
-  if (/^(本轮)?来源[:：]/.test(normalized)) return false;
-  if (mentionsRawSource(normalized)) return false;
-  const text = normalized
-    .replace(/^[-*+]\s+/, "")
-    .replace(/^\d+[.)、]\s+/, "")
-    .replace(/[*_`>#\[\]()（）:：，。,.!！?？\s-]/g, "");
-  return text.length >= 12 && /[A-Za-z0-9\u4e00-\u9fff]/.test(text);
-}
-
-function maintenanceReportMentionsSource(report: string, relativePath: string): boolean {
-  const normalizedReport = report.replace(/\\/g, "/");
-  return knowledgePathMentionVariants(relativePath)
-    .some((variant) => containsKnowledgePathMention(normalizedReport, variant) || containsKnowledgeAbsolutePathSegment(normalizedReport, variant));
-}
-
-function knowledgePathMentionVariants(relativePath: string): string[] {
-  const normalizedPath = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
-  const withoutExtension = normalizedPath.replace(/\.(md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)$/i, "");
-  const encodedPath = encodeKnowledgeRelativePath(normalizedPath);
-  const encodedWithoutExtension = encodeKnowledgeRelativePath(withoutExtension);
-  return uniqueKnowledgePathVariants([
-    normalizedPath,
-    withoutExtension,
-    encodedPath,
-    lowercasePercentEscapes(encodedPath),
-    encodedWithoutExtension,
-    lowercasePercentEscapes(encodedWithoutExtension)
-  ]);
-}
-
-function uniqueKnowledgePathVariants(paths: string[]): string[] {
-  const seen = new Set<string>();
-  const variants: string[] = [];
-  for (const current of paths) {
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    variants.push(current);
-  }
-  return variants;
-}
-
-function encodeKnowledgeRelativePath(relativePath: string): string {
-  return relativePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
-}
-
-function lowercasePercentEscapes(relativePath: string): string {
-  return relativePath.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase());
-}
-
-function containsKnowledgePathMention(text: string, relativePath: string): boolean {
-  if (!relativePath) return false;
-  let start = text.indexOf(relativePath);
-  while (start !== -1) {
-    const before = start > 0 ? text[start - 1] : "";
-    const beforePrevious = start > 1 ? text[start - 2] : "";
-    const afterIndex = start + relativePath.length;
-    const after = text[afterIndex] ?? "";
-    const afterNext = text[afterIndex + 1] ?? "";
-    if (isKnowledgePathBoundaryBefore(before, beforePrevious) && isKnowledgePathBoundaryAfter(after, afterNext)) return true;
-    start = text.indexOf(relativePath, start + 1);
-  }
-  return false;
-}
-
-function containsKnowledgeAbsolutePathSegment(text: string, relativePath: string): boolean {
-  const absoluteSegment = `/${relativePath}`;
-  let start = text.indexOf(absoluteSegment);
-  while (start !== -1) {
-    const afterIndex = start + absoluteSegment.length;
-    const after = text[afterIndex] ?? "";
-    const afterNext = text[afterIndex + 1] ?? "";
-    if (isKnowledgePathBoundaryAfter(after, afterNext)) return true;
-    start = text.indexOf(absoluteSegment, start + 1);
-  }
-  return false;
-}
-
-function isKnowledgePathBoundaryBefore(char: string, previousChar = ""): boolean {
-  if (char === "/") return !previousChar || !/[A-Za-z0-9_\-.%\u4e00-\u9fff]/.test(previousChar);
-  return !char || !/[A-Za-z0-9_\-./%\u4e00-\u9fff]/.test(char);
-}
-
-function isKnowledgePathBoundaryAfter(char: string, nextChar = ""): boolean {
-  if (!char) return true;
-  if (char === ".") {
-    return !nextChar || /[\s\])}）】』」》,，;；:：!！?？]/.test(nextChar);
-  }
-  return !/[A-Za-z0-9_\-./%\u4e00-\u9fff]/.test(char);
 }
 
 function cloneProcessedSources(processed: Record<string, KnowledgeBaseProcessedSource> | undefined): Record<string, KnowledgeBaseProcessedSource> {
@@ -2841,6 +2731,11 @@ function rejectAfterTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout
 function normalizeOpenCodeTaskTimeoutMs(value: number | undefined): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
   return OPENCODE_KNOWLEDGE_TASK_TIMEOUT_MS;
+}
+
+function normalizeHermesTaskTimeoutMs(value: number | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  return HERMES_KNOWLEDGE_TASK_TIMEOUT_MS;
 }
 
 function formatDurationForError(ms: number): string {

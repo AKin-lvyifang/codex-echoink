@@ -46,13 +46,14 @@
 - `Start` opens the EchoInk sidebar and records setup completion; it does not send a message or run a Knowledge task.
 - Keeps setup explicit: no silent installs, no surprise background Agent work.
 
-### Session-scoped Codex Workspace
+### Multi-Agent Workspace
 
-- Opens Codex in the Obsidian sidebar.
+- Opens EchoInk Agent in the Obsidian sidebar.
+- Supports Codex CLI, OpenCode API, and Hermes as switchable Agent backends.
 - Requires a folder picker for ordinary chat sessions before sending.
 - Treats attached notes as turn context only; attaching a note does not make the whole vault the workspace.
 - Keeps the `Knowledge` channel bound to the current vault for Raw, Wiki, Outputs, and Inbox maintenance.
-- Lets Codex read files, inspect folders, edit documents, and run local commands.
+- Lets the selected Agent backend read files, inspect folders, edit documents, and run allowed local operations according to its capability.
 - Keeps the workflow inside Obsidian instead of bouncing between apps.
 
 ### Agent-style Process Timeline
@@ -93,15 +94,16 @@
 - Treats chat as the main control surface: type `/init`, `/ask`, `/check`, `/maintain`, `/outputs`, `/journal`, or `/inbox`, then add your own instruction after the command.
 - Adds an LLM Wiki initialization guide: `/init` previews folders, rules files, and existing-note routing suggestions; `/init confirm` creates the template.
 - Answers read-only knowledge questions with `/ask`, searching Wiki first and then using Journal / Outputs as background evidence, while separating Vault evidence from external or model-based supplements.
-- Writes daily journals with `/journal`, following the current `journal/` folder layout and recent note format; the workday window is `00:00` through before next-day `06:00`, with Codex CLI reading Codex sessions and OpenCode API reading OpenCode chat history.
+- Writes daily journals with `/journal`, following the current `journal/` folder layout and recent note format; the workday window is `00:00` through before next-day `06:00`, with backend-specific evidence rules for Codex CLI, OpenCode API, or Hermes.
 - Keeps only the latest active Knowledge day in the channel; older chat history is stored by day under the plugin `history/` data folder and browsed through `/history`.
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
-- Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Codex/OpenCode.
+- Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Agent backends.
 - Optionally recommends [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) for longer-lived knowledge context; your Agent installs the skill and runs its bootstrap in the workspace, while the plugin does not bundle the skill or modify your `AGENTS.md`.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
-- Keeps existing Raw files unchanged, then writes structured results to Wiki, Outputs, Journal, and tracker files.
-- Runs `/maintain` as an ingest, structure-normalize, and lint workflow, with plugin-side checks protecting Raw source bodies.
+- Uses a four-step digest protocol: understand Raw, extract reusable knowledge, merge structured knowledge in Wiki / Projects, then mark Raw only after source evidence is verified.
+- Keeps existing Raw files unchanged, then writes structured results to Wiki / Projects, Outputs, Journal, and tracker files.
+- Runs `/check` as a digest audit only, `/maintain` as four-step digest, `/reingest` as forced redigest, and `/calibrate raw` as status calibration without new Agent extraction.
 - Preserves Knowledge history in the plugin's local `history/` folder, so `/history` can still show records after Codex archived threads are removed.
 - Archives background Codex threads created by Knowledge commands after local history is saved, reducing clutter in Codex Desktop's recent conversation list.
 - Supports manual runs and daily maintenance when Obsidian is open.
@@ -116,19 +118,24 @@
 
 ### Local-first Integration
 
-- Reuses your local Codex CLI login state.
+- Reuses your local Codex CLI login state when Codex is selected.
+- Can use OpenCode or Hermes as local Agent backends when they are installed and configured.
 - Does not require storing an OpenAI API key by default.
 - Optionally supports OpenAI Responses API-compatible custom providers, including multiple models per provider.
 - Supports local proxy settings for the Codex child process.
-- Keeps plugin, MCP, and skill switches scoped to the current vault instead of rewriting global Codex config.
-- Adds search to the current-vault plugin, MCP, and skill switches, with long labels clipped cleanly so the enable checkbox stays reachable.
+- Keeps MCP, Skill, and tool-bundle switches scoped to the current vault instead of rewriting global Codex, OpenCode, or Hermes config.
+- Adds an EchoInk MCP broker foundation: MCP resources with explicit `metadata.mcp` connection settings can list tools and run approved tool calls through EchoInk logs; imported-only MCP entries stay visible but are not falsely marked callable.
+- Adds search and per-scope switches for current-vault resources: chat, Knowledge, and writing actions.
 
-### OpenCode API Mode
+### Multi-Agent Backend Mode
 
 - Keeps the original Codex CLI mode for users who want to reuse local Codex login state.
-- Adds OpenCode API mode for knowledge base tasks when OpenCode is installed locally.
+- Adds OpenCode API mode for chat, writing, and knowledge tasks when OpenCode is installed locally.
 - Can detect or connect to an OpenCode server, refresh available models, and choose the active OpenCode model.
 - Can refresh and choose OpenCode Agents, so different knowledge management workflows can use different agent profiles.
+- Adds Hermes CLI/API settings for users who want Hermes profiles, memory, and provider configuration as the backend.
+- Hermes provider/model setup is intentionally left to Hermes official configuration such as `hermes model` or its environment files; EchoInk stores only the selected connection metadata.
+- Codex keeps rich process timelines. OpenCode and Hermes currently use a simpler running/completed/failed flow unless richer event APIs are available.
 
 ### Writing Context Harness
 
@@ -138,6 +145,7 @@
 - Shows a writing context panel with the current note, model, understanding status, and structured article understanding.
 - Reuses article understanding after small edits, so continuous rewrite / expand / continue / translate runs do not repeatedly re-read the whole note.
 - Shows an inline candidate that can be accepted with `Enter` or canceled with `Esc`.
+- Can run through Codex, OpenCode, or Hermes depending on the configured writing backend.
 
 This feature is still experimental and disabled by default, but v0.3.0 makes it a much more deliberate writing workflow.
 
@@ -161,12 +169,12 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 - Replaced direct sidebar style assignments with Obsidian-supported `setCssStyles` and `setCssProps`.
 - Kept the health tooltip, yearly heatmap, virtual message list, and context usage ring behavior unchanged.
-- Added regression coverage to prevent direct style assignment from returning to the Codex sidebar.
+- Added regression coverage to prevent direct style assignment from returning to the Agent sidebar.
 
 **How to use:**
 
 1. Install `v1.0.3`.
-2. Open the EchoInk Home or Codex sidebar as usual.
+2. Open the EchoInk Home or Agent sidebar as usual.
 
 ### v1.0.2
 
@@ -181,7 +189,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 **How to use:**
 
 1. Install `v1.0.2`.
-2. Open the EchoInk Home, Codex sidebar, or review preview as usual.
+2. Open the EchoInk Home, Agent sidebar, or review preview as usual.
 
 ### v1.0.1
 
@@ -235,8 +243,8 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 **How to use:**
 
-1. Run `/check` for a read-only health check.
-2. Run `/maintain` to process changed Raw sources.
+1. Run `/check` for a read-only digest audit.
+2. Run `/maintain` to run the four-step digest on changed Raw sources.
 3. Use `/history` to browse local Knowledge history; removing Codex archived conversations does not remove plugin history.
 
 ### v0.7.2
@@ -383,7 +391,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 **How to use:**
 
-1. Open the `Knowledge` channel in the Codex sidebar.
+1. Open the `Knowledge` channel in the Agent sidebar.
 2. In settings, choose `Codex CLI` or `OpenCode API` as the knowledge base backend.
 3. For OpenCode mode, install OpenCode locally, then refresh and select a model and Agent.
 4. For a new vault, type `/init` to preview the LLM Wiki setup; type `/init confirm` only after reviewing it.
@@ -449,7 +457,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 ## Install
 
 1. Install and log in to Codex CLI for Codex CLI mode.
-2. Optionally install OpenCode if you want to use OpenCode API mode for knowledge base management.
+2. Optionally install OpenCode or Hermes if you want those local Agent backends.
 3. Install `Codex EchoInk` from Obsidian Community Plugins when available.
 4. For manual install, create this folder in your vault:
 
@@ -471,13 +479,14 @@ codex-echoink/
 
 ## Quick Start
 
-1. Open the Codex sidebar from the ribbon icon or command palette.
+1. Open the EchoInk Agent sidebar from the ribbon icon or command palette.
 2. Choose a folder as the workspace in an ordinary chat session.
-3. Ask Codex to inspect, summarize, rewrite, or manage files in that workspace.
-4. Attach notes, files, images, skills, or MCP tools when needed; attachments are context only.
-5. Review the process cards for commands, edits, context usage, and evidence.
-6. Open the `Knowledge` channel when you want Codex to operate your vault knowledge base.
-7. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/ask`, `/maintain`, or `/outputs` depending on whether you want an answer, a maintenance run, or structured knowledge output.
+3. Choose the default Agent backend in settings: Codex, OpenCode, or Hermes.
+4. Ask the selected Agent to inspect, summarize, rewrite, or manage files in that workspace.
+5. Attach notes, files, images, Skills, or imported MCP resources when needed; attachments are context only.
+6. Review the process cards for commands, edits, context usage, and evidence. Codex has the richest timeline; OpenCode and Hermes use a simpler run state when richer events are not available.
+7. Open the `Knowledge` channel when you want EchoInk to operate your vault knowledge base through the selected backend.
+8. For a new vault, start with `/init`; for an existing structured vault, start with `/check`, then use `/ask`, `/maintain`, `/reingest`, `/calibrate raw`, or `/outputs` depending on whether you want an answer, four-step digest, redigest, status calibration, or structured knowledge output.
 
 ## Troubleshooting
 
@@ -497,9 +506,11 @@ Try these steps:
 - Codex EchoInk is desktop-only because it calls local command-line tools.
 - Codex CLI mode uses your local Codex CLI login and may send selected prompts, attachments, and chosen file context to the model provider configured in Codex.
 - OpenCode API mode connects to a local or user-configured OpenCode server. The plugin can start or stop `opencode serve`, but it does not silently install OpenCode.
-- Custom API provider keys are stored in Obsidian plugin data on your local machine. Use them only on a trusted device.
+- Hermes mode calls your local Hermes CLI or configured Hermes API server. EchoInk can store the selected Hermes server URL, profile, provider, model, and optional API server key, but it does not silently rewrite your Hermes global provider setup.
+- Custom API provider keys are stored in Obsidian plugin data on your local machine. Use them only on a trusted device. Hermes inference provider keys should normally stay in Hermes' own configuration.
 - The plugin does not upload your whole vault by default. Ordinary chat requires choosing a workspace folder, and attached notes are turn context only.
 - Knowledge management runs keep Raw source bodies read-only and only update indexes or trackers. In ordinary Agent chat, Raw file organization follows your explicit instruction and the active permission mode.
+- MCP and Skill resources are imported into an EchoInk vault-local registry. Per-scope switches affect EchoInk only and are not written back to Codex, OpenCode, or Hermes global configs. MCP tool calls that go through EchoInk's broker require explicit connection config, approval, and local logs.
 
 ## Screenshots
 
@@ -538,9 +549,10 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 
 - Codex CLI must be installed and available locally for Codex CLI mode.
 - OpenCode must be installed locally for OpenCode API mode. The plugin can connect to or start the OpenCode server, but it does not silently install OpenCode.
+- Hermes CLI must be installed locally for Hermes mode. Configure inference providers through Hermes, then point EchoInk at the CLI or API server.
 - Custom API providers for Codex CLI mode must be compatible with the OpenAI Responses API, such as `/v1/responses`. Providers that only support `/v1/chat/completions` may not work.
 - Custom API keys are stored in Obsidian plugin data, so use them only on a trusted local machine.
-- Leave the Codex CLI path empty to auto-detect it from `PATH` and common install folders, or set the path manually in plugin settings.
+- Leave CLI paths empty to auto-detect from `PATH` and common install folders, or set paths manually in plugin settings.
 
 ## License
 

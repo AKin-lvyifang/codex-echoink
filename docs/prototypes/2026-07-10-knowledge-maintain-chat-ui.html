@@ -1,0 +1,1612 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EchoInk Knowledge Command Cards</title>
+  <style>
+    :root {
+      --bg: #f6f7f8;
+      --pane: #ffffff;
+      --pane-2: #f4f5f5;
+      --ink: #24201d;
+      --muted: #746d66;
+      --faint: #a29a92;
+      --line: #e5e1dc;
+      --hover: #efefef;
+      --brand: #d97757;
+      --brand-2: #a95f46;
+      --brand-soft: rgba(217, 119, 87, 0.12);
+      --brand-line: rgba(217, 119, 87, 0.38);
+      --green: #18a75d;
+      --green-soft: rgba(24, 167, 93, 0.12);
+      --amber: #b9791d;
+      --amber-soft: rgba(185, 121, 29, 0.12);
+      --red: #c44236;
+      --red-soft: rgba(196, 66, 54, 0.11);
+      --blue: #4f74d0;
+      --blue-soft: rgba(79, 116, 208, 0.12);
+      --shadow: 0 18px 48px rgba(52, 42, 34, 0.12);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(217, 119, 87, 0.07), transparent 260px),
+        var(--bg);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .topline {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 16px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 8px;
+      color: var(--brand-2);
+      font-size: 13px;
+      font-weight: 720;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(24px, 2.5vw, 34px);
+      line-height: 1.16;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 720px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .version-chip {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--pane);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .command-tabs {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+
+    .command-tab {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--pane);
+      color: var(--muted);
+      cursor: pointer;
+      text-align: left;
+      transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+
+    .command-tab:hover {
+      color: var(--ink);
+      border-color: rgba(217, 119, 87, 0.28);
+      background: color-mix(in srgb, var(--brand-soft) 34%, var(--pane));
+    }
+
+    .command-tab.is-active {
+      color: var(--brand-2);
+      border-color: var(--brand-line);
+      background: color-mix(in srgb, var(--brand-soft) 62%, var(--pane));
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+    }
+
+    .command-tab svg {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+    }
+
+    .command-tab span {
+      min-width: 0;
+      overflow: hidden;
+      font-size: 14px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(470px, 720px) minmax(360px, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .mock-shell,
+    .panel-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--pane);
+      box-shadow: var(--shadow);
+    }
+
+    .mock-shell {
+      overflow: hidden;
+    }
+
+    .mock-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 46px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--pane) 86%, var(--pane-2));
+    }
+
+    .window-dots {
+      display: inline-flex;
+      gap: 6px;
+      margin-right: 2px;
+    }
+
+    .window-dots span {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--line);
+    }
+
+    .mock-title {
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .mock-title strong {
+      color: var(--brand-2);
+      font-weight: 780;
+    }
+
+    .mock-status {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .mock-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(24, 167, 93, 0.1);
+    }
+
+    .chat {
+      min-height: 780px;
+      display: flex;
+      flex-direction: column;
+      background:
+        linear-gradient(180deg, rgba(255, 253, 250, 0.8), rgba(255, 253, 250, 0.32)),
+        var(--pane);
+    }
+
+    .messages {
+      flex: 1;
+      padding: 18px 15px 16px;
+    }
+
+    .message {
+      margin-bottom: 16px;
+    }
+
+    .message.user {
+      width: fit-content;
+      max-width: 82%;
+      margin-left: auto;
+      padding: 10px 13px;
+      border: 1px solid rgba(0, 0, 0, 0.04);
+      border-radius: 10px 10px 4px 10px;
+      background: rgba(0, 0, 0, 0.055);
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .message-title {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 9px;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .message-title time {
+      color: var(--faint);
+      font-weight: 600;
+    }
+
+    .run-card,
+    .report-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--pane);
+      box-shadow: 0 1px 2px rgba(58, 46, 37, 0.04);
+    }
+
+    .run-card {
+      position: relative;
+      overflow: hidden;
+      padding: 14px;
+    }
+
+    .run-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 7% 18%, rgba(217, 119, 87, 0.13), transparent 32%),
+        linear-gradient(90deg, transparent, rgba(217, 119, 87, 0.08), transparent);
+      opacity: 0.7;
+      pointer-events: none;
+      animation: breathe-surface 3.4s ease-in-out infinite;
+    }
+
+    .run-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .run-head {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .agent-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid var(--brand-line);
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--brand-soft) 76%, var(--pane));
+      color: var(--brand-2);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.56), 0 1px 2px rgba(58, 46, 37, 0.05);
+    }
+
+    .agent-mark svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .run-label {
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .run-live {
+      min-height: 17px;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 520;
+    }
+
+    .elapsed {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.58);
+      font-size: 12px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .milestone-track {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(0, 1fr) 34px;
+      align-items: start;
+      column-gap: 7px;
+      row-gap: 6px;
+      width: 100%;
+      margin: 16px 0 0;
+      padding: 4px 0 2px;
+    }
+
+    .energy-segment {
+      display: grid;
+      grid-template-columns: repeat(18, minmax(1px, 1fr));
+      align-items: center;
+      align-self: start;
+      gap: 1px;
+      height: 34px;
+      min-width: 0;
+      pointer-events: none;
+    }
+
+    .energy-cell {
+      justify-self: center;
+      width: min(3px, 100%);
+      height: 14px;
+      border: 1px solid color-mix(in srgb, var(--line) 72%, var(--pane));
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.035);
+      transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    }
+
+    .energy-cell.is-filled {
+      border-color: rgba(24, 167, 93, 0.42);
+      background: var(--green);
+      box-shadow: 0 0 0 1px rgba(24, 167, 93, 0.05);
+    }
+
+    .energy-cell.is-next {
+      border-color: rgba(217, 119, 87, 0.34);
+      background: color-mix(in srgb, var(--brand) 54%, var(--line));
+      animation: active-cell 680ms ease-in-out infinite;
+    }
+
+    .milestone {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      justify-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .milestone-node {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--pane);
+      color: var(--faint);
+      box-shadow: 0 1px 2px rgba(58, 46, 37, 0.05);
+    }
+
+    .milestone-node svg {
+      width: 16px;
+      height: 16px;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    .milestone.is-done .milestone-node {
+      border-color: rgba(24, 167, 93, 0.38);
+      background: var(--green-soft);
+      color: var(--green);
+      box-shadow: 0 0 0 3px rgba(24, 167, 93, 0.07), 0 5px 14px rgba(24, 167, 93, 0.1);
+    }
+
+    .milestone.is-active .milestone-node {
+      border-color: var(--brand-line);
+      background: color-mix(in srgb, var(--brand-soft) 72%, var(--pane));
+      color: var(--brand-2);
+      box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.1), 0 6px 18px rgba(217, 119, 87, 0.14);
+    }
+
+    .milestone.is-active.phase-0 .milestone-node svg {
+      animation: active-scan 1.15s ease-in-out infinite;
+    }
+
+    .milestone.is-active.phase-1 .milestone-node svg {
+      animation: active-check 1.1s ease-in-out infinite;
+    }
+
+    .milestone.is-active.phase-2 .milestone-node svg {
+      animation: active-work 1.1s ease-in-out infinite;
+    }
+
+    .milestone.is-active.phase-3 .milestone-node svg {
+      animation: active-report 1.2s ease-in-out infinite;
+    }
+
+    .milestone-name {
+      max-width: 76px;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 11.5px;
+      line-height: 1.25;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .run-boundary {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 9px 10px;
+      border-radius: 9px;
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.035);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .run-boundary svg {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      margin-top: 1px;
+      color: var(--brand-2);
+    }
+
+    .report-card {
+      overflow: hidden;
+    }
+
+    .report-top {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(24, 167, 93, 0.12), transparent 44%),
+        var(--pane);
+    }
+
+    .report-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(24, 167, 93, 0.34);
+      border-radius: 10px;
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .status-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .report-title {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .report-title strong {
+      display: block;
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 780;
+    }
+
+    .report-title span {
+      display: block;
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .soft-button {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--pane);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .soft-button svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    .report-body {
+      display: grid;
+      gap: 11px;
+      padding: 14px;
+    }
+
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head svg {
+      width: 16px;
+      height: 16px;
+      color: var(--brand-2);
+    }
+
+    .section-title {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .care-list {
+      display: grid;
+      gap: 8px;
+      padding: 11px;
+    }
+
+    .care-item {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .care-item strong {
+      color: var(--ink);
+      font-weight: 720;
+    }
+
+    .mini-dot {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .mini-dot.warn {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .mini-dot.info {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .mini-dot svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .report-details {
+      display: grid;
+      gap: 8px;
+      padding: 11px;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--pane);
+    }
+
+    summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 9px 11px;
+      cursor: pointer;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 720;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary svg {
+      width: 14px;
+      height: 14px;
+      color: var(--faint);
+      transition: transform 160ms ease;
+    }
+
+    details[open] summary svg {
+      transform: rotate(90deg);
+    }
+
+    .detail-title {
+      min-width: 0;
+      flex: 1;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .detail-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 32px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--pane-2);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 780;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .detail-body {
+      display: grid;
+      gap: 9px;
+      padding: 0 11px 11px 34px;
+    }
+
+    .note-row {
+      min-width: 0;
+      padding: 8px 9px;
+      border-left: 3px solid color-mix(in srgb, var(--brand) 55%, var(--line));
+      border-radius: 0 8px 8px 0;
+      background: color-mix(in srgb, var(--brand-soft) 45%, var(--pane));
+    }
+
+    .note-title {
+      display: block;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 740;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .note-desc {
+      margin: 5px 0 0;
+      padding-left: 9px;
+      border-left: 2px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.48;
+    }
+
+    .composer {
+      margin: 0 14px 14px;
+      min-height: 106px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--pane);
+    }
+
+    .placeholder {
+      padding: 12px 13px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px;
+    }
+
+    .tool {
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 7px;
+      color: var(--ink);
+      background: transparent;
+    }
+
+    .tool svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .pill {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 30px;
+      padding: 0 11px;
+      border-radius: 999px;
+      background: var(--hover);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 740;
+    }
+
+    .pill + .pill {
+      margin-left: 4px;
+    }
+
+    .side {
+      display: grid;
+      gap: 14px;
+    }
+
+    .panel-card {
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(58, 46, 37, 0.04);
+    }
+
+    .panel-card header {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-card h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.25;
+      font-weight: 780;
+    }
+
+    .panel-card p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .matrix {
+      display: grid;
+      gap: 0;
+    }
+
+    .matrix-row {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1.1fr) minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .matrix-row:last-child {
+      border-bottom: 0;
+    }
+
+    .matrix-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .matrix-name svg {
+      width: 16px;
+      height: 16px;
+      color: var(--brand-2);
+    }
+
+    .matrix-text {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .matrix-text strong {
+      color: var(--ink);
+      font-weight: 720;
+    }
+
+    .rule-list {
+      display: grid;
+      gap: 0;
+      padding: 4px 0;
+    }
+
+    .rule-item {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 10px;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .rule-item:last-child {
+      border-bottom: 0;
+    }
+
+    .rule-no {
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--brand-soft);
+      color: var(--brand-2);
+      font-size: 12px;
+      font-weight: 780;
+    }
+
+    .rule-title {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .rule-text {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    @keyframes breathe-surface {
+      0%, 100% { opacity: 0.42; }
+      50% { opacity: 0.9; }
+    }
+
+    @keyframes active-cell {
+      0%, 100% { transform: scaleY(0.76); }
+      50% { transform: scaleY(1); }
+    }
+
+    @keyframes active-scan {
+      0%, 100% { transform: translateX(-1px); }
+      50% { transform: translateX(2px); }
+    }
+
+    @keyframes active-check {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    @keyframes active-work {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      46% { transform: translate(1px, -1px) rotate(-2deg); }
+      72% { transform: translate(-1px, 1px) rotate(1deg); }
+    }
+
+    @keyframes active-report {
+      0%, 100% { transform: translateY(0) scale(1); }
+      40% { transform: translateY(2px) scale(0.96); }
+      62% { transform: translateY(-1px) scale(1.03); }
+    }
+
+    @media (max-width: 1120px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .page {
+        padding: 18px;
+      }
+
+      .topline,
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .command-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .version-chip {
+        justify-self: start;
+      }
+
+      .matrix-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .command-tabs {
+        grid-template-columns: 1fr;
+      }
+
+      .milestone-track {
+        grid-template-columns: 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px;
+        column-gap: 6px;
+        padding-bottom: 8px;
+      }
+
+      .energy-segment {
+        height: 28px;
+      }
+
+      .energy-cell {
+        width: min(2px, 100%);
+        height: 12px;
+      }
+
+      .milestone-node {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+      }
+
+      .milestone-node svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .run-head {
+        grid-template-columns: 32px minmax(0, 1fr);
+      }
+
+      .elapsed,
+      .soft-button {
+        display: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .run-card::before,
+      .milestone.is-active .milestone-node svg,
+      .energy-cell.is-next {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="topline">
+      <div>
+        <div class="eyebrow" id="eyebrowIcon"></div>
+        <h1>知识库命令运行态与报告卡片</h1>
+        <p class="subtitle">同一套组件覆盖 5 个命令：运行只讲阶段，完成只讲结论，细节统一进入折叠区和完整报告。</p>
+      </div>
+      <div class="version-chip">Prototype · 2026-07-10</div>
+    </section>
+
+    <nav class="command-tabs" id="commandTabs" aria-label="知识库命令"></nav>
+
+    <section class="layout">
+      <div class="mock-shell">
+        <div class="mock-header">
+          <div class="window-dots"><span></span><span></span><span></span></div>
+          <div class="mock-title"><strong>EchoInk</strong> / 知识库管理</div>
+          <div class="mock-status"><span class="mock-status-dot"></span>Codex 后端在线</div>
+        </div>
+
+        <div class="chat">
+          <div class="messages">
+            <div class="message user" id="userCommand"></div>
+
+            <article class="message assistant">
+              <div class="message-title">知识库管理 <time>运行中</time></div>
+              <div class="run-card" aria-label="知识库命令运行中">
+                <div class="run-inner">
+                  <div class="run-head">
+                    <div class="agent-mark" id="runIcon" aria-hidden="true"></div>
+                    <div>
+                      <div class="run-label" id="runTitle"></div>
+                      <div class="run-live" id="runLive">阶段进度见下方</div>
+                    </div>
+                    <div class="elapsed">
+                      <span id="clockIcon"></span>
+                      <span id="elapsed">00:28</span>
+                    </div>
+                  </div>
+
+                  <div class="milestone-track" id="milestoneTrack" aria-label="命令阶段"></div>
+
+                  <div class="run-boundary">
+                    <span id="boundaryIcon"></span>
+                    <span id="runBoundary"></span>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="message assistant">
+              <div class="message-title">知识库管理 <time>完成后</time></div>
+              <div class="report-card" aria-label="知识库命令完成报告">
+                <div class="report-top">
+                  <div class="report-status">
+                    <div class="status-icon" id="reportIcon"></div>
+                    <div class="report-title">
+                      <strong id="reportTitle"></strong>
+                      <span id="reportPath"></span>
+                    </div>
+                    <button class="soft-button">
+                      <span id="openIcon"></span>
+                      打开报告
+                    </button>
+                  </div>
+                </div>
+
+                <div class="report-body">
+                  <section class="section">
+                    <div class="section-head">
+                      <span id="careIcon"></span>
+                      <div class="section-title">你应该关心</div>
+                    </div>
+                    <div class="care-list" id="careList"></div>
+                  </section>
+
+                  <section class="section">
+                    <div class="section-head">
+                      <span id="detailsIcon"></span>
+                      <div class="section-title">结果明细</div>
+                    </div>
+                    <div class="report-details" id="reportDetails"></div>
+                  </section>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="composer">
+            <div class="placeholder">普通对话直接输入；查知识库用 /ask；管理用 /check /maintain</div>
+            <div class="toolbar">
+              <button class="tool" aria-label="添加" id="plusTool"></button>
+              <button class="tool" aria-label="工具" id="toolIcon"></button>
+              <button class="tool" aria-label="笔记" id="noteIcon"></button>
+              <div class="pill">自动 高</div>
+              <div class="pill">知识库命令</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <section class="panel-card">
+          <header>
+            <h2>五个命令的配置差异</h2>
+            <p>骨架统一，语义差异放在命令配置里：阶段名、关心点、折叠横条不同。</p>
+          </header>
+          <div class="matrix" id="commandMatrix"></div>
+        </section>
+
+        <section class="panel-card">
+          <header>
+            <h2>落地规则</h2>
+            <p>这页只讨论 UI 原型，确认后再改真实插件。</p>
+          </header>
+          <div class="rule-list">
+            <div class="rule-item">
+              <div class="rule-no">1</div>
+              <div>
+                <div class="rule-title">运行卡只显示阶段</div>
+                <div class="rule-text">不塞文件明细，不展示思考链，避免用户误以为任务已经结束。</div>
+              </div>
+            </div>
+            <div class="rule-item">
+              <div class="rule-no">2</div>
+              <div>
+                <div class="rule-title">报告卡先回答“我要不要管”</div>
+                <div class="rule-text">关心点优先说是否需要用户处理，再说处理数量和环境提示。</div>
+              </div>
+            </div>
+            <div class="rule-item">
+              <div class="rule-no">3</div>
+              <div>
+                <div class="rule-title">明细统一折叠</div>
+                <div class="rule-text">展开后只给文件名和一句引用式描述；完整追溯交给“打开报告”。</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const icons = {
+      book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>',
+      bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4"/><path d="M8 13h.01"/><path d="M16 13h.01"/><path d="M9 18v2"/><path d="M15 18v2"/></svg>',
+      search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+      shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg>',
+      route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M8 17 16 7"/><path d="M18 8v5a3 3 0 0 1-3 3H9"/></svg>',
+      filePen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m13 18 5-5 2 2-5 5h-2Z"/></svg>',
+      network: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="8.5" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4"/><path d="m7 10 3 4"/><path d="m17 10-3 4"/></svg>',
+      gauge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.5 17a9 9 0 1 0-17 0"/><path d="m12 14 4-6"/><path d="M8 17h8"/></svg>',
+      checkList: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+      database: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
+      archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="4" rx="1"/><path d="M5 7v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7"/><path d="M9 12h6"/></svg>',
+      inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="m5.5 4-3 8v7a2 2 0 0 0 2 2h15a2 2 0 0 0 2-2v-7l-3-8Z"/></svg>',
+      tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><path d="M7.5 7.5h.01"/></svg>',
+      folderDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/></svg>',
+      report: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+      check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>',
+      warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+      clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+      open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+      arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>',
+      plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+      tool: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14.7 6.3 3 3"/><path d="M3 21l8.5-8.5"/><path d="M12 8 8 4l2-2 4 4"/><path d="m16 10 4 4-2 2-4-4"/></svg>',
+      note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18H6z"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h3"/></svg>'
+    };
+
+    const commands = [
+      {
+        id: "check",
+        label: "体检",
+        command: "/check",
+        icon: "shield",
+        runTitle: "正在体检知识库",
+        boundary: "只检查健康度、断链和结构风险；不会改动 raw、wiki 或 projects。",
+        phases: [
+          ["扫库", "search"],
+          ["找断点", "shield"],
+          ["对规则", "gauge"],
+          ["出建议", "report"],
+          ["收口", "check"]
+        ],
+        reportTitle: "体检完成",
+        reportPath: "outputs/maintenance/kb-check-2026-07-10.md",
+        care: [
+          ["warning", "先看真正影响后续整理的那几处。", "数量突然变多的项，比单个错误更值得追。"],
+          ["info", "如果反复出现同类问题。", "优先改规则，不要一条条补。"],
+          ["success", "只做检查。", "本轮没有写入 raw、wiki 或 projects。"]
+        ],
+        sections: [
+          {
+            title: "断链与引用异常",
+            count: 2,
+            items: [
+              ["项目周报.md", "这里指向的文件已经不存在了。"],
+              ["会议纪要/7-08.md", "被引用的段落找不到，建议换成当前版本。"]
+            ]
+          },
+          {
+            title: "命名与结构偏差",
+            count: 2,
+            items: [
+              ["Raw/读书笔记/未命名.md", "标题和文件名没有对齐。"],
+              ["Projects/EchoInk/临时稿.md", "放错层级，建议移到项目页。"]
+            ]
+          },
+          {
+            title: "可顺手修",
+            count: 2,
+            items: [
+              ["总结草稿.md", "重复段落可以合并。"],
+              ["索引页.md", "多余空行可以收掉，不影响内容。"]
+            ]
+          }
+        ]
+      },
+      {
+        id: "maintain",
+        label: "维护知识库",
+        command: "/maintain",
+        icon: "bot",
+        runTitle: "正在维护知识库",
+        boundary: "过程只显示可验证阶段；完整思考链不进入知识库频道。",
+        phases: [
+          ["准备", "book"],
+          ["消化", "filePen"],
+          ["整理", "network"],
+          ["报告", "report"],
+          ["完成", "check"]
+        ],
+        reportTitle: "知识库维护完成",
+        reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+        care: [
+          ["success", "不需要补救。", "没有需要你手动处理的文件。"],
+          ["success", "本轮消化 2 篇。", "已写入对应 wiki 页面和维护报告。"],
+          ["warning", "环境提示。", "当前 Vault 不是 Git 仓库，已跳过 git status/diff。"]
+        ],
+        sections: [
+          {
+            title: "本轮消化",
+            count: 2,
+            items: [
+              ["raw/articles/Claude Code Desktop 使用体验.md", "提炼出桌面端执行过程可视化经验，已合并到 wiki/AI 工具/Agent 交互体验.md。"],
+              ["raw/articles/Obsidian 知识库维护边界.md", "补充 raw 不改正文、只写托管元信息的规则。"]
+            ]
+          },
+          {
+            title: "新增 raw",
+            count: 1,
+            items: [["raw/articles/2026-07-10-agent-ui-loading.md", "运行期间新增，已保留在 raw/，留到下一次维护处理。"]]
+          },
+          {
+            title: "结构整理",
+            count: 3,
+            items: [
+              ["wiki/AI 工具/Codex 使用笔记.md", "移动到 wiki/AI 工具，并更新 2 处内部引用。"],
+              ["outputs/maintenance/kb-maintenance-2026-07-10.md", "归档到 outputs/maintenance，避免报告散落。"]
+            ]
+          }
+        ]
+      },
+      {
+        id: "calibrate",
+        label: "校准 raw 状态",
+        command: "/calibrate raw",
+        icon: "gauge",
+        runTitle: "正在校准 raw 状态",
+        boundary: "只对 raw 的托管状态做对账和标记；不改 raw 正文内容。",
+        phases: [
+          ["找 raw", "search"],
+          ["验状态", "gauge"],
+          ["对来源", "database"],
+          ["调标记", "checkList"],
+          ["锁定", "check"]
+        ],
+        reportTitle: "raw 状态已校准",
+        reportPath: "outputs/maintenance/kb-raw-calibration-2026-07-10.md",
+        care: [
+          ["warning", "先看还有哪些笔记被卡在 raw。", "如果内容已经整理完但状态没改，优先补状态。"],
+          ["info", "状态对了但来源断了。", "这类笔记要先补来源。"],
+          ["success", "正文未改。", "本轮只校准托管属性和状态记录。"]
+        ],
+        sections: [
+          {
+            title: "仍停留在 raw",
+            count: 2,
+            items: [
+              ["Raw/会议纪要/2026-07-08.md", "内容已提炼，但状态还没移出 raw。"],
+              ["Raw/读书/《XX》.md", "已完成摘录，应该进入知识页。"]
+            ]
+          },
+          {
+            title: "状态冲突",
+            count: 2,
+            items: [
+              ["Projects/EchoInk/协议草案.md", "已经是稳定规则，但还被标成 raw。"],
+              ["Wiki/方法论.md", "看起来已成知识页，不该继续留在 raw。"]
+            ]
+          },
+          {
+            title: "来源待回链",
+            count: 2,
+            items: [
+              ["Raw/公众号摘录.md", "正文已收进知识页，原始出处还没挂回去。"],
+              ["Raw/资料卡片.md", "结论已写好，但来源文件名还没补上。"]
+            ]
+          }
+        ]
+      },
+      {
+        id: "outputs",
+        label: "处理 outputs",
+        command: "/outputs",
+        icon: "archive",
+        runTitle: "正在处理 outputs",
+        boundary: "只把可归档成果收口成可追踪条目；半成品会保留原位。",
+        phases: [
+          ["扫描", "search"],
+          ["归类", "tag"],
+          ["整理", "archive"],
+          ["报告", "report"],
+          ["完成", "check"]
+        ],
+        reportTitle: "outputs 已归档",
+        reportPath: "outputs/maintenance/kb-outputs-2026-07-10.md",
+        care: [
+          ["success", "已归档 3 个输出。", "这些内容后面可以直接回查。"],
+          ["warning", "待补归属 1 个。", "有一条内容有价值，但还缺明确落点。"],
+          ["info", "半成品未移动。", "未满足归档条件的内容仍在原位置。"]
+        ],
+        sections: [
+          {
+            title: "已归档到知识库",
+            count: 3,
+            items: [
+              ["outputs/周会复盘.md", "已整理成可检索的正式记录。"],
+              ["outputs/项目A方案草稿.md", "已收口成可继续迭代的项目材料。"]
+            ]
+          },
+          {
+            title: "待补归属",
+            count: 1,
+            items: [["outputs/未命名导出.md", "内容有价值，但还缺一个明确标题和挂靠主题。"]]
+          },
+          {
+            title: "暂留原位",
+            count: 2,
+            items: [
+              ["outputs/截图合集.md", "证据不完整，先保留原路径。"],
+              ["outputs/半成品记录.md", "还不到可以进库的程度。"]
+            ]
+          }
+        ]
+      },
+      {
+        id: "inbox",
+        label: "处理 inbox",
+        command: "/inbox",
+        icon: "inbox",
+        runTitle: "正在处理 inbox",
+        boundary: "先识别资料类型和去向；去向不确定的条目不会强行入库。",
+        phases: [
+          ["扫描", "inbox"],
+          ["判别", "search"],
+          ["分流", "route"],
+          ["报告", "report"],
+          ["完成", "check"]
+        ],
+        reportTitle: "inbox 已分流",
+        reportPath: "outputs/maintenance/kb-inbox-2026-07-10.md",
+        care: [
+          ["success", "已进 raw 4 个。", "这些资料后续还能继续消化。"],
+          ["success", "已直达目标区 2 个。", "可以马上在项目或主题页里使用。"],
+          ["warning", "需要你决定 1 个。", "有一条内容价值不低，但去向还不清楚。"]
+        ],
+        sections: [
+          {
+            title: "已进 raw",
+            count: 4,
+            items: [
+              ["inbox/公众号摘录.md", "先保留原貌，后续再提炼。"],
+              ["inbox/会前材料包.md", "已放入 raw，方便继续处理。"]
+            ]
+          },
+          {
+            title: "已直达目标区",
+            count: 2,
+            items: [
+              ["projects/项目A/需求说明.md", "已分到对应项目页。"],
+              ["wiki/参考链接索引.md", "已并入知识库索引。"]
+            ]
+          },
+          {
+            title: "需要你决定",
+            count: 1,
+            items: [["inbox/零散截图.md", "价值不低，但还无法判断进 raw 还是项目页。"]]
+          }
+        ]
+      }
+    ];
+
+    const state = {
+      commandId: "check",
+      filledCells: 0,
+      seconds: 28
+    };
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function setIcon(el, name) {
+      el.innerHTML = icons[name] || icons.info;
+    }
+
+    function renderTabs() {
+      const tabs = $("commandTabs");
+      tabs.innerHTML = "";
+      for (const command of commands) {
+        const button = document.createElement("button");
+        button.className = `command-tab ${command.id === state.commandId ? "is-active" : ""}`;
+        button.type = "button";
+        button.dataset.commandId = command.id;
+        button.innerHTML = `${icons[command.icon]}<span>${command.label}</span>`;
+        button.onclick = () => {
+          state.commandId = command.id;
+          state.filledCells = 0;
+          state.seconds = 28;
+          renderAll();
+        };
+        tabs.appendChild(button);
+      }
+    }
+
+    function renderRun(command) {
+      $("userCommand").textContent = command.command;
+      $("runTitle").textContent = command.runTitle;
+      $("runBoundary").textContent = command.boundary;
+      $("runLive").textContent = "阶段进度见下方";
+      $("elapsed").textContent = "00:28";
+      setIcon($("runIcon"), command.icon);
+      setIcon($("clockIcon"), "clock");
+      setIcon($("boundaryIcon"), "info");
+      const track = $("milestoneTrack");
+      track.innerHTML = "";
+      command.phases.forEach((phase, index) => {
+        const milestone = document.createElement("div");
+        milestone.className = `milestone phase-${index}`;
+        milestone.dataset.index = String(index);
+        milestone.innerHTML = `
+          <div class="milestone-node">${icons[phase[1]]}</div>
+          <div class="milestone-name">${phase[0]}</div>
+        `;
+        track.appendChild(milestone);
+        if (index < command.phases.length - 1) {
+          const segment = document.createElement("div");
+          segment.className = "energy-segment";
+          for (let itemIndex = 0; itemIndex < 18; itemIndex += 1) {
+            const cell = document.createElement("span");
+            cell.className = "energy-cell";
+            segment.appendChild(cell);
+          }
+          track.appendChild(segment);
+        }
+      });
+      renderProgress();
+    }
+
+    function renderReport(command) {
+      setIcon($("reportIcon"), "check");
+      setIcon($("openIcon"), "open");
+      setIcon($("careIcon"), "checkList");
+      setIcon($("detailsIcon"), "report");
+      $("reportTitle").textContent = command.reportTitle;
+      $("reportPath").textContent = command.reportPath;
+      const careList = $("careList");
+      careList.innerHTML = "";
+      for (const item of command.care) {
+        const row = document.createElement("div");
+        row.className = "care-item";
+        const dotType = item[0] === "warning" ? "warn" : item[0] === "info" ? "info" : "";
+        const dotIcon = item[0] === "warning" ? "warning" : item[0] === "info" ? "info" : "check";
+        row.innerHTML = `<span class="mini-dot ${dotType}">${icons[dotIcon]}</span><span><strong>${item[1]}</strong>${item[2]}</span>`;
+        careList.appendChild(row);
+      }
+      const details = $("reportDetails");
+      details.innerHTML = "";
+      command.sections.forEach((section, index) => {
+        const detail = document.createElement("details");
+        if (index === 0 && section.count > 0) detail.open = true;
+        const rows = section.items.map((item) => `
+          <div class="note-row">
+            <span class="note-title">${item[0]}</span>
+            <p class="note-desc">${item[1]}</p>
+          </div>
+        `).join("");
+        detail.innerHTML = `
+          <summary>
+            ${icons.arrow}
+            <span class="detail-title">${section.title}</span>
+            <span class="detail-count">${section.count}</span>
+          </summary>
+          <div class="detail-body">${rows}</div>
+        `;
+        details.appendChild(detail);
+      });
+    }
+
+    function renderMatrix() {
+      const matrix = $("commandMatrix");
+      matrix.innerHTML = "";
+      for (const command of commands) {
+        const row = document.createElement("div");
+        row.className = "matrix-row";
+        row.innerHTML = `
+          <div class="matrix-name">${icons[command.icon]}<span>${command.label}</span></div>
+          <div class="matrix-text"><strong>阶段</strong><br>${command.phases.map((phase) => phase[0]).join(" / ")}</div>
+          <div class="matrix-text"><strong>折叠项</strong><br>${command.sections.map((section) => section.title).join(" / ")}</div>
+        `;
+        matrix.appendChild(row);
+      }
+    }
+
+    function renderProgress() {
+      const cells = Array.from(document.querySelectorAll(".energy-cell"));
+      const milestones = Array.from(document.querySelectorAll(".milestone"));
+      const totalCells = cells.length;
+      const cellsPerSegment = 18;
+      const fillCount = Math.min(state.filledCells, totalCells - 1);
+      const activeIndex = Math.min(Math.floor(fillCount / cellsPerSegment), milestones.length - 2);
+      cells.forEach((cell, index) => {
+        cell.classList.toggle("is-filled", index < fillCount);
+        cell.classList.toggle("is-next", index === fillCount);
+      });
+      milestones.forEach((milestone, index) => {
+        milestone.classList.toggle("is-done", index < activeIndex);
+        milestone.classList.toggle("is-active", index === activeIndex);
+      });
+    }
+
+    function renderAll() {
+      const command = commands.find((item) => item.id === state.commandId) || commands[0];
+      $("eyebrowIcon").innerHTML = `${icons.book}<span>EchoInk Knowledge Channel</span>`;
+      setIcon($("plusTool"), "plus");
+      setIcon($("toolIcon"), "tool");
+      setIcon($("noteIcon"), "note");
+      renderTabs();
+      renderRun(command);
+      renderReport(command);
+      renderMatrix();
+    }
+
+    renderAll();
+
+    window.setInterval(() => {
+      state.filledCells += 1;
+      const totalCells = document.querySelectorAll(".energy-cell").length;
+      if (state.filledCells >= totalCells) state.filledCells = 0;
+      renderProgress();
+    }, 280);
+
+    window.setInterval(() => {
+      state.seconds += 1;
+      const minutes = String(Math.floor(state.seconds / 60)).padStart(2, "0");
+      const rest = String(state.seconds % 60).padStart(2, "0");
+      $("elapsed").textContent = `${minutes}:${rest}`;
+    }, 1000);
+  </script>
+</body>
+</html>

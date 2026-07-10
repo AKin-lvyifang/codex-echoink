@@ -40,7 +40,7 @@ export class EditorActionController {
     setEditorActionCandidate(this.active.editor, null);
     this.active = null;
     this.plugin.getCodexView()?.setEditorActionStatus({ status, message: message ?? (status === "failed" ? "候选已失效" : "已取消") });
-    if (showNotice) new Notice("已取消 Codex 候选");
+    if (showNotice) new Notice("已取消 Agent 候选");
     return true;
   }
 
@@ -60,7 +60,7 @@ export class EditorActionController {
     for (const action of actions) {
       menu.addItem((item) => {
         item
-          .setTitle(`Codex：${action.label}`)
+          .setTitle(`EchoInk：${action.label}`)
           .setIcon(actionIcon(action.id))
           .onClick(() => void this.runEditorAction(editor, info, action));
       });
@@ -125,7 +125,7 @@ export class EditorActionController {
     await this.plugin.activateView();
     const view = this.plugin.getCodexView();
     if (!view) {
-      new Notice("无法打开 Codex 侧栏");
+      new Notice("无法打开 EchoInk Agent 侧栏");
       return;
     }
 
@@ -152,14 +152,14 @@ export class EditorActionController {
       editor.focus();
     } catch (error) {
       view.setEditorActionStatus({ status: "failed", actionLabel: action.label, error: error instanceof Error ? error.message : String(error) });
-      new Notice(`Codex ${action.label}失败：${error instanceof Error ? error.message : String(error)}`);
+      new Notice(`Agent ${action.label}失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   runEditorActionById(editor: Editor, info: MarkdownView | MarkdownFileInfo, actionId: string): Promise<void> {
     const action = enabledEditorActionConfigs(this.plugin.settings.editorActions).find((item) => item.id === actionId);
     if (!action) {
-      new Notice("这个 Codex 写作操作未启用");
+      new Notice("这个 Agent 写作操作未启用");
       return Promise.resolve();
     }
     return this.runEditorAction(editor, info, action);
@@ -204,7 +204,7 @@ function confirmedActionMessage(actionId: string): string {
 }
 
 function confirmedActionNotice(actionId: string): string {
-  if (actionId === "continue") return "已插入 Codex 续写";
+  if (actionId === "continue") return "已插入 Agent 续写";
   if (actionId === "translate") return "已替换为英文译文";
-  return "已替换为 Codex 候选";
+  return "已替换为 Agent 候选";
 }
