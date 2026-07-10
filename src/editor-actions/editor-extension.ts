@@ -95,7 +95,7 @@ class EditorActionCandidateWidget extends WidgetType {
     const span = document.createElement("span");
     span.className = "codex-editor-action-candidate";
     span.textContent = this.candidate.candidateText;
-    span.title = "Codex 候选文本：Enter 确认，Esc 取消";
+    span.title = "Agent 候选文本：Enter 确认，Esc 取消";
     return span;
   }
 

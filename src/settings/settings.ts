@@ -1,7 +1,14 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
-import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
+import type { AgentBackendKind, AgentModelInfo, AgentProfileInfo } from "../agent/types";
+import type { CapabilityBackendChoice } from "../agent/registry";
+import { defaultResourceSettings } from "../resources/registry";
+import { normalizeMcpBrokerSettings } from "../resources/mcp-broker";
+import { normalizeMcpConnectionRecords } from "../resources/mcp-connections";
+import type { EchoInkResourceSettings } from "../resources/types";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "../knowledge-base/constants";
+import { isSyntheticHermesDefaultModel } from "../core/hermes-models";
 import type { KnowledgeBaseCitationSummary } from "../knowledge-base/types";
+import type { KnowledgeBaseMessageUiPayload } from "../knowledge-base/maintain-report-card";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
   type ArticleUnderstandingCache,
@@ -54,6 +61,7 @@ export interface ChatMessage {
   details?: string;
   diffSummary?: DiffSummary;
   citations?: KnowledgeBaseCitationSummary;
+  knowledgeBaseUi?: KnowledgeBaseMessageUiPayload;
   attachments?: StoredAttachment[];
   files?: ProcessFileRef[];
   images?: StoredAttachment[];
@@ -89,10 +97,10 @@ export interface StoredSession {
   updatedAt: number;
 }
 
-export type SettingsTab = "general" | "providers" | "resources" | "editorActions" | "knowledgeBase" | "review";
+export type SettingsTab = "agents" | "general" | "providers" | "resources" | "editorActions" | "knowledgeBase" | "review";
 export type ProviderMode = "codex-login" | "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
-export type AgentBackendMode = "codex-cli" | "opencode";
+export type AgentBackendMode = AgentBackendKind;
 export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
@@ -120,6 +128,50 @@ export interface OpenCodeSettings {
   pdfEnabled: boolean;
   lastConnectedAt: number;
   lastError: string;
+}
+
+export interface HermesAgentSettings {
+  cliPath: string;
+  serverUrl: string;
+  autoStart: boolean;
+  hostname: string;
+  port: number;
+  profile: string;
+  providerId: string;
+  modelId: string;
+  apiKey: string;
+  providerConfigured: boolean;
+  lastProviderCheckAt: number;
+  lastProviderError: string;
+  lastConnectedAt: number;
+  lastError: string;
+  version: string;
+}
+
+export interface CodexAgentSettings {
+  cliPath: string;
+  proxyEnabled: boolean;
+  proxyUrl: string;
+  providerMode: ProviderMode;
+  activeApiProviderId: string;
+  defaultModel: string;
+  defaultReasoning: ReasoningEffort;
+  defaultServiceTier: ServiceTierChoice;
+  defaultPermission: PermissionMode;
+  defaultMode: UiMode;
+}
+
+export interface AgentSettings {
+  defaultBackend: AgentBackendMode;
+  codex: CodexAgentSettings;
+  opencode: OpenCodeSettings;
+  hermes: HermesAgentSettings;
+}
+
+export interface CapabilityBackendSettings {
+  chatBackend: CapabilityBackendChoice;
+  knowledgeBackend: CapabilityBackendChoice;
+  editorActionBackend: CapabilityBackendChoice;
 }
 
 export interface SetupSettings {
@@ -254,6 +306,8 @@ export interface CodexForObsidianSettings {
   settingsLanguage: SettingsLanguage;
   settingsTab: SettingsTab;
   agentBackend: AgentBackendMode;
+  agents: AgentSettings;
+  capabilities: CapabilityBackendSettings;
   cliPath: string;
   proxyEnabled: boolean;
   proxyUrl: string;
@@ -275,6 +329,7 @@ export interface CodexForObsidianSettings {
   opencode: OpenCodeSettings;
   knowledgeBase: KnowledgeBaseSettings;
   review: WeeklyReviewSettings;
+  resources: EchoInkResourceSettings;
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
@@ -441,11 +496,67 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
   }
 };
 
+const DEFAULT_OPENCODE_SETTINGS: OpenCodeSettings = {
+  cliPath: "",
+  serverUrl: "",
+  autoStart: true,
+  hostname: "127.0.0.1",
+  port: 4096,
+  providerId: "",
+  modelId: "",
+  agent: "build",
+  textEnabled: true,
+  imageEnabled: false,
+  pdfEnabled: false,
+  lastConnectedAt: 0,
+  lastError: ""
+};
+
+const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
+  cliPath: "",
+  serverUrl: "",
+  autoStart: true,
+  hostname: "127.0.0.1",
+  port: 8642,
+  profile: "",
+  providerId: "",
+  modelId: "",
+  apiKey: "",
+  providerConfigured: false,
+  lastProviderCheckAt: 0,
+  lastProviderError: "",
+  lastConnectedAt: 0,
+  lastError: "",
+  version: ""
+};
+
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 27,
+  settingsVersion: 29,
   settingsLanguage: "zh-CN",
-  settingsTab: "general",
+  settingsTab: "agents",
   agentBackend: "codex-cli",
+  agents: {
+    defaultBackend: "codex-cli",
+    codex: {
+      cliPath: "",
+      proxyEnabled: false,
+      proxyUrl: "http://127.0.0.1:7890",
+      providerMode: "codex-login",
+      activeApiProviderId: "",
+      defaultModel: "",
+      defaultReasoning: "high",
+      defaultServiceTier: "fast",
+      defaultPermission: "workspace-write",
+      defaultMode: "agent"
+    },
+    opencode: DEFAULT_OPENCODE_SETTINGS,
+    hermes: DEFAULT_HERMES_AGENT_SETTINGS
+  },
+  capabilities: {
+    chatBackend: "default",
+    knowledgeBackend: "default",
+    editorActionBackend: "default"
+  },
   cliPath: "",
   proxyEnabled: false,
   proxyUrl: "http://127.0.0.1:7890",
@@ -485,21 +596,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     actions: DEFAULT_EDITOR_ACTIONS,
     styles: DEFAULT_EDITOR_STYLES
   },
-  opencode: {
-    cliPath: "",
-    serverUrl: "",
-    autoStart: true,
-    hostname: "127.0.0.1",
-    port: 4096,
-    providerId: "",
-    modelId: "",
-    agent: "build",
-    textEnabled: true,
-    imageEnabled: false,
-    pdfEnabled: false,
-    lastConnectedAt: 0,
-    lastError: ""
-  },
+  opencode: DEFAULT_OPENCODE_SETTINGS,
   knowledgeBase: {
     enabled: false,
     sessionId: "",
@@ -559,6 +656,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
       }
     }
   },
+  resources: defaultResourceSettings(),
   workspaceResources: {
     plugins: {},
     mcpServers: {},
@@ -572,12 +670,17 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
 export function normalizeSettingsData(data: any): { settings: CodexForObsidianSettings; changed: boolean } {
   const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
   const normalizedLanguage = normalizeSettingsLanguage(data?.settingsLanguage);
+  const normalizedAgentBackend = normalizeAgentBackendMode(data?.agentBackend ?? data?.agents?.defaultBackend);
+  const normalizedOpenCode = normalizeOpenCodeSettings(data?.opencode ?? data?.agents?.opencode);
+  const normalizedAgents = normalizeAgentSettings(data?.agents, data, normalizedAgentBackend, normalizedOpenCode);
   const settings: CodexForObsidianSettings = {
     ...DEFAULT_SETTINGS,
     ...data,
     settingsLanguage: normalizedLanguage,
     settingsTab: normalizeSettingsTab(data?.settingsTab),
-    agentBackend: normalizeAgentBackendMode(data?.agentBackend),
+    agentBackend: normalizedAgentBackend,
+    agents: normalizedAgents,
+    capabilities: normalizeCapabilityBackendSettings(data?.capabilities),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
@@ -585,14 +688,16 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     setup: normalizeSetupSettings(data?.setup),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
-    opencode: normalizeOpenCodeSettings(data?.opencode),
+    opencode: normalizedOpenCode,
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
     review: normalizeReviewSettings(data?.review),
+    resources: normalizeEchoInkResourceSettings(data?.resources, data?.workspaceResources),
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: normalizeStoredSessions(data?.sessions),
     activeSessionId: typeof data?.activeSessionId === "string" ? data.activeSessionId : ""
   };
+  syncLegacyAgentFields(settings);
 
   if (settings.knowledgeBase.sessionId) {
     const session = settings.sessions.find((item) => item.id === settings.knowledgeBase.sessionId);
@@ -630,6 +735,7 @@ export function normalizeSettingsData(data: any): { settings: CodexForObsidianSe
     settings.defaultModel = "";
   }
 
+  syncAgentsFromLegacyFields(settings);
   normalizeApiProviderSelection(settings);
   settings.settingsVersion = DEFAULT_SETTINGS.settingsVersion;
   const languageChanged = data?.settingsLanguage !== normalizedLanguage;
@@ -973,7 +1079,7 @@ function normalizeResourceManagementTab(value: any): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: any): SettingsTab {
-  return value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  return value === "agents" || value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 export function normalizeSettingsLanguage(value: any): SettingsLanguage {
@@ -985,11 +1091,23 @@ function normalizeProviderMode(value: any): ProviderMode {
 }
 
 function normalizeAgentBackendMode(value: any): AgentBackendMode {
-  return value === "opencode" ? "opencode" : DEFAULT_SETTINGS.agentBackend;
+  return value === "opencode" || value === "hermes" ? value : DEFAULT_SETTINGS.agentBackend;
 }
 
 function normalizeKnowledgeBaseBackendMode(value: any): KnowledgeBaseBackendMode {
-  return value === "codex-cli" || value === "opencode" ? value : "default";
+  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+}
+
+function normalizeCapabilityBackendChoice(value: any): CapabilityBackendChoice {
+  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+}
+
+function normalizeCapabilityBackendSettings(value: any): CapabilityBackendSettings {
+  return {
+    chatBackend: normalizeCapabilityBackendChoice(value?.chatBackend),
+    knowledgeBackend: normalizeCapabilityBackendChoice(value?.knowledgeBackend),
+    editorActionBackend: normalizeCapabilityBackendChoice(value?.editorActionBackend)
+  };
 }
 
 function normalizeKnowledgeBaseRunStatus(value: any): KnowledgeBaseRunStatus {
@@ -1023,7 +1141,7 @@ function rulesFileChoiceRank(value: string): number {
 }
 
 function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
-  const fallback = DEFAULT_SETTINGS.opencode;
+  const fallback = DEFAULT_OPENCODE_SETTINGS;
   return {
     cliPath: normalizeOptionalText(value?.cliPath),
     serverUrl: normalizeOptionalText(value?.serverUrl),
@@ -1039,6 +1157,141 @@ function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
     lastConnectedAt: normalizeNonNegativeNumber(value?.lastConnectedAt),
     lastError: normalizeOptionalText(value?.lastError)
   };
+}
+
+function normalizeHermesAgentSettings(value: any): HermesAgentSettings {
+  const fallback = DEFAULT_HERMES_AGENT_SETTINGS;
+  const providerId = normalizeOptionalText(value?.providerId);
+  const modelId = normalizeOptionalText(value?.modelId);
+  const hasSyntheticDefault = isSyntheticHermesDefaultModel(providerId, modelId);
+  return {
+    cliPath: normalizeOptionalText(value?.cliPath),
+    serverUrl: normalizeOptionalText(value?.serverUrl).replace(/\/$/, ""),
+    autoStart: typeof value?.autoStart === "boolean" ? value.autoStart : fallback.autoStart,
+    hostname: normalizeText(value?.hostname, fallback.hostname),
+    port: normalizePositiveInteger(value?.port, fallback.port, 1024, 65535),
+    profile: normalizeOptionalText(value?.profile),
+    providerId: hasSyntheticDefault ? "" : providerId,
+    modelId: hasSyntheticDefault ? "" : modelId,
+    apiKey: normalizeOptionalText(value?.apiKey),
+    providerConfigured: hasSyntheticDefault ? false : value?.providerConfigured === true,
+    lastProviderCheckAt: hasSyntheticDefault ? 0 : normalizeNonNegativeNumber(value?.lastProviderCheckAt),
+    lastProviderError: hasSyntheticDefault ? "" : normalizeOptionalText(value?.lastProviderError),
+    lastConnectedAt: normalizeNonNegativeNumber(value?.lastConnectedAt),
+    lastError: normalizeOptionalText(value?.lastError),
+    version: normalizeOptionalText(value?.version)
+  };
+}
+
+function normalizeCodexAgentSettings(agentValue: any, legacy: any): CodexAgentSettings {
+  const fallback = DEFAULT_SETTINGS.agents.codex;
+  return {
+    cliPath: normalizeOptionalText(agentValue?.cliPath ?? legacy?.cliPath),
+    proxyEnabled: typeof (agentValue?.proxyEnabled ?? legacy?.proxyEnabled) === "boolean" ? Boolean(agentValue?.proxyEnabled ?? legacy?.proxyEnabled) : fallback.proxyEnabled,
+    proxyUrl: normalizeText(agentValue?.proxyUrl ?? legacy?.proxyUrl, fallback.proxyUrl),
+    providerMode: normalizeProviderMode(agentValue?.providerMode ?? legacy?.providerMode),
+    activeApiProviderId: normalizeOptionalText(agentValue?.activeApiProviderId ?? legacy?.activeApiProviderId),
+    defaultModel: normalizeOptionalText(agentValue?.defaultModel ?? legacy?.defaultModel),
+    defaultReasoning: normalizeReasoningEffort(agentValue?.defaultReasoning ?? legacy?.defaultReasoning, fallback.defaultReasoning),
+    defaultServiceTier: normalizeServiceTierChoice(agentValue?.defaultServiceTier ?? legacy?.defaultServiceTier, fallback.defaultServiceTier),
+    defaultPermission: normalizePermissionMode(agentValue?.defaultPermission ?? legacy?.defaultPermission, fallback.defaultPermission),
+    defaultMode: normalizeUiMode(agentValue?.defaultMode ?? legacy?.defaultMode, fallback.defaultMode)
+  };
+}
+
+function normalizeAgentSettings(value: any, legacy: any, defaultBackend: AgentBackendMode, opencode: OpenCodeSettings): AgentSettings {
+  return {
+    defaultBackend,
+    codex: normalizeCodexAgentSettings(value?.codex, legacy),
+    opencode,
+    hermes: normalizeHermesAgentSettings(value?.hermes ?? legacy?.hermes)
+  };
+}
+
+function syncLegacyAgentFields(settings: CodexForObsidianSettings): void {
+  settings.agentBackend = settings.agents.defaultBackend;
+  settings.cliPath = settings.agents.codex.cliPath;
+  settings.proxyEnabled = settings.agents.codex.proxyEnabled;
+  settings.proxyUrl = settings.agents.codex.proxyUrl;
+  settings.providerMode = settings.agents.codex.providerMode;
+  settings.activeApiProviderId = settings.agents.codex.activeApiProviderId;
+  settings.defaultModel = settings.agents.codex.defaultModel;
+  settings.defaultReasoning = settings.agents.codex.defaultReasoning;
+  settings.defaultServiceTier = settings.agents.codex.defaultServiceTier;
+  settings.defaultPermission = settings.agents.codex.defaultPermission;
+  settings.defaultMode = settings.agents.codex.defaultMode;
+  settings.opencode = settings.agents.opencode;
+}
+
+function syncAgentsFromLegacyFields(settings: CodexForObsidianSettings): void {
+  settings.agents.defaultBackend = settings.agentBackend;
+  settings.agents.codex = {
+    cliPath: settings.cliPath,
+    proxyEnabled: settings.proxyEnabled,
+    proxyUrl: settings.proxyUrl,
+    providerMode: settings.providerMode,
+    activeApiProviderId: settings.activeApiProviderId,
+    defaultModel: settings.defaultModel,
+    defaultReasoning: settings.defaultReasoning,
+    defaultServiceTier: settings.defaultServiceTier,
+    defaultPermission: settings.defaultPermission,
+    defaultMode: settings.defaultMode
+  };
+  settings.agents.opencode = settings.opencode;
+}
+
+function normalizeEchoInkResourceSettings(value: any, legacyWorkspaceResources: any): EchoInkResourceSettings {
+  const fallback = defaultResourceSettings();
+  const enabledByScope = value?.enabledByScope && typeof value.enabledByScope === "object" && !Array.isArray(value.enabledByScope)
+    ? value.enabledByScope
+    : {};
+  const legacy = normalizeWorkspaceResources(legacyWorkspaceResources);
+  return {
+    catalog: Array.isArray(value?.catalog) ? value.catalog.filter((item: any) => item && typeof item.id === "string") : [],
+    enabledByScope: {
+      chat: normalizeBooleanMap(enabledByScope.chat),
+      knowledge: {
+        ...normalizeBooleanMap(enabledByScope.knowledge),
+        ...Object.fromEntries(Object.entries(legacy.skills).map(([key, enabled]) => [`codex-import:skill:${resourceSlugFromLegacyKey(key)}`, enabled])),
+        ...Object.fromEntries(Object.entries(legacy.mcpServers).map(([key, enabled]) => [`codex-import:mcp-server:${resourceSlugFromLegacyKey(key)}`, enabled]))
+      },
+      "editor-actions": normalizeBooleanMap(enabledByScope["editor-actions"])
+    },
+    importedFrom: value?.importedFrom && typeof value.importedFrom === "object" && !Array.isArray(value.importedFrom)
+      ? Object.fromEntries(Object.entries(value.importedFrom).map(([key, raw]) => [key, normalizeNonNegativeNumber(raw)]))
+      : fallback.importedFrom,
+    mcpBroker: normalizeMcpBrokerSettings(value?.mcpBroker ?? fallback.mcpBroker),
+    mcpConnections: normalizeMcpConnectionRecords(value?.mcpConnections ?? fallback.mcpConnections),
+    lastScannedAt: normalizeNonNegativeNumber(value?.lastScannedAt),
+    lastError: normalizeOptionalText(value?.lastError)
+  };
+}
+
+function resourceSlugFromLegacyKey(value: string): string {
+  const basename = String(value ?? "").split(/[\\/]/).filter(Boolean).pop() ?? value;
+  return basename
+    .replace(/\.md$/i, "")
+    .replace(/^SKILL$/i, String(value ?? "").split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] ?? "skill")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "resource";
+}
+
+function normalizeReasoningEffort(value: any, fallback: ReasoningEffort): ReasoningEffort {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : fallback;
+}
+
+function normalizeServiceTierChoice(value: any, fallback: ServiceTierChoice): ServiceTierChoice {
+  return value === "standard" || value === "fast" || value === "flex" ? value : fallback;
+}
+
+function normalizePermissionMode(value: any, fallback: PermissionMode): PermissionMode {
+  return value === "read-only" || value === "workspace-write" || value === "danger-full-access" ? value : fallback;
+}
+
+function normalizeUiMode(value: any, fallback: UiMode): UiMode {
+  return value === "agent" || value === "plan" ? value : fallback;
 }
 
 function normalizeSetupSettings(value: any): SetupSettings {

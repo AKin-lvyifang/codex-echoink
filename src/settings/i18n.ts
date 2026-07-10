@@ -33,7 +33,7 @@ const ZH_CN = {
     clear: "清空"
   },
   status: {
-    codexStatus: "Codex 状态",
+    codexStatus: "Codex CLI",
     accountStatus: "账号状态",
     agentBackend: "Agent 后端",
     connection: "连接方式",
@@ -66,6 +66,7 @@ const ZH_CN = {
     lastChecked: (time: string) => `上次检测：${time}`
   },
   tabs: {
+    agents: "Agent 后端",
     general: "基础设置",
     providers: "API Provider",
     resources: "工作区能力",
@@ -77,7 +78,7 @@ const ZH_CN = {
     settingsLanguage: "设置语言",
     settingsLanguageDesc: "只影响设置页显示；不会改写 Prompt、会话内容或用户自定义名称。",
     agentBackend: "Agent 后端",
-    agentBackendDesc: "Codex CLI 复用登录态；OpenCode API 用本机 OpenCode runtime 和自配 Provider。普通聊天暂继续走 Codex，知识库管理可选择 OpenCode。",
+    agentBackendDesc: "Codex、OpenCode、Hermes 都可作为 Agent 后端；具体能力可跟随默认后端，也可单独固定。",
     cliPath: "Codex CLI 路径",
     cliPathDesc: "必须先安装并登录 Codex CLI。自定义 API 也通过 Codex CLI app-server 调用，不是插件直连 API。留空时自动查找。",
     proxyEnabled: "启用本地代理",
@@ -118,7 +119,7 @@ const ZH_CN = {
   },
   knowledge: {
     title: "知识库管理",
-    safety: "知识库管理边界：维护、提炼、体检时允许写 wiki/ 和 outputs/；raw/ 来源内容只读，不自动移动或重命名；EchoInk 后处理可写已处理、提炼状态、提炼指纹等托管元属性。普通 Agent 对话可按你的明确指令整理 raw。OpenCode 模式需要先外部安装 OpenCode。",
+    safety: "知识库管理边界：提炼不等于摘要；/check 只做提炼审计，/maintain 执行四步提炼，/calibrate raw 只校准状态。raw/ 来源内容只读，不自动移动或重命名；只有 Wiki / Projects 有结构化知识和来源证据后，EchoInk 后处理才写托管元属性。OpenCode/Hermes 模式需要先外部安装对应后端。",
     statusHeading: "运行状态",
     recentStatus: (status: string, time: string) => `最近状态：${status}${time ? ` · ${time}` : ""}`,
     initialization: (status: string, path: string) => `初始化：${status}${path ? ` · ${path}` : ""}`,
@@ -129,8 +130,9 @@ const ZH_CN = {
     commandHeading: "快捷命令",
     commandGuide: [
       { command: "/ask ...", description: "对知识库发问" },
-      { command: "/check ...", description: "只体检知识库" },
-      { command: "/maintain ...", description: "维护 raw 到 wiki" },
+      { command: "/check ...", description: "只读体检与提炼审计，不写入新的提炼结果" },
+      { command: "/maintain ...", description: "按四步提炼协议处理 Raw，并把结构化知识写入 Wiki / Projects" },
+      { command: "/calibrate raw", description: "对 Raw 提炼状态校准，只修托管状态，不调用 Agent" },
       { command: "/outputs ...", description: "处理 outputs 并提炼长期价值" },
       { command: "/inbox ...", description: "整理收件箱" },
       { command: "/journal ...", description: "写日记" },
@@ -143,7 +145,7 @@ const ZH_CN = {
     enabled: "启用知识库管理",
     enabledDesc: "总开关：只决定是否允许每日自动维护和启动补跑；真正每天跑，还需要打开下面的“每日自动维护”。右侧知识库频道仍可手动使用。",
     backend: "知识库后端",
-    backendDesc: "默认跟随基础设置里的 Agent 后端；也可以单独固定为 Codex 或 OpenCode。",
+    backendDesc: "默认跟随 Agent 后端；也可以单独固定为 Codex、OpenCode 或 Hermes。",
     followGlobal: (backend: string) => `跟随全局（${backend}）`,
     customRules: "使用自定义指南文件",
     customRulesDesc: (defaultFile: string, agentsFile: string) => `默认使用 ${defaultFile}；关闭后改用 Vault 根目录 ${agentsFile}，仅作为兼容选项。`,
@@ -335,7 +337,7 @@ const ZH_CN = {
   },
   resources: {
     title: "工作区能力管理",
-    note: "这里只改当前 Obsidian 仓库的线程配置，不写入桌面端 Codex 全局配置。",
+    note: "这里只改当前 Obsidian 仓库的 EchoInk 资源目录；从 Codex/Hermes/OpenCode 导入的资源不会写回它们的全局配置。",
     tabs: {
       plugins: "插件",
       mcp: "MCP",
@@ -365,11 +367,13 @@ const ZH_CN = {
   },
   backendLabels: {
     "codex-cli": "Codex CLI",
-    opencode: "OpenCode API"
+    opencode: "OpenCode API",
+    hermes: "Hermes"
   } satisfies Record<AgentBackendMode, string>,
   knowledgeBackendLabels: {
     "codex-cli": "Codex CLI",
-    opencode: "OpenCode API"
+    opencode: "OpenCode API",
+    hermes: "Hermes"
   } satisfies Record<AgentBackendMode, string>
 };
 
@@ -397,7 +401,7 @@ const EN: SettingsCopy = {
     clear: "Clear"
   },
   status: {
-    codexStatus: "Codex",
+    codexStatus: "Codex CLI",
     accountStatus: "Account",
     agentBackend: "Agent backend",
     connection: "Connection",
@@ -430,6 +434,7 @@ const EN: SettingsCopy = {
     lastChecked: (time) => `Last checked: ${time}`
   },
   tabs: {
+    agents: "Agents",
     general: "General",
     providers: "API Provider",
     resources: "Capabilities",
@@ -441,7 +446,7 @@ const EN: SettingsCopy = {
     settingsLanguage: "Settings language",
     settingsLanguageDesc: "Only changes this settings page. Prompts, chats, and custom names are unchanged.",
     agentBackend: "Agent backend",
-    agentBackendDesc: "Codex CLI reuses your login. OpenCode API uses local OpenCode and configured providers. General chat still uses Codex; Knowledge can use OpenCode.",
+    agentBackendDesc: "Codex, OpenCode, and Hermes can all act as Agent backends. Each capability can follow the default backend or pin its own.",
     cliPath: "Codex CLI path",
     cliPathDesc: "Install and sign in to Codex CLI first. Custom APIs still run through Codex CLI app-server, not direct plugin calls. Leave empty to auto-detect.",
     proxyEnabled: "Use local proxy",
@@ -482,7 +487,7 @@ const EN: SettingsCopy = {
   },
   knowledge: {
     title: "Knowledge",
-    safety: "Knowledge management boundary: maintenance, digest, and lint runs can write wiki/ and outputs/, while raw/ source files stay fully read-only and are not moved or renamed. Ordinary Agent chat can organize raw when you explicitly ask. OpenCode mode requires OpenCode installed separately.",
+    safety: "Knowledge boundary: digest is not summary. /check is digest audit only, /maintain runs the four-step digest, and /calibrate raw only calibrates status. raw/ sources stay read-only; EchoInk writes managed Raw metadata only after Wiki / Projects has structured knowledge and source evidence. OpenCode/Hermes modes require their local backends.",
     statusHeading: "Run status",
     recentStatus: (status, time) => `Latest: ${status}${time ? ` · ${time}` : ""}`,
     initialization: (status, path) => `Initialization: ${status}${path ? ` · ${path}` : ""}`,
@@ -493,8 +498,9 @@ const EN: SettingsCopy = {
     commandHeading: "Shortcuts",
     commandGuide: [
       { command: "/ask ...", description: "Ask the knowledge base" },
-      { command: "/check ...", description: "Run a read-only health check" },
-      { command: "/maintain ...", description: "Digest raw into wiki" },
+      { command: "/check ...", description: "Run a read-only health check and digest audit" },
+      { command: "/maintain ...", description: "Run the four-step digest flow and write structured knowledge to Wiki / Projects" },
+      { command: "/calibrate raw", description: "Run Raw digest status calibration without calling an Agent" },
       { command: "/outputs ...", description: "Process outputs into lasting notes" },
       { command: "/inbox ...", description: "Triage the inbox" },
       { command: "/journal ...", description: "Write a journal entry" },
@@ -507,7 +513,7 @@ const EN: SettingsCopy = {
     enabled: "Enable Knowledge",
     enabledDesc: "Master gate for automatic maintenance and startup catch-up. Daily runs still require Automatic maintenance below. The Knowledge channel remains available for manual work.",
     backend: "Knowledge backend",
-    backendDesc: "Follow the global Agent backend, or pin Knowledge to Codex or OpenCode.",
+    backendDesc: "Follow the Agent backend, or pin Knowledge to Codex, OpenCode, or Hermes.",
     followGlobal: (backend) => `Follow global (${backend})`,
     customRules: "Use custom guide file",
     customRulesDesc: (defaultFile, agentsFile) => `Defaults to ${defaultFile}. Turning this off uses vault-root ${agentsFile} as a compatibility fallback.`,
@@ -699,7 +705,7 @@ const EN: SettingsCopy = {
   },
   resources: {
     title: "Workspace capabilities",
-    note: "Only changes thread config for the current Obsidian vault. It does not write global Codex desktop config.",
+    note: "Only changes EchoInk resources for the current Obsidian vault. Imported Codex/Hermes/OpenCode resources are not written back to global configs.",
     tabs: {
       plugins: "Plugins",
       mcp: "MCP",
@@ -729,11 +735,13 @@ const EN: SettingsCopy = {
   },
   backendLabels: {
     "codex-cli": "Codex CLI",
-    opencode: "OpenCode API"
+    opencode: "OpenCode API",
+    hermes: "Hermes"
   },
   knowledgeBackendLabels: {
     "codex-cli": "Codex CLI",
-    opencode: "OpenCode API"
+    opencode: "OpenCode API",
+    hermes: "Hermes"
   }
 };
 

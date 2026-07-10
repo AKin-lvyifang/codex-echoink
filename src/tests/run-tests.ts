@@ -1,8 +1,10 @@
 import * as assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import * as http from "node:http";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
 import { extractClipboardImageFiles, imageExtensionForMime, saveClipboardImageAttachment } from "../core/clipboard-images";
 import { buildDiffSummary, parseFileChangeDiff, serializeFileChanges } from "../core/diff-summary";
@@ -68,12 +70,33 @@ import {
   resolveEditorActionModeConfig,
   validateApiProvider,
   resourceEnabled,
+  type AgentBackendMode,
   type ChatMessage
 } from "../settings/settings";
+import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "../settings/settings-scroll";
 import { buildSetupCheck, completeSetupState } from "../settings/setup-check";
+import { AGENT_BACKEND_DEFINITIONS, agentBackendDisplayName, getAgentBackendDefinition, resolveCapabilityBackend } from "../agent/registry";
+import { agentEventDisplayText, makeAgentLifecycleEvents, type AgentEvent } from "../agent/events";
+import { createAgentEventRuntimeWithFallback, runTaskWithLifecycleEvents } from "../agent/event-task";
+import { normalizeRichStreamEvents } from "../agent/rich-stream";
+import { AcpAgentRuntime } from "../agent/acp-runtime";
+import { createAgentTaskRuntime } from "../agent/factory";
+import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToolBridge, truncateEchoInkToolResult } from "../agent/tool-bridge";
+import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
+import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
+import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
+import { EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
+import { mcpConnectionStatus, mcpConnectionStatusLabel, normalizeMcpConnectionRecords, resolveMcpConnectionConfig } from "../resources/mcp-connections";
+import { parseHermesSkillListOutput } from "../resources/skill-loader";
+import { buildBuiltinToolBundleResources } from "../resources/tool-bundles";
+import { formatHermesError } from "../core/hermes-errors";
+import { HermesBackend } from "../core/hermes-backend";
+import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "../core/hermes-models";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, CodexService, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
+import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
+import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
 import {
   detectOpenCodeCommand,
   ensureOpenCodeModelSupportsFiles,
@@ -82,12 +105,14 @@ import {
   mimeForKnowledgeFile,
   modelInputModalities,
   requiredModalityForMime,
-  resolveOpenCodeCommand
+  resolveOpenCodeCommand,
+  selectOpenCodeModelForTask
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
+import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
 import { formatMessageHeaderTime } from "../ui/message-time";
@@ -118,12 +143,14 @@ import { editorActionStartBlockReason, editorActionStatusFromResult, extractEdit
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, type KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { verifyDigestEvidence, type KnowledgeTransactionSnapshot } from "../knowledge-base/digest-evidence";
 import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-tests";
-import { buildHomeCards, buildHomeFolderFilterItems, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
+import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
-import { KnowledgeBaseManager } from "../knowledge-base/manager";
-import { formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
+import { KnowledgeBaseManager, extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-base/manager";
+import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
+import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
@@ -210,6 +237,48 @@ function cssRuleBody(styles: string, selector: string): string {
   assert.ok(match, `Missing CSS rule: ${selector}`);
   return match[1];
 }
+
+function fakeScrollElement(input: {
+  scrollTop?: number;
+  scrollLeft?: number;
+  scrollHeight?: number;
+  scrollWidth?: number;
+  clientHeight?: number;
+  clientWidth?: number;
+  parentElement?: HTMLElement | null;
+}): HTMLElement {
+  return {
+    scrollTop: input.scrollTop ?? 0,
+    scrollLeft: input.scrollLeft ?? 0,
+    scrollHeight: input.scrollHeight ?? 0,
+    scrollWidth: input.scrollWidth ?? 0,
+    clientHeight: input.clientHeight ?? 0,
+    clientWidth: input.clientWidth ?? 0,
+    parentElement: input.parentElement ?? null
+  } as HTMLElement;
+}
+
+const settingsScrollHost = fakeScrollElement({
+  scrollTop: 640,
+  scrollHeight: 1800,
+  clientHeight: 720
+});
+const settingsContent = fakeScrollElement({
+  scrollHeight: 1600,
+  clientHeight: 720,
+  parentElement: settingsScrollHost
+});
+const settingsScrollSnapshot = captureSettingsScrollSnapshot(settingsContent);
+settingsScrollHost.scrollTop = 0;
+restoreSettingsScrollSnapshot(settingsScrollSnapshot);
+assert.equal(settingsScrollHost.scrollTop, 640);
+const settingsTabSource = await readFile(path.join(process.cwd(), "src/settings/settings-tab.ts"), "utf8");
+assert.match(settingsTabSource, /captureSettingsScrollSnapshot\(this\.containerEl\)/);
+assert.match(settingsTabSource, /restoreSettingsScrollSnapshot\(settingsScrollSnapshot\)/);
+assert.match(settingsTabSource, /mcpConnectionStatus/);
+assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
+assert.match(settingsTabSource, /补全连接配置|Configure connection/);
+assert.match(settingsTabSource, /测试连接|Test connection/);
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -362,6 +431,16 @@ assert.match(kbFailureSignal, /错误信号：turn\/completed/);
 assert.match(kbFailureSignal, /状态：failed/);
 assert.match(kbFailureSignal, /错误码：rate_limit_exceeded/);
 assert.match(kbFailureSignal, /原始消息：model service timed out/);
+const hermesFailureContext = formatAgentTaskFailureContext({
+  backend: "hermes",
+  phase: "waiting",
+  runId: "h1",
+  message: "provider missing"
+});
+assert.match(hermesFailureContext, /后端：hermes/);
+assert.match(hermesFailureContext, /阶段：waiting/);
+assert.match(hermesFailureContext, /runId：h1/);
+assert.match(hermesFailureContext, /provider missing/);
 
 assert.equal(normalizeServiceTier("standard"), null);
 assert.equal(normalizeServiceTier("fast"), "fast");
@@ -370,10 +449,296 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 27);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 29);
 assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
-assert.equal(DEFAULT_SETTINGS.settingsTab, "general");
+assert.equal(DEFAULT_SETTINGS.settingsTab, "agents");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
+assert.equal(DEFAULT_SETTINGS.agents.defaultBackend, "codex-cli");
+assert.equal(DEFAULT_SETTINGS.agents.hermes.autoStart, true);
+assert.equal(DEFAULT_SETTINGS.agents.hermes.hostname, "127.0.0.1");
+assert.equal(DEFAULT_SETTINGS.agents.hermes.port, 8642);
+assert.equal(DEFAULT_SETTINGS.agents.hermes.apiKey, "");
+assert.equal(DEFAULT_SETTINGS.capabilities.chatBackend, "default");
+assert.equal(DEFAULT_SETTINGS.capabilities.knowledgeBackend, "default");
+assert.equal(DEFAULT_SETTINGS.capabilities.editorActionBackend, "default");
+assert.ok(AGENT_BACKEND_DEFINITIONS.some((definition) => definition.kind === "hermes"));
+assert.equal(getAgentBackendDefinition("hermes").label, "Hermes");
+assert.equal(getAgentBackendDefinition("hermes").capabilities.richEvents, true);
+assert.equal(getAgentBackendDefinition("hermes").capabilities.structuredToolCalls, false);
+assert.equal(getAgentBackendDefinition("hermes").capabilities.nativeMcpPassThrough, false);
+assert.equal(getAgentBackendDefinition("opencode").capabilities.richEvents, false);
+assert.equal(agentBackendDisplayName("hermes"), "Hermes");
+assert.equal(resolveCapabilityBackend("default", DEFAULT_SETTINGS.agents.defaultBackend), "codex-cli");
+assert.equal(resolveCapabilityBackend("hermes", DEFAULT_SETTINGS.agents.defaultBackend), "hermes");
+const agentEvents = makeAgentLifecycleEvents({
+  backend: "hermes",
+  runId: "run-1",
+  title: "EchoInk test",
+  now: () => 1
+});
+assert.deepEqual(agentEvents.map((event) => event.type), [
+  "connecting",
+  "run_started",
+  "prompt_sent",
+  "waiting"
+]);
+assert.equal(agentEvents[0].backend, "hermes");
+assert.equal(agentEvents[0].runId, "run-1");
+assert.equal(agentEventDisplayText({ type: "connecting", backend: "opencode", createdAt: 1 }), "OpenCode 连接中");
+assert.equal(agentEventDisplayText({ type: "completed", backend: "hermes", createdAt: 1, text: "PONG" }), "PONG");
+const lifecycleEvents: AgentEvent[] = [];
+const fakeLifecycleRuntime: AgentTaskRuntime = {
+  kind: "hermes",
+  async connect() {
+    return { connected: true, label: "Hermes", errors: [] };
+  },
+  async listModels() {
+    return [];
+  },
+  async runTask(input) {
+    input.onRunId?.("hermes-run-1");
+    return { text: "PONG", runId: "hermes-run-1", usage: { outputTokens: 1 } };
+  },
+  async abort() {}
+};
+const lifecycleResult = await runTaskWithLifecycleEvents(fakeLifecycleRuntime, {
+  prompt: "只回复 PONG",
+  timeoutMs: 1000
+}, (event) => lifecycleEvents.push(event));
+assert.equal(lifecycleResult.text, "PONG");
+assert.deepEqual(lifecycleEvents.map((event) => event.type), [
+  "connecting",
+  "connected",
+  "run_started",
+  "prompt_sent",
+  "waiting",
+  "message_completed",
+  "usage",
+  "completed"
+]);
+assert.equal(lifecycleEvents.find((event) => event.type === "run_started")?.runId, "hermes-run-1");
+const failedLifecycleEvents: AgentEvent[] = [];
+await assert.rejects(
+  runTaskWithLifecycleEvents({
+    ...fakeLifecycleRuntime,
+    async runTask() {
+      throw new Error("provider missing");
+    }
+  }, { prompt: "x" }, (event) => failedLifecycleEvents.push(event)),
+  /provider missing/
+);
+assert.equal(failedLifecycleEvents.at(-1)?.type, "failed");
+assert.equal(failedLifecycleEvents.at(-1)?.error, "provider missing");
+const richEvents = normalizeRichStreamEvents([
+  { type: "agent_message_chunk", text: "Hel" },
+  { type: "agent_message_chunk", text: "lo" },
+  { type: "agent_thought_chunk", text: "Need read file" },
+  { type: "tool_call", toolCallId: "tool-1", title: "Read note", status: "in_progress", rawInput: { path: "testing/a.md" } },
+  { type: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", text: "done" }] },
+  { type: "usage_update", inputTokens: 10, outputTokens: 2 }
+], { backend: "opencode", runId: "run-1", now: () => 1 });
+assert.deepEqual(richEvents.map((event) => event.type), [
+  "message_delta",
+  "message_delta",
+  "thinking_delta",
+  "tool_call_requested",
+  "tool_call_completed",
+  "usage"
+]);
+assert.equal(richEvents[0].text, "Hel");
+assert.equal(richEvents[2].text, "Need read file");
+assert.equal(richEvents[3].toolName, "Read note");
+assert.equal(agentEventDisplayText({
+  type: "thinking_delta",
+  backend: "hermes",
+  createdAt: 1,
+  text: "public summary"
+}), "public summary");
+assert.doesNotMatch(agentEventDisplayText({
+  type: "thinking_delta",
+  backend: "hermes",
+  createdAt: 1,
+  text: ""
+}), /chain-of-thought/i);
+function createFakeAcpProcess(onRequest?: (message: any, write: (message: any) => void) => void) {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const requests: any[] = [];
+  let inputBuffer = "";
+  const write = (message: any) => {
+    stdout.write(`${JSON.stringify(message)}\n`);
+  };
+  stdin.on("data", (chunk) => {
+    inputBuffer += chunk.toString();
+    for (;;) {
+      const index = inputBuffer.indexOf("\n");
+      if (index < 0) break;
+      const line = inputBuffer.slice(0, index).trim();
+      inputBuffer = inputBuffer.slice(index + 1);
+      if (!line) continue;
+      const message = JSON.parse(line);
+      requests.push(message);
+      onRequest?.(message, write);
+    }
+  });
+  return {
+    process: {
+      stdin,
+      stdout,
+      stderr,
+      kill: () => {
+        stdin.end();
+        stdout.end();
+        stderr.end();
+      },
+      on: () => undefined
+    },
+    requests
+  };
+}
+
+const fakeAcp = createFakeAcpProcess((message, write) => {
+  if (message.method === "initialize") {
+    write({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1, agentInfo: { name: "Fake ACP" }, agentCapabilities: {} } });
+    return;
+  }
+  if (message.method === "session/new") {
+    write({ jsonrpc: "2.0", id: message.id, result: { sessionId: "acp-session-1" } });
+    return;
+  }
+  if (message.method === "session/prompt") {
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } } } });
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Need inspect file" } } } });
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Read", status: "pending", rawInput: { path: "testing/a.md" } } } });
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", title: "Read", status: "completed", content: [{ type: "content", text: "done" }] } } });
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "lo" } } } });
+    write({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+  }
+});
+const acpRuntime = new AcpAgentRuntime({
+  backend: "opencode",
+  command: { command: "opencode", args: ["acp"], cwd: "/vault" },
+  processFactory: () => fakeAcp.process
+});
+const acpEvents: AgentEvent[] = [];
+const acpResult = await acpRuntime.runTaskStream({ prompt: "只回复 Hello" }, (event) => acpEvents.push(event));
+assert.equal(acpResult.text, "Hello");
+assert.deepEqual(acpEvents.map((event) => event.type), [
+  "connecting",
+  "connected",
+  "run_started",
+  "prompt_sent",
+  "waiting",
+  "message_delta",
+  "thinking_delta",
+  "tool_call_requested",
+  "tool_call_completed",
+  "message_delta",
+  "completed"
+]);
+assert.deepEqual(fakeAcp.requests.map((request) => request.method), ["initialize", "session/new", "session/prompt"]);
+assert.equal(acpEvents.find((event) => event.type === "tool_call_requested")?.data?.toolCallId, "tool-1");
+
+const richStartupFailureRuntime: AgentRichStreamRuntime = {
+  ...fakeLifecycleRuntime,
+  async runTaskStream() {
+    throw new Error("ACP startup failed");
+  }
+};
+const fallbackEvents: AgentEvent[] = [];
+const fallbackRuntime = createAgentEventRuntimeWithFallback(fakeLifecycleRuntime, richStartupFailureRuntime);
+const fallbackResult = await fallbackRuntime.runTaskEvents({ prompt: "只回复 PONG" }, (event) => fallbackEvents.push(event));
+assert.equal(fallbackResult.text, "PONG");
+assert.equal(fallbackEvents.some((event) => event.type === "fallback_started" && event.error === "ACP startup failed"), true);
+assert.equal(fallbackEvents.at(-1)?.type, "completed");
+let agentChatState = createAgentEventRenderState("hermes");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "connecting", backend: "hermes", createdAt: 1 });
+assert.equal(agentChatState.status, "running");
+assert.match(agentChatState.text, /Hermes 连接中/);
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "run_started", backend: "hermes", runId: "h1", createdAt: 2 });
+assert.match(agentChatState.text, /运行已开始/);
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "message_completed", backend: "hermes", text: "PONG", createdAt: 3 });
+assert.equal(agentChatState.text, "PONG");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "completed", backend: "hermes", text: "PONG", createdAt: 4 });
+assert.equal(agentChatState.status, "completed");
+assert.equal(agentChatState.text, "PONG");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "failed", backend: "opencode", error: "timeout", createdAt: 5 });
+assert.equal(agentChatState.status, "failed");
+assert.equal(agentChatState.itemType, "error");
+assert.match(agentChatState.text, /timeout/);
+agentChatState = createAgentEventRenderState("opencode");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "message_delta", backend: "opencode", text: "Hel", createdAt: 1 });
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "message_delta", backend: "opencode", text: "lo", createdAt: 2 });
+assert.equal(agentChatState.text, "Hello");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "thinking_delta", backend: "opencode", text: "Need inspect file", createdAt: 3 });
+assert.equal(agentChatState.thinkingBlocks?.at(-1)?.text, "Need inspect file");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "tool_call_requested", backend: "opencode", toolName: "Read", data: { toolCallId: "t1", input: { path: "testing/a.md" } }, createdAt: 4 });
+assert.equal(agentChatState.toolCalls?.[0]?.status, "running");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "permission_requested", backend: "opencode", toolName: "Read", data: { toolCallId: "t1" }, createdAt: 4 });
+assert.equal(agentChatState.toolCalls?.[0]?.status, "approval");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "tool_call_completed", backend: "opencode", toolName: "Read", data: { toolCallId: "t1", output: "done" }, createdAt: 5 });
+assert.equal(agentChatState.toolCalls?.[0]?.status, "completed");
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "tool_call_completed", backend: "opencode", toolName: "Read", data: { toolCallId: "t1", output: "x".repeat(3000) }, createdAt: 6 });
+assert.equal((agentChatState.toolCalls?.[0]?.output?.length ?? 0) <= 1200, true);
+agentChatState = reduceAgentEventForChat(agentChatState, { type: "tool_call_failed", backend: "opencode", toolName: "Read", status: "denied", error: "用户拒绝", data: { toolCallId: "t1" }, createdAt: 7 });
+assert.equal(agentChatState.toolCalls?.[0]?.status, "denied");
+const openCodeEventRuntime = createAgentTaskRuntime({ backend: "opencode", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
+assert.equal(typeof (openCodeEventRuntime as any).runTaskEvents, "function");
+let staleOpenCodeTaskModel: any = null;
+(globalThis as any).__opencodeBackendTestHooks = {
+  models: [{ id: "opencode/deepseek-v4-flash-free", providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free", displayName: "OpenCode free", inputModalities: ["text"] }],
+  onRunCliTask: async (options: any) => {
+    staleOpenCodeTaskModel = options.model;
+  },
+  runCliTaskResult: { text: "PONG", runId: "test-opencode-session" }
+};
+await openCodeEventRuntime.runTask({
+  prompt: "只回复 PONG",
+  model: { providerId: "302ai", modelId: "chatgpt-4o-latest" }
+});
+assert.deepEqual(staleOpenCodeTaskModel, { providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free" });
+delete (globalThis as any).__opencodeBackendTestHooks;
+const hermesEventRuntime = createAgentTaskRuntime({ backend: "hermes", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
+assert.equal(typeof (hermesEventRuntime as any).runTaskEvents, "function");
+const agentFactorySourceForOpenCodeAcp = await readFile(path.join(process.cwd(), "src/agent/factory.ts"), "utf8");
+assert.doesNotMatch(agentFactorySourceForOpenCodeAcp, /backend:\s*"opencode"[\s\S]{0,400}args:\s*\(\)\s*=>\s*\["acp"/);
+const simpleTaskSource = await readFile(path.join(process.cwd(), "src/agent/simple-task.ts"), "utf8");
+assert.match(simpleTaskSource, /createAgentTaskRuntime/);
+assert.doesNotMatch(simpleTaskSource, /new OpenCodeBackend|new HermesBackend/);
+const turnRunnerSourceForAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
+assert.match(turnRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
+assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
+assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
+assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
+const knowledgeManagerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
+assert.match(knowledgeManagerSourceForToolBridge, /runAgentTaskWithToolBridge/);
+const editorConnectingStatus = agentEventToEditorStatus({
+  event: { type: "connecting", backend: "hermes", createdAt: 1 },
+  actionLabel: "续写",
+  qualityMode: "quality",
+  modeLabel: "平衡",
+  phase: "generating",
+  model: "",
+  startedAt: 1
+});
+assert.equal(editorConnectingStatus.status, "generating");
+assert.match(editorConnectingStatus.message ?? "", /Hermes 连接中/);
+const editorFailedStatus = agentEventToEditorStatus({
+  event: { type: "failed", backend: "opencode", createdAt: 2, error: "model missing" },
+  actionLabel: "改写",
+  qualityMode: "fast",
+  modeLabel: "快速",
+  phase: "generating",
+  model: "",
+  startedAt: 1
+});
+assert.equal(editorFailedStatus.status, "failed");
+assert.match(editorFailedStatus.message ?? "", /model missing/);
+const editorActionRunnerSourceForAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view/editor-action-runner.ts"), "utf8");
+assert.match(editorActionRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
+assert.match(editorActionRunnerSourceForAgentEvents, /agentEventToEditorStatus/);
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.autoOpenHome, false);
 assert.equal(DEFAULT_SETTINGS.editorActions.enabled, false);
@@ -400,6 +765,7 @@ assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
 assert.equal(DEFAULT_SETTINGS.opencode.textEnabled, true);
 assert.equal(DEFAULT_SETTINGS.opencode.imageEnabled, false);
 assert.equal(DEFAULT_SETTINGS.opencode.pdfEnabled, false);
+assert.equal(DEFAULT_SETTINGS.agents.opencode.port, DEFAULT_SETTINGS.opencode.port);
 assert.equal(DEFAULT_SETTINGS.setup.completedAt, 0);
 assert.equal(DEFAULT_SETTINGS.setup.lastCheckedAt, 0);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.enabled, false);
@@ -475,6 +841,64 @@ assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsV
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).changed, true);
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, autoOpenHome: true }).settings.autoOpenHome, true);
 assert.equal(normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, autoOpenHome: "yes" }).settings.autoOpenHome, false);
+const hermesBackendSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  settingsTab: "agents",
+  agentBackend: "hermes",
+  knowledgeBase: { backend: "hermes" },
+  agents: {
+    defaultBackend: "hermes",
+    hermes: {
+      cliPath: "~/bin/hermes",
+      serverUrl: "http://127.0.0.1:8642/v1/",
+      autoStart: false,
+      hostname: "127.0.0.1",
+      port: 8643,
+      profile: "knowledge-butler",
+      providerId: "deepseek",
+      modelId: "deepseek-chat",
+      apiKey: "local-dev-key",
+      lastConnectedAt: 1700000000000,
+      lastError: ""
+    }
+  },
+  capabilities: {
+    chatBackend: "hermes",
+    knowledgeBackend: "hermes",
+    editorActionBackend: "default"
+  }
+}).settings;
+assert.equal(hermesBackendSettings.settingsTab, "agents");
+assert.equal(hermesBackendSettings.agentBackend, "hermes");
+assert.equal(hermesBackendSettings.agents.defaultBackend, "hermes");
+assert.equal(hermesBackendSettings.knowledgeBase.backend, "hermes");
+assert.equal(hermesBackendSettings.capabilities.knowledgeBackend, "hermes");
+assert.equal(hermesBackendSettings.agents.hermes.cliPath, "~/bin/hermes");
+assert.equal(hermesBackendSettings.agents.hermes.serverUrl, "http://127.0.0.1:8642/v1");
+assert.equal(hermesBackendSettings.agents.hermes.autoStart, false);
+assert.equal(hermesBackendSettings.agents.hermes.port, 8643);
+assert.equal(hermesBackendSettings.agents.hermes.profile, "knowledge-butler");
+assert.equal(hermesBackendSettings.agents.hermes.providerId, "deepseek");
+assert.equal(hermesBackendSettings.agents.hermes.modelId, "deepseek-chat");
+assert.equal(hermesBackendSettings.agents.hermes.lastConnectedAt, 1700000000000);
+const syntheticHermesSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  agents: {
+    hermes: {
+      ...DEFAULT_SETTINGS.agents.hermes,
+      providerId: "hermes",
+      modelId: "hermes-agent",
+      providerConfigured: true,
+      lastProviderCheckAt: 1700000000000,
+      lastProviderError: "old placeholder"
+    }
+  }
+}).settings;
+assert.equal(syntheticHermesSettings.agents.hermes.providerId, "");
+assert.equal(syntheticHermesSettings.agents.hermes.modelId, "");
+assert.equal(syntheticHermesSettings.agents.hermes.providerConfigured, false);
+assert.equal(syntheticHermesSettings.agents.hermes.lastProviderCheckAt, 0);
+assert.equal(syntheticHermesSettings.agents.hermes.lastProviderError, "");
 assert.deepEqual(SETTINGS_LANGUAGE_OPTIONS, ["zh-CN", "en"]);
 assert.deepEqual(Object.keys(SETTINGS_COPY).sort(), SETTINGS_LANGUAGE_OPTIONS.slice().sort());
 assertI18nShapeMatches(SETTINGS_COPY["zh-CN"], SETTINGS_COPY.en);
@@ -625,7 +1049,8 @@ assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Codi
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: false }), "enqueue");
-assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, viewRunKind: "knowledge-base", knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForState({ viewRunning: true, viewRunKind: "chat", knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(composerPrimaryActionForState({ viewRunning: true, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
@@ -634,7 +1059,8 @@ assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRu
 assert.equal(composerPrimaryActionForState({ viewRunning: false, knowledgeTaskRunning: false, hasDraft: true, hasQueuedItems: true }), "enqueue");
 assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: false, globalKnowledgeTaskRunning: true, hasDraft: true, hasQueuedItems: false }), "enqueue");
 assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: false, globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
-assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: true, globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
+assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: true, viewRunKind: "knowledge-base", globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "cancel-knowledge-task");
+assert.equal(composerPrimaryActionForRuntimeState({ viewRunning: true, viewRunKind: "chat", globalKnowledgeTaskRunning: true, hasDraft: false, hasQueuedItems: false }), "stop-turn");
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: false }), true);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
@@ -1729,6 +2155,266 @@ assert.deepEqual(
   ).map((skill) => skill.name),
   ["fix-bug"]
 );
+const hermesSkillRows = parseHermesSkillListOutput([
+  "Name                    Category             Source  Trust   Status",
+  "obsidian                note-taking          builtin builtin enabled",
+  "test-driven-development software-development builtin builtin disabled"
+].join("\n"));
+assert.deepEqual(hermesSkillRows.map((skill) => skill.name), ["obsidian", "test-driven-development"]);
+assert.equal(hermesSkillRows[0].enabled, true);
+assert.equal(hermesSkillRows[1].enabled, false);
+const echoInkCatalog = buildEchoInkResourceCatalog({
+  codex: {
+    plugins: [{ id: "browser-use@openai-bundled", name: "browser-use", displayName: "Browser Use", enabled: true }],
+    skills: [{ name: "answer", description: "回答", path: "/Users/demo/.codex/skills/answer/SKILL.md", enabled: true }],
+    mcpServers: [{ name: "paper", tools: { read: {} }, authStatus: "loggedIn" }]
+  },
+  hermes: {
+    skills: hermesSkillRows,
+    mcpServers: [{ name: "memory", enabled: true, toolsCount: 2 }]
+  },
+  manual: [
+    { id: "manual:skill:house-style", kind: "skill", source: "manual", name: "house-style", description: "方哥写作风格", enabled: true, scopes: ["chat", "editor-actions"], bridgeMode: "prompt-only" },
+    {
+      id: "manual:mcp-server:notes",
+      kind: "mcp-server",
+      source: "manual",
+      name: "notes",
+      description: "手动配置 MCP",
+      enabled: true,
+      scopes: ["chat"],
+      bridgeMode: "structured-tools",
+      metadata: { mcp: { transport: "stdio", command: "node", args: ["server.js"] } }
+    }
+  ],
+  settings: workspaceResources.settings.resources
+});
+assert.ok(echoInkCatalog.some((resource) => resource.id === "codex-import:skill:answer"));
+assert.ok(echoInkCatalog.some((resource) => resource.id === "codex-import:mcp-server:paper"));
+assert.ok(echoInkCatalog.some((resource) => resource.id === "hermes-import:skill:obsidian"));
+assert.ok(echoInkCatalog.some((resource) => resource.id === "hermes-import:mcp-server:memory"));
+assert.ok(buildBuiltinToolBundleResources().some((resource) => resource.id === "echoink-local:tool-bundle:knowledge-base"));
+const preparedResources = prepareAgentResources(echoInkCatalog, {
+  scope: "knowledge",
+  backendCapabilities: getAgentBackendDefinition("hermes").capabilities,
+  enabledByScope: {
+    knowledge: {
+      "codex-import:skill:answer": true,
+      "codex-import:mcp-server:paper": true,
+      "hermes-import:mcp-server:memory": false
+    }
+  }
+});
+assert.ok(preparedResources.promptPrefix.includes("/answer"));
+assert.equal(preparedResources.enabledResources.some((resource) => resource.id === "codex-import:skill:answer"), true);
+assert.equal(preparedResources.enabledResources.some((resource) => resource.id === "codex-import:mcp-server:paper"), true);
+assert.equal(preparedResources.mcpConfig, null);
+assert.ok(preparedResources.warnings.some((warning) => warning.includes("缺少 EchoInk broker 连接配置") && warning.includes("暂不可直接调用")));
+const brokerReadyResource = echoInkCatalog.find((resource) => resource.id === "manual:mcp-server:notes")!;
+assert.equal(isMcpBrokerConnectable(brokerReadyResource), true);
+assert.equal(mcpBrokerResourceStatus(brokerReadyResource), "connectable");
+const normalizedMcpConnections = normalizeMcpConnectionRecords({
+  "manual:mcp-server:notes": {
+    transport: "stdio",
+    command: " node ",
+    args: ["server.js"],
+    env: { TOKEN: "abc", EMPTY: "" },
+    cwd: "/vault",
+    verifiedAt: 123,
+    lastError: ""
+  },
+  "bad:mcp": { transport: "stdio", command: "" }
+});
+assert.equal(normalizedMcpConnections["manual:mcp-server:notes"].transport, "stdio");
+assert.equal(normalizedMcpConnections["manual:mcp-server:notes"].command, "node");
+assert.equal(normalizedMcpConnections["manual:mcp-server:notes"].env?.TOKEN, "abc");
+assert.equal(normalizedMcpConnections["bad:mcp"], undefined);
+const httpMcpConnections = normalizeMcpConnectionRecords({
+  "manual:mcp-server:http": {
+    transport: "http",
+    url: " http://127.0.0.1:3333/mcp ",
+    headers: { Authorization: "Bearer test" }
+  }
+});
+assert.equal(httpMcpConnections["manual:mcp-server:http"].url, "http://127.0.0.1:3333/mcp");
+const importedMcpResource = echoInkCatalog.find((resource) => resource.id === "hermes-import:mcp-server:memory")!;
+assert.equal(mcpConnectionStatus(importedMcpResource, { mcpConnections: {} } as any), "imported-only");
+assert.equal(mcpConnectionStatusLabel("imported-only", "zh-CN"), "仅导入");
+assert.equal(mcpConnectionStatusLabel("connectable", "zh-CN"), "可连接");
+assert.equal(mcpConnectionStatusLabel("verified", "zh-CN"), "已验证");
+assert.equal(mcpConnectionStatusLabel("failed", "en"), "Failed");
+assert.equal(resolveMcpConnectionConfig(importedMcpResource, { mcpConnections: {} } as any), null);
+assert.equal(mcpConnectionStatus(importedMcpResource, { mcpConnections: { [importedMcpResource.id]: { transport: "stdio", command: "node" } } } as any), "connectable");
+assert.equal(mcpConnectionStatus(importedMcpResource, { mcpConnections: { [importedMcpResource.id]: normalizedMcpConnections["manual:mcp-server:notes"] } } as any), "verified");
+assert.equal(normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  resources: {
+    mcpConnections: normalizedMcpConnections
+  }
+}).settings.resources.mcpConnections["manual:mcp-server:notes"].command, "node");
+const preparedStructuredResources = prepareAgentResources(echoInkCatalog, {
+  scope: "chat",
+  backendCapabilities: {
+    ...getAgentBackendDefinition("hermes").capabilities,
+    structuredToolCalls: true,
+    promptInstructionInjection: true
+  },
+  enabledByScope: { chat: { "manual:mcp-server:notes": true } }
+});
+assert.equal(preparedStructuredResources.toolBridge?.ready, true);
+assert.deepEqual(preparedStructuredResources.toolBridge?.resourceIds, ["manual:mcp-server:notes"]);
+const importedOnlyPrepared = prepareAgentResources([importedMcpResource], {
+  scope: "chat",
+  backendCapabilities: getAgentBackendDefinition("hermes").capabilities,
+  enabledByScope: { chat: { [importedMcpResource.id]: true } },
+  mcpConnections: {}
+});
+assert.equal(importedOnlyPrepared.toolBridge?.ready, false);
+assert.equal(importedOnlyPrepared.toolBridge?.mode, "disabled");
+assert.ok(importedOnlyPrepared.warnings.some((warning) => warning.includes("缺少 EchoInk broker 连接配置") && warning.includes("暂不可直接调用")));
+const structuredPreparedWithConnection = prepareAgentResources([importedMcpResource], {
+  scope: "chat",
+  backendCapabilities: {
+    ...getAgentBackendDefinition("hermes").capabilities,
+    structuredToolCalls: true
+  },
+  enabledByScope: { chat: { [importedMcpResource.id]: true } },
+  mcpConnections: {
+    [importedMcpResource.id]: {
+      transport: "stdio",
+      command: "memory-mcp"
+    }
+  }
+});
+assert.equal(structuredPreparedWithConnection.toolBridge?.ready, true);
+assert.equal(structuredPreparedWithConnection.toolBridge?.mode, "structured-tools");
+assert.deepEqual(structuredPreparedWithConnection.toolBridge?.resourceIds, [importedMcpResource.id]);
+const textLoopPreparedWithConnection = prepareAgentResources([importedMcpResource], {
+  scope: "chat",
+  backendCapabilities: getAgentBackendDefinition("hermes").capabilities,
+  enabledByScope: { chat: { [importedMcpResource.id]: true } },
+  mcpConnections: {
+    [importedMcpResource.id]: {
+      transport: "stdio",
+      command: "memory-mcp"
+    }
+  }
+});
+assert.equal(textLoopPreparedWithConnection.toolBridge?.ready, true);
+assert.equal(textLoopPreparedWithConnection.toolBridge?.mode, "echoink-tool-loop");
+assert.deepEqual(textLoopPreparedWithConnection.toolBridge?.resourceIds, [importedMcpResource.id]);
+const brokerSettings = workspaceResources.settings.resources.mcpBroker;
+const deniedBroker = new EchoInkMcpBroker({
+  settings: brokerSettings,
+  approval: async () => false,
+  transportFactory: async () => {
+    throw new Error("transport should not start");
+  }
+});
+await assert.rejects(
+  deniedBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "read_note" }),
+  /未批准/
+);
+assert.equal(brokerSettings.callLog.at(-1)?.status, "denied");
+const approvedBroker = new EchoInkMcpBroker({
+  settings: brokerSettings,
+  approval: async () => true,
+  transportFactory: async () => ({
+    request: async (method: string) => method === "tools/list"
+      ? { tools: [{ name: "read_note" }] }
+      : method === "tools/call"
+        ? { content: [{ type: "text", text: "OK" }] }
+        : { ok: true },
+    notify: async () => undefined,
+    close: async () => undefined
+  })
+});
+assert.deepEqual(await approvedBroker.listTools(brokerReadyResource), { tools: [{ name: "read_note" }] });
+const brokerResult = await approvedBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "read_note", arguments: { path: "wiki/a.md" } });
+assert.deepEqual(brokerResult.content, { content: [{ type: "text", text: "OK" }] });
+assert.equal(brokerSettings.callLog.at(-1)?.status, "completed");
+const importedMcpBroker = new EchoInkMcpBroker({
+  settings: brokerSettings,
+  connections: {
+    [importedMcpResource.id]: {
+      transport: "stdio",
+      command: "memory-mcp"
+    }
+  },
+  transportFactory: async () => ({
+    request: async (method: string) => method === "tools/list" ? { tools: [{ name: "search_notes" }] } : { ok: true },
+    notify: async () => undefined,
+    close: async () => undefined
+  })
+});
+const importedTools = await importedMcpBroker.listTools(importedMcpResource, 1000);
+assert.deepEqual(importedTools.tools.map((tool: any) => tool.name), ["search_notes"]);
+const callableMcpCatalog = await buildCallableMcpToolCatalog({
+  resources: [brokerReadyResource, importedMcpResource],
+  scope: "chat",
+  enabledByScope: { chat: { [brokerReadyResource.id]: true, [importedMcpResource.id]: true } },
+  connections: normalizedMcpConnections,
+  listTools: async (resource) => resource.id === brokerReadyResource.id
+    ? [{ name: "read_note", description: "Read note", inputSchema: { type: "object" } }]
+    : [{ name: "search_notes" }]
+});
+assert.deepEqual(callableMcpCatalog.tools.map((tool) => tool.name), ["notes.read_note"]);
+assert.equal(callableMcpCatalog.tools[0]?.resourceId, brokerReadyResource.id);
+assert.equal(callableMcpCatalog.tools[0]?.toolName, "read_note");
+assert.equal(callableMcpCatalog.warnings.some((warning) => warning.includes("仅导入") || warning.includes("缺少")), true);
+assert.deepEqual(parseEchoInkToolCall([
+  "Before",
+  "```echoink-tool-call",
+  JSON.stringify({ tool: "notes.read_note", arguments: { path: "wiki/a.md" } }),
+  "```",
+  "After"
+].join("\n")), { tool: "notes.read_note", arguments: { path: "wiki/a.md" } });
+assert.equal(parseEchoInkToolCall("```json\n{\"tool\":\"notes.read_note\"}\n```"), null);
+assert.equal(parseEchoInkToolCall("```echoink-tool-call\n[]\n```"), null);
+assert.match(buildEchoInkToolBridgePrompt(callableMcpCatalog.tools), /```echoink-tool-call/);
+assert.match(buildEchoInkToolBridgePrompt(callableMcpCatalog.tools), /notes\.read_note/);
+assert.equal(truncateEchoInkToolResult({ text: "abcdef" }, 12).length <= 12, true);
+let toolLoopRuntimeCalls = 0;
+const fakeToolLoopRuntime: AgentTaskRuntime = {
+  kind: "hermes",
+  connect: async () => ({ connected: true, label: "Hermes", errors: [] }),
+  listModels: async () => [],
+  abort: async () => undefined,
+  runTask: async (input) => {
+    toolLoopRuntimeCalls += 1;
+    if (toolLoopRuntimeCalls === 1) {
+      assert.match(input.prompt, /TOOLS: notes\.read_note/);
+      return { text: "```echoink-tool-call\n{\"tool\":\"notes.read_note\",\"arguments\":{\"path\":\"wiki/a.md\"}}\n```" };
+    }
+    assert.match(input.prompt, /TOOL RESULT/);
+    assert.match(input.prompt, /Note content from broker/);
+    return { text: "Final answer from tool result" };
+  }
+};
+const toolLoopEvents: AgentEvent[] = [];
+const fakeToolBridge: AgentToolBridgeRuntime = {
+  enabled: true,
+  scope: "chat",
+  maxToolCalls: 3,
+  prompt: "TOOLS: notes.read_note",
+  callTool: async (input) => {
+    assert.equal(input.backend, "hermes");
+    assert.equal(input.scope, "chat");
+    assert.equal(input.tool, "notes.read_note");
+    assert.deepEqual(input.arguments, { path: "wiki/a.md" });
+    await input.emit?.({ type: "permission_requested", backend: "hermes", createdAt: 1, toolName: input.tool });
+    return "Note content from broker";
+  }
+};
+const toolLoopResult = await runAgentTaskWithToolBridge(fakeToolLoopRuntime, {
+  prompt: "read note",
+  toolBridge: fakeToolBridge
+}, (event) => toolLoopEvents.push(event));
+assert.equal(toolLoopResult.text, "Final answer from tool result");
+assert.equal(toolLoopRuntimeCalls, 2);
+assert.ok(toolLoopEvents.some((event) => event.type === "tool_call_requested"));
+assert.ok(toolLoopEvents.some((event) => event.type === "permission_requested"));
+assert.ok(toolLoopEvents.some((event) => event.type === "tool_call_completed"));
 
 const stagedResources = mergeWorkspaceResourceSnapshot(
   emptyWorkspaceResourceSnapshot(),
@@ -1775,6 +2461,8 @@ const codexViewHeaderSource = await readFile(path.join(process.cwd(), "src/ui/co
 const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/history-modal.ts"), "utf8");
 const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/knowledge-dashboard.ts"), "utf8");
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
+const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
 const codexViewUiSources = [
   codexViewSource,
   codexViewHeaderSource,
@@ -1797,7 +2485,12 @@ assert.doesNotMatch(codexViewUiSources, /\.style\./);
 assert.match(codexViewUiSources, /setCssStyles/);
 assert.match(codexViewUiSources, /setCssProps/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+assert.match(mainPluginSource, /connections:\s*this\.settings\.resources\.mcpConnections/);
+assert.match(mainPluginSource, /verifiedAt\s*=\s*Date\.now\(\)/);
+assert.match(mainPluginSource, /lastError\s*=\s*message/);
 const homeViewSource = await readFile(path.join(process.cwd(), "src/home/home-view.ts"), "utf8");
+const readmeEn = await readFile(path.join(process.cwd(), "README.md"), "utf8");
+const readmeCn = await readFile(path.join(process.cwd(), "README_CN.md"), "utf8");
 const resourceRowCss = cssRuleBody(settingsStyles, ".codex-resource-row");
 const resourceRowContentCss = cssRuleBody(settingsStyles, ".codex-resource-row-content");
 const resourceRowNameCss = cssRuleBody(settingsStyles, ".codex-resource-row-name");
@@ -1814,6 +2507,8 @@ const knowledgeBaseDashboardVisibleCss = cssRuleBody(settingsStyles, ".codex-kb-
 const knowledgeBaseDashboardHeaderCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-header");
 const knowledgeBaseDashboardSummaryCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-summary");
 const knowledgeBaseDashboardDetailsCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-details");
+const knowledgeBaseEnergyTrackCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-energy-track");
+const knowledgeBaseEnergyCellCss = cssRuleBody(settingsStyles, ".codex-kb-dashboard-energy-cell");
 const knowledgeBaseHealthTooltipCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip");
 const knowledgeBaseHealthTooltipTriggerCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-trigger");
 const knowledgeBaseHealthTooltipPanelCss = cssRuleBody(settingsStyles, ".codex-kb-health-tooltip-panel");
@@ -1839,6 +2534,10 @@ assert.match(mainPluginSource, /activateHomeAndSidebar/);
 assert.match(mainPluginSource, /ensureHomeWorkspaceSpace/);
 assert.match(mainPluginSource, /rightSplit\.collapse/);
 assert.match(mainPluginSource, /leftSplit\.collapse/);
+assert.match(mainPluginSource, /refreshKnowledgeBaseSurfaces\(\): void/);
+assert.match(mainPluginSource, /getCodexView\(\)\?\.refreshKnowledgeBaseDashboard\(\)/);
+assert.match(mainPluginSource, /getHomeView\(\)/);
+assert.match(mainPluginSource, /home\.refresh\(\)/);
 assert.equal(/registerView\([^]*?this\.(view|homeView|reviewPreviewView)\s*=/.test(mainPluginSource), false);
 assert.equal(mainPluginSource.includes("detachLeavesOfType("), false);
 assert.equal(mainPluginSource.includes("revealLeaf("), false);
@@ -1847,6 +2546,16 @@ assert.match(homeViewSource, /今日复盘/);
 assert.match(homeViewSource, /按相关度/);
 assert.match(homeViewSource, /openRefineCommand/);
 assert.match(homeViewSource, /openReviewCommand/);
+assert.match(readmeEn, /four-step digest/i);
+assert.match(readmeEn, /structured knowledge in Wiki \/ Projects/i);
+assert.match(readmeCn, /四步提炼/);
+assert.match(readmeCn, /提炼 = 写入 Wiki \/ Projects \+ 来源证据 \+ Raw 托管状态/);
+assert.ok(settingsCopy("zh-CN").knowledge.commandGuide.some((item) => item.command === "/check ..." && item.description.includes("提炼审计")));
+assert.ok(settingsCopy("zh-CN").knowledge.commandGuide.some((item) => item.command === "/maintain ..." && item.description.includes("四步提炼")));
+assert.ok(settingsCopy("zh-CN").knowledge.commandGuide.some((item) => item.command === "/calibrate raw" && item.description.includes("状态校准")));
+assert.ok(settingsCopy("en").knowledge.commandGuide.some((item) => item.command === "/check ..." && /digest audit/i.test(item.description)));
+assert.ok(settingsCopy("en").knowledge.commandGuide.some((item) => item.command === "/maintain ..." && /four-step digest/i.test(item.description)));
+assert.ok(settingsCopy("en").knowledge.commandGuide.some((item) => item.command === "/calibrate raw" && /status calibration/i.test(item.description)));
 assert.equal(calendarMonthLabel(new Date(2026, 6, 1)), "2026年7月");
 assert.equal(calendarMonthLabel(shiftCalendarMonth(new Date(2026, 6, 15), -1)), "2026年6月");
 assert.equal(calendarMonthLabel(shiftCalendarMonth(new Date(2026, 0, 15), -1)), "2025年12月");
@@ -1960,6 +2669,29 @@ assert.equal(homeCardPathToCopy(sortableHomeCards[1]), "raw/a/newer.md");
 assert.equal(homeCardObsidianLinkToCopy(sortableHomeCards[1]), "[[raw/a/newer]]");
 assert.equal(homeCardMarkdownLinkToCopy(sortableHomeCards[1]), "[Newer A](<raw/a/newer.md>)");
 assert.equal(homeCardMarkdownLinkToCopy({ ...sortableHomeCards[1], title: "A [link]" }), "[A \\[link\\]](<raw/a/newer.md>)");
+assert.equal(homeRefineCommandForCard({ ...sortableHomeCards[1], path: "raw/articles/a.md" }), "/maintain raw/articles/a.md");
+assert.equal(homeRefineCommandForCard({ ...sortableHomeCards[0], path: "wiki/topic/a.md" }), "/ask 提炼这条知识卡片：wiki/topic/a.md");
+const rawActionCards = [
+  { id: "pending", title: "Pending", path: "raw/pending.md", kind: "raw", summary: "", tags: [], status: "Raw 待提炼", touchedAt: 1 },
+  { id: "changed", title: "Changed", path: "raw/changed.md", kind: "raw", summary: "", tags: [], status: "待重新提炼", touchedAt: 2 },
+  { id: "failed", title: "Failed", path: "raw/failed.md", kind: "raw", summary: "", tags: [], status: "提炼失败", touchedAt: 3 },
+  { id: "done", title: "Done", path: "raw/done.md", kind: "raw", summary: "", tags: [], status: "已提炼", touchedAt: 4 }
+] as const;
+assert.deepEqual(filterHomeCards([...rawActionCards], "raw").map((card) => card.id), ["pending", "changed", "failed"]);
+const rawBatchPreview = buildHomeRawBatchPreview(Array.from({ length: 22 }, (_, index) => ({
+  id: `raw-${index + 1}`,
+  title: `Raw ${index + 1}`,
+  path: `raw/articles/${String(index + 1).padStart(2, "0")}.md`,
+  kind: "raw",
+  summary: "",
+  tags: [],
+  status: index === 21 ? "已提炼" : "Raw 待提炼",
+  touchedAt: index
+})));
+assert.equal(rawBatchPreview?.count, 21);
+assert.equal(rawBatchPreview?.command, "/maintain");
+assert.equal(rawBatchPreview?.previewPaths.length, 20);
+assert.equal(rawBatchPreview?.remainingCount, 1);
 assert.equal(HOME_CARDS_PAGE_SIZE, 24);
 assert.equal(resolveDefaultHomeFilter([
   { id: "a", title: "A", path: "wiki/a.md", kind: "wiki", summary: "", tags: [], status: "Wiki 更新", touchedAt: 3 },
@@ -1992,6 +2724,17 @@ assert.match(knowledgeBaseDashboardDetailsCss, /flex:\s*1 1 auto;/);
 assert.match(knowledgeBaseDashboardDetailsCss, /min-height:\s*0;/);
 assert.match(knowledgeBaseDashboardDetailsCss, /overflow-y:\s*auto;/);
 assert.match(knowledgeBaseDashboardDetailsCss, /overscroll-behavior:\s*contain;/);
+assert.match(codexViewKnowledgeDashboardSource, /const KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT = 24;/);
+assert.match(codexViewKnowledgeDashboardSource, /addKnowledgeDashboardEnergyMeter/);
+assert.match(codexViewKnowledgeDashboardSource, /codex-kb-dashboard-energy-row/);
+assert.match(codexViewKnowledgeDashboardSource, /codex-kb-dashboard-energy-percent/);
+assert.match(codexViewKnowledgeDashboardSource, /codex-kb-dashboard-energy-track/);
+assert.match(codexViewKnowledgeDashboardSource, /codex-kb-dashboard-energy-cell is-on/);
+assert.doesNotMatch(codexViewKnowledgeDashboardSource, /codex-kb-dashboard-score-track/);
+assert.match(knowledgeBaseEnergyTrackCss, /grid-template-columns:\s*repeat\(24,\s*minmax\(3px,\s*1fr\)\);/);
+assert.match(knowledgeBaseEnergyTrackCss, /height:\s*8px;/);
+assert.match(knowledgeBaseEnergyTrackCss, /gap:\s*3px;/);
+assert.match(knowledgeBaseEnergyCellCss, /border-radius:\s*2px;/);
 assert.match(knowledgeBaseHealthTooltipCss, /position:\s*relative;/);
 assert.match(knowledgeBaseHealthTooltipCss, /display:\s*inline-flex;/);
 assert.match(knowledgeBaseHealthTooltipTriggerCss, /width:\s*16px;/);
@@ -2106,6 +2849,20 @@ assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRec
 assert.match(codexViewMessageListSource, /renderKnowledgeBaseResultContent/);
 assert.match(codexViewMessageListSource, /codex-kb-result-title/);
 assert.match(codexViewMessageListSource, /codex-kb-result-body/);
+assert.match(knowledgeBaseManagerSource, /buildKnowledgeBaseMaintainReportPayload/);
+assert.match(codexViewTurnRunnerSource, /buildKnowledgeBaseRunPayload/);
+assert.match(codexViewTurnRunnerSource, /assistantMessage\.knowledgeBaseUi\s*=\s*result\.ui/);
+assert.match(codexViewMessageListSource, /renderKnowledgeBaseRunCard/);
+assert.match(codexViewMessageListSource, /renderKnowledgeBaseMaintainReportCard/);
+assert.match(codexViewMessageListSource, /knowledgeBaseUi/);
+assert.match(codexViewMessageListSource, /payload\.icon/);
+assert.match(codexViewMessageListSource, /codex-kb-run-motion-/);
+assert.match(settingsStyles, /\.codex-kb-run-card\s*\{/);
+assert.match(settingsStyles, /\.codex-kb-run-track\s*\{/);
+assert.match(settingsStyles, /\.codex-kb-run-motion-scan/);
+assert.match(settingsStyles, /\.codex-kb-run-motion-work/);
+assert.match(settingsStyles, /\.codex-kb-maintain-card\s*\{/);
+assert.match(settingsStyles, /\.codex-kb-maintain-section\s*\{/);
 assert.match(settingsStyles, /codex-process-kind-search\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-view\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-run\s+\.codex-process-icon/);
@@ -2123,6 +2880,117 @@ assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "知识库体检�
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "每日维护已取消。")?.status, "canceled");
 assert.equal(extractKnowledgeBaseResultTitle("knowledgeBase", "方哥，按 wiki 证据看没有命中。"), null);
 assert.equal(extractKnowledgeBaseResultTitle("assistant", "知识库维护完成。\n报告：x"), null);
+
+assert.equal(knowledgeBaseRunModeForCommandIntent("lint"), "lint");
+assert.equal(knowledgeBaseRunModeForCommandIntent("maintain"), "maintain");
+assert.equal(knowledgeBaseRunModeForCommandIntent("calibrate"), "calibrate");
+assert.equal(knowledgeBaseRunModeForCommandIntent("process-outputs"), "outputs");
+assert.equal(knowledgeBaseRunModeForCommandIntent("process-inbox"), "inbox");
+
+const maintainRunPayload = buildKnowledgeBaseRunPayload("maintain");
+assert.equal(maintainRunPayload.kind, "maintain-run");
+assert.equal(maintainRunPayload.mode, "maintain");
+assert.equal(maintainRunPayload.icon, "bot");
+assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.label), ["准备", "消化", "整理", "报告", "完成"]);
+assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.icon), ["book-open", "file-pen", "network", "clipboard-check", "check-circle"]);
+
+const commandRunPayloads = [
+  ["lint", ["扫库", "找断点", "对规则", "出建议", "收口"], "shield-check"],
+  ["calibrate", ["找 raw", "验状态", "对来源", "调标记", "锁定"], "gauge"],
+  ["outputs", ["扫描", "归类", "整理", "报告", "完成"], "archive"],
+  ["inbox", ["扫描", "判别", "分流", "报告", "完成"], "inbox"]
+] as const;
+for (const [mode, labels, icon] of commandRunPayloads) {
+  const payload = buildKnowledgeBaseRunPayload(mode);
+  assert.equal(payload.icon, icon);
+  assert.deepEqual(payload.phases.map((phase) => phase.label), labels);
+  assert.equal(payload.phases.length, 5);
+}
+
+const maintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maintain", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "Agent 输出：维护完成。\n结构整理：移动 1 项，更新引用 2 处，跳过 0 项。",
+  processedSources: [
+    testKnowledgeBaseSource("raw/articles/a.md", true),
+    testKnowledgeBaseSource("raw/articles/b.md", true)
+  ],
+  digestEvidencePaths: {
+    "raw/articles/a.md": ["wiki/topic-a.md"],
+    "raw/articles/b.md": ["projects/project-b.md"]
+  },
+  structure: {
+    moves: [{ from: "wiki/old.md", to: "wiki/new.md", kind: "file", reason: "规范目录" }],
+    skipped: [],
+    updatedLinks: [{ path: "wiki/index.md", replacements: 2 }],
+    remainingRootNotes: [],
+    remainingChineseDirs: [],
+    risks: [],
+    pathRewrites: [{ from: "wiki/old.md", to: "wiki/new.md", kind: "file" }],
+  }
+});
+assert.equal(maintainReportPayload.kind, "maintain-report");
+assert.equal(maintainReportPayload.title, "知识库维护完成");
+assert.equal(maintainReportPayload.reportPath, "outputs/maintenance/kb-maintenance-2026-07-10.md");
+assert.ok(maintainReportPayload.careItems.some((item) => item.text === "本轮消化 2 篇。"));
+assert.ok(maintainReportPayload.careItems.some((item) => item.text === "结构整理 3 项。"));
+assert.equal(maintainReportPayload.sections.find((section) => section.id === "digested")?.count, 2);
+assert.deepEqual(maintainReportPayload.sections.find((section) => section.id === "digested")?.items.map((item) => item.title), ["raw/articles/a.md", "raw/articles/b.md"]);
+assert.equal(maintainReportPayload.sections.find((section) => section.id === "digested")?.items[0]?.description, "已写入 wiki/topic-a.md。");
+assert.equal(maintainReportPayload.sections.find((section) => section.id === "structure")?.items[0]?.description, "移动：wiki/old.md -> wiki/new.md。规范目录");
+
+const noOpMaintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maintain", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "没有新增 raw。",
+  processedSources: []
+});
+assert.ok(noOpMaintainReportPayload.careItems.some((item) => item.text === "不需要补救。没有需要你手动处理的文件。"));
+assert.equal(noOpMaintainReportPayload.sections.find((section) => section.id === "digested")?.count, 0);
+assert.equal(noOpMaintainReportPayload.sections.find((section) => section.id === "digested")?.emptyText, "没有新的 Raw 需要消化。");
+
+const lintReportPayload = buildKnowledgeBaseMaintainReportPayload("lint", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-check-2026-07-10.md",
+  summary: "体检完成。",
+  processedSources: []
+});
+assert.equal(lintReportPayload.title, "体检完成");
+assert.deepEqual(lintReportPayload.sections.map((section) => section.title), ["断链与引用异常", "命名与结构偏差", "可顺手修"]);
+
+const calibrationReportPayload = buildKnowledgeBaseMaintainReportPayload("calibrate", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-raw-calibration-2026-07-10.md",
+  summary: "Raw 状态校准完成：已登记 1 个，待复核 1 个，内容变更 1 个。",
+  processedSources: [testKnowledgeBaseSource("raw/articles/marked.md", true)],
+  calibration: {
+    marked: [testKnowledgeBaseSource("raw/articles/marked.md", true)],
+    review: [testKnowledgeBaseSource("raw/articles/review.md", false)],
+    changed: [testKnowledgeBaseSource("raw/articles/changed.md", false)],
+    evidencePaths: { "raw/articles/marked.md": ["wiki/topic.md"] }
+  }
+});
+assert.equal(calibrationReportPayload.title, "raw 状态已校准");
+assert.deepEqual(calibrationReportPayload.sections.map((section) => `${section.title}:${section.count}`), ["已登记:1", "待复核:1", "内容变更:1"]);
+assert.equal(calibrationReportPayload.sections[0]?.items[0]?.description, "已确认来源证据：wiki/topic.md。");
+
+const outputsReportPayload = buildKnowledgeBaseMaintainReportPayload("outputs", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "outputs 处理完成。",
+  processedSources: []
+});
+assert.equal(outputsReportPayload.title, "outputs 已归档");
+assert.deepEqual(outputsReportPayload.sections.map((section) => section.title), ["已归档到知识库", "待补归属", "暂留原位"]);
+
+const inboxReportPayload = buildKnowledgeBaseMaintainReportPayload("inbox", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "inbox 处理完成。",
+  processedSources: []
+});
+assert.equal(inboxReportPayload.title, "inbox 已分流");
+assert.deepEqual(inboxReportPayload.sections.map((section) => section.title), ["已进 raw", "已直达目标区", "需要你决定"]);
 
 const codexKnowledgeOptions = buildCodexKnowledgeTurnOptions({
   settings: normalizeSettingsData({
@@ -2706,7 +3574,7 @@ const apiProviderSettings = normalizeSettingsData({
 });
 assert.equal(apiProviderSettings.settings.settingsVersion, DEFAULT_SETTINGS.settingsVersion);
 assert.equal(apiProviderSettings.settings.providerMode, "custom-api");
-assert.equal(apiProviderSettings.settings.settingsTab, "general");
+assert.equal(apiProviderSettings.settings.settingsTab, "agents");
 assert.equal(apiProviderSettings.settings.apiProviders.length, 2);
 assert.equal(apiProviderSettings.settings.apiProviders[1].id, "provider_2");
 assert.deepEqual(apiProviderSettings.settings.apiProviders[0].queryParams, { "api-version": "2026-04-28" });
@@ -3250,6 +4118,84 @@ assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: 
 assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: { status: 504 } }).message, /status/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /错误码：upstream_timeout/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /状态：504/);
+const openCodeFetchSeen = new Promise<{ method: string; body: string; header: string }>((resolve) => {
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    request.on("end", () => {
+      resolve({
+        method: request.method ?? "",
+        body: Buffer.concat(chunks).toString("utf8"),
+        header: String(request.headers["x-echoink-test"] ?? "")
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+      server.close();
+    });
+  });
+  server.listen(0, "127.0.0.1", async () => {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    await openCodeNodeFetch(new Request(`http://127.0.0.1:${address.port}/probe`, {
+      method: "POST",
+      headers: { "x-echoink-test": "kept", "content-type": "text/plain" },
+      body: "payload"
+    }));
+  });
+});
+assert.deepEqual(await openCodeFetchSeen, { method: "POST", body: "payload", header: "kept" });
+const parsedOpenCodeRun = parseOpenCodeRunJsonLines([
+  JSON.stringify({ type: "step_start", sessionID: "ses_1" }),
+  JSON.stringify({ type: "text", sessionID: "ses_1", part: { text: "OPEN" } }),
+  JSON.stringify({ type: "text", sessionID: "ses_1", part: { text: "CODE" } }),
+  JSON.stringify({ type: "step_finish", sessionID: "ses_1", part: { tokens: { input: 10, output: 2, total: 12 } } })
+].join("\n"));
+assert.equal(parsedOpenCodeRun.text, "OPENCODE");
+assert.equal(parsedOpenCodeRun.sessionId, "ses_1");
+assert.deepEqual(parsedOpenCodeRun.usage, { inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+const parsedOpenCodeCliModels = parseOpenCodeModelListOutput([
+  "opencode/deepseek-v4-flash-free",
+  "bailian-coding-plan/qwen3.5-plus",
+  "",
+  "not a model"
+].join("\n"));
+assert.deepEqual(parsedOpenCodeCliModels.map((model) => model.id), ["opencode/deepseek-v4-flash-free", "bailian-coding-plan/qwen3.5-plus"]);
+assert.deepEqual(parsedOpenCodeCliModels[0], {
+  id: "opencode/deepseek-v4-flash-free",
+  providerId: "opencode",
+  modelId: "opencode/deepseek-v4-flash-free",
+  displayName: "opencode/deepseek-v4-flash-free",
+  inputModalities: ["text"]
+});
+assert.equal(openCodeRunSessionIdFromLine(JSON.stringify({ type: "step_start", sessionID: "ses_early" })), "ses_early");
+assert.throws(() => parseOpenCodeRunJsonLines(JSON.stringify({ type: "error", error: { data: { message: "Model not found" } } })), /Model not found/);
+assert.equal(openCodeCliModelId({ providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free" }), "opencode/deepseek-v4-flash-free");
+assert.equal(openCodeCliModelId({ providerId: "requesty", modelId: "google/gemini-2.5-pro" }), "requesty/google/gemini-2.5-pro");
+assert.deepEqual(buildOpenCodeRunArgs({
+  prompt: "只回复 PONG",
+  directory: "/vault",
+  serverUrl: "http://127.0.0.1:4096",
+  model: { providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free" },
+  agent: "Build",
+  files: ["/vault/testing/a.md"]
+}), [
+  "run",
+  "--format",
+  "json",
+  "--dir",
+  "/vault",
+  "--attach",
+  "http://127.0.0.1:4096",
+  "--model",
+  "opencode/deepseek-v4-flash-free",
+  "--agent",
+  "Build",
+  "--file",
+  "/vault/testing/a.md",
+  "只回复 PONG"
+]);
+const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");
+assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(\(\) => \[\]\);\s*if \(cliModels\.length\) return cliModels;/);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {
@@ -3314,6 +4260,132 @@ assert.equal(detectOpenCodeCommand("", {
 assert.throws(() => resolveOpenCodeCommand("/definitely/missing/opencode", {
   exists: () => false
 }), /找不到 OpenCode CLI/);
+assert.equal(resolveHermesCommand("~/bin/hermes", {
+  home: "/Users/demo",
+  envPath: "",
+  exists: (candidate) => candidate === "/Users/demo/bin/hermes"
+}), "/Users/demo/bin/hermes");
+assert.equal(resolveHermesCommand("", {
+  home: "/Users/demo",
+  envPath: "/custom/bin",
+  exists: (candidate) => candidate === "/custom/bin/hermes"
+}), "/custom/bin/hermes");
+assert.equal(resolveHermesCommand("", {
+  home: "/Users/demo",
+  envPath: "",
+  exists: (candidate) => candidate === "/Users/demo/.local/bin/hermes"
+}), "/Users/demo/.local/bin/hermes");
+assert.equal(resolveHermesCommand("", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  platform: "win32",
+  appData: "C:\\Users\\demo\\AppData\\Roaming",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\AppData\\Roaming\\Python\\Scripts\\hermes.exe"
+}), "C:\\Users\\demo\\AppData\\Roaming\\Python\\Scripts\\hermes.exe");
+assert.throws(() => resolveHermesCommand("/definitely/missing/hermes", {
+  exists: () => false
+}), /找不到 Hermes CLI/);
+assert.equal(normalizeHermesServerUrl("", "127.0.0.1", 8642), "http://127.0.0.1:8642/v1");
+assert.equal(normalizeHermesServerUrl("http://127.0.0.1:8642", "0.0.0.0", 1), "http://127.0.0.1:8642/v1");
+assert.equal(normalizeHermesServerUrl("http://127.0.0.1:8642/v1/", "0.0.0.0", 1), "http://127.0.0.1:8642/v1");
+assert.deepEqual(parseHermesVersion("Hermes Agent v0.18.0 (2026.7.1) · upstream 1c473bc6"), {
+  version: "0.18.0",
+  upstream: "1c473bc6"
+});
+assert.equal(isSyntheticHermesDefaultModel("hermes", "hermes-agent"), true);
+assert.equal(isSyntheticHermesDefaultModel("deepseek", "deepseek-chat"), false);
+assert.match(formatHermesError({ status: 401, data: { error: { message: "invalid API_SERVER_KEY" } } }), /Hermes API 请求失败/);
+assert.match(formatHermesError("No inference provider configured"), /Hermes 推理 provider 未配置/);
+
+const hermesCliDefaultArgs: string[][] = [];
+const hermesCliDefaultBackend = new HermesBackend({
+  cliPath: "/usr/local/bin/hermes",
+  serverUrl: "",
+  autoStart: true,
+  hostname: "127.0.0.1",
+  port: 8642,
+  profile: "",
+  providerId: "",
+  modelId: "",
+  apiKey: "",
+  vaultPath: "/vault",
+  commandExists: (candidate) => candidate === "/usr/local/bin/hermes",
+  processRunner: async (_command, args) => {
+    hermesCliDefaultArgs.push(args);
+    return {
+      stdout: args.includes("--version") ? "Hermes Agent v0.18.0 (2026.7.1) · upstream 1c473bc6\n" : "PONG\n",
+      stderr: ""
+    };
+  }
+});
+await hermesCliDefaultBackend.connect();
+assert.deepEqual(await hermesCliDefaultBackend.listModels(), []);
+assert.equal((await hermesCliDefaultBackend.runTask({ prompt: "只回复 PONG", permission: "read-only", timeoutMs: 5000 })).text, "PONG");
+assert.deepEqual(hermesCliDefaultArgs.at(-1), ["-z", "只回复 PONG"]);
+
+const hermesCliSyntheticArgs: string[][] = [];
+const hermesCliSyntheticBackend = new HermesBackend({
+  cliPath: "/usr/local/bin/hermes",
+  serverUrl: "",
+  autoStart: true,
+  hostname: "127.0.0.1",
+  port: 8642,
+  profile: "",
+  providerId: "hermes",
+  modelId: "hermes-agent",
+  apiKey: "",
+  vaultPath: "/vault",
+  commandExists: (candidate) => candidate === "/usr/local/bin/hermes",
+  processRunner: async (_command, args) => {
+    hermesCliSyntheticArgs.push(args);
+    return {
+      stdout: args.includes("--version") ? "Hermes Agent v0.18.0 (2026.7.1)\n" : "PONG\n",
+      stderr: ""
+    };
+  }
+});
+await hermesCliSyntheticBackend.connect();
+assert.deepEqual(await hermesCliSyntheticBackend.listModels(), []);
+assert.equal((await hermesCliSyntheticBackend.runTask({ prompt: "只回复 PONG", permission: "read-only", timeoutMs: 5000 })).text, "PONG");
+assert.deepEqual(hermesCliSyntheticArgs.at(-1), ["-z", "只回复 PONG"]);
+
+const hermesRunFetchCalls: Array<{ url: string; init: any }> = [];
+const hermesRunBackend = new HermesBackend({
+  cliPath: "/usr/local/bin/hermes",
+  serverUrl: "http://127.0.0.1:8642/v1",
+  autoStart: false,
+  hostname: "127.0.0.1",
+  port: 8642,
+  profile: "",
+  providerId: "deepseek",
+  modelId: "deepseek-chat",
+  apiKey: "local-key",
+  vaultPath: "/vault",
+  commandExists: (candidate) => candidate === "/usr/local/bin/hermes",
+  processRunner: async (_command, args) => ({
+    stdout: args.includes("--version") ? "Hermes Agent v0.18.0 (2026.7.1) · upstream 1c473bc6\n" : "",
+    stderr: ""
+  }),
+  fetch: async (url, init) => {
+    hermesRunFetchCalls.push({ url, init });
+    if (url.endsWith("/models")) return { ok: true, status: 200, json: async () => ({ data: [{ id: "hermes-agent" }] }) };
+    if (url.endsWith("/runs")) return { ok: true, status: 202, json: async () => ({ run_id: "run_1", status: "started" }) };
+    if (url.endsWith("/runs/run_1")) return { ok: true, status: 200, json: async () => ({ run_id: "run_1", status: "completed", output: "Hermes 完成", usage: { total_tokens: 3 } }) };
+    return { ok: false, status: 404, json: async () => ({ error: { message: "missing" } }) };
+  }
+});
+await hermesRunBackend.connect();
+assert.equal(hermesRunBackend.getConnectionInfo().version, "0.18.0");
+assert.deepEqual((await hermesRunBackend.listModels()).map((model) => model.id), ["hermes-agent"]);
+const hermesRunOutput = await hermesRunBackend.runTask({
+  prompt: "体检知识库",
+  permission: "read-only",
+  timeoutMs: 5000,
+  resources: { promptPrefix: "使用 /answer skill", enabledResources: [], warnings: [], mcpConfig: null, toolBridge: null }
+});
+assert.equal(hermesRunOutput.text, "Hermes 完成");
+assert.ok(JSON.parse(hermesRunFetchCalls.find((call) => call.url.endsWith("/runs"))!.init.body).input.includes("使用 /answer skill"));
+assert.equal(hermesRunFetchCalls.some((call) => call.init.headers.Authorization === "Bearer local-key"), true);
 
 const setupDisconnectedStatus = {
   connected: false,
@@ -3335,7 +4407,8 @@ const setupConnectedStatus = {
 const setupMissingCodex = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
   os: "darwin",
   codexCommand: null,
-  openCodeCommand: null
+  openCodeCommand: null,
+  hermesCommand: null
 });
 assert.equal(setupMissingCodex.status, "blocking");
 assert.equal(setupMissingCodex.canStart, false);
@@ -3345,7 +4418,8 @@ assert.ok(setupMissingCodex.requirements.find((item) => item.id === "codex-cli")
 const setupCodexInstalledNotLoggedIn = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
   os: "darwin",
   codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
-  openCodeCommand: null
+  openCodeCommand: null,
+  hermesCommand: null
 });
 assert.equal(setupCodexInstalledNotLoggedIn.status, "blocking");
 assert.equal(setupCodexInstalledNotLoggedIn.canStart, false);
@@ -3356,10 +4430,12 @@ assert.ok(setupCodexInstalledNotLoggedIn.requirements.find((item) => item.id ===
 const setupCodexOnly = buildSetupCheck(DEFAULT_SETTINGS, setupConnectedStatus, {
   os: "darwin",
   codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
-  openCodeCommand: null
+  openCodeCommand: null,
+  hermesCommand: null
 });
 assert.equal(setupCodexOnly.canStart, true);
 assert.equal(setupCodexOnly.requirements.find((item) => item.id === "opencode-cli")?.status, "warning");
+assert.equal(setupCodexOnly.requirements.find((item) => item.id === "hermes-cli")?.status, "warning");
 
 const setupOpenCodeRequired = buildSetupCheck({
   ...DEFAULT_SETTINGS,
@@ -3367,7 +4443,8 @@ const setupOpenCodeRequired = buildSetupCheck({
 }, setupConnectedStatus, {
   os: "win32",
   codexCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
-  openCodeCommand: null
+  openCodeCommand: null,
+  hermesCommand: null
 });
 assert.equal(setupOpenCodeRequired.status, "blocking");
 assert.equal(setupOpenCodeRequired.canStart, false);
@@ -3384,7 +4461,8 @@ const setupOpenCodeServerFailed = buildSetupCheck({
 }, setupConnectedStatus, {
   os: "darwin",
   codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
-  openCodeCommand: "/opt/homebrew/bin/opencode"
+  openCodeCommand: "/opt/homebrew/bin/opencode",
+  hermesCommand: null
 });
 assert.equal(setupOpenCodeServerFailed.status, "blocking");
 assert.equal(setupOpenCodeServerFailed.canStart, false);
@@ -3405,10 +4483,79 @@ const setupOpenCodeReady = buildSetupCheck({
 }, setupConnectedStatus, {
   os: "win32",
   codexCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
-  openCodeCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd"
+  openCodeCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd",
+  hermesCommand: null
 });
-assert.equal(setupOpenCodeReady.status, "ok");
+assert.equal(setupOpenCodeReady.status, "warning");
 assert.equal(setupOpenCodeReady.canStart, true);
+const setupHermesRequired = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  agentBackend: "hermes",
+  agents: { ...DEFAULT_SETTINGS.agents, defaultBackend: "hermes" },
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "default" }
+}, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: null,
+  openCodeCommand: null,
+  hermesCommand: null
+});
+assert.equal(setupHermesRequired.status, "blocking");
+assert.equal(setupHermesRequired.canStart, false);
+assert.ok(setupHermesRequired.requirements.some((item) => item.id === "hermes-cli" && item.status === "blocking"));
+assert.ok(!setupHermesRequired.requirements.some((item) => item.id === "codex-login" && item.status === "blocking"));
+const setupHermesProviderMissing = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  agentBackend: "hermes",
+  agents: {
+    ...DEFAULT_SETTINGS.agents,
+    defaultBackend: "hermes",
+    hermes: {
+      ...DEFAULT_SETTINGS.agents.hermes,
+      lastConnectedAt: 1700000000000,
+      providerId: "deepseek",
+      modelId: "deepseek-chat",
+      lastError: "",
+      providerConfigured: false,
+      lastProviderError: "No inference provider configured"
+    }
+  },
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "hermes" }
+}, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: null,
+  openCodeCommand: null,
+  hermesCommand: "/Users/demo/.local/bin/hermes"
+});
+assert.equal(setupHermesProviderMissing.canStart, false);
+assert.equal(setupHermesProviderMissing.requirements.find((item) => item.id === "hermes-model")?.status, "blocking");
+assert.ok(setupHermesProviderMissing.requirements.find((item) => item.id === "hermes-model")?.actions.some((action) => action.value === "hermes model"));
+const setupHermesReady = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  agentBackend: "hermes",
+  agents: {
+    ...DEFAULT_SETTINGS.agents,
+    defaultBackend: "hermes",
+    hermes: {
+      ...DEFAULT_SETTINGS.agents.hermes,
+      lastConnectedAt: 1700000000000,
+      providerId: "deepseek",
+      modelId: "deepseek-chat",
+      lastError: "",
+      providerConfigured: true,
+      lastProviderCheckAt: 1700000000100,
+      lastProviderError: ""
+    }
+  },
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "hermes" }
+}, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: null,
+  openCodeCommand: null,
+  hermesCommand: "/Users/demo/.local/bin/hermes"
+});
+assert.equal(setupHermesReady.canStart, true);
+assert.equal(setupHermesReady.knowledgeBackend, "hermes");
+assert.match(setupHermesReady.requirements.find((item) => item.id === "hermes-model")?.message ?? "", /deepseek\/deepseek-chat · 最近验证/);
 const setupCompleted = completeSetupState(DEFAULT_SETTINGS.setup, 1700000001234, "0.5.3");
 assert.equal(setupCompleted.completedAt, 1700000001234);
 assert.equal(setupCompleted.lastCheckedAt, 1700000001234);
@@ -3449,11 +4596,30 @@ const openCodeProviders = [
         capabilities: { input: { text: true, image: true, pdf: false } }
       }
     }
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    models: {
+      "opencode/deepseek-v4-flash-free": {
+        id: "opencode/deepseek-v4-flash-free",
+        name: "DeepSeek V4 Flash Free",
+        capabilities: { input: { text: true, image: false, pdf: false } }
+      }
+    }
   }
 ] as any;
 const flattenedOpenCodeModels = flattenOpenCodeModels(openCodeProviders);
-assert.deepEqual(flattenedOpenCodeModels.map((model) => model.id), ["deepseek/deepseek-chat", "deepseek/vision-pdf", "openai/gpt-vision"]);
+assert.deepEqual(flattenedOpenCodeModels.map((model) => model.id), ["deepseek/deepseek-chat", "deepseek/vision-pdf", "openai/gpt-vision", "opencode/deepseek-v4-flash-free"]);
 assert.deepEqual(flattenedOpenCodeModels.find((model) => model.id === "deepseek/vision-pdf")?.inputModalities, ["text", "image", "pdf"]);
+assert.equal(
+  selectOpenCodeModelForTask(flattenedOpenCodeModels, "stale-provider", "stale-model", ["text"])?.id,
+  "opencode/deepseek-v4-flash-free"
+);
+assert.equal(
+  selectOpenCodeModelForTask(flattenedOpenCodeModels, "deepseek", "vision-pdf", ["text", "pdf"])?.id,
+  "deepseek/vision-pdf"
+);
 const flattenedOpenCodeAgents = flattenOpenCodeAgents([
   { name: "reviewer", mode: "subagent", permission: {}, options: {} },
   { name: "build", mode: "primary", native: true, permission: {}, options: {} },
@@ -3580,6 +4746,20 @@ try {
   assert.equal(secondDiscovery.sources.find((source) => source.relativePath === "raw/articles/demo.md")?.changed, true);
   assert.equal(secondDiscovery.changedSources.length, 6);
   assert.ok(secondDiscovery.reportPath.startsWith("outputs/maintenance/kb-maintenance-"));
+  assert.deepEqual(extractRequestedRawPaths("/maintain raw/articles/demo.md"), ["raw/articles/demo.md"]);
+  assert.deepEqual(extractRequestedRawPaths("重点处理 [[raw/articles/demo]]"), ["raw/articles/demo.md"]);
+  assert.deepEqual(extractRequestedRawPaths("处理 raw/articles/demo.md 和 raw/clippings/clip.md"), ["raw/articles/demo.md", "raw/clippings/clip.md"]);
+  assert.deepEqual(extractRequestedRawPaths("维护今天新增"), []);
+  assert.deepEqual(extractRequestedRawPaths("/maintain /Users/me/vault/raw/articles/demo.md ../raw/evil.md"), []);
+  assert.deepEqual(
+    selectSourcesForRunMode("maintain", firstDiscovery, "/maintain raw/attachments/doc.docx").map((source) => source.relativePath),
+    ["raw/attachments/doc.docx"]
+  );
+  assert.deepEqual(
+    selectSourcesForRunMode("reingest", firstDiscovery, "重新提炼 [[raw/clippings/clip]]").map((source) => source.relativePath),
+    ["raw/clippings/clip.md"]
+  );
+  assert.equal(selectSourcesForRunMode("lint", firstDiscovery, "/check raw/articles/demo.md").length, 0);
   const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
   assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
@@ -3834,7 +5014,10 @@ try {
     hasWikiIndex: true,
     hasTracker: false
   });
-  assert.ok(kbPrompt.includes("执行 Ingest + Structure Normalize + Lint"));
+  assert.ok(kbPrompt.includes("执行四步提炼协议"));
+  assert.ok(kbPrompt.includes("读懂原文 -> 拆出知识 -> 融入 Wiki / Projects -> 回写 Raw 已提炼状态"));
+  assert.ok(kbPrompt.includes("报告不能代替 Wiki / Projects 正文"));
+  assert.ok(kbPrompt.includes("优先更新已有主题页"));
   assert.ok(kbPrompt.includes(`自定义规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
   assert.ok(kbPrompt.includes("知识库结构以这个文件为准"));
   assert.ok(kbPrompt.includes("不要把 AGENTS.md 当作知识库规则合并"));
@@ -3847,6 +5030,8 @@ try {
   assert.ok(kbPrompt.includes("raw 路径不在每日维护中自动整理"));
   assert.ok(kbPrompt.includes("本轮来源列表外的新 raw 文件"));
   assert.ok(kbPrompt.includes("非索引正文页留下结构层证据"));
+  assert.ok(kbPrompt.includes("来源链接和实质内容必须在同一证据块"));
+  assert.ok(kbPrompt.includes("来源行后不要空行"));
   assert.ok(kbPrompt.includes("禁止用 `标题 2.md`"));
   assert.ok(kbPrompt.includes("必须读取并更新原始正式文件"));
   assert.ok(kbPrompt.includes("Structure Normalize"));
@@ -3854,9 +5039,25 @@ try {
   assert.ok(kbPrompt.includes("不确定或会断链的改动只写进报告"));
   assert.ok(kbPrompt.includes("find"));
   assert.ok(kbPrompt.includes("跳过 raw/ 中以 .base 结尾"));
-  assert.ok(kbPrompt.includes("3-5 句核心要点"));
+  assert.ok(!kbPrompt.includes("3-5 句核心要点"));
   assert.ok(kbPrompt.includes("断链、孤儿页面、过时或 draft"));
   assert.ok(kbPrompt.includes(secondDiscovery.reportPath));
+  const lintPrompt = buildKnowledgeBasePrompt({
+    vaultPath: kbVault,
+    mode: "lint",
+    reportPath: secondDiscovery.reportPath,
+    sources: [],
+    rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE,
+    rulesFileExists: true,
+    useCustomRulesFile: false,
+    hasRawIndex: true,
+    hasWikiIndex: true,
+    hasTracker: true
+  });
+  assert.ok(lintPrompt.includes("只体检，不提炼"));
+  assert.ok(lintPrompt.includes("不要写 Raw 托管属性"));
+  assert.ok(lintPrompt.includes("不要写 Wiki / Projects 正文"));
+  assert.ok(lintPrompt.includes("不要更新 outputs/.ingest-tracker.md"));
   const outputsPrompt = buildKnowledgeBasePrompt({
     vaultPath: kbVault,
     mode: "outputs",
@@ -3872,6 +5073,7 @@ try {
   });
   assert.ok(outputsPrompt.includes("处理 outputs"));
   assert.ok(outputsPrompt.includes("长期复用价值"));
+  assert.ok(outputsPrompt.includes("只把长期价值提炼进 Wiki / Projects"));
   assert.ok(outputsPrompt.includes("用户原始指令：/outputs 只提炼长期方法论"));
   assert.equal(stripAskCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), "Harness Engineering 和 Vibe Coding 有什么关系？");
   const askMatches = await findKnowledgeBaseAskMatches(kbVault, "Harness Engineering 和 Vibe Coding 有什么关系？");
@@ -3967,6 +5169,7 @@ try {
   const fallbackText = await readFile(path.join(kbVault, staleFallbackPath), "utf8");
   assert.ok(fallbackText.includes("fallback: true"));
   assert.ok(fallbackText.includes("本轮体检结果"));
+  assert.ok(fallbackText.includes("该报告只是过程记录，不代表 Raw 已提炼"));
   assert.ok(!fallbackText.includes("上一轮结果"));
   assert.equal(await readFreshKnowledgeBaseReportExcerpt(kbVault, staleFallbackPath, fallbackStartedAt), fallbackText.trim().slice(0, 1000).trim());
   const nearStaleFallbackPath = "outputs/maintenance/kb-maintenance-near-stale.md";
@@ -4930,6 +6133,33 @@ try {
   await rm(maintenanceOpenCodeLintScopeVault, { recursive: true, force: true });
 }
 
+const maintenanceHermesLintScopeVault = await createMaintenanceVaultForTest("codex-kb-maintain-hermes-lint-scope-");
+try {
+  const hermesTaskCalls: Array<{ permission: string }> = [];
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHermesLintScopeVault, { agentBackend: "hermes", hermesTaskCalls });
+  const result = await manager.runMaintenance("lint", "/check 测试 Hermes 权限边界");
+  assert.equal(result.status, "success");
+  assert.deepEqual(hermesTaskCalls, [{ permission: "read-only" }]);
+} finally {
+  await rm(maintenanceHermesLintScopeVault, { recursive: true, force: true });
+}
+
+const askPinnedHermesBackendVault = await createMaintenanceVaultForTest("codex-kb-ask-pinned-hermes-");
+try {
+  const hermesTaskCalls: Array<{ permission: string }> = [];
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(askPinnedHermesBackendVault, {
+    agentBackend: "codex-cli",
+    knowledgeBackend: "hermes",
+    hermesTaskCalls
+  });
+  const result = await manager.handleUserMessage("/ask New 说了什么？");
+  assert.equal(result.status, "success");
+  assert.deepEqual(hermesTaskCalls, [{ permission: "read-only" }]);
+  assert.equal(settings.knowledgeBase.backend, "hermes");
+} finally {
+  await rm(askPinnedHermesBackendVault, { recursive: true, force: true });
+}
+
 const maintenanceOpenCodeCancelBeforePromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-before-prompt-");
 try {
   let managerForHook: KnowledgeBaseManager | null = null;
@@ -4947,7 +6177,7 @@ try {
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 前取消");
   assert.equal(result.status, "canceled");
   assert.equal(result.processedSources.length, 0);
-  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 0);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.runCliTaskCalls ?? 0, 0);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
 } finally {
@@ -4961,10 +6191,10 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onSendPrompt: async () => {
+    onRunCliTask: async () => {
       await managerForHook?.cancelMaintenance();
     },
-    sendPromptError: new Error("OpenCode aborted")
+    runCliTaskError: new Error("OpenCode aborted")
   };
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelDuringPromptVault, {
     agentBackend: "opencode",
@@ -4974,7 +6204,7 @@ try {
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 中取消");
   assert.equal(result.status, "canceled");
   assert.equal(result.processedSources.length, 0);
-  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 1);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.runCliTaskCalls ?? 0, 1);
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal(settings.opencode.lastError, "");
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
@@ -4989,7 +6219,7 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onSendPrompt: async () => await new Promise(() => undefined)
+    onRunCliTask: async () => await new Promise(() => undefined)
   };
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeStalledPromptTimeoutVault, {
     agentBackend: "opencode",
@@ -5017,7 +6247,7 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onSendPrompt: async () => {
+    onRunCliTask: async () => {
       await managerForHook?.cancelMaintenance();
       await new Promise(() => undefined);
     }
@@ -5040,6 +6270,33 @@ try {
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeStalledPromptCancelVault, { recursive: true, force: true });
+}
+
+const maintenanceHermesStalledPromptTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-hermes-stalled-timeout-");
+try {
+  (globalThis as any).__hermesBackendTestHooks = {
+    models: [{ id: "test/hermes", providerId: "test", modelId: "hermes", displayName: "Test Hermes", inputModalities: ["text"] }],
+    abortCalls: [],
+    onRunTask: async () => await new Promise(() => undefined)
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceHermesStalledPromptTimeoutVault, {
+    agentBackend: "hermes",
+    useRealHermesTask: true
+  });
+  const result = await Promise.race([
+    manager.runMaintenance("lint", "/check 测试 Hermes prompt 卡死超时", { hermesTaskTimeoutMs: 10 } as any),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
+  assert.match((result as KnowledgeBaseRunResult).error ?? "", /Hermes.*长时间没有返回/);
+  assert.deepEqual((globalThis as any).__hermesBackendTestHooks.abortCalls, ["test-hermes-run"]);
+  assert.equal((manager as any).activeHermes, null);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+} finally {
+  delete (globalThis as any).__hermesBackendTestHooks;
+  await rm(maintenanceHermesStalledPromptTimeoutVault, { recursive: true, force: true });
 }
 
 const maintenanceCodexCancelDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-cancel-start-turn-");
@@ -7464,6 +8721,65 @@ try {
   await rm(rawDigestCalibrationVault, { recursive: true, force: true });
 }
 
+const rawDigestCalibrationDowngradeVault = await createMaintenanceVaultForTest("codex-kb-raw-digest-calibration-downgrade-");
+try {
+  const missingEvidenceRawPath = "raw/articles/missing-evidence.md";
+  const missingEvidenceBody = Buffer.from("# Missing Evidence\n\n正文", "utf8");
+  const missingEvidenceFingerprint = rawDigestFingerprint(missingEvidenceRawPath, missingEvidenceBody);
+  await writeFile(path.join(rawDigestCalibrationDowngradeVault, missingEvidenceRawPath), applyRawDigestFrontmatter(missingEvidenceBody, {
+    rawPath: missingEvidenceRawPath,
+    fingerprint: missingEvidenceFingerprint,
+    size: missingEvidenceBody.length,
+    mtime: Date.now() - 60_000,
+    digestedAt: Date.now() - 60_000,
+    runId: "missing-evidence",
+    reportPath: "outputs/maintenance/kb-maintenance-missing.md",
+    evidencePaths: ["wiki/missing.md"],
+    confidence: "verified"
+  }), "utf8");
+
+  const staleRawPath = "raw/articles/stale.md";
+  const staleBefore = Buffer.from("# Stale\n\n旧正文", "utf8");
+  const staleFingerprint = rawDigestFingerprint(staleRawPath, staleBefore);
+  const staleDigested = applyRawDigestFrontmatter(staleBefore, {
+    rawPath: staleRawPath,
+    fingerprint: staleFingerprint,
+    size: staleBefore.length,
+    mtime: Date.now() - 60_000,
+    digestedAt: Date.now() - 60_000,
+    runId: "stale",
+    reportPath: "outputs/maintenance/kb-maintenance-stale.md",
+    evidencePaths: ["wiki/ai-intelligence/references/stale.md"],
+    confidence: "verified"
+  }).toString("utf8").replace("# Stale\n\n旧正文", "# Stale\n\n新正文");
+  await writeFile(path.join(rawDigestCalibrationDowngradeVault, staleRawPath), staleDigested, "utf8");
+  await mkdir(path.join(rawDigestCalibrationDowngradeVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(rawDigestCalibrationDowngradeVault, "wiki", "ai-intelligence", "references", "stale.md"), [
+    "# Stale Evidence",
+    "",
+    "来源：[[raw/articles/stale]]",
+    "这条旧证据存在，但 Raw 正文已经变化，需要重新提炼。",
+    ""
+  ].join("\n"), "utf8");
+
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(rawDigestCalibrationDowngradeVault);
+  const result = await manager.calibrateRawDigestStatus();
+  assert.equal(result.status, "success");
+  assert.equal(settings.knowledgeBase.processedSources["raw/articles/missing-evidence.md"], undefined);
+  assert.equal(settings.knowledgeBase.processedSources["raw/articles/stale.md"], undefined);
+  const missingRecord = rawDigestRecordFromMarkdown(await readFile(path.join(rawDigestCalibrationDowngradeVault, missingEvidenceRawPath)));
+  assert.equal(missingRecord?.status, "待校准");
+  assert.equal(rawDigestRecordIsTrusted(missingRecord, missingEvidenceFingerprint), false);
+  const staleRecord = rawDigestRecordFromMarkdown(await readFile(path.join(rawDigestCalibrationDowngradeVault, staleRawPath)));
+  assert.equal(staleRecord?.status, "待重新提炼");
+  assert.equal(rawDigestRecordIsTrusted(staleRecord, rawDigestFingerprint(staleRawPath, await readFile(path.join(rawDigestCalibrationDowngradeVault, staleRawPath)))), false);
+  const report = await readFile(path.join(rawDigestCalibrationDowngradeVault, result.reportPath), "utf8");
+  assert.ok(report.includes("raw/articles/missing-evidence.md"));
+  assert.ok(report.includes("raw/articles/stale.md"));
+} finally {
+  await rm(rawDigestCalibrationDowngradeVault, { recursive: true, force: true });
+}
+
 const maintenanceBatchLimitVault = await createMaintenanceVaultForTest("codex-kb-maintain-batch-limit-");
 try {
   await rm(path.join(maintenanceBatchLimitVault, "raw", "articles", "new.md"), { force: true });
@@ -7866,6 +9182,9 @@ try {
   const initializedRules = await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(initializedRules.includes("LLM Wiki"));
   assert.ok(initializedRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
+  assert.ok(initializedRules.includes("四步提炼协议"));
+  assert.ok(initializedRules.includes("读懂原文 -> 拆出知识 -> 融入 Wiki / Projects -> 回写 Raw 已提炼状态"));
+  assert.ok(initializedRules.includes("报告不能代替 Wiki / Projects 正文"));
   assert.ok(initializedRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
   assert.ok(initializedRules.includes("Structure Normalize"));
   assert.ok(initializedRules.includes("托管元属性"));
@@ -7913,6 +9232,7 @@ try {
   const createdRules = await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8");
   assert.ok(createdRules.includes("LLM Wiki"));
   assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
+  assert.ok(createdRules.includes("四步提炼协议"));
   assert.ok(createdRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
   assert.ok(createdRules.includes("托管元属性"));
   assert.ok(createdRules.includes("Structure Normalize"));
@@ -7957,6 +9277,8 @@ try {
   assert.ok(patchedRules.startsWith("# Existing rules"));
   assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
   assert.ok(patchedRules.includes("`raw/` 是原始资料与待整理来源区"));
+  assert.ok(patchedRules.includes("提炼不等于摘要"));
+  assert.ok(patchedRules.includes("Wiki / Projects 正文证据"));
   assert.ok(patchedRules.includes("只有 EchoInk 插件后处理阶段可以写入托管元属性"));
   assert.ok(patchedRules.includes("raw 路径归一只写入报告风险"));
   assert.ok(patchedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
@@ -8013,6 +9335,154 @@ function knowledgeReportFileNameForTest(mode: KnowledgeBaseRunMode, value = new 
 
 function knowledgeReportAbsolutePathForTest(vaultPath: string, mode: KnowledgeBaseRunMode, value = new Date()): string {
   return path.join(vaultPath, "outputs", "maintenance", knowledgeReportFileNameForTest(mode, value));
+}
+
+function digestEvidenceSourceForTest(vaultPath: string, relativePath: string, content = "# Raw source\n"): KnowledgeBaseSource {
+  const absolutePath = path.join(vaultPath, relativePath);
+  const fingerprint = rawDigestFingerprint(relativePath, Buffer.from(content, "utf8"));
+  return {
+    relativePath,
+    absolutePath,
+    size: Buffer.byteLength(content),
+    mtime: Date.now(),
+    fingerprint,
+    mime: "text/markdown",
+    modality: "text",
+    changed: true
+  };
+}
+
+function emptyDigestEvidenceSnapshotForTest(vaultPath: string): KnowledgeTransactionSnapshot {
+  return { vaultPath, roots: ["wiki", "projects", "outputs"], entries: new Map() };
+}
+
+async function writeDigestEvidenceReportForTest(vaultPath: string, reportPath: string, rawPath = "raw/articles/new.md"): Promise<void> {
+  await mkdir(path.join(vaultPath, path.dirname(reportPath)), { recursive: true });
+  await writeFile(path.join(vaultPath, reportPath), [
+    "# KB Maintenance",
+    "",
+    `- 本轮 Raw：${rawPath}`,
+    "- 状态：等待结构证据验证"
+  ].join("\n"), "utf8");
+}
+
+const digestEvidenceVerifierVault = await mkdtemp(path.join(tmpdir(), "codex-kb-digest-evidence-"));
+try {
+  const source = digestEvidenceSourceForTest(digestEvidenceVerifierVault, "raw/articles/new.md");
+  const reportPath = "outputs/maintenance/kb-maintenance-test.md";
+  const startedAt = Date.now() - 10_000;
+
+  await writeDigestEvidenceReportForTest(digestEvidenceVerifierVault, reportPath, source.relativePath);
+  await mkdir(path.join(digestEvidenceVerifierVault, "outputs", "maintenance"), { recursive: true });
+  await writeFile(path.join(digestEvidenceVerifierVault, "outputs", "maintenance", "report-only.md"), [
+    "# Report only",
+    "",
+    "- 来源：[[raw/articles/new]]",
+    "- 这条过程记录提到了来源，但不能替代 Wiki / Projects 正文。"
+  ].join("\n"), "utf8");
+  await assert.rejects(
+    verifyDigestEvidence({
+      vaultPath: digestEvidenceVerifierVault,
+      reportPath,
+      sources: [source],
+      startedAt,
+      transactionBefore: emptyDigestEvidenceSnapshotForTest(digestEvidenceVerifierVault),
+      processedSourcesBeforeRun: {}
+    }),
+    /结构层消化证据/
+  );
+
+  await mkdir(path.join(digestEvidenceVerifierVault, "wiki"), { recursive: true });
+  await writeFile(path.join(digestEvidenceVerifierVault, "wiki", "link-only.md"), "- 来源：[[raw/articles/new]]\n", "utf8");
+  await assert.rejects(
+    verifyDigestEvidence({
+      vaultPath: digestEvidenceVerifierVault,
+      reportPath,
+      sources: [source],
+      startedAt,
+      transactionBefore: emptyDigestEvidenceSnapshotForTest(digestEvidenceVerifierVault),
+      processedSourcesBeforeRun: {}
+    }),
+    /结构层消化证据/
+  );
+
+  await writeFile(path.join(digestEvidenceVerifierVault, "wiki", "knowledge.md"), [
+    "## 关键结论",
+    "",
+    "- 来源：[[raw/articles/new]]",
+    "- 四步提炼必须把可复用知识写入主题页，并在同一证据块保留 Raw 来源。"
+  ].join("\n"), "utf8");
+  const wikiEvidence = await verifyDigestEvidence({
+    vaultPath: digestEvidenceVerifierVault,
+    reportPath,
+    sources: [source],
+    startedAt,
+    transactionBefore: emptyDigestEvidenceSnapshotForTest(digestEvidenceVerifierVault),
+    processedSourcesBeforeRun: {}
+  });
+  assert.deepEqual(wikiEvidence[source.relativePath], ["wiki/knowledge.md"]);
+
+  await rm(path.join(digestEvidenceVerifierVault, "wiki"), { recursive: true, force: true });
+  await mkdir(path.join(digestEvidenceVerifierVault, "projects", "echoink"), { recursive: true });
+  await writeFile(path.join(digestEvidenceVerifierVault, "projects", "echoink", "knowledge.md"), [
+    "## 方法",
+    "",
+    "- 来源：[[raw/articles/new]]",
+    "- EchoInk 项目资料应融入项目页，保留来源后再允许 Raw 状态回写。"
+  ].join("\n"), "utf8");
+  const projectEvidence = await verifyDigestEvidence({
+    vaultPath: digestEvidenceVerifierVault,
+    reportPath,
+    sources: [source],
+    startedAt,
+    transactionBefore: emptyDigestEvidenceSnapshotForTest(digestEvidenceVerifierVault),
+    processedSourcesBeforeRun: {}
+  });
+  assert.deepEqual(projectEvidence[source.relativePath], ["projects/echoink/knowledge.md"]);
+} finally {
+  await rm(digestEvidenceVerifierVault, { recursive: true, force: true });
+}
+
+const dashboardRawDigestStatusVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-raw-status-"));
+try {
+  await mkdir(path.join(dashboardRawDigestStatusVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(dashboardRawDigestStatusVault, "wiki"), { recursive: true });
+  await mkdir(path.join(dashboardRawDigestStatusVault, "outputs"), { recursive: true });
+  await mkdir(path.join(dashboardRawDigestStatusVault, "inbox"), { recursive: true });
+  await writeFile(path.join(dashboardRawDigestStatusVault, "AGENTS.md"), "# Rules\n", "utf8");
+  await writeFile(path.join(dashboardRawDigestStatusVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# LLM Wiki Rules\n", "utf8");
+  await writeFile(path.join(dashboardRawDigestStatusVault, "raw", "articles", "changed.md"), "# Changed\n", "utf8");
+  const failedBody = "# Failed\n";
+  const failedFingerprint = rawDigestFingerprint("raw/articles/failed.md", Buffer.from(failedBody, "utf8"));
+  await writeFile(path.join(dashboardRawDigestStatusVault, "raw", "articles", "failed.md"), [
+    "---",
+    "已处理: false",
+    "提炼状态: 提炼失败",
+    `提炼指纹: ${failedFingerprint}`,
+    "---",
+    failedBody
+  ].join("\n"), "utf8");
+  await writeFile(path.join(dashboardRawDigestStatusVault, "raw", "articles", "pending.md"), "# Pending\n", "utf8");
+
+  const dashboard = await buildKnowledgeBaseDashboardSnapshot(dashboardRawDigestStatusVault, normalizeSettingsData({
+    settingsVersion: 19,
+    knowledgeBase: {
+      processedSources: {
+        "raw/articles/changed.md": {
+          size: 1,
+          mtime: 1,
+          fingerprint: "sha256:1:stale",
+          digestedAt: 1
+        }
+      }
+    }
+  }).settings.knowledgeBase);
+
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "raw/articles/changed.md" && card.status === "待重新提炼"));
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "raw/articles/failed.md" && card.status === "提炼失败"));
+  assert.ok(dashboard.recommendations.cards.some((card) => card.path === "raw/articles/pending.md" && card.status === "Raw 待提炼"));
+} finally {
+  await rm(dashboardRawDigestStatusVault, { recursive: true, force: true });
 }
 
 const dashboardVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-"));
@@ -8259,7 +9729,7 @@ try {
   assert.equal(lowScoreDashboard.health.scoreCheckNote, "体检成功只代表检查完成；健康分反映检查发现的结构问题。");
   assert.deepEqual(lowScoreDashboard.health.scoreReasons.map((reason) => reason.label), ["Raw 待提炼", "断链", "孤儿页面", "过时/草稿"]);
   assert.deepEqual(lowScoreDashboard.health.scoreReasons.map((reason) => reason.count), [93, 40, 19, 10]);
-  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "Raw 待提炼" && reason.explanation.includes("来源未被确认消化或登记")));
+  assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "Raw 待提炼" && reason.explanation.includes("来源还没有进入 Wiki / Projects 的结构化知识，或缺少可信来源证据。")));
   assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "断链" && reason.explanation.includes("链接目标不存在")));
   assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "孤儿页面" && reason.explanation.includes("缺少有效入口或引用")));
   assert.ok(lowScoreDashboard.health.scoreReasons.some((reason) => reason.label === "过时/草稿" && reason.explanation.includes("待补、TODO、draft")));
@@ -8542,6 +10012,19 @@ assert.equal(parsedDiff[0].lines.filter((line) => line.type === "add").some((lin
 
 assert.ok(SETTINGS_GEAR_ICON_PATHS[0].includes("M12.22"));
 
+function testKnowledgeBaseSource(relativePath: string, changed: boolean) {
+  return {
+    relativePath,
+    absolutePath: `/vault/${relativePath}`,
+    size: 123,
+    mtime: 456,
+    fingerprint: `fp-${relativePath}`,
+    mime: "text/markdown",
+    modality: "text" as const,
+    changed
+  };
+}
+
 async function createMaintenanceVaultForTest(prefix: string): Promise<string> {
   const vaultPath = await mkdtemp(path.join(tmpdir(), prefix));
   await mkdir(path.join(vaultPath, "raw", "articles"), { recursive: true });
@@ -8560,11 +10043,14 @@ function makeKnowledgeBaseManagerForTest(
     failSaveCall?: number;
     cancelBeforeSaveCall?: number;
     cancelViaManagerBeforeSaveCall?: number;
-    agentBackend?: "codex-cli" | "opencode";
+    agentBackend?: AgentBackendMode;
+    knowledgeBackend?: "default" | AgentBackendMode;
     beforeAgentReturn?: () => Promise<void>;
     codexTaskCalls?: Array<{ permission: string; writeScope: string }>;
     openCodeTaskCalls?: Array<{ permission: string }>;
+    hermesTaskCalls?: Array<{ permission: string }>;
     useRealOpenCodeTask?: boolean;
+    useRealHermesTask?: boolean;
     throwOnDashboardRefresh?: boolean;
     throwOnGetVaultPath?: boolean;
   } = {}
@@ -8573,7 +10059,7 @@ function makeKnowledgeBaseManagerForTest(
     settingsVersion: DEFAULT_SETTINGS.settingsVersion,
     agentBackend: options.agentBackend ?? "codex-cli",
     knowledgeBase: {
-      backend: "default",
+      backend: options.knowledgeBackend ?? "default",
       useCustomRulesFile: true,
       rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
     }
@@ -8626,6 +10112,47 @@ function makeKnowledgeBaseManagerForTest(
   if (!options.useRealOpenCodeTask) {
     (manager as any).runOpenCodeKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string) => {
       options.openCodeTaskCalls?.push({ permission });
+      await options.beforeAgentReturn?.();
+      return "Agent 输出：维护完成。";
+    };
+  }
+  if (options.useRealHermesTask) {
+    (manager as any).createKnowledgeAgentRuntime = (backend: AgentBackendMode) => {
+      if (backend !== "hermes") throw new Error(`Unexpected backend ${backend}`);
+      const hooks = ((globalThis as any).__hermesBackendTestHooks ??= {});
+      return {
+        kind: "hermes",
+        connect: async () => {
+          await hooks.onConnect?.();
+          return hooks.status ?? { connected: true, label: "Hermes", version: "0.18.0", errors: [] };
+        },
+        disconnect: async () => {
+          await hooks.onDisconnect?.();
+        },
+        listModels: async () => {
+          await hooks.onListModels?.();
+          return hooks.models ?? [];
+        },
+        runTask: async (input: any) => {
+          hooks.runTaskCalls = (hooks.runTaskCalls ?? 0) + 1;
+          input.onRunId?.(hooks.runId ?? "test-hermes-run");
+          await hooks.onRunTask?.(input);
+          if (hooks.runTaskError) throw hooks.runTaskError;
+          return hooks.runTaskResult ?? { text: "Agent 输出：维护完成。", runId: hooks.runId ?? "test-hermes-run" };
+        },
+        abort: async (runId: string) => {
+          hooks.abortCalls?.push?.(runId);
+          await hooks.onAbort?.(runId);
+        },
+        disconnect: async () => {
+          await hooks.onDisconnect?.();
+        }
+      };
+    };
+  }
+  if (!options.useRealHermesTask) {
+    (manager as any).runHermesKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string) => {
+      options.hermesTaskCalls?.push({ permission });
       await options.beforeAgentReturn?.();
       return "Agent 输出：维护完成。";
     };

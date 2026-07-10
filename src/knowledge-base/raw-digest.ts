@@ -15,6 +15,9 @@ export const RAW_DIGEST_FIELDS = {
 } as const;
 
 export const RAW_DIGEST_STATUS_DIGESTED = "已提炼";
+export const RAW_DIGEST_STATUS_PENDING_REINGEST = "待重新提炼";
+export const RAW_DIGEST_STATUS_FAILED = "提炼失败";
+export const RAW_DIGEST_STATUS_PENDING_CALIBRATION = "待校准";
 export const RAW_DIGEST_MANAGED_KEYS = new Set<string>(Object.values(RAW_DIGEST_FIELDS));
 
 export type RawDigestConfidence = "verified" | "repaired";
@@ -98,6 +101,32 @@ export function applyRawDigestFrontmatter(content: Buffer, entry: RawDigestRegis
     `${RAW_DIGEST_FIELDS.reportPath}: ${entry.reportPath}`,
     `${RAW_DIGEST_FIELDS.evidencePaths}:`,
     ...entry.evidencePaths.map((item) => `  - ${item}`)
+  ];
+  const frontmatter = [...(unmanaged ? [unmanaged] : []), ...managed].join("\n");
+  return Buffer.from(["---", frontmatter, "---"].join("\n") + "\n" + parsed.body, "utf8");
+}
+
+export function applyRawDigestStatusFrontmatter(
+  content: Buffer,
+  input: {
+    status: typeof RAW_DIGEST_STATUS_PENDING_CALIBRATION | typeof RAW_DIGEST_STATUS_PENDING_REINGEST | typeof RAW_DIGEST_STATUS_FAILED;
+    fingerprint: string;
+    reportPath: string;
+    evidencePaths?: string[];
+    digestedAt?: number;
+  }
+): Buffer {
+  const text = content.toString("utf8");
+  const parsed = splitFrontmatter(text);
+  const unmanaged = removeManagedFrontmatterFields(parsed.frontmatter).trimEnd();
+  const managed = [
+    `${RAW_DIGEST_FIELDS.processed}: false`,
+    `${RAW_DIGEST_FIELDS.status}: ${input.status}`,
+    `${RAW_DIGEST_FIELDS.digestedAt}: ${new Date(input.digestedAt ?? Date.now()).toISOString()}`,
+    `${RAW_DIGEST_FIELDS.fingerprint}: ${input.fingerprint}`,
+    `${RAW_DIGEST_FIELDS.reportPath}: ${input.reportPath}`,
+    `${RAW_DIGEST_FIELDS.evidencePaths}:`,
+    ...(input.evidencePaths ?? []).map((item) => `  - ${item}`)
   ];
   const frontmatter = [...(unmanaged ? [unmanaged] : []), ...managed].join("\n");
   return Buffer.from(["---", frontmatter, "---"].join("\n") + "\n" + parsed.body, "utf8");

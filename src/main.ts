@@ -3,8 +3,14 @@ import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
 import { diagnoseCodexError } from "./core/codex-diagnostics";
+import { HermesBackend } from "./core/hermes-backend";
+import { isSyntheticHermesDefaultModel } from "./core/hermes-models";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
 import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
+import { buildEchoInkResourceCatalog, skillResourcesForScope } from "./resources/registry";
+import { EchoInkMcpBroker } from "./resources/mcp-broker";
+import { resolveMcpConnectionConfig } from "./resources/mcp-connections";
+import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope } from "./resources/types";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
@@ -34,6 +40,13 @@ import { ReviewManager } from "./review/manager";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "./review/preview-view";
 import { isReviewHtmlPath } from "./review/schedule";
 
+export interface HermesConnectionTestResult {
+  connected: boolean;
+  providerConfigured: boolean;
+  message: string;
+  version: string;
+}
+
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
@@ -42,6 +55,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private knowledgeBase: KnowledgeBaseManager | null = null;
   private review: ReviewManager | null = null;
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
+  private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -54,7 +68,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => new EchoInkHomeView(leaf, this));
     this.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => new ReviewPreviewView(leaf, this));
 
-    this.addRibbonIcon("bot", "打开 EchoInk 首页和 Codex 侧栏", () => {
+    this.addRibbonIcon("bot", "打开 EchoInk 首页和 Agent 侧栏", () => {
       void this.activateHomeAndSidebar();
     });
 
@@ -66,17 +80,23 @@ export default class CodexForObsidianPlugin extends Plugin {
 
     this.addCommand({
       id: "open-codex-sidebar",
-      name: "打开 Codex 侧栏",
+      name: "打开 EchoInk Agent 侧栏",
       callback: () => void this.activateView()
     });
 
     this.addCommand({
       id: "new-codex-chat",
-      name: "新建 Codex 会话",
+      name: "新建 Agent 会话",
       callback: async () => {
         await this.activateView();
-        new Notice("已打开 Codex，可点击 + 新建会话");
+        new Notice("已打开 EchoInk Agent，可点击 + 新建会话");
       }
+    });
+
+    this.addCommand({
+      id: "test-hermes-connection",
+      name: "Agent：检测 Hermes 后端",
+      callback: () => void this.testHermesConnection()
     });
 
     this.addCommand({
@@ -192,6 +212,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.getViewInstance(VIEW_TYPE_CODEX, CodexView);
   }
 
+  refreshKnowledgeBaseSurfaces(): void {
+    this.getCodexView()?.refreshKnowledgeBaseDashboard();
+    const home = this.getHomeView();
+    if (home) void home.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
+  }
+
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> {
     this.settings.settingsTab = "resources";
     this.settings.resourceManagementTab = tab;
@@ -273,6 +299,18 @@ export default class CodexForObsidianPlugin extends Plugin {
       });
     }
     return this.skillsLoadPromise;
+  }
+
+  async ensureEchoInkSkillResourcesLoaded(force = false): Promise<EchoInkResource[]> {
+    const currentCatalog = buildEchoInkResourceCatalog({ settings: this.settings.resources });
+    const currentSkills = skillResourcesForScope(currentCatalog, "chat", this.settings.resources.enabledByScope);
+    if (!force && currentSkills.length) return currentSkills;
+    if (!this.echoInkSkillLoadPromise) {
+      this.echoInkSkillLoadPromise = this.loadEchoInkSkillResources(force).finally(() => {
+        this.echoInkSkillLoadPromise = null;
+      });
+    }
+    return this.echoInkSkillLoadPromise;
   }
 
   async reconnectCodex(options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
@@ -521,6 +559,203 @@ export default class CodexForObsidianPlugin extends Plugin {
         errors: [...status.errors, error instanceof Error ? error.message : String(error)]
       };
       return status.skills;
+    }
+  }
+
+  async listEchoInkMcpTools(resourceId: string, timeoutMs = 30000): Promise<unknown[]> {
+    const resource = this.currentEchoInkResource(resourceId);
+    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
+    const broker = new EchoInkMcpBroker({
+      settings: this.settings.resources.mcpBroker,
+      connections: this.settings.resources.mcpConnections
+    });
+    try {
+      const result = await broker.listTools(resource, timeoutMs);
+      this.recordEchoInkMcpConnectionSuccess(resource);
+      await this.saveSettings(true);
+      return result.tools;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordEchoInkMcpConnectionFailure(resource, message);
+      await this.saveSettings(true);
+      throw error;
+    }
+  }
+
+  async callEchoInkMcpTool(input: {
+    resourceId: string;
+    scope: EchoInkResourceScope;
+    backend: string;
+    toolName: string;
+    arguments?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<unknown> {
+    const resource = this.currentEchoInkResource(input.resourceId);
+    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
+    const broker = new EchoInkMcpBroker({
+      settings: this.settings.resources.mcpBroker,
+      connections: this.settings.resources.mcpConnections,
+      approval: async (request) => {
+        const args = request.arguments ? `\n\n参数：${JSON.stringify(request.arguments, null, 2).slice(0, 2000)}` : "";
+        return await confirmModal(
+          this.app,
+          `MCP 工具调用：${request.toolName}`,
+          `资源：${request.resource.name}\n后端：${request.backend}\n范围：${request.scope}${args}`,
+          "允许",
+          "拒绝"
+        );
+      }
+    });
+    try {
+      const result = await broker.callTool({
+        resource,
+        scope: input.scope,
+        backend: input.backend,
+        toolName: input.toolName,
+        arguments: input.arguments,
+        timeoutMs: input.timeoutMs
+      });
+      this.recordEchoInkMcpConnectionSuccess(resource);
+      return result.content;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordEchoInkMcpConnectionFailure(resource, message);
+      throw error;
+    } finally {
+      await this.saveSettings(true);
+    }
+  }
+
+  private recordEchoInkMcpConnectionSuccess(resource: EchoInkResource): void {
+    const record = this.ensureEchoInkMcpConnectionRecord(resource);
+    if (!record) return;
+    record.verifiedAt = Date.now();
+    record.lastError = "";
+  }
+
+  private recordEchoInkMcpConnectionFailure(resource: EchoInkResource, message: string): void {
+    const record = this.ensureEchoInkMcpConnectionRecord(resource);
+    if (!record) return;
+    record.lastError = message;
+  }
+
+  private ensureEchoInkMcpConnectionRecord(resource: EchoInkResource): EchoInkMcpConnectionRecord | null {
+    const existing = this.settings.resources.mcpConnections[resource.id];
+    if (existing) return existing;
+    const config = resolveMcpConnectionConfig(resource, this.settings.resources);
+    if (!config) return null;
+    const record = { ...config };
+    this.settings.resources.mcpConnections[resource.id] = record;
+    return record;
+  }
+
+  async testHermesConnection(options: { notify?: boolean } = {}): Promise<HermesConnectionTestResult> {
+    const notify = options.notify !== false;
+    const hermes = this.settings.agents.hermes;
+    if (isSyntheticHermesDefaultModel(hermes.providerId, hermes.modelId)) {
+      hermes.providerId = "";
+      hermes.modelId = "";
+      hermes.providerConfigured = false;
+      hermes.lastProviderCheckAt = 0;
+      hermes.lastProviderError = "";
+    }
+    const backend = new HermesBackend({
+      ...hermes,
+      vaultPath: this.getVaultPath()
+    });
+    try {
+      await backend.connect();
+      const models = await backend.listModels();
+      const info = backend.getConnectionInfo();
+      hermes.version = info.version;
+      hermes.lastConnectedAt = Date.now();
+      hermes.lastError = "";
+      const configuredModel = models.find((model) => model.providerId === hermes.providerId && model.modelId === hermes.modelId);
+      const selectedModel = configuredModel ?? (hermes.providerId || hermes.modelId ? models[0] : null);
+      if (selectedModel) {
+        hermes.providerId = selectedModel.providerId;
+        hermes.modelId = selectedModel.modelId;
+      }
+      try {
+        await backend.runTask({
+          prompt: "只回复 PONG",
+          permission: "read-only",
+          timeoutMs: 60000,
+          ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
+          profile: hermes.profile
+        });
+        hermes.providerConfigured = true;
+        hermes.lastProviderCheckAt = Date.now();
+        hermes.lastProviderError = "";
+      } catch (providerError) {
+        hermes.providerConfigured = false;
+        hermes.lastProviderCheckAt = Date.now();
+        hermes.lastProviderError = providerError instanceof Error ? providerError.message : String(providerError);
+      }
+      await this.saveSettings(true);
+      const message = hermes.providerConfigured
+        ? `Hermes 已检测：${info.version || "version unknown"}，provider 可用`
+        : `Hermes CLI 可用，但 provider 未通过：${hermes.lastProviderError}`;
+      if (notify) new Notice(message);
+      return {
+        connected: true,
+        providerConfigured: hermes.providerConfigured,
+        message,
+        version: info.version
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      hermes.lastError = message;
+      await this.saveSettings(true);
+      if (notify) new Notice(`Hermes 检测失败：${message}`);
+      return {
+        connected: false,
+        providerConfigured: false,
+        message,
+        version: ""
+      };
+    } finally {
+      await backend.disconnect().catch(() => undefined);
+    }
+  }
+
+  private currentEchoInkResource(resourceId: string): EchoInkResource | null {
+    return buildEchoInkResourceCatalog({ settings: this.settings.resources }).find((resource) => resource.id === resourceId) ?? null;
+  }
+
+  private async loadEchoInkSkillResources(force: boolean): Promise<EchoInkResource[]> {
+    const codexSkills = await this.loadSkills(force).catch(() => this.lastStatus?.skills ?? []);
+    const hermesSkills = await this.loadHermesSkillResources().catch((error) => {
+      this.settings.resources.lastError = error instanceof Error ? error.message : String(error);
+      return [];
+    });
+    this.settings.resources.catalog = buildEchoInkResourceCatalog({
+      codex: { skills: codexSkills },
+      hermes: { skills: hermesSkills },
+      settings: this.settings.resources
+    });
+    if (codexSkills.length) this.settings.resources.importedFrom["codex-import"] = Date.now();
+    if (hermesSkills.length) this.settings.resources.importedFrom["hermes-import"] = Date.now();
+    this.settings.resources.lastScannedAt = Date.now();
+    if (codexSkills.length || hermesSkills.length) this.settings.resources.lastError = "";
+    await this.saveSettings(true);
+    return skillResourcesForScope(
+      buildEchoInkResourceCatalog({ settings: this.settings.resources }),
+      "chat",
+      this.settings.resources.enabledByScope
+    );
+  }
+
+  private async loadHermesSkillResources() {
+    const backend = new HermesBackend({
+      ...this.settings.agents.hermes,
+      vaultPath: this.getVaultPath()
+    });
+    try {
+      await backend.connect();
+      return await backend.listSkills();
+    } finally {
+      await backend.disconnect().catch(() => undefined);
     }
   }
 

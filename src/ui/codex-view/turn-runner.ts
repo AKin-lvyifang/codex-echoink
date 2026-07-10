@@ -1,11 +1,20 @@
 import { Notice } from "obsidian";
+import * as path from "path";
+import { getAgentBackendDefinition } from "../../agent/registry";
+import { runAgentTaskWithEvents } from "../../agent/simple-task";
+import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
+import type { AgentBackendKind, AgentPromptPart } from "../../agent/types";
+import { buildCallableMcpToolCatalog } from "../../resources/mcp-tool-catalog";
+import { buildEchoInkResourceCatalog, prepareAgentResources } from "../../resources/registry";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
 import { newId } from "../../settings/settings";
-import { buildUserInput } from "../../core/mapping";
+import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapping";
 import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
+import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
 import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./knowledge-context-bridge";
+import { createAgentEventRenderState, reduceAgentEventForChat, type AgentChatRenderState } from "./agent-event-renderer";
 
 export async function sendMessage(view: any): Promise<void> {
   if (view.editorSummaryRun) view.cancelEditorSummaryRun("用户输入抢占摘要");
@@ -148,7 +157,9 @@ export async function startQueuedTurnItemSafely(view: any, item: QueuedTurnItem,
   }
 }
 
-export async function startChatTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "failed"> {
+export async function startChatTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+  const backend = resolveChatBackend(view);
+  if (backend !== "codex-cli") return await startSimpleAgentChatTurn(view, session, item, source, backend);
   try {
     const status = await view.plugin.ensureCodexConnected();
     view.applyStatus();
@@ -196,7 +207,14 @@ export async function startChatTurn(view: any, session: StoredSession, item: Que
       });
     }
     const knowledgeContextBridge = view.isKnowledgeBaseSession(session) ? buildKnowledgeContextBridgeForThread(session, session.threadId) : null;
-    const input = buildUserInput(item.text, turnAttachments, item.skill);
+    const resourceSettings = view.plugin.settings?.resources;
+    const resources = prepareAgentResources(buildEchoInkResourceCatalog({ settings: resourceSettings }), {
+      scope: "chat",
+      backendCapabilities: getAgentBackendDefinition("codex-cli").capabilities,
+      enabledByScope: resourceSettings?.enabledByScope,
+      mcpConnections: resourceSettings?.mcpConnections
+    });
+    const input = buildUserInput(item.text, turnAttachments, item.skill, buildCodexChatStyleInstruction(resources));
     if (knowledgeContextBridge) {
       input.splice(Math.min(1, input.length), 0, { type: "text", text: knowledgeContextBridge.text, text_elements: [] });
     }
@@ -225,6 +243,132 @@ export async function startChatTurn(view: any, session: StoredSession, item: Que
   }
 }
 
+async function startSimpleAgentChatTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue", backend: Exclude<AgentBackendKind, "codex-cli">): Promise<"completed" | "failed"> {
+  const runId = newId("run");
+  view.activeRunId = runId;
+  view.activeRunKind = "chat";
+  view.activeRunSessionId = session.id;
+  const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
+  const userMessage: ChatMessage = {
+    id: newId("msg"),
+    role: "user",
+    text: item.text || "(附件)",
+    runId,
+    attachments: turnAttachments,
+    images: turnAttachments.filter((attachment) => attachment.type === "image"),
+    createdAt: Date.now()
+  };
+  const assistantMessage: ChatMessage = {
+    id: newId("msg"),
+    role: "assistant",
+    title: backend === "hermes" ? "Hermes" : "OpenCode",
+    itemType: "assistant",
+    status: "running",
+    text: backend === "hermes" ? "Hermes 正在处理..." : "OpenCode 正在处理...",
+    runId,
+    createdAt: Date.now()
+  };
+  let renderState = createAgentEventRenderState(backend);
+  await view.plugin.externalizeMessageText(userMessage, userMessage.text);
+  session.messages.push(userMessage, assistantMessage);
+  session.updatedAt = Date.now();
+  if (session.title === "新会话" && item.text) session.title = item.text.slice(0, 20);
+  if (source === "composer") view.clearComposerDraft();
+  view.running = true;
+  view.turnStartedAt = Date.now();
+  view.renderTabs();
+  view.renderMessagesIfActive(session);
+  view.renderToolbar();
+  view.applyStatus();
+  try {
+    await view.plugin.saveSettings(true);
+    const resourceSettings = view.plugin.settings?.resources;
+    const catalog = buildEchoInkResourceCatalog({ settings: resourceSettings });
+    const resources = prepareAgentResources(catalog, {
+      scope: "chat",
+      backendCapabilities: getAgentBackendDefinition(backend).capabilities,
+      enabledByScope: resourceSettings?.enabledByScope,
+      mcpConnections: resourceSettings?.mcpConnections
+    });
+    const callableMcpTools = await buildCallableMcpToolCatalog({
+      resources: catalog,
+      scope: "chat",
+      enabledByScope: resourceSettings?.enabledByScope,
+      connections: resourceSettings?.mcpConnections,
+      listTools: async (resource) => await view.plugin.listEchoInkMcpTools(resource.id, 10000)
+    });
+    const toolBridge = createEchoInkMcpToolBridgeRuntime({
+      catalog: callableMcpTools,
+      scope: "chat",
+      callTool: async (request) => await view.plugin.callEchoInkMcpTool(request)
+    });
+    const output = await runAgentTaskWithEvents({
+      backend,
+      settings: view.plugin.settings,
+      vaultPath: view.plugin.getVaultPath(),
+      title: session.title || "EchoInk Agent Chat",
+      prompt: buildSimpleChatPrompt(item.text, item.skill),
+      parts: buildAttachmentParts(view.plugin.getVaultPath(), turnAttachments),
+      resources,
+      toolBridge,
+      permission: item.turnOptions.permission,
+      timeoutMs: 120000
+    }, (event) => {
+      renderState = reduceAgentEventForChat(renderState, event);
+      applyAgentChatRenderState(assistantMessage, renderState);
+      session.updatedAt = Date.now();
+      view.renderMessagesIfActive(session);
+      view.renderToolbar();
+    });
+    assistantMessage.status = "completed";
+    assistantMessage.itemType = "assistant";
+    assistantMessage.text = (renderState.text || output.text).trim() || "Agent 未返回内容。";
+    assistantMessage.details = formatAgentEventDetails(renderState);
+    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+    await view.plugin.saveSettings(true);
+    return "completed";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assistantMessage.status = "failed";
+    assistantMessage.title = `${backend === "hermes" ? "Hermes" : "OpenCode"} 发送失败`;
+    assistantMessage.itemType = "error";
+    assistantMessage.text = message;
+    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
+    await view.plugin.saveSettings(true).catch(() => undefined);
+    new Notice(`${backend === "hermes" ? "Hermes" : "OpenCode"} 发送失败：${message}`);
+    return "failed";
+  } finally {
+    view.running = false;
+    view.activeTurnId = "";
+    view.clearTurnWatchdog();
+    view.clearActiveRun();
+    session.updatedAt = Date.now();
+    view.renderMessages({ forceBottom: true });
+    view.renderToolbar();
+    view.applyStatus();
+  }
+}
+
+function applyAgentChatRenderState(message: ChatMessage, state: AgentChatRenderState): void {
+  message.status = state.status;
+  message.itemType = state.itemType;
+  message.title = state.title;
+  message.text = state.text || message.text;
+  if (state.runId) message.runId = state.runId;
+  message.details = formatAgentEventDetails(state);
+}
+
+function formatAgentEventDetails(state: AgentChatRenderState): string {
+  const thinking = state.thinkingBlocks
+    .filter((block) => block.text.trim())
+    .map((block) => `Thinking: ${block.text.trim()}`);
+  const tools = state.toolCalls.map((tool) => {
+    const suffix = tool.output ? ` — ${tool.output}` : "";
+    return `Tool ${tool.status}: ${tool.name}${suffix}`;
+  });
+  return [...thinking, ...tools].join("\n");
+}
+
 export async function startKnowledgeBaseTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
   const manager = view.plugin.getKnowledgeBaseManager();
   if (!manager) {
@@ -247,6 +391,8 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
     createdAt: Date.now()
   };
   await view.plugin.externalizeMessageText(userMessage, userMessage.text);
+  const command = parseKnowledgeBaseCommand(item.text, turnAttachments.length);
+  const runMode = knowledgeBaseRunModeForCommandIntent(command.intent);
   const assistantMessage: ChatMessage = {
     id: newId("msg"),
     role: "assistant",
@@ -255,6 +401,7 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
     status: "running",
     text: "正在识别命令并执行...",
     runId,
+    ...(runMode ? { knowledgeBaseUi: buildKnowledgeBaseRunPayload(runMode) } : {}),
     createdAt: Date.now()
   };
   session.messages.push(userMessage, assistantMessage);
@@ -274,6 +421,8 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
     assistantMessage.status = knowledgeBaseMessageStatusFromResult(result.status);
     assistantMessage.text = result.message;
     assistantMessage.citations = result.citations;
+    if (result.ui) assistantMessage.knowledgeBaseUi = result.ui;
+    else delete assistantMessage.knowledgeBaseUi;
     if (result.status === "success" && appendKnowledgeContextBridge(session, item.text, turnAttachments.length, assistantMessage, result.citations)) {
       assistantMessage.details = knowledgeContextBridgeDetailText(result.citations);
     }
@@ -295,6 +444,7 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
   } catch (error) {
     turnError = error;
     assistantMessage.status = "failed";
+    delete assistantMessage.knowledgeBaseUi;
     assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
   } finally {
     view.running = false;
@@ -394,6 +544,55 @@ function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"]) 
     reasoning: turnOptions.reasoning,
     serviceTier: turnOptions.serviceTier,
     mcpEnabled: turnOptions.mcpEnabled,
-    workspaceResources: turnOptions.workspaceResources
+    workspaceResources: turnOptions.workspaceResources,
+    hermesTaskTimeoutMs: 120000
   };
+}
+
+function resolveChatBackend(view: any): AgentBackendKind {
+  const settings = view.plugin?.settings;
+  if (!settings) return "codex-cli";
+  const choice = settings.capabilities?.chatBackend ?? "default";
+  return choice === "default" ? settings.agentBackend ?? "codex-cli" : choice;
+}
+
+function buildSimpleChatPrompt(text: string, skill: QueuedTurnItem["skill"]): string {
+  return [
+    skill ? `本轮启用 Skill：/${skill.name}\n${skill.description || skill.contentPath || ""}` : "",
+    text || "请根据附件继续。"
+  ].filter(Boolean).join("\n\n");
+}
+
+function buildCodexChatStyleInstruction(resources: ReturnType<typeof prepareAgentResources>): string {
+  return [
+    resources.promptPrefix,
+    resources.warnings.length ? `资源提示：\n${resources.warnings.map((item) => `- ${item}`).join("\n")}` : "",
+    DEFAULT_REPLY_STYLE_INSTRUCTION
+  ].filter(Boolean).join("\n\n");
+}
+
+function buildAttachmentParts(vaultPath: string, attachments: StoredAttachment[]): AgentPromptPart[] {
+  return attachments.map((attachment): AgentPromptPart => {
+    const absolutePath = path.isAbsolute(attachment.path) ? attachment.path : path.join(vaultPath, attachment.path);
+    return {
+      type: "file",
+      path: absolutePath,
+      filename: attachment.name || path.basename(attachment.path),
+      mime: mimeForAttachment(attachment)
+    };
+  });
+}
+
+function mimeForAttachment(attachment: StoredAttachment): string {
+  const ext = path.extname(attachment.path || attachment.name).toLowerCase();
+  if (attachment.type === "image") {
+    if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+    if (ext === ".webp") return "image/webp";
+    if (ext === ".gif") return "image/gif";
+    return "image/png";
+  }
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".md" || ext === ".markdown") return "text/markdown";
+  return "text/plain";
 }

@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
 
-export type JournalEvidenceBackend = "codex-cli" | "opencode";
+export type JournalEvidenceBackend = "codex-cli" | "opencode" | "hermes";
 
 export interface JournalEvidenceWindow {
   start: Date;
@@ -84,8 +84,8 @@ export function buildKnowledgeBaseJournalPrompt(input: {
 }): string {
   const generatedAt = input.generatedAt ?? new Date();
   const backend = input.backend ?? "codex-cli";
-  const sourceLabel = backend === "opencode" ? "OpenCode API" : "Codex CLI";
-  const workLabel = backend === "opencode" ? "OpenCode" : "Codex";
+  const sourceLabel = backend === "opencode" ? "OpenCode API" : backend === "hermes" ? "Hermes" : "Codex CLI";
+  const workLabel = backend === "opencode" ? "OpenCode" : backend === "hermes" ? "Hermes" : "Codex";
   return [
     "你正在执行 Codex Obsidian Daily Journal。",
     "",
@@ -185,6 +185,13 @@ function buildJournalEvidenceInstructions(backend: JournalEvidenceBackend, targe
       "",
       "### OpenCode 当天聊天记录摘要",
       ...formatOpenCodeHistoryForPrompt(openCodeHistory, target.evidenceWindow)
+    ];
+  }
+  if (backend === "hermes") {
+    return [
+      "- 当前知识库后端是 Hermes，所以“当天记录”必须按 Hermes profile / memory / sessions 能力理解，不要把 Codex sessions 当作主证据。",
+      "- 第一版 EchoInk 还未把 Hermes memory/session 摘要预读进 prompt；如需复核当天记录，优先读取当前 Vault、outputs、journal、inbox 和 Hermes 自己可访问的本地记录。",
+      "- 如果无法复核 Hermes 历史，只能基于用户本次指令、最近日记样本和真实文件变更写短版，不要编造。"
     ];
   }
   return [

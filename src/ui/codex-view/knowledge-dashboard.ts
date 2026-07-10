@@ -31,6 +31,7 @@ export interface KnowledgeDashboardTooltipState {
 
 const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING = 16;
 const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS = 360;
+const KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT = 24;
 const HEATMAP_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function createKnowledgeDashboardTooltipState(): KnowledgeDashboardTooltipState {
@@ -183,7 +184,7 @@ function addKnowledgeDashboardHealthMetric(container: HTMLElement, health: Knowl
 function renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot, tooltipState: KnowledgeDashboardTooltipState): void {
   const section = addKnowledgeDashboardSection(container, "健康概览");
   const overview = section.createDiv({ cls: "codex-kb-dashboard-health-overview" });
-  addKnowledgeDashboardMeter(
+  addKnowledgeDashboardEnergyMeter(
     overview,
     "知识库健康",
     snapshot.health.score,
@@ -192,7 +193,7 @@ function renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: Knowle
     tooltipState,
     snapshot.health
   );
-  addKnowledgeDashboardMeter(
+  addKnowledgeDashboardEnergyMeter(
     overview,
     "体检新鲜度",
     snapshot.checkFreshness.score,
@@ -220,7 +221,7 @@ function renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: Knowle
   }
 }
 
-function addKnowledgeDashboardMeter(
+function addKnowledgeDashboardEnergyMeter(
   container: HTMLElement,
   label: string,
   scoreValue: number,
@@ -229,15 +230,23 @@ function addKnowledgeDashboardMeter(
   tooltipState: KnowledgeDashboardTooltipState,
   healthTooltip?: KnowledgeBaseDashboardSnapshot["health"]
 ): void {
-  const row = container.createDiv({ cls: "codex-kb-dashboard-meter-row" });
+  const safeScore = Math.max(0, Math.min(100, Math.round(scoreValue)));
+  const activeCellCount = Math.round((safeScore / 100) * KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT);
+  const row = container.createDiv({
+    cls: `codex-kb-dashboard-energy-row ${statusClass}`,
+    attr: { "aria-label": `${label} ${safeScore}% ${statusLabel}` }
+  });
   row.createDiv({ cls: "codex-kb-dashboard-meter-label", text: label });
-  const score = row.createDiv({ cls: "codex-kb-dashboard-score" });
-  const scoreValueEl = score.createSpan({ cls: "codex-kb-dashboard-score-value" });
-  scoreValueEl.createSpan({ cls: "codex-kb-dashboard-score-label", text: `${scoreValue}` });
-  if (healthTooltip) addKnowledgeDashboardHealthTooltip(scoreValueEl, healthTooltip, "meter", tooltipState);
-  const track = score.createDiv({ cls: "codex-kb-dashboard-score-track" });
-  const fill = track.createDiv({ cls: `codex-kb-dashboard-score-fill ${statusClass}` });
-  fill.setCssStyles({ width: `${Math.max(0, Math.min(100, scoreValue))}%` });
+  const percent = row.createDiv({ cls: "codex-kb-dashboard-energy-percent" });
+  const percentValue = percent.createSpan({ cls: "codex-kb-dashboard-energy-percent-value", text: `${safeScore}%` });
+  if (healthTooltip) addKnowledgeDashboardHealthTooltip(percentValue, healthTooltip, "meter", tooltipState);
+  const track = row.createDiv({ cls: "codex-kb-dashboard-energy-track", attr: { "aria-hidden": "true" } });
+  for (let index = 0; index < KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT; index++) {
+    const cellClass = index < activeCellCount
+      ? `codex-kb-dashboard-energy-cell is-on ${statusClass}`
+      : "codex-kb-dashboard-energy-cell";
+    track.createSpan({ cls: cellClass });
+  }
   const status = row.createDiv({ cls: `codex-kb-dashboard-health-badge ${statusClass}` });
   status.createSpan({ cls: "codex-kb-status-dot" });
   status.createSpan({ text: statusLabel });

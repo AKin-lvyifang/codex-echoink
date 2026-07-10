@@ -2,11 +2,12 @@ import * as fs from "fs";
 import * as path from "path";
 import { ItemView, MarkdownView, normalizePath, Notice, Platform, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import type { ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
+import type { AgentBackendMode, ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
 import { ensureKnowledgeBaseSession, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
+import type { EchoInkResource } from "../resources/types";
+import { buildEchoInkResourceCatalog, hasEnabledMcpResources, skillResourcesForScope, workspaceResourcesFromEchoInkResources } from "../resources/registry";
 import type {
   CodexNotification,
-  CodexSkill,
   McpServerStatus,
   PermissionMode,
   ProcessFileRef,
@@ -147,8 +148,9 @@ export class CodexView extends ItemView {
   private pendingRenderFromScroll = false;
   private measureScheduled = false;
   private pendingMeasureForceBottom = false;
+  private knowledgeBaseRunProgressTimer: number | null = null;
   private messageListRenderer = new CodexMessageListRenderer();
-  private selectedSkill: CodexSkill | null = null;
+  private selectedSkill: EchoInkResource | null = null;
   private attachments: StoredAttachment[] = [];
   private selectedModel = "";
   private selectedReasoning: ReasoningEffort;
@@ -227,9 +229,10 @@ export class CodexView extends ItemView {
     this.clearTurnWatchdog();
     this.clearEditorActionStatusTimers();
     this.clearEditorSummaryTimers();
+    this.clearKnowledgeBaseRunProgressTimer();
     this.clearKnowledgeDashboardHealthTooltips();
-    this.rejectEditorActionRun(new Error("Codex 侧栏已关闭"));
-    this.rejectEditorSummaryRun(new Error("Codex 侧栏已关闭"));
+    this.rejectEditorActionRun(new Error("EchoInk Agent 侧栏已关闭"));
+    this.rejectEditorSummaryRun(new Error("EchoInk Agent 侧栏已关闭"));
     await this.plugin.saveSettings(true);
   }
 
@@ -783,6 +786,7 @@ export class CodexView extends ItemView {
       readRawMessageText: (rawRef) => this.plugin.readRawMessageText(rawRef),
       onOpenKnowledgeHistory: () => void this.openKnowledgeBaseHistory(session),
       onScheduleMeasure: () => this.scheduleMeasureVirtualRows(),
+      onScheduleRunProgress: () => this.scheduleKnowledgeBaseRunProgress(),
       options
     });
   }
@@ -877,6 +881,7 @@ export class CodexView extends ItemView {
         selectedSkill: this.selectedSkill,
         selectedPermission: this.selectedPermission,
         running: this.running,
+        viewRunKind: this.activeRunKind,
         hasDraft: this.hasComposerDraft(),
         hasQueuedItems: this.turnQueue.hasQueuedItems(session.id),
         currentComposerSummary: this.currentComposerSummary(),
@@ -987,7 +992,7 @@ export class CodexView extends ItemView {
         onSkillsRequested: () => {
           this.skillsRequested = true;
         },
-        onLoadSkills: () => this.plugin.ensureSkillsLoaded(true),
+        onLoadSkills: () => this.plugin.ensureEchoInkSkillResourcesLoaded(true),
         onRenderMatches: () => this.renderSkillMatches()
       }
     );
@@ -1144,6 +1149,12 @@ export class CodexView extends ItemView {
     this.focusInput();
   }
 
+  async submitKnowledgeBaseCommand(command: string): Promise<void> {
+    await this.plugin.activateKnowledgeBaseChannel();
+    this.fillKnowledgeBaseCommand(command);
+    await this.sendMessage();
+  }
+
   private openModelMenu(event: MouseEvent): void {
     showModelMenu(event, this.composerModelMenuState(), {
       onSelectModel: (model) => this.selectComposerModel(model),
@@ -1269,8 +1280,7 @@ export class CodexView extends ItemView {
       this.skillMenuEl,
       query,
       {
-        skills: this.plugin.lastStatus?.skills ?? [],
-        skillOverrides: this.plugin.settings.workspaceResources.skills,
+        skills: skillResourcesForScope(this.currentEchoInkResourceCatalog(), "chat", this.plugin.settings.resources.enabledByScope),
         selectedSkill: this.selectedSkill
       },
       {
@@ -1304,6 +1314,7 @@ export class CodexView extends ItemView {
     const knowledgeManager = this.plugin.getKnowledgeBaseManager();
     return composerStateForRuntimeState({
       viewRunning: this.running,
+      viewRunKind: this.activeRunKind,
       globalKnowledgeTaskRunning: Boolean(knowledgeManager?.isRunning),
       hasDraft: this.hasComposerDraft(),
       hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
@@ -1353,7 +1364,7 @@ export class CodexView extends ItemView {
     return await startQueuedTurnItemSafelyRunner(this, item, source);
   }
 
-  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "failed"> {
+  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
     return await startChatTurnRunner(this, session, item, source);
   }
 
@@ -1508,7 +1519,7 @@ export class CodexView extends ItemView {
   }
 
   private editorActionStartBlockReason(): string | null {
-    if (this.editorActionHarnessRunId) return "Codex 正在处理上一轮，请稍后再试";
+    if (this.editorActionHarnessRunId) return "Agent 正在处理上一轮，请稍后再试";
     const reason = editorActionStartBlockReason({
       running: this.running,
       activeRunId: this.activeRunId,
@@ -1692,7 +1703,11 @@ export class CodexView extends ItemView {
   }
 
   private currentTurnOptions(session?: StoredSession) {
-    const cwd = session && !this.isKnowledgeBaseSession(session) ? normalizeWorkspacePath(session.cwd) : "";
+    const knowledgeSession = session ? this.isKnowledgeBaseSession(session) : false;
+    const cwd = session && !knowledgeSession ? normalizeWorkspacePath(session.cwd) : "";
+    const catalog = this.currentEchoInkResourceCatalog();
+    const resourceScope = knowledgeSession ? "knowledge" : "chat";
+    const workspaceResources = workspaceResourcesFromEchoInkResources(catalog, resourceScope, this.plugin.settings.resources.enabledByScope);
     return {
       ...(cwd ? { cwd } : {}),
       model: this.effectiveModel(),
@@ -1700,9 +1715,13 @@ export class CodexView extends ItemView {
       serviceTier: this.selectedServiceTier,
       permission: this.selectedPermission,
       mode: this.selectedMode,
-      mcpEnabled: this.plugin.settings.mcpEnabled,
-      workspaceResources: this.plugin.settings.workspaceResources
+      mcpEnabled: hasEnabledMcpResources(catalog, resourceScope, this.plugin.settings.resources.enabledByScope),
+      workspaceResources
     };
+  }
+
+  private currentEchoInkResourceCatalog(): EchoInkResource[] {
+    return buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
   }
 
   private activeProviderModels(): string[] {
@@ -1711,7 +1730,7 @@ export class CodexView extends ItemView {
     return provider ? getApiProviderModels(provider) : [];
   }
 
-  private resolvedKnowledgeBackend(): "codex-cli" | "opencode" {
+  private resolvedKnowledgeBackend(): AgentBackendMode {
     const configured = this.plugin.settings.knowledgeBase.backend;
     return configured === "default" ? this.plugin.settings.agentBackend : configured;
   }
@@ -2058,6 +2077,8 @@ export class CodexView extends ItemView {
       status: message.status,
       details: message.details,
       diffSummary: message.diffSummary,
+      citations: message.citations,
+      knowledgeBaseUi: message.knowledgeBaseUi,
       attachments: message.attachments,
       files: message.files,
       images: message.images
@@ -2148,7 +2169,7 @@ export class CodexView extends ItemView {
     this.editorActionActiveTimeoutMs = 0;
     this.activeThinkingMessageId = "";
     this.activePlanMessageId = "";
-    this.activeItemMessages.clear();
+    this.activeItemMessages?.clear?.();
   }
 
   private attachTurnIdToRun(session: StoredSession, turnId: string): void {
@@ -2191,6 +2212,21 @@ export class CodexView extends ItemView {
       this.measureScheduled = false;
       this.measureVisibleVirtualRows(shouldForceBottom);
     });
+  }
+
+  private scheduleKnowledgeBaseRunProgress(): void {
+    if (this.knowledgeBaseRunProgressTimer !== null) return;
+    this.knowledgeBaseRunProgressTimer = window.setTimeout(() => {
+      this.knowledgeBaseRunProgressTimer = null;
+      const forceBottom = this.isMessagesNearBottom();
+      this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
+    }, 700);
+  }
+
+  private clearKnowledgeBaseRunProgressTimer(): void {
+    if (this.knowledgeBaseRunProgressTimer === null) return;
+    window.clearTimeout(this.knowledgeBaseRunProgressTimer);
+    this.knowledgeBaseRunProgressTimer = null;
   }
 
   private measureVisibleVirtualRows(forceBottom = false): boolean {

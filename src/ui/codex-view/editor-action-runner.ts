@@ -1,4 +1,8 @@
 import { Notice } from "obsidian";
+import { getAgentBackendDefinition } from "../../agent/registry";
+import { runAgentTaskWithEvents } from "../../agent/simple-task";
+import type { AgentBackendKind } from "../../agent/types";
+import { buildEchoInkResourceCatalog, prepareAgentResources, workspaceResourcesFromEchoInkResources } from "../../resources/registry";
 import { newId, resolveEditorActionModeConfig } from "../../settings/settings";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt } from "../../editor-actions/prompt";
 import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options";
@@ -6,6 +10,7 @@ import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, re
 import type { ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionRequest } from "../../editor-actions/types";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../../editor-actions/output";
 import type { ArticleUnderstandingPanelState } from "./header";
+import { agentEventToEditorStatus } from "./agent-event-renderer";
 
 export async function sendEditorActionRequest(view: any, request: EditorActionRequest): Promise<string> {
   if (view.editorSummaryRun) view.cancelEditorSummaryRun("写作操作抢占文章理解");
@@ -25,12 +30,15 @@ export async function sendEditorActionRequest(view: any, request: EditorActionRe
       usedInLastRun: false
     });
     view.setEditorActionStatus({ status: "connecting", actionLabel: request.action.label, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label, filePath: request.source.filePath, model: request.modeConfig.model, startedAt: requestStartedAt });
-    const status = await view.withEditorActionTimeout(view.plugin.ensureCodexConnected(false, { silent: true }), timeoutMs, "写作操作连接超时");
+    const backend = resolveEditorActionBackend(view);
+    const status = backend === "codex-cli"
+      ? await view.withEditorActionTimeout(view.plugin.ensureCodexConnected(false, { silent: true }), timeoutMs, "写作操作连接超时")
+      : null;
     view.applyStatus();
-    if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
+    if (status && !status.connected) throw new Error(status.errors[0] || "Codex 未连接");
 
-    const availableModels = status.models.map((model: any) => model.model);
-    const model = view.effectiveEditorActionModel(availableModels, request.modeConfig.model);
+    const availableModels = status ? status.models.map((model: any) => model.model) : [];
+    const model = editorActionModelForBackend(view, backend, availableModels, request.modeConfig.model);
     const understanding = await ensureArticleUnderstanding(view, request, availableModels, model, timeoutMs);
     const snapshot = understanding
       ? {
@@ -68,10 +76,10 @@ export async function sendEditorActionRequest(view: any, request: EditorActionRe
         startedAt: requestStartedAt
       });
     }
-    view.prewarmEditorActionThread();
+    if (backend === "codex-cli") view.prewarmEditorActionThread();
     return result;
   } catch (error) {
-    const diagnostic = view.diagnoseCodexFailure(error);
+    const diagnostic = resolveEditorActionDiagnostic(view, error);
     view.rejectEditorActionRun(new Error(diagnostic.text));
     view.running = false;
     view.activeTurnId = "";
@@ -81,7 +89,7 @@ export async function sendEditorActionRequest(view: any, request: EditorActionRe
     view.editorActionCurrentItemIds.clear();
     view.applyStatus();
     setArticleUnderstandingPanelState(view, { ...view.articleUnderstandingPanelState, status: "failed", error: diagnostic.text });
-    view.prewarmEditorActionThread();
+    if (resolveEditorActionBackend(view) === "codex-cli") view.prewarmEditorActionThread();
     throw error;
   } finally {
     if (view.editorActionHarnessRunId === harnessRunId) view.editorActionHarnessRunId = "";
@@ -171,17 +179,27 @@ export async function runEditorActionPromptTurn(view: any, input: {
   timeoutMs: number;
   startedAt: number;
 }): Promise<string> {
+  const backend = resolveEditorActionBackend(view);
+  if (backend !== "codex-cli") return await runSimpleEditorActionPromptTurn(view, input, backend);
   const runId = newId(`editor-${input.phase}-run`);
   view.editorActionCurrentItemIds.clear();
   const waitForResult = new Promise<string>((resolve, reject) => {
     view.editorActionRun = { runId, text: "", resolve, reject };
   });
+  const catalog = buildEchoInkResourceCatalog({ settings: view.plugin.settings.resources });
+  const resources = prepareAgentResources(catalog, {
+    scope: "editor-actions",
+    backendCapabilities: getAgentBackendDefinition("codex-cli").capabilities,
+    enabledByScope: view.plugin.settings.resources.enabledByScope,
+    mcpConnections: view.plugin.settings.resources.mcpConnections
+  });
   const turnOptions = buildEditorActionTurnOptions({
     model: input.model,
     serviceTier: view.selectedServiceTier,
     timeoutMs: input.timeoutMs,
-    workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
+    workspaceResources: workspaceResourcesFromEchoInkResources(catalog, "editor-actions", view.plugin.settings.resources.enabledByScope)
   });
+  const prompt = appendPreparedResourcesToPrompt(input.prompt, resources);
   try {
     view.activeRunId = runId;
     view.activeRunSessionId = "";
@@ -191,11 +209,85 @@ export async function runEditorActionPromptTurn(view: any, input: {
     view.editorActionThreadIds.add(view.editorActionThreadId);
     view.setEditorActionStatus({ status: "generating", actionLabel: input.actionLabel, qualityMode: input.qualityMode, modeLabel: input.modeLabel, phase: input.phase, model: input.model, message: input.statusMessage, startedAt: input.startedAt });
     view.applyStatus();
-    view.activeTurnId = await view.plugin.codex!.startTurn(view.editorActionThreadId, [{ type: "text", text: input.prompt, text_elements: [] }], turnOptions);
+    view.activeTurnId = await view.plugin.codex!.startTurn(view.editorActionThreadId, [{ type: "text", text: prompt, text_elements: [] }], turnOptions);
     view.editorActionTurnIds.add(view.activeTurnId);
     view.armTurnWatchdog(input.timeoutMs, `${input.actionLabel}超时，请重试`);
     const result = await view.withEditorActionTimeout(waitForResult, input.timeoutMs, `${input.actionLabel}超时，请重试`);
     const cleaned = cleanEditorActionOutput(result);
+    const validation = validateEditorActionCandidateText(cleaned);
+    if (!validation.ok) throw new Error(validation.reason);
+    view.resolveEditorActionRun(cleaned);
+    view.setEditorActionStatus({ status: "awaiting-confirm", actionLabel: input.actionLabel, qualityMode: input.qualityMode, modeLabel: input.modeLabel, model: input.model, message: "候选已生成，等待确认", startedAt: input.startedAt });
+    return cleaned;
+  } catch (error) {
+    view.rejectEditorActionRun(error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  } finally {
+    view.running = false;
+    view.activeTurnId = "";
+    view.editorActionActiveTimeoutMs = 0;
+    view.clearTurnWatchdog();
+    view.clearActiveRun();
+    view.releaseEditorActionRunLock(runId);
+    view.applyStatus();
+  }
+}
+
+function appendPreparedResourcesToPrompt(prompt: string, resources: ReturnType<typeof prepareAgentResources>): string {
+  return [
+    resources.promptPrefix,
+    resources.warnings.length ? `资源提示：\n${resources.warnings.map((item) => `- ${item}`).join("\n")}` : "",
+    prompt
+  ].filter(Boolean).join("\n\n");
+}
+
+async function runSimpleEditorActionPromptTurn(view: any, input: {
+  prompt: string;
+  actionLabel: string;
+  qualityMode: EditorActionQualityMode;
+  modeLabel: string;
+  model: string;
+  phase: "understanding" | "generating" | "reviewing";
+  statusMessage: string;
+  timeoutMs: number;
+  startedAt: number;
+}, backend: Exclude<AgentBackendKind, "codex-cli">): Promise<string> {
+  const runId = newId(`editor-${input.phase}-run`);
+  try {
+    view.activeRunId = runId;
+    view.activeRunSessionId = "";
+    view.activeRunKind = "chat";
+    view.running = true;
+    view.setEditorActionStatus({ status: "generating", actionLabel: input.actionLabel, qualityMode: input.qualityMode, modeLabel: input.modeLabel, phase: input.phase, model: input.model, message: input.statusMessage, startedAt: input.startedAt });
+    view.applyStatus();
+    const resources = prepareAgentResources(buildEchoInkResourceCatalog({ settings: view.plugin.settings.resources }), {
+      scope: "editor-actions",
+      backendCapabilities: getAgentBackendDefinition(backend).capabilities,
+      enabledByScope: view.plugin.settings.resources.enabledByScope,
+      mcpConnections: view.plugin.settings.resources.mcpConnections
+    });
+    const result = await runAgentTaskWithEvents({
+      backend,
+      settings: view.plugin.settings,
+      vaultPath: view.plugin.getVaultPath(),
+      title: `EchoInk ${input.actionLabel}`,
+      prompt: input.prompt,
+      resources,
+      permission: "workspace-write",
+      timeoutMs: input.timeoutMs
+    }, (event) => {
+      view.setEditorActionStatus(agentEventToEditorStatus({
+        event,
+        actionLabel: input.actionLabel,
+        qualityMode: input.qualityMode,
+        modeLabel: input.modeLabel,
+        phase: input.phase,
+        model: input.model,
+        startedAt: input.startedAt
+      }));
+      view.applyStatus();
+    });
+    const cleaned = cleanEditorActionOutput(result.text);
     const validation = validateEditorActionCandidateText(cleaned);
     if (!validation.ok) throw new Error(validation.reason);
     view.resolveEditorActionRun(cleaned);
@@ -260,9 +352,12 @@ export async function refreshArticleUnderstandingFromPanel(view: any): Promise<v
   const settings = view.plugin.settings.editorActions;
   const mode = settings.qualityMode === "fast" ? "quality" : settings.qualityMode;
   const modeConfig = resolveEditorActionModeConfig(settings, mode);
-  const status = await view.withEditorActionTimeout(view.plugin.ensureCodexConnected(false, { silent: true }), settings.timeoutMs, "连接 Codex 超时");
-  if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
-  const model = view.effectiveEditorActionModel(status.models.map((item: any) => item.model), modeConfig.model);
+  const backend = resolveEditorActionBackend(view);
+  const status = backend === "codex-cli"
+    ? await view.withEditorActionTimeout(view.plugin.ensureCodexConnected(false, { silent: true }), settings.timeoutMs, "连接 Codex 超时")
+    : null;
+  if (status && !status.connected) throw new Error(status.errors[0] || "Codex 未连接");
+  const model = editorActionModelForBackend(view, backend, status ? status.models.map((item: any) => item.model) : [], modeConfig.model);
   const request: EditorActionRequest = {
     id: newId("article-understanding-refresh"),
     action: settings.actions[0],
@@ -287,7 +382,7 @@ export async function refreshArticleUnderstandingFromPanel(view: any): Promise<v
   try {
     await ensureArticleUnderstanding(view, request, status.models.map((item: any) => item.model), model, editorActionTimeoutForMode(settings.timeoutMs, mode), true);
   } catch (error) {
-    const diagnostic = view.diagnoseCodexFailure(error);
+    const diagnostic = resolveEditorActionDiagnostic(view, error);
     setArticleUnderstandingPanelState(view, {
       status: "failed",
       source,
@@ -320,4 +415,25 @@ function editorActionTimeoutForMode(baseTimeoutMs: number, mode: EditorActionQua
   if (mode === "strict") return Math.max(baseTimeoutMs, 120000);
   if (mode === "quality") return Math.max(baseTimeoutMs, 90000);
   return baseTimeoutMs;
+}
+
+function resolveEditorActionBackend(view: any): AgentBackendKind {
+  const choice = view.plugin.settings.capabilities.editorActionBackend;
+  return choice === "default" ? view.plugin.settings.agentBackend : choice;
+}
+
+function editorActionModelForBackend(view: any, backend: AgentBackendKind, availableModels: string[], configuredModel: string): string {
+  if (backend === "opencode") return view.plugin.settings.opencode.modelId || configuredModel;
+  if (backend === "hermes") return view.plugin.settings.agents.hermes.modelId || configuredModel;
+  return view.effectiveEditorActionModel(availableModels, configuredModel);
+}
+
+function resolveEditorActionDiagnostic(view: any, error: unknown): { title: string; text: string } {
+  const backend = resolveEditorActionBackend(view);
+  if (backend === "codex-cli") return view.diagnoseCodexFailure(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    title: `${backend === "hermes" ? "Hermes" : "OpenCode"} 写作失败`,
+    text: message
+  };
 }

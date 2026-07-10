@@ -16,7 +16,7 @@ export function editorActionStartBlockReason(input: {
 }): string | null {
   if (!input.running) return null;
   if (!input.activeRunId && !input.activeTurnId && !input.hasEditorActionRun) return null;
-  return "Codex 正在处理上一轮，请稍后再试";
+  return "Agent 正在处理上一轮，请稍后再试";
 }
 
 export interface EditorActionNotificationIds {

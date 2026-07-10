@@ -77,7 +77,7 @@ export async function ensureKnowledgeBaseFallbackReport(
     ? "- 同名报告存在但不是 lint-only 体检报告，已由插件生成 fallback，避免复用错误报告。"
     : existing?.isFile()
       ? "- 同名报告存在但早于本轮任务开始时间，已由插件生成 fallback，避免复用旧报告。"
-      : "- Agent 未写出报告，已由插件生成 fallback。";
+      : "- Agent 未写出报告；该报告只是过程记录，不代表 Raw 已提炼。";
   const lines = [
     "---",
     `created: ${new Date(input.startedAt).toISOString()}`,
@@ -96,6 +96,8 @@ export async function ensureKnowledgeBaseFallbackReport(
     "",
     "## 报告状态",
     reportStatus,
+    "- 该报告只是过程记录，不代表 Raw 已提炼。",
+    "- 只有 Wiki / Projects 已有结构化知识和来源证据，并通过插件验证后，Raw 才能标记为已提炼。",
     ""
   ];
   await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
