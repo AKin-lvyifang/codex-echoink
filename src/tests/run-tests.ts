@@ -201,9 +201,10 @@ import {
 const execFile = promisify(execFileCallback);
 
 const manifest = JSON.parse(await readFile(path.join(process.cwd(), "manifest.json"), "utf8")) as { id: string; name: string; version: string; author: string };
+const packageJson = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as { version: string };
 assert.equal(manifest.id, "codex-echoink");
 assert.equal(manifest.name, "Codex EchoInk");
-assert.equal(manifest.version, "1.0.3");
+assert.equal(manifest.version, packageJson.version);
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
 

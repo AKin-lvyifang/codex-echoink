@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk Home Dashboard poster showing calendar, knowledge health, activity heatmap, card filters, and copy internal link." src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+  <img width="1024" alt="Codex EchoInk v1.1.0 release poster showing Tool Broker, Process Timeline, and Four-Step Digest." src="docs/images/codex-echoink-v1.1.0-release.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -21,14 +21,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.0.3-0EA5E9?style=flat-square" alt="Version v1.0.3">
+    <img src="https://img.shields.io/badge/version-v1.1.0-0EA5E9?style=flat-square" alt="Version v1.1.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.0.3</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.1.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -161,6 +161,27 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.1.0
+
+<img width="1024" alt="Codex EchoInk v1.1.0 release poster showing Tool Broker, Process Timeline, and Four-Step Digest." src="docs/images/codex-echoink-v1.1.0-release.png">
+
+**Agent tools and Knowledge digest update:** EchoInk can now show more of what an Agent is doing, connect vault-scoped tools more clearly, and guide Knowledge maintenance through a stricter four-step digest flow.
+
+**What changed:**
+
+- Added a tool broker foundation for vault resources, MCP tools, Skills, and tool bundles, with clearer per-scope switches.
+- Improved the Agent process timeline so searches, file work, tool calls, and completion states are easier to follow.
+- Added a stricter Knowledge digest path: understand Raw, extract reusable knowledge, merge it into Wiki / Projects, then mark Raw only after source evidence is checked.
+- Added the first Hermes backend entry point, while keeping Hermes model and provider setup in Hermes itself.
+- Split the large Agent sidebar view into smaller UI modules, making future UI review and maintenance safer.
+
+**How to use:**
+
+1. Install `v1.1.0`.
+2. Open EchoInk in Obsidian and choose the Agent backend you already use.
+3. Use `/check`, `/maintain`, or `/reingest` in the Knowledge channel when you want EchoInk to inspect or digest Raw notes.
+4. Open settings to review resource switches for chat, Knowledge, and writing actions.
 
 ### v1.0.3
 

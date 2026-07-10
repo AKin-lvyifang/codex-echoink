@@ -1,5 +1,5 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 首页工作台海报，展示日历、知识库健康、活跃热力图、卡片筛选和复制内链。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+  <img width="1024" alt="Codex EchoInk v1.1.0 发布图，展示工具代理、过程时间线和四步提炼。" src="docs/images/codex-echoink-v1.1.0-release.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
@@ -22,14 +22,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.0.3-0EA5E9?style=flat-square" alt="版本 v1.0.3">
+    <img src="https://img.shields.io/badge/version-v1.1.0-0EA5E9?style=flat-square" alt="版本 v1.1.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.0.3</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.1.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -165,6 +165,27 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.1.0
+
+<img width="1024" alt="Codex EchoInk v1.1.0 发布图，展示工具代理、过程时间线和四步提炼。" src="docs/images/codex-echoink-v1.1.0-release.png">
+
+**Agent 工具和知识提炼更新：** EchoInk 现在能更清楚地展示 Agent 在做什么，也能更清楚地连接当前 vault 里的工具资源，并用更严格的四步流程维护知识库。
+
+**更新内容：**
+
+- 新增工具代理基础层：vault 资源、MCP 工具、Skills 和工具包有更清楚的开关和作用范围。
+- Agent 过程时间线更清楚：搜索、文件处理、工具调用和完成状态更容易看懂。
+- 知识库提炼流程更严格：先读懂 Raw，再拆出知识，写入 Wiki / Projects，最后确认来源证据后才标记 Raw。
+- 新增 Hermes 后端的第一阶段入口；Hermes 的模型和 provider 仍由 Hermes 自己配置。
+- 将大型 Agent 侧栏拆成更小的界面模块，后续维护和审核更稳。
+
+**使用方法：**
+
+1. 安装 `v1.1.0`。
+2. 在 Obsidian 中打开 EchoInk，选择你正在使用的 Agent 后端。
+3. 在知识库频道使用 `/check`、`/maintain` 或 `/reingest` 检查和提炼 Raw 笔记。
+4. 到设置里检查聊天、知识库、写作三个场景的资源开关。
 
 ### v1.0.3
 
