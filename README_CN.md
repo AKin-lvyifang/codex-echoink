@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
+  <a href="docs/echoink-product-whitepaper.md">白皮书</a> ·
   <a href="#为什么叫-echoink">命名</a> ·
   <a href="#更新说明">更新说明</a> ·
   <a href="#安装">安装</a> ·

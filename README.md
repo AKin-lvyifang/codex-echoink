@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="#features">Features</a> ·
+  <a href="docs/echoink-product-whitepaper.md">Whitepaper</a> ·
   <a href="#why-echoink">Why EchoInk</a> ·
   <a href="#whats-new">What's New</a> ·
   <a href="#install">Install</a> ·
