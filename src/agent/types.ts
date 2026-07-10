@@ -1,7 +1,29 @@
 import type { PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode } from "../types/app-server";
+import type { AgentToolBridgeRuntime, PreparedAgentResources } from "./runtime";
 
-export type AgentBackendKind = "codex-cli" | "opencode";
+export type AgentBackendKind = "codex-cli" | "opencode" | "hermes";
 export type AgentInputModality = "text" | "image" | "pdf";
+
+export interface AgentBackendCapabilities {
+  chat: boolean;
+  knowledgeTasks: boolean;
+  editorActions: boolean;
+  listModels: boolean;
+  listAgents: boolean;
+  fileStatus: boolean;
+  richEvents: boolean;
+  structuredToolCalls: boolean;
+  nativeMcpPassThrough: boolean;
+  promptInstructionInjection: boolean;
+  customProviderConfig: "codex-responses" | "opencode-provider" | "hermes-model" | "external";
+}
+
+export interface AgentConnectionStatus {
+  connected: boolean;
+  label: string;
+  version?: string;
+  errors: string[];
+}
 
 export interface AgentModelInfo {
   id: string;
@@ -71,7 +93,7 @@ export interface AgentFileStatus {
 
 export interface AgentBackend {
   kind: AgentBackendKind;
-  connect(): Promise<void>;
+  connect(): Promise<void | AgentConnectionStatus>;
   disconnect(): Promise<void>;
   listModels(): Promise<AgentModelInfo[]>;
   listAgents?(): Promise<AgentProfileInfo[]>;
@@ -80,4 +102,29 @@ export interface AgentBackend {
   sendPromptAsync?(options: AgentPromptOptions): Promise<void>;
   abort(sessionId: string): Promise<void>;
   fileStatus?(): Promise<AgentFileStatus[]>;
+}
+
+export interface AgentTaskInput {
+  prompt: string;
+  sources?: AgentPromptPart[];
+  permission?: PermissionMode;
+  writableRoots?: string[];
+  model?: {
+    providerId: string;
+    modelId: string;
+  };
+  agent?: string;
+  profile?: string;
+  resources?: PreparedAgentResources;
+  toolBridge?: AgentToolBridgeRuntime | null;
+  timeoutMs?: number;
+  tools?: Record<string, boolean>;
+  abortSignal?: AbortSignal;
+  onRunId?: (runId: string) => void;
+}
+
+export interface AgentTaskResult {
+  text: string;
+  runId?: string;
+  usage?: Record<string, unknown>;
 }

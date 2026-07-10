@@ -28,6 +28,7 @@ await esbuild.build({
 });
 
 const result = spawnSync(process.execPath, [".tmp/run-tests.mjs"], {
+  env: { ...process.env, ECHOINK_DISABLE_ACP: "1" },
   stdio: "inherit"
 });
 

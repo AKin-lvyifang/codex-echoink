@@ -25,6 +25,20 @@ export function formatKnowledgeBaseCodexFailureSignal(method: string, params: an
   ].filter(Boolean).join("\n");
 }
 
+export function formatAgentTaskFailureContext(input: {
+  backend: string;
+  phase: string;
+  runId?: string;
+  message: string;
+}): string {
+  return [
+    `后端：${input.backend}`,
+    `阶段：${input.phase || "unknown"}`,
+    input.runId ? `runId：${input.runId}` : "",
+    `错误：${input.message}`
+  ].filter(Boolean).join("\n");
+}
+
 function firstString(...values: any[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();

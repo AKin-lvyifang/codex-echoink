@@ -2,10 +2,17 @@ import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFi
 import type CodexForObsidianPlugin from "../main";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { detectCodexCommand } from "../core/codex-service";
+import { HermesBackend } from "../core/hermes-backend";
+import { detectHermesCommand } from "../core/hermes-models";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { detectOpenCodeCommand } from "../core/opencode-models";
+import { AGENT_BACKEND_DEFINITIONS } from "../agent/registry";
 import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
+import { buildEchoInkResourceCatalog } from "../resources/registry";
+import { mcpConnectionStatus, mcpConnectionStatusLabel } from "../resources/mcp-connections";
+import type { EchoInkResource, EchoInkResourceScope } from "../resources/types";
 import {
+  emptyWorkspaceResourceSnapshot,
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
   mergeWorkspaceResourceSnapshot,
@@ -13,7 +20,7 @@ import {
   updateWorkspaceResourceCache,
   type WorkspaceResourceKind
 } from "../core/workspace-resources";
-import { filterWorkspaceResourceRows, type WorkspaceResourceSearchRow } from "../core/workspace-resource-filter";
+import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
   ensureModelChoices,
@@ -34,7 +41,6 @@ import {
   removeApiProvider,
   normalizeReviewOutputDir,
   normalizeSettingsLanguage,
-  resourceEnabled,
   validateApiProvider,
   type ApiProviderConfig,
   type AgentBackendMode,
@@ -45,13 +51,17 @@ import {
   type ReviewReportKind,
   type ResourceManagementTab,
   type SettingsLanguage,
-  type SettingsTab
+  type SettingsTab,
+  type WorkspaceResourceToggles
 } from "./settings";
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
+import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
+import { skillResourceFromHermesSkill } from "../resources/skill-loader";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { confirmModal, textInputModal } from "../ui/modals";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
+import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 import { buildSetupCheck, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
 
 export class CodexSettingTab extends PluginSettingTab {
@@ -68,6 +78,8 @@ export class CodexSettingTab extends PluginSettingTab {
   private openCodeAgentsLoaded = false;
   private openCodeAgentsLoading = false;
   private openCodeAgentsError = "";
+  private hermesChecking = false;
+  private hermesCheckError = "";
   private setupChecking = false;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
@@ -84,54 +96,261 @@ export class CodexSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     const copy = this.copy;
-    containerEl.empty();
-    new Setting(containerEl).setName(copy.title).setHeading();
+    const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
+    try {
+      containerEl.empty();
+      new Setting(containerEl).setName(copy.title).setHeading();
 
-    const status = this.plugin.lastStatus;
-    const setupCheck = buildSetupCheck(this.plugin.settings, status, this.detectSetupPlatform());
-    const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
-    if (this.shouldShowSetupGuide(setupCheck)) {
-      this.renderSetupGuide(statusBox, setupCheck);
-    } else {
-      this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
-      this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
-      this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
-      this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
-      this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
-      this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
-      this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
-      this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
-      this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
-      this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
-      this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
-      this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
-      this.addStatusErrors(statusBox, status?.errors ?? []);
-      this.addStatusActions(statusBox);
-    }
+      const status = this.plugin.lastStatus;
+      const setupCheck = buildSetupCheck(this.plugin.settings, status, this.detectSetupPlatform());
+      const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
+      if (this.shouldShowSetupGuide(setupCheck)) {
+        this.renderSetupGuide(statusBox, setupCheck);
+      } else {
+        this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
+        this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
+        this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
+        this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
+        this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
+        this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
+        this.addStatusRow(statusBox, "sparkles", "Hermes", detectHermesPath(this.plugin.settings.agents.hermes.cliPath, copy));
+        this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
+        this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
+        this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
+        this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
+        this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
+        this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
+        this.addStatusErrors(statusBox, status?.errors ?? []);
+        this.addStatusActions(statusBox);
+      }
 
-    this.renderTopTabs(containerEl);
-    if (this.plugin.settings.settingsTab === "providers") {
-      this.renderApiProviderManager(containerEl);
-      return;
-    }
-    if (this.plugin.settings.settingsTab === "resources") {
-      this.renderWorkspaceResourceManager(containerEl);
-      return;
-    }
-    if (this.plugin.settings.settingsTab === "editorActions") {
-      this.renderEditorActionSettings(containerEl);
-      return;
-    }
-    if (this.plugin.settings.settingsTab === "knowledgeBase") {
-      this.renderKnowledgeBaseSettings(containerEl);
-      return;
-    }
-    if (this.plugin.settings.settingsTab === "review") {
-      this.renderReviewSettings(containerEl);
-      return;
-    }
+      this.renderTopTabs(containerEl);
+      if (this.plugin.settings.settingsTab === "agents") {
+        this.renderAgentSettings(containerEl, status);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "providers") {
+        this.renderApiProviderManager(containerEl);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "resources") {
+        this.renderWorkspaceResourceManager(containerEl);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "editorActions") {
+        this.renderEditorActionSettings(containerEl);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "knowledgeBase") {
+        this.renderKnowledgeBaseSettings(containerEl);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "review") {
+        this.renderReviewSettings(containerEl);
+        return;
+      }
 
-    this.renderGeneralSettings(containerEl, status);
+      this.renderGeneralSettings(containerEl, status);
+    } finally {
+      restoreSettingsScrollSnapshot(settingsScrollSnapshot);
+    }
+  }
+
+  private renderAgentSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
+    const copy = this.copy;
+    const settings = this.plugin.settings;
+    const wrapper = containerEl.createDiv({ cls: "codex-api-provider-manager codex-agent-settings" });
+    const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
+    const title = header.createDiv({ cls: "codex-resource-manager-title" });
+    const icon = title.createSpan({ cls: "codex-setting-icon" });
+    setIcon(icon, "route");
+    title.createSpan({ text: "Agent 后端" });
+
+    wrapper.createDiv({
+      cls: "codex-resource-note",
+      text: "Codex、OpenCode、Hermes 是可切换后端；知识库、写作、资源管理属于 EchoInk 通用能力。"
+    });
+
+    this.decorateSetting(
+      new Setting(wrapper)
+        .setName(copy.general.agentBackend)
+        .setDesc("选择默认 Agent。具体能力仍可在知识库等页面单独固定后端。")
+        .addDropdown((dropdown) => {
+          for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
+          dropdown.setValue(settings.agentBackend);
+          dropdown.onChange(async (value) => {
+            const backend = normalizeAgentBackendForUi(value);
+            settings.agentBackend = backend;
+            settings.agents.defaultBackend = backend;
+            await this.plugin.saveSettings();
+            this.display();
+          });
+        }),
+      "route"
+    );
+
+    const codexSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
+    codexSection.createDiv({ cls: "codex-editor-actions-heading", text: "Codex" });
+    codexSection.createDiv({ cls: "codex-resource-note", text: detectCliPath(settings.cliPath, copy) });
+    this.addProviderText(codexSection, copy.general.cliPath, settings.cliPath, "~/.npm-global/bin/codex", async (value) => {
+      settings.cliPath = value.trim();
+      settings.agents.codex.cliPath = settings.cliPath;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.decorateSetting(new Setting(codexSection).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
+      toggle.setValue(settings.proxyEnabled).onChange(async (value) => {
+        settings.proxyEnabled = value;
+        settings.agents.codex.proxyEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "waypoints");
+    this.addProviderText(codexSection, copy.general.proxyUrl, settings.proxyUrl, "http://127.0.0.1:7890", async (value) => {
+      settings.proxyUrl = value.trim();
+      settings.agents.codex.proxyUrl = settings.proxyUrl;
+      await this.plugin.saveSettings();
+    });
+    this.decorateSetting(
+      new Setting(codexSection)
+        .setName(copy.general.defaultModel)
+        .setDesc(copy.general.defaultModelDesc)
+        .addDropdown((dropdown) => {
+          dropdown.addOption("", copy.general.auto);
+          for (const model of ensureModelChoices(status?.models ?? [], settings.defaultModel, DEFAULT_SETTINGS.defaultModel)) {
+            dropdown.addOption(model.model, model.displayName || model.model);
+          }
+          dropdown.setValue(settings.defaultModel);
+          dropdown.onChange(async (value) => {
+            settings.defaultModel = value;
+            settings.agents.codex.defaultModel = value;
+            await this.plugin.saveSettings();
+            this.plugin.applyComposerDefaultsToView();
+          });
+        }),
+      "box"
+    );
+
+    const openCodeSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
+    openCodeSection.createDiv({ cls: "codex-editor-actions-heading", text: "OpenCode" });
+    this.renderOpenCodeAgentSettings(openCodeSection);
+
+    const hermes = settings.agents.hermes;
+    const hermesSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
+    hermesSection.createDiv({ cls: "codex-editor-actions-heading", text: "Hermes" });
+    hermesSection.createDiv({ cls: "codex-resource-note", text: detectHermesPath(hermes.cliPath, copy) });
+    if (hermes.lastConnectedAt) {
+      hermesSection.createDiv({ cls: "codex-resource-note", text: `最近检测：${formatSetupTime(hermes.lastConnectedAt)}${hermes.version ? ` · ${hermes.version}` : ""}` });
+    }
+    if (hermes.lastProviderCheckAt) {
+      hermesSection.createDiv({
+        cls: hermes.providerConfigured ? "codex-resource-note" : "codex-resource-error",
+        text: hermes.providerConfigured
+          ? `推理 provider 已验证：${formatSetupTime(hermes.lastProviderCheckAt)}`
+          : `推理 provider 未通过：${hermes.lastProviderError || "未配置"}`
+      });
+    }
+    if (hermes.lastError || this.hermesCheckError) hermesSection.createDiv({ cls: "codex-resource-error", text: this.hermesCheckError || hermes.lastError });
+    this.addProviderText(hermesSection, "Hermes CLI 路径", hermes.cliPath, "~/.local/bin/hermes", async (value) => {
+      hermes.cliPath = value.trim();
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addProviderText(hermesSection, "API Server URL", hermes.serverUrl, "http://127.0.0.1:8642/v1", async (value) => {
+      hermes.serverUrl = value.trim().replace(/\/$/, "");
+      await this.plugin.saveSettings();
+    });
+    this.decorateSetting(new Setting(hermesSection).setName("自动启动 Hermes").setDesc("第一版只记录偏好；正式启动优先使用 API server，CLI one-shot 只做兜底。").addToggle((toggle) =>
+      toggle.setValue(hermes.autoStart).onChange(async (value) => {
+        hermes.autoStart = value;
+        await this.plugin.saveSettings();
+      })
+    ), "power");
+    this.addProviderText(hermesSection, "Host", hermes.hostname, "127.0.0.1", async (value) => {
+      hermes.hostname = value.trim() || "127.0.0.1";
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(hermesSection, "Port", String(hermes.port), "8642", async (value) => {
+      hermes.port = parseClampedInteger(value, 8642, 1024, 65535);
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addProviderText(hermesSection, "Profile", hermes.profile, "default", async (value) => {
+      hermes.profile = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(hermesSection, "Provider", hermes.providerId, "deepseek", async (value) => {
+      hermes.providerId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(hermesSection, "Model", hermes.modelId, "deepseek-chat", async (value) => {
+      hermes.modelId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(hermesSection, "API Server Key", hermes.apiKey, "API_SERVER_KEY", async (value) => {
+      hermes.apiKey = value.trim();
+      await this.plugin.saveSettings();
+    }, "password");
+    hermesSection.createDiv({
+      cls: "codex-resource-note",
+      text: "DeepSeek 等第三方 provider 仍建议先用 Hermes 官方 hermes model / ~/.hermes/.env 配置；插件会用最小 prompt 验证 provider 是否真的可用。"
+    });
+    const hermesActions = hermesSection.createDiv({ cls: "codex-api-provider-actions" });
+    const testHermes = hermesActions.createEl("button", { cls: "codex-resource-tab", text: this.hermesChecking ? copy.common.loading : "检测 Hermes", attr: { type: "button" } });
+    testHermes.disabled = this.hermesChecking;
+    testHermes.onclick = () => void this.testHermesConnection();
+    const copyHermesModel = hermesActions.createEl("button", { cls: "codex-resource-tab", text: "复制 hermes model", attr: { type: "button" } });
+    copyHermesModel.onclick = async () => {
+      await navigator.clipboard?.writeText("hermes model").catch(() => undefined);
+      new Notice("已复制：hermes model");
+    };
+  }
+
+  private renderOpenCodeAgentSettings(container: HTMLElement): void {
+    const copy = this.copy;
+    const opencode = this.plugin.settings.opencode;
+    container.createDiv({ cls: "codex-resource-note", text: copy.knowledge.detection(detectOpenCodePath(opencode.cliPath, copy)) });
+    this.addProviderText(container, copy.knowledge.opencodePath, opencode.cliPath, "/opt/homebrew/bin/opencode", async (value) => {
+      opencode.cliPath = value.trim();
+      this.plugin.settings.agents.opencode = opencode;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addProviderText(container, copy.knowledge.serverUrl, opencode.serverUrl, "http://127.0.0.1:4096", async (value) => {
+      opencode.serverUrl = value.trim().replace(/\/$/, "");
+      await this.plugin.saveSettings();
+    });
+    this.decorateSetting(new Setting(container).setName(copy.knowledge.autoStartServer).addToggle((toggle) =>
+      toggle.setValue(opencode.autoStart).onChange(async (value) => {
+        opencode.autoStart = value;
+        await this.plugin.saveSettings();
+      })
+    ), "power");
+    this.addProviderText(container, copy.opencode.host, opencode.hostname, "127.0.0.1", async (value) => {
+      opencode.hostname = value.trim() || "127.0.0.1";
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(container, copy.opencode.port, String(opencode.port), "4096", async (value) => {
+      opencode.port = parseClampedInteger(value, 4096, 1024, 65535);
+      await this.plugin.saveSettings();
+      this.display();
+    });
+    this.addOpenCodeModelPicker(container);
+    this.addProviderText(container, copy.opencode.providerId, opencode.providerId, "anthropic", async (value) => {
+      opencode.providerId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addProviderText(container, copy.opencode.modelId, opencode.modelId, "claude-sonnet-4-20250514", async (value) => {
+      opencode.modelId = value.trim();
+      await this.plugin.saveSettings();
+    });
+    this.addOpenCodeAgentPicker(container);
+    if (opencode.lastError) container.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
+    const actions = container.createDiv({ cls: "codex-api-provider-actions" });
+    const testOpenCode = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.testConnection, attr: { type: "button" } });
+    testOpenCode.onclick = async () => {
+      await this.refreshOpenCodeRuntimeOptions();
+      this.display();
+    };
   }
 
   private renderGeneralSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
@@ -145,129 +364,6 @@ export class CodexSettingTab extends PluginSettingTab {
         this.display();
       });
     }), "languages");
-
-    this.decorateSetting(
-      new Setting(containerEl)
-      .setName(copy.general.agentBackend)
-      .setDesc(copy.general.agentBackendDesc)
-      .addDropdown((dropdown) => {
-        const options: Record<AgentBackendMode, string> = {
-          "codex-cli": "Codex CLI",
-          opencode: "OpenCode API"
-        };
-        for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
-        dropdown.setValue(this.plugin.settings.agentBackend);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.agentBackend = normalizeAgentBackendForUi(value);
-          await this.plugin.saveSettings();
-          this.display();
-        });
-      }),
-      "route"
-    );
-
-    this.decorateSetting(
-      new Setting(containerEl)
-      .setName(copy.general.cliPath)
-      .setDesc(copy.general.cliPathDesc)
-      .addText((text) =>
-        text.setPlaceholder("~/.npm-global/bin/codex").setValue(this.plugin.settings.cliPath).onChange(async (value) => {
-          this.plugin.settings.cliPath = value.trim();
-          await this.plugin.saveSettings();
-        })
-      ),
-      "terminal"
-    );
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
-      toggle.setValue(this.plugin.settings.proxyEnabled).onChange(async (value) => {
-        this.plugin.settings.proxyEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    ), "waypoints");
-
-    this.decorateSetting(
-      new Setting(containerEl)
-        .setName(copy.general.proxyUrl)
-        .setDesc(copy.general.proxyUrlDesc)
-        .addText((text) =>
-          text.setPlaceholder("http://127.0.0.1:7890").setValue(this.plugin.settings.proxyUrl).onChange(async (value) => {
-            this.plugin.settings.proxyUrl = value.trim();
-            await this.plugin.saveSettings();
-          })
-        ),
-      "route"
-    );
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.mcpEnabled).setDesc(copy.general.mcpEnabledDesc).addToggle((toggle) =>
-      toggle.setValue(this.plugin.settings.mcpEnabled).onChange(async (value) => {
-        this.plugin.settings.mcpEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    ), "blocks");
-
-    this.decorateSetting(
-      new Setting(containerEl)
-      .setName(copy.general.defaultModel)
-      .setDesc(copy.general.defaultModelDesc)
-      .addDropdown((dropdown) => {
-        dropdown.addOption("", copy.general.auto);
-        for (const model of ensureModelChoices(status?.models ?? [], this.plugin.settings.defaultModel, DEFAULT_SETTINGS.defaultModel)) {
-          dropdown.addOption(model.model, model.displayName || model.model);
-        }
-        dropdown.setValue(this.plugin.settings.defaultModel);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.defaultModel = value;
-          await this.plugin.saveSettings();
-          this.plugin.applyComposerDefaultsToView();
-        });
-      }),
-      "box"
-    );
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.defaultReasoning).addDropdown((dropdown) => {
-      const options: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
-      for (const option of options) dropdown.addOption(option, option);
-      dropdown.setValue(this.plugin.settings.defaultReasoning);
-      dropdown.onChange(async (value) => {
-        this.plugin.settings.defaultReasoning = value as ReasoningEffort;
-        await this.plugin.saveSettings();
-        this.plugin.applyComposerDefaultsToView();
-      });
-    }), "brain");
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.defaultSpeed).addDropdown((dropdown) => {
-      const options = copy.general.serviceTierOptions;
-      for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
-      dropdown.setValue(this.plugin.settings.defaultServiceTier);
-      dropdown.onChange(async (value) => {
-        this.plugin.settings.defaultServiceTier = value as ServiceTierChoice;
-        await this.plugin.saveSettings();
-        this.plugin.applyComposerDefaultsToView();
-      });
-    }), "gauge");
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.defaultPermission).addDropdown((dropdown) => {
-      const options = copy.general.permissionOptions;
-      for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
-      dropdown.setValue(this.plugin.settings.defaultPermission);
-      dropdown.onChange(async (value) => {
-        this.plugin.settings.defaultPermission = value as PermissionMode;
-        await this.plugin.saveSettings();
-        this.plugin.applyComposerDefaultsToView();
-      });
-    }), "shield-check");
-
-    this.decorateSetting(new Setting(containerEl).setName(copy.general.defaultMode).addDropdown((dropdown) => {
-      const options = copy.general.modeOptions;
-      for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
-      dropdown.setValue(this.plugin.settings.defaultMode);
-      dropdown.onChange(async (value) => {
-        this.plugin.settings.defaultMode = value as UiMode;
-        await this.plugin.saveSettings();
-        this.plugin.applyComposerDefaultsToView();
-      });
-    }), "route");
 
     this.decorateSetting(new Setting(containerEl).setName(copy.general.autoOpen).addToggle((toggle) =>
       toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => {
@@ -289,22 +385,11 @@ export class CodexSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       })
     ), "pie-chart");
-
-    this.decorateSetting(new Setting(containerEl).addButton((button) =>
-      button
-        .setButtonText(copy.general.reconnect)
-        .setCta()
-        .onClick(async () => {
-          await this.plugin.reconnectCodex();
-          this.display();
-        })
-    ), "refresh-cw");
   }
 
   private renderKnowledgeBaseSettings(container: HTMLElement): void {
     const copy = this.copy;
     const settings = this.plugin.settings.knowledgeBase;
-    const opencode = this.plugin.settings.opencode;
     const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-knowledge-settings" });
     const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
     const title = header.createDiv({ cls: "codex-resource-manager-title" });
@@ -353,7 +438,8 @@ export class CodexSettingTab extends PluginSettingTab {
       const options: Record<KnowledgeBaseBackendMode, string> = {
         default: copy.knowledge.followGlobal(agentBackendLabel(this.plugin.settings.agentBackend, copy)),
         "codex-cli": "Codex CLI",
-        opencode: "OpenCode API"
+        opencode: "OpenCode API",
+        hermes: "Hermes"
       };
       for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
       dropdown.setValue(settings.backend);
@@ -393,60 +479,9 @@ export class CodexSettingTab extends PluginSettingTab {
       })
     ), "history");
 
-    const openCodeSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
-    openCodeSection.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.opencodeMode });
-    openCodeSection.createDiv({ cls: "codex-resource-note", text: copy.knowledge.detection(detectOpenCodePath(opencode.cliPath, copy)) });
-    this.addProviderText(openCodeSection, copy.knowledge.opencodePath, opencode.cliPath, "/opt/homebrew/bin/opencode", async (value) => {
-      opencode.cliPath = value.trim();
-      await this.plugin.saveSettings();
-      this.display();
-    });
-    this.addProviderText(openCodeSection, copy.knowledge.serverUrl, opencode.serverUrl, "http://127.0.0.1:4096", async (value) => {
-      opencode.serverUrl = value.trim().replace(/\/$/, "");
-      await this.plugin.saveSettings();
-    });
-    this.decorateSetting(new Setting(openCodeSection).setName(copy.knowledge.autoStartServer).addToggle((toggle) =>
-      toggle.setValue(opencode.autoStart).onChange(async (value) => {
-        opencode.autoStart = value;
-        await this.plugin.saveSettings();
-      })
-    ), "power");
-    this.addProviderText(openCodeSection, copy.opencode.host, opencode.hostname, "127.0.0.1", async (value) => {
-      opencode.hostname = value.trim() || "127.0.0.1";
-      await this.plugin.saveSettings();
-    });
-    this.addProviderText(openCodeSection, copy.opencode.port, String(opencode.port), "4096", async (value) => {
-      opencode.port = parseClampedInteger(value, 4096, 1024, 65535);
-      await this.plugin.saveSettings();
-      this.display();
-    });
-    this.addOpenCodeModelPicker(openCodeSection);
-    this.addProviderText(openCodeSection, copy.opencode.providerId, opencode.providerId, "anthropic", async (value) => {
-      opencode.providerId = value.trim();
-      await this.plugin.saveSettings();
-    });
-    this.addProviderText(openCodeSection, copy.opencode.modelId, opencode.modelId, "claude-sonnet-4-20250514", async (value) => {
-      opencode.modelId = value.trim();
-      await this.plugin.saveSettings();
-    });
-    this.addOpenCodeAgentPicker(openCodeSection);
-    openCodeSection.createDiv({
-      cls: "codex-resource-note",
-      text: copy.knowledge.modelCapabilities(opencode.textEnabled, opencode.imageEnabled, opencode.pdfEnabled)
-    });
-    if (opencode.lastError) openCodeSection.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
-    if (this.openCodeModelsError) openCodeSection.createDiv({ cls: "codex-resource-error", text: this.openCodeModelsError });
-    if (this.openCodeAgentsError) openCodeSection.createDiv({ cls: "codex-resource-error", text: this.openCodeAgentsError });
-    const openCodeActions = openCodeSection.createDiv({ cls: "codex-api-provider-actions" });
-    const testOpenCode = openCodeActions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.testConnection, attr: { type: "button" } });
-    testOpenCode.onclick = async () => {
-      await this.refreshOpenCodeRuntimeOptions();
-      this.display();
-    };
-
     wrapper.createDiv({
       cls: "codex-resource-note",
-      text: copy.knowledge.channelNote
+      text: `${copy.knowledge.channelNote} Agent 连接、模型、profile 和 provider 请在 Agent 设置页统一配置。`
     });
   }
 
@@ -748,7 +783,8 @@ export class CodexSettingTab extends PluginSettingTab {
     return {
       os: process.platform,
       codexCommand: detectCodexCommand(this.plugin.settings.cliPath),
-      openCodeCommand: detectOpenCodeCommand(this.plugin.settings.opencode.cliPath)
+      openCodeCommand: detectOpenCodeCommand(this.plugin.settings.opencode.cliPath),
+      hermesCommand: detectHermesCommand(this.plugin.settings.agents.hermes.cliPath)
     };
   }
 
@@ -1359,6 +1395,20 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  private async testHermesConnection(): Promise<void> {
+    if (this.hermesChecking) return;
+    this.hermesChecking = true;
+    this.hermesCheckError = "";
+    this.display();
+    try {
+      const result = await this.plugin.testHermesConnection();
+      this.hermesCheckError = result.connected ? "" : result.message;
+    } finally {
+      this.hermesChecking = false;
+      this.display();
+    }
+  }
+
   private applyOpenCodeModelChoice(model: AgentModelInfo): void {
     const opencode = this.plugin.settings.opencode;
     opencode.providerId = model.providerId;
@@ -1448,7 +1498,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (settings.useCustomRulesFile) settings.rulesFilePath = result.rulesFilePath;
       else settings.rulesFilePath = AGENTS_RULES_FILE;
       await this.plugin.saveSettings();
-      this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+      this.plugin.refreshKnowledgeBaseSurfaces();
       const detail = result.status === "patched" && result.missingRules.length
         ? copy.knowledge.repairPatchedDetail(result.missingRules.length)
         : "";
@@ -1568,7 +1618,10 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!this.resourceLoaded[activeTab] && !isLoading && !loadError) {
       body.createDiv({ cls: "codex-resource-empty", text: copy.resources.notLoaded });
     }
-    if (this.resourceSnapshot && (this.resourceLoaded[activeTab] || isLoading)) this.renderActiveResourceTab(body, this.resourceSnapshot);
+    const hasSavedCatalog = this.currentEchoInkResourceCatalog(this.resourceSnapshot).some((resource) => resource.kind === resourceKindForResourceTab(activeTab));
+    if ((this.resourceSnapshot || hasSavedCatalog) && (this.resourceLoaded[activeTab] || isLoading || hasSavedCatalog)) {
+      this.renderActiveResourceTab(body, this.resourceSnapshot ?? emptyWorkspaceResourceSnapshot());
+    }
     if (!this.resourceLoaded[activeTab] && !isLoading && !loadError) void this.loadWorkspaceResources(false, activeTab);
   }
 
@@ -1608,91 +1661,74 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  private currentEchoInkResourceCatalog(snapshot: WorkspaceResourceSnapshot | null = this.resourceSnapshot): EchoInkResource[] {
+    return buildEchoInkResourceCatalog({
+      codex: snapshot ? {
+        plugins: snapshot.plugins,
+        skills: snapshot.skills,
+        mcpServers: snapshot.mcpServers
+      } : undefined,
+      settings: this.plugin.settings.resources
+    });
+  }
+
+  private syncEchoInkResourceCatalogFromSnapshot(snapshot: WorkspaceResourceSnapshot, extraResources: EchoInkResource[] = []): void {
+    this.plugin.settings.resources.catalog = buildEchoInkResourceCatalog({
+      codex: {
+        plugins: snapshot.plugins,
+        skills: snapshot.skills,
+        mcpServers: snapshot.mcpServers
+      },
+      settings: this.plugin.settings.resources,
+      manual: extraResources
+    });
+    if (snapshot.plugins.length || snapshot.skills.length || snapshot.mcpServers.length) this.plugin.settings.resources.importedFrom["codex-import"] = Date.now();
+    if (extraResources.some((resource) => resource.source === "hermes-import")) this.plugin.settings.resources.importedFrom["hermes-import"] = Date.now();
+    this.plugin.settings.resources.lastScannedAt = Date.now();
+    this.plugin.settings.resources.lastError = "";
+  }
+
   private renderActiveResourceTab(container: HTMLElement, snapshot: WorkspaceResourceSnapshot): void {
+    const catalog = this.currentEchoInkResourceCatalog(snapshot);
     if (this.plugin.settings.resourceManagementTab === "plugins") {
-      this.renderPluginResources(container, snapshot.plugins, snapshot.errors.plugins);
+      this.renderEchoInkResources(container, catalog.filter((resource) => resource.kind === "tool-bundle"), snapshot.errors.plugins);
       return;
     }
     if (this.plugin.settings.resourceManagementTab === "mcp") {
-      this.renderMcpResources(container, snapshot.mcpServers, snapshot.errors.mcp);
+      this.renderEchoInkResources(container, catalog.filter((resource) => resource.kind === "mcp-server"), snapshot.errors.mcp);
       return;
     }
-    this.renderSkillResources(container, snapshot.skills, snapshot.errors.skills);
+    this.renderEchoInkResources(container, catalog.filter((resource) => resource.kind === "skill"), snapshot.errors.skills);
   }
 
-  private renderPluginResources(container: HTMLElement, plugins: CodexPluginInfo[], error?: string): void {
+  private renderEchoInkResources(container: HTMLElement, resources: EchoInkResource[], error?: string): void {
     const copy = this.copy;
-    const rows = plugins.map((plugin) => ({
-      key: plugin.id,
-      kind: "plugins" as const,
-      name: plugin.displayName || plugin.name || plugin.id,
-      meta: [plugin.category, plugin.marketplace, plugin.installed ? copy.resources.installed : copy.resources.notInstalled].filter(Boolean).join(" · "),
-      desc: plugin.description || plugin.id,
-      enabled: resourceEnabled(this.plugin.settings.workspaceResources.plugins, plugin.id, plugin.enabled !== false)
+    const activeTab = this.plugin.settings.resourceManagementTab;
+    const rows = resources.map((resource) => ({
+      key: resource.id,
+      name: resource.kind === "skill" ? `/${resource.name}` : resource.name,
+      meta: [resource.source, resource.bridgeMode, resource.kind === "mcp-server" ? mcpConnectionStatusLabel(mcpConnectionStatus(resource, this.plugin.settings.resources), this.plugin.settings.settingsLanguage) : "", resource.scopes.join("/")].filter(Boolean).join(" · "),
+      desc: resource.description || resource.contentPath || resource.configPath || copy.resources.noDesc,
+      resource
     }));
-    const query = this.resourceSearchQuery.plugins;
+    const query = this.resourceSearchQuery[activeTab];
     const filtered = filterWorkspaceResourceRows(rows, query);
-    this.renderResourceSummary(container, plugins.length, rows.filter((row) => row.enabled).length, error, filtered.length, query);
-    if (!plugins.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noPlugins });
+    const enabled = resources.filter((resource) => resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, "knowledge")).length;
+    this.renderResourceSummary(container, resources.length, enabled, error, filtered.length, query);
+    if (activeTab === "mcp" && resources.length) {
+      container.createDiv({ cls: "codex-resource-warning", text: "MCP 已导入 EchoInk 资源目录；只有 Codex native passthrough，或带 broker 连接配置的 MCP，才会标记为可直接调用。" });
+    }
+    if (!resources.length) {
+      const emptyText = activeTab === "plugins" ? copy.resources.noPlugins : activeTab === "mcp" ? copy.resources.noMcp : copy.resources.noSkills;
+      container.createDiv({ cls: "codex-resource-empty", text: emptyText });
       return;
     }
     if (!filtered.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noPluginMatches });
+      const emptyText = activeTab === "plugins" ? copy.resources.noPluginMatches : activeTab === "mcp" ? copy.resources.noMcpMatches : copy.resources.noSkillMatches;
+      container.createDiv({ cls: "codex-resource-empty", text: emptyText });
       return;
     }
-    for (const row of filtered) this.renderResourceRow(container, row);
-  }
-
-  private renderMcpResources(container: HTMLElement, servers: McpServerStatus[], error?: string): void {
-    const copy = this.copy;
-    const rows = servers.map((server) => ({
-      key: server.name,
-      kind: "mcpServers" as const,
-      name: server.name,
-      meta: `${copy.resources.toolsCount(Object.keys(server.tools ?? {}).length)} · ${server.authStatus ?? "unknown"}`,
-      desc: copy.resources.mcpDesc,
-      enabled: resourceEnabled(this.plugin.settings.workspaceResources.mcpServers, server.name, true)
-    }));
-    const query = this.resourceSearchQuery.mcp;
-    const filtered = filterWorkspaceResourceRows(rows, query);
-    this.renderResourceSummary(container, servers.length, rows.filter((row) => row.enabled).length, error, filtered.length, query);
-    if (!this.plugin.settings.mcpEnabled && servers.length) {
-      container.createDiv({ cls: "codex-resource-warning", text: copy.resources.mcpDisabledWarning });
-    }
-    if (!servers.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noMcp });
-      return;
-    }
-    if (!filtered.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noMcpMatches });
-      return;
-    }
-    for (const row of filtered) this.renderResourceRow(container, row);
-  }
-
-  private renderSkillResources(container: HTMLElement, skills: CodexSkill[], error?: string): void {
-    const copy = this.copy;
-    const rows = skills.map((skill) => ({
-      key: skill.path || skill.name,
-      kind: "skills" as const,
-      name: `/${skill.name}`,
-      meta: [skill.scope, skill.path].filter(Boolean).join(" · "),
-      desc: skill.description || copy.resources.noDesc,
-      enabled: resourceEnabled(this.plugin.settings.workspaceResources.skills, skill.path || skill.name, skill.enabled !== false)
-    }));
-    const query = this.resourceSearchQuery.skills;
-    const filtered = filterWorkspaceResourceRows(rows, query);
-    this.renderResourceSummary(container, skills.length, rows.filter((row) => row.enabled).length, error, filtered.length, query);
-    if (!skills.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noSkills });
-      return;
-    }
-    if (!filtered.length) {
-      container.createDiv({ cls: "codex-resource-empty", text: copy.resources.noSkillMatches });
-      return;
-    }
-    for (const row of filtered) this.renderResourceRow(container, row);
+    for (const row of filtered) this.renderResourceRow(container, row.resource);
   }
 
   private renderResourceSummary(container: HTMLElement, total: number, enabled: number, error?: string, visible = total, query = ""): void {
@@ -1702,31 +1738,72 @@ export class CodexSettingTab extends PluginSettingTab {
     if (error) container.createDiv({ cls: "codex-resource-error", text: copy.common.partialReadFailed(error) });
   }
 
-  private renderResourceRow(
-    container: HTMLElement,
-    item: WorkspaceResourceSearchRow & {
-      kind: "plugins" | "mcpServers" | "skills";
-      enabled: boolean;
-    }
-  ): void {
+  private renderResourceRow(container: HTMLElement, resource: EchoInkResource): void {
     const copy = this.copy;
-    const row = container.createDiv({ cls: `codex-resource-row ${item.enabled ? "is-enabled" : "is-disabled"}` });
+    const knowledgeEnabled = resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, "knowledge");
+    const row = container.createDiv({ cls: `codex-resource-row ${knowledgeEnabled ? "is-enabled" : "is-disabled"}` });
     const icon = row.createSpan({ cls: "codex-resource-row-icon" });
-    setIcon(icon, item.kind === "skills" ? "sparkles" : item.kind === "mcpServers" ? "blocks" : "package");
+    setIcon(icon, resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
     const content = row.createDiv({ cls: "codex-resource-row-content" });
-    content.createDiv({ cls: "codex-resource-row-name", text: item.name, attr: { title: item.name } });
-    if (item.meta) content.createDiv({ cls: "codex-resource-row-meta", text: item.meta, attr: { title: item.meta } });
-    if (item.desc) content.createDiv({ cls: "codex-resource-row-desc", text: item.desc, attr: { title: item.desc } });
-    const toggle = row.createEl("input", {
-      cls: "codex-resource-toggle",
-      attr: { type: "checkbox", "aria-label": copy.resources.toggleAria(item.name) }
-    }) as HTMLInputElement;
-    toggle.checked = item.enabled;
-    toggle.onchange = async () => {
-      this.plugin.settings.workspaceResources[item.kind][item.key] = toggle.checked;
-      await this.plugin.saveSettings(true);
+    const name = resource.kind === "skill" ? `/${resource.name}` : resource.name;
+    const connectionStatus = resource.kind === "mcp-server" ? mcpConnectionStatus(resource, this.plugin.settings.resources) : "not-mcp";
+    const meta = [resource.source, resource.bridgeMode, resource.kind === "mcp-server" ? mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage) : "", resource.scopes.join("/")].filter(Boolean).join(" · ");
+    content.createDiv({ cls: "codex-resource-row-name", text: name, attr: { title: name } });
+    if (meta) content.createDiv({ cls: "codex-resource-row-meta", text: meta, attr: { title: meta } });
+    const desc = resource.description || resource.contentPath || resource.configPath || copy.resources.noDesc;
+    if (desc) content.createDiv({ cls: "codex-resource-row-desc", text: desc, attr: { title: desc } });
+    const scopes = row.createDiv({ cls: "codex-resource-scope-toggles" });
+    for (const scope of RESOURCE_SCOPES_FOR_UI) {
+      const label = scopes.createEl("label", { cls: "codex-resource-scope-toggle" });
+      const toggle = label.createEl("input", {
+        cls: "codex-resource-toggle",
+        attr: { type: "checkbox", "aria-label": copy.resources.toggleAria(`${name} ${resourceScopeLabel(scope)}`) }
+      }) as HTMLInputElement;
+      toggle.checked = resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, scope);
+      toggle.disabled = !resource.scopes.includes(scope);
+      label.createSpan({ text: resourceScopeLabel(scope) });
+      toggle.onchange = async () => {
+        this.plugin.settings.resources.enabledByScope[scope][resource.id] = toggle.checked;
+        syncLegacyWorkspaceResourceToggle(this.plugin.settings.workspaceResources, resource, scope, toggle.checked);
+        await this.plugin.saveSettings(true);
+        this.display();
+      };
+    }
+    if (resource.kind === "mcp-server") this.renderMcpConnectionActions(row, resource, connectionStatus);
+  }
+
+  private renderMcpConnectionActions(row: HTMLElement, resource: EchoInkResource, status: ReturnType<typeof mcpConnectionStatus>): void {
+    const actions = row.createDiv({ cls: "codex-resource-scope-toggles" });
+    if (status === "imported-only" || status === "missing-config") {
+      const configure = actions.createEl("button", { text: this.plugin.settings.settingsLanguage === "en" ? "Configure connection" : "补全连接配置" });
+      configure.onclick = () => void this.configureMcpConnection(resource);
+    }
+    if (status === "connectable" || status === "verified" || status === "failed") {
+      const test = actions.createEl("button", { text: this.plugin.settings.settingsLanguage === "en" ? "Test connection" : "测试连接" });
+      test.onclick = () => void this.testMcpConnection(resource);
+    }
+  }
+
+  private async configureMcpConnection(resource: EchoInkResource): Promise<void> {
+    const value = await textInputModal(this.app, "补全连接配置", "输入 stdio command 或 http(s) MCP URL", "");
+    const raw = value?.trim();
+    if (!raw) return;
+    this.plugin.settings.resources.mcpConnections[resource.id] = /^https?:\/\//i.test(raw)
+      ? { transport: "http", url: raw }
+      : { transport: "stdio", command: raw };
+    await this.plugin.saveSettings(true);
+    this.display();
+  }
+
+  private async testMcpConnection(resource: EchoInkResource): Promise<void> {
+    try {
+      const tools = await this.plugin.listEchoInkMcpTools(resource.id, 10000);
+      new Notice(`测试连接成功：${tools.length} tools`);
+    } catch (error) {
+      new Notice(`测试连接失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
       this.display();
-    };
+    }
   }
 
   private async loadWorkspaceResources(force = false, tab: ResourceManagementTab = this.plugin.settings.resourceManagementTab): Promise<void> {
@@ -1735,30 +1812,54 @@ export class CodexSettingTab extends PluginSettingTab {
     this.resourceLoadingTab = tab;
     delete this.resourceLoadErrors[tab];
     this.display();
+    const kind = resourceKindForTab(tab);
+    let codexError = "";
+    let hermesError = "";
+    let hermesResources: EchoInkResource[] = [];
     try {
-      const status = await this.plugin.ensureCodexConnected();
-      if (!status.connected || !this.plugin.codex) throw new Error(this.copy.resources.codexDisconnected);
-      const result = await this.loadResourceTab(tab);
-      this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, result.kind, result.data, result.error);
+      try {
+        const status = await this.plugin.ensureCodexConnected();
+        if (!status.connected || !this.plugin.codex) throw new Error(this.copy.resources.codexDisconnected);
+        const result = await this.loadResourceTab(tab);
+        this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, result.kind, result.data, result.error);
+        this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(
+          this.plugin.settings.workspaceResourceCache,
+          result.kind,
+          result.data,
+          result.error
+        );
+        if (this.plugin.lastStatus && this.resourceSnapshot) {
+          if (tab === "skills") this.plugin.lastStatus.skills = this.resourceSnapshot.skills;
+          if (tab === "mcp") this.plugin.lastStatus.mcpServers = this.resourceSnapshot.mcpServers;
+        }
+        codexError = result.error ?? "";
+      } catch (error) {
+        codexError = error instanceof Error ? error.message : String(error);
+        this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, kind, [], codexError);
+        this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache, kind, [], codexError);
+      }
+
+      try {
+        hermesResources = await this.loadHermesResourceTab(tab);
+      } catch (error) {
+        hermesError = error instanceof Error ? error.message : String(error);
+      }
+
       this.resourceLoaded[tab] = true;
-      this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(
-        this.plugin.settings.workspaceResourceCache,
-        result.kind,
-        result.data,
-        result.error
-      );
-      if (this.plugin.lastStatus) {
-        if (tab === "skills") this.plugin.lastStatus.skills = this.resourceSnapshot.skills;
-        if (tab === "mcp") this.plugin.lastStatus.mcpServers = this.resourceSnapshot.mcpServers;
+      this.syncEchoInkResourceCatalogFromSnapshot(this.resourceSnapshot ?? emptyWorkspaceResourceSnapshot(), hermesResources);
+      const errors = [codexError, hermesError].filter(Boolean);
+      if (errors.length) {
+        this.resourceLoadErrors[tab] = errors.join("\n");
+        this.plugin.settings.resources.lastError = this.resourceLoadErrors[tab] ?? "";
       }
       await this.plugin.saveSettings(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.resourceLoadErrors[tab] = message;
-      const kind = resourceKindForTab(tab);
       this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, kind, [], message);
       this.resourceLoaded[tab] = true;
       this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache, kind, [], message);
+      this.plugin.settings.resources.lastError = message;
       await this.plugin.saveSettings(true);
     } finally {
       this.resourceLoadingTab = null;
@@ -1778,6 +1879,21 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     const result = await this.plugin.codex.refreshSkillResources();
     return { kind: "skills", data: result.skills, error: result.error };
+  }
+
+  private async loadHermesResourceTab(tab: ResourceManagementTab): Promise<EchoInkResource[]> {
+    if (tab === "plugins") return [];
+    const backend = new HermesBackend({
+      ...this.plugin.settings.agents.hermes,
+      vaultPath: this.plugin.getVaultPath()
+    });
+    try {
+      await backend.connect();
+      if (tab === "skills") return (await backend.listSkills()).map(skillResourceFromHermesSkill);
+      return (await backend.listMcpServers()).map(mcpResourceFromHermesServer);
+    } finally {
+      await backend.disconnect().catch(() => undefined);
+    }
   }
 
   private addStatusRow(container: HTMLElement, iconName: string, label: string, value: string): void {
@@ -1808,7 +1924,10 @@ const RESOURCE_TABS: Array<{ id: ResourceManagementTab; icon: string }> = [
   { id: "skills", icon: "sparkles" }
 ];
 
+const RESOURCE_SCOPES_FOR_UI: EchoInkResourceScope[] = ["chat", "knowledge", "editor-actions"];
+
 const SETTINGS_TABS: Array<{ id: SettingsTab; icon: string }> = [
+  { id: "agents", icon: "route" },
   { id: "general", icon: "settings" },
   { id: "providers", icon: "key-round" },
   { id: "resources", icon: "blocks" },
@@ -1838,6 +1957,38 @@ function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
   return tab === "mcp" ? "mcp" : tab === "skills" ? "skills" : "plugins";
 }
 
+function resourceKindForResourceTab(tab: ResourceManagementTab): EchoInkResource["kind"] {
+  return tab === "mcp" ? "mcp-server" : tab === "skills" ? "skill" : "tool-bundle";
+}
+
+function resourceScopeLabel(scope: EchoInkResourceScope): string {
+  if (scope === "chat") return "聊天";
+  if (scope === "editor-actions") return "写作";
+  return "知识库";
+}
+
+function resourceScopeEnabled(enabledByScope: Record<EchoInkResourceScope, Record<string, boolean>>, resource: EchoInkResource, scope: EchoInkResourceScope): boolean {
+  if (!resource.scopes.includes(scope)) return false;
+  const override = enabledByScope[scope]?.[resource.id];
+  return typeof override === "boolean" ? override : resource.enabled;
+}
+
+function syncLegacyWorkspaceResourceToggle(workspaceResources: WorkspaceResourceToggles, resource: EchoInkResource, scope: EchoInkResourceScope, enabled: boolean): void {
+  if (scope !== "knowledge" || resource.source !== "codex-import") return;
+  if (resource.kind === "skill") {
+    workspaceResources.skills[resource.contentPath || resource.name] = enabled;
+    return;
+  }
+  if (resource.kind === "mcp-server") {
+    workspaceResources.mcpServers[resource.name] = enabled;
+    return;
+  }
+  if (resource.kind === "tool-bundle") {
+    const pluginId = typeof resource.metadata?.pluginId === "string" ? resource.metadata.pluginId : resource.name;
+    workspaceResources.plugins[pluginId] = enabled;
+  }
+}
+
 function detectCliPath(customPath: string, copy: SettingsCopy = settingsCopy("zh-CN")): string {
   const found = detectCodexCommand(customPath);
   return found ? copy.common.detected(found) : copy.common.notDetectedManual;
@@ -1845,6 +1996,11 @@ function detectCliPath(customPath: string, copy: SettingsCopy = settingsCopy("zh
 
 function detectOpenCodePath(customPath: string, copy: SettingsCopy = settingsCopy("zh-CN")): string {
   const found = detectOpenCodeCommand(customPath);
+  return found ? copy.common.detected(found) : copy.common.notDetectedManual;
+}
+
+function detectHermesPath(customPath: string, copy: SettingsCopy = settingsCopy("zh-CN")): string {
+  const found = detectHermesCommand(customPath);
   return found ? copy.common.detected(found) : copy.common.notDetectedManual;
 }
 
@@ -1864,7 +2020,7 @@ function formatSetupTime(value: number): string {
 }
 
 function agentBackendLabel(value: AgentBackendMode, copy: SettingsCopy = settingsCopy("zh-CN")): string {
-  return copy.backendLabels[value] ?? (value === "opencode" ? "OpenCode API" : "Codex CLI");
+  return copy.backendLabels[value] ?? (value === "hermes" ? "Hermes" : value === "opencode" ? "OpenCode API" : "Codex CLI");
 }
 
 function normalizeSettingsLanguageForUi(value: string): SettingsLanguage {
@@ -1900,11 +2056,11 @@ class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
 }
 
 function normalizeAgentBackendForUi(value: string): AgentBackendMode {
-  return value === "opencode" ? "opencode" : "codex-cli";
+  return value === "opencode" || value === "hermes" ? value : "codex-cli";
 }
 
 function normalizeKnowledgeBackendForUi(value: string): KnowledgeBaseBackendMode {
-  return value === "codex-cli" || value === "opencode" ? value : "default";
+  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
 }
 
 function normalizeKnowledgeHistoryRetentionForUi(value: string): number {

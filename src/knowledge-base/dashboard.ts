@@ -3,10 +3,11 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
+import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
-import type { KnowledgeBaseRawDigestStatus } from "./types";
+import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus } from "./types";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -480,36 +481,18 @@ function buildRawDigestStatus(
   registryEntries: Record<string, RawDigestRegistryEntry>,
   trackerHints: Set<string>
 ): KnowledgeBaseRawDigestStatus {
-  const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0 };
+  const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0, failed: 0 };
   for (const file of files) {
-    status[rawDigestState(file, processed, registryEntries, trackerHints)] += 1;
+    const state = rawDigestStateForRecord({
+      fingerprint: file.fingerprint ?? "",
+      frontmatter: file.rawDigest ?? null,
+      previous: processed[file.path],
+      registry: registryEntries[file.path],
+      hasTrackerHint: trackerHints.has(file.path)
+    });
+    status[state] += 1;
   }
   return status;
-}
-
-type RawDigestState = keyof KnowledgeBaseRawDigestStatus;
-
-function rawDigestState(
-  file: KnowledgeBaseDashboardFile,
-  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
-  registryEntries: Record<string, RawDigestRegistryEntry>,
-  trackerHints: Set<string>
-): RawDigestState {
-  if (!file.fingerprint) return "pending";
-  const previous = processed[file.path];
-  const registry = registryEntries[file.path];
-  const trusted = rawDigestRecordIsTrusted(file.rawDigest ?? null, file.fingerprint)
-    || registry?.fingerprint === file.fingerprint
-    || previous?.fingerprint === file.fingerprint;
-  if (trusted) return "digested";
-  const changed = Boolean(
-    (file.rawDigest?.fingerprint && file.rawDigest.fingerprint !== file.fingerprint)
-    || (registry?.fingerprint && registry.fingerprint !== file.fingerprint)
-    || (previous?.fingerprint && previous.fingerprint !== file.fingerprint)
-  );
-  if (changed) return "changed";
-  if (previous || trackerHints.has(file.path) || file.rawDigest?.processed) return "calibration";
-  return "pending";
 }
 
 function authoritativeProcessedSources(
@@ -720,7 +703,15 @@ async function buildRecommendationCards(vaultPath: string, input: Recommendation
   const candidates: RecommendationCandidate[] = [];
   const addCandidates = (files: KnowledgeBaseDashboardFile[], kind: KnowledgeBaseDashboardCardKind) => {
     for (const file of visibleDashboardCardFiles(files)) {
-      const rawState = kind === "raw" ? rawDigestState(file, input.processedSources, input.registryEntries, input.trackerHints) : null;
+      const rawState = kind === "raw"
+        ? rawDigestStateForRecord({
+          fingerprint: file.fingerprint ?? "",
+          frontmatter: file.rawDigest ?? null,
+          previous: input.processedSources[file.path],
+          registry: input.registryEntries[file.path],
+          hasTrackerHint: input.trackerHints.has(file.path)
+        })
+        : null;
       const status = dashboardCardStatus(kind, rawState, file, input.generatedAt);
       candidates.push({
         file,
@@ -747,7 +738,7 @@ async function buildRecommendationCards(vaultPath: string, input: Recommendation
 interface RecommendationCandidate {
   file: KnowledgeBaseDashboardFile;
   kind: KnowledgeBaseDashboardCardKind;
-  rawState: RawDigestState | null;
+  rawState: KnowledgeBaseRawDigestState | null;
   status: string;
   score: number;
 }
@@ -774,12 +765,8 @@ async function dashboardFileToCard(
   };
 }
 
-function dashboardCardStatus(kind: KnowledgeBaseDashboardCardKind, rawState: RawDigestState | null, file: KnowledgeBaseDashboardFile, generatedAt: number): string {
-  if (kind === "raw") {
-    if (rawState === "digested") return "已提炼";
-    if (rawState === "calibration") return "待校准";
-    return "Raw 待提炼";
-  }
+function dashboardCardStatus(kind: KnowledgeBaseDashboardCardKind, rawState: KnowledgeBaseRawDigestState | null, file: KnowledgeBaseDashboardFile, generatedAt: number): string {
+  if (kind === "raw") return rawDigestStateLabel(rawState ?? "pending");
   if (kind === "inbox") return "Inbox 待分流";
   if (kind === "outputs") return "维护报告";
   return isSameLocalDay(file.mtime, generatedAt) ? "Wiki 更新" : "Wiki 笔记";
@@ -788,14 +775,20 @@ function dashboardCardStatus(kind: KnowledgeBaseDashboardCardKind, rawState: Raw
 function dashboardCardScore(kind: KnowledgeBaseDashboardCardKind, file: KnowledgeBaseDashboardFile, status: string, input: RecommendationInput): number {
   const days = Math.max(0, daysBetweenDateKeys(formatLocalDateKey(file.mtime), formatLocalDateKey(input.generatedAt)));
   const recency = Math.max(0, 30 - Math.min(30, days * 3));
-  if (kind === "raw") return recency + (status === "Raw 待提炼" ? 90 : status === "待校准" ? 58 : 28);
+  if (kind === "raw") return recency + (status === "提炼失败" ? 96 : status === "Raw 待提炼" ? 90 : status === "待重新提炼" ? 86 : status === "待校准" ? 58 : 28);
   if (kind === "inbox") return recency + 70;
   if (kind === "wiki") return recency + (status === "Wiki 更新" ? 80 : 38);
   return recency + (file.path === input.latestReportPath ? 62 : 34);
 }
 
 function dashboardCardFallbackSummary(kind: KnowledgeBaseDashboardCardKind, status: string): string {
-  if (kind === "raw") return status === "Raw 待提炼" ? "这条来源还需要确认是否已经沉淀到 Wiki。" : "原始来源已登记，可作为后续引用和复盘依据。";
+  if (kind === "raw") {
+    if (status === "已提炼") return "原始来源已登记，可作为后续引用和复盘依据。";
+    if (status === "待校准") return "历史记录显示可能已提炼，但仍需要校准可信证据。";
+    if (status === "待重新提炼") return "这条来源内容变化，需要重新进入四步提炼。";
+    if (status === "提炼失败") return "上次提炼失败，需要重新写入 Wiki / Projects 并验证来源证据。";
+    return "这条来源还需要进入 Wiki / Projects 的结构化知识。";
+  }
   if (kind === "wiki") return "结构化知识页，可作为问答、复盘和关联推荐依据。";
   if (kind === "inbox") return "临时收集内容，需要判断进入 Raw、Wiki、Journal 还是项目区。";
   return "近期输出记录，可用于复盘、沉淀和追踪 Agent 工作结果。";
@@ -1006,9 +999,9 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
 
   const rawPenalty = input.rawChangedCount > 20 ? 20 : input.rawChangedCount > 5 ? 10 : 0;
   if (input.rawChangedCount > 20) {
-    addReason("critical", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "说明仍有来源未被确认消化或登记。", rawPenalty);
+    addReason("critical", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "来源还没有进入 Wiki / Projects 的结构化知识，或缺少可信来源证据。", rawPenalty);
   } else if (input.rawChangedCount > 5) {
-    addReason("risk", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "说明仍有来源未被确认消化或登记。", rawPenalty);
+    addReason("risk", `Raw 待提炼 ${input.rawChangedCount} 个`, "Raw 待提炼", input.rawChangedCount, "来源还没有进入 Wiki / Projects 的结构化知识，或缺少可信来源证据。", rawPenalty);
   }
   if (input.rawDigestStatus.calibration > 0) {
     addReason("risk", `Raw 状态待校准 ${input.rawDigestStatus.calibration} 个`, "Raw 状态待校准", input.rawDigestStatus.calibration, "说明历史记录显示可能已提炼，但还缺少可信机器标记。", input.rawDigestStatus.calibration > 20 ? 8 : 2);

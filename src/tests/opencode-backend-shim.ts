@@ -29,6 +29,14 @@ export class OpenCodeBackend {
     if (hooks().sendPromptError) throw hooks().sendPromptError;
     return hooks().sendPromptResult ?? "";
   }
+  async runCliTask(options?: any): Promise<{ text: string; runId: string }> {
+    hooks().runCliTaskCalls = (hooks().runCliTaskCalls ?? 0) + 1;
+    const runId = hooks().session?.sessionId ?? "test-opencode-session";
+    options?.onRunId?.(runId);
+    await hooks().onRunCliTask?.(options, this);
+    if (hooks().runCliTaskError ?? hooks().sendPromptError) throw hooks().runCliTaskError ?? hooks().sendPromptError;
+    return hooks().runCliTaskResult ?? { text: hooks().sendPromptResult ?? "", runId };
+  }
   async collectHistoryMessages(): Promise<null> {
     return null;
   }

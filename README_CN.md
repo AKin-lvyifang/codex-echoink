@@ -1,11 +1,12 @@
 <a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk 首页工作台海报，展示日历、知识库健康、活跃热力图、卡片筛选和复制内链。" src="docs/images/codex-echoink-home-dashboard-v1.0.0.png">
+  <img width="1024" alt="Codex EchoInk v1.1.0 发布图，展示工具代理、过程时间线和四步提炼。" src="docs/images/codex-echoink-v1.1.0-release.png">
 </a>
 
 <h1 align="center">Codex EchoInk</h1>
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
+  <a href="docs/echoink-product-whitepaper.md">白皮书</a> ·
   <a href="#为什么叫-echoink">命名</a> ·
   <a href="#更新说明">更新说明</a> ·
   <a href="#安装">安装</a> ·
@@ -21,14 +22,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.0.3-0EA5E9?style=flat-square" alt="版本 v1.0.3">
+    <img src="https://img.shields.io/badge/version-v1.1.0-0EA5E9?style=flat-square" alt="版本 v1.1.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.0.3</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.1.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -48,13 +49,14 @@
 - `Start` 只打开 EchoInk 侧栏并记录 setup 完成状态，不会自动发送消息，也不会自动跑知识库任务。
 - 整个安装过程保持显式：不静默安装，不做意外后台 Agent 工作。
 
-### 会话级 Codex 工作区
+### 多 Agent 工作区
 
-- 在 Obsidian 侧栏中打开 Codex。
+- 在 Obsidian 侧栏中打开 EchoInk Agent。
+- 支持 Codex CLI、OpenCode API、Hermes 作为可切换 Agent 后端。
 - 普通会话需要先选择一个文件夹作为工作区。
 - 附加笔记只作为本轮上下文，不会把整个 Vault 变成工作区。
 - 知识库频道才默认绑定当前 Vault，用来维护 Raw、Wiki、Outputs 和 Inbox。
-- 让 Codex 读取文件、查看文件夹、修改文档、执行本地命令。
+- 让当前选中的 Agent 后端按能力读取文件、查看文件夹、修改文档或执行允许的本地操作。
 - 不需要在 Obsidian 和外部聊天窗口之间来回切换。
 
 ### Agent 式过程时间线
@@ -95,15 +97,16 @@
 - 聊天框是主入口：输入 `/init`、`/ask`、`/check`、`/maintain`、`/outputs`、`/journal`、`/inbox`，后面可以继续补充你的要求。
 - 支持 LLM Wiki 初始化向导：先预览目录、规则文件和已有笔记分流建议，发送 `/init confirm` 后才创建模板。
 - 支持 `/ask` 只读问答：先检索 Wiki，再把 Journal / Outputs 作为背景依据，并区分 Vault 依据和外部/模型补充。
-- 支持 `/journal` 写日记：按当前 `journal/` 体系自动写入 daily 月份目录，并沿用最近日记格式；当天窗口为目标日 `00:00` 到次日 `06:00` 前，Codex CLI 读取 Codex sessions，OpenCode API 读取 OpenCode 聊天记录。
+- 支持 `/journal` 写日记：按当前 `journal/` 体系自动写入 daily 月份目录，并沿用最近日记格式；当天窗口为目标日 `00:00` 到次日 `06:00` 前，Codex CLI、OpenCode API、Hermes 分别使用对应后端证据规则。
 - 知识库频道只保留最近有记录的一天；更早聊天按天保存到插件 `history/` 数据目录，并通过 `/history` 查看。
 - Codex CLI 知识库任务会展示与普通 Agent 对话一致的过程卡片：思考、命令、文件改动、工具调用和最终结果。
 - 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
 - 默认读取 `LLM-WIKI.md` 作为知识库规则真源；`AGENTS.md` 只保留 Agent 运行层背景。
 - 可选推荐 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 来增强跨会话长期记忆；由你的 Agent 安装这个 Skill，并在工作区运行 bootstrap，插件不内置这套 Skills，也不会修改你的 `AGENTS.md`。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
-- 现有 Raw 正文保持只读，再把结构化结果写入 Wiki、Outputs、Journal 和 tracker。
-- `/maintain` 会按 ingest、结构整理和 lint 工作流执行，并由插件侧校验保护 Raw 原始正文。
+- 四步提炼：读懂 Raw，拆出可复用知识，写入 Wiki / Projects 结构化正文，再在来源证据通过后回写 Raw 托管状态。
+- 提炼 = 写入 Wiki / Projects + 来源证据 + Raw 托管状态，不等于摘要。
+- `/check` 是提炼审计，只验真；`/maintain` 执行四步提炼；`/reingest` 强制重新提炼；`/calibrate raw` 只做状态校准，不调用 Agent 重新提炼。
 - 知识库历史保存在插件本地 `history/` 目录，删除 Codex 已归档会话后仍可通过 `/history` 查看记录。
 - 知识库命令产生的后台 Codex 会话会在本地历史保存后自动归档，减少对 Codex Desktop 最近会话列表的污染。
 - 支持手动运行，也支持 Obsidian 打开时的每日维护。
@@ -118,19 +121,24 @@
 
 ### 本地优先集成
 
-- 复用本机 Codex CLI 登录状态。
+- 选择 Codex 时复用本机 Codex CLI 登录状态。
+- 已安装并配置时，也可以把 OpenCode 或 Hermes 作为本地 Agent 后端。
 - 默认不要求保存 OpenAI API key。
 - 可选配置 OpenAI Responses API 兼容的自定义 Provider，并为同一个 Provider 保存多个模型。
 - 支持为插件启动的 Codex 子进程配置本地代理。
-- 插件、MCP、Skills 开关只作用于当前 vault，不改 Codex 全局配置。
-- 当前 vault 的插件、MCP、Skills 开关支持搜索；长路径和长描述会自动省略，右侧勾选框保持可见可点。
+- MCP、Skills、工具包开关只作用于当前 vault，不改 Codex、OpenCode 或 Hermes 全局配置。
+- 新增 EchoInk MCP broker 基础层：带显式 `metadata.mcp` 连接配置的 MCP 资源可以列工具，并在审批后通过 EchoInk 调用和记录日志；仅导入的 MCP 会显示但不会被假装成可调用。
+- 当前 vault 的资源支持搜索，并可按聊天、知识库、写作三个 scope 独立开关。
 
-### OpenCode API 模式
+### 多 Agent 后端模式
 
 - 保留原来的 Codex CLI 模式，适合复用本机 Codex 登录态。
-- 新增 OpenCode API 模式，适合用本机 OpenCode 做知识库任务。
+- 新增 OpenCode API 模式，可用于普通聊天、写作和知识库任务。
 - 可检测或连接 OpenCode server，刷新可用模型，并选择当前 OpenCode 模型。
 - 可刷新并选择 OpenCode Agent，让不同知识库工作流使用不同 Agent 配置。
+- 新增 Hermes CLI/API 设置，适合使用 Hermes profile、memory 和 provider 配置。
+- Hermes 的推理 provider 建议继续通过 Hermes 官方 `hermes model` 或环境文件配置；EchoInk 只保存当前连接元信息。
+- Codex 仍保留最完整的过程时间线；OpenCode/Hermes 在没有 richer event API 时使用更简化的运行状态。
 
 ### 写作上下文 Harness
 
@@ -140,6 +148,7 @@
 - 侧栏写作上下文面板会展示当前笔记、模型、理解状态和结构化文章理解。
 - 小幅连续改写、扩写、续写或翻译会复用已有文章理解，避免每次都重新理解全文。
 - 返回灰色候选，按 `Enter` 接受，按 `Esc` 取消。
+- 可按写作后端设置走 Codex、OpenCode 或 Hermes。
 
 这个功能仍处于实验阶段，默认关闭；但 v0.3.0 已经把它升级成更完整、可见、可控的写作流程。
 
@@ -157,20 +166,41 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 <a id="更新说明"></a>
 ## 更新说明
 
+### v1.1.0
+
+<img width="1024" alt="Codex EchoInk v1.1.0 发布图，展示工具代理、过程时间线和四步提炼。" src="docs/images/codex-echoink-v1.1.0-release.png">
+
+**Agent 工具和知识提炼更新：** EchoInk 现在能更清楚地展示 Agent 在做什么，也能更清楚地连接当前 vault 里的工具资源，并用更严格的四步流程维护知识库。
+
+**更新内容：**
+
+- 新增工具代理基础层：vault 资源、MCP 工具、Skills 和工具包有更清楚的开关和作用范围。
+- Agent 过程时间线更清楚：搜索、文件处理、工具调用和完成状态更容易看懂。
+- 知识库提炼流程更严格：先读懂 Raw，再拆出知识，写入 Wiki / Projects，最后确认来源证据后才标记 Raw。
+- 新增 Hermes 后端的第一阶段入口；Hermes 的模型和 provider 仍由 Hermes 自己配置。
+- 将大型 Agent 侧栏拆成更小的界面模块，后续维护和审核更稳。
+
+**使用方法：**
+
+1. 安装 `v1.1.0`。
+2. 在 Obsidian 中打开 EchoInk，选择你正在使用的 Agent 后端。
+3. 在知识库频道使用 `/check`、`/maintain` 或 `/reingest` 检查和提炼 Raw 笔记。
+4. 到设置里检查聊天、知识库、写作三个场景的资源开关。
+
 ### v1.0.3
 
 **审核样式修复版：** 这次主要修 Obsidian 社区审核里的直接样式赋值问题，不改变 EchoInk 核心使用流程。
 
 **修复内容：**
 
-- 将 Codex 侧栏里的直接样式赋值改为 Obsidian 支持的 `setCssStyles` 和 `setCssProps`。
+- 将 Agent 侧栏里的直接样式赋值改为 Obsidian 支持的 `setCssStyles` 和 `setCssProps`。
 - 保持知识库健康分 tooltip、年度热力图、虚拟消息列表和上下文用量环的显示逻辑不变。
 - 增加回归测试，避免后续再次引入不符合官方审核规则的直接样式赋值。
 
 **使用方法：**
 
 1. 安装 `v1.0.3`。
-2. 正常打开 EchoInk 首页或 Codex 侧栏即可。
+2. 正常打开 EchoInk 首页或 Agent 侧栏即可。
 
 ### v1.0.2
 
@@ -185,7 +215,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 **使用方法：**
 
 1. 安装 `v1.0.2`。
-2. 正常打开 EchoInk 首页、Codex 侧栏或复盘预览即可。
+2. 正常打开 EchoInk 首页、Agent 侧栏或复盘预览即可。
 
 ### v1.0.1
 
@@ -239,8 +269,8 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 **使用方法：**
 
-1. 用 `/check` 做只读体检。
-2. 用 `/maintain` 处理变更的 Raw 来源。
+1. 用 `/check` 做只读提炼审计。
+2. 用 `/maintain` 对变更 Raw 执行四步提炼。
 3. 用 `/history` 查看本地历史；删除 Codex 已归档会话不会删除插件历史。
 
 ### v0.7.2
@@ -363,7 +393,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 **使用方法：**
 
-1. 打开 Codex 侧栏里的 `知识库` 频道。
+1. 打开 Agent 侧栏里的 `知识库` 频道。
 2. 需要查询知识库时输入 `/ask 你的问题`。
 3. 使用 Codex CLI 模式时，在输入框右下角选择模型和思考强度。
 4. 展开知识库健康仪表盘，查看年度体检热力图。
@@ -387,7 +417,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 **使用方法：**
 
-1. 打开 Codex 侧栏里的 `知识库` 频道。
+1. 打开 Agent 侧栏里的 `知识库` 频道。
 2. 在设置页选择知识库后端：`Codex CLI` 或 `OpenCode API`。
 3. 如果使用 OpenCode 模式，先在本机安装 OpenCode，再刷新并选择模型和 Agent。
 4. 新 vault 可先输入 `/init` 预览初始化方案；确认无误后输入 `/init confirm`。
@@ -454,7 +484,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 ## 安装
 
 1. 使用 Codex CLI 模式时，先安装并登录 Codex CLI。
-2. 如果要使用 OpenCode API 模式，额外在本机安装 OpenCode。
+2. 如果要使用 OpenCode 或 Hermes 后端，额外在本机安装对应 CLI/runtime。
 3. 如果 Obsidian 社区插件里已经可用，直接搜索并安装 `Codex EchoInk`。
 4. 如果手动安装，先在你的 vault 里创建插件目录：
 
@@ -477,13 +507,14 @@ codex-echoink/
 <a id="快速开始"></a>
 ## 快速开始
 
-1. 从 Ribbon 图标或命令面板打开 Codex 侧栏。
+1. 从 Ribbon 图标或命令面板打开 EchoInk Agent 侧栏。
 2. 在普通会话底部选择一个文件夹作为工作区。
-3. 让 Codex 检查、总结、改写或管理该工作区里的文件。
-4. 需要时附加笔记、文件、图片、skills 或 MCP 工具；附件只作为上下文。
-5. 通过过程卡片查看命令、编辑、上下文用量和结果证据。
-6. 需要维护知识库时，打开 `知识库` 常驻频道。
-7. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再按需要用 `/ask` 提问、`/maintain` 维护，或用 `/outputs` 写入结构化知识。
+3. 在设置里选择默认 Agent 后端：Codex、OpenCode 或 Hermes。
+4. 让当前 Agent 检查、总结、改写或管理该工作区里的文件。
+5. 需要时附加笔记、文件、图片、Skills 或导入的 MCP 资源；附件只作为上下文。
+6. 通过过程卡片查看命令、编辑、上下文用量和结果证据。Codex 过程最完整；OpenCode/Hermes 在没有 richer event API 时显示简化运行状态。
+7. 需要维护知识库时，打开 `知识库` 常驻频道。
+8. 新 vault 先用 `/init` 预览初始化方案；已有结构的 vault 先用 `/check` 做安全体检，再按需要用 `/ask` 提问、`/maintain` 维护，或用 `/outputs` 写入结构化知识。
 
 <a id="故障排查"></a>
 ## 故障排查
@@ -505,9 +536,11 @@ codex-echoink/
 - Codex EchoInk 仅支持桌面端，因为它会调用本机命令行工具。
 - Codex CLI 模式复用本机 Codex CLI 登录态，可能把你选择的 prompt、附件和文件上下文发送给 Codex 配置的模型服务。
 - OpenCode API 模式连接本机或用户配置的 OpenCode server；插件可以启动或停止 `opencode serve`，但不会静默安装 OpenCode。
-- 自定义 API Provider 的 key 会保存在本机 Obsidian 插件数据中，只建议在可信设备上使用。
+- Hermes 模式调用本机 Hermes CLI 或配置的 Hermes API server。EchoInk 可以保存 Hermes server URL、profile、provider、model 和可选 API server key，但不会静默改写 Hermes 全局 provider 配置。
+- 自定义 API Provider 的 key 会保存在本机 Obsidian 插件数据中，只建议在可信设备上使用。Hermes 推理 provider key 建议继续放在 Hermes 自己的配置里。
 - 插件默认不会上传整个 vault。普通会话必须先选择工作区文件夹，附加笔记只作为当前轮上下文。
-- 知识库管理任务会保护 Raw 来源内容：正文、标题、路径和对应 `.assets` 附件目录不可改；Markdown raw 的提炼指纹按正文计算，EchoInk 插件后处理阶段会写入 `已处理`、`提炼状态`、`提炼指纹` 等托管元属性，避免已提炼资料被重复消化。普通 Agent 对话中，Raw 文件整理按你的明确指令和当前权限执行。
+- 知识库管理任务会保护 Raw 来源内容：正文、标题、路径和对应 `.assets` 附件目录不可改；Markdown raw 的提炼指纹按正文计算。只有 Wiki / Projects 已有结构化知识和来源证据后，EchoInk 后处理才会写入 `已处理`、`提炼状态`、`提炼指纹` 等托管元属性。普通 Agent 对话中，Raw 文件整理按你的明确指令和当前权限执行。
+- MCP 和 Skill 会导入到 EchoInk 当前 vault 的资源目录；按 scope 的开关只影响 EchoInk，不写回 Codex、OpenCode 或 Hermes 全局配置。经 EchoInk broker 执行的 MCP 工具调用需要显式连接配置、审批和本地日志。
 
 <a id="截图"></a>
 ## 截图
@@ -549,9 +582,10 @@ OBSIDIAN_VAULT=/path/to/your/vault npm run deploy
 
 - Codex CLI 模式需要先在本机安装并登录 Codex CLI。
 - OpenCode API 模式需要先在本机安装 OpenCode。插件可以连接或启动 OpenCode server，但不会静默安装 OpenCode。
+- Hermes 模式需要先在本机安装 Hermes CLI。推理 provider 建议先通过 Hermes 官方配置完成，再在 EchoInk 里选择 CLI 或 API server。
 - Codex CLI 模式下的自定义 API Provider 需要兼容 OpenAI Responses API，例如 `/v1/responses`；只支持 `/v1/chat/completions` 的通用 OpenAI 格式通常不可用。
 - 自定义 API key 会保存在 Obsidian 插件数据里，只建议在可信本机使用。
-- Codex CLI 路径留空时会从 `PATH` 和常见安装目录自动查找；找不到时可在插件设置页手动填写。
+- CLI 路径留空时会从 `PATH` 和常见安装目录自动查找；找不到时可在插件设置页手动填写。
 
 <a id="许可证"></a>
 ## 许可证
