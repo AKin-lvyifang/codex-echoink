@@ -21,6 +21,7 @@ import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../co
 import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
 import { getElectronDialog, showItemInFinder } from "../core/electron";
+import { swallowError } from "../core/error-handling";
 import { basename, buildUserInput, contextUsageView, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { shouldCloseComposerMenusForClick } from "./composer-menu";
@@ -1062,7 +1063,7 @@ export class CodexView extends ItemView {
     const name = await textInputModal(this.app, "重命名会话", "名称", session.title);
     if (!name) return;
     session.title = name;
-    if (session.threadId) await this.plugin.codex?.setThreadName(session.threadId, name).catch(() => undefined);
+    if (session.threadId) await this.plugin.codex?.setThreadName(session.threadId, name).catch(swallowError("rename Codex chat thread"));
     await this.plugin.saveSettings();
     this.renderTabs();
   }
@@ -1243,7 +1244,7 @@ export class CodexView extends ItemView {
   private async stopTurn(): Promise<void> {
     if (this.isEditorActionRunActive()) {
       if (this.editorActionThreadId && this.activeTurnId) {
-        await this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(() => undefined);
+        await this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(swallowError("cancel editor action Codex turn"));
       }
       this.rejectEditorActionRun(new Error("写作操作已中断"));
       this.running = false;
@@ -1258,7 +1259,7 @@ export class CodexView extends ItemView {
     const session = this.activeRunSession();
     this.pauseQueueForSession(session.id);
     if (!session.threadId || !this.activeTurnId) return;
-    await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(() => undefined);
+    await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(swallowError("cancel active Codex turn"));
     if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error("写作操作已中断"));
     this.running = false;
     this.activeTurnId = "";
@@ -1292,7 +1293,7 @@ export class CodexView extends ItemView {
       this.running = false;
       if (this.isEditorActionRunActive()) {
         if (timedOutThreadId && timedOutTurnId) {
-          void this.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(() => undefined);
+          void this.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(swallowError("interrupt timed out editor action Codex turn"));
         }
         this.rejectEditorActionRun(new Error("写作操作响应超时"));
         this.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
@@ -1308,7 +1309,7 @@ export class CodexView extends ItemView {
       const knowledgeSession = this.isKnowledgeBaseSession(session);
       const shouldPauseQueue = this.activeRunKind === "chat";
       if (knowledgeSession && session.threadId && timedOutTurnId) {
-        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(() => undefined);
+        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(swallowError("interrupt timed out knowledge base Codex turn"));
       }
       this.finishThinkingMessage(session, "失败");
       this.finishRunningProcessMessages(session, "error");
@@ -1440,7 +1441,7 @@ export class CodexView extends ItemView {
     const run = this.editorSummaryRun;
     if (!run) return;
     if (run.threadId && this.activeRunId === run.runId && this.activeTurnId) {
-      void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(() => undefined);
+      void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("cancel editor summary Codex turn"));
     }
     this.rejectEditorSummaryRun(new Error(reason));
     this.releaseEditorSummaryRunLock(run.runId);
@@ -1452,7 +1453,7 @@ export class CodexView extends ItemView {
       const run = this.editorSummaryRun;
       if (!run) return;
       if (run.threadId && this.activeTurnId) {
-        void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(() => undefined);
+        void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("interrupt timed out editor summary Codex turn"));
       }
       this.rejectEditorSummaryRun(new Error("摘要生成超时"));
       this.releaseEditorSummaryRunLock(run.runId);

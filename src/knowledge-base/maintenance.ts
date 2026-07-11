@@ -1,6 +1,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
+import { swallowError } from "../core/error-handling";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { isKnowledgeBaseCancelError } from "./failure";
@@ -254,7 +255,7 @@ async function readExistingTrackerText(tracker: string): Promise<string> {
   });
   if (!stat) return fallback;
   if (!stat.isFile()) {
-    if (!stat.isSymbolicLink()) await fsp.rm(tracker, { recursive: true, force: true }).catch(() => undefined);
+    if (!stat.isSymbolicLink()) await fsp.rm(tracker, { recursive: true, force: true }).catch(swallowError("remove unsafe tracker path"));
     return fallback;
   }
   if (stat.nlink > 1) return fallback;

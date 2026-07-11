@@ -3,6 +3,7 @@ import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
 import { diagnoseCodexError } from "./core/codex-diagnostics";
+import { swallowError } from "./core/error-handling";
 import { HermesBackend } from "./core/hermes-backend";
 import { isSyntheticHermesDefaultModel } from "./core/hermes-models";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
@@ -546,7 +547,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory();
       await this.saveData(this.settings);
     });
-    this.saveQueue = run.catch(() => undefined);
+    this.saveQueue = run.catch(swallowError("settings save queue cleanup"));
     await run;
   }
 
@@ -732,7 +733,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         version: ""
       };
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes backend after loading skills"));
     }
   }
 
@@ -772,7 +773,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       await backend.connect();
       return await backend.listSkills();
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes skill resource backend"));
     }
   }
 

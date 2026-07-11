@@ -9,6 +9,7 @@ import { buildEchoInkResourceCatalog, prepareAgentResources } from "../../resour
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
 import { newId } from "../../settings/settings";
 import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapping";
+import { swallowError } from "../../core/error-handling";
 import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
@@ -339,8 +340,8 @@ async function startSimpleAgentChatTurn(view: CodexViewTurnContext, session: Sto
     assistantMessage.title = `${backend === "hermes" ? "Hermes" : "OpenCode"} 发送失败`;
     assistantMessage.itemType = "error";
     assistantMessage.text = message;
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
-    await view.plugin.saveSettings(true).catch(() => undefined);
+    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(swallowError("externalize failed agent message"));
+    await view.plugin.saveSettings(true).catch(swallowError("save failed agent message"));
     new Notice(`${backend === "hermes" ? "Hermes" : "OpenCode"} 发送失败：${message}`);
     return "failed";
   } finally {
@@ -465,8 +466,8 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
       turnError = turnError ?? error;
       assistantMessage.status = "failed";
       assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
-      await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
-      await view.plugin.saveSettings(true).catch(() => undefined);
+      await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(swallowError("externalize failed settlement message"));
+      await view.plugin.saveSettings(true).catch(swallowError("save failed settlement message"));
     }
     view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();

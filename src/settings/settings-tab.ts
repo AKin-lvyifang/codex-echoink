@@ -1,6 +1,7 @@
 import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFile, type FuzzyMatch } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
+import { swallowError } from "../core/error-handling";
 import { detectCodexCommand } from "../core/codex-service";
 import { HermesBackend } from "../core/hermes-backend";
 import { detectHermesCommand } from "../core/hermes-models";
@@ -302,7 +303,7 @@ export class CodexSettingTab extends PluginSettingTab {
     testHermes.onclick = () => void this.testHermesConnection();
     const copyHermesModel = hermesActions.createEl("button", { cls: "codex-resource-tab", text: "复制 hermes model", attr: { type: "button" } });
     copyHermesModel.onclick = async () => {
-      await navigator.clipboard?.writeText("hermes model").catch(() => undefined);
+      await navigator.clipboard?.writeText("hermes model").catch(swallowError("copy Hermes model command"));
       new Notice("已复制：hermes model");
     };
   }
@@ -1390,7 +1391,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings(true);
       new Notice(copy.opencode.readFailed(message));
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect OpenCode settings backend"));
       if (shouldLoadModels) this.openCodeModelsLoading = false;
       if (shouldLoadAgents) this.openCodeAgentsLoading = false;
       this.display();
@@ -1964,7 +1965,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (tab === "skills") return (await backend.listSkills()).map(skillResourceFromHermesSkill);
       return (await backend.listMcpServers()).map(mcpResourceFromHermesServer);
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes settings backend"));
     }
   }
 

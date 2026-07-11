@@ -3,6 +3,7 @@ import type { AgentBackendKind, AgentPromptPart, AgentTaskInput, AgentTaskResult
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentRichStreamRuntime } from "./runtime";
 import { normalizeRichStreamEvents } from "./rich-stream";
+import { swallowError } from "../core/error-handling";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcProcessLike } from "../core/json-rpc-stdio-transport";
 
 export interface AcpRuntimeCommand {
@@ -101,7 +102,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
     this.process?.kill();
     this.process = null;
     this.activeEmit = null;
-    await this.eventQueue.catch(() => undefined);
+    await this.eventQueue.catch(swallowError(`${this.options.backend} ACP event queue cleanup`));
   }
 
   async listModels() {
@@ -162,7 +163,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
       return { text: outputText, runId: sessionId, usage };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.eventQueue.catch(() => undefined);
+      await this.eventQueue.catch(swallowError(`${this.options.backend} ACP event queue cleanup`));
       await emitNow({ type: "failed", runId: this.activeRunId || undefined, error: message });
       throw error;
     } finally {

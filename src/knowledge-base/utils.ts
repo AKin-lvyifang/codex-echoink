@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { swallowError } from "../core/error-handling";
 
 export async function exists(filePath: string): Promise<boolean> {
   return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
@@ -29,7 +30,7 @@ export async function writeFileAtomic(absolutePath: string, content: string | Bu
     await fsp.writeFile(temp, content);
     await fsp.rename(temp, absolutePath);
   } catch (error) {
-    await fsp.rm(temp, { force: true }).catch(() => undefined);
+    await fsp.rm(temp, { force: true }).catch(swallowError("remove failed atomic write temp file"));
     throw error;
   }
 }

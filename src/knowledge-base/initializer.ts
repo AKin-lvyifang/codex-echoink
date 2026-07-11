@@ -1,5 +1,6 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
 import { exists, normalizeSlashes } from "./utils";
 
@@ -217,7 +218,7 @@ async function chooseRulesFilePath(vaultPath: string): Promise<string> {
 }
 
 async function scanInitializationSuggestions(vaultPath: string): Promise<KnowledgeBaseInitializationSuggestion[]> {
-  const files = await walkVaultFiles(vaultPath, 220).catch(() => []);
+  const files = await walkVaultFiles(vaultPath, 220).catch(emptyArrayOnMissingPathOrWarn("walk vault files for knowledge base initialization"));
   const suggestions: KnowledgeBaseInitializationSuggestion[] = [];
   for (const filePath of files) {
     const relativePath = normalizeSlashes(path.relative(vaultPath, filePath));

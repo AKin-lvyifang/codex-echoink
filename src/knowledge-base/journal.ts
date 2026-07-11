@@ -1,6 +1,7 @@
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
 import { exists, pad } from "./utils";
 
@@ -304,7 +305,7 @@ function buildJournalTemplateDirectories(rootPath: string, dailyRootPath: string
 
 async function collectRecentJournalSamples(vaultPath: string, dailyRootPath: string, targetRelativePath: string): Promise<string[]> {
   const root = path.join(vaultPath, dailyRootPath);
-  const files = await walkMarkdownFiles(root).catch(() => []);
+  const files = await walkMarkdownFiles(root).catch(emptyArrayOnMissingPathOrWarn("collect recent journal samples"));
   const stats = await Promise.all(files.map(async (file) => ({
     file,
     mtime: await fsp.stat(file).then((item) => item.mtimeMs, () => 0)
@@ -318,17 +319,17 @@ async function collectRecentJournalSamples(vaultPath: string, dailyRootPath: str
 }
 
 async function countMonthDirs(dir: string): Promise<number> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("count journal month directories"));
   return entries.filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name)).length;
 }
 
 async function countFlatDailyFiles(dir: string): Promise<number> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("count flat daily journal files"));
   return entries.filter((entry) => entry.isFile() && /^\d{4}-\d{2}-\d{2}(?:-周[一二三四五六日])?\.md$/.test(entry.name)).length;
 }
 
 async function countMarkdownFiles(dir: string, limit: number): Promise<number> {
-  const files = await walkMarkdownFiles(dir, limit).catch(() => []);
+  const files = await walkMarkdownFiles(dir, limit).catch(emptyArrayOnMissingPathOrWarn("count journal markdown files"));
   return files.length;
 }
 

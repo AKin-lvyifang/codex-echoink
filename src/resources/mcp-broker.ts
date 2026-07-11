@@ -7,6 +7,7 @@ import type {
   EchoInkResourceScope
 } from "./types";
 import { resolveMcpConnectionConfig } from "./mcp-connections";
+import { swallowError } from "../core/error-handling";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcStdioLaunch } from "../core/json-rpc-stdio-transport";
 
 export interface EchoInkMcpBrokerInvocation {
@@ -86,7 +87,7 @@ export class EchoInkMcpBroker {
       const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
       return { tools };
     } finally {
-      await transport.close().catch(() => undefined);
+      await transport.close().catch(swallowError("close MCP broker transport after listTools"));
     }
   }
 
@@ -120,7 +121,7 @@ export class EchoInkMcpBroker {
       this.record(invocation, "failed", message);
       throw error;
     } finally {
-      await transport.close().catch(() => undefined);
+      await transport.close().catch(swallowError("close MCP broker transport after callTool"));
     }
   }
 
@@ -184,7 +185,7 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(this.config.headers ?? {}) },
       body: JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {} })
-    }).catch(() => undefined);
+    }).catch(swallowError("send HTTP MCP notification"));
   }
 
   async close(): Promise<void> {}

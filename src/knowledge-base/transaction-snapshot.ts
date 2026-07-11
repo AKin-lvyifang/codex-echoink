@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
+import { swallowError } from "../core/error-handling";
 import type { KnowledgeBaseRunMode } from "./types";
 import {
   disposeKnowledgeTransactionSnapshot,
@@ -161,9 +162,9 @@ export async function restoreOptionalFile(snapshot: OptionalFileSnapshot): Promi
   if (!snapshot.content) return;
   await fsp.mkdir(path.dirname(snapshot.absolutePath), { recursive: true });
   await writeFileAtomic(snapshot.absolutePath, snapshot.content);
-  if (typeof snapshot.mode === "number") await fsp.chmod(snapshot.absolutePath, snapshot.mode).catch(() => undefined);
+  if (typeof snapshot.mode === "number") await fsp.chmod(snapshot.absolutePath, snapshot.mode).catch(swallowError("restore optional file mode"));
   if (typeof snapshot.atimeMs === "number" && typeof snapshot.mtimeMs === "number") {
-    await fsp.utimes(snapshot.absolutePath, new Date(snapshot.atimeMs), new Date(snapshot.mtimeMs)).catch(() => undefined);
+    await fsp.utimes(snapshot.absolutePath, new Date(snapshot.atimeMs), new Date(snapshot.mtimeMs)).catch(swallowError("restore optional file timestamps"));
   }
 }
 
@@ -186,7 +187,7 @@ async function restoreKnowledgeTransaction(snapshot: KnowledgeTransactionSnapsho
       if (entry.kind !== "directory" || !isTransactionPath(relativePath)) continue;
       const currentEntry = currentEntries.get(relativePath);
       if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore transaction directory timestamps"));
     }
   } finally {
     await disposeKnowledgeTransactionSnapshot(current);
@@ -201,21 +202,21 @@ async function restoreKnowledgeTransactionEntry(vaultPath: string, relativePath:
       await fsp.rm(absolute, { force: true, recursive: true });
     }
     await fsp.mkdir(absolute, { recursive: true });
-    await fsp.chmod(absolute, entry.mode).catch(() => undefined);
-    await fsp.utimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+    await fsp.chmod(absolute, entry.mode).catch(swallowError("restore transaction directory mode"));
+    await fsp.utimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore transaction directory timestamps"));
   } else if (entry.kind === "symlink" && entry.target !== undefined) {
     await fsp.mkdir(path.dirname(absolute), { recursive: true });
-    await fsp.rm(absolute, { force: true, recursive: true }).catch(() => undefined);
+    await fsp.rm(absolute, { force: true, recursive: true }).catch(swallowError("restore transaction symlink cleanup"));
     await fsp.symlink(entry.target, absolute);
-    await fsp.lutimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+    await fsp.lutimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore transaction symlink timestamps"));
   } else if (entry.kind === "file") {
     const content = await readKnowledgeTransactionEntryContent(entry);
     if (!content) return;
     await fsp.mkdir(path.dirname(absolute), { recursive: true });
-    await fsp.rm(absolute, { force: true, recursive: true }).catch(() => undefined);
+    await fsp.rm(absolute, { force: true, recursive: true }).catch(swallowError("restore transaction file cleanup"));
     await fsp.writeFile(absolute, content);
-    await fsp.chmod(absolute, entry.mode).catch(() => undefined);
-    await fsp.utimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+    await fsp.chmod(absolute, entry.mode).catch(swallowError("restore transaction file mode"));
+    await fsp.utimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore transaction file timestamps"));
   }
 }
 
@@ -239,7 +240,7 @@ async function restoreKnowledgeTransactionChanges(snapshot: KnowledgeTransaction
       if (entry.kind !== "directory" || !isTransactionPath(relativePath) || shouldKeepTransactionPath(relativePath, keep)) continue;
       const currentEntry = current.entries.get(relativePath);
       if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore kept transaction directory timestamps"));
     }
   } finally {
     await disposeKnowledgeTransactionSnapshot(current);

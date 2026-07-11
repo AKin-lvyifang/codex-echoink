@@ -4998,7 +4998,8 @@ assert.deepEqual(buildOpenCodeRunArgs({
   "只回复 PONG"
 ]);
 const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");
-assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(\(\) => \[\]\);\s*if \(cliModels\.length\) return cliModels;/);
+assert.match(openCodeBackendSource, /import \{ emptyArrayOnMissingPathOrWarn \} from "\.\/error-handling";/);
+assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(emptyArrayOnMissingPathOrWarn\("list OpenCode CLI models"\)\);\s*if \(cliModels\.length\) return cliModels;/);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {

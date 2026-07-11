@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions, AgentTaskResult } from "../agent/types";
+import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
 import { formatOpenCodeError } from "./opencode-errors";
 import { nodeFetch } from "./opencode-fetch";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
@@ -123,7 +124,7 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   async listModels(): Promise<AgentModelInfo[]> {
-    const cliModels = await this.listCliModels().catch(() => []);
+    const cliModels = await this.listCliModels().catch(emptyArrayOnMissingPathOrWarn("list OpenCode CLI models"));
     if (cliModels.length) return cliModels;
     const client = this.requireClient();
     const response = await unwrapOpenCodeResult(client.provider.list({ directory: this.options.vaultPath }), "读取 OpenCode 模型失败");

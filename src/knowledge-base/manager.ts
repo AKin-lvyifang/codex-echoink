@@ -10,6 +10,7 @@ import { createEchoInkMcpToolBridgeRuntime } from "../agent/tool-bridge";
 import type { AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
 import type { AgentBackendKind, AgentTaskInput } from "../agent/types";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
+import { swallowError } from "../core/error-handling";
 import type { TurnOptions } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles } from "../core/opencode-models";
@@ -279,17 +280,17 @@ export class KnowledgeBaseManager {
     this.cancelRequested = true;
     const waiter = this.codexWaiter;
     if (codexRun?.threadId && codexRun.turnId && this.plugin.codex) {
-      await this.plugin.codex.interruptTurn(codexRun.threadId, codexRun.turnId).catch(() => undefined);
+      await this.plugin.codex.interruptTurn(codexRun.threadId, codexRun.turnId).catch(swallowError("cancel knowledge base Codex turn"));
     }
     if (codexRun?.cancel) codexRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
     if (openCodeRun?.runId) {
       if (openCodeRun.cancel) openCodeRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
-      else void openCodeRun.runtime.abort(openCodeRun.runId).catch(() => undefined);
+      else void openCodeRun.runtime.abort(openCodeRun.runId).catch(swallowError("cancel knowledge base OpenCode run"));
     }
     if (hermesRun?.runId) {
       hermesRun.abortController.abort();
       if (hermesRun.cancel) hermesRun.cancel(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
-      else void hermesRun.runtime.abort(hermesRun.runId).catch(() => undefined);
+      else void hermesRun.runtime.abort(hermesRun.runId).catch(swallowError("cancel knowledge base Hermes run"));
     }
     if (waiter && this.codexWaiter === waiter) {
       waiter.reject(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
@@ -1226,7 +1227,7 @@ export class KnowledgeBaseManager {
         this.activeCodexRun = null;
       }
       if (threadId && turnId) {
-        void this.plugin.codex?.interruptTurn(threadId, turnId).catch(() => undefined);
+        void this.plugin.codex?.interruptTurn(threadId, turnId).catch(swallowError("interrupt inactive knowledge base Codex turn"));
       }
       waiter.reject(new Error(`长时间没有收到 Codex 终态（${formatDurationForError(waiter.inactivityTimeoutMs)}），已请求中断。`));
     }, Math.max(1, waiter.inactivityTimeoutMs));
@@ -1417,7 +1418,7 @@ export class KnowledgeBaseManager {
       started = await this.plugin.codex.startThread(options);
     }
     const managedRunId = this.rememberCodexKnowledgeThread(started.threadId, managedKind);
-    await this.plugin.codex.setThreadName?.(started.threadId, `Codex EchoInk KB: ${managedKind}`).catch(() => undefined);
+    await this.plugin.codex.setThreadName?.(started.threadId, `Codex EchoInk KB: ${managedKind}`).catch(swallowError("rename knowledge base Codex thread"));
     throwIfKnowledgeBaseCanceled(this.cancelRequested);
     const inactivityTimeoutMs = normalizeCodexInactivityTimeoutMs(turnOptionOverrides?.codexInactivityTimeoutMs);
     let waiterRef: CodexKbWaiter | null = null;
@@ -1437,7 +1438,7 @@ export class KnowledgeBaseManager {
       });
       this.activeCodexRun = { threadId: started.threadId, turnId: "", cancel: cancelStartTurn ?? undefined };
       const startTurnPromise = this.plugin.codex.startTurn(started.threadId, buildCodexKnowledgeInput(prompt, sources), options).then((turnId) => {
-        if (startTurnAbandoned) void this.plugin.codex?.interruptTurn(started.threadId, turnId).catch(() => undefined);
+        if (startTurnAbandoned) void this.plugin.codex?.interruptTurn(started.threadId, turnId).catch(swallowError("interrupt abandoned knowledge base Codex turn"));
         return turnId;
       });
       const turnId = await rejectAfterTimeout(
@@ -1463,7 +1464,7 @@ export class KnowledgeBaseManager {
         else this.armCodexWaiterInactivityTimer(waiter);
       }
       if (this.cancelRequested) {
-        await this.plugin.codex.interruptTurn(started.threadId, turnId).catch(() => undefined);
+        await this.plugin.codex.interruptTurn(started.threadId, turnId).catch(swallowError("interrupt canceled knowledge base Codex turn"));
         throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
       }
     } catch (error) {
@@ -1631,18 +1632,18 @@ export class KnowledgeBaseManager {
           message: `${backendLabel} 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
         }));
         if (backend === "hermes" || activeRun.runId) {
-          void runtime.abort(activeRun.runId).catch(() => undefined);
+          void runtime.abort(activeRun.runId).catch(swallowError(`abort timed out ${backend} knowledge base run`));
           fail(timeoutError);
           return;
         }
         setTimeout(() => {
-          if (activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
+          if (activeRun.runId) void runtime.abort(activeRun.runId).catch(swallowError(`abort delayed ${backend} knowledge base run`));
           fail(timeoutError);
         }, 20);
       }, Math.max(1, timeoutMs));
       activeRun.cancel = (error: Error) => {
         abortController.abort();
-        if (backend === "hermes" || activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
+        if (backend === "hermes" || activeRun.runId) void runtime.abort(activeRun.runId).catch(swallowError(`abort canceled ${backend} knowledge base run`));
         fail(error);
       };
       try {

@@ -4,6 +4,7 @@ import * as fsp from "fs/promises";
 import { tmpdir } from "os";
 import * as path from "path";
 import { normalizePath } from "obsidian";
+import { swallowError } from "../core/error-handling";
 import { walkExistingEntries } from "./utils";
 
 export interface KnowledgeTransactionSnapshot {
@@ -98,7 +99,7 @@ export async function readKnowledgeTransactionEntryContent(entry: KnowledgeTrans
 
 export async function disposeKnowledgeTransactionSnapshot(snapshot: KnowledgeTransactionSnapshot | null | undefined): Promise<void> {
   if (!snapshot?.tempDir) return;
-  await fsp.rm(snapshot.tempDir, { recursive: true, force: true }).catch(() => undefined);
+  await fsp.rm(snapshot.tempDir, { recursive: true, force: true }).catch(swallowError("dispose transaction snapshot temp directory"));
   snapshot.tempDir = undefined;
 }
 

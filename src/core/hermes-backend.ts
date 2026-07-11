@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import type { AgentBackend, AgentConnectionStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions, AgentTaskInput, AgentTaskResult } from "../agent/types";
+import { swallowError } from "./error-handling";
 import { formatHermesError } from "./hermes-errors";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "./hermes-models";
 import { parseHermesMcpListOutput, type HermesMcpServerInfo } from "../resources/mcp-loader";
@@ -148,7 +149,7 @@ export class HermesBackend implements AgentBackend {
     await this.fetchJson(`${this.connectionInfo.serverUrl}/runs/${encodeURIComponent(runId)}/stop`, {
       method: "POST",
       headers: this.headers()
-    }).catch(() => undefined);
+    }).catch(swallowError("stop Hermes run"));
   }
 
   async runTask(input: AgentTaskInput): Promise<AgentTaskResult> {
@@ -195,7 +196,7 @@ export class HermesBackend implements AgentBackend {
     let pollDelayMs = HERMES_INITIAL_POLL_DELAY_MS;
     while (Date.now() - started < timeoutMs) {
       if (signal?.aborted) {
-        await this.abort(runId).catch(() => undefined);
+        await this.abort(runId).catch(swallowError("abort canceled Hermes poll"));
         throw new Error("Hermes 任务已取消。");
       }
       last = await this.fetchJson(`${this.connectionInfo.serverUrl}/runs/${encodeURIComponent(runId)}`, {
@@ -211,7 +212,7 @@ export class HermesBackend implements AgentBackend {
       await delay(Math.min(pollDelayMs + Math.random() * HERMES_POLL_JITTER_MS, remainingMs), signal);
       pollDelayMs = Math.min(pollDelayMs * 1.5, HERMES_MAX_POLL_DELAY_MS);
     }
-    await this.abort(runId).catch(() => undefined);
+    await this.abort(runId).catch(swallowError("abort timed out Hermes poll"));
     throw new Error(`Hermes 长时间没有返回（${Math.round(timeoutMs / 1000)} 秒），已请求中断。`);
   }
 

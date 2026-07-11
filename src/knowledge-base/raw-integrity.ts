@@ -1,6 +1,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { createHash } from "node:crypto";
+import { swallowError } from "../core/error-handling";
 import type { StructureNormalizationPathRewrite } from "./types";
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { isMissingPathError, normalizeSlashes } from "./utils";
@@ -240,20 +241,20 @@ export async function restoreRawFileContents(
     if (entry.kind === "directory") {
       const current = await fsp.lstat(fullPath).catch(() => null);
       if (current && !current.isDirectory()) {
-        await fsp.rm(fullPath, { force: true, recursive: true }).catch(() => undefined);
+        await fsp.rm(fullPath, { force: true, recursive: true }).catch(swallowError("restore raw directory cleanup"));
       }
       await fsp.mkdir(fullPath, { recursive: true });
-      await fsp.chmod(fullPath, entry.mode).catch(() => undefined);
-      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.chmod(fullPath, entry.mode).catch(swallowError("restore raw directory mode"));
+      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw directory timestamps"));
     } else if (entry.kind === "symlink") {
-      await fsp.rm(fullPath, { force: true, recursive: true }).catch(() => undefined);
+      await fsp.rm(fullPath, { force: true, recursive: true }).catch(swallowError("restore raw symlink cleanup"));
       await fsp.symlink(entry.target, fullPath);
-      await fsp.lutimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.lutimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw symlink timestamps"));
     } else if (entry.kind === "file") {
-      await fsp.rm(fullPath, { force: true, recursive: true }).catch(() => undefined);
+      await fsp.rm(fullPath, { force: true, recursive: true }).catch(swallowError("restore raw file cleanup"));
       await fsp.writeFile(fullPath, entry.content);
-      await fsp.chmod(fullPath, entry.mode).catch(() => undefined);
-      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.chmod(fullPath, entry.mode).catch(swallowError("restore raw file mode"));
+      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw file timestamps"));
     }
     restored.push(target);
   }
@@ -270,19 +271,19 @@ export async function restoreRawMetadata(vaultPath: string, snapshot: RawContent
     const current = await fsp.lstat(fullPath).catch(() => null);
     if (!current) continue;
     if (entry.kind === "directory" && current.isDirectory()) {
-      await fsp.chmod(fullPath, entry.mode).catch(() => undefined);
-      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.chmod(fullPath, entry.mode).catch(swallowError("restore raw metadata directory mode"));
+      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw metadata directory timestamps"));
       restored.push(file);
       continue;
     }
     if (entry.kind === "file" && current.isFile()) {
-      await fsp.chmod(fullPath, entry.mode).catch(() => undefined);
-      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.chmod(fullPath, entry.mode).catch(swallowError("restore raw metadata file mode"));
+      await fsp.utimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw metadata file timestamps"));
       restored.push(file);
       continue;
     }
     if (entry.kind === "symlink" && current.isSymbolicLink()) {
-      await fsp.lutimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+      await fsp.lutimes(fullPath, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(swallowError("restore raw metadata symlink timestamps"));
       restored.push(file);
     }
   }
@@ -354,7 +355,7 @@ async function pruneEmptyRawParents(startDir: string, rawRoot: string): Promise<
   while (isInside(rawRoot, current) && current !== rawRoot) {
     const entries = await fsp.readdir(current).catch(() => null);
     if (!entries || entries.length) return;
-    await fsp.rmdir(current).catch(() => undefined);
+    await fsp.rmdir(current).catch(swallowError("prune empty raw parent"));
     current = path.dirname(current);
   }
 }

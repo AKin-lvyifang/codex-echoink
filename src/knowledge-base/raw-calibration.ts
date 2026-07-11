@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
+import { swallowError } from "../core/error-handling";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { transactionSnapshotExistingSourceEvidencePaths, transactionSnapshotRepairableExistingSourceEvidencePaths } from "./digest-evidence";
 import { discoverKnowledgeBaseSources } from "./discovery";
@@ -241,9 +242,9 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
     };
   } catch (error) {
     if (rawBeforeContents) {
-      await restoreRawFileContents(vaultPath, rawBeforeContents).catch(() => undefined);
+      await restoreRawFileContents(vaultPath, rawBeforeContents).catch(swallowError("restore raw contents after calibration failure"));
       const rawAfter = await snapshotKnowledgeRawFiles(vaultPath).catch(() => null);
-      if (rawAfter) await restoreRawSnapshot(vaultPath, rawBeforeContents, rawBefore, rawAfter, [], { removeAdded: "unsafe" }).catch(() => undefined);
+      if (rawAfter) await restoreRawSnapshot(vaultPath, rawBeforeContents, rawBefore, rawAfter, [], { removeAdded: "unsafe" }).catch(swallowError("restore raw snapshot after calibration failure"));
     }
     await restoreKnowledgeTransactionOnFailure(outputsBefore);
     throw error;

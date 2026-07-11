@@ -1,5 +1,6 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { swallowError } from "../core/error-handling";
 import { isRawIntegrityErrorMessage } from "./raw-integrity";
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource } from "./types";
 import { formatDateForFile } from "./utils";
@@ -204,7 +205,7 @@ export async function writeKnowledgeBaseReportFile(vaultPath: string, reportPath
     await fsp.writeFile(temp, content, "utf8");
     await fsp.rename(temp, absolute);
   } catch (error) {
-    await fsp.rm(temp, { force: true }).catch(() => undefined);
+    await fsp.rm(temp, { force: true }).catch(swallowError("remove failed report temp file"));
     throw error;
   }
 }

@@ -1,5 +1,6 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeBaseEvidenceStatus, KnowledgeBaseSource } from "./types";
 import { contentFingerprint } from "./raw-integrity";
 import { DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES, readKnowledgeBaseTextPrefix } from "./io-budget";
@@ -35,7 +36,7 @@ export async function findKnowledgeBaseAskMatches(vaultPath: string, question: s
   const maxFileReadBytes = normalizePositiveLimit(options.maxFileReadBytes, DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES);
   const maxFilesPerRoot = normalizePositiveLimit(options.maxFilesPerRoot, Number.POSITIVE_INFINITY);
   for (const root of ASK_SOURCE_ROOTS) {
-    const files = await listMarkdownFiles(path.join(vaultPath, root.dir), maxFilesPerRoot).catch(() => []);
+    const files = await listMarkdownFiles(path.join(vaultPath, root.dir), maxFilesPerRoot).catch(emptyArrayOnMissingPathOrWarn(`list ${root.dir} markdown files for ask search`));
     for (const absolutePath of files) {
       const relativePath = normalizeRelativePath(path.relative(vaultPath, absolutePath));
       const stat = await fsp.stat(absolutePath).catch(() => null);
