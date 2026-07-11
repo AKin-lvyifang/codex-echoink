@@ -1101,11 +1101,11 @@ function normalizeProviderMode(value: unknown): ProviderMode {
   return value === "custom-api" ? "custom-api" : DEFAULT_SETTINGS.providerMode;
 }
 
-function normalizeAgentBackendMode(value: unknown): AgentBackendMode {
+export function normalizeAgentBackendMode(value: unknown): AgentBackendMode {
   return value === "opencode" || value === "hermes" ? value : DEFAULT_SETTINGS.agentBackend;
 }
 
-function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBaseBackendMode {
+export function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBaseBackendMode {
   return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
 }
 
@@ -1588,7 +1588,7 @@ function normalizeKnowledgeBaseManagedThreadArchiveState(value: unknown): Knowle
   return value === "running" || value === "pending-archive" || value === "archived" || value === "archive-failed" ? value : "pending-archive";
 }
 
-function normalizeKnowledgeBaseHistoryRetentionDays(value: unknown, fallback: number): number {
+export function normalizeKnowledgeBaseHistoryRetentionDays(value: unknown, fallback: number): number {
   const normalized = normalizePositiveInteger(value, fallback, 0, 3650);
   return normalized === 0 || normalized === 7 || normalized === 30 || normalized === 90 ? normalized : fallback;
 }
@@ -1733,7 +1733,7 @@ function normalizeEditorActionModeConfig(
   };
 }
 
-function normalizeEditorActionQualityMode(value: unknown, fallback: EditorActionQualityMode): EditorActionQualityMode {
+export function normalizeEditorActionQualityMode(value: unknown, fallback: EditorActionQualityMode): EditorActionQualityMode {
   return value === "fast" || value === "quality" || value === "strict" ? value : fallback;
 }
 

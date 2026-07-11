@@ -40,6 +40,10 @@ import {
   providerModelLabel,
   providerConnectionLabel,
   removeApiProvider,
+  normalizeAgentBackendMode,
+  normalizeEditorActionQualityMode,
+  normalizeKnowledgeBaseBackendMode,
+  normalizeKnowledgeBaseHistoryRetentionDays,
   normalizeReviewOutputDir,
   normalizeSettingsLanguage,
   validateApiProvider,
@@ -51,7 +55,6 @@ import {
   type KnowledgeBaseBackendMode,
   type ReviewReportKind,
   type ResourceManagementTab,
-  type SettingsLanguage,
   type SettingsTab,
   type WorkspaceResourceToggles
 } from "./settings";
@@ -182,7 +185,7 @@ export class CodexSettingTab extends PluginSettingTab {
           for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
           dropdown.setValue(settings.agentBackend);
           dropdown.onChange(async (value) => {
-            const backend = normalizeAgentBackendForUi(value);
+            const backend = normalizeAgentBackendMode(value);
             settings.agentBackend = backend;
             settings.agents.defaultBackend = backend;
             await this.plugin.saveSettings();
@@ -362,7 +365,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const language of SETTINGS_LANGUAGE_OPTIONS) dropdown.addOption(language, copy.general.languageOptions[language]);
       dropdown.setValue(this.plugin.settings.settingsLanguage);
       dropdown.onChange(async (value) => {
-        this.plugin.settings.settingsLanguage = normalizeSettingsLanguageForUi(value);
+        this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
         await this.plugin.saveSettings(true);
         this.display();
       });
@@ -447,7 +450,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
       dropdown.setValue(settings.backend);
       dropdown.onChange(async (value) => {
-        settings.backend = normalizeKnowledgeBackendForUi(value);
+        settings.backend = normalizeKnowledgeBaseBackendMode(value);
         await this.plugin.saveSettings();
         this.display();
       });
@@ -527,7 +530,7 @@ export class CodexSettingTab extends PluginSettingTab {
         }
         dropdown.setValue(String(this.plugin.settings.knowledgeBase.historyRetentionDays));
         dropdown.onChange(async (value) => {
-          this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeHistoryRetentionForUi(value);
+          this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeBaseHistoryRetentionDays(value, DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays);
           await this.plugin.saveSettings();
           this.display();
         });
@@ -957,7 +960,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const mode of EDITOR_ACTION_QUALITY_MODES) dropdown.addOption(mode.id, copy.writing.qualityModes[mode.id].label);
       dropdown.setValue(settings.qualityMode);
       dropdown.onChange(async (value) => {
-        settings.qualityMode = normalizeEditorActionQualityModeForUi(value);
+        settings.qualityMode = normalizeEditorActionQualityMode(value, "quality");
         await this.plugin.saveSettings();
         this.display();
       });
@@ -2015,10 +2018,6 @@ const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; icon: st
   { id: "strict", icon: "shield-check" }
 ];
 
-function normalizeEditorActionQualityModeForUi(value: string): EditorActionQualityMode {
-  return value === "fast" || value === "quality" || value === "strict" ? value : "quality";
-}
-
 function editorActionIcon(actionId: string): string {
   if (actionId === "expand") return "text";
   if (actionId === "continue") return "forward";
@@ -2096,10 +2095,6 @@ function agentBackendLabel(value: AgentBackendMode, copy: SettingsCopy = setting
   return copy.backendLabels[value] ?? (value === "hermes" ? "Hermes" : value === "opencode" ? "OpenCode API" : "Codex CLI");
 }
 
-function normalizeSettingsLanguageForUi(value: string): SettingsLanguage {
-  return normalizeSettingsLanguage(value);
-}
-
 class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
   constructor(app: App, private readonly files: TFile[], private readonly onChoose: (file: TFile) => Promise<void>, copy: SettingsCopy) {
     super(app);
@@ -2126,19 +2121,6 @@ class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
   onChooseItem(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
     void this.onChoose(file);
   }
-}
-
-function normalizeAgentBackendForUi(value: string): AgentBackendMode {
-  return value === "opencode" || value === "hermes" ? value : "codex-cli";
-}
-
-function normalizeKnowledgeBackendForUi(value: string): KnowledgeBaseBackendMode {
-  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
-}
-
-function normalizeKnowledgeHistoryRetentionForUi(value: string): number {
-  const parsed = Number(value);
-  return parsed === 7 || parsed === 30 || parsed === 90 || parsed === 0 ? parsed : DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays;
 }
 
 function parseHistoryDateSelection(value: string): string[] {
