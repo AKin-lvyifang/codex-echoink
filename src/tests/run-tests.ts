@@ -178,6 +178,7 @@ import {
 import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
+import { KnowledgeBaseScheduler } from "../knowledge-base/scheduler";
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
@@ -839,6 +840,65 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   scheduledKnowledgeBaseDate(9, 0),
   scheduledKnowledgeBaseDate(8, 0).getTime()
 ), false);
+const schedulerLifecycleSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    enabled: true,
+    scheduleEnabled: true,
+    catchUpOnStartup: true,
+    scheduleTime: "00:00"
+  }
+}).settings.knowledgeBase;
+const schedulerLifecycleEvents: string[] = [];
+const schedulerLifecycleIntervals: number[] = [];
+let schedulerLifecycleIntervalDelay = 0;
+let schedulerLifecycleIntervalCallback: (() => void) | null = null;
+const previousWindowForKnowledgeBaseSchedulerTest = (globalThis as any).window;
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForKnowledgeBaseSchedulerTest ?? {}),
+    setInterval: (callback: () => void, delay: number) => {
+      schedulerLifecycleIntervalCallback = callback;
+      schedulerLifecycleIntervalDelay = delay;
+      return 902;
+    },
+    clearInterval: () => undefined
+  };
+  const scheduler = new KnowledgeBaseScheduler({
+    getSettings: () => schedulerLifecycleSettings,
+    isRunning: () => false,
+    registerInterval: (intervalId) => {
+      schedulerLifecycleIntervals.push(intervalId);
+    },
+    runMaintenance: async () => {
+      schedulerLifecycleEvents.push("runMaintenance");
+      return {
+        status: "success",
+        reportPath: "outputs/maintenance/scheduled.md",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    },
+    appendScheduledMaintenanceMessage: async (result) => {
+      schedulerLifecycleEvents.push(`append:${result.status}`);
+    },
+    refreshKnowledgeBaseSurfaces: () => {
+      schedulerLifecycleEvents.push("refresh");
+    }
+  });
+  scheduler.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerLifecycleIntervals, [902]);
+  assert.equal(schedulerLifecycleIntervalDelay, 60 * 1000);
+  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+  assert.equal(schedulerLifecycleSettings.lastScheduledRunStatus, "success");
+  assert.ok(schedulerLifecycleSettings.lastScheduledRunAt > 0);
+  schedulerLifecycleIntervalCallback?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+} finally {
+  (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
+}
 const staleKnowledgeBaseRunSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
   knowledgeBase: {

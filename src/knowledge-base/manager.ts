@@ -33,7 +33,7 @@ import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAs
 import { applyRawDigestFrontmatter, applyRawDigestStatusFrontmatter, isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_STATUS_DIGESTED, RAW_DIGEST_STATUS_PENDING_CALIBRATION, RAW_DIGEST_STATUS_PENDING_REINGEST, writeRawDigestRegistry, type RawDigestConfidence, type RawDigestRegistryEntry } from "./raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawMetadata, restoreRawSnapshot, snapshotRawFileContents, snapshotRawFiles } from "./raw-integrity";
 import type { RawContentSnapshot, RawSnapshot } from "./raw-integrity";
-import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
+import { KnowledgeBaseScheduler } from "./scheduler";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
 import { buildKnowledgeBaseMaintainReportPayload, knowledgeBaseRunModeForCommandIntent, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import { normalizeKnowledgeBaseStructure, rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
@@ -113,8 +113,7 @@ const URL_PATTERN = /https?:\/\/[^\s<>"')]+/i;
 
 export class KnowledgeBaseManager {
   private running = false;
-  private scheduleTimer: number | null = null;
-  private schedulerStartedAt = 0;
+  private readonly scheduler: KnowledgeBaseScheduler;
   private codexWaiter: CodexKbWaiter | null = null;
   private activeCodexRun: { threadId: string; turnId: string; cancel?: (error: Error) => void } | null = null;
   private activeOpenCode: ActiveOpenCodeRun | null = null;
@@ -123,7 +122,16 @@ export class KnowledgeBaseManager {
   private dashboardSnapshotCache: { snapshot: KnowledgeBaseDashboardSnapshot; savedAt: number; signature: string } | null = null;
   private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
 
-  constructor(private readonly plugin: CodexForObsidianPlugin) {}
+  constructor(private readonly plugin: CodexForObsidianPlugin) {
+    this.scheduler = new KnowledgeBaseScheduler({
+      getSettings: () => this.plugin.settings.knowledgeBase,
+      isRunning: () => this.running,
+      registerInterval: (intervalId) => this.plugin.registerInterval(intervalId),
+      runMaintenance: () => this.runMaintenance("maintain"),
+      appendScheduledMaintenanceMessage: (result) => this.appendScheduledMaintenanceMessage(result),
+      refreshKnowledgeBaseSurfaces: () => this.refreshKnowledgeBaseSurfaces()
+    });
+  }
 
   register(): void {
     const recovered = this.recoverPersistedRunState("插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。");
@@ -173,17 +181,12 @@ export class KnowledgeBaseManager {
     });
     this.plugin.addRibbonIcon("library", "知识库管理", () => void this.plugin.activateKnowledgeBaseChannel());
     this.plugin.app.workspace.onLayoutReady(() => {
-      this.schedulerStartedAt = Date.now();
-      this.armSchedule();
-      void this.runCatchUpIfNeeded();
+      this.scheduler.start();
     });
   }
 
   unload(): void {
-    if (this.scheduleTimer) {
-      window.clearInterval(this.scheduleTimer);
-      this.scheduleTimer = null;
-    }
+    this.scheduler.unload();
     if (this.codexWaiter) {
       this.codexWaiter.reject(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
       this.codexWaiter = null;
@@ -1844,30 +1847,8 @@ export class KnowledgeBaseManager {
     };
   }
 
-  private armSchedule(): void {
-    if (this.scheduleTimer) window.clearInterval(this.scheduleTimer);
-    this.scheduleTimer = window.setInterval(() => void this.runScheduledIfDue(), 60 * 1000);
-    this.plugin.registerInterval(this.scheduleTimer);
-  }
-
-  private async runCatchUpIfNeeded(): Promise<void> {
-    if (!this.plugin.settings.knowledgeBase.catchUpOnStartup) return;
-    await this.runScheduledIfDue(true);
-  }
-
   private async runScheduledIfDue(forceCatchUp = false): Promise<void> {
-    const settings = this.plugin.settings.knowledgeBase;
-    if (this.running) return;
-    if (shouldRunScheduledKnowledgeBaseMaintenance(settings, new Date(), this.schedulerStartedAt, forceCatchUp)) {
-      const scheduledStartedAt = Date.now();
-      settings.lastScheduledRunAt = scheduledStartedAt;
-      settings.lastScheduledRunStatus = "running";
-      const result = await this.runMaintenance("maintain");
-      settings.lastScheduledRunAt = scheduledStartedAt;
-      settings.lastScheduledRunStatus = result.status;
-      await this.appendScheduledMaintenanceMessage(result);
-      this.refreshKnowledgeBaseSurfaces();
-    }
+    await this.scheduler.runScheduledIfDue(forceCatchUp);
   }
 
   private async appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void> {
