@@ -1,26 +1,17 @@
-import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { readFreshKnowledgeBaseReportExcerpt } from "./report";
 import type { KnowledgeBaseSource } from "./types";
-import { walkExistingEntries } from "./utils";
+import {
+  disposeKnowledgeTransactionSnapshot,
+  readKnowledgeTransactionEntryContent,
+  snapshotKnowledgeTransactionEntries,
+  type KnowledgeTransactionSnapshot,
+  type KnowledgeTransactionSnapshotEntry
+} from "./transaction-snapshot-core";
 
-export interface KnowledgeTransactionSnapshot {
-  vaultPath: string;
-  roots: string[];
-  entries: Map<string, KnowledgeTransactionSnapshotEntry>;
-}
-
-export interface KnowledgeTransactionSnapshotEntry {
-  kind: "file" | "directory" | "symlink" | "special";
-  content?: Buffer;
-  target?: string;
-  nlink?: number;
-  mode: number;
-  atimeMs: number;
-  mtimeMs: number;
-}
+export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./transaction-snapshot-core";
 
 export async function verifyDigestEvidence(input: {
   vaultPath: string;
@@ -71,37 +62,41 @@ async function assertKnowledgeStructureDigestsSources(
     throw new Error("知识库维护未写出结构层消化证据，已停止提交 tracker。");
   }
   const current = await snapshotDigestEvidenceTransaction(vaultPath, before.roots);
-  const covered = new Set<string>();
-  const evidencePaths = new Map<string, Set<string>>();
-  const addEvidence = (source: KnowledgeBaseSource, paths: string[]) => {
-    if (!paths.length) return;
-    covered.add(source.relativePath);
-    const bucket = evidencePaths.get(source.relativePath) ?? new Set<string>();
-    for (const item of paths) bucket.add(item);
-    evidencePaths.set(source.relativePath, bucket);
-  };
-  for (const source of sources) {
-    const previous = options.processedSourcesBeforeRun?.[source.relativePath];
-    if (legacyProcessedSourceMatchesCurrent(previous, source)) {
-      addEvidence(source, transactionSnapshotExistingSourceEvidencePaths(before, source));
-    }
-    if (!covered.has(source.relativePath) && processedSourceCanUseRepairableExistingEvidence(previous)) {
-      addEvidence(source, transactionSnapshotRepairableExistingSourceEvidencePaths(before, source));
-    }
-  }
-  for (const [relativePath, currentEntry] of current.entries) {
-    if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (!transactionFileContentChanged(before.entries.get(relativePath), currentEntry)) continue;
-    const beforeEntry = before.entries.get(relativePath);
+  try {
+    const covered = new Set<string>();
+    const evidencePaths = new Map<string, Set<string>>();
+    const addEvidence = (source: KnowledgeBaseSource, paths: string[]) => {
+      if (!paths.length) return;
+      covered.add(source.relativePath);
+      const bucket = evidencePaths.get(source.relativePath) ?? new Set<string>();
+      for (const item of paths) bucket.add(item);
+      evidencePaths.set(source.relativePath, bucket);
+    };
     for (const source of sources) {
-      if (transactionFileIntroducesSourceEvidence(beforeEntry, currentEntry, source)) addEvidence(source, [relativePath]);
+      const previous = options.processedSourcesBeforeRun?.[source.relativePath];
+      if (legacyProcessedSourceMatchesCurrent(previous, source)) {
+        addEvidence(source, await transactionSnapshotExistingSourceEvidencePaths(before, source));
+      }
+      if (!covered.has(source.relativePath) && processedSourceCanUseRepairableExistingEvidence(previous)) {
+        addEvidence(source, await transactionSnapshotRepairableExistingSourceEvidencePaths(before, source));
+      }
     }
+    for (const [relativePath, currentEntry] of current.entries) {
+      if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
+      if (!transactionFileContentChanged(before.entries.get(relativePath), currentEntry)) continue;
+      const beforeEntry = before.entries.get(relativePath);
+      for (const source of sources) {
+        if (await transactionFileIntroducesSourceEvidence(beforeEntry, currentEntry, source)) addEvidence(source, [relativePath]);
+      }
+    }
+    const missing = sources.filter((source) => !covered.has(source.relativePath));
+    if (missing.length) {
+      throw new Error(`知识库维护未写出结构层消化证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
+    }
+    return Object.fromEntries(Array.from(evidencePaths.entries()).map(([key, value]) => [key, Array.from(value).sort()]));
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(current);
   }
-  const missing = sources.filter((source) => !covered.has(source.relativePath));
-  if (missing.length) {
-    throw new Error(`知识库维护未写出结构层消化证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
-  }
-  return Object.fromEntries(Array.from(evidencePaths.entries()).map(([key, value]) => [key, Array.from(value).sort()]));
 }
 
 export function isKnowledgeStructureDigestEvidencePath(relativePath: string): boolean {
@@ -122,23 +117,28 @@ function transactionFileContentChanged(
   before: KnowledgeTransactionSnapshotEntry | undefined,
   current: KnowledgeTransactionSnapshotEntry
 ): boolean {
-  if (current.kind !== "file" || !current.content) return false;
+  if (current.kind !== "file") return false;
   if (!before) return true;
-  if (before.kind !== "file" || !before.content) return true;
-  return !before.content.equals(current.content);
+  if (before.kind !== "file") return true;
+  if (typeof before.size === "number" && typeof current.size === "number" && before.size !== current.size) return true;
+  if (before.contentHash && current.contentHash) return before.contentHash !== current.contentHash;
+  return Math.round(before.mtimeMs) !== Math.round(current.mtimeMs);
 }
 
-export function transactionFileIntroducesSourceEvidence(
+export async function transactionFileIntroducesSourceEvidence(
   before: KnowledgeTransactionSnapshotEntry | undefined,
   current: KnowledgeTransactionSnapshotEntry,
   source: KnowledgeBaseSource
-): boolean {
-  if (current.kind !== "file" || !current.content) return false;
-  const currentText = current.content.toString("utf8");
+): Promise<boolean> {
+  if (current.kind !== "file") return false;
+  const currentContent = await readKnowledgeTransactionEntryContent(current);
+  if (!currentContent) return false;
+  const currentText = currentContent.toString("utf8");
   if (!maintenanceReportMentionsSource(currentText, source.relativePath)) return false;
   const currentLines = normalizedEvidenceLines(currentText);
-  const beforeLines = before?.kind === "file" && before.content
-    ? normalizedEvidenceLines(before.content.toString("utf8"))
+  const beforeContent = await readKnowledgeTransactionEntryContent(before);
+  const beforeLines = beforeContent
+    ? normalizedEvidenceLines(beforeContent.toString("utf8"))
     : [];
   const introducedLines = introducedEvidenceLineFlags(beforeLines, currentLines);
   return sourceEvidenceBlocks(currentLines, introducedLines, source.relativePath)
@@ -155,24 +155,27 @@ function processedSourceCanUseRepairableExistingEvidence(previous: KnowledgeBase
   return !previous || !previous.fingerprint;
 }
 
-export function transactionSnapshotExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): string[] {
+export async function transactionSnapshotExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): Promise<string[]> {
   const paths: string[] = [];
   for (const [relativePath, entry] of snapshot.entries) {
     if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (entry.kind !== "file" || !entry.content) continue;
-    const lines = normalizedEvidenceLines(entry.content.toString("utf8"));
+    const content = await readKnowledgeTransactionEntryContent(entry);
+    if (!content) continue;
+    const lines = normalizedEvidenceLines(content.toString("utf8"));
     if (fileHasSourceMentionAndDigest(lines, source.relativePath)) paths.push(relativePath);
   }
   return paths;
 }
 
-export function transactionSnapshotRepairableExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): string[] {
+export async function transactionSnapshotRepairableExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): Promise<string[]> {
   const paths: string[] = [];
   for (const [relativePath, entry] of snapshot.entries) {
     if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (entry.kind !== "file" || !entry.content) continue;
+    if (entry.kind !== "file") continue;
     if (!transactionEntryIsNotOlderThanSource(entry, source)) continue;
-    const lines = normalizedEvidenceLines(entry.content.toString("utf8"));
+    const content = await readKnowledgeTransactionEntryContent(entry);
+    if (!content) continue;
+    const lines = normalizedEvidenceLines(content.toString("utf8"));
     if (
       fileHasSinglePageLevelSourceEvidence(lines, source.relativePath)
       || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)
@@ -570,46 +573,11 @@ function isKnowledgePathBoundaryAfter(char: string, nextChar = ""): boolean {
 }
 
 async function snapshotDigestEvidenceTransaction(vaultPath: string, roots: string[]): Promise<KnowledgeTransactionSnapshot> {
-  const entries: KnowledgeTransactionSnapshot["entries"] = new Map();
-  for (const root of roots) {
-    const absolute = path.join(vaultPath, root);
-    const paths = await walkExistingEntries(absolute);
-    for (const entryPath of paths) {
-      const relativePath = normalizePath(path.relative(vaultPath, entryPath));
-      const stat = await fsp.lstat(entryPath);
-      if (stat.isDirectory()) {
-        entries.set(relativePath, {
-          kind: "directory",
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else if (stat.isSymbolicLink()) {
-        entries.set(relativePath, {
-          kind: "symlink",
-          target: await fsp.readlink(entryPath),
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else if (stat.isFile()) {
-        entries.set(relativePath, {
-          kind: "file",
-          content: await fsp.readFile(entryPath),
-          nlink: stat.nlink,
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else {
-        entries.set(relativePath, {
-          kind: "special",
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      }
-    }
-  }
-  return { vaultPath, roots: roots.map((root) => normalizePath(root)), entries };
+  return snapshotKnowledgeTransactionEntries(vaultPath, digestEvidenceRoots(roots));
+}
+
+function digestEvidenceRoots(roots: string[]): string[] {
+  return roots
+    .map((root) => normalizePath(root))
+    .filter((root) => root === "wiki" || root.startsWith("wiki/") || root === "projects" || root.startsWith("projects/"));
 }

@@ -3,10 +3,21 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseRunMode } from "./types";
-import type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
-import { formatDateForFile, isMissingPathError, pad, walkExistingEntries, writeFileAtomic } from "./utils";
+import {
+  disposeKnowledgeTransactionSnapshot,
+  readKnowledgeTransactionEntryContent,
+  snapshotKnowledgeTransactionEntries,
+  type KnowledgeTransactionSnapshot,
+  type KnowledgeTransactionSnapshotEntry
+} from "./transaction-snapshot-core";
+import { formatDateForFile, isMissingPathError, pad, writeFileAtomic } from "./utils";
 
-export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
+export {
+  KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD,
+  disposeKnowledgeTransactionSnapshot,
+  type KnowledgeTransactionSnapshot,
+  type KnowledgeTransactionSnapshotEntry
+} from "./transaction-snapshot-core";
 
 export interface OptionalFileSnapshot {
   absolutePath: string;
@@ -67,7 +78,12 @@ export async function assertSafeKnowledgeTransactionCurrentState(
   roots: string[],
   options: { allowedUnsafePaths?: Set<string> } = {}
 ): Promise<void> {
-  assertSafeKnowledgeTransactionRoots(await snapshotKnowledgeTransaction(vaultPath, roots), options);
+  const snapshot = await snapshotKnowledgeTransaction(vaultPath, roots);
+  try {
+    assertSafeKnowledgeTransactionRoots(snapshot, options);
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(snapshot);
+  }
 }
 
 export async function quarantinePreexistingKnowledgeConflictDuplicates(
@@ -96,48 +112,7 @@ export async function quarantinePreexistingKnowledgeConflictDuplicates(
 }
 
 export async function snapshotKnowledgeTransaction(vaultPath: string, roots: string[]): Promise<KnowledgeTransactionSnapshot> {
-  const entries: KnowledgeTransactionSnapshot["entries"] = new Map();
-  for (const root of roots) {
-    const absolute = path.join(vaultPath, root);
-    const paths = await walkExistingEntries(absolute);
-    for (const entryPath of paths) {
-      const relativePath = normalizePath(path.relative(vaultPath, entryPath));
-      const stat = await fsp.lstat(entryPath);
-      if (stat.isDirectory()) {
-        entries.set(relativePath, {
-          kind: "directory",
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else if (stat.isSymbolicLink()) {
-        entries.set(relativePath, {
-          kind: "symlink",
-          target: await fsp.readlink(entryPath),
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else if (stat.isFile()) {
-        entries.set(relativePath, {
-          kind: "file",
-          content: await fsp.readFile(entryPath),
-          nlink: stat.nlink,
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      } else {
-        entries.set(relativePath, {
-          kind: "special",
-          mode: stat.mode,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs
-        });
-      }
-    }
-  }
-  return { vaultPath, roots: roots.map((root) => normalizePath(root)), entries };
+  return snapshotKnowledgeTransactionEntries(vaultPath, roots);
 }
 
 export async function restoreKnowledgeTransactionOnFailure(snapshot: KnowledgeTransactionSnapshot | null): Promise<{ restored: boolean; error?: string }> {
@@ -193,23 +168,28 @@ export async function restoreOptionalFile(snapshot: OptionalFileSnapshot): Promi
 }
 
 async function restoreKnowledgeTransaction(snapshot: KnowledgeTransactionSnapshot): Promise<void> {
-  const currentEntries = (await snapshotKnowledgeTransaction(snapshot.vaultPath, snapshot.roots)).entries;
-  for (const [relativePath] of sortedTransactionEntries(currentEntries).reverse()) {
-    if (snapshot.entries.has(relativePath)) continue;
-    if (!isTransactionPath(relativePath)) continue;
-    await fsp.rm(path.join(snapshot.vaultPath, relativePath), { force: true, recursive: true });
-  }
-  for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries)) {
-    if (!isTransactionPath(relativePath)) continue;
-    const currentEntry = currentEntries.get(relativePath);
-    if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-    await restoreKnowledgeTransactionEntry(snapshot.vaultPath, relativePath, entry);
-  }
-  for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries).reverse()) {
-    if (entry.kind !== "directory" || !isTransactionPath(relativePath)) continue;
-    const currentEntry = currentEntries.get(relativePath);
-    if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-    await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+  const current = await snapshotKnowledgeTransaction(snapshot.vaultPath, snapshot.roots);
+  try {
+    const currentEntries = current.entries;
+    for (const [relativePath] of sortedTransactionEntries(currentEntries).reverse()) {
+      if (snapshot.entries.has(relativePath)) continue;
+      if (!isTransactionPath(relativePath)) continue;
+      await fsp.rm(path.join(snapshot.vaultPath, relativePath), { force: true, recursive: true });
+    }
+    for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries)) {
+      if (!isTransactionPath(relativePath)) continue;
+      const currentEntry = currentEntries.get(relativePath);
+      if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
+      await restoreKnowledgeTransactionEntry(snapshot.vaultPath, relativePath, entry);
+    }
+    for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries).reverse()) {
+      if (entry.kind !== "directory" || !isTransactionPath(relativePath)) continue;
+      const currentEntry = currentEntries.get(relativePath);
+      if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
+      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+    }
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(current);
   }
 }
 
@@ -228,10 +208,12 @@ async function restoreKnowledgeTransactionEntry(vaultPath: string, relativePath:
     await fsp.rm(absolute, { force: true, recursive: true }).catch(() => undefined);
     await fsp.symlink(entry.target, absolute);
     await fsp.lutimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
-  } else if (entry.kind === "file" && entry.content) {
+  } else if (entry.kind === "file") {
+    const content = await readKnowledgeTransactionEntryContent(entry);
+    if (!content) return;
     await fsp.mkdir(path.dirname(absolute), { recursive: true });
     await fsp.rm(absolute, { force: true, recursive: true }).catch(() => undefined);
-    await fsp.writeFile(absolute, entry.content);
+    await fsp.writeFile(absolute, content);
     await fsp.chmod(absolute, entry.mode).catch(() => undefined);
     await fsp.utimes(absolute, new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
   }
@@ -240,23 +222,27 @@ async function restoreKnowledgeTransactionEntry(vaultPath: string, relativePath:
 async function restoreKnowledgeTransactionChanges(snapshot: KnowledgeTransactionSnapshot, keepPaths: Set<string>): Promise<void> {
   const keep = normalizeKeepPaths(keepPaths);
   const current = await snapshotKnowledgeTransaction(snapshot.vaultPath, snapshot.roots);
-  for (const [relativePath] of sortedTransactionEntries(current.entries).reverse()) {
-    if (snapshot.entries.has(relativePath)) continue;
-    if (shouldKeepTransactionPath(relativePath, keep)) continue;
-    if (!isTransactionPath(relativePath)) continue;
-    await fsp.rm(path.join(snapshot.vaultPath, relativePath), { force: true, recursive: true });
-  }
-  for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries)) {
-    if (!isTransactionPath(relativePath) || shouldKeepTransactionPath(relativePath, keep)) continue;
-    const currentEntry = current.entries.get(relativePath);
-    if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-    await restoreKnowledgeTransactionEntry(snapshot.vaultPath, relativePath, entry);
-  }
-  for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries).reverse()) {
-    if (entry.kind !== "directory" || !isTransactionPath(relativePath) || shouldKeepTransactionPath(relativePath, keep)) continue;
-    const currentEntry = current.entries.get(relativePath);
-    if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
-    await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+  try {
+    for (const [relativePath] of sortedTransactionEntries(current.entries).reverse()) {
+      if (snapshot.entries.has(relativePath)) continue;
+      if (shouldKeepTransactionPath(relativePath, keep)) continue;
+      if (!isTransactionPath(relativePath)) continue;
+      await fsp.rm(path.join(snapshot.vaultPath, relativePath), { force: true, recursive: true });
+    }
+    for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries)) {
+      if (!isTransactionPath(relativePath) || shouldKeepTransactionPath(relativePath, keep)) continue;
+      const currentEntry = current.entries.get(relativePath);
+      if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
+      await restoreKnowledgeTransactionEntry(snapshot.vaultPath, relativePath, entry);
+    }
+    for (const [relativePath, entry] of sortedTransactionEntries(snapshot.entries).reverse()) {
+      if (entry.kind !== "directory" || !isTransactionPath(relativePath) || shouldKeepTransactionPath(relativePath, keep)) continue;
+      const currentEntry = current.entries.get(relativePath);
+      if (currentEntry && sameTransactionEntry(entry, currentEntry)) continue;
+      await fsp.utimes(path.join(snapshot.vaultPath, relativePath), new Date(entry.atimeMs), new Date(entry.mtimeMs)).catch(() => undefined);
+    }
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(current);
   }
 }
 
@@ -282,7 +268,11 @@ function sameTransactionEntry(left: KnowledgeTransactionSnapshotEntry, right: Kn
   if (left.kind !== right.kind) return false;
   if (left.mode !== right.mode) return false;
   if (Math.round(left.mtimeMs) !== Math.round(right.mtimeMs)) return false;
-  if (left.kind === "file") return Boolean(left.content && right.content && left.content.equals(right.content));
+  if (left.kind === "file") {
+    if (typeof left.size === "number" && typeof right.size === "number" && left.size !== right.size) return false;
+    if (left.contentHash && right.contentHash) return left.contentHash === right.contentHash;
+    return Boolean(left.content && right.content && left.content.equals(right.content));
+  }
   if (left.kind === "symlink") return left.target === right.target;
   if (left.kind === "special") return true;
   return true;

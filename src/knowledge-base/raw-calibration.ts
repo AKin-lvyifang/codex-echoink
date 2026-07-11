@@ -37,6 +37,7 @@ import {
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import {
   assertSafeKnowledgeTransactionRoots,
+  disposeKnowledgeTransactionSnapshot,
   restoreKnowledgeTransactionOnFailure,
   snapshotKnowledgeTransaction,
   type KnowledgeTransactionSnapshot
@@ -68,6 +69,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
   let rawBeforeContents: RawContentSnapshot | null = null;
   let rawBefore: RawSnapshot = new Map();
   let outputsBefore: KnowledgeTransactionSnapshot | null = null;
+  let structureSnapshot: KnowledgeTransactionSnapshot | null = null;
   const processedSources: KnowledgeBaseSource[] = [];
   const marked: KnowledgeBaseSource[] = [];
   const review: KnowledgeBaseSource[] = [];
@@ -85,7 +87,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
     assertSafeKnowledgeTransactionRoots(outputsBefore, { allowedUnsafePaths: new Set([RAW_DIGEST_REGISTRY_PATH, "outputs/.ingest-tracker.md"]) });
     const discovery = await discoverKnowledgeBaseSources(vaultPath, options.processedSources, "maintain");
     checkCanceled();
-    const structureSnapshot = await snapshotKnowledgeTransaction(vaultPath, ["wiki", "projects"]);
+    structureSnapshot = await snapshotKnowledgeTransaction(vaultPath, ["wiki", "projects"]);
     checkCanceled();
     const registryBeforeRun = await readRawDigestRegistry(vaultPath);
     const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, "outputs/.ingest-tracker.md", discovery.sources.map((source) => ({
@@ -101,7 +103,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       checkCanceled();
       const previous = processedSourcesBeforeRun[source.relativePath];
       const registryEntry = registryBeforeRun.entries[source.relativePath];
-      const existingEvidence = transactionSnapshotExistingSourceEvidencePaths(structureSnapshot, source);
+      const existingEvidence = await transactionSnapshotExistingSourceEvidencePaths(structureSnapshot, source);
       const rawDigestRecord = await rawMarkdownDigestFrontmatterRecord(vaultPath, source);
       if (rawDigestRecord?.fingerprint && rawDigestRecord.fingerprint !== source.fingerprint) {
         changed.push(source);
@@ -151,7 +153,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
         repairableEvidence = existingEvidence;
       }
       if (!repairableEvidence.length) {
-        repairableEvidence = transactionSnapshotRepairableExistingSourceEvidencePaths(structureSnapshot, source);
+        repairableEvidence = await transactionSnapshotRepairableExistingSourceEvidencePaths(structureSnapshot, source);
       }
       if (repairableEvidence.length) {
         evidencePaths[source.relativePath] = repairableEvidence;
@@ -245,6 +247,9 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
     }
     await restoreKnowledgeTransactionOnFailure(outputsBefore);
     throw error;
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(structureSnapshot);
+    await disposeKnowledgeTransactionSnapshot(outputsBefore);
   }
 }
 

@@ -73,6 +73,7 @@ import {
   assertSafeKnowledgeTransactionCurrentState,
   assertSafeKnowledgeTransactionRoots,
   commitLintReportOnly,
+  disposeKnowledgeTransactionSnapshot,
   knowledgeTransactionRootsForMode,
   quarantinePreexistingKnowledgeConflictDuplicates,
   restoreKnowledgeTransactionOnFailure,
@@ -634,6 +635,7 @@ export class KnowledgeBaseManager {
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
       conflictDuplicateCleanup = await quarantinePreexistingKnowledgeConflictDuplicates(vaultPath, transactionBefore, startedAt, mode);
       if (conflictDuplicateCleanup.moved.length) {
+        await disposeKnowledgeTransactionSnapshot(transactionBefore);
         transactionBefore = await snapshotKnowledgeTransaction(vaultPath, transactionRoots);
       }
       throwIfKnowledgeBaseCanceled(this.cancelRequested);
@@ -1009,6 +1011,7 @@ export class KnowledgeBaseManager {
         error: message
       };
     } finally {
+      await disposeKnowledgeTransactionSnapshot(transactionBefore);
       this.activeCodexRun = null;
       this.activeOpenCode = null;
       this.activeHermes = null;

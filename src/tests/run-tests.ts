@@ -194,7 +194,7 @@ import { extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { extractFirstUrl, isHtmlVerificationBlocked, isWeChatUrl, sanitizeWebCaptureFileName, stripCollectPrefix } from "../knowledge-base/web-capture";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
-import { commitLintReportOnly, snapshotKnowledgeTransaction } from "../knowledge-base/transaction-snapshot";
+import { commitLintReportOnly, disposeKnowledgeTransactionSnapshot, KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD, snapshotKnowledgeTransaction } from "../knowledge-base/transaction-snapshot";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
 import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "../knowledge-base/types";
@@ -5606,6 +5606,35 @@ try {
     assert.equal(await readFile(path.join(transactionSnapshotVault, "outputs", "kb-check.md"), "utf8"), "lint report");
   } finally {
     await rm(transactionSnapshotVault, { recursive: true, force: true });
+  }
+  const transactionLargeSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-large-snapshot-"));
+  let transactionLargeBefore: Awaited<ReturnType<typeof snapshotKnowledgeTransaction>> | null = null;
+  let transactionLargeTempDir = "";
+  try {
+    await mkdir(path.join(transactionLargeSnapshotVault, "wiki"), { recursive: true });
+    await mkdir(path.join(transactionLargeSnapshotVault, "outputs"), { recursive: true });
+    for (let index = 0; index <= KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD; index++) {
+      await writeFile(path.join(transactionLargeSnapshotVault, "wiki", `topic-${String(index).padStart(2, "0")}.md`), "aaaa", "utf8");
+    }
+    const targetPath = path.join(transactionLargeSnapshotVault, "wiki", "topic-00.md");
+    const targetStat = await stat(targetPath);
+    transactionLargeBefore = await snapshotKnowledgeTransaction(transactionLargeSnapshotVault, ["wiki", "outputs"]);
+    transactionLargeTempDir = transactionLargeBefore.tempDir ?? "";
+    assert.ok(transactionLargeTempDir);
+    const largeFileEntries = Array.from(transactionLargeBefore.entries.values()).filter((entry) => entry.kind === "file");
+    assert.ok(largeFileEntries.length > KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD);
+    assert.equal(largeFileEntries.some((entry) => entry.content), false);
+    assert.equal(largeFileEntries.every((entry) => entry.contentPath && entry.contentHash), true);
+    await writeFile(targetPath, "bbbb", "utf8");
+    await utimes(targetPath, new Date(targetStat.atimeMs), new Date(targetStat.mtimeMs));
+    await writeFile(path.join(transactionLargeSnapshotVault, "outputs", "kb-check.md"), "lint report", "utf8");
+    await commitLintReportOnly(transactionLargeSnapshotVault, transactionLargeBefore, "outputs/kb-check.md");
+    assert.equal(await readFile(targetPath, "utf8"), "aaaa");
+    assert.equal(await readFile(path.join(transactionLargeSnapshotVault, "outputs", "kb-check.md"), "utf8"), "lint report");
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(transactionLargeBefore);
+    if (transactionLargeTempDir) assert.equal(await fileExists(transactionLargeTempDir), false);
+    await rm(transactionLargeSnapshotVault, { recursive: true, force: true });
   }
   const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
   assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
