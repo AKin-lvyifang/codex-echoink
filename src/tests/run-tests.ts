@@ -154,6 +154,7 @@ import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJou
 import { KnowledgeBaseManager } from "../knowledge-base/manager";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
+import { buildCodexKnowledgeInput, buildOpenCodeKnowledgeParts, requiredModalities, selectOpenCodeModel } from "../knowledge-base/agent-runner";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
@@ -187,7 +188,7 @@ import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../kno
 import { commitLintReportOnly, snapshotKnowledgeTransaction } from "../knowledge-base/transaction-snapshot";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
-import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "../knowledge-base/types";
+import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "../knowledge-base/types";
 import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
 import {
   REVIEW_OUTPUT_DIR,
@@ -728,8 +729,10 @@ assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
 assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
 const knowledgeManagerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-runner.ts"), "utf8");
 assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
-assert.match(knowledgeManagerSourceForToolBridge, /runAgentTaskWithToolBridge/);
+assert.match(knowledgeManagerSourceForToolBridge, /runKnowledgeAgentTask/);
+assert.match(knowledgeAgentRunnerSourceForToolBridge, /runAgentTaskWithToolBridge/);
 const editorConnectingStatus = agentEventToEditorStatus({
   event: { type: "connecting", backend: "hermes", createdAt: 1 },
   actionLabel: "续写",
@@ -5335,6 +5338,27 @@ try {
   assert.equal(isHtmlVerificationBlocked("<html>完成验证后即可继续访问</html>"), true);
   assert.equal(isHtmlVerificationBlocked("<article>正常内容</article>"), false);
   assert.equal(sanitizeWebCaptureFileName("A/B:C*D?E\"F<G>H|#[]"), "A B C D E F G H");
+  const agentRunnerSources = Array.from({ length: 22 }, (_, index) => ({
+    relativePath: `raw/articles/source-${index}.md`,
+    absolutePath: path.join(kbVault, "raw", "articles", `source-${index}.md`),
+    size: index + 1,
+    mtime: index + 1,
+    fingerprint: `fp-${index}`,
+    mime: index === 1 ? "image/png" : "text/markdown",
+    modality: index === 1 ? "image" : "text",
+    changed: true
+  })) as KnowledgeBaseSource[];
+  const codexKnowledgeInput = buildCodexKnowledgeInput("prompt", agentRunnerSources);
+  assert.equal(codexKnowledgeInput.length, 21);
+  assert.deepEqual(codexKnowledgeInput[0], { type: "text", text: "prompt", text_elements: [] });
+  assert.equal(codexKnowledgeInput[2].type, "localImage");
+  const openCodeKnowledgeParts = buildOpenCodeKnowledgeParts("prompt", agentRunnerSources);
+  assert.equal(openCodeKnowledgeParts.length, 21);
+  assert.deepEqual(requiredModalities(openCodeKnowledgeParts), ["text", "image"]);
+  assert.equal(selectOpenCodeModel([
+    { id: "text-only", providerId: "p", modelId: "text", label: "text", inputModalities: ["text"] },
+    { id: "vision", providerId: "p", modelId: "vision", label: "vision", inputModalities: ["text", "image"] }
+  ], "missing", "missing", ["text", "image"])?.id, "vision");
   const transactionSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-snapshot-"));
   try {
     await mkdir(path.join(transactionSnapshotVault, "wiki"), { recursive: true });

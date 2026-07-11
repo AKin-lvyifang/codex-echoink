@@ -6,18 +6,33 @@ import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createAgentTaskRuntime } from "../agent/factory";
 import { getAgentBackendDefinition } from "../agent/registry";
-import { createEchoInkMcpToolBridgeRuntime, runAgentTaskWithToolBridge } from "../agent/tool-bridge";
+import { createEchoInkMcpToolBridgeRuntime } from "../agent/tool-bridge";
 import type { AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
-import type { AgentBackendKind, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput } from "../agent/types";
+import type { AgentBackendKind, AgentTaskInput } from "../agent/types";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import type { TurnOptions } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
-import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
+import { ensureOpenCodeModelSupportsFiles } from "../core/opencode-models";
 import { resolveRawRef } from "../core/raw-message-store";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseManagedThreadKind, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment, type StoredSession } from "../settings/settings";
-import type { CodexNotification, PermissionMode, UserInput } from "../types/app-server";
+import type { CodexNotification, PermissionMode } from "../types/app-server";
+import {
+  buildCodexKnowledgeInput,
+  buildOpenCodeKnowledgeParts,
+  buildPromptWithPreparedResources,
+  formatAgentTaskGuardError,
+  formatDurationForError,
+  normalizeCodexInactivityTimeoutMs,
+  normalizeHermesTaskTimeoutMs,
+  normalizeOpenCodeTaskTimeoutMs,
+  rejectAfterTimeout,
+  requiredModalities,
+  runKnowledgeAgentTask,
+  selectAgentModel,
+  selectOpenCodeModel
+} from "./agent-runner";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
@@ -101,9 +116,6 @@ export interface KnowledgeBaseTurnOptionOverrides extends Pick<TurnOptions, "mod
 }
 
 const MAX_ATTACHED_SOURCES = 20;
-const CODEX_KNOWLEDGE_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
-const OPENCODE_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
-const HERMES_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
 const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
 
@@ -2118,38 +2130,6 @@ function isRetryingCodexError(params: any): boolean {
   return params?.willRetry === true || params?.error?.willRetry === true;
 }
 
-function buildCodexKnowledgeInput(prompt: string, sources: KnowledgeBaseSource[]): UserInput[] {
-  const input: UserInput[] = [{ type: "text", text: prompt, text_elements: [] }];
-  for (const source of sources.slice(0, MAX_ATTACHED_SOURCES)) {
-    if (source.modality === "image") {
-      input.push({ type: "localImage", path: source.absolutePath });
-    } else {
-      input.push({ type: "mention", name: path.basename(source.absolutePath), path: source.absolutePath });
-    }
-  }
-  return input;
-}
-
-function buildOpenCodeKnowledgeParts(prompt: string, sources: KnowledgeBaseSource[]): AgentPromptPart[] {
-  return [
-    { type: "text", text: prompt },
-    ...sources.slice(0, MAX_ATTACHED_SOURCES).map((source): AgentPromptPart => ({
-      type: "file",
-      path: source.absolutePath,
-      filename: path.basename(source.absolutePath),
-      mime: source.mime
-    }))
-  ];
-}
-
-function requiredModalities(parts: AgentPromptPart[]): AgentInputModality[] {
-  const modalities = new Set<AgentInputModality>(["text"]);
-  for (const part of parts) {
-    if (part.type === "file") modalities.add(requiredModalityForMime(part.mime));
-  }
-  return Array.from(modalities);
-}
-
 function appendCodexWaiterAssistantDelta(waiter: CodexKbWaiter, itemId: string, delta: string): void {
   if (!delta) return;
   const id = itemId || "__assistant__";
@@ -2163,37 +2143,6 @@ function finalCodexWaiterAssistantText(waiter: CodexKbWaiter): string {
     if (text) return text;
   }
   return "";
-}
-
-function selectOpenCodeModel(models: AgentModelInfo[], providerId: string, modelId: string, required: AgentInputModality[]): AgentModelInfo | null {
-  const configured = models.find((model) => model.providerId === providerId && model.modelId === modelId);
-  if (configured) return configured;
-  return models.find((model) => required.every((modality) => model.inputModalities.includes(modality))) ?? models[0] ?? null;
-}
-
-function selectAgentModel(models: AgentModelInfo[], providerId: string, modelId: string): AgentModelInfo | null {
-  const configured = models.find((model) => model.providerId === providerId && model.modelId === modelId);
-  return configured ?? models[0] ?? null;
-}
-
-async function runKnowledgeAgentTask(runtime: AgentTaskRuntime, input: AgentTaskInput, onEvent?: (event: { type: string; runId?: string }) => void) {
-  return await runAgentTaskWithToolBridge(runtime, input, (event) => {
-    onEvent?.(event);
-  });
-}
-
-function formatAgentTaskGuardError(backend: AgentBackendKind, phase: string, runId: string, error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  if (isKnowledgeBaseCancelError(message)) return error instanceof Error ? error : new Error(message);
-  return new Error(formatAgentTaskFailureContext({ backend, phase, runId, message }));
-}
-
-function buildPromptWithPreparedResources(prompt: string, resources: PreparedAgentResources): string {
-  return [
-    resources.promptPrefix,
-    resources.warnings.length ? `资源提示：\n${resources.warnings.map((item) => `- ${item}`).join("\n")}` : "",
-    prompt
-  ].filter(Boolean).join("\n\n");
 }
 
 function formatAskAnswer(output: string, citations: KnowledgeBaseCitationSummary): string {
@@ -2684,46 +2633,6 @@ function dashboardSnapshotSignature(settings: CodexForObsidianPlugin["settings"]
 
 function throwIfKnowledgeBaseCanceled(cancelRequested: boolean): void {
   if (cancelRequested) throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
-}
-
-function normalizeCodexInactivityTimeoutMs(value: number | undefined): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-  return CODEX_KNOWLEDGE_INACTIVITY_TIMEOUT_MS;
-}
-
-function rejectAfterTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => {
-      timer = null;
-      onTimeout();
-      reject(new Error(message));
-    }, Math.max(1, timeoutMs));
-    promise.then((value) => {
-      if (timer) clearTimeout(timer);
-      timer = null;
-      resolve(value);
-    }, (error) => {
-      if (timer) clearTimeout(timer);
-      timer = null;
-      reject(error);
-    });
-  });
-}
-
-function normalizeOpenCodeTaskTimeoutMs(value: number | undefined): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-  return OPENCODE_KNOWLEDGE_TASK_TIMEOUT_MS;
-}
-
-function normalizeHermesTaskTimeoutMs(value: number | undefined): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-  return HERMES_KNOWLEDGE_TASK_TIMEOUT_MS;
-}
-
-function formatDurationForError(ms: number): string {
-  if (ms >= 60_000) return `${Math.round(ms / 60_000)} 分钟`;
-  return `${Math.round(ms / 1000)} 秒`;
 }
 
 function formatCancelResultMessage(message: string, saveError: string | null): string {
