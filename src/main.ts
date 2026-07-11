@@ -387,7 +387,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void this.flushSettingsSave();
+      void this.flushSettingsSave().catch(swallowError("scheduled settings save failed"));
     }, 750);
   }
 
@@ -561,8 +561,15 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory();
       await this.saveData(this.settings);
     });
-    this.saveQueue = run.catch(swallowError("settings save queue cleanup"));
+    this.saveQueue = run.catch((error) => {
+      this.reportSettingsSaveError(error);
+    });
     await run;
+  }
+
+  private reportSettingsSaveError(error: unknown): void {
+    console.error("[EchoInk] settings save failed:", error);
+    new Notice(this.settings.settingsLanguage === "en" ? "EchoInk settings save failed" : "EchoInk 设置保存失败，请稍后重试");
   }
 
   private async flushRawWrites(): Promise<void> {

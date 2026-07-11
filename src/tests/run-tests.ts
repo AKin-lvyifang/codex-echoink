@@ -3273,6 +3273,10 @@ assert.match(codexViewMessageListSource, /tryUpdateMessage\(message:\s*ChatMessa
 assert.match(codexViewMessageListSource, /data-message-id/);
 assert.match(codexViewMessageListSource, /querySelectorAll<HTMLElement>\("\[data-message-id\]"\)/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+assert.match(mainPluginSource, /private reportSettingsSaveError/);
+assert.match(mainPluginSource, /console\.error\("\[EchoInk\] settings save failed:"/);
+assert.match(mainPluginSource, /new Notice\(this\.settings\.settingsLanguage === "en"/);
+assert.doesNotMatch(mainPluginSource, /this\.saveQueue\s*=\s*run\.catch\(\(\)\s*=>\s*undefined\)/);
 assert.match(mainPluginSource, /connections:\s*this\.settings\.resources\.mcpConnections/);
 assert.match(mainPluginSource, /verifiedAt\s*=\s*Date\.now\(\)/);
 assert.match(mainPluginSource, /lastError\s*=\s*message/);
