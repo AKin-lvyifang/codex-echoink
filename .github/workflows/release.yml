@@ -71,6 +71,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check public repository files
+        run: npm run check:public
+
       - name: Test
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
         run: npm run test

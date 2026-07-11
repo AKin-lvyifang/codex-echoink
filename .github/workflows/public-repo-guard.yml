@@ -1,0 +1,21 @@
+name: Public Repository Guard
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-repo-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Check public repository files
+        run: node scripts/check-public-files.mjs
