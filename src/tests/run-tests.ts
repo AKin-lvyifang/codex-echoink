@@ -758,6 +758,23 @@ const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process
 assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
 assert.match(knowledgeManagerSourceForToolBridge, /runKnowledgeAgentTask/);
 assert.match(knowledgeAgentRunnerSourceForToolBridge, /runAgentTaskWithToolBridge/);
+const hermesGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendHermesTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards")
+);
+const openCodeGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards")
+);
+const sharedAgentGuardSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private resolveKnowledgeBackend")
+);
+assert.match(hermesGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("hermes"/);
+assert.match(openCodeGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("opencode"/);
+assert.doesNotMatch(`${hermesGuardWrapperSource}\n${openCodeGuardWrapperSource}`, /new Promise|runKnowledgeAgentTask|setTimeout/);
+assert.equal((sharedAgentGuardSource.match(/runKnowledgeAgentTask\(runtime/g) ?? []).length, 1);
+assert.match(sharedAgentGuardSource, /backend === "hermes" \|\| activeRun\.runId/);
 const editorConnectingStatus = agentEventToEditorStatus({
   event: { type: "connecting", backend: "hermes", createdAt: 1 },
   actionLabel: "续写",

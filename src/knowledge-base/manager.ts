@@ -116,6 +116,9 @@ type ActiveHermesRun = {
   cancel?: (error: Error) => void;
 };
 
+type GuardedAgentBackend = Extract<AgentBackendKind, "opencode" | "hermes">;
+type GuardedAgentRun = ActiveOpenCodeRun | ActiveHermesRun;
+
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed" | "canceled";
   message: string;
@@ -1588,64 +1591,21 @@ export class KnowledgeBaseManager {
   }
 
   private async sendHermesTaskWithGuards(runtime: AgentTaskRuntime, input: AgentTaskInput, timeoutMs: number): Promise<string> {
-    const abortController = new AbortController();
-    const localRunId = `hermes-${Date.now()}`;
-    const activeRun: ActiveHermesRun = { runtime, runId: localRunId, abortController };
-    let lastPhase = "starting";
-    this.activeHermes = activeRun;
-    return await new Promise<string>((resolve, reject) => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout>;
-      const finish = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (this.activeHermes === activeRun) this.activeHermes = null;
-        activeRun.cancel = undefined;
-        callback();
-      };
-      const fail = (error: Error): void => finish(() => reject(error));
-      timer = setTimeout(() => {
-        abortController.abort();
-        void runtime.abort(activeRun.runId).catch(() => undefined);
-        fail(new Error(formatAgentTaskFailureContext({
-          backend: "hermes",
-          phase: lastPhase,
-          runId: activeRun.runId,
-          message: `Hermes 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
-        })));
-      }, Math.max(1, timeoutMs));
-      activeRun.cancel = (error: Error) => {
-        abortController.abort();
-        void runtime.abort(activeRun.runId).catch(() => undefined);
-        fail(error);
-      };
-      try {
-        runKnowledgeAgentTask(runtime, {
-          ...input,
-          abortSignal: abortController.signal,
-          onRunId: (runId) => {
-            activeRun.runId = runId;
-            input.onRunId?.(runId);
-          }
-        }, (event) => {
-          lastPhase = event.type;
-          if (event.runId) activeRun.runId = event.runId;
-        }).then(
-          (output) => finish(() => resolve(output.text)),
-          (error) => fail(formatAgentTaskGuardError("hermes", lastPhase, activeRun.runId, error))
-        );
-      } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
+    return this.sendAgentTaskWithGuards("hermes", runtime, input, timeoutMs);
   }
 
   private async sendOpenCodeTaskWithGuards(runtime: AgentTaskRuntime, input: AgentTaskInput, timeoutMs: number): Promise<string> {
+    return this.sendAgentTaskWithGuards("opencode", runtime, input, timeoutMs);
+  }
+
+  private async sendAgentTaskWithGuards(backend: GuardedAgentBackend, runtime: AgentTaskRuntime, input: AgentTaskInput, timeoutMs: number): Promise<string> {
     const abortController = new AbortController();
-    const activeRun: ActiveOpenCodeRun = { runtime, runId: "" };
+    const activeRun: GuardedAgentRun = backend === "hermes"
+      ? { runtime, runId: `hermes-${Date.now()}`, abortController }
+      : { runtime, runId: "" };
+    const backendLabel = backend === "hermes" ? "Hermes" : "OpenCode";
     let lastPhase = "starting";
-    this.activeOpenCode = activeRun;
+    this.setActiveGuardedRun(backend, activeRun);
     return await new Promise<string>((resolve, reject) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout>;
@@ -1653,7 +1613,7 @@ export class KnowledgeBaseManager {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (this.activeOpenCode === activeRun) this.activeOpenCode = null;
+        this.clearActiveGuardedRun(backend, activeRun);
         activeRun.cancel = undefined;
         callback();
       };
@@ -1661,12 +1621,12 @@ export class KnowledgeBaseManager {
       timer = setTimeout(() => {
         abortController.abort();
         const timeoutError = new Error(formatAgentTaskFailureContext({
-          backend: "opencode",
+          backend,
           phase: lastPhase,
           runId: activeRun.runId,
-          message: `OpenCode 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
+          message: `${backendLabel} 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
         }));
-        if (activeRun.runId) {
+        if (backend === "hermes" || activeRun.runId) {
           void runtime.abort(activeRun.runId).catch(() => undefined);
           fail(timeoutError);
           return;
@@ -1678,7 +1638,7 @@ export class KnowledgeBaseManager {
       }, Math.max(1, timeoutMs));
       activeRun.cancel = (error: Error) => {
         abortController.abort();
-        if (activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
+        if (backend === "hermes" || activeRun.runId) void runtime.abort(activeRun.runId).catch(() => undefined);
         fail(error);
       };
       try {
@@ -1694,12 +1654,28 @@ export class KnowledgeBaseManager {
           if (event.runId) activeRun.runId = event.runId;
         }).then(
           (output) => finish(() => resolve(output.text)),
-          (error) => fail(formatAgentTaskGuardError("opencode", lastPhase, activeRun.runId, error))
+          (error) => fail(formatAgentTaskGuardError(backend, lastPhase, activeRun.runId, error))
         );
       } catch (error) {
         fail(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  private setActiveGuardedRun(backend: GuardedAgentBackend, activeRun: GuardedAgentRun): void {
+    if (backend === "hermes") {
+      this.activeHermes = activeRun as ActiveHermesRun;
+      return;
+    }
+    this.activeOpenCode = activeRun as ActiveOpenCodeRun;
+  }
+
+  private clearActiveGuardedRun(backend: GuardedAgentBackend, activeRun: GuardedAgentRun): void {
+    if (backend === "hermes") {
+      if (this.activeHermes === activeRun) this.activeHermes = null;
+      return;
+    }
+    if (this.activeOpenCode === activeRun) this.activeOpenCode = null;
   }
 
   private resolveKnowledgeBackend(): AgentBackendKind {
