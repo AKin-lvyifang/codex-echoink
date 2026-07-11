@@ -44,6 +44,10 @@ export class ReviewManager {
       name: "复盘：打开最近 HTML 看板",
       callback: () => void this.openLatestHtml()
     });
+    this.plugin.app.workspace.onLayoutReady(() => {
+      this.armSchedule();
+      void this.runCatchUpIfNeeded();
+    });
   }
 
   unload(): void {

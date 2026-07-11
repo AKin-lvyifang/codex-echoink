@@ -192,6 +192,7 @@ import {
   collectKnowledgeBaseReviewEvidence,
   reportBaseName
 } from "../review/report";
+import { ReviewManager } from "../review/manager";
 import {
   currentReviewRange,
   isReviewHtmlPath,
@@ -3918,6 +3919,67 @@ assert.equal(shouldRunScheduledReview({
     knowledgeBase: { ...DEFAULT_SETTINGS.review.reports.knowledgeBase, lastRangeKey: "2026-05-11-to-2026-05-17" }
   }
 }, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), false);
+const reviewScheduleLayoutReadyCallbacks: Array<() => void> = [];
+const reviewScheduleCommands: string[] = [];
+const reviewScheduleIntervals: number[] = [];
+let reviewScheduleIntervalDelay = 0;
+let reviewScheduleIntervalCallback: (() => void) | null = null;
+const previousWindowForReviewScheduleTest = (globalThis as any).window;
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForReviewScheduleTest ?? {}),
+    setInterval: (callback: () => void, delay: number) => {
+      reviewScheduleIntervalCallback = callback;
+      reviewScheduleIntervalDelay = delay;
+      return 901;
+    },
+    clearInterval: () => undefined
+  };
+  const reviewScheduleManager = new ReviewManager({
+    settings: normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      review: { catchUpOnStartup: true }
+    }).settings,
+    addCommand: (command: { id: string }) => {
+      reviewScheduleCommands.push(command.id);
+    },
+    registerInterval: (intervalId: number) => {
+      reviewScheduleIntervals.push(intervalId);
+    },
+    app: {
+      workspace: {
+        onLayoutReady: (callback: () => void) => {
+          reviewScheduleLayoutReadyCallbacks.push(callback);
+        }
+      }
+    },
+    saveSettings: async () => undefined,
+    getVaultPath: () => "/tmp/vault",
+    getKnowledgeBaseManager: () => null,
+    openReviewHtmlPreview: async () => undefined
+  } as any);
+  const scheduledReviewCalls: boolean[] = [];
+  reviewScheduleManager.runScheduledIfDue = async (forceCatchUp = false) => {
+    scheduledReviewCalls.push(forceCatchUp);
+  };
+
+  reviewScheduleManager.register();
+  assert.deepEqual(reviewScheduleCommands, [
+    "review-run-knowledge-base-now",
+    "review-run-agent-chat-now",
+    "review-open-latest-html"
+  ]);
+  assert.equal(reviewScheduleLayoutReadyCallbacks.length, 1);
+  reviewScheduleLayoutReadyCallbacks[0]();
+  await Promise.resolve();
+  assert.deepEqual(reviewScheduleIntervals, [901]);
+  assert.equal(reviewScheduleIntervalDelay, 60 * 1000);
+  assert.deepEqual(scheduledReviewCalls, [true]);
+  reviewScheduleIntervalCallback?.();
+  assert.deepEqual(scheduledReviewCalls, [true, false]);
+} finally {
+  (globalThis as any).window = previousWindowForReviewScheduleTest;
+}
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.html"), true);
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.md"), false);
 assert.equal(isReviewHtmlPath("../outputs/obsidian-weekly-review/bad.html"), false);
