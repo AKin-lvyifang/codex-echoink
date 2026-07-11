@@ -15,8 +15,9 @@ import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
 import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./knowledge-context-bridge";
 import { createAgentEventRenderState, reduceAgentEventForChat, type AgentChatRenderState } from "./agent-event-renderer";
+import type { CodexViewTurnContext, MessageRenderFollowContext, QueuedTurnOutcome, QueuedTurnSource } from "./runner-context";
 
-export async function sendMessage(view: any): Promise<void> {
+export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
   if (view.editorSummaryRun) view.cancelEditorSummaryRun("用户输入抢占摘要");
   const session = view.ensureSession();
   const action = composerPrimaryActionForState(view.composerStateForSession(session));
@@ -43,7 +44,7 @@ export async function sendMessage(view: any): Promise<void> {
   if (outcome !== "running") await view.afterTurnSettled(item.sessionId, outcome === "completed");
 }
 
-export async function enqueueComposerDraft(view: any): Promise<void> {
+export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<void> {
   const item = await view.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: false });
   if (!item) return;
   view.turnQueue.enqueue(item);
@@ -56,14 +57,14 @@ export async function enqueueComposerDraft(view: any): Promise<void> {
   }
 }
 
-export async function resumeQueuedTurns(view: any, sessionId: string): Promise<void> {
+export async function resumeQueuedTurns(view: CodexViewTurnContext, sessionId: string): Promise<void> {
   view.turnQueue.resumeSessionQueue(sessionId);
   view.renderQueue();
   view.renderToolbar();
   await view.startNextQueuedTurn(sessionId);
 }
 
-export async function afterTurnSettled(view: any, sessionId: string, succeeded: boolean): Promise<void> {
+export async function afterTurnSettled(view: CodexViewTurnContext, sessionId: string, succeeded: boolean): Promise<void> {
   const settlement = view.turnQueue.settleSessionQueue(sessionId, succeeded);
   if (settlement === "continue") {
     await view.startNextQueuedTurn(sessionId);
@@ -72,12 +73,12 @@ export async function afterTurnSettled(view: any, sessionId: string, succeeded: 
   view.renderToolbar();
 }
 
-export function messageRenderOptionsForRunUpdate(view: any): { forceBottom: boolean; preserveScroll: boolean } {
+export function messageRenderOptionsForRunUpdate(view: MessageRenderFollowContext): { forceBottom: boolean; preserveScroll: boolean } {
   const forceBottom = !view.messagesBottomFollowPaused;
   return { forceBottom, preserveScroll: !forceBottom };
 }
 
-export async function startNextQueuedTurn(view: any, sessionId: string): Promise<void> {
+export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId: string): Promise<void> {
   if (!canStartQueuedTurn({
     queueStartInProgress: view.queueStartInProgress,
     viewRunning: view.running,
@@ -101,7 +102,7 @@ export async function startNextQueuedTurn(view: any, sessionId: string): Promise
   if (outcome !== "running") await view.afterTurnSettled(item.sessionId, outcome === "completed");
 }
 
-export async function createQueuedTurnFromComposer(view: any, options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
+export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
   let session = view.ensureSession();
   const text = view.inputEl.value.trim();
   const attachments = view.attachments.map((attachment) => ({ ...attachment }));
@@ -142,7 +143,7 @@ export async function createQueuedTurnFromComposer(view: any, options: { allowLo
   };
 }
 
-export async function startQueuedTurnItem(view: any, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+export async function startQueuedTurnItem(view: CodexViewTurnContext, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
   const session = view.sessionById(item.sessionId);
   if (!session) {
     new Notice("队列所属会话已不存在");
@@ -152,7 +153,7 @@ export async function startQueuedTurnItem(view: any, item: QueuedTurnItem, sourc
   return await view.startChatTurn(session, item, source);
 }
 
-export async function startQueuedTurnItemSafely(view: any, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+export async function startQueuedTurnItemSafely(view: CodexViewTurnContext, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
   try {
     return await view.startQueuedTurnItem(item, source);
   } catch (error) {
@@ -162,7 +163,7 @@ export async function startQueuedTurnItemSafely(view: any, item: QueuedTurnItem,
   }
 }
 
-export async function startChatTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
+export async function startChatTurn(view: CodexViewTurnContext, session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
   const backend = resolveChatBackend(view);
   if (backend !== "codex-cli") return await startSimpleAgentChatTurn(view, session, item, source, backend);
   try {
@@ -248,7 +249,7 @@ export async function startChatTurn(view: any, session: StoredSession, item: Que
   }
 }
 
-async function startSimpleAgentChatTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue", backend: Exclude<AgentBackendKind, "codex-cli">): Promise<"completed" | "failed"> {
+async function startSimpleAgentChatTurn(view: CodexViewTurnContext, session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource, backend: Exclude<AgentBackendKind, "codex-cli">): Promise<"completed" | "failed"> {
   const runId = newId("run");
   view.activeRunId = runId;
   view.activeRunKind = "chat";
@@ -374,7 +375,7 @@ function formatAgentEventDetails(state: AgentChatRenderState): string {
   return [...thinking, ...tools].join("\n");
 }
 
-export async function startKnowledgeBaseTurn(view: any, session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
+export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource): Promise<"completed" | "failed"> {
   const manager = view.plugin.getKnowledgeBaseManager();
   if (!manager) {
     new Notice("知识库管理未初始化");
@@ -476,7 +477,7 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
   return succeeded ? "completed" : "failed";
 }
 
-export async function runKnowledgeBaseShortcut(view: any, label: string, runner: () => Promise<string>): Promise<void> {
+export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label: string, runner: () => Promise<string>): Promise<void> {
   const session = view.ensureSession();
   if (!view.isKnowledgeBaseSession(session)) {
     await view.plugin.activateKnowledgeBaseChannel();
@@ -554,7 +555,7 @@ function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"]) 
   };
 }
 
-function resolveChatBackend(view: any): AgentBackendKind {
+function resolveChatBackend(view: CodexViewTurnContext): AgentBackendKind {
   const settings = view.plugin?.settings;
   if (!settings) return "codex-cli";
   const choice = settings.capabilities?.chatBackend ?? "default";

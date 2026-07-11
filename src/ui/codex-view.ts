@@ -77,6 +77,7 @@ import {
   startQueuedTurnItem as startQueuedTurnItemRunner,
   startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
 } from "./codex-view/turn-runner";
+import type { CodexViewEditorActionContext, CodexViewTurnContext, EditorActionRunWaiter, EditorSummaryRunWaiter } from "./codex-view/runner-context";
 import {
   renderArticleUnderstandingPanelView,
   renderCodexHeader,
@@ -98,17 +99,6 @@ import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getH
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
-
-interface EditorActionRunWaiter {
-  runId: string;
-  text: string;
-  resolve: (text: string) => void;
-  reject: (error: Error) => void;
-}
-
-interface EditorSummaryRunWaiter extends EditorActionRunWaiter {
-  threadId: string;
-}
 
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
@@ -187,6 +177,8 @@ export class CodexView extends ItemView {
   private readonly turnQueue = new RuntimeTurnQueue();
   private queueStartInProgress = false;
   private draggedQueueItemId = "";
+  private readonly turnRunnerContext: CodexViewTurnContext;
+  private readonly editorActionRunnerContext: CodexViewEditorActionContext;
 
   get messagesBottomFollowPaused(): boolean {
     return this.messageScrollFollow.paused;
@@ -204,6 +196,28 @@ export class CodexView extends ItemView {
     this.selectedPermission = plugin.settings.defaultPermission;
     this.selectedMode = plugin.settings.defaultMode;
     this.activeRunKind = "";
+    this.turnRunnerContext = this.createTurnRunnerContext();
+    this.editorActionRunnerContext = this.createEditorActionRunnerContext();
+  }
+
+  private createTurnRunnerContext(): CodexViewTurnContext {
+    const view = this;
+    return {
+      get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
+      get editorSummaryRun() { return view.editorSummaryRun; }, get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return view.queueStartInProgress; }, set queueStartInProgress(value) { view.queueStartInProgress = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get threadPrewarmPromise() { return view.threadPrewarmPromise; }, get threadPrewarmSessionId() { return view.threadPrewarmSessionId; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), ensureSession: () => view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => view.enqueueComposerDraft(), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      createQueuedTurnFromComposer: (options) => view.createQueuedTurnFromComposer(options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), startKnowledgeBaseTurn: (session, item, source) => view.startKnowledgeBaseTurn(session, item, source), clearComposerDraft: () => view.clearComposerDraft(), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), clearKnowledgeBasePage: (session) => view.clearKnowledgeBasePage(session), openKnowledgeBaseHistory: (session) => view.openKnowledgeBaseHistory(session),
+      ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session) => view.renderMessagesIfActive(session), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command), refreshKnowledgeDashboard: (force) => view.refreshKnowledgeDashboard(force)
+    } satisfies CodexViewTurnContext;
+  }
+
+  private createEditorActionRunnerContext(): CodexViewEditorActionContext {
+    const view = this;
+    return {
+      get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
+      get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionRun() { return view.editorActionRun; }, set editorActionRun(value) { view.editorActionRun = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels()
+    } satisfies CodexViewEditorActionContext;
   }
 
   getViewType(): string {
@@ -1345,55 +1359,55 @@ export class CodexView extends ItemView {
   }
 
   private async sendMessage(): Promise<void> {
-    await sendMessageRunner(this);
+    await sendMessageRunner(this.turnRunnerContext);
   }
 
   private async enqueueComposerDraft(): Promise<void> {
-    await enqueueComposerDraftRunner(this);
+    await enqueueComposerDraftRunner(this.turnRunnerContext);
   }
 
   private async resumeQueuedTurns(sessionId: string): Promise<void> {
-    await resumeQueuedTurnsRunner(this, sessionId);
+    await resumeQueuedTurnsRunner(this.turnRunnerContext, sessionId);
   }
 
   private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> {
-    await afterTurnSettledRunner(this, sessionId, succeeded);
+    await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded);
   }
 
   private async startNextQueuedTurn(sessionId: string): Promise<void> {
-    await startNextQueuedTurnRunner(this, sessionId);
+    await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId);
   }
 
   private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
-    return await createQueuedTurnFromComposerRunner(this, options);
+    return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options);
   }
 
   private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemRunner(this, item, source);
+    return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source);
   }
 
   private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemSafelyRunner(this, item, source);
+    return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source);
   }
 
   private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startChatTurnRunner(this, session, item, source);
+    return await startChatTurnRunner(this.turnRunnerContext, session, item, source);
   }
 
   private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
-    return await startKnowledgeBaseTurnRunner(this, session, item, source);
+    return await startKnowledgeBaseTurnRunner(this.turnRunnerContext, session, item, source);
   }
 
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> {
-    await runKnowledgeBaseShortcutRunner(this, label, runner);
+    await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner);
   }
 
   async sendEditorActionRequest(request: EditorActionRequest): Promise<string> {
-    return await sendEditorActionRequestRunner(this, request);
+    return await sendEditorActionRequestRunner(this.editorActionRunnerContext, request);
   }
 
   private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number, forceRefresh = false): Promise<ArticleUnderstandingEntry | null> {
-    return await ensureArticleUnderstandingRunner(this, request, availableModels, model, timeoutMs, forceRefresh);
+    return await ensureArticleUnderstandingRunner(this.editorActionRunnerContext, request, availableModels, model, timeoutMs, forceRefresh);
   }
 
   private async runEditorActionPromptTurn(input: {
@@ -1407,23 +1421,23 @@ export class CodexView extends ItemView {
     timeoutMs: number;
     startedAt: number;
   }): Promise<string> {
-    return await runEditorActionPromptTurnRunner(this, input);
+    return await runEditorActionPromptTurnRunner(this.editorActionRunnerContext, input);
   }
 
   private setArticleUnderstandingPanelState(state: ArticleUnderstandingPanelState): void {
-    setArticleUnderstandingPanelStateRunner(this, state);
+    setArticleUnderstandingPanelStateRunner(this.editorActionRunnerContext, state);
   }
 
   private async refreshArticleUnderstandingPanelSourceState(): Promise<void> {
-    await refreshArticleUnderstandingPanelSourceStateRunner(this);
+    await refreshArticleUnderstandingPanelSourceStateRunner(this.editorActionRunnerContext);
   }
 
   private async refreshArticleUnderstandingFromPanel(): Promise<void> {
-    await refreshArticleUnderstandingFromPanelRunner(this);
+    await refreshArticleUnderstandingFromPanelRunner(this.editorActionRunnerContext);
   }
 
   private async currentArticleUnderstandingSource(): Promise<EditorActionSummarySource | null> {
-    return await currentArticleUnderstandingSourceRunner(this);
+    return await currentArticleUnderstandingSourceRunner(this.editorActionRunnerContext);
   }
 
   private async stopTurn(): Promise<void> {

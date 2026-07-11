@@ -114,7 +114,14 @@ import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryAc
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
-import { messageRenderOptionsForRunUpdate } from "../ui/codex-view/turn-runner";
+import {
+  afterTurnSettled as afterTurnSettledRunner,
+  messageRenderOptionsForRunUpdate,
+  startChatTurn as startChatTurnRunner,
+  startKnowledgeBaseTurn as startKnowledgeBaseTurnRunner,
+  startNextQueuedTurn as startNextQueuedTurnRunner,
+  startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
+} from "../ui/codex-view/turn-runner";
 import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
@@ -223,6 +230,13 @@ const loadSettingsSource = mainSourceForStartupPerformance.slice(loadSettingsSta
 assert.equal(loadSettingsSource.includes("externalizeLargeMessages"), false);
 assert.equal(loadSettingsSource.includes("migrateKnowledgeBaseHistory"), false);
 assert.match(mainSourceForStartupPerformance, /runDeferredStartupMaintenance/);
+for (const runnerPath of [
+  path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"),
+  path.join(process.cwd(), "src/ui/codex-view/editor-action-runner.ts")
+]) {
+  const runnerSource = await readFile(runnerPath, "utf8");
+  assert.equal(runnerSource.includes("view: any"), false, `${path.relative(process.cwd(), runnerPath)} should use typed runner context`);
+}
 
 assert.equal(formatMessageHeaderTime(new Date(2026, 4, 22, 8, 29).getTime()), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
@@ -1472,14 +1486,13 @@ const throwingQueueView: any = {
   renderToolbar: () => undefined,
   startQueuedTurnItem: async () => {
     throw new Error("post-run save failed");
-  },
-  startQueuedTurnItemSafely: (CodexView.prototype as any).startQueuedTurnItemSafely,
-  startNextQueuedTurn: (CodexView.prototype as any).startNextQueuedTurn,
-  afterTurnSettled: (CodexView.prototype as any).afterTurnSettled
+  }
 };
+throwingQueueView.startQueuedTurnItemSafely = async (item: QueuedTurnItem, source: "composer" | "queue") => await startQueuedTurnItemSafelyRunner(throwingQueueView, item, source);
+throwingQueueView.afterTurnSettled = async (sessionId: string, succeeded: boolean) => await afterTurnSettledRunner(throwingQueueView, sessionId, succeeded);
 let throwingQueueViewError: unknown = null;
 try {
-  await throwingQueueView.startNextQueuedTurn("throw-session");
+  await startNextQueuedTurnRunner(throwingQueueView, "throw-session");
 } catch (error) {
   throwingQueueViewError = error;
 }
@@ -1648,12 +1661,11 @@ const knowledgeFinalizeView: any = {
   moveMessageToEnd: (CodexView.prototype as any).moveMessageToEnd,
   finishThinkingMessage: () => undefined,
   finishRunningProcessMessages: () => undefined,
-  finishPlanMessage: () => undefined,
-  startKnowledgeBaseTurn: (CodexView.prototype as any).startKnowledgeBaseTurn
+  finishPlanMessage: () => undefined
 };
 let knowledgeFinalizeError: unknown = null;
 try {
-  await knowledgeFinalizeView.startKnowledgeBaseTurn(knowledgeFinalizeSession, knowledgeFinalizeItem, "queue");
+  await startKnowledgeBaseTurnRunner(knowledgeFinalizeView, knowledgeFinalizeSession, knowledgeFinalizeItem, "queue");
 } catch (error) {
   knowledgeFinalizeError = error;
 }
@@ -1701,7 +1713,7 @@ const knowledgeMaintainReportView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeMaintainReportOutcome = await knowledgeMaintainReportView.startKnowledgeBaseTurn(knowledgeMaintainReportSession, {
+const knowledgeMaintainReportOutcome = await startKnowledgeBaseTurnRunner(knowledgeMaintainReportView, knowledgeMaintainReportSession, {
   ...queuedTurn("kb-maintain-report-item", knowledgeMaintainReportSession.id, "/maintain"),
   kind: "knowledge-base"
 }, "queue");
@@ -1751,7 +1763,7 @@ const knowledgeInitialSaveFailureView: any = {
 };
 let knowledgeInitialSaveFailureError: unknown = null;
 try {
-  await knowledgeInitialSaveFailureView.startKnowledgeBaseTurn(knowledgeInitialSaveFailureSession, knowledgeInitialSaveFailureItem, "queue");
+  await startKnowledgeBaseTurnRunner(knowledgeInitialSaveFailureView, knowledgeInitialSaveFailureSession, knowledgeInitialSaveFailureItem, "queue");
 } catch (error) {
   knowledgeInitialSaveFailureError = error;
 }
@@ -1786,7 +1798,7 @@ const knowledgeCanceledView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeCanceledOutcome = await knowledgeCanceledView.startKnowledgeBaseTurn(knowledgeCanceledSession, {
+const knowledgeCanceledOutcome = await startKnowledgeBaseTurnRunner(knowledgeCanceledView, knowledgeCanceledSession, {
   ...queuedTurn("kb-canceled-item", knowledgeCanceledSession.id, "/check cancel"),
   kind: "knowledge-base"
 }, "queue");
@@ -1836,7 +1848,7 @@ const knowledgeContextBridgeView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeContextBridgeOutcome = await knowledgeContextBridgeView.startKnowledgeBaseTurn(knowledgeContextBridgeSession, {
+const knowledgeContextBridgeOutcome = await startKnowledgeBaseTurnRunner(knowledgeContextBridgeView, knowledgeContextBridgeSession, {
   ...queuedTurn("kb-context-bridge-item", knowledgeContextBridgeSession.id, "/ask 最近有哪些 GitHub 项目？"),
   kind: "knowledge-base"
 }, "queue");
@@ -1873,7 +1885,7 @@ const failedKnowledgeContextView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-await failedKnowledgeContextView.startKnowledgeBaseTurn(failedKnowledgeContextSession, {
+await startKnowledgeBaseTurnRunner(failedKnowledgeContextView, failedKnowledgeContextSession, {
   ...queuedTurn("kb-context-failed-item", failedKnowledgeContextSession.id, "/ask 失败问题"),
   kind: "knowledge-base"
 }, "queue");
@@ -1932,10 +1944,9 @@ const knowledgeContextChatView: any = {
   renderMessagesIfActive: () => undefined,
   renderToolbar: () => undefined,
   diagnoseCodexFailure: () => ({ title: "失败", text: "失败" }),
-  isKnowledgeBaseSession: () => true,
-  startChatTurn: (CodexView.prototype as any).startChatTurn
+  isKnowledgeBaseSession: () => true
 };
-const knowledgeContextChatOutcome = await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+const knowledgeContextChatOutcome = await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
   ...queuedTurn("kb-context-chat-item", knowledgeContextChatSession.id, "继续讲这个项目"),
   kind: "chat"
 }, "queue");
@@ -1946,7 +1957,7 @@ assert.match(injectedKnowledgeContextText, /继续讲这个项目/);
 assert.deepEqual((knowledgeContextChatSession as any).knowledgeContext[0].injectedThreadIds, ["thread-chat"]);
 
 capturedKnowledgeContextInput = [];
-await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
   ...queuedTurn("kb-context-chat-item-2", knowledgeContextChatSession.id, "再继续"),
   kind: "chat"
 }, "queue");
@@ -1982,7 +1993,7 @@ const knowledgeContextResumeFailureView: any = {
   activeRunSessionId: "",
   activeTurnId: ""
 };
-await knowledgeContextResumeFailureView.startChatTurn(knowledgeContextResumeFailureSession, {
+await startChatTurnRunner(knowledgeContextResumeFailureView, knowledgeContextResumeFailureSession, {
   ...queuedTurn("kb-context-resume-failure-item", knowledgeContextResumeFailureSession.id, "新线程继续"),
   kind: "chat"
 }, "queue");
