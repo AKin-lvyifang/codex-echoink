@@ -254,6 +254,16 @@ export function appendKnowledgeBaseWarning(previous: string, warning: string): s
   return `${normalized}；${warning}`;
 }
 
+export function cloneProcessedSources(processed: Record<string, KnowledgeBaseProcessedSource> | undefined): Record<string, KnowledgeBaseProcessedSource> {
+  return Object.fromEntries(
+    Object.entries(processed ?? {}).map(([key, source]) => [key, { ...source }])
+  );
+}
+
+export function cloneList<T extends object>(items: T[] | undefined): T[] {
+  return (items ?? []).map((item) => ({ ...item }));
+}
+
 async function readExistingTrackerText(tracker: string): Promise<string> {
   const fallback = "---\nupdated: \n---\n\n# Ingest Tracker\n";
   const stat = await fsp.lstat(tracker).catch((error) => {
