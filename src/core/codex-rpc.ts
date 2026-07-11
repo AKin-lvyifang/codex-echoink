@@ -1,13 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import * as readline from "readline";
 import type { CodexServerRequest } from "../types/app-server";
-
-type PendingRequest = {
-  method: string;
-  resolve: (value: any) => void;
-  reject: (reason: Error) => void;
-  timer: NodeJS.Timeout | null;
-};
+import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcStdioLaunch } from "./json-rpc-stdio-transport";
 
 type NotificationHandler = (params: any) => void;
 type ServerRequestHandler = (request: CodexServerRequest) => Promise<any>;
@@ -19,73 +11,32 @@ export interface CodexRpcLaunchOptions {
   env: NodeJS.ProcessEnv;
 }
 
-export class CodexRpcClient {
-  private proc: ChildProcessWithoutNullStreams | null = null;
-  private nextId = 1;
-  private pending = new Map<number, PendingRequest>();
+export class CodexRpcClient extends JsonRpcStdioTransport {
   private notificationHandlers = new Map<string, Set<NotificationHandler>>();
   private serverRequestHandlers = new Map<string, ServerRequestHandler>();
-  private stderrLines: string[] = [];
-  private disposed = false;
 
-  constructor(private readonly launch: CodexRpcLaunchOptions) {}
-
-  start(): void {
-    if (this.proc) return;
-    this.disposed = false;
-    this.proc = spawn(this.launch.command, this.launch.args, {
-      cwd: this.launch.cwd,
-      env: this.launch.env,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    const rl = readline.createInterface({ input: this.proc.stdout });
-    rl.on("line", (line) => this.handleLine(line));
-
-    this.proc.stderr.on("data", (chunk) => {
-      const text = chunk.toString();
-      this.stderrLines.push(text);
-      if (this.stderrLines.length > 30) this.stderrLines.shift();
-    });
-
-    this.proc.on("exit", (code, signal) => {
-      const wasDisposed = this.disposed;
-      this.proc = null;
-      const message = [
+  constructor(private readonly launch: CodexRpcLaunchOptions) {
+    super({
+      closedMessage: "Codex app-server 未连接",
+      disposeMessage: "Codex app-server 已关闭",
+      timeoutMessage: (method) => `请求超时：${method}`,
+      exitMessage: (code, signal) => [
         "Codex app-server 已退出",
         typeof code === "number" ? `退出码 ${code}` : "",
         signal ? `信号 ${signal}` : ""
-      ].filter(Boolean).join("，");
-      const error = new Error(message);
-      this.rejectAll(error);
-      if (!wasDisposed) {
-        this.emitNotification("error", {
-          message,
-          code: "APP_SERVER_EXIT",
-          exitCode: typeof code === "number" ? code : undefined,
-          signal: signal ?? undefined,
-          stderr: this.getRecentStderr()
-        });
-      }
-    });
-
-    this.proc.on("error", (error) => {
-      const wasDisposed = this.disposed;
-      this.proc = null;
-      const formatted = formatProcessError(error, this.launch.command);
-      this.rejectAll(formatted);
-      if (!wasDisposed) {
-        this.emitNotification("error", {
-          message: formatted.message,
-          code: processErrorCode(error),
-          stderr: this.getRecentStderr()
-        });
-      }
+      ].filter(Boolean).join("，"),
+      killTimeoutMs: 2500,
+      collectStderr: true
     });
   }
 
-  isAlive(): boolean {
-    return Boolean(this.proc && !this.disposed && !this.proc.killed && this.proc.stdin.writable);
+  protected buildCommand(): JsonRpcStdioLaunch {
+    return this.launch;
+  }
+
+  request<T = any>(method: string, params?: any, timeoutMs = 30000): Promise<T> {
+    if (!this.isAlive()) throw new Error("Codex app-server 未连接");
+    return super.request<T>(method, params, timeoutMs);
   }
 
   async initialize(): Promise<any> {
@@ -101,40 +52,6 @@ export class CodexRpcClient {
     return result;
   }
 
-  request<T = any>(method: string, params?: any, timeoutMs = 30000): Promise<T> {
-    if (!this.isAlive()) throw new Error("Codex app-server 未连接");
-    const id = this.nextId++;
-    const message = { jsonrpc: "2.0", id, method, params };
-
-    return new Promise<T>((resolve, reject) => {
-      const timer =
-        timeoutMs > 0
-          ? setTimeout(() => {
-              this.pending.delete(id);
-              reject(new Error(`请求超时：${method}`));
-            }, timeoutMs)
-          : null;
-      this.pending.set(id, {
-        method,
-        resolve,
-        reject,
-        timer
-      });
-      try {
-        this.sendRaw(message);
-      } catch (error) {
-        if (timer) clearTimeout(timer);
-        this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-  }
-
-  notify(method: string, params?: any): void {
-    if (!this.isAlive()) return;
-    this.sendRaw({ jsonrpc: "2.0", method, params });
-  }
-
   onNotification(method: string, handler: NotificationHandler): () => void {
     const handlers = this.notificationHandlers.get(method) ?? new Set<NotificationHandler>();
     handlers.add(handler);
@@ -146,67 +63,41 @@ export class CodexRpcClient {
     this.serverRequestHandlers.set(method, handler);
   }
 
-  getRecentStderr(): string {
-    return this.stderrLines.join("").trim();
-  }
-
-  async dispose(): Promise<void> {
-    this.disposed = true;
-    this.rejectAll(new Error("Codex app-server 已关闭"));
-    if (!this.proc) return;
-    const proc = this.proc;
-    this.proc = null;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 2500);
-      proc.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      try {
-        proc.kill("SIGTERM");
-      } catch {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-  }
-
-  private handleLine(line: string): void {
-    if (!line.trim()) return;
-    let message: any;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-
-    if (message.id !== undefined && this.pending.has(message.id)) {
-      const pending = this.pending.get(message.id)!;
-      this.pending.delete(message.id);
-      if (pending.timer) clearTimeout(pending.timer);
-      if (message.error) {
-        pending.reject(formatJsonRpcError(message.error));
-      } else {
-        pending.resolve(message.result);
-      }
-      return;
-    }
-
+  protected handleMessage(message: JsonRpcMessage): void {
     if (message.method && message.id !== undefined) {
-      void this.handleServerRequest(message);
+      void this.handleServerRequest(message as { id: number | string; method: string; params: any });
       return;
     }
 
     if (message.method) {
       this.emitNotification(message.method, message.params);
     }
+  }
+
+  protected formatResponseError(message: JsonRpcMessage): Error {
+    return formatJsonRpcError(message.error);
+  }
+
+  protected formatProcessError(error: Error): Error {
+    return formatProcessError(error, this.launch.command);
+  }
+
+  protected handleTransportError(error: Error): void {
+    this.emitNotification("error", {
+      message: this.formatProcessError(error).message,
+      code: processErrorCode(error),
+      stderr: this.getRecentStderr()
+    });
+  }
+
+  protected handleTransportExit(error: Error, code: number | null, signal: NodeJS.Signals | null): void {
+    this.emitNotification("error", {
+      message: error.message,
+      code: "APP_SERVER_EXIT",
+      exitCode: typeof code === "number" ? code : undefined,
+      signal: signal ?? undefined,
+      stderr: this.getRecentStderr()
+    });
   }
 
   private emitNotification(method: string, params?: any): void {
@@ -219,9 +110,9 @@ export class CodexRpcClient {
     const handler = this.serverRequestHandlers.get(message.method);
     try {
       const result = handler ? await handler({ id: message.id, method: message.method, params: message.params }) : {};
-      this.sendRaw({ jsonrpc: "2.0", id: message.id, result });
+      this.write({ jsonrpc: "2.0", id: message.id, result });
     } catch (error) {
-      this.sendRaw({
+      this.write({
         jsonrpc: "2.0",
         id: message.id,
         error: {
@@ -229,20 +120,6 @@ export class CodexRpcClient {
           message: error instanceof Error ? error.message : String(error)
         }
       });
-    }
-  }
-
-  private sendRaw(message: unknown): void {
-    const proc = this.proc;
-    if (!proc || !this.isAlive()) throw new Error("Codex app-server 未连接");
-    proc.stdin.write(`${JSON.stringify(message)}\n`);
-  }
-
-  private rejectAll(error: Error): void {
-    for (const [id, pending] of this.pending) {
-      if (pending.timer) clearTimeout(pending.timer);
-      pending.reject(error);
-      this.pending.delete(id);
     }
   }
 }
