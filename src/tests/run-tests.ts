@@ -821,20 +821,21 @@ assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
 const knowledgeManagerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-runner.ts"), "utf8");
+const knowledgeAgentTaskServiceSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-task-service.ts"), "utf8");
 assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
 assert.match(knowledgeManagerSourceForToolBridge, /runKnowledgeAgentTask/);
 assert.match(knowledgeAgentRunnerSourceForToolBridge, /runAgentTaskWithToolBridge/);
-const hermesGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
-  knowledgeManagerSourceForToolBridge.indexOf("private async sendHermesTaskWithGuards"),
-  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards")
+const hermesGuardWrapperSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendHermesTaskWithGuards"),
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards")
 );
-const openCodeGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
-  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards"),
-  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards")
+const openCodeGuardWrapperSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards"),
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards")
 );
-const sharedAgentGuardSource = knowledgeManagerSourceForToolBridge.slice(
-  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards"),
-  knowledgeManagerSourceForToolBridge.indexOf("private resolveKnowledgeBackend")
+const sharedAgentGuardSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards"),
+  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private finishCodexWaiter")
 );
 assert.match(hermesGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("hermes"/);
 assert.match(openCodeGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("opencode"/);
