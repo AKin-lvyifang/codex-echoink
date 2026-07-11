@@ -1,5 +1,5 @@
 export interface KnowledgeBaseDailyScheduleState {
-  scheduleEnabled: boolean;
+  enabled: boolean;
   scheduleTime: string;
   catchUpOnStartup: boolean;
   lastRunAt: number;
@@ -14,7 +14,7 @@ export function shouldRunScheduledKnowledgeBaseMaintenance(
   schedulerStartedAt = 0,
   forceCatchUp = false
 ): boolean {
-  if (!settings.scheduleEnabled) return false;
+  if (!settings.enabled) return false;
   const scheduled = scheduledTimeForToday(settings.scheduleTime, now);
   if (!scheduled || now.getTime() < scheduled.getTime()) return false;
   const lastScheduled = settings.lastScheduledRunAt ? new Date(settings.lastScheduledRunAt) : null;

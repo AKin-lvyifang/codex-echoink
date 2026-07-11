@@ -918,6 +918,7 @@ assert.equal(DEFAULT_SETTINGS.agents.opencode.port, DEFAULT_SETTINGS.opencode.po
 assert.equal(DEFAULT_SETTINGS.setup.completedAt, 0);
 assert.equal(DEFAULT_SETTINGS.setup.lastCheckedAt, 0);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.enabled, false);
+assert.equal("scheduleEnabled" in DEFAULT_SETTINGS.knowledgeBase, false);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.backend, "default");
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.useCustomRulesFile, true);
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
@@ -933,7 +934,7 @@ assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.managedThreads, {});
 const scheduledKnowledgeBaseBase = {
-  scheduleEnabled: true,
+  enabled: true,
   scheduleTime: "09:00",
   catchUpOnStartup: true,
   lastRunAt: 0
@@ -984,6 +985,15 @@ const schedulerLifecycleSettings = normalizeSettingsData({
     scheduleTime: "00:00"
   }
 }).settings.knowledgeBase;
+assert.equal("scheduleEnabled" in schedulerLifecycleSettings, false);
+assert.equal(normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    enabled: true,
+    scheduleEnabled: false,
+    scheduleTime: "00:00"
+  }
+}).settings.knowledgeBase.enabled, false);
 const schedulerLifecycleEvents: string[] = [];
 const schedulerLifecycleIntervals: number[] = [];
 let schedulerLifecycleIntervalDelay = 0;

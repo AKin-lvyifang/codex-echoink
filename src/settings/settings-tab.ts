@@ -480,12 +480,6 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addKnowledgeBaseRulesFilePicker(wrapper);
     this.addKnowledgeBaseMemoryRecommendation(wrapper);
 
-    this.decorateSetting(new Setting(wrapper).setName(copy.knowledge.dailyMaintenance).setDesc(copy.knowledge.dailyMaintenanceDesc).addToggle((toggle) =>
-      toggle.setValue(settings.scheduleEnabled).onChange(async (value) => {
-        settings.scheduleEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    ), "calendar-clock");
     this.addProviderText(wrapper, copy.knowledge.scheduleTime, settings.scheduleTime, "09:00", async (value) => {
       settings.scheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : settings.scheduleTime;
       await this.plugin.saveSettings();

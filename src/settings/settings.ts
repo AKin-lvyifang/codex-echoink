@@ -222,7 +222,6 @@ export interface KnowledgeBaseSettings {
   backend: KnowledgeBaseBackendMode;
   useCustomRulesFile: boolean;
   rulesFilePath: string;
-  scheduleEnabled: boolean;
   scheduleTime: string;
   catchUpOnStartup: boolean;
   lastRunAt: number;
@@ -624,7 +623,6 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     backend: "default",
     useCustomRulesFile: true,
     rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE,
-    scheduleEnabled: false,
     scheduleTime: "09:00",
     catchUpOnStartup: true,
     lastRunAt: 0,
@@ -1346,13 +1344,13 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_SETTINGS.knowledgeBase;
+  const legacyScheduleEnabled = typeof value?.scheduleEnabled === "boolean" ? value.scheduleEnabled : true;
   return {
-    enabled: value?.enabled === true,
+    enabled: value?.enabled === true && legacyScheduleEnabled !== false,
     sessionId: normalizeOptionalText(value?.sessionId),
     backend: normalizeKnowledgeBaseBackendMode(value?.backend),
     useCustomRulesFile: value?.useCustomRulesFile === true,
     rulesFilePath: normalizeKnowledgeBaseRulesPath(value?.rulesFilePath, fallback.rulesFilePath),
-    scheduleEnabled: value?.scheduleEnabled === true,
     scheduleTime: normalizeScheduleTime(value?.scheduleTime, fallback.scheduleTime),
     catchUpOnStartup: value?.catchUpOnStartup !== false,
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
