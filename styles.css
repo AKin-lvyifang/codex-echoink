@@ -5476,6 +5476,43 @@ body.theme-light .codex-container {
   border-radius: 18px;
 }
 
+.codex-input {
+  padding-right: 124px;
+}
+
+.codex-composer-enhance-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--background-primary) 88%, transparent);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.codex-composer-enhance-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.codex-composer-enhance-button:hover {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--interactive-accent) 34%, var(--background-modifier-border));
+  background: var(--background-modifier-hover);
+}
+
 .codex-turn-queue {
   display: none;
   gap: 6px;
@@ -5643,7 +5680,7 @@ body.theme-light .codex-container {
 .codex-composer-model-button,
 .codex-composer-select,
 .codex-context-meter {
-  height: 30px;
+  height: 27px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -5706,16 +5743,16 @@ body.theme-light .codex-container {
 }
 
 .codex-composer-native-select.codex-select {
-  min-width: 122px;
-  height: 30px;
-  padding: 2px 23px 2px 30px;
+  min-width: 112px;
+  height: 27px;
+  padding: 2px 21px 2px 28px;
   border: 0 !important;
   border-radius: 999px;
   color: inherit;
   background: transparent !important;
   box-shadow: none !important;
-  font-size: 12.5px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .codex-permission-control.is-danger {
@@ -5723,12 +5760,12 @@ body.theme-light .codex-container {
 }
 
 .codex-composer-model-button {
-  gap: 5px;
+  gap: 4px;
   max-width: 140px;
-  padding: 0 8px;
+  padding: 0 7px;
   flex: 0 0 auto;
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -5739,8 +5776,8 @@ body.theme-light .codex-container {
 }
 
 .codex-composer-model-icon svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 
 .codex-composer-chevron svg {

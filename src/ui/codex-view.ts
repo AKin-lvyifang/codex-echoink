@@ -56,6 +56,7 @@ import {
 } from "./codex-view/menus";
 import {
   currentArticleUnderstandingSource as currentArticleUnderstandingSourceRunner,
+  enhanceChatInput as enhanceChatInputRunner,
   ensureArticleUnderstanding as ensureArticleUnderstandingRunner,
   refreshArticleUnderstandingFromPanel as refreshArticleUnderstandingFromPanelRunner,
   refreshArticleUnderstandingPanelSourceState as refreshArticleUnderstandingPanelSourceStateRunner,
@@ -562,6 +563,7 @@ export class CodexView extends ItemView {
     const composerRefs = renderComposerShell(this.rootEl, {
       onInputChanged: () => this.onInputChanged(),
       onPasteFiles: (event) => void this.handlePastedFiles(event),
+      onEnhancePrompt: () => void this.enhanceChatInput(),
       onSendMessage: () => void this.sendMessage(),
       onDropFiles: (event) => this.handleDroppedFiles(event)
     });
@@ -1345,6 +1347,10 @@ export class CodexView extends ItemView {
 
   private async sendMessage(): Promise<void> {
     await sendMessageRunner(this);
+  }
+
+  private async enhanceChatInput(): Promise<void> {
+    await enhanceChatInputRunner(this);
   }
 
   private async enqueueComposerDraft(): Promise<void> {

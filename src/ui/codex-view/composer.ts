@@ -17,6 +17,7 @@ export interface ComposerShellRefs {
 export interface ComposerShellCallbacks {
   onInputChanged: () => void;
   onPasteFiles: (event: ClipboardEvent) => void;
+  onEnhancePrompt: () => void;
   onSendMessage: () => void;
   onDropFiles: (event: DragEvent) => void;
 }
@@ -106,6 +107,13 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
       callbacks.onSendMessage();
     }
   });
+  const enhanceButton = inputWrap.createEl("button", {
+    cls: "codex-composer-enhance-button",
+    attr: { type: "button", "aria-label": "增强提示词", title: "增强提示词" }
+  });
+  setIcon(enhanceButton, "sparkles");
+  enhanceButton.createSpan({ text: "增强提示词" });
+  enhanceButton.onclick = callbacks.onEnhancePrompt;
   inputWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
     inputWrap.addClass("is-dragging");

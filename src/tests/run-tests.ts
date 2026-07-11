@@ -144,6 +144,7 @@ import {
 } from "../editor-actions/selection";
 import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
+import { isAlreadyDetailed } from "../prompt-enhancer/meta-prompt";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, type KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { verifyDigestEvidence, type KnowledgeTransactionSnapshot } from "../knowledge-base/digest-evidence";
@@ -771,6 +772,8 @@ assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 45000);
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.articleUnderstandingCache, {});
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue", "translate", "enhance"]);
 assert.equal(DEFAULT_SETTINGS.editorActions.actions.find((action) => action.id === "enhance")?.enabled, false);
+assert.equal(isAlreadyDetailed("# 角色\n" + Array.from({ length: 90 }, (_, index) => `词${index}`).join(" ")), true);
+assert.equal(isAlreadyDetailed("帮我写周报"), false);
 assert.equal(DEFAULT_SETTINGS.opencode.autoStart, true);
 assert.equal(DEFAULT_SETTINGS.opencode.hostname, "127.0.0.1");
 assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
@@ -2862,6 +2865,7 @@ const codexViewHeaderSource = await readFile(path.join(process.cwd(), "src/ui/co
 const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/history-modal.ts"), "utf8");
 const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/knowledge-dashboard.ts"), "utf8");
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
+const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/composer.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
 const codexViewUiSources = [
@@ -3267,6 +3271,11 @@ assert.match(settingsStyles, /\.codex-kb-run-card\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-run-track\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-scan/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-work/);
+assert.match(codexViewComposerSource, /onEnhancePrompt/);
+assert.match(codexViewComposerSource, /codex-composer-enhance-button/);
+assert.match(codexViewComposerSource, /setIcon\(enhanceButton,\s*"sparkles"\)/);
+assert.match(codexViewSource, /enhanceChatInput/);
+assert.match(settingsStyles, /\.codex-composer-enhance-button/);
 assert.match(settingsStyles, /\.codex-kb-maintain-card\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-maintain-section\s*\{/);
 assert.doesNotMatch(settingsStyles, /codex-input-wrap[\s\S]{0,160}min-height:\s*(142|174)px/);

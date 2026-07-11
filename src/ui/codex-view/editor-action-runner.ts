@@ -4,13 +4,86 @@ import { runAgentTaskWithEvents } from "../../agent/simple-task";
 import type { AgentBackendKind } from "../../agent/types";
 import { buildEchoInkResourceCatalog, prepareAgentResources, workspaceResourcesFromEchoInkResources } from "../../resources/registry";
 import { newId, resolveEditorActionModeConfig } from "../../settings/settings";
-import { buildEditorActionPrompt, buildEditorActionReviewPrompt } from "../../editor-actions/prompt";
+import { buildEditorActionPrompt, buildEditorActionReviewPrompt, resolveEditorActionStyle } from "../../editor-actions/prompt";
 import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache } from "../../editor-actions/summary-cache";
 import type { ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionRequest } from "../../editor-actions/types";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../../editor-actions/output";
+import { buildEnhancePromptTemplate, isAlreadyDetailed } from "../../prompt-enhancer/meta-prompt";
 import type { ArticleUnderstandingPanelState } from "./header";
 import { agentEventToEditorStatus } from "./agent-event-renderer";
+
+export async function enhanceChatInput(view: any): Promise<void> {
+  const inputText = view.inputEl.value.trim();
+  if (!inputText) {
+    new Notice("请先输入要增强的文本");
+    return;
+  }
+  if (isAlreadyDetailed(inputText)) {
+    new Notice("当前输入已经足够详细，无需增强");
+    return;
+  }
+  const blockReason = view.editorActionStartBlockReason();
+  if (blockReason) {
+    new Notice(blockReason);
+    return;
+  }
+  const settings = view.plugin.settings.editorActions;
+  const qualityMode: EditorActionQualityMode = "fast";
+  const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
+  const action = {
+    id: "enhance",
+    label: "增强提示词",
+    enabled: true,
+    promptTemplate: buildEnhancePromptTemplate("general")
+  };
+  const style = resolveEditorActionStyle(settings);
+  const now = Date.now();
+  const snapshot = {
+    filePath: "chat-input",
+    fileName: "聊天输入",
+    fromOffset: 0,
+    toOffset: inputText.length,
+    from: { line: 0, ch: 0 },
+    to: { line: 0, ch: inputText.length },
+    selectedText: inputText,
+    beforeContext: "",
+    afterContext: ""
+  };
+  const source = {
+    filePath: "chat-input",
+    fileName: "聊天输入",
+    text: inputText,
+    mtime: now,
+    size: inputText.length
+  };
+  try {
+    const raw = await sendEditorActionRequest(view, {
+      id: newId("chat-enhance"),
+      action,
+      style,
+      snapshot,
+      source,
+      qualityMode,
+      modeConfig,
+      prompt: buildEditorActionPrompt({ action, style, snapshot, qualityMode, modeLabel: modeConfig.label }),
+      createdAt: now
+    });
+    const cleaned = cleanEditorActionOutput(raw).trim();
+    const validation = validateEditorActionCandidateText(cleaned);
+    if (!validation.ok) throw new Error(validation.reason);
+    view.inputEl.value = cleaned;
+    view.inputEl.setSelectionRange(cleaned.length, cleaned.length);
+    view.onInputChanged();
+    view.setEditorActionStatus({ status: "confirmed", actionLabel: action.label, message: "提示词已增强" });
+    view.focusInput();
+    new Notice("提示词已增强，可编辑后发送");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    view.setEditorActionStatus({ status: "failed", actionLabel: action.label, error: message });
+    new Notice(`增强失败：${message}`);
+  }
+}
 
 export async function sendEditorActionRequest(view: any, request: EditorActionRequest): Promise<string> {
   if (view.editorSummaryRun) view.cancelEditorSummaryRun("写作操作抢占文章理解");
