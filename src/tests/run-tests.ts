@@ -184,6 +184,7 @@ import { extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { extractFirstUrl, isHtmlVerificationBlocked, isWeChatUrl, sanitizeWebCaptureFileName, stripCollectPrefix } from "../knowledge-base/web-capture";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { commitLintReportOnly, snapshotKnowledgeTransaction } from "../knowledge-base/transaction-snapshot";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
 import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "../knowledge-base/types";
@@ -5334,6 +5335,22 @@ try {
   assert.equal(isHtmlVerificationBlocked("<html>完成验证后即可继续访问</html>"), true);
   assert.equal(isHtmlVerificationBlocked("<article>正常内容</article>"), false);
   assert.equal(sanitizeWebCaptureFileName("A/B:C*D?E\"F<G>H|#[]"), "A B C D E F G H");
+  const transactionSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-snapshot-"));
+  try {
+    await mkdir(path.join(transactionSnapshotVault, "wiki"), { recursive: true });
+    await mkdir(path.join(transactionSnapshotVault, "outputs"), { recursive: true });
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "before", "utf8");
+    const transactionBefore = await snapshotKnowledgeTransaction(transactionSnapshotVault, ["wiki", "outputs"]);
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "after", "utf8");
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "new.md"), "new", "utf8");
+    await writeFile(path.join(transactionSnapshotVault, "outputs", "kb-check.md"), "lint report", "utf8");
+    await commitLintReportOnly(transactionSnapshotVault, transactionBefore, "outputs/kb-check.md");
+    assert.equal(await readFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "utf8"), "before");
+    assert.equal(await fileExists(path.join(transactionSnapshotVault, "wiki", "new.md")), false);
+    assert.equal(await readFile(path.join(transactionSnapshotVault, "outputs", "kb-check.md"), "utf8"), "lint report");
+  } finally {
+    await rm(transactionSnapshotVault, { recursive: true, force: true });
+  }
   const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
   assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
