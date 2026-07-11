@@ -4,6 +4,7 @@ import { normalizePath } from "obsidian";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { readFreshKnowledgeBaseReportExcerpt } from "./report";
 import type { KnowledgeBaseSource } from "./types";
+import { isMissingPathError } from "./utils";
 
 export interface KnowledgeTransactionSnapshot {
   vaultPath: string;
@@ -626,8 +627,4 @@ async function walkExistingDigestEvidenceEntries(rootPath: string): Promise<stri
     result.push(...await walkExistingDigestEvidenceEntries(path.join(rootPath, entry.name)));
   }
   return result;
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
 }

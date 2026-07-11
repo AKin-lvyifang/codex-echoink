@@ -4,6 +4,7 @@ import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseRunMode } from "./types";
 import type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
+import { isMissingPathError } from "./utils";
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
 
@@ -365,8 +366,4 @@ function pad(value: number): string {
 
 async function pathExists(filePath: string): Promise<boolean> {
   return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT");
 }

@@ -9,6 +9,7 @@ import { readKnowledgeBaseReportText, writeKnowledgeBaseReportFile } from "./rep
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { writeFileAtomic, type KnowledgeConflictDuplicateCleanup } from "./transaction-snapshot";
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource, StructureNormalizationPathRewrite, StructureNormalizationResult } from "./types";
+import { isMissingPathError } from "./utils";
 
 export async function ensureKnowledgeBaseFolders(vaultPath: string, mode: KnowledgeBaseRunMode): Promise<void> {
   await fsp.mkdir(path.join(vaultPath, "outputs"), { recursive: true });
@@ -266,10 +267,6 @@ function isRewrittenRawPath(relativePath: string, rewrites: StructureNormalizati
     if (!rewrite.to.startsWith("raw/")) return false;
     return normalized === rewrite.to || normalized.startsWith(`${rewrite.to}/`);
   });
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
 }
 
 function escapeRegExp(value: string): string {

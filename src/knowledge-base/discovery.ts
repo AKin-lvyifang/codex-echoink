@@ -4,6 +4,7 @@ import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
+import { isMissingPathError } from "./utils";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -188,8 +189,4 @@ function pad(value: number): string {
 
 function normalizeSlashes(value: string): string {
   return value.split(path.sep).join("/");
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT");
 }

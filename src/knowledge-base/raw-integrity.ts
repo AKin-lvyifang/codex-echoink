@@ -3,6 +3,7 @@ import * as path from "path";
 import { createHash } from "node:crypto";
 import type { StructureNormalizationPathRewrite } from "./types";
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
+import { isMissingPathError } from "./utils";
 
 export interface RawSnapshotEntry {
   kind?: RawContentSnapshotEntry["kind"];
@@ -439,8 +440,4 @@ async function walkRawEntries(dir: string): Promise<string[]> {
 
 function normalizeSlashes(value: string): string {
   return value.split(path.sep).join("/");
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT");
 }
