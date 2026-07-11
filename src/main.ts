@@ -10,9 +10,9 @@ import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText 
 import { CodexServerRequestRouter } from "./core/server-request-router";
 import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { buildEchoInkResourceCatalog, skillResourcesForScope } from "./resources/registry";
-import { closeMcpBrokerConnectionPool, EchoInkMcpBroker } from "./resources/mcp-broker";
-import { resolveMcpConnectionConfig } from "./resources/mcp-connections";
-import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope } from "./resources/types";
+import { closeMcpBrokerConnectionPool } from "./resources/mcp-broker";
+import { EchoInkMcpBrokerService, type CallEchoInkMcpToolInput } from "./resources/mcp-broker-service";
+import type { EchoInkResource } from "./resources/types";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
@@ -60,6 +60,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private serverRequestRouter: CodexServerRequestRouter | null = null;
+  private echoInkMcpBroker: EchoInkMcpBrokerService | null = null;
   private startupMaintenancePromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -608,90 +609,11 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async listEchoInkMcpTools(resourceId: string, timeoutMs = 30000): Promise<unknown[]> {
-    const resource = this.currentEchoInkResource(resourceId);
-    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
-    const broker = new EchoInkMcpBroker({
-      settings: this.settings.resources.mcpBroker,
-      connections: this.settings.resources.mcpConnections
-    });
-    try {
-      const result = await broker.listTools(resource, timeoutMs);
-      this.recordEchoInkMcpConnectionSuccess(resource);
-      await this.saveSettings(true);
-      return result.tools;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.recordEchoInkMcpConnectionFailure(resource, message);
-      await this.saveSettings(true);
-      throw error;
-    }
+    return await this.getEchoInkMcpBrokerService().listTools(resourceId, timeoutMs);
   }
 
-  async callEchoInkMcpTool(input: {
-    resourceId: string;
-    scope: EchoInkResourceScope;
-    backend: string;
-    toolName: string;
-    arguments?: Record<string, unknown>;
-    timeoutMs?: number;
-  }): Promise<unknown> {
-    const resource = this.currentEchoInkResource(input.resourceId);
-    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
-    const broker = new EchoInkMcpBroker({
-      settings: this.settings.resources.mcpBroker,
-      connections: this.settings.resources.mcpConnections,
-      approval: async (request) => {
-        const args = request.arguments ? `\n\n参数：${JSON.stringify(request.arguments, null, 2).slice(0, 2000)}` : "";
-        return await confirmModal(
-          this.app,
-          `MCP 工具调用：${request.toolName}`,
-          `资源：${request.resource.name}\n后端：${request.backend}\n范围：${request.scope}${args}`,
-          "允许",
-          "拒绝"
-        );
-      }
-    });
-    try {
-      const result = await broker.callTool({
-        resource,
-        scope: input.scope,
-        backend: input.backend,
-        toolName: input.toolName,
-        arguments: input.arguments,
-        timeoutMs: input.timeoutMs
-      });
-      this.recordEchoInkMcpConnectionSuccess(resource);
-      return result.content;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.recordEchoInkMcpConnectionFailure(resource, message);
-      throw error;
-    } finally {
-      await this.saveSettings(true);
-    }
-  }
-
-  private recordEchoInkMcpConnectionSuccess(resource: EchoInkResource): void {
-    const record = this.ensureEchoInkMcpConnectionRecord(resource);
-    if (!record) return;
-    record.verifiedAt = Date.now();
-    record.lastError = "";
-  }
-
-  private recordEchoInkMcpConnectionFailure(resource: EchoInkResource, message: string): void {
-    const record = this.ensureEchoInkMcpConnectionRecord(resource);
-    if (!record) return;
-    record.lastError = message;
-  }
-
-  private ensureEchoInkMcpConnectionRecord(resource: EchoInkResource): EchoInkMcpConnectionRecord | null {
-    const existing = this.settings.resources.mcpConnections[resource.id];
-    if (existing) return existing;
-    const config = resolveMcpConnectionConfig(resource, this.settings.resources);
-    if (!config) return null;
-    const record = { ...config };
-    this.settings.resources.mcpConnections[resource.id] = record;
-    return record;
+  async callEchoInkMcpTool(input: CallEchoInkMcpToolInput): Promise<unknown> {
+    return await this.getEchoInkMcpBrokerService().callTool(input);
   }
 
   async testHermesConnection(options: { notify?: boolean } = {}): Promise<HermesConnectionTestResult> {
@@ -764,8 +686,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
   }
 
-  private currentEchoInkResource(resourceId: string): EchoInkResource | null {
-    return buildEchoInkResourceCatalog({ settings: this.settings.resources }).find((resource) => resource.id === resourceId) ?? null;
+  private getEchoInkMcpBrokerService(): EchoInkMcpBrokerService {
+    if (!this.echoInkMcpBroker) this.echoInkMcpBroker = new EchoInkMcpBrokerService(this);
+    return this.echoInkMcpBroker;
   }
 
   private async loadEchoInkSkillResources(force: boolean): Promise<EchoInkResource[]> {

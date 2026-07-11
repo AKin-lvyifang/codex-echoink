@@ -3346,13 +3346,15 @@ assert.match(codexViewMessageListSource, /tryUpdateMessage\(message:\s*ChatMessa
 assert.match(codexViewMessageListSource, /data-message-id/);
 assert.match(codexViewMessageListSource, /querySelectorAll<HTMLElement>\("\[data-message-id\]"\)/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+const mcpBrokerServiceSource = await readFile(path.join(process.cwd(), "src/resources/mcp-broker-service.ts"), "utf8");
 assert.match(mainPluginSource, /private reportSettingsSaveError/);
 assert.match(mainPluginSource, /console\.error\("\[EchoInk\] settings save failed:"/);
 assert.match(mainPluginSource, /new Notice\(this\.settings\.settingsLanguage === "en"/);
 assert.doesNotMatch(mainPluginSource, /this\.saveQueue\s*=\s*run\.catch\(\(\)\s*=>\s*undefined\)/);
-assert.match(mainPluginSource, /connections:\s*this\.settings\.resources\.mcpConnections/);
-assert.match(mainPluginSource, /verifiedAt\s*=\s*Date\.now\(\)/);
-assert.match(mainPluginSource, /lastError\s*=\s*message/);
+assert.match(mainPluginSource, /EchoInkMcpBrokerService/);
+assert.match(mcpBrokerServiceSource, /connections:\s*this\.plugin\.settings\.resources\.mcpConnections/);
+assert.match(mcpBrokerServiceSource, /verifiedAt\s*=\s*Date\.now\(\)/);
+assert.match(mcpBrokerServiceSource, /lastError\s*=\s*message/);
 const homeViewSource = await readFile(path.join(process.cwd(), "src/home/home-view.ts"), "utf8");
 const readmeEn = await readFile(path.join(process.cwd(), "README.md"), "utf8");
 const readmeCn = await readFile(path.join(process.cwd(), "README_CN.md"), "utf8");
