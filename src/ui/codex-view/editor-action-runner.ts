@@ -9,9 +9,10 @@ import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options"
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache } from "../../editor-actions/summary-cache";
 import type { ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionRequest } from "../../editor-actions/types";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../../editor-actions/output";
-import { buildEnhancePromptTemplate, isAlreadyDetailed } from "../../prompt-enhancer/meta-prompt";
+import { buildEnhancePromptTemplate, detectEnhanceStyle, isAlreadyDetailed } from "../../prompt-enhancer/meta-prompt";
 import type { ArticleUnderstandingPanelState } from "./header";
 import { agentEventToEditorStatus } from "./agent-event-renderer";
+import { clearPromptEnhanceReview, renderPromptEnhanceReview } from "./composer";
 
 export async function enhanceChatInput(view: any): Promise<void> {
   const inputText = view.inputEl.value.trim();
@@ -28,14 +29,16 @@ export async function enhanceChatInput(view: any): Promise<void> {
     new Notice(blockReason);
     return;
   }
+  clearPromptEnhanceReview(view.promptEnhanceReviewEl);
   const settings = view.plugin.settings.editorActions;
   const qualityMode: EditorActionQualityMode = "fast";
   const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
+  const enhanceStyle = detectEnhanceStyle(inputText);
   const action = {
     id: "enhance",
     label: "增强提示词",
     enabled: true,
-    promptTemplate: buildEnhancePromptTemplate("general")
+    promptTemplate: buildEnhancePromptTemplate(enhanceStyle)
   };
   const style = resolveEditorActionStyle(settings);
   const now = Date.now();
@@ -75,6 +78,16 @@ export async function enhanceChatInput(view: any): Promise<void> {
     view.inputEl.value = cleaned;
     view.inputEl.setSelectionRange(cleaned.length, cleaned.length);
     view.onInputChanged();
+    renderPromptEnhanceReview(view.promptEnhanceReviewEl, {
+      onRestore: () => {
+        view.inputEl.value = inputText;
+        view.inputEl.setSelectionRange(inputText.length, inputText.length);
+        clearPromptEnhanceReview(view.promptEnhanceReviewEl);
+        view.onInputChanged();
+        view.focusInput();
+        new Notice("已恢复原输入");
+      }
+    });
     view.setEditorActionStatus({ status: "confirmed", actionLabel: action.label, message: "提示词已增强" });
     view.focusInput();
     new Notice("提示词已增强，可编辑后发送");

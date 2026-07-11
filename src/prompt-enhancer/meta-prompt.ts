@@ -68,6 +68,14 @@ export function buildEnhancePromptTemplate(style: EnhanceStyle = "general"): str
   ].join("\n");
 }
 
+export function detectEnhanceStyle(input: string): EnhanceStyle {
+  const text = input.toLowerCase();
+  if (/(代码|函数|组件|接口|api|sdk|typescript|javascript|react|vue|登录组件|脚本|bug|报错|重构)/i.test(text)) return "code";
+  if (/(数据|分析|指标|报表|图表|趋势|同比|环比|销售|漏斗|sql|dashboard|kpi)/i.test(text)) return "analysis";
+  if (/(周报|日报|月报|报告|方案|文档|文章|邮件|通知|总结|复盘|提纲|公众号|小红书)/i.test(text)) return "writing";
+  return "general";
+}
+
 /**
  * 判断输入是否已经足够详细，不需要增强
  *
@@ -76,6 +84,7 @@ export function buildEnhancePromptTemplate(style: EnhanceStyle = "general"): str
  */
 export function isAlreadyDetailed(input: string): boolean {
   const wordCount = input.split(/\s+/).filter(Boolean).length;
+  const compactLength = input.replace(/\s+/g, "").length;
   const hasStructure = /^#{1,3}\s|^\d+\.\s|^-\s|^\*\*/m.test(input);
-  return wordCount > 80 && hasStructure;
+  return hasStructure && (wordCount > 80 || compactLength > 60);
 }

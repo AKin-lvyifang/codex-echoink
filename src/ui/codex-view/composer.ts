@@ -9,6 +9,7 @@ export interface ComposerShellRefs {
   queueEl: HTMLElement;
   attachmentsEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
+  promptEnhanceReviewEl: HTMLElement;
   skillMenuEl: HTMLElement;
   knowledgeCommandMenuEl: HTMLElement;
   toolbarEl: HTMLElement;
@@ -114,6 +115,7 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
   setIcon(enhanceButton, "sparkles");
   enhanceButton.createSpan({ text: "增强提示词" });
   enhanceButton.onclick = callbacks.onEnhancePrompt;
+  const promptEnhanceReviewEl = inputWrap.createDiv({ cls: "codex-composer-enhance-review" });
   inputWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
     inputWrap.addClass("is-dragging");
@@ -129,10 +131,31 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
     queueEl,
     attachmentsEl,
     inputEl,
+    promptEnhanceReviewEl,
     skillMenuEl: inputWrap.createDiv({ cls: "codex-skill-menu" }),
     knowledgeCommandMenuEl: inputWrap.createDiv({ cls: "codex-knowledge-command-menu" }),
     toolbarEl: inputWrap.createDiv({ cls: "codex-toolbar" })
   };
+}
+
+export function renderPromptEnhanceReview(container: HTMLElement, callbacks: { onRestore: () => void }): void {
+  container.empty();
+  container.addClass("is-visible");
+  const status = container.createSpan({ cls: "codex-composer-enhance-review-text", text: "已增强，可继续编辑" });
+  status.createSpan({ cls: "codex-composer-enhance-review-dot", text: "·" });
+  const restoreButton = container.createEl("button", {
+    cls: "codex-composer-enhance-restore",
+    attr: { type: "button", title: "恢复原文", "aria-label": "恢复原文" }
+  });
+  setIcon(restoreButton, "rotate-ccw");
+  restoreButton.createSpan({ text: "恢复原文" });
+  restoreButton.onclick = callbacks.onRestore;
+}
+
+export function clearPromptEnhanceReview(container: HTMLElement | undefined): void {
+  if (!container) return;
+  container.empty();
+  container.removeClass("is-visible");
 }
 
 export function renderComposerToolbar(container: HTMLElement, state: ComposerToolbarState, callbacks: ComposerToolbarCallbacks): ComposerToolbarRefs {

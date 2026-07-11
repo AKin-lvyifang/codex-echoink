@@ -30,6 +30,7 @@ import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeo
 import { textInputModal } from "./modals";
 import { KnowledgeBaseHistoryModal } from "./codex-view/history-modal";
 import {
+  clearPromptEnhanceReview,
   compactReasoningLabel,
   labelFor,
   renderComposerAttachments,
@@ -126,6 +127,7 @@ export class CodexView extends ItemView {
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
+  private promptEnhanceReviewEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
   private contextEl!: HTMLElement;
   private contextRingEl!: HTMLElement;
@@ -563,13 +565,14 @@ export class CodexView extends ItemView {
     const composerRefs = renderComposerShell(this.rootEl, {
       onInputChanged: () => this.onInputChanged(),
       onPasteFiles: (event) => void this.handlePastedFiles(event),
-      onEnhancePrompt: () => void this.enhanceChatInput(),
+      onEnhancePrompt: () => void enhanceChatInputRunner(this),
       onSendMessage: () => void this.sendMessage(),
       onDropFiles: (event) => this.handleDroppedFiles(event)
     });
     this.queueEl = composerRefs.queueEl;
     this.attachmentsEl = composerRefs.attachmentsEl;
     this.inputEl = composerRefs.inputEl;
+    this.promptEnhanceReviewEl = composerRefs.promptEnhanceReviewEl;
     this.skillMenuEl = composerRefs.skillMenuEl;
     this.knowledgeCommandMenuEl = composerRefs.knowledgeCommandMenuEl;
     this.toolbarEl = composerRefs.toolbarEl;
@@ -1157,6 +1160,7 @@ export class CodexView extends ItemView {
 
   fillKnowledgeBaseCommand(command: string): void {
     this.inputEl.value = command;
+    clearPromptEnhanceReview(this.promptEnhanceReviewEl);
     this.inputEl.setSelectionRange(command.length, command.length);
     this.closeComposerMenus();
     this.focusInput();
@@ -1279,6 +1283,7 @@ export class CodexView extends ItemView {
 
   private onInputChanged(): void {
     this.skillMenuEl.removeClass("is-visible");
+    if (!this.inputEl.value.trim()) clearPromptEnhanceReview(this.promptEnhanceReviewEl);
     this.renderToolbar();
     const query = knowledgeCommandQueryForInput(this.inputEl.value, this.isKnowledgeBaseSession(this.ensureSession()));
     if (query === null) {
@@ -1318,6 +1323,7 @@ export class CodexView extends ItemView {
 
   private clearComposerDraft(): void {
     this.inputEl.value = "";
+    clearPromptEnhanceReview(this.promptEnhanceReviewEl);
     this.closeComposerMenus();
     this.attachments = [];
     this.selectedSkill = null;
@@ -1347,10 +1353,6 @@ export class CodexView extends ItemView {
 
   private async sendMessage(): Promise<void> {
     await sendMessageRunner(this);
-  }
-
-  private async enhanceChatInput(): Promise<void> {
-    await enhanceChatInputRunner(this);
   }
 
   private async enqueueComposerDraft(): Promise<void> {
