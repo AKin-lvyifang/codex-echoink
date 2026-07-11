@@ -2210,28 +2210,6 @@ function workspaceDisplayName(workspacePath: string): string {
   return path.basename(normalized) || normalized;
 }
 
-function compactAccountLabel(value: string): string {
-  if (!value) return "未连接";
-  if (value.startsWith("ChatGPT：")) return "ChatGPT";
-  return value.length > 14 ? `${value.slice(0, 13)}…` : value;
-}
-
-function formatDurationSeconds(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  if (seconds < 60) return `${seconds} 秒`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
-}
-
-function knowledgeInitStatusLabel(status: string): string {
-  if (status === "preview-ready") return "已预览";
-  if (status === "initialized") return "已初始化";
-  if (status === "failed") return "初始化失败";
-  return "未初始化";
-}
-
-
 function isImagePath(filePath: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|heic)$/i.test(filePath);
 }
