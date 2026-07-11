@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import { tmpdir } from "os";
