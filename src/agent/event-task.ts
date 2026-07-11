@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentEventTaskRuntime, AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
 import type { AgentTaskInput, AgentTaskResult } from "./types";
+import { swallowError } from "../core/error-handling";
 
 export async function runTaskWithLifecycleEvents(
   runtime: AgentTaskRuntime,
@@ -49,7 +50,7 @@ export async function runTaskWithLifecycleEvents(
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await emitQueue.catch(() => undefined);
+    await emitQueue.catch(swallowError(`${runtime.kind} lifecycle event queue cleanup`));
     await emitNow({ type: "failed", error: message });
     throw error;
   }
@@ -64,8 +65,8 @@ export function createAgentEventRuntimeWithFallback(
     connect: () => fallbackRuntime.connect(),
     disconnect: async () => {
       await Promise.all([
-        fallbackRuntime.disconnect?.().catch(() => undefined),
-        richRuntime?.disconnect?.().catch(() => undefined)
+        fallbackRuntime.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} fallback disconnect cleanup`)),
+        richRuntime?.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} rich disconnect cleanup`))
       ]);
     },
     listModels: () => fallbackRuntime.listModels(),
@@ -86,15 +87,15 @@ export function createAgentEventRuntimeWithFallback(
             createdAt: Date.now(),
             error: message
           });
-          await richRuntime.disconnect?.().catch(() => undefined);
+          await richRuntime.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} rich runtime fallback disconnect`));
         }
       }
       return await runTaskWithLifecycleEvents(fallbackRuntime, input, emit);
     },
     async abort(runId: string) {
       await Promise.all([
-        fallbackRuntime.abort(runId).catch(() => undefined),
-        richRuntime?.abort(runId).catch(() => undefined)
+        fallbackRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} fallback abort cleanup`)),
+        richRuntime?.abort(runId).catch(swallowError(`${fallbackRuntime.kind} rich abort cleanup`))
       ]);
     }
   };
@@ -143,7 +144,7 @@ async function runConnectedTaskWithLifecycleEvents(
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await emitQueue.catch(() => undefined);
+    await emitQueue.catch(swallowError(`${runtime.kind} connected lifecycle event queue cleanup`));
     await emitNow({ type: "failed", error: message });
     throw error;
   }

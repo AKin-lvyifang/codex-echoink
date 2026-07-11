@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import type {
   EchoInkMcpBrokerSettings,
   EchoInkMcpConnectionConfig,
@@ -8,6 +7,8 @@ import type {
   EchoInkResourceScope
 } from "./types";
 import { resolveMcpConnectionConfig } from "./mcp-connections";
+import { swallowError } from "../core/error-handling";
+import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcStdioLaunch } from "../core/json-rpc-stdio-transport";
 
 export interface EchoInkMcpBrokerInvocation {
   resource: EchoInkResource;
@@ -47,6 +48,8 @@ export interface EchoInkMcpToolListResult {
   tools: unknown[];
 }
 
+const transportPool = new Map<string, Promise<EchoInkMcpBrokerTransport>>();
+
 export function defaultMcpBrokerSettings(): EchoInkMcpBrokerSettings {
   return { approvalMode: "ask", callLog: [] };
 }
@@ -79,14 +82,14 @@ export class EchoInkMcpBroker {
   async listTools(resource: EchoInkResource, timeoutMs = 30000): Promise<EchoInkMcpToolListResult> {
     const config = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);
     if (!config) throw new Error("MCP 资源没有 EchoInk broker 连接配置。");
-    const transport = await (this.options.transportFactory ?? createDefaultMcpTransport)(config);
+    const transport = await getPooledMcpTransport(config, this.options.transportFactory ?? createDefaultMcpTransport, timeoutMs);
     try {
-      await initializeMcpClient(transport, timeoutMs);
       const result = await transport.request("tools/list", {}, timeoutMs);
       const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
       return { tools };
-    } finally {
-      await transport.close().catch(() => undefined);
+    } catch (error) {
+      await closePooledMcpTransport(config, "close MCP broker transport after listTools failure");
+      throw error;
     }
   }
 
@@ -106,9 +109,8 @@ export class EchoInkMcpBroker {
       throw new Error("用户未批准 MCP 工具调用。");
     }
     this.record(invocation, "approved", "MCP 工具调用已批准。");
-    const transport = await (this.options.transportFactory ?? createDefaultMcpTransport)(config);
+    const transport = await getPooledMcpTransport(config, this.options.transportFactory ?? createDefaultMcpTransport, invocation.timeoutMs);
     try {
-      await initializeMcpClient(transport, invocation.timeoutMs);
       const content = await transport.request("tools/call", {
         name: invocation.toolName,
         arguments: invocation.arguments ?? {}
@@ -118,9 +120,8 @@ export class EchoInkMcpBroker {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.record(invocation, "failed", message);
+      await closePooledMcpTransport(config, "close MCP broker transport after callTool failure");
       throw error;
-    } finally {
-      await transport.close().catch(() => undefined);
     }
   }
 
@@ -137,6 +138,71 @@ export class EchoInkMcpBroker {
       message
     });
   }
+}
+
+export async function closeMcpBrokerConnectionPool(): Promise<void> {
+  const pending = Array.from(transportPool.values());
+  transportPool.clear();
+  const settled = await Promise.allSettled(pending);
+  await Promise.allSettled(settled.map((result) => {
+    if (result.status !== "fulfilled") return Promise.resolve();
+    return result.value.close().catch(swallowError("close pooled MCP broker transport"));
+  }));
+}
+
+async function getPooledMcpTransport(
+  config: EchoInkMcpConnectionConfig,
+  transportFactory: (config: EchoInkMcpConnectionConfig) => Promise<EchoInkMcpBrokerTransport>,
+  timeoutMs = 30000
+): Promise<EchoInkMcpBrokerTransport> {
+  const key = mcpTransportPoolKey(config);
+  let transportPromise = transportPool.get(key);
+  if (!transportPromise) {
+    transportPromise = createInitializedMcpTransport(config, transportFactory, timeoutMs);
+    transportPool.set(key, transportPromise);
+    transportPromise.catch(() => {
+      if (transportPool.get(key) === transportPromise) transportPool.delete(key);
+    });
+  }
+  return transportPromise;
+}
+
+async function createInitializedMcpTransport(
+  config: EchoInkMcpConnectionConfig,
+  transportFactory: (config: EchoInkMcpConnectionConfig) => Promise<EchoInkMcpBrokerTransport>,
+  timeoutMs: number
+): Promise<EchoInkMcpBrokerTransport> {
+  const transport = await transportFactory(config);
+  try {
+    await initializeMcpClient(transport, timeoutMs);
+    return transport;
+  } catch (error) {
+    await transport.close().catch(swallowError("close MCP broker transport after initialize failure"));
+    throw error;
+  }
+}
+
+async function closePooledMcpTransport(config: EchoInkMcpConnectionConfig, context: string): Promise<void> {
+  const key = mcpTransportPoolKey(config);
+  const transportPromise = transportPool.get(key);
+  if (!transportPromise) return;
+  transportPool.delete(key);
+  const transport = await transportPromise.catch(() => null);
+  if (transport) await transport.close().catch(swallowError(context));
+}
+
+function mcpTransportPoolKey(config: EchoInkMcpConnectionConfig): string {
+  return JSON.stringify(stableJson(config));
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, raw]) => [key, stableJson(raw)])
+  );
 }
 
 async function initializeMcpClient(transport: EchoInkMcpBrokerTransport, timeoutMs = 30000): Promise<void> {
@@ -184,94 +250,56 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(this.config.headers ?? {}) },
       body: JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {} })
-    }).catch(() => undefined);
+    }).catch(swallowError("send HTTP MCP notification"));
   }
 
   async close(): Promise<void> {}
 }
 
-class StdioMcpTransport implements EchoInkMcpBrokerTransport {
-  private nextId = 1;
-  private buffer = "";
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-
-  private constructor(private readonly child: ChildProcessWithoutNullStreams) {
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => this.onData(chunk));
-    child.on("error", (error) => this.rejectAll(error instanceof Error ? error : new Error(String(error))));
-    child.on("exit", (code) => {
-      if (this.pending.size) this.rejectAll(new Error(`MCP server exited with code ${code ?? "unknown"}`));
+class StdioMcpTransport extends JsonRpcStdioTransport implements EchoInkMcpBrokerTransport {
+  private constructor(private readonly config: Extract<EchoInkMcpConnectionConfig, { transport: "stdio" }>) {
+    super({
+      closedMessage: "MCP transport closed",
+      disposeMessage: "MCP transport closed",
+      timeoutMessage: (method) => `MCP request timed out: ${method}`,
+      exitMessage: (code) => `MCP server exited with code ${code ?? "unknown"}`,
+      disableTimeoutForNonPositive: false
     });
   }
 
   static async start(config: Extract<EchoInkMcpConnectionConfig, { transport: "stdio" }>): Promise<StdioMcpTransport> {
-    const child = spawn(config.command, config.args ?? [], {
-      cwd: config.cwd || process.cwd(),
-      env: { ...process.env, ...(config.env ?? {}) },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    return new StdioMcpTransport(child);
+    const transport = new StdioMcpTransport(config);
+    transport.start();
+    return transport;
   }
 
-  async request(method: string, params?: Record<string, unknown>, timeoutMs = 30000): Promise<unknown> {
-    const id = this.nextId++;
-    const message = JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} });
-    return await new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`MCP request timed out: ${method}`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${message}\n`);
-    });
+  protected buildCommand(): JsonRpcStdioLaunch {
+    return {
+      command: this.config.command,
+      args: this.config.args ?? [],
+      cwd: this.config.cwd || process.cwd(),
+      env: { ...process.env, ...(this.config.env ?? {}) }
+    };
+  }
+
+  async request<T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs = 30000): Promise<T> {
+    return await super.request<T>(method, params ?? {}, timeoutMs);
   }
 
   async notify(method: string, params?: Record<string, unknown>): Promise<void> {
-    const message = JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {} });
-    this.child.stdin.write(`${message}\n`);
+    super.notify(method, params ?? {});
   }
 
   async close(): Promise<void> {
-    this.rejectAll(new Error("MCP transport closed"));
-    this.child.kill();
+    await this.dispose();
   }
 
-  private onData(chunk: string): void {
-    this.buffer += chunk;
-    for (;;) {
-      const index = this.buffer.indexOf("\n");
-      if (index < 0) return;
-      const line = this.buffer.slice(0, index).trim();
-      this.buffer = this.buffer.slice(index + 1);
-      if (!line || !line.startsWith("{")) continue;
-      this.handleMessage(line);
-    }
+  protected handleMessage(_message: JsonRpcMessage): void {
+    // MCP responses are handled by the shared transport; broker notifications are ignored.
   }
 
-  private handleMessage(line: string): void {
-    let message: any;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-    const id = Number(message?.id);
-    if (!Number.isFinite(id)) return;
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    this.pending.delete(id);
-    clearTimeout(pending.timer);
-    if (message.error) pending.reject(new Error(String(message.error.message ?? "MCP request failed")));
-    else pending.resolve(message.result);
-  }
-
-  private rejectAll(error: Error): void {
-    for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-      this.pending.delete(id);
-    }
+  protected formatResponseError(message: JsonRpcMessage): Error {
+    return new Error(String(message.error?.message ?? "MCP request failed"));
   }
 }
 

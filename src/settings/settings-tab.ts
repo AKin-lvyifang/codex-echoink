@@ -1,6 +1,7 @@
 import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFile, type FuzzyMatch } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
+import { swallowError } from "../core/error-handling";
 import { detectCodexCommand } from "../core/codex-service";
 import { HermesBackend } from "../core/hermes-backend";
 import { detectHermesCommand } from "../core/hermes-models";
@@ -39,6 +40,10 @@ import {
   providerModelLabel,
   providerConnectionLabel,
   removeApiProvider,
+  normalizeAgentBackendMode,
+  normalizeEditorActionQualityMode,
+  normalizeKnowledgeBaseBackendMode,
+  normalizeKnowledgeBaseHistoryRetentionDays,
   normalizeReviewOutputDir,
   normalizeSettingsLanguage,
   validateApiProvider,
@@ -50,7 +55,6 @@ import {
   type KnowledgeBaseBackendMode,
   type ReviewReportKind,
   type ResourceManagementTab,
-  type SettingsLanguage,
   type SettingsTab,
   type WorkspaceResourceToggles
 } from "./settings";
@@ -70,6 +74,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private resourceLoaded: Record<ResourceManagementTab, boolean> = { plugins: false, mcp: false, skills: false };
   private resourceLoadErrors: Partial<Record<ResourceManagementTab, string>> = {};
   private resourceSearchQuery: Record<ResourceManagementTab, string> = { plugins: "", mcp: "", skills: "" };
+  private resourceSearchDebounceTimer: number | null = null;
   private openCodeModelChoices: AgentModelInfo[] = [];
   private openCodeModelsLoaded = false;
   private openCodeModelsLoading = false;
@@ -98,6 +103,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const copy = this.copy;
     const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
     try {
+      this.clearResourceSearchDebounceTimer();
       containerEl.empty();
       new Setting(containerEl).setName(copy.title).setHeading();
 
@@ -179,7 +185,7 @@ export class CodexSettingTab extends PluginSettingTab {
           for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
           dropdown.setValue(settings.agentBackend);
           dropdown.onChange(async (value) => {
-            const backend = normalizeAgentBackendForUi(value);
+            const backend = normalizeAgentBackendMode(value);
             settings.agentBackend = backend;
             settings.agents.defaultBackend = backend;
             await this.plugin.saveSettings();
@@ -300,7 +306,7 @@ export class CodexSettingTab extends PluginSettingTab {
     testHermes.onclick = () => void this.testHermesConnection();
     const copyHermesModel = hermesActions.createEl("button", { cls: "codex-resource-tab", text: "复制 hermes model", attr: { type: "button" } });
     copyHermesModel.onclick = async () => {
-      await navigator.clipboard?.writeText("hermes model").catch(() => undefined);
+      await navigator.clipboard?.writeText("hermes model").catch(swallowError("copy Hermes model command"));
       new Notice("已复制：hermes model");
     };
   }
@@ -359,7 +365,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const language of SETTINGS_LANGUAGE_OPTIONS) dropdown.addOption(language, copy.general.languageOptions[language]);
       dropdown.setValue(this.plugin.settings.settingsLanguage);
       dropdown.onChange(async (value) => {
-        this.plugin.settings.settingsLanguage = normalizeSettingsLanguageForUi(value);
+        this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
         await this.plugin.saveSettings(true);
         this.display();
       });
@@ -444,7 +450,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const [value, label] of Object.entries(options)) dropdown.addOption(value, label);
       dropdown.setValue(settings.backend);
       dropdown.onChange(async (value) => {
-        settings.backend = normalizeKnowledgeBackendForUi(value);
+        settings.backend = normalizeKnowledgeBaseBackendMode(value);
         await this.plugin.saveSettings();
         this.display();
       });
@@ -524,7 +530,7 @@ export class CodexSettingTab extends PluginSettingTab {
         }
         dropdown.setValue(String(this.plugin.settings.knowledgeBase.historyRetentionDays));
         dropdown.onChange(async (value) => {
-          this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeHistoryRetentionForUi(value);
+          this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeBaseHistoryRetentionDays(value, DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays);
           await this.plugin.saveSettings();
           this.display();
         });
@@ -954,7 +960,7 @@ export class CodexSettingTab extends PluginSettingTab {
       for (const mode of EDITOR_ACTION_QUALITY_MODES) dropdown.addOption(mode.id, copy.writing.qualityModes[mode.id].label);
       dropdown.setValue(settings.qualityMode);
       dropdown.onChange(async (value) => {
-        settings.qualityMode = normalizeEditorActionQualityModeForUi(value);
+        settings.qualityMode = normalizeEditorActionQualityMode(value, "quality");
         await this.plugin.saveSettings();
         this.display();
       });
@@ -1388,7 +1394,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings(true);
       new Notice(copy.opencode.readFailed(message));
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect OpenCode settings backend"));
       if (shouldLoadModels) this.openCodeModelsLoading = false;
       if (shouldLoadAgents) this.openCodeAgentsLoading = false;
       this.display();
@@ -1639,26 +1645,66 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     }) as HTMLInputElement;
     input.value = this.resourceSearchQuery[tab];
+    const clear = searchWrap.createEl("button", {
+      cls: "codex-resource-search-clear",
+      attr: { type: "button", title: copy.resources.clearSearch, "aria-label": copy.resources.clearSearch }
+    });
+    setIcon(clear, "x");
+    clear.hidden = !input.value;
     input.oninput = () => {
       this.resourceSearchQuery[tab] = input.value;
-      this.display();
-      window.requestAnimationFrame(() => {
-        const next = this.containerEl.querySelector<HTMLInputElement>(".codex-resource-search-input");
-        next?.focus();
-        next?.setSelectionRange(next.value.length, next.value.length);
-      });
+      clear.hidden = !input.value;
+      this.scheduleResourceSearchFilter(tab);
     };
-    if (input.value) {
-      const clear = searchWrap.createEl("button", {
-        cls: "codex-resource-search-clear",
-        attr: { type: "button", title: copy.resources.clearSearch, "aria-label": copy.resources.clearSearch }
-      });
-      setIcon(clear, "x");
-      clear.onclick = () => {
-        this.resourceSearchQuery[tab] = "";
-        this.display();
-      };
+    clear.onclick = () => {
+      input.value = "";
+      this.resourceSearchQuery[tab] = "";
+      clear.hidden = true;
+      this.clearResourceSearchDebounceTimer();
+      this.applyResourceSearchFilter(tab);
+      input.focus();
+    };
+  }
+
+  private scheduleResourceSearchFilter(tab: ResourceManagementTab): void {
+    this.clearResourceSearchDebounceTimer();
+    this.resourceSearchDebounceTimer = window.setTimeout(() => {
+      this.resourceSearchDebounceTimer = null;
+      this.applyResourceSearchFilter(tab);
+    }, 120);
+  }
+
+  private clearResourceSearchDebounceTimer(): void {
+    if (this.resourceSearchDebounceTimer === null) return;
+    window.clearTimeout(this.resourceSearchDebounceTimer);
+    this.resourceSearchDebounceTimer = null;
+  }
+
+  private applyResourceSearchFilter(tab: ResourceManagementTab): void {
+    if (this.plugin.settings.resourceManagementTab !== tab) return;
+    const body = this.containerEl.querySelector<HTMLElement>(".codex-resource-body");
+    if (!body) return;
+    const rows = Array.from(body.querySelectorAll<HTMLElement>(".codex-resource-row[data-resource-key]")).map((row) => ({
+      key: row.dataset.resourceKey ?? "",
+      name: row.dataset.resourceName ?? "",
+      meta: row.dataset.resourceMeta ?? "",
+      desc: row.dataset.resourceDesc ?? "",
+      row
+    }));
+    const query = this.resourceSearchQuery[tab];
+    const visibleKeys = new Set(filterWorkspaceResourceRows(rows, query).map((row) => row.key));
+    let visible = 0;
+    for (const row of rows) {
+      const shouldShow = visibleKeys.has(row.key);
+      row.row.toggleClass("is-search-hidden", !shouldShow);
+      if (shouldShow) visible += 1;
     }
+    const summary = body.querySelector<HTMLElement>("[data-resource-summary]");
+    const total = Number(summary?.dataset.resourceTotal ?? rows.length);
+    const enabled = Number(summary?.dataset.resourceEnabled ?? 0);
+    if (summary) summary.setText(this.copy.resources.summary(enabled, total, visible, Boolean(query.trim())));
+    const empty = body.querySelector<HTMLElement>("[data-resource-search-empty]");
+    empty?.toggleClass("is-hidden", !query.trim() || visible > 0);
   }
 
   private currentEchoInkResourceCatalog(snapshot: WorkspaceResourceSnapshot | null = this.resourceSnapshot): EchoInkResource[] {
@@ -1712,8 +1758,8 @@ export class CodexSettingTab extends PluginSettingTab {
       resource
     }));
     const query = this.resourceSearchQuery[activeTab];
-    const filtered = filterWorkspaceResourceRows(rows, query);
     const enabled = resources.filter((resource) => resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, "knowledge")).length;
+    const filtered = filterWorkspaceResourceRows(rows, query);
     this.renderResourceSummary(container, resources.length, enabled, error, filtered.length, query);
     if (activeTab === "mcp" && resources.length) {
       container.createDiv({ cls: "codex-resource-warning", text: "MCP 已导入 EchoInk 资源目录；只有 Codex native passthrough，或带 broker 连接配置的 MCP，才会标记为可直接调用。" });
@@ -1725,23 +1771,39 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     if (!filtered.length) {
       const emptyText = activeTab === "plugins" ? copy.resources.noPluginMatches : activeTab === "mcp" ? copy.resources.noMcpMatches : copy.resources.noSkillMatches;
-      container.createDiv({ cls: "codex-resource-empty", text: emptyText });
-      return;
+      container.createDiv({ cls: "codex-resource-empty", text: emptyText, attr: { "data-resource-search-empty": "true" } });
     }
-    for (const row of filtered) this.renderResourceRow(container, row.resource);
+    const visibleKeys = new Set(filtered.map((row) => row.key));
+    for (const row of rows) this.renderResourceRow(container, row.resource, visibleKeys.has(row.key), row);
   }
 
   private renderResourceSummary(container: HTMLElement, total: number, enabled: number, error?: string, visible = total, query = ""): void {
     const copy = this.copy;
     const searching = Boolean(query.trim());
-    container.createDiv({ cls: "codex-resource-summary", text: copy.resources.summary(enabled, total, visible, searching) });
+    container.createDiv({
+      cls: "codex-resource-summary",
+      text: copy.resources.summary(enabled, total, visible, searching),
+      attr: {
+        "data-resource-summary": "true",
+        "data-resource-total": String(total),
+        "data-resource-enabled": String(enabled)
+      }
+    });
     if (error) container.createDiv({ cls: "codex-resource-error", text: copy.common.partialReadFailed(error) });
   }
 
-  private renderResourceRow(container: HTMLElement, resource: EchoInkResource): void {
+  private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string }): void {
     const copy = this.copy;
     const knowledgeEnabled = resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, "knowledge");
-    const row = container.createDiv({ cls: `codex-resource-row ${knowledgeEnabled ? "is-enabled" : "is-disabled"}` });
+    const row = container.createDiv({
+      cls: `codex-resource-row ${knowledgeEnabled ? "is-enabled" : "is-disabled"} ${visible ? "" : "is-search-hidden"}`,
+      attr: {
+        "data-resource-key": searchRow?.key ?? resource.id,
+        "data-resource-name": searchRow?.name ?? (resource.kind === "skill" ? `/${resource.name}` : resource.name),
+        "data-resource-meta": searchRow?.meta ?? "",
+        "data-resource-desc": searchRow?.desc ?? ""
+      }
+    });
     const icon = row.createSpan({ cls: "codex-resource-row-icon" });
     setIcon(icon, resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
     const content = row.createDiv({ cls: "codex-resource-row-content" });
@@ -1766,10 +1828,24 @@ export class CodexSettingTab extends PluginSettingTab {
         this.plugin.settings.resources.enabledByScope[scope][resource.id] = toggle.checked;
         syncLegacyWorkspaceResourceToggle(this.plugin.settings.workspaceResources, resource, scope, toggle.checked);
         await this.plugin.saveSettings(true);
-        this.display();
+        const enabled = resourceScopeEnabled(this.plugin.settings.resources.enabledByScope, resource, "knowledge");
+        row.toggleClass("is-enabled", enabled);
+        row.toggleClass("is-disabled", !enabled);
+        this.updateResourceSummaryCounts();
       };
     }
     if (resource.kind === "mcp-server") this.renderMcpConnectionActions(row, resource, connectionStatus);
+  }
+
+  private updateResourceSummaryCounts(): void {
+    const body = this.containerEl.querySelector<HTMLElement>(".codex-resource-body");
+    const summary = body?.querySelector<HTMLElement>("[data-resource-summary]");
+    if (!body || !summary) return;
+    const rows = Array.from(body.querySelectorAll<HTMLElement>(".codex-resource-row[data-resource-key]"));
+    const enabled = rows.filter((row) => row.hasClass("is-enabled")).length;
+    const visible = rows.filter((row) => !row.hasClass("is-search-hidden")).length;
+    summary.dataset.resourceEnabled = String(enabled);
+    summary.setText(this.copy.resources.summary(enabled, rows.length, visible, Boolean(this.resourceSearchQuery[this.plugin.settings.resourceManagementTab].trim())));
   }
 
   private renderMcpConnectionActions(row: HTMLElement, resource: EchoInkResource, status: ReturnType<typeof mcpConnectionStatus>): void {
@@ -1892,7 +1968,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (tab === "skills") return (await backend.listSkills()).map(skillResourceFromHermesSkill);
       return (await backend.listMcpServers()).map(mcpResourceFromHermesServer);
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes settings backend"));
     }
   }
 
@@ -1941,10 +2017,6 @@ const EDITOR_ACTION_QUALITY_MODES: Array<{ id: EditorActionQualityMode; icon: st
   { id: "quality", icon: "file-search" },
   { id: "strict", icon: "shield-check" }
 ];
-
-function normalizeEditorActionQualityModeForUi(value: string): EditorActionQualityMode {
-  return value === "fast" || value === "quality" || value === "strict" ? value : "quality";
-}
 
 function editorActionIcon(actionId: string): string {
   if (actionId === "expand") return "text";
@@ -2023,10 +2095,6 @@ function agentBackendLabel(value: AgentBackendMode, copy: SettingsCopy = setting
   return copy.backendLabels[value] ?? (value === "hermes" ? "Hermes" : value === "opencode" ? "OpenCode API" : "Codex CLI");
 }
 
-function normalizeSettingsLanguageForUi(value: string): SettingsLanguage {
-  return normalizeSettingsLanguage(value);
-}
-
 class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
   constructor(app: App, private readonly files: TFile[], private readonly onChoose: (file: TFile) => Promise<void>, copy: SettingsCopy) {
     super(app);
@@ -2053,19 +2121,6 @@ class KnowledgeBaseRulesFileSuggestModal extends FuzzySuggestModal<TFile> {
   onChooseItem(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
     void this.onChoose(file);
   }
-}
-
-function normalizeAgentBackendForUi(value: string): AgentBackendMode {
-  return value === "opencode" || value === "hermes" ? value : "codex-cli";
-}
-
-function normalizeKnowledgeBackendForUi(value: string): KnowledgeBaseBackendMode {
-  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
-}
-
-function normalizeKnowledgeHistoryRetentionForUi(value: string): number {
-  const parsed = Number(value);
-  return parsed === 7 || parsed === 30 || parsed === 90 || parsed === 0 ? parsed : DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays;
 }
 
 function parseHistoryDateSelection(value: string): string[] {

@@ -3,7 +3,7 @@ import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime, selectOpenCodeModelForTask } from "../core/opencode-models";
 import { resolveHermesCommand } from "../core/hermes-models";
 import type { CodexForObsidianSettings } from "../settings/settings";
-import type { AgentBackendKind, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput, AgentTaskResult } from "./types";
+import type { AgentBackend, AgentBackendKind, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput, AgentTaskResult } from "./types";
 import type { AgentTaskRuntime } from "./runtime";
 import { AcpAgentRuntime } from "./acp-runtime";
 import { createAgentEventRuntimeWithFallback } from "./event-task";
@@ -14,6 +14,7 @@ export interface AgentRuntimeFactoryInput {
   vaultPath: string;
   codexRunner?: (input: AgentTaskInput) => Promise<AgentTaskResult>;
   codexModels?: () => Promise<AgentModelInfo[]>;
+  codexBackend?: AgentBackend;
 }
 
 export function createAgentTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRuntime {
@@ -26,20 +27,26 @@ function createCodexTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunti
   return {
     kind: "codex-cli",
     async connect(): Promise<AgentConnectionStatus> {
+      if (input.codexBackend) {
+        const status = await input.codexBackend.connect();
+        if (status) return status;
+      }
       return { connected: true, label: "Codex", errors: [] };
     },
     async disconnect(): Promise<void> {
       // Codex rich runtime lifecycle is owned by CodexService.
     },
     async listModels(): Promise<AgentModelInfo[]> {
+      if (input.codexBackend) return await input.codexBackend.listModels();
       return input.codexModels ? await input.codexModels() : [];
     },
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
       if (!input.codexRunner) throw new Error("Codex rich runtime 由 CodexService 管理，当前没有提供 task runner。");
       return await input.codexRunner(task);
     },
-    async abort(): Promise<void> {
-      // Codex rich runtime uses thread/turn interruption in CodexService.
+    async abort(runId: string): Promise<void> {
+      if (!input.codexBackend) throw new Error("Codex runtime 缺少 CodexService，无法取消任务。");
+      await input.codexBackend.abort(runId);
     }
   };
 }

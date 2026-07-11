@@ -2,6 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { Notice, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { ReviewReportKind, ReviewReportState } from "../settings/settings";
 import { normalizeReviewOutputDir } from "../settings/settings";
 import {
@@ -43,6 +44,10 @@ export class ReviewManager {
       id: "review-open-latest-html",
       name: "复盘：打开最近 HTML 看板",
       callback: () => void this.openLatestHtml()
+    });
+    this.plugin.app.workspace.onLayoutReady(() => {
+      this.armSchedule();
+      void this.runCatchUpIfNeeded();
     });
   }
 
@@ -200,7 +205,7 @@ export class ReviewManager {
 }
 
 async function readMaintenanceReportEntries(dir: string, relativeDir: string): Promise<Array<{ path: string }>> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read review report entries"));
   return entries
     .filter((entry) => entry.isFile() && /^kb-maintenance-\d{4}-\d{2}-\d{2}\.md$/.test(entry.name))
     .map((entry) => ({ path: `${relativeDir}/${entry.name}` }));

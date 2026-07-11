@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ItemView, MarkdownView, normalizePath, Notice, Platform, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, normalizePath, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentBackendMode, ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
 import { ensureKnowledgeBaseSession, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
@@ -20,13 +20,14 @@ import type {
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
+import { getElectronDialog, showItemInFinder } from "../core/electron";
+import { swallowError } from "../core/error-handling";
 import { basename, buildUserInput, contextUsageView, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
-import { normalizeRateLimitResponse } from "../core/rate-limits";
 import { shouldCloseComposerMenusForClick } from "./composer-menu";
 import { composerPrimaryActionForState, composerStateForRuntimeState, type ComposerPrimaryActionState } from "./composer-state";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
-import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
+import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
 import { KnowledgeBaseHistoryModal } from "./codex-view/history-modal";
 import {
@@ -78,6 +79,7 @@ import {
   startQueuedTurnItem as startQueuedTurnItemRunner,
   startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
 } from "./codex-view/turn-runner";
+import type { CodexViewPromptEnhanceContext, CodexViewTurnContext, EditorActionRunWaiter, EditorSummaryRunWaiter } from "./codex-view/runner-context";
 import {
   renderArticleUnderstandingPanelView,
   renderCodexHeader,
@@ -87,9 +89,10 @@ import {
   updateUsageHeaderView,
   type ArticleUnderstandingPanelState
 } from "./codex-view/header";
-import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
+import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
+import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
-import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
+import { editorActionStartBlockReason } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import type { EditorActionSummarySource } from "../editor-actions/summary-cache";
@@ -97,19 +100,17 @@ import { knowledgeCommandQueryForInput } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages } from "../knowledge-base/session-history";
 
+type ObsidianSettingsApi = {
+  setting?: {
+    open?: () => void;
+    openTabById?: (id: string) => void;
+  };
+};
+
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
-interface EditorActionRunWaiter {
-  runId: string;
-  text: string;
-  resolve: (text: string) => void;
-  reject: (error: Error) => void;
-}
-
-interface EditorSummaryRunWaiter extends EditorActionRunWaiter {
-  threadId: string;
-}
+const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;
 
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
@@ -144,6 +145,7 @@ export class CodexView extends ItemView {
   private activeTurnId = "";
   private turnStartedAt = 0;
   private turnWatchdog: number | null = null;
+  private sessionSaveTimer: number | null = null;
   private activeThinkingMessageId = "";
   private activePlanMessageId = "";
   private activeItemMessages = new Map<string, string>();
@@ -189,6 +191,9 @@ export class CodexView extends ItemView {
   private readonly turnQueue = new RuntimeTurnQueue();
   private queueStartInProgress = false;
   private draggedQueueItemId = "";
+  private readonly turnRunnerContext: CodexViewTurnContext;
+  private readonly editorActionRunnerContext: CodexViewPromptEnhanceContext;
+  private readonly notificationRouter: CodexNotificationRouter;
 
   get messagesBottomFollowPaused(): boolean {
     return this.messageScrollFollow.paused;
@@ -206,6 +211,40 @@ export class CodexView extends ItemView {
     this.selectedPermission = plugin.settings.defaultPermission;
     this.selectedMode = plugin.settings.defaultMode;
     this.activeRunKind = "";
+    this.turnRunnerContext = this.createTurnRunnerContext();
+    this.editorActionRunnerContext = this.createEditorActionRunnerContext();
+    this.notificationRouter = new CodexNotificationRouter(this.createNotificationRouterContext());
+  }
+
+  private createTurnRunnerContext(): CodexViewTurnContext {
+    const view = this;
+    return {
+      get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
+      get editorSummaryRun() { return view.editorSummaryRun; }, get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return view.queueStartInProgress; }, set queueStartInProgress(value) { view.queueStartInProgress = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get threadPrewarmPromise() { return view.threadPrewarmPromise; }, get threadPrewarmSessionId() { return view.threadPrewarmSessionId; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), ensureSession: () => view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => view.enqueueComposerDraft(), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      createQueuedTurnFromComposer: (options) => view.createQueuedTurnFromComposer(options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), startKnowledgeBaseTurn: (session, item, source) => view.startKnowledgeBaseTurn(session, item, source), clearComposerDraft: () => view.clearComposerDraft(), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), clearKnowledgeBasePage: (session) => view.clearKnowledgeBasePage(session), openKnowledgeBaseHistory: (session) => view.openKnowledgeBaseHistory(session),
+      ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session) => view.renderMessagesIfActive(session), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command), refreshKnowledgeDashboard: (force) => view.refreshKnowledgeDashboard(force)
+    } satisfies CodexViewTurnContext;
+  }
+
+  private createEditorActionRunnerContext(): CodexViewPromptEnhanceContext {
+    const view = this;
+    return {
+      get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
+      get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionRun() { return view.editorActionRun; }, set editorActionRun(value) { view.editorActionRun = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
+    } satisfies CodexViewPromptEnhanceContext;
+  }
+
+  private createNotificationRouterContext(): CodexNotificationRouterContext {
+    const view = this;
+    return {
+      get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, get activeRunKind() { return view.activeRunKind; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get usageLoading() { return view.usageLoading; }, set usageLoading(value) { view.usageLoading = value; }, get usageError() { return view.usageError; }, set usageError(value) { view.usageError = value; },
+      get editorActionRun() { return view.editorActionRun; }, get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, get editorActionThreadId() { return view.editorActionThreadId; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionItemIds() { return view.editorActionItemIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; },
+      isEditorActionRunActive: () => view.isEditorActionRunActive(), isEditorSummaryRunActive: () => view.isEditorSummaryRunActive(), activeRunSession: () => view.activeRunSession(), sessionForThread: (threadId) => view.sessionForThread(threadId), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), markThinkingAsStreaming: (session) => view.markThinkingAsStreaming(session), appendItemDelta: (session, itemId, role, delta, itemType, title) => view.appendItemDelta(session, itemId, role, delta, itemType, title), appendProcessDelta: (session, itemId, itemType, delta, payload) => view.appendProcessDelta(session, itemId, itemType, delta, payload), upsertProcessItem: (session, id, itemType, text, status, payload) => view.upsertProcessItem(session, id, itemType, text, status, payload),
+      renderPlanUpdate: (session, params) => view.renderPlanUpdate(session, params), renderStartedItem: (session, item) => view.renderStartedItem(session, item), renderCompletedItem: (session, item) => view.renderCompletedItem(session, item), updateUsageHeader: (rateLimits, loading, error) => view.updateUsageHeader(rateLimits, loading, error), renderUsagePanel: (rateLimits, error, loading) => view.renderUsagePanel(rateLimits, error, loading), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session), clearTurnWatchdog: () => view.clearTurnWatchdog(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status),
+      finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), clearActiveRun: () => view.clearActiveRun(), applyStatus: () => view.applyStatus(), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), rejectEditorSummaryRun: (error) => view.rejectEditorSummaryRun(error), resolveEditorSummaryRun: (text) => view.resolveEditorSummaryRun(text), releaseEditorSummaryRunLock: (runId) => view.releaseEditorSummaryRunLock(runId), addMessageToSession: (session, message) => view.addMessageToSession(session, message)
+    } satisfies CodexNotificationRouterContext;
   }
 
   getViewType(): string {
@@ -238,10 +277,10 @@ export class CodexView extends ItemView {
     this.clearEditorActionStatusTimers();
     this.clearEditorSummaryTimers();
     this.clearKnowledgeBaseRunProgressTimer();
-    this.clearKnowledgeDashboardHealthTooltips();
+    disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
     this.rejectEditorActionRun(new Error("EchoInk Agent 侧栏已关闭"));
     this.rejectEditorSummaryRun(new Error("EchoInk Agent 侧栏已关闭"));
-    await this.plugin.saveSettings(true);
+    await this.flushSessionSave();
   }
 
   applySavedComposerDefaults(): void {
@@ -285,230 +324,17 @@ export class CodexView extends ItemView {
   }
 
   handleCodexNotification(notification: CodexNotification): void {
-    const { method, params } = notification;
-    if (this.handleEditorActionNotification(method, params)) return;
-    if (this.activeRunKind === "knowledge-base" && isKnowledgeBaseUnroutedCodexNotification(method)) return;
-    if (method === "turn/started") {
-      const session = this.activeRunSession();
-      const knowledgeSession = this.isKnowledgeBaseSession(session);
-      this.running = true;
-      this.activeTurnId = params?.turn?.id ?? "";
-      this.turnStartedAt = Date.now();
-      this.attachTurnIdToRun(session, this.activeTurnId);
-      this.ensureThinkingMessage(session, "生成中", "正在生成回复...");
-      const timeoutMs = turnWatchdogTimeoutForSession(knowledgeSession);
-      if (timeoutMs === null) this.clearTurnWatchdog();
-      else this.armTurnWatchdog(timeoutMs, turnWatchdogTimeoutText(timeoutMs));
-      this.applyStatus();
+    if (!this.notificationRouter) {
+      const method = notification.method;
+      if (this.activeRunKind === "knowledge-base" && (method.startsWith("item/") || method.startsWith("turn/") || method.startsWith("thread/") || method === "error")) return;
       return;
     }
-    if (method === "turn/completed") {
-      const session = this.activeRunSession();
-      const failed = params?.turn?.status === "failed";
-      const shouldAdvanceQueue = this.activeRunKind === "chat";
-      if (this.editorActionRun?.runId === this.activeRunId) {
-        if (failed) {
-          this.rejectEditorActionRun(new Error("Codex 写作任务失败"));
-        } else if (this.editorActionRun.text.trim()) {
-          this.resolveEditorActionRun(this.editorActionRun.text);
-        } else {
-          this.rejectEditorActionRun(new Error("Codex 没有返回候选文本"));
-        }
-      }
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.finishThinkingMessage(session, failed ? "中断" : "完成");
-      this.finishRunningProcessMessages(session, failed ? "failed" : "completed");
-      this.finishPlanMessage(session);
-      this.clearActiveRun();
-      this.applyStatus();
-      void this.plugin.saveSettings(true);
-      if (shouldAdvanceQueue) void this.afterTurnSettled(session.id, !failed);
-      return;
-    }
-    if (method === "account/rateLimits/updated") {
-      const normalizedRateLimits = normalizeRateLimitResponse(params);
-      this.usageLoading = false;
-      this.usageError = null;
-      if (this.plugin.lastStatus) {
-        this.plugin.lastStatus = {
-          ...this.plugin.lastStatus,
-          rateLimits: normalizedRateLimits.rateLimits,
-          rateLimitsByLimitId: normalizedRateLimits.rateLimitsByLimitId
-        };
-      }
-      this.updateUsageHeader(normalizedRateLimits.rateLimits, false, null);
-      this.renderUsagePanel(normalizedRateLimits.rateLimits, null, false);
-      return;
-    }
-    if (method === "thread/tokenUsage/updated") {
-      this.updateContextForSession(this.activeRunSession(), params?.tokenUsage, true);
-      return;
-    }
-    if (method === "thread/compacted") {
-      const session = this.sessionForThread(params?.threadId ?? params?.thread?.id) ?? this.activeRunSession();
-      this.addContextCompactionMessage(session);
-      if (params?.tokenUsage) this.updateContextForSession(session, params.tokenUsage, true);
-      return;
-    }
-    if (method === "item/started" && params?.item) {
-      this.renderStartedItem(this.activeRunSession(), params.item);
-      return;
-    }
-    if (method === "item/agentMessage/delta") {
-      const session = this.activeRunSession();
-      this.markThinkingAsStreaming(session);
-      this.appendItemDelta(session, params.itemId, "assistant", params.delta ?? "", "assistant", "回复");
-      return;
-    }
-    if (method === "turn/plan/updated") {
-      this.renderPlanUpdate(this.activeRunSession(), params);
-      return;
-    }
-    if (method === "item/plan/delta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "plan", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/reasoning/summaryPartAdded") {
-      void this.upsertProcessItem(this.activeRunSession(), params.itemId, "reasoning", "", "running", { ...params, status: "running" });
-      return;
-    }
-    if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "reasoning", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/commandExecution/outputDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "commandExecution", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/fileChange/outputDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "fileChange", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/mcpToolCall/progress") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "mcpToolCall", params.message ?? "", params);
-      return;
-    }
-    if (method === "item/completed" && params?.item) {
-      void this.renderCompletedItem(this.activeRunSession(), params.item).catch((error) => console.error("Codex item render failed", error));
-      return;
-    }
-    if (method === "error") {
-      const session = this.activeRunSession();
-      const shouldPauseQueue = this.activeRunKind === "chat";
-      const diagnostic = this.diagnoseCodexFailure(params?.message ?? "Codex 出错了");
-      if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error(diagnostic.text));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.finishThinkingMessage(session, "失败");
-      this.finishRunningProcessMessages(session, "error");
-      this.addMessageToSession(session, {
-        role: "system",
-        text: diagnostic.text,
-        itemType: "error",
-        title: diagnostic.title
-      });
-      this.clearActiveRun();
-      this.applyStatus();
-      if (shouldPauseQueue) void this.afterTurnSettled(session.id, false);
-    }
+    this.notificationRouter.handle(notification);
   }
 
-  handleKnowledgeBaseCodexNotification(notification: CodexNotification): boolean {
-    if (this.activeRunKind !== "knowledge-base") return false;
-    return true;
-  }
-
-  private handleEditorActionNotification(method: string, params: any): boolean {
-    if (this.handleEditorSummaryNotification(method, params)) return true;
-    const isActiveEditorAction = this.isEditorActionRunActive();
-    const route = this.routeEditorActionNotification(method, params, isActiveEditorAction, this.editorActionThreadId, method === "error");
-    if (!route.swallow) return false;
-    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
-    if (!route.current) return true;
-    if (method === "turn/started") {
-      this.running = true;
-      this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
-      this.turnStartedAt = Date.now();
-      this.armTurnWatchdog(this.editorActionActiveTimeoutMs || this.plugin.settings.editorActions.timeoutMs);
-      this.applyStatus();
-      return true;
-    }
-    if (method === "turn/completed") {
-      const failed = params?.turn?.status === "failed";
-      if (failed) {
-        this.rejectEditorActionRun(new Error("Codex 写作任务失败"));
-      } else if (this.editorActionRun?.text.trim()) {
-        this.resolveEditorActionRun(this.editorActionRun.text);
-      } else {
-        this.rejectEditorActionRun(new Error("Codex 没有返回候选文本"));
-      }
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.applyStatus();
-      return true;
-    }
-    if (method === "item/agentMessage/delta") {
-      if (route.collectAssistantDelta && this.editorActionRun) this.editorActionRun.text += params?.delta ?? "";
-      return true;
-    }
-    if (method === "error") {
-      this.rejectEditorActionRun(new Error(this.diagnoseCodexFailure(params?.message ?? "Codex 出错了").text));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.applyStatus();
-      return true;
-    }
-    if (method.startsWith("item/") || method.startsWith("turn/") || method === "thread/tokenUsage/updated" || method === "thread/compacted") {
-      return true;
-    }
-    return false;
-  }
-
-  private handleEditorSummaryNotification(method: string, params: any): boolean {
-    if (!this.isEditorSummaryRunActive()) return false;
-    const summaryThreadId = this.editorSummaryRun?.threadId ?? "";
-    const route = this.routeEditorActionNotification(method, params, true, summaryThreadId, method === "error");
-    if (!route.swallow) return false;
-    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
-    if (!route.current) return true;
-    if (method === "turn/started") {
-      this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
-      return true;
-    }
-    if (method === "turn/completed") {
-      const failed = params?.turn?.status === "failed";
-      const runId = this.editorSummaryRun?.runId;
-      if (failed) {
-        this.rejectEditorSummaryRun(new Error("摘要生成失败"));
-      } else if (this.editorSummaryRun?.text.trim()) {
-        this.resolveEditorSummaryRun(this.editorSummaryRun.text);
-      } else {
-        this.rejectEditorSummaryRun(new Error("摘要为空"));
-      }
-      this.releaseEditorSummaryRunLock(runId);
-      return true;
-    }
-    if (method === "item/agentMessage/delta") {
-      if (this.editorSummaryRun) this.editorSummaryRun.text += params?.delta ?? "";
-      return true;
-    }
-    if (method === "error") {
-      const runId = this.editorSummaryRun?.runId;
-      this.rejectEditorSummaryRun(new Error(this.diagnoseCodexFailure(params?.message ?? "摘要生成失败").text));
-      this.releaseEditorSummaryRunLock(runId);
-      return true;
-    }
-    if (method.startsWith("item/") || method.startsWith("turn/") || method === "thread/tokenUsage/updated" || method === "thread/compacted") {
-      return true;
-    }
-    return false;
+  handleKnowledgeBaseCodexNotification(_notification: CodexNotification): boolean {
+    if (!this.notificationRouter) return this.activeRunKind === "knowledge-base";
+    return this.notificationRouter.handleKnowledgeBaseNotification();
   }
 
   focusInput(): void {
@@ -565,7 +391,7 @@ export class CodexView extends ItemView {
     const composerRefs = renderComposerShell(this.rootEl, {
       onInputChanged: () => this.onInputChanged(),
       onPasteFiles: (event) => void this.handlePastedFiles(event),
-      onEnhancePrompt: () => void enhanceChatInputRunner(this),
+      onEnhancePrompt: () => void enhanceChatInputRunner(this.editorActionRunnerContext),
       onSendMessage: () => void this.sendMessage(),
       onDropFiles: (event) => this.handleDroppedFiles(event)
     });
@@ -728,7 +554,7 @@ export class CodexView extends ItemView {
   }
 
   private openPluginSettings(): void {
-    const setting = (this.app as any).setting;
+    const setting = (this.app as unknown as ObsidianSettingsApi).setting;
     if (!setting?.open || !setting?.openTabById) {
       new Notice("无法打开插件设置页");
       return;
@@ -1253,7 +1079,7 @@ export class CodexView extends ItemView {
     const name = await textInputModal(this.app, "重命名会话", "名称", session.title);
     if (!name) return;
     session.title = name;
-    if (session.threadId) await this.plugin.codex?.setThreadName(session.threadId, name).catch(() => undefined);
+    if (session.threadId) await this.plugin.codex?.setThreadName(session.threadId, name).catch(swallowError("rename Codex chat thread"));
     await this.plugin.saveSettings();
     this.renderTabs();
   }
@@ -1352,55 +1178,55 @@ export class CodexView extends ItemView {
   }
 
   private async sendMessage(): Promise<void> {
-    await sendMessageRunner(this);
+    await sendMessageRunner(this.turnRunnerContext);
   }
 
   private async enqueueComposerDraft(): Promise<void> {
-    await enqueueComposerDraftRunner(this);
+    await enqueueComposerDraftRunner(this.turnRunnerContext);
   }
 
   private async resumeQueuedTurns(sessionId: string): Promise<void> {
-    await resumeQueuedTurnsRunner(this, sessionId);
+    await resumeQueuedTurnsRunner(this.turnRunnerContext, sessionId);
   }
 
   private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> {
-    await afterTurnSettledRunner(this, sessionId, succeeded);
+    await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded);
   }
 
   private async startNextQueuedTurn(sessionId: string): Promise<void> {
-    await startNextQueuedTurnRunner(this, sessionId);
+    await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId);
   }
 
   private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
-    return await createQueuedTurnFromComposerRunner(this, options);
+    return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options);
   }
 
   private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemRunner(this, item, source);
+    return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source);
   }
 
   private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemSafelyRunner(this, item, source);
+    return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source);
   }
 
   private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startChatTurnRunner(this, session, item, source);
+    return await startChatTurnRunner(this.turnRunnerContext, session, item, source);
   }
 
   private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
-    return await startKnowledgeBaseTurnRunner(this, session, item, source);
+    return await startKnowledgeBaseTurnRunner(this.turnRunnerContext, session, item, source);
   }
 
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> {
-    await runKnowledgeBaseShortcutRunner(this, label, runner);
+    await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner);
   }
 
   async sendEditorActionRequest(request: EditorActionRequest): Promise<string> {
-    return await sendEditorActionRequestRunner(this, request);
+    return await sendEditorActionRequestRunner(this.editorActionRunnerContext, request);
   }
 
   private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number, forceRefresh = false): Promise<ArticleUnderstandingEntry | null> {
-    return await ensureArticleUnderstandingRunner(this, request, availableModels, model, timeoutMs, forceRefresh);
+    return await ensureArticleUnderstandingRunner(this.editorActionRunnerContext, request, availableModels, model, timeoutMs, forceRefresh);
   }
 
   private async runEditorActionPromptTurn(input: {
@@ -1414,29 +1240,29 @@ export class CodexView extends ItemView {
     timeoutMs: number;
     startedAt: number;
   }): Promise<string> {
-    return await runEditorActionPromptTurnRunner(this, input);
+    return await runEditorActionPromptTurnRunner(this.editorActionRunnerContext, input);
   }
 
   private setArticleUnderstandingPanelState(state: ArticleUnderstandingPanelState): void {
-    setArticleUnderstandingPanelStateRunner(this, state);
+    setArticleUnderstandingPanelStateRunner(this.editorActionRunnerContext, state);
   }
 
   private async refreshArticleUnderstandingPanelSourceState(): Promise<void> {
-    await refreshArticleUnderstandingPanelSourceStateRunner(this);
+    await refreshArticleUnderstandingPanelSourceStateRunner(this.editorActionRunnerContext);
   }
 
   private async refreshArticleUnderstandingFromPanel(): Promise<void> {
-    await refreshArticleUnderstandingFromPanelRunner(this);
+    await refreshArticleUnderstandingFromPanelRunner(this.editorActionRunnerContext);
   }
 
   private async currentArticleUnderstandingSource(): Promise<EditorActionSummarySource | null> {
-    return await currentArticleUnderstandingSourceRunner(this);
+    return await currentArticleUnderstandingSourceRunner(this.editorActionRunnerContext);
   }
 
   private async stopTurn(): Promise<void> {
     if (this.isEditorActionRunActive()) {
       if (this.editorActionThreadId && this.activeTurnId) {
-        await this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(() => undefined);
+        await this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(swallowError("cancel editor action Codex turn"));
       }
       this.rejectEditorActionRun(new Error("写作操作已中断"));
       this.running = false;
@@ -1451,7 +1277,7 @@ export class CodexView extends ItemView {
     const session = this.activeRunSession();
     this.pauseQueueForSession(session.id);
     if (!session.threadId || !this.activeTurnId) return;
-    await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(() => undefined);
+    await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(swallowError("cancel active Codex turn"));
     if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error("写作操作已中断"));
     this.running = false;
     this.activeTurnId = "";
@@ -1485,7 +1311,7 @@ export class CodexView extends ItemView {
       this.running = false;
       if (this.isEditorActionRunActive()) {
         if (timedOutThreadId && timedOutTurnId) {
-          void this.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(() => undefined);
+          void this.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(swallowError("interrupt timed out editor action Codex turn"));
         }
         this.rejectEditorActionRun(new Error("写作操作响应超时"));
         this.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
@@ -1501,7 +1327,7 @@ export class CodexView extends ItemView {
       const knowledgeSession = this.isKnowledgeBaseSession(session);
       const shouldPauseQueue = this.activeRunKind === "chat";
       if (knowledgeSession && session.threadId && timedOutTurnId) {
-        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(() => undefined);
+        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(swallowError("interrupt timed out knowledge base Codex turn"));
       }
       this.finishThinkingMessage(session, "失败");
       this.finishRunningProcessMessages(session, "error");
@@ -1633,7 +1459,7 @@ export class CodexView extends ItemView {
     const run = this.editorSummaryRun;
     if (!run) return;
     if (run.threadId && this.activeRunId === run.runId && this.activeTurnId) {
-      void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(() => undefined);
+      void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("cancel editor summary Codex turn"));
     }
     this.rejectEditorSummaryRun(new Error(reason));
     this.releaseEditorSummaryRunLock(run.runId);
@@ -1645,7 +1471,7 @@ export class CodexView extends ItemView {
       const run = this.editorSummaryRun;
       if (!run) return;
       if (run.threadId && this.activeTurnId) {
-        void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(() => undefined);
+        void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("interrupt timed out editor summary Codex turn"));
       }
       this.rejectEditorSummaryRun(new Error("摘要生成超时"));
       this.releaseEditorSummaryRunLock(run.runId);
@@ -1674,36 +1500,6 @@ export class CodexView extends ItemView {
 
   private isEditorActionRunActive(): boolean {
     return Boolean(this.editorActionRun && this.editorActionRun.runId === this.activeRunId);
-  }
-
-  private routeEditorActionNotification(method: string, params: any, active: boolean, currentThreadId: string, allowUnscoped = false): ReturnType<typeof routeEditorActionNotificationState> {
-    return routeEditorActionNotificationState({
-      method,
-      params,
-      active,
-      currentThreadId,
-      currentTurnId: this.activeTurnId,
-      threadIds: this.editorActionThreadIds,
-      turnIds: this.editorActionTurnIds,
-      itemIds: this.editorActionItemIds,
-      currentItemIds: this.editorActionCurrentItemIds,
-      allowUnscoped
-    });
-  }
-
-  private rememberEditorActionNotificationIds(params: any, currentRun = false): void {
-    const ids = extractEditorActionNotificationIds(params);
-    if (ids.threadId) this.editorActionThreadIds.add(ids.threadId);
-    if (ids.turnId) this.editorActionTurnIds.add(ids.turnId);
-    if (ids.itemId) this.editorActionItemIds.add(ids.itemId);
-    if (currentRun && ids.itemId) this.editorActionCurrentItemIds.add(ids.itemId);
-    this.pruneEditorActionHiddenIds();
-  }
-
-  private pruneEditorActionHiddenIds(): void {
-    pruneSet(this.editorActionThreadIds, 80);
-    pruneSet(this.editorActionTurnIds, 120);
-    pruneSet(this.editorActionItemIds, 400);
   }
 
   private withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -1823,14 +1619,15 @@ export class CodexView extends ItemView {
     }
     message.text += delta;
     session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
+    this.renderMessagesIfActive(session, message);
   }
 
-  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: any): void {
+  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void {
     if (!delta) return;
     let messageId = this.activeItemMessages.get(itemId);
     let message = messageId ? session.messages.find((item) => item.id === messageId) : null;
-    const summaryPayload = { ...payload, status: payload?.status ?? "running" };
+    const payloadRecord = processPayloadRecord(payload);
+    const summaryPayload = { ...payloadRecord, status: payloadRecord.status ?? "running" };
     const summary = summarizeProcessEvent(itemType, summaryPayload, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     if (!message) {
       message = {
@@ -1861,7 +1658,7 @@ export class CodexView extends ItemView {
     message.status = "running";
     message.text += delta;
     session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
+    this.renderMessagesIfActive(session, message);
   }
 
   private ensureThinkingMessage(session: StoredSession, title: string, text: string): void {
@@ -1925,13 +1722,19 @@ export class CodexView extends ItemView {
     this.renderMessagesIfActive(session);
   }
 
-  private renderPlanUpdate(session: StoredSession, params: any): void {
+  private renderPlanUpdate(session: StoredSession, params: unknown): void {
+    const payload = processPayloadRecord(params);
     const lines: string[] = [];
-    if (params?.explanation) lines.push(params.explanation, "");
-    for (const item of params?.plan ?? []) {
-      const mark = item.status === "completed" ? "x" : " ";
-      const suffix = item.status === "inProgress" ? " (进行中)" : "";
-      lines.push(`- [${mark}] ${item.step}${suffix}`);
+    if (typeof payload.explanation === "string" && payload.explanation) lines.push(payload.explanation, "");
+    const plan = Array.isArray(payload.plan) ? payload.plan : [];
+    for (const rawItem of plan) {
+      const item = processPayloadRecord(rawItem);
+      const status = typeof item.status === "string" ? item.status : "";
+      const step = typeof item.step === "string" ? item.step : "";
+      if (!step) continue;
+      const mark = status === "completed" ? "x" : " ";
+      const suffix = status === "inProgress" ? " (进行中)" : "";
+      lines.push(`- [${mark}] ${step}${suffix}`);
     }
     if (!lines.length) return;
     let message = this.activePlanMessageId ? session.messages.find((item) => item.id === this.activePlanMessageId) : null;
@@ -1956,48 +1759,56 @@ export class CodexView extends ItemView {
     this.renderMessagesIfActive(session);
   }
 
-  private renderStartedItem(session: StoredSession, item: any): void {
-    if (!isProcessItemType(item?.type)) return;
-    if (item.type === "reasoning" && !rawTextForProcessItem(item)) return;
-    const status = item.status || "running";
-    void this.upsertProcessItem(session, item.id || newId("process"), item.type, rawTextForProcessItem(item), status, { ...item, status });
+  private renderStartedItem(session: StoredSession, item: unknown): void {
+    const payload = processPayloadRecord(item);
+    const type = stringPayload(payload.type);
+    if (!isProcessItemType(type)) return;
+    if (type === "reasoning" && !rawTextForProcessItem(payload)) return;
+    const status = stringPayload(payload.status) || "running";
+    void this.upsertProcessItem(session, stringPayload(payload.id) || newId("process"), type, rawTextForProcessItem(payload), status, { ...payload, status });
   }
 
-  private async renderCompletedItem(session: StoredSession, item: any): Promise<void> {
-    if (!item?.type) return;
-    if (item.type === "agentMessage") return;
-    if (item.type === "reasoning" || item.type === "plan") {
-      const text = rawTextForProcessItem(item);
+  private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> {
+    const payload = processPayloadRecord(item);
+    const type = stringPayload(payload.type);
+    if (!type) return;
+    if (type === "agentMessage") return;
+    const id = stringPayload(payload.id) || newId("process");
+    const status = stringPayload(payload.status) || "completed";
+    if (type === "reasoning" || type === "plan") {
+      const text = rawTextForProcessItem(payload);
       if (text) {
-        await this.upsertProcessItem(session, item.id, item.type, text, item.status || "completed", { ...item, status: item.status || "completed" });
+        await this.upsertProcessItem(session, id, type, text, status, { ...payload, status });
       } else {
-        this.finishProcessItem(session, item.id, item.status || "completed");
+        this.finishProcessItem(session, id, status);
       }
       return;
     }
-    if (item.type === "commandExecution") {
-      await this.upsertProcessItem(session, item.id, "commandExecution", `${item.command}\n\n${item.aggregatedOutput ?? ""}`.trim(), item.status || "completed", item);
-    } else if (item.type === "fileChange") {
-      const changes = Array.isArray(item.changes) ? item.changes : [];
+    if (type === "commandExecution") {
+      await this.upsertProcessItem(session, id, "commandExecution", `${stringPayload(payload.command)}\n\n${stringPayload(payload.aggregatedOutput)}`.trim(), status, payload);
+    } else if (type === "fileChange") {
+      const changes = Array.isArray(payload.changes) ? payload.changes : [];
       const diffSummary = buildDiffSummary(changes);
       const text = serializeFileChanges(changes);
-      await this.upsertProcessItem(session, item.id, "fileChange", text || item.status, item.status || "completed", item, diffSummary);
-    } else if (item.type === "mcpToolCall") {
-      await this.upsertProcessItem(session, item.id, "mcpToolCall", JSON.stringify(item.result ?? item.error ?? item.arguments, null, 2), item.status || "completed", item);
-    } else if (item.type === "dynamicToolCall") {
-      await this.upsertProcessItem(session, item.id, "dynamicToolCall", JSON.stringify(item.contentItems ?? item.result ?? item.arguments, null, 2), item.status || "completed", item);
-    } else if (item.type === "collabAgentToolCall") {
-      await this.upsertProcessItem(session, item.id, "collabAgentToolCall", JSON.stringify(item.result ?? item.arguments ?? item, null, 2), item.status || "completed", item);
-    } else if (item.type === "imageView") {
+      await this.upsertProcessItem(session, id, "fileChange", text || status, status, payload, diffSummary);
+    } else if (type === "mcpToolCall") {
+      await this.upsertProcessItem(session, id, "mcpToolCall", JSON.stringify(payload.result ?? payload.error ?? payload.arguments, null, 2), status, payload);
+    } else if (type === "dynamicToolCall") {
+      await this.upsertProcessItem(session, id, "dynamicToolCall", JSON.stringify(payload.contentItems ?? payload.result ?? payload.arguments, null, 2), status, payload);
+    } else if (type === "collabAgentToolCall") {
+      await this.upsertProcessItem(session, id, "collabAgentToolCall", JSON.stringify(payload.result ?? payload.arguments ?? payload, null, 2), status, payload);
+    } else if (type === "imageView") {
+      const itemPath = stringPayload(payload.path);
+      if (!itemPath) return;
       this.addMessageToSession(session, {
         role: "assistant",
         title: "图片",
         itemType: "image",
-        text: item.path,
-        images: [{ type: "image", name: basename(item.path), path: item.path }],
+        text: itemPath,
+        images: [{ type: "image", name: basename(itemPath), path: itemPath }],
         createdAt: Date.now()
       });
-    } else if (item.type === "contextCompaction") {
+    } else if (type === "contextCompaction") {
       this.addContextCompactionMessage(session);
     }
   }
@@ -2015,8 +1826,8 @@ export class CodexView extends ItemView {
     this.renderMessages();
   }
 
-  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: any, diffSummary?: DiffSummary): Promise<void> {
-    const summary = summarizeProcessEvent(itemType, { ...payload, status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
+  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown, diffSummary?: DiffSummary): Promise<void> {
+    const summary = summarizeProcessEvent(itemType, { ...processPayloadRecord(payload), status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     const existingId = this.activeItemMessages.get(id);
     const existing = existingId ? session.messages.find((item) => item.id === existingId) : null;
     if (existing) {
@@ -2105,7 +1916,23 @@ export class CodexView extends ItemView {
     });
     session.updatedAt = Date.now();
     this.renderMessagesIfActive(session);
-    void this.plugin.saveSettings();
+    this.scheduleSessionSave();
+  }
+
+  private scheduleSessionSave(): void {
+    if (this.sessionSaveTimer) return;
+    this.sessionSaveTimer = window.setTimeout(() => {
+      this.sessionSaveTimer = null;
+      void this.plugin.saveSettings(true).catch(swallowError("save chat session"));
+    }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
+  }
+
+  private async flushSessionSave(): Promise<void> {
+    if (this.sessionSaveTimer) {
+      window.clearTimeout(this.sessionSaveTimer);
+      this.sessionSaveTimer = null;
+    }
+    await this.plugin.saveSettings(true);
   }
 
   private moveMessageToEnd(session: StoredSession, messageId: string): void {
@@ -2199,8 +2026,10 @@ export class CodexView extends ItemView {
     }
   }
 
-  private renderMessagesIfActive(session: StoredSession): void {
-    if (session.id === this.plugin.settings.activeSessionId) this.scheduleRenderMessages();
+  private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void {
+    if (session.id !== this.plugin.settings.activeSessionId) return;
+    if (updatedMessage && this.messageListRenderer.tryUpdateMessage(updatedMessage)) return;
+    this.scheduleRenderMessages();
   }
 
   private handleMessagesScroll(): void {
@@ -2372,22 +2201,29 @@ function roleForProcessItem(itemType: string): ChatMessage["role"] {
   return itemType === "reasoning" || itemType === "plan" ? "assistant" : "tool";
 }
 
-function isKnowledgeBaseUnroutedCodexNotification(method: string): boolean {
-  return method.startsWith("item/")
-    || method.startsWith("turn/")
-    || method.startsWith("thread/")
-    || method === "error";
+
+function rawTextForProcessItem(item: unknown): string {
+  const payload = processPayloadRecord(item);
+  const type = stringPayload(payload.type);
+  if (type === "commandExecution") return stringPayload(payload.command);
+  if (type === "fileChange") return (Array.isArray(payload.changes) ? payload.changes : [])
+    .map((change) => stringPayload(processPayloadRecord(change).path))
+    .filter(Boolean)
+    .join("\n");
+  if (type === "mcpToolCall") return [payload.server, payload.tool].map(stringPayload).filter(Boolean).join(".");
+  if (type === "dynamicToolCall") return [payload.namespace, payload.tool].map(stringPayload).filter(Boolean).join(".");
+  if (type === "collabAgentToolCall") return stringPayload(payload.tool);
+  if (type === "reasoning") return reasoningTextFromPayload(payload);
+  if (type === "plan") return stringPayload(payload.text);
+  return "";
 }
 
-function rawTextForProcessItem(item: any): string {
-  if (item?.type === "commandExecution") return item.command ?? "";
-  if (item?.type === "fileChange") return (item.changes ?? []).map((change: any) => change.path).join("\n");
-  if (item?.type === "mcpToolCall") return [item.server, item.tool].filter(Boolean).join(".");
-  if (item?.type === "dynamicToolCall") return [item.namespace, item.tool].filter(Boolean).join(".");
-  if (item?.type === "collabAgentToolCall") return item.tool ?? "";
-  if (item?.type === "reasoning") return reasoningTextFromPayload(item);
-  if (item?.type === "plan") return item.text ?? "";
-  return "";
+function processPayloadRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringPayload(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: ProcessFileRef[]): ProcessFileRef[] {
@@ -2399,9 +2235,7 @@ function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: Proc
 }
 
 async function pickWorkspaceDirectory(defaultPath: string): Promise<string | null | undefined> {
-  if (!Platform.isDesktopApp) return undefined;
-  const electron = electronModule();
-  const dialog = electron?.remote?.dialog ?? electron?.dialog;
+  const dialog = getElectronDialog();
   if (!dialog?.showOpenDialog) return undefined;
   const result = await dialog.showOpenDialog({
     title: "选择 Codex 工作区",
@@ -2436,52 +2270,6 @@ function normalizeWorkspacePath(value: string | undefined): string {
 function workspaceDisplayName(workspacePath: string): string {
   const normalized = normalizeWorkspacePath(workspacePath);
   return path.basename(normalized) || normalized;
-}
-
-function electronModule(): any {
-  const electronRequire = (window as any).require ?? (globalThis as any).require;
-  try {
-    return electronRequire?.("electron");
-  } catch {
-    return null;
-  }
-}
-
-function showItemInFinder(filePath: string): boolean {
-  if (!Platform.isDesktopApp || !filePath) return false;
-  const shell = electronModule()?.shell;
-  if (!shell?.showItemInFolder) return false;
-  shell.showItemInFolder(filePath);
-  return true;
-}
-
-function compactAccountLabel(value: string): string {
-  if (!value) return "未连接";
-  if (value.startsWith("ChatGPT：")) return "ChatGPT";
-  return value.length > 14 ? `${value.slice(0, 13)}…` : value;
-}
-
-function formatDurationSeconds(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  if (seconds < 60) return `${seconds} 秒`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
-}
-
-function knowledgeInitStatusLabel(status: string): string {
-  if (status === "preview-ready") return "已预览";
-  if (status === "initialized") return "已初始化";
-  if (status === "failed") return "初始化失败";
-  return "未初始化";
-}
-
-function pruneSet<T>(set: Set<T>, maxSize: number): void {
-  while (set.size > maxSize) {
-    const first = set.values().next();
-    if (first.done) return;
-    set.delete(first.value);
-  }
 }
 
 function isImagePath(filePath: string): boolean {

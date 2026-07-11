@@ -158,7 +158,7 @@ function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseR
 }
 
 function buildReportSections(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseRunResult, structureCount: number, externalRawCount: number): KnowledgeBaseMaintainReportSection[] {
-  if (mode === "lint") return buildLintSections();
+  if (mode === "lint") return buildLintSections(result);
   if (mode === "calibrate") return buildCalibrationSections(result);
   if (mode === "outputs") return buildOutputsSections(result);
   if (mode === "inbox") return buildInboxSections(result);
@@ -191,7 +191,8 @@ function buildReportSections(mode: KnowledgeBaseCommandUiMode, result: Knowledge
   ];
 }
 
-function buildLintSections(): KnowledgeBaseMaintainReportSection[] {
+function buildLintSections(result: KnowledgeBaseRunResult): KnowledgeBaseMaintainReportSection[] {
+  const structureItems = lintStructureDriftItems(result.structure);
   return [
     {
       id: "broken-links",
@@ -203,9 +204,9 @@ function buildLintSections(): KnowledgeBaseMaintainReportSection[] {
     {
       id: "structure-drift",
       title: "命名与结构偏差",
-      count: 0,
+      count: structureItems.length,
       emptyText: "未发现可展示的命名或结构偏差。",
-      items: []
+      items: structureItems
     },
     {
       id: "quick-fixes",
@@ -215,6 +216,26 @@ function buildLintSections(): KnowledgeBaseMaintainReportSection[] {
       items: []
     }
   ];
+}
+
+function lintStructureDriftItems(structure?: StructureNormalizationResult): KnowledgeBaseMaintainReportSectionItem[] {
+  if (!structure) return [];
+  const rootNotes = structure.remainingRootNotes.map((item) => ({
+    title: item,
+    description: "根目录散落笔记，建议归入 wiki/、projects/ 或 inbox/。",
+    tone: "warning" as const
+  }));
+  const chineseDirs = structure.remainingChineseDirs.map((item) => ({
+    title: item,
+    description: "目录命名仍有中文路径，建议按知识库规则统一。",
+    tone: "warning" as const
+  }));
+  const risks = structure.risks.map((item) => ({
+    title: "结构风险",
+    description: item,
+    tone: "warning" as const
+  }));
+  return [...structureToReportItems(structure), ...rootNotes, ...chineseDirs, ...risks];
 }
 
 function buildCalibrationSections(result: KnowledgeBaseRunResult): KnowledgeBaseMaintainReportSection[] {

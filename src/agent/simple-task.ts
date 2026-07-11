@@ -5,6 +5,7 @@ import type { AgentEventSink } from "./events";
 import { runAgentTaskWithToolBridge } from "./tool-bridge";
 import type { AgentToolBridgeRuntime, PreparedAgentResources } from "./runtime";
 import type { AgentBackendKind, AgentPromptPart, AgentTaskResult } from "./types";
+import { swallowError } from "../core/error-handling";
 
 export interface RunAgentTaskOnceInput {
   backend: Exclude<AgentBackendKind, "codex-cli">;
@@ -52,6 +53,6 @@ export async function runAgentTaskWithEvents(input: RunAgentTaskOnceInput, emit:
     if (input.backend === "hermes") input.settings.agents.hermes.lastError = message;
     throw error;
   } finally {
-    await runtime.disconnect?.().catch(() => undefined);
+    await runtime.disconnect?.().catch(swallowError(`${input.backend} runtime disconnect cleanup`));
   }
 }

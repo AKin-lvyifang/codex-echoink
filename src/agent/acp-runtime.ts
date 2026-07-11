@@ -3,6 +3,8 @@ import type { AgentBackendKind, AgentPromptPart, AgentTaskInput, AgentTaskResult
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentRichStreamRuntime } from "./runtime";
 import { normalizeRichStreamEvents } from "./rich-stream";
+import { swallowError } from "../core/error-handling";
+import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcProcessLike } from "../core/json-rpc-stdio-transport";
 
 export interface AcpRuntimeCommand {
   command: string | (() => string);
@@ -11,14 +13,7 @@ export interface AcpRuntimeCommand {
   env?: Record<string, string>;
 }
 
-export interface AcpSubprocessLike {
-  stdin: NodeJS.WritableStream;
-  stdout: NodeJS.ReadableStream;
-  stderr?: NodeJS.ReadableStream;
-  kill(signal?: NodeJS.Signals | number): boolean | void;
-  on?(event: "error", listener: (error: Error) => void): unknown;
-  on?(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
-}
+export type AcpSubprocessLike = JsonRpcProcessLike;
 
 export interface AcpRuntimeOptions {
   backend: Exclude<AgentBackendKind, "codex-cli">;
@@ -29,26 +24,6 @@ export interface AcpRuntimeOptions {
     options: { cwd: string; env: NodeJS.ProcessEnv }
   ) => AcpSubprocessLike;
   requestTimeoutMs?: number;
-}
-
-interface JsonRpcMessage {
-  id?: number | string;
-  jsonrpc?: "2.0";
-  method?: string;
-  params?: unknown;
-  result?: unknown;
-  error?: {
-    code?: number;
-    message?: string;
-    data?: unknown;
-  };
-}
-
-interface PendingRequest {
-  method: string;
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout> | null;
 }
 
 const DEFAULT_ACP_REQUEST_TIMEOUT_MS = 30000;
@@ -127,7 +102,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
     this.process?.kill();
     this.process = null;
     this.activeEmit = null;
-    await this.eventQueue.catch(() => undefined);
+    await this.eventQueue.catch(swallowError(`${this.options.backend} ACP event queue cleanup`));
   }
 
   async listModels() {
@@ -188,7 +163,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
       return { text: outputText, runId: sessionId, usage };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.eventQueue.catch(() => undefined);
+      await this.eventQueue.catch(swallowError(`${this.options.backend} ACP event queue cleanup`));
       await emitNow({ type: "failed", runId: this.activeRunId || undefined, error: message });
       throw error;
     } finally {
@@ -252,21 +227,20 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
   }
 }
 
-class AcpJsonRpcProcessTransport {
-  private buffer = "";
-  private disposed = false;
-  private nextId = 1;
-  private readonly pending = new Map<number, PendingRequest>();
+class AcpJsonRpcProcessTransport extends JsonRpcStdioTransport {
   private readonly notificationHandlers = new Map<string, Set<(params: unknown) => void | Promise<void>>>();
   private readonly requestHandlers = new Map<string, (params: unknown) => Promise<unknown>>();
 
-  constructor(private readonly process: AcpSubprocessLike, private readonly defaultTimeoutMs: number) {
-    process.stdout.setEncoding?.("utf8");
-    process.stderr?.setEncoding?.("utf8");
-    process.stdout.on("data", (chunk) => this.onData(String(chunk)));
-    process.stdout.on("error", (error) => this.rejectAll(error instanceof Error ? error : new Error(String(error))));
-    process.on?.("error", (error) => this.rejectAll(error));
-    process.on?.("exit", (code) => this.rejectAll(new Error(`ACP process exited with code ${code ?? "unknown"}`)));
+  constructor(private readonly acpProcess: AcpSubprocessLike, defaultTimeoutMs: number) {
+    super({
+      defaultTimeoutMs,
+      closedMessage: "ACP transport is closed.",
+      disposeMessage: "ACP transport closed.",
+      timeoutMessage: (method) => `ACP request timed out: ${method}`,
+      exitMessage: (code) => `ACP process exited with code ${code ?? "unknown"}`,
+      killOnDispose: false
+    });
+    this.start();
   }
 
   onNotification(method: string, handler: (params: unknown) => void | Promise<void>): void {
@@ -279,52 +253,15 @@ class AcpJsonRpcProcessTransport {
     this.requestHandlers.set(method, handler);
   }
 
-  request(method: string, params: unknown, timeoutMs = this.defaultTimeoutMs): Promise<unknown> {
-    if (this.disposed) return Promise.reject(new Error("ACP transport is closed."));
-    const id = this.nextId++;
-    const message: JsonRpcMessage = { jsonrpc: "2.0", id, method, params };
-    return new Promise((resolve, reject) => {
-      const timer = timeoutMs > 0
-        ? setTimeout(() => {
-          this.pending.delete(id);
-          reject(new Error(`ACP request timed out: ${method}`));
-        }, timeoutMs)
-        : null;
-      this.pending.set(id, { method, resolve, reject, timer });
-      this.write(message);
-    });
+  protected createProcess(): JsonRpcProcessLike {
+    return this.acpProcess;
   }
 
-  notify(method: string, params: unknown): void {
-    if (this.disposed) return;
-    this.write({ jsonrpc: "2.0", method, params });
+  async dispose(): Promise<void> {
+    await super.dispose();
   }
 
-  dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.rejectAll(new Error("ACP transport closed."));
-  }
-
-  private onData(chunk: string): void {
-    this.buffer += chunk;
-    for (;;) {
-      const index = this.buffer.indexOf("\n");
-      if (index < 0) return;
-      const line = this.buffer.slice(0, index).trim();
-      this.buffer = this.buffer.slice(index + 1);
-      if (!line || !line.startsWith("{")) continue;
-      this.handleLine(line);
-    }
-  }
-
-  private handleLine(line: string): void {
-    let message: JsonRpcMessage;
-    try {
-      message = JSON.parse(line) as JsonRpcMessage;
-    } catch {
-      return;
-    }
+  protected handleMessage(message: JsonRpcMessage): void {
     if (message.method && message.id !== undefined) {
       void this.handleRequest(message);
       return;
@@ -333,21 +270,10 @@ class AcpJsonRpcProcessTransport {
       void this.handleNotification(message);
       return;
     }
-    this.handleResponse(message);
   }
 
-  private handleResponse(message: JsonRpcMessage): void {
-    const id = Number(message.id);
-    if (!Number.isFinite(id)) return;
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    this.pending.delete(id);
-    if (pending.timer) clearTimeout(pending.timer);
-    if (message.error) {
-      pending.reject(new AcpJsonRpcError(pending.method, Number(message.error.code ?? 0), String(message.error.message ?? "ACP request failed"), message.error.data));
-      return;
-    }
-    pending.resolve(message.result);
+  protected formatResponseError(message: JsonRpcMessage, pending: { method: string }): Error {
+    return new AcpJsonRpcError(pending.method, Number(message.error?.code ?? 0), String(message.error?.message ?? "ACP request failed"), message.error?.data);
   }
 
   private async handleNotification(message: JsonRpcMessage): Promise<void> {
@@ -371,17 +297,6 @@ class AcpJsonRpcProcessTransport {
     }
   }
 
-  private write(message: JsonRpcMessage): void {
-    this.process.stdin.write(`${JSON.stringify(message)}\n`);
-  }
-
-  private rejectAll(error: Error): void {
-    for (const [id, pending] of this.pending) {
-      if (pending.timer) clearTimeout(pending.timer);
-      pending.reject(error);
-      this.pending.delete(id);
-    }
-  }
 }
 
 class AcpJsonRpcError extends Error {

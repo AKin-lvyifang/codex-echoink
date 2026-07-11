@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type {
   StructureNormalizationMove,
   StructureNormalizationPathRewrite,
@@ -8,6 +9,7 @@ import type {
   StructureNormalizationSkipped,
   StructureNormalizationUpdatedLink
 } from "./types";
+import { exists } from "./utils";
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
@@ -125,7 +127,7 @@ function isRawMoveCandidate(candidate: MoveCandidate): boolean {
 
 async function outputMoveCandidates(vaultPath: string): Promise<MoveCandidate[]> {
   const outputsPath = path.join(vaultPath, "outputs");
-  const entries = await fsp.readdir(outputsPath, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(outputsPath, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read maintenance report output directory"));
   const candidates: MoveCandidate[] = [];
   for (const entry of entries) {
     if (entry.name === ".DS_Store" || entry.name === ".ingest-tracker.md") continue;
@@ -156,7 +158,7 @@ async function outputMoveCandidates(vaultPath: string): Promise<MoveCandidate[]>
 
 async function projectPhaseMoveCandidates(vaultPath: string): Promise<MoveCandidate[]> {
   const projectsPath = path.join(vaultPath, "projects");
-  const projects = await fsp.readdir(projectsPath, { withFileTypes: true }).catch(() => []);
+  const projects = await fsp.readdir(projectsPath, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read projects directory for structure normalization"));
   const candidates: MoveCandidate[] = [];
   for (const project of projects) {
     if (!project.isDirectory() || project.name.startsWith(".")) continue;
@@ -358,7 +360,7 @@ async function walkKnowledgeTextFiles(vaultPath: string): Promise<string[]> {
 }
 
 async function walkTextFiles(dir: string): Promise<string[]> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("walk markdown directory for structure normalization"));
   const result: string[] = [];
   for (const entry of entries) {
     if (entry.name === ".DS_Store") continue;
@@ -385,7 +387,7 @@ async function findRemainingRootNotes(vaultPath: string): Promise<string[]> {
   };
   const notes: string[] = [];
   for (const root of KNOWLEDGE_ROOTS) {
-    const entries = await fsp.readdir(path.join(vaultPath, root), { withFileTypes: true }).catch(() => []);
+    const entries = await fsp.readdir(path.join(vaultPath, root), { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn(`detect case conflicts under ${root}`));
     for (const entry of entries) {
       if (!entry.isFile() || entry.name.startsWith(".") || path.extname(entry.name).toLowerCase() !== ".md") continue;
       if (allowed[root]?.has(entry.name)) continue;
@@ -404,7 +406,7 @@ async function findRemainingChineseDirs(vaultPath: string): Promise<string[]> {
 }
 
 async function walkDirs(dir: string, vaultPath: string, result: string[]): Promise<void> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("walk conflict directory for structure normalization"));
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
@@ -442,8 +444,4 @@ function countOccurrences(text: string, search: string): number {
 
 function normalizeSlashes(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }

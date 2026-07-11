@@ -28,6 +28,7 @@ import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { formatJsonRpcError } from "../core/codex-rpc";
+import { CodexServerRequestRouter } from "../core/server-request-router";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText } from "../core/raw-message-store";
 import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "../ui/turn-watchdog";
@@ -85,7 +86,7 @@ import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToo
 import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
-import { EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
+import { closeMcpBrokerConnectionPool, EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
 import { mcpConnectionStatus, mcpConnectionStatusLabel, normalizeMcpConnectionRecords, resolveMcpConnectionConfig } from "../resources/mcp-connections";
 import { parseHermesSkillListOutput } from "../resources/skill-loader";
 import { buildBuiltinToolBundleResources } from "../resources/tool-bundles";
@@ -93,9 +94,11 @@ import { formatHermesError } from "../core/hermes-errors";
 import { HermesBackend } from "../core/hermes-backend";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "../core/hermes-models";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
-import { buildCodexLaunchConfig, CodexService, resolveCodexCommand } from "../core/codex-service";
+import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
+import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
+import { expandHome } from "../core/path-utils";
 import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
 import {
   detectOpenCodeCommand,
@@ -114,7 +117,16 @@ import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryAc
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
-import { messageRenderOptionsForRunUpdate } from "../ui/codex-view/turn-runner";
+import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
+import { EditorActionRunCoordinator } from "../ui/codex-view/editor-action-run-coordinator";
+import {
+  afterTurnSettled as afterTurnSettledRunner,
+  messageRenderOptionsForRunUpdate,
+  startChatTurn as startChatTurnRunner,
+  startKnowledgeBaseTurn as startKnowledgeBaseTurnRunner,
+  startNextQueuedTurn as startNextQueuedTurnRunner,
+  startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
+} from "../ui/codex-view/turn-runner";
 import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
@@ -152,9 +164,10 @@ import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-t
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
-import { KnowledgeBaseManager, extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-base/manager";
+import { KnowledgeBaseManager } from "../knowledge-base/manager";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
+import { buildCodexKnowledgeInput, buildOpenCodeKnowledgeParts, requiredModalities, selectOpenCodeModel } from "../knowledge-base/agent-runner";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
@@ -179,12 +192,16 @@ import {
 import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
+import { KnowledgeBaseScheduler } from "../knowledge-base/scheduler";
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
+import { extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-base/source-selection";
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
+import { extractFirstUrl, isHtmlVerificationBlocked, isWeChatUrl, sanitizeWebCaptureFileName, stripCollectPrefix } from "../knowledge-base/web-capture";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { commitLintReportOnly, disposeKnowledgeTransactionSnapshot, KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD, snapshotKnowledgeTransaction } from "../knowledge-base/transaction-snapshot";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
 import { buildCodexKnowledgeTurnOptions } from "../knowledge-base/turn-options";
-import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "../knowledge-base/types";
+import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "../knowledge-base/types";
 import { REVIEW_HTML_CSS, REVIEW_SECTION_HEADINGS, renderReviewHtml } from "../review/review-html-template";
 import {
   REVIEW_OUTPUT_DIR,
@@ -193,6 +210,7 @@ import {
   collectKnowledgeBaseReviewEvidence,
   reportBaseName
 } from "../review/report";
+import { ReviewManager } from "../review/manager";
 import {
   currentReviewRange,
   isReviewHtmlPath,
@@ -218,6 +236,13 @@ const loadSettingsSource = mainSourceForStartupPerformance.slice(loadSettingsSta
 assert.equal(loadSettingsSource.includes("externalizeLargeMessages"), false);
 assert.equal(loadSettingsSource.includes("migrateKnowledgeBaseHistory"), false);
 assert.match(mainSourceForStartupPerformance, /runDeferredStartupMaintenance/);
+for (const runnerPath of [
+  path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"),
+  path.join(process.cwd(), "src/ui/codex-view/editor-action-runner.ts")
+]) {
+  const runnerSource = await readFile(runnerPath, "utf8");
+  assert.equal(runnerSource.includes("view: any"), false, `${path.relative(process.cwd(), runnerPath)} should use typed runner context`);
+}
 
 assert.equal(formatMessageHeaderTime(new Date(2026, 4, 22, 8, 29).getTime()), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
@@ -285,12 +310,26 @@ settingsScrollHost.scrollTop = 0;
 restoreSettingsScrollSnapshot(settingsScrollSnapshot);
 assert.equal(settingsScrollHost.scrollTop, 640);
 const settingsTabSource = await readFile(path.join(process.cwd(), "src/settings/settings-tab.ts"), "utf8");
+assert.doesNotMatch(settingsTabSource, /normalize[A-Za-z]+ForUi/);
+assert.match(settingsTabSource, /normalizeAgentBackendMode\(value\)/);
+assert.match(settingsTabSource, /normalizeKnowledgeBaseBackendMode\(value\)/);
+assert.match(settingsTabSource, /normalizeKnowledgeBaseHistoryRetentionDays\(value,\s*DEFAULT_SETTINGS\.knowledgeBase\.historyRetentionDays\)/);
+assert.match(settingsTabSource, /normalizeEditorActionQualityMode\(value,\s*"quality"\)/);
 assert.match(settingsTabSource, /captureSettingsScrollSnapshot\(this\.containerEl\)/);
 assert.match(settingsTabSource, /restoreSettingsScrollSnapshot\(settingsScrollSnapshot\)/);
 assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
+const resourceSearchSource = settingsTabSource.slice(settingsTabSource.indexOf("private renderResourceSearch"), settingsTabSource.indexOf("private currentEchoInkResourceCatalog"));
+assert.match(resourceSearchSource, /scheduleResourceSearchFilter\(tab\)/);
+assert.doesNotMatch(resourceSearchSource, /this\.display\(\)/);
+assert.doesNotMatch(resourceSearchSource, /requestAnimationFrame/);
+assert.match(settingsTabSource, /private applyResourceSearchFilter/);
+assert.match(settingsTabSource, /data-resource-key/);
+assert.match(settingsTabSource, /data-resource-summary/);
+const renderResourceRowSource = settingsTabSource.slice(settingsTabSource.indexOf("private renderResourceRow"), settingsTabSource.indexOf("private renderMcpConnectionActions"));
+assert.doesNotMatch(renderResourceRowSource, /this\.display\(\)/);
 
 const workspace = buildSandboxPolicy("workspace-write", "/vault");
 assert.equal(workspace.type, "workspaceWrite");
@@ -402,6 +441,36 @@ const archiveService = new CodexService({
 });
 await archiveService.archiveThread("thread-kb");
 assert.deepEqual(archiveCalls, [{ command: process.execPath, args: ["archive", "thread-kb"], cwd: "/vault" }]);
+
+const serverRequestEvents: string[] = [];
+const serverRequestRouter = new CodexServerRequestRouter({
+  confirm: async (title, body, acceptText, declineText) => {
+    serverRequestEvents.push([title, body, acceptText ?? "", declineText ?? ""].join("|"));
+    return !body.includes("deny");
+  },
+  requestUserInput: async (questions) => {
+    serverRequestEvents.push(`questions:${questions.length}`);
+    return { topic: { answers: ["yes"] } };
+  },
+  openUrl: (url) => serverRequestEvents.push(`open:${url}`)
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 1, method: "item/commandExecution/requestApproval", params: { command: "npm test", reason: "verify" } }), { decision: "accept" });
+assert.deepEqual(await serverRequestRouter.handle({ id: 2, method: "item/fileChange/requestApproval", params: { reason: "deny file" } }), { decision: "decline" });
+assert.deepEqual(await serverRequestRouter.handle({ id: 3, method: "item/permissions/requestApproval", params: { reason: "need", permissions: { filesystem: "write" } } }), {
+  permissions: { filesystem: "write" },
+  scope: "turn"
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 4, method: "item/tool/requestUserInput", params: { questions: [{ id: "topic" }] } }), {
+  answers: { topic: { answers: ["yes"] } }
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 5, method: "mcpServer/elicitation/request", params: { mode: "url", message: "login", url: "https://example.com" } }), {
+  action: "accept",
+  content: null,
+  _meta: null
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 6, method: "unknown/request", params: {} }), {});
+assert.ok(serverRequestEvents.includes("open:https://example.com"));
+
 const queuedKbTurnOptions = buildCodexKnowledgeTurnOptions({
   settings: DEFAULT_SETTINGS,
   availableModels: [{ model: "gpt-test" }],
@@ -713,7 +782,34 @@ assert.deepEqual(staleOpenCodeTaskModel, { providerId: "opencode", modelId: "ope
 delete (globalThis as any).__opencodeBackendTestHooks;
 const hermesEventRuntime = createAgentTaskRuntime({ backend: "hermes", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
 assert.equal(typeof (hermesEventRuntime as any).runTaskEvents, "function");
+const codexRuntimeAbortCalls: string[] = [];
+const codexRuntime = createAgentTaskRuntime({
+  backend: "codex-cli",
+  settings: DEFAULT_SETTINGS,
+  vaultPath: "/vault",
+  codexBackend: {
+    kind: "codex-cli",
+    connect: async () => ({ connected: true, label: "Codex", errors: [] }),
+    disconnect: async () => undefined,
+    listModels: async () => [{ id: "gpt-test", providerId: "codex", modelId: "gpt-test", displayName: "GPT Test", inputModalities: ["text"] }],
+    startSession: async () => ({ sessionId: "thread-1", title: "Codex test" }),
+    sendPrompt: async () => "",
+    abort: async (runId: string) => {
+      codexRuntimeAbortCalls.push(runId);
+    }
+  }
+});
+assert.equal((await codexRuntime.connect()).label, "Codex");
+assert.deepEqual((await codexRuntime.listModels()).map((model) => model.id), ["gpt-test"]);
+await codexRuntime.abort(codexRunIdForTurn("thread-1", "turn-1"));
+assert.deepEqual(codexRuntimeAbortCalls, ["thread-1::turn-1"]);
 const agentFactorySourceForOpenCodeAcp = await readFile(path.join(process.cwd(), "src/agent/factory.ts"), "utf8");
+const codexServiceSourceForAgentBackend = await readFile(path.join(process.cwd(), "src/core/codex-service.ts"), "utf8");
+assert.match(codexServiceSourceForAgentBackend, /class CodexService implements AgentBackend/);
+assert.match(codexServiceSourceForAgentBackend, /readonly kind = "codex-cli" as const/);
+assert.match(codexServiceSourceForAgentBackend, /async abort\(runId: string\)/);
+assert.match(agentFactorySourceForOpenCodeAcp, /codexBackend\.abort\(runId\)/);
+assert.doesNotMatch(agentFactorySourceForOpenCodeAcp, /async abort\(\): Promise<void>\s*\{[\s\S]{0,120}Codex rich runtime uses thread\/turn interruption/);
 assert.doesNotMatch(agentFactorySourceForOpenCodeAcp, /backend:\s*"opencode"[\s\S]{0,400}args:\s*\(\)\s*=>\s*\["acp"/);
 const simpleTaskSource = await readFile(path.join(process.cwd(), "src/agent/simple-task.ts"), "utf8");
 assert.match(simpleTaskSource, /createAgentTaskRuntime/);
@@ -724,8 +820,27 @@ assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
 assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
 const knowledgeManagerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-runner.ts"), "utf8");
 assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
-assert.match(knowledgeManagerSourceForToolBridge, /runAgentTaskWithToolBridge/);
+assert.match(knowledgeManagerSourceForToolBridge, /runKnowledgeAgentTask/);
+assert.match(knowledgeAgentRunnerSourceForToolBridge, /runAgentTaskWithToolBridge/);
+const hermesGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendHermesTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards")
+);
+const openCodeGuardWrapperSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards")
+);
+const sharedAgentGuardSource = knowledgeManagerSourceForToolBridge.slice(
+  knowledgeManagerSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards"),
+  knowledgeManagerSourceForToolBridge.indexOf("private resolveKnowledgeBackend")
+);
+assert.match(hermesGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("hermes"/);
+assert.match(openCodeGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("opencode"/);
+assert.doesNotMatch(`${hermesGuardWrapperSource}\n${openCodeGuardWrapperSource}`, /new Promise|runKnowledgeAgentTask|setTimeout/);
+assert.equal((sharedAgentGuardSource.match(/runKnowledgeAgentTask\(runtime/g) ?? []).length, 1);
+assert.match(sharedAgentGuardSource, /backend === "hermes" \|\| activeRun\.runId/);
 const editorConnectingStatus = agentEventToEditorStatus({
   event: { type: "connecting", backend: "hermes", createdAt: 1 },
   actionLabel: "续写",
@@ -814,7 +929,6 @@ assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.managedThreads, {});
 const scheduledKnowledgeBaseBase = {
-  enabled: true,
   scheduleEnabled: true,
   scheduleTime: "09:00",
   catchUpOnStartup: true,
@@ -857,6 +971,102 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   scheduledKnowledgeBaseDate(9, 0),
   scheduledKnowledgeBaseDate(8, 0).getTime()
 ), false);
+const schedulerLifecycleSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    enabled: true,
+    scheduleEnabled: true,
+    catchUpOnStartup: true,
+    scheduleTime: "00:00"
+  }
+}).settings.knowledgeBase;
+const schedulerLifecycleEvents: string[] = [];
+const schedulerLifecycleIntervals: number[] = [];
+let schedulerLifecycleIntervalDelay = 0;
+let schedulerLifecycleIntervalCallback: (() => void) | null = null;
+const previousWindowForKnowledgeBaseSchedulerTest = (globalThis as any).window;
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForKnowledgeBaseSchedulerTest ?? {}),
+    setInterval: (callback: () => void, delay: number) => {
+      schedulerLifecycleIntervalCallback = callback;
+      schedulerLifecycleIntervalDelay = delay;
+      return 902;
+    },
+    clearInterval: () => undefined
+  };
+  const scheduler = new KnowledgeBaseScheduler({
+    getSettings: () => schedulerLifecycleSettings,
+    isRunning: () => false,
+    registerInterval: (intervalId) => {
+      schedulerLifecycleIntervals.push(intervalId);
+    },
+    runMaintenance: async () => {
+      schedulerLifecycleEvents.push("runMaintenance");
+      return {
+        status: "success",
+        reportPath: "outputs/maintenance/scheduled.md",
+        summary: "scheduled ok",
+        processedSources: []
+      };
+    },
+    appendScheduledMaintenanceMessage: async (result) => {
+      schedulerLifecycleEvents.push(`append:${result.status}`);
+    },
+    refreshKnowledgeBaseSurfaces: () => {
+      schedulerLifecycleEvents.push("refresh");
+    }
+  });
+  scheduler.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerLifecycleIntervals, [902]);
+  assert.equal(schedulerLifecycleIntervalDelay, 60 * 1000);
+  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+  assert.equal(schedulerLifecycleSettings.lastScheduledRunStatus, "success");
+  assert.ok(schedulerLifecycleSettings.lastScheduledRunAt > 0);
+  schedulerLifecycleIntervalCallback?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+} finally {
+  (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
+}
+const schedulerDisabledSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    enabled: false,
+    scheduleEnabled: true,
+    catchUpOnStartup: true,
+    scheduleTime: "00:00"
+  }
+}).settings.knowledgeBase;
+const schedulerDisabledEvents: string[] = [];
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForKnowledgeBaseSchedulerTest ?? {}),
+    setInterval: () => 903,
+    clearInterval: () => undefined
+  };
+  const scheduler = new KnowledgeBaseScheduler({
+    getSettings: () => schedulerDisabledSettings,
+    isRunning: () => false,
+    registerInterval: () => undefined,
+    runMaintenance: async () => {
+      schedulerDisabledEvents.push("runMaintenance");
+      return { status: "success", reportPath: "", summary: "", processedSources: [] };
+    },
+    appendScheduledMaintenanceMessage: async () => {
+      schedulerDisabledEvents.push("append");
+    },
+    refreshKnowledgeBaseSurfaces: () => {
+      schedulerDisabledEvents.push("refresh");
+    }
+  });
+  scheduler.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerDisabledEvents, []);
+} finally {
+  (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
+}
 const staleKnowledgeBaseRunSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
   knowledgeBase: {
@@ -1424,14 +1634,13 @@ const throwingQueueView: any = {
   renderToolbar: () => undefined,
   startQueuedTurnItem: async () => {
     throw new Error("post-run save failed");
-  },
-  startQueuedTurnItemSafely: (CodexView.prototype as any).startQueuedTurnItemSafely,
-  startNextQueuedTurn: (CodexView.prototype as any).startNextQueuedTurn,
-  afterTurnSettled: (CodexView.prototype as any).afterTurnSettled
+  }
 };
+throwingQueueView.startQueuedTurnItemSafely = async (item: QueuedTurnItem, source: "composer" | "queue") => await startQueuedTurnItemSafelyRunner(throwingQueueView, item, source);
+throwingQueueView.afterTurnSettled = async (sessionId: string, succeeded: boolean) => await afterTurnSettledRunner(throwingQueueView, sessionId, succeeded);
 let throwingQueueViewError: unknown = null;
 try {
-  await throwingQueueView.startNextQueuedTurn("throw-session");
+  await startNextQueuedTurnRunner(throwingQueueView, "throw-session");
 } catch (error) {
   throwingQueueViewError = error;
 }
@@ -1515,6 +1724,159 @@ foregroundKnowledgeNotificationView.handleCodexNotification({
   params: { itemId: "leaked-kb-item", delta: "不应该显示的子线程长文本" }
 } as any);
 assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
+function createNotificationRouterTestContext(overrides: Record<string, any> = {}) {
+  const calls: string[] = [];
+  const session = overrides.session ?? {
+    id: "router-session",
+    title: "Router session",
+    kind: "chat" as const,
+    cwd: "/vault",
+    messages: [] as any[],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  const context: any = {};
+  Object.assign(context, {
+    plugin: {
+      settings: { editorActions: { timeoutMs: 45000 } },
+      lastStatus: { rateLimits: null, rateLimitsByLimitId: null },
+      saveSettings: async () => {
+        calls.push("saveSettings");
+      }
+    },
+    running: false,
+    activeRunId: "router-run",
+    activeRunKind: "chat",
+    activeTurnId: "router-turn",
+    turnStartedAt: 0,
+    usageLoading: true,
+    usageError: "loading",
+    editorActionRun: null,
+    editorSummaryRun: null,
+    editorActionActiveTimeoutMs: 0,
+    editorActionThreadId: "",
+    editorActionThreadIds: new Set<string>(),
+    editorActionTurnIds: new Set<string>(),
+    editorActionItemIds: new Set<string>(),
+    editorActionCurrentItemIds: new Set<string>(),
+    isEditorActionRunActive: () => Boolean(context.editorActionRun && context.editorActionRun.runId === context.activeRunId),
+    isEditorSummaryRunActive: () => Boolean(context.editorSummaryRun && context.editorSummaryRun.runId === context.activeRunId),
+    activeRunSession: () => session,
+    sessionForThread: () => null,
+    isKnowledgeBaseSession: (candidate: any) => candidate.kind === "knowledge-base",
+    attachTurnIdToRun: (_session: any, turnId: string) => calls.push(`attachTurn:${turnId}`),
+    ensureThinkingMessage: (_session: any, title: string) => calls.push(`thinking:${title}`),
+    markThinkingAsStreaming: () => calls.push("streaming"),
+    appendItemDelta: (_session: any, itemId: string, _role: string, delta: string) => calls.push(`itemDelta:${itemId}:${delta}`),
+    appendProcessDelta: (_session: any, itemId: string, itemType: string, delta: string) => calls.push(`processDelta:${itemType}:${itemId}:${delta}`),
+    upsertProcessItem: async (_session: any, id: string, itemType: string) => {
+      calls.push(`upsert:${itemType}:${id}`);
+    },
+    renderPlanUpdate: () => calls.push("planUpdate"),
+    renderStartedItem: () => calls.push("itemStarted"),
+    renderCompletedItem: async () => {
+      calls.push("itemCompleted");
+    },
+    updateUsageHeader: (rateLimits: any, loading: boolean, error: string | null) => calls.push(`usageHeader:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+    renderUsagePanel: (rateLimits: any, error: string | null, loading: boolean) => calls.push(`usagePanel:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+    updateContextForSession: () => calls.push("contextUpdate"),
+    addContextCompactionMessage: () => calls.push("compact"),
+    clearTurnWatchdog: () => calls.push("clearWatchdog"),
+    armTurnWatchdog: (timeoutMs?: number) => calls.push(`armWatchdog:${timeoutMs ?? "default"}`),
+    finishThinkingMessage: (_session: any, status: string) => calls.push(`finishThinking:${status}`),
+    finishRunningProcessMessages: (_session: any, status: string) => calls.push(`finishProcess:${status}`),
+    finishPlanMessage: () => calls.push("finishPlan"),
+    clearActiveRun: () => calls.push("clearActive"),
+    applyStatus: () => calls.push("applyStatus"),
+    afterTurnSettled: async (_sessionId: string, succeeded: boolean) => {
+      calls.push(`afterTurn:${succeeded}`);
+    },
+    diagnoseCodexFailure: (message: unknown) => ({ title: "失败", text: String(message) }),
+    rejectEditorActionRun: (error: Error) => calls.push(`rejectAction:${error.message}`),
+    resolveEditorActionRun: (text: string) => calls.push(`resolveAction:${text}`),
+    rejectEditorSummaryRun: (error: Error) => calls.push(`rejectSummary:${error.message}`),
+    resolveEditorSummaryRun: (text: string) => calls.push(`resolveSummary:${text}`),
+    releaseEditorSummaryRunLock: (runId?: string) => calls.push(`releaseSummary:${runId ?? ""}`),
+    addMessageToSession: (_session: any, message: any) => calls.push(`message:${message.itemType}:${message.text}`)
+  });
+  Object.assign(context, overrides);
+  return { calls, context, session };
+}
+
+const rateLimitRouterState = createNotificationRouterTestContext();
+new CodexNotificationRouter(rateLimitRouterState.context).handle({
+  method: "account/rateLimits/updated",
+  params: {
+    rateLimitsByLimitId: {
+      codex: {
+        limitId: "codex",
+        primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1777229369 },
+        secondary: null
+      }
+    }
+  }
+} as any);
+assert.equal(rateLimitRouterState.context.usageLoading, false);
+assert.equal(rateLimitRouterState.context.plugin.lastStatus.rateLimits.limitId, "codex");
+assert.ok(rateLimitRouterState.calls.includes("usageHeader:codex:false:none"));
+assert.ok(rateLimitRouterState.calls.includes("usagePanel:codex:false:none"));
+
+const reasoningRouterState = createNotificationRouterTestContext();
+new CodexNotificationRouter(reasoningRouterState.context).handle({
+  method: "item/reasoning/summaryPartAdded",
+  params: { itemId: "reasoning-item" }
+} as any);
+assert.ok(reasoningRouterState.calls.includes("upsert:reasoning:reasoning-item"));
+
+const knowledgeRouterState = createNotificationRouterTestContext({
+  activeRunKind: "knowledge-base",
+  session: {
+    id: "router-kb-session",
+    title: "Knowledge",
+    kind: "knowledge-base" as const,
+    cwd: "/vault",
+    messages: [] as any[],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+});
+new CodexNotificationRouter(knowledgeRouterState.context).handle({
+  method: "item/agentMessage/delta",
+  params: { itemId: "kb-background-item", delta: "后台维护输出" }
+} as any);
+assert.deepEqual(knowledgeRouterState.calls, []);
+
+const editorActionRouterState = createNotificationRouterTestContext({
+  editorActionRun: {
+    runId: "router-run",
+    text: "",
+    resolve: () => undefined,
+    reject: () => undefined
+  },
+  editorActionThreadId: "editor-thread"
+});
+new CodexNotificationRouter(editorActionRouterState.context).handle({
+  method: "item/agentMessage/delta",
+  params: { threadId: "editor-thread", itemId: "editor-item", delta: "候选文本" }
+} as any);
+assert.equal(editorActionRouterState.context.editorActionRun.text, "候选文本");
+assert.equal(editorActionRouterState.calls.some((item) => item.startsWith("itemDelta:")), false);
+
+const editorSummaryRouterState = createNotificationRouterTestContext({
+  editorSummaryRun: {
+    runId: "router-run",
+    threadId: "summary-thread",
+    text: "",
+    resolve: () => undefined,
+    reject: () => undefined
+  }
+});
+new EditorActionRunCoordinator(editorSummaryRouterState.context).handleNotification("item/agentMessage/delta", {
+  threadId: "summary-thread",
+  itemId: "summary-item",
+  delta: "摘要文本"
+});
+assert.equal(editorSummaryRouterState.context.editorSummaryRun.text, "摘要文本");
 const activeKnowledgeRunSession = {
   id: "active-kb-run-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -1600,12 +1962,11 @@ const knowledgeFinalizeView: any = {
   moveMessageToEnd: (CodexView.prototype as any).moveMessageToEnd,
   finishThinkingMessage: () => undefined,
   finishRunningProcessMessages: () => undefined,
-  finishPlanMessage: () => undefined,
-  startKnowledgeBaseTurn: (CodexView.prototype as any).startKnowledgeBaseTurn
+  finishPlanMessage: () => undefined
 };
 let knowledgeFinalizeError: unknown = null;
 try {
-  await knowledgeFinalizeView.startKnowledgeBaseTurn(knowledgeFinalizeSession, knowledgeFinalizeItem, "queue");
+  await startKnowledgeBaseTurnRunner(knowledgeFinalizeView, knowledgeFinalizeSession, knowledgeFinalizeItem, "queue");
 } catch (error) {
   knowledgeFinalizeError = error;
 }
@@ -1653,7 +2014,7 @@ const knowledgeMaintainReportView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeMaintainReportOutcome = await knowledgeMaintainReportView.startKnowledgeBaseTurn(knowledgeMaintainReportSession, {
+const knowledgeMaintainReportOutcome = await startKnowledgeBaseTurnRunner(knowledgeMaintainReportView, knowledgeMaintainReportSession, {
   ...queuedTurn("kb-maintain-report-item", knowledgeMaintainReportSession.id, "/maintain"),
   kind: "knowledge-base"
 }, "queue");
@@ -1703,7 +2064,7 @@ const knowledgeInitialSaveFailureView: any = {
 };
 let knowledgeInitialSaveFailureError: unknown = null;
 try {
-  await knowledgeInitialSaveFailureView.startKnowledgeBaseTurn(knowledgeInitialSaveFailureSession, knowledgeInitialSaveFailureItem, "queue");
+  await startKnowledgeBaseTurnRunner(knowledgeInitialSaveFailureView, knowledgeInitialSaveFailureSession, knowledgeInitialSaveFailureItem, "queue");
 } catch (error) {
   knowledgeInitialSaveFailureError = error;
 }
@@ -1738,7 +2099,7 @@ const knowledgeCanceledView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeCanceledOutcome = await knowledgeCanceledView.startKnowledgeBaseTurn(knowledgeCanceledSession, {
+const knowledgeCanceledOutcome = await startKnowledgeBaseTurnRunner(knowledgeCanceledView, knowledgeCanceledSession, {
   ...queuedTurn("kb-canceled-item", knowledgeCanceledSession.id, "/check cancel"),
   kind: "knowledge-base"
 }, "queue");
@@ -1788,7 +2149,7 @@ const knowledgeContextBridgeView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeContextBridgeOutcome = await knowledgeContextBridgeView.startKnowledgeBaseTurn(knowledgeContextBridgeSession, {
+const knowledgeContextBridgeOutcome = await startKnowledgeBaseTurnRunner(knowledgeContextBridgeView, knowledgeContextBridgeSession, {
   ...queuedTurn("kb-context-bridge-item", knowledgeContextBridgeSession.id, "/ask 最近有哪些 GitHub 项目？"),
   kind: "knowledge-base"
 }, "queue");
@@ -1825,7 +2186,7 @@ const failedKnowledgeContextView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-await failedKnowledgeContextView.startKnowledgeBaseTurn(failedKnowledgeContextSession, {
+await startKnowledgeBaseTurnRunner(failedKnowledgeContextView, failedKnowledgeContextSession, {
   ...queuedTurn("kb-context-failed-item", failedKnowledgeContextSession.id, "/ask 失败问题"),
   kind: "knowledge-base"
 }, "queue");
@@ -1884,10 +2245,9 @@ const knowledgeContextChatView: any = {
   renderMessagesIfActive: () => undefined,
   renderToolbar: () => undefined,
   diagnoseCodexFailure: () => ({ title: "失败", text: "失败" }),
-  isKnowledgeBaseSession: () => true,
-  startChatTurn: (CodexView.prototype as any).startChatTurn
+  isKnowledgeBaseSession: () => true
 };
-const knowledgeContextChatOutcome = await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+const knowledgeContextChatOutcome = await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
   ...queuedTurn("kb-context-chat-item", knowledgeContextChatSession.id, "继续讲这个项目"),
   kind: "chat"
 }, "queue");
@@ -1898,7 +2258,7 @@ assert.match(injectedKnowledgeContextText, /继续讲这个项目/);
 assert.deepEqual((knowledgeContextChatSession as any).knowledgeContext[0].injectedThreadIds, ["thread-chat"]);
 
 capturedKnowledgeContextInput = [];
-await knowledgeContextChatView.startChatTurn(knowledgeContextChatSession, {
+await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
   ...queuedTurn("kb-context-chat-item-2", knowledgeContextChatSession.id, "再继续"),
   kind: "chat"
 }, "queue");
@@ -1934,7 +2294,7 @@ const knowledgeContextResumeFailureView: any = {
   activeRunSessionId: "",
   activeTurnId: ""
 };
-await knowledgeContextResumeFailureView.startChatTurn(knowledgeContextResumeFailureSession, {
+await startChatTurnRunner(knowledgeContextResumeFailureView, knowledgeContextResumeFailureSession, {
   ...queuedTurn("kb-context-resume-failure-item", knowledgeContextResumeFailureSession.id, "新线程继续"),
   kind: "chat"
 }, "queue");
@@ -2752,6 +3112,39 @@ assert.deepEqual(await approvedBroker.listTools(brokerReadyResource), { tools: [
 const brokerResult = await approvedBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "read_note", arguments: { path: "wiki/a.md" } });
 assert.deepEqual(brokerResult.content, { content: [{ type: "text", text: "OK" }] });
 assert.equal(brokerSettings.callLog.at(-1)?.status, "completed");
+await closeMcpBrokerConnectionPool();
+let pooledBrokerCreateCount = 0;
+let pooledBrokerInitializeCount = 0;
+let pooledBrokerCloseCount = 0;
+const pooledBroker = new EchoInkMcpBroker({
+  settings: { approvalMode: "ask", callLog: [] },
+  approval: async () => true,
+  transportFactory: async () => {
+    pooledBrokerCreateCount += 1;
+    return {
+      request: async (method: string) => {
+        if (method === "initialize") {
+          pooledBrokerInitializeCount += 1;
+          return { ok: true };
+        }
+        if (method === "tools/list") return { tools: [{ name: "pooled_tool" }] };
+        if (method === "tools/call") return { content: [{ type: "text", text: "POOLED" }] };
+        return { ok: true };
+      },
+      notify: async () => undefined,
+      close: async () => {
+        pooledBrokerCloseCount += 1;
+      }
+    };
+  }
+});
+assert.deepEqual(await pooledBroker.listTools(brokerReadyResource), { tools: [{ name: "pooled_tool" }] });
+assert.deepEqual((await pooledBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "pooled_tool" })).content, { content: [{ type: "text", text: "POOLED" }] });
+assert.equal(pooledBrokerCreateCount, 1);
+assert.equal(pooledBrokerInitializeCount, 1);
+assert.equal(pooledBrokerCloseCount, 0);
+await closeMcpBrokerConnectionPool();
+assert.equal(pooledBrokerCloseCount, 1);
 const importedMcpBroker = new EchoInkMcpBroker({
   settings: brokerSettings,
   connections: {
@@ -2882,7 +3275,16 @@ const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd()
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/composer.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const digestEvidenceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/digest-evidence.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
+const cloneStoredSessionsSource = knowledgeBaseManagerSource.slice(
+  knowledgeBaseManagerSource.indexOf("function cloneStoredSessions"),
+  knowledgeBaseManagerSource.indexOf("function rollbackScheduledMaintenanceMessage")
+);
+const introducedEvidenceLineFlagsSource = digestEvidenceSource.slice(
+  digestEvidenceSource.indexOf("function introducedEvidenceLineFlags"),
+  digestEvidenceSource.indexOf("function evidenceVectorValue")
+);
 const codexViewUiSources = [
   codexViewSource,
   codexViewHeaderSource,
@@ -2892,19 +3294,50 @@ const codexViewUiSources = [
 ].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
 const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
+const codexViewAddMessageToSessionSource = codexViewSource.slice(
+  codexViewSource.indexOf("private addMessageToSession"),
+  codexViewSource.indexOf("private scheduleSessionSave")
+);
 assert.ok(codexViewModules.includes("history-modal.ts"));
 assert.ok(codexViewModules.includes("knowledge-dashboard.ts"));
 assert.ok(codexViewModules.includes("header.ts"));
 assert.ok(codexViewModules.includes("composer.ts"));
 assert.ok(codexViewModules.includes("message-list.ts"));
+assert.ok(codexViewModules.includes("notification-router.ts"));
+assert.ok(codexViewModules.includes("editor-action-run-coordinator.ts"));
 assert.ok(codexViewLineCount <= 2500, `src/ui/codex-view.ts should stay under 2500 lines, got ${codexViewLineCount}`);
+assert.match(codexViewSource, /CHAT_SESSION_SAVE_DEBOUNCE_MS\s*=\s*500/);
+assert.match(codexViewSource, /private scheduleSessionSave/);
+assert.match(codexViewSource, /private async flushSessionSave/);
+assert.match(codexViewSource, /window\.setTimeout\(\(\) => \{/);
+assert.match(codexViewAddMessageToSessionSource, /this\.scheduleSessionSave\(\)/);
+assert.doesNotMatch(codexViewAddMessageToSessionSource, /saveSettings/);
+assert.match(cloneStoredSessionsSource, /clonePlainValue/);
+assert.match(cloneStoredSessionsSource, /value instanceof Date/);
+assert.doesNotMatch(cloneStoredSessionsSource, /JSON\.parse|JSON\.stringify/);
+assert.match(digestEvidenceSource, /DIGEST_EVIDENCE_DIFF_LINE_LIMIT\s*=\s*5000/);
+assert.match(introducedEvidenceLineFlagsSource, /beforeLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT/);
+assert.match(introducedEvidenceLineFlagsSource, /currentLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT/);
+assert.match(introducedEvidenceLineFlagsSource, /return currentLines\.map\(\(\) => true\)/);
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
+assert.doesNotMatch(codexViewSource, /private handleEditorActionNotification/);
+assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);
+assert.match(codexViewSource, /CodexNotificationRouter/);
 assert.doesNotMatch(codexViewSource, /private addKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewUiSources, /\.style\./);
 assert.match(codexViewUiSources, /setCssStyles/);
 assert.match(codexViewUiSources, /setCssProps/);
+assert.match(codexViewSource, /renderMessagesIfActive\(session,\s*message\)/);
+assert.match(codexViewSource, /tryUpdateMessage\(updatedMessage\)/);
+assert.match(codexViewMessageListSource, /tryUpdateMessage\(message:\s*ChatMessage\)/);
+assert.match(codexViewMessageListSource, /data-message-id/);
+assert.match(codexViewMessageListSource, /querySelectorAll<HTMLElement>\("\[data-message-id\]"\)/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+assert.match(mainPluginSource, /private reportSettingsSaveError/);
+assert.match(mainPluginSource, /console\.error\("\[EchoInk\] settings save failed:"/);
+assert.match(mainPluginSource, /new Notice\(this\.settings\.settingsLanguage === "en"/);
+assert.doesNotMatch(mainPluginSource, /this\.saveQueue\s*=\s*run\.catch\(\(\)\s*=>\s*undefined\)/);
 assert.match(mainPluginSource, /connections:\s*this\.settings\.resources\.mcpConnections/);
 assert.match(mainPluginSource, /verifiedAt\s*=\s*Date\.now\(\)/);
 assert.match(mainPluginSource, /lastError\s*=\s*message/);
@@ -3182,6 +3615,8 @@ assert.match(resourceRowNameCss, /text-overflow:\s*ellipsis;/);
 assert.match(resourceRowNameCss, /white-space:\s*nowrap;/);
 assert.match(resourceSearchInputCss, /width:\s*100%;/);
 assert.match(resourceSearchInputCss, /min-width:\s*0;/);
+assert.match(settingsStyles, /\.codex-resource-row\.is-search-hidden/);
+assert.match(settingsStyles, /\.codex-resource-empty\.is-hidden/);
 assert.match(processFileLinkCss, /background:\s*transparent;/);
 assert.match(processFileLinkCss, /border:\s*0;/);
 assert.doesNotMatch(processFileLinkCss, /box-shadow:\s*var\(/);
@@ -3224,25 +3659,34 @@ assert.match(codexViewKnowledgeDashboardSource, /panel\.onpointerleave/);
 assert.match(codexViewKnowledgeDashboardSource, /isKnowledgeDashboardHealthTooltipHoverPoint/);
 assert.match(codexViewKnowledgeDashboardSource, /scheduleCloseIfOutside/);
 assert.match(codexViewKnowledgeDashboardSource, /wrapper\.hasClass\("is-click-open"\)/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("resize"/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("scroll",\s*repositionOpenPanel,\s*true/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("pointermove",\s*trackOpenTooltipPointer/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("mousemove",\s*trackOpenTooltipPointer/);
-assert.match(codexViewKnowledgeDashboardSource, /document\.addEventListener\("pointerdown",\s*closeOnOutsidePointerDown,\s*true/);
-assert.match(codexViewKnowledgeDashboardSource, /document\.addEventListener\("mousedown",\s*closeOnOutsidePointerDown,\s*true/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("resize"/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("scroll",\s*repositionOpenPanel,\s*true/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("pointermove",\s*trackOpenTooltipPointer/);
-assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("mousemove",\s*trackOpenTooltipPointer/);
-assert.match(codexViewKnowledgeDashboardSource, /document\.removeEventListener\("pointerdown",\s*closeOnOutsidePointerDown,\s*true/);
-assert.match(codexViewKnowledgeDashboardSource, /document\.removeEventListener\("mousedown",\s*closeOnOutsidePointerDown,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /ensureKnowledgeDashboardHealthTooltipDelegates/);
+assert.match(codexViewKnowledgeDashboardSource, /state\.tooltips\.push\(tooltip\)/);
+assert.match(codexViewKnowledgeDashboardSource, /for \(const tooltip of state\.tooltips\)/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("resize",\s*repositionOpenHealthTooltipPanels\)/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("scroll",\s*repositionOpenHealthTooltipPanels,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("pointermove",\s*trackOpenHealthTooltipPointer/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.addEventListener\("mousemove",\s*trackOpenHealthTooltipPointer/);
+assert.match(codexViewKnowledgeDashboardSource, /document\.addEventListener\("pointerdown",\s*closeOpenHealthTooltipOnOutsidePointer,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /document\.addEventListener\("mousedown",\s*closeOpenHealthTooltipOnOutsidePointer,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("resize",\s*repositionOpenHealthTooltipPanels\)/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("scroll",\s*repositionOpenHealthTooltipPanels,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("pointermove",\s*trackOpenHealthTooltipPointer/);
+assert.match(codexViewKnowledgeDashboardSource, /window\.removeEventListener\("mousemove",\s*trackOpenHealthTooltipPointer/);
+assert.match(codexViewKnowledgeDashboardSource, /document\.removeEventListener\("pointerdown",\s*closeOpenHealthTooltipOnOutsidePointer,\s*true/);
+assert.match(codexViewKnowledgeDashboardSource, /document\.removeEventListener\("mousedown",\s*closeOpenHealthTooltipOnOutsidePointer,\s*true/);
+const addKnowledgeDashboardHealthTooltipSource = codexViewKnowledgeDashboardSource.slice(
+  codexViewKnowledgeDashboardSource.indexOf("function addKnowledgeDashboardHealthTooltip"),
+  codexViewKnowledgeDashboardSource.indexOf("function ensureKnowledgeDashboardHealthTooltipDelegates")
+);
+assert.doesNotMatch(addKnowledgeDashboardHealthTooltipSource, /addEventListener/);
+assert.match(codexViewSource, /disposeKnowledgeDashboardTooltipState/);
 assert.doesNotMatch(codexViewKnowledgeDashboardSource, /window\.addEventListener\("mousemove",\s*(?:close|schedule|.*Close)/);
 assert.doesNotMatch(codexViewKnowledgeDashboardSource, /scheduleClose\(3500\)/);
-assert.match(codexViewKnowledgeDashboardSource, /lastTooltipPointer/);
+assert.match(codexViewKnowledgeDashboardSource, /lastPointer/);
 assert.match(codexViewKnowledgeDashboardSource, /rememberTooltipPointer/);
 assert.match(codexViewKnowledgeDashboardSource, /isPointerCurrentlyInsideTooltip/);
 assert.match(codexViewKnowledgeDashboardSource, /closePanelIfPointerOutside/);
-assert.match(codexViewKnowledgeDashboardSource, /closeOnOutsidePointerDown/);
+assert.match(codexViewKnowledgeDashboardSource, /closeOpenHealthTooltipOnOutsidePointer/);
 assert.match(codexViewKnowledgeDashboardSource, /document\.elementFromPoint/);
 assert.match(codexViewKnowledgeDashboardSource, /bridge\.onmouseenter/);
 assert.match(codexViewKnowledgeDashboardSource, /bridge\.onpointerenter/);
@@ -3411,10 +3855,21 @@ const lintReportPayload = buildKnowledgeBaseMaintainReportPayload("lint", {
   status: "success",
   reportPath: "outputs/maintenance/kb-check-2026-07-10.md",
   summary: "体检完成。",
-  processedSources: []
+  processedSources: [],
+  structure: {
+    moves: [],
+    skipped: [],
+    updatedLinks: [{ path: "wiki/index.md", replacements: 2 }],
+    remainingRootNotes: ["loose.md"],
+    remainingChineseDirs: ["资料库"],
+    risks: ["raw 缺少来源索引"],
+    pathRewrites: []
+  }
 });
 assert.equal(lintReportPayload.title, "体检完成");
 assert.deepEqual(lintReportPayload.sections.map((section) => section.title), ["断链与引用异常", "命名与结构偏差", "可顺手修"]);
+assert.equal(lintReportPayload.sections.find((section) => section.id === "structure-drift")?.count, 4);
+assert.deepEqual(lintReportPayload.sections.find((section) => section.id === "structure-drift")?.items.map((item) => item.title), ["wiki/index.md", "loose.md", "资料库", "结构风险"]);
 
 const calibrationReportPayload = buildKnowledgeBaseMaintainReportPayload("calibrate", {
   status: "success",
@@ -3951,6 +4406,67 @@ assert.equal(shouldRunScheduledReview({
     knowledgeBase: { ...DEFAULT_SETTINGS.review.reports.knowledgeBase, lastRangeKey: "2026-05-11-to-2026-05-17" }
   }
 }, "knowledge-base", new Date("2026-05-18T09:00:00+08:00")), false);
+const reviewScheduleLayoutReadyCallbacks: Array<() => void> = [];
+const reviewScheduleCommands: string[] = [];
+const reviewScheduleIntervals: number[] = [];
+let reviewScheduleIntervalDelay = 0;
+let reviewScheduleIntervalCallback: (() => void) | null = null;
+const previousWindowForReviewScheduleTest = (globalThis as any).window;
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForReviewScheduleTest ?? {}),
+    setInterval: (callback: () => void, delay: number) => {
+      reviewScheduleIntervalCallback = callback;
+      reviewScheduleIntervalDelay = delay;
+      return 901;
+    },
+    clearInterval: () => undefined
+  };
+  const reviewScheduleManager = new ReviewManager({
+    settings: normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      review: { catchUpOnStartup: true }
+    }).settings,
+    addCommand: (command: { id: string }) => {
+      reviewScheduleCommands.push(command.id);
+    },
+    registerInterval: (intervalId: number) => {
+      reviewScheduleIntervals.push(intervalId);
+    },
+    app: {
+      workspace: {
+        onLayoutReady: (callback: () => void) => {
+          reviewScheduleLayoutReadyCallbacks.push(callback);
+        }
+      }
+    },
+    saveSettings: async () => undefined,
+    getVaultPath: () => "/tmp/vault",
+    getKnowledgeBaseManager: () => null,
+    openReviewHtmlPreview: async () => undefined
+  } as any);
+  const scheduledReviewCalls: boolean[] = [];
+  reviewScheduleManager.runScheduledIfDue = async (forceCatchUp = false) => {
+    scheduledReviewCalls.push(forceCatchUp);
+  };
+
+  reviewScheduleManager.register();
+  assert.deepEqual(reviewScheduleCommands, [
+    "review-run-knowledge-base-now",
+    "review-run-agent-chat-now",
+    "review-open-latest-html"
+  ]);
+  assert.equal(reviewScheduleLayoutReadyCallbacks.length, 1);
+  reviewScheduleLayoutReadyCallbacks[0]();
+  await Promise.resolve();
+  assert.deepEqual(reviewScheduleIntervals, [901]);
+  assert.equal(reviewScheduleIntervalDelay, 60 * 1000);
+  assert.deepEqual(scheduledReviewCalls, [true]);
+  reviewScheduleIntervalCallback?.();
+  assert.deepEqual(scheduledReviewCalls, [true, false]);
+} finally {
+  (globalThis as any).window = previousWindowForReviewScheduleTest;
+}
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.html"), true);
 assert.equal(isReviewHtmlPath("outputs/obsidian-weekly-review/agent-chat-review-2026-05-11-to-2026-05-17.md"), false);
 assert.equal(isReviewHtmlPath("../outputs/obsidian-weekly-review/bad.html"), false);
@@ -4574,6 +5090,28 @@ assert.equal(diagnoseCodexError("spawn codex ENOENT").kind, "missing-cli");
 assert.equal(diagnoseCodexError("app-server exited with code 1").kind, "app-server");
 assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: { status: 504 } }).message, /错误码：-32000/);
 assert.match(formatJsonRpcError({ code: -32000, message: "model timeout", data: { status: 504 } }).message, /status/);
+const jsonRpcTransportSource = await readFile(path.join(process.cwd(), "src/core/json-rpc-stdio-transport.ts"), "utf8");
+const codexRpcSource = await readFile(path.join(process.cwd(), "src/core/codex-rpc.ts"), "utf8");
+const mcpBrokerSource = await readFile(path.join(process.cwd(), "src/resources/mcp-broker.ts"), "utf8");
+const acpRuntimeSource = await readFile(path.join(process.cwd(), "src/agent/acp-runtime.ts"), "utf8");
+assert.match(jsonRpcTransportSource, /abstract class JsonRpcStdioTransport/);
+assert.match(jsonRpcTransportSource, /private readonly pending = new Map/);
+assert.match(jsonRpcTransportSource, /private processExited = false/);
+assert.match(jsonRpcTransportSource, /!this\.processExited/);
+assert.match(jsonRpcTransportSource, /this\.processExited = true/);
+assert.match(jsonRpcTransportSource, /disableTimeoutForNonPositive/);
+assert.match(jsonRpcTransportSource, /killOnDispose/);
+assert.match(codexRpcSource, /extends JsonRpcStdioTransport/);
+assert.match(codexRpcSource, /disposeMessage:\s*"Codex app-server 已关闭"/);
+assert.match(codexRpcSource, /handleTransportExit/);
+assert.match(codexRpcSource, /formatJsonRpcError\(message\.error\)/);
+assert.match(mcpBrokerSource, /class StdioMcpTransport extends JsonRpcStdioTransport/);
+assert.match(mcpBrokerSource, /disableTimeoutForNonPositive:\s*false/);
+assert.match(mcpBrokerSource, /notifications\/initialized/);
+assert.match(acpRuntimeSource, /class AcpJsonRpcProcessTransport extends JsonRpcStdioTransport/);
+assert.match(acpRuntimeSource, /killOnDispose:\s*false/);
+assert.match(acpRuntimeSource, /new AcpJsonRpcError/);
+assert.match(acpRuntimeSource, /Unsupported ACP request/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /错误码：upstream_timeout/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /状态：504/);
 const openCodeFetchSeen = new Promise<{ method: string; body: string; header: string }>((resolve) => {
@@ -4611,6 +5149,41 @@ const parsedOpenCodeRun = parseOpenCodeRunJsonLines([
 assert.equal(parsedOpenCodeRun.text, "OPENCODE");
 assert.equal(parsedOpenCodeRun.sessionId, "ses_1");
 assert.deepEqual(parsedOpenCodeRun.usage, { inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+const opencodeHistoryStart = new Date("2026-05-19T00:00:00Z").getTime();
+const fakeOpenCodeSessions = Array.from({ length: 6 }, (_, index) => ({
+  id: `session-${index}`,
+  title: `Session ${index}`,
+  directory: "/vault",
+  time: {
+    created: opencodeHistoryStart + index * 1000,
+    updated: opencodeHistoryStart + 60_000
+  }
+}));
+let activeOpenCodeMessageRequests = 0;
+let maxOpenCodeMessageConcurrency = 0;
+const opencodeHistory = await collectOpenCodeHistoryMessages({
+  sessions: fakeOpenCodeSessions,
+  startMs: opencodeHistoryStart,
+  endMs: opencodeHistoryStart + 120_000,
+  maxMessages: 6,
+  maxChars: 10000,
+  fetchMessages: async (session) => {
+    activeOpenCodeMessageRequests += 1;
+    maxOpenCodeMessageConcurrency = Math.max(maxOpenCodeMessageConcurrency, activeOpenCodeMessageRequests);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeOpenCodeMessageRequests -= 1;
+    return [{
+      info: {
+        role: "assistant",
+        sessionID: String(session.id ?? ""),
+        time: { created: opencodeHistoryStart + 10_000 }
+      },
+      parts: [{ type: "text", text: `Message ${String(session.id ?? "")}` }]
+    }];
+  }
+});
+assert.equal(opencodeHistory.messages.length, 6);
+assert.equal(maxOpenCodeMessageConcurrency > 1, true);
 const parsedOpenCodeCliModels = parseOpenCodeModelListOutput([
   "opencode/deepseek-v4-flash-free",
   "bailian-coding-plan/qwen3.5-plus",
@@ -4653,7 +5226,8 @@ assert.deepEqual(buildOpenCodeRunArgs({
   "只回复 PONG"
 ]);
 const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");
-assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(\(\) => \[\]\);\s*if \(cliModels\.length\) return cliModels;/);
+assert.match(openCodeBackendSource, /import \{ emptyArrayOnMissingPathOrWarn \} from "\.\/error-handling";/);
+assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(emptyArrayOnMissingPathOrWarn\("list OpenCode CLI models"\)\);\s*if \(cliModels\.length\) return cliModels;/);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {
@@ -4685,6 +5259,12 @@ assert.equal(resolveCodexCommand("~/bin/codex", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/codex"
 }), "/Users/demo/bin/codex");
+assert.equal(expandHome("~\\bin\\codex", "C:\\Users\\demo"), "C:\\Users\\demo\\bin\\codex");
+assert.equal(resolveCodexCommand("~\\bin\\codex.cmd", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\codex.cmd"
+}), "C:\\Users\\demo\\bin\\codex.cmd");
 assert.equal(resolveCodexCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",
@@ -4703,6 +5283,11 @@ assert.equal(detectOpenCodeCommand("~/bin/opencode", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/opencode"
 }), "/Users/demo/bin/opencode");
+assert.equal(detectOpenCodeCommand("~\\bin\\opencode.cmd", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\opencode.cmd"
+}), "C:\\Users\\demo\\bin\\opencode.cmd");
 assert.equal(detectOpenCodeCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",
@@ -4723,6 +5308,11 @@ assert.equal(resolveHermesCommand("~/bin/hermes", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/hermes"
 }), "/Users/demo/bin/hermes");
+assert.equal(resolveHermesCommand("~\\bin\\hermes.exe", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\hermes.exe"
+}), "C:\\Users\\demo\\bin\\hermes.exe");
 assert.equal(resolveHermesCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",
@@ -4754,6 +5344,16 @@ assert.equal(isSyntheticHermesDefaultModel("hermes", "hermes-agent"), true);
 assert.equal(isSyntheticHermesDefaultModel("deepseek", "deepseek-chat"), false);
 assert.match(formatHermesError({ status: 401, data: { error: { message: "invalid API_SERVER_KEY" } } }), /Hermes API 请求失败/);
 assert.match(formatHermesError("No inference provider configured"), /Hermes 推理 provider 未配置/);
+
+const hermesBackendSource = await readFile(path.join(process.cwd(), "src/core/hermes-backend.ts"), "utf8");
+const hermesPollRunSource = hermesBackendSource.slice(hermesBackendSource.indexOf("private async pollRun"), hermesBackendSource.indexOf("private async fetchJson"));
+assert.match(hermesBackendSource, /const HERMES_INITIAL_POLL_DELAY_MS = 500/);
+assert.match(hermesBackendSource, /const HERMES_MAX_POLL_DELAY_MS = 5_000/);
+assert.match(hermesBackendSource, /const HERMES_POLL_JITTER_MS = 250/);
+assert.match(hermesPollRunSource, /Math\.random\(\) \* HERMES_POLL_JITTER_MS/);
+assert.match(hermesPollRunSource, /Math\.min\(pollDelayMs \* 1\.5, HERMES_MAX_POLL_DELAY_MS\)/);
+assert.match(hermesPollRunSource, /await delay\([^;]+signal\)/);
+assert.doesNotMatch(hermesPollRunSource, /await delay\(500\)/);
 
 const hermesCliDefaultArgs: string[][] = [];
 const hermesCliDefaultBackend = new HermesBackend({
@@ -5234,6 +5834,80 @@ try {
     ["raw/clippings/clip.md"]
   );
   assert.equal(selectSourcesForRunMode("lint", firstDiscovery, "/check raw/articles/demo.md").length, 0);
+  assert.equal(extractFirstUrl("网页收藏：https://example.com/a?b=1"), "https://example.com/a?b=1");
+  assert.equal(extractFirstUrl("没有链接"), null);
+  assert.equal(isWeChatUrl("https://mp.weixin.qq.com/s/demo"), true);
+  assert.equal(isWeChatUrl("https://example.com/s/demo"), false);
+  assert.equal(stripCollectPrefix("网页收藏： https://example.com/a"), "https://example.com/a");
+  assert.equal(isHtmlVerificationBlocked("<html>完成验证后即可继续访问</html>"), true);
+  assert.equal(isHtmlVerificationBlocked("<article>正常内容</article>"), false);
+  assert.equal(sanitizeWebCaptureFileName("A/B:C*D?E\"F<G>H|#[]"), "A B C D E F G H");
+  const agentRunnerSources = Array.from({ length: 22 }, (_, index) => ({
+    relativePath: `raw/articles/source-${index}.md`,
+    absolutePath: path.join(kbVault, "raw", "articles", `source-${index}.md`),
+    size: index + 1,
+    mtime: index + 1,
+    fingerprint: `fp-${index}`,
+    mime: index === 1 ? "image/png" : "text/markdown",
+    modality: index === 1 ? "image" : "text",
+    changed: true
+  })) as KnowledgeBaseSource[];
+  const codexKnowledgeInput = buildCodexKnowledgeInput("prompt", agentRunnerSources);
+  assert.equal(codexKnowledgeInput.length, 21);
+  assert.deepEqual(codexKnowledgeInput[0], { type: "text", text: "prompt", text_elements: [] });
+  assert.equal(codexKnowledgeInput[2].type, "localImage");
+  const openCodeKnowledgeParts = buildOpenCodeKnowledgeParts("prompt", agentRunnerSources);
+  assert.equal(openCodeKnowledgeParts.length, 21);
+  assert.deepEqual(requiredModalities(openCodeKnowledgeParts), ["text", "image"]);
+  assert.equal(selectOpenCodeModel([
+    { id: "text-only", providerId: "p", modelId: "text", label: "text", inputModalities: ["text"] },
+    { id: "vision", providerId: "p", modelId: "vision", label: "vision", inputModalities: ["text", "image"] }
+  ], "missing", "missing", ["text", "image"])?.id, "vision");
+  const transactionSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-snapshot-"));
+  try {
+    await mkdir(path.join(transactionSnapshotVault, "wiki"), { recursive: true });
+    await mkdir(path.join(transactionSnapshotVault, "outputs"), { recursive: true });
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "before", "utf8");
+    const transactionBefore = await snapshotKnowledgeTransaction(transactionSnapshotVault, ["wiki", "outputs"]);
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "after", "utf8");
+    await writeFile(path.join(transactionSnapshotVault, "wiki", "new.md"), "new", "utf8");
+    await writeFile(path.join(transactionSnapshotVault, "outputs", "kb-check.md"), "lint report", "utf8");
+    await commitLintReportOnly(transactionSnapshotVault, transactionBefore, "outputs/kb-check.md");
+    assert.equal(await readFile(path.join(transactionSnapshotVault, "wiki", "topic.md"), "utf8"), "before");
+    assert.equal(await fileExists(path.join(transactionSnapshotVault, "wiki", "new.md")), false);
+    assert.equal(await readFile(path.join(transactionSnapshotVault, "outputs", "kb-check.md"), "utf8"), "lint report");
+  } finally {
+    await rm(transactionSnapshotVault, { recursive: true, force: true });
+  }
+  const transactionLargeSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-large-snapshot-"));
+  let transactionLargeBefore: Awaited<ReturnType<typeof snapshotKnowledgeTransaction>> | null = null;
+  let transactionLargeTempDir = "";
+  try {
+    await mkdir(path.join(transactionLargeSnapshotVault, "wiki"), { recursive: true });
+    await mkdir(path.join(transactionLargeSnapshotVault, "outputs"), { recursive: true });
+    for (let index = 0; index <= KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD; index++) {
+      await writeFile(path.join(transactionLargeSnapshotVault, "wiki", `topic-${String(index).padStart(2, "0")}.md`), "aaaa", "utf8");
+    }
+    const targetPath = path.join(transactionLargeSnapshotVault, "wiki", "topic-00.md");
+    const targetStat = await stat(targetPath);
+    transactionLargeBefore = await snapshotKnowledgeTransaction(transactionLargeSnapshotVault, ["wiki", "outputs"]);
+    transactionLargeTempDir = transactionLargeBefore.tempDir ?? "";
+    assert.ok(transactionLargeTempDir);
+    const largeFileEntries = Array.from(transactionLargeBefore.entries.values()).filter((entry) => entry.kind === "file");
+    assert.ok(largeFileEntries.length > KNOWLEDGE_TRANSACTION_FILE_STORAGE_THRESHOLD);
+    assert.equal(largeFileEntries.some((entry) => entry.content), false);
+    assert.equal(largeFileEntries.every((entry) => entry.contentPath && entry.contentHash), true);
+    await writeFile(targetPath, "bbbb", "utf8");
+    await utimes(targetPath, new Date(targetStat.atimeMs), new Date(targetStat.mtimeMs));
+    await writeFile(path.join(transactionLargeSnapshotVault, "outputs", "kb-check.md"), "lint report", "utf8");
+    await commitLintReportOnly(transactionLargeSnapshotVault, transactionLargeBefore, "outputs/kb-check.md");
+    assert.equal(await readFile(targetPath, "utf8"), "aaaa");
+    assert.equal(await readFile(path.join(transactionLargeSnapshotVault, "outputs", "kb-check.md"), "utf8"), "lint report");
+  } finally {
+    await disposeKnowledgeTransactionSnapshot(transactionLargeBefore);
+    if (transactionLargeTempDir) assert.equal(await fileExists(transactionLargeTempDir), false);
+    await rm(transactionLargeSnapshotVault, { recursive: true, force: true });
+  }
   const lintDiscovery = await discoverKnowledgeBaseSources(kbVault, {}, "lint");
   assert.ok(lintDiscovery.reportPath.startsWith("outputs/maintenance/kb-check-"));
   await mkdir(path.join(kbVault, "outputs"), { recursive: true });
@@ -9454,6 +10128,34 @@ try {
   assert.ok(report.includes("raw/articles/stale.md"));
 } finally {
   await rm(rawDigestCalibrationDowngradeVault, { recursive: true, force: true });
+}
+
+const rawDigestCalibrationCancelVault = await createMaintenanceVaultForTest("codex-kb-raw-digest-calibration-cancel-");
+try {
+  const rawBeforeCancel = await readFile(path.join(rawDigestCalibrationCancelVault, "raw", "articles", "new.md"));
+  await mkdir(path.join(rawDigestCalibrationCancelVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(rawDigestCalibrationCancelVault, "wiki", "ai-intelligence", "references", "cancel.md"), [
+    "# Cancel Evidence",
+    "",
+    "来源：[[raw/articles/new]]",
+    "这份 raw 已经有强正文证据，但校准最终保存窗口会被取消。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(rawDigestCalibrationCancelVault, {
+    cancelBeforeSaveCall: 2
+  });
+  const result = await manager.calibrateRawDigestStatus();
+  assert.equal(result.status, "canceled");
+  assert.equal(result.processedSources.length, 0);
+  assert.match(result.error ?? "", /用户取消/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /用户取消/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await readFile(path.join(rawDigestCalibrationCancelVault, "raw", "articles", "new.md"), "utf8"), rawBeforeCancel.toString("utf8"));
+  assert.equal(await fileExists(path.join(rawDigestCalibrationCancelVault, "outputs", ".ingest-tracker.md")), false);
+} finally {
+  await rm(rawDigestCalibrationCancelVault, { recursive: true, force: true });
 }
 
 const maintenanceBatchLimitVault = await createMaintenanceVaultForTest("codex-kb-maintain-batch-limit-");

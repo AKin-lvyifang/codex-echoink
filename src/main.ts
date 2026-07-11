@@ -3,18 +3,20 @@ import * as path from "path";
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { CodexService } from "./core/codex-service";
 import { diagnoseCodexError } from "./core/codex-diagnostics";
+import { swallowError } from "./core/error-handling";
 import { HermesBackend } from "./core/hermes-backend";
 import { isSyntheticHermesDefaultModel } from "./core/hermes-models";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
+import { CodexServerRequestRouter } from "./core/server-request-router";
 import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { buildEchoInkResourceCatalog, skillResourcesForScope } from "./resources/registry";
-import { EchoInkMcpBroker } from "./resources/mcp-broker";
+import { closeMcpBrokerConnectionPool, EchoInkMcpBroker } from "./resources/mcp-broker";
 import { resolveMcpConnectionConfig } from "./resources/mcp-connections";
 import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope } from "./resources/types";
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
-import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
+import type { CodexNotification, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
@@ -57,6 +59,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
   private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
+  private serverRequestRouter: CodexServerRequestRouter | null = null;
   private startupMaintenancePromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -159,6 +162,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.knowledgeBase?.unload();
     this.review?.unload();
     await this.saveSettings(true);
+    await closeMcpBrokerConnectionPool();
     await this.codex?.disconnect();
   }
 
@@ -255,7 +259,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         activeApiProvider: getActiveApiProvider(this.settings),
         vaultPath: this.getVaultPath(),
         onNotification: (notification) => this.handleCodexNotification(notification),
-        onServerRequest: (request) => this.handleServerRequest(request)
+        onServerRequest: (request) => this.getServerRequestRouter().handle(request)
       });
     }
     this.connectPromise = (async () => {
@@ -389,7 +393,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void this.flushSettingsSave();
+      void this.flushSettingsSave().catch(swallowError("scheduled settings save failed"));
     }, 750);
   }
 
@@ -538,12 +542,23 @@ export default class CodexForObsidianPlugin extends Plugin {
     return true;
   }
 
-  private handleCodexNotification(notification: any): void {
+  private handleCodexNotification(notification: CodexNotification): void {
     if (this.knowledgeBase?.handleCodexNotification(notification)) {
       this.getCodexView()?.handleKnowledgeBaseCodexNotification(notification);
       return;
     }
     this.getCodexView()?.handleCodexNotification(notification);
+  }
+
+  private getServerRequestRouter(): CodexServerRequestRouter {
+    if (!this.serverRequestRouter) {
+      this.serverRequestRouter = new CodexServerRequestRouter({
+        confirm: (title, body, acceptText, declineText) => confirmModal(this.app, title, body, acceptText, declineText),
+        requestUserInput: (questions) => requestUserInputModal(this.app, questions),
+        openUrl: (url) => window.open(url)
+      });
+    }
+    return this.serverRequestRouter;
   }
 
   private async flushSettingsSave(options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
@@ -552,8 +567,15 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory();
       await this.saveData(this.settings);
     });
-    this.saveQueue = run.catch(() => undefined);
+    this.saveQueue = run.catch((error) => {
+      this.reportSettingsSaveError(error);
+    });
     await run;
+  }
+
+  private reportSettingsSaveError(error: unknown): void {
+    console.error("[EchoInk] settings save failed:", error);
+    new Notice(this.settings.settingsLanguage === "en" ? "EchoInk settings save failed" : "EchoInk 设置保存失败，请稍后重试");
   }
 
   private async flushRawWrites(): Promise<void> {
@@ -738,7 +760,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         version: ""
       };
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes backend after loading skills"));
     }
   }
 
@@ -778,43 +800,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       await backend.connect();
       return await backend.listSkills();
     } finally {
-      await backend.disconnect().catch(() => undefined);
+      await backend.disconnect().catch(swallowError("disconnect Hermes skill resource backend"));
     }
   }
 
-  private async handleServerRequest(request: CodexServerRequest): Promise<any> {
-    if (request.method === "item/commandExecution/requestApproval") {
-      const command = request.params?.command ?? "未知命令";
-      const accepted = await confirmModal(this.app, "Codex 请求执行命令", `${command}\n\n${request.params?.reason ?? ""}`);
-      return { decision: accepted ? "accept" : "decline" };
-    }
-    if (request.method === "item/fileChange/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求修改文件", request.params?.reason ?? "是否允许本次文件修改？");
-      return { decision: accepted ? "accept" : "decline" };
-    }
-    if (request.method === "item/permissions/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求额外权限", request.params?.reason ?? "是否允许本次额外权限？");
-      return accepted
-        ? {
-            permissions: request.params?.permissions ?? {},
-            scope: "turn"
-          }
-        : { permissions: {}, scope: "turn" };
-    }
-    if (request.method === "item/tool/requestUserInput") {
-      const answers = await requestUserInputModal(this.app, request.params?.questions ?? []);
-      return { answers };
-    }
-    if (request.method === "mcpServer/elicitation/request") {
-      const params = request.params ?? {};
-      if (params.mode === "url") {
-        const accepted = await confirmModal(this.app, "MCP 需要网页登录", `${params.message}\n\n${params.url}`, "打开", "取消");
-        if (accepted) window.open(params.url);
-        return { action: accepted ? "accept" : "cancel", content: null, _meta: null };
-      }
-      const accepted = await confirmModal(this.app, `MCP：${params.serverName}`, params.message ?? "是否继续？");
-      return { action: accepted ? "accept" : "decline", content: {}, _meta: null };
-    }
-    return {};
-  }
 }

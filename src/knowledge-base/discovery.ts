@@ -4,6 +4,7 @@ import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
+import { formatDateForFile, isMissingPathError, normalizeSlashes } from "./utils";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -176,20 +177,4 @@ async function walkFiles(dir: string): Promise<string[]> {
     else if (entry.isFile()) result.push(full);
   }
   return result;
-}
-
-function formatDateForFile(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT");
 }

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE } from "./constants";
 import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
@@ -8,6 +9,7 @@ import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type K
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus } from "./types";
+import { exists, normalizeSlashes } from "./utils";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -379,7 +381,7 @@ async function scanDashboardDirectory(vaultPath: string, relativeDir: string, op
       limited = true;
       return;
     }
-    const entries = await fsp.readdir(current, { withFileTypes: true }).catch(() => []);
+    const entries = await fsp.readdir(current, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn(`read dashboard directory ${path.relative(vaultPath, current) || "."}`));
     for (const entry of entries) {
       if (files.length >= MAX_DASHBOARD_FILES) {
         limited = true;
@@ -939,7 +941,7 @@ async function resolveLatestReportPath(vaultPath: string, configuredPath: string
 }
 
 async function countImmediateDirectories(root: string): Promise<number> {
-  const entries: fs.Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+  const entries: fs.Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read dashboard report directory"));
   return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).length;
 }
 
@@ -1269,12 +1271,4 @@ function buildWarnings(input: { rulesFileExists: boolean; rawExists: boolean; wi
 function normalizeRelativePath(value: string, fallback: string): string {
   const clean = value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/");
   return clean || fallback;
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
 }

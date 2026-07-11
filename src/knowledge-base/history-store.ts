@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import { pluginDataDir, rawStorageDir, resolveRawRef } from "../core/raw-message-store";
 import { isKnowledgeBaseSession, type ChatMessage, type CodexForObsidianSettings, type StoredSession } from "../settings/settings";
 
@@ -127,9 +128,9 @@ export function compactKnowledgeBaseMessagesToActiveDay(session: StoredSession, 
   const activeDate = activeKnowledgeBaseHistoryDate(session.messages, session.historyActiveDate, now);
   const activeDates = activeKnowledgeBaseMessageDates(session.messages, activeDate, now);
   const activeMessages = session.messages.filter((message) => activeDates.has(localDateKeyForTimestamp(message.createdAt)));
-  const changed = activeDate !== (session as any).historyActiveDate || activeMessages.length !== session.messages.length;
+  const changed = activeDate !== session.historyActiveDate || activeMessages.length !== session.messages.length;
   session.messages = activeMessages.slice(-KNOWLEDGE_BASE_ACTIVE_DAY_MESSAGE_LIMIT);
-  (session as any).historyActiveDate = activeDate || undefined;
+  session.historyActiveDate = activeDate || undefined;
   return changed;
 }
 
@@ -173,7 +174,7 @@ export async function persistAndCompactKnowledgeBaseHistory(
   return {
     changed: hydrated || changed,
     messageCount,
-    activeDate: (session as any).historyActiveDate ?? ""
+    activeDate: session.historyActiveDate ?? ""
   };
 }
 
@@ -188,7 +189,7 @@ export async function persistKnowledgeBaseHistoryMessages(
   const touchedDays: KnowledgeBaseHistoryDaySummary[] = [];
   for (const [date, dayMessages] of grouped.entries()) {
     const file = knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.id, date);
-    const existing = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, date).catch(() => []);
+    const existing = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, date).catch(emptyArrayOnMissingPathOrWarn(`read existing knowledge history day ${date}`));
     const merged = mergeHistoryMessages(existing, dayMessages);
     await writeJsonlAtomic(file, merged);
     touchedDays.push(summarizeHistoryDay(date, merged));
@@ -226,18 +227,18 @@ export async function readKnowledgeBaseHistoryDay(vaultPath: string, pluginDir: 
 export async function rebuildKnowledgeBaseHistoryIndex(vaultPath: string, pluginDir: string): Promise<KnowledgeBaseHistoryIndex> {
   const root = knowledgeBaseHistoryRoot(vaultPath, pluginDir);
   const sessionsRoot = path.join(root, "sessions");
-  const sessionDirs = await readdir(sessionsRoot, { withFileTypes: true }).catch(() => []);
+  const sessionDirs = await readdir(sessionsRoot, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read knowledge history session directories"));
   const sessions: KnowledgeBaseHistorySessionSummary[] = [];
   for (const entry of sessionDirs) {
     if (!entry.isDirectory()) continue;
     const sessionId = entry.name;
     const dir = path.join(sessionsRoot, entry.name);
-    const files = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    const files = await readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn(`read knowledge history day files for ${sessionId}`));
     const days: KnowledgeBaseHistoryDaySummary[] = [];
     for (const file of files) {
       if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
       const date = file.name.replace(/\.jsonl$/, "");
-      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, sessionId, date).catch(() => []);
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, sessionId, date).catch(emptyArrayOnMissingPathOrWarn(`read knowledge history day ${date} for ${sessionId}`));
       if (messages.length) days.push(summarizeHistoryDay(date, messages));
     }
     const sorted = days.sort((a, b) => b.date.localeCompare(a.date));
@@ -281,7 +282,7 @@ export async function exportKnowledgeBaseHistory(vaultPath: string, pluginDir: s
     for (const day of session.days) {
       days.push({
         ...day,
-        messages: await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => [])
+        messages: await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`export knowledge history day ${day.date}`))
       });
     }
     sessions.push({ ...session, days });
@@ -298,7 +299,7 @@ export async function compactOldKnowledgeBaseProcessHistory(vaultPath: string, p
   for (const session of index.sessions) {
     for (const day of session.days) {
       if (day.date >= activeDate) continue;
-      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => []);
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`compact knowledge history day ${day.date}`));
       let changed = false;
       const compacted = messages.map((message) => {
         if (!message.itemType || message.role === "user" || message.role === "assistant") return message;
@@ -328,7 +329,7 @@ export async function removeKnowledgeBaseHistory(vaultPath: string, pluginDir: s
   let removedMessageCount = 0;
   for (const session of index.sessions) {
     for (const day of session.days) {
-      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => []);
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`remove knowledge history day ${day.date}`));
       removedMessageCount += messages.length || day.messageCount;
       await removeHistoryRawRefs(vaultPath, pluginDir, messages);
     }
@@ -355,7 +356,7 @@ export async function removeKnowledgeBaseHistoryDays(
   for (const session of sessions) {
     for (const day of session.days) {
       if (!targets.has(day.date)) continue;
-      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(() => []);
+      const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`remove selected knowledge history day ${day.date}`));
       removedMessageCount += messages.length || day.messageCount;
       await removeHistoryRawRefs(vaultPath, pluginDir, messages);
       await rm(knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.sessionId, day.date), { force: true });
@@ -406,7 +407,7 @@ async function hydrateActiveKnowledgeBaseHistoryDate(
     .filter((date) => date < today && !session.messages.some((message) => localDateKeyForTimestamp(message.createdAt) === date))
     .sort((left, right) => right.localeCompare(left))[0];
   if (!historyDate) return false;
-  const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, historyDate).catch(() => []);
+  const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, historyDate).catch(emptyArrayOnMissingPathOrWarn(`hydrate active knowledge history day ${historyDate}`));
   if (!messages.length) return false;
   session.messages = mergeHistoryMessages(session.messages, messages);
   session.historyActiveDate = historyDate;
@@ -479,33 +480,39 @@ async function updateKnowledgeBaseHistoryIndex(
   } satisfies KnowledgeBaseHistoryIndex);
 }
 
-function normalizeHistorySessionSummary(value: any): KnowledgeBaseHistorySessionSummary | null {
-  if (!value?.sessionId || !Array.isArray(value?.days)) return null;
-  const days = value.days.map(normalizeHistoryDaySummary).filter(Boolean) as KnowledgeBaseHistoryDaySummary[];
+function normalizeHistorySessionSummary(value: unknown): KnowledgeBaseHistorySessionSummary | null {
+  const record = historyRecord(value);
+  if (!record?.sessionId || !Array.isArray(record.days)) return null;
+  const days = record.days.map(normalizeHistoryDaySummary).filter(Boolean) as KnowledgeBaseHistoryDaySummary[];
   return {
-    sessionId: String(value.sessionId),
-    title: typeof value.title === "string" && value.title.trim() ? value.title.trim() : "知识库管理",
+    sessionId: String(record.sessionId),
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : "知识库管理",
     kind: "knowledge-base",
-    activeDate: typeof value.activeDate === "string" ? value.activeDate : days[0]?.date ?? "",
-    messageCount: typeof value.messageCount === "number" ? value.messageCount : days.reduce((sum, day) => sum + day.messageCount, 0),
-    dayCount: typeof value.dayCount === "number" ? value.dayCount : days.length,
-    updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : 0,
+    activeDate: typeof record.activeDate === "string" ? record.activeDate : days[0]?.date ?? "",
+    messageCount: typeof record.messageCount === "number" ? record.messageCount : days.reduce((sum, day) => sum + day.messageCount, 0),
+    dayCount: typeof record.dayCount === "number" ? record.dayCount : days.length,
+    updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : 0,
     days
   };
 }
 
-function normalizeHistoryDaySummary(value: any): KnowledgeBaseHistoryDaySummary | null {
-  if (typeof value?.date !== "string") return null;
+function normalizeHistoryDaySummary(value: unknown): KnowledgeBaseHistoryDaySummary | null {
+  const record = historyRecord(value);
+  if (typeof record?.date !== "string") return null;
   return {
-    date: value.date,
-    messageCount: numberOrZero(value.messageCount),
-    userMessageCount: numberOrZero(value.userMessageCount),
-    assistantMessageCount: numberOrZero(value.assistantMessageCount),
-    processMessageCount: numberOrZero(value.processMessageCount),
-    failedMessageCount: numberOrZero(value.failedMessageCount),
-    firstMessageAt: numberOrZero(value.firstMessageAt),
-    lastMessageAt: numberOrZero(value.lastMessageAt)
+    date: record.date,
+    messageCount: numberOrZero(record.messageCount),
+    userMessageCount: numberOrZero(record.userMessageCount),
+    assistantMessageCount: numberOrZero(record.assistantMessageCount),
+    processMessageCount: numberOrZero(record.processMessageCount),
+    failedMessageCount: numberOrZero(record.failedMessageCount),
+    firstMessageAt: numberOrZero(record.firstMessageAt),
+    lastMessageAt: numberOrZero(record.lastMessageAt)
   };
+}
+
+function historyRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function compactProcessText(message: ChatMessage): string {

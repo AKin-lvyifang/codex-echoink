@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { expandHome } from "./path-utils";
 
 export interface HermesCommandResolveOptions {
   home?: string;
@@ -72,10 +73,4 @@ function hermesCommandCandidates(home: string, platform: NodeJS.Platform | strin
     "/opt/homebrew/bin/hermes",
     "/usr/local/bin/hermes"
   ];
-}
-
-function expandHome(value: string, home: string): string {
-  if (value === "~") return home;
-  if (value.startsWith("~/") || value.startsWith("~\\")) return path.join(home, value.slice(2));
-  return value;
 }

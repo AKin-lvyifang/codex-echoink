@@ -25,8 +25,23 @@ export interface KnowledgeDashboardActions {
 
 export interface KnowledgeDashboardTooltipState {
   panels: HTMLElement[];
+  tooltips: KnowledgeDashboardHealthTooltipEntry[];
   closeTimers: Set<number>;
   cleanups: Array<() => void>;
+}
+
+interface KnowledgeDashboardHealthTooltipEntry {
+  wrapper: HTMLElement;
+  button: HTMLButtonElement;
+  panel: HTMLElement;
+  bridge: HTMLElement;
+  placement: "summary" | "meter";
+  lastPointer: { x: number; y: number } | null;
+  closeTimer?: number;
+  closePanel: () => void;
+  repositionOpenPanel: () => void;
+  trackOpenTooltipPointer: (event: MouseEvent) => void;
+  isTooltipTarget: (target: EventTarget | null) => boolean;
 }
 
 const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING = 16;
@@ -37,6 +52,7 @@ const HEATMAP_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "
 export function createKnowledgeDashboardTooltipState(): KnowledgeDashboardTooltipState {
   return {
     panels: [],
+    tooltips: [],
     closeTimers: new Set<number>(),
     cleanups: []
   };
@@ -106,14 +122,19 @@ export function clearKnowledgeDashboardHealthTooltips(state: KnowledgeDashboardT
     window.clearTimeout(timer);
   }
   state.closeTimers.clear();
-  for (const cleanup of state.cleanups) {
-    cleanup();
-  }
-  state.cleanups = [];
+  state.tooltips = [];
   for (const panel of state.panels) {
     panel.remove();
   }
   state.panels = [];
+}
+
+export function disposeKnowledgeDashboardTooltipState(state: KnowledgeDashboardTooltipState): void {
+  clearKnowledgeDashboardHealthTooltips(state);
+  for (const cleanup of state.cleanups) {
+    cleanup();
+  }
+  state.cleanups = [];
 }
 
 export function isKnowledgeDashboardHealthTooltipHoverPoint(
@@ -258,6 +279,7 @@ function addKnowledgeDashboardHealthTooltip(
   placement: "summary" | "meter",
   state: KnowledgeDashboardTooltipState
 ): void {
+  ensureKnowledgeDashboardHealthTooltipDelegates(state);
   const placementClass = placement === "summary" ? "codex-kb-health-tooltip-placement-summary" : "codex-kb-health-tooltip-placement-meter";
   const wrapper = container.createSpan({ cls: `codex-kb-health-tooltip ${placementClass}` });
   const tooltipId = newId("codex-kb-health-tooltip");
@@ -292,10 +314,9 @@ function addKnowledgeDashboardHealthTooltip(
   note.createDiv({ text: health.scoreCheckNote || "体检成功只代表检查完成；健康分反映检查发现的结构问题。" });
   note.createDiv({ text: health.scoreThresholdText || "85+ 健康，60-84 风险，低于 60 异常。" });
 
-  let closeTimer: number | undefined;
-  let lastTooltipPointer: { x: number; y: number } | null = null;
+  let tooltip: KnowledgeDashboardHealthTooltipEntry;
   const rememberTooltipPointer = (event: MouseEvent) => {
-    lastTooltipPointer = { x: event.clientX, y: event.clientY };
+    tooltip.lastPointer = { x: event.clientX, y: event.clientY };
   };
   const hidePanelState = () => {
     button.setAttribute("aria-expanded", "false");
@@ -305,10 +326,10 @@ function addKnowledgeDashboardHealthTooltip(
   };
   hidePanelState();
   const clearCloseTimer = () => {
-    if (!closeTimer) return;
-    window.clearTimeout(closeTimer);
-    state.closeTimers.delete(closeTimer);
-    closeTimer = undefined;
+    if (!tooltip.closeTimer) return;
+    window.clearTimeout(tooltip.closeTimer);
+    state.closeTimers.delete(tooltip.closeTimer);
+    tooltip.closeTimer = undefined;
   };
   const openPanel = () => {
     clearCloseTimer();
@@ -328,8 +349,8 @@ function addKnowledgeDashboardHealthTooltip(
   };
   const scheduleClose = (delayMs = 160) => {
     clearCloseTimer();
-    closeTimer = window.setTimeout(closePanelIfPointerOutside, delayMs);
-    state.closeTimers.add(closeTimer);
+    tooltip.closeTimer = window.setTimeout(closePanelIfPointerOutside, delayMs);
+    state.closeTimers.add(tooltip.closeTimer);
   };
   const isPointerInsideTooltip = (event: MouseEvent) => isKnowledgeDashboardHealthTooltipHoverPoint(
     button.getBoundingClientRect(),
@@ -342,25 +363,20 @@ function addKnowledgeDashboardHealthTooltip(
     return button.contains(target) || panel.contains(target) || bridge.contains(target);
   };
   const isPointerCurrentlyInsideTooltip = () => {
-    if (!lastTooltipPointer) return false;
-    const elementAtPointer = document.elementFromPoint(lastTooltipPointer.x, lastTooltipPointer.y);
+    if (!tooltip.lastPointer) return false;
+    const elementAtPointer = document.elementFromPoint(tooltip.lastPointer.x, tooltip.lastPointer.y);
     if (isTooltipTarget(elementAtPointer)) return true;
     return isKnowledgeDashboardHealthTooltipHoverPoint(
       button.getBoundingClientRect(),
       panel.getBoundingClientRect(),
-      lastTooltipPointer.x,
-      lastTooltipPointer.y
+      tooltip.lastPointer.x,
+      tooltip.lastPointer.y
     );
   };
   const closePanelIfPointerOutside = () => {
-    if (closeTimer) state.closeTimers.delete(closeTimer);
-    closeTimer = undefined;
+    if (tooltip.closeTimer) state.closeTimers.delete(tooltip.closeTimer);
+    tooltip.closeTimer = undefined;
     if (isPointerCurrentlyInsideTooltip()) return;
-    closePanel();
-  };
-  const closeOnOutsidePointerDown = (event: MouseEvent) => {
-    if (!wrapper.hasClass("is-tooltip-open")) return;
-    if (isTooltipTarget(event.target)) return;
     closePanel();
   };
   const trackOpenTooltipPointer = (event: MouseEvent) => {
@@ -383,18 +399,19 @@ function addKnowledgeDashboardHealthTooltip(
     if (!wrapper.hasClass("is-tooltip-open")) return;
     positionKnowledgeDashboardHealthTooltip(button, panel, bridge, placement);
   };
-  window.addEventListener("resize", repositionOpenPanel);
-  window.addEventListener("scroll", repositionOpenPanel, true);
-  window.addEventListener("pointermove", trackOpenTooltipPointer, { passive: true });
-  window.addEventListener("mousemove", trackOpenTooltipPointer, { passive: true });
-  document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
-  document.addEventListener("mousedown", closeOnOutsidePointerDown, true);
-  state.cleanups.push(() => window.removeEventListener("resize", repositionOpenPanel));
-  state.cleanups.push(() => window.removeEventListener("scroll", repositionOpenPanel, true));
-  state.cleanups.push(() => window.removeEventListener("pointermove", trackOpenTooltipPointer));
-  state.cleanups.push(() => window.removeEventListener("mousemove", trackOpenTooltipPointer));
-  state.cleanups.push(() => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true));
-  state.cleanups.push(() => document.removeEventListener("mousedown", closeOnOutsidePointerDown, true));
+  tooltip = {
+    wrapper,
+    button,
+    panel,
+    bridge,
+    placement,
+    lastPointer: null,
+    closePanel,
+    repositionOpenPanel,
+    trackOpenTooltipPointer,
+    isTooltipTarget
+  };
+  state.tooltips.push(tooltip);
   const openPanelFromPointer = (event: MouseEvent) => {
     rememberTooltipPointer(event);
     openPanel();
@@ -430,6 +447,39 @@ function addKnowledgeDashboardHealthTooltip(
   bridge.onpointerenter = openPanelFromPointer;
   bridge.onmouseleave = (event) => scheduleCloseIfOutside(event);
   bridge.onpointerleave = (event) => scheduleCloseIfOutside(event);
+}
+
+function ensureKnowledgeDashboardHealthTooltipDelegates(state: KnowledgeDashboardTooltipState): void {
+  if (state.cleanups.length) return;
+  const repositionOpenHealthTooltipPanels = () => {
+    for (const tooltip of state.tooltips) {
+      tooltip.repositionOpenPanel();
+    }
+  };
+  const trackOpenHealthTooltipPointer = (event: MouseEvent) => {
+    for (const tooltip of state.tooltips) {
+      tooltip.trackOpenTooltipPointer(event);
+    }
+  };
+  const closeOpenHealthTooltipOnOutsidePointer = (event: MouseEvent) => {
+    for (const tooltip of state.tooltips) {
+      if (!tooltip.wrapper.hasClass("is-tooltip-open")) continue;
+      if (tooltip.isTooltipTarget(event.target)) continue;
+      tooltip.closePanel();
+    }
+  };
+  window.addEventListener("resize", repositionOpenHealthTooltipPanels);
+  window.addEventListener("scroll", repositionOpenHealthTooltipPanels, true);
+  window.addEventListener("pointermove", trackOpenHealthTooltipPointer, { passive: true });
+  window.addEventListener("mousemove", trackOpenHealthTooltipPointer, { passive: true });
+  document.addEventListener("pointerdown", closeOpenHealthTooltipOnOutsidePointer, true);
+  document.addEventListener("mousedown", closeOpenHealthTooltipOnOutsidePointer, true);
+  state.cleanups.push(() => window.removeEventListener("resize", repositionOpenHealthTooltipPanels));
+  state.cleanups.push(() => window.removeEventListener("scroll", repositionOpenHealthTooltipPanels, true));
+  state.cleanups.push(() => window.removeEventListener("pointermove", trackOpenHealthTooltipPointer));
+  state.cleanups.push(() => window.removeEventListener("mousemove", trackOpenHealthTooltipPointer));
+  state.cleanups.push(() => document.removeEventListener("pointerdown", closeOpenHealthTooltipOnOutsidePointer, true));
+  state.cleanups.push(() => document.removeEventListener("mousedown", closeOpenHealthTooltipOnOutsidePointer, true));
 }
 
 function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTMLElement, bridge: HTMLElement, placement: "summary" | "meter"): void {

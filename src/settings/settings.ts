@@ -688,11 +688,13 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   activeSessionId: ""
 };
 
-export function normalizeSettingsData(data: any): { settings: CodexForObsidianSettings; changed: boolean } {
+export function normalizeSettingsData(input: unknown): { settings: CodexForObsidianSettings; changed: boolean } {
+  const data = settingsRecord(input) ?? {};
+  const agentsData = settingsRecord(data.agents);
   const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
   const normalizedLanguage = normalizeSettingsLanguage(data?.settingsLanguage);
-  const normalizedAgentBackend = normalizeAgentBackendMode(data?.agentBackend ?? data?.agents?.defaultBackend);
-  const normalizedOpenCode = normalizeOpenCodeSettings(data?.opencode ?? data?.agents?.opencode);
+  const normalizedAgentBackend = normalizeAgentBackendMode(data?.agentBackend ?? agentsData?.defaultBackend);
+  const normalizedOpenCode = normalizeOpenCodeSettings(data?.opencode ?? agentsData?.opencode);
   const normalizedAgents = normalizeAgentSettings(data?.agents, data, normalizedAgentBackend, normalizedOpenCode);
   const settings: CodexForObsidianSettings = {
     ...DEFAULT_SETTINGS,
@@ -874,17 +876,19 @@ export function ensureModelChoices(models: CodexModel[], ...preferredModels: Arr
   return [...preferred, ...models];
 }
 
-export function normalizeEditorActionSettings(value: any, previousVersion = DEFAULT_SETTINGS.settingsVersion): EditorAiActionSettings {
+export function normalizeEditorActionSettings(input: unknown, previousVersion = DEFAULT_SETTINGS.settingsVersion): EditorAiActionSettings {
+  const value = settingsRecord(input) ?? {};
   const defaults = DEFAULT_SETTINGS.editorActions;
   const actions = normalizeEditorActionConfigs(value?.actions, defaults.actions, previousVersion);
   const styles = normalizeEditorActionStyles(value?.styles, defaults.styles, previousVersion);
-  const defaultStyleId = typeof value?.defaultStyleId === "string" && styles.some((style) => style.id === value.defaultStyleId.trim())
-    ? value.defaultStyleId.trim()
+  const requestedDefaultStyleId = normalizeOptionalText(value?.defaultStyleId);
+  const defaultStyleId = requestedDefaultStyleId && styles.some((style) => style.id === requestedDefaultStyleId)
+    ? requestedDefaultStyleId
     : defaults.defaultStyleId;
   const legacyContextCharsBefore = normalizeEditorActionPerformanceNumber(value?.contextCharsBefore, defaults.contextCharsBefore, 1200, previousVersion, 0, 10000);
   const legacyContextCharsAfter = normalizeEditorActionPerformanceNumber(value?.contextCharsAfter, defaults.contextCharsAfter, 1200, previousVersion, 0, 10000);
   const legacyTimeoutMs = normalizeEditorActionTimeoutMs(value?.timeoutMs, defaults.timeoutMs, previousVersion);
-  const hasExistingEditorActionSettings = value && typeof value === "object" && !Array.isArray(value);
+  const hasExistingEditorActionSettings = Boolean(settingsRecord(input));
   const legacyUpgrade = hasExistingEditorActionSettings && previousVersion < 14;
   const qualityMode = legacyUpgrade ? "fast" : normalizeEditorActionQualityMode(value?.qualityMode, defaults.qualityMode);
   const modeConfigs = normalizeEditorActionModeConfigs(previousVersion < 14 ? null : value?.modeConfigs, defaults.modeConfigs, legacyUpgrade ? {
@@ -916,7 +920,8 @@ export function resolveEditorActionModeConfig(settings: EditorAiActionSettings, 
   return settings.modeConfigs[mode] ?? settings.modeConfigs.quality ?? settings.modeConfigs.fast ?? DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality;
 }
 
-export function normalizeWorkspaceResources(value: any): WorkspaceResourceToggles {
+export function normalizeWorkspaceResources(input: unknown): WorkspaceResourceToggles {
+  const value = settingsRecord(input) ?? {};
   return {
     plugins: normalizeBooleanMap(value?.plugins),
     mcpServers: normalizeBooleanMap(value?.mcpServers),
@@ -924,7 +929,8 @@ export function normalizeWorkspaceResources(value: any): WorkspaceResourceToggle
   };
 }
 
-export function normalizeWorkspaceResourceCache(value: any): WorkspaceResourceCache {
+export function normalizeWorkspaceResourceCache(input: unknown): WorkspaceResourceCache {
+  const value = settingsRecord(input) ?? {};
   return {
     ...(normalizeCacheEntry(value?.plugins, normalizeCachedPlugin) ? { plugins: normalizeCacheEntry(value?.plugins, normalizeCachedPlugin) } : {}),
     ...(normalizeCacheEntry(value?.mcp, normalizeCachedMcp) ? { mcp: normalizeCacheEntry(value?.mcp, normalizeCachedMcp) } : {}),
@@ -932,22 +938,24 @@ export function normalizeWorkspaceResourceCache(value: any): WorkspaceResourceCa
   };
 }
 
-function normalizeEditorActionSummaryCache(value: any): EditorAiActionSettings["summaryCache"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const entries = Object.values(value)
-    .map((item: any) => {
-      const filePath = normalizeText(item?.filePath, "");
-      const summary = normalizeText(item?.summary, "");
-      const contentHash = normalizeText(item?.contentHash, "");
+function normalizeEditorActionSummaryCache(value: unknown): EditorAiActionSettings["summaryCache"] {
+  const record = settingsRecord(value);
+  if (!record) return {};
+  const entries = Object.values(record)
+    .map((item: unknown) => {
+      const itemRecord = settingsRecord(item) ?? {};
+      const filePath = normalizeText(itemRecord.filePath, "");
+      const summary = normalizeText(itemRecord.summary, "");
+      const contentHash = normalizeText(itemRecord.contentHash, "");
       if (!filePath || !summary || !contentHash) return null;
       return {
         filePath,
-        mtime: normalizeNonNegativeNumber(item?.mtime),
-        size: normalizeNonNegativeNumber(item?.size),
+        mtime: normalizeNonNegativeNumber(itemRecord.mtime),
+        size: normalizeNonNegativeNumber(itemRecord.size),
         contentHash,
         summary,
-        updatedAt: normalizeNonNegativeNumber(item?.updatedAt),
-        lastUsedAt: normalizeNonNegativeNumber(item?.lastUsedAt ?? item?.updatedAt)
+        updatedAt: normalizeNonNegativeNumber(itemRecord.updatedAt),
+        lastUsedAt: normalizeNonNegativeNumber(itemRecord.lastUsedAt ?? itemRecord.updatedAt)
       };
     })
     .filter((item): item is EditorAiActionSettings["summaryCache"][string] => Boolean(item))
@@ -956,7 +964,7 @@ function normalizeEditorActionSummaryCache(value: any): EditorAiActionSettings["
   return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
 }
 
-function normalizeArticleUnderstandingCache(value: any, legacySummaryCache: any, fallbackModel: string): ArticleUnderstandingCache {
+function normalizeArticleUnderstandingCache(value: unknown, legacySummaryCache: unknown, fallbackModel: string): ArticleUnderstandingCache {
   const direct = normalizeArticleUnderstandingCacheEntries(value);
   if (Object.keys(direct).length) return direct;
   const summaries = Object.values(normalizeEditorActionSummaryCache(legacySummaryCache))
@@ -977,28 +985,30 @@ function normalizeArticleUnderstandingCache(value: any, legacySummaryCache: any,
   return Object.fromEntries(summaries.map((entry) => [entry.filePath, entry]));
 }
 
-function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstandingCache {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const entries = Object.values(value)
-    .map((item: any) => {
-      const filePath = normalizeText(item?.filePath, "");
-      const understanding = normalizeText(item?.understanding, "");
-      const contentHash = normalizeText(item?.contentHash, "");
-      const model = normalizeText(item?.model, DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality.model);
-      const mode = normalizeEditorActionQualityMode(item?.mode, "quality");
-      const fingerprint = normalizeArticleUnderstandingFingerprint(item?.fingerprint);
+function normalizeArticleUnderstandingCacheEntries(value: unknown): ArticleUnderstandingCache {
+  const record = settingsRecord(value);
+  if (!record) return {};
+  const entries = Object.values(record)
+    .map((item: unknown) => {
+      const itemRecord = settingsRecord(item) ?? {};
+      const filePath = normalizeText(itemRecord.filePath, "");
+      const understanding = normalizeText(itemRecord.understanding, "");
+      const contentHash = normalizeText(itemRecord.contentHash, "");
+      const model = normalizeText(itemRecord.model, DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality.model);
+      const mode = normalizeEditorActionQualityMode(itemRecord.mode, "quality");
+      const fingerprint = normalizeArticleUnderstandingFingerprint(itemRecord.fingerprint);
       if (!filePath || !understanding || !contentHash) return null;
       return {
         filePath,
-        mtime: normalizeNonNegativeNumber(item?.mtime),
-        size: normalizeNonNegativeNumber(item?.size),
+        mtime: normalizeNonNegativeNumber(itemRecord.mtime),
+        size: normalizeNonNegativeNumber(itemRecord.size),
         contentHash,
         model,
         mode,
         understanding,
         ...(fingerprint ? { fingerprint } : {}),
-        updatedAt: normalizeNonNegativeNumber(item?.updatedAt),
-        lastUsedAt: normalizeNonNegativeNumber(item?.lastUsedAt ?? item?.updatedAt)
+        updatedAt: normalizeNonNegativeNumber(itemRecord.updatedAt),
+        lastUsedAt: normalizeNonNegativeNumber(itemRecord.lastUsedAt ?? itemRecord.updatedAt)
       };
     })
     .filter((item): item is ArticleUnderstandingCache[string] => Boolean(item))
@@ -1007,10 +1017,11 @@ function normalizeArticleUnderstandingCacheEntries(value: any): ArticleUnderstan
   return Object.fromEntries(entries.map((entry) => [entry.filePath, entry]));
 }
 
-function normalizeArticleUnderstandingFingerprint(value: any): ArticleUnderstandingFingerprint | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+function normalizeArticleUnderstandingFingerprint(input: unknown): ArticleUnderstandingFingerprint | null {
+  const value = settingsRecord(input);
+  if (!value) return null;
   const stableLineHashes = Array.isArray(value.stableLineHashes)
-    ? value.stableLineHashes.map((item: any) => normalizeText(item, "")).filter(Boolean).slice(0, 12)
+    ? value.stableLineHashes.map((item: unknown) => normalizeText(item, "")).filter(Boolean).slice(0, 12)
     : [];
   const fingerprint = {
     textLength: normalizeNonNegativeNumber(value.textLength),
@@ -1095,35 +1106,36 @@ export function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeResourceManagementTab(value: any): ResourceManagementTab {
+function normalizeResourceManagementTab(value: unknown): ResourceManagementTab {
   return value === "mcp" || value === "skills" || value === "plugins" ? value : DEFAULT_SETTINGS.resourceManagementTab;
 }
 
-function normalizeSettingsTab(value: any): SettingsTab {
+function normalizeSettingsTab(value: unknown): SettingsTab {
   return value === "agents" || value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
-export function normalizeSettingsLanguage(value: any): SettingsLanguage {
+export function normalizeSettingsLanguage(value: unknown): SettingsLanguage {
   return value === "en" ? "en" : DEFAULT_SETTINGS.settingsLanguage;
 }
 
-function normalizeProviderMode(value: any): ProviderMode {
+function normalizeProviderMode(value: unknown): ProviderMode {
   return value === "custom-api" ? "custom-api" : DEFAULT_SETTINGS.providerMode;
 }
 
-function normalizeAgentBackendMode(value: any): AgentBackendMode {
+export function normalizeAgentBackendMode(value: unknown): AgentBackendMode {
   return value === "opencode" || value === "hermes" ? value : DEFAULT_SETTINGS.agentBackend;
 }
 
-function normalizeKnowledgeBaseBackendMode(value: any): KnowledgeBaseBackendMode {
+export function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBaseBackendMode {
   return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
 }
 
-function normalizeCapabilityBackendChoice(value: any): CapabilityBackendChoice {
+function normalizeCapabilityBackendChoice(value: unknown): CapabilityBackendChoice {
   return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
 }
 
-function normalizeCapabilityBackendSettings(value: any): CapabilityBackendSettings {
+function normalizeCapabilityBackendSettings(input: unknown): CapabilityBackendSettings {
+  const value = settingsRecord(input) ?? {};
   return {
     chatBackend: normalizeCapabilityBackendChoice(value?.chatBackend),
     knowledgeBackend: normalizeCapabilityBackendChoice(value?.knowledgeBackend),
@@ -1131,19 +1143,19 @@ function normalizeCapabilityBackendSettings(value: any): CapabilityBackendSettin
   };
 }
 
-function normalizeKnowledgeBaseRunStatus(value: any): KnowledgeBaseRunStatus {
+function normalizeKnowledgeBaseRunStatus(value: unknown): KnowledgeBaseRunStatus {
   return value === "running" || value === "success" || value === "failed" || value === "canceled" ? value : "idle";
 }
 
-function normalizeReviewRunStatus(value: any): ReviewRunStatus {
+function normalizeReviewRunStatus(value: unknown): ReviewRunStatus {
   return value === "running" || value === "success" || value === "failed" ? value : "idle";
 }
 
-function normalizeKnowledgeBaseInitStatus(value: any): KnowledgeBaseInitStatus {
+function normalizeKnowledgeBaseInitStatus(value: unknown): KnowledgeBaseInitStatus {
   return value === "preview-ready" || value === "initialized" || value === "failed" ? value : "not-started";
 }
 
-function normalizeKnowledgeBaseRulesPath(value: any, fallback: string): string {
+function normalizeKnowledgeBaseRulesPath(value: unknown, fallback: string): string {
   const raw = normalizeText(value, fallback).replace(/\\/g, "/").trim();
   const withoutLeadingSlash = raw.replace(/^\/+/, "");
   const clean = withoutLeadingSlash
@@ -1161,7 +1173,8 @@ function rulesFileChoiceRank(value: string): number {
   return value.includes("/") ? 3 : 2;
 }
 
-function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
+function normalizeOpenCodeSettings(input: unknown): OpenCodeSettings {
+  const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_OPENCODE_SETTINGS;
   return {
     cliPath: normalizeOptionalText(value?.cliPath),
@@ -1180,7 +1193,8 @@ function normalizeOpenCodeSettings(value: any): OpenCodeSettings {
   };
 }
 
-function normalizeHermesAgentSettings(value: any): HermesAgentSettings {
+function normalizeHermesAgentSettings(input: unknown): HermesAgentSettings {
+  const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_HERMES_AGENT_SETTINGS;
   const providerId = normalizeOptionalText(value?.providerId);
   const modelId = normalizeOptionalText(value?.modelId);
@@ -1204,28 +1218,33 @@ function normalizeHermesAgentSettings(value: any): HermesAgentSettings {
   };
 }
 
-function normalizeCodexAgentSettings(agentValue: any, legacy: any): CodexAgentSettings {
+function normalizeCodexAgentSettings(agentValue: unknown, legacy: unknown): CodexAgentSettings {
+  const agent = settingsRecord(agentValue) ?? {};
+  const legacyRecord = settingsRecord(legacy) ?? {};
+  const proxyEnabled = agent.proxyEnabled ?? legacyRecord.proxyEnabled;
   const fallback = DEFAULT_SETTINGS.agents.codex;
   return {
-    cliPath: normalizeOptionalText(agentValue?.cliPath ?? legacy?.cliPath),
-    proxyEnabled: typeof (agentValue?.proxyEnabled ?? legacy?.proxyEnabled) === "boolean" ? Boolean(agentValue?.proxyEnabled ?? legacy?.proxyEnabled) : fallback.proxyEnabled,
-    proxyUrl: normalizeText(agentValue?.proxyUrl ?? legacy?.proxyUrl, fallback.proxyUrl),
-    providerMode: normalizeProviderMode(agentValue?.providerMode ?? legacy?.providerMode),
-    activeApiProviderId: normalizeOptionalText(agentValue?.activeApiProviderId ?? legacy?.activeApiProviderId),
-    defaultModel: normalizeOptionalText(agentValue?.defaultModel ?? legacy?.defaultModel),
-    defaultReasoning: normalizeReasoningEffort(agentValue?.defaultReasoning ?? legacy?.defaultReasoning, fallback.defaultReasoning),
-    defaultServiceTier: normalizeServiceTierChoice(agentValue?.defaultServiceTier ?? legacy?.defaultServiceTier, fallback.defaultServiceTier),
-    defaultPermission: normalizePermissionMode(agentValue?.defaultPermission ?? legacy?.defaultPermission, fallback.defaultPermission),
-    defaultMode: normalizeUiMode(agentValue?.defaultMode ?? legacy?.defaultMode, fallback.defaultMode)
+    cliPath: normalizeOptionalText(agent.cliPath ?? legacyRecord.cliPath),
+    proxyEnabled: typeof proxyEnabled === "boolean" ? proxyEnabled : fallback.proxyEnabled,
+    proxyUrl: normalizeText(agent.proxyUrl ?? legacyRecord.proxyUrl, fallback.proxyUrl),
+    providerMode: normalizeProviderMode(agent.providerMode ?? legacyRecord.providerMode),
+    activeApiProviderId: normalizeOptionalText(agent.activeApiProviderId ?? legacyRecord.activeApiProviderId),
+    defaultModel: normalizeOptionalText(agent.defaultModel ?? legacyRecord.defaultModel),
+    defaultReasoning: normalizeReasoningEffort(agent.defaultReasoning ?? legacyRecord.defaultReasoning, fallback.defaultReasoning),
+    defaultServiceTier: normalizeServiceTierChoice(agent.defaultServiceTier ?? legacyRecord.defaultServiceTier, fallback.defaultServiceTier),
+    defaultPermission: normalizePermissionMode(agent.defaultPermission ?? legacyRecord.defaultPermission, fallback.defaultPermission),
+    defaultMode: normalizeUiMode(agent.defaultMode ?? legacyRecord.defaultMode, fallback.defaultMode)
   };
 }
 
-function normalizeAgentSettings(value: any, legacy: any, defaultBackend: AgentBackendMode, opencode: OpenCodeSettings): AgentSettings {
+function normalizeAgentSettings(value: unknown, legacy: unknown, defaultBackend: AgentBackendMode, opencode: OpenCodeSettings): AgentSettings {
+  const record = settingsRecord(value) ?? {};
+  const legacyRecord = settingsRecord(legacy) ?? {};
   return {
     defaultBackend,
-    codex: normalizeCodexAgentSettings(value?.codex, legacy),
+    codex: normalizeCodexAgentSettings(record.codex, legacy),
     opencode,
-    hermes: normalizeHermesAgentSettings(value?.hermes ?? legacy?.hermes)
+    hermes: normalizeHermesAgentSettings(record.hermes ?? legacyRecord.hermes)
   };
 }
 
@@ -1261,14 +1280,14 @@ function syncAgentsFromLegacyFields(settings: CodexForObsidianSettings): void {
   settings.agents.opencode = settings.opencode;
 }
 
-function normalizeEchoInkResourceSettings(value: any, legacyWorkspaceResources: any): EchoInkResourceSettings {
+function normalizeEchoInkResourceSettings(value: unknown, legacyWorkspaceResources: unknown): EchoInkResourceSettings {
+  const record = settingsRecord(value) ?? {};
   const fallback = defaultResourceSettings();
-  const enabledByScope = value?.enabledByScope && typeof value.enabledByScope === "object" && !Array.isArray(value.enabledByScope)
-    ? value.enabledByScope
-    : {};
+  const enabledByScope = settingsRecord(record.enabledByScope) ?? {};
+  const importedFrom = settingsRecord(record.importedFrom);
   const legacy = normalizeWorkspaceResources(legacyWorkspaceResources);
   return {
-    catalog: Array.isArray(value?.catalog) ? value.catalog.filter((item: any) => item && typeof item.id === "string") : [],
+    catalog: Array.isArray(record.catalog) ? record.catalog.filter(isEchoInkResourceLike) : [],
     enabledByScope: {
       chat: normalizeBooleanMap(enabledByScope.chat),
       knowledge: {
@@ -1278,13 +1297,13 @@ function normalizeEchoInkResourceSettings(value: any, legacyWorkspaceResources: 
       },
       "editor-actions": normalizeBooleanMap(enabledByScope["editor-actions"])
     },
-    importedFrom: value?.importedFrom && typeof value.importedFrom === "object" && !Array.isArray(value.importedFrom)
-      ? Object.fromEntries(Object.entries(value.importedFrom).map(([key, raw]) => [key, normalizeNonNegativeNumber(raw)]))
+    importedFrom: importedFrom
+      ? Object.fromEntries(Object.entries(importedFrom).map(([key, raw]) => [key, normalizeNonNegativeNumber(raw)]))
       : fallback.importedFrom,
-    mcpBroker: normalizeMcpBrokerSettings(value?.mcpBroker ?? fallback.mcpBroker),
-    mcpConnections: normalizeMcpConnectionRecords(value?.mcpConnections ?? fallback.mcpConnections),
-    lastScannedAt: normalizeNonNegativeNumber(value?.lastScannedAt),
-    lastError: normalizeOptionalText(value?.lastError)
+    mcpBroker: normalizeMcpBrokerSettings(record.mcpBroker ?? fallback.mcpBroker),
+    mcpConnections: normalizeMcpConnectionRecords(record.mcpConnections ?? fallback.mcpConnections),
+    lastScannedAt: normalizeNonNegativeNumber(record.lastScannedAt),
+    lastError: normalizeOptionalText(record.lastError)
   };
 }
 
@@ -1299,23 +1318,24 @@ function resourceSlugFromLegacyKey(value: string): string {
     .replace(/^-+|-+$/g, "") || "resource";
 }
 
-function normalizeReasoningEffort(value: any, fallback: ReasoningEffort): ReasoningEffort {
+function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffort): ReasoningEffort {
   return value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : fallback;
 }
 
-function normalizeServiceTierChoice(value: any, fallback: ServiceTierChoice): ServiceTierChoice {
+function normalizeServiceTierChoice(value: unknown, fallback: ServiceTierChoice): ServiceTierChoice {
   return value === "standard" || value === "fast" || value === "flex" ? value : fallback;
 }
 
-function normalizePermissionMode(value: any, fallback: PermissionMode): PermissionMode {
+function normalizePermissionMode(value: unknown, fallback: PermissionMode): PermissionMode {
   return value === "read-only" || value === "workspace-write" || value === "danger-full-access" ? value : fallback;
 }
 
-function normalizeUiMode(value: any, fallback: UiMode): UiMode {
+function normalizeUiMode(value: unknown, fallback: UiMode): UiMode {
   return value === "agent" || value === "plan" ? value : fallback;
 }
 
-function normalizeSetupSettings(value: any): SetupSettings {
+function normalizeSetupSettings(input: unknown): SetupSettings {
+  const value = settingsRecord(input) ?? {};
   return {
     completedAt: normalizeNonNegativeNumber(value?.completedAt),
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
@@ -1323,7 +1343,8 @@ function normalizeSetupSettings(value: any): SetupSettings {
   };
 }
 
-function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
+function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
+  const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_SETTINGS.knowledgeBase;
   return {
     enabled: value?.enabled === true,
@@ -1350,9 +1371,11 @@ function normalizeKnowledgeBaseSettings(value: any): KnowledgeBaseSettings {
   };
 }
 
-function normalizeReviewSettings(value: any): WeeklyReviewSettings {
+function normalizeReviewSettings(input: unknown): WeeklyReviewSettings {
+  const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_SETTINGS.review;
   const outputDir = normalizeReviewOutputDir(value?.outputDir, fallback.outputDir);
+  const reports = settingsRecord(value?.reports) ?? {};
   return {
     enabled: false,
     knowledgeBaseEnabled: typeof value?.knowledgeBaseEnabled === "boolean" ? value.knowledgeBaseEnabled : fallback.knowledgeBaseEnabled,
@@ -1363,13 +1386,14 @@ function normalizeReviewSettings(value: any): WeeklyReviewSettings {
     rangeMode: normalizeReviewRangeMode(value?.rangeMode, fallback.rangeMode),
     openHtmlAfterRun: value?.openHtmlAfterRun === true,
     reports: {
-      knowledgeBase: normalizeReviewReportState(value?.reports?.knowledgeBase, outputDir),
-      agentChat: normalizeReviewReportState(value?.reports?.agentChat, outputDir)
+      knowledgeBase: normalizeReviewReportState(reports.knowledgeBase, outputDir),
+      agentChat: normalizeReviewReportState(reports.agentChat, outputDir)
     }
   };
 }
 
-function normalizeReviewReportState(value: any, outputDir = DEFAULT_REVIEW_OUTPUT_DIR): ReviewReportState {
+function normalizeReviewReportState(input: unknown, outputDir = DEFAULT_REVIEW_OUTPUT_DIR): ReviewReportState {
+  const value = settingsRecord(input) ?? {};
   return {
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
     lastRunStatus: normalizeReviewRunStatus(value?.lastRunStatus),
@@ -1381,16 +1405,16 @@ function normalizeReviewReportState(value: any, outputDir = DEFAULT_REVIEW_OUTPU
   };
 }
 
-function normalizeReviewRangeMode(value: any, fallback: ReviewRangeMode): ReviewRangeMode {
+function normalizeReviewRangeMode(value: unknown, fallback: ReviewRangeMode): ReviewRangeMode {
   return value === "current-week" || value === "previous-week" ? value : fallback;
 }
 
-function normalizeReviewRangeKey(value: any): string {
+function normalizeReviewRangeKey(value: unknown): string {
   const text = normalizeOptionalText(value);
   return /^\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
-export function normalizeReviewOutputDir(value: any, fallback = DEFAULT_REVIEW_OUTPUT_DIR): string {
+export function normalizeReviewOutputDir(value: unknown, fallback = DEFAULT_REVIEW_OUTPUT_DIR): string {
   const raw = normalizeText(value, fallback).replace(/\\/g, "/").replace(/^\/+/, "");
   const clean = raw
     .split("/")
@@ -1399,7 +1423,7 @@ export function normalizeReviewOutputDir(value: any, fallback = DEFAULT_REVIEW_O
   return clean || fallback;
 }
 
-function normalizeReviewOutputPath(value: any, extension: ".md" | ".html", outputDir = DEFAULT_REVIEW_OUTPUT_DIR): string {
+function normalizeReviewOutputPath(value: unknown, extension: ".md" | ".html", outputDir = DEFAULT_REVIEW_OUTPUT_DIR): string {
   const raw = normalizeOptionalText(value).replace(/\\/g, "/").replace(/^\/+/, "");
   if (!raw.endsWith(extension)) return "";
   const parts = raw.split("/");
@@ -1408,7 +1432,8 @@ function normalizeReviewOutputPath(value: any, extension: ".md" | ".html", outpu
   return allowedDirs.some((dir) => raw.startsWith(`${dir}/`)) ? raw : "";
 }
 
-function normalizeKnowledgeBaseInitialization(value: any): KnowledgeBaseInitializationSettings {
+function normalizeKnowledgeBaseInitialization(input: unknown): KnowledgeBaseInitializationSettings {
+  const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_SETTINGS.knowledgeBase.initialization;
   return {
     status: normalizeKnowledgeBaseInitStatus(value?.status),
@@ -1419,48 +1444,50 @@ function normalizeKnowledgeBaseInitialization(value: any): KnowledgeBaseInitiali
   };
 }
 
-function normalizeStoredSessions(value: any): StoredSession[] {
+function normalizeStoredSessions(value: unknown): StoredSession[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((session: any): StoredSession | null => {
-      const id = normalizeOptionalText(session?.id);
+    .map((rawSession: unknown): StoredSession | null => {
+      const session = settingsRecord(rawSession) ?? {};
+      const id = normalizeOptionalText(session.id);
       if (!id) return null;
-      const messages = Array.isArray(session?.messages) ? session.messages : [];
-      const kind = session?.kind === "knowledge-base" ? "knowledge-base" as const : undefined;
+      const messages = Array.isArray(session.messages) ? session.messages as ChatMessage[] : [];
+      const kind = session.kind === "knowledge-base" ? "knowledge-base" as const : undefined;
       return {
         id,
-        title: normalizeText(session?.title, kind === "knowledge-base" ? KNOWLEDGE_BASE_SESSION_TITLE : "新会话"),
+        title: normalizeText(session.title, kind === "knowledge-base" ? KNOWLEDGE_BASE_SESSION_TITLE : "新会话"),
         ...(kind ? { kind } : {}),
-        threadId: normalizeOptionalText(session?.threadId) || undefined,
-        cwd: normalizeOptionalText(session?.cwd),
+        threadId: normalizeOptionalText(session.threadId) || undefined,
+        cwd: normalizeOptionalText(session.cwd),
         messages,
-        knowledgeContext: normalizeKnowledgeContextBridgeEntries(session?.knowledgeContext),
-        messagesHiddenBefore: normalizeOptionalPositiveNumber(session?.messagesHiddenBefore),
-        historyActiveDate: normalizeOptionalText(session?.historyActiveDate) || undefined,
-        tokenUsage: session?.tokenUsage,
-        createdAt: normalizeNonNegativeNumber(session?.createdAt),
-        updatedAt: normalizeNonNegativeNumber(session?.updatedAt)
+        knowledgeContext: normalizeKnowledgeContextBridgeEntries(session.knowledgeContext),
+        messagesHiddenBefore: normalizeOptionalPositiveNumber(session.messagesHiddenBefore),
+        historyActiveDate: normalizeOptionalText(session.historyActiveDate) || undefined,
+        tokenUsage: session.tokenUsage as TokenUsage,
+        createdAt: normalizeNonNegativeNumber(session.createdAt),
+        updatedAt: normalizeNonNegativeNumber(session.updatedAt)
       };
     })
     .filter((session): session is StoredSession => Boolean(session));
 }
 
-function normalizeKnowledgeContextBridgeEntries(value: any): KnowledgeContextBridgeEntry[] | undefined {
+function normalizeKnowledgeContextBridgeEntries(value: unknown): KnowledgeContextBridgeEntry[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const entries = value
-    .map((item: any): KnowledgeContextBridgeEntry | null => {
-      const id = normalizeOptionalText(item?.id);
-      const summary = normalizeOptionalText(item?.summary).slice(0, 2000);
+    .map((item: unknown): KnowledgeContextBridgeEntry | null => {
+      const record = settingsRecord(item) ?? {};
+      const id = normalizeOptionalText(record.id);
+      const summary = normalizeOptionalText(record.summary).slice(0, 2000);
       if (!id || !summary) return null;
       return {
         id,
-        intent: normalizeOptionalText(item?.intent) || "unknown",
-        command: normalizeOptionalText(item?.command).slice(0, 500),
+        intent: normalizeOptionalText(record.intent) || "unknown",
+        command: normalizeOptionalText(record.command).slice(0, 500),
         summary,
-        sourceMessageId: normalizeOptionalText(item?.sourceMessageId),
-        ...(item?.citations ? { citations: item.citations as KnowledgeBaseCitationSummary } : {}),
-        createdAt: normalizeNonNegativeNumber(item?.createdAt),
-        injectedThreadIds: normalizeKnowledgeContextThreadIds(item?.injectedThreadIds)
+        sourceMessageId: normalizeOptionalText(record.sourceMessageId),
+        ...(record.citations ? { citations: record.citations as KnowledgeBaseCitationSummary } : {}),
+        createdAt: normalizeNonNegativeNumber(record.createdAt),
+        injectedThreadIds: normalizeKnowledgeContextThreadIds(record.injectedThreadIds)
       };
     })
     .filter((entry): entry is KnowledgeContextBridgeEntry => Boolean(entry))
@@ -1468,42 +1495,43 @@ function normalizeKnowledgeContextBridgeEntries(value: any): KnowledgeContextBri
   return entries.length ? entries : undefined;
 }
 
-function normalizeKnowledgeContextThreadIds(value: any): string[] {
+function normalizeKnowledgeContextThreadIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const ids = value
-    .map((threadId: any) => normalizeOptionalText(threadId))
+    .map((threadId: unknown) => normalizeOptionalText(threadId))
     .filter((threadId): threadId is string => Boolean(threadId));
   return [...new Set(ids)].slice(-20);
 }
 
-function normalizeOptionalPositiveNumber(value: any): number | undefined {
+function normalizeOptionalPositiveNumber(value: unknown): number | undefined {
   const normalized = normalizeNonNegativeNumber(value);
   return normalized > 0 ? normalized : undefined;
 }
 
-function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, KnowledgeBaseProcessedSource> {
+function normalizeKnowledgeBaseProcessedSources(value: unknown): Record<string, KnowledgeBaseProcessedSource> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const entries = Object.entries(value)
-    .map(([key, item]: [string, any]) => {
-      const path = normalizeOptionalText(item?.path || key);
+    .map(([key, item]: [string, unknown]) => {
+      const record = settingsRecord(item) ?? {};
+      const path = normalizeOptionalText(record.path || key);
       if (!path) return null;
-      const fingerprint = normalizeOptionalText(item?.fingerprint);
+      const fingerprint = normalizeOptionalText(record.fingerprint);
       const source: KnowledgeBaseProcessedSource = {
         path,
-        size: normalizeNonNegativeNumber(item?.size),
-        mtime: normalizeNonNegativeNumber(item?.mtime),
-        digestedAt: normalizeNonNegativeNumber(item?.digestedAt)
+        size: normalizeNonNegativeNumber(record.size),
+        mtime: normalizeNonNegativeNumber(record.mtime),
+        digestedAt: normalizeNonNegativeNumber(record.digestedAt)
       };
       if (fingerprint) source.fingerprint = fingerprint;
-      const reportPath = normalizeOptionalText(item?.reportPath);
+      const reportPath = normalizeOptionalText(record.reportPath);
       if (reportPath) source.reportPath = reportPath;
-      const evidencePaths = Array.isArray(item?.evidencePaths)
-        ? item.evidencePaths.map(normalizeOptionalText).filter(Boolean)
+      const evidencePaths = Array.isArray(record.evidencePaths)
+        ? record.evidencePaths.map(normalizeOptionalText).filter(Boolean)
         : [];
       if (evidencePaths.length) source.evidencePaths = evidencePaths;
-      const runId = normalizeOptionalText(item?.runId);
+      const runId = normalizeOptionalText(record.runId);
       if (runId) source.runId = runId;
-      if (item?.confidence === "verified" || item?.confidence === "repaired") source.confidence = item.confidence;
+      if (record.confidence === "verified" || record.confidence === "repaired") source.confidence = record.confidence;
       return [
         path,
         source
@@ -1515,17 +1543,18 @@ function normalizeKnowledgeBaseProcessedSources(value: any): Record<string, Know
   return Object.fromEntries(entries);
 }
 
-function normalizeKnowledgeBaseHealthHistory(value: any): KnowledgeBaseHealthHistoryEntry[] {
+function normalizeKnowledgeBaseHealthHistory(value: unknown): KnowledgeBaseHealthHistoryEntry[] {
   if (!Array.isArray(value)) return [];
   const byDate = new Map<string, KnowledgeBaseHealthHistoryEntry>();
   for (const item of value) {
-    const date = normalizeOptionalText(item?.date);
-    const status = normalizeKnowledgeBaseHealthCheckStatus(item?.status);
+    const record = settingsRecord(item) ?? {};
+    const date = normalizeOptionalText(record.date);
+    const status = normalizeKnowledgeBaseHealthCheckStatus(record.status);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) continue;
     byDate.set(date, {
       date,
       status,
-      at: normalizeNonNegativeNumber(item?.at)
+      at: normalizeNonNegativeNumber(record.at)
     });
   }
   return Array.from(byDate.values())
@@ -1533,21 +1562,22 @@ function normalizeKnowledgeBaseHealthHistory(value: any): KnowledgeBaseHealthHis
     .slice(-90);
 }
 
-function normalizeKnowledgeBaseMaintenanceHistory(value: any, legacyHealthHistory?: any): KnowledgeBaseMaintenanceHistoryEntry[] {
+function normalizeKnowledgeBaseMaintenanceHistory(value: unknown, legacyHealthHistory?: unknown): KnowledgeBaseMaintenanceHistoryEntry[] {
   const byDate = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
-  const add = (item: any, legacyMode: KnowledgeBaseMaintenanceMode) => {
-    const date = normalizeOptionalText(item?.date);
-    const status = normalizeKnowledgeBaseHealthCheckStatus(item?.status);
+  const add = (item: unknown, legacyMode: KnowledgeBaseMaintenanceMode) => {
+    const record = settingsRecord(item) ?? {};
+    const date = normalizeOptionalText(record.date);
+    const status = normalizeKnowledgeBaseHealthCheckStatus(record.status);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) return;
-    const at = normalizeNonNegativeNumber(item?.at);
+    const at = normalizeNonNegativeNumber(record.at);
     const current = byDate.get(date);
     if (current && current.at > at) return;
     byDate.set(date, {
       date,
       status,
       at,
-      mode: normalizeKnowledgeBaseMaintenanceMode(item?.mode) ?? legacyMode,
-      reportPath: normalizeOptionalText(item?.reportPath)
+      mode: normalizeKnowledgeBaseMaintenanceMode(record.mode) ?? legacyMode,
+      reportPath: normalizeOptionalText(record.reportPath)
     });
   };
   if (Array.isArray(legacyHealthHistory)) {
@@ -1561,34 +1591,34 @@ function normalizeKnowledgeBaseMaintenanceHistory(value: any, legacyHealthHistor
     .slice(-180);
 }
 
-function normalizeKnowledgeBaseHealthCheckStatus(value: any): KnowledgeBaseHealthCheckStatus | null {
+function normalizeKnowledgeBaseHealthCheckStatus(value: unknown): KnowledgeBaseHealthCheckStatus | null {
   return value === "success" || value === "failed" ? value : null;
 }
 
-function normalizeKnowledgeBaseMaintenanceMode(value: any): KnowledgeBaseMaintenanceMode | null {
+function normalizeKnowledgeBaseMaintenanceMode(value: unknown): KnowledgeBaseMaintenanceMode | null {
   return value === "maintain" || value === "lint" || value === "reingest" || value === "outputs" || value === "inbox" || value === "unknown" ? value : null;
 }
 
-function normalizeKnowledgeBaseManagedThreadKind(value: any): KnowledgeBaseManagedThreadKind {
+function normalizeKnowledgeBaseManagedThreadKind(value: unknown): KnowledgeBaseManagedThreadKind {
   const maintenanceMode = normalizeKnowledgeBaseMaintenanceMode(value);
   if (maintenanceMode) return maintenanceMode;
   return value === "ask" || value === "journal" || value === "review" ? value : "unknown";
 }
 
-function normalizeKnowledgeBaseManagedThreadArchiveState(value: any): KnowledgeBaseManagedThreadArchiveState {
+function normalizeKnowledgeBaseManagedThreadArchiveState(value: unknown): KnowledgeBaseManagedThreadArchiveState {
   return value === "running" || value === "pending-archive" || value === "archived" || value === "archive-failed" ? value : "pending-archive";
 }
 
-function normalizeKnowledgeBaseHistoryRetentionDays(value: any, fallback: number): number {
+export function normalizeKnowledgeBaseHistoryRetentionDays(value: unknown, fallback: number): number {
   const normalized = normalizePositiveInteger(value, fallback, 0, 3650);
   return normalized === 0 || normalized === 7 || normalized === 30 || normalized === 90 ? normalized : fallback;
 }
 
-function normalizeKnowledgeBaseManagedThreads(value: any): Record<string, KnowledgeBaseManagedThread> {
+function normalizeKnowledgeBaseManagedThreads(value: unknown): Record<string, KnowledgeBaseManagedThread> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const entries: Array<[string, KnowledgeBaseManagedThread]> = [];
   for (const [key, raw] of Object.entries(value)) {
-    const item = raw as any;
+    const item = settingsRecord(raw) ?? {};
     const threadId = normalizeOptionalText(item?.threadId || key);
     if (!threadId) continue;
     entries.push([threadId, {
@@ -1636,26 +1666,27 @@ function formatLocalDateKey(value: number): string {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeScheduleTime(value: any, fallback: string): string {
+function normalizeScheduleTime(value: unknown, fallback: string): string {
   const text = normalizeOptionalText(value);
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(text) ? text : fallback;
 }
 
-function normalizeEditorActionConfigs(value: any, defaults: EditorAiActionConfig[], previousVersion: number): EditorAiActionConfig[] {
+function normalizeEditorActionConfigs(value: unknown, defaults: EditorAiActionConfig[], previousVersion: number): EditorAiActionConfig[] {
   const defaultById = new Map(defaults.map((item) => [item.id, item]));
   const used = new Set<string>();
   const result: EditorAiActionConfig[] = [];
   const source = Array.isArray(value) ? value : [];
   for (const item of source) {
-    const id = normalizeEditorActionId(item?.id);
+    const record = settingsRecord(item) ?? {};
+    const id = normalizeEditorActionId(record.id);
     if (!id || used.has(id)) continue;
     const fallback = defaultById.get(id);
     used.add(id);
-    const rawPromptTemplate = normalizeText(item?.promptTemplate, fallback?.promptTemplate ?? "{{selected_text}}");
+    const rawPromptTemplate = normalizeText(record.promptTemplate, fallback?.promptTemplate ?? "{{selected_text}}");
     result.push({
       id,
-      label: normalizeText(item?.label, fallback?.label ?? id),
-      enabled: typeof item?.enabled === "boolean" ? item.enabled : fallback?.enabled ?? true,
+      label: normalizeText(record.label, fallback?.label ?? id),
+      enabled: typeof record.enabled === "boolean" ? record.enabled : fallback?.enabled ?? true,
       promptTemplate: shouldMigrateEditorActionPrompt(id, rawPromptTemplate, previousVersion) ? fallback?.promptTemplate ?? rawPromptTemplate : rawPromptTemplate
     });
   }
@@ -1666,20 +1697,21 @@ function normalizeEditorActionConfigs(value: any, defaults: EditorAiActionConfig
   return result;
 }
 
-function normalizeEditorActionStyles(value: any, defaults: EditorAiStyleConfig[], previousVersion: number): EditorAiStyleConfig[] {
+function normalizeEditorActionStyles(value: unknown, defaults: EditorAiStyleConfig[], previousVersion: number): EditorAiStyleConfig[] {
   const defaultById = new Map(defaults.map((item) => [item.id, item]));
   const used = new Set<string>();
   const result: EditorAiStyleConfig[] = [];
   const source = Array.isArray(value) ? value : [];
   for (const item of source) {
-    const id = normalizeEditorActionId(item?.id);
+    const record = settingsRecord(item) ?? {};
+    const id = normalizeEditorActionId(record.id);
     if (!id || used.has(id)) continue;
     const fallback = defaultById.get(id);
     used.add(id);
-    const rawInstruction = normalizeText(item?.instruction, fallback?.instruction ?? "");
+    const rawInstruction = normalizeText(record.instruction, fallback?.instruction ?? "");
     result.push({
       id,
-      label: normalizeText(item?.label, fallback?.label ?? id),
+      label: normalizeText(record.label, fallback?.label ?? id),
       instruction: shouldMigrateEditorStyleInstruction(id, rawInstruction, previousVersion) ? fallback?.instruction ?? rawInstruction : rawInstruction
     });
   }
@@ -1691,11 +1723,11 @@ function normalizeEditorActionStyles(value: any, defaults: EditorAiStyleConfig[]
 }
 
 function normalizeEditorActionModeConfigs(
-  value: any,
+  value: unknown,
   defaults: Record<EditorActionQualityMode, EditorActionModeConfig>,
   legacyFast?: { model: string; contextCharsBefore: number; contextCharsAfter: number }
 ): Record<EditorActionQualityMode, EditorActionModeConfig> {
-  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const source = settingsRecord(value) ?? {};
   return {
     fast: normalizeEditorActionModeConfig(source.fast, defaults.fast, legacyFast ? {
       model: legacyFast.model || defaults.fast.model,
@@ -1708,10 +1740,11 @@ function normalizeEditorActionModeConfigs(
 }
 
 function normalizeEditorActionModeConfig(
-  value: any,
+  input: unknown,
   fallback: EditorActionModeConfig,
   overrideFallback?: Partial<Pick<EditorActionModeConfig, "model" | "contextCharsBefore" | "contextCharsAfter">>
 ): EditorActionModeConfig {
+  const value = settingsRecord(input) ?? {};
   return {
     mode: fallback.mode,
     label: fallback.label,
@@ -1721,11 +1754,11 @@ function normalizeEditorActionModeConfig(
   };
 }
 
-function normalizeEditorActionQualityMode(value: any, fallback: EditorActionQualityMode): EditorActionQualityMode {
+export function normalizeEditorActionQualityMode(value: unknown, fallback: EditorActionQualityMode): EditorActionQualityMode {
   return value === "fast" || value === "quality" || value === "strict" ? value : fallback;
 }
 
-function normalizeEditorActionId(value: any): string {
+function normalizeEditorActionId(value: unknown): string {
   const id = typeof value === "string" ? value.trim() : "";
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : "";
 }
@@ -1741,40 +1774,40 @@ function shouldMigrateEditorStyleInstruction(id: string, value: string, previous
   return LEGACY_EDITOR_STYLE_INSTRUCTIONS[id] === value;
 }
 
-function normalizeText(value: any, fallback: string): string {
+function normalizeText(value: unknown, fallback: string): string {
   const text = typeof value === "string" ? value.trim() : "";
   return text || fallback;
 }
 
-function normalizeOptionalText(value: any): string {
+function normalizeOptionalText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeComparablePath(value: any): string {
+function normalizeComparablePath(value: unknown): string {
   return normalizeOptionalText(value)
     .replace(/^file:\/\//, "")
     .replace(/\\/g, "/")
     .replace(/\/+$/, "");
 }
 
-function normalizePositiveInteger(value: any, fallback: number, min: number, max: number): number {
+function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number): number {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
 }
 
-function normalizeEditorActionPerformanceNumber(value: any, fallback: number, legacyDefault: number, previousVersion: number, min: number, max: number): number {
+function normalizeEditorActionPerformanceNumber(value: unknown, fallback: number, legacyDefault: number, previousVersion: number, min: number, max: number): number {
   if (previousVersion < 10 && Number(value) === legacyDefault) return fallback;
   return normalizePositiveInteger(value, fallback, min, max);
 }
 
-function normalizeEditorActionTimeoutMs(value: any, fallback: number, previousVersion: number): number {
+function normalizeEditorActionTimeoutMs(value: unknown, fallback: number, previousVersion: number): number {
   const number = Number(value);
   if (previousVersion < 13 && (number === 90000 || number === 25000)) return fallback;
   return normalizePositiveInteger(value, fallback, 10000, 300000);
 }
 
-function normalizeNonNegativeNumber(value: any): number {
+function normalizeNonNegativeNumber(value: unknown): number {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number) || number < 0) return 0;
   return number;
@@ -1788,21 +1821,22 @@ function normalizeApiProviderSelection(settings: Pick<CodexForObsidianSettings, 
   if (settings.providerMode === "custom-api" && !first) settings.providerMode = "codex-login";
 }
 
-function normalizeApiProviders(value: any): ApiProviderConfig[] {
+function normalizeApiProviders(value: unknown): ApiProviderConfig[] {
   if (!Array.isArray(value)) return [];
   const usedIds = new Set<string>();
   return value.map((item, index) => {
-    const id = uniqueProviderId(sanitizeProviderId(item?.id, index), usedIds, index);
+    const record = settingsRecord(item) ?? {};
+    const id = uniqueProviderId(sanitizeProviderId(record.id, index), usedIds, index);
     usedIds.add(id);
-    const queryParams = normalizeQueryParams(item?.queryParams);
-    const models = normalizeModelList(Array.isArray(item?.models) ? [...item.models, item?.model] : [item?.model]);
+    const queryParams = normalizeQueryParams(record.queryParams);
+    const models = normalizeModelList(Array.isArray(record.models) ? [...record.models, record.model] : [record.model]);
     return {
       id,
-      name: typeof item?.name === "string" ? item.name.trim() : "",
-      baseUrl: typeof item?.baseUrl === "string" ? item.baseUrl.trim() : "",
+      name: typeof record.name === "string" ? record.name.trim() : "",
+      baseUrl: typeof record.baseUrl === "string" ? record.baseUrl.trim() : "",
       model: models[0] ?? "",
       models,
-      apiKey: typeof item?.apiKey === "string" ? item.apiKey.trim() : "",
+      apiKey: typeof record.apiKey === "string" ? record.apiKey.trim() : "",
       ...(Object.keys(queryParams).length ? { queryParams } : {})
     };
   });
@@ -1820,7 +1854,7 @@ function normalizeModelList(value: unknown[]): string[] {
   return models;
 }
 
-function sanitizeProviderId(value: any, index: number): string {
+function sanitizeProviderId(value: unknown, index: number): string {
   const id = typeof value === "string" ? value.trim() : "";
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : `provider_${index + 1}`;
 }
@@ -1836,7 +1870,7 @@ function uniqueProviderId(id: string, usedIds: Set<string>, index: number): stri
   return next;
 }
 
-function normalizeQueryParams(value: any): Record<string, string> {
+function normalizeQueryParams(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const result: Record<string, string> = {};
   for (const [key, raw] of Object.entries(value)) {
@@ -1847,7 +1881,7 @@ function normalizeQueryParams(value: any): Record<string, string> {
   return result;
 }
 
-function normalizeBooleanMap(value: any): Record<string, boolean> {
+function normalizeBooleanMap(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const result: Record<string, boolean> = {};
   for (const [key, enabled] of Object.entries(value)) {
@@ -1856,50 +1890,63 @@ function normalizeBooleanMap(value: any): Record<string, boolean> {
   return result;
 }
 
-function normalizeCacheEntry<T>(value: any, normalizeItem: (item: any) => T | null): WorkspaceResourceCacheEntry<T> | undefined {
-  if (!value || typeof value !== "object" || !Array.isArray(value.items)) return undefined;
-  const items = value.items.map(normalizeItem).filter((item): item is T => Boolean(item));
-  const fetchedAt = typeof value.fetchedAt === "number" && Number.isFinite(value.fetchedAt) ? value.fetchedAt : Date.now();
-  const error = typeof value.error === "string" && value.error.trim() ? value.error : "";
+function normalizeCacheEntry<T>(value: unknown, normalizeItem: (item: unknown) => T | null): WorkspaceResourceCacheEntry<T> | undefined {
+  const record = settingsRecord(value);
+  if (!record || !Array.isArray(record.items)) return undefined;
+  const items = record.items.map(normalizeItem).filter((item): item is T => Boolean(item));
+  const fetchedAt = typeof record.fetchedAt === "number" && Number.isFinite(record.fetchedAt) ? record.fetchedAt : Date.now();
+  const error = typeof record.error === "string" && record.error.trim() ? record.error : "";
   return { fetchedAt, items, ...(error ? { error } : {}) };
 }
 
-function normalizeCachedPlugin(item: any): CodexPluginInfo | null {
-  const id = typeof item?.id === "string" ? item.id : "";
+function normalizeCachedPlugin(item: unknown): CodexPluginInfo | null {
+  const value = settingsRecord(item) ?? {};
+  const id = typeof value.id === "string" ? value.id : "";
   if (!id) return null;
   return {
     id,
-    name: typeof item?.name === "string" ? item.name : id,
-    displayName: typeof item?.displayName === "string" ? item.displayName : id,
-    description: typeof item?.description === "string" ? item.description : "",
-    marketplace: typeof item?.marketplace === "string" ? item.marketplace : "",
-    category: typeof item?.category === "string" ? item.category : "",
-    installed: item?.installed !== false,
-    enabled: item?.enabled !== false
+    name: typeof value.name === "string" ? value.name : id,
+    displayName: typeof value.displayName === "string" ? value.displayName : id,
+    description: typeof value.description === "string" ? value.description : "",
+    marketplace: typeof value.marketplace === "string" ? value.marketplace : "",
+    category: typeof value.category === "string" ? value.category : "",
+    installed: value.installed !== false,
+    enabled: value.enabled !== false
   };
 }
 
-function normalizeCachedSkill(item: any): CodexSkill | null {
-  const name = typeof item?.name === "string" ? item.name : "";
-  const path = typeof item?.path === "string" ? item.path : "";
+function normalizeCachedSkill(item: unknown): CodexSkill | null {
+  const value = settingsRecord(item) ?? {};
+  const name = typeof value.name === "string" ? value.name : "";
+  const path = typeof value.path === "string" ? value.path : "";
   if (!name || !path) return null;
   return {
     name,
     path,
-    description: typeof item?.description === "string" ? item.description : "",
-    scope: typeof item?.scope === "string" ? item.scope : "",
-    enabled: item?.enabled !== false
+    description: typeof value.description === "string" ? value.description : "",
+    scope: typeof value.scope === "string" ? value.scope : "",
+    enabled: value.enabled !== false
   };
 }
 
-function normalizeCachedMcp(item: any): McpServerStatus | null {
-  const name = typeof item?.name === "string" ? item.name : "";
+function normalizeCachedMcp(item: unknown): McpServerStatus | null {
+  const value = settingsRecord(item) ?? {};
+  const name = typeof value.name === "string" ? value.name : "";
   if (!name) return null;
   return {
     name,
-    tools: item?.tools && typeof item.tools === "object" && !Array.isArray(item.tools) ? item.tools : {},
-    resources: Array.isArray(item?.resources) ? item.resources : [],
-    resourceTemplates: Array.isArray(item?.resourceTemplates) ? item.resourceTemplates : [],
-    authStatus: typeof item?.authStatus === "string" ? item.authStatus : "unknown"
+    tools: settingsRecord(value.tools) ?? {},
+    resources: Array.isArray(value.resources) ? value.resources : [],
+    resourceTemplates: Array.isArray(value.resourceTemplates) ? value.resourceTemplates : [],
+    authStatus: typeof value.authStatus === "string" ? value.authStatus : "unknown"
   };
+}
+
+function isEchoInkResourceLike(value: unknown): value is EchoInkResourceSettings["catalog"][number] {
+  const record = settingsRecord(value);
+  return typeof record?.id === "string";
+}
+
+function settingsRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }

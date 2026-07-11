@@ -1,7 +1,8 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
+import { exists, normalizeSlashes } from "./utils";
 
 export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.7";
 
@@ -116,7 +117,7 @@ const KNOWN_TOP_LEVEL_DIRS = new Set([
 ]);
 
 export async function buildKnowledgeBaseInitializationPreview(vaultPath: string): Promise<KnowledgeBaseInitializationPreview> {
-  const rulesFilePath = await chooseRulesFilePath(vaultPath);
+  const rulesFilePath = chooseRulesFilePath();
   const suggestions = await scanInitializationSuggestions(vaultPath);
   const skipped = suggestions.filter((item) => item.target === "ignore").map((item) => item.path);
   const actionableSuggestions = suggestions.filter((item) => item.target !== "ignore");
@@ -212,12 +213,12 @@ function formatKnowledgeBaseInitializationResult(input: Omit<KnowledgeBaseInitia
   ].join("\n");
 }
 
-async function chooseRulesFilePath(vaultPath: string): Promise<string> {
+function chooseRulesFilePath(): string {
   return DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
 }
 
 async function scanInitializationSuggestions(vaultPath: string): Promise<KnowledgeBaseInitializationSuggestion[]> {
-  const files = await walkVaultFiles(vaultPath, 220).catch(() => []);
+  const files = await walkVaultFiles(vaultPath, 220).catch(emptyArrayOnMissingPathOrWarn("walk vault files for knowledge base initialization"));
   const suggestions: KnowledgeBaseInitializationSuggestion[] = [];
   for (const filePath of files) {
     const relativePath = normalizeSlashes(path.relative(vaultPath, filePath));
@@ -477,12 +478,4 @@ function formatDate(date: Date): string {
 function assertAllowedRulesFilePath(relativePath: string): void {
   if (relativePath === DEFAULT_KNOWLEDGE_BASE_RULES_FILE || relativePath === AGENTS_RULES_FILE || relativePath === LEGACY_CLAUDE_RULES_FILE || relativePath === "CLAUDE.kb-template.md") return;
   throw new Error("初始化规则文件路径不合法。");
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
 }
