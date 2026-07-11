@@ -1,11 +1,8 @@
-import * as fs from "fs";
-import * as path from "path";
-import { ItemView, MarkdownView, normalizePath, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, Notice, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentBackendMode, ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
-import { ensureKnowledgeBaseSession, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
+import { providerConnectionLabel } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
-import { buildEchoInkResourceCatalog, hasEnabledMcpResources, skillResourcesForScope, workspaceResourcesFromEchoInkResources } from "../resources/registry";
 import type {
   CodexNotification,
   McpServerStatus,
@@ -16,47 +13,17 @@ import type {
   TokenUsage,
   UiMode
 } from "../types/app-server";
-import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
-import { getElectronDialog, showItemInFinder } from "../core/electron";
-import { swallowError } from "../core/error-handling";
-import { buildUserInput, contextUsageView } from "../core/mapping";
-import { settleStaleRunningMessages } from "../core/message-state";
-import { shouldCloseComposerMenusForClick } from "./composer-menu";
-import { composerPrimaryActionForState, composerStateForRuntimeState, type ComposerPrimaryActionState } from "./composer-state";
+import { buildUserInput } from "../core/mapping";
+import { composerPrimaryActionForState, type ComposerPrimaryActionState } from "./composer-state";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
-import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "./turn-watchdog";
-import { textInputModal } from "./modals";
-import { KnowledgeBaseHistoryModal } from "./codex-view/history-modal";
-import {
-  clearPromptEnhanceReview,
-  compactReasoningLabel,
-  labelFor,
-  renderComposerAttachments,
-  renderComposerShell,
-  renderComposerToolbar,
-  renderTurnQueue,
-  shortModelLabel
-} from "./codex-view/composer";
+import { clearPromptEnhanceReview } from "./codex-view/composer";
 import { CodexMessageListRenderer, isProcessItemType } from "./codex-view/message-list";
 import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./codex-view/knowledge-context-bridge";
-import { renderCodexTabs } from "./codex-view/tabs";
 import { renderMcpPanelView } from "./codex-view/mcp-panel";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
 import {
-  openAddMenu as showAddMenu,
-  openKnowledgeCommandMenu as showKnowledgeCommandMenu,
-  openKnowledgeModelMenu as showKnowledgeModelMenu,
-  openModelMenu as showModelMenu,
-  openSessionMenu as showSessionMenu,
-  openSkillMenu as showSkillMenu,
-  openWorkspaceMenu as showWorkspaceMenu,
-  renderKnowledgeCommandMatches as renderKnowledgeCommandMatchesView,
-  renderSkillMatches as renderSkillMatchesView
-} from "./codex-view/menus";
-import {
   currentArticleUnderstandingSource as currentArticleUnderstandingSourceRunner,
-  enhanceChatInput as enhanceChatInputRunner,
   ensureArticleUnderstanding as ensureArticleUnderstandingRunner,
   refreshArticleUnderstandingFromPanel as refreshArticleUnderstandingFromPanelRunner,
   refreshArticleUnderstandingPanelSourceState as refreshArticleUnderstandingPanelSourceStateRunner,
@@ -78,85 +45,148 @@ import {
   startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
 } from "./codex-view/turn-runner";
 import type { CodexViewPromptEnhanceContext, CodexViewTurnContext, EditorActionRunWaiter, EditorSummaryRunWaiter } from "./codex-view/runner-context";
-import {
-  renderArticleUnderstandingPanelView,
-  renderCodexHeader,
-  renderEditorActionStatusView,
-  renderHeaderHistoryButton,
-  renderUsagePanelView,
-  updateUsageHeaderView,
-  type ArticleUnderstandingPanelState
-} from "./codex-view/header";
-import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
+import { type ArticleUnderstandingPanelState } from "./codex-view/header";
+import { createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState } from "./codex-view/knowledge-dashboard";
 import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
-import { SessionMessageStore, type SessionMessageInput } from "./codex-view/session-message-store";
+import type { SessionMessageInput } from "./codex-view/session-message-store";
+import {
+  attachActiveFile as attachActiveFileAction,
+  handleDroppedFiles as handleDroppedFilesAction,
+  handlePastedFiles as handlePastedFilesAction,
+  pickFiles as pickFilesAction,
+  pickKnowledgeBaseFiles as pickKnowledgeBaseFilesAction,
+  renderAttachmentsView,
+  type CodexAttachmentHost
+} from "./codex-view/attachments";
+import { normalizeWorkspacePath } from "./codex-view/workspace-utils";
+import {
+  activeProviderModels as activeProviderModelsAction,
+  currentEchoInkResourceCatalog as currentEchoInkResourceCatalogAction,
+  currentTurnOptions as currentTurnOptionsAction,
+  effectiveModel as effectiveModelAction,
+  ensureChatWorkspaceSelected as ensureChatWorkspaceSelectedAction,
+  openWorkspaceMenu as openWorkspaceMenuAction,
+  prewarmActiveThread as prewarmActiveThreadAction,
+  resolvedKnowledgeBackend as resolvedKnowledgeBackendAction,
+  type CodexWorkspaceHost
+} from "./codex-view/workspace-controller";
+import {
+  clearKnowledgeDashboardTooltips,
+  refreshKnowledgeDashboard as refreshKnowledgeDashboardAction,
+  renderKnowledgeDashboard as renderKnowledgeDashboardAction,
+  type CodexKnowledgeDashboardHost
+} from "./codex-view/knowledge-dashboard-controller";
+import {
+  clearComposerDraft as clearComposerDraftAction,
+  closeComposerMenus as closeComposerMenusAction,
+  composerStateForSession as composerStateForSessionAction,
+  fillKnowledgeBaseCommand as fillKnowledgeBaseCommandAction,
+  onInputChanged as onInputChangedAction,
+  openKnowledgeCommandMenu as openKnowledgeCommandMenuAction,
+  openKnowledgeModelMenu as openKnowledgeModelMenuAction,
+  openModelMenu as openModelMenuAction,
+  pauseQueueForSession as pauseQueueForSessionAction,
+  renderKnowledgeCommandMatches as renderKnowledgeCommandMatchesAction,
+  renderQueue as renderQueueAction,
+  renderToolbar as renderToolbarAction,
+  submitKnowledgeBaseCommand as submitKnowledgeBaseCommandAction,
+  updateContextForSession as updateContextForSessionAction,
+  type CodexComposerHost
+} from "./codex-view/composer-controller";
+import {
+  addContextCompactionMessage as addContextCompactionMessageAction,
+  addMessageToSession as addMessageToSessionAction,
+  appendItemDelta as appendItemDeltaAction,
+  appendProcessDelta as appendProcessDeltaAction,
+  attachTurnIdToRun as attachTurnIdToRunAction,
+  clearKnowledgeBaseRunProgressTimer as clearKnowledgeBaseRunProgressTimerAction,
+  clearSessionMessageActiveRun,
+  ensureThinkingMessage as ensureThinkingMessageAction,
+  finishPlanMessage as finishPlanMessageAction,
+  finishRunningProcessMessages as finishRunningProcessMessagesAction,
+  finishThinkingMessage as finishThinkingMessageAction,
+  flushSessionSave as flushSessionSaveAction,
+  handleMessagesScroll as handleMessagesScrollAction,
+  isMessagesAtBottom as isMessagesAtBottomAction,
+  isMessagesNearBottom as isMessagesNearBottomAction,
+  markThinkingAsStreaming as markThinkingAsStreamingAction,
+  moveMessageToEnd as moveMessageToEndAction,
+  renderCompletedItem as renderCompletedItemAction,
+  renderMessages as renderMessagesAction,
+  renderMessagesIfActive as renderMessagesIfActiveAction,
+  renderPlanUpdate as renderPlanUpdateAction,
+  renderStartedItem as renderStartedItemAction,
+  resetVirtualWindow as resetVirtualWindowAction,
+  scheduleKnowledgeBaseRunProgress as scheduleKnowledgeBaseRunProgressAction,
+  scheduleMeasureVirtualRows as scheduleMeasureVirtualRowsAction,
+  scheduleRenderMessages as scheduleRenderMessagesAction,
+  scheduleSessionSave as scheduleSessionSaveAction,
+  settleStaleMessages as settleStaleMessagesAction,
+  upsertProcessItem as upsertProcessItemAction,
+  type CodexMessageHost
+} from "./codex-view/message-controller";
+import {
+  applyStatus as applyStatusAction,
+  clearEditorActionStatusTimers as clearEditorActionStatusTimersAction,
+  openPluginSettings as openPluginSettingsAction,
+  refreshHeaderRateLimits as refreshHeaderRateLimitsAction,
+  renderArticleUnderstandingPanel as renderArticleUnderstandingPanelAction,
+  renderEditorActionStatus as renderEditorActionStatusAction,
+  renderHeaderHistory as renderHeaderHistoryAction,
+  renderUsagePanel as renderUsagePanelAction,
+  setEditorActionStatus as setEditorActionStatusAction,
+  updateInputPlaceholder as updateInputPlaceholderAction,
+  updateUsageHeader as updateUsageHeaderAction,
+  type CodexHeaderHost
+} from "./codex-view/header-controller";
+import {
+  armTurnWatchdog as armTurnWatchdogAction,
+  clearActiveRun as clearActiveRunAction,
+  clearTurnWatchdog as clearTurnWatchdogAction,
+  stopTurn as stopTurnAction,
+  type CodexTurnLifecycleHost
+} from "./codex-view/turn-lifecycle";
+import { renderViewShell, type CodexViewShellHost } from "./codex-view/view-shell";
+import {
+  activeRunSession as activeRunSessionAction,
+  clearKnowledgeBasePage as clearKnowledgeBasePageAction,
+  createSession as createSessionAction,
+  deleteSession as deleteSessionAction,
+  ensureSession as ensureSessionAction,
+  isKnowledgeBaseSession as isKnowledgeBaseSessionAction,
+  openKnowledgeBaseHistory as openKnowledgeBaseHistoryAction,
+  renderTabsView,
+  renameSession as renameSessionAction,
+  sessionById as sessionByIdAction,
+  sessionForThread as sessionForThreadAction,
+  type CodexSessionHost
+} from "./codex-view/session-controller";
+import {
+  armEditorSummaryTimeout as armEditorSummaryTimeoutAction,
+  cancelEditorSummaryRun as cancelEditorSummaryRunAction,
+  clearEditorSummaryTimers as clearEditorSummaryTimersAction,
+  effectiveEditorActionModel as effectiveEditorActionModelAction,
+  editorActionStartBlockReason as editorActionStartBlockReasonAction,
+  isEditorActionRunActive as isEditorActionRunActiveAction,
+  isEditorSummaryRunActive as isEditorSummaryRunActiveAction,
+  prewarmEditorActionThread as prewarmEditorActionThreadAction,
+  rejectEditorActionRun as rejectEditorActionRunAction,
+  rejectEditorSummaryRun as rejectEditorSummaryRunAction,
+  releaseEditorActionRunLock as releaseEditorActionRunLockAction,
+  releaseEditorSummaryRunLock as releaseEditorSummaryRunLockAction,
+  resolveEditorActionRun as resolveEditorActionRunAction,
+  resolveEditorSummaryRun as resolveEditorSummaryRunAction,
+  takeEditorActionThread as takeEditorActionThreadAction,
+  withEditorActionTimeout as withEditorActionTimeoutAction,
+  type CodexEditorActionRunHost
+} from "./codex-view/editor-action-run-state";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
-import { editorActionStartBlockReason } from "../editor-actions/state";
-import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import type { EditorActionSummarySource } from "../editor-actions/summary-cache";
-import { knowledgeCommandQueryForInput } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
-import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages } from "../knowledge-base/session-history";
-
-type ObsidianSettingsApi = {
-  setting?: {
-    open?: () => void;
-    openTabById?: (id: string) => void;
-  };
-};
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
-
-const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;
-const sessionMessageStores = new WeakMap<object, SessionMessageStore>();
-
-type SessionMessageStoreHost = {
-  plugin?: {
-    getVaultPath?: () => string;
-    externalizeMessageText?: (message: ChatMessage, text: string) => Promise<void>;
-    saveSettings?: (force?: boolean) => Promise<void>;
-  };
-  activeRunId?: string;
-  activeTurnId?: string;
-  activeThinkingMessageId?: string;
-  activePlanMessageId?: string;
-  activeItemMessages?: Map<string, string>;
-  renderMessagesIfActive?: (session: StoredSession, updatedMessage?: ChatMessage) => void;
-  scheduleSessionSave?: () => void;
-};
-
-function sessionMessageStoreFor(view: object): SessionMessageStore {
-  const existing = sessionMessageStores.get(view);
-  if (existing) return existing;
-  const host = view as SessionMessageStoreHost;
-  const store = new SessionMessageStore({
-    getActiveRunId: () => host.activeRunId ?? "",
-    getActiveTurnId: () => host.activeTurnId ?? "",
-    getVaultPath: () => host.plugin?.getVaultPath?.() ?? "",
-    externalizeMessageText: async (message, text) => {
-      await host.plugin?.externalizeMessageText?.(message, text);
-    },
-    renderMessagesIfActive: (session, updatedMessage) => host.renderMessagesIfActive?.(session, updatedMessage),
-    scheduleSessionSave: () => {
-      if (host.scheduleSessionSave) {
-        host.scheduleSessionSave();
-        return;
-      }
-      void host.plugin?.saveSettings?.(true).catch(swallowError("save chat session"));
-    }
-  });
-  sessionMessageStores.set(view, store);
-  return store;
-}
-
-function clearLegacySessionMessageState(view: object): void {
-  const host = view as SessionMessageStoreHost;
-  host.activeThinkingMessageId = "";
-  host.activePlanMessageId = "";
-  host.activeItemMessages?.clear();
-}
 
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
@@ -258,6 +288,17 @@ export class CodexView extends ItemView {
     this.editorActionRunnerContext = this.createEditorActionRunnerContext();
     this.notificationRouter = new CodexNotificationRouter(this.createNotificationRouterContext());
   }
+
+  private attachmentHost(): CodexAttachmentHost { return this as unknown as CodexAttachmentHost; }
+  private sessionHost(): CodexSessionHost { return this as unknown as CodexSessionHost; }
+  private knowledgeDashboardHost(): CodexKnowledgeDashboardHost { return this as unknown as CodexKnowledgeDashboardHost; }
+  private workspaceHost(): CodexWorkspaceHost { return this as unknown as CodexWorkspaceHost; }
+  private editorActionRunHost(): CodexEditorActionRunHost { return this as unknown as CodexEditorActionRunHost; }
+  private composerHost(): CodexComposerHost { return this as unknown as CodexComposerHost; }
+  private messageHost(): CodexMessageHost { return this as unknown as CodexMessageHost; }
+  private headerHost(): CodexHeaderHost { return this as unknown as CodexHeaderHost; }
+  private turnLifecycleHost(): CodexTurnLifecycleHost { return this as unknown as CodexTurnLifecycleHost; }
+  private shellHost(): CodexViewShellHost { return this as unknown as CodexViewShellHost; }
 
   private createTurnRunnerContext(): CodexViewTurnContext {
     const view = this;
@@ -384,889 +425,85 @@ export class CodexView extends ItemView {
     window.setTimeout(() => this.inputEl?.focus(), 50);
   }
 
-  private render(): void {
-    this.clearKnowledgeDashboardHealthTooltips();
-    this.contentEl.empty();
-    this.rootEl = this.contentEl.createDiv({ cls: "codex-container" });
-
-    const headerRefs = renderCodexHeader(this.rootEl, {
-      onToggleArticlePanel: () => {
-        this.articleUnderstandingPanelVisible = !this.articleUnderstandingPanelVisible;
-        if (this.articleUnderstandingPanelVisible) void this.refreshArticleUnderstandingPanelSourceState();
-        this.renderArticleUnderstandingPanel();
-      },
-      onOpenHistory: () => {
-        const session = this.ensureSession();
-        if (!this.isKnowledgeBaseSession(session)) return;
-        void this.openKnowledgeBaseHistory(session);
-      },
-      onRefreshRateLimits: () => this.refreshHeaderRateLimits(),
-      onOpenWorkspaceResources: () => void this.plugin.openWorkspaceResourceSettings("plugins"),
-      onOpenSettings: () => this.openPluginSettings()
-    });
-    this.headerStatusEl = headerRefs.headerStatusEl;
-    this.headerStatusTextEl = headerRefs.headerStatusTextEl;
-    this.editorActionStatusEl = headerRefs.editorActionStatusEl;
-    this.editorActionStatusTextEl = headerRefs.editorActionStatusTextEl;
-    this.headerHistoryEl = headerRefs.headerHistoryEl;
-    this.headerUsageEl = headerRefs.headerUsageEl;
-    this.headerUsageTextEl = headerRefs.headerUsageTextEl;
-    this.usagePanelEl = headerRefs.usagePanelEl;
-    this.articleUnderstandingPanelEl = headerRefs.articleUnderstandingPanelEl;
-    this.registerDomEvent(document, "click", (event) => {
-      const target = event.target instanceof Node ? event.target : null;
-      if (!target) return;
-      if (!this.rootEl.contains(target)) {
-        this.usagePanelEl.removeClass("is-visible");
-      }
-      if (shouldCloseComposerMenusForClick(target, this.rootEl, [this.skillMenuEl, this.knowledgeCommandMenuEl])) this.closeComposerMenus();
-    });
-
-    this.tabBarEl = this.rootEl.createDiv({ cls: "codex-tabs" });
-    this.knowledgeDashboardEl = this.rootEl.createDiv({ cls: "codex-kb-dashboard" });
-    this.messagesEl = this.rootEl.createDiv({ cls: "codex-messages" });
-    this.virtualListEl = this.messagesEl.createDiv({ cls: "codex-virtual-list" });
-    this.registerDomEvent(this.messagesEl, "wheel", (event) => this.messageScrollFollow.handleWheel(event as WheelEvent));
-    this.registerDomEvent(this.messagesEl, "touchstart", (event) => this.messageScrollFollow.handleTouchStart(event as TouchEvent));
-    this.registerDomEvent(this.messagesEl, "touchmove", (event) => this.messageScrollFollow.handleTouchMove(event as TouchEvent));
-    this.registerDomEvent(this.messagesEl, "scroll", () => this.handleMessagesScroll());
-
-    const composerRefs = renderComposerShell(this.rootEl, {
-      onInputChanged: () => this.onInputChanged(),
-      onPasteFiles: (event) => void this.handlePastedFiles(event),
-      onEnhancePrompt: () => void enhanceChatInputRunner(this.editorActionRunnerContext),
-      onSendMessage: () => void this.sendMessage(),
-      onDropFiles: (event) => this.handleDroppedFiles(event)
-    });
-    this.queueEl = composerRefs.queueEl;
-    this.attachmentsEl = composerRefs.attachmentsEl;
-    this.inputEl = composerRefs.inputEl;
-    this.promptEnhanceReviewEl = composerRefs.promptEnhanceReviewEl;
-    this.skillMenuEl = composerRefs.skillMenuEl;
-    this.knowledgeCommandMenuEl = composerRefs.knowledgeCommandMenuEl;
-    this.toolbarEl = composerRefs.toolbarEl;
-    this.mcpPanelEl = this.rootEl.createDiv({ cls: "codex-mcp-panel" });
-    this.renderToolbar();
-    this.updateInputPlaceholder();
-    this.renderEditorActionStatus();
-    this.renderArticleUnderstandingPanel();
-  }
-
-  private updateInputPlaceholder(): void {
-    if (!this.inputEl) return;
-    const session = this.ensureSession();
-    this.inputEl.setAttr("placeholder", this.isKnowledgeBaseSession(session)
-      ? "普通对话直接输入；查知识库用 /ask；管理用 /check /maintain"
-      : session.cwd ? `问 Codex，当前工作区：${workspaceDisplayName(session.cwd)}` : "先选择工作区，再问 Codex");
-    this.renderHeaderHistory();
-  }
-
-  private renderHeaderHistory(): void {
-    if (!this.headerHistoryEl) return;
-    const visible = this.isKnowledgeBaseSession(this.ensureSession());
-    renderHeaderHistoryButton(this.headerHistoryEl, visible);
-  }
-
-  private applyStatus(): void {
-    const status = this.plugin.lastStatus;
-    this.headerStatusTextEl.setText(this.running ? "思考中" : status?.connected ? "活跃" : "未连接");
-    this.headerStatusEl.toggleClass("has-warning", Boolean(status?.errors?.length) || !status?.connected);
-    this.headerStatusEl.toggleClass("is-ok", Boolean(status?.connected && !status?.errors?.length));
-    this.headerStatusEl.toggleClass("is-active", this.running);
-    const providerLabel = providerConnectionLabel(this.plugin.settings);
-    this.headerStatusEl.setAttr("title", status?.errors?.length ? status.errors.join("\n") : `${status?.accountLabel ?? "未连接"}\n${providerLabel}`);
-    this.updateUsageHeader(status?.rateLimits ?? null, this.usageLoading, this.usageError);
-    this.renderUsagePanel(status?.rateLimits ?? null, this.usageError, this.usageLoading);
-    this.renderToolbar();
-  }
-
-  setEditorActionStatus(status: EditorActionStatusView): void {
-    this.editorActionStatus = {
-      ...status,
-      startedAt: status.startedAt ?? this.editorActionStatus.startedAt ?? Date.now()
-    };
-    this.clearEditorActionStatusTimers();
-    if (status.status === "generating") {
-      this.editorActionStatusTicker = window.setInterval(() => this.renderEditorActionStatus(), 1000);
-    }
-    if (status.status === "confirmed" || status.status === "canceled" || status.status === "failed") {
-      this.editorActionStatusResetTimer = window.setTimeout(() => {
-        this.editorActionStatus = {
-          status: "idle",
-          understandingStatus: this.articleUnderstandingPanelState.status === "fresh" || this.articleUnderstandingPanelState.status === "reused" || this.articleUnderstandingPanelState.status === "stale"
-            ? this.articleUnderstandingPanelState.status
-            : undefined
-        };
-        this.renderEditorActionStatus();
-      }, 2200);
-    }
-    this.renderEditorActionStatus();
-  }
-
-  private renderEditorActionStatus(): void {
-    if (!this.editorActionStatusEl || !this.editorActionStatusTextEl) return;
-    renderEditorActionStatusView(this.editorActionStatusEl, this.editorActionStatusTextEl, this.editorActionStatus, this.plugin.settings.editorActions.statusSlotEnabled);
-    this.renderArticleUnderstandingPanel();
-  }
-
-  private renderArticleUnderstandingPanel(): void {
-    if (!this.articleUnderstandingPanelEl) return;
-    const settings = this.plugin.settings.editorActions;
-    renderArticleUnderstandingPanelView(
-      this.articleUnderstandingPanelEl,
-      {
-        app: this.plugin.app,
-        component: this,
-        visible: this.articleUnderstandingPanelVisible,
-        settings,
-        state: this.articleUnderstandingPanelState
-      },
-      {
-        onRefresh: () => void this.refreshArticleUnderstandingFromPanel(),
-        onClear: (filePath) => {
-          delete this.plugin.settings.editorActions.articleUnderstandingCache[filePath];
-          this.articleUnderstandingPanelState = {
-            ...this.articleUnderstandingPanelState,
-            status: settings.qualityMode === "fast" ? "idle" : "missing",
-            entry: null,
-            usedInLastRun: false
-          };
-          void this.plugin.saveSettings().then(() => this.renderEditorActionStatus());
-        },
-        onOpenSettings: () => {
-          this.plugin.settings.settingsTab = "editorActions";
-          void this.plugin.saveSettings().then(() => this.openPluginSettings());
-        }
-      }
-    );
-  }
+  private render(): void { renderViewShell(this.shellHost(), this.editorActionRunnerContext); }
+  private updateInputPlaceholder(): void { updateInputPlaceholderAction(this.headerHost()); }
+  private renderHeaderHistory(): void { renderHeaderHistoryAction(this.headerHost()); }
+  private applyStatus(): void { applyStatusAction(this.headerHost()); }
+  setEditorActionStatus(status: EditorActionStatusView): void { setEditorActionStatusAction(this.headerHost(), status); }
+  private renderEditorActionStatus(): void { renderEditorActionStatusAction(this.headerHost()); }
+  private renderArticleUnderstandingPanel(): void { renderArticleUnderstandingPanelAction(this.headerHost()); }
 
   private clearEditorActionStatusTimers(): void {
-    if (this.editorActionStatusTicker) {
-      window.clearInterval(this.editorActionStatusTicker);
-      this.editorActionStatusTicker = null;
-    }
-    if (this.editorActionStatusResetTimer) {
-      window.clearTimeout(this.editorActionStatusResetTimer);
-      this.editorActionStatusResetTimer = null;
-    }
+    clearEditorActionStatusTimersAction(this.headerHost());
   }
 
   private async refreshHeaderRateLimits(): Promise<void> {
-    const requestId = ++this.usageRequestId;
-    const cachedRateLimits = this.plugin.lastStatus?.rateLimits ?? null;
-    this.usageLoading = true;
-    this.usageError = null;
-    this.updateUsageHeader(cachedRateLimits, true, null);
-    this.renderUsagePanel(cachedRateLimits, null, true);
-
-    const status = await this.plugin.ensureCodexConnected();
-    if (requestId !== this.usageRequestId) return;
-    if (!status.connected || !this.plugin.codex) {
-      this.usageLoading = false;
-      this.usageError = "Codex 未连接";
-      this.updateUsageHeader(null, false, this.usageError);
-      this.renderUsagePanel(null, this.usageError, false);
-      return;
-    }
-    const result = await this.plugin.codex.refreshRateLimits();
-    if (requestId !== this.usageRequestId) return;
-    const nextRateLimits = result.rateLimits ?? this.plugin.lastStatus?.rateLimits ?? null;
-    const nextRateLimitsByLimitId = result.rateLimitsByLimitId ?? this.plugin.lastStatus?.rateLimitsByLimitId ?? null;
-    if (this.plugin.lastStatus) {
-      this.plugin.lastStatus = {
-        ...this.plugin.lastStatus,
-        rateLimits: nextRateLimits,
-        rateLimitsByLimitId: nextRateLimitsByLimitId
-      };
-    }
-    this.usageLoading = false;
-    this.usageError = result.error;
-    this.updateUsageHeader(nextRateLimits, false, result.error);
-    this.renderUsagePanel(nextRateLimits, result.error, false);
+    await refreshHeaderRateLimitsAction(this.headerHost());
   }
 
-  private updateUsageHeader(rateLimits: RateLimitSnapshot | null, loading = false, error: string | null = null): void {
-    if (!this.headerUsageTextEl) return;
-    updateUsageHeaderView(this.headerUsageEl, this.headerUsageTextEl, rateLimits, loading, error);
-  }
-
-  private renderUsagePanel(rateLimits: RateLimitSnapshot | null, error?: string | null, loading = false): void {
-    if (!this.usagePanelEl) return;
-    renderUsagePanelView(this.usagePanelEl, rateLimits, error, loading);
-  }
-
-  private openPluginSettings(): void {
-    const setting = (this.app as unknown as ObsidianSettingsApi).setting;
-    if (!setting?.open || !setting?.openTabById) {
-      new Notice("无法打开插件设置页");
-      return;
-    }
-    setting.open();
-    setting.openTabById(this.plugin.manifest.id);
-  }
-
-  private renderTabs(): void {
-    this.ensureSession();
-    renderCodexTabs(
-      this.tabBarEl,
-      this.plugin.settings.sessions,
-      this.plugin.settings.activeSessionId,
-      this.plugin.settings.knowledgeBase.sessionId,
-      {
-        onActivate: (session) => void (async () => {
-          this.plugin.settings.activeSessionId = session.id;
-          await this.plugin.saveSettings(true);
-          this.resetVirtualWindow();
-          this.renderTabs();
-          this.renderMessages({ forceBottom: true });
-          this.renderToolbar();
-          this.renderKnowledgeDashboard();
-          void this.refreshKnowledgeDashboard();
-          this.updateInputPlaceholder();
-          this.prewarmActiveThread();
-        })(),
-        onContextMenu: (event, session) => this.openSessionMenu(event, session),
-        onRename: (session, knowledgeSession) => {
-          if (knowledgeSession) {
-            new Notice("知识库管理频道是常驻频道，不能重命名");
-            return;
-          }
-          void this.renameSession(session);
-        },
-        onCreateSession: () => void (async () => {
-          this.createSession();
-          this.resetVirtualWindow();
-          await this.plugin.saveSettings(true);
-          this.renderTabs();
-          this.renderMessages({ forceBottom: true });
-          this.renderToolbar();
-          this.renderKnowledgeDashboard();
-          void this.refreshKnowledgeDashboard();
-          this.updateInputPlaceholder();
-          this.prewarmActiveThread();
-        })()
-      }
-    );
-  }
-
-  private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
-    const session = this.ensureSession();
-    this.settleStaleMessages(session);
-    const knowledgeSession = this.isKnowledgeBaseSession(session);
-    const messages = knowledgeSession ? getDisplayKnowledgeBaseMessages(session) : session.messages;
-    const hiddenCount = knowledgeSession ? getHiddenKnowledgeBaseMessages(session).length : 0;
-    const renderOptions = this.messagesBottomFollowPaused ? { ...options, forceBottom: false, preserveScroll: true } : options;
-    this.messageListRenderer.render({
-      app: this.app,
-      component: this,
-      messagesEl: this.messagesEl,
-      virtualListEl: this.virtualListEl,
-      sessionId: session.id,
-      knowledgeSession,
-      messages,
-      hiddenKnowledgeMessageCount: hiddenCount,
-      vaultPath: this.plugin.getVaultPath(),
-      readRawMessageText: (rawRef) => this.plugin.readRawMessageText(rawRef),
-      onOpenKnowledgeHistory: () => void this.openKnowledgeBaseHistory(session),
-      onScheduleMeasure: () => this.scheduleMeasureVirtualRows(),
-      onScheduleRunProgress: () => this.scheduleKnowledgeBaseRunProgress(),
-      shouldFollowBottom: () => !this.messagesBottomFollowPaused,
-      options: renderOptions
-    });
-  }
-
-  private renderKnowledgeDashboard(): void {
-    if (!this.knowledgeDashboardEl) return;
-    const session = this.ensureSession();
-    renderKnowledgeDashboardView(
-      this.knowledgeDashboardEl,
-      {
-        visible: this.isKnowledgeBaseSession(session),
-        snapshot: this.knowledgeDashboardSnapshot,
-        expanded: this.knowledgeDashboardExpanded,
-        loading: this.knowledgeDashboardLoading,
-        error: this.knowledgeDashboardError
-      },
-      {
-        onRefresh: () => void this.refreshKnowledgeDashboard(true),
-        onToggleExpanded: () => {
-          this.knowledgeDashboardExpanded = !this.knowledgeDashboardExpanded;
-          this.renderKnowledgeDashboard();
-        },
-        onOpenRulesFile: (snapshot) => void this.openKnowledgeDashboardRulesFile(snapshot)
-      },
-      this.knowledgeDashboardTooltipState
-    );
-  }
+  private updateUsageHeader(rateLimits: RateLimitSnapshot | null, loading = false, error: string | null = null): void { updateUsageHeaderAction(this.headerHost(), rateLimits, loading, error); }
+  private renderUsagePanel(rateLimits: RateLimitSnapshot | null, error?: string | null, loading = false): void { renderUsagePanelAction(this.headerHost(), rateLimits, error, loading); }
+  private openPluginSettings(): void { openPluginSettingsAction(this.headerHost()); }
+  private renderTabs(): void { renderTabsView(this.sessionHost()); }
+  private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void { renderMessagesAction(this.messageHost(), options); }
+  private renderKnowledgeDashboard(): void { renderKnowledgeDashboardAction(this.knowledgeDashboardHost()); }
 
   private async refreshKnowledgeDashboard(force = false): Promise<void> {
-    if (!this.knowledgeDashboardEl) return;
-    const session = this.ensureSession();
-    if (!this.isKnowledgeBaseSession(session)) {
-      this.renderKnowledgeDashboard();
-      return;
-    }
-    if (this.knowledgeDashboardLoading && !force) return;
-    const manager = this.plugin.getKnowledgeBaseManager();
-    if (!manager) return;
-    const requestId = ++this.knowledgeDashboardRequestId;
-    this.knowledgeDashboardLoading = true;
-    this.knowledgeDashboardError = "";
-    this.renderKnowledgeDashboard();
-    try {
-      const snapshot = await manager.getDashboardSnapshot();
-      if (requestId !== this.knowledgeDashboardRequestId) return;
-      this.knowledgeDashboardSnapshot = snapshot;
-    } catch (error) {
-      if (requestId !== this.knowledgeDashboardRequestId) return;
-      this.knowledgeDashboardError = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (requestId === this.knowledgeDashboardRequestId) {
-        this.knowledgeDashboardLoading = false;
-        this.renderKnowledgeDashboard();
-      }
-    }
+    await refreshKnowledgeDashboardAction(this.knowledgeDashboardHost(), force);
   }
 
-  private async openKnowledgeDashboardRulesFile(snapshot: KnowledgeBaseDashboardSnapshot): Promise<void> {
-    if (!snapshot.rulesFileExists) {
-      new Notice(`知识库规则文件缺失：${snapshot.rulesFilePath}。请到设置里修正规则文件。`);
-      return;
-    }
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(snapshot.rulesFilePath));
-    if (file instanceof TFile) {
-      await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
-      return;
-    }
-    new Notice(`没有在当前 Obsidian 仓库找到：${snapshot.rulesFilePath}`);
-  }
-
-  private clearKnowledgeDashboardHealthTooltips(): void {
-    clearKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
-  }
-
-  private renderToolbar(): void {
-    if (!this.toolbarEl) return;
-    this.renderQueue();
-    this.renderAttachments();
-
-    const session = this.ensureSession();
-    const knowledgeSession = this.isKnowledgeBaseSession(session);
-    const knowledgeManager = this.plugin.getKnowledgeBaseManager();
-    const knowledgeTaskRunning = Boolean(knowledgeManager?.isRunning);
-    const workspacePath = normalizeWorkspacePath(session.cwd);
-    const refs = renderComposerToolbar(
-      this.toolbarEl,
-      {
-        session,
-        knowledgeSession,
-        knowledgeTaskRunning,
-        knowledgeBackend: this.resolvedKnowledgeBackend(),
-        selectedSkill: this.selectedSkill,
-        selectedPermission: this.selectedPermission,
-        running: this.running,
-        viewRunKind: this.activeRunKind,
-        hasDraft: this.hasComposerDraft(),
-        hasQueuedItems: this.turnQueue.hasQueuedItems(session.id),
-        currentComposerSummary: this.currentComposerSummary(),
-        currentComposerSummaryTitle: this.currentComposerSummaryTitle(),
-        currentKnowledgeComposerSummaryTitle: this.currentKnowledgeComposerSummaryTitle(),
-        workspacePath,
-        workspaceDisplayName: workspacePath ? workspaceDisplayName(workspacePath) : "",
-        workspaceValid: workspacePath ? workspaceDirectoryExists(workspacePath) : false
-      },
-      {
-        onOpenAddMenu: (event) => this.openAddMenu(event),
-        onOpenSkillMenu: (event) => this.openSkillMenu(event),
-        onCaptureWeChatArticle: () => this.runKnowledgeBaseShortcut("公众号收集", async () => {
-          const paths = await this.plugin.getKnowledgeBaseManager()?.captureWeChatArticle();
-          return paths?.length ? `已收集公众号：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收集内容。";
-        }),
-        onCaptureWebPage: () => this.runKnowledgeBaseShortcut("网页收藏", async () => {
-          const paths = await this.plugin.getKnowledgeBaseManager()?.captureWebPage();
-          return paths?.length ? `已收藏网页：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收藏内容。";
-        }),
-        onPickKnowledgeBaseFiles: () => this.pickKnowledgeBaseFiles(),
-        onOpenKnowledgeModelMenu: (event) => this.openKnowledgeModelMenu(event),
-        onOpenKnowledgeCommandMenu: (event) => this.openKnowledgeCommandMenu(event),
-        onPermissionChange: (value) => {
-          this.selectedPermission = value;
-          this.persistComposerDefaults();
-          this.renderToolbar();
-        },
-        onOpenWorkspaceMenu: (event, nextSession) => this.openWorkspaceMenu(event, nextSession),
-        onOpenModelMenu: (event) => this.openModelMenu(event),
-        onMicInput: () => new Notice("语音输入暂未接入"),
-        onCancelKnowledgeTask: () => {
-          this.pauseQueueForSession(session.id);
-          void knowledgeManager?.cancelMaintenance();
-        },
-        onStopTurn: () => void this.stopTurn(),
-        onEnqueueDraft: () => void this.enqueueComposerDraft(),
-        onResumeQueue: (sessionId) => void this.resumeQueuedTurns(sessionId),
-        onSendMessage: () => void this.sendMessage()
-      }
-    );
-    if (!knowledgeSession) {
-      this.contextEl = refs.contextEl!;
-      this.contextRingEl = refs.contextRingEl!;
-      this.contextValueEl = refs.contextValueEl!;
-      this.updateContext(session.tokenUsage, false);
-    }
-  }
-
-  private renderQueue(): void {
-    if (!this.queueEl) return;
-    const session = this.ensureSession();
-    renderTurnQueue(
-      this.queueEl,
-      {
-        items: this.turnQueue.itemsForSession(session.id),
-        paused: this.turnQueue.isSessionQueuePaused(session.id),
-        canResume: !this.running && !this.plugin.getKnowledgeBaseManager()?.isRunning,
-        draggedItemId: this.draggedQueueItemId
-      },
-      {
-        onResume: () => void this.resumeQueuedTurns(session.id),
-        onDragStart: (itemId) => {
-          this.draggedQueueItemId = itemId;
-        },
-        onDragEnd: () => {
-          this.draggedQueueItemId = "";
-        },
-        onReorder: (sessionId, sourceId, index) => {
-          this.turnQueue.reorderQueuedItem(sessionId, sourceId, index);
-          this.renderQueue();
-        },
-        onRemove: (sessionId, itemId) => {
-          this.turnQueue.removeQueuedItem(sessionId, itemId);
-          this.renderQueue();
-          this.renderToolbar();
-        }
-      }
-    );
-  }
-
-  private renderAttachments(): void {
-    if (!this.attachmentsEl) return;
-    renderComposerAttachments(this.attachmentsEl, { selectedSkill: this.selectedSkill, attachments: this.attachments }, {
-      onRemoveSkill: () => {
-        this.selectedSkill = null;
-        this.renderAttachments();
-        this.renderToolbar();
-      },
-      onRemoveAttachment: (attachmentPath) => {
-        this.attachments = this.attachments.filter((attachment) => attachment.path !== attachmentPath);
-        this.renderAttachments();
-      }
-    });
-  }
-
-  private closeComposerMenus(): void {
-    this.skillMenuEl?.removeClass("is-visible");
-    this.knowledgeCommandMenuEl?.removeClass("is-visible");
-  }
-
-  private openSkillMenu(event: MouseEvent): void {
-    showSkillMenu(
-      event,
-      { skillMenuEl: this.skillMenuEl, knowledgeCommandMenuEl: this.knowledgeCommandMenuEl },
-      { skillsRequested: this.skillsRequested },
-      {
-        onSkillsRequested: () => {
-          this.skillsRequested = true;
-        },
-        onLoadSkills: () => this.plugin.ensureEchoInkSkillResourcesLoaded(true),
-        onRenderMatches: () => this.renderSkillMatches()
-      }
-    );
-  }
-
-  private openAddMenu(event: MouseEvent): void {
-    showAddMenu(event, {
-      onAttachActiveFile: () => this.attachActiveFile(),
-      onPickFiles: (imagesOnly) => this.pickFiles(imagesOnly),
-      onToggleMcpPanel: () => void this.toggleMcpPanel()
-    });
-  }
-
-  private openWorkspaceMenu(event: MouseEvent, session: StoredSession): void {
-    const workspacePath = normalizeWorkspacePath(session.cwd);
-    showWorkspaceMenu(event, workspacePath, {
-      onChooseWorkspace: () => void this.chooseChatWorkspace(session),
-      onRevealWorkspace: () => showItemInFinder(workspacePath),
-      onClearWorkspace: () => void this.clearChatWorkspace(session)
-    });
-  }
-
-  private async chooseChatWorkspace(session: StoredSession): Promise<boolean> {
-    if (this.running) {
-      new Notice("当前会话运行中，结束后再切换工作区");
-      return false;
-    }
-    const pickedPath = await pickWorkspaceDirectory(session.cwd);
-    const selectedPath = pickedPath === undefined
-      ? await textInputModal(this.app, "选择工作区", "文件夹路径", session.cwd)
-      : pickedPath;
-    if (!selectedPath) return false;
-    const workspacePath = normalizeWorkspacePath(selectedPath);
-    if (!workspaceDirectoryExists(workspacePath)) {
-      new Notice("请选择一个存在的文件夹作为工作区");
-      return false;
-    }
-    const changed = normalizeWorkspacePath(session.cwd) !== workspacePath;
-    session.cwd = workspacePath;
-    if (changed) {
-      delete session.threadId;
-      delete session.tokenUsage;
-    }
-    session.updatedAt = Date.now();
-    await this.plugin.saveSettings(true);
-    this.renderToolbar();
-    this.updateInputPlaceholder();
-    this.renderMessages();
-    this.prewarmActiveThread();
-    new Notice(changed ? `工作区已设为：${workspaceDisplayName(workspacePath)}，下一轮将开启新线程` : `工作区已设为：${workspaceDisplayName(workspacePath)}`);
-    return true;
-  }
-
-  private async clearChatWorkspace(session: StoredSession): Promise<void> {
-    if (this.running) {
-      new Notice("当前会话运行中，结束后再清除工作区");
-      return;
-    }
-    session.cwd = "";
-    delete session.threadId;
-    delete session.tokenUsage;
-    session.updatedAt = Date.now();
-    await this.plugin.saveSettings(true);
-    this.renderToolbar();
-    this.updateInputPlaceholder();
-    this.renderMessages();
-    new Notice("已清除工作区");
-  }
+  private clearKnowledgeDashboardHealthTooltips(): void { clearKnowledgeDashboardTooltips(this.knowledgeDashboardHost()); }
+  private renderToolbar(): void { renderToolbarAction(this.composerHost()); }
+  private renderQueue(): void { renderQueueAction(this.composerHost()); }
+  private renderAttachments(): void { renderAttachmentsView(this.attachmentHost()); }
+  private closeComposerMenus(): void { closeComposerMenusAction(this.composerHost()); }
+  private openWorkspaceMenu(event: MouseEvent, session: StoredSession): void { openWorkspaceMenuAction(this.workspaceHost(), event, session); }
 
   private async clearKnowledgeBasePage(session: StoredSession): Promise<void> {
-    if (!this.isKnowledgeBaseSession(session)) return;
-    if (this.running || this.plugin.getKnowledgeBaseManager()?.isRunning) {
-      new Notice("知识库任务运行中，结束后再清空页面");
-      return;
-    }
-    const result = clearKnowledgeBaseVisibleHistory(session);
-    this.inputEl.value = "";
-    this.closeComposerMenus();
-    this.attachments = [];
-    this.selectedSkill = null;
-    this.resetVirtualWindow();
-    await this.plugin.saveSettings(true);
-    this.renderTabs();
-    this.renderMessages({ forceBottom: true });
-    this.renderToolbar();
-    this.updateInputPlaceholder();
-    new Notice(result.hiddenCount ? `已清空当前页面，${result.hiddenCount} 条历史仍可在 /history 查看` : "已开启新的知识库上下文");
+    await clearKnowledgeBasePageAction(this.sessionHost(), session);
   }
 
   private async openKnowledgeBaseHistory(session: StoredSession): Promise<void> {
-    if (!this.isKnowledgeBaseSession(session)) return;
-    await this.plugin.saveSettings(true);
-    const index = await this.plugin.readKnowledgeBaseHistoryIndex().catch((error) => {
-      console.error("Codex knowledge history read failed", error);
-      return null;
-    });
-    const historySession = index?.sessions.find((item) => item.sessionId === session.id);
-    const days = historySession?.days ?? [];
-    if (!days.length) {
-      new Notice("没有知识库历史");
-      return;
-    }
-    new KnowledgeBaseHistoryModal(
-      this.app,
-      days,
-      (date) => this.plugin.readKnowledgeBaseHistoryDay(session.id, date),
-      (date) => this.restoreKnowledgeBaseHistoryDate(session, date)
-    ).open();
-  }
-
-  private async restoreKnowledgeBaseHistoryDate(session: StoredSession, date: string): Promise<void> {
-    const messages = await this.plugin.readKnowledgeBaseHistoryDay(session.id, date);
-    if (!messages.length) {
-      new Notice("这一天没有可恢复的历史");
-      return;
-    }
-    session.messages = messages;
-    session.historyActiveDate = date;
-    delete session.messagesHiddenBefore;
-    delete session.threadId;
-    delete session.tokenUsage;
-    delete session.knowledgeContext;
-    session.updatedAt = Date.now();
-    this.resetVirtualWindow();
-    await this.plugin.saveSettings(true);
-    this.renderMessages({ forceBottom: true });
-    this.renderToolbar();
-    new Notice("已把这一天恢复到页面显示；模型上下文会从新线程开始");
+    await openKnowledgeBaseHistoryAction(this.sessionHost(), session);
   }
 
   private async ensureChatWorkspaceSelected(session: StoredSession): Promise<boolean> {
-    const workspacePath = normalizeWorkspacePath(session.cwd);
-    if (workspacePath && workspaceDirectoryExists(workspacePath)) return true;
-    const picked = await this.chooseChatWorkspace(session);
-    if (!picked) new Notice("普通会话需要先选择一个文件夹作为工作区");
-    return picked;
+    return await ensureChatWorkspaceSelectedAction(this.workspaceHost(), session);
   }
 
-  private openKnowledgeCommandMenu(event: MouseEvent): void {
-    showKnowledgeCommandMenu(event, (command) => this.fillKnowledgeBaseCommand(command));
-  }
-
-  private openKnowledgeModelMenu(event: MouseEvent): void {
-    showKnowledgeModelMenu(event, this.composerModelMenuState(), {
-      onSelectModel: (model) => this.selectComposerModel(model),
-      onSelectReasoning: (reasoning) => this.selectComposerReasoning(reasoning)
-    });
-  }
-
-  fillKnowledgeBaseCommand(command: string): void {
-    this.inputEl.value = command;
-    clearPromptEnhanceReview(this.promptEnhanceReviewEl);
-    this.inputEl.setSelectionRange(command.length, command.length);
-    this.closeComposerMenus();
-    this.focusInput();
-  }
-
-  async submitKnowledgeBaseCommand(command: string): Promise<void> {
-    await this.plugin.activateKnowledgeBaseChannel();
-    this.fillKnowledgeBaseCommand(command);
-    await this.sendMessage();
-  }
-
-  private openModelMenu(event: MouseEvent): void {
-    showModelMenu(event, this.composerModelMenuState(), {
-      onSelectModel: (model) => this.selectComposerModel(model),
-      onSelectReasoning: (reasoning) => this.selectComposerReasoning(reasoning),
-      onSelectServiceTier: (tier) => this.selectComposerServiceTier(tier),
-      onSelectMode: (mode) => this.selectComposerMode(mode)
-    });
-  }
-
-  private composerModelMenuState() {
-    return {
-      providerModels: this.activeProviderModels(),
-      availableModels: this.plugin.lastStatus?.models ?? [],
-      selectedModel: this.selectedModel,
-      defaultModel: this.plugin.settings.defaultModel,
-      effectiveModel: this.effectiveModel(),
-      selectedReasoning: this.selectedReasoning,
-      selectedServiceTier: this.selectedServiceTier,
-      selectedMode: this.selectedMode
-    };
-  }
-
-  private selectComposerModel(model: string): void {
-    this.selectedModel = model;
-    this.persistComposerDefaults();
-    this.renderToolbar();
-  }
-
-  private selectComposerReasoning(reasoning: ReasoningEffort): void {
-    this.selectedReasoning = reasoning;
-    this.persistComposerDefaults();
-    this.renderToolbar();
-  }
-
-  private selectComposerServiceTier(tier: ServiceTierChoice): void {
-    this.selectedServiceTier = tier;
-    this.persistComposerDefaults();
-    this.renderToolbar();
-  }
-
-  private selectComposerMode(mode: UiMode): void {
-    this.selectedMode = mode;
-    this.persistComposerDefaults();
-    this.renderToolbar();
-  }
-
-  private currentComposerSummary(): string {
-    return `${shortModelLabel(this.effectiveModel())} ${compactReasoningLabel(this.selectedReasoning)}`;
-  }
-
-  private currentComposerSummaryTitle(): string {
-    return `模型：${this.effectiveModel() || "自动"}\n思考：${labelFor(this.selectedReasoning)}\n速度：${labelFor(this.selectedServiceTier)}\n模式：${labelFor(this.selectedMode)}`;
-  }
-
-  private currentKnowledgeComposerSummaryTitle(): string {
-    return `知识库模型：${this.effectiveModel() || "自动"}\n思考强度：${labelFor(this.selectedReasoning)}`;
-  }
-
-  private persistComposerDefaults(): void {
-    this.plugin.settings.defaultModel = this.selectedModel;
-    this.plugin.settings.defaultReasoning = this.selectedReasoning;
-    this.plugin.settings.defaultServiceTier = this.selectedServiceTier;
-    this.plugin.settings.defaultPermission = this.selectedPermission;
-    this.plugin.settings.defaultMode = this.selectedMode;
-    void this.plugin.saveSettings(true).catch((error) => {
-      console.error("Codex composer defaults save failed", error);
-      new Notice(`运行参数保存失败：${error instanceof Error ? error.message : String(error)}`);
-    });
-  }
-
-  private openSessionMenu(event: MouseEvent, session: StoredSession): void {
-    showSessionMenu(event, this.isKnowledgeBaseSession(session), {
-      onRename: () => void this.renameSession(session),
-      onDelete: () => void this.deleteSession(session.id)
-    });
-  }
+  private openKnowledgeCommandMenu(event: MouseEvent): void { openKnowledgeCommandMenuAction(this.composerHost(), event); }
+  private openKnowledgeModelMenu(event: MouseEvent): void { openKnowledgeModelMenuAction(this.composerHost(), event); }
+  fillKnowledgeBaseCommand(command: string): void { fillKnowledgeBaseCommandAction(this.composerHost(), command); }
+  async submitKnowledgeBaseCommand(command: string): Promise<void> { await submitKnowledgeBaseCommandAction(this.composerHost(), command); }
+  private openModelMenu(event: MouseEvent): void { openModelMenuAction(this.composerHost(), event); }
 
   private async renameSession(session: StoredSession): Promise<void> {
-    const name = await textInputModal(this.app, "重命名会话", "名称", session.title);
-    if (!name) return;
-    session.title = name;
-    if (session.threadId) await this.plugin.codex?.setThreadName(session.threadId, name).catch(swallowError("rename Codex chat thread"));
-    await this.plugin.saveSettings();
-    this.renderTabs();
+    await renameSessionAction(this.sessionHost(), session);
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    const sessions = this.plugin.settings.sessions;
-    const index = sessions.findIndex((session) => session.id === sessionId);
-    if (index < 0) return;
-    if (this.isKnowledgeBaseSession(sessions[index])) {
-      new Notice("知识库管理频道不能删除");
-      return;
-    }
-    this.turnQueue.clearSessionQueue(sessionId);
-    const wasActive = this.plugin.settings.activeSessionId === sessionId;
-    sessions.splice(index, 1);
-    if (!sessions.length) {
-      this.createSession();
-    } else if (wasActive) {
-      this.plugin.settings.activeSessionId = sessions[Math.max(0, index - 1)]?.id ?? sessions[0].id;
-      this.resetVirtualWindow();
-    }
-    await this.plugin.saveSettings();
-    this.renderTabs();
-    this.renderMessages({ forceBottom: true });
-    new Notice("已删除会话");
+    await deleteSessionAction(this.sessionHost(), sessionId);
   }
 
-  private onInputChanged(): void {
-    this.skillMenuEl.removeClass("is-visible");
-    if (!this.inputEl.value.trim()) clearPromptEnhanceReview(this.promptEnhanceReviewEl);
-    this.renderToolbar();
-    const query = knowledgeCommandQueryForInput(this.inputEl.value, this.isKnowledgeBaseSession(this.ensureSession()));
-    if (query === null) {
-      this.knowledgeCommandMenuEl.removeClass("is-visible");
-      return;
-    }
-    this.renderKnowledgeCommandMatches(query);
-  }
+  private onInputChanged(): void { onInputChangedAction(this.composerHost()); }
+  private renderKnowledgeCommandMatches(query: string): void { renderKnowledgeCommandMatchesAction(this.composerHost(), query); }
+  private clearComposerDraft(): void { clearComposerDraftAction(this.composerHost()); }
+  private composerStateForSession(session: StoredSession): ComposerPrimaryActionState { return composerStateForSessionAction(this.composerHost(), session); }
+  private pauseQueueForSession(sessionId: string): void { pauseQueueForSessionAction(this.composerHost(), sessionId); }
+  private sessionById(sessionId: string): StoredSession | null { return sessionByIdAction(this.sessionHost(), sessionId); }
 
-  private renderSkillMatches(query = ""): void {
-    renderSkillMatchesView(
-      this.skillMenuEl,
-      query,
-      {
-        skills: skillResourcesForScope(this.currentEchoInkResourceCatalog(), "chat", this.plugin.settings.resources.enabledByScope),
-        selectedSkill: this.selectedSkill
-      },
-      {
-        onSelectSkill: (skill) => {
-        this.selectedSkill = skill;
-        this.skillMenuEl.removeClass("is-visible");
-        this.renderAttachments();
-        this.renderToolbar();
-        this.inputEl.focus();
-        }
-      }
-    );
-  }
-
-  private renderKnowledgeCommandMatches(query: string): void {
-    renderKnowledgeCommandMatchesView(this.knowledgeCommandMenuEl, query, (command) => this.fillKnowledgeBaseCommand(command));
-  }
-
-  private hasComposerDraft(): boolean {
-    return Boolean(this.inputEl?.value.trim() || this.attachments.length || this.selectedSkill);
-  }
-
-  private clearComposerDraft(): void {
-    this.inputEl.value = "";
-    clearPromptEnhanceReview(this.promptEnhanceReviewEl);
-    this.closeComposerMenus();
-    this.attachments = [];
-    this.selectedSkill = null;
-  }
-
-  private composerStateForSession(session: StoredSession): ComposerPrimaryActionState {
-    const knowledgeManager = this.plugin.getKnowledgeBaseManager();
-    return composerStateForRuntimeState({
-      viewRunning: this.running,
-      viewRunKind: this.activeRunKind,
-      globalKnowledgeTaskRunning: Boolean(knowledgeManager?.isRunning),
-      hasDraft: this.hasComposerDraft(),
-      hasQueuedItems: this.turnQueue.hasQueuedItems(session.id)
-    });
-  }
-
-  private pauseQueueForSession(sessionId: string): void {
-    if (!this.turnQueue.hasQueuedItems(sessionId)) return;
-    this.turnQueue.pauseSessionQueue(sessionId);
-    this.renderQueue();
-    this.renderToolbar();
-  }
-
-  private sessionById(sessionId: string): StoredSession | null {
-    return this.plugin.settings.sessions.find((session) => session.id === sessionId) ?? null;
-  }
-
-  private async sendMessage(): Promise<void> {
-    await sendMessageRunner(this.turnRunnerContext);
-  }
-
-  private async enqueueComposerDraft(): Promise<void> {
-    await enqueueComposerDraftRunner(this.turnRunnerContext);
-  }
-
-  private async resumeQueuedTurns(sessionId: string): Promise<void> {
-    await resumeQueuedTurnsRunner(this.turnRunnerContext, sessionId);
-  }
-
-  private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> {
-    await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded);
-  }
-
-  private async startNextQueuedTurn(sessionId: string): Promise<void> {
-    await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId);
-  }
-
-  private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
-    return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options);
-  }
-
-  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source);
-  }
-
-  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source);
-  }
-
-  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> {
-    return await startChatTurnRunner(this.turnRunnerContext, session, item, source);
-  }
-
-  private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> {
-    return await startKnowledgeBaseTurnRunner(this.turnRunnerContext, session, item, source);
-  }
-
-  private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> {
-    await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner);
-  }
-
-  async sendEditorActionRequest(request: EditorActionRequest): Promise<string> {
-    return await sendEditorActionRequestRunner(this.editorActionRunnerContext, request);
-  }
+  private async sendMessage(): Promise<void> { await sendMessageRunner(this.turnRunnerContext); }
+  private async enqueueComposerDraft(): Promise<void> { await enqueueComposerDraftRunner(this.turnRunnerContext); }
+  private async resumeQueuedTurns(sessionId: string): Promise<void> { await resumeQueuedTurnsRunner(this.turnRunnerContext, sessionId); }
+  private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> { await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded); }
+  private async startNextQueuedTurn(sessionId: string): Promise<void> { await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId); }
+  private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> { return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options); }
+  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source); }
+  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source); }
+  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startChatTurnRunner(this.turnRunnerContext, session, item, source); }
+  private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> { return await startKnowledgeBaseTurnRunner(this.turnRunnerContext, session, item, source); }
+  private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
+  async sendEditorActionRequest(request: EditorActionRequest): Promise<string> { return await sendEditorActionRequestRunner(this.editorActionRunnerContext, request); }
 
   private async ensureArticleUnderstanding(request: EditorActionRequest, availableModels: string[], model: string, timeoutMs: number, forceRefresh = false): Promise<ArticleUnderstandingEntry | null> {
     return await ensureArticleUnderstandingRunner(this.editorActionRunnerContext, request, availableModels, model, timeoutMs, forceRefresh);
@@ -1286,451 +523,63 @@ export class CodexView extends ItemView {
     return await runEditorActionPromptTurnRunner(this.editorActionRunnerContext, input);
   }
 
-  private setArticleUnderstandingPanelState(state: ArticleUnderstandingPanelState): void {
-    setArticleUnderstandingPanelStateRunner(this.editorActionRunnerContext, state);
+  private setArticleUnderstandingPanelState(state: ArticleUnderstandingPanelState): void { setArticleUnderstandingPanelStateRunner(this.editorActionRunnerContext, state); }
+  private async refreshArticleUnderstandingPanelSourceState(): Promise<void> { await refreshArticleUnderstandingPanelSourceStateRunner(this.editorActionRunnerContext); }
+  private async refreshArticleUnderstandingFromPanel(): Promise<void> { await refreshArticleUnderstandingFromPanelRunner(this.editorActionRunnerContext); }
+  private async currentArticleUnderstandingSource(): Promise<EditorActionSummarySource | null> { return await currentArticleUnderstandingSourceRunner(this.editorActionRunnerContext); }
+  private async stopTurn(): Promise<void> { await stopTurnAction(this.turnLifecycleHost()); }
+  private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
+  private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }
+  private clearTurnWatchdog(): void { clearTurnWatchdogAction(this.turnLifecycleHost()); }
+  private resolveEditorActionRun(text: string): void { resolveEditorActionRunAction(this.editorActionRunHost(), text); }
+  private rejectEditorActionRun(error: Error): void { rejectEditorActionRunAction(this.editorActionRunHost(), error); }
+  private editorActionStartBlockReason(): string | null { return editorActionStartBlockReasonAction(this.editorActionRunHost()); }
+  private releaseEditorActionRunLock(runId: string): void { releaseEditorActionRunLockAction(this.editorActionRunHost(), runId); }
+
+  private async takeEditorActionThread(turnOptions: Parameters<typeof takeEditorActionThreadAction>[1]): Promise<string> {
+    return await takeEditorActionThreadAction(this.editorActionRunHost(), turnOptions);
   }
 
-  private async refreshArticleUnderstandingPanelSourceState(): Promise<void> {
-    await refreshArticleUnderstandingPanelSourceStateRunner(this.editorActionRunnerContext);
-  }
-
-  private async refreshArticleUnderstandingFromPanel(): Promise<void> {
-    await refreshArticleUnderstandingFromPanelRunner(this.editorActionRunnerContext);
-  }
-
-  private async currentArticleUnderstandingSource(): Promise<EditorActionSummarySource | null> {
-    return await currentArticleUnderstandingSourceRunner(this.editorActionRunnerContext);
-  }
-
-  private async stopTurn(): Promise<void> {
-    if (this.isEditorActionRunActive()) {
-      if (this.editorActionThreadId && this.activeTurnId) {
-        await this.plugin.codex?.interruptTurn(this.editorActionThreadId, this.activeTurnId).catch(swallowError("cancel editor action Codex turn"));
-      }
-      this.rejectEditorActionRun(new Error("写作操作已中断"));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.editorActionCurrentItemIds.clear();
-      this.setEditorActionStatus({ status: "canceled", message: "已中断" });
-      this.applyStatus();
-      return;
-    }
-    const session = this.activeRunSession();
-    this.pauseQueueForSession(session.id);
-    if (!session.threadId || !this.activeTurnId) return;
-    await this.plugin.codex?.interruptTurn(session.threadId, this.activeTurnId).catch(swallowError("cancel active Codex turn"));
-    if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error("写作操作已中断"));
-    this.running = false;
-    this.activeTurnId = "";
-    this.editorActionActiveTimeoutMs = 0;
-    this.clearTurnWatchdog();
-    this.finishThinkingMessage(session, "中断");
-    this.finishRunningProcessMessages(session, "interrupted");
-    this.clearActiveRun();
-    this.applyStatus();
-    void this.plugin.saveSettings(true);
-  }
-
-  private settleStaleMessages(session: StoredSession): void {
-    if (this.running) return;
-    if (this.isKnowledgeBaseSession(session) && this.plugin.getKnowledgeBaseManager()?.isRunning) return;
-    const count = settleStaleRunningMessages(session.messages);
-    if (!count) return;
-    sessionMessageStoreFor(this).clearActiveRun();
-    clearLegacySessionMessageState(this);
-    void this.plugin.saveSettings();
-  }
-
-  private armTurnWatchdog(timeoutMs = CHAT_TURN_WATCHDOG_MS, timeoutText?: string): void {
-    this.clearTurnWatchdog();
-    this.turnWatchdog = window.setTimeout(() => {
-      this.turnWatchdog = null;
-      if (!this.running) return;
-      const timedOutThreadId = this.editorActionThreadId;
-      const timedOutTurnId = this.activeTurnId;
-      this.running = false;
-      if (this.isEditorActionRunActive()) {
-        if (timedOutThreadId && timedOutTurnId) {
-          void this.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(swallowError("interrupt timed out editor action Codex turn"));
-        }
-        this.rejectEditorActionRun(new Error("写作操作响应超时"));
-        this.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
-        this.activeTurnId = "";
-        this.clearActiveRun();
-        this.editorActionCurrentItemIds.clear();
-        this.applyStatus();
-        this.prewarmEditorActionThread();
-        return;
-      }
-      this.activeTurnId = "";
-      const session = this.activeRunSession();
-      const knowledgeSession = this.isKnowledgeBaseSession(session);
-      const shouldPauseQueue = this.activeRunKind === "chat";
-      if (knowledgeSession && session.threadId && timedOutTurnId) {
-        void this.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(swallowError("interrupt timed out knowledge base Codex turn"));
-      }
-      this.finishThinkingMessage(session, "失败");
-      this.finishRunningProcessMessages(session, "error");
-      this.addMessageToSession(session, {
-        role: "system",
-        title: "响应超时",
-        itemType: "error",
-        text: timeoutText ?? turnWatchdogTimeoutText(timeoutMs)
-      });
-      this.clearActiveRun();
-      this.applyStatus();
-      void this.plugin.saveSettings(true);
-      if (shouldPauseQueue) void this.afterTurnSettled(session.id, false);
-    }, timeoutMs);
-  }
-
-  private clearTurnWatchdog(): void {
-    if (!this.turnWatchdog) return;
-    window.clearTimeout(this.turnWatchdog);
-    this.turnWatchdog = null;
-  }
-
-  private resolveEditorActionRun(text: string): void {
-    const run = this.editorActionRun;
-    if (!run) return;
-    this.editorActionRun = null;
-    run.resolve(text);
-  }
-
-  private rejectEditorActionRun(error: Error): void {
-    const run = this.editorActionRun;
-    if (!run) return;
-    this.editorActionRun = null;
-    run.reject(error);
-  }
-
-  private editorActionStartBlockReason(): string | null {
-    if (this.editorActionHarnessRunId) return "Agent 正在处理上一轮，请稍后再试";
-    const reason = editorActionStartBlockReason({
-      running: this.running,
-      activeRunId: this.activeRunId,
-      activeTurnId: this.activeTurnId,
-      hasEditorActionRun: Boolean(this.editorActionRun)
-    });
-    if (!reason && this.running) {
-      this.running = false;
-      this.clearTurnWatchdog();
-      this.applyStatus();
-    }
-    return reason;
-  }
-
-  private releaseEditorActionRunLock(runId: string): void {
-    if (this.activeRunId && this.activeRunId !== runId) return;
-    this.running = false;
-    this.activeTurnId = "";
-    this.clearTurnWatchdog();
-    this.clearActiveRun();
-    this.editorActionCurrentItemIds.clear();
-    this.applyStatus();
-  }
-
-  private async takeEditorActionThread(turnOptions: ReturnType<typeof buildEditorActionTurnOptions>): Promise<string> {
-    if (this.editorActionPrewarmThreadId) {
-      const threadId = this.editorActionPrewarmThreadId;
-      this.editorActionPrewarmThreadId = "";
-      return threadId;
-    }
-    if (this.editorActionPrewarmPromise) {
-      const threadId = await this.editorActionPrewarmPromise.catch(() => null);
-      if (threadId) {
-        if (this.editorActionPrewarmThreadId === threadId) this.editorActionPrewarmThreadId = "";
-        return threadId;
-      }
-    }
-    const started = await this.plugin.codex!.startThread(turnOptions);
-    this.editorActionThreadIds.add(started.threadId);
-    return started.threadId;
-  }
-
-  private prewarmEditorActionThread(): void {
-    if (this.editorActionPrewarmThreadId || this.editorActionPrewarmPromise || this.running) return;
-    this.editorActionPrewarmPromise = this.createEditorActionPrewarmThread()
-      .catch(() => null)
-      .finally(() => {
-        this.editorActionPrewarmPromise = null;
-      });
-  }
-
-  private async createEditorActionPrewarmThread(): Promise<string | null> {
-    const status = await this.plugin.ensureCodexConnected(false, { silent: true });
-    if (!status.connected || !this.plugin.codex || this.running) return null;
-    const modeConfig = resolveEditorActionModeConfig(this.plugin.settings.editorActions);
-    const turnOptions = {
-      ...buildEditorActionTurnOptions({
-        model: this.effectiveEditorActionModel(status.models.map((model) => model.model), modeConfig.model),
-        serviceTier: this.selectedServiceTier,
-        timeoutMs: this.plugin.settings.editorActions.timeoutMs,
-        workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
-      }),
-      requestTimeoutMs: 15000
-    };
-    const started = await this.plugin.codex.startThread(turnOptions);
-    if (this.running || this.editorActionPrewarmThreadId) return null;
-    this.editorActionThreadIds.add(started.threadId);
-    this.editorActionPrewarmThreadId = started.threadId;
-    return started.threadId;
-  }
-
-  private isEditorSummaryRunActive(): boolean {
-    return Boolean(this.editorSummaryRun && this.editorSummaryRun.runId === this.activeRunId);
-  }
-
-  private resolveEditorSummaryRun(text: string): void {
-    const run = this.editorSummaryRun;
-    if (!run) return;
-    this.editorSummaryRun = null;
-    run.resolve(text);
-  }
-
-  private rejectEditorSummaryRun(error: Error): void {
-    const run = this.editorSummaryRun;
-    if (!run) return;
-    this.editorSummaryRun = null;
-    run.reject(error);
-  }
-
-  private cancelEditorSummaryRun(reason: string): void {
-    const run = this.editorSummaryRun;
-    if (!run) return;
-    if (run.threadId && this.activeRunId === run.runId && this.activeTurnId) {
-      void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("cancel editor summary Codex turn"));
-    }
-    this.rejectEditorSummaryRun(new Error(reason));
-    this.releaseEditorSummaryRunLock(run.runId);
-  }
-
-  private armEditorSummaryTimeout(timeoutMs: number): void {
-    this.clearEditorSummaryTimeout();
-    this.editorSummaryTimeout = window.setTimeout(() => {
-      const run = this.editorSummaryRun;
-      if (!run) return;
-      if (run.threadId && this.activeTurnId) {
-        void this.plugin.codex?.interruptTurn(run.threadId, this.activeTurnId).catch(swallowError("interrupt timed out editor summary Codex turn"));
-      }
-      this.rejectEditorSummaryRun(new Error("摘要生成超时"));
-      this.releaseEditorSummaryRunLock(run.runId);
-    }, timeoutMs);
-  }
-
-  private clearEditorSummaryTimers(): void {
-    this.clearEditorSummaryTimeout();
-  }
-
-  private clearEditorSummaryTimeout(): void {
-    if (!this.editorSummaryTimeout) return;
-    window.clearTimeout(this.editorSummaryTimeout);
-    this.editorSummaryTimeout = null;
-  }
-
-  private releaseEditorSummaryRunLock(runId?: string): void {
-    this.clearEditorSummaryTimeout();
-    if ((runId && this.activeRunId === runId) || this.isEditorSummaryRunActive()) {
-      this.running = false;
-      this.clearActiveRun();
-      this.editorActionCurrentItemIds.clear();
-      this.applyStatus();
-    }
-  }
-
-  private isEditorActionRunActive(): boolean {
-    return Boolean(this.editorActionRun && this.editorActionRun.runId === this.activeRunId);
-  }
-
-  private withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = window.setTimeout(() => reject(new Error(message)), Math.max(1000, timeoutMs));
-      promise.then(
-        (value) => {
-          window.clearTimeout(timer);
-          resolve(value);
-        },
-        (error) => {
-          window.clearTimeout(timer);
-          reject(error);
-        }
-      );
-    });
-  }
-
-  private currentTurnOptions(session?: StoredSession) {
-    const knowledgeSession = session ? this.isKnowledgeBaseSession(session) : false;
-    const cwd = session && !knowledgeSession ? normalizeWorkspacePath(session.cwd) : "";
-    const catalog = this.currentEchoInkResourceCatalog();
-    const resourceScope = knowledgeSession ? "knowledge" : "chat";
-    const workspaceResources = workspaceResourcesFromEchoInkResources(catalog, resourceScope, this.plugin.settings.resources.enabledByScope);
-    return {
-      ...(cwd ? { cwd } : {}),
-      model: this.effectiveModel(),
-      reasoning: this.selectedReasoning,
-      serviceTier: this.selectedServiceTier,
-      permission: this.selectedPermission,
-      mode: this.selectedMode,
-      mcpEnabled: hasEnabledMcpResources(catalog, resourceScope, this.plugin.settings.resources.enabledByScope),
-      workspaceResources
-    };
-  }
-
-  private currentEchoInkResourceCatalog(): EchoInkResource[] {
-    return buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
-  }
-
-  private activeProviderModels(): string[] {
-    if (this.plugin.settings.providerMode !== "custom-api") return [];
-    const provider = getActiveApiProvider(this.plugin.settings);
-    return provider ? getApiProviderModels(provider) : [];
-  }
-
-  private resolvedKnowledgeBackend(): AgentBackendMode {
-    const configured = this.plugin.settings.knowledgeBase.backend;
-    return configured === "default" ? this.plugin.settings.agentBackend : configured;
-  }
-
-  private effectiveModel(): string {
-    const providerModels = this.activeProviderModels();
-    if (providerModels.length) {
-      return providerModels.includes(this.selectedModel) ? this.selectedModel : providerModels[0];
-    }
-    return this.selectedModel || this.plugin.settings.defaultModel || "";
-  }
-
-  private effectiveEditorActionModel(availableModels: string[] = [], configuredModel = this.plugin.settings.editorActions.model): string {
-    const providerModels = this.activeProviderModels();
-    return resolveEditorActionModel({
-      configuredModel,
-      availableModels: providerModels.length ? providerModels : availableModels,
-      fallbackModel: this.effectiveModel()
-    });
-  }
-
-  private prewarmActiveThread(): void {
-    const session = this.ensureSession();
-    if (this.isKnowledgeBaseSession(session)) return;
-    if (session.threadId || this.running) return;
-    if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return;
-    if (this.threadPrewarmPromise && this.threadPrewarmSessionId === session.id) return;
-    this.threadPrewarmSessionId = session.id;
-    this.threadPrewarmPromise = this.startThreadForSession(session)
-      .catch(() => false)
-      .finally(() => {
-        if (this.threadPrewarmSessionId === session.id) {
-          this.threadPrewarmPromise = null;
-          this.threadPrewarmSessionId = "";
-        }
-      });
-  }
-
-  private async startThreadForSession(session: StoredSession): Promise<boolean> {
-    if (session.threadId) return true;
-    if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return false;
-    const status = await this.plugin.ensureCodexConnected();
-    if (!status.connected || !this.plugin.codex || session.threadId) return Boolean(session.threadId);
-    const started = await this.plugin.codex.startThread(this.currentTurnOptions(session));
-    session.threadId = started.threadId;
-    await this.plugin.saveSettings();
-    return true;
-  }
+  private prewarmEditorActionThread(): void { prewarmEditorActionThreadAction(this.editorActionRunHost()); }
+  private isEditorSummaryRunActive(): boolean { return isEditorSummaryRunActiveAction(this.editorActionRunHost()); }
+  private resolveEditorSummaryRun(text: string): void { resolveEditorSummaryRunAction(this.editorActionRunHost(), text); }
+  private rejectEditorSummaryRun(error: Error): void { rejectEditorSummaryRunAction(this.editorActionRunHost(), error); }
+  private cancelEditorSummaryRun(reason: string): void { cancelEditorSummaryRunAction(this.editorActionRunHost(), reason); }
+  private armEditorSummaryTimeout(timeoutMs: number): void { armEditorSummaryTimeoutAction(this.editorActionRunHost(), timeoutMs); }
+  private clearEditorSummaryTimers(): void { clearEditorSummaryTimersAction(this.editorActionRunHost()); }
+  private releaseEditorSummaryRunLock(runId?: string): void { releaseEditorSummaryRunLockAction(this.editorActionRunHost(), runId); }
+  private isEditorActionRunActive(): boolean { return isEditorActionRunActiveAction(this.editorActionRunHost()); }
+  private withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> { return withEditorActionTimeoutAction(promise, timeoutMs, message); }
+  private currentTurnOptions(session?: StoredSession) { return currentTurnOptionsAction(this.workspaceHost(), session); }
+  private currentEchoInkResourceCatalog(): EchoInkResource[] { return currentEchoInkResourceCatalogAction(this.workspaceHost()); }
+  private activeProviderModels(): string[] { return activeProviderModelsAction(this.workspaceHost()); }
+  private resolvedKnowledgeBackend(): AgentBackendMode { return resolvedKnowledgeBackendAction(this.workspaceHost()); }
+  private effectiveModel(): string { return effectiveModelAction(this.workspaceHost()); }
+  private effectiveEditorActionModel(availableModels: string[] = [], configuredModel = this.plugin.settings.editorActions.model): string { return effectiveEditorActionModelAction(this.editorActionRunHost(), availableModels, configuredModel); }
+  private prewarmActiveThread(): void { prewarmActiveThreadAction(this.workspaceHost()); }
 
   private appendItemDelta(session: StoredSession, itemId: string, role: ChatMessage["role"], delta: string, itemType: string, title: string): void {
     if (this.editorActionRun?.runId === this.activeRunId && role === "assistant" && itemType === "assistant") {
       this.editorActionRun.text += delta;
     }
-    sessionMessageStoreFor(this).appendItemDelta(session, itemId, role, delta, itemType, title);
+    appendItemDeltaAction(this.messageHost(), session, itemId, role, delta, itemType, title);
   }
 
-  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void {
-    sessionMessageStoreFor(this).appendProcessDelta(session, itemId, itemType, delta, payload);
-  }
-
-  private ensureThinkingMessage(session: StoredSession, title: string, text: string): void {
-    sessionMessageStoreFor(this).ensureThinkingMessage(session, title, text);
-  }
-
-  private markThinkingAsStreaming(session: StoredSession): void {
-    sessionMessageStoreFor(this).markThinkingAsStreaming(session);
-  }
-
-  private finishThinkingMessage(session: StoredSession, _status: string): void {
-    sessionMessageStoreFor(this).finishThinkingMessage(session, _status);
-  }
-
-  private finishPlanMessage(session: StoredSession): void {
-    sessionMessageStoreFor(this).finishPlanMessage(session);
-  }
-
-  private finishRunningProcessMessages(session: StoredSession, status: string): void {
-    sessionMessageStoreFor(this).finishRunningProcessMessages(session, status);
-  }
-
-  private renderPlanUpdate(session: StoredSession, params: unknown): void {
-    sessionMessageStoreFor(this).renderPlanUpdate(session, params);
-  }
-
-  private renderStartedItem(session: StoredSession, item: unknown): void {
-    sessionMessageStoreFor(this).renderStartedItem(session, item);
-  }
-
-  private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> {
-    await sessionMessageStoreFor(this).renderCompletedItem(session, item);
-  }
-
-  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown): Promise<void> {
-    await sessionMessageStoreFor(this).upsertProcessItem(session, id, itemType, text, status, payload);
-  }
-
-  private addMessageToSession(session: StoredSession, message: SessionMessageInput): void {
-    sessionMessageStoreFor(this).addMessageToSession(session, message);
-  }
-
-  private scheduleSessionSave(): void {
-    if (this.sessionSaveTimer) return;
-    this.sessionSaveTimer = window.setTimeout(() => {
-      this.sessionSaveTimer = null;
-      void this.plugin.saveSettings(true).catch(swallowError("save chat session"));
-    }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
-  }
-
-  private async flushSessionSave(): Promise<void> {
-    if (this.sessionSaveTimer) {
-      window.clearTimeout(this.sessionSaveTimer);
-      this.sessionSaveTimer = null;
-    }
-    await this.plugin.saveSettings(true);
-  }
-
-  private moveMessageToEnd(session: StoredSession, messageId: string): void {
-    sessionMessageStoreFor(this).moveMessageToEnd(session, messageId);
-  }
-
-  private updateContext(tokenUsage: TokenUsage | undefined, persist: boolean): void {
-    this.updateContextForSession(this.ensureSession(), tokenUsage, persist);
-  }
-
-  private updateContextForSession(session: StoredSession, tokenUsage: TokenUsage | undefined, persist: boolean): void {
-    if (persist) {
-      session.tokenUsage = tokenUsage;
-      session.updatedAt = Date.now();
-      void this.plugin.saveSettings();
-    }
-    if (session.id !== this.plugin.settings.activeSessionId) return;
-    if (!this.contextEl) return;
-    this.contextEl.toggleClass("is-hidden", !this.plugin.settings.showContext);
-    if (!this.plugin.settings.showContext) return;
-    const view = contextUsageView(tokenUsage);
-    this.contextValueEl.setText(view.label);
-    this.contextEl.setCssProps({ "--codex-context-angle": `${view.angle}deg` });
-    this.contextEl.setAttr("aria-label", view.title);
-    this.contextEl.setAttr("title", view.title);
-    this.contextEl.toggleClass("is-empty", view.percent === null);
-    this.contextEl.toggleClass("is-warning", (view.percent ?? 0) >= 80);
-  }
+  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void { appendProcessDeltaAction(this.messageHost(), session, itemId, itemType, delta, payload); }
+  private ensureThinkingMessage(session: StoredSession, title: string, text: string): void { ensureThinkingMessageAction(this.messageHost(), session, title, text); }
+  private markThinkingAsStreaming(session: StoredSession): void { markThinkingAsStreamingAction(this.messageHost(), session); }
+  private finishThinkingMessage(session: StoredSession, _status: string): void { finishThinkingMessageAction(this.messageHost(), session, _status); }
+  private finishPlanMessage(session: StoredSession): void { finishPlanMessageAction(this.messageHost(), session); }
+  private finishRunningProcessMessages(session: StoredSession, status: string): void { finishRunningProcessMessagesAction(this.messageHost(), session, status); }
+  private renderPlanUpdate(session: StoredSession, params: unknown): void { renderPlanUpdateAction(this.messageHost(), session, params); }
+  private renderStartedItem(session: StoredSession, item: unknown): void { renderStartedItemAction(this.messageHost(), session, item); }
+  private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> { await renderCompletedItemAction(this.messageHost(), session, item); }
+  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown): Promise<void> { await upsertProcessItemAction(this.messageHost(), session, id, itemType, text, status, payload); }
+  private addMessageToSession(session: StoredSession, message: SessionMessageInput): void { addMessageToSessionAction(this.messageHost(), session, message); }
+  private scheduleSessionSave(): void { scheduleSessionSaveAction(this.messageHost()); }
+  private async flushSessionSave(): Promise<void> { await flushSessionSaveAction(this.messageHost()); }
+  private moveMessageToEnd(session: StoredSession, messageId: string): void { moveMessageToEndAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session, messageId); }
+  private updateContextForSession(session: StoredSession, tokenUsage: TokenUsage | undefined, persist: boolean): void { updateContextForSessionAction(this.composerHost(), session, tokenUsage, persist); }
 
   private async toggleMcpPanel(): Promise<void> {
     const willOpen = !this.mcpPanelEl.hasClass("is-visible");
@@ -1751,260 +600,45 @@ export class CodexView extends ItemView {
 
   private renderMcpPanel(servers: McpServerStatus[], error: string | null): void {
     renderMcpPanelView(this.mcpPanelEl, servers, error, this.plugin.settings.mcpEnabled, {
-      onRetry: () => {
-        this.mcpPanelEl.removeClass("is-visible");
-        void this.toggleMcpPanel();
-      },
+      onRetry: () => { this.mcpPanelEl.removeClass("is-visible"); void this.toggleMcpPanel(); },
       onLogin: (serverName) => this.plugin.codex?.startMcpOAuth(serverName) ?? Promise.resolve(null)
     });
   }
 
-  private activeRunSession(): StoredSession {
-    const active = this.activeRunSessionId ? this.plugin.settings.sessions.find((session) => session.id === this.activeRunSessionId) : null;
-    return active ?? this.ensureSession();
-  }
-
-  private sessionForThread(threadId?: string): StoredSession | null {
-    if (!threadId) return null;
-    return this.plugin.settings.sessions.find((session) => session.threadId === threadId) ?? null;
-  }
-
-  private addContextCompactionMessage(session: StoredSession): void {
-    const last = session.messages[session.messages.length - 1];
-    if (last?.itemType === "contextCompaction" && Date.now() - last.createdAt < 10_000) return;
-    this.addMessageToSession(session, { role: "system", title: "上下文压缩", itemType: "contextCompaction", text: "Codex 已自动压缩上下文。", createdAt: Date.now() });
-  }
-
+  private activeRunSession(): StoredSession { return activeRunSessionAction(this.sessionHost()); }
+  private sessionForThread(threadId?: string): StoredSession | null { return sessionForThreadAction(this.sessionHost(), threadId); }
+  private addContextCompactionMessage(session: StoredSession): void { addContextCompactionMessageAction(this.messageHost(), session); }
   private clearActiveRun(): void {
-    this.activeRunId = "";
-    this.activeRunKind = "";
-    this.activeRunSessionId = "";
-    this.activeTurnId = "";
-    this.editorActionActiveTimeoutMs = 0;
-    sessionMessageStoreFor(this).clearActiveRun();
-    clearLegacySessionMessageState(this);
-  }
-
-  private attachTurnIdToRun(session: StoredSession, turnId: string): void {
-    if (!turnId || !this.activeRunId) return;
-    for (const message of session.messages) {
-      if (message.runId === this.activeRunId) message.turnId = turnId;
-    }
-  }
-
-  private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void {
-    if (session.id !== this.plugin.settings.activeSessionId) return;
-    if (updatedMessage && this.messageListRenderer.tryUpdateMessage(updatedMessage)) return;
-    this.scheduleRenderMessages();
-  }
-
-  private handleMessagesScroll(): void {
-    this.scheduleRenderMessages(this.messageScrollFollow.handleScroll(this.isMessagesAtBottom()));
-  }
-
-  private scheduleRenderMessages(options: MessageRenderScheduleOptions = {}): void {
-    this.messageScrollFollow.scheduleRender(options, (callback) => window.requestAnimationFrame(callback), (renderOptions) => this.renderMessages(renderOptions));
-  }
-
-  private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused): void {
-    this.messageScrollFollow.scheduleMeasure(forceBottom, (callback) => window.requestAnimationFrame(callback), (shouldForceBottom) => this.measureVisibleVirtualRows(shouldForceBottom));
-  }
-
-  private scheduleKnowledgeBaseRunProgress(): void {
-    if (this.knowledgeBaseRunProgressTimer !== null) return;
-    this.knowledgeBaseRunProgressTimer = window.setTimeout(() => {
-      this.knowledgeBaseRunProgressTimer = null;
-      const forceBottom = !this.messagesBottomFollowPaused;
-      this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
-    }, 700);
-  }
-
-  private clearKnowledgeBaseRunProgressTimer(): void {
-    if (this.knowledgeBaseRunProgressTimer === null) return;
-    window.clearTimeout(this.knowledgeBaseRunProgressTimer);
-    this.knowledgeBaseRunProgressTimer = null;
-  }
-
-  private measureVisibleVirtualRows(forceBottom = false): boolean {
-    if (!this.virtualListEl || !this.messagesEl) return false;
-    const changed = this.messageListRenderer.measureVisibleVirtualRows(this.messagesEl, this.virtualListEl, forceBottom, { rerender: false });
-    if (changed) this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
-    return changed;
-  }
-
-  private isMessagesNearBottom(): boolean {
-    if (!this.messagesEl) return true;
-    return this.messageListRenderer.isNearBottom(this.messagesEl, this.virtualListEl);
-  }
-
-  private isMessagesAtBottom(): boolean {
-    if (!this.messagesEl) return true;
-    return this.messageListRenderer.isAtBottom(this.messagesEl, this.virtualListEl);
-  }
-
-  private resetVirtualWindow(): void {
-    this.messageListRenderer.resetVirtualWindow();
-    this.messageScrollFollow.reset();
-    if (this.messagesEl) this.messagesEl.scrollTop = 0;
-  }
-
-  private ensureSession(): StoredSession {
-    ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath());
-    const activeId = this.plugin.settings.activeSessionId;
-    const active = this.plugin.settings.sessions.find((session) => session.id === activeId);
-    if (active) return active;
-    return this.createSession();
-  }
-
-  private isKnowledgeBaseSession(session: StoredSession): boolean {
-    return isKnowledgeBaseSession(session, this.plugin.settings.knowledgeBase.sessionId);
-  }
-
-  private createSession(title = "新会话"): StoredSession {
-    const session: StoredSession = {
-      id: newId("session"),
-      title,
-      cwd: "",
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    this.plugin.settings.sessions.push(session);
-    this.plugin.settings.activeSessionId = session.id;
-    return session;
-  }
-
-  private attachActiveFile(): void {
-    const file = this.app.workspace.getActiveFile();
-    if (!file) {
-      new Notice("没有当前笔记");
+    if (typeof (this as unknown as { turnLifecycleHost?: unknown }).turnLifecycleHost === "function") {
+      clearActiveRunAction(this.turnLifecycleHost(), () => clearSessionMessageActiveRun(this.messageHost()));
       return;
     }
-    this.attachments.push({
-      type: isImagePath(file.path) ? "image" : "file",
-      name: file.name,
-      path: absoluteVaultPath(this.plugin.getVaultPath(), file.path)
-    });
-    this.renderAttachments();
+    const host = this as unknown as { activeRunId: string; activeRunKind: string; activeRunSessionId: string; activeTurnId: string; editorActionActiveTimeoutMs?: number; activeThinkingMessageId?: string; activePlanMessageId?: string; activeItemMessages?: Map<string, string> };
+    host.activeRunId = "";
+    host.activeRunKind = "";
+    host.activeRunSessionId = "";
+    host.activeTurnId = "";
+    host.editorActionActiveTimeoutMs = 0;
+    host.activeThinkingMessageId = "";
+    host.activePlanMessageId = "";
+    host.activeItemMessages?.clear();
   }
-
-  private pickFiles(imagesOnly: boolean): void {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    if (imagesOnly) input.accept = "image/*";
-    input.onchange = () => {
-      const files = Array.from(input.files ?? []);
-      for (const file of files) {
-        const filePath = (file as File & { path?: string }).path;
-        if (!filePath) continue;
-        this.attachments.push({
-          type: isImagePath(filePath) ? "image" : "file",
-          name: file.name,
-          path: filePath
-        });
-      }
-      this.renderAttachments();
-    };
-    input.click();
-  }
-
-  private pickKnowledgeBaseFiles(): void {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.accept = ".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain";
-    input.onchange = () => {
-      const files = Array.from(input.files ?? []);
-      const attachments: StoredAttachment[] = [];
-      for (const file of files) {
-        const filePath = (file as File & { path?: string }).path;
-        if (!filePath) continue;
-        attachments.push({
-          type: "file",
-          name: file.name,
-          path: filePath
-        });
-      }
-      void this.runKnowledgeBaseShortcut("文件收藏", async () => {
-        const paths = await this.plugin.getKnowledgeBaseManager()?.captureExternalFiles(attachments);
-        return paths?.length ? `已收藏文件：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未选择文件。";
-      });
-    };
-    input.click();
-  }
-
-  private handleDroppedFiles(event: DragEvent): void {
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    for (const file of files) {
-      const filePath = (file as File & { path?: string }).path;
-      if (!filePath) continue;
-      this.attachments.push({
-        type: isImagePath(filePath) ? "image" : "file",
-        name: file.name,
-        path: filePath
-      });
-    }
-    this.renderAttachments();
-  }
-
-  private async handlePastedFiles(event: ClipboardEvent): Promise<void> {
-    const files = extractClipboardImageFiles(event.clipboardData);
-    if (!files.length) return;
-    event.preventDefault();
-    try {
-      const pasted = await saveClipboardImageAttachments(files, { vaultPath: this.plugin.getVaultPath(), pluginDir: this.plugin.getPluginDataDirName() });
-      this.attachments.push(...pasted);
-      this.renderAttachments();
-    } catch (error) {
-      console.error("Codex paste image failed", error);
-      new Notice("粘贴图片失败");
-    }
-  }
-}
-
-async function pickWorkspaceDirectory(defaultPath: string): Promise<string | null | undefined> {
-  const dialog = getElectronDialog();
-  if (!dialog?.showOpenDialog) return undefined;
-  const result = await dialog.showOpenDialog({
-    title: "选择 Codex 工作区",
-    defaultPath: normalizeWorkspacePath(defaultPath) || undefined,
-    properties: ["openDirectory", "createDirectory"]
-  });
-  if (result?.canceled) return null;
-  return result?.filePaths?.[0] ?? null;
-}
-
-function workspaceDirectoryExists(value: string): boolean {
-  const workspacePath = normalizeWorkspacePath(value);
-  if (!workspacePath) return false;
-  try {
-    return fs.statSync(workspacePath).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function normalizeWorkspacePath(value: string | undefined): string {
-  const raw = (value ?? "").trim();
-  if (!raw) return "";
-  const withoutFileProtocol = raw.replace(/^file:\/\//, "");
-  try {
-    return path.resolve(decodeURI(withoutFileProtocol));
-  } catch {
-    return path.resolve(withoutFileProtocol);
-  }
-}
-
-function workspaceDisplayName(workspacePath: string): string {
-  const normalized = normalizeWorkspacePath(workspacePath);
-  return path.basename(normalized) || normalized;
-}
-
-function isImagePath(filePath: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|heic)$/i.test(filePath);
-}
-
-function absoluteVaultPath(vaultPath: string, relativePath: string): string {
-  return `${vaultPath.replace(/\/$/, "")}/${relativePath.replace(/^\//, "")}`;
+  private attachTurnIdToRun(session: StoredSession, turnId: string): void { attachTurnIdToRunAction(this.messageHost(), session, turnId); }
+  private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void { renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage); }
+  private handleMessagesScroll(): void { handleMessagesScrollAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost); }
+  private scheduleRenderMessages(options: MessageRenderScheduleOptions = {}): void { scheduleRenderMessagesAction(this.messageHost(), options); }
+  private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused): void { scheduleMeasureVirtualRowsAction(this.messageHost(), forceBottom); }
+  private scheduleKnowledgeBaseRunProgress(): void { scheduleKnowledgeBaseRunProgressAction(this.messageHost()); }
+  private clearKnowledgeBaseRunProgressTimer(): void { clearKnowledgeBaseRunProgressTimerAction(this.messageHost()); }
+  private isMessagesNearBottom(): boolean { return isMessagesNearBottomAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost); }
+  private isMessagesAtBottom(): boolean { return isMessagesAtBottomAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost); }
+  private resetVirtualWindow(): void { resetVirtualWindowAction(this.messageHost()); }
+  private ensureSession(): StoredSession { return ensureSessionAction(this.sessionHost()); }
+  private isKnowledgeBaseSession(session: StoredSession): boolean { return isKnowledgeBaseSessionAction(this.sessionHost(), session); }
+  private createSession(title = "新会话"): StoredSession { return createSessionAction(this.sessionHost(), title); }
+  private attachActiveFile(): void { attachActiveFileAction(this.attachmentHost()); }
+  private pickFiles(imagesOnly: boolean): void { pickFilesAction(this.attachmentHost(), imagesOnly); }
+  private pickKnowledgeBaseFiles(): void { pickKnowledgeBaseFilesAction(this.attachmentHost()); }
+  private handleDroppedFiles(event: DragEvent): void { handleDroppedFilesAction(this.attachmentHost(), event); }
+  private async handlePastedFiles(event: ClipboardEvent): Promise<void> { await handlePastedFilesAction(this.attachmentHost(), event); }
 }
