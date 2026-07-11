@@ -124,6 +124,12 @@ export default class CodexForObsidianPlugin extends Plugin {
       editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "translate")
     });
 
+    this.addCommand({
+      id: "editor-action-enhance",
+      name: "增强提示词",
+      editorCallback: (editor, view) => void this.editorActions?.runEditorActionById(editor, view, "enhance")
+    });
+
     this.addSettingTab(new CodexSettingTab(this));
     this.editorActions = new EditorActionController(this);
     this.editorActions.register();

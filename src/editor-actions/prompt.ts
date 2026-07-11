@@ -1,4 +1,5 @@
 import type { UserInput } from "../types/app-server";
+import { ENHANCE_META_PROMPT } from "../prompt-enhancer/meta-prompt";
 import type { EditorActionPromptInput, EditorAiActionSettings, EditorAiStyleConfig } from "./types";
 
 export const EDITOR_ACTION_OUTPUT_RULES = [
@@ -22,6 +23,7 @@ export function resolveEditorActionStyle(settings: EditorAiActionSettings, style
 export function buildEditorActionPrompt(input: EditorActionPromptInput): string {
   const modeLabel = input.modeLabel ?? "";
   const translateAction = isTranslateAction(input.action.id);
+  const enhanceAction = isEnhanceAction(input.action.id);
   const articleUnderstanding = input.snapshot.articleUnderstanding ?? input.snapshot.noteSummary ?? "";
   const variables: Record<string, string> = {
     action: input.action.label,
@@ -36,6 +38,29 @@ export function buildEditorActionPrompt(input: EditorActionPromptInput): string 
   const articleUnderstandingNotice = articleUnderstanding && input.snapshot.articleUnderstandingState === "reusable"
     ? "注意：这份文章理解来自稍早版本。当前选区和前后文优先，文章理解只用于主题、风格、事实边界。"
     : "";
+  if (enhanceAction) {
+    return [
+      ENHANCE_META_PROMPT,
+      "",
+      "当前文件：",
+      fenceContext(input.snapshot.fileName),
+      "",
+      "用户原始需求（选中文字）：",
+      fenceContext(input.snapshot.selectedText),
+      "",
+      "文件上下文（选区前文）：",
+      fenceContext(input.snapshot.beforeContext),
+      "",
+      "文件上下文（选区后文）：",
+      fenceContext(input.snapshot.afterContext),
+      "",
+      "任务要求：",
+      renderedTemplate,
+      "",
+      "输出规则：",
+      EDITOR_ACTION_OUTPUT_RULES
+    ].join("\n");
+  }
   return [
     `你正在 Obsidian 笔记中执行「${input.action.label}」。`,
     `当前文件：${input.snapshot.fileName} (${input.snapshot.filePath})`,
@@ -126,4 +151,8 @@ function fenceContext(value: string): string {
 
 function isTranslateAction(actionId: string): boolean {
   return actionId === "translate";
+}
+
+function isEnhanceAction(actionId: string): boolean {
+  return actionId === "enhance";
 }
