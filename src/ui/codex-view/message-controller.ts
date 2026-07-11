@@ -1,6 +1,7 @@
 import type { App, Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type { ChatMessage, StoredSession } from "../../settings/settings";
+import { swallowError } from "../../core/error-handling";
 import { settleStaleRunningMessages } from "../../core/message-state";
 import { getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages } from "../../knowledge-base/session-history";
 import { SessionMessageStore, type SessionMessageInput } from "./session-message-store";
@@ -151,7 +152,7 @@ export function scheduleSessionSave(host: CodexMessageHost): void {
   if (host.sessionSaveTimer) return;
   host.sessionSaveTimer = window.setTimeout(() => {
     host.sessionSaveTimer = null;
-    void host.plugin.saveSettings(true).catch(() => undefined);
+    void host.plugin.saveSettings(true).catch(swallowError("scheduled session save failed"));
   }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
 }
 
