@@ -4,7 +4,7 @@ import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseRunMode } from "./types";
 import type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
-import { isMissingPathError } from "./utils";
+import { formatDateForFile, isMissingPathError, pad } from "./utils";
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
 
@@ -357,11 +357,7 @@ function isKnowledgeConflictDuplicatePath(relativePath: string, entries: Map<str
 }
 
 function formatDateTimeForFile(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
+  return `${formatDateForFile(date)}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

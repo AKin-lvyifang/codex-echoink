@@ -86,7 +86,7 @@ import {
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
 import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { extractArticleMarkdown, extractFirstUrl, isHtmlVerificationBlocked, isWeChatUrl, sanitizeWebCaptureFileName, stripCollectPrefix } from "./web-capture";
-import { exists } from "./utils";
+import { exists, formatDateForFile, pad } from "./utils";
 
 type CodexKbWaiter = {
   threadId: string;
@@ -2162,14 +2162,6 @@ function execFilePromise(command: string, args: string[], options: { maxBuffer: 
   });
 }
 
-function formatDateForFile(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 function formatDateTimeForFile(date: Date): string {
   return `${formatDateForFile(date)}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
 }

@@ -2,6 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { isRawIntegrityErrorMessage } from "./raw-integrity";
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource } from "./types";
+import { formatDateForFile } from "./utils";
 
 export async function readKnowledgeBaseReportExcerpt(vaultPath: string, reportPath: string, maxChars = 1000): Promise<string | null> {
   const text = await readKnowledgeBaseReportText(vaultPath, reportPath);
@@ -243,11 +244,7 @@ function isFreshReportMtime(mtimeMs: number | null | undefined, minimumMtimeMs: 
 }
 
 function formatDateForTitle(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
+  return formatDateForFile(date);
 }
 
 function hasUnnegatedLintOnlySignal(text: string, signal: RegExp): boolean {

@@ -2,7 +2,7 @@ import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
-import { exists } from "./utils";
+import { exists, pad } from "./utils";
 
 export type JournalEvidenceBackend = "codex-cli" | "opencode" | "hermes";
 
@@ -358,10 +358,6 @@ function formatDateTimeLocal(date: Date): string {
 
 function formatDateTimeDisplay(date: Date): string {
   return `${formatDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
 }
 
 function normalizeSlashes(value: string): string {

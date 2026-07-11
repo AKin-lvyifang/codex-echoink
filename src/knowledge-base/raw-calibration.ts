@@ -42,6 +42,7 @@ import {
   type KnowledgeTransactionSnapshot
 } from "./transaction-snapshot";
 import type { KnowledgeBaseRawCalibrationResult, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
+import { formatDateForFile } from "./utils";
 
 export interface RawDigestCalibrationCommit {
   nextProcessedSources: Record<string, KnowledgeBaseProcessedSource>;
@@ -516,16 +517,4 @@ function cloneProcessedSources(processed: Record<string, KnowledgeBaseProcessedS
   return Object.fromEntries(
     Object.entries(processed ?? {}).map(([key, source]) => [key, { ...source }])
   );
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function formatDateForFile(date: Date): string {
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate())
-  ].join("-");
 }
