@@ -1,5 +1,6 @@
 import { Component, normalizePath, setIcon, TFile } from "obsidian";
 import type { App } from "obsidian";
+import { openPathInElectron } from "../core/electron";
 import { splitVaultNoteLinkSegments, type VaultNoteLinkSegment } from "../core/vault-note-links";
 
 export function renderRichText(app: App, component: Component, container: HTMLElement, text: string): void {
@@ -193,17 +194,7 @@ async function openHiddenVaultMarkdown(app: App, targetPath: string): Promise<vo
   if (!exists) return;
   const basePath = vaultBasePath(app);
   const absolutePath = basePath ? `${basePath}/${normalized}` : "";
-  const shell = electronModule()?.shell;
-  if (absolutePath && shell?.openPath) await shell.openPath(absolutePath);
-}
-
-function electronModule(): any {
-  const electronRequire = (window as any).require ?? (globalThis as any).require;
-  try {
-    return electronRequire?.("electron");
-  } catch {
-    return null;
-  }
+  if (absolutePath) await openPathInElectron(absolutePath);
 }
 
 function vaultBasePath(app: App): string {

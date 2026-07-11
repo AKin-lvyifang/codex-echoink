@@ -2,6 +2,7 @@ import { Notice, normalizePath, Platform, setIcon, TFile, type App, type Compone
 import type { ChatMessage, DiffSummary, StoredAttachment } from "../../settings/settings";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../../knowledge-base/types";
 import type { ProcessFileRef } from "../../types/app-server";
+import { showItemInFinder } from "../../core/electron";
 import { basename, normalizeProcessFileRef, processGroupStateId } from "../../core/mapping";
 import { diffSummaryLabel, parseFileChangeDiff, type ParsedDiffFile } from "../../core/diff-summary";
 import { displayTextForMessage, isLargeRawMessage } from "../../core/raw-message-store";
@@ -1106,21 +1107,4 @@ function toImageSrc(app: App, imagePath: string): string {
   if (file instanceof TFile) return app.vault.getResourcePath(file);
   if (Platform.isDesktopApp) return `file://${imagePath}`;
   return imagePath;
-}
-
-function showItemInFinder(filePath: string): boolean {
-  if (!Platform.isDesktopApp || !filePath) return false;
-  const shell = electronModule()?.shell;
-  if (!shell?.showItemInFolder) return false;
-  shell.showItemInFolder(filePath);
-  return true;
-}
-
-function electronModule(): any {
-  const electronRequire = (window as any).require ?? (globalThis as any).require;
-  try {
-    return electronRequire?.("electron");
-  } catch {
-    return null;
-  }
 }

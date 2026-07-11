@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ItemView, MarkdownView, normalizePath, Notice, Platform, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, normalizePath, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentBackendMode, ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
 import { ensureKnowledgeBaseSession, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
@@ -20,6 +20,7 @@ import type {
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
 import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
+import { getElectronDialog, showItemInFinder } from "../core/electron";
 import { basename, buildUserInput, contextUsageView, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { normalizeRateLimitResponse } from "../core/rate-limits";
@@ -2391,9 +2392,7 @@ function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: Proc
 }
 
 async function pickWorkspaceDirectory(defaultPath: string): Promise<string | null | undefined> {
-  if (!Platform.isDesktopApp) return undefined;
-  const electron = electronModule();
-  const dialog = electron?.remote?.dialog ?? electron?.dialog;
+  const dialog = getElectronDialog();
   if (!dialog?.showOpenDialog) return undefined;
   const result = await dialog.showOpenDialog({
     title: "选择 Codex 工作区",
@@ -2428,23 +2427,6 @@ function normalizeWorkspacePath(value: string | undefined): string {
 function workspaceDisplayName(workspacePath: string): string {
   const normalized = normalizeWorkspacePath(workspacePath);
   return path.basename(normalized) || normalized;
-}
-
-function electronModule(): any {
-  const electronRequire = (window as any).require ?? (globalThis as any).require;
-  try {
-    return electronRequire?.("electron");
-  } catch {
-    return null;
-  }
-}
-
-function showItemInFinder(filePath: string): boolean {
-  if (!Platform.isDesktopApp || !filePath) return false;
-  const shell = electronModule()?.shell;
-  if (!shell?.showItemInFolder) return false;
-  shell.showItemInFolder(filePath);
-  return true;
 }
 
 function compactAccountLabel(value: string): string {
