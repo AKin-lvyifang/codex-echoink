@@ -17,18 +17,14 @@ import {
   selectOpenCodeModel
 } from "./agent-runner";
 import { AGENTS_RULES_FILE } from "./constants";
-import { isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
+import { KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
-import { runRawDigestCalibration } from "./raw-calibration";
 import { KnowledgeBaseScheduler } from "./scheduler";
 import { appendScheduledMaintenanceMessage as appendScheduledMaintenanceMessageToSession } from "./scheduled-maintenance";
 import {
   appendKnowledgeBaseWarning,
-  cloneProcessedSources,
-  formatCancelResultMessage,
   saveSettingsSafely,
-  writeKnowledgeBaseTracker
 } from "./maintenance";
 import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { KnowledgeBaseCaptureService } from "./capture";
@@ -36,6 +32,7 @@ import { KnowledgeBaseManagedThreadStore } from "./managed-threads";
 import { KnowledgeBaseQueryJournalService } from "./query-journal";
 import { KnowledgeBaseMaintenanceRunner } from "./maintenance-runner";
 import { KnowledgeBaseAgentTaskService } from "./agent-task-service";
+import { KnowledgeBaseRawDigestCalibrationRunner } from "./raw-digest-calibration-runner";
 import { exists } from "./utils";
 const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
 
@@ -47,6 +44,7 @@ export class KnowledgeBaseManager {
   private readonly managedThreads: KnowledgeBaseManagedThreadStore;
   private readonly maintenanceRunner: KnowledgeBaseMaintenanceRunner;
   private readonly agentTaskService: KnowledgeBaseAgentTaskService;
+  private readonly rawDigestCalibrationRunner: KnowledgeBaseRawDigestCalibrationRunner;
   private cancelRequested = false;
   private dashboardSnapshotCache: { snapshot: KnowledgeBaseDashboardSnapshot; savedAt: number; signature: string } | null = null;
   private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
@@ -56,6 +54,12 @@ export class KnowledgeBaseManager {
     this.agentTaskService = new KnowledgeBaseAgentTaskService(plugin, this.managedThreads, {
       isCancelRequested: () => this.cancelRequested,
       createKnowledgeAgentRuntime: (backend) => this.createKnowledgeAgentRuntime(backend)
+    });
+    this.rawDigestCalibrationRunner = new KnowledgeBaseRawDigestCalibrationRunner(plugin, {
+      isRunning: () => this.running,
+      beginRun: () => this.beginKnowledgeBaseRun(),
+      finishRun: (refreshSurfaces) => this.finishRawDigestCalibrationRun(refreshSurfaces),
+      isCancelRequested: () => this.cancelRequested
     });
     this.captureService = new KnowledgeBaseCaptureService(plugin);
     this.queryJournalService = new KnowledgeBaseQueryJournalService(plugin, this.captureService, {
@@ -324,84 +328,7 @@ export class KnowledgeBaseManager {
   }
 
   async calibrateRawDigestStatus(): Promise<KnowledgeBaseRunResult> {
-    if (this.running) {
-      new Notice("知识库维护正在运行");
-      return {
-        status: "failed",
-        reportPath: this.plugin.settings.knowledgeBase.lastReportPath,
-        summary: "",
-        processedSources: [],
-        error: "已有任务正在运行"
-      };
-    }
-    this.running = true;
-    this.cancelRequested = false;
-    const startedAt = Date.now();
-    const settings = this.plugin.settings.knowledgeBase;
-    const processedSourcesBeforeRun = cloneProcessedSources(settings.processedSources);
-    let vaultPath = "";
-    try {
-      vaultPath = this.plugin.getVaultPath();
-      settings.lastRunStatus = "running";
-      settings.lastError = "";
-      settings.lastSummary = "";
-      settings.lastRunAt = startedAt;
-      await this.plugin.saveSettings(true);
-      const result = await runRawDigestCalibration({
-        vaultPath,
-        startedAt,
-        processedSources: settings.processedSources,
-        checkCanceled: () => {
-          throwIfKnowledgeBaseCanceled(this.cancelRequested);
-        },
-        writeTracker: async (processed, updatedAt) => {
-          throwIfKnowledgeBaseCanceled(this.cancelRequested);
-          await writeKnowledgeBaseTracker(vaultPath, processed, updatedAt);
-          throwIfKnowledgeBaseCanceled(this.cancelRequested);
-        },
-        commit: async (commit) => {
-          throwIfKnowledgeBaseCanceled(this.cancelRequested);
-          settings.processedSources = commit.nextProcessedSources;
-          settings.lastRunStatus = "success";
-          settings.lastReportPath = commit.reportPath;
-          settings.lastSummary = commit.summary;
-          settings.lastRunAt = Date.now();
-          await this.plugin.saveSettings(true);
-          throwIfKnowledgeBaseCanceled(this.cancelRequested);
-        }
-      });
-      new Notice("Raw 状态校准完成");
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const canceled = this.cancelRequested || isKnowledgeBaseCancelError(message);
-      settings.processedSources = processedSourcesBeforeRun;
-      settings.lastRunStatus = canceled ? "canceled" : "failed";
-      settings.lastError = canceled ? formatCancelResultMessage(message, null) : message;
-      settings.lastSummary = "";
-      const saveError = await saveSettingsSafely(this.plugin);
-      if (canceled && saveError) {
-        settings.lastError = formatCancelResultMessage(message, saveError);
-        await saveSettingsSafely(this.plugin);
-      }
-      return {
-        status: canceled ? "canceled" : "failed",
-        reportPath: "",
-        summary: "",
-        processedSources: [],
-        error: settings.lastError
-      };
-    } finally {
-      this.running = false;
-      this.cancelRequested = false;
-      if (vaultPath) {
-        try {
-          this.refreshKnowledgeBaseSurfaces();
-        } catch (error) {
-          console.warn("知识库仪表盘刷新失败", error);
-        }
-      }
-    }
+    return this.rawDigestCalibrationRunner.calibrateRawDigestStatus();
   }
 
   async runMaintenance(mode: KnowledgeBaseRunMode = "maintain", userRequest = "", turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseRunResult> {
@@ -429,6 +356,17 @@ export class KnowledgeBaseManager {
       this.refreshKnowledgeBaseSurfaces();
     } catch (error) {
       console.warn("知识库面板刷新失败", error);
+    }
+  }
+
+  private finishRawDigestCalibrationRun(refreshSurfaces: boolean): void {
+    this.running = false;
+    this.cancelRequested = false;
+    if (!refreshSurfaces) return;
+    try {
+      this.refreshKnowledgeBaseSurfaces();
+    } catch (error) {
+      console.warn("知识库仪表盘刷新失败", error);
     }
   }
 
