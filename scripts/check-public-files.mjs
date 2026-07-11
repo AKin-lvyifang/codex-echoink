@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 function trackedFiles() {
   const output = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
@@ -37,12 +38,42 @@ const rules = [
   }
 ];
 
+const contentRules = [
+  {
+    reason: "local absolute user path",
+    pattern: /\/Users\/lyuakin\//
+  },
+  {
+    reason: "private vault path or name",
+    pattern: new RegExp("AKin-" + "note-management")
+  },
+  {
+    reason: "raw Authorization bearer token",
+    pattern: /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i
+  },
+  {
+    reason: "hard-coded secret or API key assignment",
+    pattern: /\b(?:OPENAI|ANTHROPIC|DEEPSEEK|GITHUB|GH|HERMES|OPENCODE)[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET)\b\s*[:=]\s*['"][^'"\n]{8,}['"]/i
+  }
+];
+
+function readTextFile(file) {
+  const buffer = readFileSync(file);
+  if (buffer.includes(0)) return null;
+  return buffer.toString("utf8");
+}
+
 const files = trackedFiles();
 const blocked = [];
 
 for (const file of files) {
   const rule = rules.find((candidate) => candidate.matches(file));
   if (rule) blocked.push({ file, reason: rule.reason });
+
+  const text = readTextFile(file);
+  if (!text) continue;
+  const contentRule = contentRules.find((candidate) => candidate.pattern.test(text));
+  if (contentRule) blocked.push({ file, reason: contentRule.reason });
 }
 
 if (blocked.length > 0) {
