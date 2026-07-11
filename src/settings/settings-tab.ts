@@ -87,6 +87,10 @@ export class CodexSettingTab extends PluginSettingTab {
   private hermesCheckError = "";
   private setupChecking = false;
   private displayFrame: number | null = null;
+  private settingsTitleEl: HTMLElement | null = null;
+  private settingsStatusEl: HTMLElement | null = null;
+  private settingsTabsEl: HTMLElement | null = null;
+  private settingsBodyEl: HTMLElement | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
@@ -104,17 +108,44 @@ export class CodexSettingTab extends PluginSettingTab {
       window.cancelAnimationFrame(this.displayFrame);
       this.displayFrame = null;
     }
+    this.renderSettingsShell();
+    this.renderSettingsContent();
+  }
+
+  private renderSettingsShell(): void {
     const { containerEl } = this;
+    containerEl.empty();
+    this.settingsTitleEl = containerEl.createDiv({ cls: "codex-settings-title" });
+    this.settingsStatusEl = containerEl.createDiv({ cls: "codex-settings-status" });
+    this.settingsTabsEl = containerEl.createDiv({ cls: "codex-settings-tabs-slot" });
+    this.settingsBodyEl = containerEl.createDiv({ cls: "codex-settings-body" });
+  }
+
+  private ensureSettingsShell(): void {
+    if (this.settingsBodyEl && this.containerEl.contains(this.settingsBodyEl)) return;
+    this.renderSettingsShell();
+  }
+
+  private renderSettingsContent(): void {
+    this.ensureSettingsShell();
     const copy = this.copy;
     const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
     try {
       this.clearResourceSearchDebounceTimer();
-      containerEl.empty();
-      new Setting(containerEl).setName(copy.title).setHeading();
+      const titleEl = this.settingsTitleEl;
+      const statusEl = this.settingsStatusEl;
+      const tabsEl = this.settingsTabsEl;
+      const bodyEl = this.settingsBodyEl;
+      if (!titleEl || !statusEl || !tabsEl || !bodyEl) return;
+      titleEl.empty();
+      statusEl.empty();
+      tabsEl.empty();
+      bodyEl.empty();
+      new Setting(titleEl).setName(copy.title).setHeading();
 
       const status = this.plugin.lastStatus;
       const setupCheck = buildSetupCheck(this.plugin.settings, status, this.detectSetupPlatform());
-      const statusBox = containerEl.createDiv({ cls: "codex-settings-status" });
+      const statusBox = statusEl;
       if (this.shouldShowSetupGuide(setupCheck)) {
         this.renderSetupGuide(statusBox, setupCheck);
       } else {
@@ -135,33 +166,33 @@ export class CodexSettingTab extends PluginSettingTab {
         this.addStatusActions(statusBox);
       }
 
-      this.renderTopTabs(containerEl);
+      this.renderTopTabs(tabsEl);
       if (this.plugin.settings.settingsTab === "agents") {
-        this.renderAgentSettings(containerEl, status);
+        this.renderAgentSettings(bodyEl, status);
         return;
       }
       if (this.plugin.settings.settingsTab === "providers") {
-        this.renderApiProviderManager(containerEl);
+        this.renderApiProviderManager(bodyEl);
         return;
       }
       if (this.plugin.settings.settingsTab === "resources") {
-        this.renderWorkspaceResourceManager(containerEl);
+        this.renderWorkspaceResourceManager(bodyEl);
         return;
       }
       if (this.plugin.settings.settingsTab === "editorActions") {
-        this.renderEditorActionSettings(containerEl);
+        this.renderEditorActionSettings(bodyEl);
         return;
       }
       if (this.plugin.settings.settingsTab === "knowledgeBase") {
-        this.renderKnowledgeBaseSettings(containerEl);
+        this.renderKnowledgeBaseSettings(bodyEl);
         return;
       }
       if (this.plugin.settings.settingsTab === "review") {
-        this.renderReviewSettings(containerEl);
+        this.renderReviewSettings(bodyEl);
         return;
       }
 
-      this.renderGeneralSettings(containerEl, status);
+      this.renderGeneralSettings(bodyEl, status);
     } finally {
       restoreSettingsScrollSnapshot(settingsScrollSnapshot);
     }
@@ -171,7 +202,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.displayFrame !== null) return;
     this.displayFrame = window.requestAnimationFrame(() => {
       this.displayFrame = null;
-      this.display();
+      this.renderSettingsContent();
     });
   }
 

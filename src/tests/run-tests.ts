@@ -317,6 +317,18 @@ assert.match(settingsTabSource, /normalizeKnowledgeBaseHistoryRetentionDays\(val
 assert.match(settingsTabSource, /normalizeEditorActionQualityMode\(value,\s*"quality"\)/);
 assert.match(settingsTabSource, /captureSettingsScrollSnapshot\(this\.containerEl\)/);
 assert.match(settingsTabSource, /restoreSettingsScrollSnapshot\(settingsScrollSnapshot\)/);
+const settingsTabDisplaySource = settingsTabSource.slice(
+  settingsTabSource.indexOf("display(): void"),
+  settingsTabSource.indexOf("private scheduleDisplay")
+);
+const settingsTabScheduleDisplaySource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private scheduleDisplay"),
+  settingsTabSource.indexOf("private renderAgentSettings")
+);
+assert.match(settingsTabDisplaySource, /this\.renderSettingsShell\(\)/);
+assert.match(settingsTabDisplaySource, /this\.renderSettingsContent\(\)/);
+assert.doesNotMatch(settingsTabScheduleDisplaySource, /this\.display\(\)/);
+assert.match(settingsTabScheduleDisplaySource, /this\.renderSettingsContent\(\)/);
 assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
