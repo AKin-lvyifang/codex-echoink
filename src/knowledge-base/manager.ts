@@ -85,6 +85,7 @@ import {
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { KnowledgeBaseCaptureService } from "./capture";
+import { KnowledgeBaseManagedThreadStore } from "./managed-threads";
 import { KnowledgeBaseQueryJournalService } from "./query-journal";
 import { exists } from "./utils";
 
@@ -127,6 +128,7 @@ export class KnowledgeBaseManager {
   private readonly scheduler: KnowledgeBaseScheduler;
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly queryJournalService: KnowledgeBaseQueryJournalService;
+  private readonly managedThreads: KnowledgeBaseManagedThreadStore;
   private codexWaiter: CodexKbWaiter | null = null;
   private activeCodexRun: { threadId: string; turnId: string; cancel?: (error: Error) => void } | null = null;
   private activeOpenCode: ActiveOpenCodeRun | null = null;
@@ -136,6 +138,7 @@ export class KnowledgeBaseManager {
   private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
+    this.managedThreads = new KnowledgeBaseManagedThreadStore(plugin);
     this.captureService = new KnowledgeBaseCaptureService(plugin);
     this.queryJournalService = new KnowledgeBaseQueryJournalService(plugin, this.captureService, {
       isRunning: () => this.running,
@@ -1025,71 +1028,17 @@ export class KnowledgeBaseManager {
     waiter.inactivityTimer = null;
   }
 
-  private rememberCodexKnowledgeThread(threadId: string, kind: KnowledgeBaseManagedThreadKind): string {
-    const id = threadId.trim();
-    const runId = newId("kb-codex-thread");
-    if (!id) return runId;
-    const now = Date.now();
-    this.plugin.settings.knowledgeBase.managedThreads[id] = {
-      threadId: id,
-      runId,
-      kind,
-      vaultPath: this.plugin.getVaultPath(),
-      archiveState: "running",
-      createdAt: now,
-      settledAt: 0,
-      archivedAt: 0,
-      attempts: 0,
-      lastError: ""
-    };
-    return runId;
-  }
-
-  private markCodexKnowledgeThreadPendingArchive(threadId: string, runId: string): void {
-    const id = threadId.trim();
-    if (!id) return;
-    const existing = this.plugin.settings.knowledgeBase.managedThreads[id];
-    if (!existing || existing.runId !== runId || existing.archiveState === "archived") return;
-    existing.archiveState = "pending-archive";
-    existing.settledAt = Date.now();
-    existing.lastError = "";
-  }
-
   async archivePendingCodexKnowledgeThreads(): Promise<number> {
-    let recovered = 0;
-    if (!this.running && !this.codexWaiter && !this.activeCodexRun && !this.activeOpenCode && !this.activeHermes) {
-      recovered = this.recoverStaleRunningCodexKnowledgeThreads("归档前恢复遗留 running 状态");
-    }
-    const codex = this.plugin.codex;
-    if (!codex?.archiveThread) {
-      if (recovered) await saveSettingsSafely(this.plugin);
-      return 0;
-    }
-    const managed = this.plugin.settings.knowledgeBase.managedThreads;
-    const pending = Object.values(managed)
-      .filter((thread) => thread.archiveState === "pending-archive" || thread.archiveState === "archive-failed")
-      .sort((left, right) => (left.settledAt || left.createdAt) - (right.settledAt || right.createdAt));
-    let archived = 0;
-    for (const thread of pending) {
-      try {
-        thread.attempts += 1;
-        await codex.archiveThread(thread.threadId);
-        thread.archiveState = "archived";
-        thread.archivedAt = Date.now();
-        thread.lastError = "";
-        archived += 1;
-      } catch (error) {
-        thread.archiveState = "archive-failed";
-        thread.lastError = error instanceof Error ? error.message : String(error);
-      }
-    }
-    if (pending.length || recovered) await saveSettingsSafely(this.plugin);
-    return archived;
+    return this.managedThreads.archivePending({
+      recoverStaleReason: !this.running && !this.codexWaiter && !this.activeCodexRun && !this.activeOpenCode && !this.activeHermes
+        ? "归档前恢复遗留 running 状态"
+        : undefined
+    });
   }
 
   private recoverPersistedRunState(reason: string): number {
     const settings = this.plugin.settings.knowledgeBase;
-    let recovered = this.recoverStaleRunningCodexKnowledgeThreads(reason);
+    let recovered = this.managedThreads.recoverStaleRunning(reason);
     if (settings.lastRunStatus === "running") {
       settings.lastRunStatus = "failed";
       settings.lastError = appendKnowledgeBaseWarning(settings.lastError, reason);
@@ -1099,20 +1048,6 @@ export class KnowledgeBaseManager {
     if (settings.lastScheduledRunStatus === "running") {
       settings.lastScheduledRunStatus = "failed";
       settings.lastError = appendKnowledgeBaseWarning(settings.lastError, reason);
-      recovered += 1;
-    }
-    return recovered;
-  }
-
-  private recoverStaleRunningCodexKnowledgeThreads(reason: string): number {
-    const managed = this.plugin.settings.knowledgeBase.managedThreads;
-    const now = Date.now();
-    let recovered = 0;
-    for (const thread of Object.values(managed)) {
-      if (thread.archiveState !== "running") continue;
-      thread.archiveState = "pending-archive";
-      thread.settledAt = thread.settledAt || now;
-      thread.lastError = reason;
       recovered += 1;
     }
     return recovered;
@@ -1203,7 +1138,7 @@ export class KnowledgeBaseManager {
       if (!status.connected || !this.plugin.codex) throw error;
       started = await this.plugin.codex.startThread(options);
     }
-    const managedRunId = this.rememberCodexKnowledgeThread(started.threadId, managedKind);
+    const managedRunId = this.managedThreads.remember(started.threadId, managedKind);
     await this.plugin.codex.setThreadName?.(started.threadId, `Codex EchoInk KB: ${managedKind}`).catch(swallowError("rename knowledge base Codex thread"));
     throwIfKnowledgeBaseCanceled(this.cancelRequested);
     const inactivityTimeoutMs = normalizeCodexInactivityTimeoutMs(turnOptionOverrides?.codexInactivityTimeoutMs);
@@ -1256,7 +1191,7 @@ export class KnowledgeBaseManager {
     } catch (error) {
       if (waiterRef) this.clearCodexWaiterTimer(waiterRef);
       this.codexWaiter = null;
-      this.markCodexKnowledgeThreadPendingArchive(started.threadId, managedRunId);
+      this.managedThreads.markPendingArchive(started.threadId, managedRunId);
       throw error;
     }
     try {
@@ -1264,7 +1199,7 @@ export class KnowledgeBaseManager {
     } finally {
       if (waiterRef) this.clearCodexWaiterTimer(waiterRef);
       if (this.codexWaiter === waiterRef) this.codexWaiter = null;
-      this.markCodexKnowledgeThreadPendingArchive(started.threadId, managedRunId);
+      this.managedThreads.markPendingArchive(started.threadId, managedRunId);
     }
   }
 
