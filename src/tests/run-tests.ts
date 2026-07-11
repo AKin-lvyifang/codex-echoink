@@ -3223,6 +3223,10 @@ const codexViewUiSources = [
 ].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
 const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
+const codexViewAddMessageToSessionSource = codexViewSource.slice(
+  codexViewSource.indexOf("private addMessageToSession"),
+  codexViewSource.indexOf("private scheduleSessionSave")
+);
 assert.ok(codexViewModules.includes("history-modal.ts"));
 assert.ok(codexViewModules.includes("knowledge-dashboard.ts"));
 assert.ok(codexViewModules.includes("header.ts"));
@@ -3231,6 +3235,12 @@ assert.ok(codexViewModules.includes("message-list.ts"));
 assert.ok(codexViewModules.includes("notification-router.ts"));
 assert.ok(codexViewModules.includes("editor-action-run-coordinator.ts"));
 assert.ok(codexViewLineCount <= 2500, `src/ui/codex-view.ts should stay under 2500 lines, got ${codexViewLineCount}`);
+assert.match(codexViewSource, /CHAT_SESSION_SAVE_DEBOUNCE_MS\s*=\s*500/);
+assert.match(codexViewSource, /private scheduleSessionSave/);
+assert.match(codexViewSource, /private async flushSessionSave/);
+assert.match(codexViewSource, /window\.setTimeout\(\(\) => \{/);
+assert.match(codexViewAddMessageToSessionSource, /this\.scheduleSessionSave\(\)/);
+assert.doesNotMatch(codexViewAddMessageToSessionSource, /saveSettings/);
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
 assert.doesNotMatch(codexViewSource, /private handleEditorActionNotification/);
 assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);

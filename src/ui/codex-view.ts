@@ -108,6 +108,8 @@ type ObsidianSettingsApi = {
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
+const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;
+
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
   private headerStatusEl!: HTMLElement;
@@ -140,6 +142,7 @@ export class CodexView extends ItemView {
   private activeTurnId = "";
   private turnStartedAt = 0;
   private turnWatchdog: number | null = null;
+  private sessionSaveTimer: number | null = null;
   private activeThinkingMessageId = "";
   private activePlanMessageId = "";
   private activeItemMessages = new Map<string, string>();
@@ -274,7 +277,7 @@ export class CodexView extends ItemView {
     disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
     this.rejectEditorActionRun(new Error("EchoInk Agent 侧栏已关闭"));
     this.rejectEditorSummaryRun(new Error("EchoInk Agent 侧栏已关闭"));
-    await this.plugin.saveSettings(true);
+    await this.flushSessionSave();
   }
 
   applySavedComposerDefaults(): void {
@@ -1905,7 +1908,23 @@ export class CodexView extends ItemView {
     });
     session.updatedAt = Date.now();
     this.renderMessagesIfActive(session);
-    void this.plugin.saveSettings();
+    this.scheduleSessionSave();
+  }
+
+  private scheduleSessionSave(): void {
+    if (this.sessionSaveTimer) return;
+    this.sessionSaveTimer = window.setTimeout(() => {
+      this.sessionSaveTimer = null;
+      void this.plugin.saveSettings(true).catch(swallowError("save chat session"));
+    }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
+  }
+
+  private async flushSessionSave(): Promise<void> {
+    if (this.sessionSaveTimer) {
+      window.clearTimeout(this.sessionSaveTimer);
+      this.sessionSaveTimer = null;
+    }
+    await this.plugin.saveSettings(true);
   }
 
   private moveMessageToEnd(session: StoredSession, messageId: string): void {
