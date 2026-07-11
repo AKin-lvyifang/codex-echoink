@@ -107,6 +107,7 @@ const MAX_ATTACHED_SOURCES = 20;
 const CODEX_KNOWLEDGE_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
 const OPENCODE_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
 const HERMES_KNOWLEDGE_TASK_TIMEOUT_MS = 20 * 60 * 1000;
+const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
 const URL_PATTERN = /https?:\/\/[^\s<>"')]+/i;
 
@@ -119,12 +120,14 @@ export class KnowledgeBaseManager {
   private activeOpenCode: ActiveOpenCodeRun | null = null;
   private activeHermes: ActiveHermesRun | null = null;
   private cancelRequested = false;
+  private dashboardSnapshotCache: { snapshot: KnowledgeBaseDashboardSnapshot; savedAt: number; signature: string } | null = null;
+  private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   register(): void {
-    const recovered = this.recoverStaleRunningCodexKnowledgeThreads("插件重新加载后恢复为待归档");
-    if (recovered) void saveSettingsSafely(this.plugin);
+    const recovered = this.recoverPersistedRunState("插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。");
+    if (recovered) void saveSettingsSafely(this.plugin, { flushKnowledgeBaseHistory: false });
     this.plugin.addCommand({
       id: "knowledge-base-initialize",
       name: "知识库：初始化 LLM Wiki",
@@ -196,16 +199,43 @@ export class KnowledgeBaseManager {
   }
 
   async getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> {
-    return buildKnowledgeBaseDashboardSnapshot(this.plugin.getVaultPath(), this.plugin.settings.knowledgeBase);
+    const signature = dashboardSnapshotSignature(this.plugin.settings.knowledgeBase);
+    const now = Date.now();
+    if (
+      this.dashboardSnapshotCache
+      && this.dashboardSnapshotCache.signature === signature
+      && now - this.dashboardSnapshotCache.savedAt <= DASHBOARD_SNAPSHOT_CACHE_TTL_MS
+    ) {
+      return this.dashboardSnapshotCache.snapshot;
+    }
+    if (this.dashboardSnapshotPromise) return this.dashboardSnapshotPromise;
+    this.dashboardSnapshotPromise = buildKnowledgeBaseDashboardSnapshot(this.plugin.getVaultPath(), this.plugin.settings.knowledgeBase)
+      .then((snapshot) => {
+        this.dashboardSnapshotCache = {
+          snapshot,
+          savedAt: Date.now(),
+          signature
+        };
+        return snapshot;
+      })
+      .finally(() => {
+        this.dashboardSnapshotPromise = null;
+      });
+    return this.dashboardSnapshotPromise;
   }
 
   private refreshKnowledgeBaseSurfaces(): void {
+    this.invalidateDashboardSnapshot();
     const plugin = this.plugin as CodexForObsidianPlugin & { refreshKnowledgeBaseSurfaces?: () => void };
     if (typeof plugin.refreshKnowledgeBaseSurfaces === "function") {
       plugin.refreshKnowledgeBaseSurfaces();
       return;
     }
     this.plugin.getCodexView()?.refreshKnowledgeBaseDashboard();
+  }
+
+  private invalidateDashboardSnapshot(): void {
+    this.dashboardSnapshotCache = null;
   }
 
   async cancelMaintenance(): Promise<void> {
@@ -1329,6 +1359,23 @@ export class KnowledgeBaseManager {
     }
     if (pending.length || recovered) await saveSettingsSafely(this.plugin);
     return archived;
+  }
+
+  private recoverPersistedRunState(reason: string): number {
+    const settings = this.plugin.settings.knowledgeBase;
+    let recovered = this.recoverStaleRunningCodexKnowledgeThreads(reason);
+    if (settings.lastRunStatus === "running") {
+      settings.lastRunStatus = "failed";
+      settings.lastError = appendKnowledgeBaseWarning(settings.lastError, reason);
+      settings.lastSummary = "";
+      recovered += 1;
+    }
+    if (settings.lastScheduledRunStatus === "running") {
+      settings.lastScheduledRunStatus = "failed";
+      settings.lastError = appendKnowledgeBaseWarning(settings.lastError, reason);
+      recovered += 1;
+    }
+    return recovered;
   }
 
   private recoverStaleRunningCodexKnowledgeThreads(reason: string): number {
@@ -2699,6 +2746,23 @@ function appendKnowledgeBaseWarning(previous: string, warning: string): string {
   return `${normalized}；${warning}`;
 }
 
+function dashboardSnapshotSignature(settings: CodexForObsidianPlugin["settings"]["knowledgeBase"]): string {
+  return [
+    settings.lastRunAt,
+    settings.lastRunStatus,
+    settings.lastScheduledRunAt,
+    settings.lastScheduledRunStatus,
+    settings.lastReportPath,
+    settings.lastError,
+    Object.keys(settings.processedSources ?? {}).length,
+    (settings.healthHistory ?? []).length,
+    (settings.maintenanceHistory ?? []).length,
+    Object.keys(settings.managedThreads ?? {}).length,
+    settings.initialization.status,
+    settings.initialization.initializedAt
+  ].join("|");
+}
+
 function throwIfKnowledgeBaseCanceled(cancelRequested: boolean): void {
   if (cancelRequested) throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
 }
@@ -2775,9 +2839,9 @@ function assertSafeRawEntries(snapshot: RawContentSnapshot): void {
   }
 }
 
-async function saveSettingsSafely(plugin: CodexForObsidianPlugin): Promise<string | null> {
+async function saveSettingsSafely(plugin: CodexForObsidianPlugin, options?: Parameters<CodexForObsidianPlugin["saveSettings"]>[1]): Promise<string | null> {
   try {
-    await plugin.saveSettings(true);
+    await plugin.saveSettings(true, options);
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);

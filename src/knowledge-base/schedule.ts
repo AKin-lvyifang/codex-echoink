@@ -19,7 +19,7 @@ export function shouldRunScheduledKnowledgeBaseMaintenance(
   const scheduled = scheduledTimeForToday(settings.scheduleTime, now);
   if (!scheduled || now.getTime() < scheduled.getTime()) return false;
   const lastScheduled = settings.lastScheduledRunAt ? new Date(settings.lastScheduledRunAt) : null;
-  if (lastScheduled && lastScheduled.toDateString() === now.toDateString() && settings.lastScheduledRunStatus !== "running") return false;
+  if (lastScheduled && lastScheduled.toDateString() === now.toDateString()) return false;
   if (forceCatchUp) return settings.catchUpOnStartup;
   if (schedulerStartedAt > scheduled.getTime() && !settings.catchUpOnStartup) return false;
   return true;

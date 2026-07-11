@@ -49,9 +49,10 @@ function isKnowledgeBaseScopedNotification(
   state: KnowledgeBaseCodexRouteState
 ): boolean {
   if (ids.itemId && state.itemIds.has(ids.itemId)) {
-    if (!ids.threadId && !ids.turnId) return !state.turnId;
+    if (ids.threadId && ids.threadId !== state.threadId) return false;
     if (ids.turnId) return state.turnId ? ids.turnId === state.turnId : ids.threadId === state.threadId;
-    return ids.threadId === state.threadId;
+    if (ids.threadId) return ids.threadId === state.threadId;
+    return true;
   }
   if (ids.turnId) {
     if (state.turnId) return ids.turnId === state.turnId;

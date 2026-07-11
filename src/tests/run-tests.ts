@@ -112,6 +112,7 @@ import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
+import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom } from "../ui/codex-view/message-list";
 import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
@@ -207,6 +208,13 @@ assert.equal(manifest.name, "Codex EchoInk");
 assert.equal(manifest.version, packageJson.version);
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
+const mainSourceForStartupPerformance = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+const loadSettingsStart = mainSourceForStartupPerformance.indexOf("async loadSettings(): Promise<void>");
+const loadSettingsEnd = mainSourceForStartupPerformance.indexOf("private async applyKnowledgeBaseRulesFileDefault", loadSettingsStart);
+const loadSettingsSource = mainSourceForStartupPerformance.slice(loadSettingsStart, loadSettingsEnd);
+assert.equal(loadSettingsSource.includes("externalizeLargeMessages"), false);
+assert.equal(loadSettingsSource.includes("migrateKnowledgeBaseHistory"), false);
+assert.match(mainSourceForStartupPerformance, /runDeferredStartupMaintenance/);
 
 assert.equal(formatMessageHeaderTime(new Date(2026, 4, 22, 8, 29).getTime()), "星期五08:29");
 assert.equal(formatMessageHeaderTime(0), "");
@@ -822,12 +830,86 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: scheduledKnowledgeBaseDate(9, 0, 10).getTime(), lastScheduledRunStatus: "running" },
   scheduledKnowledgeBaseDate(9, 1),
   scheduledKnowledgeBaseDate(8, 0).getTime()
-), true);
+), false);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, scheduleTime: "09:20" },
   scheduledKnowledgeBaseDate(9, 0),
   scheduledKnowledgeBaseDate(8, 0).getTime()
 ), false);
+const staleKnowledgeBaseRunSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    lastRunStatus: "running",
+    lastScheduledRunStatus: "running",
+    managedThreads: {
+      "thread-stale-startup": {
+        threadId: "thread-stale-startup",
+        runId: "run-stale-startup",
+        kind: "maintain",
+        vaultPath: "/tmp/vault",
+        archiveState: "running",
+        createdAt: scheduledKnowledgeBaseDate(8, 59).getTime(),
+        settledAt: 0,
+        archivedAt: 0,
+        attempts: 0,
+        lastError: ""
+      }
+    }
+  }
+}).settings;
+const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
+  settings: staleKnowledgeBaseRunSettings,
+  getVaultPath: () => "/tmp/vault",
+  saveSettings: async () => undefined,
+  getCodexView: () => null,
+  getReviewManager: () => null,
+  externalizeMessageText: async () => undefined,
+  pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+  activateKnowledgeBaseChannel: async () => undefined,
+  addCommand: () => undefined,
+  addRibbonIcon: () => undefined,
+  registerInterval: () => undefined,
+  app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+} as any);
+assert.equal((staleKnowledgeBaseRunManager as any).recoverPersistedRunState("startup recovery"), 3);
+assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastRunStatus, "failed");
+assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastScheduledRunStatus, "failed");
+assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.managedThreads["thread-stale-startup"]?.archiveState, "pending-archive");
+assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /startup recovery/);
+const dashboardCacheVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-cache-"));
+try {
+  await mkdir(path.join(dashboardCacheVault, "raw", "articles"), { recursive: true });
+  await mkdir(path.join(dashboardCacheVault, "wiki"), { recursive: true });
+  await mkdir(path.join(dashboardCacheVault, "outputs"), { recursive: true });
+  await mkdir(path.join(dashboardCacheVault, "inbox"), { recursive: true });
+  await writeFile(path.join(dashboardCacheVault, "raw", "articles", "demo.md"), "# Demo\n", "utf8");
+  const dashboardCacheSettings = normalizeSettingsData({
+    settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+    knowledgeBase: { enabled: true }
+  }).settings;
+  const dashboardCacheManager = new KnowledgeBaseManager({
+    settings: dashboardCacheSettings,
+    getVaultPath: () => dashboardCacheVault,
+    saveSettings: async () => undefined,
+    getCodexView: () => null,
+    getReviewManager: () => null,
+    externalizeMessageText: async () => undefined,
+    pruneKnowledgeBaseHistoryByRetention: async () => ({ removedDayCount: 0, removedMessageCount: 0 }),
+    activateKnowledgeBaseChannel: async () => undefined,
+    addCommand: () => undefined,
+    addRibbonIcon: () => undefined,
+    registerInterval: () => undefined,
+    app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
+  } as any);
+  const firstDashboardSnapshot = await dashboardCacheManager.getDashboardSnapshot();
+  const secondDashboardSnapshot = await dashboardCacheManager.getDashboardSnapshot();
+  assert.equal(secondDashboardSnapshot, firstDashboardSnapshot);
+  (dashboardCacheManager as any).invalidateDashboardSnapshot();
+  const thirdDashboardSnapshot = await dashboardCacheManager.getDashboardSnapshot();
+  assert.notEqual(thirdDashboardSnapshot, firstDashboardSnapshot);
+} finally {
+  await rm(dashboardCacheVault, { recursive: true, force: true });
+}
 assert.equal(DEFAULT_SETTINGS.review.enabled, false);
 assert.equal(DEFAULT_SETTINGS.review.knowledgeBaseEnabled, true);
 assert.equal(DEFAULT_SETTINGS.review.agentChatEnabled, true);
@@ -1066,6 +1148,45 @@ assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: fals
 assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: true }), false);
+const previousHTMLElement = (globalThis as any).HTMLElement;
+const previousWindowForMessageListTest = (globalThis as any).window;
+try {
+  class FakeHTMLElement {}
+  const frameCallbacks: Array<() => void> = [];
+  (globalThis as any).HTMLElement = FakeHTMLElement;
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  const row = new FakeHTMLElement() as any;
+  row.dataset = { rowId: "message:1" };
+  row.getBoundingClientRect = () => ({ height: 123 });
+  let renderCalls = 0;
+  let renderedSessionId = "";
+  (renderer as any).env = { options: {}, sessionId: "before-measure" };
+  (renderer as any).render = (input: { sessionId?: string }) => {
+    renderCalls += 1;
+    renderedSessionId = input.sessionId ?? "";
+  };
+  const changed = renderer.measureVisibleVirtualRows(
+    { scrollTop: 0, scrollHeight: 500 } as HTMLElement,
+    { children: [row] } as any,
+    false
+  );
+  assert.equal(changed, true);
+  assert.equal(renderCalls, 0);
+  assert.equal(frameCallbacks.length, 1);
+  (renderer as any).env = { options: {}, sessionId: "after-measure" };
+  frameCallbacks[0]();
+  assert.equal(renderCalls, 1);
+  assert.equal(renderedSessionId, "after-measure");
+} finally {
+  (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
 const menuTarget = {} as Node;
 const rootOnlyTarget = {} as Node;
 const outsideTarget = {} as Node;
@@ -1292,6 +1413,52 @@ assert.equal(knowledgeFinalizeRenderMessagesCalls > 0, true);
 assert.equal(knowledgeFinalizeToolbarCalls > 1, true);
 assert.equal(knowledgeFinalizeApplyStatusCalls > 0, true);
 assert.equal(knowledgeFinalizeSaveCalls, 3);
+const knowledgeMaintainReportSession = {
+  id: "kb-maintain-report-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const knowledgeMaintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maintain", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "没有新增 raw。",
+  processedSources: []
+});
+const knowledgeMaintainReportView: any = {
+  ...knowledgeFinalizeView,
+  plugin: {
+    settings: { activeSessionId: knowledgeMaintainReportSession.id },
+    getKnowledgeBaseManager: () => ({
+      handleUserMessage: async () => ({
+        status: "success",
+        message: "知识库维护完成。\n报告：outputs/maintenance/kb-maintenance-2026-07-10.md",
+        ui: knowledgeMaintainReportPayload
+      })
+    }),
+    externalizeMessageText: async () => undefined,
+    archivePendingKnowledgeBaseThreads: async () => 0,
+    saveSettings: async () => undefined
+  },
+  running: false,
+  activeRunId: "",
+  activeRunKind: "",
+  activeRunSessionId: "",
+  activeTurnId: "",
+  activeItemMessages: new Map()
+};
+const knowledgeMaintainReportOutcome = await knowledgeMaintainReportView.startKnowledgeBaseTurn(knowledgeMaintainReportSession, {
+  ...queuedTurn("kb-maintain-report-item", knowledgeMaintainReportSession.id, "/maintain"),
+  kind: "knowledge-base"
+}, "queue");
+assert.equal(knowledgeMaintainReportOutcome, "completed");
+const settledMaintainReportMessage = knowledgeMaintainReportSession.messages.find((message: ChatMessage) => message.itemType === "knowledgeBase");
+assert.equal(settledMaintainReportMessage?.status, "completed");
+assert.equal(settledMaintainReportMessage?.knowledgeBaseUi?.kind, "maintain-report");
+assert.equal(settledMaintainReportMessage?.knowledgeBaseUi?.reportPath, "outputs/maintenance/kb-maintenance-2026-07-10.md");
 const knowledgeInitialSaveFailureSession = {
   id: "kb-initial-save-failure-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -1838,8 +2005,8 @@ const delayedOrphanDeltaAfterTurnKnown = routeKnowledgeBaseCodexNotification("it
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(delayedOrphanDeltaAfterTurnKnown.swallow, false);
-assert.equal(delayedOrphanDeltaAfterTurnKnown.collectAssistantDelta, false);
+assert.equal(delayedOrphanDeltaAfterTurnKnown.swallow, true);
+assert.equal(delayedOrphanDeltaAfterTurnKnown.collectAssistantDelta, true);
 const rememberedItemDifferentThread = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { threadId: "thread-other", itemId: "item-before-turn", delta: "其他 thread 输出" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
@@ -1847,6 +2014,21 @@ const rememberedItemDifferentThread = routeKnowledgeBaseCodexNotification("item/
 });
 assert.equal(rememberedItemDifferentThread.swallow, false);
 assert.equal(rememberedItemDifferentThread.collectAssistantDelta, false);
+const startedScopedItem = routeKnowledgeBaseCodexNotification("item/started", { threadId: "thread-kb", turnId: "turn-kb", item: { id: "item-scoped" } }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(startedScopedItem.swallow, true);
+assert.equal(startedScopedItem.rememberItemId, "item-scoped");
+kbRouteItems.add(startedScopedItem.rememberItemId!);
+const scopedItemOnlyDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-scoped", delta: "报告卡片摘要" }, {
+  threadId: "thread-kb",
+  turnId: "turn-kb",
+  itemIds: kbRouteItems
+});
+assert.equal(scopedItemOnlyDelta.swallow, true);
+assert.equal(scopedItemOnlyDelta.collectAssistantDelta, true);
 assert.equal(routeKnowledgeBaseCodexNotification("thread/tokenUsage/updated", { threadId: "thread-other" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
@@ -2856,6 +3038,8 @@ assert.match(codexViewTurnRunnerSource, /assistantMessage\.knowledgeBaseUi\s*=\s
 assert.match(codexViewMessageListSource, /renderKnowledgeBaseRunCard/);
 assert.match(codexViewMessageListSource, /renderKnowledgeBaseMaintainReportCard/);
 assert.match(codexViewMessageListSource, /knowledgeBaseUi/);
+assert.match(codexViewMessageListSource, /knowledgeBaseRunDisplayTitle/);
+assert.match(codexViewMessageListSource, /知识库任务已中断/);
 assert.match(codexViewMessageListSource, /payload\.icon/);
 assert.match(codexViewMessageListSource, /codex-kb-run-motion-/);
 assert.match(settingsStyles, /\.codex-kb-run-card\s*\{/);
@@ -2894,6 +3078,13 @@ assert.equal(maintainRunPayload.mode, "maintain");
 assert.equal(maintainRunPayload.icon, "bot");
 assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.label), ["准备", "消化", "整理", "报告", "完成"]);
 assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.icon), ["book-open", "file-pen", "network", "clipboard-check", "check-circle"]);
+const interruptedRunProgress = knowledgeBaseRunProgressState("interrupted", 1000, 1000 + 60_000, maintainRunPayload.phases.length);
+assert.equal(interruptedRunProgress.totalCells, 72);
+assert.equal(interruptedRunProgress.filledCells, 0);
+assert.equal(interruptedRunProgress.activeIndex, -1);
+const completedRunProgress = knowledgeBaseRunProgressState("completed", 1000, 1000 + 60_000, maintainRunPayload.phases.length);
+assert.equal(completedRunProgress.filledCells, completedRunProgress.totalCells);
+assert.equal(completedRunProgress.activeIndex, -1);
 
 const commandRunPayloads = [
   ["lint", ["扫库", "找断点", "对规则", "出建议", "收口"], "shield-check"],
@@ -4687,6 +4878,22 @@ assert.equal(staleMessages.length, 2);
 assert.equal(staleMessages[0].status, "interrupted");
 assert.equal(staleMessages[0].text, "rg -n foo docs");
 assert.equal(staleMessages[1].status, "completed");
+const staleKnowledgeBaseRunMessages = [
+  {
+    id: "kb-stale-run",
+    role: "assistant",
+    title: "知识库管理",
+    text: "正在识别命令并执行...",
+    itemType: "knowledgeBase",
+    status: "running",
+    createdAt: 5,
+    knowledgeBaseUi: buildKnowledgeBaseRunPayload("maintain")
+  }
+] as any;
+assert.equal(settleStaleRunningMessages(staleKnowledgeBaseRunMessages), 1);
+assert.equal(staleKnowledgeBaseRunMessages[0].status, "failed");
+assert.equal(staleKnowledgeBaseRunMessages[0].knowledgeBaseUi, undefined);
+assert.match(staleKnowledgeBaseRunMessages[0].text, /知识库维护失败：任务中断，未收到完成报告。/);
 
 const kbVault = await mkdtemp(path.join(tmpdir(), "codex-kb-"));
 try {
@@ -6443,6 +6650,56 @@ try {
   assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "ask"), "## 一眼结论\n最终答案");
 } finally {
   await rm(maintenanceCodexFinalAssistantItemVault, { recursive: true, force: true });
+}
+
+const maintenanceCodexItemOnlyDeltaVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-item-only-delta-");
+try {
+  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
+  let manager: KnowledgeBaseManager;
+  const plugin = {
+    settings,
+    getVaultPath: () => maintenanceCodexItemOnlyDeltaVault,
+    saveSettings: async () => undefined,
+    ensureCodexConnected: async () => ({
+      connected: true,
+      accountLabel: "Codex",
+      loggedIn: true,
+      models: [],
+      skills: [],
+      mcpServers: [],
+      errors: []
+    }),
+    codex: {
+      startThread: async () => ({ threadId: "thread-item-only-delta", title: "KB" }),
+      startTurn: async () => {
+        queueMicrotask(() => {
+          manager.handleCodexNotification({
+            method: "turn/started",
+            params: { threadId: "thread-item-only-delta", turn: { id: "turn-item-only-delta" } }
+          } as any);
+          manager.handleCodexNotification({
+            method: "item/started",
+            params: { threadId: "thread-item-only-delta", turnId: "turn-item-only-delta", item: { id: "item-item-only-delta" } }
+          } as any);
+          manager.handleCodexNotification({
+            method: "item/agentMessage/delta",
+            params: { itemId: "item-item-only-delta", delta: "报告摘要" }
+          } as any);
+          manager.handleCodexNotification({
+            method: "turn/completed",
+            params: { threadId: "thread-item-only-delta", turn: { id: "turn-item-only-delta", status: "completed" } }
+          } as any);
+        });
+        return "turn-item-only-delta";
+      },
+      interruptTurn: async () => undefined
+    }
+  };
+  manager = new KnowledgeBaseManager(plugin as any);
+  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "maintain"), "报告摘要");
+  assert.equal(settings.knowledgeBase.managedThreads["thread-item-only-delta"]?.archiveState, "pending-archive");
+} finally {
+  await rm(maintenanceCodexItemOnlyDeltaVault, { recursive: true, force: true });
 }
 
 const maintenanceCodexStaleRunningThreadVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stale-running-");
@@ -9969,6 +10226,9 @@ const bottom = scrollTopForVirtualBottom(firstWindow.totalHeight, 480);
 assert.equal(bottom, firstWindow.totalHeight - 480);
 assert.equal(isNearVirtualBottom(bottom, 480, firstWindow.totalHeight), true);
 assert.equal(isNearVirtualBottom(bottom - 200, 480, firstWindow.totalHeight), false);
+const messageListBottomHeight = messageListVirtualHeight(firstWindow.totalHeight, 480);
+assert.ok(messageListBottomHeight > firstWindow.totalHeight);
+assert.equal(scrollTopForMessageListBottom(firstWindow.totalHeight, 480), messageListBottomHeight - 480);
 
 const pressureVirtualIds = Array.from({ length: 1000 }, (_, index) => `message:pressure-${index}`);
 const pressureWindow = calculateVirtualWindow({ rowIds: pressureVirtualIds, scrollTop: 45_000, viewportHeight: 720 });

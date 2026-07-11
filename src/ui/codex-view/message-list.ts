@@ -44,6 +44,39 @@ interface MessageListEnvironment extends MessageListRenderInput {
 
 const KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT = 18;
 const KNOWLEDGE_BASE_RUN_CELL_MS = 360;
+const MESSAGE_LIST_BOTTOM_SPACER_PX = 40;
+const VIRTUAL_RERENDER_BURST_LIMIT = 24;
+const VIRTUAL_RERENDER_WINDOW_MS = 1000;
+
+export interface KnowledgeBaseRunProgressState {
+  totalCells: number;
+  filledCells: number;
+  activeIndex: number;
+}
+
+export function knowledgeBaseRunProgressState(status: string | undefined, createdAt: number, now: number, phaseCount: number): KnowledgeBaseRunProgressState {
+  const totalCells = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, phaseCount - 1);
+  if (status === "completed") {
+    return { totalCells, filledCells: totalCells, activeIndex: -1 };
+  }
+  if (status !== "running") {
+    return { totalCells, filledCells: 0, activeIndex: -1 };
+  }
+  const elapsedCells = Math.floor(Math.max(0, now - createdAt) / KNOWLEDGE_BASE_RUN_CELL_MS);
+  const filledCells = Math.max(0, Math.min(Math.max(0, totalCells - 1), elapsedCells));
+  const activeIndex = filledCells >= totalCells
+    ? -1
+    : Math.min(Math.floor(filledCells / KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT), phaseCount - 2);
+  return { totalCells, filledCells, activeIndex };
+}
+
+export function messageListVirtualHeight(contentHeight: number, viewportHeight: number): number {
+  return Math.max(Math.max(0, contentHeight) + MESSAGE_LIST_BOTTOM_SPACER_PX, Math.max(1, viewportHeight));
+}
+
+export function scrollTopForMessageListBottom(contentHeight: number, viewportHeight: number): number {
+  return scrollTopForVirtualBottom(messageListVirtualHeight(contentHeight, viewportHeight), viewportHeight);
+}
 
 export class CodexMessageListRenderer {
   private virtualSessionId = "";
@@ -53,6 +86,9 @@ export class CodexMessageListRenderer {
   private openProcessItems = new Map<string, boolean>();
   private openKnowledgeBaseCitations = new Map<string, boolean>();
   private env: MessageListEnvironment | null = null;
+  private virtualRerenderScheduled = false;
+  private virtualRerenderBurst = 0;
+  private virtualRerenderWindowStartedAt = 0;
 
   render(input: MessageListRenderInput): void {
     const env: MessageListEnvironment = { ...input, options: input.options ?? {} };
@@ -94,7 +130,7 @@ export class CodexMessageListRenderer {
       scrollTop: previousScrollTop,
       viewportHeight
     });
-    virtualListEl.setCssStyles({ height: `${Math.max(virtual.totalHeight, viewportHeight)}px` });
+    virtualListEl.setCssStyles({ height: `${messageListVirtualHeight(virtual.totalHeight, viewportHeight)}px` });
 
     for (const virtualRow of virtual.rows) {
       const row = rows[virtualRow.index];
@@ -108,13 +144,13 @@ export class CodexMessageListRenderer {
 
     this.measureVisibleVirtualRows(messagesEl, virtualListEl, shouldPinBottom);
     if (shouldPinBottom) {
-      messagesEl.scrollTop = scrollTopForVirtualBottom(virtual.totalHeight, viewportHeight);
+      messagesEl.scrollTop = scrollTopForMessageListBottom(virtual.totalHeight, viewportHeight);
     } else if (env.options.fromScroll || env.options.preserveScroll) {
       messagesEl.scrollTop = previousScrollTop;
     }
   }
 
-  measureVisibleVirtualRows(messagesEl: HTMLElement, virtualListEl: HTMLElement, forceBottom = false): boolean {
+  measureVisibleVirtualRows(messagesEl: HTMLElement, virtualListEl: HTMLElement, forceBottom = false, options: { rerender?: boolean } = {}): boolean {
     let changed = false;
     for (const child of Array.from(virtualListEl.children)) {
       if (!(child instanceof HTMLElement)) continue;
@@ -126,7 +162,11 @@ export class CodexMessageListRenderer {
         changed = true;
       }
     }
-    if (changed) this.render({ ...this.requireEnv(), options: { forceBottom, preserveScroll: !forceBottom } });
+    if (changed && options.rerender !== false) this.scheduleMeasuredRowsRerender(forceBottom);
+    if (!changed) {
+      this.virtualRerenderBurst = 0;
+      this.virtualRerenderWindowStartedAt = 0;
+    }
     if (forceBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
     return changed;
   }
@@ -147,6 +187,24 @@ export class CodexMessageListRenderer {
   private requireEnv(): MessageListEnvironment {
     if (!this.env) throw new Error("Message list renderer has not been initialized");
     return this.env;
+  }
+
+  private scheduleMeasuredRowsRerender(forceBottom: boolean): void {
+    if (!this.env || this.virtualRerenderScheduled) return;
+    const now = Date.now();
+    if (!this.virtualRerenderWindowStartedAt || now - this.virtualRerenderWindowStartedAt > VIRTUAL_RERENDER_WINDOW_MS) {
+      this.virtualRerenderWindowStartedAt = now;
+      this.virtualRerenderBurst = 0;
+    }
+    if (this.virtualRerenderBurst >= VIRTUAL_RERENDER_BURST_LIMIT) return;
+    this.virtualRerenderBurst += 1;
+    this.virtualRerenderScheduled = true;
+    window.requestAnimationFrame(() => {
+      this.virtualRerenderScheduled = false;
+      const env = this.env;
+      if (!env) return;
+      this.render({ ...env, options: { forceBottom, preserveScroll: !forceBottom } });
+    });
   }
 
   private buildVirtualRows(messages: ChatMessage[]): MessageRenderRow[] {
@@ -248,22 +306,15 @@ export class CodexMessageListRenderer {
 
   private renderKnowledgeBaseRunCard(container: HTMLElement, payload: KnowledgeBaseRunPayload, message: ChatMessage): void {
     const env = this.requireEnv();
-    const card = container.createDiv({ cls: "codex-kb-run-card" });
+    const card = container.createDiv({ cls: `codex-kb-run-card codex-kb-run-card-${message.status ?? "running"}` });
     const head = card.createDiv({ cls: "codex-kb-run-head" });
     const mark = head.createSpan({ cls: "codex-kb-run-mark" });
     setIcon(mark, payload.icon);
     const text = head.createDiv({ cls: "codex-kb-run-copy" });
-    text.createDiv({ cls: "codex-kb-run-title", text: payload.title });
+    text.createDiv({ cls: "codex-kb-run-title", text: knowledgeBaseRunDisplayTitle(payload, message.status) });
     const track = card.createDiv({ cls: "codex-kb-run-track" });
     const cellsPerSegment = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT;
-    const totalCells = cellsPerSegment * Math.max(0, payload.phases.length - 1);
-    const elapsedCells = message.status === "running"
-      ? Math.floor(Math.max(0, Date.now() - message.createdAt) / KNOWLEDGE_BASE_RUN_CELL_MS)
-      : totalCells;
-    const filledCells = Math.max(0, Math.min(message.status === "running" ? Math.max(0, totalCells - 1) : totalCells, elapsedCells));
-    const activeIndex = filledCells >= totalCells
-      ? -1
-      : Math.min(Math.floor(filledCells / cellsPerSegment), payload.phases.length - 2);
+    const { totalCells, filledCells, activeIndex } = knowledgeBaseRunProgressState(message.status, message.createdAt, Date.now(), payload.phases.length);
     if (message.status === "running") env.onScheduleRunProgress();
     payload.phases.forEach((phase, index) => {
       const node = track.createDiv({ cls: `codex-kb-run-node codex-kb-run-node-${phase.id} codex-kb-run-motion-${phase.motion}` });
@@ -991,6 +1042,14 @@ function formatAbsoluteTime(value: number): string {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function knowledgeBaseRunDisplayTitle(payload: KnowledgeBaseRunPayload, status?: string): string {
+  if (status === "interrupted") return "知识库任务已中断";
+  if (status === "canceled") return "知识库任务已取消";
+  if (status === "failed") return "知识库任务失败";
+  if (status === "completed") return "知识库任务已完成";
+  return payload.title;
 }
 
 function formatBytes(byteCount: number): string {

@@ -57,6 +57,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
   private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
+  private startupMaintenancePromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
@@ -143,7 +144,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       });
     }
     this.app.workspace.onLayoutReady(() => {
-      window.setTimeout(() => void this.pruneKnowledgeBaseHistoryByRetention(), 1200);
+      window.setTimeout(() => void this.runDeferredStartupMaintenance(), 1200);
     });
   }
 
@@ -341,20 +342,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     ensureKnowledgeBaseSession(this.settings, this.getVaultPath());
     const legacyChatWorkspacesCleared = clearLegacyChatWorkspaceDefaults(this.settings, this.getVaultPath(), previousVersion);
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
-    let rawMigrated = 0;
-    let historyMigrated = false;
-    try {
-      rawMigrated = await externalizeLargeMessages(this.getVaultPath(), this.settings, this.getPluginDataDirName());
-    } catch (error) {
-      console.error("Codex raw message migration failed", error);
-    }
-    try {
-      historyMigrated = (await migrateKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName(), this.settings)).changed;
-    } catch (error) {
-      console.error("Codex knowledge history migration failed", error);
-    }
     const knowledgeSessionChanged = sessionCountBefore !== this.settings.sessions.length || knowledgeSessionBefore !== this.settings.knowledgeBase.sessionId;
-    if (normalized.changed || rawMigrated > 0 || historyMigrated || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) await this.saveSettings(true);
+    if (normalized.changed || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) {
+      await this.saveSettings(true, { flushKnowledgeBaseHistory: false });
+    }
   }
 
   private async applyKnowledgeBaseRulesFileDefault(data: any): Promise<boolean> {
@@ -380,13 +371,13 @@ export default class CodexForObsidianPlugin extends Plugin {
     return true;
   }
 
-  async saveSettings(force = false): Promise<void> {
+  async saveSettings(force = false, options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
     if (force) {
       if (this.saveTimer) {
         clearTimeout(this.saveTimer);
         this.saveTimer = null;
       }
-      await this.flushSettingsSave();
+      await this.flushSettingsSave(options);
       return;
     }
     if (this.saveTimer) return;
@@ -458,6 +449,32 @@ export default class CodexForObsidianPlugin extends Plugin {
     return pruneKnowledgeBaseHistoryByRetention(this.getVaultPath(), this.getPluginDataDirName(), retentionDays);
   }
 
+  private async runDeferredStartupMaintenance(): Promise<void> {
+    if (this.startupMaintenancePromise) return this.startupMaintenancePromise;
+    this.startupMaintenancePromise = (async () => {
+      let changed = false;
+      try {
+        changed = await externalizeLargeMessages(this.getVaultPath(), this.settings, this.getPluginDataDirName()) > 0 || changed;
+      } catch (error) {
+        console.error("Codex raw message migration failed", error);
+      }
+      try {
+        changed = (await migrateKnowledgeBaseHistory(this.getVaultPath(), this.getPluginDataDirName(), this.settings)).changed || changed;
+      } catch (error) {
+        console.error("Codex knowledge history migration failed", error);
+      }
+      try {
+        await this.pruneKnowledgeBaseHistoryByRetention();
+      } catch (error) {
+        console.warn("Codex knowledge history retention cleanup failed", error);
+      }
+      if (changed) await this.saveSettings(true, { flushKnowledgeBaseHistory: false });
+    })().finally(() => {
+      this.startupMaintenancePromise = null;
+    });
+    return this.startupMaintenancePromise;
+  }
+
   async archivePendingKnowledgeBaseThreads(): Promise<number> {
     if (!this.knowledgeBase) return 0;
     return this.knowledgeBase.archivePendingCodexKnowledgeThreads();
@@ -523,10 +540,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.getCodexView()?.handleCodexNotification(notification);
   }
 
-  private async flushSettingsSave(): Promise<void> {
+  private async flushSettingsSave(options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
     const run = this.saveQueue.then(async () => {
       await this.flushRawWrites();
-      await this.flushKnowledgeBaseHistory();
+      if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory();
       await this.saveData(this.settings);
     });
     this.saveQueue = run.catch(() => undefined);

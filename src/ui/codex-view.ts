@@ -2231,7 +2231,7 @@ export class CodexView extends ItemView {
 
   private measureVisibleVirtualRows(forceBottom = false): boolean {
     if (!this.virtualListEl || !this.messagesEl) return false;
-    const changed = this.messageListRenderer.measureVisibleVirtualRows(this.messagesEl, this.virtualListEl, forceBottom);
+    const changed = this.messageListRenderer.measureVisibleVirtualRows(this.messagesEl, this.virtualListEl, forceBottom, { rerender: false });
     if (changed) this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
     return changed;
   }
