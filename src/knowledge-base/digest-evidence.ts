@@ -4,7 +4,7 @@ import { normalizePath } from "obsidian";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { readFreshKnowledgeBaseReportExcerpt } from "./report";
 import type { KnowledgeBaseSource } from "./types";
-import { isMissingPathError } from "./utils";
+import { walkExistingEntries } from "./utils";
 
 export interface KnowledgeTransactionSnapshot {
   vaultPath: string;
@@ -573,7 +573,7 @@ async function snapshotDigestEvidenceTransaction(vaultPath: string, roots: strin
   const entries: KnowledgeTransactionSnapshot["entries"] = new Map();
   for (const root of roots) {
     const absolute = path.join(vaultPath, root);
-    const paths = await walkExistingDigestEvidenceEntries(absolute);
+    const paths = await walkExistingEntries(absolute);
     for (const entryPath of paths) {
       const relativePath = normalizePath(path.relative(vaultPath, entryPath));
       const stat = await fsp.lstat(entryPath);
@@ -612,19 +612,4 @@ async function snapshotDigestEvidenceTransaction(vaultPath: string, roots: strin
     }
   }
   return { vaultPath, roots: roots.map((root) => normalizePath(root)), entries };
-}
-
-async function walkExistingDigestEvidenceEntries(rootPath: string): Promise<string[]> {
-  const stat = await fsp.lstat(rootPath).catch((error) => {
-    if (isMissingPathError(error)) return null;
-    throw error;
-  });
-  if (!stat) return [];
-  if (!stat.isDirectory()) return [rootPath];
-  const result = [rootPath];
-  const entries = await fsp.readdir(rootPath, { withFileTypes: true });
-  for (const entry of entries) {
-    result.push(...await walkExistingDigestEvidenceEntries(path.join(rootPath, entry.name)));
-  }
-  return result;
 }

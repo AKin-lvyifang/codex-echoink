@@ -4,7 +4,7 @@ import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseRunMode } from "./types";
 import type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
-import { formatDateForFile, isMissingPathError, pad, writeFileAtomic } from "./utils";
+import { formatDateForFile, isMissingPathError, pad, walkExistingEntries, writeFileAtomic } from "./utils";
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
 
@@ -99,7 +99,7 @@ export async function snapshotKnowledgeTransaction(vaultPath: string, roots: str
   const entries: KnowledgeTransactionSnapshot["entries"] = new Map();
   for (const root of roots) {
     const absolute = path.join(vaultPath, root);
-    const paths = await walkExistingKnowledgeTransactionEntries(absolute);
+    const paths = await walkExistingEntries(absolute);
     for (const entryPath of paths) {
       const relativePath = normalizePath(path.relative(vaultPath, entryPath));
       const stat = await fsp.lstat(entryPath);
@@ -286,21 +286,6 @@ function sameTransactionEntry(left: KnowledgeTransactionSnapshotEntry, right: Kn
   if (left.kind === "symlink") return left.target === right.target;
   if (left.kind === "special") return true;
   return true;
-}
-
-async function walkExistingKnowledgeTransactionEntries(rootPath: string): Promise<string[]> {
-  const stat = await fsp.lstat(rootPath).catch((error) => {
-    if (isMissingPathError(error)) return null;
-    throw error;
-  });
-  if (!stat) return [];
-  if (!stat.isDirectory()) return [rootPath];
-  const result = [rootPath];
-  const entries = await fsp.readdir(rootPath, { withFileTypes: true });
-  for (const entry of entries) {
-    result.push(...await walkExistingKnowledgeTransactionEntries(path.join(rootPath, entry.name)));
-  }
-  return result;
 }
 
 function sortedTransactionEntries(entries: Map<string, KnowledgeTransactionSnapshotEntry>): Array<[string, KnowledgeTransactionSnapshotEntry]> {

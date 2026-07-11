@@ -33,3 +33,18 @@ export async function writeFileAtomic(absolutePath: string, content: string | Bu
     throw error;
   }
 }
+
+export async function walkExistingEntries(rootPath: string): Promise<string[]> {
+  const stat = await fsp.lstat(rootPath).catch((error) => {
+    if (isMissingPathError(error)) return null;
+    throw error;
+  });
+  if (!stat) return [];
+  if (!stat.isDirectory()) return [rootPath];
+  const result = [rootPath];
+  const entries = await fsp.readdir(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    result.push(...await walkExistingEntries(path.join(rootPath, entry.name)));
+  }
+  return result;
+}
