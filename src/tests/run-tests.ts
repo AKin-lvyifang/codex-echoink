@@ -98,6 +98,7 @@ import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCo
 import { formatOpenCodeError } from "../core/opencode-errors";
 import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
+import { expandHome } from "../core/path-utils";
 import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
 import {
   detectOpenCodeCommand,
@@ -5150,6 +5151,12 @@ assert.equal(resolveCodexCommand("~/bin/codex", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/codex"
 }), "/Users/demo/bin/codex");
+assert.equal(expandHome("~\\bin\\codex", "C:\\Users\\demo"), "C:\\Users\\demo\\bin\\codex");
+assert.equal(resolveCodexCommand("~\\bin\\codex.cmd", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\codex.cmd"
+}), "C:\\Users\\demo\\bin\\codex.cmd");
 assert.equal(resolveCodexCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",
@@ -5168,6 +5175,11 @@ assert.equal(detectOpenCodeCommand("~/bin/opencode", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/opencode"
 }), "/Users/demo/bin/opencode");
+assert.equal(detectOpenCodeCommand("~\\bin\\opencode.cmd", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\opencode.cmd"
+}), "C:\\Users\\demo\\bin\\opencode.cmd");
 assert.equal(detectOpenCodeCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",
@@ -5188,6 +5200,11 @@ assert.equal(resolveHermesCommand("~/bin/hermes", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/hermes"
 }), "/Users/demo/bin/hermes");
+assert.equal(resolveHermesCommand("~\\bin\\hermes.exe", {
+  home: "C:\\Users\\demo",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\bin\\hermes.exe"
+}), "C:\\Users\\demo\\bin\\hermes.exe");
 assert.equal(resolveHermesCommand("", {
   home: "/Users/demo",
   envPath: "/custom/bin",

@@ -4,6 +4,7 @@ import * as path from "path";
 import { pathToFileURL } from "node:url";
 import type { Agent, FilePartInput, Model, Provider, TextPartInput } from "@opencode-ai/sdk/v2";
 import type { AgentInputModality, AgentModelInfo, AgentProfileInfo, AgentPromptPart } from "../agent/types";
+import { expandHome } from "./path-utils";
 
 export interface OpenCodeCommandResolveOptions {
   home?: string;
@@ -172,8 +173,4 @@ export function selectOpenCodeModelForTask(
 export function toOpenCodePromptPart(part: AgentPromptPart): TextPartInput | FilePartInput {
   if (part.type === "text") return { type: "text", text: part.text };
   return toOpenCodeFilePart(part.path, part.mime);
-}
-
-function expandHome(value: string, home: string): string {
-  return value === "~" || value.startsWith("~/") ? path.join(home, value.slice(2)) : value;
 }

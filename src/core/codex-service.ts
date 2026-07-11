@@ -25,6 +25,7 @@ import { normalizeRateLimitResponse } from "./rate-limits";
 import { mergeMcpServers } from "./workspace-resources";
 import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
 import type { AgentBackend, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions } from "../agent/types";
+import { expandHome } from "./path-utils";
 
 export interface CodexServiceOptions {
   cliPath: string;
@@ -668,12 +669,6 @@ function codexAppCommandCandidates(home: string): string[] {
     "/Applications/Codex.app/Contents/Resources/codex",
     path.join(home, "Applications", "Codex.app", "Contents", "Resources", "codex")
   ];
-}
-
-function expandHome(value: string, home = os.homedir()): string {
-  if (value === "~") return home;
-  if (value.startsWith("~/")) return path.join(home, value.slice(2));
-  return value;
 }
 
 function normalizeProxyUrl(value: string): string {
