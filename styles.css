@@ -2347,6 +2347,11 @@ body.theme-light .codex-code-wrapper pre {
   opacity: 0.62;
 }
 
+.codex-resource-row.is-search-hidden,
+.codex-resource-empty.is-hidden {
+  display: none;
+}
+
 .codex-resource-row-content {
   flex: 1;
   min-width: 0;
