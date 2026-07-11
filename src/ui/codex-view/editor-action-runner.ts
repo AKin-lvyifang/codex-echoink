@@ -31,7 +31,7 @@ export async function enhanceChatInput(view: any): Promise<void> {
   }
   clearPromptEnhanceReview(view.promptEnhanceReviewEl);
   const settings = view.plugin.settings.editorActions;
-  const qualityMode: EditorActionQualityMode = "fast";
+  const qualityMode: EditorActionQualityMode = "quality";
   const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
   const enhanceStyle = detectEnhanceStyle(inputText);
   const action = {
@@ -190,7 +190,7 @@ export async function ensureArticleUnderstanding(
   timeoutMs: number,
   forceRefresh = false
 ): Promise<ArticleUnderstandingEntry | null> {
-  if (request.qualityMode === "fast") {
+  if (request.qualityMode === "fast" || request.action.id === "enhance") {
     setArticleUnderstandingPanelState(view, {
       status: "idle",
       source: request.source,
