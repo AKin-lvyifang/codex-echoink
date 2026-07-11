@@ -3131,6 +3131,11 @@ assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTo
 assert.doesNotMatch(codexViewUiSources, /\.style\./);
 assert.match(codexViewUiSources, /setCssStyles/);
 assert.match(codexViewUiSources, /setCssProps/);
+assert.match(codexViewSource, /renderMessagesIfActive\(session,\s*message\)/);
+assert.match(codexViewSource, /tryUpdateMessage\(updatedMessage\)/);
+assert.match(codexViewMessageListSource, /tryUpdateMessage\(message:\s*ChatMessage\)/);
+assert.match(codexViewMessageListSource, /data-message-id/);
+assert.match(codexViewMessageListSource, /querySelectorAll<HTMLElement>\("\[data-message-id\]"\)/);
 const mainPluginSource = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
 assert.match(mainPluginSource, /connections:\s*this\.settings\.resources\.mcpConnections/);
 assert.match(mainPluginSource, /verifiedAt\s*=\s*Date\.now\(\)/);

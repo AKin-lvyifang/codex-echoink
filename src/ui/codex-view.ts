@@ -1600,7 +1600,7 @@ export class CodexView extends ItemView {
     }
     message.text += delta;
     session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
+    this.renderMessagesIfActive(session, message);
   }
 
   private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: any): void {
@@ -1638,7 +1638,7 @@ export class CodexView extends ItemView {
     message.status = "running";
     message.text += delta;
     session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
+    this.renderMessagesIfActive(session, message);
   }
 
   private ensureThinkingMessage(session: StoredSession, title: string, text: string): void {
@@ -1976,8 +1976,10 @@ export class CodexView extends ItemView {
     }
   }
 
-  private renderMessagesIfActive(session: StoredSession): void {
-    if (session.id === this.plugin.settings.activeSessionId) this.scheduleRenderMessages();
+  private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void {
+    if (session.id !== this.plugin.settings.activeSessionId) return;
+    if (updatedMessage && this.messageListRenderer.tryUpdateMessage(updatedMessage)) return;
+    this.scheduleRenderMessages();
   }
 
   private handleMessagesScroll(): void {

@@ -180,6 +180,19 @@ export class CodexMessageListRenderer {
     return changed;
   }
 
+  tryUpdateMessage(message: ChatMessage): boolean {
+    const env = this.env;
+    if (!env || message.rawRef || message.citations) return false;
+    if (message.itemType === "knowledgeBase" && (message.knowledgeBaseUi || message.details)) return false;
+    const target = this.findRenderedMessageElement(message.id);
+    if (!target) return false;
+    const shouldPinBottom = (env.shouldFollowBottom?.() ?? true) && this.isAtBottom(env.messagesEl, env.virtualListEl);
+    if (!this.replaceRenderedMessage(target, message)) return false;
+    env.onScheduleMeasure();
+    if (shouldPinBottom) env.messagesEl.scrollTop = env.messagesEl.scrollHeight;
+    return true;
+  }
+
   isNearBottom(messagesEl: HTMLElement, virtualListEl: HTMLElement): boolean {
     return isNearVirtualBottom(
       messagesEl.scrollTop,
@@ -205,6 +218,43 @@ export class CodexMessageListRenderer {
   private requireEnv(): MessageListEnvironment {
     if (!this.env) throw new Error("Message list renderer has not been initialized");
     return this.env;
+  }
+
+  private findRenderedMessageElement(messageId: string): HTMLElement | null {
+    const env = this.requireEnv();
+    for (const element of Array.from(env.virtualListEl.querySelectorAll<HTMLElement>("[data-message-id]"))) {
+      if (element.dataset.messageId === messageId) return element;
+    }
+    return null;
+  }
+
+  private replaceRenderedMessage(target: HTMLElement, message: ChatMessage): boolean {
+    if (target.matches("details.codex-process")) {
+      const parent = target.parentElement;
+      if (!parent) return false;
+      rememberOpenState(this.openProcessItems, message.id, (target as HTMLDetailsElement).open);
+      target.remove();
+      this.renderProcessMessage(parent, message, true);
+      return true;
+    }
+    const wrapper = target.hasClass("codex-message") ? target : target.closest<HTMLElement>(".codex-message");
+    const content = wrapper?.querySelector<HTMLElement>("[data-message-content]");
+    if (!wrapper || !content) return false;
+    wrapper.toggleClass("codex-message-streaming", message.status === "running");
+    content.empty();
+    if (message.itemType === "thinking") {
+      this.renderThinkingMessage(content, message);
+      return true;
+    }
+    if (isProcessItemType(message.itemType)) {
+      this.renderProcessMessage(content, message);
+      return true;
+    }
+    const displayText = displayTextForMessage(message);
+    if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
+      renderRichText(this.requireEnv().app, this.requireEnv().component, content, displayText);
+    }
+    return true;
   }
 
   private scheduleMeasuredRowsRerender(forceBottom: boolean): void {
@@ -260,6 +310,7 @@ export class CodexMessageListRenderer {
   private renderMessage(container: HTMLElement, message: ChatMessage): void {
     const env = this.requireEnv();
     const wrapper = container.createDiv({ cls: `codex-message codex-message-${message.role}` });
+    wrapper.dataset.messageId = message.id;
     wrapper.toggleClass("codex-message-streaming", message.status === "running");
     wrapper.toggleClass(`codex-message-type-${message.itemType ?? "text"}`, true);
     if (message.title) {
@@ -287,6 +338,7 @@ export class CodexMessageListRenderer {
       }
     }
     const content = wrapper.createDiv({ cls: "codex-message-content" });
+    content.dataset.messageContent = "true";
     if (message.itemType === "thinking") {
       this.renderThinkingMessage(content, message);
       return;
@@ -575,6 +627,7 @@ export class CodexMessageListRenderer {
 
   private renderProcessMessage(container: HTMLElement, message: ChatMessage, nested = false): void {
     const details = container.createEl("details", { cls: `codex-structured codex-process codex-process-${message.itemType ?? "item"}` });
+    details.dataset.messageId = message.id;
     details.toggleClass("is-running", message.status === "running");
     details.toggleClass("is-completed", message.status === "completed");
     details.toggleClass("is-error", message.status === "error" || message.status === "failed");
