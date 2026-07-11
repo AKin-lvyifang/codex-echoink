@@ -9,6 +9,8 @@ export interface WalkFilesOptions {
   maxFiles?: number;
   shouldSkipEntry?: (entry: fs.Dirent, absolutePath: string) => boolean;
   shouldIncludeFile?: (entry: fs.Dirent, absolutePath: string) => boolean;
+  onDirectory?: (entry: fs.Dirent, absolutePath: string) => void | Promise<void>;
+  onReadDirError?: (error: unknown, absolutePath: string) => void | Promise<void>;
 }
 
 export async function exists(filePath: string): Promise<boolean> {
@@ -54,12 +56,22 @@ export async function walkFiles(dir: string, options: WalkFilesOptions = {}): Pr
   const result: string[] = [];
   async function walk(current: string): Promise<void> {
     if (options.maxFiles !== undefined && result.length >= options.maxFiles) return;
-    const entries = await fsp.readdir(current, { withFileTypes: true });
+    let entries: fs.Dirent[];
+    try {
+      entries = await fsp.readdir(current, { withFileTypes: true });
+    } catch (error) {
+      if (options.onReadDirError) {
+        await options.onReadDirError(error, current);
+        return;
+      }
+      throw error;
+    }
     for (const entry of entries) {
       if (options.maxFiles !== undefined && result.length >= options.maxFiles) return;
       const full = path.join(current, entry.name);
       if (options.shouldSkipEntry?.(entry, full)) continue;
       if (entry.isDirectory()) {
+        await options.onDirectory?.(entry, full);
         await walk(full);
         continue;
       }

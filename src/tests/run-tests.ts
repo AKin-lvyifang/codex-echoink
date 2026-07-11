@@ -333,6 +333,26 @@ assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
+const knowledgeBaseUtilsSource = await readFile(path.join(process.cwd(), "src/knowledge-base/utils.ts"), "utf8");
+const rawIntegritySource = await readFile(path.join(process.cwd(), "src/knowledge-base/raw-integrity.ts"), "utf8");
+const structureNormalizerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/structure-normalizer.ts"), "utf8");
+const knowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/knowledge-base/dashboard.ts"), "utf8");
+const structureWalkTextFilesSource = structureNormalizerSource.slice(
+  structureNormalizerSource.indexOf("async function walkTextFiles"),
+  structureNormalizerSource.indexOf("async function findRemainingRootNotes")
+);
+const structureFindChineseDirsSource = structureNormalizerSource.slice(
+  structureNormalizerSource.indexOf("async function findRemainingChineseDirs"),
+  structureNormalizerSource.indexOf("function isKnowledgeRelativePath")
+);
+assert.match(knowledgeBaseUtilsSource, /onDirectory\?:/);
+assert.match(rawIntegritySource, /walkExistingEntries/);
+assert.doesNotMatch(rawIntegritySource, /async function walkRawEntries/);
+assert.match(structureNormalizerSource, /walkFiles/);
+assert.doesNotMatch(structureWalkTextFilesSource, /fsp\.readdir/);
+assert.doesNotMatch(structureFindChineseDirsSource, /async function walkDirs/);
+assert.match(knowledgeDashboardSource, /walkFiles/);
+assert.doesNotMatch(knowledgeDashboardSource, /async function walk\(current: string\)/);
 const resourceSearchSource = settingsTabSource.slice(settingsTabSource.indexOf("private renderResourceSearch"), settingsTabSource.indexOf("private currentEchoInkResourceCatalog"));
 assert.match(resourceSearchSource, /scheduleResourceSearchFilter\(tab\)/);
 assert.doesNotMatch(resourceSearchSource, /this\.display\(\)/);

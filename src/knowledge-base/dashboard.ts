@@ -9,7 +9,7 @@ import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type K
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus } from "./types";
-import { exists, normalizeSlashes } from "./utils";
+import { exists, normalizeSlashes, walkFiles } from "./utils";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -376,33 +376,26 @@ async function scanDashboardDirectory(vaultPath: string, relativeDir: string, op
   let limited = false;
   if (!rootExists) return { path: relativeDir, exists: false, fileCount: 0, folderCount: 0, totalSize: 0, recentFiles: [], files, limited };
 
-  async function walk(current: string): Promise<void> {
-    if (files.length >= MAX_DASHBOARD_FILES) {
-      limited = true;
-      return;
+  const filePaths = await walkFiles(root, {
+    maxFiles: MAX_DASHBOARD_FILES,
+    shouldSkipEntry: (entry) => Boolean(options.ignoreNames?.has(entry.name) || (options.skipHidden && entry.name.startsWith("."))),
+    onDirectory: (_entry, full) => {
+      folderPaths.add(normalizeSlashes(path.relative(vaultPath, full)));
+    },
+    onReadDirError: (error, current) => {
+      emptyArrayOnMissingPathOrWarn(`read dashboard directory ${path.relative(vaultPath, current) || "."}`)(error);
     }
-    const entries = await fsp.readdir(current, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn(`read dashboard directory ${path.relative(vaultPath, current) || "."}`));
-    for (const entry of entries) {
-      if (files.length >= MAX_DASHBOARD_FILES) {
-        limited = true;
-        return;
-      }
-      if (options.ignoreNames?.has(entry.name)) continue;
-      if (options.skipHidden && entry.name.startsWith(".")) continue;
-      const full = path.join(current, entry.name);
-      const relative = normalizeSlashes(path.relative(vaultPath, full));
-      if (entry.isDirectory()) {
-        folderPaths.add(relative);
-        await walk(full);
-      } else if (entry.isFile()) {
-        const stat = await fsp.stat(full).catch(() => null);
-        if (!stat) continue;
-        files.push({ path: relative, size: stat.size, mtime: stat.mtimeMs });
-      }
-    }
+  });
+  limited = filePaths.length >= MAX_DASHBOARD_FILES;
+  for (const full of filePaths) {
+    const stat = await fsp.stat(full).catch(() => null);
+    if (!stat) continue;
+    files.push({
+      path: normalizeSlashes(path.relative(vaultPath, full)),
+      size: stat.size,
+      mtime: stat.mtimeMs
+    });
   }
-
-  await walk(root);
   const recentFiles = [...files].sort((left, right) => right.mtime - left.mtime).slice(0, RECENT_FILE_LIMIT);
   return {
     path: relativeDir,

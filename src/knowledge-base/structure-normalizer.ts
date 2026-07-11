@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
@@ -9,7 +8,7 @@ import type {
   StructureNormalizationSkipped,
   StructureNormalizationUpdatedLink
 } from "./types";
-import { exists, normalizeSlashes } from "./utils";
+import { exists, normalizeSlashes, walkFiles } from "./utils";
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
@@ -360,21 +359,13 @@ async function walkKnowledgeTextFiles(vaultPath: string): Promise<string[]> {
 }
 
 async function walkTextFiles(dir: string): Promise<string[]> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("walk markdown directory for structure normalization"));
-  const result: string[] = [];
-  for (const entry of entries) {
-    if (entry.name === ".DS_Store") continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name.startsWith(".")) continue;
-      result.push(...await walkTextFiles(full));
-      continue;
+  return walkFiles(dir, {
+    shouldSkipEntry: (entry) => entry.name === ".DS_Store" || (entry.isDirectory() && entry.name.startsWith(".")),
+    shouldIncludeFile: (entry) => TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) || entry.name === ".ingest-tracker.md",
+    onReadDirError: (error) => {
+      emptyArrayOnMissingPathOrWarn("walk markdown directory for structure normalization")(error);
     }
-    if (!entry.isFile()) continue;
-    const ext = path.extname(entry.name).toLowerCase();
-    if (TEXT_EXTENSIONS.has(ext) || entry.name === ".ingest-tracker.md") result.push(full);
-  }
-  return result;
+  });
 }
 
 async function findRemainingRootNotes(vaultPath: string): Promise<string[]> {
@@ -400,21 +391,20 @@ async function findRemainingRootNotes(vaultPath: string): Promise<string[]> {
 async function findRemainingChineseDirs(vaultPath: string): Promise<string[]> {
   const result: string[] = [];
   for (const root of KNOWLEDGE_ROOTS) {
-    await walkDirs(path.join(vaultPath, root), vaultPath, result);
+    await walkFiles(path.join(vaultPath, root), {
+      shouldSkipEntry: (entry) => entry.isDirectory() && entry.name.startsWith("."),
+      shouldIncludeFile: () => false,
+      onDirectory: (entry, full) => {
+        if (CHINESE_TEXT.test(entry.name) && !entry.name.endsWith(".assets")) {
+          result.push(normalizeSlashes(path.relative(vaultPath, full)));
+        }
+      },
+      onReadDirError: (error) => {
+        emptyArrayOnMissingPathOrWarn("walk conflict directory for structure normalization")(error);
+      }
+    });
   }
   return result.sort((left, right) => left.localeCompare(right));
-}
-
-async function walkDirs(dir: string, vaultPath: string, result: string[]): Promise<void> {
-  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("walk conflict directory for structure normalization"));
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const full = path.join(dir, entry.name);
-    if (CHINESE_TEXT.test(entry.name) && !entry.name.endsWith(".assets")) {
-      result.push(normalizeSlashes(path.relative(vaultPath, full)));
-    }
-    await walkDirs(full, vaultPath, result);
-  }
 }
 
 function isKnowledgeRelativePath(relativePath: string): boolean {

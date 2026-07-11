@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { swallowError } from "../core/error-handling";
 import type { StructureNormalizationPathRewrite } from "./types";
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
-import { isMissingPathError, normalizeSlashes } from "./utils";
+import { isMissingPathError, normalizeSlashes, walkExistingEntries } from "./utils";
 
 export interface RawSnapshotEntry {
   kind?: RawContentSnapshotEntry["kind"];
@@ -147,7 +147,7 @@ export async function snapshotRawFileContents(vaultPath: string): Promise<RawCon
 
 async function walkExistingRawEntries(rawDir: string): Promise<string[]> {
   try {
-    return await walkRawEntries(rawDir);
+    return await walkExistingEntries(rawDir);
   } catch (error) {
     if (isMissingPathError(error)) return [];
     throw error;
@@ -424,17 +424,4 @@ function rawEntryIdentity(entry: RawContentSnapshotEntry): string | undefined {
 
 function rawKindFingerprint(kind: RawContentSnapshotEntry["kind"]): string {
   return `${kind}\0`;
-}
-
-async function walkRawEntries(dir: string): Promise<string[]> {
-  const stat = await fsp.lstat(dir);
-  const result = [dir];
-  if (!stat.isDirectory()) return result;
-  const entries = await fsp.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    result.push(full);
-    if (entry.isDirectory()) result.push(...await walkRawEntries(full));
-  }
-  return result;
 }
