@@ -13,6 +13,6 @@ export function emptyArrayOnMissingPathOrWarn(context: string): (error: unknown)
   };
 }
 
-function isMissingPathError(error: unknown): boolean {
+export function isMissingPathError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ENOENT";
 }

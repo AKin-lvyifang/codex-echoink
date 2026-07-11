@@ -4,7 +4,7 @@ import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
-import { formatDateForFile, isMissingPathError, normalizeSlashes } from "./utils";
+import { formatDateForFile, isMissingPathError, normalizeSlashes, walkFiles } from "./utils";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -150,7 +150,9 @@ function reportFileNameForMode(mode: KnowledgeBaseRunMode, dateKey: string): str
 
 async function walkExistingRawFiles(rawDir: string): Promise<string[]> {
   try {
-    return await walkFiles(rawDir);
+    return await walkFiles(rawDir, {
+      shouldSkipEntry: (entry) => entry.name.startsWith(".")
+    });
   } catch (error) {
     if (isMissingPathError(error)) return [];
     throw error;
@@ -165,16 +167,4 @@ function isSourceChanged(source: KnowledgeBaseSource, previous?: { size: number;
 
 function isRawRootIndexPath(relativePath: string): boolean {
   return relativePath === "raw/index.md" || /^raw\/index \d+\.md$/i.test(relativePath);
-}
-
-async function walkFiles(dir: string): Promise<string[]> {
-  const result: string[] = [];
-  const entries = await fsp.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) result.push(...await walkFiles(full));
-    else if (entry.isFile()) result.push(full);
-  }
-  return result;
 }

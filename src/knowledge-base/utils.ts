@@ -1,18 +1,18 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { swallowError } from "../core/error-handling";
+import { isMissingPathError, swallowError } from "../core/error-handling";
+export { isMissingPathError };
+export { normalizeSlashes } from "../core/path-utils";
+
+export interface WalkFilesOptions {
+  maxFiles?: number;
+  shouldSkipEntry?: (entry: fs.Dirent, absolutePath: string) => boolean;
+  shouldIncludeFile?: (entry: fs.Dirent, absolutePath: string) => boolean;
+}
 
 export async function exists(filePath: string): Promise<boolean> {
   return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
-}
-
-export function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT");
-}
-
-export function normalizeSlashes(value: string): string {
-  return value.replace(/\\/g, "/");
 }
 
 export function pad(value: number): string {
@@ -47,5 +47,27 @@ export async function walkExistingEntries(rootPath: string): Promise<string[]> {
   for (const entry of entries) {
     result.push(...await walkExistingEntries(path.join(rootPath, entry.name)));
   }
+  return result;
+}
+
+export async function walkFiles(dir: string, options: WalkFilesOptions = {}): Promise<string[]> {
+  const result: string[] = [];
+  async function walk(current: string): Promise<void> {
+    if (options.maxFiles !== undefined && result.length >= options.maxFiles) return;
+    const entries = await fsp.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      if (options.maxFiles !== undefined && result.length >= options.maxFiles) return;
+      const full = path.join(current, entry.name);
+      if (options.shouldSkipEntry?.(entry, full)) continue;
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (options.shouldIncludeFile && !options.shouldIncludeFile(entry, full)) continue;
+      result.push(full);
+    }
+  }
+  await walk(dir);
   return result;
 }

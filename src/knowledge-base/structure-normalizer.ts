@@ -9,7 +9,7 @@ import type {
   StructureNormalizationSkipped,
   StructureNormalizationUpdatedLink
 } from "./types";
-import { exists } from "./utils";
+import { exists, normalizeSlashes } from "./utils";
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
@@ -440,8 +440,4 @@ function stripMarkdownExtension(value: string): string {
 function countOccurrences(text: string, search: string): number {
   if (!search) return 0;
   return text.split(search).length - 1;
-}
-
-function normalizeSlashes(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "");
 }

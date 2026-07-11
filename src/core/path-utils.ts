@@ -7,3 +7,7 @@ export function expandHome(value: string, home = os.homedir()): string {
   const suffix = value.slice(2);
   return home.includes("\\") ? path.win32.join(home, suffix) : path.join(home, suffix.replace(/\\/g, path.sep));
 }
+
+export function normalizeSlashes(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "");
+}

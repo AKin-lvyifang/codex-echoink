@@ -2,7 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
-import { exists, normalizeSlashes } from "./utils";
+import { exists, normalizeSlashes, walkFiles } from "./utils";
 
 export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.7";
 
@@ -246,26 +246,16 @@ async function classifyExistingFile(filePath: string, relativePath: string): Pro
 }
 
 async function walkVaultFiles(root: string, maxFiles: number): Promise<string[]> {
-  const result: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    if (result.length >= maxFiles) return;
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (result.length >= maxFiles) return;
-      if (entry.name.startsWith(".") && entry.name !== ".ingest-tracker.md") continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        const relative = normalizeSlashes(path.relative(root, full));
-        const firstPart = relative.split("/")[0];
-        if (KNOWN_TOP_LEVEL_DIRS.has(firstPart)) continue;
-        await walk(full);
-      } else if (entry.isFile()) {
-        result.push(full);
-      }
+  return walkFiles(root, {
+    maxFiles,
+    shouldSkipEntry: (entry, full) => {
+      if (entry.name.startsWith(".") && entry.name !== ".ingest-tracker.md") return true;
+      if (!entry.isDirectory()) return false;
+      const relative = normalizeSlashes(path.relative(root, full));
+      const firstPart = relative.split("/")[0];
+      return KNOWN_TOP_LEVEL_DIRS.has(firstPart);
     }
-  }
-  await walk(root);
-  return result;
+  });
 }
 
 async function writeFileIfMissing(vaultPath: string, relativePath: string, content: string, createdFiles: string[], skippedFiles: string[]): Promise<void> {

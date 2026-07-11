@@ -13,6 +13,7 @@ import type {
 } from "../types/app-server";
 import type { StoredAttachment } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
+import { normalizeSlashes } from "./path-utils";
 
 export const DEFAULT_REPLY_STYLE_INSTRUCTION =
   "回复格式要求：使用中文；先给结论，再给关键依据；短段落；能用列表就用列表；对比、取舍、验收项优先用 Markdown 表格；避免整段长文。";
@@ -376,10 +377,6 @@ function cleanCandidatePath(value: string): string {
     .replace(/^file:\/\//, "")
     .replace(/[,:;]+$/, "")
     .replace(/^['"`]+|['"`]+$/g, "");
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
 }
 
 function looksLikePath(value: string): boolean {

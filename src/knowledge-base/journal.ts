@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
-import { exists, pad } from "./utils";
+import { exists, formatDateForFile, normalizeSlashes, pad, walkFiles } from "./utils";
 
 export type JournalEvidenceBackend = "codex-cli" | "opencode" | "hermes";
 
@@ -42,7 +42,7 @@ export function stripJournalPrefix(value: string): string {
 
 export async function resolveJournalDailyTarget(vaultPath: string, userRequest: string, now = new Date()): Promise<JournalDailyTarget> {
   const targetDate = parseJournalTargetDate(userRequest, now);
-  const dateKey = formatDate(targetDate);
+  const dateKey = formatDateForFile(targetDate);
   const monthKey = `${targetDate.getFullYear()}-${pad(targetDate.getMonth() + 1)}`;
   const yearKey = String(targetDate.getFullYear());
   const weekday = WEEKDAYS[targetDate.getDay()];
@@ -334,33 +334,16 @@ async function countMarkdownFiles(dir: string, limit: number): Promise<number> {
 }
 
 async function walkMarkdownFiles(dir: string, limit = 200): Promise<string[]> {
-  const result: string[] = [];
-  async function walk(current: string): Promise<void> {
-    if (result.length >= limit) return;
-    const entries = await fsp.readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      if (result.length >= limit) return;
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else if (entry.isFile() && /\.md$/i.test(entry.name)) result.push(full);
-    }
-  }
-  await walk(dir);
-  return result;
-}
-
-function formatDate(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return walkFiles(dir, {
+    maxFiles: limit,
+    shouldIncludeFile: (entry) => /\.md$/i.test(entry.name)
+  });
 }
 
 function formatDateTimeLocal(date: Date): string {
-  return `${formatDate(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${formatDateForFile(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatDateTimeDisplay(date: Date): string {
-  return `${formatDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function normalizeSlashes(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "");
+  return `${formatDateForFile(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
