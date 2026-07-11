@@ -4,8 +4,11 @@ import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, A
 import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
 import { formatOpenCodeError } from "./opencode-errors";
 import { nodeFetch } from "./opencode-fetch";
+import { collectOpenCodeHistoryMessages, normalizeOpenCodeTimeMs, type OpenCodeHistorySnapshot } from "./opencode-history-loader";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
 import { buildOpenCodeRunArgs, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "./opencode-run";
+
+export type { OpenCodeHistoryMessage, OpenCodeHistorySnapshot } from "./opencode-history-loader";
 
 export interface OpenCodeBackendOptions {
   cliPath: string;
@@ -25,25 +28,6 @@ export interface OpenCodeConnectionInfo {
   command: string;
   version: string;
   errors: string[];
-}
-
-export interface OpenCodeHistoryMessage {
-  sessionId: string;
-  sessionTitle: string;
-  directory: string;
-  role: string;
-  createdAt: number;
-  createdAtLabel: string;
-  modelLabel: string;
-  text: string;
-}
-
-export interface OpenCodeHistorySnapshot {
-  serverUrl: string;
-  sessionsScanned: number;
-  sessionsMatched: number;
-  messages: OpenCodeHistoryMessage[];
-  truncated: boolean;
 }
 
 export interface OpenCodeCliTaskOptions {
@@ -170,50 +154,28 @@ export class OpenCodeBackend implements AgentBackend {
       if (start + limit >= maxSessions) truncated = true;
     }
 
-    const messages: OpenCodeHistoryMessage[] = [];
-    let charBudget = maxChars;
-    for (const session of candidates) {
-      if (messages.length >= maxMessages || charBudget <= 0) {
-        truncated = true;
-        break;
+    const loaded = await collectOpenCodeHistoryMessages({
+      sessions: candidates,
+      startMs: input.startMs,
+      endMs: input.endMs,
+      maxMessages,
+      maxChars,
+      fetchMessages: async (session) => {
+        const sessionMessages = await unwrapOpenCodeResult(client.session.messages({
+          sessionID: String(session.id ?? ""),
+          directory: this.options.vaultPath,
+          limit: 200
+        }), `读取 OpenCode 会话消息失败：${String(session.title ?? session.id ?? "")}`);
+        return Array.isArray(sessionMessages) ? sessionMessages : [];
       }
-      const sessionMessages = await unwrapOpenCodeResult(client.session.messages({
-        sessionID: session.id,
-        directory: this.options.vaultPath,
-        limit: 200
-      }), `读取 OpenCode 会话消息失败：${session.title ?? session.id}`);
-      const entries = Array.isArray(sessionMessages) ? sessionMessages : [];
-      for (const entry of entries) {
-        const info = (entry?.info ?? {}) as any;
-        const createdAt = normalizeOpenCodeTimeMs(info?.time?.created ?? info?.created_at);
-        if (createdAt < input.startMs || createdAt >= input.endMs) continue;
-        const text = compactOpenCodeText(extractOpenCodePartsText(entry?.parts ?? []), Math.min(1800, charBudget));
-        if (!text) continue;
-        messages.push({
-          sessionId: String(session.id ?? info.sessionID ?? ""),
-          sessionTitle: String(session.title ?? "未命名会话"),
-          directory: String((session as any).directory ?? info?.path?.cwd ?? ""),
-          role: String(info.role ?? "unknown"),
-          createdAt,
-          createdAtLabel: formatOpenCodeTimeLabel(createdAt),
-          modelLabel: openCodeMessageModelLabel(info, session),
-          text
-        });
-        charBudget -= text.length;
-        if (messages.length >= maxMessages || charBudget <= 0) {
-          truncated = true;
-          break;
-        }
-      }
-    }
+    });
 
-    messages.sort((left, right) => left.createdAt - right.createdAt);
     return {
       serverUrl: this.connectionInfo.serverUrl,
       sessionsScanned,
       sessionsMatched: candidates.length,
-      messages,
-      truncated
+      messages: loaded.messages,
+      truncated: truncated || loaded.truncated
     };
   }
 
@@ -408,72 +370,6 @@ async function unwrapOpenCodeResult<T>(promise: Promise<{ data: T; error: undefi
   const result = await promise;
   if (result.error) throw new Error(`${fallback}：${formatOpenCodeError(result.error)}`);
   return result.data as T;
-}
-
-function normalizeOpenCodeTimeMs(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return parsed < 100000000000 ? parsed * 1000 : parsed;
-}
-
-function formatOpenCodeTimeLabel(value: number): string {
-  const date = new Date(value);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-function openCodeMessageModelLabel(info: any, session: any): string {
-  const provider = info?.providerID ?? info?.model?.providerID ?? session?.model?.providerID ?? "";
-  const model = info?.modelID ?? info?.model?.modelID ?? info?.model?.id ?? session?.model?.id ?? "";
-  return [provider, model].filter(Boolean).join("/");
-}
-
-function extractOpenCodePartsText(parts: any[]): string {
-  const lines: string[] = [];
-  for (const part of parts) {
-    if (part?.ignored) continue;
-    if (part?.type === "text" && typeof part.text === "string") {
-      lines.push(part.text.trim());
-    } else if (part?.type === "tool") {
-      lines.push(openCodeToolPartSummary(part));
-    } else if (part?.type === "patch" && Array.isArray(part.files)) {
-      lines.push(`文件改动：${part.files.join("，")}`);
-    } else if (part?.type === "file") {
-      lines.push(`引用文件：${part.filename || part.url || "未命名文件"}`);
-    } else if (part?.type === "agent") {
-      lines.push(`切换 Agent：${part.name}`);
-    }
-  }
-  return lines.filter(Boolean).join("\n");
-}
-
-function openCodeToolPartSummary(part: any): string {
-  const tool = part.tool ? `工具 ${part.tool}` : "工具调用";
-  const state = part.state ?? {};
-  if (state.status === "completed") {
-    const title = state.title ? `：${state.title}` : "";
-    const output = typeof state.output === "string" && state.output.trim()
-      ? `\n${compactOpenCodeText(state.output, 500)}`
-      : "";
-    return `${tool}${title}${output}`;
-  }
-  if (state.status === "error") return `${tool} 失败：${state.error ?? "未知错误"}`;
-  if (state.status === "running") return `${tool} 运行中`;
-  return tool;
-}
-
-function compactOpenCodeText(value: string, limit: number): string {
-  const normalized = value
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n")
-    .trim();
-  if (!normalized || normalized.length <= limit) return normalized;
-  return `${normalized.slice(0, Math.max(0, limit - 20)).trimEnd()}\n...（已截断）`;
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
 }
 
 function defaultOpenCodeModel(options: OpenCodeBackendOptions): { providerId: string; modelId: string } | null {

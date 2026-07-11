@@ -96,6 +96,7 @@ import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVer
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
+import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
 import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
 import {
@@ -5020,6 +5021,41 @@ const parsedOpenCodeRun = parseOpenCodeRunJsonLines([
 assert.equal(parsedOpenCodeRun.text, "OPENCODE");
 assert.equal(parsedOpenCodeRun.sessionId, "ses_1");
 assert.deepEqual(parsedOpenCodeRun.usage, { inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+const opencodeHistoryStart = new Date("2026-05-19T00:00:00Z").getTime();
+const fakeOpenCodeSessions = Array.from({ length: 6 }, (_, index) => ({
+  id: `session-${index}`,
+  title: `Session ${index}`,
+  directory: "/vault",
+  time: {
+    created: opencodeHistoryStart + index * 1000,
+    updated: opencodeHistoryStart + 60_000
+  }
+}));
+let activeOpenCodeMessageRequests = 0;
+let maxOpenCodeMessageConcurrency = 0;
+const opencodeHistory = await collectOpenCodeHistoryMessages({
+  sessions: fakeOpenCodeSessions,
+  startMs: opencodeHistoryStart,
+  endMs: opencodeHistoryStart + 120_000,
+  maxMessages: 6,
+  maxChars: 10000,
+  fetchMessages: async (session) => {
+    activeOpenCodeMessageRequests += 1;
+    maxOpenCodeMessageConcurrency = Math.max(maxOpenCodeMessageConcurrency, activeOpenCodeMessageRequests);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeOpenCodeMessageRequests -= 1;
+    return [{
+      info: {
+        role: "assistant",
+        sessionID: String(session.id ?? ""),
+        time: { created: opencodeHistoryStart + 10_000 }
+      },
+      parts: [{ type: "text", text: `Message ${String(session.id ?? "")}` }]
+    }];
+  }
+});
+assert.equal(opencodeHistory.messages.length, 6);
+assert.equal(maxOpenCodeMessageConcurrency > 1, true);
 const parsedOpenCodeCliModels = parseOpenCodeModelListOutput([
   "opencode/deepseek-v4-flash-free",
   "bailian-coding-plan/qwen3.5-plus",
