@@ -9596,6 +9596,34 @@ try {
   await rm(rawDigestCalibrationDowngradeVault, { recursive: true, force: true });
 }
 
+const rawDigestCalibrationCancelVault = await createMaintenanceVaultForTest("codex-kb-raw-digest-calibration-cancel-");
+try {
+  const rawBeforeCancel = await readFile(path.join(rawDigestCalibrationCancelVault, "raw", "articles", "new.md"));
+  await mkdir(path.join(rawDigestCalibrationCancelVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  await writeFile(path.join(rawDigestCalibrationCancelVault, "wiki", "ai-intelligence", "references", "cancel.md"), [
+    "# Cancel Evidence",
+    "",
+    "来源：[[raw/articles/new]]",
+    "这份 raw 已经有强正文证据，但校准最终保存窗口会被取消。",
+    ""
+  ].join("\n"), "utf8");
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(rawDigestCalibrationCancelVault, {
+    cancelBeforeSaveCall: 2
+  });
+  const result = await manager.calibrateRawDigestStatus();
+  assert.equal(result.status, "canceled");
+  assert.equal(result.processedSources.length, 0);
+  assert.match(result.error ?? "", /用户取消/);
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.match(settings.knowledgeBase.lastError, /用户取消/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+  assert.equal(await readFile(path.join(rawDigestCalibrationCancelVault, "raw", "articles", "new.md"), "utf8"), rawBeforeCancel.toString("utf8"));
+  assert.equal(await fileExists(path.join(rawDigestCalibrationCancelVault, "outputs", ".ingest-tracker.md")), false);
+} finally {
+  await rm(rawDigestCalibrationCancelVault, { recursive: true, force: true });
+}
+
 const maintenanceBatchLimitVault = await createMaintenanceVaultForTest("codex-kb-maintain-batch-limit-");
 try {
   await rm(path.join(maintenanceBatchLimitVault, "raw", "articles", "new.md"), { force: true });

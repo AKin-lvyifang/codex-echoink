@@ -26,6 +26,7 @@ import {
   contentFingerprint,
   fingerprintRawContentSnapshot,
   formatRawIntegrityError,
+  restoreRawFileContents,
   rawSnapshotChangeMessages,
   restoreRawSnapshot,
   snapshotRawFileContents,
@@ -54,12 +55,14 @@ export interface RawDigestCalibrationOptions {
   vaultPath: string;
   startedAt: number;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
+  checkCanceled?: () => void;
   writeTracker(processed: Record<string, KnowledgeBaseProcessedSource>, updatedAt: number): Promise<void>;
   commit(commit: RawDigestCalibrationCommit): Promise<void>;
 }
 
 export async function runRawDigestCalibration(options: RawDigestCalibrationOptions): Promise<KnowledgeBaseRunResult> {
   const { vaultPath, startedAt } = options;
+  const checkCanceled = options.checkCanceled ?? (() => undefined);
   const processedSourcesBeforeRun = cloneProcessedSources(options.processedSources);
   let rawBeforeContents: RawContentSnapshot | null = null;
   let rawBefore: RawSnapshot = new Map();
@@ -70,14 +73,19 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
   const changed: KnowledgeBaseSource[] = [];
   const statusUpdates: Array<{ source: KnowledgeBaseSource; status: typeof RAW_DIGEST_STATUS_PENDING_CALIBRATION | typeof RAW_DIGEST_STATUS_PENDING_REINGEST; evidencePaths?: string[] }> = [];
   try {
+    checkCanceled();
     rawBeforeContents = await snapshotRawFileContents(vaultPath);
+    checkCanceled();
     rawBefore = fingerprintKnowledgeRawContentSnapshot(rawBeforeContents);
     assertSafeRawRoot(rawBeforeContents);
     assertSafeRawEntries(rawBeforeContents);
     outputsBefore = await snapshotKnowledgeTransaction(vaultPath, ["outputs"]);
+    checkCanceled();
     assertSafeKnowledgeTransactionRoots(outputsBefore, { allowedUnsafePaths: new Set([RAW_DIGEST_REGISTRY_PATH, "outputs/.ingest-tracker.md"]) });
     const discovery = await discoverKnowledgeBaseSources(vaultPath, options.processedSources, "maintain");
+    checkCanceled();
     const structureSnapshot = await snapshotKnowledgeTransaction(vaultPath, ["wiki", "projects"]);
+    checkCanceled();
     const registryBeforeRun = await readRawDigestRegistry(vaultPath);
     const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, "outputs/.ingest-tracker.md", discovery.sources.map((source) => ({
       path: source.relativePath,
@@ -89,6 +97,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
     const nextProcessedSources = cloneProcessedSources(options.processedSources);
     const evidencePaths: Record<string, string[]> = {};
     for (const source of discovery.sources) {
+      checkCanceled();
       const previous = processedSourcesBeforeRun[source.relativePath];
       const registryEntry = registryBeforeRun.entries[source.relativePath];
       const existingEvidence = transactionSnapshotExistingSourceEvidencePaths(structureSnapshot, source);
@@ -154,16 +163,21 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
         delete nextProcessedSources[source.relativePath];
       }
     }
+    checkCanceled();
     const refreshedMarked = await writeRawDigestMetadataForSources(vaultPath, marked, {
       reportPath,
       startedAt,
       evidencePaths,
-      confidence: "repaired"
+      confidence: "repaired",
+      checkCanceled
     });
+    checkCanceled();
     const refreshedStatusUpdates = await writeRawDigestStatusMetadataForSources(vaultPath, statusUpdates, {
       reportPath,
-      startedAt
+      startedAt,
+      checkCanceled
     });
+    checkCanceled();
     const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath);
     const rawDigestChanges = classifyRawSnapshotChanges(rawBefore, rawAfterDigestMetadata, [], {
       allowedManagedFrontmatterPaths: new Set([...refreshedMarked, ...refreshedStatusUpdates].map((source) => source.relativePath))
@@ -174,6 +188,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       throw new Error(formatRawIntegrityError(messages, true));
     }
     for (const source of refreshedMarked) {
+      checkCanceled();
       nextProcessedSources[source.relativePath] = {
         path: source.relativePath,
         size: source.size,
@@ -187,7 +202,9 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       };
       processedSources.push(source);
     }
+    checkCanceled();
     await options.writeTracker(nextProcessedSources, startedAt);
+    checkCanceled();
     await writeKnowledgeBaseReportFile(vaultPath, reportPath, buildRawDigestCalibrationReport({
       startedAt,
       marked: refreshedMarked,
@@ -195,6 +212,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       changed,
       evidencePaths
     }));
+    checkCanceled();
     const summary = `Raw 状态校准完成：已登记 ${refreshedMarked.length} 个，待复核 ${review.length} 个，内容变更 ${changed.length} 个。`;
     const calibration = {
       marked: refreshedMarked,
@@ -202,6 +220,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       changed,
       evidencePaths
     };
+    checkCanceled();
     await options.commit({
       nextProcessedSources,
       reportPath,
@@ -209,6 +228,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       processedSources,
       calibration
     });
+    checkCanceled();
     return {
       status: "success",
       reportPath,
@@ -218,6 +238,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
     };
   } catch (error) {
     if (rawBeforeContents) {
+      await restoreRawFileContents(vaultPath, rawBeforeContents).catch(() => undefined);
       const rawAfter = await snapshotKnowledgeRawFiles(vaultPath).catch(() => null);
       if (rawAfter) await restoreRawSnapshot(vaultPath, rawBeforeContents, rawBefore, rawAfter, [], { removeAdded: "unsafe" }).catch(() => undefined);
     }
@@ -234,12 +255,14 @@ export async function writeRawDigestMetadataForSources(
     startedAt: number;
     evidencePaths: Record<string, string[]>;
     confidence: RawDigestConfidence;
+    checkCanceled?: () => void;
   }
 ): Promise<KnowledgeBaseSource[]> {
   if (!sources.length) return sources;
   const registry = await readRawDigestRegistry(vaultPath);
   const updated: KnowledgeBaseSource[] = [];
   for (const source of sources) {
+    options.checkCanceled?.();
     const absolutePath = path.join(vaultPath, source.relativePath);
     const content = await fsp.readFile(absolutePath);
     const fingerprint = rawDigestFingerprint(source.relativePath, content);
@@ -261,6 +284,7 @@ export async function writeRawDigestMetadataForSources(
         throw new Error(`raw 提炼状态写入后指纹不稳定：${source.relativePath}`);
       }
       if (!nextContent.equals(content)) {
+        options.checkCanceled?.();
         await fsp.writeFile(absolutePath, nextContent);
       }
     }
@@ -279,6 +303,7 @@ export async function writeRawDigestMetadataForSources(
     });
     updated.push(refreshed);
   }
+  options.checkCanceled?.();
   registry.updatedAt = new Date(options.startedAt).toISOString();
   await writeRawDigestRegistry(vaultPath, registry);
   return updated;
@@ -320,6 +345,7 @@ async function writeRawDigestStatusMetadataForSources(
   options: {
     reportPath: string;
     startedAt: number;
+    checkCanceled?: () => void;
   }
 ): Promise<KnowledgeBaseSource[]> {
   if (!updates.length) return [];
@@ -327,6 +353,7 @@ async function writeRawDigestStatusMetadataForSources(
   const updated: KnowledgeBaseSource[] = [];
   const seen = new Set<string>();
   for (const update of updates) {
+    options.checkCanceled?.();
     const source = update.source;
     if (seen.has(source.relativePath)) continue;
     seen.add(source.relativePath);
@@ -351,6 +378,7 @@ async function writeRawDigestStatusMetadataForSources(
       throw new Error(`raw 待处理状态写入后指纹不稳定：${source.relativePath}`);
     }
     if (!nextContent.equals(content)) {
+      options.checkCanceled?.();
       await fsp.writeFile(absolutePath, nextContent);
     }
     updated.push({
@@ -360,6 +388,7 @@ async function writeRawDigestStatusMetadataForSources(
       fingerprint
     });
   }
+  options.checkCanceled?.();
   registry.updatedAt = new Date(options.startedAt).toISOString();
   await writeRawDigestRegistry(vaultPath, registry);
   return updated;

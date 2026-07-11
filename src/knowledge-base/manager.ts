@@ -535,33 +535,45 @@ export class KnowledgeBaseManager {
         vaultPath,
         startedAt,
         processedSources: settings.processedSources,
+        checkCanceled: () => {
+          throwIfKnowledgeBaseCanceled(this.cancelRequested);
+        },
         writeTracker: async (processed, updatedAt) => {
+          throwIfKnowledgeBaseCanceled(this.cancelRequested);
           await writeKnowledgeBaseTracker(vaultPath, processed, updatedAt);
+          throwIfKnowledgeBaseCanceled(this.cancelRequested);
         },
         commit: async (commit) => {
+          throwIfKnowledgeBaseCanceled(this.cancelRequested);
           settings.processedSources = commit.nextProcessedSources;
           settings.lastRunStatus = "success";
           settings.lastReportPath = commit.reportPath;
           settings.lastSummary = commit.summary;
           settings.lastRunAt = Date.now();
           await this.plugin.saveSettings(true);
+          throwIfKnowledgeBaseCanceled(this.cancelRequested);
         }
       });
       new Notice("Raw 状态校准完成");
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const canceled = this.cancelRequested || isKnowledgeBaseCancelError(message);
       settings.processedSources = processedSourcesBeforeRun;
-      settings.lastRunStatus = "failed";
-      settings.lastError = message;
+      settings.lastRunStatus = canceled ? "canceled" : "failed";
+      settings.lastError = canceled ? formatCancelResultMessage(message, null) : message;
       settings.lastSummary = "";
-      await saveSettingsSafely(this.plugin);
+      const saveError = await saveSettingsSafely(this.plugin);
+      if (canceled && saveError) {
+        settings.lastError = formatCancelResultMessage(message, saveError);
+        await saveSettingsSafely(this.plugin);
+      }
       return {
-        status: "failed",
+        status: canceled ? "canceled" : "failed",
         reportPath: "",
         summary: "",
         processedSources: [],
-        error: message
+        error: settings.lastError
       };
     } finally {
       this.running = false;
