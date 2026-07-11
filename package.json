@@ -5,7 +5,9 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
+    "check:public": "node scripts/check-public-files.mjs",
     "dev": "node esbuild.config.mjs watch",
+    "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
     "package": "npm run build && node scripts/package.mjs",
