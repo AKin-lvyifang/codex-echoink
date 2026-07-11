@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ItemView, MarkdownView, normalizePath, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import type { AgentBackendMode, ChatMessage, DiffSummary, StoredAttachment, StoredSession } from "../settings/settings";
+import type { AgentBackendMode, ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
 import { ensureKnowledgeBaseSession, getActiveApiProvider, getApiProviderModels, isKnowledgeBaseSession, newId, providerConnectionLabel, resolveEditorActionModeConfig } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
 import { buildEchoInkResourceCatalog, hasEnabledMcpResources, skillResourcesForScope, workspaceResourcesFromEchoInkResources } from "../resources/registry";
@@ -10,7 +10,6 @@ import type {
   CodexNotification,
   McpServerStatus,
   PermissionMode,
-  ProcessFileRef,
   RateLimitSnapshot,
   ReasoningEffort,
   ServiceTierChoice,
@@ -18,11 +17,10 @@ import type {
   UiMode
 } from "../types/app-server";
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../core/clipboard-images";
-import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../core/diff-summary";
 import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-diagnostics";
 import { getElectronDialog, showItemInFinder } from "../core/electron";
 import { swallowError } from "../core/error-handling";
-import { basename, buildUserInput, contextUsageView, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
+import { buildUserInput, contextUsageView } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
 import { shouldCloseComposerMenusForClick } from "./composer-menu";
 import { composerPrimaryActionForState, composerStateForRuntimeState, type ComposerPrimaryActionState } from "./composer-state";
@@ -91,6 +89,7 @@ import {
 } from "./codex-view/header";
 import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
 import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
+import { SessionMessageStore, type SessionMessageInput } from "./codex-view/session-message-store";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
 import { editorActionStartBlockReason } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
@@ -111,6 +110,53 @@ export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
 const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;
+const sessionMessageStores = new WeakMap<object, SessionMessageStore>();
+
+type SessionMessageStoreHost = {
+  plugin?: {
+    getVaultPath?: () => string;
+    externalizeMessageText?: (message: ChatMessage, text: string) => Promise<void>;
+    saveSettings?: (force?: boolean) => Promise<void>;
+  };
+  activeRunId?: string;
+  activeTurnId?: string;
+  activeThinkingMessageId?: string;
+  activePlanMessageId?: string;
+  activeItemMessages?: Map<string, string>;
+  renderMessagesIfActive?: (session: StoredSession, updatedMessage?: ChatMessage) => void;
+  scheduleSessionSave?: () => void;
+};
+
+function sessionMessageStoreFor(view: object): SessionMessageStore {
+  const existing = sessionMessageStores.get(view);
+  if (existing) return existing;
+  const host = view as SessionMessageStoreHost;
+  const store = new SessionMessageStore({
+    getActiveRunId: () => host.activeRunId ?? "",
+    getActiveTurnId: () => host.activeTurnId ?? "",
+    getVaultPath: () => host.plugin?.getVaultPath?.() ?? "",
+    externalizeMessageText: async (message, text) => {
+      await host.plugin?.externalizeMessageText?.(message, text);
+    },
+    renderMessagesIfActive: (session, updatedMessage) => host.renderMessagesIfActive?.(session, updatedMessage),
+    scheduleSessionSave: () => {
+      if (host.scheduleSessionSave) {
+        host.scheduleSessionSave();
+        return;
+      }
+      void host.plugin?.saveSettings?.(true).catch(swallowError("save chat session"));
+    }
+  });
+  sessionMessageStores.set(view, store);
+  return store;
+}
+
+function clearLegacySessionMessageState(view: object): void {
+  const host = view as SessionMessageStoreHost;
+  host.activeThinkingMessageId = "";
+  host.activePlanMessageId = "";
+  host.activeItemMessages?.clear();
+}
 
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
@@ -146,9 +192,6 @@ export class CodexView extends ItemView {
   private turnStartedAt = 0;
   private turnWatchdog: number | null = null;
   private sessionSaveTimer: number | null = null;
-  private activeThinkingMessageId = "";
-  private activePlanMessageId = "";
-  private activeItemMessages = new Map<string, string>();
   private readonly messageScrollFollow = new MessageScrollFollowController();
   private knowledgeBaseRunProgressTimer: number | null = null;
   private messageListRenderer = new CodexMessageListRenderer();
@@ -1295,9 +1338,8 @@ export class CodexView extends ItemView {
     if (this.isKnowledgeBaseSession(session) && this.plugin.getKnowledgeBaseManager()?.isRunning) return;
     const count = settleStaleRunningMessages(session.messages);
     if (!count) return;
-    this.activeThinkingMessageId = "";
-    this.activePlanMessageId = "";
-    this.activeItemMessages.clear();
+    sessionMessageStoreFor(this).clearActiveRun();
+    clearLegacySessionMessageState(this);
     void this.plugin.saveSettings();
   }
 
@@ -1597,326 +1639,54 @@ export class CodexView extends ItemView {
   }
 
   private appendItemDelta(session: StoredSession, itemId: string, role: ChatMessage["role"], delta: string, itemType: string, title: string): void {
-    if (!delta) return;
     if (this.editorActionRun?.runId === this.activeRunId && role === "assistant" && itemType === "assistant") {
       this.editorActionRun.text += delta;
     }
-    let messageId = this.activeItemMessages.get(itemId);
-    let message = messageId ? session.messages.find((item) => item.id === messageId) : null;
-    if (!message) {
-      message = {
-        id: itemId || newId("msg"),
-        role,
-        text: "",
-        itemType,
-        title,
-        runId: this.activeRunId || undefined,
-        turnId: this.activeTurnId || undefined,
-        createdAt: Date.now()
-      };
-      session.messages.push(message);
-      this.activeItemMessages.set(itemId, message.id);
-    }
-    message.text += delta;
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session, message);
+    sessionMessageStoreFor(this).appendItemDelta(session, itemId, role, delta, itemType, title);
   }
 
   private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void {
-    if (!delta) return;
-    let messageId = this.activeItemMessages.get(itemId);
-    let message = messageId ? session.messages.find((item) => item.id === messageId) : null;
-    const payloadRecord = processPayloadRecord(payload);
-    const summaryPayload = { ...payloadRecord, status: payloadRecord.status ?? "running" };
-    const summary = summarizeProcessEvent(itemType, summaryPayload, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
-    if (!message) {
-      message = {
-        id: itemId || newId("process"),
-        role: roleForProcessItem(itemType),
-        text: "",
-        itemType,
-        title: summary.title,
-        details: summary.detail,
-        files: summary.files,
-        processKind: summary.kind,
-        runId: this.activeRunId || undefined,
-        turnId: this.activeTurnId || undefined,
-        status: "running",
-        createdAt: Date.now()
-      };
-      session.messages.push(message);
-      this.activeItemMessages.set(itemId, message.id);
-    }
-    if (itemType === "reasoning" || !message.title || message.title === "命令输出") message.title = summary.title;
-    if (itemType === "reasoning") {
-      if (summary.detail) message.details = summary.detail;
-    } else if (!message.details && summary.detail) {
-      message.details = summary.detail;
-    }
-    message.processKind = summary.kind;
-    message.files = mergeProcessFiles(message.files, summary.files);
-    message.status = "running";
-    message.text += delta;
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session, message);
+    sessionMessageStoreFor(this).appendProcessDelta(session, itemId, itemType, delta, payload);
   }
 
   private ensureThinkingMessage(session: StoredSession, title: string, text: string): void {
-    if (this.activeThinkingMessageId) {
-      const existing = session.messages.find((message) => message.id === this.activeThinkingMessageId);
-      if (existing) {
-        existing.title = title;
-        existing.text = text;
-        existing.status = "running";
-        this.renderMessagesIfActive(session);
-        return;
-      }
-    }
-    const id = newId("thinking");
-    this.activeThinkingMessageId = id;
-    session.messages.push({
-      id,
-      role: "assistant",
-      title,
-      text,
-      itemType: "thinking",
-      runId: this.activeRunId || undefined,
-      turnId: this.activeTurnId || undefined,
-      status: "running",
-      createdAt: Date.now()
-    });
-    this.renderMessagesIfActive(session);
+    sessionMessageStoreFor(this).ensureThinkingMessage(session, title, text);
   }
 
   private markThinkingAsStreaming(session: StoredSession): void {
-    const message = session.messages.find((item) => item.id === this.activeThinkingMessageId);
-    if (!message || message.status !== "running") return;
-    message.text = "正在生成回复...";
-    this.renderMessagesIfActive(session);
+    sessionMessageStoreFor(this).markThinkingAsStreaming(session);
   }
 
   private finishThinkingMessage(session: StoredSession, _status: string): void {
-    const messageIndex = session.messages.findIndex((item) => item.id === this.activeThinkingMessageId);
-    const message = messageIndex >= 0 ? session.messages[messageIndex] : null;
-    if (!message) return;
-    session.messages.splice(messageIndex, 1);
-    session.updatedAt = Date.now();
-    this.activeThinkingMessageId = "";
-    this.renderMessagesIfActive(session);
+    sessionMessageStoreFor(this).finishThinkingMessage(session, _status);
   }
 
   private finishPlanMessage(session: StoredSession): void {
-    const message = session.messages.find((item) => item.id === this.activePlanMessageId);
-    if (message) message.status = "completed";
-    this.activePlanMessageId = "";
+    sessionMessageStoreFor(this).finishPlanMessage(session);
   }
 
   private finishRunningProcessMessages(session: StoredSession, status: string): void {
-    for (const message of session.messages) {
-      if (isProcessItemType(message.itemType) && message.status === "running") {
-        message.status = status;
-        if (message.text) void this.plugin.externalizeMessageText(message, message.text);
-        if (message.itemType === "reasoning") this.refreshProcessSummary(message, status, session);
-      }
-    }
-    this.renderMessagesIfActive(session);
+    sessionMessageStoreFor(this).finishRunningProcessMessages(session, status);
   }
 
   private renderPlanUpdate(session: StoredSession, params: unknown): void {
-    const payload = processPayloadRecord(params);
-    const lines: string[] = [];
-    if (typeof payload.explanation === "string" && payload.explanation) lines.push(payload.explanation, "");
-    const plan = Array.isArray(payload.plan) ? payload.plan : [];
-    for (const rawItem of plan) {
-      const item = processPayloadRecord(rawItem);
-      const status = typeof item.status === "string" ? item.status : "";
-      const step = typeof item.step === "string" ? item.step : "";
-      if (!step) continue;
-      const mark = status === "completed" ? "x" : " ";
-      const suffix = status === "inProgress" ? " (进行中)" : "";
-      lines.push(`- [${mark}] ${step}${suffix}`);
-    }
-    if (!lines.length) return;
-    let message = this.activePlanMessageId ? session.messages.find((item) => item.id === this.activePlanMessageId) : null;
-    if (!message) {
-      message = {
-        id: newId("plan"),
-        role: "assistant",
-        itemType: "plan",
-        title: "更新计划",
-        text: "",
-        processKind: "plan",
-        runId: this.activeRunId || undefined,
-        turnId: this.activeTurnId || undefined,
-        status: "running",
-        createdAt: Date.now()
-      };
-      this.activePlanMessageId = message.id;
-      session.messages.push(message);
-    }
-    message.text = lines.join("\n");
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
+    sessionMessageStoreFor(this).renderPlanUpdate(session, params);
   }
 
   private renderStartedItem(session: StoredSession, item: unknown): void {
-    const payload = processPayloadRecord(item);
-    const type = stringPayload(payload.type);
-    if (!isProcessItemType(type)) return;
-    if (type === "reasoning" && !rawTextForProcessItem(payload)) return;
-    const status = stringPayload(payload.status) || "running";
-    void this.upsertProcessItem(session, stringPayload(payload.id) || newId("process"), type, rawTextForProcessItem(payload), status, { ...payload, status });
+    sessionMessageStoreFor(this).renderStartedItem(session, item);
   }
 
   private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> {
-    const payload = processPayloadRecord(item);
-    const type = stringPayload(payload.type);
-    if (!type) return;
-    if (type === "agentMessage") return;
-    const id = stringPayload(payload.id) || newId("process");
-    const status = stringPayload(payload.status) || "completed";
-    if (type === "reasoning" || type === "plan") {
-      const text = rawTextForProcessItem(payload);
-      if (text) {
-        await this.upsertProcessItem(session, id, type, text, status, { ...payload, status });
-      } else {
-        this.finishProcessItem(session, id, status);
-      }
-      return;
-    }
-    if (type === "commandExecution") {
-      await this.upsertProcessItem(session, id, "commandExecution", `${stringPayload(payload.command)}\n\n${stringPayload(payload.aggregatedOutput)}`.trim(), status, payload);
-    } else if (type === "fileChange") {
-      const changes = Array.isArray(payload.changes) ? payload.changes : [];
-      const diffSummary = buildDiffSummary(changes);
-      const text = serializeFileChanges(changes);
-      await this.upsertProcessItem(session, id, "fileChange", text || status, status, payload, diffSummary);
-    } else if (type === "mcpToolCall") {
-      await this.upsertProcessItem(session, id, "mcpToolCall", JSON.stringify(payload.result ?? payload.error ?? payload.arguments, null, 2), status, payload);
-    } else if (type === "dynamicToolCall") {
-      await this.upsertProcessItem(session, id, "dynamicToolCall", JSON.stringify(payload.contentItems ?? payload.result ?? payload.arguments, null, 2), status, payload);
-    } else if (type === "collabAgentToolCall") {
-      await this.upsertProcessItem(session, id, "collabAgentToolCall", JSON.stringify(payload.result ?? payload.arguments ?? payload, null, 2), status, payload);
-    } else if (type === "imageView") {
-      const itemPath = stringPayload(payload.path);
-      if (!itemPath) return;
-      this.addMessageToSession(session, {
-        role: "assistant",
-        title: "图片",
-        itemType: "image",
-        text: itemPath,
-        images: [{ type: "image", name: basename(itemPath), path: itemPath }],
-        createdAt: Date.now()
-      });
-    } else if (type === "contextCompaction") {
-      this.addContextCompactionMessage(session);
-    }
+    await sessionMessageStoreFor(this).renderCompletedItem(session, item);
   }
 
-  private upsertCompletedItem(id: string, role: ChatMessage["role"], itemType: string, title: string, text: string, status?: string): void {
-    const session = this.ensureSession();
-    const existingId = this.activeItemMessages.get(id);
-    const existing = existingId ? session.messages.find((item) => item.id === existingId) : null;
-    if (existing) {
-      existing.text = text || existing.text;
-      existing.status = status;
-    } else {
-      session.messages.push({ id, role, itemType, title, text, status, createdAt: Date.now() });
-    }
-    this.renderMessages();
+  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown): Promise<void> {
+    await sessionMessageStoreFor(this).upsertProcessItem(session, id, itemType, text, status, payload);
   }
 
-  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown, diffSummary?: DiffSummary): Promise<void> {
-    const summary = summarizeProcessEvent(itemType, { ...processPayloadRecord(payload), status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
-    const existingId = this.activeItemMessages.get(id);
-    const existing = existingId ? session.messages.find((item) => item.id === existingId) : null;
-    if (existing) {
-      existing.role = roleForProcessItem(itemType);
-      existing.itemType = itemType;
-      existing.title = summary.title;
-      existing.details = diffSummary ? diffSummaryLabel(diffSummary) : summary.detail || existing.details;
-      existing.diffSummary = diffSummary;
-      existing.files = mergeProcessFiles(existing.files, summary.files);
-      existing.processKind = summary.kind;
-      if (text) await this.plugin.externalizeMessageText(existing, text);
-      existing.status = status;
-      existing.turnId = this.activeTurnId || existing.turnId;
-      existing.runId = this.activeRunId || existing.runId;
-    } else {
-      const message: ChatMessage = {
-        id,
-        role: roleForProcessItem(itemType),
-        itemType,
-        title: summary.title,
-        details: diffSummary ? diffSummaryLabel(diffSummary) : summary.detail,
-        diffSummary,
-        files: summary.files,
-        processKind: summary.kind,
-        text,
-        runId: this.activeRunId || undefined,
-        turnId: this.activeTurnId || undefined,
-        status,
-        createdAt: Date.now()
-      };
-      if (text) await this.plugin.externalizeMessageText(message, text);
-      session.messages.push(message);
-      this.activeItemMessages.set(id, id);
-    }
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
-  }
-
-  private finishProcessItem(session: StoredSession, id: string, status: string): void {
-    const existingId = this.activeItemMessages.get(id);
-    const existing = existingId ? session.messages.find((item) => item.id === existingId) : session.messages.find((item) => item.id === id);
-    if (!existing) return;
-    existing.status = status;
-    if (existing.itemType === "reasoning") this.refreshProcessSummary(existing, status, session);
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
-  }
-
-  private refreshProcessSummary(message: ChatMessage, status: string, session: StoredSession): void {
-    if (!message.itemType) return;
-    const summary = summarizeProcessEvent(message.itemType, { text: message.text, status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
-    message.title = summary.title;
-    if (summary.detail) message.details = summary.detail;
-    message.processKind = summary.kind;
-  }
-
-  private addMessage(message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>): void {
-    this.addMessageToSession(this.ensureSession(), message);
-  }
-
-  private addMessageToSession(session: StoredSession, message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>): void {
-    session.messages.push({
-      id: message.id ?? newId("msg"),
-      createdAt: message.createdAt ?? Date.now(),
-      role: message.role,
-      text: message.text,
-      previewText: message.previewText,
-      rawRef: message.rawRef,
-      rawSize: message.rawSize,
-      rawLines: message.rawLines,
-      rawTruncatedForPreview: message.rawTruncatedForPreview,
-      phase: message.phase,
-      itemType: message.itemType,
-      runId: message.runId ?? (this.activeRunId || undefined),
-      turnId: message.turnId ?? (this.activeTurnId || undefined),
-      processKind: message.processKind,
-      title: message.title,
-      status: message.status,
-      details: message.details,
-      diffSummary: message.diffSummary,
-      citations: message.citations,
-      knowledgeBaseUi: message.knowledgeBaseUi,
-      attachments: message.attachments,
-      files: message.files,
-      images: message.images
-    });
-    session.updatedAt = Date.now();
-    this.renderMessagesIfActive(session);
-    this.scheduleSessionSave();
+  private addMessageToSession(session: StoredSession, message: SessionMessageInput): void {
+    sessionMessageStoreFor(this).addMessageToSession(session, message);
   }
 
   private scheduleSessionSave(): void {
@@ -1936,10 +1706,7 @@ export class CodexView extends ItemView {
   }
 
   private moveMessageToEnd(session: StoredSession, messageId: string): void {
-    const index = session.messages.findIndex((message) => message.id === messageId);
-    if (index < 0 || index === session.messages.length - 1) return;
-    const [message] = session.messages.splice(index, 1);
-    session.messages.push(message);
+    sessionMessageStoreFor(this).moveMessageToEnd(session, messageId);
   }
 
   private updateContext(tokenUsage: TokenUsage | undefined, persist: boolean): void {
@@ -2014,9 +1781,8 @@ export class CodexView extends ItemView {
     this.activeRunSessionId = "";
     this.activeTurnId = "";
     this.editorActionActiveTimeoutMs = 0;
-    this.activeThinkingMessageId = "";
-    this.activePlanMessageId = "";
-    this.activeItemMessages?.clear?.();
+    sessionMessageStoreFor(this).clearActiveRun();
+    clearLegacySessionMessageState(this);
   }
 
   private attachTurnIdToRun(session: StoredSession, turnId: string): void {
@@ -2195,43 +1961,6 @@ export class CodexView extends ItemView {
       new Notice("粘贴图片失败");
     }
   }
-}
-
-function roleForProcessItem(itemType: string): ChatMessage["role"] {
-  return itemType === "reasoning" || itemType === "plan" ? "assistant" : "tool";
-}
-
-
-function rawTextForProcessItem(item: unknown): string {
-  const payload = processPayloadRecord(item);
-  const type = stringPayload(payload.type);
-  if (type === "commandExecution") return stringPayload(payload.command);
-  if (type === "fileChange") return (Array.isArray(payload.changes) ? payload.changes : [])
-    .map((change) => stringPayload(processPayloadRecord(change).path))
-    .filter(Boolean)
-    .join("\n");
-  if (type === "mcpToolCall") return [payload.server, payload.tool].map(stringPayload).filter(Boolean).join(".");
-  if (type === "dynamicToolCall") return [payload.namespace, payload.tool].map(stringPayload).filter(Boolean).join(".");
-  if (type === "collabAgentToolCall") return stringPayload(payload.tool);
-  if (type === "reasoning") return reasoningTextFromPayload(payload);
-  if (type === "plan") return stringPayload(payload.text);
-  return "";
-}
-
-function processPayloadRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function stringPayload(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: ProcessFileRef[]): ProcessFileRef[] {
-  const byKey = new Map<string, ProcessFileRef>();
-  for (const file of [...(current ?? []), ...incoming]) {
-    byKey.set(`${file.kind}:${file.path}`, file);
-  }
-  return Array.from(byKey.values()).slice(0, 8);
 }
 
 async function pickWorkspaceDirectory(defaultPath: string): Promise<string | null | undefined> {

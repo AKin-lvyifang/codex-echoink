@@ -3275,6 +3275,7 @@ const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src
 const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/knowledge-dashboard.ts"), "utf8");
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/composer.ts"), "utf8");
+const codexViewSessionMessageStoreSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/session-message-store.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const knowledgeBaseCommandRouterSource = await readFile(path.join(process.cwd(), "src/knowledge-base/command-router.ts"), "utf8");
 const knowledgeBaseScheduledMaintenanceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/scheduled-maintenance.ts"), "utf8");
@@ -3292,13 +3293,14 @@ const codexViewUiSources = [
   codexViewHeaderSource,
   codexViewHistoryModalSource,
   codexViewKnowledgeDashboardSource,
-  codexViewMessageListSource
+  codexViewMessageListSource,
+  codexViewSessionMessageStoreSource
 ].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
 const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
-const codexViewAddMessageToSessionSource = codexViewSource.slice(
-  codexViewSource.indexOf("private addMessageToSession"),
-  codexViewSource.indexOf("private scheduleSessionSave")
+const sessionMessageStoreAddMessageSource = codexViewSessionMessageStoreSource.slice(
+  codexViewSessionMessageStoreSource.indexOf("addMessageToSession"),
+  codexViewSessionMessageStoreSource.indexOf("moveMessageToEnd")
 );
 assert.ok(codexViewModules.includes("history-modal.ts"));
 assert.ok(codexViewModules.includes("knowledge-dashboard.ts"));
@@ -3307,13 +3309,18 @@ assert.ok(codexViewModules.includes("composer.ts"));
 assert.ok(codexViewModules.includes("message-list.ts"));
 assert.ok(codexViewModules.includes("notification-router.ts"));
 assert.ok(codexViewModules.includes("editor-action-run-coordinator.ts"));
-assert.ok(codexViewLineCount <= 2500, `src/ui/codex-view.ts should stay under 2500 lines, got ${codexViewLineCount}`);
+assert.ok(codexViewModules.includes("session-message-store.ts"));
+assert.ok(codexViewLineCount <= 2100, `src/ui/codex-view.ts should stay under 2100 lines, got ${codexViewLineCount}`);
 assert.match(codexViewSource, /CHAT_SESSION_SAVE_DEBOUNCE_MS\s*=\s*500/);
 assert.match(codexViewSource, /private scheduleSessionSave/);
 assert.match(codexViewSource, /private async flushSessionSave/);
 assert.match(codexViewSource, /window\.setTimeout\(\(\) => \{/);
-assert.match(codexViewAddMessageToSessionSource, /this\.scheduleSessionSave\(\)/);
-assert.doesNotMatch(codexViewAddMessageToSessionSource, /saveSettings/);
+assert.match(codexViewSource, /sessionMessageStoreFor\(this\)\.addMessageToSession/);
+assert.match(codexViewSessionMessageStoreSource, /class SessionMessageStore/);
+assert.match(codexViewSessionMessageStoreSource, /appendItemDelta/);
+assert.match(codexViewSessionMessageStoreSource, /upsertProcessItem/);
+assert.match(sessionMessageStoreAddMessageSource, /this\.context\.scheduleSessionSave\(\)/);
+assert.doesNotMatch(sessionMessageStoreAddMessageSource, /saveSettings/);
 assert.match(cloneStoredSessionsSource, /clonePlainValue/);
 assert.match(cloneStoredSessionsSource, /value instanceof Date/);
 assert.doesNotMatch(cloneStoredSessionsSource, /JSON\.parse|JSON\.stringify/);
@@ -3330,7 +3337,7 @@ assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTo
 assert.doesNotMatch(codexViewUiSources, /\.style\./);
 assert.match(codexViewUiSources, /setCssStyles/);
 assert.match(codexViewUiSources, /setCssProps/);
-assert.match(codexViewSource, /renderMessagesIfActive\(session,\s*message\)/);
+assert.match(codexViewSessionMessageStoreSource, /renderMessagesIfActive\(session,\s*message\)/);
 assert.match(codexViewSource, /tryUpdateMessage\(updatedMessage\)/);
 assert.match(codexViewMessageListSource, /tryUpdateMessage\(message:\s*ChatMessage\)/);
 assert.match(codexViewMessageListSource, /data-message-id/);
