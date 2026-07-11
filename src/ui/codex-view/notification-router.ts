@@ -16,11 +16,11 @@ export interface CodexNotificationRouterContext extends EditorActionRunCoordinat
   ensureThinkingMessage(session: StoredSession, title: string, text: string): void;
   markThinkingAsStreaming(session: StoredSession): void;
   appendItemDelta(session: StoredSession, itemId: string, role: ChatMessage["role"], delta: string, itemType: string, title: string): void;
-  appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: any): void;
-  upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: any): Promise<void>;
-  renderPlanUpdate(session: StoredSession, params: any): void;
-  renderStartedItem(session: StoredSession, item: any): void;
-  renderCompletedItem(session: StoredSession, item: any): Promise<void>;
+  appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void;
+  upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown): Promise<void>;
+  renderPlanUpdate(session: StoredSession, params: unknown): void;
+  renderStartedItem(session: StoredSession, item: unknown): void;
+  renderCompletedItem(session: StoredSession, item: unknown): Promise<void>;
   updateUsageHeader(rateLimits: RateLimitSnapshot | null, loading?: boolean, error?: string | null): void;
   renderUsagePanel(rateLimits: RateLimitSnapshot | null, error?: string | null, loading?: boolean): void;
   updateContextForSession(session: StoredSession, tokenUsage: TokenUsage | undefined, persist: boolean): void;
@@ -41,14 +41,16 @@ export class CodexNotificationRouter {
 
   handle(notification: CodexNotification): void {
     const { method, params } = notification;
+    const payload = paramsObject(params);
     const view = this.context;
     if (this.editorActionCoordinator.handleNotification(method, params)) return;
     if (view.activeRunKind === "knowledge-base" && isKnowledgeBaseUnroutedCodexNotification(method)) return;
     if (method === "turn/started") {
       const session = view.activeRunSession();
       const knowledgeSession = view.isKnowledgeBaseSession(session);
+      const turn = paramsObject(payload.turn);
       view.running = true;
-      view.activeTurnId = params?.turn?.id ?? "";
+      view.activeTurnId = stringParam(turn.id);
       view.turnStartedAt = Date.now();
       view.attachTurnIdToRun(session, view.activeTurnId);
       view.ensureThinkingMessage(session, "生成中", "正在生成回复...");
@@ -60,7 +62,7 @@ export class CodexNotificationRouter {
     }
     if (method === "turn/completed") {
       const session = view.activeRunSession();
-      const failed = params?.turn?.status === "failed";
+      const failed = stringParam(paramsObject(payload.turn).status) === "failed";
       const shouldAdvanceQueue = view.activeRunKind === "chat";
       view.running = false;
       view.activeTurnId = "";
@@ -90,23 +92,23 @@ export class CodexNotificationRouter {
       return;
     }
     if (method === "thread/tokenUsage/updated") {
-      view.updateContextForSession(view.activeRunSession(), params?.tokenUsage, true);
+      view.updateContextForSession(view.activeRunSession(), tokenUsageParam(payload.tokenUsage), true);
       return;
     }
     if (method === "thread/compacted") {
-      const session = view.sessionForThread(params?.threadId ?? params?.thread?.id) ?? view.activeRunSession();
+      const session = view.sessionForThread(stringParam(payload.threadId) || stringParam(paramsObject(payload.thread).id)) ?? view.activeRunSession();
       view.addContextCompactionMessage(session);
-      if (params?.tokenUsage) view.updateContextForSession(session, params.tokenUsage, true);
+      if (payload.tokenUsage) view.updateContextForSession(session, tokenUsageParam(payload.tokenUsage), true);
       return;
     }
-    if (method === "item/started" && params?.item) {
-      view.renderStartedItem(view.activeRunSession(), params.item);
+    if (method === "item/started" && payload.item) {
+      view.renderStartedItem(view.activeRunSession(), payload.item);
       return;
     }
     if (method === "item/agentMessage/delta") {
       const session = view.activeRunSession();
       view.markThinkingAsStreaming(session);
-      view.appendItemDelta(session, params.itemId, "assistant", params.delta ?? "", "assistant", "回复");
+      view.appendItemDelta(session, stringParam(payload.itemId), "assistant", stringParam(payload.delta), "assistant", "回复");
       return;
     }
     if (method === "turn/plan/updated") {
@@ -114,37 +116,37 @@ export class CodexNotificationRouter {
       return;
     }
     if (method === "item/plan/delta") {
-      view.appendProcessDelta(view.activeRunSession(), params.itemId, "plan", params.delta ?? "", { text: params.delta ?? "", status: "running" });
+      view.appendProcessDelta(view.activeRunSession(), stringParam(payload.itemId), "plan", stringParam(payload.delta), { text: stringParam(payload.delta), status: "running" });
       return;
     }
     if (method === "item/reasoning/summaryPartAdded") {
-      void view.upsertProcessItem(view.activeRunSession(), params.itemId, "reasoning", "", "running", { ...params, status: "running" });
+      void view.upsertProcessItem(view.activeRunSession(), stringParam(payload.itemId), "reasoning", "", "running", { ...payload, status: "running" });
       return;
     }
     if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
-      view.appendProcessDelta(view.activeRunSession(), params.itemId, "reasoning", params.delta ?? "", { text: params.delta ?? "", status: "running" });
+      view.appendProcessDelta(view.activeRunSession(), stringParam(payload.itemId), "reasoning", stringParam(payload.delta), { text: stringParam(payload.delta), status: "running" });
       return;
     }
     if (method === "item/commandExecution/outputDelta") {
-      view.appendProcessDelta(view.activeRunSession(), params.itemId, "commandExecution", params.delta ?? "", { text: params.delta ?? "", status: "running" });
+      view.appendProcessDelta(view.activeRunSession(), stringParam(payload.itemId), "commandExecution", stringParam(payload.delta), { text: stringParam(payload.delta), status: "running" });
       return;
     }
     if (method === "item/fileChange/outputDelta") {
-      view.appendProcessDelta(view.activeRunSession(), params.itemId, "fileChange", params.delta ?? "", { text: params.delta ?? "", status: "running" });
+      view.appendProcessDelta(view.activeRunSession(), stringParam(payload.itemId), "fileChange", stringParam(payload.delta), { text: stringParam(payload.delta), status: "running" });
       return;
     }
     if (method === "item/mcpToolCall/progress") {
-      view.appendProcessDelta(view.activeRunSession(), params.itemId, "mcpToolCall", params.message ?? "", params);
+      view.appendProcessDelta(view.activeRunSession(), stringParam(payload.itemId), "mcpToolCall", stringParam(payload.message), payload);
       return;
     }
-    if (method === "item/completed" && params?.item) {
-      void view.renderCompletedItem(view.activeRunSession(), params.item).catch((error) => console.error("Codex item render failed", error));
+    if (method === "item/completed" && payload.item) {
+      void view.renderCompletedItem(view.activeRunSession(), payload.item).catch((error) => console.error("Codex item render failed", error));
       return;
     }
     if (method === "error") {
       const session = view.activeRunSession();
       const shouldPauseQueue = view.activeRunKind === "chat";
-      const diagnostic = view.diagnoseCodexFailure(params?.message ?? "Codex 出错了");
+      const diagnostic = view.diagnoseCodexFailure(stringParam(payload.message) || "Codex 出错了");
       view.running = false;
       view.activeTurnId = "";
       view.clearTurnWatchdog();
@@ -164,4 +166,16 @@ export class CodexNotificationRouter {
 
 function isKnowledgeBaseUnroutedCodexNotification(method: string): boolean {
   return method.startsWith("item/") || method.startsWith("turn/") || method.startsWith("thread/") || method === "error";
+}
+
+function paramsObject(params: unknown): Record<string, unknown> {
+  return params && typeof params === "object" && !Array.isArray(params) ? params as Record<string, unknown> : {};
+}
+
+function stringParam(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function tokenUsageParam(value: unknown): TokenUsage | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as TokenUsage : undefined;
 }

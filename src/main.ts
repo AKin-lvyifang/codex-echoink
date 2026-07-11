@@ -15,7 +15,7 @@ import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope 
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
-import type { CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
+import type { CodexNotification, CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
@@ -533,7 +533,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     return true;
   }
 
-  private handleCodexNotification(notification: any): void {
+  private handleCodexNotification(notification: CodexNotification): void {
     if (this.knowledgeBase?.handleCodexNotification(notification)) {
       this.getCodexView()?.handleKnowledgeBaseCodexNotification(notification);
       return;
@@ -777,39 +777,48 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
   }
 
-  private async handleServerRequest(request: CodexServerRequest): Promise<any> {
+  private async handleServerRequest(request: CodexServerRequest): Promise<unknown> {
+    const params = asRecord(request.params) ?? {};
     if (request.method === "item/commandExecution/requestApproval") {
-      const command = request.params?.command ?? "未知命令";
-      const accepted = await confirmModal(this.app, "Codex 请求执行命令", `${command}\n\n${request.params?.reason ?? ""}`);
+      const command = stringParam(params.command) || "未知命令";
+      const accepted = await confirmModal(this.app, "Codex 请求执行命令", `${command}\n\n${stringParam(params.reason)}`);
       return { decision: accepted ? "accept" : "decline" };
     }
     if (request.method === "item/fileChange/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求修改文件", request.params?.reason ?? "是否允许本次文件修改？");
+      const accepted = await confirmModal(this.app, "Codex 请求修改文件", stringParam(params.reason) || "是否允许本次文件修改？");
       return { decision: accepted ? "accept" : "decline" };
     }
     if (request.method === "item/permissions/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求额外权限", request.params?.reason ?? "是否允许本次额外权限？");
+      const accepted = await confirmModal(this.app, "Codex 请求额外权限", stringParam(params.reason) || "是否允许本次额外权限？");
       return accepted
         ? {
-            permissions: request.params?.permissions ?? {},
+            permissions: asRecord(params.permissions) ?? {},
             scope: "turn"
           }
         : { permissions: {}, scope: "turn" };
     }
     if (request.method === "item/tool/requestUserInput") {
-      const answers = await requestUserInputModal(this.app, request.params?.questions ?? []);
+      const answers = await requestUserInputModal(this.app, Array.isArray(params.questions) ? params.questions : []);
       return { answers };
     }
     if (request.method === "mcpServer/elicitation/request") {
-      const params = request.params ?? {};
       if (params.mode === "url") {
-        const accepted = await confirmModal(this.app, "MCP 需要网页登录", `${params.message}\n\n${params.url}`, "打开", "取消");
-        if (accepted) window.open(params.url);
+        const url = stringParam(params.url);
+        const accepted = await confirmModal(this.app, "MCP 需要网页登录", `${stringParam(params.message)}\n\n${url}`, "打开", "取消");
+        if (accepted && url) window.open(url);
         return { action: accepted ? "accept" : "cancel", content: null, _meta: null };
       }
-      const accepted = await confirmModal(this.app, `MCP：${params.serverName}`, params.message ?? "是否继续？");
+      const accepted = await confirmModal(this.app, `MCP：${stringParam(params.serverName)}`, stringParam(params.message) || "是否继续？");
       return { action: accepted ? "accept" : "decline", content: {}, _meta: null };
     }
     return {};
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringParam(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }

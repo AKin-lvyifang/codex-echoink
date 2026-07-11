@@ -143,11 +143,11 @@ export interface ProcessEventSummary {
 
 export interface CodexNotification {
   method: string;
-  params: any;
+  params: unknown;
 }
 
 export interface CodexServerRequest {
   method: string;
   id: number | string;
-  params: any;
+  params: unknown;
 }

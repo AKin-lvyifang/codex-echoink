@@ -102,7 +102,7 @@ type CodexKbWaiter = {
   startTurnPending: boolean;
   inactivityTimeoutMs: number;
   inactivityTimer: ReturnType<typeof setTimeout> | null;
-  pendingTerminal?: { method: "turn/completed" | "error"; params: any };
+  pendingTerminal?: { method: "turn/completed" | "error"; params: unknown };
 };
 
 type ActiveOpenCodeRun = {
@@ -1179,7 +1179,7 @@ export class KnowledgeBaseManager {
     if (method === "turn/started" && ids.turnId) waiter.turnId = ids.turnId;
     if (route.rememberItemId) waiter.itemIds.add(route.rememberItemId);
     if (ids.itemId && ids.turnId && ids.turnId === waiter.turnId) waiter.itemIds.add(ids.itemId);
-    if (route.collectAssistantDelta) appendCodexWaiterAssistantDelta(waiter, ids.itemId, params?.delta ?? "");
+    if (route.collectAssistantDelta) appendCodexWaiterAssistantDelta(waiter, ids.itemId, codexNotificationDelta(params));
     if (method === "turn/completed") {
       if (waiter.startTurnPending) {
         waiter.pendingTerminal = { method, params };
@@ -1198,11 +1198,11 @@ export class KnowledgeBaseManager {
     return true;
   }
 
-  private finishCodexWaiter(waiter: CodexKbWaiter, method: "turn/completed" | "error", params: any): void {
+  private finishCodexWaiter(waiter: CodexKbWaiter, method: "turn/completed" | "error", params: unknown): void {
     if (method === "error" && isRetryingCodexError(params)) return;
     this.clearCodexWaiterTimer(waiter);
     if (this.codexWaiter === waiter) this.codexWaiter = null;
-    if (method === "turn/completed" && params?.turn?.status !== "failed") {
+    if (method === "turn/completed" && codexNotificationTurnStatus(params) !== "failed") {
       if (this.cancelRequested) waiter.reject(new Error(KNOWLEDGE_BASE_CANCEL_ERROR));
       else waiter.resolve(finalCodexWaiterAssistantText(waiter));
       return;
@@ -1995,8 +1995,24 @@ export class KnowledgeBaseManager {
   }
 }
 
-function isRetryingCodexError(params: any): boolean {
-  return params?.willRetry === true || params?.error?.willRetry === true;
+function isRetryingCodexError(params: unknown): boolean {
+  const record = codexNotificationRecord(params);
+  const error = codexNotificationRecord(record.error);
+  return record.willRetry === true || error.willRetry === true;
+}
+
+function codexNotificationDelta(params: unknown): string {
+  const delta = codexNotificationRecord(params).delta;
+  return typeof delta === "string" ? delta : "";
+}
+
+function codexNotificationTurnStatus(params: unknown): string {
+  const turn = codexNotificationRecord(codexNotificationRecord(params).turn);
+  return typeof turn.status === "string" ? turn.status : "";
+}
+
+function codexNotificationRecord(params: unknown): Record<string, unknown> {
+  return params && typeof params === "object" && !Array.isArray(params) ? params as Record<string, unknown> : {};
 }
 
 function appendCodexWaiterAssistantDelta(waiter: CodexKbWaiter, itemId: string, delta: string): void {

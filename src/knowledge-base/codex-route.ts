@@ -10,7 +10,7 @@ export interface KnowledgeBaseCodexRoute {
   rememberItemId?: string;
 }
 
-export function routeKnowledgeBaseCodexNotification(method: string, params: any, state: KnowledgeBaseCodexRouteState): KnowledgeBaseCodexRoute {
+export function routeKnowledgeBaseCodexNotification(method: string, params: unknown, state: KnowledgeBaseCodexRouteState): KnowledgeBaseCodexRoute {
   const ids = extractKnowledgeBaseNotificationIds(params);
   const exact = isKnowledgeBaseScopedNotification(method, ids, state);
   const orphanAssistantItem = Boolean(
@@ -27,15 +27,28 @@ export function routeKnowledgeBaseCodexNotification(method: string, params: any,
   };
 }
 
-export function extractKnowledgeBaseNotificationIds(params: any): { threadId: string; turnId: string; itemId: string } {
+export function extractKnowledgeBaseNotificationIds(params: unknown): { threadId: string; turnId: string; itemId: string } {
   return {
-    threadId: firstString(params?.threadId, params?.thread?.id, params?.turn?.threadId, params?.item?.threadId),
-    turnId: firstString(params?.turnId, params?.turn?.id, params?.item?.turnId),
-    itemId: firstString(params?.itemId, params?.item?.id)
+    threadId: firstString(
+      field(params, "threadId"),
+      nestedField(params, "thread", "id"),
+      nestedField(params, "turn", "threadId"),
+      nestedField(params, "item", "threadId")
+    ),
+    turnId: firstString(field(params, "turnId"), nestedField(params, "turn", "id"), nestedField(params, "item", "turnId")),
+    itemId: firstString(field(params, "itemId"), nestedField(params, "item", "id"))
   };
 }
 
-function firstString(...values: any[]): string {
+function field(value: unknown, key: string): unknown {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function nestedField(value: unknown, first: string, second: string): unknown {
+  return field(field(value, first), second);
+}
+
+function firstString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }

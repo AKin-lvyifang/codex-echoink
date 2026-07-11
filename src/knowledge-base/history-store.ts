@@ -128,9 +128,9 @@ export function compactKnowledgeBaseMessagesToActiveDay(session: StoredSession, 
   const activeDate = activeKnowledgeBaseHistoryDate(session.messages, session.historyActiveDate, now);
   const activeDates = activeKnowledgeBaseMessageDates(session.messages, activeDate, now);
   const activeMessages = session.messages.filter((message) => activeDates.has(localDateKeyForTimestamp(message.createdAt)));
-  const changed = activeDate !== (session as any).historyActiveDate || activeMessages.length !== session.messages.length;
+  const changed = activeDate !== session.historyActiveDate || activeMessages.length !== session.messages.length;
   session.messages = activeMessages.slice(-KNOWLEDGE_BASE_ACTIVE_DAY_MESSAGE_LIMIT);
-  (session as any).historyActiveDate = activeDate || undefined;
+  session.historyActiveDate = activeDate || undefined;
   return changed;
 }
 
@@ -174,7 +174,7 @@ export async function persistAndCompactKnowledgeBaseHistory(
   return {
     changed: hydrated || changed,
     messageCount,
-    activeDate: (session as any).historyActiveDate ?? ""
+    activeDate: session.historyActiveDate ?? ""
   };
 }
 
@@ -480,33 +480,39 @@ async function updateKnowledgeBaseHistoryIndex(
   } satisfies KnowledgeBaseHistoryIndex);
 }
 
-function normalizeHistorySessionSummary(value: any): KnowledgeBaseHistorySessionSummary | null {
-  if (!value?.sessionId || !Array.isArray(value?.days)) return null;
-  const days = value.days.map(normalizeHistoryDaySummary).filter(Boolean) as KnowledgeBaseHistoryDaySummary[];
+function normalizeHistorySessionSummary(value: unknown): KnowledgeBaseHistorySessionSummary | null {
+  const record = historyRecord(value);
+  if (!record?.sessionId || !Array.isArray(record.days)) return null;
+  const days = record.days.map(normalizeHistoryDaySummary).filter(Boolean) as KnowledgeBaseHistoryDaySummary[];
   return {
-    sessionId: String(value.sessionId),
-    title: typeof value.title === "string" && value.title.trim() ? value.title.trim() : "知识库管理",
+    sessionId: String(record.sessionId),
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : "知识库管理",
     kind: "knowledge-base",
-    activeDate: typeof value.activeDate === "string" ? value.activeDate : days[0]?.date ?? "",
-    messageCount: typeof value.messageCount === "number" ? value.messageCount : days.reduce((sum, day) => sum + day.messageCount, 0),
-    dayCount: typeof value.dayCount === "number" ? value.dayCount : days.length,
-    updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : 0,
+    activeDate: typeof record.activeDate === "string" ? record.activeDate : days[0]?.date ?? "",
+    messageCount: typeof record.messageCount === "number" ? record.messageCount : days.reduce((sum, day) => sum + day.messageCount, 0),
+    dayCount: typeof record.dayCount === "number" ? record.dayCount : days.length,
+    updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : 0,
     days
   };
 }
 
-function normalizeHistoryDaySummary(value: any): KnowledgeBaseHistoryDaySummary | null {
-  if (typeof value?.date !== "string") return null;
+function normalizeHistoryDaySummary(value: unknown): KnowledgeBaseHistoryDaySummary | null {
+  const record = historyRecord(value);
+  if (typeof record?.date !== "string") return null;
   return {
-    date: value.date,
-    messageCount: numberOrZero(value.messageCount),
-    userMessageCount: numberOrZero(value.userMessageCount),
-    assistantMessageCount: numberOrZero(value.assistantMessageCount),
-    processMessageCount: numberOrZero(value.processMessageCount),
-    failedMessageCount: numberOrZero(value.failedMessageCount),
-    firstMessageAt: numberOrZero(value.firstMessageAt),
-    lastMessageAt: numberOrZero(value.lastMessageAt)
+    date: record.date,
+    messageCount: numberOrZero(record.messageCount),
+    userMessageCount: numberOrZero(record.userMessageCount),
+    assistantMessageCount: numberOrZero(record.assistantMessageCount),
+    processMessageCount: numberOrZero(record.processMessageCount),
+    failedMessageCount: numberOrZero(record.failedMessageCount),
+    firstMessageAt: numberOrZero(record.firstMessageAt),
+    lastMessageAt: numberOrZero(record.lastMessageAt)
   };
+}
+
+function historyRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function compactProcessText(message: ChatMessage): string {

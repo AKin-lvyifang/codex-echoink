@@ -98,6 +98,13 @@ import { knowledgeCommandQueryForInput } from "../knowledge-base/commands";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages } from "../knowledge-base/session-history";
 
+type ObsidianSettingsApi = {
+  setting?: {
+    open?: () => void;
+    openTabById?: (id: string) => void;
+  };
+};
+
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
 export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
@@ -539,7 +546,7 @@ export class CodexView extends ItemView {
   }
 
   private openPluginSettings(): void {
-    const setting = (this.app as any).setting;
+    const setting = (this.app as unknown as ObsidianSettingsApi).setting;
     if (!setting?.open || !setting?.openTabById) {
       new Notice("无法打开插件设置页");
       return;
@@ -1604,11 +1611,12 @@ export class CodexView extends ItemView {
     this.renderMessagesIfActive(session, message);
   }
 
-  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: any): void {
+  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void {
     if (!delta) return;
     let messageId = this.activeItemMessages.get(itemId);
     let message = messageId ? session.messages.find((item) => item.id === messageId) : null;
-    const summaryPayload = { ...payload, status: payload?.status ?? "running" };
+    const payloadRecord = processPayloadRecord(payload);
+    const summaryPayload = { ...payloadRecord, status: payloadRecord.status ?? "running" };
     const summary = summarizeProcessEvent(itemType, summaryPayload, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     if (!message) {
       message = {
@@ -1703,13 +1711,19 @@ export class CodexView extends ItemView {
     this.renderMessagesIfActive(session);
   }
 
-  private renderPlanUpdate(session: StoredSession, params: any): void {
+  private renderPlanUpdate(session: StoredSession, params: unknown): void {
+    const payload = processPayloadRecord(params);
     const lines: string[] = [];
-    if (params?.explanation) lines.push(params.explanation, "");
-    for (const item of params?.plan ?? []) {
-      const mark = item.status === "completed" ? "x" : " ";
-      const suffix = item.status === "inProgress" ? " (进行中)" : "";
-      lines.push(`- [${mark}] ${item.step}${suffix}`);
+    if (typeof payload.explanation === "string" && payload.explanation) lines.push(payload.explanation, "");
+    const plan = Array.isArray(payload.plan) ? payload.plan : [];
+    for (const rawItem of plan) {
+      const item = processPayloadRecord(rawItem);
+      const status = typeof item.status === "string" ? item.status : "";
+      const step = typeof item.step === "string" ? item.step : "";
+      if (!step) continue;
+      const mark = status === "completed" ? "x" : " ";
+      const suffix = status === "inProgress" ? " (进行中)" : "";
+      lines.push(`- [${mark}] ${step}${suffix}`);
     }
     if (!lines.length) return;
     let message = this.activePlanMessageId ? session.messages.find((item) => item.id === this.activePlanMessageId) : null;
@@ -1734,48 +1748,56 @@ export class CodexView extends ItemView {
     this.renderMessagesIfActive(session);
   }
 
-  private renderStartedItem(session: StoredSession, item: any): void {
-    if (!isProcessItemType(item?.type)) return;
-    if (item.type === "reasoning" && !rawTextForProcessItem(item)) return;
-    const status = item.status || "running";
-    void this.upsertProcessItem(session, item.id || newId("process"), item.type, rawTextForProcessItem(item), status, { ...item, status });
+  private renderStartedItem(session: StoredSession, item: unknown): void {
+    const payload = processPayloadRecord(item);
+    const type = stringPayload(payload.type);
+    if (!isProcessItemType(type)) return;
+    if (type === "reasoning" && !rawTextForProcessItem(payload)) return;
+    const status = stringPayload(payload.status) || "running";
+    void this.upsertProcessItem(session, stringPayload(payload.id) || newId("process"), type, rawTextForProcessItem(payload), status, { ...payload, status });
   }
 
-  private async renderCompletedItem(session: StoredSession, item: any): Promise<void> {
-    if (!item?.type) return;
-    if (item.type === "agentMessage") return;
-    if (item.type === "reasoning" || item.type === "plan") {
-      const text = rawTextForProcessItem(item);
+  private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> {
+    const payload = processPayloadRecord(item);
+    const type = stringPayload(payload.type);
+    if (!type) return;
+    if (type === "agentMessage") return;
+    const id = stringPayload(payload.id) || newId("process");
+    const status = stringPayload(payload.status) || "completed";
+    if (type === "reasoning" || type === "plan") {
+      const text = rawTextForProcessItem(payload);
       if (text) {
-        await this.upsertProcessItem(session, item.id, item.type, text, item.status || "completed", { ...item, status: item.status || "completed" });
+        await this.upsertProcessItem(session, id, type, text, status, { ...payload, status });
       } else {
-        this.finishProcessItem(session, item.id, item.status || "completed");
+        this.finishProcessItem(session, id, status);
       }
       return;
     }
-    if (item.type === "commandExecution") {
-      await this.upsertProcessItem(session, item.id, "commandExecution", `${item.command}\n\n${item.aggregatedOutput ?? ""}`.trim(), item.status || "completed", item);
-    } else if (item.type === "fileChange") {
-      const changes = Array.isArray(item.changes) ? item.changes : [];
+    if (type === "commandExecution") {
+      await this.upsertProcessItem(session, id, "commandExecution", `${stringPayload(payload.command)}\n\n${stringPayload(payload.aggregatedOutput)}`.trim(), status, payload);
+    } else if (type === "fileChange") {
+      const changes = Array.isArray(payload.changes) ? payload.changes : [];
       const diffSummary = buildDiffSummary(changes);
       const text = serializeFileChanges(changes);
-      await this.upsertProcessItem(session, item.id, "fileChange", text || item.status, item.status || "completed", item, diffSummary);
-    } else if (item.type === "mcpToolCall") {
-      await this.upsertProcessItem(session, item.id, "mcpToolCall", JSON.stringify(item.result ?? item.error ?? item.arguments, null, 2), item.status || "completed", item);
-    } else if (item.type === "dynamicToolCall") {
-      await this.upsertProcessItem(session, item.id, "dynamicToolCall", JSON.stringify(item.contentItems ?? item.result ?? item.arguments, null, 2), item.status || "completed", item);
-    } else if (item.type === "collabAgentToolCall") {
-      await this.upsertProcessItem(session, item.id, "collabAgentToolCall", JSON.stringify(item.result ?? item.arguments ?? item, null, 2), item.status || "completed", item);
-    } else if (item.type === "imageView") {
+      await this.upsertProcessItem(session, id, "fileChange", text || status, status, payload, diffSummary);
+    } else if (type === "mcpToolCall") {
+      await this.upsertProcessItem(session, id, "mcpToolCall", JSON.stringify(payload.result ?? payload.error ?? payload.arguments, null, 2), status, payload);
+    } else if (type === "dynamicToolCall") {
+      await this.upsertProcessItem(session, id, "dynamicToolCall", JSON.stringify(payload.contentItems ?? payload.result ?? payload.arguments, null, 2), status, payload);
+    } else if (type === "collabAgentToolCall") {
+      await this.upsertProcessItem(session, id, "collabAgentToolCall", JSON.stringify(payload.result ?? payload.arguments ?? payload, null, 2), status, payload);
+    } else if (type === "imageView") {
+      const itemPath = stringPayload(payload.path);
+      if (!itemPath) return;
       this.addMessageToSession(session, {
         role: "assistant",
         title: "图片",
         itemType: "image",
-        text: item.path,
-        images: [{ type: "image", name: basename(item.path), path: item.path }],
+        text: itemPath,
+        images: [{ type: "image", name: basename(itemPath), path: itemPath }],
         createdAt: Date.now()
       });
-    } else if (item.type === "contextCompaction") {
+    } else if (type === "contextCompaction") {
       this.addContextCompactionMessage(session);
     }
   }
@@ -1793,8 +1815,8 @@ export class CodexView extends ItemView {
     this.renderMessages();
   }
 
-  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: any, diffSummary?: DiffSummary): Promise<void> {
-    const summary = summarizeProcessEvent(itemType, { ...payload, status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
+  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown, diffSummary?: DiffSummary): Promise<void> {
+    const summary = summarizeProcessEvent(itemType, { ...processPayloadRecord(payload), status }, this.plugin.getVaultPath(), session.cwd || this.plugin.getVaultPath());
     const existingId = this.activeItemMessages.get(id);
     const existing = existingId ? session.messages.find((item) => item.id === existingId) : null;
     if (existing) {
@@ -2153,15 +2175,28 @@ function roleForProcessItem(itemType: string): ChatMessage["role"] {
 }
 
 
-function rawTextForProcessItem(item: any): string {
-  if (item?.type === "commandExecution") return item.command ?? "";
-  if (item?.type === "fileChange") return (item.changes ?? []).map((change: any) => change.path).join("\n");
-  if (item?.type === "mcpToolCall") return [item.server, item.tool].filter(Boolean).join(".");
-  if (item?.type === "dynamicToolCall") return [item.namespace, item.tool].filter(Boolean).join(".");
-  if (item?.type === "collabAgentToolCall") return item.tool ?? "";
-  if (item?.type === "reasoning") return reasoningTextFromPayload(item);
-  if (item?.type === "plan") return item.text ?? "";
+function rawTextForProcessItem(item: unknown): string {
+  const payload = processPayloadRecord(item);
+  const type = stringPayload(payload.type);
+  if (type === "commandExecution") return stringPayload(payload.command);
+  if (type === "fileChange") return (Array.isArray(payload.changes) ? payload.changes : [])
+    .map((change) => stringPayload(processPayloadRecord(change).path))
+    .filter(Boolean)
+    .join("\n");
+  if (type === "mcpToolCall") return [payload.server, payload.tool].map(stringPayload).filter(Boolean).join(".");
+  if (type === "dynamicToolCall") return [payload.namespace, payload.tool].map(stringPayload).filter(Boolean).join(".");
+  if (type === "collabAgentToolCall") return stringPayload(payload.tool);
+  if (type === "reasoning") return reasoningTextFromPayload(payload);
+  if (type === "plan") return stringPayload(payload.text);
   return "";
+}
+
+function processPayloadRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringPayload(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function mergeProcessFiles(current: ProcessFileRef[] | undefined, incoming: ProcessFileRef[]): ProcessFileRef[] {

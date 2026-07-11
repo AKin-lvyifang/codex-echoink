@@ -1,8 +1,8 @@
 import type { CodexServerRequest } from "../types/app-server";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcStdioLaunch } from "./json-rpc-stdio-transport";
 
-type NotificationHandler = (params: any) => void;
-type ServerRequestHandler = (request: CodexServerRequest) => Promise<any>;
+type NotificationHandler = (params: unknown) => void;
+type ServerRequestHandler = (request: CodexServerRequest) => Promise<unknown>;
 
 export interface CodexRpcLaunchOptions {
   command: string;
@@ -34,12 +34,12 @@ export class CodexRpcClient extends JsonRpcStdioTransport {
     return this.launch;
   }
 
-  request<T = any>(method: string, params?: any, timeoutMs = 30000): Promise<T> {
+  request<T = unknown>(method: string, params?: unknown, timeoutMs = 30000): Promise<T> {
     if (!this.isAlive()) throw new Error("Codex app-server 未连接");
     return super.request<T>(method, params, timeoutMs);
   }
 
-  async initialize(): Promise<any> {
+  async initialize(): Promise<unknown> {
     const result = await this.request(
       "initialize",
       {
@@ -65,7 +65,7 @@ export class CodexRpcClient extends JsonRpcStdioTransport {
 
   protected handleMessage(message: JsonRpcMessage): void {
     if (message.method && message.id !== undefined) {
-      void this.handleServerRequest(message as { id: number | string; method: string; params: any });
+      void this.handleServerRequest(message as { id: number | string; method: string; params: unknown });
       return;
     }
 
@@ -100,13 +100,13 @@ export class CodexRpcClient extends JsonRpcStdioTransport {
     });
   }
 
-  private emitNotification(method: string, params?: any): void {
+  private emitNotification(method: string, params?: unknown): void {
     const handlers = this.notificationHandlers.get(method);
     if (!handlers) return;
     for (const handler of handlers) handler(params);
   }
 
-  private async handleServerRequest(message: { id: number | string; method: string; params: any }): Promise<void> {
+  private async handleServerRequest(message: { id: number | string; method: string; params: unknown }): Promise<void> {
     const handler = this.serverRequestHandlers.get(message.method);
     try {
       const result = handler ? await handler({ id: message.id, method: message.method, params: message.params }) : {};
@@ -134,10 +134,11 @@ function processErrorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
 }
 
-export function formatJsonRpcError(error: any): Error {
-  const code = error?.code !== undefined ? String(error.code) : "";
-  const message = typeof error?.message === "string" && error.message.trim() ? error.message.trim() : "JSON-RPC 请求失败";
-  const data = error?.data !== undefined ? safeStringify(error.data) : "";
+export function formatJsonRpcError(error: unknown): Error {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  const code = record?.code !== undefined ? String(record.code) : "";
+  const message = typeof record?.message === "string" && record.message.trim() ? record.message.trim() : "JSON-RPC 请求失败";
+  const data = record?.data !== undefined ? safeStringify(record.data) : "";
   return new Error([
     "JSON-RPC 错误",
     code ? `错误码：${code}` : "",
@@ -146,7 +147,7 @@ export function formatJsonRpcError(error: any): Error {
   ].filter(Boolean).join("\n"));
 }
 
-function safeStringify(value: any): string {
+function safeStringify(value: unknown): string {
   try {
     return typeof value === "string" ? value : JSON.stringify(value);
   } catch {
