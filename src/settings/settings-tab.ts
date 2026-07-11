@@ -86,6 +86,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private hermesChecking = false;
   private hermesCheckError = "";
   private setupChecking = false;
+  private displayFrame: number | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
@@ -99,6 +100,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    if (this.displayFrame !== null) {
+      window.cancelAnimationFrame(this.displayFrame);
+      this.displayFrame = null;
+    }
     const { containerEl } = this;
     const copy = this.copy;
     const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
@@ -162,6 +167,14 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  private scheduleDisplay(): void {
+    if (this.displayFrame !== null) return;
+    this.displayFrame = window.requestAnimationFrame(() => {
+      this.displayFrame = null;
+      this.display();
+    });
+  }
+
   private renderAgentSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
     const copy = this.copy;
     const settings = this.plugin.settings;
@@ -189,7 +202,7 @@ export class CodexSettingTab extends PluginSettingTab {
             settings.agentBackend = backend;
             settings.agents.defaultBackend = backend;
             await this.plugin.saveSettings();
-            this.display();
+            this.scheduleDisplay();
           });
         }),
       "route"
@@ -202,7 +215,7 @@ export class CodexSettingTab extends PluginSettingTab {
       settings.cliPath = value.trim();
       settings.agents.codex.cliPath = settings.cliPath;
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.decorateSetting(new Setting(codexSection).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
       toggle.setValue(settings.proxyEnabled).onChange(async (value) => {
@@ -259,7 +272,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(hermesSection, "Hermes CLI 路径", hermes.cliPath, "~/.local/bin/hermes", async (value) => {
       hermes.cliPath = value.trim();
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addProviderText(hermesSection, "API Server URL", hermes.serverUrl, "http://127.0.0.1:8642/v1", async (value) => {
       hermes.serverUrl = value.trim().replace(/\/$/, "");
@@ -278,7 +291,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(hermesSection, "Port", String(hermes.port), "8642", async (value) => {
       hermes.port = parseClampedInteger(value, 8642, 1024, 65535);
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addProviderText(hermesSection, "Profile", hermes.profile, "default", async (value) => {
       hermes.profile = value.trim();
@@ -319,7 +332,7 @@ export class CodexSettingTab extends PluginSettingTab {
       opencode.cliPath = value.trim();
       this.plugin.settings.agents.opencode = opencode;
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addProviderText(container, copy.knowledge.serverUrl, opencode.serverUrl, "http://127.0.0.1:4096", async (value) => {
       opencode.serverUrl = value.trim().replace(/\/$/, "");
@@ -338,7 +351,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(container, copy.opencode.port, String(opencode.port), "4096", async (value) => {
       opencode.port = parseClampedInteger(value, 4096, 1024, 65535);
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addOpenCodeModelPicker(container);
     this.addProviderText(container, copy.opencode.providerId, opencode.providerId, "anthropic", async (value) => {
@@ -355,7 +368,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const testOpenCode = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.testConnection, attr: { type: "button" } });
     testOpenCode.onclick = async () => {
       await this.refreshOpenCodeRuntimeOptions();
-      this.display();
+      this.scheduleDisplay();
     };
   }
 
@@ -367,7 +380,7 @@ export class CodexSettingTab extends PluginSettingTab {
       dropdown.onChange(async (value) => {
         this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
         await this.plugin.saveSettings(true);
-        this.display();
+        this.scheduleDisplay();
       });
     }), "languages");
 
@@ -420,13 +433,13 @@ export class CodexSettingTab extends PluginSettingTab {
     const openChannel = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.openChannel, attr: { type: "button" } });
     openChannel.onclick = async () => {
       await this.plugin.activateKnowledgeBaseChannel();
-      this.display();
+      this.scheduleDisplay();
     };
     const initChannel = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.initChannel, attr: { type: "button" } });
     initChannel.onclick = async () => {
       await this.plugin.activateKnowledgeBaseChannel();
       this.plugin.getCodexView()?.fillKnowledgeBaseCommand("/init ");
-      this.display();
+      this.scheduleDisplay();
     };
 
     this.addKnowledgeBaseCommandGuide(wrapper);
@@ -436,7 +449,7 @@ export class CodexSettingTab extends PluginSettingTab {
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       })
     ), "toggle-right");
 
@@ -452,7 +465,7 @@ export class CodexSettingTab extends PluginSettingTab {
       dropdown.onChange(async (value) => {
         settings.backend = normalizeKnowledgeBaseBackendMode(value);
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       });
     }), "route");
 
@@ -461,7 +474,7 @@ export class CodexSettingTab extends PluginSettingTab {
         settings.useCustomRulesFile = value;
         if (value && (!settings.rulesFilePath || settings.rulesFilePath === AGENTS_RULES_FILE)) settings.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       })
     ), "file-cog");
     this.addKnowledgeBaseRulesFilePicker(wrapper);
@@ -476,7 +489,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(wrapper, copy.knowledge.scheduleTime, settings.scheduleTime, "09:00", async (value) => {
       settings.scheduleTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : settings.scheduleTime;
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.decorateSetting(new Setting(wrapper).setName(copy.knowledge.catchUp).setDesc(copy.knowledge.catchUpDesc).addToggle((toggle) =>
       toggle.setValue(settings.catchUpOnStartup).onChange(async (value) => {
@@ -532,7 +545,7 @@ export class CodexSettingTab extends PluginSettingTab {
         dropdown.onChange(async (value) => {
           this.plugin.settings.knowledgeBase.historyRetentionDays = normalizeKnowledgeBaseHistoryRetentionDays(value, DEFAULT_SETTINGS.knowledgeBase.historyRetentionDays);
           await this.plugin.saveSettings();
-          this.display();
+          this.scheduleDisplay();
         });
       }), "calendar-clock");
     const actions = section.createDiv({ cls: "codex-api-provider-actions" });
@@ -541,14 +554,14 @@ export class CodexSettingTab extends PluginSettingTab {
       rebuild.disabled = true;
       await this.plugin.rebuildKnowledgeBaseHistoryIndex();
       new Notice(copy.knowledge.historyRebuilt);
-      this.display();
+      this.scheduleDisplay();
     };
     const exportButton = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.exportHistory, attr: { type: "button" } });
     exportButton.onclick = async () => {
       exportButton.disabled = true;
       const exported = await this.plugin.exportKnowledgeBaseHistory();
       new Notice(copy.knowledge.historyExported(exported));
-      this.display();
+      this.scheduleDisplay();
     };
     const compact = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.compactHistory, attr: { type: "button" } });
     compact.onclick = async () => {
@@ -557,7 +570,7 @@ export class CodexSettingTab extends PluginSettingTab {
       compact.disabled = true;
       const count = await this.plugin.compactOldKnowledgeBaseProcessHistory();
       new Notice(copy.knowledge.historyCompacted(count));
-      this.display();
+      this.scheduleDisplay();
     };
     const prune = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.pruneHistory, attr: { type: "button" } });
     prune.onclick = async () => {
@@ -566,7 +579,7 @@ export class CodexSettingTab extends PluginSettingTab {
       prune.disabled = true;
       const result = await this.plugin.pruneKnowledgeBaseHistoryByRetention();
       new Notice(copy.knowledge.historyPruned(result.removedDayCount, result.removedMessageCount));
-      this.display();
+      this.scheduleDisplay();
     };
     const deleteDate = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.deleteHistoryDate, attr: { type: "button" } });
     deleteDate.onclick = async () => {
@@ -580,7 +593,7 @@ export class CodexSettingTab extends PluginSettingTab {
       deleteDate.disabled = true;
       const result = await this.plugin.removeKnowledgeBaseHistoryDays(dates);
       new Notice(copy.knowledge.historyPruned(result.removedDayCount, result.removedMessageCount));
-      this.display();
+      this.scheduleDisplay();
     };
     const clear = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.clearHistory, attr: { type: "button" } });
     clear.onclick = async () => {
@@ -589,7 +602,7 @@ export class CodexSettingTab extends PluginSettingTab {
       clear.disabled = true;
       const result = await this.plugin.removeKnowledgeBaseHistory();
       new Notice(copy.knowledge.historyCleared(result.removedDayCount, result.removedMessageCount));
-      this.display();
+      this.scheduleDisplay();
     };
   }
 
@@ -614,7 +627,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(paths, copy.review.outputDir, settings.outputDir, DEFAULT_SETTINGS.review.outputDir, async (value) => {
       settings.outputDir = normalizeReviewOutputDir(value, DEFAULT_SETTINGS.review.outputDir);
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addReviewPath(paths, copy.review.knowledgeMarkdown, settings.reports.knowledgeBase.lastMarkdownPath);
     this.addReviewPath(paths, copy.review.knowledgeHtml, settings.reports.knowledgeBase.lastHtmlPath);
@@ -647,7 +660,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (!accepted) return;
       button.disabled = true;
       await this.plugin.getReviewManager()?.runReview(kind);
-      this.display();
+      this.scheduleDisplay();
     };
   }
 
@@ -758,7 +771,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private async runSetupCheck(): Promise<void> {
     if (this.setupChecking) return;
     this.setupChecking = true;
-    this.display();
+    this.scheduleDisplay();
     try {
       await this.plugin.reconnectCodex({ refreshLogin: true });
       const check = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
@@ -769,7 +782,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings(true);
     } finally {
       this.setupChecking = false;
-      this.display();
+      this.scheduleDisplay();
     }
   }
 
@@ -782,7 +795,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.plugin.settings.setup = completeSetupState(this.plugin.settings.setup, Date.now(), this.plugin.manifest.version);
     await this.plugin.saveSettings(true);
     await this.plugin.activateView();
-    this.display();
+    this.scheduleDisplay();
   }
 
   private detectSetupPlatform(): SetupPlatform {
@@ -810,7 +823,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const status = await this.plugin.reconnectCodex({ refreshLogin: true });
       if (status.connected) new Notice(copy.status.refreshSuccess(status.accountLabel));
       else new Notice(copy.status.refreshFailed(status.errors[0] ?? copy.common.unknown));
-      this.display();
+      this.scheduleDisplay();
     };
   }
 
@@ -848,7 +861,7 @@ export class CodexSettingTab extends PluginSettingTab {
       button.onclick = async () => {
         this.plugin.settings.settingsTab = tab.id;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       };
     }
   }
@@ -885,7 +898,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.plugin.settings.providerMode = "codex-login";
       await this.plugin.saveSettings(true);
       await this.plugin.reconnectCodex();
-      this.display();
+      this.scheduleDisplay();
     };
 
     const add = header.createEl("button", {
@@ -909,7 +922,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.plugin.settings.apiProviders.push(provider);
       this.plugin.settings.activeApiProviderId = provider.id;
       await this.plugin.saveSettings(true);
-      this.display();
+      this.scheduleDisplay();
     };
 
     if (!this.plugin.settings.apiProviders.length) {
@@ -938,7 +951,7 @@ export class CodexSettingTab extends PluginSettingTab {
       toggle.setValue(settings.enabled).onChange(async (value) => {
         settings.enabled = value;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       })
     ), "toggle-right");
 
@@ -962,7 +975,7 @@ export class CodexSettingTab extends PluginSettingTab {
       dropdown.onChange(async (value) => {
         settings.qualityMode = normalizeEditorActionQualityMode(value, "quality");
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       });
     }), "gauge");
 
@@ -990,7 +1003,7 @@ export class CodexSettingTab extends PluginSettingTab {
       button.setButtonText(copy.common.clear).setIcon("trash-2").onClick(async () => {
         settings.articleUnderstandingCache = {};
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       })
     ), "database");
 
@@ -1015,13 +1028,13 @@ export class CodexSettingTab extends PluginSettingTab {
         toggle.setValue(action.enabled).onChange(async (value) => {
           action.enabled = value;
           await this.plugin.saveSettings();
-          this.display();
+          this.scheduleDisplay();
         })
       );
       this.addProviderText(row, copy.writing.name, action.label, copy.writing.actionNamePlaceholder, async (value) => {
         action.label = value.trim() || action.id;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       });
       this.addProviderTextArea(row, copy.writing.promptTemplate, action.promptTemplate, copy.writing.promptPlaceholder, async (value) => {
         action.promptTemplate = value.trim();
@@ -1082,7 +1095,7 @@ export class CodexSettingTab extends PluginSettingTab {
       styles.push({ id, label: copy.writing.defaultStyleLabel, instruction: copy.writing.defaultStyleInstruction });
       this.plugin.settings.editorActions.defaultStyleId = id;
       await this.plugin.saveSettings(true);
-      this.display();
+      this.scheduleDisplay();
     };
 
     for (const style of styles) {
@@ -1100,13 +1113,13 @@ export class CodexSettingTab extends PluginSettingTab {
           this.plugin.settings.editorActions.styles = styles.filter((item) => item.id !== style.id);
           if (this.plugin.settings.editorActions.defaultStyleId === style.id) this.plugin.settings.editorActions.defaultStyleId = "clear";
           await this.plugin.saveSettings(true);
-          this.display();
+          this.scheduleDisplay();
         };
       }
       this.addProviderText(row, copy.writing.name, style.label, copy.writing.styleNamePlaceholder, async (value) => {
         style.label = value.trim() || style.id;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       });
       this.addProviderTextArea(row, copy.writing.styleInstruction, style.instruction, copy.writing.styleInstructionPlaceholder, async (value) => {
         style.instruction = value.trim();
@@ -1144,7 +1157,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.plugin.settings.activeApiProviderId = provider.id;
       await this.plugin.saveSettings(true);
       await this.plugin.reconnectCodex();
-      this.display();
+      this.scheduleDisplay();
     };
 
     const remove = actions.createEl("button", {
@@ -1158,13 +1171,13 @@ export class CodexSettingTab extends PluginSettingTab {
       removeApiProvider(this.plugin.settings, provider.id);
       await this.plugin.saveSettings(true);
       if (wasActive) await this.plugin.reconnectCodex();
-      this.display();
+      this.scheduleDisplay();
     };
 
     this.addProviderText(row, copy.providers.name, provider.name, copy.providers.namePlaceholder, async (value) => {
       provider.name = value.trim();
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addProviderText(row, copy.providers.baseUrl, provider.baseUrl, "https://api.openai.com/v1", async (value) => {
       provider.baseUrl = value.trim();
@@ -1176,7 +1189,7 @@ export class CodexSettingTab extends PluginSettingTab {
       provider.models = models;
       provider.model = models[0] ?? "";
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     });
     this.addProviderText(row, copy.providers.apiKey, provider.apiKey, "sk-...", async (value) => {
       provider.apiKey = value.trim();
@@ -1244,7 +1257,7 @@ export class CodexSettingTab extends PluginSettingTab {
         if (!selected) return;
         this.applyOpenCodeModelChoice(selected);
         await this.plugin.saveSettings(true);
-        this.display();
+        this.scheduleDisplay();
       };
     } else {
       controls.createDiv({
@@ -1297,7 +1310,7 @@ export class CodexSettingTab extends PluginSettingTab {
         const selected = this.openCodeAgentChoices.find((agent) => agent.name === selectedName);
         opencode.agent = selected?.name ?? selectedName;
         await this.plugin.saveSettings(true);
-        this.display();
+        this.scheduleDisplay();
       };
     } else {
       const input = controls.createEl("input", {
@@ -1312,7 +1325,7 @@ export class CodexSettingTab extends PluginSettingTab {
       input.onchange = async () => {
         opencode.agent = input.value.trim() || "build";
         await this.plugin.saveSettings(true);
-        this.display();
+        this.scheduleDisplay();
       };
     }
 
@@ -1360,7 +1373,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.openCodeAgentsLoading = true;
       this.openCodeAgentsError = "";
     }
-    this.display();
+    this.scheduleDisplay();
     try {
       await backend.connect();
       const opencode = this.plugin.settings.opencode;
@@ -1397,7 +1410,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await backend.disconnect().catch(swallowError("disconnect OpenCode settings backend"));
       if (shouldLoadModels) this.openCodeModelsLoading = false;
       if (shouldLoadAgents) this.openCodeAgentsLoading = false;
-      this.display();
+      this.scheduleDisplay();
     }
   }
 
@@ -1405,13 +1418,13 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.hermesChecking) return;
     this.hermesChecking = true;
     this.hermesCheckError = "";
-    this.display();
+    this.scheduleDisplay();
     try {
       const result = await this.plugin.testHermesConnection();
       this.hermesCheckError = result.connected ? "" : result.message;
     } finally {
       this.hermesChecking = false;
-      this.display();
+      this.scheduleDisplay();
     }
   }
 
@@ -1457,7 +1470,7 @@ export class CodexSettingTab extends PluginSettingTab {
       settings.useCustomRulesFile = true;
       settings.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
       await this.plugin.saveSettings();
-      this.display();
+      this.scheduleDisplay();
     };
 
     const repairButton = picker.createEl("button", {
@@ -1509,7 +1522,7 @@ export class CodexSettingTab extends PluginSettingTab {
         ? copy.knowledge.repairPatchedDetail(result.missingRules.length)
         : "";
       new Notice(`${copy.knowledge.repairSummary(result.status, result.rulesFilePath)}${detail}`);
-      this.display();
+      this.scheduleDisplay();
     } catch (error) {
       new Notice(copy.knowledge.repairFailed(error instanceof Error ? error.message : String(error)));
     }
@@ -1531,7 +1544,7 @@ export class CodexSettingTab extends PluginSettingTab {
       settings.rulesFilePath = sanitizeRelativeSettingsPath(file.path);
       await this.plugin.saveSettings();
       new Notice(copy.knowledge.selectedRulesFile(settings.rulesFilePath));
-      this.display();
+      this.scheduleDisplay();
     }, copy).open();
   }
 
@@ -1595,7 +1608,7 @@ export class CodexSettingTab extends PluginSettingTab {
       button.onclick = async () => {
         this.plugin.settings.resourceManagementTab = tab.id;
         await this.plugin.saveSettings();
-        this.display();
+        this.scheduleDisplay();
       };
     }
     const refresh = tabs.createEl("button", {
@@ -1868,7 +1881,7 @@ export class CodexSettingTab extends PluginSettingTab {
       ? { transport: "http", url: raw }
       : { transport: "stdio", command: raw };
     await this.plugin.saveSettings(true);
-    this.display();
+    this.scheduleDisplay();
   }
 
   private async testMcpConnection(resource: EchoInkResource): Promise<void> {
@@ -1878,7 +1891,7 @@ export class CodexSettingTab extends PluginSettingTab {
     } catch (error) {
       new Notice(`测试连接失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      this.display();
+      this.scheduleDisplay();
     }
   }
 
@@ -1887,7 +1900,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.resourceLoaded[tab] && !force) return;
     this.resourceLoadingTab = tab;
     delete this.resourceLoadErrors[tab];
-    this.display();
+    this.scheduleDisplay();
     const kind = resourceKindForTab(tab);
     let codexError = "";
     let hermesError = "";
@@ -1939,7 +1952,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings(true);
     } finally {
       this.resourceLoadingTab = null;
-      this.display();
+      this.scheduleDisplay();
     }
   }
 
