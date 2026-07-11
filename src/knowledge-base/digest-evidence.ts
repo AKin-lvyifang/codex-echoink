@@ -13,6 +13,8 @@ import {
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./transaction-snapshot-core";
 
+const DIGEST_EVIDENCE_DIFF_LINE_LIMIT = 5000;
+
 export async function verifyDigestEvidence(input: {
   vaultPath: string;
   reportPath: string;
@@ -299,6 +301,9 @@ function introducedEvidenceLineFlags(beforeLines: string[], currentLines: string
   if (!beforeLines.length) return currentLines.map(() => true);
   const beforeLength = beforeLines.length;
   const currentLength = currentLines.length;
+  if (beforeLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT || currentLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT) {
+    return currentLines.map(() => true);
+  }
   const maxDistance = beforeLength + currentLength;
   const trace: Array<Map<number, number>> = [];
   const vector = new Map<number, number>([[1, 0]]);

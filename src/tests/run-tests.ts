@@ -3214,10 +3214,15 @@ const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src
 const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/knowledge-dashboard.ts"), "utf8");
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const digestEvidenceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/digest-evidence.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
 const cloneStoredSessionsSource = knowledgeBaseManagerSource.slice(
   knowledgeBaseManagerSource.indexOf("function cloneStoredSessions"),
   knowledgeBaseManagerSource.indexOf("function rollbackScheduledMaintenanceMessage")
+);
+const introducedEvidenceLineFlagsSource = digestEvidenceSource.slice(
+  digestEvidenceSource.indexOf("function introducedEvidenceLineFlags"),
+  digestEvidenceSource.indexOf("function evidenceVectorValue")
 );
 const codexViewUiSources = [
   codexViewSource,
@@ -3249,6 +3254,10 @@ assert.doesNotMatch(codexViewAddMessageToSessionSource, /saveSettings/);
 assert.match(cloneStoredSessionsSource, /clonePlainValue/);
 assert.match(cloneStoredSessionsSource, /value instanceof Date/);
 assert.doesNotMatch(cloneStoredSessionsSource, /JSON\.parse|JSON\.stringify/);
+assert.match(digestEvidenceSource, /DIGEST_EVIDENCE_DIFF_LINE_LIMIT\s*=\s*5000/);
+assert.match(introducedEvidenceLineFlagsSource, /beforeLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT/);
+assert.match(introducedEvidenceLineFlagsSource, /currentLength > DIGEST_EVIDENCE_DIFF_LINE_LIMIT/);
+assert.match(introducedEvidenceLineFlagsSource, /return currentLines\.map\(\(\) => true\)/);
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
 assert.doesNotMatch(codexViewSource, /private handleEditorActionNotification/);
 assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);
