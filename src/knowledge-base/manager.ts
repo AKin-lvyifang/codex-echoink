@@ -18,6 +18,7 @@ import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseManagedThreadKind, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment, type StoredSession } from "../settings/settings";
 import type { CodexNotification, PermissionMode } from "../types/app-server";
+import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult, type KnowledgeBaseTurnOptionOverrides } from "./command-router";
 import {
   buildCodexKnowledgeInput,
   buildOpenCodeKnowledgeParts,
@@ -33,7 +34,6 @@ import {
   selectAgentModel,
   selectOpenCodeModel
 } from "./agent-runner";
-import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
 import { verifyDigestEvidence } from "./digest-evidence";
@@ -51,7 +51,7 @@ import { assertSafeRawEntries, assertSafeRawRoot, fingerprintKnowledgeRawContent
 import { KnowledgeBaseScheduler } from "./scheduler";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
 import { extractRequestedRawPaths, processedSourcesForRunMode, selectSourcesForRunMode } from "./source-selection";
-import { buildKnowledgeBaseMaintainReportPayload, knowledgeBaseRunModeForCommandIntent, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
+import type { KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import {
   appendConflictDuplicateCleanupReport,
   appendExternalRawAdditionsReport,
@@ -119,20 +119,6 @@ type ActiveHermesRun = {
 
 type GuardedAgentBackend = Extract<AgentBackendKind, "opencode" | "hermes">;
 type GuardedAgentRun = ActiveOpenCodeRun | ActiveHermesRun;
-
-export interface KnowledgeBaseChatResult {
-  status: "success" | "failed" | "canceled";
-  message: string;
-  citations?: KnowledgeBaseCitationSummary;
-  ui?: KnowledgeBaseMessageUiPayload;
-  followUpCommand?: string;
-}
-
-export interface KnowledgeBaseTurnOptionOverrides extends Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources"> {
-  codexInactivityTimeoutMs?: number;
-  opencodeTaskTimeoutMs?: number;
-  hermesTaskTimeoutMs?: number;
-}
 
 const MAX_ATTACHED_SOURCES = 20;
 const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
@@ -345,124 +331,25 @@ export class KnowledgeBaseManager {
   }
 
   async handleUserMessage(text: string, attachments: StoredAttachment[] = [], turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
-    const command = parseKnowledgeBaseCommand(text, attachments.length);
-    try {
-      if (command.intent === "help") {
-        return { status: "success", message: knowledgeBaseHelpText() };
-      }
-      if (command.intent === "chat") {
-        return { status: "success", message: "这条消息会按普通 Agent 对话处理；需要查询知识库时请使用 `/ask ...`。" };
-      }
-      if (command.intent === "init") {
-        if (command.confirm) {
-          const preview = await this.previewInitialization();
-          const result = await this.executeInitialization(preview);
-          return {
-            status: "success",
-            message: result.summary,
-            followUpCommand: "/check 初始化后体检当前 vault，只报告问题，不移动文件，不删除文件。"
-          };
-        }
-        const preview = await this.previewInitialization();
-        return { status: "success", message: preview.summary };
-      }
-      if (command.intent === "cancel") {
-        await this.cancelMaintenance();
-        return { status: "success", message: "已请求取消当前知识库任务。" };
-      }
-      if (command.intent === "calibrate") {
-        const result = await this.calibrateRawDigestStatus();
-        if (result.status === "success") {
-          return {
-            status: "success",
-            message: [
-              "Raw 状态校准完成。",
-              result.reportPath ? `报告：${result.reportPath}` : "",
-              result.summary ? `\n${result.summary}` : ""
-            ].filter(Boolean).join("\n"),
-            ui: buildKnowledgeBaseMaintainReportPayload("calibrate", result)
-          };
-        }
-        return {
-          status: "failed",
-          message: `Raw 状态校准失败：${result.error || "未知错误"}`,
-          ui: buildKnowledgeBaseMaintainReportPayload("calibrate", result)
-        };
-      }
-      if (command.intent === "lint" || command.intent === "maintain" || command.intent === "reingest" || command.intent === "process-outputs" || command.intent === "process-inbox") {
-        const mode = command.intent === "process-inbox" ? "inbox" : command.intent === "process-outputs" ? "outputs" : command.intent;
-        const result = await this.runMaintenance(mode, text, turnOptionOverrides);
-        if (result.status === "success") {
-          return {
-            status: "success",
-            message: [
-              `知识库${labelForRunMode(mode)}完成。`,
-              result.reportPath ? `报告：${result.reportPath}` : "",
-              result.summary ? `\n${result.summary}` : ""
-            ].filter(Boolean).join("\n"),
-            ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
-          };
-        }
-        if (result.status === "canceled") {
-          return {
-            status: "canceled",
-            message: [
-              `知识库${labelForRunMode(mode)}已取消。`,
-              result.error ? `原因：${result.error}` : "",
-              result.reportPath ? `报告：${result.reportPath}` : ""
-            ].filter(Boolean).join("\n"),
-            ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
-          };
-        }
-        return {
-          status: "failed",
-          message: [
-            `知识库${labelForRunMode(mode)}失败：${result.error || "未知错误"}`,
-            this.formatFailureContext(result.reportPath)
-          ].filter(Boolean).join("\n"),
-          ui: buildKnowledgeBaseMaintainReportPayload(mode, result)
-        };
-      }
-      if (command.intent === "ask") {
-        return await this.answerQuestion(text, turnOptionOverrides);
-      }
-      if (command.intent === "review") {
-        return await this.runWeeklyReview(command.reviewKind ?? "knowledge-base");
-      }
-      if (command.intent === "journal") {
-        return await this.writeDailyJournal(text, attachments, turnOptionOverrides);
-      }
-      const target = command.target === "journal" ? "inbox" : command.target ?? (attachments.length ? "raw-attachments" : "inbox");
-      const paths = await this.captureChatInput(target, text, attachments);
-      return {
-        status: "success",
-        message: paths.length ? `已收集到：\n${paths.map((item) => `- ${item}`).join("\n")}` : "没有可收集的内容。"
-      };
-    } catch (error) {
-      if (command.intent === "init") {
-        this.plugin.settings.knowledgeBase.initialization.status = "failed";
-        await this.plugin.saveSettings(true);
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      const mode = knowledgeBaseRunModeForCommandIntent(command.intent);
-      if (mode) {
-        return {
-          status: "failed",
-          message,
-          ui: buildKnowledgeBaseMaintainReportPayload(mode, {
-            status: "failed",
-            reportPath: this.plugin.settings.knowledgeBase.lastReportPath || "",
-            summary: "",
-            processedSources: [],
-            error: message
-          })
-        };
-      }
-      return {
-        status: "failed",
-        message
-      };
-    }
+    return handleKnowledgeBaseUserMessage({
+      previewInitialization: () => this.previewInitialization(),
+      executeInitialization: (preview) => this.executeInitialization(preview),
+      markInitializationFailed: () => this.markInitializationFailed(),
+      cancelMaintenance: () => this.cancelMaintenance(),
+      calibrateRawDigestStatus: () => this.calibrateRawDigestStatus(),
+      runMaintenance: (mode, userRequest, overrides) => this.runMaintenance(mode, userRequest, overrides),
+      answerQuestion: (query, overrides) => this.answerQuestion(query, overrides),
+      runWeeklyReview: (kind) => this.runWeeklyReview(kind),
+      writeDailyJournal: (query, files, overrides) => this.writeDailyJournal(query, files, overrides),
+      captureChatInput: (target, query, files) => this.captureChatInput(target, query, files),
+      lastReportPath: () => this.plugin.settings.knowledgeBase.lastReportPath || "",
+      formatFailureContext: (reportPath) => this.formatFailureContext(reportPath)
+    }, text, attachments, turnOptionOverrides);
+  }
+
+  private async markInitializationFailed(): Promise<void> {
+    this.plugin.settings.knowledgeBase.initialization.status = "failed";
+    await this.plugin.saveSettings(true);
   }
 
   async previewInitialization(): Promise<KnowledgeBaseInitializationPreview> {

@@ -3275,6 +3275,7 @@ const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd()
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/composer.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
+const knowledgeBaseCommandRouterSource = await readFile(path.join(process.cwd(), "src/knowledge-base/command-router.ts"), "utf8");
 const digestEvidenceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/digest-evidence.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
 const cloneStoredSessionsSource = knowledgeBaseManagerSource.slice(
@@ -3713,7 +3714,8 @@ assert.equal(isKnowledgeDashboardHealthTooltipHoverPoint(healthTooltipTriggerRec
 assert.match(codexViewMessageListSource, /renderKnowledgeBaseResultContent/);
 assert.match(codexViewMessageListSource, /codex-kb-result-title/);
 assert.match(codexViewMessageListSource, /codex-kb-result-body/);
-assert.match(knowledgeBaseManagerSource, /buildKnowledgeBaseMaintainReportPayload/);
+assert.match(knowledgeBaseManagerSource, /handleKnowledgeBaseUserMessage/);
+assert.match(knowledgeBaseCommandRouterSource, /buildKnowledgeBaseMaintainReportPayload/);
 assert.match(codexViewTurnRunnerSource, /buildKnowledgeBaseRunPayload/);
 assert.match(codexViewTurnRunnerSource, /assistantMessage\.knowledgeBaseUi\s*=\s*result\.ui/);
 assert.match(codexViewMessageListSource, /renderKnowledgeBaseRunCard/);
