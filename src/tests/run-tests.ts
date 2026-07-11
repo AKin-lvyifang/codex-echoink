@@ -28,6 +28,7 @@ import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { formatJsonRpcError } from "../core/codex-rpc";
+import { CodexServerRequestRouter } from "../core/server-request-router";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText } from "../core/raw-message-store";
 import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "../ui/turn-watchdog";
@@ -432,6 +433,36 @@ const archiveService = new CodexService({
 });
 await archiveService.archiveThread("thread-kb");
 assert.deepEqual(archiveCalls, [{ command: process.execPath, args: ["archive", "thread-kb"], cwd: "/vault" }]);
+
+const serverRequestEvents: string[] = [];
+const serverRequestRouter = new CodexServerRequestRouter({
+  confirm: async (title, body, acceptText, declineText) => {
+    serverRequestEvents.push([title, body, acceptText ?? "", declineText ?? ""].join("|"));
+    return !body.includes("deny");
+  },
+  requestUserInput: async (questions) => {
+    serverRequestEvents.push(`questions:${questions.length}`);
+    return { topic: { answers: ["yes"] } };
+  },
+  openUrl: (url) => serverRequestEvents.push(`open:${url}`)
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 1, method: "item/commandExecution/requestApproval", params: { command: "npm test", reason: "verify" } }), { decision: "accept" });
+assert.deepEqual(await serverRequestRouter.handle({ id: 2, method: "item/fileChange/requestApproval", params: { reason: "deny file" } }), { decision: "decline" });
+assert.deepEqual(await serverRequestRouter.handle({ id: 3, method: "item/permissions/requestApproval", params: { reason: "need", permissions: { filesystem: "write" } } }), {
+  permissions: { filesystem: "write" },
+  scope: "turn"
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 4, method: "item/tool/requestUserInput", params: { questions: [{ id: "topic" }] } }), {
+  answers: { topic: { answers: ["yes"] } }
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 5, method: "mcpServer/elicitation/request", params: { mode: "url", message: "login", url: "https://example.com" } }), {
+  action: "accept",
+  content: null,
+  _meta: null
+});
+assert.deepEqual(await serverRequestRouter.handle({ id: 6, method: "unknown/request", params: {} }), {});
+assert.ok(serverRequestEvents.includes("open:https://example.com"));
+
 const queuedKbTurnOptions = buildCodexKnowledgeTurnOptions({
   settings: DEFAULT_SETTINGS,
   availableModels: [{ model: "gpt-test" }],

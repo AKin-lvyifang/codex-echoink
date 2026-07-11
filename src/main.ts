@@ -7,6 +7,7 @@ import { swallowError } from "./core/error-handling";
 import { HermesBackend } from "./core/hermes-backend";
 import { isSyntheticHermesDefaultModel } from "./core/hermes-models";
 import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "./core/raw-message-store";
+import { CodexServerRequestRouter } from "./core/server-request-router";
 import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { buildEchoInkResourceCatalog, skillResourcesForScope } from "./resources/registry";
 import { EchoInkMcpBroker } from "./resources/mcp-broker";
@@ -15,7 +16,7 @@ import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope 
 import { CodexSettingTab } from "./settings/settings-tab";
 import { confirmModal, requestUserInputModal } from "./ui/modals";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
-import type { CodexNotification, CodexServerRequest, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
+import type { CodexNotification, CodexSkill, CodexStatusSnapshot } from "./types/app-server";
 import { EditorActionController } from "./editor-actions/controller";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./knowledge-base/constants";
@@ -58,6 +59,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
   private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
+  private serverRequestRouter: CodexServerRequestRouter | null = null;
   private startupMaintenancePromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -250,7 +252,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         activeApiProvider: getActiveApiProvider(this.settings),
         vaultPath: this.getVaultPath(),
         onNotification: (notification) => this.handleCodexNotification(notification),
-        onServerRequest: (request) => this.handleServerRequest(request)
+        onServerRequest: (request) => this.getServerRequestRouter().handle(request)
       });
     }
     this.connectPromise = (async () => {
@@ -541,6 +543,17 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.getCodexView()?.handleCodexNotification(notification);
   }
 
+  private getServerRequestRouter(): CodexServerRequestRouter {
+    if (!this.serverRequestRouter) {
+      this.serverRequestRouter = new CodexServerRequestRouter({
+        confirm: (title, body, acceptText, declineText) => confirmModal(this.app, title, body, acceptText, declineText),
+        requestUserInput: (questions) => requestUserInputModal(this.app, questions),
+        openUrl: (url) => window.open(url)
+      });
+    }
+    return this.serverRequestRouter;
+  }
+
   private async flushSettingsSave(options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
     const run = this.saveQueue.then(async () => {
       await this.flushRawWrites();
@@ -777,48 +790,4 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
   }
 
-  private async handleServerRequest(request: CodexServerRequest): Promise<unknown> {
-    const params = asRecord(request.params) ?? {};
-    if (request.method === "item/commandExecution/requestApproval") {
-      const command = stringParam(params.command) || "未知命令";
-      const accepted = await confirmModal(this.app, "Codex 请求执行命令", `${command}\n\n${stringParam(params.reason)}`);
-      return { decision: accepted ? "accept" : "decline" };
-    }
-    if (request.method === "item/fileChange/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求修改文件", stringParam(params.reason) || "是否允许本次文件修改？");
-      return { decision: accepted ? "accept" : "decline" };
-    }
-    if (request.method === "item/permissions/requestApproval") {
-      const accepted = await confirmModal(this.app, "Codex 请求额外权限", stringParam(params.reason) || "是否允许本次额外权限？");
-      return accepted
-        ? {
-            permissions: asRecord(params.permissions) ?? {},
-            scope: "turn"
-          }
-        : { permissions: {}, scope: "turn" };
-    }
-    if (request.method === "item/tool/requestUserInput") {
-      const answers = await requestUserInputModal(this.app, Array.isArray(params.questions) ? params.questions : []);
-      return { answers };
-    }
-    if (request.method === "mcpServer/elicitation/request") {
-      if (params.mode === "url") {
-        const url = stringParam(params.url);
-        const accepted = await confirmModal(this.app, "MCP 需要网页登录", `${stringParam(params.message)}\n\n${url}`, "打开", "取消");
-        if (accepted && url) window.open(url);
-        return { action: accepted ? "accept" : "cancel", content: null, _meta: null };
-      }
-      const accepted = await confirmModal(this.app, `MCP：${stringParam(params.serverName)}`, stringParam(params.message) || "是否继续？");
-      return { action: accepted ? "accept" : "decline", content: {}, _meta: null };
-    }
-    return {};
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function stringParam(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
