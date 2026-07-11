@@ -8,7 +8,7 @@ import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type K
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus } from "./types";
-import { exists } from "./utils";
+import { exists, normalizeSlashes } from "./utils";
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -1270,8 +1270,4 @@ function buildWarnings(input: { rulesFileExists: boolean; rawExists: boolean; wi
 function normalizeRelativePath(value: string, fallback: string): string {
   const clean = value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/");
   return clean || fallback;
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
 }

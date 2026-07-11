@@ -4,7 +4,7 @@ import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
-import { isMissingPathError } from "./utils";
+import { isMissingPathError, normalizeSlashes } from "./utils";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -185,8 +185,4 @@ function formatDateForFile(date: Date): string {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
-}
-
-function normalizeSlashes(value: string): string {
-  return value.split(path.sep).join("/");
 }
