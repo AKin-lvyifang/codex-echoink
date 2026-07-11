@@ -3215,6 +3215,10 @@ const codexViewKnowledgeDashboardSource = await readFile(path.join(process.cwd()
 const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
+const cloneStoredSessionsSource = knowledgeBaseManagerSource.slice(
+  knowledgeBaseManagerSource.indexOf("function cloneStoredSessions"),
+  knowledgeBaseManagerSource.indexOf("function rollbackScheduledMaintenanceMessage")
+);
 const codexViewUiSources = [
   codexViewSource,
   codexViewHeaderSource,
@@ -3242,6 +3246,9 @@ assert.match(codexViewSource, /private async flushSessionSave/);
 assert.match(codexViewSource, /window\.setTimeout\(\(\) => \{/);
 assert.match(codexViewAddMessageToSessionSource, /this\.scheduleSessionSave\(\)/);
 assert.doesNotMatch(codexViewAddMessageToSessionSource, /saveSettings/);
+assert.match(cloneStoredSessionsSource, /clonePlainValue/);
+assert.match(cloneStoredSessionsSource, /value instanceof Date/);
+assert.doesNotMatch(cloneStoredSessionsSource, /JSON\.parse|JSON\.stringify/);
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
 assert.doesNotMatch(codexViewSource, /private handleEditorActionNotification/);
 assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);

@@ -2049,7 +2049,18 @@ function cloneList<T extends object>(items: T[] | undefined): T[] {
 }
 
 function cloneStoredSessions(sessions: StoredSession[] | undefined): StoredSession[] {
-  return JSON.parse(JSON.stringify(sessions ?? [])) as StoredSession[];
+  return clonePlainValue(sessions ?? []);
+}
+
+function clonePlainValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => clonePlainValue(item)) as T;
+  if (value instanceof Date) return new Date(value.getTime()) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, clonePlainValue(entry)])
+    ) as T;
+  }
+  return value;
 }
 
 function rollbackScheduledMaintenanceMessage(
