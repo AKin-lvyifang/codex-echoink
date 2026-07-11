@@ -23,11 +23,10 @@ import { diagnoseCodexError, type CodexErrorDiagnostic } from "../core/codex-dia
 import { getElectronDialog, showItemInFinder } from "../core/electron";
 import { basename, buildUserInput, contextUsageView, reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { settleStaleRunningMessages } from "../core/message-state";
-import { normalizeRateLimitResponse } from "../core/rate-limits";
 import { shouldCloseComposerMenusForClick } from "./composer-menu";
 import { composerPrimaryActionForState, composerStateForRuntimeState, type ComposerPrimaryActionState } from "./composer-state";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
-import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutForSession, turnWatchdogTimeoutText } from "./turn-watchdog";
+import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "./turn-watchdog";
 import { textInputModal } from "./modals";
 import { KnowledgeBaseHistoryModal } from "./codex-view/history-modal";
 import {
@@ -88,8 +87,9 @@ import {
   type ArticleUnderstandingPanelState
 } from "./codex-view/header";
 import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
+import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
-import { editorActionStartBlockReason, extractEditorActionNotificationIds, routeEditorActionNotification as routeEditorActionNotificationState } from "../editor-actions/state";
+import { editorActionStartBlockReason } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../editor-actions/turn-options";
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionRequest, EditorActionStatusView } from "../editor-actions/types";
 import type { EditorActionSummarySource } from "../editor-actions/summary-cache";
@@ -179,6 +179,7 @@ export class CodexView extends ItemView {
   private draggedQueueItemId = "";
   private readonly turnRunnerContext: CodexViewTurnContext;
   private readonly editorActionRunnerContext: CodexViewEditorActionContext;
+  private readonly notificationRouter: CodexNotificationRouter;
 
   get messagesBottomFollowPaused(): boolean {
     return this.messageScrollFollow.paused;
@@ -198,6 +199,7 @@ export class CodexView extends ItemView {
     this.activeRunKind = "";
     this.turnRunnerContext = this.createTurnRunnerContext();
     this.editorActionRunnerContext = this.createEditorActionRunnerContext();
+    this.notificationRouter = new CodexNotificationRouter(this.createNotificationRouterContext());
   }
 
   private createTurnRunnerContext(): CodexViewTurnContext {
@@ -218,6 +220,17 @@ export class CodexView extends ItemView {
       get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionRun() { return view.editorActionRun; }, set editorActionRun(value) { view.editorActionRun = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
       applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels()
     } satisfies CodexViewEditorActionContext;
+  }
+
+  private createNotificationRouterContext(): CodexNotificationRouterContext {
+    const view = this;
+    return {
+      get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, get activeRunKind() { return view.activeRunKind; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get usageLoading() { return view.usageLoading; }, set usageLoading(value) { view.usageLoading = value; }, get usageError() { return view.usageError; }, set usageError(value) { view.usageError = value; },
+      get editorActionRun() { return view.editorActionRun; }, get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, get editorActionThreadId() { return view.editorActionThreadId; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionItemIds() { return view.editorActionItemIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; },
+      isEditorActionRunActive: () => view.isEditorActionRunActive(), isEditorSummaryRunActive: () => view.isEditorSummaryRunActive(), activeRunSession: () => view.activeRunSession(), sessionForThread: (threadId) => view.sessionForThread(threadId), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), markThinkingAsStreaming: (session) => view.markThinkingAsStreaming(session), appendItemDelta: (session, itemId, role, delta, itemType, title) => view.appendItemDelta(session, itemId, role, delta, itemType, title), appendProcessDelta: (session, itemId, itemType, delta, payload) => view.appendProcessDelta(session, itemId, itemType, delta, payload), upsertProcessItem: (session, id, itemType, text, status, payload) => view.upsertProcessItem(session, id, itemType, text, status, payload),
+      renderPlanUpdate: (session, params) => view.renderPlanUpdate(session, params), renderStartedItem: (session, item) => view.renderStartedItem(session, item), renderCompletedItem: (session, item) => view.renderCompletedItem(session, item), updateUsageHeader: (rateLimits, loading, error) => view.updateUsageHeader(rateLimits, loading, error), renderUsagePanel: (rateLimits, error, loading) => view.renderUsagePanel(rateLimits, error, loading), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session), clearTurnWatchdog: () => view.clearTurnWatchdog(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status),
+      finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), clearActiveRun: () => view.clearActiveRun(), applyStatus: () => view.applyStatus(), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), rejectEditorSummaryRun: (error) => view.rejectEditorSummaryRun(error), resolveEditorSummaryRun: (text) => view.resolveEditorSummaryRun(text), releaseEditorSummaryRunLock: (runId) => view.releaseEditorSummaryRunLock(runId), addMessageToSession: (session, message) => view.addMessageToSession(session, message)
+    } satisfies CodexNotificationRouterContext;
   }
 
   getViewType(): string {
@@ -297,230 +310,17 @@ export class CodexView extends ItemView {
   }
 
   handleCodexNotification(notification: CodexNotification): void {
-    const { method, params } = notification;
-    if (this.handleEditorActionNotification(method, params)) return;
-    if (this.activeRunKind === "knowledge-base" && isKnowledgeBaseUnroutedCodexNotification(method)) return;
-    if (method === "turn/started") {
-      const session = this.activeRunSession();
-      const knowledgeSession = this.isKnowledgeBaseSession(session);
-      this.running = true;
-      this.activeTurnId = params?.turn?.id ?? "";
-      this.turnStartedAt = Date.now();
-      this.attachTurnIdToRun(session, this.activeTurnId);
-      this.ensureThinkingMessage(session, "生成中", "正在生成回复...");
-      const timeoutMs = turnWatchdogTimeoutForSession(knowledgeSession);
-      if (timeoutMs === null) this.clearTurnWatchdog();
-      else this.armTurnWatchdog(timeoutMs, turnWatchdogTimeoutText(timeoutMs));
-      this.applyStatus();
+    if (!this.notificationRouter) {
+      const method = notification.method;
+      if (this.activeRunKind === "knowledge-base" && (method.startsWith("item/") || method.startsWith("turn/") || method.startsWith("thread/") || method === "error")) return;
       return;
     }
-    if (method === "turn/completed") {
-      const session = this.activeRunSession();
-      const failed = params?.turn?.status === "failed";
-      const shouldAdvanceQueue = this.activeRunKind === "chat";
-      if (this.editorActionRun?.runId === this.activeRunId) {
-        if (failed) {
-          this.rejectEditorActionRun(new Error("Codex 写作任务失败"));
-        } else if (this.editorActionRun.text.trim()) {
-          this.resolveEditorActionRun(this.editorActionRun.text);
-        } else {
-          this.rejectEditorActionRun(new Error("Codex 没有返回候选文本"));
-        }
-      }
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.finishThinkingMessage(session, failed ? "中断" : "完成");
-      this.finishRunningProcessMessages(session, failed ? "failed" : "completed");
-      this.finishPlanMessage(session);
-      this.clearActiveRun();
-      this.applyStatus();
-      void this.plugin.saveSettings(true);
-      if (shouldAdvanceQueue) void this.afterTurnSettled(session.id, !failed);
-      return;
-    }
-    if (method === "account/rateLimits/updated") {
-      const normalizedRateLimits = normalizeRateLimitResponse(params);
-      this.usageLoading = false;
-      this.usageError = null;
-      if (this.plugin.lastStatus) {
-        this.plugin.lastStatus = {
-          ...this.plugin.lastStatus,
-          rateLimits: normalizedRateLimits.rateLimits,
-          rateLimitsByLimitId: normalizedRateLimits.rateLimitsByLimitId
-        };
-      }
-      this.updateUsageHeader(normalizedRateLimits.rateLimits, false, null);
-      this.renderUsagePanel(normalizedRateLimits.rateLimits, null, false);
-      return;
-    }
-    if (method === "thread/tokenUsage/updated") {
-      this.updateContextForSession(this.activeRunSession(), params?.tokenUsage, true);
-      return;
-    }
-    if (method === "thread/compacted") {
-      const session = this.sessionForThread(params?.threadId ?? params?.thread?.id) ?? this.activeRunSession();
-      this.addContextCompactionMessage(session);
-      if (params?.tokenUsage) this.updateContextForSession(session, params.tokenUsage, true);
-      return;
-    }
-    if (method === "item/started" && params?.item) {
-      this.renderStartedItem(this.activeRunSession(), params.item);
-      return;
-    }
-    if (method === "item/agentMessage/delta") {
-      const session = this.activeRunSession();
-      this.markThinkingAsStreaming(session);
-      this.appendItemDelta(session, params.itemId, "assistant", params.delta ?? "", "assistant", "回复");
-      return;
-    }
-    if (method === "turn/plan/updated") {
-      this.renderPlanUpdate(this.activeRunSession(), params);
-      return;
-    }
-    if (method === "item/plan/delta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "plan", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/reasoning/summaryPartAdded") {
-      void this.upsertProcessItem(this.activeRunSession(), params.itemId, "reasoning", "", "running", { ...params, status: "running" });
-      return;
-    }
-    if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "reasoning", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/commandExecution/outputDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "commandExecution", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/fileChange/outputDelta") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "fileChange", params.delta ?? "", { text: params.delta ?? "", status: "running" });
-      return;
-    }
-    if (method === "item/mcpToolCall/progress") {
-      this.appendProcessDelta(this.activeRunSession(), params.itemId, "mcpToolCall", params.message ?? "", params);
-      return;
-    }
-    if (method === "item/completed" && params?.item) {
-      void this.renderCompletedItem(this.activeRunSession(), params.item).catch((error) => console.error("Codex item render failed", error));
-      return;
-    }
-    if (method === "error") {
-      const session = this.activeRunSession();
-      const shouldPauseQueue = this.activeRunKind === "chat";
-      const diagnostic = this.diagnoseCodexFailure(params?.message ?? "Codex 出错了");
-      if (this.editorActionRun?.runId === this.activeRunId) this.rejectEditorActionRun(new Error(diagnostic.text));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.finishThinkingMessage(session, "失败");
-      this.finishRunningProcessMessages(session, "error");
-      this.addMessageToSession(session, {
-        role: "system",
-        text: diagnostic.text,
-        itemType: "error",
-        title: diagnostic.title
-      });
-      this.clearActiveRun();
-      this.applyStatus();
-      if (shouldPauseQueue) void this.afterTurnSettled(session.id, false);
-    }
+    this.notificationRouter.handle(notification);
   }
 
-  handleKnowledgeBaseCodexNotification(notification: CodexNotification): boolean {
-    if (this.activeRunKind !== "knowledge-base") return false;
-    return true;
-  }
-
-  private handleEditorActionNotification(method: string, params: any): boolean {
-    if (this.handleEditorSummaryNotification(method, params)) return true;
-    const isActiveEditorAction = this.isEditorActionRunActive();
-    const route = this.routeEditorActionNotification(method, params, isActiveEditorAction, this.editorActionThreadId, method === "error");
-    if (!route.swallow) return false;
-    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
-    if (!route.current) return true;
-    if (method === "turn/started") {
-      this.running = true;
-      this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
-      this.turnStartedAt = Date.now();
-      this.armTurnWatchdog(this.editorActionActiveTimeoutMs || this.plugin.settings.editorActions.timeoutMs);
-      this.applyStatus();
-      return true;
-    }
-    if (method === "turn/completed") {
-      const failed = params?.turn?.status === "failed";
-      if (failed) {
-        this.rejectEditorActionRun(new Error("Codex 写作任务失败"));
-      } else if (this.editorActionRun?.text.trim()) {
-        this.resolveEditorActionRun(this.editorActionRun.text);
-      } else {
-        this.rejectEditorActionRun(new Error("Codex 没有返回候选文本"));
-      }
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.applyStatus();
-      return true;
-    }
-    if (method === "item/agentMessage/delta") {
-      if (route.collectAssistantDelta && this.editorActionRun) this.editorActionRun.text += params?.delta ?? "";
-      return true;
-    }
-    if (method === "error") {
-      this.rejectEditorActionRun(new Error(this.diagnoseCodexFailure(params?.message ?? "Codex 出错了").text));
-      this.running = false;
-      this.activeTurnId = "";
-      this.clearTurnWatchdog();
-      this.clearActiveRun();
-      this.applyStatus();
-      return true;
-    }
-    if (method.startsWith("item/") || method.startsWith("turn/") || method === "thread/tokenUsage/updated" || method === "thread/compacted") {
-      return true;
-    }
-    return false;
-  }
-
-  private handleEditorSummaryNotification(method: string, params: any): boolean {
-    if (!this.isEditorSummaryRunActive()) return false;
-    const summaryThreadId = this.editorSummaryRun?.threadId ?? "";
-    const route = this.routeEditorActionNotification(method, params, true, summaryThreadId, method === "error");
-    if (!route.swallow) return false;
-    this.rememberEditorActionNotificationIds(params, route.current || route.rememberCurrentItem);
-    if (!route.current) return true;
-    if (method === "turn/started") {
-      this.activeTurnId = params?.turn?.id ?? this.activeTurnId;
-      return true;
-    }
-    if (method === "turn/completed") {
-      const failed = params?.turn?.status === "failed";
-      const runId = this.editorSummaryRun?.runId;
-      if (failed) {
-        this.rejectEditorSummaryRun(new Error("摘要生成失败"));
-      } else if (this.editorSummaryRun?.text.trim()) {
-        this.resolveEditorSummaryRun(this.editorSummaryRun.text);
-      } else {
-        this.rejectEditorSummaryRun(new Error("摘要为空"));
-      }
-      this.releaseEditorSummaryRunLock(runId);
-      return true;
-    }
-    if (method === "item/agentMessage/delta") {
-      if (this.editorSummaryRun) this.editorSummaryRun.text += params?.delta ?? "";
-      return true;
-    }
-    if (method === "error") {
-      const runId = this.editorSummaryRun?.runId;
-      this.rejectEditorSummaryRun(new Error(this.diagnoseCodexFailure(params?.message ?? "摘要生成失败").text));
-      this.releaseEditorSummaryRunLock(runId);
-      return true;
-    }
-    if (method.startsWith("item/") || method.startsWith("turn/") || method === "thread/tokenUsage/updated" || method === "thread/compacted") {
-      return true;
-    }
-    return false;
+  handleKnowledgeBaseCodexNotification(_notification: CodexNotification): boolean {
+    if (!this.notificationRouter) return this.activeRunKind === "knowledge-base";
+    return this.notificationRouter.handleKnowledgeBaseNotification();
   }
 
   focusInput(): void {
@@ -1683,36 +1483,6 @@ export class CodexView extends ItemView {
     return Boolean(this.editorActionRun && this.editorActionRun.runId === this.activeRunId);
   }
 
-  private routeEditorActionNotification(method: string, params: any, active: boolean, currentThreadId: string, allowUnscoped = false): ReturnType<typeof routeEditorActionNotificationState> {
-    return routeEditorActionNotificationState({
-      method,
-      params,
-      active,
-      currentThreadId,
-      currentTurnId: this.activeTurnId,
-      threadIds: this.editorActionThreadIds,
-      turnIds: this.editorActionTurnIds,
-      itemIds: this.editorActionItemIds,
-      currentItemIds: this.editorActionCurrentItemIds,
-      allowUnscoped
-    });
-  }
-
-  private rememberEditorActionNotificationIds(params: any, currentRun = false): void {
-    const ids = extractEditorActionNotificationIds(params);
-    if (ids.threadId) this.editorActionThreadIds.add(ids.threadId);
-    if (ids.turnId) this.editorActionTurnIds.add(ids.turnId);
-    if (ids.itemId) this.editorActionItemIds.add(ids.itemId);
-    if (currentRun && ids.itemId) this.editorActionCurrentItemIds.add(ids.itemId);
-    this.pruneEditorActionHiddenIds();
-  }
-
-  private pruneEditorActionHiddenIds(): void {
-    pruneSet(this.editorActionThreadIds, 80);
-    pruneSet(this.editorActionTurnIds, 120);
-    pruneSet(this.editorActionItemIds, 400);
-  }
-
   private withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = window.setTimeout(() => reject(new Error(message)), Math.max(1000, timeoutMs));
@@ -2379,12 +2149,6 @@ function roleForProcessItem(itemType: string): ChatMessage["role"] {
   return itemType === "reasoning" || itemType === "plan" ? "assistant" : "tool";
 }
 
-function isKnowledgeBaseUnroutedCodexNotification(method: string): boolean {
-  return method.startsWith("item/")
-    || method.startsWith("turn/")
-    || method.startsWith("thread/")
-    || method === "error";
-}
 
 function rawTextForProcessItem(item: any): string {
   if (item?.type === "commandExecution") return item.command ?? "";
@@ -2464,13 +2228,6 @@ function knowledgeInitStatusLabel(status: string): string {
   return "未初始化";
 }
 
-function pruneSet<T>(set: Set<T>, maxSize: number): void {
-  while (set.size > maxSize) {
-    const first = set.values().next();
-    if (first.done) return;
-    set.delete(first.value);
-  }
-}
 
 function isImagePath(filePath: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|heic)$/i.test(filePath);

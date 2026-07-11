@@ -114,6 +114,8 @@ import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryAc
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
+import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
+import { EditorActionRunCoordinator } from "../ui/codex-view/editor-action-run-coordinator";
 import {
   afterTurnSettled as afterTurnSettledRunner,
   messageRenderOptionsForRunUpdate,
@@ -1576,6 +1578,159 @@ foregroundKnowledgeNotificationView.handleCodexNotification({
   params: { itemId: "leaked-kb-item", delta: "不应该显示的子线程长文本" }
 } as any);
 assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
+function createNotificationRouterTestContext(overrides: Record<string, any> = {}) {
+  const calls: string[] = [];
+  const session = overrides.session ?? {
+    id: "router-session",
+    title: "Router session",
+    kind: "chat" as const,
+    cwd: "/vault",
+    messages: [] as any[],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  const context: any = {};
+  Object.assign(context, {
+    plugin: {
+      settings: { editorActions: { timeoutMs: 45000 } },
+      lastStatus: { rateLimits: null, rateLimitsByLimitId: null },
+      saveSettings: async () => {
+        calls.push("saveSettings");
+      }
+    },
+    running: false,
+    activeRunId: "router-run",
+    activeRunKind: "chat",
+    activeTurnId: "router-turn",
+    turnStartedAt: 0,
+    usageLoading: true,
+    usageError: "loading",
+    editorActionRun: null,
+    editorSummaryRun: null,
+    editorActionActiveTimeoutMs: 0,
+    editorActionThreadId: "",
+    editorActionThreadIds: new Set<string>(),
+    editorActionTurnIds: new Set<string>(),
+    editorActionItemIds: new Set<string>(),
+    editorActionCurrentItemIds: new Set<string>(),
+    isEditorActionRunActive: () => Boolean(context.editorActionRun && context.editorActionRun.runId === context.activeRunId),
+    isEditorSummaryRunActive: () => Boolean(context.editorSummaryRun && context.editorSummaryRun.runId === context.activeRunId),
+    activeRunSession: () => session,
+    sessionForThread: () => null,
+    isKnowledgeBaseSession: (candidate: any) => candidate.kind === "knowledge-base",
+    attachTurnIdToRun: (_session: any, turnId: string) => calls.push(`attachTurn:${turnId}`),
+    ensureThinkingMessage: (_session: any, title: string) => calls.push(`thinking:${title}`),
+    markThinkingAsStreaming: () => calls.push("streaming"),
+    appendItemDelta: (_session: any, itemId: string, _role: string, delta: string) => calls.push(`itemDelta:${itemId}:${delta}`),
+    appendProcessDelta: (_session: any, itemId: string, itemType: string, delta: string) => calls.push(`processDelta:${itemType}:${itemId}:${delta}`),
+    upsertProcessItem: async (_session: any, id: string, itemType: string) => {
+      calls.push(`upsert:${itemType}:${id}`);
+    },
+    renderPlanUpdate: () => calls.push("planUpdate"),
+    renderStartedItem: () => calls.push("itemStarted"),
+    renderCompletedItem: async () => {
+      calls.push("itemCompleted");
+    },
+    updateUsageHeader: (rateLimits: any, loading: boolean, error: string | null) => calls.push(`usageHeader:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+    renderUsagePanel: (rateLimits: any, error: string | null, loading: boolean) => calls.push(`usagePanel:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+    updateContextForSession: () => calls.push("contextUpdate"),
+    addContextCompactionMessage: () => calls.push("compact"),
+    clearTurnWatchdog: () => calls.push("clearWatchdog"),
+    armTurnWatchdog: (timeoutMs?: number) => calls.push(`armWatchdog:${timeoutMs ?? "default"}`),
+    finishThinkingMessage: (_session: any, status: string) => calls.push(`finishThinking:${status}`),
+    finishRunningProcessMessages: (_session: any, status: string) => calls.push(`finishProcess:${status}`),
+    finishPlanMessage: () => calls.push("finishPlan"),
+    clearActiveRun: () => calls.push("clearActive"),
+    applyStatus: () => calls.push("applyStatus"),
+    afterTurnSettled: async (_sessionId: string, succeeded: boolean) => {
+      calls.push(`afterTurn:${succeeded}`);
+    },
+    diagnoseCodexFailure: (message: unknown) => ({ title: "失败", text: String(message) }),
+    rejectEditorActionRun: (error: Error) => calls.push(`rejectAction:${error.message}`),
+    resolveEditorActionRun: (text: string) => calls.push(`resolveAction:${text}`),
+    rejectEditorSummaryRun: (error: Error) => calls.push(`rejectSummary:${error.message}`),
+    resolveEditorSummaryRun: (text: string) => calls.push(`resolveSummary:${text}`),
+    releaseEditorSummaryRunLock: (runId?: string) => calls.push(`releaseSummary:${runId ?? ""}`),
+    addMessageToSession: (_session: any, message: any) => calls.push(`message:${message.itemType}:${message.text}`)
+  });
+  Object.assign(context, overrides);
+  return { calls, context, session };
+}
+
+const rateLimitRouterState = createNotificationRouterTestContext();
+new CodexNotificationRouter(rateLimitRouterState.context).handle({
+  method: "account/rateLimits/updated",
+  params: {
+    rateLimitsByLimitId: {
+      codex: {
+        limitId: "codex",
+        primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1777229369 },
+        secondary: null
+      }
+    }
+  }
+} as any);
+assert.equal(rateLimitRouterState.context.usageLoading, false);
+assert.equal(rateLimitRouterState.context.plugin.lastStatus.rateLimits.limitId, "codex");
+assert.ok(rateLimitRouterState.calls.includes("usageHeader:codex:false:none"));
+assert.ok(rateLimitRouterState.calls.includes("usagePanel:codex:false:none"));
+
+const reasoningRouterState = createNotificationRouterTestContext();
+new CodexNotificationRouter(reasoningRouterState.context).handle({
+  method: "item/reasoning/summaryPartAdded",
+  params: { itemId: "reasoning-item" }
+} as any);
+assert.ok(reasoningRouterState.calls.includes("upsert:reasoning:reasoning-item"));
+
+const knowledgeRouterState = createNotificationRouterTestContext({
+  activeRunKind: "knowledge-base",
+  session: {
+    id: "router-kb-session",
+    title: "Knowledge",
+    kind: "knowledge-base" as const,
+    cwd: "/vault",
+    messages: [] as any[],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+});
+new CodexNotificationRouter(knowledgeRouterState.context).handle({
+  method: "item/agentMessage/delta",
+  params: { itemId: "kb-background-item", delta: "后台维护输出" }
+} as any);
+assert.deepEqual(knowledgeRouterState.calls, []);
+
+const editorActionRouterState = createNotificationRouterTestContext({
+  editorActionRun: {
+    runId: "router-run",
+    text: "",
+    resolve: () => undefined,
+    reject: () => undefined
+  },
+  editorActionThreadId: "editor-thread"
+});
+new CodexNotificationRouter(editorActionRouterState.context).handle({
+  method: "item/agentMessage/delta",
+  params: { threadId: "editor-thread", itemId: "editor-item", delta: "候选文本" }
+} as any);
+assert.equal(editorActionRouterState.context.editorActionRun.text, "候选文本");
+assert.equal(editorActionRouterState.calls.some((item) => item.startsWith("itemDelta:")), false);
+
+const editorSummaryRouterState = createNotificationRouterTestContext({
+  editorSummaryRun: {
+    runId: "router-run",
+    threadId: "summary-thread",
+    text: "",
+    resolve: () => undefined,
+    reject: () => undefined
+  }
+});
+new EditorActionRunCoordinator(editorSummaryRouterState.context).handleNotification("item/agentMessage/delta", {
+  threadId: "summary-thread",
+  itemId: "summary-item",
+  delta: "摘要文本"
+});
+assert.equal(editorSummaryRouterState.context.editorSummaryRun.text, "摘要文本");
 const activeKnowledgeRunSession = {
   id: "active-kb-run-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -2955,8 +3110,13 @@ assert.ok(codexViewModules.includes("knowledge-dashboard.ts"));
 assert.ok(codexViewModules.includes("header.ts"));
 assert.ok(codexViewModules.includes("composer.ts"));
 assert.ok(codexViewModules.includes("message-list.ts"));
+assert.ok(codexViewModules.includes("notification-router.ts"));
+assert.ok(codexViewModules.includes("editor-action-run-coordinator.ts"));
 assert.ok(codexViewLineCount <= 2500, `src/ui/codex-view.ts should stay under 2500 lines, got ${codexViewLineCount}`);
 assert.doesNotMatch(codexViewSource, /class KnowledgeBaseHistoryModal/);
+assert.doesNotMatch(codexViewSource, /private handleEditorActionNotification/);
+assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);
+assert.match(codexViewSource, /CodexNotificationRouter/);
 assert.doesNotMatch(codexViewSource, /private addKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewUiSources, /\.style\./);
