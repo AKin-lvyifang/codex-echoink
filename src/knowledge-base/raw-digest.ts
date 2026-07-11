@@ -1,6 +1,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { contentFingerprint } from "./raw-integrity";
+import { writeFileAtomic } from "./utils";
 
 export const RAW_DIGEST_REGISTRY_PATH = "outputs/.raw-digest-registry.json";
 export const RAW_DIGEST_SCHEMA_VERSION = 1;
@@ -274,16 +275,4 @@ function nonNegativeNumber(value: any): number {
 function normalizeRelativePath(value: any): string {
   if (typeof value !== "string") return "";
   return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/");
-}
-
-async function writeFileAtomic(absolutePath: string, content: string): Promise<void> {
-  await fsp.mkdir(path.dirname(absolutePath), { recursive: true });
-  const temp = path.join(path.dirname(absolutePath), `.${path.basename(absolutePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    await fsp.writeFile(temp, content, "utf8");
-    await fsp.rename(temp, absolutePath);
-  } catch (error) {
-    await fsp.rm(temp, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }

@@ -4,7 +4,7 @@ import * as path from "path";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseRunMode } from "./types";
 import type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
-import { formatDateForFile, isMissingPathError, pad } from "./utils";
+import { formatDateForFile, isMissingPathError, pad, writeFileAtomic } from "./utils";
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
 
@@ -189,18 +189,6 @@ export async function restoreOptionalFile(snapshot: OptionalFileSnapshot): Promi
   if (typeof snapshot.mode === "number") await fsp.chmod(snapshot.absolutePath, snapshot.mode).catch(() => undefined);
   if (typeof snapshot.atimeMs === "number" && typeof snapshot.mtimeMs === "number") {
     await fsp.utimes(snapshot.absolutePath, new Date(snapshot.atimeMs), new Date(snapshot.mtimeMs)).catch(() => undefined);
-  }
-}
-
-export async function writeFileAtomic(absolutePath: string, content: string | Buffer): Promise<void> {
-  await fsp.mkdir(path.dirname(absolutePath), { recursive: true });
-  const temp = path.join(path.dirname(absolutePath), `.${path.basename(absolutePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    await fsp.writeFile(temp, content);
-    await fsp.rename(temp, absolutePath);
-  } catch (error) {
-    await fsp.rm(temp, { force: true }).catch(() => undefined);
-    throw error;
   }
 }
 

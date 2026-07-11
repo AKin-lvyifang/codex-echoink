@@ -7,9 +7,9 @@ import { isKnowledgeBaseCancelError } from "./failure";
 import { rawDigestFingerprint } from "./raw-digest";
 import { readKnowledgeBaseReportText, writeKnowledgeBaseReportFile } from "./report";
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
-import { writeFileAtomic, type KnowledgeConflictDuplicateCleanup } from "./transaction-snapshot";
+import type { KnowledgeConflictDuplicateCleanup } from "./transaction-snapshot";
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource, StructureNormalizationPathRewrite, StructureNormalizationResult } from "./types";
-import { isMissingPathError } from "./utils";
+import { isMissingPathError, writeFileAtomic } from "./utils";
 
 export async function ensureKnowledgeBaseFolders(vaultPath: string, mode: KnowledgeBaseRunMode): Promise<void> {
   await fsp.mkdir(path.join(vaultPath, "outputs"), { recursive: true });
