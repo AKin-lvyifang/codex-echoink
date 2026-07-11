@@ -905,7 +905,6 @@ assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.managedThreads, {});
 const scheduledKnowledgeBaseBase = {
-  enabled: true,
   scheduleEnabled: true,
   scheduleTime: "09:00",
   catchUpOnStartup: true,
@@ -1004,6 +1003,43 @@ try {
   schedulerLifecycleIntervalCallback?.();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+} finally {
+  (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
+}
+const schedulerDisabledSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  knowledgeBase: {
+    enabled: false,
+    scheduleEnabled: true,
+    catchUpOnStartup: true,
+    scheduleTime: "00:00"
+  }
+}).settings.knowledgeBase;
+const schedulerDisabledEvents: string[] = [];
+try {
+  (globalThis as any).window = {
+    ...(previousWindowForKnowledgeBaseSchedulerTest ?? {}),
+    setInterval: () => 903,
+    clearInterval: () => undefined
+  };
+  const scheduler = new KnowledgeBaseScheduler({
+    getSettings: () => schedulerDisabledSettings,
+    isRunning: () => false,
+    registerInterval: () => undefined,
+    runMaintenance: async () => {
+      schedulerDisabledEvents.push("runMaintenance");
+      return { status: "success", reportPath: "", summary: "", processedSources: [] };
+    },
+    appendScheduledMaintenanceMessage: async () => {
+      schedulerDisabledEvents.push("append");
+    },
+    refreshKnowledgeBaseSurfaces: () => {
+      schedulerDisabledEvents.push("refresh");
+    }
+  });
+  scheduler.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(schedulerDisabledEvents, []);
 } finally {
   (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
 }
@@ -3781,10 +3817,21 @@ const lintReportPayload = buildKnowledgeBaseMaintainReportPayload("lint", {
   status: "success",
   reportPath: "outputs/maintenance/kb-check-2026-07-10.md",
   summary: "体检完成。",
-  processedSources: []
+  processedSources: [],
+  structure: {
+    moves: [],
+    skipped: [],
+    updatedLinks: [{ path: "wiki/index.md", replacements: 2 }],
+    remainingRootNotes: ["loose.md"],
+    remainingChineseDirs: ["资料库"],
+    risks: ["raw 缺少来源索引"],
+    pathRewrites: []
+  }
 });
 assert.equal(lintReportPayload.title, "体检完成");
 assert.deepEqual(lintReportPayload.sections.map((section) => section.title), ["断链与引用异常", "命名与结构偏差", "可顺手修"]);
+assert.equal(lintReportPayload.sections.find((section) => section.id === "structure-drift")?.count, 4);
+assert.deepEqual(lintReportPayload.sections.find((section) => section.id === "structure-drift")?.items.map((item) => item.title), ["wiki/index.md", "loose.md", "资料库", "结构风险"]);
 
 const calibrationReportPayload = buildKnowledgeBaseMaintainReportPayload("calibrate", {
   status: "success",

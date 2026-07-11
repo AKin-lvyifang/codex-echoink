@@ -32,6 +32,7 @@ export class KnowledgeBaseScheduler {
   async runScheduledIfDue(forceCatchUp = false): Promise<void> {
     const settings = this.host.getSettings();
     if (this.host.isRunning()) return;
+    if (!settings.enabled) return;
     if (!shouldRunScheduledKnowledgeBaseMaintenance(settings, new Date(), this.schedulerStartedAt, forceCatchUp)) return;
 
     const scheduledStartedAt = Date.now();

@@ -117,7 +117,7 @@ const KNOWN_TOP_LEVEL_DIRS = new Set([
 ]);
 
 export async function buildKnowledgeBaseInitializationPreview(vaultPath: string): Promise<KnowledgeBaseInitializationPreview> {
-  const rulesFilePath = await chooseRulesFilePath(vaultPath);
+  const rulesFilePath = chooseRulesFilePath();
   const suggestions = await scanInitializationSuggestions(vaultPath);
   const skipped = suggestions.filter((item) => item.target === "ignore").map((item) => item.path);
   const actionableSuggestions = suggestions.filter((item) => item.target !== "ignore");
@@ -213,7 +213,7 @@ function formatKnowledgeBaseInitializationResult(input: Omit<KnowledgeBaseInitia
   ].join("\n");
 }
 
-async function chooseRulesFilePath(vaultPath: string): Promise<string> {
+function chooseRulesFilePath(): string {
   return DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
 }
 
