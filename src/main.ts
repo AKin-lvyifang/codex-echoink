@@ -10,7 +10,7 @@ import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText 
 import { CodexServerRequestRouter } from "./core/server-request-router";
 import { clearLegacyChatWorkspaceDefaults, ensureKnowledgeBaseSession, getActiveApiProvider, normalizeSettingsData, providerConnectionLabel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { buildEchoInkResourceCatalog, skillResourcesForScope } from "./resources/registry";
-import { EchoInkMcpBroker } from "./resources/mcp-broker";
+import { closeMcpBrokerConnectionPool, EchoInkMcpBroker } from "./resources/mcp-broker";
 import { resolveMcpConnectionConfig } from "./resources/mcp-connections";
 import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope } from "./resources/types";
 import { CodexSettingTab } from "./settings/settings-tab";
@@ -156,6 +156,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.knowledgeBase?.unload();
     this.review?.unload();
     await this.saveSettings(true);
+    await closeMcpBrokerConnectionPool();
     await this.codex?.disconnect();
   }
 

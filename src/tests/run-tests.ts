@@ -86,7 +86,7 @@ import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToo
 import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
-import { EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
+import { closeMcpBrokerConnectionPool, EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
 import { mcpConnectionStatus, mcpConnectionStatusLabel, normalizeMcpConnectionRecords, resolveMcpConnectionConfig } from "../resources/mcp-connections";
 import { parseHermesSkillListOutput } from "../resources/skill-loader";
 import { buildBuiltinToolBundleResources } from "../resources/tool-bundles";
@@ -3050,6 +3050,39 @@ assert.deepEqual(await approvedBroker.listTools(brokerReadyResource), { tools: [
 const brokerResult = await approvedBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "read_note", arguments: { path: "wiki/a.md" } });
 assert.deepEqual(brokerResult.content, { content: [{ type: "text", text: "OK" }] });
 assert.equal(brokerSettings.callLog.at(-1)?.status, "completed");
+await closeMcpBrokerConnectionPool();
+let pooledBrokerCreateCount = 0;
+let pooledBrokerInitializeCount = 0;
+let pooledBrokerCloseCount = 0;
+const pooledBroker = new EchoInkMcpBroker({
+  settings: { approvalMode: "ask", callLog: [] },
+  approval: async () => true,
+  transportFactory: async () => {
+    pooledBrokerCreateCount += 1;
+    return {
+      request: async (method: string) => {
+        if (method === "initialize") {
+          pooledBrokerInitializeCount += 1;
+          return { ok: true };
+        }
+        if (method === "tools/list") return { tools: [{ name: "pooled_tool" }] };
+        if (method === "tools/call") return { content: [{ type: "text", text: "POOLED" }] };
+        return { ok: true };
+      },
+      notify: async () => undefined,
+      close: async () => {
+        pooledBrokerCloseCount += 1;
+      }
+    };
+  }
+});
+assert.deepEqual(await pooledBroker.listTools(brokerReadyResource), { tools: [{ name: "pooled_tool" }] });
+assert.deepEqual((await pooledBroker.callTool({ resource: brokerReadyResource, scope: "chat", backend: "hermes", toolName: "pooled_tool" })).content, { content: [{ type: "text", text: "POOLED" }] });
+assert.equal(pooledBrokerCreateCount, 1);
+assert.equal(pooledBrokerInitializeCount, 1);
+assert.equal(pooledBrokerCloseCount, 0);
+await closeMcpBrokerConnectionPool();
+assert.equal(pooledBrokerCloseCount, 1);
 const importedMcpBroker = new EchoInkMcpBroker({
   settings: brokerSettings,
   connections: {

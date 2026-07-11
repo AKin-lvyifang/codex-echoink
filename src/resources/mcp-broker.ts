@@ -48,6 +48,8 @@ export interface EchoInkMcpToolListResult {
   tools: unknown[];
 }
 
+const transportPool = new Map<string, Promise<EchoInkMcpBrokerTransport>>();
+
 export function defaultMcpBrokerSettings(): EchoInkMcpBrokerSettings {
   return { approvalMode: "ask", callLog: [] };
 }
@@ -80,14 +82,14 @@ export class EchoInkMcpBroker {
   async listTools(resource: EchoInkResource, timeoutMs = 30000): Promise<EchoInkMcpToolListResult> {
     const config = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);
     if (!config) throw new Error("MCP 资源没有 EchoInk broker 连接配置。");
-    const transport = await (this.options.transportFactory ?? createDefaultMcpTransport)(config);
+    const transport = await getPooledMcpTransport(config, this.options.transportFactory ?? createDefaultMcpTransport, timeoutMs);
     try {
-      await initializeMcpClient(transport, timeoutMs);
       const result = await transport.request("tools/list", {}, timeoutMs);
       const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
       return { tools };
-    } finally {
-      await transport.close().catch(swallowError("close MCP broker transport after listTools"));
+    } catch (error) {
+      await closePooledMcpTransport(config, "close MCP broker transport after listTools failure");
+      throw error;
     }
   }
 
@@ -107,9 +109,8 @@ export class EchoInkMcpBroker {
       throw new Error("用户未批准 MCP 工具调用。");
     }
     this.record(invocation, "approved", "MCP 工具调用已批准。");
-    const transport = await (this.options.transportFactory ?? createDefaultMcpTransport)(config);
+    const transport = await getPooledMcpTransport(config, this.options.transportFactory ?? createDefaultMcpTransport, invocation.timeoutMs);
     try {
-      await initializeMcpClient(transport, invocation.timeoutMs);
       const content = await transport.request("tools/call", {
         name: invocation.toolName,
         arguments: invocation.arguments ?? {}
@@ -119,9 +120,8 @@ export class EchoInkMcpBroker {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.record(invocation, "failed", message);
+      await closePooledMcpTransport(config, "close MCP broker transport after callTool failure");
       throw error;
-    } finally {
-      await transport.close().catch(swallowError("close MCP broker transport after callTool"));
     }
   }
 
@@ -138,6 +138,71 @@ export class EchoInkMcpBroker {
       message
     });
   }
+}
+
+export async function closeMcpBrokerConnectionPool(): Promise<void> {
+  const pending = Array.from(transportPool.values());
+  transportPool.clear();
+  const settled = await Promise.allSettled(pending);
+  await Promise.allSettled(settled.map((result) => {
+    if (result.status !== "fulfilled") return Promise.resolve();
+    return result.value.close().catch(swallowError("close pooled MCP broker transport"));
+  }));
+}
+
+async function getPooledMcpTransport(
+  config: EchoInkMcpConnectionConfig,
+  transportFactory: (config: EchoInkMcpConnectionConfig) => Promise<EchoInkMcpBrokerTransport>,
+  timeoutMs = 30000
+): Promise<EchoInkMcpBrokerTransport> {
+  const key = mcpTransportPoolKey(config);
+  let transportPromise = transportPool.get(key);
+  if (!transportPromise) {
+    transportPromise = createInitializedMcpTransport(config, transportFactory, timeoutMs);
+    transportPool.set(key, transportPromise);
+    transportPromise.catch(() => {
+      if (transportPool.get(key) === transportPromise) transportPool.delete(key);
+    });
+  }
+  return transportPromise;
+}
+
+async function createInitializedMcpTransport(
+  config: EchoInkMcpConnectionConfig,
+  transportFactory: (config: EchoInkMcpConnectionConfig) => Promise<EchoInkMcpBrokerTransport>,
+  timeoutMs: number
+): Promise<EchoInkMcpBrokerTransport> {
+  const transport = await transportFactory(config);
+  try {
+    await initializeMcpClient(transport, timeoutMs);
+    return transport;
+  } catch (error) {
+    await transport.close().catch(swallowError("close MCP broker transport after initialize failure"));
+    throw error;
+  }
+}
+
+async function closePooledMcpTransport(config: EchoInkMcpConnectionConfig, context: string): Promise<void> {
+  const key = mcpTransportPoolKey(config);
+  const transportPromise = transportPool.get(key);
+  if (!transportPromise) return;
+  transportPool.delete(key);
+  const transport = await transportPromise.catch(() => null);
+  if (transport) await transport.close().catch(swallowError(context));
+}
+
+function mcpTransportPoolKey(config: EchoInkMcpConnectionConfig): string {
+  return JSON.stringify(stableJson(config));
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, raw]) => [key, stableJson(raw)])
+  );
 }
 
 async function initializeMcpClient(transport: EchoInkMcpBrokerTransport, timeoutMs = 30000): Promise<void> {
