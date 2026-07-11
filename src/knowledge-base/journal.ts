@@ -1,8 +1,8 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
+import { exists } from "./utils";
 
 export type JournalEvidenceBackend = "codex-cli" | "opencode" | "hermes";
 
@@ -346,10 +346,6 @@ async function walkMarkdownFiles(dir: string, limit = 200): Promise<string[]> {
   }
   await walk(dir);
   return result;
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }
 
 function formatDate(date: Date): string {

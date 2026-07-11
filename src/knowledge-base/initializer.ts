@@ -1,7 +1,7 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "./constants";
+import { exists } from "./utils";
 
 export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "v0.7";
 
@@ -477,10 +477,6 @@ function formatDate(date: Date): string {
 function assertAllowedRulesFilePath(relativePath: string): void {
   if (relativePath === DEFAULT_KNOWLEDGE_BASE_RULES_FILE || relativePath === AGENTS_RULES_FILE || relativePath === LEGACY_CLAUDE_RULES_FILE || relativePath === "CLAUDE.kb-template.md") return;
   throw new Error("初始化规则文件路径不合法。");
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }
 
 function normalizeSlashes(value: string): string {

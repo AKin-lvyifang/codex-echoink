@@ -1,9 +1,9 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import type { KnowledgeBaseSettings } from "../settings/settings";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./constants";
 import { buildKnowledgeBaseRulesTemplate, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "./initializer";
+import { exists } from "./utils";
 
 export type KnowledgeBaseRulesRepairStatus = "created" | "patched" | "ok";
 
@@ -159,8 +159,4 @@ function normalizeRulesPath(value: string): string {
     .filter((part) => part && part !== "." && part !== "..")
     .join("/");
   return clean || DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }

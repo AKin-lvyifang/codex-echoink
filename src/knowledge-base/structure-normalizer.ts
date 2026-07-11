@@ -8,6 +8,7 @@ import type {
   StructureNormalizationSkipped,
   StructureNormalizationUpdatedLink
 } from "./types";
+import { exists } from "./utils";
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
@@ -442,8 +443,4 @@ function countOccurrences(text: string, search: string): number {
 
 function normalizeSlashes(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }

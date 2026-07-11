@@ -86,6 +86,7 @@ import {
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
 import type { KnowledgeBaseCitationSummary, KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { extractArticleMarkdown, extractFirstUrl, isHtmlVerificationBlocked, isWeChatUrl, sanitizeWebCaptureFileName, stripCollectPrefix } from "./web-capture";
+import { exists } from "./utils";
 
 type CodexKbWaiter = {
   threadId: string;
@@ -2147,10 +2148,6 @@ function execFilePromise(command: string, args: string[], options: { maxBuffer: 
       resolve({ stdout, stderr });
     });
   });
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  return fsp.access(filePath, fs.constants.F_OK).then(() => true, () => false);
 }
 
 function formatDateForFile(date: Date): string {
