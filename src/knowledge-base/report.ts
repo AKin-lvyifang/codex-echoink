@@ -103,6 +103,52 @@ export async function ensureKnowledgeBaseFallbackReport(
   await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
 }
 
+export async function writeKnowledgeBaseFailureReport(
+  vaultPath: string,
+  reportPath: string,
+  input: {
+    mode: KnowledgeBaseRunMode;
+    error: string;
+    sources: Pick<KnowledgeBaseSource, "relativePath">[];
+    startedAt: number;
+    rollbackRestored: boolean;
+    rollbackError?: string;
+    externalRawAdditions?: string[];
+  }
+): Promise<void> {
+  const lines = [
+    "---",
+    `created: ${new Date(input.startedAt).toISOString()}`,
+    "source: codex-echoink",
+    "status: failed",
+    `mode: ${input.mode}`,
+    "fallback: true",
+    "---",
+    "",
+    `# 知识库${labelForRunMode(input.mode)}失败 — ${formatDateForTitle(new Date(input.startedAt))}`,
+    "",
+    "## 一眼结论",
+    `知识库${labelForRunMode(input.mode)}失败，插件已停止提交 tracker。`,
+    "",
+    "## 失败原因",
+    input.error.trim() || "未捕获到具体错误信息。",
+    "",
+    "## 本轮来源",
+    ...(input.sources.length ? input.sources.map((source) => `- [[${source.relativePath}]]`) : ["- 无新增或变更 raw 文件"]),
+    "",
+    "## 回滚状态",
+    input.rollbackRestored ? "- 已回滚本轮知识库写入。" : "- 未检测到需要回滚的知识库写入。",
+    ...(input.rollbackError ? [`- 回滚警告：${input.rollbackError}`] : []),
+    ...(input.externalRawAdditions?.length ? ["", "## 并发新增 Raw", ...input.externalRawAdditions.map((item) => `- [[${item}]]`)] : []),
+    "",
+    "## 下一步",
+    "- 修复失败原因后重新运行知识库维护。",
+    "- 只有 Wiki / Projects 已有结构化知识和来源证据，并通过插件验证后，Raw 才会标记为已提炼。",
+    ""
+  ];
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
+}
+
 async function ensureLintOnlyReportModeMetadata(vaultPath: string, reportPath: string): Promise<void> {
   const text = await readKnowledgeBaseReportText(vaultPath, reportPath);
   if (!text.trim()) return;

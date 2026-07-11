@@ -172,7 +172,13 @@ export function transactionSnapshotRepairableExistingSourceEvidencePaths(snapsho
     if (entry.kind !== "file" || !entry.content) continue;
     if (!transactionEntryIsNotOlderThanSource(entry, source)) continue;
     const lines = normalizedEvidenceLines(entry.content.toString("utf8"));
-    if (fileHasSinglePageLevelSourceEvidence(lines, source.relativePath) || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)) paths.push(relativePath);
+    if (
+      fileHasSinglePageLevelSourceEvidence(lines, source.relativePath)
+      || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)
+      || fileHasInlineSourceDigestEvidence(lines, source.relativePath)
+    ) {
+      paths.push(relativePath);
+    }
   }
   return paths;
 }
@@ -224,6 +230,10 @@ function fileHasDatedAggregateSourceEvidence(lines: string[], relativePath: stri
     if (!isSubstantiveDigestLine(line)) return false;
     return evidenceTextCoversDate(line, sourceDate) || evidenceTextCoversDate(nearestEvidenceHeading(lines, index), sourceDate);
   });
+}
+
+function fileHasInlineSourceDigestEvidence(lines: string[], relativePath: string): boolean {
+  return lines.some((line) => isSubstantiveSourceEvidenceLine(line, relativePath));
 }
 
 function fileHasIntroducedDigest(lines: string[], introducedLines: boolean[]): boolean {
@@ -427,10 +437,10 @@ function isSourceEvidenceBlockBoundary(line: string): boolean {
 
 function isSubstantiveSourceEvidenceLine(line: string, relativePath: string): boolean {
   if (!maintenanceReportMentionsSource(line, relativePath)) return false;
-  const withoutSource = stripRawSourceMentions(line)
+  const withoutSource = stripInlineSourceEvidenceBoilerplate(stripRawSourceMentions(line)
     .replace(/^(本轮)?来源[:：]/, "")
     .replace(/^[-*+]\s+/, "")
-    .trim();
+    .trim());
   return isSubstantiveDigestLine(withoutSource);
 }
 
@@ -448,6 +458,19 @@ function stripRawSourceMentions(line: string): string {
     .replace(/(^|[^A-Za-z0-9_\-./%\u4e00-\u9fff])raw\/[^\s`)\]）】,，;；:：!！?？。]+/gi, "$1");
 }
 
+function stripInlineSourceEvidenceBoilerplate(line: string): string {
+  return line
+    .replace(/本系列页唯一承载/g, "")
+    .replace(/本页直接承载/g, "")
+    .replace(/唯一承载/g, "")
+    .replace(/直接承载/g, "")
+    .replace(/本轮来源/g, "")
+    .replace(/历史来源/g, "")
+    .replace(/来源/g, "")
+    .replace(/状态/g, "")
+    .trim();
+}
+
 function isSubstantiveDigestLine(line: string): boolean {
   const normalized = line.trim();
   if (!normalized) return false;
@@ -460,7 +483,7 @@ function isSubstantiveDigestLine(line: string): boolean {
   const text = normalized
     .replace(/^[-*+]\s+/, "")
     .replace(/^\d+[.)、]\s+/, "")
-    .replace(/[*_`>#\[\]()（）:：，。,.!！?？\s-]/g, "");
+    .replace(/[*_`>#\[\]()（）:：，。,.!！?？\s|\-]/g, "");
   return text.length >= 12 && /[A-Za-z0-9\u4e00-\u9fff]/.test(text);
 }
 

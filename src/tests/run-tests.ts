@@ -112,7 +112,8 @@ import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
-import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom } from "../ui/codex-view/message-list";
+import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
+import { messageRenderOptionsForRunUpdate } from "../ui/codex-view/turn-runner";
 import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
 import { extractKnowledgeBaseResultTitle } from "../ui/knowledge-base-result-title";
@@ -1148,6 +1149,34 @@ assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: fals
 assert.equal(canStartQueuedTurn({ queueStartInProgress: true, viewRunning: false, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: true, knowledgeTaskRunning: false }), false);
 assert.equal(canStartQueuedTurn({ queueStartInProgress: false, viewRunning: false, knowledgeTaskRunning: true }), false);
+assert.equal(shouldPinMessageListBottom({ preserveScroll: true }, true), false);
+assert.equal(shouldPinMessageListBottom({ fromScroll: true }, true), false);
+assert.equal(shouldPinMessageListBottom({ forceBottom: true, preserveScroll: true }, true), true);
+assert.equal(shouldPinMessageListBottom({}, true), true);
+assert.equal(shouldPinMessageListBottom({}, false), false);
+assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true, isMessagesNearBottom: () => true }), { forceBottom: false, preserveScroll: true });
+assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => false }), { forceBottom: false, preserveScroll: true });
+assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => true }), { forceBottom: true, preserveScroll: false });
+let scrollFollowRenderOptions: unknown = null;
+const scrollFollowView: any = {
+  messagesBottomFollowPaused: false,
+  lastMessagesScrollTop: 1000,
+  messagesEl: { scrollTop: 950 },
+  messageListRenderer: { isNearBottom: () => true },
+  virtualListEl: {},
+  scheduleRenderMessages: (options: unknown) => {
+    scrollFollowRenderOptions = options;
+  },
+  isMessagesNearBottom: (CodexView.prototype as any).isMessagesNearBottom,
+  handleMessagesScroll: (CodexView.prototype as any).handleMessagesScroll
+};
+scrollFollowView.handleMessagesScroll();
+assert.equal(scrollFollowView.messagesBottomFollowPaused, true);
+assert.deepEqual(scrollFollowRenderOptions, { fromScroll: true });
+scrollFollowView.messagesEl.scrollTop = 1200;
+scrollFollowView.lastMessagesScrollTop = 950;
+scrollFollowView.handleMessagesScroll();
+assert.equal(scrollFollowView.messagesBottomFollowPaused, false);
 const previousHTMLElement = (globalThis as any).HTMLElement;
 const previousWindowForMessageListTest = (globalThis as any).window;
 try {
@@ -1183,6 +1212,35 @@ try {
   frameCallbacks[0]();
   assert.equal(renderCalls, 1);
   assert.equal(renderedSessionId, "after-measure");
+} finally {
+  (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  class FakeHTMLElement {}
+  const frameCallbacks: Array<() => void> = [];
+  (globalThis as any).HTMLElement = FakeHTMLElement;
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  const row = new FakeHTMLElement() as any;
+  row.dataset = { rowId: "message:bottom" };
+  row.getBoundingClientRect = () => ({ height: 96 });
+  let renderOptions: unknown = null;
+  const messagesEl = { scrollTop: 300, clientHeight: 100, scrollHeight: 400 } as HTMLElement;
+  const virtualListEl = { children: [row], scrollHeight: 400 } as any;
+  (renderer as any).env = { options: {}, sessionId: "bottom-measure", messagesEl, virtualListEl };
+  (renderer as any).render = (input: { options?: unknown }) => {
+    renderOptions = input.options;
+  };
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, true), true);
+  messagesEl.scrollTop = 260;
+  frameCallbacks[0]();
+  assert.deepEqual(renderOptions, { forceBottom: false, preserveScroll: true });
 } finally {
   (globalThis as any).HTMLElement = previousHTMLElement;
   (globalThis as any).window = previousWindowForMessageListTest;
@@ -1350,6 +1408,49 @@ const foregroundKnowledgeForwarded = foregroundKnowledgeNotificationView.handleK
 } as any);
 assert.equal(foregroundKnowledgeForwarded, true);
 assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
+foregroundKnowledgeNotificationView.handleCodexNotification({
+  method: "item/agentMessage/delta",
+  params: { itemId: "leaked-kb-item", delta: "不应该显示的子线程长文本" }
+} as any);
+assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
+const activeKnowledgeRunSession = {
+  id: "active-kb-run-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  messages: [
+    {
+      id: "active-kb-run-message",
+      role: "assistant",
+      title: "知识库管理",
+      text: "正在识别命令并执行...",
+      itemType: "knowledgeBase",
+      status: "running",
+      createdAt: Date.now(),
+      knowledgeBaseUi: buildKnowledgeBaseRunPayload("maintain")
+    }
+  ] as any[],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+const activeKnowledgeRunView: any = {
+  running: false,
+  activeThinkingMessageId: "thinking",
+  activePlanMessageId: "plan",
+  activeItemMessages: new Map([["item", "message"]]),
+  plugin: {
+    getKnowledgeBaseManager: () => ({ isRunning: true }),
+    saveSettings: async () => undefined
+  },
+  isKnowledgeBaseSession: () => true,
+  settleStaleMessages: (CodexView.prototype as any).settleStaleMessages
+};
+activeKnowledgeRunView.settleStaleMessages(activeKnowledgeRunSession);
+assert.equal(activeKnowledgeRunSession.messages[0].status, "running");
+assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi?.kind, "maintain-run");
+activeKnowledgeRunView.plugin.getKnowledgeBaseManager = () => ({ isRunning: false });
+activeKnowledgeRunView.settleStaleMessages(activeKnowledgeRunSession);
+assert.equal(activeKnowledgeRunSession.messages[0].status, "failed");
+assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi, undefined);
 const knowledgeFinalizeSession = {
   id: "kb-finalize-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -1824,7 +1925,40 @@ const duplicateKnowledgeRunSession = {
   createdAt: 1,
   updatedAt: 6
 };
-assert.deepEqual(getDisplayKnowledgeBaseMessages(duplicateKnowledgeRunSession).map((message) => message.id), ["dup-user", "dup-final", "other-assistant"]);
+assert.deepEqual(getDisplayKnowledgeBaseMessages(duplicateKnowledgeRunSession).map((message) => message.id), ["dup-user", "dup-final"]);
+
+const pollutedMaintainHistorySession = {
+  id: "kb-polluted-maintain-session",
+  title: KNOWLEDGE_BASE_SESSION_TITLE,
+  kind: "knowledge-base" as const,
+  cwd: "/vault",
+  messages: [
+    { id: "prod-user", role: "user", text: "/maintain", runId: "kb-run-prod", createdAt: 1 },
+    { id: "prod-assistant-run", role: "assistant", itemType: "assistant", text: "不应该展示的维护过程话术", runId: "kb-run-prod", createdAt: 2 },
+    { id: "prod-tool-run", role: "tool", itemType: "commandExecution", text: "不应该展示的工具输出", runId: "kb-run-prod", createdAt: 3 },
+    { id: "prod-tool-orphan", role: "tool", itemType: "commandExecution", text: "不应该展示的无 runId 工具输出", createdAt: 4 },
+    { id: "prod-assistant-orphan", role: "assistant", itemType: "assistant", text: "不应该展示的无 runId 长篇话术", createdAt: 5 },
+    {
+      id: "prod-final",
+      role: "assistant",
+      title: "知识库管理",
+      itemType: "knowledgeBase",
+      text: "知识库维护完成。",
+      runId: "kb-run-prod",
+      status: "completed",
+      knowledgeBaseUi: buildKnowledgeBaseMaintainReportPayload("maintain", {
+        status: "success",
+        reportPath: "outputs/maintenance/kb-maintenance-2026-07-11.md",
+        summary: "维护完成",
+        processedSources: []
+      }),
+      createdAt: 6
+    }
+  ] as any[],
+  createdAt: 1,
+  updatedAt: 6
+};
+assert.deepEqual(getDisplayKnowledgeBaseMessages(pollutedMaintainHistorySession).map((message) => message.id), ["prod-user", "prod-final"]);
 
 const may18 = new Date(2026, 4, 18, 23, 0, 0).getTime();
 const may19 = new Date(2026, 4, 19, 1, 0, 0).getTime();
@@ -1976,22 +2110,22 @@ const unknownOrphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessag
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(unknownOrphanDelta.swallow, false);
-assert.equal(unknownOrphanDelta.collectAssistantDelta, false);
+assert.equal(unknownOrphanDelta.swallow, true);
+assert.equal(unknownOrphanDelta.collectAssistantDelta, true);
 const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(orphanStarted.swallow, false);
-assert.equal(orphanStarted.rememberItemId, undefined);
+assert.equal(orphanStarted.swallow, true);
+assert.equal(orphanStarted.rememberItemId, "item-1");
 const orphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-1", delta: "报告" }, {
   threadId: "thread-kb",
   turnId: "turn-kb",
   itemIds: kbRouteItems
 });
-assert.equal(orphanDelta.swallow, false);
-assert.equal(orphanDelta.collectAssistantDelta, false);
+assert.equal(orphanDelta.swallow, true);
+assert.equal(orphanDelta.collectAssistantDelta, true);
 const orphanBeforeTurnStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-before-turn" } }, {
   threadId: "thread-kb",
   turnId: "",
@@ -3042,12 +3176,16 @@ assert.match(codexViewMessageListSource, /knowledgeBaseRunDisplayTitle/);
 assert.match(codexViewMessageListSource, /知识库任务已中断/);
 assert.match(codexViewMessageListSource, /payload\.icon/);
 assert.match(codexViewMessageListSource, /codex-kb-run-motion-/);
+assert.match(codexViewMessageListSource, /renderFileChangeBody[\s\S]*renderDiff\(text\);[\s\S]*onScheduleMeasure\(\);/);
+assert.match(codexViewMessageListSource, /文件改动加载失败[\s\S]*renderPlainTextBlock[\s\S]*onScheduleMeasure\(\);/);
+assert.match(codexViewMessageListSource, /details\.ontoggle = \(\) => \{[\s\S]*if \(details\.open\) renderRows\(\);[\s\S]*onScheduleMeasure\(\);/);
 assert.match(settingsStyles, /\.codex-kb-run-card\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-run-track\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-scan/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-work/);
 assert.match(settingsStyles, /\.codex-kb-maintain-card\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-maintain-section\s*\{/);
+assert.doesNotMatch(settingsStyles, /codex-input-wrap[\s\S]{0,160}min-height:\s*(142|174)px/);
 assert.match(settingsStyles, /codex-process-kind-search\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-view\s+\.codex-process-icon/);
 assert.match(settingsStyles, /codex-process-kind-run\s+\.codex-process-icon/);
@@ -3068,6 +3206,7 @@ assert.equal(extractKnowledgeBaseResultTitle("assistant", "知识库维护完成
 
 assert.equal(knowledgeBaseRunModeForCommandIntent("lint"), "lint");
 assert.equal(knowledgeBaseRunModeForCommandIntent("maintain"), "maintain");
+assert.equal(knowledgeBaseRunModeForCommandIntent("reingest"), "reingest");
 assert.equal(knowledgeBaseRunModeForCommandIntent("calibrate"), "calibrate");
 assert.equal(knowledgeBaseRunModeForCommandIntent("process-outputs"), "outputs");
 assert.equal(knowledgeBaseRunModeForCommandIntent("process-inbox"), "inbox");
@@ -3088,6 +3227,7 @@ assert.equal(completedRunProgress.activeIndex, -1);
 
 const commandRunPayloads = [
   ["lint", ["扫库", "找断点", "对规则", "出建议", "收口"], "shield-check"],
+  ["reingest", ["准备", "重提炼", "整理", "报告", "完成"], "file-pen"],
   ["calibrate", ["找 raw", "验状态", "对来源", "调标记", "锁定"], "gauge"],
   ["outputs", ["扫描", "归类", "整理", "报告", "完成"], "archive"],
   ["inbox", ["扫描", "判别", "分流", "报告", "完成"], "inbox"]
@@ -3140,6 +3280,16 @@ const noOpMaintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maint
 assert.ok(noOpMaintainReportPayload.careItems.some((item) => item.text === "不需要补救。没有需要你手动处理的文件。"));
 assert.equal(noOpMaintainReportPayload.sections.find((section) => section.id === "digested")?.count, 0);
 assert.equal(noOpMaintainReportPayload.sections.find((section) => section.id === "digested")?.emptyText, "没有新的 Raw 需要消化。");
+
+const reingestReportPayload = buildKnowledgeBaseMaintainReportPayload("reingest", {
+  status: "success",
+  reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
+  summary: "重新提炼完成。",
+  processedSources: [testKnowledgeBaseSource("raw/articles/reingest.md", true)]
+});
+assert.equal(reingestReportPayload.kind, "maintain-report");
+assert.equal(reingestReportPayload.title, "知识库重新提炼完成");
+assert.equal(reingestReportPayload.sections.find((section) => section.id === "digested")?.count, 1);
 
 const lintReportPayload = buildKnowledgeBaseMaintainReportPayload("lint", {
   status: "success",
@@ -6187,7 +6337,8 @@ try {
   assert.equal(await readFile(rawPath, "utf8"), rawTextBefore);
   assert.ok(Math.abs((await stat(rawPath)).mtimeMs - rawStatBefore.mtimeMs) <= 5);
   assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "wiki", "agent-temp.md")), false);
-  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`)), false);
+  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, result.reportPath)), true);
+  assert.match(await readFile(path.join(maintenanceRawViolationRollbackVault, result.reportPath), "utf8"), /试图改写 raw\/ 原始资料文件/);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
   assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "outputs", ".ingest-tracker.md")), false);
 } finally {
@@ -6315,6 +6466,22 @@ try {
   assert.doesNotMatch(result.message, /失败/);
 } finally {
   await rm(maintenanceHandleCanceledVault, { recursive: true, force: true });
+}
+
+const maintenanceHandleThrownVault = await createMaintenanceVaultForTest("codex-kb-maintain-handle-thrown-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHandleThrownVault);
+  (manager as any).runMaintenance = async () => {
+    throw new Error("Agent 后端提前崩溃");
+  };
+  const result = await manager.handleUserMessage("/maintain 测试异常卡片");
+  assert.equal(result.status, "failed");
+  assert.match(result.message, /Agent 后端提前崩溃/);
+  assert.equal(result.ui?.kind, "maintain-report");
+  assert.equal(result.ui?.mode, "maintain");
+  assert.equal(result.ui?.status, "failed");
+} finally {
+  await rm(maintenanceHandleThrownVault, { recursive: true, force: true });
 }
 
 const maintenanceLintScopeVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-scope-");
@@ -7309,7 +7476,7 @@ try {
   assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 2/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
   assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
-  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportSaveFailureVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintRecoveredReportSaveFailureVault, result);
   assert.equal(saveCalls(), 3);
 } finally {
   await rm(maintenanceLintRecoveredReportSaveFailureVault, { recursive: true, force: true });
@@ -7355,7 +7522,7 @@ try {
   assert.match(result.error ?? "", /用户取消/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
-  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportCancelVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintRecoveredReportCancelVault, result);
 } finally {
   await rm(maintenanceLintRecoveredReportCancelVault, { recursive: true, force: true });
 }
@@ -7370,7 +7537,7 @@ try {
   assert.match(result.error ?? "", /saveSettings failed at call 2/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
   assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
-  assert.equal(await fileExists(path.join(maintenanceLintFinalSaveFailureVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintFinalSaveFailureVault, result);
   assert.equal(saveCalls(), 3);
 } finally {
   await rm(maintenanceLintFinalSaveFailureVault, { recursive: true, force: true });
@@ -7388,7 +7555,7 @@ try {
   assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 2/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.match(settings.knowledgeBase.lastError, /状态保存失败：saveSettings failed at call 2/);
-  assert.equal(await fileExists(path.join(maintenanceLateCancelSaveFailureVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLateCancelSaveFailureVault, result);
 } finally {
   await rm(maintenanceLateCancelSaveFailureVault, { recursive: true, force: true });
 }
@@ -7406,7 +7573,7 @@ try {
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.match(settings.knowledgeBase.lastError, /状态保存失败：saveSettings failed at call 3/);
   assert.equal(saveCalls(), 4);
-  assert.equal(await fileExists(path.join(maintenanceCancelStatusSaveRetryVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceCancelStatusSaveRetryVault, result);
 } finally {
   await rm(maintenanceCancelStatusSaveRetryVault, { recursive: true, force: true });
 }
@@ -7426,7 +7593,7 @@ try {
   const result = await manager.runMaintenance("lint", "/check 测试 Agent 新增 symlink 不误恢复");
   assert.equal(result.status, "failed");
   assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
-  assert.equal(await fileExists(path.join(maintenanceLintSymlinkAfterAgentVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintSymlinkAfterAgentVault, result);
   assert.equal(await fileExists(path.join(maintenanceLintSymlinkAfterAgentVault, "outputs", "agent-link")), false);
   assert.deepEqual(await readdir(externalOutputTarget), []);
 } finally {
@@ -7483,7 +7650,7 @@ try {
   });
   const result = await manager.runMaintenance("lint", "/check 测试失败报告回滚");
   assert.equal(result.status, "failed");
-  assert.equal(await fileExists(path.join(maintenanceLintFailedReportRollbackVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintFailedReportRollbackVault, result);
 } finally {
   await rm(maintenanceLintFailedReportRollbackVault, { recursive: true, force: true });
 }
@@ -7504,7 +7671,7 @@ try {
   });
   const result = await manager.runMaintenance("lint", "/check 测试失败只回滚 outputs");
   assert.equal(result.status, "failed");
-  assert.equal(await fileExists(path.join(maintenanceLintFailurePreservesNonOutputVault, result.reportPath)), false);
+  await assertNoReportFileForResult(maintenanceLintFailurePreservesNonOutputVault, result);
   assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "raw", "index.md"), "utf8"), "# Raw\n");
   assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
   assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox", "idea.md"), "utf8"), "# Idea\n");
@@ -7656,6 +7823,13 @@ try {
   assert.match(result.error ?? "", /未写出结构层消化证据/);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
   assert.equal(await fileExists(path.join(maintenanceReportOnlyVault, "outputs", ".ingest-tracker.md")), false);
+  assert.equal(result.reportPath, settings.knowledgeBase.lastReportPath);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.reportPath, result.reportPath);
+  const failureReportPath = path.join(maintenanceReportOnlyVault, result.reportPath);
+  assert.equal(await fileExists(failureReportPath), true);
+  const failureReport = await readFile(failureReportPath, "utf8");
+  assert.match(failureReport, /维护失败/);
+  assert.match(failureReport, /未写出结构层消化证据/);
   const rediscovered = await discoverKnowledgeBaseSources(maintenanceReportOnlyVault, settings.knowledgeBase.processedSources);
   assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
 } finally {
@@ -7946,6 +8120,134 @@ try {
   assert.equal(rediscovered.changedSources.length, 0);
 } finally {
   await rm(maintenanceExistingDigestRepairVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingInlineListDigestRepairVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-inline-list-digest-");
+try {
+  const rawPath = path.join(maintenanceExistingInlineListDigestRepairVault, "raw", "articles", "new.md");
+  const rawTime = new Date(Date.now() - 60_000);
+  await utimes(rawPath, rawTime, rawTime);
+  await mkdir(path.join(maintenanceExistingInlineListDigestRepairVault, "wiki", "ai-intelligence", "concepts"), { recursive: true });
+  const pagePath = path.join(maintenanceExistingInlineListDigestRepairVault, "wiki", "ai-intelligence", "concepts", "harness.md");
+  await writeFile(pagePath, [
+    "# Harness",
+    "",
+    "- [[raw/articles/new.md]]：提供 Prompt 到 Context 再到 Harness 的迁移路径、长期记忆、工程闭环、可追踪和可度量的研发原则。",
+    ""
+  ].join("\n"), "utf8");
+  const pageTime = new Date(Date.now() - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingInlineListDigestRepairVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceExistingInlineListDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new.md]]：已有列表行正文承载，本轮修复 tracker。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 已有列表行正文承载可修复 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.match(settings.knowledgeBase.processedSources["raw/articles/new.md"]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+} finally {
+  await rm(maintenanceExistingInlineListDigestRepairVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingInlineTableDigestRepairVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-inline-table-digest-");
+try {
+  await rm(path.join(maintenanceExistingInlineTableDigestRepairVault, "raw", "articles", "new.md"), { force: true });
+  await mkdir(path.join(maintenanceExistingInlineTableDigestRepairVault, "raw", "articles", "GitHub项目收集"), { recursive: true });
+  const rawRelativePath = "raw/articles/GitHub项目收集/2026-07-10 GitHub 热门项目简报.md";
+  const rawPath = path.join(maintenanceExistingInlineTableDigestRepairVault, rawRelativePath);
+  await writeFile(rawPath, "# 2026-07-10 GitHub 热门项目简报\n\n正文", "utf8");
+  const rawTime = new Date(Date.now() - 60_000);
+  await utimes(rawPath, rawTime, rawTime);
+  await mkdir(path.join(maintenanceExistingInlineTableDigestRepairVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  const pagePath = path.join(maintenanceExistingInlineTableDigestRepairVault, "wiki", "ai-intelligence", "references", "github-trending.md");
+  await writeFile(pagePath, [
+    "# GitHub Trending",
+    "",
+    "| 日期 | 来源 | 摘要 |",
+    "| --- | --- | --- |",
+    `| 2026-07-10 | 本页直接承载：[[${rawRelativePath}|2026-07-10 GitHub 热门项目简报]] | ai-job-search、agent-skills、OfficeCLI、awesome-design-md 和 system_prompts_leaks 指向 agent team 生产流、质量门、Office 文档渲染闭环、Design.md 规则库和 Prompt 规则研究 |`,
+    ""
+  ].join("\n"), "utf8");
+  const pageTime = new Date(Date.now() - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingInlineTableDigestRepairVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceExistingInlineTableDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        `- [[${rawRelativePath}]]：已有表格行正文承载，本轮修复 tracker。`,
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 已有表格行正文承载可修复 tracker");
+  assert.equal(result.status, "success");
+  assert.equal(result.processedSources.length, 1);
+  assert.match(settings.knowledgeBase.processedSources[rawRelativePath]?.fingerprint ?? "", /^sha256:\d+:[a-f0-9]{64}$/);
+} finally {
+  await rm(maintenanceExistingInlineTableDigestRepairVault, { recursive: true, force: true });
+}
+
+const maintenanceExistingCarrierOnlyTableVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-carrier-only-table-");
+try {
+  const rawPath = path.join(maintenanceExistingCarrierOnlyTableVault, "raw", "articles", "new.md");
+  const rawTime = new Date(Date.now() - 60_000);
+  await utimes(rawPath, rawTime, rawTime);
+  await mkdir(path.join(maintenanceExistingCarrierOnlyTableVault, "wiki", "ai-intelligence", "references"), { recursive: true });
+  const pagePath = path.join(maintenanceExistingCarrierOnlyTableVault, "wiki", "ai-intelligence", "references", "carrier-only.md");
+  await writeFile(pagePath, [
+    "# Carrier Only",
+    "",
+    "| 日期 | 来源 | 状态 |",
+    "| --- | --- | --- |",
+    "| 2026-07-10 | [[raw/articles/new.md|新资料]] | 本页直接承载 |",
+    ""
+  ].join("\n"), "utf8");
+  const pageTime = new Date(Date.now() - 10_000);
+  await utimes(pagePath, pageTime, pageTime);
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingCarrierOnlyTableVault, {
+    beforeAgentReturn: async () => {
+      const reportPath = path.join(maintenanceExistingCarrierOnlyTableVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new.md]]：只有承载标签，不能修复 tracker。",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 只有表格承载标签不能修复 tracker");
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
+} finally {
+  await rm(maintenanceExistingCarrierOnlyTableVault, { recursive: true, force: true });
 }
 
 const maintenanceExistingDigestOlderThanRawVault = await createMaintenanceVaultForTest("codex-kb-maintain-existing-digest-older-than-raw-");
@@ -10227,8 +10529,9 @@ assert.equal(bottom, firstWindow.totalHeight - 480);
 assert.equal(isNearVirtualBottom(bottom, 480, firstWindow.totalHeight), true);
 assert.equal(isNearVirtualBottom(bottom - 200, 480, firstWindow.totalHeight), false);
 const messageListBottomHeight = messageListVirtualHeight(firstWindow.totalHeight, 480);
-assert.ok(messageListBottomHeight > firstWindow.totalHeight);
+assert.equal(messageListBottomHeight, firstWindow.totalHeight);
 assert.equal(scrollTopForMessageListBottom(firstWindow.totalHeight, 480), messageListBottomHeight - 480);
+assert.equal(messageListVirtualHeight(320, 480), 480);
 
 const pressureVirtualIds = Array.from({ length: 1000 }, (_, index) => `message:pressure-${index}`);
 const pressureWindow = calculateVirtualWindow({ rowIds: pressureVirtualIds, scrollTop: 45_000, viewportHeight: 720 });
@@ -10423,6 +10726,11 @@ function makeKnowledgeBaseManagerForTest(
 
 async function fileExists(filePath: string): Promise<boolean> {
   return stat(filePath).then(() => true, () => false);
+}
+
+async function assertNoReportFileForResult(vaultPath: string, result: Pick<KnowledgeBaseRunResult, "reportPath">): Promise<void> {
+  if (!result.reportPath) return;
+  assert.equal(await fileExists(path.join(vaultPath, result.reportPath)), false);
 }
 
 await runKnowledgeBasePerformanceTests();

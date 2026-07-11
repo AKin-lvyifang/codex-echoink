@@ -17,8 +17,7 @@ export function routeKnowledgeBaseCodexNotification(method: string, params: any,
     ids.itemId &&
     !ids.threadId &&
     !ids.turnId &&
-    method === "item/started" &&
-    !state.turnId
+    method.startsWith("item/")
   );
   const swallow = exact || orphanAssistantItem;
   return {
@@ -59,6 +58,6 @@ function isKnowledgeBaseScopedNotification(
     return method === "turn/started" && ids.threadId === state.threadId;
   }
   if (!ids.threadId || ids.threadId !== state.threadId) return false;
-  if (method.startsWith("turn/") && state.turnId) return false;
+  if (method.startsWith("turn/") && state.turnId && ids.turnId) return false;
   return true;
 }

@@ -54,14 +54,30 @@ function normalizedHiddenBefore(value: number | undefined): number {
 }
 
 function hideSettledKnowledgeBaseRunInternals(messages: ChatMessage[]): ChatMessage[] {
-  const knowledgeRunIds = new Set(
-    messages
-      .filter((message) => message.itemType === "knowledgeBase" && message.runId)
-      .map((message) => message.runId as string)
-  );
-  if (!knowledgeRunIds.size) return messages;
-  return messages.filter((message) => {
-    if (!message.runId || !knowledgeRunIds.has(message.runId)) return true;
-    return message.role === "user" || message.itemType === "knowledgeBase";
-  });
+  const displayMessages: ChatMessage[] = [];
+  let segment: ChatMessage[] = [];
+  const flushSegment = () => {
+    if (!segment.length) return;
+    if (segment.some(isKnowledgeBaseMessage)) {
+      displayMessages.push(...segment.filter(isKnowledgeBaseDisplayMessage));
+    } else {
+      displayMessages.push(...segment);
+    }
+    segment = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "user" && segment.length) flushSegment();
+    segment.push(message);
+  }
+  flushSegment();
+  return displayMessages;
+}
+
+function isKnowledgeBaseMessage(message: ChatMessage): boolean {
+  return message.itemType === "knowledgeBase";
+}
+
+function isKnowledgeBaseDisplayMessage(message: ChatMessage): boolean {
+  return message.role === "user" || isKnowledgeBaseMessage(message);
 }

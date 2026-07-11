@@ -148,6 +148,8 @@ export class CodexView extends ItemView {
   private pendingRenderFromScroll = false;
   private measureScheduled = false;
   private pendingMeasureForceBottom = false;
+  private lastMessagesScrollTop = 0;
+  private messagesBottomFollowPaused = false;
   private knowledgeBaseRunProgressTimer: number | null = null;
   private messageListRenderer = new CodexMessageListRenderer();
   private selectedSkill: EchoInkResource | null = null;
@@ -279,6 +281,7 @@ export class CodexView extends ItemView {
   handleCodexNotification(notification: CodexNotification): void {
     const { method, params } = notification;
     if (this.handleEditorActionNotification(method, params)) return;
+    if (this.activeRunKind === "knowledge-base" && isKnowledgeBaseUnroutedCodexNotification(method)) return;
     if (method === "turn/started") {
       const session = this.activeRunSession();
       const knowledgeSession = this.isKnowledgeBaseSession(session);
@@ -548,7 +551,7 @@ export class CodexView extends ItemView {
     this.knowledgeDashboardEl = this.rootEl.createDiv({ cls: "codex-kb-dashboard" });
     this.messagesEl = this.rootEl.createDiv({ cls: "codex-messages" });
     this.virtualListEl = this.messagesEl.createDiv({ cls: "codex-virtual-list" });
-    this.registerDomEvent(this.messagesEl, "scroll", () => this.scheduleRenderMessages({ fromScroll: true }));
+    this.registerDomEvent(this.messagesEl, "scroll", () => this.handleMessagesScroll());
 
     const composerRefs = renderComposerShell(this.rootEl, {
       onInputChanged: () => this.onInputChanged(),
@@ -773,6 +776,7 @@ export class CodexView extends ItemView {
     const knowledgeSession = this.isKnowledgeBaseSession(session);
     const messages = knowledgeSession ? getDisplayKnowledgeBaseMessages(session) : session.messages;
     const hiddenCount = knowledgeSession ? getHiddenKnowledgeBaseMessages(session).length : 0;
+    const renderOptions = this.messagesBottomFollowPaused ? { ...options, forceBottom: false, preserveScroll: true } : options;
     this.messageListRenderer.render({
       app: this.app,
       component: this,
@@ -787,7 +791,7 @@ export class CodexView extends ItemView {
       onOpenKnowledgeHistory: () => void this.openKnowledgeBaseHistory(session),
       onScheduleMeasure: () => this.scheduleMeasureVirtualRows(),
       onScheduleRunProgress: () => this.scheduleKnowledgeBaseRunProgress(),
-      options
+      options: renderOptions
     });
   }
 
@@ -1447,6 +1451,7 @@ export class CodexView extends ItemView {
 
   private settleStaleMessages(session: StoredSession): void {
     if (this.running) return;
+    if (this.isKnowledgeBaseSession(session) && this.plugin.getKnowledgeBaseManager()?.isRunning) return;
     const count = settleStaleRunningMessages(session.messages);
     if (!count) return;
     this.activeThinkingMessageId = "";
@@ -2183,8 +2188,15 @@ export class CodexView extends ItemView {
     if (session.id === this.plugin.settings.activeSessionId) this.scheduleRenderMessages();
   }
 
+  private handleMessagesScroll(): void {
+    const top = this.messagesEl?.scrollTop ?? 0, previous = this.lastMessagesScrollTop;
+    this.lastMessagesScrollTop = top;
+    if (top < previous - 2) this.messagesBottomFollowPaused = true;
+    else if (this.isMessagesNearBottom()) this.messagesBottomFollowPaused = false;
+    this.scheduleRenderMessages({ fromScroll: true });
+  }
   private scheduleRenderMessages(options: { forceBottom?: boolean; fromScroll?: boolean } = {}): void {
-    this.pendingRenderForceBottom = this.pendingRenderForceBottom || Boolean(options.forceBottom);
+    this.pendingRenderForceBottom = this.pendingRenderForceBottom || (Boolean(options.forceBottom) && !this.messagesBottomFollowPaused);
     if (options.fromScroll && !this.pendingRenderForceBottom) {
       this.pendingRenderFromScroll = true;
     } else if (!options.fromScroll) {
@@ -2193,16 +2205,16 @@ export class CodexView extends ItemView {
     if (this.renderScheduled) return;
     this.renderScheduled = true;
     window.requestAnimationFrame(() => {
-      const forceBottom = this.pendingRenderForceBottom;
+      const forceBottom = this.pendingRenderForceBottom && !this.messagesBottomFollowPaused;
       const fromScroll = this.pendingRenderFromScroll && !forceBottom;
       this.pendingRenderForceBottom = false;
       this.pendingRenderFromScroll = false;
       this.renderScheduled = false;
-      this.renderMessages({ forceBottom, fromScroll });
+      this.renderMessages({ forceBottom, fromScroll, preserveScroll: this.messagesBottomFollowPaused && !forceBottom });
     });
   }
 
-  private scheduleMeasureVirtualRows(forceBottom = this.isMessagesNearBottom()): void {
+  private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused && this.isMessagesNearBottom()): void {
     this.pendingMeasureForceBottom = this.pendingMeasureForceBottom || forceBottom;
     if (this.measureScheduled) return;
     this.measureScheduled = true;
@@ -2218,7 +2230,7 @@ export class CodexView extends ItemView {
     if (this.knowledgeBaseRunProgressTimer !== null) return;
     this.knowledgeBaseRunProgressTimer = window.setTimeout(() => {
       this.knowledgeBaseRunProgressTimer = null;
-      const forceBottom = this.isMessagesNearBottom();
+      const forceBottom = !this.messagesBottomFollowPaused && this.isMessagesNearBottom();
       this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
     }, 700);
   }
@@ -2243,6 +2255,7 @@ export class CodexView extends ItemView {
 
   private resetVirtualWindow(): void {
     this.messageListRenderer.resetVirtualWindow();
+    this.messagesBottomFollowPaused = false;
     if (this.messagesEl) this.messagesEl.scrollTop = 0;
   }
 
@@ -2363,6 +2376,13 @@ export class CodexView extends ItemView {
 
 function roleForProcessItem(itemType: string): ChatMessage["role"] {
   return itemType === "reasoning" || itemType === "plan" ? "assistant" : "tool";
+}
+
+function isKnowledgeBaseUnroutedCodexNotification(method: string): boolean {
+  return method.startsWith("item/")
+    || method.startsWith("turn/")
+    || method.startsWith("thread/")
+    || method === "error";
 }
 
 function rawTextForProcessItem(item: any): string {

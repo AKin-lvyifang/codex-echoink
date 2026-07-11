@@ -44,7 +44,8 @@ interface MessageListEnvironment extends MessageListRenderInput {
 
 const KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT = 18;
 const KNOWLEDGE_BASE_RUN_CELL_MS = 360;
-const MESSAGE_LIST_BOTTOM_SPACER_PX = 40;
+const MESSAGE_LIST_BOTTOM_SPACER_PX = 0;
+const MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX = 2;
 const VIRTUAL_RERENDER_BURST_LIMIT = 24;
 const VIRTUAL_RERENDER_WINDOW_MS = 1000;
 
@@ -78,6 +79,10 @@ export function scrollTopForMessageListBottom(contentHeight: number, viewportHei
   return scrollTopForVirtualBottom(messageListVirtualHeight(contentHeight, viewportHeight), viewportHeight);
 }
 
+export function shouldPinMessageListBottom(options: MessageListRenderOptions, nearBottom: boolean): boolean {
+  return Boolean(options.forceBottom) || (!options.fromScroll && !options.preserveScroll && nearBottom);
+}
+
 export class CodexMessageListRenderer {
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
@@ -99,7 +104,7 @@ export class CodexMessageListRenderer {
       this.virtualRowHeights.clear();
     }
     const previousScrollTop = messagesEl.scrollTop;
-    const shouldPinBottom = Boolean(env.options.forceBottom) || (!env.options.fromScroll && this.isNearBottom(messagesEl, virtualListEl));
+    const shouldPinBottom = shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
     virtualListEl.empty();
     if (messages.length === 0) {
       virtualListEl.setCssStyles({ height: "100%" });
@@ -203,7 +208,13 @@ export class CodexMessageListRenderer {
       this.virtualRerenderScheduled = false;
       const env = this.env;
       if (!env) return;
-      this.render({ ...env, options: { forceBottom, preserveScroll: !forceBottom } });
+      const stillPinnedBottom = forceBottom && isNearVirtualBottom(
+        env.messagesEl.scrollTop,
+        Math.max(1, env.messagesEl.clientHeight),
+        Math.max(env.virtualListEl.scrollHeight, env.messagesEl.scrollHeight),
+        MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX
+      );
+      this.render({ ...env, options: { forceBottom: stillPinnedBottom, preserveScroll: !stillPinnedBottom } });
     });
   }
 
@@ -624,11 +635,15 @@ export class CodexMessageListRenderer {
     if (message.rawRef) {
       body.createDiv({ cls: "codex-process-raw-loading", text: "正在加载文件改动..." });
       void this.loadRawText(message)
-        .then((text) => renderDiff(text))
+        .then((text) => {
+          renderDiff(text);
+          this.requireEnv().onScheduleMeasure();
+        })
         .catch((error) => {
           body.empty();
           body.createDiv({ cls: "codex-process-raw-loading", text: `文件改动加载失败：${error instanceof Error ? error.message : String(error)}` });
           this.renderPlainTextBlock(body, displayTextForMessage(message) || fallback);
+          this.requireEnv().onScheduleMeasure();
         });
       return;
     }
@@ -689,6 +704,7 @@ export class CodexMessageListRenderer {
       };
       details.ontoggle = () => {
         if (details.open) renderRows();
+        this.requireEnv().onScheduleMeasure();
       };
       const summary = details.createEl("summary", { cls: "codex-diff-file-summary" });
       const main = summary.createSpan({ cls: "codex-diff-file-main" });

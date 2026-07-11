@@ -72,6 +72,11 @@ export async function afterTurnSettled(view: any, sessionId: string, succeeded: 
   view.renderToolbar();
 }
 
+export function messageRenderOptionsForRunUpdate(view: any): { forceBottom: boolean; preserveScroll: boolean } {
+  const forceBottom = !view.messagesBottomFollowPaused && (typeof view.isMessagesNearBottom === "function" ? view.isMessagesNearBottom() : true);
+  return { forceBottom, preserveScroll: !forceBottom };
+}
+
 export async function startNextQueuedTurn(view: any, sessionId: string): Promise<void> {
   if (!canStartQueuedTurn({
     queueStartInProgress: view.queueStartInProgress,
@@ -343,7 +348,7 @@ async function startSimpleAgentChatTurn(view: any, session: StoredSession, item:
     view.clearTurnWatchdog();
     view.clearActiveRun();
     session.updatedAt = Date.now();
-    view.renderMessages({ forceBottom: true });
+    view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
   }
@@ -462,7 +467,7 @@ export async function startKnowledgeBaseTurn(view: any, session: StoredSession, 
       await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
       await view.plugin.saveSettings(true).catch(() => undefined);
     }
-    view.renderMessages({ forceBottom: true });
+    view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
     void view.refreshKnowledgeDashboard(true);
@@ -515,7 +520,7 @@ export async function runKnowledgeBaseShortcut(view: any, label: string, runner:
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     await view.plugin.saveSettings(true);
     await view.plugin.archivePendingKnowledgeBaseThreads().catch((error) => console.warn("Codex knowledge thread archive failed", error));
-    view.renderMessages({ forceBottom: true });
+    view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
     void view.refreshKnowledgeDashboard(true);

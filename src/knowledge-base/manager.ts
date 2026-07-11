@@ -23,7 +23,7 @@ import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
 import { transactionSnapshotExistingSourceEvidencePaths, transactionSnapshotRepairableExistingSourceEvidencePaths, verifyDigestEvidence, type KnowledgeTransactionSnapshot, type KnowledgeTransactionSnapshotEntry } from "./digest-evidence";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
-import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, readKnowledgeBaseReportText, recoveredLintReportSummary, writeKnowledgeBaseReportFile } from "./report";
+import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, readKnowledgeBaseReportText, recoveredLintReportSummary, writeKnowledgeBaseFailureReport, writeKnowledgeBaseReportFile } from "./report";
 import { SUPPORTED_RAW_EXTENSIONS, discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
@@ -35,7 +35,7 @@ import { classifyRawSnapshotChanges, contentFingerprint, fingerprintRawContentSn
 import type { RawContentSnapshot, RawSnapshot } from "./raw-integrity";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
-import { buildKnowledgeBaseMaintainReportPayload, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
+import { buildKnowledgeBaseMaintainReportPayload, knowledgeBaseRunModeForCommandIntent, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import { normalizeKnowledgeBaseStructure, rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import { buildCodexKnowledgeTurnOptions } from "./turn-options";
@@ -412,9 +412,24 @@ export class KnowledgeBaseManager {
         this.plugin.settings.knowledgeBase.initialization.status = "failed";
         await this.plugin.saveSettings(true);
       }
+      const message = error instanceof Error ? error.message : String(error);
+      const mode = knowledgeBaseRunModeForCommandIntent(command.intent);
+      if (mode) {
+        return {
+          status: "failed",
+          message,
+          ui: buildKnowledgeBaseMaintainReportPayload(mode, {
+            status: "failed",
+            reportPath: this.plugin.settings.knowledgeBase.lastReportPath || "",
+            summary: "",
+            processedSources: [],
+            error: message
+          })
+        };
+      }
       return {
         status: "failed",
-        message: error instanceof Error ? error.message : String(error)
+        message
       };
     }
   }
@@ -699,6 +714,7 @@ export class KnowledgeBaseManager {
     let reportMtimeBefore: number | null = null;
     let trackerBeforeRun: OptionalFileSnapshot | null = null;
     let transactionBefore: KnowledgeTransactionSnapshot | null = null;
+    let runSourcesForFailureReport: KnowledgeBaseSource[] = [];
     let trackerWritten = false;
     let lintReportRecoveryEligible = false;
     const externalRawAdditionsDuringRun = new Set<string>();
@@ -740,6 +756,7 @@ export class KnowledgeBaseManager {
       const requestedRawPaths = extractRequestedRawPaths(userRequest);
       const promptSources = selectSourcesForRunMode(mode, discovery, userRequest);
       const runSources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
+      runSourcesForFailureReport = runSources;
       const prompt = buildKnowledgeBasePrompt({
         vaultPath,
         mode,
@@ -1054,6 +1071,23 @@ export class KnowledgeBaseManager {
         message = `${message}；知识库写入回滚失败：${restored.error}`;
       }
       if (restored.restored) trackerWritten = false;
+      let failureReportPath = "";
+      if (vaultPath && discovery?.reportPath && shouldWriteKnowledgeBaseFailureReportForMode(mode)) {
+        const reportError = await writeKnowledgeBaseFailureReport(vaultPath, discovery.reportPath, {
+          mode,
+          error: message,
+          sources: runSourcesForFailureReport,
+          startedAt,
+          rollbackRestored: restored.restored,
+          rollbackError: restored.error,
+          externalRawAdditions: Array.from(externalRawAdditionsDuringRun)
+        }).then(() => null, (error) => error instanceof Error ? error.message : String(error));
+        if (reportError) {
+          message = appendKnowledgeBaseWarning(message, `失败报告写入失败：${reportError}`);
+        } else {
+          failureReportPath = discovery.reportPath;
+        }
+      }
       settings.lastRunAt = Date.now();
       settings.lastRunStatus = "failed";
       settings.lastError = message;
@@ -1061,13 +1095,13 @@ export class KnowledgeBaseManager {
       settings.processedSources = processedSourcesBeforeRun;
       settings.healthHistory = cloneList(healthHistoryBeforeRun);
       settings.maintenanceHistory = cloneList(maintenanceHistoryBeforeRun);
-      if (discovery?.reportPath) settings.lastReportPath = discovery.reportPath;
-      recordKnowledgeBaseMaintenanceRun(settings, { status: "failed", mode, reportPath: discovery?.reportPath ?? "" });
+      if (failureReportPath) settings.lastReportPath = failureReportPath;
+      recordKnowledgeBaseMaintenanceRun(settings, { status: "failed", mode, reportPath: failureReportPath });
       message = await saveFailureStatusWithRetry(message);
       new Notice(`知识库${labelForRunMode(mode)}失败：${message}`);
       return {
         status: "failed",
-        reportPath: discovery?.reportPath ?? "",
+        reportPath: failureReportPath,
         summary: "",
         processedSources: [],
         error: message
@@ -3211,6 +3245,10 @@ function buildMaintenanceSummary(output: string, mode: KnowledgeBaseRunMode, str
     lines.push(`冲突副本预检：转移 ${cleanup.moved.length} 个历史数字副本。`);
   }
   return lines.join("\n").slice(0, 1000);
+}
+
+function shouldWriteKnowledgeBaseFailureReportForMode(mode: KnowledgeBaseRunMode): boolean {
+  return mode !== "lint";
 }
 
 function labelForRunMode(mode: KnowledgeBaseRunMode): string {
