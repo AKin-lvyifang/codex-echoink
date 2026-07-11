@@ -1589,7 +1589,8 @@ export class KnowledgeBaseManager {
     return createAgentTaskRuntime({
       backend,
       settings: this.plugin.settings,
-      vaultPath: this.plugin.getVaultPath()
+      vaultPath: this.plugin.getVaultPath(),
+      codexBackend: this.plugin.codex ?? undefined
     });
   }
 

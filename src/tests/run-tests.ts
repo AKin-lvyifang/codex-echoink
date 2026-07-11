@@ -93,7 +93,7 @@ import { formatHermesError } from "../core/hermes-errors";
 import { HermesBackend } from "../core/hermes-backend";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "../core/hermes-models";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
-import { buildCodexLaunchConfig, CodexService, resolveCodexCommand } from "../core/codex-service";
+import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCommand } from "../core/codex-service";
 import { formatOpenCodeError } from "../core/opencode-errors";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
 import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
@@ -743,7 +743,34 @@ assert.deepEqual(staleOpenCodeTaskModel, { providerId: "opencode", modelId: "ope
 delete (globalThis as any).__opencodeBackendTestHooks;
 const hermesEventRuntime = createAgentTaskRuntime({ backend: "hermes", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
 assert.equal(typeof (hermesEventRuntime as any).runTaskEvents, "function");
+const codexRuntimeAbortCalls: string[] = [];
+const codexRuntime = createAgentTaskRuntime({
+  backend: "codex-cli",
+  settings: DEFAULT_SETTINGS,
+  vaultPath: "/vault",
+  codexBackend: {
+    kind: "codex-cli",
+    connect: async () => ({ connected: true, label: "Codex", errors: [] }),
+    disconnect: async () => undefined,
+    listModels: async () => [{ id: "gpt-test", providerId: "codex", modelId: "gpt-test", displayName: "GPT Test", inputModalities: ["text"] }],
+    startSession: async () => ({ sessionId: "thread-1", title: "Codex test" }),
+    sendPrompt: async () => "",
+    abort: async (runId: string) => {
+      codexRuntimeAbortCalls.push(runId);
+    }
+  }
+});
+assert.equal((await codexRuntime.connect()).label, "Codex");
+assert.deepEqual((await codexRuntime.listModels()).map((model) => model.id), ["gpt-test"]);
+await codexRuntime.abort(codexRunIdForTurn("thread-1", "turn-1"));
+assert.deepEqual(codexRuntimeAbortCalls, ["thread-1::turn-1"]);
 const agentFactorySourceForOpenCodeAcp = await readFile(path.join(process.cwd(), "src/agent/factory.ts"), "utf8");
+const codexServiceSourceForAgentBackend = await readFile(path.join(process.cwd(), "src/core/codex-service.ts"), "utf8");
+assert.match(codexServiceSourceForAgentBackend, /class CodexService implements AgentBackend/);
+assert.match(codexServiceSourceForAgentBackend, /readonly kind = "codex-cli" as const/);
+assert.match(codexServiceSourceForAgentBackend, /async abort\(runId: string\)/);
+assert.match(agentFactorySourceForOpenCodeAcp, /codexBackend\.abort\(runId\)/);
+assert.doesNotMatch(agentFactorySourceForOpenCodeAcp, /async abort\(\): Promise<void>\s*\{[\s\S]{0,120}Codex rich runtime uses thread\/turn interruption/);
 assert.doesNotMatch(agentFactorySourceForOpenCodeAcp, /backend:\s*"opencode"[\s\S]{0,400}args:\s*\(\)\s*=>\s*\["acp"/);
 const simpleTaskSource = await readFile(path.join(process.cwd(), "src/agent/simple-task.ts"), "utf8");
 assert.match(simpleTaskSource, /createAgentTaskRuntime/);

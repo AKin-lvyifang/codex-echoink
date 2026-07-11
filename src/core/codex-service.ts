@@ -24,6 +24,7 @@ import { CodexRpcClient } from "./codex-rpc";
 import { normalizeRateLimitResponse } from "./rate-limits";
 import { mergeMcpServers } from "./workspace-resources";
 import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
+import type { AgentBackend, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions } from "../agent/types";
 
 export interface CodexServiceOptions {
   cliPath: string;
@@ -47,6 +48,8 @@ export type CodexProcessRunner = (
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxBuffer: number }
 ) => Promise<{ stdout: string; stderr: string }>;
+
+type CodexAgentStatusSnapshot = CodexStatusSnapshot & AgentConnectionStatus;
 
 export interface CodexCommandResolveOptions {
   home?: string;
@@ -105,7 +108,8 @@ const SERVER_REQUEST_METHODS = [
   "mcpServer/elicitation/request"
 ];
 
-export class CodexService {
+export class CodexService implements AgentBackend {
+  readonly kind = "codex-cli" as const;
   private client: CodexRpcClient | null = null;
   private initResult: any = null;
   private cachedSkills: CodexSkill[] = [];
@@ -113,7 +117,7 @@ export class CodexService {
 
   constructor(private readonly options: CodexServiceOptions) {}
 
-  async connect(force = false, options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
+  async connect(force = false, options: { refreshLogin?: boolean } = {}): Promise<CodexAgentStatusSnapshot> {
     if (this.client && !force && this.client.isAlive()) return this.refreshStatus({ refreshToken: options.refreshLogin === true });
     await this.disconnect();
 
@@ -154,11 +158,35 @@ export class CodexService {
     return Boolean(this.client?.isAlive());
   }
 
-  async refreshStatus(options: { refreshToken?: boolean } = {}): Promise<CodexStatusSnapshot> {
+  async listModels(): Promise<AgentModelInfo[]> {
+    const status = this.isConnected() ? await this.refreshStatus() : await this.connect();
+    return status.models.map(codexModelToAgentModel);
+  }
+
+  async startSession(options: AgentSessionOptions): Promise<{ sessionId: string; title: string }> {
+    const session = await this.startThread(turnOptionsFromAgentSession(options, this.options.vaultPath));
+    return { sessionId: session.threadId, title: session.title || options.title };
+  }
+
+  async sendPrompt(options: AgentPromptOptions): Promise<string> {
+    throw new Error("Codex 输出通过通知流返回；请使用 sendPromptAsync 并在调用方汇总 turn 通知。");
+  }
+
+  async sendPromptAsync(options: AgentPromptOptions): Promise<void> {
+    await this.startTurn(options.sessionId, agentPromptPartsToCodexInput(options.parts, options.system), turnOptionsFromAgentPrompt(options, this.options.vaultPath));
+  }
+
+  async abort(runId: string): Promise<void> {
+    const { threadId, turnId } = parseCodexRunId(runId);
+    await this.interruptTurn(threadId, turnId);
+  }
+
+  async refreshStatus(options: { refreshToken?: boolean } = {}): Promise<CodexAgentStatusSnapshot> {
     const errors: string[] = [];
     if (!this.client) {
       return {
         connected: false,
+        label: "Codex",
         accountLabel: "未连接",
         loggedIn: false,
         models: [],
@@ -178,6 +206,7 @@ export class CodexService {
 
     return {
       connected: true,
+      label: "Codex",
       codexHome: this.initResult?.codexHome,
       platform: this.initResult?.platformOs,
       accountLabel: formatAccountLabel(account),
@@ -644,6 +673,77 @@ function formatAccountLabel(response: any): string {
   if (account.type === "chatgpt") return account.email ? `ChatGPT：${account.email}` : "ChatGPT 已登录";
   if (account.type === "apiKey") return "API Key 已配置";
   return "已登录";
+}
+
+function codexModelToAgentModel(model: CodexModel): AgentModelInfo {
+  const modelId = model.model || model.id;
+  return {
+    id: model.id || modelId,
+    providerId: "codex",
+    modelId,
+    displayName: model.displayName || modelId,
+    inputModalities: normalizeCodexAgentModalities(model.inputModalities)
+  };
+}
+
+function normalizeCodexAgentModalities(input: string[] | undefined): AgentInputModality[] {
+  const modalities = new Set<AgentInputModality>(["text"]);
+  for (const item of input ?? []) {
+    if (item === "image" || item === "pdf") modalities.add(item);
+  }
+  return Array.from(modalities);
+}
+
+function turnOptionsFromAgentSession(options: AgentSessionOptions, vaultPath: string): TurnOptions {
+  return {
+    cwd: vaultPath,
+    model: options.model?.modelId ?? "",
+    reasoning: options.reasoning ?? "medium",
+    serviceTier: options.serviceTier ?? "standard",
+    permission: options.permission ?? "workspace-write",
+    mode: options.mode ?? "agent",
+    mcpEnabled: true,
+    writableRoots: options.writableRoots
+  };
+}
+
+function turnOptionsFromAgentPrompt(options: AgentPromptOptions, vaultPath: string): TurnOptions {
+  return {
+    cwd: vaultPath,
+    model: options.model?.modelId ?? "",
+    reasoning: "medium",
+    serviceTier: "standard",
+    permission: options.tools?.write === false && options.tools?.edit === false ? "read-only" : "workspace-write",
+    mode: "agent",
+    mcpEnabled: true
+  };
+}
+
+function agentPromptPartsToCodexInput(parts: AgentPromptPart[], system?: string): UserInput[] {
+  const input: UserInput[] = [];
+  if (system?.trim()) input.push({ type: "text", text: system.trim(), text_elements: [] });
+  for (const part of parts) {
+    if (part.type === "text") {
+      input.push({ type: "text", text: part.text, text_elements: [] });
+    } else if (part.mime.startsWith("image/")) {
+      input.push({ type: "localImage", path: part.path });
+    } else {
+      input.push({ type: "mention", name: part.filename || path.basename(part.path), path: part.path });
+    }
+  }
+  return input.length ? input : [{ type: "text", text: "", text_elements: [] }];
+}
+
+export function codexRunIdForTurn(threadId: string, turnId: string): string {
+  return `${threadId}::${turnId}`;
+}
+
+function parseCodexRunId(runId: string): { threadId: string; turnId: string } {
+  const separator = runId.indexOf("::");
+  const threadId = separator === -1 ? "" : runId.slice(0, separator).trim();
+  const turnId = separator === -1 ? "" : runId.slice(separator + 2).trim();
+  if (!threadId || !turnId) throw new Error("Codex abort 需要 threadId::turnId 格式的 runId。");
+  return { threadId, turnId };
 }
 
 function normalizeModels(data: any): CodexModel[] {
