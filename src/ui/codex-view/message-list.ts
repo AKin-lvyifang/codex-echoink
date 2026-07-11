@@ -35,6 +35,7 @@ export interface MessageListRenderInput {
   onOpenKnowledgeHistory: () => void;
   onScheduleMeasure: () => void;
   onScheduleRunProgress: () => void;
+  shouldFollowBottom?: () => boolean;
   options?: MessageListRenderOptions;
 }
 
@@ -172,7 +173,9 @@ export class CodexMessageListRenderer {
       this.virtualRerenderBurst = 0;
       this.virtualRerenderWindowStartedAt = 0;
     }
-    if (forceBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (forceBottom) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
     return changed;
   }
 
@@ -181,6 +184,15 @@ export class CodexMessageListRenderer {
       messagesEl.scrollTop,
       Math.max(1, messagesEl.clientHeight),
       Math.max(virtualListEl.scrollHeight, messagesEl.scrollHeight)
+    );
+  }
+
+  isAtBottom(messagesEl: HTMLElement, virtualListEl: HTMLElement): boolean {
+    return isNearVirtualBottom(
+      messagesEl.scrollTop,
+      Math.max(1, messagesEl.clientHeight),
+      Math.max(virtualListEl.scrollHeight, messagesEl.scrollHeight),
+      MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX
     );
   }
 
@@ -208,7 +220,7 @@ export class CodexMessageListRenderer {
       this.virtualRerenderScheduled = false;
       const env = this.env;
       if (!env) return;
-      const stillPinnedBottom = forceBottom && isNearVirtualBottom(
+      const stillPinnedBottom = forceBottom && (env.shouldFollowBottom?.() ?? true) && isNearVirtualBottom(
         env.messagesEl.scrollTop,
         Math.max(1, env.messagesEl.clientHeight),
         Math.max(env.virtualListEl.scrollHeight, env.messagesEl.scrollHeight),

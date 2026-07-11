@@ -42,6 +42,7 @@ import { CodexMessageListRenderer, isProcessItemType } from "./codex-view/messag
 import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./codex-view/knowledge-context-bridge";
 import { renderCodexTabs } from "./codex-view/tabs";
 import { renderMcpPanelView } from "./codex-view/mcp-panel";
+import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
 import {
   openAddMenu as showAddMenu,
   openKnowledgeCommandMenu as showKnowledgeCommandMenu,
@@ -143,13 +144,7 @@ export class CodexView extends ItemView {
   private activeThinkingMessageId = "";
   private activePlanMessageId = "";
   private activeItemMessages = new Map<string, string>();
-  private renderScheduled = false;
-  private pendingRenderForceBottom = false;
-  private pendingRenderFromScroll = false;
-  private measureScheduled = false;
-  private pendingMeasureForceBottom = false;
-  private lastMessagesScrollTop = 0;
-  private messagesBottomFollowPaused = false;
+  private readonly messageScrollFollow = new MessageScrollFollowController();
   private knowledgeBaseRunProgressTimer: number | null = null;
   private messageListRenderer = new CodexMessageListRenderer();
   private selectedSkill: EchoInkResource | null = null;
@@ -191,6 +186,14 @@ export class CodexView extends ItemView {
   private readonly turnQueue = new RuntimeTurnQueue();
   private queueStartInProgress = false;
   private draggedQueueItemId = "";
+
+  get messagesBottomFollowPaused(): boolean {
+    return this.messageScrollFollow.paused;
+  }
+
+  set messagesBottomFollowPaused(paused: boolean) {
+    this.messageScrollFollow.paused = paused;
+  }
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -551,6 +554,9 @@ export class CodexView extends ItemView {
     this.knowledgeDashboardEl = this.rootEl.createDiv({ cls: "codex-kb-dashboard" });
     this.messagesEl = this.rootEl.createDiv({ cls: "codex-messages" });
     this.virtualListEl = this.messagesEl.createDiv({ cls: "codex-virtual-list" });
+    this.registerDomEvent(this.messagesEl, "wheel", (event) => this.messageScrollFollow.handleWheel(event as WheelEvent));
+    this.registerDomEvent(this.messagesEl, "touchstart", (event) => this.messageScrollFollow.handleTouchStart(event as TouchEvent));
+    this.registerDomEvent(this.messagesEl, "touchmove", (event) => this.messageScrollFollow.handleTouchMove(event as TouchEvent));
     this.registerDomEvent(this.messagesEl, "scroll", () => this.handleMessagesScroll());
 
     const composerRefs = renderComposerShell(this.rootEl, {
@@ -791,6 +797,7 @@ export class CodexView extends ItemView {
       onOpenKnowledgeHistory: () => void this.openKnowledgeBaseHistory(session),
       onScheduleMeasure: () => this.scheduleMeasureVirtualRows(),
       onScheduleRunProgress: () => this.scheduleKnowledgeBaseRunProgress(),
+      shouldFollowBottom: () => !this.messagesBottomFollowPaused,
       options: renderOptions
     });
   }
@@ -2189,48 +2196,22 @@ export class CodexView extends ItemView {
   }
 
   private handleMessagesScroll(): void {
-    const top = this.messagesEl?.scrollTop ?? 0, previous = this.lastMessagesScrollTop;
-    this.lastMessagesScrollTop = top;
-    if (top < previous - 2) this.messagesBottomFollowPaused = true;
-    else if (this.isMessagesNearBottom()) this.messagesBottomFollowPaused = false;
-    this.scheduleRenderMessages({ fromScroll: true });
-  }
-  private scheduleRenderMessages(options: { forceBottom?: boolean; fromScroll?: boolean } = {}): void {
-    this.pendingRenderForceBottom = this.pendingRenderForceBottom || (Boolean(options.forceBottom) && !this.messagesBottomFollowPaused);
-    if (options.fromScroll && !this.pendingRenderForceBottom) {
-      this.pendingRenderFromScroll = true;
-    } else if (!options.fromScroll) {
-      this.pendingRenderFromScroll = false;
-    }
-    if (this.renderScheduled) return;
-    this.renderScheduled = true;
-    window.requestAnimationFrame(() => {
-      const forceBottom = this.pendingRenderForceBottom && !this.messagesBottomFollowPaused;
-      const fromScroll = this.pendingRenderFromScroll && !forceBottom;
-      this.pendingRenderForceBottom = false;
-      this.pendingRenderFromScroll = false;
-      this.renderScheduled = false;
-      this.renderMessages({ forceBottom, fromScroll, preserveScroll: this.messagesBottomFollowPaused && !forceBottom });
-    });
+    this.scheduleRenderMessages(this.messageScrollFollow.handleScroll(this.isMessagesAtBottom()));
   }
 
-  private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused && this.isMessagesNearBottom()): void {
-    this.pendingMeasureForceBottom = this.pendingMeasureForceBottom || forceBottom;
-    if (this.measureScheduled) return;
-    this.measureScheduled = true;
-    window.requestAnimationFrame(() => {
-      const shouldForceBottom = this.pendingMeasureForceBottom;
-      this.pendingMeasureForceBottom = false;
-      this.measureScheduled = false;
-      this.measureVisibleVirtualRows(shouldForceBottom);
-    });
+  private scheduleRenderMessages(options: MessageRenderScheduleOptions = {}): void {
+    this.messageScrollFollow.scheduleRender(options, (callback) => window.requestAnimationFrame(callback), (renderOptions) => this.renderMessages(renderOptions));
+  }
+
+  private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused): void {
+    this.messageScrollFollow.scheduleMeasure(forceBottom, (callback) => window.requestAnimationFrame(callback), (shouldForceBottom) => this.measureVisibleVirtualRows(shouldForceBottom));
   }
 
   private scheduleKnowledgeBaseRunProgress(): void {
     if (this.knowledgeBaseRunProgressTimer !== null) return;
     this.knowledgeBaseRunProgressTimer = window.setTimeout(() => {
       this.knowledgeBaseRunProgressTimer = null;
-      const forceBottom = !this.messagesBottomFollowPaused && this.isMessagesNearBottom();
+      const forceBottom = !this.messagesBottomFollowPaused;
       this.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
     }, 700);
   }
@@ -2253,9 +2234,14 @@ export class CodexView extends ItemView {
     return this.messageListRenderer.isNearBottom(this.messagesEl, this.virtualListEl);
   }
 
+  private isMessagesAtBottom(): boolean {
+    if (!this.messagesEl) return true;
+    return this.messageListRenderer.isAtBottom(this.messagesEl, this.virtualListEl);
+  }
+
   private resetVirtualWindow(): void {
     this.messageListRenderer.resetVirtualWindow();
-    this.messagesBottomFollowPaused = false;
+    this.messageScrollFollow.reset();
     if (this.messagesEl) this.messagesEl.scrollTop = 0;
   }
 

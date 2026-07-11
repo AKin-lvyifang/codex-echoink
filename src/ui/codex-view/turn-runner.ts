@@ -73,7 +73,7 @@ export async function afterTurnSettled(view: any, sessionId: string, succeeded: 
 }
 
 export function messageRenderOptionsForRunUpdate(view: any): { forceBottom: boolean; preserveScroll: boolean } {
-  const forceBottom = !view.messagesBottomFollowPaused && (typeof view.isMessagesNearBottom === "function" ? view.isMessagesNearBottom() : true);
+  const forceBottom = !view.messagesBottomFollowPaused;
   return { forceBottom, preserveScroll: !forceBottom };
 }
 

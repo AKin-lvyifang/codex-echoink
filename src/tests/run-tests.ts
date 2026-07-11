@@ -113,6 +113,7 @@ import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
+import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
 import { messageRenderOptionsForRunUpdate } from "../ui/codex-view/turn-runner";
 import { agentEventToEditorStatus, createAgentEventRenderState, reduceAgentEventForChat } from "../ui/codex-view/agent-event-renderer";
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "../ui/turn-queue";
@@ -1155,12 +1156,11 @@ assert.equal(shouldPinMessageListBottom({ forceBottom: true, preserveScroll: tru
 assert.equal(shouldPinMessageListBottom({}, true), true);
 assert.equal(shouldPinMessageListBottom({}, false), false);
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true, isMessagesNearBottom: () => true }), { forceBottom: false, preserveScroll: true });
-assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => false }), { forceBottom: false, preserveScroll: true });
+assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => false }), { forceBottom: true, preserveScroll: false });
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => true }), { forceBottom: true, preserveScroll: false });
 let scrollFollowRenderOptions: unknown = null;
 const scrollFollowView: any = {
-  messagesBottomFollowPaused: false,
-  lastMessagesScrollTop: 1000,
+  messageScrollFollow: new MessageScrollFollowController(),
   messagesEl: { scrollTop: 950 },
   messageListRenderer: { isNearBottom: () => true },
   virtualListEl: {},
@@ -1168,15 +1168,42 @@ const scrollFollowView: any = {
     scrollFollowRenderOptions = options;
   },
   isMessagesNearBottom: (CodexView.prototype as any).isMessagesNearBottom,
+  isMessagesAtBottom: () => false,
   handleMessagesScroll: (CodexView.prototype as any).handleMessagesScroll
 };
 scrollFollowView.handleMessagesScroll();
-assert.equal(scrollFollowView.messagesBottomFollowPaused, true);
+assert.equal(scrollFollowView.messageScrollFollow.paused, true);
 assert.deepEqual(scrollFollowRenderOptions, { fromScroll: true });
 scrollFollowView.messagesEl.scrollTop = 1200;
-scrollFollowView.lastMessagesScrollTop = 950;
+scrollFollowView.isMessagesAtBottom = () => true;
 scrollFollowView.handleMessagesScroll();
-assert.equal(scrollFollowView.messagesBottomFollowPaused, false);
+assert.equal(scrollFollowView.messageScrollFollow.paused, false);
+const wheelPauseFollow = new MessageScrollFollowController();
+const wheelPauseRenderFrames: Array<() => void> = [];
+const wheelPauseMeasureFrames: Array<() => void> = [];
+let wheelPauseRenderOptions: unknown = null;
+let wheelPauseMeasureForceBottom: unknown = null;
+wheelPauseFollow.scheduleRender({ forceBottom: true }, (callback) => {
+  wheelPauseRenderFrames.push(callback);
+  return wheelPauseRenderFrames.length;
+}, (options) => {
+  wheelPauseRenderOptions = options;
+});
+wheelPauseFollow.scheduleMeasure(true, (callback) => {
+  wheelPauseMeasureFrames.push(callback);
+  return wheelPauseMeasureFrames.length;
+}, (forceBottom) => {
+  wheelPauseMeasureForceBottom = forceBottom;
+});
+wheelPauseFollow.handleWheel({ deltaY: -1 });
+assert.equal(wheelPauseFollow.paused, true);
+wheelPauseRenderFrames[0]();
+wheelPauseMeasureFrames[0]();
+assert.deepEqual(wheelPauseRenderOptions, { forceBottom: false, fromScroll: false, preserveScroll: true });
+assert.equal(wheelPauseMeasureForceBottom, false);
+const wheelDownFollow = new MessageScrollFollowController();
+wheelDownFollow.handleWheel({ deltaY: 1 });
+assert.equal(wheelDownFollow.paused, false);
 const previousHTMLElement = (globalThis as any).HTMLElement;
 const previousWindowForMessageListTest = (globalThis as any).window;
 try {
@@ -1214,6 +1241,62 @@ try {
   assert.equal(renderedSessionId, "after-measure");
 } finally {
   (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  class FakeHTMLElement {}
+  const frameCallbacks: Array<() => void> = [];
+  (globalThis as any).HTMLElement = FakeHTMLElement;
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  const row = new FakeHTMLElement() as any;
+  row.dataset = { rowId: "message:paused-bottom" };
+  row.getBoundingClientRect = () => ({ height: 96 });
+  let renderOptions: unknown = null;
+  const messagesEl = { scrollTop: 300, clientHeight: 100, scrollHeight: 400 } as HTMLElement;
+  const virtualListEl = { children: [row], scrollHeight: 400 } as any;
+  (renderer as any).env = {
+    options: {},
+    sessionId: "paused-bottom-measure",
+    messagesEl,
+    virtualListEl,
+    shouldFollowBottom: () => false
+  };
+  (renderer as any).render = (input: { options?: unknown }) => {
+    renderOptions = input.options;
+  };
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, true), true);
+  frameCallbacks[0]();
+  assert.deepEqual(renderOptions, { forceBottom: false, preserveScroll: true });
+} finally {
+  (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  const frameCallbacks: Array<() => void> = [];
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+  const measureRaceFollow = new MessageScrollFollowController();
+  let measuredForceBottom: unknown = null;
+  measureRaceFollow.scheduleMeasure(true, (callback) => {
+    frameCallbacks.push(callback);
+    return frameCallbacks.length;
+  }, (forceBottom) => {
+    measuredForceBottom = forceBottom;
+  });
+  measureRaceFollow.paused = true;
+  frameCallbacks[0]();
+  assert.equal(measuredForceBottom, false);
+} finally {
   (globalThis as any).window = previousWindowForMessageListTest;
 }
 try {
