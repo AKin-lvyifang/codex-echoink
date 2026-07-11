@@ -13,10 +13,9 @@ import { swallowError } from "../core/error-handling";
 import type { TurnOptions } from "../core/codex-service";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles } from "../core/opencode-models";
-import { resolveRawRef } from "../core/raw-message-store";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
-import { ensureKnowledgeBaseSession, newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type ChatMessage, type KnowledgeBaseManagedThreadKind, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment, type StoredSession } from "../settings/settings";
+import { newId, providerConnectionLabel, recordKnowledgeBaseMaintenanceRun, type KnowledgeBaseManagedThreadKind, type KnowledgeBaseProcessedSource, type ReviewReportKind, type StoredAttachment } from "../settings/settings";
 import type { CodexNotification, PermissionMode } from "../types/app-server";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult, type KnowledgeBaseTurnOptionOverrides } from "./command-router";
 import {
@@ -38,7 +37,7 @@ import { AGENTS_RULES_FILE } from "./constants";
 import { extractKnowledgeBaseNotificationIds, routeKnowledgeBaseCodexNotification } from "./codex-route";
 import { verifyDigestEvidence } from "./digest-evidence";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
-import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, recoveredLintReportSummary, writeKnowledgeBaseFailureReport } from "./report";
+import { ensureKnowledgeBaseFallbackReport, isLintOnlyKnowledgeBaseReport, readFreshKnowledgeBaseReportExcerpt, readKnowledgeBaseReportMtime, recoveredLintReportSummary, writeKnowledgeBaseFailureReport } from "./report";
 import { discoverKnowledgeBaseSources } from "./discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
@@ -47,13 +46,14 @@ import { classifyRawSnapshotChanges, formatRawIntegrityError, isRawIntegrityErro
 import type { RawContentSnapshot, RawSnapshot } from "./raw-integrity";
 import { assertSafeRawEntries, assertSafeRawRoot, fingerprintKnowledgeRawContentSnapshot, runRawDigestCalibration, snapshotKnowledgeRawFiles, writeRawDigestMetadataForSources } from "./raw-calibration";
 import { KnowledgeBaseScheduler } from "./scheduler";
-import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
+import { appendScheduledMaintenanceMessage as appendScheduledMaintenanceMessageToSession } from "./scheduled-maintenance";
 import { extractRequestedRawPaths, processedSourcesForRunMode, selectSourcesForRunMode } from "./source-selection";
 import type { KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import {
   appendConflictDuplicateCleanupReport,
   appendExternalRawAdditionsReport,
   appendStructureNormalizationReport,
+  appendKnowledgeBaseWarning,
   buildMaintenanceSummary,
   collectExternalRawAdditions,
   ensureKnowledgeBaseFolders,
@@ -1450,63 +1450,9 @@ export class KnowledgeBaseManager {
   }
 
   private async appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void> {
-    const settings = this.plugin.settings;
-    const sessionsBefore = cloneStoredSessions(settings.sessions);
-    const sessionIdBefore = settings.knowledgeBase.sessionId;
-    const lastErrorBefore = settings.knowledgeBase.lastError;
-    let vaultPath = "";
-    let scheduledSessionId: string | null = null;
-    let scheduledMessageId: string | null = null;
-    let scheduledRawRef: string | null = null;
-    try {
-      vaultPath = this.plugin.getVaultPath();
-      const session = ensureKnowledgeBaseSession(settings, vaultPath);
-      scheduledSessionId = session.id;
-      const reportText = result.reportPath
-        ? await readKnowledgeBaseReportExcerpt(vaultPath, result.reportPath, 3000).catch(() => null)
-        : null;
-      const message: ChatMessage = {
-        id: newId("msg"),
-        role: "assistant",
-        title: "每日知识库维护",
-        itemType: "knowledgeBase",
-        status: result.status === "success" ? "completed" : result.status === "canceled" ? "canceled" : "failed",
-        text: buildScheduledKnowledgeBaseMessage(result, reportText ?? ""),
-        createdAt: Date.now()
-      };
-      scheduledMessageId = message.id;
-      await this.plugin.externalizeMessageText(message, message.text);
-      scheduledRawRef = message.rawRef ?? null;
-      session.messages.push(message);
-      session.title = "知识库管理";
-      session.updatedAt = message.createdAt;
-      await this.plugin.saveSettings(true);
+    await appendScheduledMaintenanceMessageToSession(this.plugin, result, async () => {
       await this.archivePendingCodexKnowledgeThreads();
-      await this.plugin.pruneKnowledgeBaseHistoryByRetention().catch((cleanupError) => console.warn("知识库历史清理失败", cleanupError));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      rollbackScheduledMaintenanceMessage(settings, {
-        sessionsBefore,
-        sessionIdBefore,
-        scheduledSessionId,
-        scheduledMessageId
-      });
-      const cleanupError = scheduledRawRef
-        ? await removeUnreferencedScheduledRawMessage(vaultPath, scheduledRawRef, this.plugin.getPluginDataDirName(), settings)
-        : null;
-      const warning = cleanupError
-        ? `自动维护消息保存失败：${message}；外置原文清理失败：${cleanupError}`
-        : `自动维护消息保存失败：${message}`;
-      settings.knowledgeBase.lastError = appendKnowledgeBaseWarning(lastErrorBefore, warning);
-      await saveSettingsSafely(this.plugin);
-      new Notice(`每日维护消息保存失败：${message}`);
-      return;
-    }
-    try {
-      this.plugin.getCodexView()?.refreshAfterBackgroundKnowledgeMessage();
-    } catch (error) {
-      console.warn("每日维护消息刷新失败", error);
-    }
+    });
   }
 
   async captureText(target: "inbox" | "raw-articles"): Promise<void> {
@@ -1579,10 +1525,6 @@ function cloneList<T extends object>(items: T[] | undefined): T[] {
   return (items ?? []).map((item) => ({ ...item }));
 }
 
-function cloneStoredSessions(sessions: StoredSession[] | undefined): StoredSession[] {
-  return clonePlainValue(sessions ?? []);
-}
-
 function clonePlainValue<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => clonePlainValue(item)) as T;
   if (value instanceof Date) return new Date(value.getTime()) as T;
@@ -1592,71 +1534,6 @@ function clonePlainValue<T>(value: T): T {
     ) as T;
   }
   return value;
-}
-
-function rollbackScheduledMaintenanceMessage(
-  settings: CodexForObsidianPlugin["settings"],
-  options: {
-    sessionsBefore: StoredSession[];
-    sessionIdBefore: string;
-    scheduledSessionId: string | null;
-    scheduledMessageId: string | null;
-  }
-): void {
-  const beforeById = new Map(options.sessionsBefore.map((session) => [session.id, session]));
-  const scheduledSession = options.scheduledSessionId
-    ? settings.sessions.find((session) => session.id === options.scheduledSessionId)
-    : null;
-  if (scheduledSession && options.scheduledMessageId) {
-    scheduledSession.messages = scheduledSession.messages.filter((message) => message.id !== options.scheduledMessageId);
-    const beforeSession = beforeById.get(scheduledSession.id);
-    if (!beforeSession) {
-      if (scheduledSession.messages.length === 0) {
-        settings.sessions = settings.sessions.filter((session) => session.id !== scheduledSession.id);
-      }
-    } else if (sameSessionMessageIds(scheduledSession, beforeSession)) {
-      Object.assign(scheduledSession, cloneStoredSessions([beforeSession])[0]);
-    } else {
-      scheduledSession.updatedAt = Math.max(
-        beforeSession.updatedAt,
-        scheduledSession.createdAt,
-        ...scheduledSession.messages.map((message) => message.createdAt)
-      );
-    }
-  }
-  if (settings.knowledgeBase.sessionId === options.scheduledSessionId) {
-    const scheduledStillExists = Boolean(options.scheduledSessionId && settings.sessions.some((session) => session.id === options.scheduledSessionId));
-    settings.knowledgeBase.sessionId = scheduledStillExists ? options.scheduledSessionId! : options.sessionIdBefore;
-  }
-}
-
-async function removeUnreferencedScheduledRawMessage(
-  vaultPath: string,
-  rawRef: string | null,
-  pluginDir: string,
-  settings: CodexForObsidianPlugin["settings"]
-): Promise<string | null> {
-  if (!vaultPath || !rawRef) return null;
-  const stillReferenced = settings.sessions.some((session) => session.messages.some((message) => message.rawRef === rawRef));
-  if (stillReferenced) return null;
-  try {
-    await fsp.rm(resolveRawRef(vaultPath, rawRef, pluginDir), { force: true });
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-}
-
-function sameSessionMessageIds(left: StoredSession, right: StoredSession): boolean {
-  if (left.messages.length !== right.messages.length) return false;
-  return left.messages.every((message, index) => message.id === right.messages[index]?.id);
-}
-
-function appendKnowledgeBaseWarning(previous: string, warning: string): string {
-  const normalized = previous.trim();
-  if (!normalized) return warning;
-  if (normalized.includes(warning)) return normalized;
-  return `${normalized}；${warning}`;
 }
 
 function dashboardSnapshotSignature(settings: CodexForObsidianPlugin["settings"]["knowledgeBase"]): string {

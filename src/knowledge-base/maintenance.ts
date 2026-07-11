@@ -247,6 +247,13 @@ export function labelForRunMode(mode: KnowledgeBaseRunMode): string {
   return "维护";
 }
 
+export function appendKnowledgeBaseWarning(previous: string, warning: string): string {
+  const normalized = previous.trim();
+  if (!normalized) return warning;
+  if (normalized.includes(warning)) return normalized;
+  return `${normalized}；${warning}`;
+}
+
 async function readExistingTrackerText(tracker: string): Promise<string> {
   const fallback = "---\nupdated: \n---\n\n# Ingest Tracker\n";
   const stat = await fsp.lstat(tracker).catch((error) => {

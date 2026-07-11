@@ -3276,11 +3276,11 @@ const codexViewMessageListSource = await readFile(path.join(process.cwd(), "src/
 const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/composer.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const knowledgeBaseCommandRouterSource = await readFile(path.join(process.cwd(), "src/knowledge-base/command-router.ts"), "utf8");
+const knowledgeBaseScheduledMaintenanceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/scheduled-maintenance.ts"), "utf8");
 const digestEvidenceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/digest-evidence.ts"), "utf8");
 const codexViewTurnRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
-const cloneStoredSessionsSource = knowledgeBaseManagerSource.slice(
-  knowledgeBaseManagerSource.indexOf("function cloneStoredSessions"),
-  knowledgeBaseManagerSource.indexOf("function rollbackScheduledMaintenanceMessage")
+const cloneStoredSessionsSource = knowledgeBaseScheduledMaintenanceSource.slice(
+  knowledgeBaseScheduledMaintenanceSource.indexOf("function cloneStoredSessions")
 );
 const introducedEvidenceLineFlagsSource = digestEvidenceSource.slice(
   digestEvidenceSource.indexOf("function introducedEvidenceLineFlags"),
