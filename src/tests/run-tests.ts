@@ -5056,6 +5056,16 @@ assert.equal(isSyntheticHermesDefaultModel("deepseek", "deepseek-chat"), false);
 assert.match(formatHermesError({ status: 401, data: { error: { message: "invalid API_SERVER_KEY" } } }), /Hermes API 请求失败/);
 assert.match(formatHermesError("No inference provider configured"), /Hermes 推理 provider 未配置/);
 
+const hermesBackendSource = await readFile(path.join(process.cwd(), "src/core/hermes-backend.ts"), "utf8");
+const hermesPollRunSource = hermesBackendSource.slice(hermesBackendSource.indexOf("private async pollRun"), hermesBackendSource.indexOf("private async fetchJson"));
+assert.match(hermesBackendSource, /const HERMES_INITIAL_POLL_DELAY_MS = 500/);
+assert.match(hermesBackendSource, /const HERMES_MAX_POLL_DELAY_MS = 5_000/);
+assert.match(hermesBackendSource, /const HERMES_POLL_JITTER_MS = 250/);
+assert.match(hermesPollRunSource, /Math\.random\(\) \* HERMES_POLL_JITTER_MS/);
+assert.match(hermesPollRunSource, /Math\.min\(pollDelayMs \* 1\.5, HERMES_MAX_POLL_DELAY_MS\)/);
+assert.match(hermesPollRunSource, /await delay\([^;]+signal\)/);
+assert.doesNotMatch(hermesPollRunSource, /await delay\(500\)/);
+
 const hermesCliDefaultArgs: string[][] = [];
 const hermesCliDefaultBackend = new HermesBackend({
   cliPath: "/usr/local/bin/hermes",

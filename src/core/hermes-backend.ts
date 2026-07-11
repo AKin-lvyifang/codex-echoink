@@ -43,6 +43,10 @@ export type HermesFetch = (url: string, init?: any) => Promise<{
   text?(): Promise<string>;
 }>;
 
+const HERMES_INITIAL_POLL_DELAY_MS = 500;
+const HERMES_MAX_POLL_DELAY_MS = 5_000;
+const HERMES_POLL_JITTER_MS = 250;
+
 export class HermesBackend implements AgentBackend {
   readonly kind = "hermes" as const;
   private connectionInfo: HermesConnectionInfo = {
@@ -188,6 +192,7 @@ export class HermesBackend implements AgentBackend {
   private async pollRun(runId: string, timeoutMs: number, signal?: AbortSignal): Promise<any> {
     const started = Date.now();
     let last: any = null;
+    let pollDelayMs = HERMES_INITIAL_POLL_DELAY_MS;
     while (Date.now() - started < timeoutMs) {
       if (signal?.aborted) {
         await this.abort(runId).catch(() => undefined);
@@ -202,7 +207,9 @@ export class HermesBackend implements AgentBackend {
         if (status === "completed" || status === "success") return last;
         throw new Error(formatHermesError(last?.error ?? last?.message ?? `Hermes run ${status}`));
       }
-      await delay(500);
+      const remainingMs = Math.max(timeoutMs - (Date.now() - started), 0);
+      await delay(Math.min(pollDelayMs + Math.random() * HERMES_POLL_JITTER_MS, remainingMs), signal);
+      pollDelayMs = Math.min(pollDelayMs * 1.5, HERMES_MAX_POLL_DELAY_MS);
     }
     await this.abort(runId).catch(() => undefined);
     throw new Error(`Hermes 长时间没有返回（${Math.round(timeoutMs / 1000)} 秒），已请求中断。`);
@@ -286,8 +293,21 @@ function appendProcessOutput(error: Error, stdout: string | Buffer, stderr: stri
   return next;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener("abort", finish);
+      if (timeout) clearTimeout(timeout);
+      resolve();
+    };
+    timeout = setTimeout(finish, ms);
+    if (signal) signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
