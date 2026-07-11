@@ -5063,6 +5063,9 @@ const mcpBrokerSource = await readFile(path.join(process.cwd(), "src/resources/m
 const acpRuntimeSource = await readFile(path.join(process.cwd(), "src/agent/acp-runtime.ts"), "utf8");
 assert.match(jsonRpcTransportSource, /abstract class JsonRpcStdioTransport/);
 assert.match(jsonRpcTransportSource, /private readonly pending = new Map/);
+assert.match(jsonRpcTransportSource, /private processExited = false/);
+assert.match(jsonRpcTransportSource, /!this\.processExited/);
+assert.match(jsonRpcTransportSource, /this\.processExited = true/);
 assert.match(jsonRpcTransportSource, /disableTimeoutForNonPositive/);
 assert.match(jsonRpcTransportSource, /killOnDispose/);
 assert.match(codexRpcSource, /extends JsonRpcStdioTransport/);

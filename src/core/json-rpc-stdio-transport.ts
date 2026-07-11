@@ -53,6 +53,7 @@ interface PendingJsonRpcRequest {
 export abstract class JsonRpcStdioTransport {
   protected process: JsonRpcProcessLike | null = null;
   protected disposed = false;
+  private processExited = false;
   private buffer = "";
   private nextId = 1;
   private readonly pending = new Map<number, PendingJsonRpcRequest>();
@@ -63,6 +64,7 @@ export abstract class JsonRpcStdioTransport {
   start(): void {
     if (this.process) return;
     this.disposed = false;
+    this.processExited = false;
     const child = this.createProcess();
     this.process = child;
     child.stdout.setEncoding?.("utf8");
@@ -76,7 +78,7 @@ export abstract class JsonRpcStdioTransport {
 
   isAlive(): boolean {
     const child = this.process;
-    return Boolean(child && !this.disposed && !child.killed && child.stdin.writable);
+    return Boolean(child && !this.disposed && !this.processExited && !child.killed && child.stdin.writable);
   }
 
   request<T = unknown>(method: string, params?: unknown, timeoutMs = this.options.defaultTimeoutMs ?? 30000): Promise<T> {
@@ -224,6 +226,7 @@ export abstract class JsonRpcStdioTransport {
 
   private handleProcessError(error: Error): void {
     const wasDisposed = this.disposed;
+    this.processExited = true;
     this.process = null;
     this.rejectAll(this.formatProcessError(error));
     if (!wasDisposed) this.handleTransportError(error);
@@ -231,6 +234,7 @@ export abstract class JsonRpcStdioTransport {
 
   private handleProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
     const wasDisposed = this.disposed;
+    this.processExited = true;
     this.process = null;
     const error = this.formatExitError(code, signal);
     this.rejectAll(error);
