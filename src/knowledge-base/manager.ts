@@ -35,6 +35,7 @@ import { classifyRawSnapshotChanges, contentFingerprint, fingerprintRawContentSn
 import type { RawContentSnapshot, RawSnapshot } from "./raw-integrity";
 import { KnowledgeBaseScheduler } from "./scheduler";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
+import { extractRequestedRawPaths, processedSourcesForRunMode, selectSourcesForRunMode } from "./source-selection";
 import { buildKnowledgeBaseMaintainReportPayload, knowledgeBaseRunModeForCommandIntent, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
 import { normalizeKnowledgeBaseStructure, rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
@@ -2626,55 +2627,6 @@ async function writeFileAtomic(absolutePath: string, content: string | Buffer): 
     await fsp.rm(temp, { force: true }).catch(() => undefined);
     throw error;
   }
-}
-
-export function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: KnowledgeBaseDiscovery, userRequest = ""): KnowledgeBaseSource[] {
-  if (mode === "lint" || mode === "inbox" || mode === "outputs") return [];
-  const requestedRawPaths = extractRequestedRawPaths(userRequest);
-  if (requestedRawPaths.length && (mode === "maintain" || mode === "reingest")) {
-    const requested = new Set(requestedRawPaths);
-    return discovery.sources.filter((source) => requested.has(source.relativePath));
-  }
-  if (mode === "reingest") {
-    const changed = discovery.changedSources;
-    if (changed.length) return changed;
-    return [...discovery.sources].sort((left, right) => right.mtime - left.mtime).slice(0, MAX_ATTACHED_SOURCES);
-  }
-  return discovery.changedSources;
-}
-
-export function extractRequestedRawPaths(text: string): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  const add = (value: string) => {
-    const normalized = normalizeRequestedRawPath(value);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    result.push(normalized);
-  };
-  for (const match of text.matchAll(/\[\[\s*(raw\/[^\]|#\n\r]+)(?:#[^\]|\n\r]+)?(?:\|[^\]\n\r]+)?\s*\]\]/gi)) {
-    add(match[1] ?? "");
-  }
-  for (const match of text.matchAll(/(?:^|[\s"'`([{（，,。；;：:])((?:raw\/)[^\s"'`)\]}）】,，。；;：:]+)(?=$|[\s"'`)\]}）】,，。；;：:])/gi)) {
-    add(match[1] ?? "");
-  }
-  return result;
-}
-
-function normalizeRequestedRawPath(value: string): string {
-  const trimmed = value.trim().replace(/\\/g, "/").replace(/^<|>$/g, "");
-  if (!trimmed || trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed) || trimmed.includes("..")) return "";
-  if (!trimmed.startsWith("raw/")) return "";
-  const withoutHash = trimmed.split("#")[0].trim();
-  const clean = withoutHash.split("/").filter((part) => part && part !== ".").join("/");
-  if (!clean.startsWith("raw/")) return "";
-  if (/[?#]/.test(clean)) return "";
-  if (/\.(md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)$/i.test(clean)) return clean;
-  return `${clean}.md`;
-}
-
-function processedSourcesForRunMode(mode: KnowledgeBaseRunMode, sources: KnowledgeBaseSource[]): KnowledgeBaseSource[] {
-  return mode === "maintain" || mode === "reingest" ? sources : [];
 }
 
 function legacyProcessedSourceMatchesCurrent(previous: KnowledgeBaseProcessedSource | undefined, source: KnowledgeBaseSource): boolean {

@@ -151,7 +151,7 @@ import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-t
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
-import { KnowledgeBaseManager, extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-base/manager";
+import { KnowledgeBaseManager } from "../knowledge-base/manager";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
@@ -180,6 +180,7 @@ import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { shouldRunScheduledKnowledgeBaseMaintenance } from "../knowledge-base/schedule";
 import { KnowledgeBaseScheduler } from "../knowledge-base/scheduler";
 import { buildScheduledKnowledgeBaseMessage, extractKnowledgeBaseReportConclusion } from "../knowledge-base/scheduled-message";
+import { extractRequestedRawPaths, selectSourcesForRunMode } from "../knowledge-base/source-selection";
 import { normalizeKnowledgeBaseStructure } from "../knowledge-base/structure-normalizer";
 import { CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { clearKnowledgeBaseVisibleHistory, getDisplayKnowledgeBaseMessages, getHiddenKnowledgeBaseMessages, getVisibleKnowledgeBaseMessages, restoreKnowledgeBaseVisibleHistory } from "../knowledge-base/session-history";
