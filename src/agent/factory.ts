@@ -34,7 +34,7 @@ function createCodexTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunti
       return { connected: true, label: "Codex", errors: [] };
     },
     async disconnect(): Promise<void> {
-      // Codex rich runtime lifecycle is owned by CodexService.
+      await input.codexBackend?.disconnect();
     },
     async listModels(): Promise<AgentModelInfo[]> {
       if (input.codexBackend) return await input.codexBackend.listModels();

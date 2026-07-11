@@ -783,6 +783,7 @@ delete (globalThis as any).__opencodeBackendTestHooks;
 const hermesEventRuntime = createAgentTaskRuntime({ backend: "hermes", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
 assert.equal(typeof (hermesEventRuntime as any).runTaskEvents, "function");
 const codexRuntimeAbortCalls: string[] = [];
+let codexRuntimeDisconnectCalls = 0;
 const codexRuntime = createAgentTaskRuntime({
   backend: "codex-cli",
   settings: DEFAULT_SETTINGS,
@@ -790,7 +791,7 @@ const codexRuntime = createAgentTaskRuntime({
   codexBackend: {
     kind: "codex-cli",
     connect: async () => ({ connected: true, label: "Codex", errors: [] }),
-    disconnect: async () => undefined,
+    disconnect: async () => { codexRuntimeDisconnectCalls += 1; },
     listModels: async () => [{ id: "gpt-test", providerId: "codex", modelId: "gpt-test", displayName: "GPT Test", inputModalities: ["text"] }],
     startSession: async () => ({ sessionId: "thread-1", title: "Codex test" }),
     sendPrompt: async () => "",
@@ -802,7 +803,9 @@ const codexRuntime = createAgentTaskRuntime({
 assert.equal((await codexRuntime.connect()).label, "Codex");
 assert.deepEqual((await codexRuntime.listModels()).map((model) => model.id), ["gpt-test"]);
 await codexRuntime.abort(codexRunIdForTurn("thread-1", "turn-1"));
+await codexRuntime.disconnect?.();
 assert.deepEqual(codexRuntimeAbortCalls, ["thread-1::turn-1"]);
+assert.equal(codexRuntimeDisconnectCalls, 1);
 const agentFactorySourceForOpenCodeAcp = await readFile(path.join(process.cwd(), "src/agent/factory.ts"), "utf8");
 const codexServiceSourceForAgentBackend = await readFile(path.join(process.cwd(), "src/core/codex-service.ts"), "utf8");
 assert.match(codexServiceSourceForAgentBackend, /class CodexService implements AgentBackend/);
