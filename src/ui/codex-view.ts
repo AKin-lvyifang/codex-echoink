@@ -87,7 +87,7 @@ import {
   updateUsageHeaderView,
   type ArticleUnderstandingPanelState
 } from "./codex-view/header";
-import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
+import { clearKnowledgeDashboardHealthTooltips as clearKnowledgeDashboardTooltipState, createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState, renderKnowledgeDashboardView } from "./codex-view/knowledge-dashboard";
 import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
 import { buildEditorActionUserInput } from "../editor-actions/prompt";
 import { editorActionStartBlockReason } from "../editor-actions/state";
@@ -271,7 +271,7 @@ export class CodexView extends ItemView {
     this.clearEditorActionStatusTimers();
     this.clearEditorSummaryTimers();
     this.clearKnowledgeBaseRunProgressTimer();
-    this.clearKnowledgeDashboardHealthTooltips();
+    disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
     this.rejectEditorActionRun(new Error("EchoInk Agent 侧栏已关闭"));
     this.rejectEditorSummaryRun(new Error("EchoInk Agent 侧栏已关闭"));
     await this.plugin.saveSettings(true);
