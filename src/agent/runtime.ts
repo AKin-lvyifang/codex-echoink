@@ -14,12 +14,14 @@ export interface AgentToolBridgeRuntime {
   scope: EchoInkResourceScope;
   maxToolCalls: number;
   prompt: string;
+  toolResourceIds?: Record<string, string>;
   callTool(input: {
     tool: string;
     arguments?: Record<string, unknown>;
     scope: EchoInkResourceScope;
     backend: AgentBackendKind;
     emit?: AgentEventSink;
+    signal?: AbortSignal;
   }): Promise<string>;
 }
 
@@ -37,6 +39,8 @@ export interface AgentTaskRuntime {
   disconnect?(): Promise<void>;
   listModels(): Promise<AgentModelInfo[]>;
   listAgents?(): Promise<AgentProfileInfo[]>;
+  hasNativeSession?(sessionId: string): Promise<boolean>;
+  deleteNativeSession?(sessionId: string): Promise<boolean>;
   runTask(input: AgentTaskInput): Promise<AgentTaskResult>;
   abort(runId: string): Promise<void>;
 }

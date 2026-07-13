@@ -31,7 +31,7 @@ export interface ComposerToolbarState {
   selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
   running: boolean;
-  viewRunKind?: "chat" | "knowledge-base" | "";
+  viewRunKind?: "chat" | "knowledge-base" | "editor" | "";
   hasDraft: boolean;
   hasQueuedItems: boolean;
   currentComposerSummary: string;

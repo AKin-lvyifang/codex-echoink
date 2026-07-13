@@ -2,7 +2,7 @@ export type ComposerPrimaryAction = "send" | "enqueue" | "resume-queue" | "stop-
 
 export interface ComposerPrimaryActionState {
   viewRunning: boolean;
-  viewRunKind?: "chat" | "knowledge-base" | "";
+  viewRunKind?: "chat" | "knowledge-base" | "editor" | "";
   knowledgeTaskRunning: boolean;
   hasDraft?: boolean;
   hasQueuedItems?: boolean;
@@ -10,7 +10,7 @@ export interface ComposerPrimaryActionState {
 
 export interface ComposerRuntimeActionState {
   viewRunning: boolean;
-  viewRunKind?: "chat" | "knowledge-base" | "";
+  viewRunKind?: "chat" | "knowledge-base" | "editor" | "";
   globalKnowledgeTaskRunning: boolean;
   hasDraft?: boolean;
   hasQueuedItems?: boolean;

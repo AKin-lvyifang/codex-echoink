@@ -1,14 +1,14 @@
 import type CodexForObsidianPlugin from "../main";
-import { OpenCodeBackend } from "../core/opencode-backend";
 import type { PermissionMode } from "../types/app-server";
 import type { AgentBackendKind } from "../agent/types";
 import type { KnowledgeBaseManagedThreadKind, StoredAttachment } from "../settings/settings";
 import type { KnowledgeBaseChatResult, KnowledgeBaseTurnOptionOverrides } from "./command-router";
 import type { KnowledgeBaseCaptureService } from "./capture";
-import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
+import { buildKnowledgeBaseJournalPrompt, collectEchoInkJournalEvidenceFromSessions, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "./journal";
 import { buildKnowledgeBaseAskPrompt } from "./prompt";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
 import type { KnowledgeBaseCitationSummary, KnowledgeBaseSource } from "./types";
+import type { KnowledgeAgentTaskOutput, KnowledgeJournalNativeHistory } from "./agent-runner";
 import { exists } from "./utils";
 
 export interface KnowledgeBaseQueryJournalContext {
@@ -17,6 +17,7 @@ export interface KnowledgeBaseQueryJournalContext {
   finishRun(): void;
   resolveRulesFile(): Promise<{ relativePath: string; exists: boolean; useCustomRulesFile: boolean }>;
   resolveKnowledgeBackend(): AgentBackendKind;
+  collectNativeJournalHistory(backend: AgentBackendKind, window: { startMs: number; endMs: number }): Promise<KnowledgeJournalNativeHistory>;
   runKnowledgeAgentTask(input: {
     prompt: string;
     sources: KnowledgeBaseSource[];
@@ -24,7 +25,7 @@ export interface KnowledgeBaseQueryJournalContext {
     codexWriteScope: "knowledge-base" | "knowledge-lint" | "journal";
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
     managedKind: KnowledgeBaseManagedThreadKind;
-  }): Promise<string>;
+  }): Promise<KnowledgeAgentTaskOutput>;
 }
 
 export class KnowledgeBaseQueryJournalService {
@@ -65,7 +66,8 @@ export class KnowledgeBaseQueryJournalService {
       });
       return {
         status: "success",
-        message: formatAskAnswer(output, citations),
+        message: formatAskAnswer(output.text, citations),
+        harnessResult: output.harnessResult,
         citations
       };
     } catch (error) {
@@ -90,7 +92,12 @@ export class KnowledgeBaseQueryJournalService {
       const backend = this.context.resolveKnowledgeBackend();
       const target = await resolveJournalDailyTarget(vaultPath, text);
       await ensureJournalTargetFolders(vaultPath, target);
-      const openCodeHistory = backend === "opencode" ? await this.collectOpenCodeJournalHistory(target) : null;
+      const echoInkEvidence = collectEchoInkJournalEvidenceFromSessions(
+        this.plugin.settings.sessions,
+        this.plugin.settings.knowledgeBase.sessionId,
+        target.evidenceWindow
+      );
+      const nativeHistory = await this.context.collectNativeJournalHistory(backend, target.evidenceWindow);
       const prompt = buildKnowledgeBaseJournalPrompt({
         vaultPath,
         userRequest: copiedAttachments.length
@@ -103,7 +110,8 @@ export class KnowledgeBaseQueryJournalService {
           : request,
         target,
         backend,
-        openCodeHistory
+        echoInkEvidence,
+        openCodeHistory: nativeHistory
       });
       const output = await this.context.runKnowledgeAgentTask({
         prompt,
@@ -114,11 +122,12 @@ export class KnowledgeBaseQueryJournalService {
         managedKind: "journal"
       });
       if (!await exists(target.absolutePath)) {
-        throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
+        throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.text.trim() ? `\n\nAgent 输出：${output.text.trim().slice(0, 800)}` : ""}`);
       }
       return {
         status: "success",
-        message: [`已写入日记：`, `- ${target.relativePath}`, output.trim() ? `\n${output.trim().slice(0, 800)}` : ""].filter(Boolean).join("\n")
+        message: [`已写入日记：`, `- ${target.relativePath}`, output.text.trim() ? `\n${output.text.trim().slice(0, 800)}` : ""].filter(Boolean).join("\n"),
+        harnessResult: output.harnessResult
       };
     } catch (error) {
       return {
@@ -130,28 +139,6 @@ export class KnowledgeBaseQueryJournalService {
     }
   }
 
-  private async collectOpenCodeJournalHistory(target: { evidenceWindow: { startMs: number; endMs: number } }) {
-    const backend = new OpenCodeBackend({
-      ...this.plugin.settings.opencode,
-      vaultPath: this.plugin.getVaultPath()
-    });
-    try {
-      await backend.connect();
-      this.plugin.settings.opencode.lastConnectedAt = Date.now();
-      this.plugin.settings.opencode.lastError = "";
-      await this.plugin.saveSettings();
-      return await backend.collectHistoryMessages({
-        startMs: target.evidenceWindow.startMs,
-        endMs: target.evidenceWindow.endMs
-      });
-    } catch (error) {
-      this.plugin.settings.opencode.lastError = error instanceof Error ? error.message : String(error);
-      await this.plugin.saveSettings();
-      throw error;
-    } finally {
-      await backend.disconnect();
-    }
-  }
 }
 
 function formatAskAnswer(output: string, citations: KnowledgeBaseCitationSummary): string {

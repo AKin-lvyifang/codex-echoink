@@ -70,8 +70,8 @@ export function getAgentBackendDefinition(kind: AgentBackendKind): AgentBackendD
   return AGENT_BACKEND_DEFINITIONS.find((definition) => definition.kind === kind) ?? AGENT_BACKEND_DEFINITIONS[0];
 }
 
-export function agentBackendDisplayName(kind: AgentBackendKind): string {
-  return getAgentBackendDefinition(kind).label;
+export function agentBackendDisplayName(kind: string): string {
+  return AGENT_BACKEND_DEFINITIONS.find((definition) => definition.kind === kind)?.label ?? kind;
 }
 
 export function isAgentBackendKind(value: unknown): value is AgentBackendKind {

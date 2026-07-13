@@ -71,6 +71,12 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
     async listAgents() {
       return await backend.listAgents();
     },
+    async hasNativeSession(sessionId: string): Promise<boolean> {
+      return await backend.hasSession(sessionId);
+    },
+    async deleteNativeSession(sessionId: string): Promise<boolean> {
+      return await backend.deleteSession(sessionId);
+    },
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
       throwIfTaskAborted(task.abortSignal);
       const sources = task.sources ?? [];
@@ -95,6 +101,7 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
       }
       const result = await backend.runCliTask({
         prompt: withResourcePrefix(task.prompt, task.resources),
+        nativeSessionId: task.nativeSessionId,
         parts: sources,
         agent: input.settings.opencode.agent,
         ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
@@ -102,7 +109,10 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
         abortSignal: task.abortSignal,
         onRunId: task.onRunId
       });
-      return result;
+      return {
+        ...result,
+        ...(selectedModel ? { effectiveModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {})
+      };
     },
     async abort(runId: string): Promise<void> {
       await backend.abort(runId);

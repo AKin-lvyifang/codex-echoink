@@ -158,7 +158,7 @@ export async function startThreadForSession(host: CodexWorkspaceHost, session: S
   if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return false;
   const status = await host.plugin.ensureCodexConnected();
   if (!status.connected || !host.plugin.codex || session.threadId) return Boolean(session.threadId);
-  const started = await host.plugin.codex.startThread(currentTurnOptions(host, session));
+  const started = await host.plugin.startCodexHarnessThread(currentTurnOptions(host, session));
   session.threadId = started.threadId;
   await host.plugin.saveSettings();
   return true;

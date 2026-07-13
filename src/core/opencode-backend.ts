@@ -2,11 +2,19 @@ import { spawn, type ChildProcess } from "child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions, AgentTaskResult } from "../agent/types";
 import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
-import { formatOpenCodeError } from "./opencode-errors";
+import { formatOpenCodeError, isOpenCodeNotFoundError } from "./opencode-errors";
 import { nodeFetch } from "./opencode-fetch";
 import { collectOpenCodeHistoryMessages, normalizeOpenCodeTimeMs, type OpenCodeHistorySnapshot } from "./opencode-history-loader";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
-import { buildOpenCodeRunArgs, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "./opencode-run";
+import { runOpenCodeCommand, stopOpenCodeProcess } from "./opencode-process";
+import {
+  buildOpenCodeRunArgs,
+  latestOpenCodeAssistantText,
+  openCodeAssistantMessageIds,
+  openCodeRunSessionIdFromLine,
+  parseOpenCodeModelListOutput,
+  parseOpenCodeRunJsonLines
+} from "./opencode-run";
 
 export type { OpenCodeHistoryMessage, OpenCodeHistorySnapshot } from "./opencode-history-loader";
 
@@ -32,6 +40,7 @@ export interface OpenCodeConnectionInfo {
 
 export interface OpenCodeCliTaskOptions {
   prompt: string;
+  nativeSessionId?: string;
   parts?: AgentPromptPart[];
   model?: {
     providerId: string;
@@ -221,12 +230,40 @@ export class OpenCodeBackend implements AgentBackend {
     }), "OpenCode 启动异步任务失败");
   }
 
+  async hasSession(sessionId: string): Promise<boolean> {
+    try {
+      const session = await unwrapOpenCodeResult(this.requireClient().session.get({
+        sessionID: sessionId,
+        directory: this.options.vaultPath
+      }), `读取 OpenCode 会话失败：${sessionId}`);
+      return Boolean(session?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const result = await this.requireClient().session.delete({
+      sessionID: sessionId,
+      directory: this.options.vaultPath
+    });
+    if (result.error) {
+      if (isOpenCodeNotFoundError(result.error)) return false;
+      throw new Error(`删除 OpenCode 会话失败：${formatOpenCodeError(result.error)}`);
+    }
+    return result.data === true;
+  }
+
   async runCliTask(options: OpenCodeCliTaskOptions): Promise<AgentTaskResult> {
     const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const knownAssistantIds = options.nativeSessionId
+      ? await this.readSessionMessages(options.nativeSessionId).then(openCodeAssistantMessageIds).catch(() => null)
+      : new Set<string>();
     const files = (options.parts ?? []).filter((part) => part.type === "file").map((part) => part.path);
     const args = buildOpenCodeRunArgs({
       prompt: options.prompt,
       directory: this.options.vaultPath,
+      sessionId: options.nativeSessionId,
       model: options.model,
       agent: options.agent ?? this.options.agent,
       files
@@ -255,9 +292,14 @@ export class OpenCodeBackend implements AgentBackend {
       }
     });
     const parsed = parseOpenCodeRunJsonLines(output);
-    if (parsed.sessionId && !emittedRunId) options.onRunId?.(parsed.sessionId);
-    if (!parsed.text) throw new Error("OpenCode CLI 未返回内容。");
-    return { text: parsed.text, runId: parsed.sessionId, usage: parsed.usage };
+    const sessionId = parsed.sessionId || options.nativeSessionId;
+    if (sessionId && !emittedRunId) options.onRunId?.(sessionId);
+    const recoveredText = !parsed.text && sessionId && knownAssistantIds
+      ? await this.recoverLatestAssistantText(sessionId, knownAssistantIds)
+      : "";
+    const text = parsed.text || recoveredText;
+    if (!text) throw new Error("OpenCode CLI 未返回内容。");
+    return { text, runId: sessionId, usage: parsed.usage };
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -282,6 +324,24 @@ export class OpenCodeBackend implements AgentBackend {
     return this.client;
   }
 
+  private async readSessionMessages(sessionId: string): Promise<unknown[]> {
+    const messages = await unwrapOpenCodeResult(this.requireClient().session.messages({
+      sessionID: sessionId,
+      directory: this.options.vaultPath,
+      limit: 200
+    }), `读取 OpenCode 会话消息失败：${sessionId}`);
+    return Array.isArray(messages) ? messages : [];
+  }
+
+  private async recoverLatestAssistantText(sessionId: string, knownAssistantIds: ReadonlySet<string>): Promise<string> {
+    for (const delayMs of [0, 100, 300]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const text = latestOpenCodeAssistantText(await this.readSessionMessages(sessionId), knownAssistantIds);
+      if (text) return text;
+    }
+    return "";
+  }
+
   private async listCliModels(): Promise<AgentModelInfo[]> {
     const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
     const output = await runOpenCodeCommand({
@@ -292,71 +352,6 @@ export class OpenCodeBackend implements AgentBackend {
     });
     return parseOpenCodeModelListOutput(output);
   }
-}
-
-async function runOpenCodeCommand(input: {
-  command: string;
-  args: string[];
-  cwd: string;
-  timeoutMs?: number;
-  abortSignal?: AbortSignal;
-  onStdoutChunk?: (chunk: string) => void;
-}): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn(input.command, input.args, {
-      cwd: input.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      input.abortSignal?.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve(stdout);
-    };
-    const abort = () => {
-      stopOpenCodeServer(child);
-      finish(new Error("Agent 任务已取消。"));
-    };
-    const timer = input.timeoutMs && input.timeoutMs > 0
-      ? setTimeout(() => {
-        stopOpenCodeServer(child);
-        finish(new Error(`OpenCode CLI 执行超时：${input.timeoutMs}ms`));
-      }, input.timeoutMs)
-      : null;
-    input.abortSignal?.addEventListener("abort", abort, { once: true });
-    child.stdout?.on("data", (chunk) => {
-      const value = chunk.toString();
-      stdout += value;
-      input.onStdoutChunk?.(value);
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => finish(error));
-    child.on("exit", (code, signal) => {
-      if (code === 0) {
-        finish();
-        return;
-      }
-      const parsedError = parseOpenCodeRunFailure(stdout);
-      finish(new Error(parsedError || `OpenCode CLI 已退出：${code ?? signal ?? "unknown"}${stderr.trim() ? `\n${stderr.trim()}` : ""}`));
-    });
-  });
-}
-
-function parseOpenCodeRunFailure(output: string): string {
-  try {
-    parseOpenCodeRunJsonLines(output);
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  return "";
 }
 
 function openCodePromptText(parts: any[]): string {
@@ -422,21 +417,5 @@ async function startOpenCodeServer(input: { command: string; hostname: string; p
 }
 
 function stopOpenCodeServer(proc: ChildProcess): void {
-  if (proc.exitCode !== null || proc.signalCode !== null) return;
-  if (typeof proc.pid === "number") {
-    try {
-      process.kill(-proc.pid, "SIGTERM");
-      globalThis.setTimeout(() => {
-        try {
-          process.kill(-proc.pid!, "SIGKILL");
-        } catch {
-          // Already stopped.
-        }
-      }, 1500);
-      return;
-    } catch {
-      // Fall back to killing the direct child below.
-    }
-  }
-  proc.kill("SIGTERM");
+  stopOpenCodeProcess(proc);
 }

@@ -81,10 +81,11 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     knowledgeSession,
     messages,
     hiddenKnowledgeMessageCount: hiddenCount,
+    tokenUsage: session.tokenUsage,
     vaultPath: host.plugin.getVaultPath(),
     readRawMessageText: (rawRef) => host.plugin.readRawMessageText(rawRef),
     onOpenKnowledgeHistory: () => void host.openKnowledgeBaseHistory(session),
-    onScheduleMeasure: () => host.scheduleMeasureVirtualRows(),
+    onScheduleMeasure: (forceBottom) => host.scheduleMeasureVirtualRows(forceBottom),
     onScheduleRunProgress: () => host.scheduleKnowledgeBaseRunProgress(),
     shouldFollowBottom: () => !host.messagesBottomFollowPaused,
     options: renderOptions
