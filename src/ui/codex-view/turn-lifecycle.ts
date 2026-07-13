@@ -5,6 +5,7 @@ import type { EditorActionRunWaiter } from "./runner-context";
 import type { SessionMessageInput } from "./session-message-store";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "../turn-watchdog";
 import type { EditorActionStatusView } from "../../editor-actions/types";
+import type { SettleRunTerminalInput } from "../../harness/kernel/run-orchestrator";
 
 export interface CodexTurnLifecycleHost {
   readonly plugin: CodexForObsidianPlugin;
@@ -47,10 +48,21 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
     host.applyStatus();
     return;
   }
+  if (host.activeRunKind === "knowledge-base") {
+    const manager = host.plugin.getKnowledgeBaseManager();
+    if (manager) {
+      const session = host.activeRunSession();
+      host.pauseQueueForSession(session.id);
+      await manager.cancelMaintenance();
+      return;
+    }
+  }
   const session = host.activeRunSession();
   host.pauseQueueForSession(session.id);
-  if (!session.threadId || !host.activeTurnId) return;
-  await host.plugin.codex?.interruptTurn(session.threadId, host.activeTurnId).catch(swallowError("cancel active Codex turn"));
+  const runId = host.activeRunId;
+  if (!runId) return;
+  const backendId = backendIdForRun(session, runId);
+  await host.plugin.cancelHarnessRun(runId).catch(swallowError("cancel active Harness run"));
   if (host.editorActionRun?.runId === host.activeRunId) host.rejectEditorActionRun(new Error("写作操作已中断"));
   host.running = false;
   host.activeTurnId = "";
@@ -58,9 +70,17 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
   host.clearTurnWatchdog();
   host.finishThinkingMessage(session, "中断");
   host.finishRunningProcessMessages(session, "interrupted");
+  host.addMessageToSession(session, {
+    role: "system",
+    title: "已中断",
+    itemType: "error",
+    status: "canceled",
+    runId,
+    text: "本轮对话已中断。"
+  });
   host.clearActiveRun();
+  await persistAndSettleChatRun(host.plugin, { runId, status: "cancelled", backendId, error: "用户中断" });
   host.applyStatus();
-  void host.plugin.saveSettings(true);
 }
 
 export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_TURN_WATCHDOG_MS, timeoutText?: string): void {
@@ -83,24 +103,42 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
     }
     host.activeTurnId = "";
     const session = host.activeRunSession();
-    const knowledgeSession = host.isKnowledgeBaseSession(session);
+    const runId = host.activeRunId;
     const shouldPauseQueue = host.activeRunKind === "chat";
-    if (knowledgeSession && session.threadId && timedOutTurnId) {
+    const backendId = backendIdForRun(session, runId);
+    if (runId) void host.plugin.cancelHarnessRun(runId).catch(swallowError("cancel timed out Harness run"));
+    if (!shouldPauseQueue && host.isKnowledgeBaseSession(session) && session.threadId && timedOutTurnId) {
       void host.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(swallowError("interrupt timed out knowledge base Codex turn"));
     }
     host.finishThinkingMessage(session, "失败");
     host.finishRunningProcessMessages(session, "error");
+    const error = timeoutText ?? turnWatchdogTimeoutText(timeoutMs);
     host.addMessageToSession(session, {
       role: "system",
       title: "响应超时",
       itemType: "error",
-      text: timeoutText ?? turnWatchdogTimeoutText(timeoutMs)
+      status: "failed",
+      runId,
+      text: error
     });
+    if (shouldPauseQueue && runId) {
+      void persistAndSettleChatRun(host.plugin, { runId, status: "failed", backendId, error });
+    } else {
+      void host.plugin.saveSettings(true);
+    }
     host.clearActiveRun();
     host.applyStatus();
-    void host.plugin.saveSettings(true);
     if (shouldPauseQueue) void host.afterTurnSettled(session.id, false);
   }, timeoutMs);
+}
+
+export async function persistAndSettleChatRun(plugin: CodexForObsidianPlugin, input: SettleRunTerminalInput): Promise<void> {
+  await plugin.saveSettings(true);
+  await plugin.settleHarnessRunTerminal(input);
+}
+
+function backendIdForRun(session: StoredSession, runId: string): string {
+  return session.messages.slice().reverse().find((message) => message.runId === runId && message.backendId)?.backendId ?? "codex-cli";
 }
 
 export function clearTurnWatchdog(host: CodexTurnLifecycleHost): void {

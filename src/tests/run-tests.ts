@@ -175,6 +175,7 @@ import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-l
 import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
 import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
+import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
@@ -863,7 +864,9 @@ const simpleTaskSource = await readFile(path.join(process.cwd(), "src/agent/simp
 assert.match(simpleTaskSource, /createAgentTaskRuntime/);
 assert.doesNotMatch(simpleTaskSource, /new OpenCodeBackend|new HermesBackend/);
 const turnRunnerSourceForAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
-assert.match(turnRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
+assert.doesNotMatch(turnRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
+assert.match(turnRunnerSourceForAgentEvents, /createHarnessAgentAdapter/);
+assert.match(turnRunnerSourceForAgentEvents, /runHarnessWithAdapter/);
 assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
 assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
@@ -10864,5 +10867,6 @@ await runHarnessV2KnowledgeAskLeaseTests();
 await runHarnessV2KnowledgeTurnTests();
 await runEditorActionControllerTests();
 await runPromptEnhancerHarnessTests();
+await runHarnessV3ChatUiTests();
 
 console.log("All tests passed");

@@ -81,6 +81,7 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     knowledgeSession,
     messages,
     hiddenKnowledgeMessageCount: hiddenCount,
+    tokenUsage: session.tokenUsage,
     vaultPath: host.plugin.getVaultPath(),
     readRawMessageText: (rawRef) => host.plugin.readRawMessageText(rawRef),
     onOpenKnowledgeHistory: () => void host.openKnowledgeBaseHistory(session),
