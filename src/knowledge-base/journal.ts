@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { OpenCodeHistorySnapshot } from "../core/opencode-backend";
+import type { ChatMessage, StoredSession } from "../settings/settings";
 import { exists, formatDateForFile, normalizeSlashes, pad, walkFiles } from "./utils";
 
 export type JournalEvidenceBackend = "codex-cli" | "opencode" | "hermes";
@@ -30,6 +31,22 @@ export interface JournalDailyTarget {
   evidenceWindow: JournalEvidenceWindow;
   codexSessionsPath: string;
   codexSessionGlobs: string[];
+}
+
+export interface EchoInkJournalEvidenceMessage {
+  source: "knowledge" | "chat";
+  sessionTitle: string;
+  role: ChatMessage["role"];
+  status?: string;
+  backendId?: string;
+  modelId?: string;
+  createdAtLabel: string;
+  text: string;
+}
+
+export interface EchoInkJournalEvidence {
+  messages: EchoInkJournalEvidenceMessage[];
+  truncated: boolean;
 }
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -80,17 +97,17 @@ export function buildKnowledgeBaseJournalPrompt(input: {
   userRequest: string;
   target: JournalDailyTarget;
   backend?: JournalEvidenceBackend;
+  echoInkEvidence?: EchoInkJournalEvidence | null;
   openCodeHistory?: OpenCodeHistorySnapshot | null;
   generatedAt?: Date;
 }): string {
   const generatedAt = input.generatedAt ?? new Date();
   const backend = input.backend ?? "codex-cli";
-  const sourceLabel = backend === "opencode" ? "OpenCode API" : backend === "hermes" ? "Hermes" : "Codex CLI";
-  const workLabel = backend === "opencode" ? "OpenCode" : backend === "hermes" ? "Hermes" : "Codex";
+  const nativeSourceLabel = journalNativeSourceLabel(backend);
   return [
     "你正在执行 Codex Obsidian Daily Journal。",
     "",
-    `这个任务默认不是生活散文，而是把方哥当天在 ${workLabel} 里实际推进的工作写进 Obsidian 日记。`,
+    "这个任务默认不是生活散文，而是把方哥当天在 EchoInk 工作台、Obsidian Vault 和相关 Agent 执行中实际推进的工作写进 Obsidian 日记。",
     "必须使用中文，先给结论，再给关键依据；不要写空话，不要把命令流水账原样塞进去。",
     "",
     "## 用户原始指令",
@@ -104,7 +121,8 @@ export function buildKnowledgeBaseJournalPrompt(input: {
     `- 文件：${input.target.relativePath}`,
     `- 日记根目录：${input.target.rootPath}`,
     `- Daily 根目录：${input.target.dailyRootPath}`,
-    `- 记录来源：${sourceLabel}`,
+    "- 记录来源：EchoInk 本地历史 + Vault 文件变化",
+    `- Agent 原生补充：${nativeSourceLabel}`,
     `- 当天窗口：${input.target.evidenceWindow.label}（起始含，结束不含）`,
     "",
     "## 当前 journal 目录模板",
@@ -115,12 +133,15 @@ export function buildKnowledgeBaseJournalPrompt(input: {
       ? input.target.samplePaths.map((sample) => `- ${sample}`)
       : ["- 未找到历史样本；使用下面的兜底格式。"]),
     "",
+    "## EchoInk 本地历史证据",
+    ...formatEchoInkJournalEvidenceForPrompt(input.echoInkEvidence, input.target.evidenceWindow),
+    "",
     "## 当天记录读取规则",
     ...buildJournalEvidenceInstructions(backend, input.target, input.openCodeHistory),
     "",
     "## 执行步骤",
     `1. 先读取最近日记样本，沿用它们的 YAML、标题、分节和语气。`,
-    `2. 按“当天记录读取规则”提取 ${workLabel} 在目标窗口内的有效工作记录。`,
+    "2. 按“当天记录读取规则”优先消化 EchoInk 本地历史、Vault 文件变化和工作产物。",
     "3. 当天窗口固定为目标日 00:00 到次日 06:00 前；不要再使用 00:00-02:30 旧口径。",
     "4. 补看当天 Obsidian Vault、当前工作目录和相关 outputs 里真实新增或更新的关键文件，避免只看聊天。",
     "5. 如果目标日记已存在，只做增量更新；保留用户原文，不要删旧内容，不要重复写同一件事。",
@@ -164,6 +185,38 @@ export function buildKnowledgeBaseJournalPrompt(input: {
   ].join("\n");
 }
 
+export function collectEchoInkJournalEvidenceFromSessions(
+  sessions: StoredSession[],
+  knowledgeSessionId: string,
+  window: JournalEvidenceWindow,
+  maxMessages = 24
+): EchoInkJournalEvidence {
+  const records = sessions.flatMap((session) => {
+    const source: EchoInkJournalEvidenceMessage["source"] = session.id === knowledgeSessionId || session.kind === "knowledge-base"
+      ? "knowledge"
+      : "chat";
+    return session.messages
+      .filter((message) => message.createdAt >= window.startMs && message.createdAt < window.endMs)
+      .map((message): EchoInkJournalEvidenceMessage => ({
+        source,
+        sessionTitle: session.title || session.id,
+        role: message.role,
+        status: message.status,
+        backendId: message.backendId,
+        modelId: message.modelId,
+        createdAtLabel: formatDateTimeDisplay(new Date(message.createdAt)),
+        text: compactJournalEvidenceText(message.text || message.previewText || message.title || "", 700)
+      }));
+  })
+    .filter((message) => message.text.trim())
+    .sort((left, right) => left.createdAtLabel.localeCompare(right.createdAtLabel));
+  const truncated = records.length > maxMessages;
+  return {
+    messages: records.slice(Math.max(0, records.length - maxMessages)),
+    truncated
+  };
+}
+
 export function buildJournalEvidenceWindow(targetDate: Date): JournalEvidenceWindow {
   const start = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0, 0);
   const end = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate() + 1, 6, 0, 0, 0);
@@ -177,31 +230,70 @@ export function buildJournalEvidenceWindow(targetDate: Date): JournalEvidenceWin
 }
 
 function buildJournalEvidenceInstructions(backend: JournalEvidenceBackend, target: JournalDailyTarget, openCodeHistory?: OpenCodeHistorySnapshot | null): string[] {
-  if (backend === "opencode") {
-    return [
-      "- 当前知识库后端是 OpenCode API，所以“当天记录”必须按 OpenCode 聊天记录理解，不要再读取 Codex sessions 当作主证据。",
-      "- 插件已在执行前通过 OpenCode API 的 `session.list` / `session.messages` 读取目标窗口内记录；优先使用下面的 OpenCode 证据摘要。",
-      "- 如果摘要为空，说明 OpenCode 在该窗口内没有可用聊天记录；新用户首次写日记时仍要按 journal 模板创建目标文件，但内容要短，不要编造。",
-      "- 如需复核本机原始记录，可参考 OpenCode 本地库 `~/.opencode/opencode.db` 的 `sessions` / `messages` 表，但不要把它当成 Codex 记录。",
-      "",
-      "### OpenCode 当天聊天记录摘要",
-      ...formatOpenCodeHistoryForPrompt(openCodeHistory, target.evidenceWindow)
-    ];
-  }
-  if (backend === "hermes") {
-    return [
-      "- 当前知识库后端是 Hermes，所以“当天记录”必须按 Hermes profile / memory / sessions 能力理解，不要把 Codex sessions 当作主证据。",
-      "- 第一版 EchoInk 还未把 Hermes memory/session 摘要预读进 prompt；如需复核当天记录，优先读取当前 Vault、outputs、journal、inbox 和 Hermes 自己可访问的本地记录。",
-      "- 如果无法复核 Hermes 历史，只能基于用户本次指令、最近日记样本和真实文件变更写短版，不要编造。"
-    ];
-  }
   return [
-    "- 当前知识库后端是 Codex CLI，所以“当天记录”默认读取 Codex 会话记录。",
-    "- 读取下面两个日期目录，并只保留目标窗口内的消息、工具调用、文件变更和最终产物：",
+    "- 主要证据顺序固定：EchoInk 本地历史、Knowledge History、Vault 文件变化、维护报告和真实产物。",
+    "- Agent 原生历史只能作为可选补充证据；如果与 EchoInk 本地历史冲突，以 EchoInk 本地历史为准。",
+    "- 如果本地历史和文件变化证据不足，就短写并明确证据不足，不要编造。",
+    ...JOURNAL_NATIVE_SUPPLEMENT_INSTRUCTIONS[backend](target, openCodeHistory)
+  ];
+}
+
+const JOURNAL_NATIVE_SUPPLEMENT_INSTRUCTIONS: Record<JournalEvidenceBackend, (target: JournalDailyTarget, openCodeHistory?: OpenCodeHistorySnapshot | null) => string[]> = {
+  "codex-cli": (target) => [
+    "- 可选补充：如需复核 Codex 原生会话，只读取下面两个日期目录中目标窗口内的消息、工具调用、文件变更和最终产物：",
     ...target.codexSessionGlobs.map((glob) => `  - ${glob}`),
     `- 过滤窗口：${target.evidenceWindow.label}（起始含，结束不含）。`,
-    "- 不要把命令和 JSONL 原样抄进日记，要先消化成正常人能读懂的工作进展。"
-  ];
+    "- 不要把 Codex JSONL 原样抄进日记。"
+  ],
+  opencode: (target, openCodeHistory) => [
+    "- 可选补充：插件已尝试读取 OpenCode API 的 session 摘要；它只能作为补充证据。",
+    "- 如果摘要为空，说明 OpenCode 在该窗口内没有可用补充记录。",
+    "- 不要把 OpenCode 原生 session 当作 EchoInk 历史真源。",
+    "",
+    "### OpenCode 可选补充摘要",
+    ...formatOpenCodeHistoryForPrompt(openCodeHistory, target.evidenceWindow)
+  ],
+  hermes: () => [
+    "- 可选补充：Hermes profile / memory / sessions 只能帮助复核，不是 EchoInk 历史真源。",
+    "- 第一版 EchoInk 还未把 Hermes memory/session 摘要预读进 prompt；优先读取当前 Vault、outputs、journal、inbox 和 EchoInk 本地证据。"
+  ]
+};
+
+function journalNativeSourceLabel(backend: JournalEvidenceBackend): string {
+  return {
+    "codex-cli": "Codex CLI（可选）",
+    opencode: "OpenCode API（可选）",
+    hermes: "Hermes（可选）"
+  }[backend];
+}
+
+function formatEchoInkJournalEvidenceForPrompt(evidence: EchoInkJournalEvidence | null | undefined, window: JournalEvidenceWindow): string[] {
+  if (!evidence?.messages.length) {
+    return [
+      `- 未读取到 EchoInk 本地历史摘要；目标窗口仍是 ${window.label}。`,
+      "- 仍需读取 Vault 中当天新增/修改的日记、outputs、raw、wiki 和维护报告作为主证据。"
+    ];
+  }
+  const lines = [
+    `- 命中 EchoInk 本地消息：${evidence.messages.length} 条。`,
+    evidence.truncated ? "- 本地历史摘要已截断，只能使用已提供的证据，不要猜未提供内容。" : ""
+  ].filter(Boolean);
+  for (const message of evidence.messages) {
+    lines.push([
+      `- ${message.createdAtLabel} ${message.source} / ${message.role} · ${message.sessionTitle}`,
+      message.backendId ? `  后端：${message.backendId}` : "",
+      message.modelId ? `  模型：${message.modelId}` : "",
+      message.status ? `  状态：${message.status}` : "",
+      "  内容：",
+      ...message.text.split(/\r?\n/).filter(Boolean).map((line) => `  ${line}`)
+    ].filter(Boolean).join("\n"));
+  }
+  return lines;
+}
+
+function compactJournalEvidenceText(value: string, limit: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, Math.max(0, limit - 3))}...` : normalized;
 }
 
 function formatOpenCodeHistoryForPrompt(snapshot: OpenCodeHistorySnapshot | null | undefined, window: JournalEvidenceWindow): string[] {

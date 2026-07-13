@@ -1,6 +1,7 @@
 import { agentBackendDisplayName } from "../../agent/registry";
 import type { AgentBackendKind, AgentTaskInput } from "../../agent/types";
 import type { CodexForObsidianSettings } from "../../settings/settings";
+import type { PermissionMode } from "../../types/app-server";
 import type { NativeExecutionKind, NativeExecutionPersistence } from "../contracts/native-execution";
 
 export interface HarnessBackendRuntimeProfile {
@@ -9,6 +10,7 @@ export interface HarnessBackendRuntimeProfile {
   thinkingMessage: boolean;
   editorActionThreadPrewarm: boolean;
   deferMessageModelUntilRunResult: boolean;
+  knowledgeLintRequiresWorkspaceWrite: boolean;
 }
 
 const RUNTIME_PROFILES: Record<AgentBackendKind, HarnessBackendRuntimeProfile> = {
@@ -17,21 +19,24 @@ const RUNTIME_PROFILES: Record<AgentBackendKind, HarnessBackendRuntimeProfile> =
     adapterVersion: "rich-runtime",
     thinkingMessage: true,
     editorActionThreadPrewarm: true,
-    deferMessageModelUntilRunResult: false
+    deferMessageModelUntilRunResult: false,
+    knowledgeLintRequiresWorkspaceWrite: true
   },
   opencode: {
     displayName: agentBackendDisplayName("opencode"),
     adapterVersion: "legacy-runtime",
     thinkingMessage: false,
     editorActionThreadPrewarm: false,
-    deferMessageModelUntilRunResult: true
+    deferMessageModelUntilRunResult: true,
+    knowledgeLintRequiresWorkspaceWrite: false
   },
   hermes: {
     displayName: agentBackendDisplayName("hermes"),
     adapterVersion: "legacy-runtime",
     thinkingMessage: false,
     editorActionThreadPrewarm: false,
-    deferMessageModelUntilRunResult: false
+    deferMessageModelUntilRunResult: false,
+    knowledgeLintRequiresWorkspaceWrite: false
   }
 };
 
@@ -115,6 +120,16 @@ export function harnessKnowledgeTaskTimeoutMs(
   if (backend === "opencode") return overrides?.opencodeTaskTimeoutMs;
   if (backend === "hermes") return overrides?.hermesTaskTimeoutMs;
   return undefined;
+}
+
+export function harnessKnowledgeTaskPermission(
+  backend: AgentBackendKind,
+  permission: PermissionMode,
+  writeScope: "knowledge-base" | "knowledge-lint" | "journal"
+): PermissionMode {
+  return writeScope === "knowledge-lint" && harnessBackendRuntimeProfile(backend).knowledgeLintRequiresWorkspaceWrite
+    ? "workspace-write"
+    : permission;
 }
 
 export function harnessKnowledgeTaskNativeExecutionKind(backend: Exclude<AgentBackendKind, "codex-cli">): NativeExecutionKind {

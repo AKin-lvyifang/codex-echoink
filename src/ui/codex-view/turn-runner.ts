@@ -43,7 +43,6 @@ const INLINE_AGENT_PROCESS_SAVE_DELAY_MS = 750;
 const inlineAgentProcessSaveTimers = new WeakMap<object, ReturnType<typeof setTimeout>>();
 
 export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
-  if (view.editorSummaryRun) view.cancelEditorSummaryRun("用户输入抢占摘要");
   const session = view.ensureSession();
   const action = composerPrimaryActionForState(view.composerStateForSession(session));
   if (action === "enqueue") {

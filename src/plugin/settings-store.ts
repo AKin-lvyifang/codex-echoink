@@ -3,6 +3,7 @@ import * as path from "path";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { swallowError } from "../core/error-handling";
+import { recoverStaleHarnessRuns } from "../core/message-state";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
 import { FileConversationStore } from "../harness/conversation/conversation-store";
 import {
@@ -47,6 +48,7 @@ export class EchoInkSettingsStore {
   private rawWrites = new Set<Promise<void>>();
   private conversationStore: FileConversationStore | null = null;
   private conversationStoreRootPath = "";
+  private interruptedRunRecoveryQueue: Promise<number> = Promise.resolve(0);
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
@@ -60,12 +62,50 @@ export class EchoInkSettingsStore {
     const knowledgeSessionBefore = this.plugin.settings.knowledgeBase.sessionId;
     const knowledgeRulesMigrated = await this.applyKnowledgeBaseRulesFileDefault(data);
     ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath());
+    const interruptedRunsRecovered = await this.recoverInterruptedHarnessRuns();
     const legacyChatWorkspacesCleared = clearLegacyChatWorkspaceDefaults(this.plugin.settings, this.plugin.getVaultPath(), previousVersion);
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     const knowledgeSessionChanged = sessionCountBefore !== this.plugin.settings.sessions.length || knowledgeSessionBefore !== this.plugin.settings.knowledgeBase.sessionId;
-    if (normalized.changed || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated) {
+    if (normalized.changed || legacyChatWorkspacesCleared > 0 || knowledgeSessionChanged || knowledgeStatusRecovered || knowledgeRulesMigrated || interruptedRunsRecovered > 0) {
       await this.saveSettings(true, { flushKnowledgeBaseHistory: false });
     }
+  }
+
+  async recoverInterruptedHarnessRuns(sessionId?: string): Promise<number> {
+    const recovery = this.interruptedRunRecoveryQueue
+      .catch(() => 0)
+      .then(async () => {
+        let recovered = 0;
+        const sessions = sessionId
+          ? this.plugin.settings.sessions.filter((session) => session.id === sessionId)
+          : this.plugin.settings.sessions;
+        for (const session of sessions) {
+          try {
+            const result = await recoverStaleHarnessRuns({
+              messages: session.messages,
+              commitLocalHistory: async () => {
+                session.updatedAt = Date.now();
+                await this.saveSettings(true, {
+                  strictConversationStore: true,
+                  strictKnowledgeBaseHistory: session.kind === "knowledge-base"
+                });
+              },
+              settleRunTerminal: async (terminal) => {
+                await this.plugin.settleHarnessRunTerminal(terminal);
+              }
+            });
+            recovered += result.settledRunIds.length;
+            if (result.failedRunIds.length) {
+              console.error("EchoInk interrupted run terminal recovery failed", result.failedRunIds);
+            }
+          } catch (error) {
+            console.error("EchoInk interrupted run local commit failed", error);
+          }
+        }
+        return recovered;
+      });
+    this.interruptedRunRecoveryQueue = recovery;
+    return await recovery;
   }
 
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {

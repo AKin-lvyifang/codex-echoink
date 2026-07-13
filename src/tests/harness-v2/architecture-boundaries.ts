@@ -1,0 +1,200 @@
+import * as assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import * as path from "node:path";
+
+export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
+  await assertSingleHarnessCoreDefinitions();
+  await assertSingleContextCompilerCallSite();
+  await assertKnowledgeDoesNotForkSessionContextCore();
+  await assertKnowledgeControllersUseAgentBoundary();
+  await assertSingleProductionRunOrchestratorConstruction();
+  await assertKnowledgeCodexRichNotificationsUseHub();
+  await assertAgentAdapterDeclaresAwaitResult();
+  await assertCodexViewOnlyKeepsGlobalNotificationAllowlist();
+  await assertEditorSurfaceRemovesLegacyRawWaiters();
+  await assertCodexViewRemovesLegacyRawRenderers();
+  await assertChatSurfaceRemovesInlineAssistantBranch();
+}
+
+async function assertSingleHarnessCoreDefinitions(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const expected = new Map<RegExp, string>([
+    [/\bclass\s+EchoInkHarnessKernel\b/, "src/harness/kernel/harness-kernel.ts"],
+    [/\bclass\s+RunOrchestrator\b/, "src/harness/kernel/run-orchestrator.ts"],
+    [/\bfunction\s+compileContextBundle\b/, "src/harness/kernel/context-compiler.ts"],
+    [/\binterface\s+RunLedger\b/, "src/harness/ledger/run-ledger.ts"]
+  ]);
+  for (const [pattern, expectedPath] of expected) {
+    const definitions: string[] = [];
+    for (const file of sources) {
+      if (pattern.test(await readFile(file.absolutePath, "utf8"))) definitions.push(file.relativePath);
+    }
+    assert.deepEqual(definitions, [expectedPath], `${pattern.source} must have one production definition`);
+  }
+}
+
+async function assertChatSurfaceRemovesInlineAssistantBranch(): Promise<void> {
+  const sources = await Promise.all([
+    readSource("src/ui/codex-view/turn-runner.ts"),
+    readSource("src/harness/agents/backend-runtime-profile.ts")
+  ]);
+  assert.doesNotMatch(sources.join("\n"), /chatUsesInlineAssistant|harnessBackendUsesInlineAssistant|inlineAssistant/);
+}
+
+export async function runHarnessV2CodexViewRawParserBoundaryTests(): Promise<void> {
+  await assertCodexViewOnlyKeepsGlobalNotificationAllowlist();
+}
+
+async function assertAgentAdapterDeclaresAwaitResult(): Promise<void> {
+  const adapter = await readSource("src/harness/agents/adapter.ts");
+  assert.match(adapter, /awaitResult\?\(runId: string\): Promise<AgentRunResult>/);
+}
+
+async function assertCodexViewOnlyKeepsGlobalNotificationAllowlist(): Promise<void> {
+  const [view, router] = await Promise.all([
+    readSource("src/ui/codex-view.ts"),
+    readSource("src/ui/codex-view/notification-router.ts")
+  ]);
+  const rawHandler = sourceBetween(
+    router,
+    "  handle(notification: CodexNotification): void {",
+    "}\n\nfunction paramsObject"
+  );
+  assert.doesNotMatch(rawHandler, /method === "(?:item\/|turn\/started|turn\/completed|error)/);
+  assert.doesNotMatch(rawHandler, /handleEditorSummaryNotification|editorSummaryRun/);
+  assert.match(rawHandler, /method === "account\/rateLimits\/updated"/);
+  assert.match(rawHandler, /method === "thread\/tokenUsage\/updated"/);
+  assert.match(rawHandler, /method === "thread\/compacted"/);
+  assert.match(view, /this\.notificationRouter\?\.handle\(notification\)/);
+}
+
+async function assertCodexViewRemovesLegacyRawRenderers(): Promise<void> {
+  const view = await readSource("src/ui/codex-view.ts");
+  for (const legacyName of [
+    "activeItemMessages",
+    "handleEditorActionNotification",
+    "appendItemDelta",
+    "appendProcessDelta",
+    "markThinkingAsStreaming",
+    "renderPlanUpdate",
+    "renderStartedItem",
+    "renderCompletedItem",
+    "upsertProcessItem",
+    "findProcessMessageByItemId",
+    "clearEditorSummaryTimers"
+  ]) {
+    assert.doesNotMatch(view, new RegExp(`\\b${legacyName}\\b`), `${legacyName} must not remain in production`);
+  }
+}
+
+async function assertEditorSurfaceRemovesLegacyRawWaiters(): Promise<void> {
+  const [view, runner] = await Promise.all([
+    readSource("src/ui/codex-view.ts"),
+    readSource("src/ui/codex-view/editor-action-runner.ts")
+  ]);
+
+  assert.doesNotMatch(view, /editorSummaryRun|handleEditorSummaryNotification|resolveEditorSummaryRun|rejectEditorSummaryRun|releaseEditorSummaryRunLock/);
+  assert.doesNotMatch(runner, /waitForResult|resolveEditorActionHarnessOutput|editorActionRun\s*=\s*\{\s*runId[\s\S]*?resolve,\s*reject/s);
+  assert.match(runner, /awaitResult\(/);
+}
+
+async function assertSingleContextCompilerCallSite(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const callers: string[] = [];
+  for (const file of sources) {
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/compileContextBundle\s*\(/.test(source) && file.relativePath !== "src/harness/kernel/context-compiler.ts") {
+      callers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(callers, ["src/harness/kernel/run-orchestrator.ts"]);
+}
+
+async function assertKnowledgeDoesNotForkSessionContextCore(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const forbidden = /KnowledgeContextBridge|buildKnowledgeContextBridgeForThread|appendKnowledgeContextBridge|class\s+\w*ContextManager/;
+  const offenders: string[] = [];
+  for (const file of sources) {
+    const source = await readFile(file.absolutePath, "utf8");
+    if (forbidden.test(source)) offenders.push(file.relativePath);
+  }
+  assert.deepEqual(offenders, []);
+
+  for (const relativePath of [
+    "src/harness/kernel/context-compiler.ts",
+    "src/harness/kernel/session-service.ts",
+    "src/harness/conversation/conversation-store.ts"
+  ]) {
+    const source = await readFile(path.join(process.cwd(), relativePath), "utf8");
+    assert.doesNotMatch(source, /knowledge-base|KnowledgeBase|\/maintain|Raw Digest|LLM-WIKI/);
+  }
+}
+
+async function assertKnowledgeControllersUseAgentBoundary(): Promise<void> {
+  const [manager, queryJournal] = await Promise.all([
+    readSource("src/knowledge-base/manager.ts"),
+    readSource("src/knowledge-base/query-journal.ts")
+  ]);
+  const concreteBackend = /(?:OpenCodeBackend|HermesBackend|CodexService)|new\s+\w*Backend\s*\(/;
+  const backendBranch = /backend\s*(?:===|!==)\s*"(?:codex-cli|opencode|hermes)"/;
+
+  assert.doesNotMatch(manager, concreteBackend);
+  assert.doesNotMatch(manager, backendBranch);
+  assert.doesNotMatch(manager, /testOpenCodeConnection/);
+  assert.doesNotMatch(queryJournal, concreteBackend);
+  assert.doesNotMatch(queryJournal, backendBranch);
+  assert.match(queryJournal, /collectEchoInkJournalEvidenceFromSessions/);
+  assert.match(queryJournal, /collectNativeJournalHistory/);
+}
+
+async function assertSingleProductionRunOrchestratorConstruction(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const constructors: string[] = [];
+  for (const file of sources) {
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/new\s+RunOrchestrator\s*\(/.test(source)) constructors.push(file.relativePath);
+  }
+  assert.deepEqual(constructors, ["src/harness/kernel/harness-kernel.ts"]);
+}
+
+async function assertKnowledgeCodexRichNotificationsUseHub(): Promise<void> {
+  const [manager, main, harnessService] = await Promise.all([
+    readSource("src/knowledge-base/manager.ts"),
+    readSource("src/main.ts"),
+    readSource("src/plugin/harness-service.ts")
+  ]);
+
+  assert.doesNotMatch(manager, /CodexKbWaiter|codexWaiter|handleCodexNotification|waitForCodexKnowledgeResult|startTurnPending/);
+  assert.doesNotMatch(main, /knowledgeBase\?\.handleCodexNotification|handleKnowledgeBaseCodexNotification/);
+  assert.match(main, /getHarnessService\(\)\.handleCodexNotification\(notification\)/);
+  assert.match(harnessService, /codexRichNotificationHub\.dispatch\(notification\)/);
+}
+
+async function readSource(relativePath: string): Promise<string> {
+  return await readFile(path.join(process.cwd(), relativePath), "utf8");
+}
+
+function sourceBetween(source: string, start: string, end: string): string {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.ok(startIndex >= 0, `Missing source marker: ${start}`);
+  assert.ok(endIndex > startIndex, `Missing source marker: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
+async function productionTypeScriptSources(): Promise<Array<{ absolutePath: string; relativePath: string }>> {
+  const srcRoot = path.join(process.cwd(), "src");
+  const files: Array<{ absolutePath: string; relativePath: string }> = [];
+  const visit = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "tests") await visit(absolutePath);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        files.push({ absolutePath, relativePath: path.relative(process.cwd(), absolutePath) });
+      }
+    }
+  };
+  await visit(srcRoot);
+  return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}

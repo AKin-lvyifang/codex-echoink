@@ -163,14 +163,14 @@ export async function refreshHeaderRateLimits(host: CodexHeaderHost): Promise<vo
 
   const status = await host.plugin.ensureCodexConnected();
   if (requestId !== host.usageRequestId) return;
-  if (!status.connected || !host.plugin.codex) {
+  if (!status.connected || !host.plugin.hasCodexHarnessTransport()) {
     host.usageLoading = false;
     host.usageError = "Codex 未连接";
     updateUsageHeader(host, null, false, host.usageError);
     renderUsagePanel(host, null, host.usageError, false);
     return;
   }
-  const result = await host.plugin.codex.refreshRateLimits();
+  const result = await host.plugin.refreshCodexHarnessRateLimits();
   if (requestId !== host.usageRequestId) return;
   const nextRateLimits = result.rateLimits ?? host.plugin.lastStatus?.rateLimits ?? null;
   const nextRateLimitsByLimitId = result.rateLimitsByLimitId ?? host.plugin.lastStatus?.rateLimitsByLimitId ?? null;

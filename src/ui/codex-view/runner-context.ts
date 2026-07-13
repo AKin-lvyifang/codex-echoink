@@ -15,17 +15,6 @@ export type QueuedTurnSource = "composer" | "queue";
 export type QueuedTurnOutcome = "running" | "completed" | "failed";
 export type KnowledgeBaseTurnOutcome = "completed" | "failed";
 
-export interface EditorActionRunWaiter {
-  runId: string;
-  text: string;
-  resolve: (text: string) => void;
-  reject: (error: Error) => void;
-}
-
-export interface EditorSummaryRunWaiter extends EditorActionRunWaiter {
-  threadId: string;
-}
-
 export interface RunnerMessageRenderOptions {
   forceBottom?: boolean;
   fromScroll?: boolean;
@@ -53,7 +42,6 @@ export interface CodexViewRunnerBaseContext {
 }
 
 export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, MessageRenderFollowContext {
-  readonly editorSummaryRun: EditorSummaryRunWaiter | null;
   readonly turnQueue: RuntimeTurnQueue;
   queueStartInProgress: boolean;
   turnStartedAt: number;
@@ -62,7 +50,6 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   readonly selectedSkill: EchoInkResource | null;
   readonly threadPrewarmPromise: Promise<boolean> | null;
   readonly threadPrewarmSessionId: string;
-  cancelEditorSummaryRun(reason: string): void;
   ensureSession(): StoredSession;
   composerStateForSession(session: StoredSession): ComposerPrimaryActionState;
   enqueueComposerDraft(): Promise<void>;
@@ -99,25 +86,18 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
 }
 
 export interface CodexViewEditorActionContext extends CodexViewRunnerBaseContext {
-  readonly editorSummaryRun: EditorSummaryRunWaiter | null;
   editorActionHarnessRunId: string;
   editorActionActiveTimeoutMs: number;
-  editorActionRun: EditorActionRunWaiter | null;
   editorActionThreadId: string;
-  readonly editorActionThreadIds: Set<string>;
-  readonly editorActionTurnIds: Set<string>;
   readonly editorActionCurrentItemIds: Set<string>;
   articleUnderstandingPanelState: ArticleUnderstandingPanelState;
   readonly selectedServiceTier: ServiceTierChoice;
-  cancelEditorSummaryRun(reason: string): void;
   editorActionStartBlockReason(): string | null;
   setEditorActionStatus(status: EditorActionStatusView): void;
   withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T>;
   prewarmEditorActionThread(): void;
-  rejectEditorActionRun(error: Error): void;
   effectiveEditorActionModel(availableModels?: string[], configuredModel?: string): string;
   takeEditorActionThread(turnOptions: TurnOptions): Promise<string>;
-  resolveEditorActionRun(text: string): void;
   releaseEditorActionRunLock(runId: string): void;
   renderEditorActionStatus(): void;
   activeProviderModels(): string[];

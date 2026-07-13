@@ -2,7 +2,7 @@ import * as path from "path";
 import { createAgentTaskRuntime } from "../agent/factory";
 import type { AgentTaskRuntime, PreparedAgentResources } from "../agent/runtime";
 import type { AgentBackendKind, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput } from "../agent/types";
-import { OpenCodeBackend } from "../core/opencode-backend";
+import { OpenCodeBackend, type OpenCodeHistorySnapshot } from "../core/opencode-backend";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
 import { harnessBackendDisplayName, harnessTaskAgent, harnessTaskModel, harnessTaskProfile } from "../harness/agents/backend-runtime-profile";
 import { TaskRuntimeAgentAdapter, type TaskRuntimeAgentAdapterOptions } from "../harness/agents/adapters/task-runtime-adapter";
@@ -38,6 +38,8 @@ export type KnowledgeAgentTaskOutput = {
   text: string;
   harnessResult?: HarnessRunResult;
 };
+
+export type KnowledgeJournalNativeHistory = OpenCodeHistorySnapshot | null;
 
 export type KnowledgeAgentArtifactRecovery = () => Promise<string | null>;
 
@@ -115,44 +117,6 @@ const KNOWLEDGE_TASK_TIMEOUT_NORMALIZERS: Record<AgentBackendKind, (value: numbe
   hermes: normalizeHermesTaskTimeoutMs
 };
 
-export async function testOpenCodeKnowledgeConnection(input: {
-  settings: CodexForObsidianSettings;
-  vaultPath: string;
-  saveSettings(): Promise<void>;
-}): Promise<{ modelCount: number }> {
-  const backend = new OpenCodeBackend({
-    ...input.settings.opencode,
-    vaultPath: input.vaultPath
-  });
-  try {
-    await backend.connect();
-    const models = await backend.listModels();
-    const selected = selectOpenCodeModel(
-      models,
-      input.settings.opencode.providerId,
-      input.settings.opencode.modelId,
-      ["text"]
-    );
-    if (selected) {
-      input.settings.opencode.providerId = selected.providerId;
-      input.settings.opencode.modelId = selected.modelId;
-      input.settings.opencode.textEnabled = selected.inputModalities.includes("text");
-      input.settings.opencode.imageEnabled = selected.inputModalities.includes("image");
-      input.settings.opencode.pdfEnabled = selected.inputModalities.includes("pdf");
-    }
-    input.settings.opencode.lastConnectedAt = Date.now();
-    input.settings.opencode.lastError = "";
-    await input.saveSettings();
-    return { modelCount: models.length };
-  } catch (error) {
-    input.settings.opencode.lastError = error instanceof Error ? error.message : String(error);
-    await input.saveSettings();
-    throw error;
-  } finally {
-    await backend.disconnect();
-  }
-}
-
 export async function collectOpenCodeKnowledgeJournalHistory(input: {
   settings: CodexForObsidianSettings;
   vaultPath: string;
@@ -189,7 +153,7 @@ export async function collectKnowledgeJournalHistoryForBackend(input: {
   startMs: number;
   endMs: number;
   saveSettings(): Promise<void>;
-}) {
+}): Promise<KnowledgeJournalNativeHistory> {
   const collector = KNOWLEDGE_JOURNAL_COLLECTORS[input.backend];
   return collector ? await collector(input) : null;
 }

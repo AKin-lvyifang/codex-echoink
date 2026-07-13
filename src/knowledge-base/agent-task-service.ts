@@ -32,11 +32,13 @@ import type { PermissionMode } from "../types/app-server";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import {
   buildCodexKnowledgeInput,
+  collectKnowledgeJournalHistoryForBackend,
   formatDurationForError,
   KnowledgeAgentRuntimeController,
   normalizeCodexInactivityTimeoutMs,
   rejectAfterTimeout,
   type KnowledgeAgentArtifactRecovery,
+  type KnowledgeJournalNativeHistory,
   type KnowledgeAgentTaskOutput
 } from "./agent-runner";
 import { isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
@@ -113,10 +115,19 @@ export class KnowledgeBaseAgentTaskService {
     return this.activeHarnessRunId;
   }
 
-  get codexWaiter(): null { return null; }
-  get activeCodexRun(): null { return null; }
-  get activeOpenCode(): null { return null; }
-  get activeHermes(): null { return null; }
+  async collectNativeJournalHistory(
+    backend: AgentBackendKind,
+    window: { startMs: number; endMs: number }
+  ): Promise<KnowledgeJournalNativeHistory> {
+    return await collectKnowledgeJournalHistoryForBackend({
+      backend,
+      settings: this.plugin.settings,
+      vaultPath: this.plugin.getVaultPath(),
+      startMs: window.startMs,
+      endMs: window.endMs,
+      saveSettings: async () => await this.plugin.saveSettings()
+    });
+  }
 
   async unload(): Promise<void> {
     await this.cancelActiveTasks().catch(() => undefined);
@@ -153,10 +164,6 @@ export class KnowledgeBaseAgentTaskService {
       });
     }
     if (errors.length) throw new Error(errors.join("; "));
-  }
-
-  handleCodexNotification(): boolean {
-    return false;
   }
 
   async runTask(input: KnowledgeBaseHarnessTaskInput): Promise<KnowledgeAgentTaskOutput> {

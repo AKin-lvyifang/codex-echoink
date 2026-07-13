@@ -1,7 +1,6 @@
 import type CodexForObsidianPlugin from "../../main";
 import { swallowError } from "../../core/error-handling";
 import type { StoredSession } from "../../settings/settings";
-import type { EditorActionRunWaiter } from "./runner-context";
 import type { SessionMessageInput } from "./session-message-store";
 import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "../turn-watchdog";
 import type { EditorActionStatusView } from "../../editor-actions/types";
@@ -16,11 +15,9 @@ export interface CodexTurnLifecycleHost {
   activeTurnId: string;
   editorActionActiveTimeoutMs: number;
   editorActionThreadId: string;
-  editorActionRun: EditorActionRunWaiter | null;
   editorActionCurrentItemIds: Set<string>;
   turnWatchdog: number | null;
   isEditorActionRunActive(): boolean;
-  rejectEditorActionRun(error: Error): void;
   setEditorActionStatus(status: EditorActionStatusView): void;
   clearTurnWatchdog(): void;
   clearActiveRun(): void;
@@ -37,8 +34,7 @@ export interface CodexTurnLifecycleHost {
 
 export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
   if (host.isEditorActionRunActive()) {
-    if (host.activeRunId) await host.plugin.cancelHarnessRun(host.activeRunId).catch(swallowError("cancel editor action Harness run"));
-    host.rejectEditorActionRun(new Error("写作操作已中断"));
+    if (host.activeRunId) await host.plugin.cancelHarnessRun(host.activeRunId);
     host.running = false;
     host.activeTurnId = "";
     host.clearTurnWatchdog();
@@ -58,12 +54,11 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
     }
   }
   const session = host.activeRunSession();
-  host.pauseQueueForSession(session.id);
   const runId = host.activeRunId;
   if (!runId) return;
   const backendId = backendIdForRun(session, runId);
-  await host.plugin.cancelHarnessRun(runId).catch(swallowError("cancel active Harness run"));
-  if (host.editorActionRun?.runId === host.activeRunId) host.rejectEditorActionRun(new Error("写作操作已中断"));
+  await host.plugin.cancelHarnessRun(runId);
+  host.pauseQueueForSession(session.id);
   host.running = false;
   host.activeTurnId = "";
   host.editorActionActiveTimeoutMs = 0;
@@ -88,11 +83,9 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
   host.turnWatchdog = window.setTimeout(() => {
     host.turnWatchdog = null;
     if (!host.running) return;
-    const timedOutTurnId = host.activeTurnId;
     host.running = false;
     if (host.isEditorActionRunActive()) {
       if (host.activeRunId) void host.plugin.cancelHarnessRun(host.activeRunId).catch(swallowError("interrupt timed out editor action Harness run"));
-      host.rejectEditorActionRun(new Error("写作操作响应超时"));
       host.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
       host.activeTurnId = "";
       host.clearActiveRun();
@@ -107,9 +100,6 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
     const shouldPauseQueue = host.activeRunKind === "chat";
     const backendId = backendIdForRun(session, runId);
     if (runId) void host.plugin.cancelHarnessRun(runId).catch(swallowError("cancel timed out Harness run"));
-    if (!shouldPauseQueue && host.isKnowledgeBaseSession(session) && session.threadId && timedOutTurnId) {
-      void host.plugin.codex?.interruptTurn(session.threadId, timedOutTurnId).catch(swallowError("interrupt timed out knowledge base Codex turn"));
-    }
     host.finishThinkingMessage(session, "失败");
     host.finishRunningProcessMessages(session, "error");
     const error = timeoutText ?? turnWatchdogTimeoutText(timeoutMs);

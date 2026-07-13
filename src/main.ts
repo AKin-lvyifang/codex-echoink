@@ -95,6 +95,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async settleHarnessRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> { return await this.getHarnessService().settleRunTerminal(input, sink); }
   async appendHarnessRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink) { return await this.getHarnessService().appendRunEvent(input, sink); }
   async cancelHarnessRun(runId: string): Promise<void> { return await this.getHarnessService().cancelRun(runId); }
+  async recoverInterruptedHarnessRuns(sessionId?: string): Promise<number> { return await this.getSettingsStore().recoverInterruptedHarnessRuns(sessionId); }
   getNativeExecutionRefContext(backendId?: AgentBackendKind) { return this.getHarnessService().getNativeExecutionRefContext(backendId); }
   async recordNativeExecution(record: NativeExecutionRecord): Promise<void> { return await this.getHarnessService().recordNativeExecution(record); }
   async settleNativeExecution(input: SettleNativeExecutionInput): Promise<NativeExecutionRecord | null> { return await this.getHarnessService().settleNativeExecution(input); }
@@ -154,10 +155,6 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   private handleCodexNotification(notification: CodexNotification): void {
     if (this.getHarnessService().handleCodexNotification(notification)) return;
-    if (this.knowledgeBase?.handleCodexNotification(notification)) {
-      this.getCodexView()?.handleKnowledgeBaseCodexNotification(notification);
-      return;
-    }
     this.getCodexView()?.handleCodexNotification(notification);
   }
 

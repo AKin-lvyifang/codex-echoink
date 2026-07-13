@@ -43,7 +43,7 @@ import {
   startQueuedTurnItem as startQueuedTurnItemRunner,
   startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
 } from "./codex-view/turn-runner";
-import type { CodexViewPromptEnhanceContext, CodexViewTurnContext, EditorActionRunWaiter, EditorSummaryRunWaiter } from "./codex-view/runner-context";
+import type { CodexViewPromptEnhanceContext, CodexViewTurnContext } from "./codex-view/runner-context";
 import { type ArticleUnderstandingPanelState } from "./codex-view/header";
 import { createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState } from "./codex-view/knowledge-dashboard";
 import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
@@ -95,8 +95,6 @@ import {
 import {
   addContextCompactionMessage as addContextCompactionMessageAction,
   addMessageToSession as addMessageToSessionAction,
-  appendItemDelta as appendItemDeltaAction,
-  appendProcessDelta as appendProcessDeltaAction,
   attachTurnIdToRun as attachTurnIdToRunAction,
   clearKnowledgeBaseRunProgressTimer as clearKnowledgeBaseRunProgressTimerAction,
   clearSessionMessageActiveRun,
@@ -108,20 +106,15 @@ import {
   handleMessagesScroll as handleMessagesScrollAction,
   isMessagesAtBottom as isMessagesAtBottomAction,
   isMessagesNearBottom as isMessagesNearBottomAction,
-  markThinkingAsStreaming as markThinkingAsStreamingAction,
   moveMessageToEnd as moveMessageToEndAction,
-  renderCompletedItem as renderCompletedItemAction,
   renderMessages as renderMessagesAction,
   renderMessagesIfActive as renderMessagesIfActiveAction,
-  renderPlanUpdate as renderPlanUpdateAction,
-  renderStartedItem as renderStartedItemAction,
   resetVirtualWindow as resetVirtualWindowAction,
   scheduleKnowledgeBaseRunProgress as scheduleKnowledgeBaseRunProgressAction,
   scheduleMeasureVirtualRows as scheduleMeasureVirtualRowsAction,
   scheduleRenderMessages as scheduleRenderMessagesAction,
   scheduleSessionSave as scheduleSessionSaveAction,
   settleStaleMessages as settleStaleMessagesAction,
-  upsertProcessItem as upsertProcessItemAction,
   type CodexMessageHost
 } from "./codex-view/message-controller";
 import {
@@ -161,20 +154,11 @@ import {
   type CodexSessionHost
 } from "./codex-view/session-controller";
 import {
-  armEditorSummaryTimeout as armEditorSummaryTimeoutAction,
-  cancelEditorSummaryRun as cancelEditorSummaryRunAction,
-  clearEditorSummaryTimers as clearEditorSummaryTimersAction,
   effectiveEditorActionModel as effectiveEditorActionModelAction,
   editorActionStartBlockReason as editorActionStartBlockReasonAction,
   isEditorActionRunActive as isEditorActionRunActiveAction,
-  isEditorSummaryRunActive as isEditorSummaryRunActiveAction,
   prewarmEditorActionThread as prewarmEditorActionThreadAction,
-  rejectEditorActionRun as rejectEditorActionRunAction,
-  rejectEditorSummaryRun as rejectEditorSummaryRunAction,
   releaseEditorActionRunLock as releaseEditorActionRunLockAction,
-  releaseEditorSummaryRunLock as releaseEditorSummaryRunLockAction,
-  resolveEditorActionRun as resolveEditorActionRunAction,
-  resolveEditorSummaryRun as resolveEditorSummaryRunAction,
   takeEditorActionThread as takeEditorActionThreadAction,
   withEditorActionTimeout as withEditorActionTimeoutAction,
   type CodexEditorActionRunHost
@@ -243,17 +227,11 @@ export class CodexView extends ItemView {
   private editorActionHarnessRunId = "";
   private editorActionStatusTicker: number | null = null;
   private editorActionStatusResetTimer: number | null = null;
-  private editorActionRun: EditorActionRunWaiter | null = null;
   private editorActionActiveTimeoutMs = 0;
   private editorActionThreadId = "";
-  private editorActionThreadIds = new Set<string>();
-  private editorActionTurnIds = new Set<string>();
-  private editorActionItemIds = new Set<string>();
   private editorActionCurrentItemIds = new Set<string>();
   private editorActionPrewarmThreadId = "";
   private editorActionPrewarmPromise: Promise<string | null> | null = null;
-  private editorSummaryRun: EditorSummaryRunWaiter | null = null;
-  private editorSummaryTimeout: number | null = null;
   private knowledgeDashboardSnapshot: KnowledgeBaseDashboardSnapshot | null = null;
   private knowledgeDashboardExpanded = false;
   private knowledgeDashboardLoading = false;
@@ -303,8 +281,8 @@ export class CodexView extends ItemView {
     const view = this;
     return {
       get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
-      get editorSummaryRun() { return view.editorSummaryRun; }, get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return view.queueStartInProgress; }, set queueStartInProgress(value) { view.queueStartInProgress = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get threadPrewarmPromise() { return view.threadPrewarmPromise; }, get threadPrewarmSessionId() { return view.threadPrewarmSessionId; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), ensureSession: () => view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => view.enqueueComposerDraft(), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return view.queueStartInProgress; }, set queueStartInProgress(value) { view.queueStartInProgress = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get threadPrewarmPromise() { return view.threadPrewarmPromise; }, get threadPrewarmSessionId() { return view.threadPrewarmSessionId; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => view.enqueueComposerDraft(), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
       createQueuedTurnFromComposer: (options) => view.createQueuedTurnFromComposer(options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), startKnowledgeBaseTurn: (session, item, source) => view.startKnowledgeBaseTurn(session, item, source), clearComposerDraft: () => view.clearComposerDraft(), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), clearKnowledgeBasePage: (session) => view.clearKnowledgeBasePage(session), openKnowledgeBaseHistory: (session) => view.openKnowledgeBaseHistory(session),
       ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session) => view.renderMessagesIfActive(session), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command), refreshKnowledgeDashboard: (force) => view.refreshKnowledgeDashboard(force)
     } satisfies CodexViewTurnContext;
@@ -314,19 +292,16 @@ export class CodexView extends ItemView {
     const view = this;
     return {
       get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
-      get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionRun() { return view.editorActionRun; }, set editorActionRun(value) { view.editorActionRun = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), cancelEditorSummaryRun: (reason) => view.cancelEditorSummaryRun(reason), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
+      get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
     } satisfies CodexViewPromptEnhanceContext;
   }
 
   private createNotificationRouterContext(): CodexNotificationRouterContext {
     const view = this;
     return {
-      get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, get activeRunKind() { return view.activeRunKind; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get usageLoading() { return view.usageLoading; }, set usageLoading(value) { view.usageLoading = value; }, get usageError() { return view.usageError; }, set usageError(value) { view.usageError = value; },
-      get editorActionRun() { return view.editorActionRun; }, get editorSummaryRun() { return view.editorSummaryRun; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, get editorActionThreadId() { return view.editorActionThreadId; }, get editorActionThreadIds() { return view.editorActionThreadIds; }, get editorActionTurnIds() { return view.editorActionTurnIds; }, get editorActionItemIds() { return view.editorActionItemIds; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; },
-      isEditorActionRunActive: () => view.isEditorActionRunActive(), isEditorSummaryRunActive: () => view.isEditorSummaryRunActive(), activeRunSession: () => view.activeRunSession(), sessionForThread: (threadId) => view.sessionForThread(threadId), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), markThinkingAsStreaming: (session) => view.markThinkingAsStreaming(session), appendItemDelta: (session, itemId, role, delta, itemType, title) => view.appendItemDelta(session, itemId, role, delta, itemType, title), appendProcessDelta: (session, itemId, itemType, delta, payload) => view.appendProcessDelta(session, itemId, itemType, delta, payload), upsertProcessItem: (session, id, itemType, text, status, payload) => view.upsertProcessItem(session, id, itemType, text, status, payload),
-      renderPlanUpdate: (session, params) => view.renderPlanUpdate(session, params), renderStartedItem: (session, item) => view.renderStartedItem(session, item), renderCompletedItem: (session, item) => view.renderCompletedItem(session, item), updateUsageHeader: (rateLimits, loading, error) => view.updateUsageHeader(rateLimits, loading, error), renderUsagePanel: (rateLimits, error, loading) => view.renderUsagePanel(rateLimits, error, loading), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session), clearTurnWatchdog: () => view.clearTurnWatchdog(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status),
-      finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), clearActiveRun: () => view.clearActiveRun(), applyStatus: () => view.applyStatus(), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), rejectEditorActionRun: (error) => view.rejectEditorActionRun(error), resolveEditorActionRun: (text) => view.resolveEditorActionRun(text), rejectEditorSummaryRun: (error) => view.rejectEditorSummaryRun(error), resolveEditorSummaryRun: (text) => view.resolveEditorSummaryRun(text), releaseEditorSummaryRunLock: (runId) => view.releaseEditorSummaryRunLock(runId), addMessageToSession: (session, message) => view.addMessageToSession(session, message)
+      get plugin() { return view.plugin; }, get usageLoading() { return view.usageLoading; }, set usageLoading(value) { view.usageLoading = value; }, get usageError() { return view.usageError; }, set usageError(value) { view.usageError = value; },
+      sessionForThread: (threadId) => view.sessionForThread(threadId), updateUsageHeader: (rateLimits, loading, error) => view.updateUsageHeader(rateLimits, loading, error), renderUsagePanel: (rateLimits, error, loading) => view.renderUsagePanel(rateLimits, error, loading), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session)
     } satisfies CodexNotificationRouterContext;
   }
 
@@ -356,16 +331,36 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    if (this.activeRunKind === "editor" && this.activeRunId) {
-      await this.plugin.cancelHarnessRun(this.activeRunId).catch(() => undefined);
-    }
     this.clearTurnWatchdog();
     this.clearEditorActionStatusTimers();
-    this.clearEditorSummaryTimers();
     this.clearKnowledgeBaseRunProgressTimer();
     disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
-    this.rejectEditorActionRun(new Error("EchoInk Agent 侧栏已关闭"));
-    this.rejectEditorSummaryRun(new Error("EchoInk Agent 侧栏已关闭"));
+    const activeRunId = this.activeRunId;
+    const activeRunKind = this.activeRunKind;
+    const activeRunSessionId = activeRunId && activeRunKind !== "editor" ? this.activeRunSession().id : "";
+    if (activeRunId) {
+      const cancelError = await this.plugin.cancelHarnessRun(activeRunId).then(
+        () => null,
+        (error) => error instanceof Error ? error : new Error(String(error))
+      );
+      if (activeRunKind === "editor") {
+        this.setEditorActionStatus(cancelError
+          ? { status: "failed", message: "中断失败", error: cancelError.message }
+          : { status: "canceled", message: "侧栏已关闭" });
+      }
+      this.running = false;
+      this.clearActiveRun();
+      if (activeRunSessionId) {
+        await this.plugin.recoverInterruptedHarnessRuns(activeRunSessionId);
+      } else if (activeRunKind === "editor") {
+        await this.plugin.saveSettings(true);
+        await this.plugin.settleHarnessRunTerminal({
+          runId: activeRunId,
+          status: cancelError ? "failed" : "cancelled",
+          error: cancelError?.message ?? "侧栏关闭"
+        });
+      }
+    }
     await this.flushSessionSave();
   }
 
@@ -410,17 +405,7 @@ export class CodexView extends ItemView {
   }
 
   handleCodexNotification(notification: CodexNotification): void {
-    if (!this.notificationRouter) {
-      const method = notification.method;
-      if (this.activeRunKind === "knowledge-base" && (method.startsWith("item/") || method.startsWith("turn/") || method.startsWith("thread/") || method === "error")) return;
-      return;
-    }
-    this.notificationRouter.handle(notification);
-  }
-
-  handleKnowledgeBaseCodexNotification(_notification: CodexNotification): boolean {
-    if (!this.notificationRouter) return this.activeRunKind === "knowledge-base";
-    return this.notificationRouter.handleKnowledgeBaseNotification();
+    this.notificationRouter?.handle(notification);
   }
 
   focusInput(): void {
@@ -533,8 +518,6 @@ export class CodexView extends ItemView {
   private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
   private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }
   private clearTurnWatchdog(): void { clearTurnWatchdogAction(this.turnLifecycleHost()); }
-  private resolveEditorActionRun(text: string): void { resolveEditorActionRunAction(this.editorActionRunHost(), text); }
-  private rejectEditorActionRun(error: Error): void { rejectEditorActionRunAction(this.editorActionRunHost(), error); }
   private editorActionStartBlockReason(): string | null { return editorActionStartBlockReasonAction(this.editorActionRunHost()); }
   private releaseEditorActionRunLock(runId: string): void { releaseEditorActionRunLockAction(this.editorActionRunHost(), runId); }
 
@@ -543,13 +526,6 @@ export class CodexView extends ItemView {
   }
 
   private prewarmEditorActionThread(): void { prewarmEditorActionThreadAction(this.editorActionRunHost()); }
-  private isEditorSummaryRunActive(): boolean { return isEditorSummaryRunActiveAction(this.editorActionRunHost()); }
-  private resolveEditorSummaryRun(text: string): void { resolveEditorSummaryRunAction(this.editorActionRunHost(), text); }
-  private rejectEditorSummaryRun(error: Error): void { rejectEditorSummaryRunAction(this.editorActionRunHost(), error); }
-  private cancelEditorSummaryRun(reason: string): void { cancelEditorSummaryRunAction(this.editorActionRunHost(), reason); }
-  private armEditorSummaryTimeout(timeoutMs: number): void { armEditorSummaryTimeoutAction(this.editorActionRunHost(), timeoutMs); }
-  private clearEditorSummaryTimers(): void { clearEditorSummaryTimersAction(this.editorActionRunHost()); }
-  private releaseEditorSummaryRunLock(runId?: string): void { releaseEditorSummaryRunLockAction(this.editorActionRunHost(), runId); }
   private isEditorActionRunActive(): boolean { return isEditorActionRunActiveAction(this.editorActionRunHost()); }
   private withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> { return withEditorActionTimeoutAction(promise, timeoutMs, message); }
   private currentTurnOptions(session?: StoredSession) { return currentTurnOptionsAction(this.workspaceHost(), session); }
@@ -560,23 +536,10 @@ export class CodexView extends ItemView {
   private effectiveEditorActionModel(availableModels: string[] = [], configuredModel = this.plugin.settings.editorActions.model): string { return effectiveEditorActionModelAction(this.editorActionRunHost(), availableModels, configuredModel); }
   private prewarmActiveThread(): void { prewarmActiveThreadAction(this.workspaceHost()); }
 
-  private appendItemDelta(session: StoredSession, itemId: string, role: ChatMessage["role"], delta: string, itemType: string, title: string): void {
-    if (this.editorActionRun?.runId === this.activeRunId && role === "assistant" && itemType === "assistant") {
-      this.editorActionRun.text += delta;
-    }
-    appendItemDeltaAction(this.messageHost(), session, itemId, role, delta, itemType, title);
-  }
-
-  private appendProcessDelta(session: StoredSession, itemId: string, itemType: string, delta: string, payload: unknown): void { appendProcessDeltaAction(this.messageHost(), session, itemId, itemType, delta, payload); }
   private ensureThinkingMessage(session: StoredSession, title: string, text: string): void { ensureThinkingMessageAction(this.messageHost(), session, title, text); }
-  private markThinkingAsStreaming(session: StoredSession): void { markThinkingAsStreamingAction(this.messageHost(), session); }
   private finishThinkingMessage(session: StoredSession, _status: string): void { finishThinkingMessageAction(this.messageHost(), session, _status); }
   private finishPlanMessage(session: StoredSession): void { finishPlanMessageAction(this.messageHost(), session); }
   private finishRunningProcessMessages(session: StoredSession, status: string): void { finishRunningProcessMessagesAction(this.messageHost(), session, status); }
-  private renderPlanUpdate(session: StoredSession, params: unknown): void { renderPlanUpdateAction(this.messageHost(), session, params); }
-  private renderStartedItem(session: StoredSession, item: unknown): void { renderStartedItemAction(this.messageHost(), session, item); }
-  private async renderCompletedItem(session: StoredSession, item: unknown): Promise<void> { await renderCompletedItemAction(this.messageHost(), session, item); }
-  private async upsertProcessItem(session: StoredSession, id: string, itemType: string, text: string, status: string | undefined, payload: unknown): Promise<void> { await upsertProcessItemAction(this.messageHost(), session, id, itemType, text, status, payload); }
   private addMessageToSession(session: StoredSession, message: SessionMessageInput): void { addMessageToSessionAction(this.messageHost(), session, message); }
   private scheduleSessionSave(): void { scheduleSessionSaveAction(this.messageHost()); }
   private async flushSessionSave(): Promise<void> { await flushSessionSaveAction(this.messageHost()); }
@@ -591,11 +554,11 @@ export class CodexView extends ItemView {
     this.mcpPanelEl.createDiv({ cls: "codex-mcp-title", text: "MCP 状态" });
     this.mcpPanelEl.createDiv({ cls: "codex-mcp-empty", text: "正在读取 MCP 状态..." });
     const status = await this.plugin.ensureCodexConnected();
-    if (!status.connected || !this.plugin.codex) {
+    if (!status.connected || !this.plugin.hasCodexHarnessTransport()) {
       this.renderMcpPanel([], "Codex 未连接");
       return;
     }
-    const result = await this.plugin.codex.refreshMcpStatus();
+    const result = await this.plugin.refreshCodexHarnessMcpStatus();
     if (this.plugin.lastStatus) this.plugin.lastStatus.mcpServers = result.servers;
     this.renderMcpPanel(result.servers, result.error);
   }
@@ -603,7 +566,7 @@ export class CodexView extends ItemView {
   private renderMcpPanel(servers: McpServerStatus[], error: string | null): void {
     renderMcpPanelView(this.mcpPanelEl, servers, error, this.plugin.settings.mcpEnabled, {
       onRetry: () => { this.mcpPanelEl.removeClass("is-visible"); void this.toggleMcpPanel(); },
-      onLogin: (serverName) => this.plugin.codex?.startMcpOAuth(serverName) ?? Promise.resolve(null)
+      onLogin: (serverName) => this.plugin.startCodexHarnessMcpOAuth(serverName)
     });
   }
 
@@ -615,7 +578,7 @@ export class CodexView extends ItemView {
       clearActiveRunAction(this.turnLifecycleHost(), () => clearSessionMessageActiveRun(this.messageHost()));
       return;
     }
-    const host = this as unknown as { activeRunId: string; activeRunKind: string; activeRunSessionId: string; activeTurnId: string; editorActionActiveTimeoutMs?: number; activeThinkingMessageId?: string; activePlanMessageId?: string; activeItemMessages?: Map<string, string> };
+    const host = this as unknown as { activeRunId: string; activeRunKind: string; activeRunSessionId: string; activeTurnId: string; editorActionActiveTimeoutMs?: number; activeThinkingMessageId?: string; activePlanMessageId?: string };
     host.activeRunId = "";
     host.activeRunKind = "";
     host.activeRunSessionId = "";
@@ -623,7 +586,6 @@ export class CodexView extends ItemView {
     host.editorActionActiveTimeoutMs = 0;
     host.activeThinkingMessageId = "";
     host.activePlanMessageId = "";
-    host.activeItemMessages?.clear();
   }
   private attachTurnIdToRun(session: StoredSession, turnId: string): void { attachTurnIdToRunAction(this.messageHost(), session, turnId); }
   private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void { renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage); }

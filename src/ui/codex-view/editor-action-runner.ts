@@ -106,7 +106,6 @@ export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Pro
 }
 
 export async function sendEditorActionRequest(view: CodexViewEditorActionContext, request: EditorActionRequest): Promise<string> {
-  if (view.editorSummaryRun) view.cancelEditorSummaryRun("写作操作抢占文章理解");
   const blockReason = view.editorActionStartBlockReason();
   if (blockReason) throw new Error(blockReason);
   const harnessRunId = newId("editor-action-harness");
@@ -307,7 +306,6 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         getNativeThreadId: () => undefined,
         setNativeThreadId: (threadId) => {
           view.editorActionThreadId = threadId;
-          view.editorActionThreadIds.add(threadId);
         },
         buildInput: () => [{ type: "text", text: prompt, text_elements: [] }],
         startThread: async () => {
@@ -316,8 +314,6 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         },
         onTurnStarted: ({ threadId, turnId }) => {
           view.editorActionThreadId = threadId;
-          view.editorActionThreadIds.add(threadId);
-          view.editorActionTurnIds.add(turnId);
           view.activeTurnId = turnId;
         },
         nativeRefContext: view.plugin.getNativeExecutionRefContext(backend)

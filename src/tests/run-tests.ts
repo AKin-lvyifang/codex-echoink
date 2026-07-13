@@ -121,7 +121,6 @@ import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/co
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
 import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
-import { EditorActionRunCoordinator } from "../ui/codex-view/editor-action-run-coordinator";
 import {
   afterTurnSettled as afterTurnSettledRunner,
   messageRenderOptionsForRunUpdate,
@@ -165,7 +164,9 @@ import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, t
 import { verifyDigestEvidence, type KnowledgeTransactionSnapshot } from "../knowledge-base/digest-evidence";
 import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-tests";
 import { runHarnessV2MemoryTests } from "./harness-v2/memory";
+import { runHarnessV2ContractTests } from "./harness-v2/contracts";
 import { runHarnessV2AdapterTests } from "./harness-v2/adapters";
+import { runHarnessV2ResourceTests } from "./harness-v2/resources";
 import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-store";
 import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
 import { runHarnessV2KnowledgePolicyProfileTests } from "./harness-v2/knowledge-policy-profile";
@@ -173,12 +174,15 @@ import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger"
 import { runHarnessV2NativeExecutionTests } from "./harness-v2/native-execution";
 import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-lease";
 import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
+import { runHarnessV2AsyncRunSettlementTests } from "./harness-v2/async-run-settlement";
+import { runHarnessV2SurfaceRunSettlementTests } from "./harness-v2/surface-run-settlement";
+import { runHarnessV2ArchitectureBoundaryTests } from "./harness-v2/architecture-boundaries";
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
 import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
-import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
+import { buildKnowledgeBaseJournalPrompt, collectEchoInkJournalEvidenceFromSessions, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { KnowledgeBaseManager } from "../knowledge-base/manager";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
@@ -1701,163 +1705,26 @@ assert.equal(throwingQueueViewError, null);
 assert.equal(throwingQueueView.queueStartInProgress, false);
 assert.equal(throwingQueueViewQueue.isSessionQueuePaused("throw-session"), true);
 assert.deepEqual(throwingQueueViewQueue.itemsForSession("throw-session").map((item) => item.id), ["throw-b"]);
-const backgroundKnowledgeNotificationSession = {
-  id: "chat-during-background-kb",
-  title: "普通会话",
-  kind: "chat" as const,
-  cwd: "/vault",
-  messages: [] as any[],
-  createdAt: Date.now(),
-  updatedAt: Date.now()
+const notificationSessions = [
+  { id: "router-a", title: "A", cwd: "/vault", threadId: "thread-a", messages: [], createdAt: 1, updatedAt: 1 },
+  { id: "router-b", title: "B", cwd: "/vault", threadId: "thread-b", messages: [], createdAt: 1, updatedAt: 1 }
+];
+const notificationCalls: string[] = [];
+const notificationContext: any = {
+  plugin: { lastStatus: { rateLimits: null, rateLimitsByLimitId: null } },
+  usageLoading: true,
+  usageError: "loading",
+  sessionForThread: (threadId: string) => notificationSessions.find((session) => session.threadId === threadId) ?? null,
+  updateUsageHeader: (rateLimits: any, loading: boolean, error: string | null) => notificationCalls.push(`usageHeader:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+  renderUsagePanel: (rateLimits: any, error: string | null, loading: boolean) => notificationCalls.push(`usagePanel:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
+  updateContextForSession: (session: any, usage: any) => notificationCalls.push(`context:${session.id}:${usage?.total?.totalTokens ?? 0}`),
+  addContextCompactionMessage: (session: any) => notificationCalls.push(`compact:${session.id}`)
 };
-const backgroundKnowledgeNotificationView: any = {
-  activeRunKind: "chat",
-  activeRunId: "chat-run",
-  activeRunSessionId: backgroundKnowledgeNotificationSession.id,
-  activeTurnId: "chat-turn",
-  activeItemMessages: new Map(),
-  plugin: {
-    settings: {
-      sessions: [backgroundKnowledgeNotificationSession],
-      activeSessionId: backgroundKnowledgeNotificationSession.id
-    },
-    getVaultPath: () => "/vault",
-    saveSettings: async () => undefined
-  },
-  ensureSession: () => backgroundKnowledgeNotificationSession,
-  handleKnowledgeBaseCodexNotification: (CodexView.prototype as any).handleKnowledgeBaseCodexNotification,
-  handleCodexNotification: (CodexView.prototype as any).handleCodexNotification,
-  handleEditorActionNotification: () => false,
-  activeRunSession: (CodexView.prototype as any).activeRunSession,
-  isKnowledgeBaseSession: () => false,
-  markThinkingAsStreaming: () => undefined,
-  appendItemDelta: (CodexView.prototype as any).appendItemDelta,
-  renderMessagesIfActive: () => undefined,
-  applyStatus: () => undefined,
-  diagnoseCodexFailure: () => ({ title: "失败", text: "失败" })
-};
-const backgroundKnowledgeForwarded = backgroundKnowledgeNotificationView.handleKnowledgeBaseCodexNotification({
-  method: "item/agentMessage/delta",
-  params: { threadId: "kb-thread", turnId: "kb-turn", itemId: "kb-item", delta: "后台维护输出" }
-} as any);
-assert.equal(backgroundKnowledgeForwarded, false);
-assert.equal(backgroundKnowledgeNotificationSession.messages.length, 0);
-const foregroundKnowledgeNotificationSession = {
-  ...backgroundKnowledgeNotificationSession,
-  id: "foreground-kb-session",
-  kind: "knowledge-base" as const,
-  messages: [] as any[]
-};
-const foregroundKnowledgeNotificationView: any = {
-  ...backgroundKnowledgeNotificationView,
-  activeRunKind: "knowledge-base",
-  activeRunId: "kb-run",
-  activeRunSessionId: foregroundKnowledgeNotificationSession.id,
-  activeTurnId: "kb-turn",
-  activeItemMessages: new Map(),
-  plugin: {
-    settings: {
-      sessions: [foregroundKnowledgeNotificationSession],
-      activeSessionId: foregroundKnowledgeNotificationSession.id
-    },
-    getVaultPath: () => "/vault",
-    saveSettings: async () => undefined
-  },
-  ensureSession: () => foregroundKnowledgeNotificationSession,
-  isKnowledgeBaseSession: () => true
-};
-const foregroundKnowledgeForwarded = foregroundKnowledgeNotificationView.handleKnowledgeBaseCodexNotification({
-  method: "item/agentMessage/delta",
-  params: { threadId: "kb-thread", turnId: "kb-turn", itemId: "kb-item", delta: "前台知识库输出" }
-} as any);
-assert.equal(foregroundKnowledgeForwarded, true);
-assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
-foregroundKnowledgeNotificationView.handleCodexNotification({
-  method: "item/agentMessage/delta",
-  params: { itemId: "leaked-kb-item", delta: "不应该显示的子线程长文本" }
-} as any);
-assert.equal(foregroundKnowledgeNotificationSession.messages.length, 0);
-function createNotificationRouterTestContext(overrides: Record<string, any> = {}) {
-  const calls: string[] = [];
-  const session = overrides.session ?? {
-    id: "router-session",
-    title: "Router session",
-    kind: "chat" as const,
-    cwd: "/vault",
-    messages: [] as any[],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-  const context: any = {};
-  Object.assign(context, {
-    plugin: {
-      settings: { editorActions: { timeoutMs: 45000 } },
-      lastStatus: { rateLimits: null, rateLimitsByLimitId: null },
-      saveSettings: async () => {
-        calls.push("saveSettings");
-      }
-    },
-    running: false,
-    activeRunId: "router-run",
-    activeRunKind: "chat",
-    activeTurnId: "router-turn",
-    turnStartedAt: 0,
-    usageLoading: true,
-    usageError: "loading",
-    editorActionRun: null,
-    editorSummaryRun: null,
-    editorActionActiveTimeoutMs: 0,
-    editorActionThreadId: "",
-    editorActionThreadIds: new Set<string>(),
-    editorActionTurnIds: new Set<string>(),
-    editorActionItemIds: new Set<string>(),
-    editorActionCurrentItemIds: new Set<string>(),
-    isEditorActionRunActive: () => Boolean(context.editorActionRun && context.editorActionRun.runId === context.activeRunId),
-    isEditorSummaryRunActive: () => Boolean(context.editorSummaryRun && context.editorSummaryRun.runId === context.activeRunId),
-    activeRunSession: () => session,
-    sessionForThread: () => null,
-    isKnowledgeBaseSession: (candidate: any) => candidate.kind === "knowledge-base",
-    attachTurnIdToRun: (_session: any, turnId: string) => calls.push(`attachTurn:${turnId}`),
-    ensureThinkingMessage: (_session: any, title: string) => calls.push(`thinking:${title}`),
-    markThinkingAsStreaming: () => calls.push("streaming"),
-    appendItemDelta: (_session: any, itemId: string, _role: string, delta: string) => calls.push(`itemDelta:${itemId}:${delta}`),
-    appendProcessDelta: (_session: any, itemId: string, itemType: string, delta: string) => calls.push(`processDelta:${itemType}:${itemId}:${delta}`),
-    upsertProcessItem: async (_session: any, id: string, itemType: string) => {
-      calls.push(`upsert:${itemType}:${id}`);
-    },
-    renderPlanUpdate: () => calls.push("planUpdate"),
-    renderStartedItem: () => calls.push("itemStarted"),
-    renderCompletedItem: async () => {
-      calls.push("itemCompleted");
-    },
-    updateUsageHeader: (rateLimits: any, loading: boolean, error: string | null) => calls.push(`usageHeader:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
-    renderUsagePanel: (rateLimits: any, error: string | null, loading: boolean) => calls.push(`usagePanel:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
-    updateContextForSession: () => calls.push("contextUpdate"),
-    addContextCompactionMessage: () => calls.push("compact"),
-    clearTurnWatchdog: () => calls.push("clearWatchdog"),
-    armTurnWatchdog: (timeoutMs?: number) => calls.push(`armWatchdog:${timeoutMs ?? "default"}`),
-    finishThinkingMessage: (_session: any, status: string) => calls.push(`finishThinking:${status}`),
-    finishRunningProcessMessages: (_session: any, status: string) => calls.push(`finishProcess:${status}`),
-    finishPlanMessage: () => calls.push("finishPlan"),
-    clearActiveRun: () => calls.push("clearActive"),
-    applyStatus: () => calls.push("applyStatus"),
-    afterTurnSettled: async (_sessionId: string, succeeded: boolean) => {
-      calls.push(`afterTurn:${succeeded}`);
-    },
-    diagnoseCodexFailure: (message: unknown) => ({ title: "失败", text: String(message) }),
-    rejectEditorActionRun: (error: Error) => calls.push(`rejectAction:${error.message}`),
-    resolveEditorActionRun: (text: string) => calls.push(`resolveAction:${text}`),
-    rejectEditorSummaryRun: (error: Error) => calls.push(`rejectSummary:${error.message}`),
-    resolveEditorSummaryRun: (text: string) => calls.push(`resolveSummary:${text}`),
-    releaseEditorSummaryRunLock: (runId?: string) => calls.push(`releaseSummary:${runId ?? ""}`),
-    addMessageToSession: (_session: any, message: any) => calls.push(`message:${message.itemType}:${message.text}`)
-  });
-  Object.assign(context, overrides);
-  return { calls, context, session };
-}
-
-const rateLimitRouterState = createNotificationRouterTestContext();
-new CodexNotificationRouter(rateLimitRouterState.context).handle({
+const notificationRouter = new CodexNotificationRouter(notificationContext);
+notificationRouter.handle({ method: "item/reasoning/summaryPartAdded", params: { itemId: "reasoning-item" } } as any);
+notificationRouter.handle({ method: "item/agentMessage/delta", params: { threadId: "kb-thread", delta: "不得旁路显示" } } as any);
+assert.deepEqual(notificationCalls, []);
+notificationRouter.handle({
   method: "account/rateLimits/updated",
   params: {
     rateLimitsByLimitId: {
@@ -1869,67 +1736,17 @@ new CodexNotificationRouter(rateLimitRouterState.context).handle({
     }
   }
 } as any);
-assert.equal(rateLimitRouterState.context.usageLoading, false);
-assert.equal(rateLimitRouterState.context.plugin.lastStatus.rateLimits.limitId, "codex");
-assert.ok(rateLimitRouterState.calls.includes("usageHeader:codex:false:none"));
-assert.ok(rateLimitRouterState.calls.includes("usagePanel:codex:false:none"));
-
-const reasoningRouterState = createNotificationRouterTestContext();
-new CodexNotificationRouter(reasoningRouterState.context).handle({
-  method: "item/reasoning/summaryPartAdded",
-  params: { itemId: "reasoning-item" }
-} as any);
-assert.ok(reasoningRouterState.calls.includes("upsert:reasoning:reasoning-item"));
-
-const knowledgeRouterState = createNotificationRouterTestContext({
-  activeRunKind: "knowledge-base",
-  session: {
-    id: "router-kb-session",
-    title: "Knowledge",
-    kind: "knowledge-base" as const,
-    cwd: "/vault",
-    messages: [] as any[],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  }
-});
-new CodexNotificationRouter(knowledgeRouterState.context).handle({
-  method: "item/agentMessage/delta",
-  params: { itemId: "kb-background-item", delta: "后台维护输出" }
-} as any);
-assert.deepEqual(knowledgeRouterState.calls, []);
-
-const editorActionRouterState = createNotificationRouterTestContext({
-  editorActionRun: {
-    runId: "router-run",
-    text: "",
-    resolve: () => undefined,
-    reject: () => undefined
-  },
-  editorActionThreadId: "editor-thread"
-});
-new CodexNotificationRouter(editorActionRouterState.context).handle({
-  method: "item/agentMessage/delta",
-  params: { threadId: "editor-thread", itemId: "editor-item", delta: "候选文本" }
-} as any);
-assert.equal(editorActionRouterState.context.editorActionRun.text, "候选文本");
-assert.equal(editorActionRouterState.calls.some((item) => item.startsWith("itemDelta:")), false);
-
-const editorSummaryRouterState = createNotificationRouterTestContext({
-  editorSummaryRun: {
-    runId: "router-run",
-    threadId: "summary-thread",
-    text: "",
-    resolve: () => undefined,
-    reject: () => undefined
-  }
-});
-new EditorActionRunCoordinator(editorSummaryRouterState.context).handleNotification("item/agentMessage/delta", {
-  threadId: "summary-thread",
-  itemId: "summary-item",
-  delta: "摘要文本"
-});
-assert.equal(editorSummaryRouterState.context.editorSummaryRun.text, "摘要文本");
+assert.equal(notificationContext.usageLoading, false);
+assert.equal(notificationContext.plugin.lastStatus.rateLimits.limitId, "codex");
+assert.ok(notificationCalls.includes("usageHeader:codex:false:none"));
+assert.ok(notificationCalls.includes("usagePanel:codex:false:none"));
+notificationRouter.handle({ method: "thread/tokenUsage/updated", params: { threadId: "unknown", tokenUsage: { total: { totalTokens: 99 } } } } as any);
+notificationRouter.handle({ method: "thread/tokenUsage/updated", params: { threadId: "thread-a", tokenUsage: { total: { totalTokens: 23 } } } } as any);
+notificationRouter.handle({ method: "thread/compacted", params: { threadId: "thread-b", tokenUsage: { total: { totalTokens: 17 } } } } as any);
+assert.ok(notificationCalls.includes("context:router-a:23"));
+assert.ok(notificationCalls.includes("compact:router-b"));
+assert.ok(notificationCalls.includes("context:router-b:17"));
+assert.equal(notificationCalls.some((item) => item.includes(":99")), false);
 const activeKnowledgeRunSession = {
   id: "active-kb-run-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -3153,7 +2970,7 @@ assert.ok(codexViewModules.includes("header.ts"));
 assert.ok(codexViewModules.includes("composer.ts"));
 assert.ok(codexViewModules.includes("message-list.ts"));
 assert.ok(codexViewModules.includes("notification-router.ts"));
-assert.ok(codexViewModules.includes("editor-action-run-coordinator.ts"));
+assert.equal(codexViewModules.includes("editor-action-run-coordinator.ts"), false);
 assert.ok(codexViewModules.includes("session-message-store.ts"));
 assert.ok(codexViewModules.includes("message-controller.ts"));
 assert.ok(codexViewModules.includes("view-shell.ts"));
@@ -7267,7 +7084,7 @@ try {
   assert.equal((result as KnowledgeBaseRunResult).status, "failed");
   assert.match((result as KnowledgeBaseRunResult).error ?? "", /OpenCode.*长时间没有返回/);
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
-  assert.equal((manager as any).activeOpenCode, null);
+  assert.equal((manager as any).agentTaskService.hasActiveTask, false);
   assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
   assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
 } finally {
@@ -7325,7 +7142,7 @@ try {
   assert.equal((result as KnowledgeBaseRunResult).status, "failed");
   assert.match((result as KnowledgeBaseRunResult).error ?? "", /Hermes.*长时间没有返回/);
   assert.deepEqual((globalThis as any).__hermesBackendTestHooks.abortCalls, ["test-hermes-run"]);
-  assert.equal((manager as any).activeHermes, null);
+  assert.equal((manager as any).agentTaskService.hasActiveTask, false);
   assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
   assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
 } finally {
@@ -9815,6 +9632,16 @@ try {
     vaultPath: journalVault,
     userRequest: "写一下今天的日记。",
     target,
+    echoInkEvidence: {
+      messages: [{
+        source: "knowledge",
+        sessionTitle: "知识库管理",
+        role: "user",
+        createdAtLabel: "2026-05-18 10:00",
+        text: "/maintain 完成 journal 证据迁移"
+      }],
+      truncated: false
+    },
     generatedAt: new Date(2026, 4, 18, 9, 1, 0)
   });
   assert.ok(journalPrompt.includes("Codex Obsidian Daily Journal"));
@@ -9823,7 +9650,24 @@ try {
   assert.ok(journalPrompt.includes("只做增量更新"));
   assert.ok(journalPrompt.includes("2026-05-18 00:00 - 2026-05-19 06:00"));
   assert.ok(journalPrompt.includes("不要再使用 00:00-02:30 旧口径"));
-  assert.ok(journalPrompt.includes("2026/05/19/*.jsonl"));
+  assert.ok(journalPrompt.includes("EchoInk 本地历史证据"));
+  assert.ok(journalPrompt.includes("/maintain 完成 journal 证据迁移"));
+  assert.ok(journalPrompt.includes("Agent 原生历史只能作为可选补充"));
+  assert.equal(journalPrompt.includes("当前知识库后端是 Codex CLI，所以“当天记录”默认读取 Codex 会话记录。"), false);
+  const collectedJournalEvidence = collectEchoInkJournalEvidenceFromSessions([{
+    id: "kb",
+    kind: "knowledge-base",
+    title: "知识库管理",
+    cwd: journalVault,
+    messages: [
+      { id: "msg-old", role: "user", text: "窗口外", createdAt: new Date(2026, 4, 17, 23, 0, 0).getTime() },
+      { id: "msg-hit", role: "assistant", text: "窗口内 EchoInk 结果", status: "completed", backendId: "opencode", createdAt: new Date(2026, 4, 18, 12, 0, 0).getTime() }
+    ],
+    createdAt: 1,
+    updatedAt: 1
+  }], "kb", target.evidenceWindow);
+  assert.equal(collectedJournalEvidence.messages.length, 1);
+  assert.equal(collectedJournalEvidence.messages[0].text, "窗口内 EchoInk 结果");
   const openCodeJournalPrompt = buildKnowledgeBaseJournalPrompt({
     vaultPath: journalVault,
     userRequest: "写一下今天的日记。",
@@ -9847,10 +9691,11 @@ try {
     },
     generatedAt: new Date(2026, 4, 18, 9, 1, 0)
   });
-  assert.ok(openCodeJournalPrompt.includes("记录来源：OpenCode API"));
-  assert.ok(openCodeJournalPrompt.includes("session.list"));
+  assert.ok(openCodeJournalPrompt.includes("记录来源：EchoInk 本地历史 + Vault 文件变化"));
+  assert.ok(openCodeJournalPrompt.includes("Agent 原生补充：OpenCode API"));
   assert.ok(openCodeJournalPrompt.includes("处理 journal 后端切换"));
-  assert.ok(openCodeJournalPrompt.includes("不要再读取 Codex sessions 当作主证据"));
+  assert.ok(openCodeJournalPrompt.includes("只能作为补充证据"));
+  assert.equal(openCodeJournalPrompt.includes("优先使用下面的 OpenCode 证据摘要"), false);
   const yesterdayTarget = await resolveJournalDailyTarget(journalVault, "写日记：昨天的内容", new Date(2026, 4, 18, 9, 0, 0));
   assert.equal(yesterdayTarget.relativePath, "journal/daily/2026-05/2026-05-17-周日.md");
 } finally {
@@ -10857,7 +10702,9 @@ async function assertNoReportFileForResult(vaultPath: string, result: Pick<Knowl
 
 await runKnowledgeBasePerformanceTests();
 await runHarnessV2MemoryTests();
+await runHarnessV2ContractTests();
 await runHarnessV2AdapterTests();
+await runHarnessV2ResourceTests();
 await runHarnessV2ConversationStoreTests();
 await runHarnessV2SessionContextTests();
 await runHarnessV2KnowledgePolicyProfileTests();
@@ -10865,6 +10712,9 @@ await runHarnessV2KnowledgeLedgerTests();
 await runHarnessV2NativeExecutionTests();
 await runHarnessV2KnowledgeAskLeaseTests();
 await runHarnessV2KnowledgeTurnTests();
+await runHarnessV2AsyncRunSettlementTests();
+await runHarnessV2SurfaceRunSettlementTests();
+await runHarnessV2ArchitectureBoundaryTests();
 await runEditorActionControllerTests();
 await runPromptEnhancerHarnessTests();
 await runHarnessV3ChatUiTests();

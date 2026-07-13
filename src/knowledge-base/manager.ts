@@ -5,16 +5,14 @@ import { getAgentBackendDefinition } from "../agent/registry";
 import { createEchoInkMcpToolBridgeRuntime } from "../agent/tool-bridge";
 import type { AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
 import type { AgentBackendKind } from "../agent/types";
-import { OpenCodeBackend } from "../core/opencode-backend";
-import { harnessKnowledgePromptUsesPreparedResources, harnessKnowledgeUsesEchoInkToolBridge, harnessMessageModelId } from "../harness/agents/backend-runtime-profile";
+import { harnessKnowledgePromptUsesPreparedResources, harnessKnowledgeTaskPermission, harnessKnowledgeUsesEchoInkToolBridge, harnessMessageModelId } from "../harness/agents/backend-runtime-profile";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import type { KnowledgeBaseManagedThreadKind, ReviewReportKind, StoredAttachment } from "../settings/settings";
-import type { CodexNotification, PermissionMode } from "../types/app-server";
+import type { PermissionMode } from "../types/app-server";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult, type KnowledgeBaseTurnOptionOverrides } from "./command-router";
 import {
   buildPromptWithPreparedResources,
-  selectOpenCodeModel,
   type KnowledgeAgentTaskOutput
 } from "./agent-runner";
 import { AGENTS_RULES_FILE } from "./constants";
@@ -65,6 +63,7 @@ export class KnowledgeBaseManager {
       finishRun: () => this.finishKnowledgeBaseRun(),
       resolveRulesFile: () => this.resolveRulesFile(),
       resolveKnowledgeBackend: () => this.resolveKnowledgeBackend(),
+      collectNativeJournalHistory: (backend, window) => this.agentTaskService.collectNativeJournalHistory(backend, window),
       runKnowledgeAgentTask: (input) => this.runKnowledgeAgentTask(input)
     });
     this.maintenanceRunner = new KnowledgeBaseMaintenanceRunner(plugin, {
@@ -147,22 +146,6 @@ export class KnowledgeBaseManager {
     return this.running;
   }
 
-  private get codexWaiter(): unknown {
-    return this.agentTaskService.codexWaiter;
-  }
-
-  private get activeCodexRun(): unknown {
-    return this.agentTaskService.activeCodexRun;
-  }
-
-  private get activeOpenCode(): unknown {
-    return this.agentTaskService.activeOpenCode;
-  }
-
-  private get activeHermes(): unknown {
-    return this.agentTaskService.activeHermes;
-  }
-
   async getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> {
     const signature = dashboardSnapshotSignature(this.plugin.settings.knowledgeBase);
     const now = Date.now();
@@ -218,41 +201,6 @@ export class KnowledgeBaseManager {
       await saveSettingsSafely(this.plugin);
     }
     new Notice("已取消知识库任务");
-  }
-
-  async testOpenCodeConnection(): Promise<void> {
-    const backend = new OpenCodeBackend({
-      ...this.plugin.settings.opencode,
-      vaultPath: this.plugin.getVaultPath()
-    });
-    try {
-      await backend.connect();
-      const models = await backend.listModels();
-      const selected = selectOpenCodeModel(
-        models,
-        this.plugin.settings.opencode.providerId,
-        this.plugin.settings.opencode.modelId,
-        ["text"]
-      );
-      if (selected) {
-        this.plugin.settings.opencode.providerId = selected.providerId;
-        this.plugin.settings.opencode.modelId = selected.modelId;
-        this.plugin.settings.opencode.textEnabled = selected.inputModalities.includes("text");
-        this.plugin.settings.opencode.imageEnabled = selected.inputModalities.includes("image");
-        this.plugin.settings.opencode.pdfEnabled = selected.inputModalities.includes("pdf");
-      }
-      this.plugin.settings.opencode.lastConnectedAt = Date.now();
-      this.plugin.settings.opencode.lastError = "";
-      await this.plugin.saveSettings(true);
-      new Notice(`OpenCode 已连接，读取到 ${models.length} 个模型`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.plugin.settings.opencode.lastError = message;
-      await this.plugin.saveSettings(true);
-      new Notice(`OpenCode 连接失败：${message}`);
-    } finally {
-      await backend.disconnect();
-    }
   }
 
   async handleUserMessage(text: string, attachments: StoredAttachment[] = [], turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
@@ -367,10 +315,6 @@ export class KnowledgeBaseManager {
     }
   }
 
-  handleCodexNotification(_notification: CodexNotification): boolean {
-    return this.agentTaskService.handleCodexNotification();
-  }
-
   async archivePendingCodexKnowledgeThreads(): Promise<number> {
     return await this.settlePendingKnowledgeBaseNativeExecutions();
   }
@@ -418,9 +362,7 @@ export class KnowledgeBaseManager {
       backend,
       prompt,
       sources: input.sources,
-      permission: backend === "codex-cli" && input.permission === "read-only" && input.codexWriteScope === "knowledge-lint"
-        ? "workspace-write"
-        : input.permission,
+      permission: harnessKnowledgeTaskPermission(backend, input.permission, input.codexWriteScope),
       codexWriteScope: input.codexWriteScope,
       turnOptionOverrides: input.turnOptionOverrides,
       managedKind: input.managedKind,
