@@ -10,7 +10,7 @@ export interface CodexTurnLifecycleHost {
   readonly plugin: CodexForObsidianPlugin;
   running: boolean;
   activeRunId: string;
-  activeRunKind: "chat" | "knowledge-base" | "";
+  activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   activeRunSessionId: string;
   activeTurnId: string;
   editorActionActiveTimeoutMs: number;
@@ -36,9 +36,7 @@ export interface CodexTurnLifecycleHost {
 
 export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
   if (host.isEditorActionRunActive()) {
-    if (host.editorActionThreadId && host.activeTurnId) {
-      await host.plugin.codex?.interruptTurn(host.editorActionThreadId, host.activeTurnId).catch(swallowError("cancel editor action Codex turn"));
-    }
+    if (host.activeRunId) await host.plugin.cancelHarnessRun(host.activeRunId).catch(swallowError("cancel editor action Harness run"));
     host.rejectEditorActionRun(new Error("写作操作已中断"));
     host.running = false;
     host.activeTurnId = "";
@@ -70,13 +68,10 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
   host.turnWatchdog = window.setTimeout(() => {
     host.turnWatchdog = null;
     if (!host.running) return;
-    const timedOutThreadId = host.editorActionThreadId;
     const timedOutTurnId = host.activeTurnId;
     host.running = false;
     if (host.isEditorActionRunActive()) {
-      if (timedOutThreadId && timedOutTurnId) {
-        void host.plugin.codex?.interruptTurn(timedOutThreadId, timedOutTurnId).catch(swallowError("interrupt timed out editor action Codex turn"));
-      }
+      if (host.activeRunId) void host.plugin.cancelHarnessRun(host.activeRunId).catch(swallowError("interrupt timed out editor action Harness run"));
       host.rejectEditorActionRun(new Error("写作操作响应超时"));
       host.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
       host.activeTurnId = "";

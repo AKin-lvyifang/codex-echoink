@@ -10,7 +10,7 @@ import type { ComposerPrimaryActionState } from "../composer-state";
 import type { QueuedTurnItem, RuntimeTurnQueue } from "../turn-queue";
 import type { ArticleUnderstandingPanelState } from "./header";
 
-export type RunnerRunKind = "chat" | "knowledge-base" | "";
+export type RunnerRunKind = "chat" | "knowledge-base" | "editor" | "";
 export type QueuedTurnSource = "composer" | "queue";
 export type QueuedTurnOutcome = "running" | "completed" | "failed";
 export type KnowledgeBaseTurnOutcome = "completed" | "failed";

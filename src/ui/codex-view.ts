@@ -215,7 +215,7 @@ export class CodexView extends ItemView {
   private queueEl!: HTMLElement;
   private running = false;
   private activeRunId = "";
-  private activeRunKind: "chat" | "knowledge-base" | "";
+  private activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   private activeRunSessionId = "";
   private activeTurnId = "";
   private turnStartedAt = 0;
@@ -356,6 +356,9 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    if (this.activeRunKind === "editor" && this.activeRunId) {
+      await this.plugin.cancelHarnessRun(this.activeRunId).catch(() => undefined);
+    }
     this.clearTurnWatchdog();
     this.clearEditorActionStatusTimers();
     this.clearEditorSummaryTimers();

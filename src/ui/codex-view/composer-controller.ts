@@ -50,7 +50,7 @@ export interface CodexComposerHost {
   selectedMode: UiMode;
   skillsRequested: boolean;
   running: boolean;
-  activeRunKind: "chat" | "knowledge-base" | "";
+  activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   ensureSession(): StoredSession;
   isKnowledgeBaseSession(session: StoredSession): boolean;
   resolvedKnowledgeBackend(): AgentBackendMode;

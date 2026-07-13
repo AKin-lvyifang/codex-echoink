@@ -12,6 +12,7 @@ export interface CodexEditorActionRunHost {
   readonly plugin: CodexForObsidianPlugin;
   running: boolean;
   activeRunId: string;
+  activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   activeTurnId: string;
   editorActionHarnessRunId: string;
   editorActionRun: EditorActionRunWaiter | null;
@@ -91,7 +92,7 @@ export async function takeEditorActionThread(host: CodexEditorActionRunHost, tur
       return threadId;
     }
   }
-  const started = await host.plugin.codex!.startThread(turnOptions);
+  const started = await host.plugin.startCodexHarnessThread(turnOptions);
   host.editorActionThreadIds.add(started.threadId);
   return started.threadId;
 }
@@ -107,7 +108,7 @@ export function prewarmEditorActionThread(host: CodexEditorActionRunHost): void 
 
 async function createEditorActionPrewarmThread(host: CodexEditorActionRunHost): Promise<string | null> {
   const status = await host.plugin.ensureCodexConnected(false, { silent: true });
-  if (!status.connected || !host.plugin.codex || host.running) return null;
+  if (!status.connected || !host.plugin.hasCodexHarnessTransport() || host.running) return null;
   const modeConfig = resolveEditorActionModeConfig(host.plugin.settings.editorActions);
   const turnOptions = {
     ...buildEditorActionTurnOptions({
@@ -118,7 +119,7 @@ async function createEditorActionPrewarmThread(host: CodexEditorActionRunHost): 
     }),
     requestTimeoutMs: 15000
   };
-  const started = await host.plugin.codex.startThread(turnOptions);
+  const started = await host.plugin.startCodexHarnessThread(turnOptions);
   if (host.running || host.editorActionPrewarmThreadId) return null;
   host.editorActionThreadIds.add(started.threadId);
   host.editorActionPrewarmThreadId = started.threadId;
@@ -187,7 +188,10 @@ export function releaseEditorSummaryRunLock(host: CodexEditorActionRunHost, runI
 }
 
 export function isEditorActionRunActive(host: CodexEditorActionRunHost): boolean {
-  return Boolean(host.editorActionRun && host.editorActionRun.runId === host.activeRunId);
+  return Boolean(
+    (host.editorActionRun && host.editorActionRun.runId === host.activeRunId)
+    || (host.activeRunKind === "editor" && host.activeRunId)
+  );
 }
 
 export function withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

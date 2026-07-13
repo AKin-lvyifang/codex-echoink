@@ -173,6 +173,8 @@ import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger"
 import { runHarnessV2NativeExecutionTests } from "./harness-v2/native-execution";
 import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-lease";
 import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
+import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
+import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
@@ -898,7 +900,11 @@ const editorFailedStatus = agentEventToEditorStatus({
 assert.equal(editorFailedStatus.status, "failed");
 assert.match(editorFailedStatus.message ?? "", /model missing/);
 const editorActionRunnerSourceForAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view/editor-action-runner.ts"), "utf8");
-assert.match(editorActionRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
+assert.match(editorActionRunnerSourceForAgentEvents, /createHarnessAgentAdapter/);
+assert.match(editorActionRunnerSourceForAgentEvents, /runHarnessWithAdapter/);
+assert.match(editorActionRunnerSourceForAgentEvents, /kind:\s*"editor-candidate"/);
+assert.match(editorActionRunnerSourceForAgentEvents, /mode:\s*"read-only"/);
+assert.doesNotMatch(editorActionRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
 assert.match(editorActionRunnerSourceForAgentEvents, /agentEventToEditorStatus/);
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.autoOpenHome, false);
@@ -10856,5 +10862,7 @@ await runHarnessV2KnowledgeLedgerTests();
 await runHarnessV2NativeExecutionTests();
 await runHarnessV2KnowledgeAskLeaseTests();
 await runHarnessV2KnowledgeTurnTests();
+await runEditorActionControllerTests();
+await runPromptEnhancerHarnessTests();
 
 console.log("All tests passed");
