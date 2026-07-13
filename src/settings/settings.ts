@@ -1,6 +1,9 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, ServiceTierChoice, TokenUsage, UiMode } from "../types/app-server";
 import type { AgentBackendKind, AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import type { CapabilityBackendChoice } from "../agent/registry";
+import type { BackendSessionBinding } from "../harness/contracts/run";
+import type { NativeCleanupStatus, NativeExecutionRef, NativeLocalCommitStatus } from "../harness/contracts/native-execution";
+import type { ContextCompileMode, ContextSyncCursor, SessionContextSnapshot } from "../harness/contracts/context";
 import { defaultResourceSettings } from "../resources/registry";
 import { normalizeMcpBrokerSettings } from "../resources/mcp-broker";
 import { normalizeMcpConnectionRecords } from "../resources/mcp-connections";
@@ -46,6 +49,21 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   text: string;
+  backendId?: string;
+  modelId?: string;
+  profileId?: string;
+  nativeExecutionIdHash?: string;
+  contextMode?: ContextCompileMode;
+  contextCompiledThroughMessageId?: string;
+  contextSnapshotVersion?: string;
+  nativeLeaseId?: string;
+  nativeLeaseStatus?: BackendSessionBinding["leaseStatus"];
+  nativeLeaseTurnCount?: number;
+  nativeLeaseReused?: boolean;
+  nativeLocalCommitStatus?: NativeLocalCommitStatus;
+  nativeCleanupStatus?: NativeCleanupStatus;
+  runTerminalRecoveryPending?: "cancelled" | "failed";
+  runTerminalRecovered?: boolean;
   previewText?: string;
   rawRef?: string;
   rawSize?: number;
@@ -66,6 +84,7 @@ export interface ChatMessage {
   files?: ProcessFileRef[];
   images?: StoredAttachment[];
   createdAt: number;
+  completedAt?: number;
 }
 
 export type StoredSessionKind = "chat" | "knowledge-base";
@@ -87,8 +106,15 @@ export interface StoredSession {
   title: string;
   kind?: StoredSessionKind;
   threadId?: string;
+  backendBindings?: Record<string, BackendSessionBinding>;
+  revision?: number;
+  contextSnapshot?: SessionContextSnapshot;
   cwd: string;
   messages: ChatMessage[];
+  rollingSummary?: {
+    text: string;
+    updatedAt: number;
+  };
   knowledgeContext?: KnowledgeContextBridgeEntry[];
   messagesHiddenBefore?: number;
   historyActiveDate?: string;
@@ -1449,15 +1475,20 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
       const session = settingsRecord(rawSession) ?? {};
       const id = normalizeOptionalText(session.id);
       if (!id) return null;
-      const messages = Array.isArray(session.messages) ? session.messages as ChatMessage[] : [];
+      const messages = normalizeChatMessages(session.messages);
       const kind = session.kind === "knowledge-base" ? "knowledge-base" as const : undefined;
+      const legacyThreadId = normalizeOptionalText(session.threadId) || undefined;
       return {
         id,
         title: normalizeText(session.title, kind === "knowledge-base" ? KNOWLEDGE_BASE_SESSION_TITLE : "新会话"),
         ...(kind ? { kind } : {}),
-        threadId: normalizeOptionalText(session.threadId) || undefined,
+        threadId: legacyThreadId,
+        backendBindings: normalizeBackendSessionBindings(session.backendBindings, legacyThreadId),
+        revision: normalizeSessionRevision(session.revision),
+        contextSnapshot: normalizeSessionContextSnapshot(session.contextSnapshot, id),
         cwd: normalizeOptionalText(session.cwd),
         messages,
+        rollingSummary: normalizeSessionSummary(session.rollingSummary),
         knowledgeContext: normalizeKnowledgeContextBridgeEntries(session.knowledgeContext),
         messagesHiddenBefore: normalizeOptionalPositiveNumber(session.messagesHiddenBefore),
         historyActiveDate: normalizeOptionalText(session.historyActiveDate) || undefined,
@@ -1467,6 +1498,202 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
       };
     })
     .filter((session): session is StoredSession => Boolean(session));
+}
+
+function normalizeChatMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((raw: unknown): ChatMessage | null => {
+      const item = settingsRecord(raw);
+      if (!item) return null;
+      const id = normalizeOptionalText(item.id);
+      const role = normalizeChatMessageRole(item.role);
+      if (!id || !role) return null;
+      const message = { ...item, id, role } as unknown as ChatMessage;
+      message.text = typeof item.text === "string" ? item.text : "";
+      assignOptionalText(message, "backendId", item.backendId);
+      assignOptionalText(message, "modelId", item.modelId ?? item.model);
+      assignOptionalText(message, "profileId", item.profileId ?? item.profile);
+      assignOptionalText(message, "nativeExecutionIdHash", item.nativeExecutionIdHash);
+      assignOptionalText(message, "contextCompiledThroughMessageId", item.contextCompiledThroughMessageId);
+      assignOptionalText(message, "contextSnapshotVersion", item.contextSnapshotVersion);
+      assignOptionalText(message, "nativeLeaseId", item.nativeLeaseId);
+      message.contextMode = normalizeContextCompileMode(item.contextMode);
+      message.nativeLeaseStatus = normalizeNativeLeaseStatus(item.nativeLeaseStatus);
+      message.nativeLocalCommitStatus = normalizeNativeLocalCommitStatus(item.nativeLocalCommitStatus);
+      message.nativeCleanupStatus = normalizeNativeCleanupStatus(item.nativeCleanupStatus);
+      message.runTerminalRecoveryPending = normalizeRunTerminalRecoveryPending(item.runTerminalRecoveryPending);
+      message.nativeLeaseTurnCount = normalizeOptionalPositiveNumber(item.nativeLeaseTurnCount);
+      if (typeof item.nativeLeaseReused === "boolean") message.nativeLeaseReused = item.nativeLeaseReused;
+      else delete message.nativeLeaseReused;
+      if (typeof item.runTerminalRecovered === "boolean") message.runTerminalRecovered = item.runTerminalRecovered;
+      else delete message.runTerminalRecovered;
+      message.createdAt = normalizeNonNegativeNumber(item.createdAt);
+      message.completedAt = normalizeOptionalPositiveNumber(item.completedAt);
+      return message;
+    })
+    .filter((message): message is ChatMessage => Boolean(message));
+}
+
+function assignOptionalText<T extends object, K extends keyof T>(target: T, key: K, value: unknown): void {
+  const normalized = normalizeOptionalText(value);
+  if (normalized) target[key] = normalized as T[K];
+  else delete target[key];
+}
+
+function normalizeChatMessageRole(value: unknown): ChatMessage["role"] | null {
+  return value === "user" || value === "assistant" || value === "system" || value === "tool" ? value : null;
+}
+
+function normalizeRunTerminalRecoveryPending(value: unknown): ChatMessage["runTerminalRecoveryPending"] {
+  return value === "cancelled" || value === "failed" ? value : undefined;
+}
+
+function normalizeContextCompileMode(value: unknown): ContextCompileMode | undefined {
+  return value === "bootstrap" || value === "incremental" || value === "catch-up" || value === "workflow" ? value : undefined;
+}
+
+function normalizeBackendSessionBindings(value: unknown, legacyThreadId?: string): Record<string, BackendSessionBinding> | undefined {
+  const bindings: Record<string, BackendSessionBinding> = {};
+  const records = settingsRecord(value);
+  if (records) {
+    for (const [key, raw] of Object.entries(records)) {
+      const item = settingsRecord(raw) ?? {};
+      const backendId = normalizeOptionalText(item.backendId || key);
+      if (!backendId) continue;
+      const nativeSessionId = normalizeOptionalText(item.nativeSessionId);
+      const nativeThreadId = normalizeOptionalText(item.nativeThreadId);
+      bindings[backendId] = {
+        backendId,
+        ...(nativeSessionId ? { nativeSessionId } : {}),
+        ...(nativeThreadId ? { nativeThreadId } : {}),
+        nativeExecutionKind: normalizeNativeExecutionKind(item.nativeExecutionKind),
+        nativeExecutionRef: normalizeNativeExecutionRef(item.nativeExecutionRef, backendId),
+        leaseId: normalizeOptionalText(item.leaseId) || undefined,
+        leaseStatus: normalizeNativeLeaseStatus(item.leaseStatus),
+        leaseCreatedAt: normalizeOptionalPositiveNumber(item.leaseCreatedAt),
+        leaseLastUsedAt: normalizeOptionalPositiveNumber(item.leaseLastUsedAt),
+        leaseExpiresAt: normalizeOptionalPositiveNumber(item.leaseExpiresAt),
+        leaseTurnCount: normalizeOptionalPositiveNumber(item.leaseTurnCount),
+        leaseMaxTurns: normalizeOptionalPositiveNumber(item.leaseMaxTurns),
+        leaseContextChars: normalizeOptionalPositiveNumber(item.leaseContextChars),
+        leaseMaxContextChars: normalizeOptionalPositiveNumber(item.leaseMaxContextChars),
+        contextCheckpointMessageId: normalizeOptionalText(item.contextCheckpointMessageId) || undefined,
+        syncedThroughMessageId: normalizeOptionalText(item.syncedThroughMessageId) || undefined,
+        syncedSessionRevision: normalizeSessionRevision(item.syncedSessionRevision),
+        snapshotVersion: normalizeOptionalText(item.snapshotVersion) || undefined,
+        contextCursor: normalizeContextSyncCursor(item.contextCursor, item),
+        lastUsedAt: normalizeNonNegativeNumber(item.lastUsedAt),
+        ...(item.capabilitySnapshot ? { capabilitySnapshot: item.capabilitySnapshot as BackendSessionBinding["capabilitySnapshot"] } : {})
+      };
+    }
+  }
+  if (legacyThreadId && !bindings["codex-cli"]) {
+    bindings["codex-cli"] = {
+      backendId: "codex-cli",
+      nativeThreadId: legacyThreadId,
+      nativeExecutionKind: "thread",
+      syncedSessionRevision: 1,
+      lastUsedAt: 0
+    };
+  }
+  return Object.keys(bindings).length ? bindings : undefined;
+}
+
+function normalizeSessionRevision(value: unknown): number {
+  return normalizePositiveInteger(value, 1, 1, 1_000_000_000) || 1;
+}
+
+function normalizeNativeExecutionKind(value: unknown): BackendSessionBinding["nativeExecutionKind"] | undefined {
+  return value === "thread" || value === "session" || value === "run" || value === "process" ? value : undefined;
+}
+
+function normalizeNativeExecutionRef(value: unknown, backendId: string): NativeExecutionRef | undefined {
+  const item = settingsRecord(value);
+  if (!item) return undefined;
+  const id = normalizeOptionalText(item.id);
+  const kind = normalizeNativeExecutionKind(item.kind);
+  const persistence = item.persistence === "none" || item.persistence === "process-local" || item.persistence === "provider-persistent" || item.persistence === "unknown"
+    ? item.persistence
+    : undefined;
+  const deviceKey = normalizeOptionalText(item.deviceKey);
+  const vaultId = normalizeOptionalText(item.vaultId);
+  if (!id || !kind || !persistence || !deviceKey || !vaultId) return undefined;
+  const providerEndpoint = normalizeOptionalText(item.providerEndpoint);
+  return {
+    backendId,
+    id,
+    kind,
+    persistence,
+    ...(providerEndpoint ? { providerEndpoint } : {}),
+    deviceKey,
+    vaultId,
+    createdAt: normalizeNonNegativeNumber(item.createdAt)
+  };
+}
+
+function normalizeNativeLeaseStatus(value: unknown): BackendSessionBinding["leaseStatus"] | undefined {
+  return value === "active" || value === "expired" || value === "cleanup-pending" || value === "disposed" || value === "failed" ? value : undefined;
+}
+
+function normalizeNativeLocalCommitStatus(value: unknown): NativeLocalCommitStatus | undefined {
+  return value === "pending" || value === "committed" || value === "failed" ? value : undefined;
+}
+
+function normalizeNativeCleanupStatus(value: unknown): NativeCleanupStatus | undefined {
+  return value === "not-needed" || value === "pending" || value === "disposed" || value === "unsupported" || value === "failed" || value === "retained-for-recovery" || value === "retained"
+    ? value
+    : undefined;
+}
+
+function normalizeContextSyncCursor(value: unknown, fallback?: unknown): ContextSyncCursor | undefined {
+  const source = settingsRecord(value) ?? settingsRecord(fallback);
+  if (!source) return undefined;
+  const syncedThroughMessageId = normalizeOptionalText(source.syncedThroughMessageId);
+  const snapshotVersion = normalizeOptionalText(source.snapshotVersion);
+  return {
+    ...(syncedThroughMessageId ? { syncedThroughMessageId } : {}),
+    syncedSessionRevision: normalizeSessionRevision(source.syncedSessionRevision),
+    ...(snapshotVersion ? { snapshotVersion } : {})
+  };
+}
+
+function normalizeSessionContextSnapshot(value: unknown, sessionId: string): SessionContextSnapshot | undefined {
+  const item = settingsRecord(value);
+  if (!item) return undefined;
+  const version = normalizeOptionalText(item.version);
+  const rollingSummary = normalizeOptionalText(item.rollingSummary).slice(0, 8000);
+  if (!version && !rollingSummary) return undefined;
+  const summarizedFromMessageId = normalizeOptionalText(item.summarizedFromMessageId);
+  const summarizedThroughMessageId = normalizeOptionalText(item.summarizedThroughMessageId);
+  return {
+    sessionId: normalizeOptionalText(item.sessionId) || sessionId,
+    version: version || "snapshot-v1",
+    goal: normalizeOptionalText(item.goal).slice(0, 2000),
+    currentState: normalizeOptionalText(item.currentState).slice(0, 4000),
+    decisions: normalizeTextArray(item.decisions, 80, 1000),
+    constraints: normalizeTextArray(item.constraints, 80, 1000),
+    openLoops: normalizeTextArray(item.openLoops, 80, 1000),
+    keyReferences: normalizeTextArray(item.keyReferences, 80, 1000),
+    rollingSummary,
+    ...(summarizedFromMessageId ? { summarizedFromMessageId } : {}),
+    ...(summarizedThroughMessageId ? { summarizedThroughMessageId } : {}),
+    sourceMessageCount: normalizePositiveInteger(item.sourceMessageCount, 0, 0, 1_000_000),
+    createdAt: normalizeNonNegativeNumber(item.createdAt),
+    updatedAt: normalizeNonNegativeNumber(item.updatedAt)
+  };
+}
+
+function normalizeTextArray(value: unknown, maxItems: number, maxChars: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeOptionalText(item).slice(0, maxChars)).filter(Boolean).slice(-maxItems);
+}
+
+function normalizeSessionSummary(value: unknown): StoredSession["rollingSummary"] {
+  const item = settingsRecord(value);
+  const text = normalizeOptionalText(item?.text).slice(0, 4000);
+  if (!text) return undefined;
+  return { text, updatedAt: normalizeNonNegativeNumber(item?.updatedAt) };
 }
 
 function normalizeKnowledgeContextBridgeEntries(value: unknown): KnowledgeContextBridgeEntry[] | undefined {

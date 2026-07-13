@@ -1,0 +1,76 @@
+export type HarnessEventSource = "kernel" | "agent" | "workflow" | "tool" | "memory";
+
+export type HarnessEventType =
+  | "run.created"
+  | "run.started"
+  | "run.completed"
+  | "run.failed"
+  | "run.cancelled"
+  | "run.local_commit.started"
+  | "run.local_commit.completed"
+  | "run.local_commit.failed"
+  | "session.context.snapshot.updated"
+  | "session.context.bootstrap.compiled"
+  | "agent.connecting"
+  | "agent.connected"
+  | "agent.native_execution.created"
+  | "agent.native_lease.created"
+  | "agent.native_lease.reused"
+  | "agent.native_lease.expired"
+  | "agent.native_lease.recovery_failed"
+  | "agent.native_cleanup.scheduled"
+  | "agent.native_cleanup.started"
+  | "agent.native_cleanup.completed"
+  | "agent.native_cleanup.unsupported"
+  | "agent.native_cleanup.failed"
+  | "agent.native_cleanup.retained"
+  | "agent.message.delta"
+  | "agent.message.completed"
+  | "agent.reasoning.started"
+  | "agent.reasoning.summary.delta"
+  | "agent.reasoning.summary.completed"
+  | "agent.plan.updated"
+  | "tool.requested"
+  | "tool.approval.requested"
+  | "tool.approval.resolved"
+  | "tool.started"
+  | "tool.output.delta"
+  | "tool.completed"
+  | "tool.failed"
+  | "file.change.proposed"
+  | "file.change.applied"
+  | "file.change.reverted"
+  | "usage.updated"
+  | "adapter.fallback.started"
+  | "workflow.started"
+  | "workflow.phase.started"
+  | "workflow.phase.progress"
+  | "workflow.phase.completed"
+  | "workflow.phase.failed"
+  | "workflow.validation.started"
+  | "workflow.validation.result"
+  | "workflow.transaction.snapshot"
+  | "workflow.transaction.committed"
+  | "workflow.transaction.rolled_back"
+  | "workflow.artifact.created"
+  | "workflow.report.ready"
+  | "workflow.completed";
+
+export interface HarnessEvent {
+  eventId: string;
+  runId: string;
+  sequence: number;
+  createdAt: number;
+  source: HarnessEventSource;
+  type: HarnessEventType;
+  backendId?: string;
+  text?: string;
+  title?: string;
+  status?: string;
+  toolName?: string;
+  resourceId?: string;
+  error?: string;
+  data?: Record<string, unknown>;
+}
+
+export type HarnessEventSink = (event: HarnessEvent) => void | Promise<void>;
