@@ -71,6 +71,8 @@ export function createAgentEventRuntimeWithFallback(
     },
     listModels: () => fallbackRuntime.listModels(),
     listAgents: fallbackRuntime.listAgents ? () => fallbackRuntime.listAgents?.() ?? Promise.resolve([]) : undefined,
+    hasNativeSession: fallbackRuntime.hasNativeSession ? (sessionId) => fallbackRuntime.hasNativeSession!(sessionId) : undefined,
+    deleteNativeSession: fallbackRuntime.deleteNativeSession ? (sessionId) => fallbackRuntime.deleteNativeSession!(sessionId) : undefined,
     runTask: (input) => fallbackRuntime.runTask(input),
     async runTaskEvents(input, emit) {
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {

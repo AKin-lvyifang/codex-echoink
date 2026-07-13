@@ -106,6 +106,7 @@ export interface AgentBackend {
 
 export interface AgentTaskInput {
   prompt: string;
+  nativeSessionId?: string;
   sources?: AgentPromptPart[];
   permission?: PermissionMode;
   writableRoots?: string[];
@@ -126,5 +127,9 @@ export interface AgentTaskInput {
 export interface AgentTaskResult {
   text: string;
   runId?: string;
+  effectiveModel?: {
+    providerId: string;
+    modelId: string;
+  };
   usage?: Record<string, unknown>;
 }

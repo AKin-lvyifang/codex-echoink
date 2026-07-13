@@ -1,0 +1,2922 @@
+import * as assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import * as path from "node:path";
+import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runtime-adapter";
+import { CodexRichAgentAdapter } from "../../harness/agents/adapters/codex-rich-adapter";
+import { CodexRichRunDriver } from "../../harness/agents/adapters/codex-rich-driver";
+import { CodexRichNotificationHub } from "../../harness/agents/adapters/codex-rich-notification-hub";
+import { FakeFourthAgentAdapter } from "../../harness/agents/adapters/fake-fourth";
+import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
+import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
+import { RunOrchestrator } from "../../harness/kernel/run-orchestrator";
+import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
+import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
+import { DEFAULT_SETTINGS } from "../../settings/settings";
+import type { AgentTaskRuntime } from "../../agent/runtime";
+import type { AgentTaskInput, AgentTaskResult } from "../../agent/types";
+import type { AgentConnectionStatus } from "../../agent/types";
+import type { AgentRunResult } from "../../harness/agents/adapter";
+import type { HarnessEvent } from "../../harness/contracts/event";
+import { compileContextBundle } from "../../harness/kernel/context-compiler";
+import { harnessInitialMessageModelId, harnessMessageModelId } from "../../harness/agents/backend-runtime-profile";
+
+export async function runHarnessV2AdapterTests(): Promise<void> {
+  await assertTaskRuntimeAdapterRunsThroughHarnessContract();
+  await assertTaskRuntimeAdapterMapsFallbackEvents();
+  await assertTaskRuntimeAdapterMapsToolBridgeResourceEvents();
+  await assertTaskRuntimeAdapterPreservesLegacyTaskDefaults();
+  await assertTaskRuntimeAdapterDeclaresTruthfulNativeCleanupFallback();
+  await assertAdaptersExposeNativeResourceProvider();
+  await assertCodexRichAdapterStartsThreadAndTurn();
+  await assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors();
+  await assertCodexRichRunDriverMapsNotificationsToHarnessEvents();
+  await assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent();
+  await assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput();
+  await assertCodexRichRunDriverPreservesCompletedOnlyAssistantOrder();
+  await assertCodexRichRunDriverDoesNotDuplicateDeltaAndCompletedAssistantText();
+  await assertCodexRichRunDriverDoesNotMisselectEmptyProcessAssistant();
+  await assertCodexRichRunDriverIgnoresRetryingErrors();
+  await assertCodexRichRunDriverSettlesWhenTerminalEmitRejects();
+  await assertCodexRichRunDriverCatchesNotificationEmitRejection();
+  await assertCodexRichAdapterInterruptsStartedTurnOnCancel();
+  await assertCodexRichAdapterCleansUpCancelBeforeStartTurn();
+  await assertCodexRichAdapterCancelsPendingStartTurnWithoutReturningRunning();
+  await assertCodexRichAdapterKeepsTerminalThatArrivesBeforeStartTurnResolves();
+  await assertCodexRichAdapterSettlesFailedAfterInterruptFailure();
+  await assertCodexRichAdapterRecoversArtifactsAfterInactivity();
+  await assertCodexRichAdapterFailsWhenArtifactRecoveryFails();
+  await assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty();
+  await assertCodexRichAdapterUnregistersCompletedRunFromNotificationHub();
+  await assertCodexRichAdapterReleasesTerminalRunStatesAfterAwaitResult();
+  await assertCodexRichAdapterDisposeCancelsAllActiveRuns();
+  await assertCodexRichAdapterFallsBackToStartThreadWhenResumeThreadThrows();
+  await assertCodexRichAdapterInjectsBootstrapContextIntoStartTurn();
+  await assertCodexRichAdapterInjectsEchoInkMemoryIntoStartTurn();
+  await assertCodexRichAdapterInjectsCatchUpContextIntoStartTurn();
+  await assertCodexRichAdapterRemovesCurrentUserBeforeTrailingAssistantPlaceholder();
+  await assertCodexRichAdapterPreservesBlankAndSubstringHistory();
+  await assertCodexRichAdapterOnlyInjectsIncrementalDeltaIntoStartTurn();
+  await assertAdapterFactoryPassesCodexToolBridgeIntoCodexRichAdapter();
+  await assertCodexRichAdapterRunsEchoInkBrokerLoopAcrossTurns();
+  await assertCodexRichAdapterDisposeCancelsHangingBrokerCall();
+  await assertCodexRichAdapterCancelCancelsHangingBrokerCall();
+  await assertCodexRichAdapterFailsUnknownBrokerToolWithoutHanging();
+  await assertCodexRichAdapterFailsBrokerErrorWithoutHanging();
+  await assertCodexRichAdapterFailsWhenBrokerLoopExceedsMaxToolCalls();
+  await assertOrchestratorRebuildsContextWhenNativeSessionResumeFails();
+  await assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns();
+  await assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext();
+  await assertEmulatedResumeBackendRebuildsContextForEachRun();
+  await assertAdapterFactoryUsesRegisteredBuilders();
+  await assertFakeFourthAgentOnlyNeedsAdapterAndManifest();
+}
+
+async function assertTaskRuntimeAdapterMapsToolBridgeResourceEvents(): Promise<void> {
+  let calls = 0;
+  const runtime = fakeRuntime({
+    kind: "opencode",
+    result: { text: "final", runId: "native-run-1" },
+    onRunTask: () => {
+      calls += 1;
+      return calls === 1
+        ? { text: "```echoink-tool-call\n{\"tool\":\"search.query\",\"arguments\":{\"q\":\"Harness\"}}\n```", runId: "native-run-1" }
+        : { text: "final", runId: "native-run-1" };
+    }
+  });
+  const toolBridge = createEchoInkMcpToolBridgeRuntime({
+    catalog: {
+      tools: [{
+        name: "search.query",
+        resourceId: "echoink-local:mcp-server:mcp-search",
+        resourceName: "search",
+        toolName: "query",
+        description: "Search"
+      }],
+      warnings: []
+    },
+    scope: "chat",
+    callTool: async () => ({ result: "found" })
+  });
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy",
+    legacyTaskDefaults: {
+      toolBridge
+    }
+  });
+  const events: HarnessEvent[] = [];
+
+  await adapter.run({
+    runId: "run-tool-resource",
+    sessionId: "session-1",
+    input: { text: "search", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "opencode",
+      workflow: "chat.generic",
+      userInput: { text: "search", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.deepEqual(
+    events
+      .filter((event) => event.type.startsWith("tool."))
+      .map((event) => [event.type, event.toolName, event.resourceId]),
+    [
+      ["tool.requested", "search.query", "echoink-local:mcp-server:mcp-search"],
+      ["tool.approval.requested", "search.query", "echoink-local:mcp-server:mcp-search"],
+      ["tool.completed", "search.query", "echoink-local:mcp-server:mcp-search"]
+    ]
+  );
+}
+
+async function assertTaskRuntimeAdapterRunsThroughHarnessContract(): Promise<void> {
+  const calls: AgentTaskInput[] = [];
+  const runtime = fakeRuntime({
+    kind: "opencode",
+    result: { text: "runtime pong", runId: "native-run-1" },
+    onRunTask: (input) => calls.push(input)
+  });
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+  const events: HarnessEvent[] = [];
+  const result = await adapter.run({
+    runId: "run-adapter",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "opencode",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "runtime pong");
+  assert.equal(result.nativeSessionId, "native-run-1");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].prompt, /ping/);
+  assert.deepEqual(events.map((event) => event.type), ["agent.message.completed"]);
+}
+
+async function assertAdaptersExposeNativeResourceProvider(): Promise<void> {
+  const taskAdapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime: fakeRuntime({ kind: "opencode", result: { text: "pong", runId: "opencode-session" } }),
+    capabilities: "legacy",
+    legacyTaskDefaults: {
+      resources: {
+        promptPrefix: "",
+        warnings: [],
+        mcpConfig: null,
+        toolBridge: null,
+        enabledResources: [
+          {
+            id: "opencode-import:skill:reviewer",
+            kind: "skill",
+            source: "opencode-import",
+            name: "reviewer",
+            description: "",
+            enabled: true,
+            scopes: ["chat"],
+            bridgeMode: "prompt-only"
+          },
+          {
+            id: "opencode-import:mcp-server:browser",
+            kind: "mcp-server",
+            source: "opencode-import",
+            name: "browser",
+            description: "",
+            enabled: true,
+            scopes: ["chat"],
+            bridgeMode: "native-mcp"
+          },
+          {
+            id: "hermes-import:mcp-server:browser",
+            kind: "mcp-server",
+            source: "hermes-import",
+            name: "browser",
+            description: "",
+            enabled: true,
+            scopes: ["chat"],
+            bridgeMode: "native-mcp"
+          }
+        ]
+      }
+    }
+  });
+  const taskSnapshot = await taskAdapter.listNativeResources?.();
+  assert.deepEqual(taskSnapshot?.resources.map((resource) => [resource.id, resource.type, resource.name]), [
+    ["opencode-import:skill:reviewer", "skill", "reviewer"],
+    ["opencode-import:mcp-server:browser", "mcp", "browser"]
+  ]);
+
+  const codexAdapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [],
+    startThread: async () => ({ threadId: "thread", title: "Thread" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "turn",
+    nativeResources: [
+      { id: "codex-import:skill:answer", type: "skill", name: "answer" },
+      { id: "codex-import:mcp-server:github", type: "mcp", name: "github" }
+    ]
+  });
+  const codexSnapshot = await codexAdapter.listNativeResources?.();
+  assert.equal(codexSnapshot?.backendId, "codex-cli");
+  assert.equal(typeof codexSnapshot?.capturedAt, "number");
+  assert.deepEqual(codexSnapshot?.resources, [
+    { id: "codex-import:skill:answer", type: "skill", name: "answer" },
+    { id: "codex-import:mcp-server:github", type: "mcp", name: "github" }
+  ]);
+}
+
+async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
+  const runtime = {
+    ...fakeRuntime({ kind: "hermes", result: { text: "rich pong", runId: "hermes-run" } }),
+    async runTaskEvents(input: AgentTaskInput, emit: any): Promise<AgentTaskResult> {
+      emit({ type: "fallback_started", backend: "hermes", createdAt: 1, error: "ACP unavailable" });
+      emit({ type: "message_delta", backend: "hermes", createdAt: 2, text: "rich " });
+      emit({ type: "message_completed", backend: "hermes", createdAt: 3, text: "rich pong" });
+      return { text: "rich pong", runId: input.onRunId ? "ignored" : "hermes-run" };
+    }
+  };
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+  const events: HarnessEvent[] = [];
+  const result = await adapter.run({
+    runId: "run-hermes",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "hermes",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "rich pong");
+  assert.deepEqual(events.map((event) => event.type), [
+    "adapter.fallback.started",
+    "agent.message.delta",
+    "agent.message.completed"
+  ]);
+}
+
+async function assertTaskRuntimeAdapterPreservesLegacyTaskDefaults(): Promise<void> {
+  const calls: AgentTaskInput[] = [];
+  const runtime = fakeRuntime({
+    kind: "opencode",
+    result: { text: "runtime pong", runId: "native-run-1" },
+    onRunTask: (input) => calls.push(input)
+  });
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy",
+    legacyTaskDefaults: {
+      resources: {
+        promptPrefix: "legacy resource prefix",
+        enabledResources: [],
+        warnings: [],
+        mcpConfig: null,
+        toolBridge: null
+      },
+      toolBridge: null,
+      timeoutMs: 1234,
+      tools: { read: true, write: false }
+    }
+  });
+
+  await adapter.run({
+    runId: "run-adapter",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "opencode",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, () => undefined);
+
+  assert.equal(calls[0].resources?.promptPrefix, "legacy resource prefix");
+  assert.equal(calls[0].timeoutMs, 1234);
+  assert.equal(calls[0].tools?.write, false);
+}
+
+async function assertTaskRuntimeAdapterDeclaresTruthfulNativeCleanupFallback(): Promise<void> {
+  let disconnectCalls = 0;
+  const deletedSessions: string[] = [];
+  const opencode = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime: {
+      ...fakeRuntime({ kind: "opencode", result: { text: "pong", runId: "opencode-session-1" } }),
+      disconnect: async () => {
+        disconnectCalls += 1;
+      },
+      deleteNativeSession: async (sessionId) => {
+        deletedSessions.push(sessionId);
+        return true;
+      }
+    },
+    nativeRefContext: {
+      providerEndpoint: "http://127.0.0.1:4096",
+      deviceKey: "device-1",
+      vaultId: "vault-1"
+    },
+    capabilities: "legacy"
+  });
+  const opencodeResult = await opencode.run({
+    runId: "run-opencode-native",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "opencode",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, () => undefined);
+
+  assert.equal(opencodeResult.nativeExecution?.kind, "session");
+  assert.equal(opencodeResult.nativeExecution?.persistence, "provider-persistent");
+  assert.equal(opencodeResult.nativeExecution?.providerEndpoint, "http://127.0.0.1:4096");
+  assert.equal(opencode.manifest.nativeExecution?.dispositions.delete, true);
+  assert.equal(opencode.manifest.nativeExecution?.dispositions.archive, false);
+  assert.equal(opencode.manifest.nativeExecution?.dispositions.processExit, false);
+  const opencodeCleanup = await opencode.disposeNativeExecution?.({
+    ref: opencodeResult.nativeExecution!,
+    requested: "archive",
+    reason: "knowledge-run-completed"
+  });
+  assert.equal(opencodeCleanup?.outcome, "unsupported");
+  const opencodeDelete = await opencode.disposeNativeExecution?.({
+    ref: opencodeResult.nativeExecution!,
+    requested: "delete",
+    reason: "manual"
+  });
+  assert.equal(opencodeDelete?.outcome, "disposed");
+  assert.deepEqual(deletedSessions, ["opencode-session-1"]);
+  const mismatchedDelete = await opencode.disposeNativeExecution?.({
+    ref: { ...opencodeResult.nativeExecution!, providerEndpoint: "http://127.0.0.1:4999" },
+    requested: "delete",
+    reason: "manual"
+  });
+  assert.equal(mismatchedDelete?.outcome, "retained");
+  assert.deepEqual(deletedSessions, ["opencode-session-1"]);
+  assert.equal(disconnectCalls, 0, "native cleanup must not be implemented as runtime.disconnect()");
+
+  const hermes = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime: fakeRuntime({ kind: "hermes", result: { text: "pong", runId: "hermes-run-1" } }),
+    capabilities: "legacy"
+  });
+  const hermesResult = await hermes.run({
+    runId: "run-hermes-native",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "hermes",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, () => undefined);
+
+  assert.equal(hermesResult.nativeExecution?.kind, "run");
+  assert.equal(hermesResult.nativeExecution?.persistence, "unknown");
+  assert.equal(hermes.manifest.nativeExecution?.dispositions.delete, false);
+  assert.equal(hermes.manifest.nativeExecution?.dispositions.archive, false);
+  assert.equal(hermes.manifest.nativeExecution?.dispositions.processExit, false);
+}
+
+async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
+  const calls: string[] = [];
+  const archived: string[] = [];
+  let threadId = "";
+  let turnId = "";
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => threadId,
+    setNativeThreadId: (next) => {
+      threadId = next;
+    },
+    buildInput: (currentThreadId) => {
+      calls.push(`buildInput:${currentThreadId}`);
+      return [{ type: "text" as const, text: "ping", text_elements: [] }];
+    },
+    startThread: async () => {
+      calls.push("startThread");
+      return { threadId: "codex-thread-1", title: "Thread" };
+    },
+    resumeThread: async (id) => {
+      calls.push(`resumeThread:${id}`);
+    },
+    startTurn: async (id, input) => {
+      calls.push(`startTurn:${id}:${input[0]?.type}`);
+      return "codex-turn-1";
+    },
+    archiveThread: async (id) => {
+      archived.push(id);
+    },
+    nativeRefContext: {
+      deviceKey: "device-1",
+      vaultId: "vault-1"
+    },
+    onTurnStarted: (ids) => {
+      turnId = ids.turnId;
+    }
+  });
+  const result = await adapter.run({
+    runId: "run-codex",
+    sessionId: "session-1",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "workspace-write", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, () => undefined);
+
+  assert.equal(result.status, "running");
+  assert.equal(result.nativeThreadId, "codex-thread-1");
+  assert.equal(result.nativeSessionId, "codex-turn-1");
+  assert.equal(result.nativeExecution?.kind, "thread");
+  assert.equal(result.nativeExecution?.persistence, "provider-persistent");
+  assert.equal(adapter.manifest.nativeExecution?.dispositions.archive, true);
+  assert.equal(adapter.manifest.nativeExecution?.dispositions.delete, false);
+  assert.equal(turnId, "codex-turn-1");
+  assert.deepEqual(calls, ["startThread", "buildInput:codex-thread-1", "startTurn:codex-thread-1:text"]);
+  const disposed = await adapter.disposeNativeExecution({
+    ref: result.nativeExecution!,
+    requested: "archive",
+    reason: "knowledge-run-completed"
+  });
+  const deleteResult = await adapter.disposeNativeExecution({
+    ref: result.nativeExecution!,
+    requested: "delete",
+    reason: "manual"
+  });
+  assert.deepEqual(archived, ["codex-thread-1"]);
+  assert.equal(disposed.outcome, "disposed");
+  assert.equal(disposed.applied, "archive");
+  assert.equal(deleteResult.outcome, "unsupported");
+}
+
+async function assertCodexRichAdapterFallsBackToStartThreadWhenResumeThreadThrows(): Promise<void> {
+  const calls: string[] = [];
+  let threadId = "missing-thread";
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => threadId,
+    setNativeThreadId: (next) => { threadId = next; },
+    buildInput: () => [{ type: "text", text: "continue", text_elements: [] }],
+    resumeThread: async (id) => {
+      calls.push(`resume:${id}`);
+      throw new Error("thread not found");
+    },
+    startThread: async () => {
+      calls.push("start");
+      return { threadId: "replacement-thread", title: "Replacement" };
+    },
+    startTurn: async (id) => {
+      calls.push(`turn:${id}`);
+      return "replacement-turn";
+    }
+  });
+
+  const result = await adapter.run(agentRunRequest("run-resume-fallback"), () => undefined);
+
+  assert.equal(result.nativeThreadId, "replacement-thread");
+  assert.equal(threadId, "replacement-thread");
+  assert.deepEqual(calls, ["resume:missing-thread", "start", "turn:replacement-thread"]);
+}
+
+async function assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors(): Promise<void> {
+  const hub = new CodexRichNotificationHub();
+  const runA = createDriverHarness("run-a", { threadId: "thread-a", turnId: "turn-a" });
+  const runB = createDriverHarness("run-b", { threadId: "thread-b", turnId: "turn-b" });
+  hub.register(runA.driver);
+  hub.register(runB.driver);
+
+  assert.equal(hub.dispatch({
+    method: "item/started",
+    params: {
+      threadId: "thread-a",
+      turnId: "turn-a",
+      itemId: "item-a",
+      item: { id: "item-a", type: "commandExecution", title: "ls" }
+    }
+  }), true);
+  assert.equal(hub.dispatch({
+    method: "item/commandExecution/outputDelta",
+    params: {
+      itemId: "item-a",
+      delta: "stdout"
+    }
+  }), true);
+  assert.equal(hub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-b",
+      turn: { id: "turn-b", status: "completed" }
+    }
+  }), true);
+  assert.equal(hub.dispatch({
+    method: "error",
+    params: { message: "ambiguous error" }
+  }), true);
+
+  hub.unregister("run-b");
+
+  assert.equal(hub.dispatch({
+    method: "error",
+    params: { message: "single active error" }
+  }), true);
+
+  const resultA = await runA.driver.awaitResult();
+  const resultB = await runB.driver.awaitResult();
+
+  assert.equal(resultA.status, "failed");
+  assert.equal(resultB.status, "completed");
+  assert.deepEqual(
+    runA.events.map((event) => event.type),
+    ["tool.started", "tool.output.delta", "run.failed"]
+  );
+  assert.deepEqual(
+    runB.events.map((event) => event.type),
+    ["run.completed"]
+  );
+}
+
+async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-map", {
+    threadId: "thread-map",
+    turnId: "turn-map"
+  });
+
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "assistant-1",
+      delta: "Hello "
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "agentMessage",
+        text: "Hello world"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/reasoning/summaryPartAdded",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "reason-1"
+    }
+  });
+  driver.handleNotification({
+    method: "item/reasoning/summaryTextDelta",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "reason-1",
+      delta: "Thinking"
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "reason-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "reasoning",
+        text: "Thinking done"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/plan/updated",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      plan: [{ step: "收集", status: "completed" }]
+    }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "cmd-1",
+      item: {
+        id: "cmd-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "commandExecution",
+        title: "pwd",
+        command: "pwd"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/commandExecution/outputDelta",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "cmd-1",
+      delta: "/vault"
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "cmd-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "commandExecution",
+        status: "completed",
+        output: "/vault"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "tool-1",
+      item: {
+        id: "tool-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "mcpToolCall",
+        title: "search.query",
+        toolName: "search.query"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/mcpToolCall/progress",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "tool-1",
+      message: "searching"
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "tool-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "mcpToolCall",
+        status: "failed",
+        error: "network"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "file-1",
+      item: {
+        id: "file-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "fileChange",
+        title: "main.ts"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/fileChange/outputDelta",
+    params: {
+      threadId: "thread-map",
+      turnId: "turn-map",
+      itemId: "file-1",
+      delta: "updated main.ts"
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "file-1",
+        threadId: "thread-map",
+        turnId: "turn-map",
+        type: "fileChange",
+        status: "completed"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-map",
+      turn: { id: "turn-map", status: "completed" },
+      usage: { totalTokens: 11, outputTokens: 5 }
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Hello world");
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      "agent.message.delta",
+      "agent.message.completed",
+      "agent.reasoning.started",
+      "agent.reasoning.summary.delta",
+      "agent.reasoning.summary.completed",
+      "agent.plan.updated",
+      "tool.started",
+      "tool.output.delta",
+      "tool.completed",
+      "tool.started",
+      "tool.output.delta",
+      "tool.failed",
+      "file.change.proposed",
+      "file.change.proposed",
+      "file.change.applied",
+      "usage.updated",
+      "run.completed"
+    ]
+  );
+  for (const event of events) {
+    assert.equal("threadId" in (event.data ?? {}), false);
+    assert.equal("turnId" in (event.data ?? {}), false);
+    assert.equal("itemId" in (event.data ?? {}), false);
+  }
+}
+
+async function assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-terminal", {
+    threadId: "thread-terminal",
+    turnId: "turn-terminal"
+  });
+
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "thread-terminal",
+      turnId: "turn-terminal",
+      itemId: "assistant-terminal",
+      delta: "Hello"
+    }
+  });
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      itemId: "assistant-terminal",
+      delta: " world"
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-terminal",
+      turn: { id: "turn-terminal", status: "completed" }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-terminal",
+      turn: { id: "turn-terminal", status: "completed" }
+    }
+  });
+  driver.handleNotification({
+    method: "error",
+    params: {
+      threadId: "thread-terminal",
+      turnId: "turn-terminal",
+      message: "late error"
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Hello world");
+  assert.deepEqual(events.map((event) => event.type), [
+    "agent.message.delta",
+    "agent.message.delta",
+    "run.completed"
+  ]);
+}
+
+async function assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-completed-only-final", {
+    threadId: "thread-completed-only-final",
+    turnId: "turn-completed-only-final"
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-completed-only-final",
+        threadId: "thread-completed-only-final",
+        turnId: "turn-completed-only-final",
+        type: "agentMessage",
+        text: "Final only"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-completed-only-final",
+      turn: { id: "turn-completed-only-final", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Final only");
+  assert.deepEqual(events.map((event) => event.type), [
+    "agent.message.completed",
+    "run.completed"
+  ]);
+}
+
+async function assertCodexRichRunDriverPreservesCompletedOnlyAssistantOrder(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-completed-only-order", {
+    threadId: "thread-completed-only-order",
+    turnId: "turn-completed-only-order"
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-completed-only-order-1",
+        threadId: "thread-completed-only-order",
+        turnId: "turn-completed-only-order",
+        type: "agentMessage",
+        text: "Hello "
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-completed-only-order-2",
+        threadId: "thread-completed-only-order",
+        turnId: "turn-completed-only-order",
+        type: "agentMessage",
+        text: "world"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-completed-only-order",
+      turn: { id: "turn-completed-only-order", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Hello world");
+  assert.deepEqual(events.map((event) => event.type), [
+    "agent.message.completed",
+    "agent.message.completed",
+    "run.completed"
+  ]);
+}
+
+async function assertCodexRichRunDriverDoesNotDuplicateDeltaAndCompletedAssistantText(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-delta-completed-dedup", {
+    threadId: "thread-delta-completed-dedup",
+    turnId: "turn-delta-completed-dedup"
+  });
+
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "thread-delta-completed-dedup",
+      turnId: "turn-delta-completed-dedup",
+      itemId: "assistant-delta-completed-dedup",
+      delta: "Hello "
+    }
+  });
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      itemId: "assistant-delta-completed-dedup",
+      delta: "world"
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-delta-completed-dedup",
+        threadId: "thread-delta-completed-dedup",
+        turnId: "turn-delta-completed-dedup",
+        type: "agentMessage",
+        text: "Hello world"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-delta-completed-dedup",
+      turn: { id: "turn-delta-completed-dedup", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Hello world");
+  assert.deepEqual(events.map((event) => event.type), [
+    "agent.message.delta",
+    "agent.message.delta",
+    "agent.message.completed",
+    "run.completed"
+  ]);
+}
+
+async function assertCodexRichRunDriverDoesNotMisselectEmptyProcessAssistant(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-empty-process-assistant", {
+    threadId: "thread-empty-process-assistant",
+    turnId: "turn-empty-process-assistant"
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-empty-process",
+        threadId: "thread-empty-process-assistant",
+        turnId: "turn-empty-process-assistant",
+        type: "agentMessage",
+        text: ""
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-final-process",
+        threadId: "thread-empty-process-assistant",
+        turnId: "turn-empty-process-assistant",
+        type: "agentMessage",
+        text: "Final answer"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-empty-process-assistant",
+      turn: { id: "turn-empty-process-assistant", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Final answer");
+  assert.deepEqual(events.map((event) => event.type), [
+    "agent.message.completed",
+    "agent.message.completed",
+    "run.completed"
+  ]);
+}
+
+async function assertCodexRichRunDriverIgnoresRetryingErrors(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-retrying-error", {
+    threadId: "retrying-error-thread",
+    turnId: "retrying-error-turn"
+  });
+
+  driver.handleNotification({
+    method: "error",
+    params: {
+      threadId: "retrying-error-thread",
+      turnId: "retrying-error-turn",
+      message: "transient top-level error",
+      willRetry: true
+    }
+  });
+  driver.handleNotification({
+    method: "error",
+    params: {
+      threadId: "retrying-error-thread",
+      turnId: "retrying-error-turn",
+      message: "transient nested error",
+      error: { willRetry: true }
+    }
+  });
+
+  assert.equal(await promiseStillPending(driver.awaitResult()), true);
+
+  driver.handleNotification({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "retrying-error-thread",
+      turnId: "retrying-error-turn",
+      itemId: "retrying-answer",
+      delta: "Recovered after retry"
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "retrying-error-thread",
+      turn: { id: "retrying-error-turn", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Recovered after retry");
+  assert.deepEqual(events.map((event) => event.type), ["agent.message.delta", "run.completed"]);
+}
+
+async function assertCodexRichRunDriverSettlesWhenTerminalEmitRejects(): Promise<void> {
+  const settled: AgentRunResult[] = [];
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const driver = new CodexRichRunDriver({
+      runId: "run-terminal-emit-reject",
+      backendId: "codex-cli",
+      threadId: "terminal-emit-reject-thread",
+      turnId: "terminal-emit-reject-turn",
+      emit: async () => {
+        throw new Error("terminal emit rejected");
+      },
+      onSettled: (result) => {
+        settled.push(result);
+      }
+    });
+
+    driver.handleNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "terminal-emit-reject-thread",
+        turn: { id: "terminal-emit-reject-turn", status: "completed" }
+      }
+    });
+
+    const timeout = Symbol("timeout");
+    const result = await Promise.race([
+      driver.awaitResult(),
+      delay(20).then(() => timeout)
+    ]);
+    assert.notEqual(result, timeout, "terminal emit rejection must not leave awaitResult pending");
+    assert.equal((result as AgentRunResult).status, "failed");
+    assert.match((result as AgentRunResult).error ?? "", /terminal emit rejected/);
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0].status, "failed");
+    await delay(0);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+}
+
+async function assertCodexRichRunDriverCatchesNotificationEmitRejection(): Promise<void> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const driver = new CodexRichRunDriver({
+      runId: "run-notification-emit-reject",
+      backendId: "codex-cli",
+      threadId: "notification-emit-reject-thread",
+      turnId: "notification-emit-reject-turn",
+      emit: async (event) => {
+        if (event.type === "agent.message.delta") throw new Error("delta emit rejected");
+      }
+    });
+
+    driver.handleNotification({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "notification-emit-reject-thread",
+        turnId: "notification-emit-reject-turn",
+        itemId: "notification-emit-reject-item",
+        delta: "still aggregated"
+      }
+    });
+    await delay(0);
+    driver.handleNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "notification-emit-reject-thread",
+        turn: { id: "notification-emit-reject-turn", status: "completed" }
+      }
+    });
+
+    const result = await driver.awaitResult();
+    await delay(0);
+    assert.equal(result.status, "completed");
+    assert.equal(result.outputText, "still aggregated");
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+}
+
+async function assertCodexRichAdapterInterruptsStartedTurnOnCancel(): Promise<void> {
+  const interrupts: string[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "stop", text_elements: [] }],
+    startThread: async () => ({ threadId: "cancel-thread", title: "Cancel thread" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "cancel-turn",
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+    }
+  });
+
+  const result = await adapter.run(agentRunRequest("run-codex-cancel-started"), () => undefined);
+  assert.equal(result.status, "running");
+
+  await adapter.cancel("run-codex-cancel-started");
+
+  assert.deepEqual(interrupts, ["cancel-thread:cancel-turn"]);
+}
+
+async function assertCodexRichAdapterCleansUpCancelBeforeStartTurn(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  let releaseInput!: () => void;
+  const inputBlocked = new Promise<void>((resolve) => {
+    releaseInput = resolve;
+  });
+  let inputStarted!: () => void;
+  const inputPending = new Promise<void>((resolve) => {
+    inputStarted = resolve;
+  });
+  let startTurnCalls = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: async () => {
+      inputStarted();
+      await inputBlocked;
+      return [{ type: "text", text: "cancel before turn", text_elements: [] }];
+    },
+    startThread: async () => ({ threadId: "pre-turn-cancel-thread", title: "Pre-turn cancel" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => {
+      startTurnCalls += 1;
+      return "must-not-start";
+    }
+  });
+
+  const runPromise = adapter.run(agentRunRequest("run-codex-pre-turn-cancel"), () => undefined);
+  await inputPending;
+  await adapter.cancel("run-codex-pre-turn-cancel");
+  releaseInput();
+
+  const result = await runPromise;
+  assert.equal(result.status, "cancelled");
+  assert.equal(startTurnCalls, 0);
+  assert.equal(notificationHub.dispatch({
+    method: "error",
+    params: { message: "stale notification" }
+  }), false);
+  await assert.rejects(adapter.awaitResult("run-codex-pre-turn-cancel"), /Unknown Codex run/);
+}
+
+async function assertCodexRichAdapterCancelsPendingStartTurnWithoutReturningRunning(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  let markStartTurnPending!: () => void;
+  const startTurnPending = new Promise<void>((resolve) => {
+    markStartTurnPending = resolve;
+  });
+  let resolveTurn!: (turnId: string) => void;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "late stop", text_elements: [] }],
+    startThread: async () => ({ threadId: "pending-thread", title: "Pending thread" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => await new Promise<string>((resolve) => {
+      markStartTurnPending();
+      resolveTurn = resolve;
+    }),
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+    }
+  });
+
+  const runPromise = adapter.run(agentRunRequest("run-codex-pending-cancel"), () => undefined);
+  await startTurnPending;
+  await adapter.cancel("run-codex-pending-cancel");
+  resolveTurn("pending-turn");
+
+  const result = await runPromise;
+  const awaited = await adapter.awaitResult("run-codex-pending-cancel");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.error, "Run cancelled");
+  assert.equal(awaited.status, "cancelled");
+  assert.deepEqual(interrupts, ["pending-thread:pending-turn"]);
+}
+
+async function assertCodexRichAdapterKeepsTerminalThatArrivesBeforeStartTurnResolves(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  let releaseTurn!: (turnId: string) => void;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "race", text_elements: [] }],
+    startThread: async () => ({ threadId: "race-thread", title: "Race" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => await new Promise<string>((resolve) => {
+      releaseTurn = resolve;
+    })
+  });
+
+  const runPromise = adapter.run(agentRunRequest("run-codex-race"), () => undefined);
+  await delay(0);
+  assert.equal(notificationHub.dispatch({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "race-thread",
+      itemId: "assistant-race",
+      delta: "Race done"
+    }
+  }), true);
+  assert.equal(notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "race-thread",
+      turn: { id: "race-turn", status: "completed" }
+    }
+  }), true);
+  releaseTurn("race-turn");
+
+  const runResult = await runPromise;
+  const awaited = await adapter.awaitResult("run-codex-race");
+
+  assert.equal(runResult.status, "running");
+  assert.equal(awaited.status, "completed");
+  assert.equal(awaited.outputText, "Race done");
+}
+
+async function assertCodexRichAdapterSettlesFailedAfterInterruptFailure(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  let attempt = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "cancel retry", text_elements: [] }],
+    startThread: async () => ({ threadId: "retry-thread", title: "Retry" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "retry-turn",
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}:${++attempt}`);
+      if (attempt === 1) throw new Error("interrupt failed");
+    }
+  });
+
+  const runResult = await adapter.run(agentRunRequest("run-codex-cancel-retry"), () => undefined);
+  assert.equal(runResult.status, "running");
+
+  await assert.rejects(adapter.cancel("run-codex-cancel-retry"), /interrupt failed/);
+  const awaited = await adapter.awaitResult("run-codex-cancel-retry");
+
+  assert.deepEqual(interrupts, ["retry-thread:retry-turn:1"]);
+  assert.equal(awaited.status, "failed");
+  assert.match(awaited.error ?? "", /Codex interrupt failed/);
+}
+
+async function assertCodexRichAdapterRecoversArtifactsAfterInactivity(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    inactivityTimeoutMs: 5,
+    artifactRecovery: async () => "Recovered artifact answer",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "recover", text_elements: [] }],
+    startThread: async () => ({ threadId: "recover-thread", title: "Recover" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "recover-turn",
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+    }
+  });
+
+  const runResult = await adapter.run(agentRunRequest("run-codex-recover"), () => undefined);
+  const awaited = await adapter.awaitResult("run-codex-recover");
+
+  assert.equal(runResult.status, "running");
+  assert.equal(awaited.status, "completed");
+  assert.equal(awaited.outputText, "Recovered artifact answer");
+  assert.deepEqual(interrupts, ["recover-thread:recover-turn"]);
+}
+
+async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    inactivityTimeoutMs: 5,
+    artifactRecovery: async () => {
+      throw new Error("artifact recovery failed");
+    },
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "recover fail", text_elements: [] }],
+    startThread: async () => ({ threadId: "recover-fail-thread", title: "Recover fail" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "recover-fail-turn",
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-recover-fail"), () => undefined);
+  const awaited = await adapter.awaitResult("run-codex-recover-fail");
+
+  assert.equal(awaited.status, "failed");
+  assert.match(awaited.error ?? "", /artifact recovery failed/);
+  assert.deepEqual(interrupts, []);
+}
+
+async function assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty(): Promise<void> {
+  for (const [suffix, recovered] of [["null", null], ["blank", "   "]] as const) {
+    const notificationHub = new CodexRichNotificationHub();
+    const interrupts: string[] = [];
+    const adapter = new CodexRichAgentAdapter({
+      displayName: "Codex",
+      version: "test",
+      notificationHub,
+      inactivityTimeoutMs: 5,
+      artifactRecovery: async () => recovered,
+      getNativeThreadId: () => undefined,
+      setNativeThreadId: () => undefined,
+      buildInput: () => [{ type: "text", text: "empty recovery", text_elements: [] }],
+      startThread: async () => ({ threadId: `empty-recovery-${suffix}-thread`, title: "Empty recovery" }),
+      resumeThread: async () => undefined,
+      startTurn: async () => `empty-recovery-${suffix}-turn`,
+      interruptTurn: async (threadId, turnId) => {
+        interrupts.push(`${threadId}:${turnId}`);
+      }
+    });
+
+    await adapter.run(agentRunRequest(`run-codex-empty-recovery-${suffix}`), () => undefined);
+    const result = await adapter.awaitResult(`run-codex-empty-recovery-${suffix}`);
+
+    assert.equal(result.status, "failed");
+    assert.match(result.error ?? "", /Codex inactivity timeout/);
+    assert.deepEqual(interrupts, []);
+  }
+}
+
+async function assertCodexRichAdapterUnregistersCompletedRunFromNotificationHub(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  let threadId = "old-thread";
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: (next) => {
+      threadId = next;
+    },
+    buildInput: () => [{ type: "text", text: "reuse", text_elements: [] }],
+    startThread: async () => ({ threadId, title: "Thread" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => threadId === "old-thread" ? "old-turn" : "new-turn"
+  });
+
+  await adapter.run(agentRunRequest("run-codex-old"), () => undefined);
+  assert.equal(notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "old-thread",
+      turn: { id: "old-turn", status: "completed" }
+    }
+  }), true);
+  const oldResult = await adapter.awaitResult("run-codex-old");
+  assert.equal(oldResult.status, "completed");
+
+  threadId = "new-thread";
+  await adapter.run(agentRunRequest("run-codex-new"), () => undefined);
+
+  assert.equal(notificationHub.dispatch({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "old-thread",
+      turnId: "old-turn",
+      itemId: "stale-item",
+      delta: "stale"
+    }
+  }), false);
+  assert.equal(notificationHub.dispatch({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "new-thread",
+      turnId: "new-turn",
+      itemId: "fresh-item",
+      delta: "fresh"
+    }
+  }), true);
+  assert.equal(notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "new-thread",
+      turn: { id: "new-turn", status: "completed" }
+    }
+  }), true);
+
+  const newResult = await adapter.awaitResult("run-codex-new");
+  assert.equal(newResult.outputText, "fresh");
+}
+
+async function assertCodexRichAdapterReleasesTerminalRunStatesAfterAwaitResult(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  let runIndex = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "terminal cleanup", text_elements: [] }],
+    startThread: async () => {
+      runIndex += 1;
+      return { threadId: `terminal-thread-${runIndex}`, title: "Terminal cleanup" };
+    },
+    resumeThread: async () => undefined,
+    startTurn: async (_threadId) => `terminal-turn-${runIndex}`,
+    interruptTurn: async () => undefined
+  });
+
+  const completedRunId = "run-codex-terminal-completed";
+  await adapter.run(agentRunRequest(completedRunId), () => undefined);
+  notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "terminal-thread-1",
+      turn: { id: "terminal-turn-1", status: "completed" }
+    }
+  });
+  assert.equal((await adapter.awaitResult(completedRunId)).status, "completed");
+  await assert.rejects(adapter.awaitResult(completedRunId), /Unknown Codex run/);
+
+  const failedRunId = "run-codex-terminal-failed";
+  await adapter.run(agentRunRequest(failedRunId), () => undefined);
+  notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "terminal-thread-2",
+      turn: { id: "terminal-turn-2", status: "failed", error: "terminal failure" }
+    }
+  });
+  assert.equal((await adapter.awaitResult(failedRunId)).status, "failed");
+  await assert.rejects(adapter.awaitResult(failedRunId), /Unknown Codex run/);
+
+  const cancelledRunId = "run-codex-terminal-cancelled";
+  await adapter.run(agentRunRequest(cancelledRunId), () => undefined);
+  await adapter.cancel(cancelledRunId);
+  assert.equal((await adapter.awaitResult(cancelledRunId)).status, "cancelled");
+  await assert.rejects(adapter.awaitResult(cancelledRunId), /Unknown Codex run/);
+}
+
+async function assertCodexRichAdapterDisposeCancelsAllActiveRuns(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  let runIndex = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "dispose active run", text_elements: [] }],
+    startThread: async () => {
+      runIndex += 1;
+      return { threadId: `dispose-thread-${runIndex}`, title: "Dispose" };
+    },
+    resumeThread: async () => undefined,
+    startTurn: async (_threadId) => `dispose-turn-${runIndex}`,
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+      if (threadId === "dispose-thread-1") throw new Error("interrupt failed during dispose");
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-dispose-1"), () => undefined);
+  await adapter.run(agentRunRequest("run-codex-dispose-2"), () => undefined);
+  const firstResult = adapter.awaitResult("run-codex-dispose-1");
+  const secondResult = adapter.awaitResult("run-codex-dispose-2");
+
+  await adapter.dispose();
+  assert.deepEqual(
+    await Promise.all([firstResult, secondResult]).then((results) => results.map((result) => result.status)),
+    ["failed", "cancelled"]
+  );
+  assert.deepEqual(interrupts.sort(), [
+    "dispose-thread-1:dispose-turn-1",
+    "dispose-thread-2:dispose-turn-2"
+  ]);
+  assert.equal(notificationHub.dispatch({
+    method: "error",
+    params: { message: "stale after dispose" }
+  }), false);
+  await assert.rejects(adapter.awaitResult("run-codex-dispose-1"), /Unknown Codex run/);
+  await adapter.dispose();
+  assert.equal(interrupts.length, 2);
+}
+
+async function assertCodexRichAdapterInjectsBootstrapContextIntoStartTurn(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "继续收口", text_elements: [] }],
+    startThread: async () => ({ threadId: "bootstrap-thread", title: "Bootstrap" }),
+    resumeThread: async () => undefined,
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "bootstrap-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-bootstrap-context", {
+    inputText: "继续收口",
+    context: compileContextBundle({
+      session: {
+        id: "session-bootstrap",
+        title: "Bootstrap context",
+        cwd: "/vault",
+        contextSnapshot: {
+          sessionId: "session-bootstrap",
+          version: "v3",
+          goal: "完成 Harness V3",
+          currentState: "Native thread 需要补上下文",
+          decisions: ["EchoInk 是权威真源"],
+          constraints: [],
+          openLoops: [],
+          keyReferences: [],
+          rollingSummary: "",
+          sourceMessageCount: 3,
+          createdAt: 1,
+          updatedAt: 3
+        },
+        messages: [
+          { id: "m1", role: "user", text: "先记住 Harness V3", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "Hermes assistant BETA-204", createdAt: 2 },
+          { id: "m3", role: "user", text: "继续收口", createdAt: 3 }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "继续收口", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.match(injectedText, /Goal: 完成 Harness V3/);
+  assert.match(injectedText, /Hermes assistant BETA-204/);
+  assert.equal(countOccurrences(injectedText, "继续收口"), 1);
+}
+
+async function assertCodexRichAdapterInjectsEchoInkMemoryIntoStartTurn(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "口令是什么？", text_elements: [] }],
+    startThread: async () => ({ threadId: "memory-thread", title: "Memory" }),
+    resumeThread: async () => undefined,
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "memory-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-memory-context", {
+    inputText: "口令是什么？",
+    context: compileContextBundle({
+      session: {
+        id: "session-memory",
+        title: "Memory context",
+        cwd: "/vault",
+        messages: [{ id: "m1", role: "user", text: "口令是什么？", createdAt: 1 }],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "口令是什么？", attachments: [] },
+      memory: {
+        providerId: "file-memory",
+        items: [],
+        sections: [{
+          id: "memory:cross-agent-passphrase",
+          priority: 500,
+          channel: "memory",
+          content: "跨会话口令 MEMORY-713",
+          source: "echoink-memory",
+          required: false,
+          sensitive: false
+        }]
+      },
+      corePolicySections: []
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.match(injectedText, /\[EchoInk Long-term Memory\]/);
+  assert.match(injectedText, /without searching local files/);
+  assert.match(injectedText, /跨会话口令 MEMORY-713/);
+  assert.equal(countOccurrences(injectedText, "口令是什么？"), 1);
+}
+
+async function assertCodexRichAdapterInjectsCatchUpContextIntoStartTurn(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => "catch-up-thread",
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "继续", text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => ({ threadId: "catch-up-thread", title: "Catch up" }),
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "catch-up-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-catch-up-context", {
+    inputText: "继续",
+    context: compileContextBundle({
+      session: {
+        id: "session-catch-up",
+        title: "Catch up context",
+        cwd: "/vault",
+        messages: [
+          { id: "m1", role: "user", text: "旧线程已经同步过的历史", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "Hermes assistant BETA-204", createdAt: 2 },
+          { id: "m3", role: "user", text: "继续", createdAt: 3 }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "继续", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: [],
+      mode: "catch-up",
+      cursor: { syncedThroughMessageId: "m1", syncedSessionRevision: 1 }
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.match(injectedText, /Hermes assistant BETA-204/);
+  assert.equal(countOccurrences(injectedText, "继续"), 1);
+}
+
+async function assertCodexRichAdapterRemovesCurrentUserBeforeTrailingAssistantPlaceholder(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => "catch-up-thread",
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "继续", text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => ({ threadId: "catch-up-thread", title: "Catch up" }),
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "catch-up-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-catch-up-trailing-assistant", {
+    inputText: "继续",
+    context: compileContextBundle({
+      session: {
+        id: "session-catch-up-trailing-assistant",
+        title: "Catch up trailing assistant",
+        cwd: "/vault",
+        messages: [
+          { id: "m1", role: "user", text: "旧线程已经同步过的历史", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "Hermes assistant BETA-204", createdAt: 2 },
+          { id: "m3", role: "user", text: "继续", createdAt: 3 },
+          { id: "m4", role: "assistant", text: "正在连接 Codex...", createdAt: 4 }
+        ],
+        createdAt: 1,
+        updatedAt: 4
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "继续", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: [],
+      mode: "catch-up",
+      cursor: { syncedThroughMessageId: "m1", syncedSessionRevision: 1 }
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.match(injectedText, /Hermes assistant BETA-204/);
+  assert.match(injectedText, /assistant: 正在连接 Codex\.\.\./);
+  assert.equal(countOccurrences(injectedText, "继续"), 1);
+}
+
+async function assertCodexRichAdapterOnlyInjectsIncrementalDeltaIntoStartTurn(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => "incremental-thread",
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "继续收口", text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => ({ threadId: "incremental-thread", title: "Incremental" }),
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "incremental-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-incremental-context", {
+    inputText: "继续收口",
+    context: compileContextBundle({
+      session: {
+        id: "session-incremental",
+        title: "Incremental context",
+        cwd: "/vault",
+        messages: [
+          { id: "m1", role: "user", text: "早期历史：不要重复发给原生线程", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "已同步到原生线程", createdAt: 2 },
+          { id: "m3", role: "assistant", text: "新的约束：不能删除 Raw", createdAt: 3 },
+          { id: "m4", role: "user", text: "继续收口", createdAt: 4 }
+        ],
+        createdAt: 1,
+        updatedAt: 4
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "继续收口", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: [],
+      mode: "incremental",
+      cursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 2 }
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.doesNotMatch(injectedText, /早期历史：不要重复发给原生线程/);
+  assert.match(injectedText, /新的约束：不能删除 Raw/);
+  assert.equal(countOccurrences(injectedText, "继续收口"), 1);
+}
+
+async function assertAdapterFactoryPassesCodexToolBridgeIntoCodexRichAdapter(): Promise<void> {
+  const toolBridge = createEchoInkMcpToolBridgeRuntime({
+    catalog: {
+      tools: [{
+        name: "search.query",
+        resourceId: "echoink-local:mcp-server:mcp-search",
+        resourceName: "search",
+        toolName: "query",
+        description: "Search"
+      }],
+      warnings: []
+    },
+    scope: "chat",
+    callTool: async () => ({ result: "ok" })
+  });
+  let capturedToolBridge: unknown = Symbol("unset");
+
+  createHarnessAgentAdapter({
+    backendId: "codex-cli",
+    settings: DEFAULT_SETTINGS,
+    vaultPath: "/vault",
+    codexRich: {
+      getNativeThreadId: () => undefined,
+      setNativeThreadId: () => undefined,
+      buildInput: () => [{ type: "text", text: "continue", text_elements: [] }]
+    },
+    task: {
+      toolBridge
+    },
+    createCodexRichAdapter: (options: any) => {
+      capturedToolBridge = options.toolBridge;
+      return new CodexRichAgentAdapter({
+        ...options,
+        startThread: async () => ({ threadId: "factory-thread", title: "Factory" }),
+        resumeThread: async () => undefined,
+        startTurn: async () => "factory-turn"
+      });
+    }
+  });
+
+  assert.equal(capturedToolBridge, toolBridge);
+}
+
+async function assertCodexRichAdapterRunsEchoInkBrokerLoopAcrossTurns(): Promise<void> {
+  const notificationHub = new TrackingCodexRichNotificationHub();
+  const brokerCalls: Array<Record<string, unknown>> = [];
+  const startTurns: Array<{ threadId: string; input: Array<{ type: string; text?: string }> }> = [];
+  const toolBridge = createEchoInkMcpToolBridgeRuntime({
+    catalog: {
+      tools: [{
+        name: "search.query",
+        resourceId: "echoink-local:mcp-server:mcp-search",
+        resourceName: "search",
+        toolName: "query",
+        description: "Search"
+      }],
+      warnings: []
+    },
+    scope: "chat",
+    maxToolCalls: 2,
+    callTool: async (request) => {
+      brokerCalls.push({
+        resourceId: request.resourceId,
+        scope: request.scope,
+        backend: request.backend,
+        toolName: request.toolName,
+        arguments: request.arguments
+      });
+      return { result: "found Harness docs" };
+    }
+  });
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    toolBridge,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "search Harness", text_elements: [] }],
+    startThread: async () => ({ threadId: "broker-thread", title: "Broker" }),
+    resumeThread: async () => undefined,
+    startTurn: async (threadId, input) => {
+      const turnIndex = startTurns.length + 1;
+      const turnId = `broker-turn-${turnIndex}`;
+      startTurns.push({ threadId, input: input as Array<{ type: string; text?: string }> });
+      setTimeout(() => {
+        if (turnIndex === 1) {
+          notificationHub.dispatch({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId,
+              turnId,
+              itemId: "broker-assistant-1",
+              delta: "```echoink-tool-call\n{\"tool\":\"search.query\",\"arguments\":{\"q\":\"Harness\"}}\n```"
+            }
+          });
+        } else {
+          notificationHub.dispatch({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId,
+              turnId,
+              itemId: "broker-assistant-2",
+              delta: "Harness broker final answer"
+            }
+          });
+        }
+        notificationHub.dispatch({
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed" }
+          }
+        });
+      }, 0);
+      return turnId;
+    }
+  });
+  const events: HarnessEvent[] = [];
+
+  const runResult = await adapter.run(agentRunRequest("run-codex-broker-loop"), (event) => events.push(event));
+  const awaited = await adapter.awaitResult("run-codex-broker-loop");
+
+  assert.equal(runResult.status, "running");
+  assert.equal(awaited.status, "completed");
+  assert.equal(awaited.outputText, "Harness broker final answer");
+  assert.equal(startTurns.length, 2);
+  assert.deepEqual(startTurns.map((turn) => turn.threadId), ["broker-thread", "broker-thread"]);
+  assert.match(joinedTextInput(startTurns[0]?.input ?? []), /EchoInk broker tools are available for this turn\./);
+  assert.match(joinedTextInput(startTurns[1]?.input ?? []), /TOOL RESULT search\.query:/);
+  assert.match(joinedTextInput(startTurns[1]?.input ?? []), /found Harness docs/);
+  assert.deepEqual(brokerCalls, [{
+    resourceId: "echoink-local:mcp-server:mcp-search",
+    scope: "chat",
+    backend: "codex-cli",
+    toolName: "query",
+    arguments: { q: "Harness" }
+  }]);
+  assert.deepEqual(
+    events
+      .filter((event) => event.type.startsWith("tool."))
+      .map((event) => [event.type, event.toolName, event.resourceId]),
+    [
+      ["tool.requested", "search.query", "echoink-local:mcp-server:mcp-search"],
+      ["tool.approval.requested", "search.query", "echoink-local:mcp-server:mcp-search"],
+      ["tool.completed", "search.query", "echoink-local:mcp-server:mcp-search"]
+    ]
+  );
+  assert.equal(notificationHub.registerCalls, 2);
+  assert.equal(notificationHub.unregisterCalls, 2);
+}
+
+async function assertCodexRichAdapterDisposeCancelsHangingBrokerCall(): Promise<void> {
+  const harness = createCodexHangingBrokerHarness("dispose-hanging-broker");
+  const runId = "run-codex-dispose-hanging-broker";
+
+  await harness.adapter.run(agentRunRequest(runId), (event) => harness.events.push(event));
+  const resultPromise = harness.adapter.awaitResult(runId);
+  await harness.bridgeStarted;
+  await harness.adapter.dispose();
+
+  const result = await settleWithin(resultPromise);
+  assert.equal(result.status, "cancelled");
+  assert.equal(harness.bridgeAborted(), true);
+  harness.resolveBridge({ result: "late broker result" });
+  await delay(0);
+  assert.equal(harness.startTurnCalls(), 1);
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.startsWith("tool.")).map((event) => event.type),
+    ["tool.requested", "tool.approval.requested"]
+  );
+  assert.equal(harness.notificationHub.dispatch({
+    method: "error",
+    params: { message: "stale after hanging broker dispose" }
+  }), false);
+  await assert.rejects(harness.adapter.awaitResult(runId), /Unknown Codex run/);
+}
+
+async function assertCodexRichAdapterCancelCancelsHangingBrokerCall(): Promise<void> {
+  const harness = createCodexHangingBrokerHarness("cancel-hanging-broker");
+  const runId = "run-codex-cancel-hanging-broker";
+
+  await harness.adapter.run(agentRunRequest(runId), (event) => harness.events.push(event));
+  const resultPromise = harness.adapter.awaitResult(runId);
+  await harness.bridgeStarted;
+  await harness.adapter.cancel(runId);
+
+  const result = await settleWithin(resultPromise);
+  assert.equal(result.status, "cancelled");
+  assert.equal(harness.bridgeAborted(), true);
+  assert.equal(harness.startTurnCalls(), 1);
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.startsWith("tool.")).map((event) => event.type),
+    ["tool.requested", "tool.approval.requested"]
+  );
+  await assert.rejects(harness.adapter.awaitResult(runId), /Unknown Codex run/);
+}
+
+async function assertCodexRichAdapterFailsUnknownBrokerToolWithoutHanging(): Promise<void> {
+  const notificationHub = new TrackingCodexRichNotificationHub();
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    toolBridge: createEchoInkMcpToolBridgeRuntime({
+      catalog: {
+        tools: [{
+          name: "search.query",
+          resourceId: "echoink-local:mcp-server:mcp-search",
+          resourceName: "search",
+          toolName: "query",
+          description: "Search"
+        }],
+        warnings: []
+      },
+      scope: "chat",
+      callTool: async () => ({ result: "ok" })
+    }),
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "unknown tool", text_elements: [] }],
+    startThread: async () => ({ threadId: "unknown-tool-thread", title: "Unknown tool" }),
+    resumeThread: async () => undefined,
+    startTurn: async (threadId) => {
+      const turnId = "unknown-tool-turn";
+      setTimeout(() => {
+        notificationHub.dispatch({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: "unknown-tool-assistant",
+            delta: "```echoink-tool-call\n{\"tool\":\"missing.query\",\"arguments\":{}}\n```"
+          }
+        });
+        notificationHub.dispatch({
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed" }
+          }
+        });
+      }, 0);
+      return turnId;
+    }
+  });
+  const events: HarnessEvent[] = [];
+
+  await adapter.run(agentRunRequest("run-codex-broker-unknown-tool"), (event) => events.push(event));
+  const awaited = await adapter.awaitResult("run-codex-broker-unknown-tool");
+
+  assert.equal(awaited.status, "failed");
+  assert.match(awaited.error ?? "", /missing\.query/);
+  assert.deepEqual(
+    events
+      .filter((event) => event.type.startsWith("tool."))
+      .map((event) => event.type),
+    ["tool.requested", "tool.failed"]
+  );
+}
+
+async function assertCodexRichAdapterFailsBrokerErrorWithoutHanging(): Promise<void> {
+  const notificationHub = new TrackingCodexRichNotificationHub();
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    toolBridge: createEchoInkMcpToolBridgeRuntime({
+      catalog: {
+        tools: [{
+          name: "search.query",
+          resourceId: "echoink-local:mcp-server:mcp-search",
+          resourceName: "search",
+          toolName: "query",
+          description: "Search"
+        }],
+        warnings: []
+      },
+      scope: "chat",
+      callTool: async () => {
+        throw new Error("broker offline");
+      }
+    }),
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "broker fail", text_elements: [] }],
+    startThread: async () => ({ threadId: "broker-fail-thread", title: "Broker fail" }),
+    resumeThread: async () => undefined,
+    startTurn: async (threadId) => {
+      const turnId = "broker-fail-turn";
+      setTimeout(() => {
+        notificationHub.dispatch({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: "broker-fail-assistant",
+            delta: "```echoink-tool-call\n{\"tool\":\"search.query\",\"arguments\":{\"q\":\"Harness\"}}\n```"
+          }
+        });
+        notificationHub.dispatch({
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed" }
+          }
+        });
+      }, 0);
+      return turnId;
+    }
+  });
+  const events: HarnessEvent[] = [];
+
+  await adapter.run(agentRunRequest("run-codex-broker-failure"), (event) => events.push(event));
+  const awaited = await adapter.awaitResult("run-codex-broker-failure");
+
+  assert.equal(awaited.status, "failed");
+  assert.match(awaited.error ?? "", /broker offline/);
+  assert.deepEqual(
+    events
+      .filter((event) => event.type.startsWith("tool."))
+      .map((event) => event.type),
+    ["tool.requested", "tool.approval.requested", "tool.failed"]
+  );
+}
+
+async function assertCodexRichAdapterFailsWhenBrokerLoopExceedsMaxToolCalls(): Promise<void> {
+  const notificationHub = new TrackingCodexRichNotificationHub();
+  let turnCount = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    toolBridge: createEchoInkMcpToolBridgeRuntime({
+      catalog: {
+        tools: [{
+          name: "search.query",
+          resourceId: "echoink-local:mcp-server:mcp-search",
+          resourceName: "search",
+          toolName: "query",
+          description: "Search"
+        }],
+        warnings: []
+      },
+      scope: "chat",
+      maxToolCalls: 1,
+      callTool: async () => ({ result: "first result" })
+    }),
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "too many tools", text_elements: [] }],
+    startThread: async () => ({ threadId: "max-tool-thread", title: "Max tool" }),
+    resumeThread: async () => undefined,
+    startTurn: async (threadId) => {
+      turnCount += 1;
+      const turnId = `max-tool-turn-${turnCount}`;
+      setTimeout(() => {
+        notificationHub.dispatch({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: `max-tool-assistant-${turnCount}`,
+            delta: "```echoink-tool-call\n{\"tool\":\"search.query\",\"arguments\":{\"q\":\"Harness\"}}\n```"
+          }
+        });
+        notificationHub.dispatch({
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed" }
+          }
+        });
+      }, 0);
+      return turnId;
+    }
+  });
+  const events: HarnessEvent[] = [];
+
+  await adapter.run(agentRunRequest("run-codex-broker-max-tool-calls"), (event) => events.push(event));
+  const awaited = await adapter.awaitResult("run-codex-broker-max-tool-calls");
+
+  assert.equal(awaited.status, "failed");
+  assert.match(awaited.error ?? "", /maxToolCalls=1/);
+  assert.equal(turnCount, 2);
+  assert.equal(events.some((event) => event.type === "tool.failed"), true);
+}
+
+async function assertCodexRichAdapterPreservesBlankAndSubstringHistory(): Promise<void> {
+  let startedInput: Array<{ type: string; text?: string }> = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => "exact-match-thread",
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "继续收口", text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => ({ threadId: "exact-match-thread", title: "Exact match" }),
+    startTurn: async (_id, input) => {
+      startedInput = input as Array<{ type: string; text?: string }>;
+      return "exact-match-turn";
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-exact-context", {
+    inputText: "继续收口",
+    context: compileContextBundle({
+      session: {
+        id: "session-exact-context",
+        title: "Exact context",
+        cwd: "/vault",
+        messages: [
+          { id: "m1", role: "assistant", text: "已同步到原生线程", createdAt: 1 },
+          { id: "m2", role: "user", text: "继续", createdAt: 2 },
+          { id: "m3", role: "user", text: "   ", createdAt: 3 },
+          { id: "m4", role: "user", text: "继续收口", createdAt: 4 }
+        ],
+        createdAt: 1,
+        updatedAt: 4
+      },
+      backendId: "codex-cli",
+      workflow: "chat.generic",
+      userInput: { text: "继续收口", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: [],
+      mode: "incremental",
+      cursor: { syncedThroughMessageId: "m1", syncedSessionRevision: 1 }
+    })
+  }), () => undefined);
+
+  const injectedText = joinedTextInput(startedInput);
+  assert.match(injectedText, /user: 继续\n/);
+  assert.match(injectedText, /user:\s*\n/);
+  assert.equal(countOccurrences(injectedText, "继续收口"), 1);
+}
+
+async function assertOrchestratorRebuildsContextWhenNativeSessionResumeFails(): Promise<void> {
+  const events: HarnessEvent[] = [];
+  let threadId = "missing-thread";
+  let contextMode = "";
+  let compiledContext = "";
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => threadId,
+    setNativeThreadId: (next) => { threadId = next; },
+    buildInput: (_threadId, request) => {
+      contextMode = request.context.manifest?.mode ?? "";
+      compiledContext = request.context.sessionContext.map((section) => section.content).join("\n");
+      return [{ type: "text", text: "continue", text_elements: [] }];
+    },
+    resumeThread: async () => { throw new Error("thread not found"); },
+    startThread: async () => ({ threadId: "replacement-thread", title: "Replacement" }),
+    startTurn: async () => "replacement-turn"
+  });
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    now: () => 100,
+    sessionProvider: () => ({
+      id: "session-resume-recovery",
+      title: "Resume recovery",
+      cwd: "/vault",
+      revision: 2,
+      backendBindings: {
+        "codex-cli": {
+          backendId: "codex-cli",
+          nativeThreadId: "missing-thread",
+          leaseId: "lease-missing-thread",
+          leaseStatus: "active",
+          leaseCreatedAt: 1,
+          leaseLastUsedAt: 90,
+          leaseExpiresAt: 10_000,
+          leaseTurnCount: 1,
+          leaseMaxTurns: 20,
+          syncedThroughMessageId: "m2",
+          syncedSessionRevision: 2,
+          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 2 },
+          lastUsedAt: 90
+        }
+      },
+      messages: [
+        { id: "m1", role: "user", text: "关键目标：完成 Harness V3", createdAt: 1 },
+        { id: "m2", role: "assistant", text: "当前决定：EchoInk 是权威真源", createdAt: 2 }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  });
+
+  const result = await orchestrator.run({
+    runId: "run-native-resume-recovery",
+    sessionId: "session-resume-recovery",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "codex-cli",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "继续", attachments: [] },
+    permissions: { mode: "workspace-write", writableRoots: ["/vault"], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.equal(result.status, "running");
+  assert.equal(result.contextManifest?.mode, "bootstrap");
+  assert.equal(contextMode, "bootstrap");
+  assert.match(compiledContext, /完成 Harness V3/);
+  assert.match(compiledContext, /EchoInk 是权威真源/);
+  assert.equal(result.backendBinding?.nativeThreadId, "replacement-thread");
+  assert.notEqual(result.backendBinding?.leaseId, "lease-missing-thread");
+  assert.equal(events.some((event) => event.type === "agent.native_lease.recovery_failed"), true);
+  assert.equal(events.some((event) => event.type === "agent.native_lease.reused"), false);
+  assert.equal(events.some((event) => event.type === "agent.native_lease.created"), true);
+}
+
+async function assertEmulatedResumeBackendRebuildsContextForEachRun(): Promise<void> {
+  const prompts: string[] = [];
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime: fakeRuntime({
+      kind: "hermes",
+      result: { text: "继续完成", runId: "hermes-run-new" },
+      onRunTask: (input) => { prompts.push(input.prompt); }
+    }),
+    capabilities: "legacy"
+  });
+  assert.equal(adapter.manifest.capabilities.output.streaming, "native");
+  assert.equal(adapter.manifest.capabilities.output.reasoningSummary, "none");
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    now: () => 200,
+    sessionProvider: () => ({
+      id: "session-hermes-emulated",
+      title: "Hermes emulated resume",
+      cwd: "/vault",
+      revision: 1,
+      backendBindings: {
+        hermes: {
+          backendId: "hermes",
+          nativeSessionId: "hermes-run-old",
+          nativeExecutionKind: "run",
+          leaseId: "lease-hermes-old",
+          leaseStatus: "active",
+          leaseCreatedAt: 1,
+          leaseLastUsedAt: 190,
+          leaseExpiresAt: 10_000,
+          leaseTurnCount: 1,
+          leaseMaxTurns: 20,
+          syncedThroughMessageId: "m2",
+          syncedSessionRevision: 1,
+          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          lastUsedAt: 190
+        }
+      },
+      messages: [
+        { id: "m1", role: "user", text: "关键约束：不能删除 Raw", createdAt: 1 },
+        { id: "m2", role: "assistant", text: "已记录约束", createdAt: 2 }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  });
+
+  const result = await orchestrator.run({
+    runId: "run-hermes-emulated-resume",
+    sessionId: "session-hermes-emulated",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "hermes",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "继续", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  });
+
+  assert.equal(result.contextManifest?.mode, "bootstrap");
+  assert.match(prompts[0] ?? "", /不能删除 Raw/);
+  assert.notEqual(result.backendBinding?.leaseId, "lease-hermes-old");
+}
+
+async function assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns(): Promise<void> {
+  let taskNativeSessionId = "";
+  const runtime = fakeRuntime({
+    kind: "opencode",
+    result: {
+      text: "继续完成",
+      runId: "opencode-session-old",
+      effectiveModel: { providerId: "opencode", modelId: "opencode/big-pickle" }
+    } as AgentTaskResult,
+    onRunTask: (input) => { taskNativeSessionId = (input as AgentTaskInput & { nativeSessionId?: string }).nativeSessionId ?? ""; }
+  }) as AgentTaskRuntime & { hasNativeSession(sessionId: string): Promise<boolean> };
+  runtime.hasNativeSession = async (sessionId) => sessionId === "opencode-session-old";
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+  assert.equal(adapter.manifest.capabilities.sessions.resume, "native");
+  const events: HarnessEvent[] = [];
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    now: () => 300,
+    sessionProvider: () => ({
+      id: "session-opencode-native",
+      title: "OpenCode native resume",
+      cwd: "/vault",
+      revision: 1,
+      backendBindings: {
+        opencode: {
+          backendId: "opencode",
+          nativeSessionId: "opencode-session-old",
+          nativeExecutionKind: "session",
+          leaseId: "lease-opencode-old",
+          leaseStatus: "active",
+          leaseCreatedAt: 1,
+          leaseLastUsedAt: 290,
+          leaseExpiresAt: 10_000,
+          leaseTurnCount: 1,
+          leaseMaxTurns: 20,
+          syncedThroughMessageId: "m2",
+          syncedSessionRevision: 1,
+          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          lastUsedAt: 290
+        }
+      },
+      messages: [
+        { id: "m1", role: "user", text: "记住 O5-842", backendId: "opencode", createdAt: 1 },
+        { id: "m2", role: "assistant", text: "已记住", backendId: "opencode", createdAt: 2 }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  });
+
+  const result = await orchestrator.run({
+    runId: "run-opencode-native-resume",
+    sessionId: "session-opencode-native",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "opencode",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "继续", attachments: [] },
+    permissions: { mode: "workspace-write", writableRoots: ["/vault"], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.equal(result.contextManifest?.mode, "incremental");
+  assert.equal(taskNativeSessionId, "opencode-session-old");
+  assert.equal(result.backendBinding?.nativeSessionId, "opencode-session-old");
+  assert.equal(result.backendBinding?.leaseId, "lease-opencode-old");
+  assert.equal(result.backendBinding?.leaseTurnCount, 2);
+  assert.deepEqual((result as AgentRunResult & { effectiveModel?: { providerId: string; modelId: string } }).effectiveModel, {
+    providerId: "opencode",
+    modelId: "opencode/big-pickle"
+  });
+  assert.equal(events.some((event) => event.type === "agent.native_lease.reused"), true);
+  assert.equal(harnessMessageModelId({
+    ...DEFAULT_SETTINGS,
+    opencode: { ...DEFAULT_SETTINGS.opencode, providerId: "opencode", modelId: "opencode/big-pickle" }
+  }, "opencode"), "opencode/big-pickle");
+  assert.equal(harnessInitialMessageModelId({
+    ...DEFAULT_SETTINGS,
+    opencode: { ...DEFAULT_SETTINGS.opencode, providerId: "invalid", modelId: "missing" }
+  }, "opencode"), "");
+}
+
+async function assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext(): Promise<void> {
+  let taskNativeSessionId = "unexpected";
+  let taskPrompt = "";
+  const runtime = fakeRuntime({
+    kind: "opencode",
+    result: { text: "重建完成", runId: "opencode-session-new" },
+    onRunTask: (input) => {
+      taskNativeSessionId = (input as AgentTaskInput & { nativeSessionId?: string }).nativeSessionId ?? "";
+      taskPrompt = input.prompt;
+    }
+  }) as AgentTaskRuntime & { hasNativeSession(sessionId: string): Promise<boolean> };
+  runtime.hasNativeSession = async () => false;
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+  const events: HarnessEvent[] = [];
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    now: () => 400,
+    sessionProvider: () => ({
+      id: "session-opencode-missing",
+      title: "OpenCode missing session",
+      cwd: "/vault",
+      revision: 1,
+      backendBindings: {
+        opencode: {
+          backendId: "opencode",
+          nativeSessionId: "opencode-session-missing",
+          nativeExecutionKind: "session",
+          leaseId: "lease-opencode-missing",
+          leaseStatus: "active",
+          leaseCreatedAt: 1,
+          leaseLastUsedAt: 390,
+          leaseExpiresAt: 10_000,
+          leaseTurnCount: 1,
+          leaseMaxTurns: 20,
+          syncedThroughMessageId: "m2",
+          syncedSessionRevision: 1,
+          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          lastUsedAt: 390
+        }
+      },
+      messages: [
+        { id: "m1", role: "user", text: "关键目标：保留 EchoInk 上下文", backendId: "opencode", createdAt: 1 },
+        { id: "m2", role: "assistant", text: "当前状态：继续修复", backendId: "opencode", createdAt: 2 }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  });
+
+  const result = await orchestrator.run({
+    runId: "run-opencode-missing-rebuild",
+    sessionId: "session-opencode-missing",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "opencode",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "继续", attachments: [] },
+    permissions: { mode: "workspace-write", writableRoots: ["/vault"], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  assert.equal(result.contextManifest?.mode, "bootstrap");
+  assert.equal(taskNativeSessionId, "");
+  assert.match(taskPrompt, /保留 EchoInk 上下文/);
+  assert.match(taskPrompt, /继续修复/);
+  assert.equal(result.backendBinding?.nativeSessionId, "opencode-session-new");
+  assert.notEqual(result.backendBinding?.leaseId, "lease-opencode-missing");
+  assert.equal(events.some((event) => event.type === "agent.native_lease.recovery_failed"), true);
+  assert.equal(events.some((event) => event.type === "agent.native_lease.created"), true);
+}
+
+async function assertFakeFourthAgentOnlyNeedsAdapterAndManifest(): Promise<void> {
+  const adapter = new FakeFourthAgentAdapter();
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider()
+  });
+  const result = await orchestrator.run({
+    runId: "run-fourth",
+    sessionId: "session-fourth",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "fake-fourth",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "fake-fourth:pong");
+  for (const file of [
+    "src/ui/codex-view/turn-runner.ts",
+    "src/ui/codex-view/editor-action-runner.ts",
+    "src/knowledge-base/manager.ts"
+  ]) {
+    const source = await readFile(path.join(process.cwd(), file), "utf8");
+    assert.doesNotMatch(source, /fake-fourth/);
+  }
+}
+
+async function assertAdapterFactoryUsesRegisteredBuilders(): Promise<void> {
+  const adapter = (createHarnessAgentAdapter as any)({
+    backendId: "fake-fourth",
+    settings: DEFAULT_SETTINGS,
+    vaultPath: "/vault",
+    adapterFactories: {
+      "fake-fourth": () => new FakeFourthAgentAdapter()
+    }
+  });
+  assert.equal(adapter instanceof FakeFourthAgentAdapter, true);
+
+  const source = await readFile(path.join(process.cwd(), "src/harness/agents/adapter-factory.ts"), "utf8");
+  assert.doesNotMatch(source, /backendId\s*===\s*"codex-cli"/);
+}
+
+function fakeRuntime(input: {
+  kind: AgentTaskRuntime["kind"];
+  result: AgentTaskResult;
+  onRunTask?: (input: AgentTaskInput) => AgentTaskResult | void;
+}): AgentTaskRuntime {
+  return {
+    kind: input.kind,
+    async connect(): Promise<AgentConnectionStatus> {
+      return { connected: true, label: input.kind, errors: [] };
+    },
+    async listModels() {
+      return [];
+    },
+    async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
+      const override = input.onRunTask?.(task);
+      const result = isAgentTaskResult(override) ? override : input.result;
+      task.onRunId?.(result.runId ?? "runtime-run");
+      return result;
+    },
+    async abort(): Promise<void> {
+      return undefined;
+    }
+  };
+}
+
+function agentRunRequest(
+  runId: string,
+  options?: {
+    inputText?: string;
+    context?: ReturnType<typeof compileContextBundle>;
+  }
+) {
+  const inputText = options?.inputText ?? "continue";
+  const context = options?.context ?? compileContextBundle({
+    session: { id: "session-1", title: "Test", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+    backendId: "codex-cli",
+    workflow: "chat.generic",
+    userInput: { text: inputText, attachments: [] },
+    memory: { providerId: "noop", items: [], sections: [] },
+    corePolicySections: []
+  });
+  return {
+    runId,
+    sessionId: "session-1",
+    input: { text: inputText, attachments: [] },
+    permissions: { mode: "workspace-write" as const, writableRoots: ["/vault"], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context,
+    outputContract: { kind: "plain-text" as const }
+  };
+}
+
+function isAgentTaskResult(value: unknown): value is AgentTaskResult {
+  return Boolean(value && typeof value === "object" && typeof (value as AgentTaskResult).text === "string");
+}
+
+function joinedTextInput(input: Array<{ type: string; text?: string }>): string {
+  return input
+    .filter((entry) => entry.type === "text" && typeof entry.text === "string")
+    .map((entry) => entry.text ?? "")
+    .join("\n\n");
+}
+
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
+
+function createDriverHarness(
+  runId: string,
+  options: { threadId?: string; turnId?: string } = {}
+): { driver: CodexRichRunDriver; events: HarnessEvent[] } {
+  const events: HarnessEvent[] = [];
+  const driver = new CodexRichRunDriver({
+    runId,
+    backendId: "codex-cli",
+    threadId: options.threadId,
+    turnId: options.turnId,
+    emit: async (event) => {
+      events.push(event);
+    }
+  });
+  return { driver, events };
+}
+
+class TrackingCodexRichNotificationHub extends CodexRichNotificationHub {
+  registerCalls = 0;
+  unregisterCalls = 0;
+
+  register(driver: CodexRichRunDriver): void {
+    this.registerCalls += 1;
+    super.register(driver);
+  }
+
+  unregister(runId: string): void {
+    this.unregisterCalls += 1;
+    super.unregister(runId);
+  }
+}
+
+function createCodexHangingBrokerHarness(prefix: string): {
+  adapter: CodexRichAgentAdapter;
+  bridgeStarted: Promise<void>;
+  events: HarnessEvent[];
+  notificationHub: TrackingCodexRichNotificationHub;
+  resolveBridge(value: unknown): void;
+  bridgeAborted(): boolean;
+  startTurnCalls(): number;
+} {
+  const notificationHub = new TrackingCodexRichNotificationHub();
+  const events: HarnessEvent[] = [];
+  let signalBridgeStarted!: () => void;
+  const bridgeStarted = new Promise<void>((resolve) => {
+    signalBridgeStarted = resolve;
+  });
+  let resolveBridge!: (value: unknown) => void;
+  let rejectBridge!: (error: Error) => void;
+  let bridgeAborted = false;
+  const bridgeResult = new Promise<unknown>((resolve, reject) => {
+    resolveBridge = resolve;
+    rejectBridge = reject;
+  });
+  let turnCount = 0;
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    toolBridge: createEchoInkMcpToolBridgeRuntime({
+      catalog: {
+        tools: [{
+          name: "search.query",
+          resourceId: "echoink-local:mcp-server:mcp-search",
+          resourceName: "search",
+          toolName: "query",
+          description: "Search"
+        }],
+        warnings: []
+      },
+      scope: "chat",
+      callTool: async (request) => {
+        signalBridgeStarted();
+        request.signal?.addEventListener("abort", () => {
+          bridgeAborted = true;
+          rejectBridge(new Error("bridge aborted"));
+        }, { once: true });
+        return await bridgeResult;
+      }
+    }),
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "hang in broker", text_elements: [] }],
+    startThread: async () => ({ threadId: `${prefix}-thread`, title: "Hanging broker" }),
+    resumeThread: async () => undefined,
+    startTurn: async (threadId) => {
+      turnCount += 1;
+      const turnId = `${prefix}-turn-${turnCount}`;
+      setTimeout(() => {
+        notificationHub.dispatch({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: `${prefix}-assistant-${turnCount}`,
+            delta: "```echoink-tool-call\n{\"tool\":\"search.query\",\"arguments\":{\"q\":\"Harness\"}}\n```"
+          }
+        });
+        notificationHub.dispatch({
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed" }
+          }
+        });
+      }, 0);
+      return turnId;
+    }
+  });
+  return {
+    adapter,
+    bridgeStarted,
+    events,
+    notificationHub,
+    resolveBridge,
+    bridgeAborted: () => bridgeAborted,
+    startTurnCalls: () => turnCount
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs = 50): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Promise did not settle within ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function promiseStillPending<T>(promise: Promise<T>): Promise<boolean> {
+  const sentinel = Symbol("pending");
+  return await Promise.race([
+    promise.then(() => false, () => false),
+    delay(5).then(() => sentinel)
+  ]) === sentinel;
+}

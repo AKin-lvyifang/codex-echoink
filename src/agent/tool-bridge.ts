@@ -19,6 +19,7 @@ export interface EchoInkMcpToolBridgeExecutorInput {
   toolName: string;
   arguments?: Record<string, unknown>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export function createEchoInkMcpToolBridgeRuntime(input: {
@@ -33,6 +34,7 @@ export function createEchoInkMcpToolBridgeRuntime(input: {
     enabled: true,
     scope: input.scope,
     maxToolCalls: input.maxToolCalls ?? 3,
+    toolResourceIds: Object.fromEntries(input.catalog.tools.map((tool) => [tool.name, tool.resourceId])),
     prompt: buildEchoInkToolBridgePrompt(input.catalog.tools),
     callTool: async (request) => {
       const tool = toolsByName.get(request.tool);
@@ -51,7 +53,8 @@ export function createEchoInkMcpToolBridgeRuntime(input: {
         backend: request.backend,
         toolName: tool.toolName,
         arguments: request.arguments,
-        timeoutMs: 30000
+        timeoutMs: 30000,
+        signal: request.signal
       }));
     }
   };
@@ -73,14 +76,15 @@ export async function runAgentTaskWithToolBridge(
     const request = parseEchoInkToolCall(lastResult.text);
     if (!request) return lastResult;
     if (callIndex >= bridge.maxToolCalls) {
-      const error = `EchoInk tool loop exceeded maxToolCalls=${bridge.maxToolCalls}`;
-      await emitToolEvent(emit, runtime.kind, { type: "tool_call_failed", toolName: request.tool, error });
+      const error = buildEchoInkToolLoopExceededError(bridge.maxToolCalls);
+      await emitToolEvent(emit, runtime.kind, { type: "tool_call_failed", toolName: request.tool, resourceId: bridge.toolResourceIds?.[request.tool], error });
       throw new Error(error);
     }
     const toolCallId = `echoink-tool-${Date.now()}-${callIndex}`;
     await emitToolEvent(emit, runtime.kind, {
       type: "tool_call_requested",
       toolName: request.tool,
+      resourceId: bridge.toolResourceIds?.[request.tool],
       data: { toolCallId, input: request.arguments }
     });
     try {
@@ -89,12 +93,14 @@ export async function runAgentTaskWithToolBridge(
         arguments: request.arguments,
         scope: bridge.scope,
         backend: runtime.kind,
-        emit
+        emit,
+        signal: input.abortSignal
       });
       const truncatedOutput = truncateEchoInkToolResult(output);
       await emitToolEvent(emit, runtime.kind, {
         type: "tool_call_completed",
         toolName: request.tool,
+        resourceId: bridge.toolResourceIds?.[request.tool],
         data: { toolCallId, output: truncatedOutput }
       });
       prompt = appendToolResultPrompt(prompt, request, truncatedOutput);
@@ -103,6 +109,7 @@ export async function runAgentTaskWithToolBridge(
       await emitToolEvent(emit, runtime.kind, {
         type: "tool_call_failed",
         toolName: request.tool,
+        resourceId: bridge.toolResourceIds?.[request.tool],
         error: message,
         data: { toolCallId, input: request.arguments }
       });
@@ -157,6 +164,10 @@ export function buildEchoInkToolBridgePrompt(tools: EchoInkCallableMcpTool[]): s
   ].join("\n");
 }
 
+export function buildEchoInkToolLoopExceededError(maxToolCalls: number): string {
+  return `EchoInk tool loop exceeded maxToolCalls=${maxToolCalls}`;
+}
+
 export function truncateEchoInkToolResult(value: unknown, maxChars = DEFAULT_TOOL_RESULT_MAX_CHARS): string {
   const text = stringifyToolValue(value);
   if (text.length <= maxChars) return text;
@@ -202,4 +213,8 @@ function appendToolResultPrompt(prompt: string, request: EchoInkToolCallRequest,
     "",
     "Continue from the tool result. If no more tools are needed, answer normally without an echoink-tool-call block."
   ].join("\n");
+}
+
+export function buildEchoInkToolResultTurnPrompt(request: EchoInkToolCallRequest, output: string): string {
+  return appendToolResultPrompt("", request, output).trim();
 }

@@ -18,12 +18,39 @@ export function formatOpenCodeError(error: any): string {
   return safeOpenCodeStringify(error);
 }
 
+export function isOpenCodeNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as Record<string, any>;
+  const status = firstFiniteOpenCodeNumber(
+    value.status,
+    value.statusCode,
+    value.code,
+    value.data?.status,
+    value.data?.statusCode,
+    value.data?.code
+  );
+  if (status === 404) return true;
+  const name = firstOpenCodeString(value.name, value.data?.name).toLowerCase();
+  if (name === "notfounderror" || name === "not_found") return true;
+  const message = firstOpenCodeString(value.message, value.data?.message).toLowerCase();
+  return /\bsession\s+not\s+found\b/.test(message);
+}
+
 function firstOpenCodeString(...values: any[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
+}
+
+function firstFiniteOpenCodeNumber(...values: any[]): number {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
 }
 
 function safeOpenCodeStringify(error: any): string {

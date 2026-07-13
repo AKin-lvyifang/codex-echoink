@@ -1,12 +1,13 @@
 import type { AgentBackendCapabilities } from "../agent/types";
 import type { PreparedAgentResources } from "../agent/runtime";
+import type { ResourceRef, ResourceSelectionSnapshot } from "../harness/contracts/run";
 import type { CodexPluginInfo, CodexSkill, McpServerStatus } from "../types/app-server";
 import type { WorkspaceResourceToggles } from "../settings/settings";
 import { buildBuiltinToolBundleResources } from "./tool-bundles";
 import { defaultMcpBrokerSettings, isMcpBrokerConnectable } from "./mcp-broker";
 import { mcpResourceFromCodexServer, mcpResourceFromHermesServer, type HermesMcpServerInfo } from "./mcp-loader";
 import { skillResourceFromCodexSkill, skillResourceFromHermesSkill, type HermesSkillInfo } from "./skill-loader";
-import type { EchoInkMcpConnectionRecords, EchoInkResource, EchoInkResourceScope, EchoInkResourceSettings } from "./types";
+import type { EchoInkMcpConnectionRecords, EchoInkResource, EchoInkResourceScope, EchoInkResourceSettings, EchoInkResourceSource } from "./types";
 
 export interface BuildEchoInkResourceCatalogInput {
   codex?: {
@@ -110,6 +111,27 @@ export function prepareAgentResources(catalog: EchoInkResource[], input: Prepare
   };
 }
 
+export function resourceSelectionFromPreparedResources(
+  resources: Pick<PreparedAgentResources, "enabledResources" | "warnings">,
+  backendId: string,
+  resolvedAt = Date.now()
+): ResourceSelectionSnapshot {
+  const selected: ResourceRef[] = [];
+  const warnings = [...resources.warnings];
+  for (const resource of resources.enabledResources) {
+    const ref = resourceRefFromEchoInkResource(resource, backendId);
+    if (ref) {
+      selected.push(ref);
+      continue;
+    }
+    const nativeBackendId = nativeBackendIdForResourceSource(resource.source);
+    if (nativeBackendId && nativeBackendId !== backendId) {
+      warnings.push(`资源 ${resource.name || resource.id} 属于 ${nativeBackendId} 原生资源，当前后端 ${backendId} 不可直接使用。`);
+    }
+  }
+  return { selected, resolvedAt, warnings };
+}
+
 export function enabledResourcesForScope(
   catalog: EchoInkResource[],
   scope: EchoInkResourceScope,
@@ -171,6 +193,8 @@ export function workspaceResourcesFromEchoInkResources(
   return toggles;
 }
 
+export const codexResourceOverridesFromEchoInkResources = workspaceResourcesFromEchoInkResources;
+
 export function hasEnabledMcpResources(
   catalog: EchoInkResource[],
   scope: EchoInkResourceScope,
@@ -229,4 +253,25 @@ function stableResourceId(source: string, kind: string, rawName: string): string
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return `${source}:${kind}:${name || "resource"}`;
+}
+
+function resourceRefFromEchoInkResource(resource: EchoInkResource, backendId: string): ResourceRef | null {
+  if (resource.source === "echoink-local") {
+    if (resource.kind === "tool-bundle") return null;
+    return { plane: "echoink-vault", resourceId: resource.contentPath || resource.name || resource.id };
+  }
+  if (resource.bridgeMode === "prompt-only") return { plane: "imported-copy", resourceId: resource.id };
+  const nativeBackendId = nativeBackendIdForResourceSource(resource.source);
+  if (nativeBackendId && nativeBackendId === backendId) {
+    return { plane: "agent-native", backendId: nativeBackendId, resourceId: resource.name || resource.id };
+  }
+  if (resource.source === "manual") return { plane: "imported-copy", resourceId: resource.id };
+  return null;
+}
+
+function nativeBackendIdForResourceSource(source: EchoInkResourceSource): string {
+  if (source === "codex-import") return "codex-cli";
+  if (source === "opencode-import") return "opencode";
+  if (source === "hermes-import") return "hermes";
+  return "";
 }
