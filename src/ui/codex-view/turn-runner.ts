@@ -67,6 +67,9 @@ export async function resumeQueuedTurns(view: CodexViewTurnContext, sessionId: s
 
 export async function afterTurnSettled(view: CodexViewTurnContext, sessionId: string, succeeded: boolean): Promise<void> {
   const settlement = view.turnQueue.settleSessionQueue(sessionId, succeeded);
+  await view.plugin.enforceNativeSessionLeaseLimits?.().catch((error: unknown) => {
+    console.warn("EchoInk native lease cleanup failed", error);
+  });
   if (settlement === "continue") {
     await view.startNextQueuedTurn(sessionId);
   }

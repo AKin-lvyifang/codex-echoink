@@ -9,7 +9,10 @@ import { CodexRichAgentAdapter, type CodexRichAgentAdapterOptions } from "../har
 import { CodexRichNotificationHub } from "../harness/agents/adapters/codex-rich-notification-hub";
 import type { HarnessEventSink } from "../harness/contracts/event";
 import type { NativeExecutionRecord } from "../harness/contracts/native-execution";
+import type { NativeExecutionDispositionResult, NativeSessionLease } from "../harness/contracts/native-execution";
 import { EchoInkHarnessKernel, type HarnessRunWithAdapterInput } from "../harness/kernel/harness-kernel";
+import { NativeSessionLeaseManager, type NativeSessionLeaseCleanupExecutionResult } from "../harness/kernel/native-session-lease-manager";
+import { sessionNativeExecutionRefs } from "../harness/kernel/session-service";
 import type { AppendRunEventInput, SettleRunTerminalInput } from "../harness/kernel/run-orchestrator";
 import { FileRunLedger } from "../harness/ledger/run-ledger";
 import { FileMemoryProvider } from "../harness/memory/file-memory";
@@ -18,6 +21,7 @@ import { NativeExecutionStore } from "../harness/native/native-execution-store";
 import { buildEchoInkResourceCatalog } from "../resources/registry";
 import { loadVaultEchoInkResources } from "../resources/vault-resource-catalog";
 import type { EchoInkResource } from "../resources/types";
+import type { StoredSession } from "../settings/settings";
 import type { CodexNotification, UserInput } from "../types/app-server";
 
 export class EchoInkHarnessService {
@@ -26,6 +30,8 @@ export class EchoInkHarnessService {
   private nativeExecutionManager: NativeExecutionManager | null = null;
   private nativeExecutionManagerKey = "";
   private nativeExecutionDeviceKey = "";
+  private readonly nativeSessionLeaseManager = new NativeSessionLeaseManager();
+  private nativeLeaseCleanupQueue: Promise<NativeSessionLeaseCleanupExecutionResult[]> = Promise.resolve([]);
   private readonly codexRichNotificationHub = new CodexRichNotificationHub();
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
@@ -69,6 +75,48 @@ export class EchoInkHarnessService {
 
   async cleanupDueNativeExecutions(limit = 20): Promise<NativeCleanupResult[]> {
     return await this.getNativeExecutionManager().cleanupDue(limit);
+  }
+
+  async enforceNativeSessionLeaseLimits(): Promise<NativeSessionLeaseCleanupExecutionResult[]> {
+    const run = this.nativeLeaseCleanupQueue
+      .catch(() => [])
+      .then(async () => await this.nativeSessionLeaseManager.cleanupSessions({
+        sessions: this.plugin.settings.sessions,
+        now: Date.now(),
+        commit: async () => await this.plugin.saveSettings(true, { strictConversationStore: true }),
+        dispose: async (lease, reason) => await this.disposeNativeSessionLease(lease, reason)
+      }));
+    this.nativeLeaseCleanupQueue = run;
+    return await run;
+  }
+
+  async commitEchoInkSessionDeletion(session: StoredSession): Promise<NativeCleanupResult[]> {
+    await this.plugin.saveSettings(true, { strictConversationStore: true });
+    await this.plugin.deleteStoredConversationSession(session.id);
+    return await this.cleanupSessionNativeExecutions(session, "session.delete");
+  }
+
+  async resetEchoInkSessionNativeCache(session: StoredSession): Promise<NativeCleanupResult[]> {
+    const previousBindings = session.backendBindings;
+    const previousThreadId = session.threadId;
+    const cleanupSession: StoredSession = { ...session, backendBindings: previousBindings, threadId: previousThreadId };
+    if (!sessionNativeExecutionRefs(cleanupSession).length) return [];
+    session.backendBindings = Object.fromEntries(Object.entries(previousBindings ?? {}).map(([backendId, binding]) => [
+      backendId,
+      { ...binding, leaseStatus: "cleanup-pending" as const }
+    ]));
+    delete session.threadId;
+    try {
+      await this.plugin.saveSettings(true, { strictConversationStore: true });
+    } catch (error) {
+      session.backendBindings = previousBindings;
+      session.threadId = previousThreadId;
+      throw error;
+    }
+    const results = await this.cleanupSessionNativeExecutions(cleanupSession, "session.cache-reset");
+    delete session.backendBindings;
+    await this.plugin.saveSettings(true, { strictConversationStore: true });
+    return results;
   }
 
   async failPendingNativeExecutionsForRecovery(input: { reason: string; surface?: string; sessionId?: string }): Promise<number> {
@@ -206,6 +254,80 @@ export class EchoInkHarnessService {
       vaultPath: this.plugin.getVaultPath(),
       nativeRefContext: this.getNativeExecutionRefContext(backendId)
     });
+  }
+
+  private async disposeNativeSessionLease(
+    lease: NativeSessionLease,
+    _reason: string
+  ): Promise<NativeExecutionDispositionResult> {
+    const adapter = this.createNativeCleanupAdapter(lease.backendId as AgentBackendKind);
+    const capabilities = adapter.manifest.nativeExecution?.dispositions;
+    const requested = capabilities?.delete
+      ? "delete" as const
+      : capabilities?.archive
+        ? "archive" as const
+        : capabilities?.processExit
+          ? "process-exit" as const
+          : "retain" as const;
+    if (requested === "retain" || !adapter.disposeNativeExecution) {
+      return { outcome: "retained", message: `${adapter.manifest.displayName} does not expose native cache cleanup` };
+    }
+    try {
+      await adapter.connect({
+        runId: `lease-cleanup:${lease.leaseId}`,
+        sessionId: lease.echoInkSessionId,
+        workspace: { vaultPath: this.plugin.getVaultPath(), cwd: this.plugin.getVaultPath() }
+      });
+      return await adapter.disposeNativeExecution({ ref: lease.native, requested, reason: "manual" });
+    } finally {
+      await adapter.dispose().catch(() => undefined);
+    }
+  }
+
+  private async cleanupSessionNativeExecutions(session: StoredSession, workflow: string): Promise<NativeCleanupResult[]> {
+    const manager = this.getNativeExecutionManager();
+    const now = Date.now();
+    const results: NativeCleanupResult[] = [];
+    for (const native of sessionNativeExecutionRefs(session)) {
+      const recordId = `${workflow}:${session.id}:${native.backendId}`;
+      try {
+        results.push(await manager.cleanupCommitted({
+          id: recordId,
+          runId: `${workflow}:${session.id}`,
+          sessionId: session.id,
+          surface: "chat",
+          workflow,
+          native,
+          policy: {
+            historyAuthority: "echoink",
+            mode: "leased-conversation",
+            preferredDisposition: ["delete", "archive", "process-exit", "retain"],
+            retainWhenLocalCommitFails: true,
+            cleanupRequiredForTaskSuccess: false
+          },
+          localCommit: "committed",
+          cleanup: "pending",
+          attempts: 0,
+          nextAttemptAt: now,
+          lastError: "",
+          createdAt: now,
+          settledAt: now,
+          committedAt: now,
+          disposedAt: 0,
+          emitEvents: false,
+          dispositionReason: "manual"
+        }));
+      } catch (error) {
+        console.error("EchoInk session native cleanup scheduling failed", error);
+        results.push({
+          recordId,
+          cleanup: "failed",
+          attempted: false,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    return results;
   }
 
   private getNativeExecutionDeviceKey(): string {

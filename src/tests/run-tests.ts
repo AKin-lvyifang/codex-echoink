@@ -163,6 +163,8 @@ import { verifyDigestEvidence, type KnowledgeTransactionSnapshot } from "../know
 import { runKnowledgeBasePerformanceTests } from "./knowledge-base-performance-tests";
 import { runHarnessV2MemoryTests } from "./harness-v2/memory";
 import { runHarnessV2AdapterTests } from "./harness-v2/adapters";
+import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-store";
+import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
@@ -11628,5 +11630,7 @@ async function assertNoReportFileForResult(vaultPath: string, result: Pick<Knowl
 await runKnowledgeBasePerformanceTests();
 await runHarnessV2MemoryTests();
 await runHarnessV2AdapterTests();
+await runHarnessV2ConversationStoreTests();
+await runHarnessV2SessionContextTests();
 
 console.log("All tests passed");

@@ -7,6 +7,7 @@ import type { NativeExecutionRecord } from "./harness/contracts/native-execution
 import type { HarnessRunWithAdapterInput } from "./harness/kernel/harness-kernel";
 import type { AppendRunEventInput, SettleRunTerminalInput } from "./harness/kernel/run-orchestrator";
 import type { NativeCleanupResult, SettleNativeExecutionInput } from "./harness/native/native-execution-manager";
+import type { NativeSessionLeaseCleanupExecutionResult } from "./harness/kernel/native-session-lease-manager";
 import { closeMcpBrokerConnectionPool } from "./resources/mcp-broker";
 import type { CallEchoInkMcpToolInput } from "./resources/mcp-broker-service";
 import type { EchoInkResource } from "./resources/types";
@@ -18,12 +19,12 @@ import type {
   KnowledgeBaseStorageStats
 } from "./knowledge-base/history-store";
 import type { ReviewManager } from "./review/manager";
-import type { ChatMessage, CodexForObsidianSettings, ResourceManagementTab } from "./settings/settings";
+import type { ChatMessage, CodexForObsidianSettings, ResourceManagementTab, StoredSession } from "./settings/settings";
 import type { CodexNotification, CodexSkill, CodexStatusSnapshot, UserInput } from "./types/app-server";
 import type { CodexView } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
 import { EchoInkConnectionService } from "./plugin/connection-service";
-import { EchoInkSettingsStore } from "./plugin/settings-store";
+import { EchoInkSettingsStore, type SettingsSaveOptions } from "./plugin/settings-store";
 import { EchoInkViewService } from "./plugin/view-service";
 import { EchoInkHarnessService } from "./plugin/harness-service";
 
@@ -98,6 +99,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async recordNativeExecution(record: NativeExecutionRecord): Promise<void> { return await this.getHarnessService().recordNativeExecution(record); }
   async settleNativeExecution(input: SettleNativeExecutionInput): Promise<NativeExecutionRecord | null> { return await this.getHarnessService().settleNativeExecution(input); }
   async cleanupDueNativeExecutions(limit = 20): Promise<NativeCleanupResult[]> { return await this.getHarnessService().cleanupDueNativeExecutions(limit); }
+  async enforceNativeSessionLeaseLimits(): Promise<NativeSessionLeaseCleanupExecutionResult[]> { return await this.getHarnessService().enforceNativeSessionLeaseLimits(); }
+  async commitEchoInkSessionDeletion(session: StoredSession): Promise<NativeCleanupResult[]> { return await this.getHarnessService().commitEchoInkSessionDeletion(session); }
+  async resetEchoInkSessionNativeCache(session: StoredSession): Promise<NativeCleanupResult[]> { return await this.getHarnessService().resetEchoInkSessionNativeCache(session); }
   async failPendingNativeExecutionsForRecovery(input: { reason: string; surface?: string; sessionId?: string }): Promise<number> { return await this.getHarnessService().failPendingNativeExecutionsForRecovery(input); }
   createCodexRichAgentAdapter(options: Omit<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread"> & Partial<Pick<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread">>) { return this.getHarnessService().createCodexRichAgentAdapter(options); }
   hasCodexHarnessTransport(): boolean { return Boolean(this.codex); }
@@ -124,7 +128,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> { return this.getSettingsStore().loadSettings(); }
-  async saveSettings(force = false, options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
+  async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
+  async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> { return this.getSettingsStore().readKnowledgeBaseHistoryIndex(); }

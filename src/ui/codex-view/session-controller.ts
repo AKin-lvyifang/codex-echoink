@@ -2,6 +2,7 @@ import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import { swallowError } from "../../core/error-handling";
 import { clearKnowledgeBaseVisibleHistory } from "../../knowledge-base/session-history";
+import { advanceSessionRevision, sessionBackendBinding } from "../../harness/kernel/session-service";
 import { ensureKnowledgeBaseSession, isKnowledgeBaseSession as isKnowledgeSession, newId, type StoredAttachment, type StoredSession } from "../../settings/settings";
 import { RuntimeTurnQueue } from "../turn-queue";
 import { textInputModal } from "../modals";
@@ -83,15 +84,31 @@ export function renderTabsView(host: CodexSessionHost): void {
 export function openSessionMenuView(host: CodexSessionHost, event: MouseEvent, session: StoredSession): void {
   showSessionMenu(event, host.isKnowledgeBaseSession(session), {
     onRename: () => void host.renameSession(session),
+    onResetCache: () => void resetSessionNativeCache(host, session),
     onDelete: () => void host.deleteSession(session.id)
   });
+}
+
+export async function resetSessionNativeCache(host: CodexSessionHost, session: StoredSession): Promise<void> {
+  if (host.running && host.activeRunSessionId === session.id) {
+    new Notice("当前会话正在运行，结束后再重置 Agent 缓存");
+    return;
+  }
+  try {
+    const results = await host.plugin.resetEchoInkSessionNativeCache(session);
+    const retained = results.filter((result) => result.cleanup !== "disposed").length;
+    new Notice(retained ? `Agent 缓存已重置；${retained} 个原生记录已保留或等待重试` : "Agent 缓存已重置");
+  } catch (error) {
+    new Notice(`重置 Agent 缓存失败：${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function renameSession(host: CodexSessionHost, session: StoredSession): Promise<void> {
   const name = await textInputModal(host.app, "重命名会话", "名称", session.title);
   if (!name) return;
   session.title = name;
-  if (session.threadId) await host.plugin.codex?.setThreadName(session.threadId, name).catch(swallowError("rename Codex chat thread"));
+  const threadId = sessionBackendBinding(session, "codex-cli")?.nativeThreadId ?? session.threadId;
+  if (threadId) await host.plugin.setCodexHarnessThreadName(threadId, name).catch(swallowError("rename Codex chat thread"));
   await host.plugin.saveSettings();
   host.renderTabs();
 }
@@ -100,11 +117,13 @@ export async function deleteSession(host: CodexSessionHost, sessionId: string): 
   const sessions = host.plugin.settings.sessions;
   const index = sessions.findIndex((session) => session.id === sessionId);
   if (index < 0) return;
-  if (host.isKnowledgeBaseSession(sessions[index])) {
+  const session = sessions[index];
+  if (host.isKnowledgeBaseSession(session)) {
     new Notice("知识库管理频道不能删除");
     return;
   }
-  host.turnQueue.clearSessionQueue(sessionId);
+  const previousSessions = sessions.slice();
+  const previousActiveSessionId = host.plugin.settings.activeSessionId;
   const wasActive = host.plugin.settings.activeSessionId === sessionId;
   sessions.splice(index, 1);
   if (!sessions.length) {
@@ -113,10 +132,21 @@ export async function deleteSession(host: CodexSessionHost, sessionId: string): 
     host.plugin.settings.activeSessionId = sessions[Math.max(0, index - 1)]?.id ?? sessions[0].id;
     host.resetVirtualWindow();
   }
-  await host.plugin.saveSettings();
+  let cleanupResults = [] as Awaited<ReturnType<CodexForObsidianPlugin["commitEchoInkSessionDeletion"]>>;
+  try {
+    cleanupResults = await host.plugin.commitEchoInkSessionDeletion(session);
+  } catch (error) {
+    host.plugin.settings.sessions = previousSessions;
+    host.plugin.settings.activeSessionId = previousActiveSessionId;
+    await host.plugin.saveSettings(true).catch(() => undefined);
+    new Notice(`删除会话失败：${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  host.turnQueue.clearSessionQueue(sessionId);
   host.renderTabs();
   host.renderMessages({ forceBottom: true });
-  new Notice("已删除会话");
+  const retained = cleanupResults.filter((result) => result.cleanup !== "disposed").length;
+  new Notice(retained ? `已删除会话；${retained} 个原生缓存已保留或等待重试` : "已删除会话");
 }
 
 export async function clearKnowledgeBasePage(host: CodexSessionHost, session: StoredSession): Promise<void> {
@@ -166,6 +196,7 @@ export async function restoreKnowledgeBaseHistoryDate(host: CodexSessionHost, se
     new Notice("这一天没有可恢复的历史");
     return;
   }
+  advanceSessionRevision(session);
   session.messages = messages;
   session.historyActiveDate = date;
   delete session.messagesHiddenBefore;

@@ -3,12 +3,15 @@ import * as path from "path";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { swallowError } from "../core/error-handling";
-import { externalizeLargeMessages, prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
+import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
+import { FileConversationStore } from "../harness/conversation/conversation-store";
 import {
   clearLegacyChatWorkspaceDefaults,
   ensureKnowledgeBaseSession,
   normalizeSettingsData,
-  type ChatMessage
+  type ChatMessage,
+  type CodexForObsidianSettings,
+  type StoredSession
 } from "../settings/settings";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import {
@@ -29,11 +32,20 @@ import {
 } from "../knowledge-base/history-store";
 import { readKnowledgeBaseReportExcerpt, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 
+export interface SettingsSaveOptions {
+  flushConversationStore?: boolean;
+  strictConversationStore?: boolean;
+  flushKnowledgeBaseHistory?: boolean;
+  strictKnowledgeBaseHistory?: boolean;
+}
+
 export class EchoInkSettingsStore {
   private startupMaintenancePromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
+  private conversationStore: FileConversationStore | null = null;
+  private conversationStoreRootPath = "";
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
@@ -42,6 +54,7 @@ export class EchoInkSettingsStore {
     const previousVersion = typeof data?.settingsVersion === "number" ? data.settingsVersion : 0;
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
+    await this.hydrateConversationSessions();
     const sessionCountBefore = this.plugin.settings.sessions.length;
     const knowledgeSessionBefore = this.plugin.settings.knowledgeBase.sessionId;
     const knowledgeRulesMigrated = await this.applyKnowledgeBaseRulesFileDefault(data);
@@ -54,7 +67,7 @@ export class EchoInkSettingsStore {
     }
   }
 
-  async saveSettings(force = false, options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
+  async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
     if (force) {
       if (this.saveTimer) {
         clearTimeout(this.saveTimer);
@@ -93,6 +106,10 @@ export class EchoInkSettingsStore {
 
   async readRawMessageText(rawRef: string): Promise<string> {
     return readRawText(this.plugin.getVaultPath(), rawRef, this.plugin.getPluginDataDirName());
+  }
+
+  async deleteConversationSession(sessionId: string): Promise<boolean> {
+    return await this.getConversationStore().deleteSession(sessionId);
   }
 
   async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
@@ -195,11 +212,12 @@ export class EchoInkSettingsStore {
     return true;
   }
 
-  private async flushSettingsSave(options: { flushKnowledgeBaseHistory?: boolean } = {}): Promise<void> {
+  private async flushSettingsSave(options: SettingsSaveOptions = {}): Promise<void> {
     const run = this.saveQueue.then(async () => {
       await this.flushRawWrites();
-      if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory();
-      await this.plugin.saveData(this.plugin.settings);
+      if (options.flushConversationStore !== false) await this.flushConversationStore(options.strictConversationStore !== false);
+      if (options.flushKnowledgeBaseHistory !== false) await this.flushKnowledgeBaseHistory(options.strictKnowledgeBaseHistory === true);
+      await this.plugin.saveData(settingsForDataSave(this.plugin.settings));
     });
     this.saveQueue = run.catch((error) => {
       this.reportSettingsSaveError(error);
@@ -217,11 +235,62 @@ export class EchoInkSettingsStore {
     if (pending.length) await Promise.allSettled(pending);
   }
 
-  private async flushKnowledgeBaseHistory(): Promise<void> {
+  private async flushKnowledgeBaseHistory(strict = false): Promise<void> {
     try {
       await persistAndCompactKnowledgeBaseHistory(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName(), this.plugin.settings);
     } catch (error) {
       console.error("Codex knowledge history save failed", error);
+      if (strict) throw error;
     }
   }
+
+  private async flushConversationStore(strict = true): Promise<void> {
+    try {
+      await this.getConversationStore().persistSettingsSessions(this.plugin.settings);
+    } catch (error) {
+      console.error("EchoInk conversation store save failed", error);
+      if (strict) throw error;
+    }
+  }
+
+  private async hydrateConversationSessions(): Promise<void> {
+    await Promise.all(this.plugin.settings.sessions.map(async (session) => {
+      const stored = await this.getConversationStore().readSession(session.id).catch(() => null);
+      if (!stored) return;
+      applyStoredConversation(session, stored);
+    }));
+  }
+
+  private getConversationStore(): FileConversationStore {
+    const rootPath = path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "conversations");
+    if (this.conversationStore && this.conversationStoreRootPath === rootPath) return this.conversationStore;
+    this.conversationStoreRootPath = rootPath;
+    this.conversationStore = new FileConversationStore({ rootPath });
+    return this.conversationStore;
+  }
+}
+
+export function settingsForDataSave(settings: CodexForObsidianSettings): CodexForObsidianSettings {
+  const data = JSON.parse(JSON.stringify(settings)) as CodexForObsidianSettings;
+  for (const session of data.sessions) {
+    session.messages = [];
+    delete session.threadId;
+  }
+  return data;
+}
+
+function applyStoredConversation(target: StoredSession, stored: StoredSession): void {
+  target.title = stored.title;
+  target.kind = stored.kind;
+  target.cwd = stored.cwd;
+  target.messages = stored.messages;
+  target.backendBindings = stored.backendBindings;
+  target.revision = stored.revision;
+  target.contextSnapshot = stored.contextSnapshot;
+  target.rollingSummary = stored.rollingSummary;
+  target.messagesHiddenBefore = stored.messagesHiddenBefore;
+  target.historyActiveDate = stored.historyActiveDate;
+  target.tokenUsage = stored.tokenUsage;
+  target.createdAt = stored.createdAt;
+  target.updatedAt = stored.updatedAt;
 }

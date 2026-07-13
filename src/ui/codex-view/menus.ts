@@ -65,6 +65,7 @@ export interface ModelMenuCallbacks extends KnowledgeModelMenuCallbacks {
 
 export interface SessionMenuCallbacks {
   onRename: () => void;
+  onResetCache: () => void;
   onDelete: () => void;
 }
 
@@ -246,24 +247,30 @@ export function openModelMenu(event: MouseEvent, state: ModelMenuState, callback
 
 export function openSessionMenu(event: MouseEvent, knowledgeSession: boolean, callbacks: SessionMenuCallbacks): void {
   event.preventDefault();
-  if (knowledgeSession) {
-    new Notice("知识库管理频道是常驻频道，不能删除");
-    return;
-  }
   const menu = new Menu();
+  if (!knowledgeSession) {
+    menu.addItem((item) =>
+      item
+        .setTitle("重命名会话")
+        .setIcon("pencil")
+        .onClick(callbacks.onRename)
+    );
+  }
   menu.addItem((item) =>
     item
-      .setTitle("重命名会话")
-      .setIcon("pencil")
-      .onClick(callbacks.onRename)
+      .setTitle("重置 Agent 缓存")
+      .setIcon("rotate-ccw")
+      .onClick(callbacks.onResetCache)
   );
-  menu.addItem((item) =>
-    item
-      .setTitle("删除会话")
-      .setIcon("trash")
-      .setWarning(true)
-      .onClick(callbacks.onDelete)
-  );
+  if (!knowledgeSession) {
+    menu.addItem((item) =>
+      item
+        .setTitle("删除会话")
+        .setIcon("trash")
+        .setWarning(true)
+        .onClick(callbacks.onDelete)
+    );
+  }
   menu.showAtMouseEvent(event);
 }
 
