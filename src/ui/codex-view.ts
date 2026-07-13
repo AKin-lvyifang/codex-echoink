@@ -19,7 +19,6 @@ import { composerPrimaryActionForState, type ComposerPrimaryActionState } from "
 import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
 import { clearPromptEnhanceReview } from "./codex-view/composer";
 import { CodexMessageListRenderer, isProcessItemType } from "./codex-view/message-list";
-import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./codex-view/knowledge-context-bridge";
 import { renderMcpPanelView } from "./codex-view/mcp-panel";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
 import {

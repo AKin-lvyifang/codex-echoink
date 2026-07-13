@@ -1,12 +1,12 @@
 import * as path from "path";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { createAgentTaskRuntime } from "../agent/factory";
 import { getAgentBackendDefinition } from "../agent/registry";
 import { createEchoInkMcpToolBridgeRuntime } from "../agent/tool-bridge";
-import type { AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
+import type { AgentToolBridgeRuntime, PreparedAgentResources } from "../agent/runtime";
 import type { AgentBackendKind } from "../agent/types";
 import { OpenCodeBackend } from "../core/opencode-backend";
+import { harnessKnowledgePromptUsesPreparedResources, harnessKnowledgeUsesEchoInkToolBridge, harnessMessageModelId } from "../harness/agents/backend-runtime-profile";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import type { KnowledgeBaseManagedThreadKind, ReviewReportKind, StoredAttachment } from "../settings/settings";
@@ -14,7 +14,8 @@ import type { CodexNotification, PermissionMode } from "../types/app-server";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult, type KnowledgeBaseTurnOptionOverrides } from "./command-router";
 import {
   buildPromptWithPreparedResources,
-  selectOpenCodeModel
+  selectOpenCodeModel,
+  type KnowledgeAgentTaskOutput
 } from "./agent-runner";
 import { AGENTS_RULES_FILE } from "./constants";
 import { KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
@@ -28,7 +29,6 @@ import {
 } from "./maintenance";
 import type { KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { KnowledgeBaseCaptureService } from "./capture";
-import { KnowledgeBaseManagedThreadStore } from "./managed-threads";
 import { KnowledgeBaseQueryJournalService } from "./query-journal";
 import { KnowledgeBaseMaintenanceRunner } from "./maintenance-runner";
 import { KnowledgeBaseAgentTaskService } from "./agent-task-service";
@@ -41,7 +41,6 @@ export class KnowledgeBaseManager {
   private readonly scheduler: KnowledgeBaseScheduler;
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly queryJournalService: KnowledgeBaseQueryJournalService;
-  private readonly managedThreads: KnowledgeBaseManagedThreadStore;
   private readonly maintenanceRunner: KnowledgeBaseMaintenanceRunner;
   private readonly agentTaskService: KnowledgeBaseAgentTaskService;
   private readonly rawDigestCalibrationRunner: KnowledgeBaseRawDigestCalibrationRunner;
@@ -50,10 +49,8 @@ export class KnowledgeBaseManager {
   private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
-    this.managedThreads = new KnowledgeBaseManagedThreadStore(plugin);
-    this.agentTaskService = new KnowledgeBaseAgentTaskService(plugin, this.managedThreads, {
-      isCancelRequested: () => this.cancelRequested,
-      createKnowledgeAgentRuntime: (backend) => this.createKnowledgeAgentRuntime(backend)
+    this.agentTaskService = new KnowledgeBaseAgentTaskService(plugin, {
+      isCancelRequested: () => this.cancelRequested
     });
     this.rawDigestCalibrationRunner = new KnowledgeBaseRawDigestCalibrationRunner(plugin, {
       isRunning: () => this.running,
@@ -140,9 +137,9 @@ export class KnowledgeBaseManager {
     });
   }
 
-  unload(): void {
+  async unload(): Promise<void> {
     this.scheduler.unload();
-    this.agentTaskService.unload();
+    await this.agentTaskService.unload();
     this.cancelRequested = false;
   }
 
@@ -370,21 +367,25 @@ export class KnowledgeBaseManager {
     }
   }
 
-  handleCodexNotification(notification: CodexNotification): boolean {
-    return this.agentTaskService.handleCodexNotification(notification);
+  handleCodexNotification(_notification: CodexNotification): boolean {
+    return this.agentTaskService.handleCodexNotification();
   }
 
   async archivePendingCodexKnowledgeThreads(): Promise<number> {
-    return this.managedThreads.archivePending({
-      recoverStaleReason: !this.running && !this.agentTaskService.hasActiveTask
-        ? "归档前恢复遗留 running 状态"
-        : undefined
-    });
+    return await this.settlePendingKnowledgeBaseNativeExecutions();
+  }
+
+  async settlePendingKnowledgeBaseNativeExecutions(): Promise<number> {
+    return await this.agentTaskService.settlePendingNativeExecutions();
+  }
+
+  getLastNativeLifecycleSummary() {
+    return this.agentTaskService.getLastNativeLifecycleSummary();
   }
 
   private recoverPersistedRunState(reason: string): number {
     const settings = this.plugin.settings.knowledgeBase;
-    let recovered = this.managedThreads.recoverStaleRunning(reason);
+    let recovered = 0;
     if (settings.lastRunStatus === "running") {
       settings.lastRunStatus = "failed";
       settings.lastError = appendKnowledgeBaseWarning(settings.lastError, reason);
@@ -406,29 +407,30 @@ export class KnowledgeBaseManager {
     codexWriteScope: "knowledge-base" | "knowledge-lint" | "journal";
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
     managedKind: KnowledgeBaseManagedThreadKind;
-  }): Promise<string> {
+  }): Promise<KnowledgeAgentTaskOutput> {
     const backend = this.resolveKnowledgeBackend();
-    const resources = this.prepareKnowledgeAgentResources(backend);
-    const toolBridge = backend === "codex-cli" ? null : await this.prepareKnowledgeAgentToolBridge();
-    const prompt = buildPromptWithPreparedResources(input.prompt, resources);
-    if (backend === "opencode") {
-      return await this.runOpenCodeKnowledgeTask(prompt, input.sources, input.permission, resources, toolBridge, input.turnOptionOverrides);
-    }
-    if (backend === "hermes") {
-      return await this.runHermesKnowledgeTask(input.prompt, input.sources, input.permission, resources, toolBridge, input.turnOptionOverrides);
-    }
-    return await this.runCodexKnowledgeTask(
+    const resources = await this.prepareKnowledgeAgentResources(backend);
+    const toolBridge = harnessKnowledgeUsesEchoInkToolBridge(backend) ? await this.prepareKnowledgeAgentToolBridge() : null;
+    const prompt = harnessKnowledgePromptUsesPreparedResources(backend)
+      ? buildPromptWithPreparedResources(input.prompt, resources)
+      : input.prompt;
+    return await this.agentTaskService.runTask({
+      backend,
       prompt,
-      input.sources,
-      input.permission === "read-only" && input.codexWriteScope !== "knowledge-lint" ? "read-only" : "workspace-write",
-      input.codexWriteScope,
-      input.turnOptionOverrides,
-      input.managedKind
-    );
+      sources: input.sources,
+      permission: backend === "codex-cli" && input.permission === "read-only" && input.codexWriteScope === "knowledge-lint"
+        ? "workspace-write"
+        : input.permission,
+      codexWriteScope: input.codexWriteScope,
+      turnOptionOverrides: input.turnOptionOverrides,
+      managedKind: input.managedKind,
+      resources,
+      toolBridge
+    });
   }
 
-  private prepareKnowledgeAgentResources(backend: AgentBackendKind): PreparedAgentResources {
-    const catalog = buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
+  private async prepareKnowledgeAgentResources(backend: AgentBackendKind): Promise<PreparedAgentResources> {
+    const catalog = await this.runtimeEchoInkResourceCatalog();
     return prepareAgentResources(catalog, {
       scope: "knowledge",
       backendCapabilities: getAgentBackendDefinition(backend).capabilities,
@@ -439,7 +441,7 @@ export class KnowledgeBaseManager {
 
   private async prepareKnowledgeAgentToolBridge(): Promise<AgentToolBridgeRuntime | null> {
     const resourceSettings = this.plugin.settings.resources;
-    const catalog = buildEchoInkResourceCatalog({ settings: resourceSettings });
+    const catalog = await this.runtimeEchoInkResourceCatalog();
     const callableTools = await buildCallableMcpToolCatalog({
       resources: catalog,
       scope: "knowledge",
@@ -454,46 +456,13 @@ export class KnowledgeBaseManager {
     });
   }
 
-  private async runCodexKnowledgeTask(
-    prompt: string,
-    sources: KnowledgeBaseSource[],
-    permission: PermissionMode = "workspace-write",
-    writeScope: "knowledge-base" | "knowledge-lint" | "journal" = "knowledge-base",
-    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides,
-    managedKind: KnowledgeBaseManagedThreadKind = "unknown"
-  ): Promise<string> {
-    return this.agentTaskService.runCodexKnowledgeTask(prompt, sources, permission, writeScope, turnOptionOverrides, managedKind);
-  }
-
-  private async runOpenCodeKnowledgeTask(
-    prompt: string,
-    sources: KnowledgeBaseSource[],
-    permission: PermissionMode = "workspace-write",
-    resources?: PreparedAgentResources,
-    toolBridge?: AgentToolBridgeRuntime | null,
-    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides
-  ): Promise<string> {
-    return this.agentTaskService.runOpenCodeKnowledgeTask(prompt, sources, permission, resources, toolBridge, turnOptionOverrides);
-  }
-
-  private async runHermesKnowledgeTask(
-    prompt: string,
-    _sources: KnowledgeBaseSource[],
-    permission: PermissionMode = "workspace-write",
-    resources?: PreparedAgentResources,
-    toolBridge?: AgentToolBridgeRuntime | null,
-    turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides
-  ): Promise<string> {
-    return this.agentTaskService.runHermesKnowledgeTask(prompt, _sources, permission, resources, toolBridge, turnOptionOverrides);
-  }
-
-  private createKnowledgeAgentRuntime(backend: AgentBackendKind): AgentTaskRuntime {
-    return createAgentTaskRuntime({
-      backend,
-      settings: this.plugin.settings,
-      vaultPath: this.plugin.getVaultPath(),
-      codexBackend: this.plugin.codex ?? undefined
-    });
+  private async runtimeEchoInkResourceCatalog() {
+    const plugin = this.plugin as CodexForObsidianPlugin & {
+      buildRuntimeEchoInkResourceCatalog?: () => Promise<ReturnType<typeof buildEchoInkResourceCatalog>>;
+    };
+    return typeof plugin.buildRuntimeEchoInkResourceCatalog === "function"
+      ? await plugin.buildRuntimeEchoInkResourceCatalog()
+      : buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
   }
 
   private resolveKnowledgeBackend(): AgentBackendKind {
@@ -503,14 +472,11 @@ export class KnowledgeBaseManager {
 
   private formatFailureContext(reportPath = ""): string {
     const backend = this.resolveKnowledgeBackend();
-    const opencode = this.plugin.settings.opencode;
     const kb = this.plugin.settings.knowledgeBase;
+    const modelLabel = harnessMessageModelId(this.plugin.settings, backend);
     return [
       `后端：${backend}`,
-      backend === "opencode" && opencode.providerId && opencode.modelId ? `模型：${opencode.providerId}/${opencode.modelId}` : "",
-      backend === "hermes" && this.plugin.settings.agents.hermes.providerId && this.plugin.settings.agents.hermes.modelId
-        ? `模型：${this.plugin.settings.agents.hermes.providerId}/${this.plugin.settings.agents.hermes.modelId}`
-        : "",
+      modelLabel ? `模型：${modelLabel}` : "",
       `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : AGENTS_RULES_FILE}`,
       reportPath ? `报告：${reportPath}` : ""
     ].filter(Boolean).join("\n");
@@ -574,7 +540,7 @@ function dashboardSnapshotSignature(settings: CodexForObsidianPlugin["settings"]
     Object.keys(settings.processedSources ?? {}).length,
     (settings.healthHistory ?? []).length,
     (settings.maintenanceHistory ?? []).length,
-    Object.keys(settings.managedThreads ?? {}).length,
+    Object.keys(settings.legacyManagedThreads ?? {}).length,
     settings.initialization.status,
     settings.initialization.initializedAt
   ].join("|");

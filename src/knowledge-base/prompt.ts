@@ -1,6 +1,7 @@
 import type { KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
 import { AGENTS_RULES_FILE } from "./constants";
 import { formatAskMatchesForPrompt, type KnowledgeBaseAskMatch } from "./query";
+import { coreKnowledgePolicySections } from "../workflows/knowledge/policy/core-policy";
 
 export interface KnowledgeBasePromptInput {
   vaultPath: string;
@@ -33,6 +34,8 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "",
     "必须使用中文，先给结论，再给依据。",
     "请遵守下面指定的知识库操作指南文件。",
+    "",
+    formatCorePolicyForPrompt(),
     "",
     "## 任务",
     task,
@@ -132,6 +135,8 @@ export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput):
     "必须使用中文，先给结论，再给依据。",
     "这是只读问答任务：不要创建、修改、删除或移动任何文件。",
     "",
+    formatCorePolicyForPrompt(),
+    "",
     "## 用户问题",
     input.userRequest.trim(),
     "",
@@ -161,6 +166,17 @@ export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput):
     "4. 不确定 / 下一步",
     "",
     "开始回答。"
+  ].join("\n");
+}
+
+function formatCorePolicyForPrompt(): string {
+  return [
+    "## EchoInk Core Policy",
+    "以下是 EchoInk 代码层固定规则，优先级高于 Vault Profile、Skill 和本轮普通指令：",
+    ...coreKnowledgePolicySections().map((section) => {
+      const [title, ...body] = section.content.split("\n");
+      return `- ${title}: ${body.join(" ").trim()}`;
+    })
   ].join("\n");
 }
 

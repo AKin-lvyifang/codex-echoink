@@ -9,6 +9,7 @@ import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJou
 import { buildKnowledgeBaseAskPrompt } from "./prompt";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "./query";
 import type { KnowledgeBaseCitationSummary, KnowledgeBaseSource } from "./types";
+import type { KnowledgeAgentTaskOutput } from "./agent-runner";
 import { exists } from "./utils";
 
 export interface KnowledgeBaseQueryJournalContext {
@@ -24,7 +25,7 @@ export interface KnowledgeBaseQueryJournalContext {
     codexWriteScope: "knowledge-base" | "knowledge-lint" | "journal";
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
     managedKind: KnowledgeBaseManagedThreadKind;
-  }): Promise<string>;
+  }): Promise<KnowledgeAgentTaskOutput>;
 }
 
 export class KnowledgeBaseQueryJournalService {
@@ -65,7 +66,8 @@ export class KnowledgeBaseQueryJournalService {
       });
       return {
         status: "success",
-        message: formatAskAnswer(output, citations),
+        message: formatAskAnswer(output.text, citations),
+        harnessResult: output.harnessResult,
         citations
       };
     } catch (error) {
@@ -114,11 +116,12 @@ export class KnowledgeBaseQueryJournalService {
         managedKind: "journal"
       });
       if (!await exists(target.absolutePath)) {
-        throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.trim() ? `\n\nAgent 输出：${output.trim().slice(0, 800)}` : ""}`);
+        throw new Error(`日记任务结束，但未找到目标文件：${target.relativePath}${output.text.trim() ? `\n\nAgent 输出：${output.text.trim().slice(0, 800)}` : ""}`);
       }
       return {
         status: "success",
-        message: [`已写入日记：`, `- ${target.relativePath}`, output.trim() ? `\n${output.trim().slice(0, 800)}` : ""].filter(Boolean).join("\n")
+        message: [`已写入日记：`, `- ${target.relativePath}`, output.text.trim() ? `\n${output.text.trim().slice(0, 800)}` : ""].filter(Boolean).join("\n"),
+        harnessResult: output.harnessResult
       };
     } catch (error) {
       return {

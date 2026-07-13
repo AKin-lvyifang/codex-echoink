@@ -86,6 +86,9 @@ import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToo
 import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
+import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
+import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
+import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import { closeMcpBrokerConnectionPool, EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
 import { mcpConnectionStatus, mcpConnectionStatusLabel, normalizeMcpConnectionRecords, resolveMcpConnectionConfig } from "../resources/mcp-connections";
 import { parseHermesSkillListOutput } from "../resources/skill-loader";
@@ -165,6 +168,11 @@ import { runHarnessV2MemoryTests } from "./harness-v2/memory";
 import { runHarnessV2AdapterTests } from "./harness-v2/adapters";
 import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-store";
 import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
+import { runHarnessV2KnowledgePolicyProfileTests } from "./harness-v2/knowledge-policy-profile";
+import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger";
+import { runHarnessV2NativeExecutionTests } from "./harness-v2/native-execution";
+import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-lease";
+import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
@@ -178,7 +186,6 @@ import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, finger
 import type { RawSnapshotEntry } from "../knowledge-base/raw-integrity";
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, getTrailingSlashQuery, knowledgeBaseHelpText, knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
-import { routeKnowledgeBaseCodexNotification } from "../knowledge-base/codex-route";
 import {
   compactKnowledgeBaseMessagesToActiveDay,
   collectKnowledgeBaseStorageStats,
@@ -863,24 +870,11 @@ const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process
 const knowledgeAgentTaskServiceSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-task-service.ts"), "utf8");
 assert.match(knowledgeManagerSourceForToolBridge, /prepareKnowledgeAgentToolBridge/);
 assert.match(knowledgeManagerSourceForToolBridge, /runKnowledgeAgentTask/);
-assert.match(knowledgeAgentRunnerSourceForToolBridge, /runAgentTaskWithToolBridge/);
-const hermesGuardWrapperSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendHermesTaskWithGuards"),
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards")
-);
-const openCodeGuardWrapperSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendOpenCodeTaskWithGuards"),
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards")
-);
-const sharedAgentGuardSource = knowledgeAgentTaskServiceSourceForToolBridge.slice(
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private async sendAgentTaskWithGuards"),
-  knowledgeAgentTaskServiceSourceForToolBridge.indexOf("private finishCodexWaiter")
-);
-assert.match(hermesGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("hermes"/);
-assert.match(openCodeGuardWrapperSource, /return this\.sendAgentTaskWithGuards\("opencode"/);
-assert.doesNotMatch(`${hermesGuardWrapperSource}\n${openCodeGuardWrapperSource}`, /new Promise|runKnowledgeAgentTask|setTimeout/);
-assert.equal((sharedAgentGuardSource.match(/runKnowledgeAgentTask\(runtime/g) ?? []).length, 1);
-assert.match(sharedAgentGuardSource, /backend === "hermes" \|\| activeRun\.runId/);
+assert.match(knowledgeAgentRunnerSourceForToolBridge, /TaskRuntimeAgentAdapter/);
+assert.match(knowledgeAgentRunnerSourceForToolBridge, /runWithAdapter/);
+assert.match(knowledgeAgentTaskServiceSourceForToolBridge, /KnowledgeAgentRuntimeController/);
+assert.match(knowledgeAgentTaskServiceSourceForToolBridge, /runHarnessWithAdapter/);
+assert.doesNotMatch(knowledgeAgentTaskServiceSourceForToolBridge, /extractKnowledgeBaseNotificationIds/);
 const editorConnectingStatus = agentEventToEditorStatus({
   event: { type: "connecting", backend: "hermes", createdAt: 1 },
   actionLabel: "续写",
@@ -968,7 +962,7 @@ assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.status, "not-started"
 assert.equal(DEFAULT_SETTINGS.knowledgeBase.initialization.templateVersion, KNOWLEDGE_BASE_TEMPLATE_VERSION);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.healthHistory, []);
 assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.maintenanceHistory, []);
-assert.deepEqual(DEFAULT_SETTINGS.knowledgeBase.managedThreads, {});
+assert.equal(DEFAULT_SETTINGS.knowledgeBase.legacyManagedThreads, undefined);
 const scheduledKnowledgeBaseBase = {
   enabled: true,
   scheduleTime: "09:00",
@@ -1152,10 +1146,10 @@ const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
   registerInterval: () => undefined,
   app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
 } as any);
-assert.equal((staleKnowledgeBaseRunManager as any).recoverPersistedRunState("startup recovery"), 3);
+assert.equal((staleKnowledgeBaseRunManager as any).recoverPersistedRunState("startup recovery"), 2);
 assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastRunStatus, "failed");
 assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastScheduledRunStatus, "failed");
-assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.managedThreads["thread-stale-startup"]?.archiveState, "pending-archive");
+assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.legacyManagedThreads?.["thread-stale-startup"]?.archiveState, "running");
 assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /startup recovery/);
 const dashboardCacheVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-cache-"));
 try {
@@ -2156,8 +2150,8 @@ const knowledgeCanceledOutcome = await startKnowledgeBaseTurnRunner(knowledgeCan
 assert.equal(knowledgeCanceledOutcome, "failed");
 assert.equal(knowledgeCanceledSession.messages.at(-1)?.status, "canceled");
 assert.match(knowledgeCanceledSession.messages.at(-1)?.text ?? "", /已取消/);
-const knowledgeContextBridgeSession = {
-  id: "kb-context-bridge-session",
+const knowledgeHarnessSession = {
+  id: "kb-harness-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
   kind: "knowledge-base" as const,
   cwd: "/vault",
@@ -2165,10 +2159,10 @@ const knowledgeContextBridgeSession = {
   createdAt: Date.now(),
   updatedAt: Date.now()
 };
-const knowledgeContextBridgeView: any = {
+const knowledgeHarnessView: any = {
   ...knowledgeFinalizeView,
   plugin: {
-    settings: { activeSessionId: knowledgeContextBridgeSession.id },
+    settings: { activeSessionId: knowledgeHarnessSession.id },
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({
         status: "success",
@@ -2199,20 +2193,15 @@ const knowledgeContextBridgeView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-const knowledgeContextBridgeOutcome = await startKnowledgeBaseTurnRunner(knowledgeContextBridgeView, knowledgeContextBridgeSession, {
-  ...queuedTurn("kb-context-bridge-item", knowledgeContextBridgeSession.id, "/ask 最近有哪些 GitHub 项目？"),
+const knowledgeHarnessOutcome = await startKnowledgeBaseTurnRunner(knowledgeHarnessView, knowledgeHarnessSession, {
+  ...queuedTurn("kb-harness-item", knowledgeHarnessSession.id, "/ask 最近有哪些 GitHub 项目？"),
   kind: "knowledge-base"
 }, "queue");
-assert.equal(knowledgeContextBridgeOutcome, "completed");
-assert.equal((knowledgeContextBridgeSession as any).knowledgeContext?.length, 1);
-assert.equal((knowledgeContextBridgeSession as any).knowledgeContext[0].intent, "ask");
-assert.equal((knowledgeContextBridgeSession as any).knowledgeContext[0].command, "/ask 最近有哪些 GitHub 项目？");
-assert.match((knowledgeContextBridgeSession as any).knowledgeContext[0].summary, /Alpha 项目/);
-assert.match((knowledgeContextBridgeSession as any).knowledgeContext[0].summary, /wiki\/projects\/github-radar\.md/);
-assert.match(knowledgeContextBridgeSession.messages.at(-1)?.details ?? "", /已保存为后续上下文摘要/);
+assert.equal(knowledgeHarnessOutcome, "completed");
+assert.equal(knowledgeHarnessSession.messages.at(-1)?.citations?.status, "strong");
 
-const failedKnowledgeContextSession = {
-  id: "kb-context-failed-session",
+const failedKnowledgeTurnSession = {
+  id: "kb-harness-failed-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
   kind: "knowledge-base" as const,
   cwd: "/vault",
@@ -2220,11 +2209,11 @@ const failedKnowledgeContextSession = {
   createdAt: Date.now(),
   updatedAt: Date.now()
 };
-const failedKnowledgeContextView: any = {
-  ...knowledgeContextBridgeView,
+const failedKnowledgeTurnView: any = {
+  ...knowledgeHarnessView,
   plugin: {
-    ...knowledgeContextBridgeView.plugin,
-    settings: { activeSessionId: failedKnowledgeContextSession.id },
+    ...knowledgeHarnessView.plugin,
+    settings: { activeSessionId: failedKnowledgeTurnSession.id },
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({ status: "failed", message: "知识库任务失败" })
     })
@@ -2236,121 +2225,11 @@ const failedKnowledgeContextView: any = {
   activeTurnId: "",
   activeItemMessages: new Map()
 };
-await startKnowledgeBaseTurnRunner(failedKnowledgeContextView, failedKnowledgeContextSession, {
-  ...queuedTurn("kb-context-failed-item", failedKnowledgeContextSession.id, "/ask 失败问题"),
+await startKnowledgeBaseTurnRunner(failedKnowledgeTurnView, failedKnowledgeTurnSession, {
+  ...queuedTurn("kb-harness-failed-item", failedKnowledgeTurnSession.id, "/ask 失败问题"),
   kind: "knowledge-base"
 }, "queue");
-assert.equal((failedKnowledgeContextSession as any).knowledgeContext, undefined);
 
-const knowledgeContextChatSession = {
-  id: "kb-context-chat-session",
-  title: KNOWLEDGE_BASE_SESSION_TITLE,
-  kind: "knowledge-base" as const,
-  cwd: "/vault",
-  threadId: "thread-chat",
-  messages: [] as any[],
-  knowledgeContext: [{
-    id: "ctx-alpha",
-    intent: "ask",
-    command: "/ask Alpha",
-    summary: "Alpha 项目来自本地 Wiki，适合继续跟进。",
-    sourceMessageId: "assistant-alpha",
-    createdAt: 1,
-    injectedThreadIds: [] as string[]
-  }],
-  createdAt: Date.now(),
-  updatedAt: Date.now()
-};
-let capturedKnowledgeContextInput: any[] = [];
-const knowledgeContextChatView: any = {
-  plugin: {
-    ensureCodexConnected: async () => ({ connected: true, accountLabel: "Codex", loggedIn: true, models: [], skills: [], mcpServers: [], errors: [] }),
-    codex: {
-      resumeThread: async () => undefined,
-      startThread: async () => ({ threadId: "thread-new", title: "KB" }),
-      startTurn: async (_threadId: string, input: any[]) => {
-        capturedKnowledgeContextInput = input;
-        return "turn-chat";
-      }
-    },
-    externalizeMessageText: async () => undefined,
-    saveSettings: async () => undefined
-  },
-  running: false,
-  activeRunId: "",
-  activeRunKind: "",
-  activeRunSessionId: "",
-  activeTurnId: "",
-  threadPrewarmPromise: null,
-  threadPrewarmSessionId: "",
-  applyStatus: () => undefined,
-  ensureThinkingMessage: () => undefined,
-  armTurnWatchdog: () => undefined,
-  finishThinkingMessage: () => undefined,
-  addMessageToSession: (CodexView.prototype as any).addMessageToSession,
-  clearTurnWatchdog: () => undefined,
-  clearActiveRun: (CodexView.prototype as any).clearActiveRun,
-  attachTurnIdToRun: () => undefined,
-  renderTabs: () => undefined,
-  renderMessagesIfActive: () => undefined,
-  renderToolbar: () => undefined,
-  diagnoseCodexFailure: () => ({ title: "失败", text: "失败" }),
-  isKnowledgeBaseSession: () => true
-};
-const knowledgeContextChatOutcome = await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
-  ...queuedTurn("kb-context-chat-item", knowledgeContextChatSession.id, "继续讲这个项目"),
-  kind: "chat"
-}, "queue");
-assert.equal(knowledgeContextChatOutcome, "running");
-const injectedKnowledgeContextText = capturedKnowledgeContextInput.map((item) => item.text ?? "").join("\n");
-assert.match(injectedKnowledgeContextText, /Alpha 项目来自本地 Wiki/);
-assert.match(injectedKnowledgeContextText, /继续讲这个项目/);
-assert.deepEqual((knowledgeContextChatSession as any).knowledgeContext[0].injectedThreadIds, ["thread-chat"]);
-
-capturedKnowledgeContextInput = [];
-await startChatTurnRunner(knowledgeContextChatView, knowledgeContextChatSession, {
-  ...queuedTurn("kb-context-chat-item-2", knowledgeContextChatSession.id, "再继续"),
-  kind: "chat"
-}, "queue");
-assert.doesNotMatch(capturedKnowledgeContextInput.map((item) => item.text ?? "").join("\n"), /Alpha 项目来自本地 Wiki/);
-
-const knowledgeContextResumeFailureSession = {
-  ...knowledgeContextChatSession,
-  id: "kb-context-resume-failure-session",
-  threadId: "thread-old",
-  messages: [] as any[],
-  knowledgeContext: [{
-    ...(knowledgeContextChatSession as any).knowledgeContext[0],
-    injectedThreadIds: ["thread-old"]
-  }]
-};
-let capturedResumeFailureInput: any[] = [];
-const knowledgeContextResumeFailureView: any = {
-  ...knowledgeContextChatView,
-  plugin: {
-    ...knowledgeContextChatView.plugin,
-    codex: {
-      resumeThread: async () => { throw new Error("resume failed"); },
-      startThread: async () => ({ threadId: "thread-new", title: "KB" }),
-      startTurn: async (_threadId: string, input: any[]) => {
-        capturedResumeFailureInput = input;
-        return "turn-new";
-      }
-    }
-  },
-  running: false,
-  activeRunId: "",
-  activeRunKind: "",
-  activeRunSessionId: "",
-  activeTurnId: ""
-};
-await startChatTurnRunner(knowledgeContextResumeFailureView, knowledgeContextResumeFailureSession, {
-  ...queuedTurn("kb-context-resume-failure-item", knowledgeContextResumeFailureSession.id, "新线程继续"),
-  kind: "chat"
-}, "queue");
-assert.equal(knowledgeContextResumeFailureSession.threadId, "thread-new");
-assert.match(capturedResumeFailureInput.map((item) => item.text ?? "").join("\n"), /Alpha 项目来自本地 Wiki/);
-assert.deepEqual((knowledgeContextResumeFailureSession as any).knowledgeContext[0].injectedThreadIds, ["thread-old", "thread-new"]);
 assert.equal(composerIsBusy({ viewRunning: true, knowledgeTaskRunning: false }), true);
 assert.deepEqual(parseKnowledgeBaseCommand("/init").intent, "init");
 assert.deepEqual((parseKnowledgeBaseCommand("/init confirm") as any).confirm, true);
@@ -2397,15 +2276,6 @@ const clearableHistorySession = {
   ...normalizedHistorySession,
   threadId: "thread-old",
   tokenUsage: { total: { totalTokens: 99 } },
-  knowledgeContext: [{
-    id: "ctx-old",
-    intent: "ask",
-    command: "/ask old",
-    summary: "旧知识库上下文",
-    sourceMessageId: "old-assistant",
-    createdAt: 12,
-    injectedThreadIds: ["thread-old"]
-  }],
   messagesHiddenBefore: undefined,
   messages: [...normalizedHistorySession.messages]
 };
@@ -2414,7 +2284,6 @@ assert.equal(clearResult.hiddenCount, 3);
 assert.equal(clearableHistorySession.messages.length, 3);
 assert.equal(clearableHistorySession.threadId, undefined);
 assert.equal(clearableHistorySession.tokenUsage, undefined);
-assert.equal((clearableHistorySession as any).knowledgeContext, undefined);
 assert.equal(clearableHistorySession.messagesHiddenBefore, 21);
 assert.deepEqual(getVisibleKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), []);
 assert.deepEqual(getHiddenKnowledgeBaseMessages(clearableHistorySession).map((message) => message.id), ["old-user", "old-assistant", "new-user"]);
@@ -2616,90 +2485,6 @@ const emptyAgentDocs = buildReviewDocuments("agent-chat", reviewEvidenceRange, c
 }).settings, reviewEvidenceRange));
 assert.ok(emptyAgentDocs.html.includes("<span class=\"pill\">提示词质量</span><h3>待观察</h3>"));
 
-const kbRouteItems = new Set<string>();
-const unknownOrphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "unknown-item", delta: "其他任务输出" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(unknownOrphanDelta.swallow, true);
-assert.equal(unknownOrphanDelta.collectAssistantDelta, true);
-const orphanStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-1" } }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(orphanStarted.swallow, true);
-assert.equal(orphanStarted.rememberItemId, "item-1");
-const orphanDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-1", delta: "报告" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(orphanDelta.swallow, true);
-assert.equal(orphanDelta.collectAssistantDelta, true);
-const orphanBeforeTurnStarted = routeKnowledgeBaseCodexNotification("item/started", { item: { id: "item-before-turn" } }, {
-  threadId: "thread-kb",
-  turnId: "",
-  itemIds: kbRouteItems
-});
-assert.equal(orphanBeforeTurnStarted.swallow, true);
-assert.equal(orphanBeforeTurnStarted.rememberItemId, "item-before-turn");
-kbRouteItems.add(orphanBeforeTurnStarted.rememberItemId!);
-const delayedOrphanDeltaAfterTurnKnown = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-before-turn", delta: "可能是其他任务输出" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(delayedOrphanDeltaAfterTurnKnown.swallow, true);
-assert.equal(delayedOrphanDeltaAfterTurnKnown.collectAssistantDelta, true);
-const rememberedItemDifferentThread = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { threadId: "thread-other", itemId: "item-before-turn", delta: "其他 thread 输出" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(rememberedItemDifferentThread.swallow, false);
-assert.equal(rememberedItemDifferentThread.collectAssistantDelta, false);
-const startedScopedItem = routeKnowledgeBaseCodexNotification("item/started", { threadId: "thread-kb", turnId: "turn-kb", item: { id: "item-scoped" } }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(startedScopedItem.swallow, true);
-assert.equal(startedScopedItem.rememberItemId, "item-scoped");
-kbRouteItems.add(startedScopedItem.rememberItemId!);
-const scopedItemOnlyDelta = routeKnowledgeBaseCodexNotification("item/agentMessage/delta", { itemId: "item-scoped", delta: "报告卡片摘要" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-});
-assert.equal(scopedItemOnlyDelta.swallow, true);
-assert.equal(scopedItemOnlyDelta.collectAssistantDelta, true);
-assert.equal(routeKnowledgeBaseCodexNotification("thread/tokenUsage/updated", { threadId: "thread-other" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-}).swallow, false);
-assert.equal(routeKnowledgeBaseCodexNotification("turn/completed", { threadId: "thread-kb", turn: { id: "turn-other", status: "failed" } }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-}).swallow, false);
-assert.equal(routeKnowledgeBaseCodexNotification("turn/started", { threadId: "thread-kb", turn: { id: "turn-new" } }, {
-  threadId: "thread-kb",
-  turnId: "",
-  itemIds: kbRouteItems
-}).swallow, true);
-assert.equal(routeKnowledgeBaseCodexNotification("turn/completed", { threadId: "thread-kb", turn: { id: "turn-new", status: "completed" } }, {
-  threadId: "thread-kb",
-  turnId: "",
-  itemIds: kbRouteItems
-}).swallow, false);
-assert.equal(routeKnowledgeBaseCodexNotification("error", { message: "failed" }, {
-  threadId: "thread-kb",
-  turnId: "turn-kb",
-  itemIds: kbRouteItems
-}).swallow, false);
 
 assert.deepEqual(buildCollaborationMode("agent", "gpt-5.4", "high"), null);
 assert.deepEqual(buildCollaborationMode("plan", "gpt-5.4", "high"), {
@@ -6639,7 +6424,6 @@ try {
     assert.equal(scheduledRefreshSettings.sessions.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages[0].status, "completed");
-    assert.equal((scheduledRefreshSettings.sessions[0] as any).knowledgeContext, undefined);
     assert.equal(scheduledRefreshSaveCalls, 1);
     assert.equal(scheduledRefreshWarnings.length, 1);
     assert.equal(scheduledRefreshWarnings[0][0], "每日维护消息刷新失败");
@@ -7540,548 +7324,6 @@ try {
   await rm(maintenanceHermesStalledPromptTimeoutVault, { recursive: true, force: true });
 }
 
-const maintenanceCodexCancelDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-cancel-start-turn-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  const interruptCalls: Array<{ threadId: string; turnId: string }> = [];
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexCancelDuringStartTurnVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-cancel", title: "KB" }),
-      startTurn: async () => {
-        (manager as any).cancelRequested = true;
-        return "turn-cancel";
-      },
-      interruptTurn: async (threadId: string, turnId: string) => {
-        interruptCalls.push({ threadId, turnId });
-      }
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  let errorMessage = "";
-  try {
-    await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  } catch (error) {
-    errorMessage = error instanceof Error ? error.message : String(error);
-  }
-  assert.equal(isKnowledgeBaseCancelError(errorMessage), true);
-  assert.deepEqual(interruptCalls, [{ threadId: "thread-cancel", turnId: "turn-cancel" }]);
-  assert.equal((manager as any).codexWaiter, null);
-} finally {
-  await rm(maintenanceCodexCancelDuringStartTurnVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexArchiveVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-archive-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const archivedThreadIds: string[] = [];
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexArchiveVault,
-    saveSettings: async () => undefined,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-archive", title: "KB" }),
-	      setThreadName: async () => undefined,
-	      startTurn: async () => {
-	        queueMicrotask(() => {
-	          manager.handleCodexNotification({
-	            method: "turn/started",
-	            params: { threadId: "thread-archive", turn: { id: "turn-archive" } }
-	          } as any);
-	          manager.handleCodexNotification({
-	            method: "item/agentMessage/delta",
-	            params: { threadId: "thread-archive", turnId: "turn-archive", itemId: "item-archive", delta: "归档输出" }
-	          } as any);
-          manager.handleCodexNotification({
-            method: "turn/completed",
-            params: { threadId: "thread-archive", turn: { id: "turn-archive", status: "completed" } }
-          } as any);
-        });
-        return "turn-archive";
-      },
-      interruptTurn: async () => undefined,
-      archiveThread: async (threadId: string) => {
-        archivedThreadIds.push(threadId);
-      }
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "ask"), "归档输出");
-  assert.equal(settings.knowledgeBase.managedThreads["thread-archive"]?.archiveState, "pending-archive");
-  await manager.archivePendingCodexKnowledgeThreads();
-  assert.deepEqual(archivedThreadIds, ["thread-archive"]);
-  assert.equal(settings.knowledgeBase.managedThreads["thread-archive"]?.archiveState, "archived");
-} finally {
-  await rm(maintenanceCodexArchiveVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexFinalAssistantItemVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-final-item-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexFinalAssistantItemVault,
-    saveSettings: async () => undefined,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-final-item", title: "KB" }),
-      startTurn: async () => {
-        queueMicrotask(() => {
-          manager.handleCodexNotification({
-            method: "turn/started",
-            params: { threadId: "thread-final-item", turn: { id: "turn-final-item" } }
-          } as any);
-          manager.handleCodexNotification({
-            method: "item/agentMessage/delta",
-            params: { threadId: "thread-final-item", turnId: "turn-final-item", itemId: "item-process", delta: "方哥，我先核对本地 Wiki。" }
-          } as any);
-          manager.handleCodexNotification({
-            method: "item/agentMessage/delta",
-            params: { threadId: "thread-final-item", turnId: "turn-final-item", itemId: "item-final", delta: "## 一眼结论\n最终答案" }
-          } as any);
-          manager.handleCodexNotification({
-            method: "turn/completed",
-            params: { threadId: "thread-final-item", turn: { id: "turn-final-item", status: "completed" } }
-          } as any);
-        });
-        return "turn-final-item";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "ask"), "## 一眼结论\n最终答案");
-} finally {
-  await rm(maintenanceCodexFinalAssistantItemVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexItemOnlyDeltaVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-item-only-delta-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexItemOnlyDeltaVault,
-    saveSettings: async () => undefined,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-item-only-delta", title: "KB" }),
-      startTurn: async () => {
-        queueMicrotask(() => {
-          manager.handleCodexNotification({
-            method: "turn/started",
-            params: { threadId: "thread-item-only-delta", turn: { id: "turn-item-only-delta" } }
-          } as any);
-          manager.handleCodexNotification({
-            method: "item/started",
-            params: { threadId: "thread-item-only-delta", turnId: "turn-item-only-delta", item: { id: "item-item-only-delta" } }
-          } as any);
-          manager.handleCodexNotification({
-            method: "item/agentMessage/delta",
-            params: { itemId: "item-item-only-delta", delta: "报告摘要" }
-          } as any);
-          manager.handleCodexNotification({
-            method: "turn/completed",
-            params: { threadId: "thread-item-only-delta", turn: { id: "turn-item-only-delta", status: "completed" } }
-          } as any);
-        });
-        return "turn-item-only-delta";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  assert.equal(await (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", undefined, "maintain"), "报告摘要");
-  assert.equal(settings.knowledgeBase.managedThreads["thread-item-only-delta"]?.archiveState, "pending-archive");
-} finally {
-  await rm(maintenanceCodexItemOnlyDeltaVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexStaleRunningThreadVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stale-running-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  settings.knowledgeBase.managedThreads["thread-stale-running"] = {
-    threadId: "thread-stale-running",
-    runId: "run-stale-running",
-    kind: "maintain",
-    vaultPath: maintenanceCodexStaleRunningThreadVault,
-    archiveState: "running",
-    createdAt: Date.now() - 60_000,
-    settledAt: 0,
-    archivedAt: 0,
-    attempts: 0,
-    lastError: ""
-  };
-  let saveCalls = 0;
-  const manager = new KnowledgeBaseManager({
-    settings,
-    getVaultPath: () => maintenanceCodexStaleRunningThreadVault,
-    saveSettings: async () => {
-      saveCalls += 1;
-    },
-    codex: null
-  } as any);
-  assert.equal(await manager.archivePendingCodexKnowledgeThreads(), 0);
-  assert.equal(settings.knowledgeBase.managedThreads["thread-stale-running"]?.archiveState, "pending-archive");
-  assert.match(settings.knowledgeBase.managedThreads["thread-stale-running"]?.lastError ?? "", /running/);
-  assert.equal(saveCalls, 1);
-} finally {
-  await rm(maintenanceCodexStaleRunningThreadVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexOldCompletedDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-old-completed-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexOldCompletedDuringStartTurnVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-reused", title: "KB" }),
-      startTurn: async () => {
-        assert.equal(manager.handleCodexNotification({
-          method: "turn/completed",
-          params: { threadId: "thread-reused", turn: { id: "turn-old", status: "completed" } }
-        } as any), false);
-        return "turn-new";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal((manager as any).codexWaiter?.turnId, "turn-new");
-  assert.equal(manager.handleCodexNotification({
-    method: "item/agentMessage/delta",
-    params: { threadId: "thread-reused", turnId: "turn-new", itemId: "item-new", delta: "新任务输出" }
-  } as any), true);
-  assert.equal(manager.handleCodexNotification({
-    method: "turn/completed",
-    params: { threadId: "thread-reused", turn: { id: "turn-new", status: "completed" } }
-  } as any), true);
-  assert.equal(await taskPromise, "新任务输出");
-} finally {
-  await rm(maintenanceCodexOldCompletedDuringStartTurnVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexFastCompletionDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-fast-completed-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexFastCompletionDuringStartTurnVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-fast", title: "KB" }),
-      startTurn: async () => {
-        assert.equal(manager.handleCodexNotification({
-          method: "turn/started",
-          params: { threadId: "thread-fast", turn: { id: "turn-fast" } }
-        } as any), true);
-        assert.equal(manager.handleCodexNotification({
-          method: "item/agentMessage/delta",
-          params: { threadId: "thread-fast", turnId: "turn-fast", itemId: "item-fast", delta: "快速输出" }
-        } as any), true);
-        assert.equal(manager.handleCodexNotification({
-          method: "turn/completed",
-          params: { threadId: "thread-fast", turn: { id: "turn-fast", status: "completed" } }
-        } as any), true);
-        return "turn-fast";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  const result = await Promise.race([
-    taskPromise,
-    new Promise((resolve) => setTimeout(() => resolve("timeout"), 50))
-  ]);
-  assert.equal(result, "快速输出");
-} finally {
-  await rm(maintenanceCodexFastCompletionDuringStartTurnVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexRetryingErrorVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-retrying-error-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexRetryingErrorVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-retry", title: "KB" }),
-      startTurn: async () => "turn-retry",
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(manager.handleCodexNotification({
-    method: "error",
-    params: {
-      threadId: "thread-retry",
-      turnId: "turn-retry",
-      willRetry: true,
-      error: { message: "Reconnecting... 1/5" }
-    }
-  } as any), true);
-  assert.notEqual((manager as any).codexWaiter, null);
-  assert.equal(manager.handleCodexNotification({
-    method: "item/agentMessage/delta",
-    params: { threadId: "thread-retry", turnId: "turn-retry", itemId: "item-retry", delta: "重连后输出" }
-  } as any), true);
-  assert.equal(manager.handleCodexNotification({
-    method: "turn/completed",
-    params: { threadId: "thread-retry", turn: { id: "turn-retry", status: "completed" } }
-  } as any), true);
-  assert.equal(await taskPromise, "重连后输出");
-} finally {
-  await rm(maintenanceCodexRetryingErrorVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexRetryingErrorDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-retrying-start-turn-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexRetryingErrorDuringStartTurnVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-retry-start", title: "KB" }),
-      startTurn: async () => {
-        assert.equal(manager.handleCodexNotification({
-          method: "error",
-          params: {
-            threadId: "thread-retry-start",
-            turnId: "turn-retry-start",
-            willRetry: true,
-            error: { message: "Reconnecting... 1/5" }
-          }
-        } as any), true);
-        return "turn-retry-start";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal((manager as any).codexWaiter?.pendingTerminal, undefined);
-  assert.equal(manager.handleCodexNotification({
-    method: "item/agentMessage/delta",
-    params: { threadId: "thread-retry-start", turnId: "turn-retry-start", itemId: "item-retry-start", delta: "启动后输出" }
-  } as any), true);
-  assert.equal(manager.handleCodexNotification({
-    method: "turn/completed",
-    params: { threadId: "thread-retry-start", turn: { id: "turn-retry-start", status: "completed" } }
-  } as any), true);
-  assert.equal(await taskPromise, "启动后输出");
-} finally {
-  await rm(maintenanceCodexRetryingErrorDuringStartTurnVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexStalledTurnTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stalled-turn-timeout-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  const interruptCalls: Array<{ threadId: string; turnId: string }> = [];
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexStalledTurnTimeoutVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-stalled", title: "KB" }),
-      startTurn: async () => "turn-stalled",
-      interruptTurn: async (threadId: string, turnId: string) => {
-        interruptCalls.push({ threadId, turnId });
-      }
-    }
-  };
-  const manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", { codexInactivityTimeoutMs: 10 });
-  const result = await Promise.race([
-    taskPromise.then(() => "resolved", (error: unknown) => error instanceof Error ? error.message : String(error)),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
-  ]);
-  assert.notEqual(result, "hung");
-  assert.match(String(result), /长时间没有收到 Codex 终态/);
-  assert.deepEqual(interruptCalls, [{ threadId: "thread-stalled", turnId: "turn-stalled" }]);
-  assert.equal((manager as any).codexWaiter, null);
-} finally {
-  await rm(maintenanceCodexStalledTurnTimeoutVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexStalledStartTurnTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-stalled-start-turn-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexStalledStartTurnTimeoutVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-stalled-start", title: "KB" }),
-      startTurn: async () => new Promise<string>(() => undefined),
-      interruptTurn: async () => undefined
-    }
-  };
-  const manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base", { codexInactivityTimeoutMs: 10 });
-  const result = await Promise.race([
-    taskPromise.then(() => "resolved", (error: unknown) => error instanceof Error ? error.message : String(error)),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
-  ]);
-  assert.notEqual(result, "hung");
-  assert.match(String(result), /长时间没有收到 Codex turn id/);
-  assert.equal(settings.knowledgeBase.managedThreads["thread-stalled-start"]?.archiveState, "pending-archive");
-  assert.equal((manager as any).codexWaiter, null);
-} finally {
-  await rm(maintenanceCodexStalledStartTurnTimeoutVault, { recursive: true, force: true });
-}
-
-const maintenanceCodexOldStartedCompletedDuringStartTurnVault = await createMaintenanceVaultForTest("codex-kb-maintain-codex-old-started-completed-");
-try {
-  const settings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion }).settings;
-  let manager: KnowledgeBaseManager;
-  const plugin = {
-    settings,
-    getVaultPath: () => maintenanceCodexOldStartedCompletedDuringStartTurnVault,
-    ensureCodexConnected: async () => ({
-      connected: true,
-      accountLabel: "Codex",
-      loggedIn: true,
-      models: [],
-      skills: [],
-      mcpServers: [],
-      errors: []
-    }),
-    codex: {
-      startThread: async () => ({ threadId: "thread-reused", title: "KB" }),
-      startTurn: async () => {
-        assert.equal(manager.handleCodexNotification({
-          method: "turn/started",
-          params: { threadId: "thread-reused", turn: { id: "turn-old" } }
-        } as any), true);
-        assert.equal(manager.handleCodexNotification({
-          method: "item/agentMessage/delta",
-          params: { threadId: "thread-reused", turnId: "turn-old", itemId: "item-old", delta: "旧任务输出" }
-        } as any), true);
-        assert.equal(manager.handleCodexNotification({
-          method: "turn/completed",
-          params: { threadId: "thread-reused", turn: { id: "turn-old", status: "completed" } }
-        } as any), true);
-        return "turn-new";
-      },
-      interruptTurn: async () => undefined
-    }
-  };
-  manager = new KnowledgeBaseManager(plugin as any);
-  const taskPromise = (manager as any).runCodexKnowledgeTask("prompt", [], "workspace-write", "knowledge-base");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal((manager as any).codexWaiter?.turnId, "turn-new");
-  assert.equal(manager.handleCodexNotification({
-    method: "item/agentMessage/delta",
-    params: { threadId: "thread-reused", turnId: "turn-new", itemId: "item-new", delta: "新任务输出" }
-  } as any), true);
-  assert.equal(manager.handleCodexNotification({
-    method: "turn/completed",
-    params: { threadId: "thread-reused", turn: { id: "turn-new", status: "completed" } }
-  } as any), true);
-  assert.equal(await taskPromise, "新任务输出");
-} finally {
-  await rm(maintenanceCodexOldStartedCompletedDuringStartTurnVault, { recursive: true, force: true });
-}
 
 const maintenanceLintDoesNotCreateWikiVault = await mkdtemp(path.join(tmpdir(), "codex-kb-maintain-lint-no-wiki-"));
 try {
@@ -10634,16 +9876,11 @@ try {
   assert.equal(await fileExists(path.join(initVault, "wiki", "index.md")), true);
   assert.equal(await fileExists(path.join(initVault, "outputs", ".ingest-tracker.md")), true);
   const initializedRules = await readFile(path.join(initVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
-  assert.ok(initializedRules.includes("LLM Wiki"));
-  assert.ok(initializedRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
-  assert.ok(initializedRules.includes("四步提炼协议"));
-  assert.ok(initializedRules.includes("读懂原文 -> 拆出知识 -> 融入 Wiki / Projects -> 回写 Raw 已提炼状态"));
-  assert.ok(initializedRules.includes("报告不能代替 Wiki / Projects 正文"));
-  assert.ok(initializedRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
-  assert.ok(initializedRules.includes("Structure Normalize"));
-  assert.ok(initializedRules.includes("托管元属性"));
-  assert.ok(initializedRules.includes("`raw/` 只更新 `raw/index.md`，不移动原始资料"));
-  assert.ok(initializedRules.includes("普通 Agent 对话不默认检索知识库"));
+  assert.ok(initializedRules.includes("echoink_profile_version: 1"));
+  assert.ok(initializedRules.includes("# 当前知识库说明"));
+  assert.ok(initializedRules.includes("roots:"));
+  assert.ok(initializedRules.includes("protected_paths:"));
+  assert.doesNotMatch(initializedRules, /四步提炼协议|Agent 最终文本不能决定业务成功/);
   assert.ok((await readFile(path.join(initVault, "wiki", "index.md"), "utf8")).includes("AI 与智能体"));
   assert.ok((await readFile(path.join(initVault, "raw", "index.md"), "utf8")).includes("插件可写托管元属性，不自动移动"));
 } finally {
@@ -10657,7 +9894,7 @@ try {
   assert.equal(preview.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   await executeKnowledgeBaseInitialization(initVaultWithAgents, preview, new Date("2026-05-15T08:00:00.000Z"));
   assert.ok((await readFile(path.join(initVaultWithAgents, "AGENTS.md"), "utf8")).includes("Existing agents"));
-  assert.ok((await readFile(path.join(initVaultWithAgents, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVaultWithAgents, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("echoink_profile_version: 1"));
 } finally {
   await rm(initVaultWithAgents, { recursive: true, force: true });
 }
@@ -10670,7 +9907,7 @@ try {
   assert.equal(preview.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   await executeKnowledgeBaseInitialization(initVaultWithBothRules, preview, new Date("2026-05-15T08:00:00.000Z"));
   assert.ok((await readFile(path.join(initVaultWithBothRules, "CLAUDE.md"), "utf8")).includes("Existing claude"));
-  assert.ok((await readFile(path.join(initVaultWithBothRules, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(initVaultWithBothRules, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("echoink_profile_version: 1"));
 } finally {
   await rm(initVaultWithBothRules, { recursive: true, force: true });
 }
@@ -10682,22 +9919,19 @@ try {
     rulesFilePath: "AGENTS.md"
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(created.status, "created");
-  assert.equal(created.rulesFilePath, "AGENTS.md");
-  const createdRules = await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8");
-  assert.ok(createdRules.includes("LLM Wiki"));
-  assert.ok(createdRules.includes("outputs/.ingest-tracker.md"));
-  assert.ok(createdRules.includes("四步提炼协议"));
-  assert.ok(createdRules.includes("知识库管理动作中禁止 Agent 改写 `raw/` 正文"));
-  assert.ok(createdRules.includes("托管元属性"));
-  assert.ok(createdRules.includes("Structure Normalize"));
-  assert.ok(createdRules.includes("普通 Agent 对话中明确要求整理 `raw/`"));
+  assert.equal(created.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
+  const createdRules = await readFile(path.join(rulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
+  assert.ok(createdRules.includes("echoink_profile_version: 1"));
+  assert.ok(createdRules.includes("# 当前知识库说明"));
+  assert.ok(!createdRules.includes("四步提炼协议"));
+  assert.equal(await fileExists(path.join(rulesRepairVault, "AGENTS.md")), false);
 
   const ok = await repairKnowledgeBaseRulesFile(rulesRepairVault, {
     useCustomRulesFile: false,
     rulesFilePath: "AGENTS.md"
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(ok.status, "ok");
-  assert.equal(await readFile(path.join(rulesRepairVault, "AGENTS.md"), "utf8"), createdRules);
+  assert.equal(await readFile(path.join(rulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8"), createdRules);
 } finally {
   await rm(rulesRepairVault, { recursive: true, force: true });
 }
@@ -10711,7 +9945,7 @@ try {
   assert.equal(customCreated.status, "created");
   assert.equal(customCreated.rulesFilePath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   assert.equal(await fileExists(path.join(customRulesRepairVault, "AGENTS.md")), false);
-  assert.ok((await readFile(path.join(customRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("LLM Wiki"));
+  assert.ok((await readFile(path.join(customRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8")).includes("echoink_profile_version: 1"));
 } finally {
   await rm(customRulesRepairVault, { recursive: true, force: true });
 }
@@ -10724,19 +9958,12 @@ try {
     rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(patched.status, "patched");
-  assert.ok(patched.missingRules.includes("raw/ 内容保护与托管元属性边界"));
-  assert.ok(patched.missingRules.includes("raw/ 普通对话授权边界"));
-  assert.ok(patched.missingRules.includes("Structure Normalize 阶段"));
+  assert.ok(patched.missingRules.includes("Vault Profile frontmatter"));
   const patchedRules = await readFile(path.join(patchRulesRepairVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
   assert.ok(patchedRules.startsWith("# Existing rules"));
-  assert.ok(patchedRules.includes("codex-echoink-kb-minimum-rules:start"));
-  assert.ok(patchedRules.includes("`raw/` 是原始资料与待整理来源区"));
-  assert.ok(patchedRules.includes("提炼不等于摘要"));
-  assert.ok(patchedRules.includes("Wiki / Projects 正文证据"));
-  assert.ok(patchedRules.includes("只有 EchoInk 插件后处理阶段可以写入托管元属性"));
-  assert.ok(patchedRules.includes("raw 路径归一只写入报告风险"));
-  assert.ok(patchedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
-  assert.ok(patchedRules.includes("把维护报告写入 `outputs/maintenance/`"));
+  assert.ok(patchedRules.includes("codex-echoink-vault-profile:start"));
+  assert.ok(patchedRules.includes("echoink_profile_version: 1"));
+  assert.ok(!patchedRules.includes("四步提炼协议"));
 } finally {
   await rm(patchRulesRepairVault, { recursive: true, force: true });
 }
@@ -10744,16 +9971,13 @@ try {
 const replaceMinimumRulesVault = await mkdtemp(path.join(tmpdir(), "codex-kb-replace-min-rules-"));
 try {
   await writeFile(path.join(replaceMinimumRulesVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), [
-    "# Existing rules",
+    "# Existing profile",
     "",
-    "<!-- codex-echoink-kb-minimum-rules:start -->",
+    "<!-- codex-echoink-vault-profile:start -->",
     "",
-    "## Codex 知识库最小运行规则",
+    "旧 profile",
     "",
-    "- `raw/` 是不可变原始资料区，只读。",
-    "- 禁止删除文件。",
-    "",
-    "<!-- codex-echoink-kb-minimum-rules:end -->"
+    "<!-- codex-echoink-vault-profile:end -->"
   ].join("\n"), "utf8");
   const replaced = await repairKnowledgeBaseRulesFile(replaceMinimumRulesVault, {
     useCustomRulesFile: true,
@@ -10761,9 +9985,9 @@ try {
   }, new Date("2026-05-15T08:00:00.000Z"));
   assert.equal(replaced.status, "patched");
   const replacedRules = await readFile(path.join(replaceMinimumRulesVault, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "utf8");
-  assert.equal((replacedRules.match(/codex-echoink-kb-minimum-rules:start/g) ?? []).length, 1);
-  assert.ok(replacedRules.includes("普通 Agent 对话中，如果用户明确要求整理 `raw/`"));
-  assert.ok(!replacedRules.includes("不可变原始资料区"));
+  assert.equal((replacedRules.match(/codex-echoink-vault-profile:start/g) ?? []).length, 1);
+  assert.ok(replacedRules.includes("echoink_profile_version: 1"));
+  assert.ok(!replacedRules.includes("旧 profile"));
 } finally {
   await rm(replaceMinimumRulesVault, { recursive: true, force: true });
 }
@@ -11524,6 +10748,10 @@ function makeKnowledgeBaseManagerForTest(
   }).settings;
   let saveCalls = 0;
   let manager: KnowledgeBaseManager | null = null;
+  const harnessKernel = new EchoInkHarnessKernel({
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider()
+  });
   const plugin = {
     settings,
     getVaultPath: () => {
@@ -11554,6 +10782,11 @@ function makeKnowledgeBaseManagerForTest(
     addCommand: () => undefined,
     addRibbonIcon: () => undefined,
     registerInterval: () => undefined,
+    runHarnessWithAdapter: async (input: any) => await harnessKernel.runWithAdapter(input),
+    cancelHarnessRun: async (runId: string) => await harnessKernel.cancelRun(runId),
+    settleHarnessRunTerminal: async (input: any) => await harnessKernel.settleRunTerminal(input),
+    getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: vaultPath }),
+    buildRuntimeEchoInkResourceCatalog: async () => buildEchoInkResourceCatalog({ settings: settings.resources }),
     app: {
       workspace: {
         onLayoutReady: () => undefined,
@@ -11562,20 +10795,18 @@ function makeKnowledgeBaseManagerForTest(
     }
   };
   manager = new KnowledgeBaseManager(plugin as any);
-  (manager as any).runCodexKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string, writeScope: string) => {
-    options.codexTaskCalls?.push({ permission, writeScope });
+  const realRunTask = (manager as any).agentTaskService.runTask.bind((manager as any).agentTaskService);
+  (manager as any).agentTaskService.runTask = async (input: any) => {
+    const useReal = input.backend === "opencode" ? options.useRealOpenCodeTask : input.backend === "hermes" ? options.useRealHermesTask : false;
+    if (useReal) return await realRunTask(input);
+    if (input.backend === "codex-cli") options.codexTaskCalls?.push({ permission: input.permission, writeScope: input.codexWriteScope });
+    if (input.backend === "opencode") options.openCodeTaskCalls?.push({ permission: input.permission });
+    if (input.backend === "hermes") options.hermesTaskCalls?.push({ permission: input.permission });
     await options.beforeAgentReturn?.();
-    return "Agent 输出：维护完成。";
+    return { text: "Agent 输出：维护完成。" };
   };
-  if (!options.useRealOpenCodeTask) {
-    (manager as any).runOpenCodeKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string) => {
-      options.openCodeTaskCalls?.push({ permission });
-      await options.beforeAgentReturn?.();
-      return "Agent 输出：维护完成。";
-    };
-  }
   if (options.useRealHermesTask) {
-    (manager as any).createKnowledgeAgentRuntime = (backend: AgentBackendMode) => {
+    (manager as any).agentTaskService.runtimeController.createRuntime = (backend: AgentBackendMode) => {
       if (backend !== "hermes") throw new Error(`Unexpected backend ${backend}`);
       const hooks = ((globalThis as any).__hermesBackendTestHooks ??= {});
       return {
@@ -11584,9 +10815,7 @@ function makeKnowledgeBaseManagerForTest(
           await hooks.onConnect?.();
           return hooks.status ?? { connected: true, label: "Hermes", version: "0.18.0", errors: [] };
         },
-        disconnect: async () => {
-          await hooks.onDisconnect?.();
-        },
+        disconnect: async () => { await hooks.onDisconnect?.(); },
         listModels: async () => {
           await hooks.onListModels?.();
           return hooks.models ?? [];
@@ -11601,18 +10830,8 @@ function makeKnowledgeBaseManagerForTest(
         abort: async (runId: string) => {
           hooks.abortCalls?.push?.(runId);
           await hooks.onAbort?.(runId);
-        },
-        disconnect: async () => {
-          await hooks.onDisconnect?.();
         }
       };
-    };
-  }
-  if (!options.useRealHermesTask) {
-    (manager as any).runHermesKnowledgeTask = async (_prompt: string, _sources: unknown[], permission: string) => {
-      options.hermesTaskCalls?.push({ permission });
-      await options.beforeAgentReturn?.();
-      return "Agent 输出：维护完成。";
     };
   }
   return { manager, settings, saveCalls: () => saveCalls };
@@ -11632,5 +10851,10 @@ await runHarnessV2MemoryTests();
 await runHarnessV2AdapterTests();
 await runHarnessV2ConversationStoreTests();
 await runHarnessV2SessionContextTests();
+await runHarnessV2KnowledgePolicyProfileTests();
+await runHarnessV2KnowledgeLedgerTests();
+await runHarnessV2NativeExecutionTests();
+await runHarnessV2KnowledgeAskLeaseTests();
+await runHarnessV2KnowledgeTurnTests();
 
 console.log("All tests passed");

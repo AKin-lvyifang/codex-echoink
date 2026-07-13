@@ -31,6 +31,7 @@ import {
   type KnowledgeBaseStorageStats
 } from "../knowledge-base/history-store";
 import { readKnowledgeBaseReportExcerpt, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
+import type { LocalRunCommitResult } from "../harness/contracts/native-execution";
 
 export interface SettingsSaveOptions {
   flushConversationStore?: boolean;
@@ -110,6 +111,15 @@ export class EchoInkSettingsStore {
 
   async deleteConversationSession(sessionId: string): Promise<boolean> {
     return await this.getConversationStore().deleteSession(sessionId);
+  }
+
+  async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> {
+    try {
+      await this.saveSettings(true, { strictConversationStore: true, strictKnowledgeBaseHistory: true });
+      return localRunCommitResult(true);
+    } catch (error) {
+      return localRunCommitResult(false, error instanceof Error ? error.message : String(error));
+    }
   }
 
   async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
@@ -293,4 +303,15 @@ function applyStoredConversation(target: StoredSession, stored: StoredSession): 
   target.tokenUsage = stored.tokenUsage;
   target.createdAt = stored.createdAt;
   target.updatedAt = stored.updatedAt;
+}
+
+function localRunCommitResult(committed: boolean, error = ""): LocalRunCommitResult {
+  return {
+    committed,
+    conversationCommitted: committed,
+    runLedgerCommitted: committed,
+    artifactsCommitted: committed,
+    historyIndexCommitted: committed,
+    ...(error ? { error } : {})
+  };
 }

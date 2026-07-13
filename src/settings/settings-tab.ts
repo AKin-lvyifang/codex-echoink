@@ -1539,8 +1539,8 @@ export class CodexSettingTab extends PluginSettingTab {
     const settings = this.plugin.settings.knowledgeBase;
     try {
       const result = await repairKnowledgeBaseRulesFile(this.plugin.getVaultPath(), settings);
-      if (settings.useCustomRulesFile) settings.rulesFilePath = result.rulesFilePath;
-      else settings.rulesFilePath = AGENTS_RULES_FILE;
+      settings.useCustomRulesFile = true;
+      settings.rulesFilePath = result.rulesFilePath;
       await this.plugin.saveSettings();
       this.plugin.refreshKnowledgeBaseSurfaces();
       const detail = result.status === "patched" && result.missingRules.length

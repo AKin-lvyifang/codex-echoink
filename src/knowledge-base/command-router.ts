@@ -1,5 +1,6 @@
 import type { TurnOptions } from "../core/codex-service";
-import type { ReviewReportKind, StoredAttachment } from "../settings/settings";
+import type { HarnessRunResult } from "../harness/contracts/run";
+import type { ReviewReportKind, StoredAttachment, StoredSession } from "../settings/settings";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand } from "./commands";
 import type { KnowledgeBaseInitializationPreview } from "./initializer";
 import { buildKnowledgeBaseMaintainReportPayload, knowledgeBaseRunModeForCommandIntent, type KnowledgeBaseMessageUiPayload } from "./maintain-report-card";
@@ -9,6 +10,7 @@ import type { KnowledgeBaseCitationSummary, KnowledgeBaseRunMode, KnowledgeBaseR
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed" | "canceled";
   message: string;
+  harnessResult?: HarnessRunResult;
   citations?: KnowledgeBaseCitationSummary;
   ui?: KnowledgeBaseMessageUiPayload;
   followUpCommand?: string;
@@ -18,6 +20,7 @@ export interface KnowledgeBaseTurnOptionOverrides extends Pick<TurnOptions, "mod
   codexInactivityTimeoutMs?: number;
   opencodeTaskTimeoutMs?: number;
   hermesTaskTimeoutMs?: number;
+  harnessSession?: StoredSession;
 }
 
 export interface KnowledgeBaseCommandRouterContext {

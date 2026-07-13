@@ -202,7 +202,6 @@ export async function restoreKnowledgeBaseHistoryDate(host: CodexSessionHost, se
   delete session.messagesHiddenBefore;
   delete session.threadId;
   delete session.tokenUsage;
-  delete session.knowledgeContext;
   session.updatedAt = Date.now();
   host.resetVirtualWindow();
   await host.plugin.saveSettings(true);

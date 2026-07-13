@@ -14,7 +14,7 @@ import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
-import { appendKnowledgeContextBridge, buildKnowledgeContextBridgeForThread, knowledgeContextBridgeDetailText, markKnowledgeContextBridgeInjected } from "./knowledge-context-bridge";
+import { updateSessionBackendBinding } from "../../harness/kernel/session-service";
 import { createAgentEventRenderState, reduceAgentEventForChat, type AgentChatRenderState } from "./agent-event-renderer";
 import type { CodexViewTurnContext, MessageRenderFollowContext, QueuedTurnOutcome, QueuedTurnSource } from "./runner-context";
 
@@ -216,7 +216,6 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         session.threadId = started.threadId;
       });
     }
-    const knowledgeContextBridge = view.isKnowledgeBaseSession(session) ? buildKnowledgeContextBridgeForThread(session, session.threadId) : null;
     const resourceSettings = view.plugin.settings?.resources;
     const resources = prepareAgentResources(buildEchoInkResourceCatalog({ settings: resourceSettings }), {
       scope: "chat",
@@ -225,11 +224,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       mcpConnections: resourceSettings?.mcpConnections
     });
     const input = buildUserInput(item.text, turnAttachments, item.skill, buildCodexChatStyleInstruction(resources));
-    if (knowledgeContextBridge) {
-      input.splice(Math.min(1, input.length), 0, { type: "text", text: knowledgeContextBridge.text, text_elements: [] });
-    }
     view.activeTurnId = await view.plugin.codex!.startTurn(session.threadId, input, turnOptions);
-    if (knowledgeContextBridge) markKnowledgeContextBridgeInjected(knowledgeContextBridge.entries, session.threadId);
     view.attachTurnIdToRun(session, view.activeTurnId);
     await view.plugin.saveSettings();
     return "running";
@@ -426,16 +421,26 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
   let turnError: unknown = null;
   try {
     await view.plugin.saveSettings(true);
-    const result = await manager.handleUserMessage(item.text, turnAttachments, knowledgeBaseTurnOverrides(item.turnOptions));
+    const result = await manager.handleUserMessage(item.text, turnAttachments, knowledgeBaseTurnOverrides(item.turnOptions, session));
     succeeded = result.status === "success";
+    if (result.harnessResult?.backendBinding) updateSessionBackendBinding(session, result.harnessResult.backendBinding);
+    if (result.harnessResult?.nativeExecution) {
+      assistantMessage.nativeLocalCommitStatus = "pending";
+      assistantMessage.nativeCleanupStatus = "pending";
+      assistantMessage.backendId = result.harnessResult.nativeExecution.backendId;
+      assistantMessage.contextMode = result.harnessResult.contextManifest?.mode;
+      assistantMessage.contextCompiledThroughMessageId = result.harnessResult.contextManifest?.compiledThroughMessageId;
+      assistantMessage.contextSnapshotVersion = result.harnessResult.contextManifest?.snapshotVersion;
+      assistantMessage.nativeLeaseId = result.harnessResult.backendBinding?.leaseId;
+      assistantMessage.nativeLeaseStatus = result.harnessResult.backendBinding?.leaseStatus;
+      assistantMessage.nativeLeaseTurnCount = result.harnessResult.backendBinding?.leaseTurnCount;
+      assistantMessage.nativeLeaseReused = (result.harnessResult.backendBinding?.leaseTurnCount ?? 0) > 1;
+    }
     assistantMessage.status = knowledgeBaseMessageStatusFromResult(result.status);
     assistantMessage.text = result.message;
     assistantMessage.citations = result.citations;
     if (result.ui) assistantMessage.knowledgeBaseUi = result.ui;
     else delete assistantMessage.knowledgeBaseUi;
-    if (result.status === "success" && appendKnowledgeContextBridge(session, item.text, turnAttachments.length, assistantMessage, result.citations)) {
-      assistantMessage.details = knowledgeContextBridgeDetailText(result.citations);
-    }
     if (result.status === "failed") {
       view.finishThinkingMessage(session, "失败");
       view.finishRunningProcessMessages(session, "error");
@@ -464,7 +469,9 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     try {
       await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
       await view.plugin.saveSettings(true);
-      await view.plugin.archivePendingKnowledgeBaseThreads().catch((error) => console.warn("Codex knowledge thread archive failed", error));
+      await view.plugin.settlePendingKnowledgeBaseNativeExecutions?.().catch((error) => console.warn("EchoInk native execution settle failed", error));
+      applyKnowledgeNativeLifecycleSummary(assistantMessage, manager.getLastNativeLifecycleSummary?.());
+      await view.plugin.saveSettings(true);
     } catch (error) {
       turnError = turnError ?? error;
       assistantMessage.status = "failed";
@@ -524,7 +531,7 @@ export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label
     active.updatedAt = Date.now();
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     await view.plugin.saveSettings(true);
-    await view.plugin.archivePendingKnowledgeBaseThreads().catch((error) => console.warn("Codex knowledge thread archive failed", error));
+    await view.plugin.settlePendingKnowledgeBaseNativeExecutions?.().catch((error) => console.warn("EchoInk native execution settle failed", error));
     view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
@@ -548,15 +555,30 @@ function isLocalKnowledgeBaseCommand(intent: string): boolean {
   return intent === "clear" || intent === "history";
 }
 
-function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"]) {
+function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"], harnessSession: StoredSession) {
   return {
     model: turnOptions.model,
     reasoning: turnOptions.reasoning,
     serviceTier: turnOptions.serviceTier,
     mcpEnabled: turnOptions.mcpEnabled,
     workspaceResources: turnOptions.workspaceResources,
-    hermesTaskTimeoutMs: 120000
+    hermesTaskTimeoutMs: 120000,
+    harnessSession
   };
+}
+
+function applyKnowledgeNativeLifecycleSummary(
+  message: ChatMessage,
+  summary: { localCommitStatus?: "committed" | "failed"; cleanupStatuses: string[]; disposedCount: number } | null | undefined
+): void {
+  if (!summary) return;
+  if (summary.localCommitStatus) message.nativeLocalCommitStatus = summary.localCommitStatus;
+  if (summary.cleanupStatuses.includes("failed")) message.nativeCleanupStatus = "failed";
+  else if (summary.cleanupStatuses.includes("retained-for-recovery")) message.nativeCleanupStatus = "retained-for-recovery";
+  else if (summary.cleanupStatuses.includes("unsupported")) message.nativeCleanupStatus = "unsupported";
+  else if (summary.cleanupStatuses.includes("retained")) message.nativeCleanupStatus = "retained";
+  else if (summary.disposedCount > 0) message.nativeCleanupStatus = "disposed";
+  else if (summary.cleanupStatuses.includes("not-needed")) message.nativeCleanupStatus = "not-needed";
 }
 
 function resolveChatBackend(view: CodexViewTurnContext): AgentBackendKind {

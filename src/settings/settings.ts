@@ -90,17 +90,6 @@ export interface ChatMessage {
 export type StoredSessionKind = "chat" | "knowledge-base";
 export const KNOWLEDGE_BASE_SESSION_TITLE = "知识库管理";
 
-export interface KnowledgeContextBridgeEntry {
-  id: string;
-  intent: string;
-  command: string;
-  summary: string;
-  sourceMessageId: string;
-  citations?: KnowledgeBaseCitationSummary;
-  createdAt: number;
-  injectedThreadIds: string[];
-}
-
 export interface StoredSession {
   id: string;
   title: string;
@@ -115,7 +104,6 @@ export interface StoredSession {
     text: string;
     updatedAt: number;
   };
-  knowledgeContext?: KnowledgeContextBridgeEntry[];
   messagesHiddenBefore?: number;
   historyActiveDate?: string;
   tokenUsage?: TokenUsage;
@@ -258,7 +246,7 @@ export interface KnowledgeBaseSettings {
   lastError: string;
   lastSummary: string;
   historyRetentionDays: number;
-  managedThreads: Record<string, KnowledgeBaseManagedThread>;
+  legacyManagedThreads?: Record<string, KnowledgeBaseManagedThread>;
   initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
   healthHistory: KnowledgeBaseHealthHistoryEntry[];
@@ -659,7 +647,6 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastError: "",
     lastSummary: "",
     historyRetentionDays: 30,
-    managedThreads: {},
     initialization: {
       status: "not-started",
       initializedAt: 0,
@@ -1387,7 +1374,7 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
     historyRetentionDays: normalizeKnowledgeBaseHistoryRetentionDays(value?.historyRetentionDays, fallback.historyRetentionDays),
-    managedThreads: normalizeKnowledgeBaseManagedThreads(value?.managedThreads),
+    ...legacyManagedThreadsFrom(value?.legacyManagedThreads ?? value?.managedThreads),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
     processedSources: normalizeKnowledgeBaseProcessedSources(value?.processedSources),
     healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory),
@@ -1489,7 +1476,6 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
         cwd: normalizeOptionalText(session.cwd),
         messages,
         rollingSummary: normalizeSessionSummary(session.rollingSummary),
-        knowledgeContext: normalizeKnowledgeContextBridgeEntries(session.knowledgeContext),
         messagesHiddenBefore: normalizeOptionalPositiveNumber(session.messagesHiddenBefore),
         historyActiveDate: normalizeOptionalText(session.historyActiveDate) || undefined,
         tokenUsage: session.tokenUsage as TokenUsage,
@@ -1696,38 +1682,6 @@ function normalizeSessionSummary(value: unknown): StoredSession["rollingSummary"
   return { text, updatedAt: normalizeNonNegativeNumber(item?.updatedAt) };
 }
 
-function normalizeKnowledgeContextBridgeEntries(value: unknown): KnowledgeContextBridgeEntry[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const entries = value
-    .map((item: unknown): KnowledgeContextBridgeEntry | null => {
-      const record = settingsRecord(item) ?? {};
-      const id = normalizeOptionalText(record.id);
-      const summary = normalizeOptionalText(record.summary).slice(0, 2000);
-      if (!id || !summary) return null;
-      return {
-        id,
-        intent: normalizeOptionalText(record.intent) || "unknown",
-        command: normalizeOptionalText(record.command).slice(0, 500),
-        summary,
-        sourceMessageId: normalizeOptionalText(record.sourceMessageId),
-        ...(record.citations ? { citations: record.citations as KnowledgeBaseCitationSummary } : {}),
-        createdAt: normalizeNonNegativeNumber(record.createdAt),
-        injectedThreadIds: normalizeKnowledgeContextThreadIds(record.injectedThreadIds)
-      };
-    })
-    .filter((entry): entry is KnowledgeContextBridgeEntry => Boolean(entry))
-    .slice(-8);
-  return entries.length ? entries : undefined;
-}
-
-function normalizeKnowledgeContextThreadIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const ids = value
-    .map((threadId: unknown) => normalizeOptionalText(threadId))
-    .filter((threadId): threadId is string => Boolean(threadId));
-  return [...new Set(ids)].slice(-20);
-}
-
 function normalizeOptionalPositiveNumber(value: unknown): number | undefined {
   const normalized = normalizeNonNegativeNumber(value);
   return normalized > 0 ? normalized : undefined;
@@ -1837,6 +1791,11 @@ function normalizeKnowledgeBaseManagedThreadArchiveState(value: unknown): Knowle
 export function normalizeKnowledgeBaseHistoryRetentionDays(value: unknown, fallback: number): number {
   const normalized = normalizePositiveInteger(value, fallback, 0, 3650);
   return normalized === 0 || normalized === 7 || normalized === 30 || normalized === 90 ? normalized : fallback;
+}
+
+function legacyManagedThreadsFrom(value: unknown): Pick<KnowledgeBaseSettings, "legacyManagedThreads"> {
+  const legacyManagedThreads = normalizeKnowledgeBaseManagedThreads(value);
+  return Object.keys(legacyManagedThreads).length ? { legacyManagedThreads } : {};
 }
 
 function normalizeKnowledgeBaseManagedThreads(value: unknown): Record<string, KnowledgeBaseManagedThread> {

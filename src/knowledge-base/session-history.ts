@@ -36,7 +36,6 @@ export function clearKnowledgeBaseVisibleHistory(session: StoredSession, now = D
   session.messagesHiddenBefore = hiddenBefore;
   delete session.threadId;
   delete session.tokenUsage;
-  delete session.knowledgeContext;
   session.updatedAt = now;
   return {
     hiddenCount: getHiddenKnowledgeBaseMessages(session).length,

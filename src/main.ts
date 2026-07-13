@@ -3,7 +3,7 @@ import type { CodexService, TurnOptions } from "./core/codex-service";
 import type { AgentBackendKind } from "./agent/types";
 import type { CodexRichAgentAdapterOptions } from "./harness/agents/adapters/codex-rich-adapter";
 import type { HarnessEventSink } from "./harness/contracts/event";
-import type { NativeExecutionRecord } from "./harness/contracts/native-execution";
+import type { LocalRunCommitResult, NativeExecutionRecord } from "./harness/contracts/native-execution";
 import type { HarnessRunWithAdapterInput } from "./harness/kernel/harness-kernel";
 import type { AppendRunEventInput, SettleRunTerminalInput } from "./harness/kernel/run-orchestrator";
 import type { NativeCleanupResult, SettleNativeExecutionInput } from "./harness/native/native-execution-manager";
@@ -58,7 +58,7 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async onunload(): Promise<void> {
     this.editorActions?.cancelActiveCandidate("canceled", false);
-    this.knowledgeBase?.unload();
+    await this.knowledgeBase?.unload();
     this.review?.unload();
     await this.saveSettings(true);
     await closeMcpBrokerConnectionPool();
@@ -129,6 +129,7 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async loadSettings(): Promise<void> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
+  async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> { return await this.getSettingsStore().commitKnowledgeRunDurably(); }
   async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
@@ -144,8 +145,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async runDeferredStartupMaintenance(): Promise<void> { return this.getSettingsStore().runDeferredStartupMaintenance(); }
 
   async archivePendingKnowledgeBaseThreads(): Promise<number> {
-    return this.knowledgeBase ? this.knowledgeBase.archivePendingCodexKnowledgeThreads() : 0;
+    return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0;
   }
+  async settlePendingKnowledgeBaseNativeExecutions(): Promise<number> { return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0; }
   getKnowledgeBaseManager(): KnowledgeBaseManager | null { return this.knowledgeBase; }
   getReviewManager(): ReviewManager | null { return this.review; }
   getEditorActions(): EditorActionController | null { return this.editorActions; }

@@ -71,6 +71,7 @@ import {
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeBaseSource } from "./types";
 import { exists } from "./utils";
 import type { KnowledgeBaseTurnOptionOverrides } from "./command-router";
+import type { KnowledgeAgentTaskOutput } from "./agent-runner";
 
 const MAX_ATTACHED_SOURCES = 20;
 
@@ -87,7 +88,7 @@ export interface KnowledgeBaseMaintenanceRunnerContext {
     codexWriteScope: "knowledge-base" | "knowledge-lint" | "journal";
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
     managedKind: KnowledgeBaseManagedThreadKind;
-  }): Promise<string>;
+  }): Promise<KnowledgeAgentTaskOutput>;
 }
 
 export class KnowledgeBaseMaintenanceRunner {
@@ -183,7 +184,7 @@ export class KnowledgeBaseMaintenanceRunner {
       this.throwIfCanceled();
 
       lintReportRecoveryEligible = mode === "lint";
-      const output = await this.context.runKnowledgeAgentTask({
+      const agentOutput = await this.context.runKnowledgeAgentTask({
         prompt,
         sources: runSources,
         permission: mode === "lint" ? "read-only" : "workspace-write",
@@ -191,6 +192,7 @@ export class KnowledgeBaseMaintenanceRunner {
         turnOptionOverrides,
         managedKind: mode
       });
+      const output = agentOutput.text;
       lintReportRecoveryEligible = false;
       this.throwIfCanceled();
 
