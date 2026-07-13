@@ -7,7 +7,14 @@ import { nodeFetch } from "./opencode-fetch";
 import { collectOpenCodeHistoryMessages, normalizeOpenCodeTimeMs, type OpenCodeHistorySnapshot } from "./opencode-history-loader";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
 import { runOpenCodeCommand, stopOpenCodeProcess } from "./opencode-process";
-import { buildOpenCodeRunArgs, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "./opencode-run";
+import {
+  buildOpenCodeRunArgs,
+  latestOpenCodeAssistantText,
+  openCodeAssistantMessageIds,
+  openCodeRunSessionIdFromLine,
+  parseOpenCodeModelListOutput,
+  parseOpenCodeRunJsonLines
+} from "./opencode-run";
 
 export type { OpenCodeHistoryMessage, OpenCodeHistorySnapshot } from "./opencode-history-loader";
 
@@ -249,6 +256,9 @@ export class OpenCodeBackend implements AgentBackend {
 
   async runCliTask(options: OpenCodeCliTaskOptions): Promise<AgentTaskResult> {
     const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const knownAssistantIds = options.nativeSessionId
+      ? await this.readSessionMessages(options.nativeSessionId).then(openCodeAssistantMessageIds).catch(() => null)
+      : new Set<string>();
     const files = (options.parts ?? []).filter((part) => part.type === "file").map((part) => part.path);
     const args = buildOpenCodeRunArgs({
       prompt: options.prompt,
@@ -282,9 +292,14 @@ export class OpenCodeBackend implements AgentBackend {
       }
     });
     const parsed = parseOpenCodeRunJsonLines(output);
-    if (parsed.sessionId && !emittedRunId) options.onRunId?.(parsed.sessionId);
-    if (!parsed.text) throw new Error("OpenCode CLI 未返回内容。");
-    return { text: parsed.text, runId: parsed.sessionId, usage: parsed.usage };
+    const sessionId = parsed.sessionId || options.nativeSessionId;
+    if (sessionId && !emittedRunId) options.onRunId?.(sessionId);
+    const recoveredText = !parsed.text && sessionId && knownAssistantIds
+      ? await this.recoverLatestAssistantText(sessionId, knownAssistantIds)
+      : "";
+    const text = parsed.text || recoveredText;
+    if (!text) throw new Error("OpenCode CLI 未返回内容。");
+    return { text, runId: sessionId, usage: parsed.usage };
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -307,6 +322,24 @@ export class OpenCodeBackend implements AgentBackend {
   private requireClient(): OpencodeClient {
     if (!this.client) throw new Error("OpenCode 未连接");
     return this.client;
+  }
+
+  private async readSessionMessages(sessionId: string): Promise<unknown[]> {
+    const messages = await unwrapOpenCodeResult(this.requireClient().session.messages({
+      sessionID: sessionId,
+      directory: this.options.vaultPath,
+      limit: 200
+    }), `读取 OpenCode 会话消息失败：${sessionId}`);
+    return Array.isArray(messages) ? messages : [];
+  }
+
+  private async recoverLatestAssistantText(sessionId: string, knownAssistantIds: ReadonlySet<string>): Promise<string> {
+    for (const delayMs of [0, 100, 300]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const text = latestOpenCodeAssistantText(await this.readSessionMessages(sessionId), knownAssistantIds);
+      if (text) return text;
+    }
+    return "";
   }
 
   private async listCliModels(): Promise<AgentModelInfo[]> {

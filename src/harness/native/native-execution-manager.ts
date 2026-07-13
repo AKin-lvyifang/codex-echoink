@@ -328,14 +328,16 @@ function cleanupNeeded(record: NativeExecutionRecord): boolean {
 
 function chooseSupportedDisposition(record: NativeExecutionRecord, adapter?: AgentAdapter): NativeDisposition {
   const capabilities = adapter?.manifest.nativeExecution?.dispositions;
+  let unsupportedFallback: NativeDisposition | null = null;
   for (const disposition of record.policy.preferredDisposition) {
-    if (disposition === "retain") return "retain";
+    if (disposition === "retain") return unsupportedFallback ?? "retain";
+    unsupportedFallback ??= disposition;
     if (!capabilities) continue;
     if (disposition === "delete" && capabilities.delete) return "delete";
     if (disposition === "archive" && capabilities.archive) return "archive";
     if (disposition === "process-exit" && capabilities.processExit) return "process-exit";
   }
-  return "retain";
+  return unsupportedFallback ?? "retain";
 }
 
 function cleanupReason(outcome: NativeRunOutcome | undefined): "knowledge-run-completed" | "knowledge-run-failed" | "knowledge-run-cancelled" {

@@ -10,6 +10,7 @@ import { buildAgentTurnProjection } from "../../ui/codex-view/agent-turn-process
 import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAgentEventForChat } from "../../ui/codex-view/agent-event-renderer";
 import { messageProvenanceMetaItems } from "../../ui/codex-view/message-list";
 import { messageRenderOptionsForRunUpdate, startChatTurn } from "../../ui/codex-view/turn-runner";
+import { renderTabsView } from "../../ui/codex-view/session-controller";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
   const runningMessages = createAgentTurn("running");
@@ -62,6 +63,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.equal(codexState.thinkingBlocks.length, 1);
 
   await testUnifiedChatHarnessTurn();
+  await testChatTabUpdatesPlaceholderBeforeSettingsSave();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true }), { forceBottom: false, preserveScroll: true });
@@ -78,6 +80,87 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   for (const selector of [".codex-agent-header", ".codex-message-type-actionStream", ".codex-turn-process", ".codex-action-region"]) {
     assert.ok(styles.includes(`${selector} {`) || styles.includes(`${selector},`), `Missing UI selector ${selector}`);
   }
+  assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name-row\s*\{[\s\S]*flex-wrap:\s*wrap/);
+  assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name\s*\{[\s\S]*white-space:\s*nowrap/);
+  assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-kb-maintain-report-path\s*\{[\s\S]*overflow-wrap:\s*anywhere[\s\S]*white-space:\s*normal/);
+}
+
+async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const knowledge: StoredSession = {
+    id: "knowledge-placeholder",
+    title: "知识库管理",
+    kind: "knowledge-base",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const chat: StoredSession = {
+    id: "chat-placeholder",
+    title: "Chat placeholder",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  settings.knowledgeBase.sessionId = knowledge.id;
+  settings.sessions = [knowledge, chat];
+  settings.activeSessionId = knowledge.id;
+  let releaseSave!: () => void;
+  const saveBlocked = new Promise<void>((resolve) => { releaseSave = resolve; });
+  let placeholderUpdates = 0;
+  let buttons: any[] = [];
+  const tabBarEl = {
+    empty() { buttons = []; },
+    createEl(_tag: string, options: any) {
+      const button = {
+        className: options?.cls ?? "",
+        textContent: options?.text ?? "",
+        attrs: options?.attr ?? {},
+        onclick: null as null | (() => void),
+        oncontextmenu: null,
+        ondblclick: null,
+        getAttribute(name: string) { return this.attrs[name] ?? null; }
+      };
+      buttons.push(button);
+      return button;
+    }
+  };
+  const host: any = {
+    plugin: {
+      settings,
+      getVaultPath: () => "/tmp/echoink-chat-ui",
+      saveSettings: async () => await saveBlocked
+    },
+    turnQueue: { clearSessionQueue: () => undefined },
+    tabBarEl,
+    running: false,
+    activeRunSessionId: "",
+    inputEl: { value: "" },
+    attachments: [],
+    selectedSkill: null,
+    resetVirtualWindow: () => undefined,
+    renderTabs: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    renderKnowledgeDashboard: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined,
+    updateInputPlaceholder: () => { placeholderUpdates += 1; },
+    prewarmActiveThread: () => undefined,
+    closeComposerMenus: () => undefined,
+    isKnowledgeBaseSession: (session: StoredSession) => session.id === knowledge.id
+  };
+
+  renderTabsView(host);
+  const chatButton = buttons.find((button) => button.getAttribute("title") === chat.title);
+  assert.ok(chatButton?.onclick);
+  chatButton.onclick();
+
+  assert.equal(settings.activeSessionId, chat.id);
+  assert.equal(placeholderUpdates, 1, "chat placeholder must update before asynchronous settings persistence finishes");
+  releaseSave();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function testUnifiedChatHarnessTurn(): Promise<void> {

@@ -65,8 +65,11 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
   }
 
   async disposeNativeExecution(request: NativeExecutionDispositionRequest): Promise<NativeExecutionDispositionResult> {
-    if (request.ref.backendId !== this.manifest.id || request.ref.kind !== "session") {
+    if (request.ref.backendId !== this.manifest.id) {
       return { outcome: "retained", message: "Native execution does not belong to this session adapter" };
+    }
+    if (request.ref.kind !== "session") {
+      return { outcome: "unsupported", message: `${this.manifest.displayName} does not support cleanup for ${request.ref.kind}` };
     }
     if (request.requested !== "delete" || !this.options.runtime.deleteNativeSession) {
       return { outcome: "unsupported", message: `${this.manifest.displayName} does not support ${request.requested}` };
@@ -137,7 +140,7 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
 
     const runtime = this.options.runtime as AgentTaskRuntime & Partial<AgentEventTaskRuntime>;
     try {
-      const result = await runAgentTaskWithToolBridge(runtime, taskInput, legacyEventSink(emit, this.manifest.id));
+      const result = await runAgentTaskWithToolBridge(runtime, taskInput, legacyEventSink(emit, this.manifest));
 
       if (!runtime.runTaskEvents) {
         await emit(incompleteHarnessEvent("agent.message.completed", this.manifest.id, result.text));
@@ -172,14 +175,15 @@ function buildPrompt(request: AgentRunRequest): string {
   return context || request.input.text;
 }
 
-function legacyEventSink(emit: HarnessEventSink, backendId: string): LegacyAgentEventSink {
+function legacyEventSink(emit: HarnessEventSink, manifest: AgentManifest): LegacyAgentEventSink {
   return async (event: AgentEvent) => {
-    const mapped = mapLegacyEvent(event, backendId);
+    const mapped = mapLegacyEvent(event, manifest);
     if (mapped) await emit(mapped);
   };
 }
 
-function mapLegacyEvent(event: AgentEvent, backendId: string): HarnessEvent | null {
+function mapLegacyEvent(event: AgentEvent, manifest: AgentManifest): HarnessEvent | null {
+  const backendId = manifest.id;
   switch (event.type) {
     case "fallback_started":
       return incompleteHarnessEvent("adapter.fallback.started", backendId, undefined, event.error, undefined, undefined, event.data);
@@ -189,8 +193,10 @@ function mapLegacyEvent(event: AgentEvent, backendId: string): HarnessEvent | nu
     case "completed":
       return incompleteHarnessEvent("agent.message.completed", backendId, event.text, undefined, undefined, undefined, event.data);
     case "thinking_delta":
+      if (manifest.capabilities.output.reasoningSummary === "none") return null;
       return incompleteHarnessEvent("agent.reasoning.summary.delta", backendId, event.text, undefined, undefined, undefined, event.data);
     case "thinking_completed":
+      if (manifest.capabilities.output.reasoningSummary === "none") return null;
       return incompleteHarnessEvent("agent.reasoning.summary.completed", backendId, event.text, undefined, undefined, undefined, event.data);
     case "tool_call_requested":
       return incompleteHarnessEvent("tool.requested", backendId, event.text, event.error, event.toolName, event.resourceId, event.data);

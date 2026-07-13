@@ -49,6 +49,7 @@ export interface CodexRichAgentAdapterOptions {
   toolBridge?: AgentToolBridgeRuntime | null;
   artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   inactivityTimeoutMs?: number;
+  finalAnswerGraceMs?: number;
 }
 
 export class CodexRichAgentAdapter implements AgentAdapter {
@@ -268,6 +269,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       emit,
       interruptTurn: this.options.interruptTurn,
       inactivityTimeoutMs: this.options.inactivityTimeoutMs,
+      finalAnswerGraceMs: this.options.finalAnswerGraceMs,
       artifactRecovery: this.options.artifactRecovery,
       onSettled: async () => {
         this.options.notificationHub?.unregister(runId);

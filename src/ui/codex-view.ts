@@ -319,12 +319,13 @@ export class CodexView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.render();
-    await this.plugin.ensureCodexConnected();
-    this.applyStatus();
     this.renderTabs();
     this.renderMessages({ forceBottom: true });
     this.renderKnowledgeDashboard();
     void this.refreshKnowledgeDashboard();
+    if (this.plugin.lastStatus) this.applyStatus();
+    await this.plugin.ensureCodexConnected();
+    this.applyStatus();
     this.prewarmActiveThread();
     this.prewarmEditorActionThread();
     void this.refreshHeaderRateLimits();
@@ -544,6 +545,7 @@ export class CodexView extends ItemView {
   private scheduleSessionSave(): void { scheduleSessionSaveAction(this.messageHost()); }
   private async flushSessionSave(): Promise<void> { await flushSessionSaveAction(this.messageHost()); }
   private moveMessageToEnd(session: StoredSession, messageId: string): void { moveMessageToEndAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session, messageId); }
+  private updateContext(tokenUsage: TokenUsage | undefined, persist: boolean): void { this.updateContextForSession(this.ensureSession(), tokenUsage, persist); }
   private updateContextForSession(session: StoredSession, tokenUsage: TokenUsage | undefined, persist: boolean): void { updateContextForSessionAction(this.composerHost(), session, tokenUsage, persist); }
 
   private async toggleMcpPanel(): Promise<void> {

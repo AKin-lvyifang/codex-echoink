@@ -79,9 +79,14 @@ export function createAgentEventRuntimeWithFallback(
         return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
       }
       if (richRuntime && shouldAttemptRichRuntime(input.timeoutMs)) {
+        let richOutputStarted = false;
         try {
-          return await richRuntime.runTaskStream(input, emit);
+          return await richRuntime.runTaskStream(input, async (event) => {
+            if (isRichOutputEvent(event)) richOutputStarted = true;
+            await emit(event);
+          });
         } catch (error) {
+          if (input.abortSignal?.aborted || richOutputStarted) throw error;
           const message = error instanceof Error ? error.message : String(error);
           await emit({
             type: "fallback_started",
@@ -154,4 +159,18 @@ async function runConnectedTaskWithLifecycleEvents(
 
 function shouldAttemptRichRuntime(timeoutMs: number | undefined): boolean {
   return !timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs >= 1000;
+}
+
+function isRichOutputEvent(event: AgentEvent): boolean {
+  return event.type === "message_delta"
+    || event.type === "message_completed"
+    || event.type === "thinking_delta"
+    || event.type === "thinking_completed"
+    || event.type === "tool_call_requested"
+    || event.type === "tool_call_delta"
+    || event.type === "tool_call_completed"
+    || event.type === "tool_call_failed"
+    || event.type === "permission_requested"
+    || event.type === "file_status"
+    || event.type === "plan_updated";
 }

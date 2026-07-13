@@ -102,7 +102,15 @@ import { formatOpenCodeError } from "../core/opencode-errors";
 import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
 import { expandHome } from "../core/path-utils";
-import { buildOpenCodeRunArgs, openCodeCliModelId, openCodeRunSessionIdFromLine, parseOpenCodeModelListOutput, parseOpenCodeRunJsonLines } from "../core/opencode-run";
+import {
+  buildOpenCodeRunArgs,
+  latestOpenCodeAssistantText,
+  openCodeAssistantMessageIds,
+  openCodeCliModelId,
+  openCodeRunSessionIdFromLine,
+  parseOpenCodeModelListOutput,
+  parseOpenCodeRunJsonLines
+} from "../core/opencode-run";
 import {
   detectOpenCodeCommand,
   ensureOpenCodeModelSupportsFiles,
@@ -783,6 +791,53 @@ const fallbackResult = await fallbackRuntime.runTaskEvents({ prompt: "只回复 
 assert.equal(fallbackResult.text, "PONG");
 assert.equal(fallbackEvents.some((event) => event.type === "fallback_started" && event.error === "ACP startup failed"), true);
 assert.equal(fallbackEvents.at(-1)?.type, "completed");
+let abortedFallbackCalls = 0;
+const abortedRichController = new AbortController();
+abortedRichController.abort();
+const abortedFallbackEvents: AgentEvent[] = [];
+const abortedFallbackRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async runTask() {
+    abortedFallbackCalls += 1;
+    return { text: "must not run" };
+  }
+}, {
+  ...richStartupFailureRuntime,
+  async runTaskStream() {
+    throw new Error("ACP transport closed after cancellation");
+  }
+});
+await assert.rejects(
+  abortedFallbackRuntime.runTaskEvents({
+    prompt: "cancelled",
+    timeoutMs: 120_000,
+    abortSignal: abortedRichController.signal
+  }, (event) => abortedFallbackEvents.push(event)),
+  /ACP transport closed after cancellation/
+);
+assert.equal(abortedFallbackCalls, 0);
+assert.equal(abortedFallbackEvents.some((event) => event.type === "fallback_started"), false);
+let streamedFallbackCalls = 0;
+const streamedFallbackEvents: AgentEvent[] = [];
+const streamedFailureRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async runTask() {
+    streamedFallbackCalls += 1;
+    return { text: "must not run" };
+  }
+}, {
+  ...richStartupFailureRuntime,
+  async runTaskStream(_input, emit) {
+    await emit({ type: "message_delta", backend: "hermes", createdAt: 1, text: "partial" });
+    throw new Error("ACP stream failed after output");
+  }
+});
+await assert.rejects(
+  streamedFailureRuntime.runTaskEvents({ prompt: "stream" }, (event) => streamedFallbackEvents.push(event)),
+  /ACP stream failed after output/
+);
+assert.equal(streamedFallbackCalls, 0);
+assert.equal(streamedFallbackEvents.some((event) => event.type === "fallback_started"), false);
 let agentChatState = createAgentEventRenderState("hermes");
 agentChatState = reduceAgentEventForChat(agentChatState, { type: "connecting", backend: "hermes", createdAt: 1 });
 assert.equal(agentChatState.status, "running");
@@ -874,6 +929,7 @@ assert.match(turnRunnerSourceForAgentEvents, /runHarnessWithAdapter/);
 assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
 assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
+assert.doesNotMatch(turnRunnerSourceForAgentEvents, /hermesTaskTimeoutMs:\s*120000/);
 const knowledgeManagerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const knowledgeAgentRunnerSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-runner.ts"), "utf8");
 const knowledgeAgentTaskServiceSourceForToolBridge = await readFile(path.join(process.cwd(), "src/knowledge-base/agent-task-service.ts"), "utf8");
@@ -1149,6 +1205,10 @@ const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
   settings: staleKnowledgeBaseRunSettings,
   getVaultPath: () => "/tmp/vault",
   saveSettings: async () => undefined,
+  failPendingNativeExecutionsForRecovery: async (input: { reason: string; surface?: string }) => {
+    staleKnowledgeRecoveryCalls.push(input);
+    return 1;
+  },
   getCodexView: () => null,
   getReviewManager: () => null,
   externalizeMessageText: async () => undefined,
@@ -1159,11 +1219,14 @@ const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
   registerInterval: () => undefined,
   app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
 } as any);
-assert.equal((staleKnowledgeBaseRunManager as any).recoverPersistedRunState("startup recovery"), 2);
+const staleKnowledgeRecoveryCalls: Array<{ reason: string; surface?: string }> = [];
+staleKnowledgeBaseRunManager.register();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastRunStatus, "failed");
 assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastScheduledRunStatus, "failed");
 assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.legacyManagedThreads?.["thread-stale-startup"]?.archiveState, "running");
-assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /startup recovery/);
+assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /插件重新加载/);
+assert.deepEqual(staleKnowledgeRecoveryCalls.map((input) => input.surface), ["knowledge"]);
 const dashboardCacheVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-cache-"));
 try {
   await mkdir(path.join(dashboardCacheVault, "raw", "articles"), { recursive: true });
@@ -1441,6 +1504,18 @@ assert.equal(shouldPinMessageListBottom({ fromScroll: true }, true), false);
 assert.equal(shouldPinMessageListBottom({ forceBottom: true, preserveScroll: true }, true), true);
 assert.equal(shouldPinMessageListBottom({}, true), true);
 assert.equal(shouldPinMessageListBottom({}, false), false);
+const messageListBottomPinSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
+const messageListRenderMethod = messageListBottomPinSource.slice(
+  messageListBottomPinSource.indexOf("  render(input: MessageListRenderInput): void"),
+  messageListBottomPinSource.indexOf("  measureVisibleVirtualRows(")
+);
+assert.match(messageListRenderMethod, /messagesEl\.scrollTop\s*=\s*messagesEl\.scrollHeight/);
+const messageListIncrementalMethod = messageListBottomPinSource.slice(
+  messageListBottomPinSource.indexOf("  tryUpdateMessage(message: ChatMessage): boolean"),
+  messageListBottomPinSource.indexOf("  isNearBottom(")
+);
+assert.match(messageListIncrementalMethod, /onScheduleMeasure\(shouldPinBottom\)/);
+assert.doesNotMatch(messageListIncrementalMethod, /messagesEl\.scrollTop\s*=/);
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true, isMessagesNearBottom: () => true }), { forceBottom: false, preserveScroll: true });
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => false }), { forceBottom: true, preserveScroll: false });
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => true }), { forceBottom: true, preserveScroll: false });
@@ -2959,6 +3034,18 @@ const codexViewUiSources = [
   codexViewSessionMessageStoreSource
 ].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
+const codexViewOnOpenSource = codexViewSource.slice(
+  codexViewSource.indexOf("async onOpen(): Promise<void>"),
+  codexViewSource.indexOf("async onClose(): Promise<void>")
+);
+assert.ok(
+  codexViewOnOpenSource.indexOf("this.renderTabs()") < codexViewOnOpenSource.indexOf("await this.plugin.ensureCodexConnected()"),
+  "the sidebar must render session navigation before a slow Codex connection settles"
+);
+assert.ok(
+  codexViewOnOpenSource.indexOf("this.renderMessages({ forceBottom: true })") < codexViewOnOpenSource.indexOf("await this.plugin.ensureCodexConnected()"),
+  "the sidebar must restore local messages before a slow Codex connection settles"
+);
 const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
 const sessionMessageStoreAddMessageSource = codexViewSessionMessageStoreSource.slice(
   codexViewSessionMessageStoreSource.indexOf("addMessageToSession"),
@@ -3425,6 +3512,7 @@ assert.match(codexViewComposerSource, /恢复原文/);
 assert.match(codexViewShellSource, /enhanceChatInput/);
 assert.match(editorActionRunnerSourceForAgentEvents, /export async function enhanceChatInput/);
 assert.match(codexViewSource, /promptEnhanceReviewEl/);
+assert.match(codexViewSource, /private updateContext\(tokenUsage:[\s\S]*this\.updateContextForSession\(this\.ensureSession\(\), tokenUsage, persist\)/);
 assert.match(editorActionRunnerSourceForAgentEvents, /detectEnhanceStyle/);
 assert.match(editorActionRunnerSourceForAgentEvents, /renderPromptEnhanceReview/);
 assert.match(editorActionRunnerSourceForAgentEvents, /const qualityMode:\s*EditorActionQualityMode\s*=\s*"quality"/);
@@ -4836,6 +4924,26 @@ const parsedOpenCodeRun = parseOpenCodeRunJsonLines([
 assert.equal(parsedOpenCodeRun.text, "OPENCODE");
 assert.equal(parsedOpenCodeRun.sessionId, "ses_1");
 assert.deepEqual(parsedOpenCodeRun.usage, { inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+const openCodeMessagesForRecovery = [
+  {
+    info: { id: "msg-user-1", role: "user", time: { created: 10 } },
+    parts: [{ type: "text", text: "question" }]
+  },
+  {
+    info: { id: "msg-assistant-old", role: "assistant", time: { created: 20, completed: 21 } },
+    parts: [{ type: "text", text: "old answer" }]
+  },
+  {
+    info: { id: "msg-assistant-new", role: "assistant", time: { created: 30, completed: 31 } },
+    parts: [
+      { type: "reasoning", text: "private reasoning" },
+      { type: "text", text: "new answer" }
+    ]
+  }
+];
+const knownOpenCodeAssistantIds = openCodeAssistantMessageIds(openCodeMessagesForRecovery.slice(0, 2));
+assert.equal(latestOpenCodeAssistantText(openCodeMessagesForRecovery, knownOpenCodeAssistantIds), "new answer");
+assert.equal(latestOpenCodeAssistantText(openCodeMessagesForRecovery.slice(0, 2), knownOpenCodeAssistantIds), "");
 const opencodeHistoryStart = new Date("2026-05-19T00:00:00Z").getTime();
 const fakeOpenCodeSessions = Array.from({ length: 6 }, (_, index) => ({
   id: `session-${index}`,
@@ -4910,6 +5018,7 @@ assert.deepEqual(buildOpenCodeRunArgs({
   "Build",
   "--file",
   "/vault/testing/a.md",
+  "--",
   "只回复 PONG"
 ]);
 const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");

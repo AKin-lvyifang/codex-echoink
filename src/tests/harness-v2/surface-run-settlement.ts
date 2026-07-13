@@ -14,12 +14,14 @@ import { CodexNotificationRouter } from "../../ui/codex-view/notification-router
 import {
   afterTurnSettled,
   startChatTurn,
+  startKnowledgeBaseTurn,
   startNextQueuedTurn,
   startQueuedTurnItem,
   startQueuedTurnItemSafely
 } from "../../ui/codex-view/turn-runner";
 import { armTurnWatchdog, persistAndSettleChatRun, stopTurn } from "../../ui/codex-view/turn-lifecycle";
 import { recoverStaleHarnessRuns } from "../../core/message-state";
+import { KnowledgeBaseAgentTaskService } from "../../knowledge-base/agent-task-service";
 
 export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertChatTerminalPersistsHistoryBeforeLedger();
@@ -27,6 +29,9 @@ export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertChatStopUsesActualBackend();
   await assertChatStopPropagatesCancelFailureAndAllowsRetry();
   await assertKnowledgeStopDelegatesToManager();
+  await assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure();
+  await assertKnowledgeCleanupFailureDoesNotFailCompletedTurn();
+  await assertKnowledgeUnloadWaitsForActiveRunSettlement();
   await assertEditorStopUsesHarnessCancel();
   await assertEditorStopPropagatesCancelFailureAndAllowsRetry();
   await assertKnowledgeWatchdogUsesHarnessCancel();
@@ -277,6 +282,216 @@ async function assertKnowledgeStopDelegatesToManager(): Promise<void> {
   assert.deepEqual(calls, ["pause:session-knowledge-stop", "cancel-knowledge"]);
   assert.equal(view.running, true);
   assert.equal(view.activeRunId, "kb-run-knowledge-stop");
+}
+
+async function assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure(): Promise<void> {
+  const calls: string[] = [];
+  let saveCalls = 0;
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "opencode";
+  settings.knowledgeBase.backend = "opencode";
+  settings.activeSessionId = "session-knowledge-local-fail";
+  const session: StoredSession = {
+    id: settings.activeSessionId,
+    title: "Knowledge",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const manager = {
+    handleUserMessage: async () => ({
+      status: "success" as const,
+      message: "知识任务完成",
+      harnessResult: {
+        runId: "knowledge-opencode-local-fail",
+        status: "completed" as const,
+        nativeExecution: {
+          backendId: "opencode",
+          id: "native-local-fail",
+          kind: "session" as const,
+          persistence: "provider-persistent" as const,
+          deviceKey: "device",
+          vaultId: "vault",
+          createdAt: 1
+        }
+      }
+    }),
+    getLastNativeLifecycleSummary: () => ({
+      localCommitStatus: "failed" as const,
+      cleanupStatuses: ["retained-for-recovery" as const]
+    })
+  };
+  const view: any = {
+    plugin: {
+      settings,
+      getKnowledgeBaseManager: () => manager,
+      externalizeMessageText: async (_message: unknown, _text: string) => { calls.push("externalize"); },
+      saveSettings: async () => {
+        saveCalls += 1;
+        calls.push(`save:${saveCalls}`);
+        if (saveCalls >= 2) throw new Error("conversation store failed");
+      },
+      settlePendingKnowledgeBaseNativeExecutions: async () => { calls.push("settle-native"); }
+    },
+    running: false,
+    activeRunId: "",
+    activeRunKind: "",
+    activeRunSessionId: "",
+    messagesBottomFollowPaused: false,
+    clearComposerDraft: () => undefined,
+    renderTabs: () => undefined,
+    renderMessagesIfActive: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    clearTurnWatchdog: () => undefined,
+    clearActiveRun: () => undefined,
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    finishPlanMessage: () => undefined,
+    moveMessageToEnd: () => undefined,
+    fillKnowledgeBaseCommand: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined
+  };
+  const item = { ...queuedTurn("knowledge-local-fail", session.id, "/check test"), kind: "knowledge-base" };
+
+  await assert.rejects(startKnowledgeBaseTurn(view, session, item, "composer"), /conversation store failed/);
+
+  assert.ok(calls.indexOf("settle-native") > calls.indexOf("externalize"));
+  assert.ok(calls.indexOf("settle-native") < calls.indexOf("save:2"));
+  assert.equal(session.messages.find((message) => message.role === "assistant")?.nativeLocalCommitStatus, "failed");
+  assert.equal(session.messages.find((message) => message.role === "assistant")?.nativeCleanupStatus, "retained-for-recovery");
+}
+
+async function assertKnowledgeCleanupFailureDoesNotFailCompletedTurn(): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "opencode";
+  settings.knowledgeBase.backend = "opencode";
+  settings.activeSessionId = "session-knowledge-cleanup-fail";
+  const session: StoredSession = {
+    id: settings.activeSessionId,
+    title: "Knowledge",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const manager = {
+    handleUserMessage: async () => ({
+      status: "success" as const,
+      message: "知识任务完成",
+      harnessResult: {
+        runId: "knowledge-opencode-cleanup-fail",
+        status: "completed" as const,
+        nativeExecution: {
+          backendId: "opencode",
+          id: "native-cleanup-fail",
+          kind: "session" as const,
+          persistence: "provider-persistent" as const,
+          deviceKey: "device",
+          vaultId: "vault",
+          createdAt: 1
+        }
+      }
+    }),
+    getLastNativeLifecycleSummary: () => ({
+      localCommitStatus: "committed" as const,
+      cleanupStatuses: ["failed" as const]
+    })
+  };
+  const view: any = {
+    plugin: {
+      settings,
+      getKnowledgeBaseManager: () => manager,
+      externalizeMessageText: async () => undefined,
+      saveSettings: async () => undefined,
+      settlePendingKnowledgeBaseNativeExecutions: async () => {
+        throw new Error("native cleanup failed");
+      }
+    },
+    running: false,
+    activeRunId: "",
+    activeRunKind: "",
+    activeRunSessionId: "",
+    messagesBottomFollowPaused: false,
+    clearComposerDraft: () => undefined,
+    renderTabs: () => undefined,
+    renderMessagesIfActive: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    clearTurnWatchdog: () => undefined,
+    clearActiveRun: () => undefined,
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    finishPlanMessage: () => undefined,
+    moveMessageToEnd: () => undefined,
+    fillKnowledgeBaseCommand: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined
+  };
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    const outcome = await startKnowledgeBaseTurn(
+      view,
+      session,
+      { ...queuedTurn("knowledge-cleanup-fail", session.id, "/check test"), kind: "knowledge-base" },
+      "composer"
+    );
+    const assistant = session.messages.find((message) => message.role === "assistant");
+    assert.equal(outcome, "completed");
+    assert.equal(assistant?.status, "completed");
+    assert.equal(assistant?.text, "知识任务完成");
+    assert.equal(assistant?.nativeLocalCommitStatus, "committed");
+    assert.equal(assistant?.nativeCleanupStatus, "failed");
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]?.[0]), /native execution settle failed/);
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
+async function assertKnowledgeUnloadWaitsForActiveRunSettlement(): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  let resolveRun: ((value: { text: string }) => void) | null = null;
+  let runtimeCleared = false;
+  const service = new KnowledgeBaseAgentTaskService({
+    settings,
+    getVaultPath: () => "/vault",
+    saveSettings: async () => undefined,
+    settleHarnessRunTerminal: async () => undefined,
+    cancelHarnessRun: async () => undefined
+  } as any, { isCancelRequested: () => false });
+  (service as any).runtimeController = {
+    hasActiveRun: true,
+    run: async () => await new Promise<{ text: string }>((resolve) => { resolveRun = resolve; }),
+    cancel: async () => {
+      setTimeout(() => resolveRun?.({ text: "cancelled and settled" }), 15);
+      return true;
+    },
+    clear: () => { runtimeCleared = true; }
+  };
+
+  const runPromise = service.runTask({
+    backend: "codex-cli",
+    prompt: "wait for unload",
+    sources: [],
+    permission: "read-only",
+    codexWriteScope: "knowledge-lint",
+    managedKind: "lint"
+  });
+  await Promise.resolve();
+  let unloadCompleted = false;
+  const unloadPromise = service.unload().then(() => { unloadCompleted = true; });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(unloadCompleted, false, "plugin unload must wait for the active Knowledge run promise");
+  await unloadPromise;
+  await runPromise;
+  assert.equal(runtimeCleared, true);
 }
 
 async function assertChatStopPropagatesCancelFailureAndAllowsRetry(): Promise<void> {

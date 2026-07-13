@@ -32,6 +32,9 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichRunDriverMapsNotificationsToHarnessEvents();
   await assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent();
   await assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput();
+  await assertCodexRichRunDriverSettlesFinalAnswerWithoutTurnCompleted();
+  await assertCodexRichRunDriverPrefersOfficialTurnCompletedDuringGrace();
+  await assertCodexRichRunDriverCancelsFinalAnswerFallbackForFollowUpWork();
   await assertCodexRichRunDriverPreservesCompletedOnlyAssistantOrder();
   await assertCodexRichRunDriverDoesNotDuplicateDeltaAndCompletedAssistantText();
   await assertCodexRichRunDriverDoesNotMisselectEmptyProcessAssistant();
@@ -261,7 +264,9 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
     async runTaskEvents(input: AgentTaskInput, emit: any): Promise<AgentTaskResult> {
       emit({ type: "fallback_started", backend: "hermes", createdAt: 1, error: "ACP unavailable" });
       emit({ type: "message_delta", backend: "hermes", createdAt: 2, text: "rich " });
-      emit({ type: "message_completed", backend: "hermes", createdAt: 3, text: "rich pong" });
+      emit({ type: "thinking_delta", backend: "hermes", createdAt: 3, text: "raw internal thought" });
+      emit({ type: "thinking_completed", backend: "hermes", createdAt: 4, text: "raw internal thought" });
+      emit({ type: "message_completed", backend: "hermes", createdAt: 5, text: "rich pong" });
       return { text: "rich pong", runId: input.onRunId ? "ignored" : "hermes-run" };
     }
   };
@@ -292,6 +297,7 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
 
   assert.equal(result.status, "completed");
   assert.equal(result.outputText, "rich pong");
+  assert.equal(events.some((event) => event.type.startsWith("agent.reasoning.")), false);
   assert.deepEqual(events.map((event) => event.type), [
     "adapter.fallback.started",
     "agent.message.delta",
@@ -446,6 +452,12 @@ async function assertTaskRuntimeAdapterDeclaresTruthfulNativeCleanupFallback(): 
   assert.equal(hermes.manifest.nativeExecution?.dispositions.delete, false);
   assert.equal(hermes.manifest.nativeExecution?.dispositions.archive, false);
   assert.equal(hermes.manifest.nativeExecution?.dispositions.processExit, false);
+  const hermesCleanup = await hermes.disposeNativeExecution?.({
+    ref: hermesResult.nativeExecution!,
+    requested: "delete",
+    reason: "knowledge-run-completed"
+  });
+  assert.equal(hermesCleanup?.outcome, "unsupported");
 }
 
 async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
@@ -923,6 +935,130 @@ async function assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput()
     "agent.message.completed",
     "run.completed"
   ]);
+}
+
+async function assertCodexRichRunDriverSettlesFinalAnswerWithoutTurnCompleted(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-final-answer-fallback", {
+    threadId: "thread-final-answer-fallback",
+    turnId: "turn-final-answer-fallback",
+    finalAnswerGraceMs: 5
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-final-answer-fallback",
+        threadId: "thread-final-answer-fallback",
+        turnId: "turn-final-answer-fallback",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "Recovered terminal answer"
+      }
+    }
+  });
+
+  const result = await driver.awaitResult();
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-final-answer-fallback",
+      turn: { id: "turn-final-answer-fallback", status: "completed" }
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Recovered terminal answer");
+  assert.deepEqual(events.map((event) => event.type), ["agent.message.completed", "run.completed"]);
+  assert.equal(events.at(-1)?.data?.settlement, "final-answer-grace");
+}
+
+async function assertCodexRichRunDriverPrefersOfficialTurnCompletedDuringGrace(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-final-answer-official", {
+    threadId: "thread-final-answer-official",
+    turnId: "turn-final-answer-official",
+    finalAnswerGraceMs: 20
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-final-answer-official",
+        threadId: "thread-final-answer-official",
+        turnId: "turn-final-answer-official",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "Official terminal answer"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-final-answer-official",
+      turn: { id: "turn-final-answer-official", status: "completed" }
+    }
+  });
+
+  const result = await driver.awaitResult();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Official terminal answer");
+  assert.equal(events.filter((event) => event.type === "run.completed").length, 1);
+  assert.equal(events.at(-1)?.data?.settlement, undefined);
+}
+
+async function assertCodexRichRunDriverCancelsFinalAnswerFallbackForFollowUpWork(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-final-answer-follow-up", {
+    threadId: "thread-final-answer-follow-up",
+    turnId: "turn-final-answer-follow-up",
+    finalAnswerGraceMs: 5
+  });
+
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-final-answer-follow-up",
+        threadId: "thread-final-answer-follow-up",
+        turnId: "turn-final-answer-follow-up",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "Answer before follow-up"
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: {
+      item: {
+        id: "tool-after-final-answer",
+        threadId: "thread-final-answer-follow-up",
+        turnId: "turn-final-answer-follow-up",
+        type: "commandExecution",
+        command: "echo follow-up"
+      }
+    }
+  });
+
+  const pending = await Promise.race([
+    driver.awaitResult().then(() => "settled"),
+    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 15))
+  ]);
+  assert.equal(pending, "pending");
+
+  driver.handleNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-final-answer-follow-up",
+      turn: { id: "turn-final-answer-follow-up", status: "completed" }
+    }
+  });
+  assert.equal((await driver.awaitResult()).status, "completed");
+  assert.equal(events.filter((event) => event.type === "run.completed").length, 1);
 }
 
 async function assertCodexRichRunDriverPreservesCompletedOnlyAssistantOrder(): Promise<void> {
@@ -2777,7 +2913,7 @@ function countOccurrences(text: string, needle: string): number {
 
 function createDriverHarness(
   runId: string,
-  options: { threadId?: string; turnId?: string } = {}
+  options: { threadId?: string; turnId?: string; finalAnswerGraceMs?: number } = {}
 ): { driver: CodexRichRunDriver; events: HarnessEvent[] } {
   const events: HarnessEvent[] = [];
   const driver = new CodexRichRunDriver({
@@ -2785,6 +2921,7 @@ function createDriverHarness(
     backendId: "codex-cli",
     threadId: options.threadId,
     turnId: options.turnId,
+    finalAnswerGraceMs: options.finalAnswerGraceMs,
     emit: async (event) => {
       events.push(event);
     }

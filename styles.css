@@ -309,6 +309,7 @@ body.theme-light .codex-container {
 
 .codex-agent-header-main {
   display: grid;
+  flex: 1 1 auto;
   gap: 1px;
   min-width: 0;
 }
@@ -7358,6 +7359,29 @@ body.theme-light .codex-container {
 }
 
 @container (max-width: 420px) {
+  .codex-agent-name-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .codex-agent-name {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .codex-agent-model-pill {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .codex-kb-maintain-report-path {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
   .codex-action-summary,
   .codex-action-group-summary,
   .codex-action-item-head {

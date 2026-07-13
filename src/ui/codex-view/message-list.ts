@@ -38,7 +38,7 @@ export interface MessageListRenderInput {
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
   onOpenKnowledgeHistory: () => void;
-  onScheduleMeasure: () => void;
+  onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
   options?: MessageListRenderOptions;
@@ -171,7 +171,7 @@ export class CodexMessageListRenderer {
 
     this.measureVisibleVirtualRows(messagesEl, virtualListEl, shouldPinBottom);
     if (shouldPinBottom) {
-      messagesEl.scrollTop = scrollTopForMessageListBottom(virtual.totalHeight, viewportHeight);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     } else if (env.options.fromScroll || env.options.preserveScroll) {
       messagesEl.scrollTop = previousScrollTop;
     }
@@ -212,8 +212,7 @@ export class CodexMessageListRenderer {
     wrapper.toggleClass("codex-message-streaming", true);
     content.empty();
     renderRichText(env.app, env.component, content, displayTextForMessage(message));
-    env.onScheduleMeasure();
-    if (shouldPinBottom) env.messagesEl.scrollTop = env.messagesEl.scrollHeight;
+    env.onScheduleMeasure(shouldPinBottom);
     return true;
   }
 
@@ -356,7 +355,7 @@ export class CodexMessageListRenderer {
       for (const image of message.images) {
         const img = images.createEl("img", { attr: { alt: image.name } });
         img.src = toImageSrc(env.app, image.path);
-        img.onload = env.onScheduleMeasure;
+        img.onload = () => env.onScheduleMeasure();
         img.onclick = () => openImageOverlay(img.src);
       }
     }

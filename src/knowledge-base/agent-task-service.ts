@@ -81,6 +81,7 @@ export class KnowledgeBaseAgentTaskService {
   private activeHarnessRunId: string | null = null;
   private readonly pendingNativeExecutionCommits = new Map<string, PendingNativeExecutionCommit>();
   private readonly pendingHarnessTerminalSettlements = new Map<string, SettleRunTerminalInput>();
+  private readonly activeTaskSettlements = new Set<Promise<void>>();
   private lastNativeLifecycleSummary: KnowledgeBaseNativeLifecycleSummary | null = null;
 
   constructor(
@@ -131,6 +132,7 @@ export class KnowledgeBaseAgentTaskService {
 
   async unload(): Promise<void> {
     await this.cancelActiveTasks().catch(() => undefined);
+    await Promise.allSettled(Array.from(this.activeTaskSettlements));
     this.runtimeController.clear();
   }
 
@@ -167,6 +169,9 @@ export class KnowledgeBaseAgentTaskService {
   }
 
   async runTask(input: KnowledgeBaseHarnessTaskInput): Promise<KnowledgeAgentTaskOutput> {
+    let releaseTaskSettlement!: () => void;
+    const taskSettlement = new Promise<void>((resolve) => { releaseTaskSettlement = resolve; });
+    this.activeTaskSettlements.add(taskSettlement);
     const harnessRunId = newId(`knowledge-${input.backend}`);
     this.activeHarnessRunId = harnessRunId;
     let nativeRecordPromise: Promise<string> | null = null;
@@ -217,6 +222,8 @@ export class KnowledgeBaseAgentTaskService {
       throw error;
     } finally {
       if (this.activeHarnessRunId === harnessRunId) this.activeHarnessRunId = null;
+      releaseTaskSettlement();
+      this.activeTaskSettlements.delete(taskSettlement);
     }
   }
 

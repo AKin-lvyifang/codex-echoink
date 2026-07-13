@@ -85,8 +85,15 @@ export class KnowledgeBaseManager {
   }
 
   register(): void {
-    const recovered = this.recoverPersistedRunState("插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。");
-    if (recovered) void saveSettingsSafely(this.plugin, { flushKnowledgeBaseHistory: false });
+    const recoveryReason = "插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。";
+    const recovered = this.recoverPersistedRunState(recoveryReason);
+    void (async () => {
+      if (recovered) await saveSettingsSafely(this.plugin, { flushKnowledgeBaseHistory: false });
+      await this.plugin.failPendingNativeExecutionsForRecovery({
+        reason: recoveryReason,
+        surface: "knowledge"
+      });
+    })().catch((error) => console.error("EchoInk knowledge recovery failed", error));
     this.plugin.addCommand({
       id: "knowledge-base-initialize",
       name: "知识库：初始化 LLM Wiki",

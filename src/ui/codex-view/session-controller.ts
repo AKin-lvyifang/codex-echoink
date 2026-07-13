@@ -47,6 +47,7 @@ export function renderTabsView(host: CodexSessionHost): void {
     {
       onActivate: (session) => void (async () => {
         host.plugin.settings.activeSessionId = session.id;
+        host.updateInputPlaceholder();
         await host.plugin.saveSettings(true);
         host.resetVirtualWindow();
         host.renderTabs();

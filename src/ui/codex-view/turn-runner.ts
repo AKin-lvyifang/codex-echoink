@@ -810,11 +810,7 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     view.clearTurnWatchdog();
     view.clearActiveRun();
     try {
-      await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
-      await view.plugin.saveSettings(true);
-      await view.plugin.settlePendingKnowledgeBaseNativeExecutions?.().catch((error) => console.warn("EchoInk native execution settle failed", error));
-      applyKnowledgeNativeLifecycleSummary(assistantMessage, manager.getLastNativeLifecycleSummary?.());
-      await view.plugin.saveSettings(true);
+      await persistAndSettleKnowledgeRun(view, assistantMessage, manager);
     } catch (error) {
       turnError = turnError ?? error;
       assistantMessage.status = "failed";
@@ -872,9 +868,7 @@ export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label
   } finally {
     view.running = false;
     active.updatedAt = Date.now();
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
-    await view.plugin.saveSettings(true);
-    await view.plugin.settlePendingKnowledgeBaseNativeExecutions?.().catch((error) => console.warn("EchoInk native execution settle failed", error));
+    await persistAndSettleKnowledgeRun(view, assistantMessage, view.plugin.getKnowledgeBaseManager());
     view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
@@ -886,6 +880,25 @@ function appendSettlementFailure(text: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const note = `任务收口失败：${message}`;
   return text.trim() ? `${text}\n\n${note}` : note;
+}
+
+async function persistAndSettleKnowledgeRun(
+  view: CodexViewTurnContext,
+  assistantMessage: ChatMessage,
+  manager: { getLastNativeLifecycleSummary?(): Parameters<typeof applyKnowledgeNativeLifecycleSummary>[1] } | null | undefined
+): Promise<void> {
+  let firstError: unknown = null;
+  await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch((error) => {
+    firstError = firstError ?? error;
+  });
+  await view.plugin.settlePendingKnowledgeBaseNativeExecutions?.().catch((error) => {
+    console.warn("EchoInk native execution settle failed", error);
+  });
+  applyKnowledgeNativeLifecycleSummary(assistantMessage, manager?.getLastNativeLifecycleSummary?.());
+  await view.plugin.saveSettings(true).catch((error) => {
+    firstError = firstError ?? error;
+  });
+  if (firstError) throw firstError;
 }
 
 function knowledgeBaseMessageStatusFromResult(status: "success" | "failed" | "canceled"): string {
@@ -905,7 +918,6 @@ function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"], 
     serviceTier: turnOptions.serviceTier,
     mcpEnabled: turnOptions.mcpEnabled,
     workspaceResources: turnOptions.workspaceResources,
-    hermesTaskTimeoutMs: 120000,
     harnessSession: session
   };
 }

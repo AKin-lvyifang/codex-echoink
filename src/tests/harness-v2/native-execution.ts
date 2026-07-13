@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { FakeAgentAdapter } from "../../harness/agents/adapters/fake";
+import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runtime-adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { LocalRunCommitResult, NativeExecutionDispositionRequest, NativeExecutionRecord } from "../../harness/contracts/native-execution";
 import { EchoInkHarnessKernel } from "../../harness/kernel/harness-kernel";
@@ -21,10 +22,52 @@ export async function runHarnessV2NativeExecutionTests(): Promise<void> {
   await assertLocalCommitFailureRetainsNativeExecution();
   await assertCleanupUsesAdapterCapabilityAndRetriesFailures();
   await assertCleanupUnsupportedAndRetainedEvents();
+  await assertEphemeralHermesCleanupIsUnsupportedInsteadOfRetained();
   await assertScheduledEventFailureKeepsCleanupRecoverable();
   await assertCleanupTerminalEventFailureDoesNotThrowAfterStoreUpdate();
   await assertCommittedSessionDeletionCleanupPersistsWithoutRunEvents();
   await assertPendingLocalCommitsAreMarkedFailedOnRecovery();
+}
+
+async function assertEphemeralHermesCleanupIsUnsupportedInsteadOfRetained(): Promise<void> {
+  const rootPath = await tempRoot("echoink-native-hermes-unsupported-");
+  const store = new NativeExecutionStore({ rootPath, now: fixedClock(65_000) });
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime: {
+      kind: "hermes",
+      async connect() { return { connected: true, label: "Hermes", errors: [] }; },
+      async listModels() { return []; },
+      async runTask() { return { text: "done", runId: "hermes-run-1" }; },
+      async abort() { return undefined; }
+    },
+    capabilities: "legacy"
+  });
+  const manager = new NativeExecutionManager({ store, adapters: [adapter], now: fixedClock(65_000) });
+  await manager.recordCreated(baseRecord({
+    id: "native-hermes-unsupported",
+    native: {
+      backendId: "hermes",
+      id: "hermes-run-1",
+      kind: "run",
+      persistence: "unknown",
+      deviceKey: "device-1",
+      vaultId: "vault-1",
+      createdAt: 1
+    }
+  }));
+  const settled = await manager.settleRun({
+    recordId: "native-hermes-unsupported",
+    runOutcome: "success",
+    localCommit: localCommit(true)
+  });
+  const cleanup = await manager.cleanupDue();
+
+  assert.equal(settled?.requestedDisposition, "delete");
+  assert.equal(cleanup[0]?.cleanup, "unsupported");
+  assert.equal((await store.get("native-hermes-unsupported"))?.cleanup, "unsupported");
 }
 
 async function assertCommittedSessionDeletionCleanupPersistsWithoutRunEvents(): Promise<void> {

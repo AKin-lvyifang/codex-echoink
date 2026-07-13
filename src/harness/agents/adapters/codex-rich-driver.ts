@@ -20,6 +20,7 @@ export interface CodexRichRunDriverOptions {
   inactivityTimeoutMs?: number;
   artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   onSettled?: (result: AgentRunResult) => void | Promise<void>;
+  finalAnswerGraceMs?: number;
 }
 
 export class CodexRichRunDriver {
@@ -37,6 +38,7 @@ export class CodexRichRunDriver {
   private readonly onSettled?: (result: AgentRunResult) => void | Promise<void>;
   private readonly artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   private readonly inactivityTimeoutMs?: number;
+  private readonly finalAnswerGraceMs: number;
   private readonly interruptTurn?: (threadId: string, turnId: string) => Promise<void>;
 
   private queue: Promise<void> = Promise.resolve();
@@ -45,6 +47,7 @@ export class CodexRichRunDriver {
   private terminalResolved = false;
   private cancelRequested = false;
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+  private finalAnswerTimer: ReturnType<typeof setTimeout> | null = null;
   private resolveResult!: (result: AgentRunResult) => void;
   private readonly resultPromise: Promise<AgentRunResult>;
 
@@ -58,6 +61,7 @@ export class CodexRichRunDriver {
     this.onSettled = options.onSettled;
     this.artifactRecovery = options.artifactRecovery;
     this.inactivityTimeoutMs = options.inactivityTimeoutMs;
+    this.finalAnswerGraceMs = Math.max(1, options.finalAnswerGraceMs ?? 1_500);
     this.interruptTurn = options.interruptTurn;
     this.resultPromise = new Promise<AgentRunResult>((resolve) => {
       this.resolveResult = resolve;
@@ -150,6 +154,7 @@ export class CodexRichRunDriver {
     if (threadId) this.threadId = threadId;
     if (turnId) this.turnId = turnId;
     if (itemId) this.itemIds.add(itemId);
+    this.clearFinalAnswerTimerForFollowUp(method);
     this.armInactivityTimer();
 
     if (method === "item/agentMessage/delta") {
@@ -277,6 +282,9 @@ export class CodexRichRunDriver {
       const text = textValue(item?.text, item?.output) || (itemId ? this.assistantTextByItem.get(itemId) ?? "" : "");
       if (itemId) this.assistantTextByItem.set(itemId, text);
       await this.emitEvent("agent.message.completed", "agent", { text, data: sanitizeData(item) });
+      if (stringValue(item?.phase).toLowerCase() === "final_answer") {
+        this.armFinalAnswerTimer();
+      }
       return;
     }
     if (itemType === "reasoning") {
@@ -369,6 +377,29 @@ export class CodexRichRunDriver {
     }, Math.max(1, this.inactivityTimeoutMs));
   }
 
+  private armFinalAnswerTimer(): void {
+    if (this.terminalResolved) return;
+    this.clearFinalAnswerTimer();
+    this.finalAnswerTimer = setTimeout(() => {
+      void this.enqueue(async () => {
+        if (this.terminalResolved) return;
+        const text = this.finalAssistantText();
+        await this.settle({ status: "completed", outputText: text }, {
+          type: "run.completed",
+          source: "kernel",
+          text,
+          data: { settlement: "final-answer-grace" }
+        });
+      }).catch(() => undefined);
+    }, this.finalAnswerGraceMs);
+  }
+
+  private clearFinalAnswerTimerForFollowUp(method: string): void {
+    if (!this.finalAnswerTimer) return;
+    if (!FINAL_ANSWER_FOLLOW_UP_METHODS.has(method)) return;
+    this.clearFinalAnswerTimer();
+  }
+
   private async handleInactivityTimeout(): Promise<void> {
     if (this.terminalResolved) return;
     this.clearInactivityTimer();
@@ -417,6 +448,7 @@ export class CodexRichRunDriver {
     source: HarnessEvent["source"];
     text?: string;
     error?: string;
+    data?: Record<string, unknown>;
   }): Promise<void> {
     if (this.terminalResolved) return;
     if (!this.settling) {
@@ -430,13 +462,16 @@ export class CodexRichRunDriver {
     source: HarnessEvent["source"];
     text?: string;
     error?: string;
+    data?: Record<string, unknown>;
   }): Promise<void> {
     this.clearInactivityTimer();
+    this.clearFinalAnswerTimer();
     let settledResult = result;
     try {
       await this.emitEvent(terminalEvent.type, terminalEvent.source, {
         text: terminalEvent.text,
-        error: terminalEvent.error
+        error: terminalEvent.error,
+        data: terminalEvent.data
       });
     } catch (error) {
       settledResult = {
@@ -458,7 +493,26 @@ export class CodexRichRunDriver {
     clearTimeout(this.inactivityTimer);
     this.inactivityTimer = null;
   }
+
+  private clearFinalAnswerTimer(): void {
+    if (!this.finalAnswerTimer) return;
+    clearTimeout(this.finalAnswerTimer);
+    this.finalAnswerTimer = null;
+  }
 }
+
+const FINAL_ANSWER_FOLLOW_UP_METHODS = new Set([
+  "item/started",
+  "item/agentMessage/delta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/textDelta",
+  "turn/plan/updated",
+  "item/plan/delta",
+  "item/commandExecution/outputDelta",
+  "item/mcpToolCall/progress",
+  "item/fileChange/outputDelta"
+]);
 
 function notificationParams(value: unknown): any {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
