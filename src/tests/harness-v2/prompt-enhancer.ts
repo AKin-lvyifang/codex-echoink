@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createAgentTaskRuntime } from "../../agent/factory";
@@ -9,6 +10,8 @@ import { emptyContextBundle } from "../../harness/contracts/context";
 import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "../../prompt-enhancer/meta-prompt";
 import { createPromptEnhancerRuntimeWorkspace } from "../../prompt-enhancer/runtime-workspace";
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../../settings/settings";
+
+const WORKBUDDY_META_PROMPT_SHA256 = "60480d0bf677b6cb31170013a4d7cf2ab5c274844f523ba9467535b16c81ab94";
 
 export async function runPromptEnhancerHarnessTests(): Promise<void> {
   await assertPromptEnhancerIsSeparateFromEditorActions();
@@ -48,10 +51,12 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
 }
 
 async function assertPromptEnhancerUsesWorkBuddyMetaPrompt(): Promise<void> {
-  const document = await readFile(path.join(process.cwd(), "docs/architecture/WorkBuddy增强提示词实现逻辑参考文档.md"), "utf8");
-  const match = document.match(/## 2\. 内置 Meta-Prompt 全文[\s\S]*?未经任何修改：\s*```[^\n]*\n([\s\S]*?)\n```/);
-  assert.ok(match?.[1], "WorkBuddy 文档必须包含“内置 Meta-Prompt 全文”代码块");
-  assert.equal(ENHANCE_META_PROMPT, match[1], "内置 system prompt 必须与 WorkBuddy 原文逐字符一致");
+  assert.equal(ENHANCE_META_PROMPT.length, 2981, "内置 system prompt 必须保留 WorkBuddy 原文长度");
+  assert.equal(
+    createHash("sha256").update(ENHANCE_META_PROMPT, "utf8").digest("hex"),
+    WORKBUDDY_META_PROMPT_SHA256,
+    "内置 system prompt 必须与 WorkBuddy 原文逐字符一致"
+  );
   assert.equal(cleanPromptEnhancerOutput("```text\n请基于真实记录生成周报。\n```"), "请基于真实记录生成周报。");
 }
 
