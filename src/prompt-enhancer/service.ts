@@ -5,7 +5,11 @@ import { CodexRichNotificationHub } from "../harness/agents/adapters/codex-rich-
 import type { HarnessRunResult } from "../harness/contracts/run";
 import type CodexForObsidianPlugin from "../main";
 import {
-  getActiveApiProvider,
+  DEFAULT_CODEX_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_PROVIDER,
+  DEFAULT_OPENCODE_UTILITY_MODEL,
+  DEFAULT_OPENCODE_UTILITY_PROVIDER,
   getApiProviderModels,
   newId,
   type ApiProviderConfig,
@@ -44,7 +48,28 @@ export async function runPromptEnhancer(input: RunPromptEnhancerInput): Promise<
 
 export function resolvePromptEnhancerBackend(settings: CodexForObsidianSettings): AgentBackendKind {
   const configured = settings.promptEnhancer.backend;
-  return configured === "default" ? settings.agentBackend : configured;
+  return configured === "opencode" || configured === "hermes" ? configured : "codex-cli";
+}
+
+export function resolvePromptEnhancerModel(settings: CodexForObsidianSettings, backend = resolvePromptEnhancerBackend(settings)): string {
+  const configured = settings.promptEnhancer.model.trim();
+  if (configured) return configured;
+  if (backend === "opencode") return DEFAULT_OPENCODE_UTILITY_MODEL;
+  if (backend === "hermes") return DEFAULT_HERMES_UTILITY_MODEL;
+  const provider = settings.promptEnhancer.codexProviderMode === "custom-api"
+    ? settings.apiProviders.find((item) => item.id === settings.promptEnhancer.activeApiProviderId) ?? null
+    : null;
+  const providerModel = provider ? getApiProviderModels(provider)[0] : "";
+  if (providerModel) return providerModel;
+  return DEFAULT_CODEX_UTILITY_MODEL;
+}
+
+export function resolvePromptEnhancerProviderId(settings: CodexForObsidianSettings, backend = resolvePromptEnhancerBackend(settings)): string {
+  const configured = settings.promptEnhancer.providerId.trim();
+  if (configured) return configured;
+  if (backend === "opencode") return DEFAULT_OPENCODE_UTILITY_PROVIDER;
+  if (backend === "hermes") return DEFAULT_HERMES_UTILITY_PROVIDER;
+  return "";
 }
 
 export function resolvePromptEnhancerCodexProvider(settings: CodexForObsidianSettings): {
@@ -52,11 +77,9 @@ export function resolvePromptEnhancerCodexProvider(settings: CodexForObsidianSet
   activeApiProvider: ApiProviderConfig | null;
 } {
   const enhancer = settings.promptEnhancer;
-  const providerMode = enhancer.codexProviderMode === "default" ? settings.providerMode : enhancer.codexProviderMode;
+  const providerMode = enhancer.codexProviderMode === "custom-api" ? "custom-api" : "codex-login";
   if (providerMode !== "custom-api") return { providerMode, activeApiProvider: null };
-  const activeApiProvider = enhancer.codexProviderMode === "custom-api"
-    ? settings.apiProviders.find((provider) => provider.id === enhancer.activeApiProviderId) ?? null
-    : getActiveApiProvider(settings);
+  const activeApiProvider = settings.apiProviders.find((provider) => provider.id === enhancer.activeApiProviderId) ?? null;
   if (!activeApiProvider) throw new Error("增强提示词 API Provider 未配置");
   return { providerMode, activeApiProvider };
 }
@@ -85,11 +108,11 @@ async function runCodexPromptEnhancer(input: RunPromptEnhancerInput, runId: stri
     if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
     const turnOptions: TurnOptions = {
       cwd: workspace.cwd,
-      model: settings.model.trim(),
+      model: resolvePromptEnhancerModel(plugin.settings, "codex-cli"),
       developerInstructions: ENHANCE_META_PROMPT,
       ephemeral: true,
       reasoning: "low",
-      serviceTier: input.serviceTier ?? plugin.settings.defaultServiceTier,
+      serviceTier: input.serviceTier ?? "fast",
       permission: "read-only",
       mode: "agent",
       mcpEnabled: false,
@@ -167,6 +190,8 @@ async function runTaskPromptEnhancer(input: RunPromptEnhancerInput & { backend: 
   const taskSettings = promptEnhancerTaskSettings(plugin.settings, input.backend);
   const workspace = await createPromptEnhancerRuntimeWorkspace(input.backend);
   const backendAgent = enhancer.agent.trim() || (input.backend === "opencode" ? ENHANCE_PROMPT_AGENT_NAME : "");
+  const model = resolvePromptEnhancerModel(plugin.settings, input.backend);
+  const providerId = resolvePromptEnhancerProviderId(plugin.settings, input.backend);
   let adapter: AgentAdapter | null = null;
   try {
     adapter = createHarnessAgentAdapter({
@@ -181,7 +206,7 @@ async function runTaskPromptEnhancer(input: RunPromptEnhancerInput & { backend: 
         system: ENHANCE_META_PROMPT,
         timeoutMs: enhancer.timeoutMs,
         tools: NO_TOOLS,
-        ...(enhancer.providerId && enhancer.model ? { model: { providerId: enhancer.providerId, modelId: enhancer.model } } : {}),
+        ...(providerId && model ? { model: { providerId, modelId: model } } : {}),
         ...(backendAgent ? { agent: backendAgent } : {}),
         ...(enhancer.agent.trim() ? { profile: enhancer.agent.trim() } : {}),
         requireDirectAgent: input.backend === "opencode"
@@ -281,14 +306,14 @@ function promptEnhancerTaskSettings(settings: CodexForObsidianSettings, backend:
 
 export function promptEnhancerModelChoices(settings: CodexForObsidianSettings, statusModels: string[] = []): string[] {
   const enhancer = settings.promptEnhancer;
+  const backend = resolvePromptEnhancerBackend(settings);
   const provider = enhancer.codexProviderMode === "custom-api" && enhancer.activeApiProviderId
     ? settings.apiProviders.find((item) => item.id === enhancer.activeApiProviderId) ?? null
-    : enhancer.codexProviderMode === "default" && settings.providerMode === "custom-api"
-      ? getActiveApiProvider(settings)
-      : null;
+    : null;
   return Array.from(new Set([
     enhancer.model,
-    ...(provider ? getApiProviderModels(provider) : []),
-    ...statusModels
+    resolvePromptEnhancerModel(settings, backend),
+    ...(backend === "codex-cli" && provider ? getApiProviderModels(provider) : []),
+    ...(backend === "codex-cli" ? statusModels : [])
   ].map((model) => model.trim()).filter(Boolean)));
 }

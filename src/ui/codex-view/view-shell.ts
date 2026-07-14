@@ -11,21 +11,19 @@ export interface CodexViewShellHost extends Component {
   readonly contentEl: HTMLElement;
   readonly plugin: CodexForObsidianPlugin;
   rootEl: HTMLElement;
-  headerStatusEl: HTMLElement;
+  headerStatusEl: HTMLButtonElement;
   headerStatusTextEl: HTMLElement;
   editorActionStatusEl: HTMLElement;
   editorActionStatusTextEl: HTMLElement;
   headerHistoryEl: HTMLButtonElement;
   articleUnderstandingPanelEl: HTMLElement;
-  headerUsageEl: HTMLButtonElement;
-  headerUsageTextEl: HTMLElement;
-  usagePanelEl: HTMLElement;
   tabBarEl: HTMLElement;
   knowledgeDashboardEl: HTMLElement;
   messagesEl: HTMLElement;
   virtualListEl: HTMLElement;
   queueEl: HTMLElement;
   attachmentsEl: HTMLElement;
+  workspaceEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
   promptEnhanceReviewEl: HTMLElement;
   skillMenuEl: HTMLElement;
@@ -44,7 +42,7 @@ export interface CodexViewShellHost extends Component {
   ensureSession(): StoredSession;
   isKnowledgeBaseSession(session: StoredSession): boolean;
   openKnowledgeBaseHistory(session: StoredSession): Promise<void>;
-  refreshHeaderRateLimits(): Promise<void>;
+  openAgentMenu(event: MouseEvent): void;
   openPluginSettings(): void;
   closeComposerMenus(): void;
   handleMessagesScroll(): void;
@@ -73,7 +71,7 @@ export function renderViewShell(host: CodexViewShellHost, promptEnhancerRunnerCo
       if (!host.isKnowledgeBaseSession(session)) return;
       void host.openKnowledgeBaseHistory(session);
     },
-    onRefreshRateLimits: () => host.refreshHeaderRateLimits(),
+    onOpenAgentMenu: (event) => host.openAgentMenu(event),
     onOpenWorkspaceResources: () => void host.plugin.openWorkspaceResourceSettings("plugins"),
     onOpenSettings: () => host.openPluginSettings()
   });
@@ -82,14 +80,10 @@ export function renderViewShell(host: CodexViewShellHost, promptEnhancerRunnerCo
   host.editorActionStatusEl = headerRefs.editorActionStatusEl;
   host.editorActionStatusTextEl = headerRefs.editorActionStatusTextEl;
   host.headerHistoryEl = headerRefs.headerHistoryEl;
-  host.headerUsageEl = headerRefs.headerUsageEl;
-  host.headerUsageTextEl = headerRefs.headerUsageTextEl;
-  host.usagePanelEl = headerRefs.usagePanelEl;
   host.articleUnderstandingPanelEl = headerRefs.articleUnderstandingPanelEl;
   host.registerDomEvent(document, "click", (event) => {
     const target = event.target instanceof Node ? event.target : null;
     if (!target) return;
-    if (!host.rootEl.contains(target)) host.usagePanelEl.removeClass("is-visible");
     if (shouldCloseComposerMenusForClick(target, host.rootEl, [host.skillMenuEl, host.knowledgeCommandMenuEl])) host.closeComposerMenus();
   });
 
@@ -111,6 +105,7 @@ export function renderViewShell(host: CodexViewShellHost, promptEnhancerRunnerCo
   });
   host.queueEl = composerRefs.queueEl;
   host.attachmentsEl = composerRefs.attachmentsEl;
+  host.workspaceEl = composerRefs.workspaceEl;
   host.inputEl = composerRefs.inputEl;
   host.promptEnhanceReviewEl = composerRefs.promptEnhanceReviewEl;
   host.skillMenuEl = composerRefs.skillMenuEl;

@@ -1,17 +1,14 @@
-import { Notice, type App, type Component } from "obsidian";
+import { Menu, Notice, type App, type Component } from "obsidian";
+import { AGENT_BACKEND_DEFINITIONS, agentBackendDisplayName } from "../../agent/registry";
 import type CodexForObsidianPlugin from "../../main";
-import { providerConnectionLabel, type StoredSession } from "../../settings/settings";
-import type { RateLimitSnapshot } from "../../types/app-server";
+import type { AgentBackendMode, StoredSession } from "../../settings/settings";
 import type { EditorActionStatusView } from "../../editor-actions/types";
 import {
   renderArticleUnderstandingPanelView,
   renderEditorActionStatusView,
   renderHeaderHistoryButton,
-  renderUsagePanelView,
-  updateUsageHeaderView,
   type ArticleUnderstandingPanelState
 } from "./header";
-import { workspaceDisplayName } from "./workspace-utils";
 
 type ObsidianSettingsApi = {
   setting?: {
@@ -25,19 +22,13 @@ export interface CodexHeaderHost {
   readonly plugin: CodexForObsidianPlugin;
   running: boolean;
   promptEnhancerRunning: boolean;
-  headerStatusEl: HTMLElement;
+  headerStatusEl: HTMLButtonElement;
   headerStatusTextEl: HTMLElement;
   editorActionStatusEl: HTMLElement;
   editorActionStatusTextEl: HTMLElement;
   headerHistoryEl: HTMLButtonElement;
   articleUnderstandingPanelEl: HTMLElement;
-  headerUsageEl: HTMLButtonElement;
-  headerUsageTextEl: HTMLElement;
-  usagePanelEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
-  usageLoading: boolean;
-  usageError: string | null;
-  usageRequestId: number;
   editorActionStatus: EditorActionStatusView;
   editorActionStatusTicker: number | null;
   editorActionStatusResetTimer: number | null;
@@ -51,6 +42,8 @@ export interface CodexHeaderHost {
   renderEditorActionStatus(): void;
   refreshArticleUnderstandingFromPanel(): Promise<void>;
   openPluginSettings(): void;
+  applyStatus(): void;
+  prewarmActiveThread(): void;
   clearEditorActionStatusTimers(): void;
 }
 
@@ -59,7 +52,7 @@ export function updateInputPlaceholder(host: CodexHeaderHost): void {
   const session = host.ensureSession();
   host.inputEl.setAttr("placeholder", host.isKnowledgeBaseSession(session)
     ? "普通对话直接输入；查知识库用 /ask；管理用 /check /maintain"
-    : session.cwd ? `问 Codex，当前工作区：${workspaceDisplayName(session.cwd)}` : "先选择工作区，再问 Codex");
+    : session.cwd ? "问 Codex" : "选择工作区后开始对话");
   host.renderHeaderHistory();
 }
 
@@ -70,16 +63,56 @@ export function renderHeaderHistory(host: CodexHeaderHost): void {
 }
 
 export function applyStatus(host: CodexHeaderHost): void {
-  const status = host.plugin.lastStatus;
-  host.headerStatusTextEl.setText(host.promptEnhancerRunning ? "增强中" : host.running ? "思考中" : status?.connected ? "活跃" : "未连接");
-  host.headerStatusEl.toggleClass("has-warning", Boolean(status?.errors?.length) || !status?.connected);
-  host.headerStatusEl.toggleClass("is-ok", Boolean(status?.connected && !status?.errors?.length));
-  host.headerStatusEl.toggleClass("is-active", host.running || host.promptEnhancerRunning);
-  const providerLabel = providerConnectionLabel(host.plugin.settings);
-  host.headerStatusEl.setAttr("title", status?.errors?.length ? status.errors.join("\n") : `${status?.accountLabel ?? "未连接"}\n${providerLabel}`);
-  updateUsageHeader(host, status?.rateLimits ?? null, host.usageLoading, host.usageError);
-  renderUsagePanel(host, status?.rateLimits ?? null, host.usageError, host.usageLoading);
+  const backend = host.plugin.settings.agentBackend;
+  const label = agentBackendDisplayName(backend);
+  const blocked = host.running || host.promptEnhancerRunning;
+  host.headerStatusTextEl.setText(label);
+  host.headerStatusEl.disabled = blocked;
+  host.headerStatusEl.toggleClass("is-active", blocked);
+  host.headerStatusEl.setAttr("aria-label", blocked ? `当前 Agent：${label}，任务运行中` : `当前 Agent：${label}，点击切换`);
+  host.headerStatusEl.setAttr("title", blocked ? `当前 Agent：${label}\n任务运行中，暂时不能切换` : `当前 Agent：${label}\n点击切换 Agent`);
   host.renderToolbar();
+}
+
+export function openAgentBackendMenu(host: CodexHeaderHost, event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  if (host.running || host.promptEnhancerRunning) {
+    new Notice("任务运行中，暂时不能切换 Agent");
+    return;
+  }
+  const current = host.plugin.settings.agentBackend;
+  const menu = new Menu();
+  for (const definition of AGENT_BACKEND_DEFINITIONS) {
+    menu.addItem((item) => item
+      .setTitle(definition.label)
+      .setIcon(agentBackendIcon(definition.kind))
+      .setChecked(definition.kind === current)
+      .onClick(() => void selectAgentBackend(host, definition.kind)));
+  }
+  menu.showAtMouseEvent(event);
+}
+
+export async function selectAgentBackend(host: CodexHeaderHost, backend: AgentBackendMode): Promise<boolean> {
+  if (host.running || host.promptEnhancerRunning) return false;
+  const settings = host.plugin.settings;
+  if (settings.agentBackend === backend && settings.agents.defaultBackend === backend) return false;
+  const previousBackend = settings.agentBackend;
+  const previousDefaultBackend = settings.agents.defaultBackend;
+  settings.agentBackend = backend;
+  settings.agents.defaultBackend = backend;
+  host.applyStatus();
+  try {
+    await host.plugin.saveSettings(true);
+  } catch (error) {
+    settings.agentBackend = previousBackend;
+    settings.agents.defaultBackend = previousDefaultBackend;
+    host.applyStatus();
+    new Notice(`Agent 切换失败：${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+  if (backend === "codex-cli") host.prewarmActiveThread();
+  return true;
 }
 
 export function setEditorActionStatus(host: CodexHeaderHost, status: EditorActionStatusView): void {
@@ -154,50 +187,6 @@ export function clearEditorActionStatusTimers(host: CodexHeaderHost): void {
   }
 }
 
-export async function refreshHeaderRateLimits(host: CodexHeaderHost): Promise<void> {
-  const requestId = ++host.usageRequestId;
-  const cachedRateLimits = host.plugin.lastStatus?.rateLimits ?? null;
-  host.usageLoading = true;
-  host.usageError = null;
-  updateUsageHeader(host, cachedRateLimits, true, null);
-  renderUsagePanel(host, cachedRateLimits, null, true);
-
-  const status = await host.plugin.ensureCodexConnected();
-  if (requestId !== host.usageRequestId) return;
-  if (!status.connected || !host.plugin.hasCodexHarnessTransport()) {
-    host.usageLoading = false;
-    host.usageError = "Codex 未连接";
-    updateUsageHeader(host, null, false, host.usageError);
-    renderUsagePanel(host, null, host.usageError, false);
-    return;
-  }
-  const result = await host.plugin.refreshCodexHarnessRateLimits();
-  if (requestId !== host.usageRequestId) return;
-  const nextRateLimits = result.rateLimits ?? host.plugin.lastStatus?.rateLimits ?? null;
-  const nextRateLimitsByLimitId = result.rateLimitsByLimitId ?? host.plugin.lastStatus?.rateLimitsByLimitId ?? null;
-  if (host.plugin.lastStatus) {
-    host.plugin.lastStatus = {
-      ...host.plugin.lastStatus,
-      rateLimits: nextRateLimits,
-      rateLimitsByLimitId: nextRateLimitsByLimitId
-    };
-  }
-  host.usageLoading = false;
-  host.usageError = result.error;
-  updateUsageHeader(host, nextRateLimits, false, result.error);
-  renderUsagePanel(host, nextRateLimits, result.error, false);
-}
-
-export function updateUsageHeader(host: CodexHeaderHost, rateLimits: RateLimitSnapshot | null, loading = false, error: string | null = null): void {
-  if (!host.headerUsageTextEl) return;
-  updateUsageHeaderView(host.headerUsageEl, host.headerUsageTextEl, rateLimits, loading, error);
-}
-
-export function renderUsagePanel(host: CodexHeaderHost, rateLimits: RateLimitSnapshot | null, error?: string | null, loading = false): void {
-  if (!host.usagePanelEl) return;
-  renderUsagePanelView(host.usagePanelEl, rateLimits, error, loading);
-}
-
 export function openPluginSettings(host: CodexHeaderHost): void {
   const setting = (host.app as unknown as ObsidianSettingsApi).setting;
   if (!setting?.open || !setting?.openTabById) {
@@ -206,4 +195,10 @@ export function openPluginSettings(host: CodexHeaderHost): void {
   }
   setting.open();
   setting.openTabById(host.plugin.manifest.id);
+}
+
+function agentBackendIcon(backend: AgentBackendMode): string {
+  if (backend === "opencode") return "code-2";
+  if (backend === "hermes") return "sparkles";
+  return "bot";
 }

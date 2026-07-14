@@ -23,6 +23,9 @@ import {
 } from "../core/workspace-resources";
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
+  DEFAULT_CODEX_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_MODEL,
+  DEFAULT_OPENCODE_UTILITY_MODEL,
   DEFAULT_SETTINGS,
   DEFAULT_PROMPT_ENHANCER_MODEL,
   ensureModelChoices,
@@ -61,7 +64,7 @@ import {
 } from "./settings";
 import { ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "../prompt-enhancer/meta-prompt";
 import { promptEnhancerModelChoices } from "../prompt-enhancer/service";
-import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
+import type { CodexModel, CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
 import { skillResourceFromHermesSkill } from "../resources/skill-loader";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
@@ -970,7 +973,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderPromptEnhancerSettings(container: HTMLElement, status: CodexStatusSnapshot | null): void {
     const settings = this.plugin.settings.promptEnhancer;
-    const effectiveBackend = settings.backend === "default" ? this.plugin.settings.agentBackend : settings.backend;
+    const effectiveBackend = settings.backend === "default" ? "codex-cli" : settings.backend;
     const usesCodex = effectiveBackend === "codex-cli";
     const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-prompt-enhancer-settings" });
     const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
@@ -991,12 +994,11 @@ export class CodexSettingTab extends PluginSettingTab {
       })
     ), "toggle-right");
 
-    this.decorateSetting(new Setting(wrapper).setName("增强 Agent 后端").setDesc("默认跟随全局后端，也可以只为提示词增强单独固定。").addDropdown((dropdown) => {
-      dropdown.addOption("default", `跟随全局（${agentBackendLabel(this.plugin.settings.agentBackend, this.copy)}）`);
+    this.decorateSetting(new Setting(wrapper).setName("增强 Agent 后端").setDesc("独立于顶部主 Agent，只用于提示词增强。").addDropdown((dropdown) => {
       for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
-      dropdown.setValue(settings.backend);
+      dropdown.setValue(effectiveBackend);
       dropdown.onChange(async (value) => {
-        settings.backend = value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+        settings.backend = value === "opencode" || value === "hermes" ? value : "codex-cli";
         await this.plugin.saveSettings();
         this.scheduleDisplay();
       });
@@ -1008,7 +1010,6 @@ export class CodexSettingTab extends PluginSettingTab {
         text: `当前实际使用 Codex：由内置子代理 ${ENHANCE_PROMPT_AGENT_NAME} 执行，不复用改写、续写或普通聊天会话。`
       });
       this.decorateSetting(new Setting(wrapper).setName("Codex API 路径").setDesc("只在增强 Agent 使用 Codex 时生效，不影响普通聊天。").addDropdown((dropdown) => {
-        dropdown.addOption("default", `跟随全局（${providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage)}）`);
         dropdown.addOption("codex-login", "Codex 登录态");
         for (const provider of this.plugin.settings.apiProviders) {
           dropdown.addOption(`provider:${provider.id}`, `API Provider：${provider.name || "未命名"} · ${providerModelLabel(provider, this.plugin.settings.settingsLanguage)}`);
@@ -1019,7 +1020,7 @@ export class CodexSettingTab extends PluginSettingTab {
             settings.codexProviderMode = "custom-api";
             settings.activeApiProviderId = value.slice("provider:".length);
           } else {
-            settings.codexProviderMode = value === "codex-login" ? "codex-login" : "default";
+            settings.codexProviderMode = "codex-login";
             settings.activeApiProviderId = "";
           }
           await this.plugin.saveSettings();
@@ -1034,8 +1035,13 @@ export class CodexSettingTab extends PluginSettingTab {
     }
 
     const modelChoices = promptEnhancerModelChoices(this.plugin.settings, status?.models.map((model) => model.model) ?? []);
-    this.decorateSetting(new Setting(wrapper).setName("增强模型").setDesc(usesCodex ? "默认不指定模型，使用 Codex 或 API Provider 的默认模型。需要更快时可在这里单独固定。" : "默认不指定模型，使用当前后端默认模型。OpenCode/Hermes 需要同时填写模型 Provider ID 才会固定模型。").addDropdown((dropdown) => {
-      dropdown.addOption("", "自动（后端默认）");
+    const automaticModelLabel = usesCodex
+      ? `自动（${DEFAULT_CODEX_UTILITY_MODEL}）`
+      : effectiveBackend === "opencode"
+        ? `自动（${DEFAULT_OPENCODE_UTILITY_MODEL}）`
+        : `自动（${DEFAULT_HERMES_UTILITY_MODEL}）`;
+    this.decorateSetting(new Setting(wrapper).setName("增强模型").setDesc("这是提示词增强自己的模型设置，不影响普通聊天或编辑区写作。").addDropdown((dropdown) => {
+      dropdown.addOption("", automaticModelLabel);
       for (const model of modelChoices) dropdown.addOption(model, model);
       dropdown.setValue(modelChoices.includes(settings.model) ? settings.model : DEFAULT_PROMPT_ENHANCER_MODEL);
       dropdown.onChange(async (value) => {
@@ -1114,6 +1120,18 @@ export class CodexSettingTab extends PluginSettingTab {
         .setDesc(copy.writing.requestModeDesc),
       "terminal"
     );
+
+    const configuredBackend = this.plugin.settings.capabilities.editorActionBackend;
+    const editorBackend = configuredBackend === "default" ? "codex-cli" : configuredBackend;
+    this.decorateSetting(new Setting(container).setName("写作 Agent 后端").setDesc("独立于顶部主 Agent，只用于改写、扩写、续写等编辑区小功能。").addDropdown((dropdown) => {
+      for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
+      dropdown.setValue(editorBackend);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.capabilities.editorActionBackend = value === "opencode" || value === "hermes" ? value : "codex-cli";
+        await this.plugin.saveSettings();
+        this.scheduleDisplay();
+      });
+    }), "route");
 
     this.decorateSetting(new Setting(container).setName(copy.writing.enabled).setDesc(copy.writing.enabledDesc).addToggle((toggle) =>
       toggle.setValue(settings.enabled).onChange(async (value) => {
@@ -1216,7 +1234,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const settings = this.plugin.settings.editorActions;
     const section = container.createDiv({ cls: "codex-editor-actions-section" });
     section.createDiv({ cls: "codex-editor-actions-heading", text: copy.writing.qualityModesHeading });
-    const modelChoices = ensureModelChoices(this.plugin.lastStatus?.models ?? [], "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", DEFAULT_SETTINGS.defaultModel);
+    const modelChoices = this.editorActionModelChoices();
     for (const mode of EDITOR_ACTION_QUALITY_MODES) {
       const config = settings.modeConfigs[mode.id];
       const row = section.createDiv({ cls: "codex-api-provider-row codex-editor-mode-row" });
@@ -1227,8 +1245,19 @@ export class CodexSettingTab extends PluginSettingTab {
       title.createSpan({ text: copy.writing.qualityModes[mode.id].label });
       title.createSpan({ cls: "codex-resource-row-meta", text: copy.writing.qualityModes[mode.id].desc });
 
-      this.decorateSetting(new Setting(row).setName(copy.writing.model).addDropdown((dropdown) => {
-        for (const model of ensureModelChoices(modelChoices, config.model)) dropdown.addOption(model.model, model.displayName || model.model);
+      const backend = this.plugin.settings.capabilities.editorActionBackend === "default"
+        ? "codex-cli"
+        : this.plugin.settings.capabilities.editorActionBackend;
+      const autoLabel = backend === "codex-cli"
+        ? `自动（${DEFAULT_CODEX_UTILITY_MODEL}）`
+        : backend === "opencode"
+          ? `自动（${DEFAULT_OPENCODE_UTILITY_MODEL}）`
+          : `自动（${DEFAULT_HERMES_UTILITY_MODEL}）`;
+      this.decorateSetting(new Setting(row).setName(copy.writing.model).setDesc("该档位自己的模型覆盖；留空使用写作 Agent 的小能力默认模型。").addDropdown((dropdown) => {
+        dropdown.addOption("", autoLabel);
+        for (const model of ensureModelChoices(modelChoices, config.model)) {
+          if (model.model) dropdown.addOption(model.model, model.displayName || model.model);
+        }
         dropdown.setValue(config.model);
         dropdown.onChange(async (value) => {
           config.model = value;
@@ -1246,6 +1275,24 @@ export class CodexSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     }
+  }
+
+  private editorActionModelChoices(): CodexModel[] {
+    const configured = this.plugin.settings.capabilities.editorActionBackend;
+    const backend = configured === "opencode" || configured === "hermes" ? configured : "codex-cli";
+    if (backend === "opencode") {
+      const models = this.openCodeModelChoices.map((model) => ({
+        id: model.id,
+        model: model.modelId,
+        displayName: model.displayName || `${model.providerId}/${model.modelId}`
+      }));
+      return ensureModelChoices(models, DEFAULT_OPENCODE_UTILITY_MODEL, this.plugin.settings.opencode.modelId);
+    }
+    if (backend === "hermes") {
+      const model = this.plugin.settings.agents.hermes.modelId;
+      return ensureModelChoices([], model);
+    }
+    return ensureModelChoices(this.plugin.lastStatus?.models ?? [], DEFAULT_CODEX_UTILITY_MODEL);
   }
 
   private renderEditorStyleList(container: HTMLElement, styles: EditorAiStyleConfig[]): void {

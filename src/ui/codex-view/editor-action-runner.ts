@@ -3,12 +3,13 @@ import type { AgentEvent } from "../../agent/events";
 import { getAgentBackendDefinition } from "../../agent/registry";
 import type { AgentBackendKind } from "../../agent/types";
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
-import { harnessBackendDisplayName, harnessEditorActionModel } from "../../harness/agents/backend-runtime-profile";
+import { harnessBackendDisplayName, harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../../harness/agents/backend-runtime-profile";
 import type { AgentAdapter } from "../../harness/agents/adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { HarnessRunResult, HarnessWorkflow } from "../../harness/contracts/run";
 import { buildEchoInkResourceCatalog, codexResourceOverridesFromEchoInkResources, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
 import { newId, resolveEditorActionModeConfig } from "../../settings/settings";
+import type { CodexForObsidianSettings } from "../../settings/settings";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, resolveEditorActionStyle } from "../../editor-actions/prompt";
 import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options";
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache } from "../../editor-actions/summary-cache";
@@ -148,7 +149,7 @@ export async function ensureArticleUnderstanding(
     actionLabel: "理解文章",
     qualityMode: request.qualityMode,
     modeLabel: request.modeConfig.label,
-    model: view.effectiveEditorActionModel(availableModels, model),
+    model,
     phase: "understanding",
     statusMessage: `${request.modeConfig.label} · 正在理解文章`,
     timeoutMs: Math.max(45000, Math.min(timeoutMs, 90000)),
@@ -195,11 +196,12 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
   });
   const turnOptions = buildEditorActionTurnOptions({
     model: input.model,
-    serviceTier: view.selectedServiceTier,
+    serviceTier: "fast",
     timeoutMs: input.timeoutMs,
     workspaceResources: codexResourceOverridesFromEchoInkResources(catalog, "editor-actions", view.plugin.settings.resources.enabledByScope)
   });
   const prompt = appendPreparedResourcesToPrompt(input.prompt, resources);
+  const adapterSettings = editorActionAdapterSettings(view.plugin.settings, backend, input.model);
   let adapter: AgentAdapter | null = null;
   try {
     view.activeRunId = runId;
@@ -210,7 +212,7 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
     view.applyStatus();
     adapter = createHarnessAgentAdapter({
       backendId: backend,
-      settings: view.plugin.settings,
+      settings: adapterSettings,
       vaultPath: view.plugin.getVaultPath(),
       nativeRefContext: view.plugin.getNativeExecutionRefContext(backend),
       createCodexRichAdapter: (options) => view.plugin.createCodexRichAgentAdapter(options),
@@ -235,7 +237,8 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         resources,
         toolBridge: null,
         timeoutMs: input.timeoutMs,
-        tools: { read: true, write: false, edit: false, bash: false }
+        tools: { read: true, write: false, edit: false, bash: false },
+        model: harnessEditorActionTaskModel(adapterSettings, backend, input.model)
       }
     });
     const harnessResult = await view.plugin.runHarnessWithAdapter({
@@ -410,7 +413,8 @@ export async function refreshArticleUnderstandingPanelSourceState(view: CodexVie
   }
   const mode = settings.qualityMode;
   const modeConfig = resolveEditorActionModeConfig(settings, mode);
-  const model = view.effectiveEditorActionModel(view.activeProviderModels(), modeConfig.model);
+  const backend = resolveEditorActionBackend(view);
+  const model = editorActionModelForBackend(view, backend, view.activeProviderModels(), modeConfig.model);
   const cached = resolveArticleUnderstandingCache(settings.articleUnderstandingCache, source, mode, model);
   const status = mode === "fast"
     ? "idle"
@@ -505,8 +509,7 @@ function editorActionTimeoutForMode(baseTimeoutMs: number, mode: EditorActionQua
 }
 
 function resolveEditorActionBackend(view: CodexViewEditorActionContext): AgentBackendKind {
-  const choice = view.plugin.settings.capabilities.editorActionBackend;
-  return choice === "default" ? view.plugin.settings.agentBackend : choice;
+  return harnessEditorActionBackend(view.plugin.settings);
 }
 
 function editorWorkflowForAction(actionId: string): HarnessWorkflow {
@@ -517,7 +520,20 @@ function editorWorkflowForAction(actionId: string): HarnessWorkflow {
 }
 
 function editorActionModelForBackend(view: CodexViewEditorActionContext, backend: AgentBackendKind, availableModels: string[], configuredModel: string): string {
-  return view.effectiveEditorActionModel(availableModels, harnessEditorActionModel(view.plugin.settings, backend, configuredModel));
+  const preferredModel = harnessEditorActionModel(view.plugin.settings, backend, configuredModel);
+  return backend === "codex-cli"
+    ? view.effectiveEditorActionModel(availableModels, preferredModel)
+    : preferredModel;
+}
+
+function editorActionAdapterSettings(settings: CodexForObsidianSettings, backend: AgentBackendKind, resolvedModel: string): CodexForObsidianSettings {
+  if (backend === "codex-cli") return settings;
+  const cloned = JSON.parse(JSON.stringify(settings)) as CodexForObsidianSettings;
+  if (backend === "hermes" && !resolvedModel) {
+    cloned.agents.hermes.providerId = "";
+    cloned.agents.hermes.modelId = "";
+  }
+  return cloned;
 }
 
 function resolveEditorActionDiagnostic(view: CodexViewEditorActionContext, error: unknown): { title: string; text: string } {

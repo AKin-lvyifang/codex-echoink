@@ -1,6 +1,13 @@
 import { agentBackendDisplayName } from "../../agent/registry";
 import type { AgentBackendKind, AgentTaskInput } from "../../agent/types";
-import type { CodexForObsidianSettings } from "../../settings/settings";
+import {
+  DEFAULT_CODEX_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_PROVIDER,
+  DEFAULT_OPENCODE_UTILITY_MODEL,
+  DEFAULT_OPENCODE_UTILITY_PROVIDER,
+  type CodexForObsidianSettings
+} from "../../settings/settings";
 import type { PermissionMode } from "../../types/app-server";
 import type { NativeExecutionKind, NativeExecutionPersistence } from "../contracts/native-execution";
 
@@ -91,10 +98,34 @@ export function harnessTaskProfile(settings: CodexForObsidianSettings | null | u
   return normalizeOptionalAgentProfile(settings?.agents?.hermes?.profile) || undefined;
 }
 
+export function harnessEditorActionBackend(settings: CodexForObsidianSettings | null | undefined): AgentBackendKind {
+  const configured = settings?.capabilities?.editorActionBackend;
+  return configured === "opencode" || configured === "hermes" ? configured : "codex-cli";
+}
+
 export function harnessEditorActionModel(settings: CodexForObsidianSettings | null | undefined, backend: AgentBackendKind, configuredModel: string): string {
-  if (backend === "opencode") return settings?.opencode?.modelId || configuredModel;
-  if (backend === "hermes") return settings?.agents?.hermes?.modelId || configuredModel;
-  return configuredModel;
+  const override = normalizeOptionalAgentProfile(configuredModel);
+  if (override) return override;
+  if (backend === "opencode") return DEFAULT_OPENCODE_UTILITY_MODEL;
+  if (backend === "hermes") return DEFAULT_HERMES_UTILITY_MODEL;
+  return DEFAULT_CODEX_UTILITY_MODEL;
+}
+
+export function harnessEditorActionTaskModel(
+  settings: CodexForObsidianSettings | null | undefined,
+  backend: AgentBackendKind,
+  resolvedModel: string
+): AgentTaskInput["model"] | undefined {
+  if (backend === "codex-cli") return undefined;
+  const modelId = normalizeOptionalAgentProfile(resolvedModel);
+  const providerId = backend === "opencode"
+    ? providerIdFromModel(modelId)
+      || normalizeOptionalAgentProfile(settings?.opencode?.providerId)
+      || DEFAULT_OPENCODE_UTILITY_PROVIDER
+    : normalizeOptionalAgentProfile(settings?.agents?.hermes?.providerId)
+      || DEFAULT_HERMES_UTILITY_PROVIDER;
+  if (!providerId || !modelId) return undefined;
+  return { providerId, modelId };
 }
 
 export function harnessKnowledgeUsesEchoInkToolBridge(backend: AgentBackendKind): boolean {
@@ -147,4 +178,9 @@ function providerModelForTask(providerValue: unknown, modelValue: unknown): Agen
 
 function normalizeOptionalAgentProfile(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function providerIdFromModel(modelId: string): string {
+  const separator = modelId.indexOf("/");
+  return separator > 0 ? modelId.slice(0, separator) : "";
 }

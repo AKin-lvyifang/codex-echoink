@@ -7,7 +7,6 @@ import type {
   CodexModel,
   CodexNotification,
   CodexPluginInfo,
-  RateLimitSnapshot,
   CodexServerRequest,
   CodexSkill,
   CodexStatusSnapshot,
@@ -21,7 +20,6 @@ import type {
 } from "../types/app-server";
 import { buildCollaborationMode, buildSandboxPolicy, normalizeServiceTier } from "./mapping";
 import { CodexRpcClient } from "./codex-rpc";
-import { normalizeRateLimitResponse } from "./rate-limits";
 import { mergeMcpServers } from "./workspace-resources";
 import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
 import type { AgentBackend, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions } from "../agent/types";
@@ -245,23 +243,6 @@ export class CodexService implements AgentBackend {
       rateLimitsByLimitId: null,
       errors
     };
-  }
-
-  async refreshRateLimits(): Promise<{
-    rateLimits: RateLimitSnapshot | null;
-    rateLimitsByLimitId: Record<string, RateLimitSnapshot | undefined> | null;
-    error: string | null;
-  }> {
-    try {
-      const response = await this.requireClient().request("account/rateLimits/read", undefined, 60000);
-      return { ...normalizeRateLimitResponse(response), error: null };
-    } catch (error) {
-      return {
-        rateLimits: null,
-        rateLimitsByLimitId: null,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
   }
 
   async refreshSkills(): Promise<CodexSkill[]> {

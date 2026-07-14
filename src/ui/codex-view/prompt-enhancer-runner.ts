@@ -34,7 +34,6 @@ export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Pro
     const enhanced = await runPromptEnhancer({
       plugin: view.plugin,
       prompt: originalInput,
-      serviceTier: view.selectedServiceTier,
       onRunCreated: (createdRunId) => {
         runId = createdRunId;
         view.promptEnhancerRunId = createdRunId;

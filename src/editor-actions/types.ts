@@ -3,7 +3,7 @@ import type { EditorPosition } from "obsidian";
 export type BuiltInEditorActionId = "rewrite" | "expand" | "continue" | "translate";
 export type EditorActionQualityMode = "fast" | "quality" | "strict";
 export type EditorActionStatus = "idle" | "preparing" | "connecting" | "generating" | "awaiting-confirm" | "confirmed" | "canceled" | "failed";
-export const DEFAULT_EDITOR_ACTION_MODEL = "gpt-5.4-mini";
+export const DEFAULT_EDITOR_ACTION_MODEL = "";
 
 export interface EditorActionSummaryCacheEntry {
   filePath: string;

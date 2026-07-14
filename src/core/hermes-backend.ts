@@ -188,9 +188,11 @@ export class HermesBackend implements AgentBackend {
     if (promptOnly) args.push("chat", "-q", prompt, "--quiet", "--ignore-rules", "--source", "tool");
     else args.push("-z", prompt);
     if (noTools) args.push("--toolsets", HERMES_PROMPT_ONLY_TOOLSET);
-    const useConfiguredModel = !isSyntheticHermesDefaultModel(this.options.providerId, this.options.modelId);
-    if (useConfiguredModel && this.options.providerId) args.push("--provider", this.options.providerId);
-    if (useConfiguredModel && this.options.modelId) args.push("--model", this.options.modelId);
+    const providerId = input.model?.providerId || this.options.providerId;
+    const modelId = input.model?.modelId || this.options.modelId;
+    const useConfiguredModel = !isSyntheticHermesDefaultModel(providerId, modelId);
+    if (useConfiguredModel && providerId) args.push("--provider", providerId);
+    if (useConfiguredModel && modelId) args.push("--model", modelId);
     const localRunId = `hermes-cli-${Date.now()}`;
     input.onRunId?.(localRunId);
     const env = input.system?.trim()

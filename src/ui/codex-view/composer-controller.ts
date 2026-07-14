@@ -32,6 +32,7 @@ export interface CodexComposerHost {
   readonly plugin: CodexForObsidianPlugin;
   readonly turnQueue: RuntimeTurnQueue;
   toolbarEl: HTMLElement;
+  workspaceEl: HTMLElement;
   queueEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
   promptEnhanceReviewEl: HTMLElement;
@@ -93,6 +94,7 @@ export function renderToolbar(host: CodexComposerHost): void {
   const workspacePath = normalizeWorkspacePath(session.cwd);
   const refs = renderComposerToolbar(
     host.toolbarEl,
+    host.workspaceEl,
     {
       session,
       knowledgeSession,
@@ -100,6 +102,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       knowledgeBackend: host.resolvedKnowledgeBackend(),
       selectedSkill: host.selectedSkill,
       selectedPermission: host.selectedPermission,
+      selectedMode: host.selectedMode,
       running: host.running,
       promptEnhancerRunning: host.promptEnhancerRunning,
       viewRunKind: host.activeRunKind,

@@ -6,22 +6,13 @@ import { DEFAULT_EDITOR_ACTION_MODEL } from "./types";
 const EMPTY_RESOURCES: WorkspaceResourceToggles = { plugins: {}, mcpServers: {}, skills: {} };
 export { DEFAULT_EDITOR_ACTION_MODEL };
 
-const EDITOR_ACTION_MODEL_PREFERENCE = [
-  DEFAULT_EDITOR_ACTION_MODEL,
-  "gpt-5.4",
-  "gpt-5.5"
-];
-
-export function resolveEditorActionModel(input: { configuredModel?: string; availableModels?: string[]; fallbackModel: string; preferConfiguredWithoutAvailability?: boolean }): string {
+export function resolveEditorActionModel(input: { configuredModel?: string; availableModels?: string[]; utilityModel: string }): string {
   const configuredModel = input.configuredModel?.trim() || DEFAULT_EDITOR_ACTION_MODEL;
+  if (configuredModel) return configuredModel;
+  const utilityModel = input.utilityModel.trim();
+  if (utilityModel) return utilityModel;
   const availableModels = Array.from(new Set((input.availableModels ?? []).map((model) => model.trim()).filter(Boolean)));
-  if (!availableModels.length) return input.preferConfiguredWithoutAvailability ? configuredModel || input.fallbackModel : input.fallbackModel;
-  if (availableModels.includes(configuredModel)) return configuredModel;
-  for (const model of EDITOR_ACTION_MODEL_PREFERENCE) {
-    if (availableModels.includes(model)) return model;
-  }
-  if (availableModels.includes(input.fallbackModel)) return input.fallbackModel;
-  return availableModels[0] ?? input.fallbackModel;
+  return availableModels[0] ?? "";
 }
 
 export function buildEditorActionTurnOptions(input: { model: string; serviceTier: ServiceTierChoice; timeoutMs?: number; workspaceResources?: WorkspaceResourceToggles }): TurnOptions {

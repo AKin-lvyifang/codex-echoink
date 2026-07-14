@@ -1,16 +1,8 @@
-import { normalizeRateLimitResponse } from "../../core/rate-limits";
 import type { StoredSession } from "../../settings/settings";
-import type { CodexNotification, CodexStatusSnapshot, RateLimitSnapshot, TokenUsage } from "../../types/app-server";
+import type { CodexNotification, TokenUsage } from "../../types/app-server";
 
 export interface CodexNotificationRouterContext {
-  readonly plugin: {
-    lastStatus: CodexStatusSnapshot | null;
-  };
-  usageLoading: boolean;
-  usageError: string | null;
   sessionForThread(threadId?: string): StoredSession | null;
-  updateUsageHeader(rateLimits: RateLimitSnapshot | null, loading?: boolean, error?: string | null): void;
-  renderUsagePanel(rateLimits: RateLimitSnapshot | null, error?: string | null, loading?: boolean): void;
   updateContextForSession(session: StoredSession, tokenUsage: TokenUsage | undefined, persist: boolean): void;
   addContextCompactionMessage(session: StoredSession): void;
 }
@@ -22,21 +14,6 @@ export class CodexNotificationRouter {
     const { method, params } = notification;
     const payload = paramsObject(params);
     const view = this.context;
-    if (method === "account/rateLimits/updated") {
-      const normalizedRateLimits = normalizeRateLimitResponse(params);
-      view.usageLoading = false;
-      view.usageError = null;
-      if (view.plugin.lastStatus) {
-        view.plugin.lastStatus = {
-          ...view.plugin.lastStatus,
-          rateLimits: normalizedRateLimits.rateLimits,
-          rateLimitsByLimitId: normalizedRateLimits.rateLimitsByLimitId
-        };
-      }
-      view.updateUsageHeader(normalizedRateLimits.rateLimits, false, null);
-      view.renderUsagePanel(normalizedRateLimits.rateLimits, null, false);
-      return;
-    }
     if (method === "thread/tokenUsage/updated") {
       const session = view.sessionForThread(notificationThreadId(payload));
       if (!session) return;

@@ -42,6 +42,11 @@ import {
 } from "../core/workspace-resources";
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
+  DEFAULT_CODEX_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_MODEL,
+  DEFAULT_HERMES_UTILITY_PROVIDER,
+  DEFAULT_OPENCODE_UTILITY_MODEL,
+  DEFAULT_OPENCODE_UTILITY_PROVIDER,
   DEFAULT_SETTINGS,
   DEFAULT_PROMPT_ENHANCER_MODEL,
   DEFAULT_REVIEW_OUTPUT_DIR,
@@ -75,6 +80,7 @@ import {
   type AgentBackendMode,
   type ChatMessage
 } from "../settings/settings";
+import { promptEnhancerModelChoices, resolvePromptEnhancerBackend, resolvePromptEnhancerCodexProvider, resolvePromptEnhancerModel, resolvePromptEnhancerProviderId } from "../prompt-enhancer/service";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "../settings/settings-scroll";
 import { buildSetupCheck, completeSetupState } from "../settings/setup-check";
 import { AGENT_BACKEND_DEFINITIONS, agentBackendDisplayName, getAgentBackendDefinition, resolveCapabilityBackend } from "../agent/registry";
@@ -88,6 +94,7 @@ import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime }
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
+import { harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../harness/agents/backend-runtime-profile";
 import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import { closeMcpBrokerConnectionPool, EchoInkMcpBroker, isMcpBrokerConnectable, mcpBrokerResourceStatus } from "../resources/mcp-broker";
@@ -128,9 +135,12 @@ import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
+import { shouldShowComposerPlanIndicator } from "../ui/codex-view/composer";
+import { positionAnchoredMenu, positionSubmenu } from "../ui/codex-view/floating-menu-position";
 import { CodexMessageListRenderer, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
 import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
+import { selectAgentBackend } from "../ui/codex-view/header-controller";
 import {
   afterTurnSettled as afterTurnSettledRunner,
   messageRenderOptionsForRunUpdate,
@@ -257,7 +267,53 @@ assert.equal(manifest.name, "Codex EchoInk");
 assert.equal(manifest.version, packageJson.version);
 assert.equal(manifest.author, "AKin-lvyifang");
 assert.equal(manifest.id.includes("obsidian"), false);
+
+assert.equal(shouldShowComposerPlanIndicator(false, "agent"), false);
+assert.equal(shouldShowComposerPlanIndicator(false, "plan"), true);
+assert.equal(shouldShowComposerPlanIndicator(true, "agent"), false);
+assert.equal(shouldShowComposerPlanIndicator(true, "plan"), false);
+
+assert.deepEqual(
+  positionAnchoredMenu(
+    { left: 360, right: 400, top: 700, bottom: 730 },
+    { width: 220, height: 280 },
+    { width: 420, height: 780 }
+  ),
+  { left: 180, top: 412, verticalSide: "above" }
+);
+assert.deepEqual(
+  positionAnchoredMenu(
+    { left: 4, right: 48, top: 20, bottom: 48 },
+    { width: 220, height: 280 },
+    { width: 420, height: 780 }
+  ),
+  { left: 8, top: 56, verticalSide: "below" }
+);
+assert.deepEqual(
+  positionSubmenu(
+    { left: 40, right: 252, top: 160, bottom: 192 },
+    { left: 40, right: 260, top: 120, bottom: 420 },
+    { width: 180, height: 220 },
+    { width: 620, height: 780 }
+  ),
+  { left: 268, top: 160, horizontalSide: "right" }
+);
+assert.deepEqual(
+  positionSubmenu(
+    { left: 328, right: 532, top: 680, bottom: 712 },
+    { left: 320, right: 540, top: 520, bottom: 760 },
+    { width: 180, height: 220 },
+    { width: 600, height: 760 }
+  ),
+  { left: 132, top: 532, horizontalSide: "left" }
+);
 const mainSourceForStartupPerformance = await readFile(path.join(process.cwd(), "src/main.ts"), "utf8");
+const codexServiceSourceForQuotaRemoval = await readFile(path.join(process.cwd(), "src/core/codex-service.ts"), "utf8");
+const headerSourceForQuotaRemoval = await readFile(path.join(process.cwd(), "src/ui/codex-view/header.ts"), "utf8");
+const viewSourceForQuotaRemoval = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
+assert.doesNotMatch(codexServiceSourceForQuotaRemoval, /account\/rateLimits\/read/);
+assert.doesNotMatch(headerSourceForQuotaRemoval, /codex-usage|Codex 用量|剩余额度/);
+assert.doesNotMatch(viewSourceForQuotaRemoval, /refreshHeaderRateLimits|refreshCodexHarnessRateLimits/);
 const loadSettingsStart = mainSourceForStartupPerformance.indexOf("async loadSettings(): Promise<void>");
 const loadSettingsEnd = mainSourceForStartupPerformance.indexOf("private async applyKnowledgeBaseRulesFileDefault", loadSettingsStart);
 const loadSettingsSource = mainSourceForStartupPerformance.slice(loadSettingsStart, loadSettingsEnd);
@@ -599,27 +655,55 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 31);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 34);
 assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "agents");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.agents.defaultBackend, "codex-cli");
+assert.equal(DEFAULT_SETTINGS.agents.codex.defaultModel, "");
+assert.equal(DEFAULT_SETTINGS.opencode.providerId, "");
+assert.equal(DEFAULT_SETTINGS.opencode.modelId, "");
 assert.equal(DEFAULT_SETTINGS.agents.hermes.autoStart, true);
 assert.equal(DEFAULT_SETTINGS.agents.hermes.hostname, "127.0.0.1");
 assert.equal(DEFAULT_SETTINGS.agents.hermes.port, 8642);
 assert.equal(DEFAULT_SETTINGS.agents.hermes.apiKey, "");
 assert.equal(DEFAULT_SETTINGS.capabilities.chatBackend, "default");
 assert.equal(DEFAULT_SETTINGS.capabilities.knowledgeBackend, "default");
-assert.equal(DEFAULT_SETTINGS.capabilities.editorActionBackend, "default");
+assert.equal(DEFAULT_SETTINGS.capabilities.editorActionBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.enabled, true);
-assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "default");
-assert.equal(DEFAULT_SETTINGS.promptEnhancer.codexProviderMode, "default");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "codex-cli");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.codexProviderMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.activeApiProviderId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.providerId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.model, DEFAULT_PROMPT_ENHANCER_MODEL);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.timeoutMs, 45000);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.maxInputChars, 4000);
+assert.equal(resolvePromptEnhancerBackend(DEFAULT_SETTINGS), "codex-cli");
+assert.equal(resolvePromptEnhancerModel(DEFAULT_SETTINGS), DEFAULT_CODEX_UTILITY_MODEL);
+assert.ok(promptEnhancerModelChoices(DEFAULT_SETTINGS).includes(DEFAULT_CODEX_UTILITY_MODEL));
+const legacyDefaultPromptEnhancerSettings = structuredClone(DEFAULT_SETTINGS);
+legacyDefaultPromptEnhancerSettings.agentBackend = "hermes";
+legacyDefaultPromptEnhancerSettings.promptEnhancer.backend = "default";
+legacyDefaultPromptEnhancerSettings.promptEnhancer.codexProviderMode = "default";
+assert.equal(resolvePromptEnhancerBackend(legacyDefaultPromptEnhancerSettings), "codex-cli");
+assert.equal(resolvePromptEnhancerModel(legacyDefaultPromptEnhancerSettings), DEFAULT_CODEX_UTILITY_MODEL);
+assert.deepEqual(resolvePromptEnhancerCodexProvider(legacyDefaultPromptEnhancerSettings), {
+  providerMode: "codex-login",
+  activeApiProvider: null
+});
+const openCodeUtilitySettings = structuredClone(DEFAULT_SETTINGS);
+openCodeUtilitySettings.promptEnhancer.backend = "opencode";
+openCodeUtilitySettings.opencode.providerId = "opencode";
+openCodeUtilitySettings.opencode.modelId = "opencode/big-pickle";
+assert.equal(resolvePromptEnhancerModel(openCodeUtilitySettings), DEFAULT_OPENCODE_UTILITY_MODEL);
+assert.equal(resolvePromptEnhancerProviderId(openCodeUtilitySettings), DEFAULT_OPENCODE_UTILITY_PROVIDER);
+const hermesUtilitySettings = structuredClone(DEFAULT_SETTINGS);
+hermesUtilitySettings.promptEnhancer.backend = "hermes";
+hermesUtilitySettings.agents.hermes.providerId = "deepseek";
+hermesUtilitySettings.agents.hermes.modelId = "custom-hermes-chat";
+assert.equal(resolvePromptEnhancerModel(hermesUtilitySettings), DEFAULT_HERMES_UTILITY_MODEL);
+assert.equal(resolvePromptEnhancerProviderId(hermesUtilitySettings), DEFAULT_HERMES_UTILITY_PROVIDER);
 assert.equal(normalizeSettingsData({
   settingsVersion: 30,
   promptEnhancer: { agent: "enhance-prompt" }
@@ -637,6 +721,29 @@ assert.equal(getAgentBackendDefinition("opencode").capabilities.richEvents, fals
 assert.equal(agentBackendDisplayName("hermes"), "Hermes");
 assert.equal(resolveCapabilityBackend("default", DEFAULT_SETTINGS.agents.defaultBackend), "codex-cli");
 assert.equal(resolveCapabilityBackend("hermes", DEFAULT_SETTINGS.agents.defaultBackend), "hermes");
+const agentSwitchSettings = normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, agentBackend: "codex-cli" }).settings;
+const agentSwitchCalls: string[] = [];
+const agentSwitchHost: any = {
+  running: false,
+  promptEnhancerRunning: false,
+  plugin: {
+    settings: agentSwitchSettings,
+    saveSettings: async (immediate: boolean) => agentSwitchCalls.push(`save:${immediate}`)
+  },
+  applyStatus: () => agentSwitchCalls.push(`status:${agentSwitchSettings.agentBackend}`),
+  prewarmActiveThread: () => agentSwitchCalls.push("prewarm")
+};
+assert.equal(await selectAgentBackend(agentSwitchHost, "hermes"), true);
+assert.equal(agentSwitchSettings.agentBackend, "hermes");
+assert.equal(agentSwitchSettings.agents.defaultBackend, "hermes");
+assert.deepEqual(agentSwitchCalls, ["status:hermes", "save:true"]);
+agentSwitchHost.running = true;
+assert.equal(await selectAgentBackend(agentSwitchHost, "opencode"), false);
+assert.equal(agentSwitchSettings.agentBackend, "hermes");
+agentSwitchHost.running = false;
+assert.equal(await selectAgentBackend(agentSwitchHost, "codex-cli"), true);
+assert.equal(agentSwitchSettings.agentBackend, "codex-cli");
+assert.equal(agentSwitchCalls.at(-1), "prewarm");
 const agentEvents = makeAgentLifecycleEvents({
   backend: "hermes",
   runId: "run-1",
@@ -997,6 +1104,9 @@ assert.match(editorActionRunnerSourceForAgentEvents, /kind:\s*"editor-candidate"
 assert.match(editorActionRunnerSourceForAgentEvents, /mode:\s*"read-only"/);
 assert.doesNotMatch(editorActionRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
 assert.match(editorActionRunnerSourceForAgentEvents, /agentEventToEditorStatus/);
+assert.match(editorActionRunnerSourceForAgentEvents, /harnessEditorActionTaskModel/);
+assert.match(editorActionRunnerSourceForAgentEvents, /const cloned = JSON\.parse\(JSON\.stringify\(settings\)\)/);
+assert.match(editorActionRunnerSourceForAgentEvents, /backend === "hermes" && !resolvedModel/);
 assert.equal(DEFAULT_SETTINGS.providerMode, "codex-login");
 assert.equal(DEFAULT_SETTINGS.autoOpenHome, false);
 assert.equal(DEFAULT_SETTINGS.editorActions.enabled, false);
@@ -1004,11 +1114,11 @@ assert.equal(DEFAULT_SETTINGS.editorActions.statusSlotEnabled, true);
 assert.equal(DEFAULT_SETTINGS.editorActions.model, DEFAULT_EDITOR_ACTION_MODEL);
 assert.equal(DEFAULT_SETTINGS.editorActions.qualityMode, "quality");
 assert.equal(DEFAULT_SETTINGS.editorActions.showContextPanel, true);
-assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "fast").model, "gpt-5.4-mini");
+assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "fast").model, "");
 assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "fast").contextCharsBefore, 500);
-assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "quality").model, "gpt-5.4");
+assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "quality").model, "");
 assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "quality").contextCharsBefore, 1000);
-assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "strict").model, "gpt-5.5");
+assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "strict").model, "");
 assert.equal(resolveEditorActionModeConfig(DEFAULT_SETTINGS.editorActions, "strict").contextCharsBefore, 1500);
 assert.equal(DEFAULT_SETTINGS.editorActions.defaultStyleId, "clear");
 assert.equal(DEFAULT_SETTINGS.editorActions.maxSelectedChars, 4000);
@@ -1805,12 +1915,7 @@ const notificationSessions = [
 ];
 const notificationCalls: string[] = [];
 const notificationContext: any = {
-  plugin: { lastStatus: { rateLimits: null, rateLimitsByLimitId: null } },
-  usageLoading: true,
-  usageError: "loading",
   sessionForThread: (threadId: string) => notificationSessions.find((session) => session.threadId === threadId) ?? null,
-  updateUsageHeader: (rateLimits: any, loading: boolean, error: string | null) => notificationCalls.push(`usageHeader:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
-  renderUsagePanel: (rateLimits: any, error: string | null, loading: boolean) => notificationCalls.push(`usagePanel:${rateLimits?.limitId ?? "none"}:${loading}:${error ?? "none"}`),
   updateContextForSession: (session: any, usage: any) => notificationCalls.push(`context:${session.id}:${usage?.total?.totalTokens ?? 0}`),
   addContextCompactionMessage: (session: any) => notificationCalls.push(`compact:${session.id}`)
 };
@@ -1830,10 +1935,7 @@ notificationRouter.handle({
     }
   }
 } as any);
-assert.equal(notificationContext.usageLoading, false);
-assert.equal(notificationContext.plugin.lastStatus.rateLimits.limitId, "codex");
-assert.ok(notificationCalls.includes("usageHeader:codex:false:none"));
-assert.ok(notificationCalls.includes("usagePanel:codex:false:none"));
+assert.deepEqual(notificationCalls, []);
 notificationRouter.handle({ method: "thread/tokenUsage/updated", params: { threadId: "unknown", tokenUsage: { total: { totalTokens: 99 } } } } as any);
 notificationRouter.handle({ method: "thread/tokenUsage/updated", params: { threadId: "thread-a", tokenUsage: { total: { totalTokens: 23 } } } } as any);
 notificationRouter.handle({ method: "thread/compacted", params: { threadId: "thread-b", tokenUsage: { total: { totalTokens: 17 } } } } as any);
@@ -2647,6 +2749,80 @@ const customDefaultModelSettings = normalizeSettingsData({
 });
 assert.equal(customDefaultModelSettings.settings.defaultModel, "custom-stable-model");
 assert.deepEqual(getApiProviderModels(customDefaultModelSettings.settings.apiProviders[0]), ["gpt-5.4", "gpt-5.5"]);
+
+const migratedEditorActionModels = normalizeSettingsData({
+  settingsVersion: 31,
+  defaultModel: "",
+  opencode: { providerId: "", modelId: "" },
+  editorActions: {
+    model: "gpt-5.4-mini",
+    modeConfigs: {
+      fast: { mode: "fast", label: "快速", model: "gpt-5.4-mini", contextCharsBefore: 500, contextCharsAfter: 500 },
+      quality: { mode: "quality", label: "质量", model: "gpt-5.4", contextCharsBefore: 1000, contextCharsAfter: 1000 },
+      strict: { mode: "strict", label: "严格", model: "gpt-5.5", contextCharsBefore: 1500, contextCharsAfter: 1500 }
+    }
+  }
+}).settings;
+assert.equal(migratedEditorActionModels.defaultModel, "");
+assert.equal(migratedEditorActionModels.opencode.providerId, "");
+assert.equal(migratedEditorActionModels.opencode.modelId, "");
+assert.equal(migratedEditorActionModels.editorActions.model, "");
+assert.deepEqual(Object.values(migratedEditorActionModels.editorActions.modeConfigs).map((config) => config.model), ["", "", ""]);
+assert.equal(migratedEditorActionModels.capabilities.editorActionBackend, "codex-cli");
+assert.equal(migratedEditorActionModels.promptEnhancer.backend, "codex-cli");
+
+const correctedV32UtilityBoundary = normalizeSettingsData({
+  settingsVersion: 32,
+  defaultModel: DEFAULT_CODEX_UTILITY_MODEL,
+  opencode: {
+    providerId: DEFAULT_OPENCODE_UTILITY_PROVIDER,
+    modelId: DEFAULT_OPENCODE_UTILITY_MODEL
+  },
+  capabilities: { editorActionBackend: "default" },
+  promptEnhancer: { backend: "default", codexProviderMode: "default", model: "" }
+}).settings;
+assert.equal(correctedV32UtilityBoundary.defaultModel, "");
+assert.equal(correctedV32UtilityBoundary.opencode.providerId, "");
+assert.equal(correctedV32UtilityBoundary.opencode.modelId, "");
+assert.equal(correctedV32UtilityBoundary.capabilities.editorActionBackend, "codex-cli");
+assert.equal(correctedV32UtilityBoundary.promptEnhancer.backend, "codex-cli");
+assert.equal(correctedV32UtilityBoundary.promptEnhancer.codexProviderMode, "codex-login");
+assert.equal(resolvePromptEnhancerModel(correctedV32UtilityBoundary), DEFAULT_CODEX_UTILITY_MODEL);
+assert.equal(normalizeSettingsData({
+  settingsVersion: 32,
+  defaultModel: "custom-chat-model"
+}).settings.defaultModel, "custom-chat-model");
+
+const correctedV33IndependentUtilities = normalizeSettingsData({
+  settingsVersion: 33,
+  agentBackend: "hermes",
+  defaultModel: "custom-chat-model",
+  capabilities: { editorActionBackend: "default" },
+  promptEnhancer: { backend: "default", codexProviderMode: "default" }
+}).settings;
+assert.equal(correctedV33IndependentUtilities.agentBackend, "hermes");
+assert.equal(correctedV33IndependentUtilities.defaultModel, "custom-chat-model");
+assert.equal(correctedV33IndependentUtilities.capabilities.editorActionBackend, "codex-cli");
+assert.equal(correctedV33IndependentUtilities.promptEnhancer.backend, "codex-cli");
+assert.equal(correctedV33IndependentUtilities.promptEnhancer.codexProviderMode, "codex-login");
+
+const preservedCustomAgentModels = normalizeSettingsData({
+  settingsVersion: 31,
+  defaultModel: "custom-codex-model",
+  opencode: { providerId: "opencode", modelId: "opencode/big-pickle" },
+  editorActions: {
+    model: "custom-editor-model",
+    modeConfigs: {
+      fast: { mode: "fast", label: "快速", model: "custom-fast", contextCharsBefore: 500, contextCharsAfter: 500 },
+      quality: { mode: "quality", label: "质量", model: "custom-quality", contextCharsBefore: 1000, contextCharsAfter: 1000 },
+      strict: { mode: "strict", label: "严格", model: "custom-strict", contextCharsBefore: 1500, contextCharsAfter: 1500 }
+    }
+  }
+}).settings;
+assert.equal(preservedCustomAgentModels.defaultModel, "custom-codex-model");
+assert.equal(preservedCustomAgentModels.opencode.modelId, "opencode/big-pickle");
+assert.equal(preservedCustomAgentModels.editorActions.model, "custom-editor-model");
+assert.deepEqual(Object.values(preservedCustomAgentModels.editorActions.modeConfigs).map((config) => config.model), ["custom-fast", "custom-quality", "custom-strict"]);
 
 const workspaceResources = normalizeSettingsData({
   settingsVersion: 4,
@@ -4617,11 +4793,53 @@ assert.deepEqual(editorActionTurnOptions, {
   requestTimeoutMs: 45000,
   workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
 });
-assert.equal(resolveEditorActionModel({ fallbackModel: "gpt-5.5" }), "gpt-5.5");
-assert.equal(resolveEditorActionModel({ configuredModel: DEFAULT_EDITOR_ACTION_MODEL, availableModels: ["gpt-5.5", DEFAULT_EDITOR_ACTION_MODEL], fallbackModel: "gpt-5.5" }), DEFAULT_EDITOR_ACTION_MODEL);
-assert.equal(resolveEditorActionModel({ configuredModel: DEFAULT_EDITOR_ACTION_MODEL, availableModels: ["gpt-5.4", "gpt-5.5"], fallbackModel: "gpt-5.5" }), "gpt-5.4");
-assert.equal(resolveEditorActionModel({ configuredModel: DEFAULT_EDITOR_ACTION_MODEL, availableModels: ["custom-fast", "custom-large"], fallbackModel: "gpt-5.5" }), "custom-fast");
-assert.equal(resolveEditorActionModel({ configuredModel: DEFAULT_EDITOR_ACTION_MODEL, availableModels: ["custom-fast"], fallbackModel: "gpt-5.5", preferConfiguredWithoutAvailability: false }), "custom-fast");
+assert.equal(resolveEditorActionModel({ utilityModel: DEFAULT_CODEX_UTILITY_MODEL }), DEFAULT_CODEX_UTILITY_MODEL);
+assert.equal(resolveEditorActionModel({
+  configuredModel: DEFAULT_EDITOR_ACTION_MODEL,
+  availableModels: ["main-chat-model"],
+  utilityModel: DEFAULT_CODEX_UTILITY_MODEL
+}), DEFAULT_CODEX_UTILITY_MODEL);
+assert.equal(resolveEditorActionModel({
+  configuredModel: "custom-editor",
+  availableModels: ["main-chat-model"],
+  utilityModel: DEFAULT_CODEX_UTILITY_MODEL
+}), "custom-editor");
+
+const editorActionAgentSettings = normalizeSettingsData({
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+  defaultModel: "codex-main",
+  opencode: { providerId: "opencode", modelId: "opencode/big-pickle" },
+  agents: { hermes: { providerId: "deepseek", modelId: "deepseek-v4-flash" } }
+}).settings;
+const legacyDefaultEditorActionSettings = structuredClone(editorActionAgentSettings);
+legacyDefaultEditorActionSettings.agentBackend = "hermes";
+legacyDefaultEditorActionSettings.capabilities.editorActionBackend = "default";
+assert.equal(harnessEditorActionBackend(legacyDefaultEditorActionSettings), "codex-cli");
+assert.equal(harnessEditorActionModel(editorActionAgentSettings, "codex-cli", ""), DEFAULT_CODEX_UTILITY_MODEL);
+assert.equal(harnessEditorActionModel(editorActionAgentSettings, "codex-cli", "custom-codex-utility"), "custom-codex-utility");
+assert.equal(harnessEditorActionModel(editorActionAgentSettings, "opencode", ""), DEFAULT_OPENCODE_UTILITY_MODEL);
+assert.equal(harnessEditorActionModel(editorActionAgentSettings, "hermes", ""), DEFAULT_HERMES_UTILITY_MODEL);
+assert.equal(harnessEditorActionModel(editorActionAgentSettings, "hermes", "custom-hermes-model"), "custom-hermes-model");
+assert.deepEqual(harnessEditorActionTaskModel(editorActionAgentSettings, "opencode", DEFAULT_OPENCODE_UTILITY_MODEL), {
+  providerId: DEFAULT_OPENCODE_UTILITY_PROVIDER,
+  modelId: DEFAULT_OPENCODE_UTILITY_MODEL
+});
+assert.deepEqual(harnessEditorActionTaskModel(editorActionAgentSettings, "opencode", "bailian-coding-plan/qwen3.5-plus"), {
+  providerId: "bailian-coding-plan",
+  modelId: "bailian-coding-plan/qwen3.5-plus"
+});
+assert.deepEqual(harnessEditorActionTaskModel(editorActionAgentSettings, "hermes", "custom-hermes-model"), {
+  providerId: "deepseek",
+  modelId: "custom-hermes-model"
+});
+const hermesUtilityTaskSettings = structuredClone(editorActionAgentSettings);
+hermesUtilityTaskSettings.agents.hermes.providerId = "";
+hermesUtilityTaskSettings.agents.hermes.modelId = "";
+assert.deepEqual(harnessEditorActionTaskModel(hermesUtilityTaskSettings, "hermes", DEFAULT_HERMES_UTILITY_MODEL), {
+  providerId: DEFAULT_HERMES_UTILITY_PROVIDER,
+  modelId: DEFAULT_HERMES_UTILITY_MODEL
+});
+assert.equal(harnessEditorActionTaskModel(editorActionAgentSettings, "codex-cli", "codex-main"), undefined);
 
 assert.equal(editorActionStatusFromResult("success"), "awaiting-confirm");
 assert.equal(editorActionStatusFromResult("failed"), "failed");
@@ -5233,6 +5451,17 @@ await hermesCliDefaultBackend.connect();
 assert.deepEqual(await hermesCliDefaultBackend.listModels(), []);
 assert.equal((await hermesCliDefaultBackend.runTask({ prompt: "只回复 PONG", permission: "read-only", timeoutMs: 5000 })).text, "PONG");
 assert.deepEqual(hermesCliDefaultArgs.at(-1), ["-z", "只回复 PONG"]);
+assert.equal((await hermesCliDefaultBackend.runTask({
+  prompt: "只回复 PONG",
+  permission: "read-only",
+  timeoutMs: 5000,
+  model: { providerId: DEFAULT_HERMES_UTILITY_PROVIDER, modelId: DEFAULT_HERMES_UTILITY_MODEL }
+})).text, "PONG");
+assert.deepEqual(hermesCliDefaultArgs.at(-1), [
+  "-z", "只回复 PONG",
+  "--provider", DEFAULT_HERMES_UTILITY_PROVIDER,
+  "--model", DEFAULT_HERMES_UTILITY_MODEL
+]);
 
 const hermesCliSyntheticArgs: string[][] = [];
 const hermesCliSyntheticBackend = new HermesBackend({

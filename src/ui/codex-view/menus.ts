@@ -5,6 +5,7 @@ import type { EchoInkResource } from "../../resources/types";
 import type { CodexModel, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
 import { knowledgeCommandOptions, type KnowledgeBaseCommandOption } from "../../knowledge-base/commands";
 import { labelFor } from "./composer";
+import { positionAnchoredMenu, positionSubmenu } from "./floating-menu-position";
 
 export interface SkillMenuElements {
   skillMenuEl: HTMLElement;
@@ -68,6 +69,33 @@ export interface SessionMenuCallbacks {
   onResetCache: () => void;
   onDelete: () => void;
 }
+
+interface ComposerParameterOption {
+  value: string;
+  label: string;
+  selected: boolean;
+}
+
+interface ComposerParameterSection {
+  id: string;
+  icon: string;
+  label: string;
+  currentValue: string;
+  options: ComposerParameterOption[];
+  onSelect: (value: string) => void;
+}
+
+interface ActiveComposerParameterMenu {
+  anchor: HTMLElement;
+  root: HTMLElement;
+  submenu: HTMLElement | null;
+  activeTrigger: HTMLButtonElement | null;
+  activeSectionId: string;
+  cleanup: () => void;
+  reposition: () => void;
+}
+
+let activeComposerParameterMenu: ActiveComposerParameterMenu | null = null;
 
 export function openSkillMenu(event: MouseEvent, elements: SkillMenuElements, state: SkillMenuState, callbacks: SkillMenuCallbacks): void {
   event.preventDefault();
@@ -166,83 +194,22 @@ export function openKnowledgeCommandMenu(event: MouseEvent, onFillCommand: (comm
 }
 
 export function openKnowledgeModelMenu(event: MouseEvent, state: ModelMenuState, callbacks: KnowledgeModelMenuCallbacks): void {
-  event.preventDefault();
-  const menu = new Menu();
-  const models = modelChoicesForState(state);
-  menu.addItem((item) => item.setTitle("知识库模型").setIsLabel(true));
-  if (!state.providerModels.length) {
-    menu.addItem((item) =>
-      item
-        .setTitle("自动")
-        .setIcon("wand-sparkles")
-        .setChecked(!state.selectedModel)
-        .onClick(() => callbacks.onSelectModel(""))
-    );
-  }
-  for (const model of models) {
-    menu.addItem((item) =>
-      item
-        .setTitle(model.displayName || model.model)
-        .setIcon("box")
-        .setChecked(state.effectiveModel === model.model)
-        .onClick(() => callbacks.onSelectModel(model.model))
-    );
-  }
-  addReasoningSection(menu, state.selectedReasoning, callbacks.onSelectReasoning);
-  menu.showAtMouseEvent(event);
+  openComposerParameterMenu(event, parameterSections(state, callbacks, false), "知识库模型和思考强度");
 }
 
 export function openModelMenu(event: MouseEvent, state: ModelMenuState, callbacks: ModelMenuCallbacks): void {
-  event.preventDefault();
-  const menu = new Menu();
-  const models = modelChoicesForState(state);
-  menu.addItem((item) => item.setTitle("模型").setIsLabel(true));
-  if (!state.providerModels.length) {
-    menu.addItem((item) =>
-      item
-        .setTitle("自动")
-        .setIcon("wand-sparkles")
-        .setChecked(!state.selectedModel)
-        .onClick(() => callbacks.onSelectModel(""))
-    );
-  }
-  if (models.length) {
-    for (const model of models) {
-      menu.addItem((item) =>
-        item
-          .setTitle(model.displayName || model.model)
-          .setIcon("box")
-          .setChecked(state.effectiveModel === model.model)
-          .onClick(() => callbacks.onSelectModel(model.model))
-      );
-    }
-  } else {
-    menu.addItem((item) => item.setTitle(state.selectedModel || "自动").setIcon("box").setChecked(true));
-  }
-  addReasoningSection(menu, state.selectedReasoning, callbacks.onSelectReasoning);
-  menu.addSeparator();
-  menu.addItem((item) => item.setTitle("速度").setIsLabel(true));
-  for (const tier of ["standard", "fast", "flex"] as ServiceTierChoice[]) {
-    menu.addItem((item) =>
-      item
-        .setTitle(labelFor(tier))
-        .setIcon("gauge")
-        .setChecked(state.selectedServiceTier === tier)
-        .onClick(() => callbacks.onSelectServiceTier(tier))
-    );
-  }
-  menu.addSeparator();
-  menu.addItem((item) => item.setTitle("模式").setIsLabel(true));
-  for (const mode of ["agent", "plan"] as UiMode[]) {
-    menu.addItem((item) =>
-      item
-        .setTitle(labelFor(mode))
-        .setIcon("route")
-        .setChecked(state.selectedMode === mode)
-        .onClick(() => callbacks.onSelectMode(mode))
-    );
-  }
-  menu.showAtMouseEvent(event);
+  openComposerParameterMenu(event, parameterSections(state, callbacks, true), "模型和运行参数");
+}
+
+export function closeComposerParameterMenu(): void {
+  const active = activeComposerParameterMenu;
+  if (!active) return;
+  activeComposerParameterMenu = null;
+  active.anchor.removeClass("is-open");
+  active.anchor.setAttribute("aria-expanded", "false");
+  active.submenu?.remove();
+  active.root.remove();
+  active.cleanup();
 }
 
 export function openSessionMenu(event: MouseEvent, knowledgeSession: boolean, callbacks: SessionMenuCallbacks): void {
@@ -305,18 +272,272 @@ function modelChoicesForState(state: ModelMenuState): CodexModel[] {
     : ensureModelChoices(state.availableModels, state.selectedModel, state.defaultModel, DEFAULT_SETTINGS.defaultModel);
 }
 
-function addReasoningSection(menu: Menu, selectedReasoning: ReasoningEffort, onSelectReasoning: (reasoning: ReasoningEffort) => void): void {
-  menu.addSeparator();
-  menu.addItem((item) => item.setTitle("思考强度").setIsLabel(true));
-  for (const effort of ["low", "medium", "high", "xhigh"] as ReasoningEffort[]) {
-    menu.addItem((item) =>
-      item
-        .setTitle(labelFor(effort))
-        .setIcon("brain")
-        .setChecked(selectedReasoning === effort)
-        .onClick(() => onSelectReasoning(effort))
-    );
+function parameterSections(
+  state: ModelMenuState,
+  callbacks: KnowledgeModelMenuCallbacks | ModelMenuCallbacks,
+  includeRuntimeOptions: boolean
+): ComposerParameterSection[] {
+  const models = modelChoicesForState(state);
+  const selectedModel = models.find((model) => model.model === state.selectedModel || model.model === state.effectiveModel);
+  const sections: ComposerParameterSection[] = [
+    {
+      id: "model",
+      icon: "box",
+      label: "模型",
+      currentValue: state.selectedModel ? selectedModel?.displayName || selectedModel?.model || state.selectedModel : "自动",
+      options: [
+        { value: "", label: "自动", selected: !state.selectedModel },
+        ...models.map((model) => ({
+          value: model.model,
+          label: model.displayName || model.model,
+          selected: Boolean(state.selectedModel) && (state.selectedModel === model.model || state.effectiveModel === model.model)
+        }))
+      ],
+      onSelect: callbacks.onSelectModel
+    },
+    {
+      id: "reasoning",
+      icon: "brain",
+      label: "思考强度",
+      currentValue: labelFor(state.selectedReasoning),
+      options: (["low", "medium", "high", "xhigh"] as ReasoningEffort[]).map((effort) => ({
+        value: effort,
+        label: labelFor(effort),
+        selected: state.selectedReasoning === effort
+      })),
+      onSelect: (value) => callbacks.onSelectReasoning(value as ReasoningEffort)
+    }
+  ];
+  if (!includeRuntimeOptions) return sections;
+
+  const runtimeCallbacks = callbacks as ModelMenuCallbacks;
+  sections.push(
+    {
+      id: "speed",
+      icon: "gauge",
+      label: "速度",
+      currentValue: labelFor(state.selectedServiceTier),
+      options: (["standard", "fast", "flex"] as ServiceTierChoice[]).map((tier) => ({
+        value: tier,
+        label: labelFor(tier),
+        selected: state.selectedServiceTier === tier
+      })),
+      onSelect: (value) => runtimeCallbacks.onSelectServiceTier(value as ServiceTierChoice)
+    },
+    {
+      id: "mode",
+      icon: "route",
+      label: "模式",
+      currentValue: labelFor(state.selectedMode),
+      options: (["agent", "plan"] as UiMode[]).map((mode) => ({
+        value: mode,
+        label: labelFor(mode),
+        selected: state.selectedMode === mode
+      })),
+      onSelect: (value) => runtimeCallbacks.onSelectMode(value as UiMode)
+    }
+  );
+  return sections;
+}
+
+function openComposerParameterMenu(event: MouseEvent, sections: ComposerParameterSection[], ariaLabel: string): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  if (!anchor) return;
+  if (activeComposerParameterMenu?.anchor === anchor) {
+    closeComposerParameterMenu();
+    return;
   }
+  closeComposerParameterMenu();
+
+  const doc = anchor.ownerDocument;
+  const view = doc.defaultView ?? window;
+  const root = doc.createElement("div");
+  root.className = "codex-composer-parameter-menu";
+  root.setAttribute("role", "menu");
+  root.setAttribute("aria-label", ariaLabel);
+  root.style.visibility = "hidden";
+  doc.body.appendChild(root);
+
+  const active: ActiveComposerParameterMenu = {
+    anchor,
+    root,
+    submenu: null,
+    activeTrigger: null,
+    activeSectionId: "",
+    cleanup: () => undefined,
+    reposition: () => undefined
+  };
+  activeComposerParameterMenu = active;
+  anchor.addClass("is-open");
+  anchor.setAttribute("aria-expanded", "true");
+
+  for (const section of sections) {
+    const trigger = createParameterTrigger(root, section);
+    trigger.onmouseenter = () => openParameterSubmenu(active, section, trigger, false);
+    trigger.onclick = (clickEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      openParameterSubmenu(active, section, trigger, true);
+    };
+    trigger.onkeydown = (keyEvent) => {
+      if (keyEvent.key !== "ArrowRight" && keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
+      keyEvent.preventDefault();
+      openParameterSubmenu(active, section, trigger, true);
+    };
+  }
+
+  const reposition = () => {
+    if (!anchor.isConnected) {
+      closeComposerParameterMenu();
+      return;
+    }
+    const anchorRect = anchor.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const viewport = { width: doc.documentElement.clientWidth, height: doc.documentElement.clientHeight };
+    const placement = positionAnchoredMenu(anchorRect, rootRect, viewport);
+    root.style.left = `${placement.left}px`;
+    root.style.top = `${placement.top}px`;
+    root.dataset.verticalSide = placement.verticalSide;
+    root.style.visibility = "visible";
+    positionActiveSubmenu(active);
+  };
+  active.reposition = reposition;
+
+  const onPointerDown = (pointerEvent: PointerEvent) => {
+    const target = pointerEvent.target instanceof Node ? pointerEvent.target : null;
+    if (!target || root.contains(target) || active.submenu?.contains(target) || anchor.contains(target)) return;
+    closeComposerParameterMenu();
+  };
+  const onKeyDown = (keyEvent: KeyboardEvent) => {
+    if (keyEvent.key !== "Escape") return;
+    keyEvent.preventDefault();
+    if (active.submenu) {
+      active.submenu.remove();
+      active.submenu = null;
+      active.activeSectionId = "";
+      active.activeTrigger?.removeClass("is-open");
+      active.activeTrigger?.setAttribute("aria-expanded", "false");
+      active.activeTrigger?.focus();
+      active.activeTrigger = null;
+      return;
+    }
+    closeComposerParameterMenu();
+    anchor.focus();
+  };
+  const observer = new MutationObserver(() => {
+    if (!anchor.isConnected) closeComposerParameterMenu();
+  });
+  observer.observe(doc.body, { childList: true, subtree: true });
+  doc.addEventListener("pointerdown", onPointerDown, true);
+  doc.addEventListener("keydown", onKeyDown, true);
+  doc.addEventListener("scroll", reposition, true);
+  view.addEventListener("resize", reposition);
+  active.cleanup = () => {
+    observer.disconnect();
+    doc.removeEventListener("pointerdown", onPointerDown, true);
+    doc.removeEventListener("keydown", onKeyDown, true);
+    doc.removeEventListener("scroll", reposition, true);
+    view.removeEventListener("resize", reposition);
+  };
+
+  reposition();
+  root.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+function createParameterTrigger(container: HTMLElement, section: ComposerParameterSection): HTMLButtonElement {
+  const trigger = container.createEl("button", {
+    cls: "codex-parameter-menu-item codex-parameter-menu-trigger",
+    attr: {
+      type: "button",
+      role: "menuitem",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false"
+    }
+  });
+  const icon = trigger.createSpan({ cls: "codex-parameter-menu-icon" });
+  setIcon(icon, section.icon);
+  trigger.createSpan({ cls: "codex-parameter-menu-label", text: section.label });
+  trigger.createSpan({ cls: "codex-parameter-menu-value", text: section.currentValue });
+  const chevron = trigger.createSpan({ cls: "codex-parameter-menu-chevron" });
+  setIcon(chevron, "chevron-right");
+  return trigger;
+}
+
+function openParameterSubmenu(
+  active: ActiveComposerParameterMenu,
+  section: ComposerParameterSection,
+  trigger: HTMLButtonElement,
+  focusFirstOption: boolean
+): void {
+  if (activeComposerParameterMenu !== active) return;
+  if (active.activeSectionId === section.id && active.submenu) {
+    if (focusFirstOption) active.submenu.querySelector<HTMLButtonElement>("button")?.focus();
+    return;
+  }
+
+  active.activeTrigger?.removeClass("is-open");
+  active.activeTrigger?.setAttribute("aria-expanded", "false");
+  active.submenu?.remove();
+  active.activeTrigger = trigger;
+  active.activeSectionId = section.id;
+  trigger.addClass("is-open");
+  trigger.setAttribute("aria-expanded", "true");
+
+  const panel = active.root.ownerDocument.createElement("div");
+  panel.className = "codex-composer-parameter-submenu";
+  panel.setAttribute("role", "menu");
+  panel.setAttribute("aria-label", section.label);
+  panel.style.visibility = "hidden";
+  panel.createDiv({ cls: "codex-parameter-submenu-title", text: section.label });
+  for (const option of section.options) {
+    const button = panel.createEl("button", {
+      cls: `codex-parameter-menu-item codex-parameter-option${option.selected ? " is-selected" : ""}`,
+      attr: {
+        type: "button",
+        role: "menuitemradio",
+        "aria-checked": String(option.selected)
+      }
+    });
+    button.createSpan({ cls: "codex-parameter-option-label", text: option.label });
+    const check = button.createSpan({ cls: "codex-parameter-option-check" });
+    if (option.selected) setIcon(check, "check");
+    button.onclick = (clickEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      closeComposerParameterMenu();
+      section.onSelect(option.value);
+    };
+  }
+  panel.onkeydown = (keyEvent) => {
+    if (keyEvent.key !== "ArrowLeft") return;
+    keyEvent.preventDefault();
+    panel.remove();
+    active.submenu = null;
+    active.activeSectionId = "";
+    trigger.removeClass("is-open");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.focus();
+  };
+  active.root.ownerDocument.body.appendChild(panel);
+  active.submenu = panel;
+  positionActiveSubmenu(active);
+  if (focusFirstOption) panel.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+function positionActiveSubmenu(active: ActiveComposerParameterMenu): void {
+  if (!active.submenu || !active.activeTrigger) return;
+  const doc = active.root.ownerDocument;
+  const triggerRect = active.activeTrigger.getBoundingClientRect();
+  const rootRect = active.root.getBoundingClientRect();
+  const panelRect = active.submenu.getBoundingClientRect();
+  const viewport = { width: doc.documentElement.clientWidth, height: doc.documentElement.clientHeight };
+  const placement = positionSubmenu(triggerRect, rootRect, panelRect, viewport);
+  active.submenu.style.left = `${placement.left}px`;
+  active.submenu.style.top = `${placement.top}px`;
+  active.submenu.dataset.horizontalSide = placement.horizontalSide;
+  active.submenu.style.visibility = "visible";
 }
 
 function createKnowledgeCommandItem(command: KnowledgeBaseCommandOption, onFillCommand: (command: string) => void): HTMLElement {

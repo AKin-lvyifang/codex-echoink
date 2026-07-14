@@ -62,7 +62,7 @@ async function assertCodexViewOnlyKeepsGlobalNotificationAllowlist(): Promise<vo
   );
   assert.doesNotMatch(rawHandler, /method === "(?:item\/|turn\/started|turn\/completed|error)/);
   assert.doesNotMatch(rawHandler, /handleEditorSummaryNotification|editorSummaryRun/);
-  assert.match(rawHandler, /method === "account\/rateLimits\/updated"/);
+  assert.doesNotMatch(rawHandler, /account\/rateLimits/);
   assert.match(rawHandler, /method === "thread\/tokenUsage\/updated"/);
   assert.match(rawHandler, /method === "thread\/compacted"/);
   assert.match(view, /this\.notificationRouter\?\.handle\(notification\)/);

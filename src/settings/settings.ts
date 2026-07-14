@@ -500,6 +500,11 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
 
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 export const DEFAULT_PROMPT_ENHANCER_MODEL = "";
+export const DEFAULT_CODEX_UTILITY_MODEL = "gpt-5.6-terra";
+export const DEFAULT_OPENCODE_UTILITY_PROVIDER = "opencode";
+export const DEFAULT_OPENCODE_UTILITY_MODEL = "opencode/deepseek-v4-flash-free";
+export const DEFAULT_HERMES_UTILITY_PROVIDER = "deepseek";
+export const DEFAULT_HERMES_UTILITY_MODEL = "deepseek-v4-flash";
 
 export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode, EditorActionModeConfig> = {
   fast: {
@@ -512,14 +517,14 @@ export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode,
   quality: {
     mode: "quality",
     label: "质量",
-    model: "gpt-5.4",
+    model: DEFAULT_EDITOR_ACTION_MODEL,
     contextCharsBefore: 1000,
     contextCharsAfter: 1000
   },
   strict: {
     mode: "strict",
     label: "严格",
-    model: "gpt-5.5",
+    model: DEFAULT_EDITOR_ACTION_MODEL,
     contextCharsBefore: 1500,
     contextCharsAfter: 1500
   }
@@ -543,8 +548,8 @@ const DEFAULT_OPENCODE_SETTINGS: OpenCodeSettings = {
 
 const DEFAULT_PROMPT_ENHANCER_SETTINGS: PromptEnhancerSettings = {
   enabled: true,
-  backend: "default",
-  codexProviderMode: "default",
+  backend: "codex-cli",
+  codexProviderMode: "codex-login",
   activeApiProviderId: "",
   providerId: "",
   model: DEFAULT_PROMPT_ENHANCER_MODEL,
@@ -572,7 +577,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 31,
+  settingsVersion: 34,
   settingsLanguage: "zh-CN",
   settingsTab: "agents",
   agentBackend: "codex-cli",
@@ -596,7 +601,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   capabilities: {
     chatBackend: "default",
     knowledgeBackend: "default",
-    editorActionBackend: "default"
+    editorActionBackend: "codex-cli"
   },
   cliPath: "",
   proxyEnabled: false,
@@ -776,6 +781,37 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
 
   if (previousVersion < 25 && settings.defaultModel === "gpt-5.5") {
     settings.defaultModel = "";
+  }
+
+  if (previousVersion < 32) {
+    settings.editorActions.model = migrateLegacyEditorActionModel(settings.editorActions.model);
+    for (const config of Object.values(settings.editorActions.modeConfigs)) {
+      config.model = migrateLegacyEditorActionModel(config.model);
+    }
+  }
+
+  if (previousVersion < 33) {
+    // v32 briefly applied the utility model to ordinary chat. Undo only that
+    // migration while keeping any older or custom chat model untouched.
+    if (previousVersion === 32 && settings.defaultModel === DEFAULT_CODEX_UTILITY_MODEL) {
+      settings.defaultModel = "";
+    }
+    if (previousVersion === 32
+      && settings.opencode.providerId === DEFAULT_OPENCODE_UTILITY_PROVIDER
+      && settings.opencode.modelId === DEFAULT_OPENCODE_UTILITY_MODEL) {
+      settings.opencode.providerId = "";
+      settings.opencode.modelId = "";
+    }
+    if (settings.capabilities.editorActionBackend === "default") {
+      settings.capabilities.editorActionBackend = "codex-cli";
+    }
+    if (settings.promptEnhancer.backend === "default") {
+      settings.promptEnhancer.backend = "codex-cli";
+    }
+    if (settings.promptEnhancer.codexProviderMode === "default") {
+      settings.promptEnhancer.codexProviderMode = "codex-login";
+      settings.promptEnhancer.activeApiProviderId = "";
+    }
   }
 
   syncAgentsFromLegacyFields(settings);
@@ -1168,11 +1204,11 @@ export function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBase
 }
 
 export function normalizePromptEnhancerBackendMode(value: unknown): PromptEnhancerBackendMode {
-  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+  return value === "opencode" || value === "hermes" ? value : DEFAULT_PROMPT_ENHANCER_SETTINGS.backend;
 }
 
 export function normalizePromptEnhancerProviderMode(value: unknown): PromptEnhancerProviderMode {
-  return value === "codex-login" || value === "custom-api" ? value : "default";
+  return value === "custom-api" ? value : DEFAULT_PROMPT_ENHANCER_SETTINGS.codexProviderMode;
 }
 
 function normalizeCapabilityBackendChoice(value: unknown): CapabilityBackendChoice {
@@ -1184,7 +1220,9 @@ function normalizeCapabilityBackendSettings(input: unknown): CapabilityBackendSe
   return {
     chatBackend: normalizeCapabilityBackendChoice(value?.chatBackend),
     knowledgeBackend: normalizeCapabilityBackendChoice(value?.knowledgeBackend),
-    editorActionBackend: normalizeCapabilityBackendChoice(value?.editorActionBackend)
+    editorActionBackend: value?.editorActionBackend === "opencode" || value?.editorActionBackend === "hermes"
+      ? value.editorActionBackend
+      : DEFAULT_SETTINGS.capabilities.editorActionBackend
   };
 }
 
@@ -1996,6 +2034,11 @@ function shouldMigrateEditorStyleInstruction(id: string, value: string, previous
 function normalizeText(value: unknown, fallback: string): string {
   const text = typeof value === "string" ? value.trim() : "";
   return text || fallback;
+}
+
+function migrateLegacyEditorActionModel(value: string): string {
+  const model = value.trim();
+  return model === "gpt-5.4-mini" || model === "gpt-5.4" || model === "gpt-5.5" ? "" : model;
 }
 
 function normalizeOptionalText(value: unknown): string {

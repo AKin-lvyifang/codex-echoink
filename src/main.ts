@@ -113,7 +113,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   async interruptCodexHarnessTurn(threadId: string, turnId: string): Promise<void> { return await this.getHarnessService().interruptCodexTurn(threadId, turnId); }
   canArchiveCodexHarnessThread(): boolean { return typeof this.codex?.archiveThread === "function"; }
   async archiveCodexHarnessThread(threadId: string): Promise<void> { return await this.getHarnessService().archiveCodexThread(threadId); }
-  async refreshCodexHarnessRateLimits() { if (!this.codex) throw new Error("Codex 未连接"); return await this.codex.refreshRateLimits(); }
   async refreshCodexHarnessMcpStatus() { if (!this.codex) throw new Error("Codex 未连接"); return await this.codex.refreshMcpStatus(); }
   async startCodexHarnessMcpOAuth(serverName: string) { return await this.codex?.startMcpOAuth(serverName) ?? null; }
   async buildRuntimeEchoInkResourceCatalog(): Promise<EchoInkResource[]> { return await this.getHarnessService().buildRuntimeEchoInkResourceCatalog(); }

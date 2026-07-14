@@ -272,7 +272,7 @@ const ZH_CN = {
   },
   writing: {
     requestMode: "写作请求方式",
-    requestModeDesc: "通过当前 Codex CLI 发起请求；自定义 API 仍需本机 Codex CLI 支持 Responses API。",
+    requestModeDesc: "写作操作使用独立的小能力调用，不复用顶部主 Agent 的会话或模型。",
     enabled: "启用写作操作",
     enabledDesc: "开启后，编辑区选中文字右键可选择改写、扩写、续写、翻译成英文。",
     statusSlot: "显示侧栏写作状态",
@@ -641,7 +641,7 @@ const EN: SettingsCopy = {
   },
   writing: {
     requestMode: "Writing request mode",
-    requestModeDesc: "Requests run through the current Codex CLI. Custom APIs still need local Codex CLI support for Responses API.",
+    requestModeDesc: "Writing actions use an independent utility call and do not reuse the primary Agent session or model.",
     enabled: "Enable writing actions",
     enabledDesc: "When enabled, selected editor text can be rewritten, expanded, continued, or translated to English from the context menu.",
     statusSlot: "Show sidebar writing status",

@@ -7,7 +7,6 @@ import type {
   CodexNotification,
   McpServerStatus,
   PermissionMode,
-  RateLimitSnapshot,
   ReasoningEffort,
   ServiceTierChoice,
   TokenUsage,
@@ -121,15 +120,13 @@ import {
 import {
   applyStatus as applyStatusAction,
   clearEditorActionStatusTimers as clearEditorActionStatusTimersAction,
+  openAgentBackendMenu as openAgentBackendMenuAction,
   openPluginSettings as openPluginSettingsAction,
-  refreshHeaderRateLimits as refreshHeaderRateLimitsAction,
   renderArticleUnderstandingPanel as renderArticleUnderstandingPanelAction,
   renderEditorActionStatus as renderEditorActionStatusAction,
   renderHeaderHistory as renderHeaderHistoryAction,
-  renderUsagePanel as renderUsagePanelAction,
   setEditorActionStatus as setEditorActionStatusAction,
   updateInputPlaceholder as updateInputPlaceholderAction,
-  updateUsageHeader as updateUsageHeaderAction,
   type CodexHeaderHost
 } from "./codex-view/header-controller";
 import {
@@ -140,6 +137,7 @@ import {
   type CodexTurnLifecycleHost
 } from "./codex-view/turn-lifecycle";
 import { renderViewShell, type CodexViewShellHost } from "./codex-view/view-shell";
+import { closeComposerParameterMenu } from "./codex-view/menus";
 import {
   activeRunSession as activeRunSessionAction,
   clearKnowledgeBasePage as clearKnowledgeBasePageAction,
@@ -174,19 +172,17 @@ export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowle
 
 export class CodexView extends ItemView {
   private rootEl!: HTMLElement;
-  private headerStatusEl!: HTMLElement;
+  private headerStatusEl!: HTMLButtonElement;
   private headerStatusTextEl!: HTMLElement;
   private editorActionStatusEl!: HTMLElement;
   private editorActionStatusTextEl!: HTMLElement;
   private headerHistoryEl!: HTMLButtonElement;
   private articleUnderstandingPanelEl!: HTMLElement;
-  private headerUsageEl!: HTMLButtonElement;
-  private headerUsageTextEl!: HTMLElement;
-  private usagePanelEl!: HTMLElement;
   private tabBarEl!: HTMLElement;
   private knowledgeDashboardEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
+  private workspaceEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private promptEnhanceReviewEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
@@ -222,9 +218,6 @@ export class CodexView extends ItemView {
   private skillsRequested = false;
   private threadPrewarmPromise: Promise<boolean> | null = null;
   private threadPrewarmSessionId = "";
-  private usageLoading = false;
-  private usageError: string | null = null;
-  private usageRequestId = 0;
   private editorActionStatus: EditorActionStatusView = { status: "idle" };
   private articleUnderstandingPanelVisible = false;
   private articleUnderstandingPanelState: ArticleUnderstandingPanelState = { status: "idle" };
@@ -298,7 +291,7 @@ export class CodexView extends ItemView {
     const view = this;
     return {
       get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
-      get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
+      get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; },
       applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels()
     } satisfies CodexViewEditorActionContext;
   }
@@ -306,7 +299,7 @@ export class CodexView extends ItemView {
   private createPromptEnhancerRunnerContext(): CodexViewPromptEnhanceContext {
     const view = this;
     return {
-      get plugin() { return view.plugin; }, get normalTaskRunning() { return view.running; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; }, get promptEnhancerRunning() { return view.promptEnhancerRunning; }, set promptEnhancerRunning(value) { view.promptEnhancerRunning = value; }, get promptEnhancerRunId() { return view.promptEnhancerRunId; }, set promptEnhancerRunId(value) { view.promptEnhancerRunId = value; }, get promptEnhancerTurnId() { return view.promptEnhancerTurnId; }, set promptEnhancerTurnId(value) { view.promptEnhancerTurnId = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
+      get plugin() { return view.plugin; }, get normalTaskRunning() { return view.running; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; }, get promptEnhancerRunning() { return view.promptEnhancerRunning; }, set promptEnhancerRunning(value) { view.promptEnhancerRunning = value; }, get promptEnhancerRunId() { return view.promptEnhancerRunId; }, set promptEnhancerRunId(value) { view.promptEnhancerRunId = value; }, get promptEnhancerTurnId() { return view.promptEnhancerTurnId; }, set promptEnhancerTurnId(value) { view.promptEnhancerTurnId = value; },
       applyStatus: () => view.applyStatus(), renderToolbar: () => view.renderToolbar(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
     } satisfies CodexViewPromptEnhanceContext;
   }
@@ -314,8 +307,7 @@ export class CodexView extends ItemView {
   private createNotificationRouterContext(): CodexNotificationRouterContext {
     const view = this;
     return {
-      get plugin() { return view.plugin; }, get usageLoading() { return view.usageLoading; }, set usageLoading(value) { view.usageLoading = value; }, get usageError() { return view.usageError; }, set usageError(value) { view.usageError = value; },
-      sessionForThread: (threadId) => view.sessionForThread(threadId), updateUsageHeader: (rateLimits, loading, error) => view.updateUsageHeader(rateLimits, loading, error), renderUsagePanel: (rateLimits, error, loading) => view.renderUsagePanel(rateLimits, error, loading), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session)
+      sessionForThread: (threadId) => view.sessionForThread(threadId), updateContextForSession: (session, tokenUsage, persist) => view.updateContextForSession(session, tokenUsage, persist), addContextCompactionMessage: (session) => view.addContextCompactionMessage(session)
     } satisfies CodexNotificationRouterContext;
   }
 
@@ -342,10 +334,10 @@ export class CodexView extends ItemView {
     this.applyStatus();
     this.prewarmActiveThread();
     this.prewarmEditorActionThread();
-    void this.refreshHeaderRateLimits();
   }
 
   async onClose(): Promise<void> {
+    closeComposerParameterMenu();
     this.clearTurnWatchdog();
     this.clearEditorActionStatusTimers();
     this.clearKnowledgeBaseRunProgressTimer();
@@ -448,12 +440,7 @@ export class CodexView extends ItemView {
     clearEditorActionStatusTimersAction(this.headerHost());
   }
 
-  private async refreshHeaderRateLimits(): Promise<void> {
-    await refreshHeaderRateLimitsAction(this.headerHost());
-  }
-
-  private updateUsageHeader(rateLimits: RateLimitSnapshot | null, loading = false, error: string | null = null): void { updateUsageHeaderAction(this.headerHost(), rateLimits, loading, error); }
-  private renderUsagePanel(rateLimits: RateLimitSnapshot | null, error?: string | null, loading = false): void { renderUsagePanelAction(this.headerHost(), rateLimits, error, loading); }
+  private openAgentMenu(event: MouseEvent): void { openAgentBackendMenuAction(this.headerHost(), event); }
   private openPluginSettings(): void { openPluginSettingsAction(this.headerHost()); }
   private renderTabs(): void { renderTabsView(this.sessionHost()); }
   private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void { renderMessagesAction(this.messageHost(), options); }

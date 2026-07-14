@@ -22,7 +22,7 @@ export async function runPromptEnhancerHarnessTests(): Promise<void> {
 
 async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> {
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.enabled, true);
-  assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "default");
+  assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "codex-cli");
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
   assert.equal(DEFAULT_SETTINGS.editorActions.actions.some((action) => action.id === "enhance"), false);
 
@@ -178,6 +178,7 @@ async function assertPromptEnhancerOpenCodeAgentIsDirectAndVerified(): Promise<v
 async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void> {
   const cwd = process.cwd();
   const composerSource = await readFile(path.join(cwd, "src/ui/codex-view/composer.ts"), "utf8");
+  const menusSource = await readFile(path.join(cwd, "src/ui/codex-view/menus.ts"), "utf8");
   const shellSource = await readFile(path.join(cwd, "src/ui/codex-view/view-shell.ts"), "utf8");
   const viewSource = await readFile(path.join(cwd, "src/ui/codex-view.ts"), "utf8");
   const styles = await readFile(path.join(cwd, "styles.css"), "utf8");
@@ -187,19 +188,29 @@ async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void>
   assert.doesNotMatch(composerSource, /codex-composer-enhance-button/);
   assert.match(composerSource, /codex-composer-model-name/);
   assert.match(composerSource, /codex-composer-reasoning-label/);
+  assert.match(composerSource, /codex-composer-workspace/);
+  assert.match(composerSource, /shouldShowComposerPlanIndicator\(state\.knowledgeSession,\s*state\.selectedMode\)/);
+  assert.match(composerSource, /setIcon\(icon,\s*"list-todo"\)/);
   assert.match(composerSource, /text:\s*state\.workspacePath\s*\?\s*state\.workspaceDisplayName\s*:\s*"请选择文件夹"/);
   assert.doesNotMatch(composerSource, /toggleClass\("is-missing"/);
   assert.match(shellSource, /prompt-enhancer-runner/);
   assert.match(viewSource, /enhancePrompt\(\)/);
   assert.match(viewSource, /promptEnhancerRunning/);
   assert.match(viewSource, /promptEnhancerRunId/);
+  assert.match(menusSource, /codex-composer-parameter-menu/);
+  assert.match(menusSource, /positionSubmenu/);
   assert.doesNotMatch(styles, /\.codex-composer-enhance-button/);
-  assert.match(styles, /\.codex-model-summary-button[\s\S]*background:\s*color-mix/);
+  assert.match(styles, /\.codex-model-summary-button\s*\{[^}]*border:\s*0\s*!important[^}]*background:\s*transparent\s*!important[^}]*box-shadow:\s*none\s*!important/);
+  assert.match(styles, /\.codex-model-summary-button:(?:hover|focus-visible)[^{]*\{[^}]*background:\s*var\(--background-modifier-hover\)/);
+  assert.match(styles, /\.codex-tab,\s*\.codex-tab-new\s*\{[^}]*border:\s*1px\s+solid\s+var\(--background-modifier-border\)\s*!important/);
+  assert.match(styles, /\.codex-tab\.is-active\s*\{[^}]*border-color:\s*color-mix/);
   assert.match(styles, /\.codex-composer-model-name[\s\S]*color:\s*var\(--text-normal\)/);
-  assert.match(styles, /\.codex-composer-reasoning-label[\s\S]*color:\s*var\(--text-muted\)/);
+  assert.match(styles, /\.codex-composer-reasoning-label[\s\S]*color:\s*var\(--interactive-accent\)/);
+  assert.match(styles, /\.codex-composer-mode-indicator\s*\{[^}]*border:\s*0[^}]*background:\s*transparent[^}]*pointer-events:\s*none/);
   assert.match(settingsTabSource, /renderPromptEnhancerSettings/);
   assert.match(settingsTabSource, /查看内置 Meta-Prompt/);
   assert.match(settingsTabSource, /Codex API 路径/);
+  assert.match(settingsTabSource, /独立于顶部主 Agent/);
 }
 
 async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> {
@@ -212,6 +223,7 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   assert.match(serviceSource, /workflow:\s*"prompt\.enhance"/);
   assert.match(serviceSource, /developerInstructions:\s*ENHANCE_META_PROMPT/);
   assert.match(serviceSource, /ephemeral:\s*true/);
+  assert.match(serviceSource, /serviceTier:\s*input\.serviceTier\s*\?\?\s*"fast"/);
   assert.match(serviceSource, /sessionId:\s*`\$\{ENHANCE_PROMPT_AGENT_NAME\}:\$\{runId\}`/);
   assert.match(serviceSource, /withTimeout\(plugin\.runHarnessWithAdapter/);
   assert.match(serviceSource, /adapter\?\.cancel\(runId\)/);
@@ -220,6 +232,7 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   assert.match(taskAdapterSource, /request\.workflow === "prompt\.enhance"/);
   assert.match(eventRuntimeSource, /input\.system/);
   assert.match(promptEnhancerRunnerSource, /view\.promptEnhancerRunning = true/);
+  assert.doesNotMatch(promptEnhancerRunnerSource, /selectedServiceTier/);
   assert.doesNotMatch(promptEnhancerRunnerSource, /view\.running = true|view\.activeRunId\s*=/);
   assert.doesNotMatch(editorActionRunnerSource, /export async function enhanceChatInput|request\.action\.id === "enhance"/);
 }

@@ -2,8 +2,8 @@ import type CodexForObsidianPlugin from "../../main";
 import type { TurnOptions } from "../../core/codex-service";
 import { editorActionStartBlockReason as editorActionStartBlockReasonState } from "../../editor-actions/state";
 import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../../editor-actions/turn-options";
+import { harnessEditorActionBackend, harnessEditorActionModel } from "../../harness/agents/backend-runtime-profile";
 import { resolveEditorActionModeConfig } from "../../settings/settings";
-import type { ServiceTierChoice } from "../../types/app-server";
 import type { EditorActionStatusView } from "../../editor-actions/types";
 
 export interface CodexEditorActionRunHost {
@@ -18,12 +18,10 @@ export interface CodexEditorActionRunHost {
   editorActionCurrentItemIds: Set<string>;
   editorActionPrewarmThreadId: string;
   editorActionPrewarmPromise: Promise<string | null> | null;
-  selectedServiceTier: ServiceTierChoice;
   clearTurnWatchdog(): void;
   clearActiveRun(): void;
   applyStatus(): void;
   activeProviderModels(): string[];
-  effectiveModel(): string;
   effectiveEditorActionModel(availableModels?: string[], configuredModel?: string): string;
   prewarmEditorActionThread(): void;
   setEditorActionStatus(status: EditorActionStatusView): void;
@@ -73,6 +71,8 @@ export async function takeEditorActionThread(host: CodexEditorActionRunHost, tur
 }
 
 export function prewarmEditorActionThread(host: CodexEditorActionRunHost): void {
+  const backend = harnessEditorActionBackend(host.plugin.settings);
+  if (backend !== "codex-cli") return;
   if (host.editorActionPrewarmThreadId || host.editorActionPrewarmPromise || host.running) return;
   host.editorActionPrewarmPromise = createEditorActionPrewarmThread(host)
     .catch(() => null)
@@ -87,8 +87,11 @@ async function createEditorActionPrewarmThread(host: CodexEditorActionRunHost): 
   const modeConfig = resolveEditorActionModeConfig(host.plugin.settings.editorActions);
   const turnOptions = {
     ...buildEditorActionTurnOptions({
-      model: host.effectiveEditorActionModel(status.models.map((model) => model.model), modeConfig.model),
-      serviceTier: host.selectedServiceTier,
+      model: host.effectiveEditorActionModel(
+        status.models.map((model) => model.model),
+        harnessEditorActionModel(host.plugin.settings, "codex-cli", modeConfig.model)
+      ),
+      serviceTier: "fast",
       timeoutMs: host.plugin.settings.editorActions.timeoutMs,
       workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
     }),
@@ -125,6 +128,6 @@ export function effectiveEditorActionModel(host: CodexEditorActionRunHost, avail
   return resolveEditorActionModel({
     configuredModel,
     availableModels: providerModels.length ? providerModels : availableModels,
-    fallbackModel: host.effectiveModel()
+    utilityModel: harnessEditorActionModel(host.plugin.settings, "codex-cli", "")
   });
 }

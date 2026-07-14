@@ -1,13 +1,14 @@
 import { setIcon } from "obsidian";
 import type { EchoInkResource } from "../../resources/types";
 import type { AgentBackendMode, StoredAttachment, StoredSession } from "../../settings/settings";
-import type { PermissionMode, ReasoningEffort } from "../../types/app-server";
+import type { PermissionMode, ReasoningEffort, UiMode } from "../../types/app-server";
 import { composerPrimaryActionForState, composerStateForRuntimeState } from "../composer-state";
 import type { QueuedTurnItem } from "../turn-queue";
 
 export interface ComposerShellRefs {
   queueEl: HTMLElement;
   attachmentsEl: HTMLElement;
+  workspaceEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
   promptEnhanceReviewEl: HTMLElement;
   skillMenuEl: HTMLElement;
@@ -30,6 +31,7 @@ export interface ComposerToolbarState {
   knowledgeBackend: AgentBackendMode;
   selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
+  selectedMode: UiMode;
   running: boolean;
   promptEnhancerRunning: boolean;
   viewRunKind?: "chat" | "knowledge-base" | "editor" | "";
@@ -93,10 +95,15 @@ export interface ComposerAttachmentsCallbacks {
   onRemoveAttachment: (path: string) => void;
 }
 
+export function shouldShowComposerPlanIndicator(knowledgeSession: boolean, selectedMode: UiMode): boolean {
+  return !knowledgeSession && selectedMode === "plan";
+}
+
 export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShellCallbacks): ComposerShellRefs {
   const inputWrap = rootEl.createDiv({ cls: "codex-input-wrap" });
   const queueEl = inputWrap.createDiv({ cls: "codex-turn-queue" });
   const attachmentsEl = inputWrap.createDiv({ cls: "codex-attachments" });
+  const workspaceEl = inputWrap.createDiv({ cls: "codex-composer-workspace" });
   const inputEl = inputWrap.createEl("textarea", {
     cls: "codex-input",
     attr: { placeholder: "问 Codex，让它管理当前 Obsidian 仓库" }
@@ -124,6 +131,7 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
   return {
     queueEl,
     attachmentsEl,
+    workspaceEl,
     inputEl,
     promptEnhanceReviewEl,
     skillMenuEl: inputWrap.createDiv({ cls: "codex-skill-menu" }),
@@ -152,8 +160,22 @@ export function clearPromptEnhanceReview(container: HTMLElement | undefined): vo
   container.removeClass("is-visible");
 }
 
-export function renderComposerToolbar(container: HTMLElement, state: ComposerToolbarState, callbacks: ComposerToolbarCallbacks): ComposerToolbarRefs {
+export function renderComposerToolbar(
+  container: HTMLElement,
+  workspaceContainer: HTMLElement,
+  state: ComposerToolbarState,
+  callbacks: ComposerToolbarCallbacks
+): ComposerToolbarRefs {
   container.empty();
+  workspaceContainer.empty();
+  workspaceContainer.toggleClass("is-visible", !state.knowledgeSession);
+  if (!state.knowledgeSession) {
+    addWorkspaceButton(workspaceContainer, state, callbacks);
+    if (shouldShowComposerPlanIndicator(state.knowledgeSession, state.selectedMode)) {
+      addPlanModeIndicator(workspaceContainer);
+    }
+  }
+
   const row = container.createDiv({ cls: "codex-composer-row" });
   const left = row.createDiv({ cls: "codex-composer-left" });
   const right = row.createDiv({ cls: "codex-composer-right" });
@@ -186,6 +208,7 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
     }
 
     const kbChip = right.createEl("button", { cls: "codex-composer-model-button codex-kb-channel-chip", attr: { type: "button", title: "知识库常用命令" } });
+    kbChip.toggleClass("is-running", state.knowledgeTaskRunning);
     const kbIcon = kbChip.createSpan({ cls: "codex-composer-model-icon" });
     setIcon(kbIcon, "library");
     kbChip.createSpan({ cls: "codex-composer-model-text", text: state.knowledgeTaskRunning ? "知识库运行中" : "知识库命令" });
@@ -194,7 +217,6 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
     kbChip.onclick = callbacks.onOpenKnowledgeCommandMenu;
   } else {
     addComposerSelect<PermissionMode>(left, "shield-check", ["read-only", "workspace-write", "danger-full-access"], state.selectedPermission, callbacks.onPermissionChange, "权限", "codex-permission-control");
-    addWorkspaceButton(left, state, callbacks);
 
     refs.contextEl = right.createDiv({ cls: "codex-context-meter", attr: { title: "上下文容量" } });
     refs.contextRingEl = refs.contextEl.createSpan({ cls: "codex-context-ring", attr: { "aria-hidden": "true" } });
@@ -381,7 +403,7 @@ function createComposerIconButton(container: HTMLElement, iconName: string, titl
 function addModelButton(container: HTMLElement, ariaLabel: string, title: string, model: string, reasoning: string): HTMLButtonElement {
   const modelButton = container.createEl("button", {
     cls: "codex-composer-model-button codex-model-summary-button",
-    attr: { type: "button", "aria-label": ariaLabel, title }
+    attr: { type: "button", "aria-label": ariaLabel, "aria-haspopup": "menu", "aria-expanded": "false", title }
   });
   modelButton.createSpan({ cls: "codex-composer-model-name", text: model });
   modelButton.createSpan({ cls: "codex-composer-reasoning-label", text: reasoning });
@@ -415,8 +437,9 @@ function addWorkspaceButton(container: HTMLElement, state: ComposerToolbarState,
     : "选择文件夹作为本会话工作区";
   const button = container.createEl("button", {
     cls: "codex-composer-model-button codex-workspace-button",
-    attr: { type: "button", title, "aria-label": "选择工作区" }
+    attr: { type: "button", title, "aria-label": "选择工作区", "aria-haspopup": "menu" }
   });
+  button.toggleClass("has-workspace", Boolean(state.workspacePath));
   button.toggleClass("is-invalid", Boolean(state.workspacePath && !state.workspaceValid));
   const icon = button.createSpan({ cls: "codex-composer-model-icon" });
   setIcon(icon, state.workspacePath ? "folder-open" : "folder");
@@ -424,6 +447,16 @@ function addWorkspaceButton(container: HTMLElement, state: ComposerToolbarState,
   const chevron = button.createSpan({ cls: "codex-composer-chevron" });
   setIcon(chevron, "chevron-down");
   button.onclick = (event) => callbacks.onOpenWorkspaceMenu(event, state.session);
+}
+
+function addPlanModeIndicator(container: HTMLElement): void {
+  const indicator = container.createDiv({
+    cls: "codex-composer-mode-indicator",
+    attr: { "aria-label": "当前模式：计划", title: "当前模式：计划" }
+  });
+  const icon = indicator.createSpan({ cls: "codex-composer-mode-indicator-icon", attr: { "aria-hidden": "true" } });
+  setIcon(icon, "list-todo");
+  indicator.createSpan({ cls: "codex-composer-mode-indicator-label", text: "计划" });
 }
 
 function composerActionButtonView(action: ReturnType<typeof composerPrimaryActionForState>): { icon: string; label: string; title: string } {

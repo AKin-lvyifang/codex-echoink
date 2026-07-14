@@ -825,11 +825,7 @@ async function assertUsageAndCompactionOnlyUpdateMatchingSessionThread(): Promis
     addContextCompactionMessage: (session: StoredSession) => {
       compactions.push(session.id);
     },
-    usageLoading: true,
-    usageError: "stale",
-    plugin: { lastStatus: null },
-    updateUsageHeader: () => undefined,
-    renderUsagePanel: () => undefined
+    plugin: { lastStatus: null }
   };
   const router = new CodexNotificationRouter(view);
 

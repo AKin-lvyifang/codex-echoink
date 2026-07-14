@@ -1,8 +1,6 @@
 import type { App, Component } from "obsidian";
 import { setIcon } from "obsidian";
-import { formatRateLimitUsage, type RateLimitWindowView } from "../../core/rate-limits";
 import { resolveEditorActionModeConfig } from "../../settings/settings";
-import type { RateLimitSnapshot } from "../../types/app-server";
 import type { ArticleUnderstandingEntry, ArticleUnderstandingStatus, EditorActionQualityMode, EditorActionStatusView, EditorAiActionSettings } from "../../editor-actions/types";
 import type { EditorActionSummarySource } from "../../editor-actions/summary-cache";
 import { renderSettingsGearIcon } from "../codex-icon";
@@ -20,21 +18,18 @@ export interface ArticleUnderstandingPanelState {
 }
 
 export interface CodexHeaderRefs {
-  headerStatusEl: HTMLElement;
+  headerStatusEl: HTMLButtonElement;
   headerStatusTextEl: HTMLElement;
   editorActionStatusEl: HTMLElement;
   editorActionStatusTextEl: HTMLElement;
   headerHistoryEl: HTMLButtonElement;
-  headerUsageEl: HTMLButtonElement;
-  headerUsageTextEl: HTMLElement;
-  usagePanelEl: HTMLElement;
   articleUnderstandingPanelEl: HTMLElement;
 }
 
 export interface CodexHeaderCallbacks {
   onToggleArticlePanel: () => void;
   onOpenHistory: () => void;
-  onRefreshRateLimits: () => Promise<void>;
+  onOpenAgentMenu: (event: MouseEvent) => void;
   onOpenWorkspaceResources: () => void;
   onOpenSettings: () => void;
 }
@@ -82,18 +77,16 @@ export function renderCodexHeader(rootEl: HTMLElement, callbacks: CodexHeaderCal
     callbacks.onOpenHistory();
   };
 
-  const headerStatusEl = headerActions.createDiv({ cls: "codex-header-status codex-status-chip" });
-  const statusIcon = headerStatusEl.createSpan({ cls: "codex-header-status-icon" });
-  setIcon(statusIcon, "activity");
-  const headerStatusTextEl = headerStatusEl.createSpan({ cls: "codex-header-status-text", text: "连接中" });
-
-  const headerUsageEl = headerActions.createEl("button", {
-    cls: "codex-status-chip codex-usage-chip",
-    attr: { type: "button", "aria-label": "Codex 用量", title: "Codex 用量" }
+  const headerStatusEl = headerActions.createEl("button", {
+    cls: "codex-header-status codex-status-chip codex-agent-switcher",
+    attr: { type: "button", "aria-label": "切换 Agent", title: "切换 Agent" }
   });
-  const usageIcon = headerUsageEl.createSpan({ cls: "codex-header-status-icon" });
-  setIcon(usageIcon, "gauge");
-  const headerUsageTextEl = headerUsageEl.createSpan({ cls: "codex-header-status-text", text: "用量 --" });
+  const statusIcon = headerStatusEl.createSpan({ cls: "codex-header-status-icon" });
+  setIcon(statusIcon, "bot");
+  const headerStatusTextEl = headerStatusEl.createSpan({ cls: "codex-header-status-text", text: "Codex" });
+  const statusChevron = headerStatusEl.createSpan({ cls: "codex-agent-switcher-chevron", attr: { "aria-hidden": "true" } });
+  setIcon(statusChevron, "chevron-down");
+  headerStatusEl.onclick = (event) => callbacks.onOpenAgentMenu(event);
 
   const resourceButton = headerActions.createEl("button", {
     cls: "codex-icon-button codex-resource-button",
@@ -109,13 +102,6 @@ export function renderCodexHeader(rootEl: HTMLElement, callbacks: CodexHeaderCal
   renderSettingsGearIcon(settingsButton);
   settingsButton.onclick = callbacks.onOpenSettings;
 
-  const usagePanelEl = header.createDiv({ cls: "codex-usage-panel" });
-  headerUsageEl.onclick = async (event) => {
-    event.stopPropagation();
-    const willShow = !usagePanelEl.hasClass("is-visible");
-    usagePanelEl.toggleClass("is-visible", willShow);
-    if (willShow) await callbacks.onRefreshRateLimits();
-  };
   const articleUnderstandingPanelEl = header.createDiv({ cls: "codex-article-panel" });
 
   return {
@@ -124,9 +110,6 @@ export function renderCodexHeader(rootEl: HTMLElement, callbacks: CodexHeaderCal
     editorActionStatusEl,
     editorActionStatusTextEl,
     headerHistoryEl,
-    headerUsageEl,
-    headerUsageTextEl,
-    usagePanelEl,
     articleUnderstandingPanelEl
   };
 }
@@ -170,7 +153,7 @@ export function renderArticleUnderstandingPanelView(
 
   const modeConfig = resolveEditorActionModeConfig(settings, state.mode ?? settings.qualityMode);
   const title = panelEl.createDiv({ cls: "codex-article-panel-title" });
-  const titleIcon = title.createSpan({ cls: "codex-usage-panel-icon" });
+  const titleIcon = title.createSpan({ cls: "codex-article-panel-icon" });
   setIcon(titleIcon, "file-search");
   title.createSpan({ text: "写作上下文" });
 
@@ -204,53 +187,6 @@ export function renderArticleUnderstandingPanelView(
   };
   const settingsButton = actions.createEl("button", { cls: "codex-resource-tab", text: "打开设置", attr: { type: "button" } });
   settingsButton.onclick = callbacks.onOpenSettings;
-}
-
-export function updateUsageHeaderView(
-  usageButton: HTMLButtonElement,
-  usageTextEl: HTMLElement,
-  rateLimits: RateLimitSnapshot | null,
-  loading = false,
-  error: string | null = null
-): void {
-  const usage = formatRateLimitUsage(rateLimits);
-  usageTextEl.setText(loading && !rateLimits ? "读取中" : usage.summary);
-  usageButton.setAttr("title", loading ? "正在读取 Codex 用量" : error && !rateLimits ? `读取失败：${error}` : usage.title);
-  usageButton.toggleClass("is-loading", loading);
-  usageButton.toggleClass("has-warning", Boolean(error && !rateLimits) || (!rateLimits && !loading));
-  usageButton.toggleClass("is-ok", Boolean(rateLimits && !error && !loading));
-}
-
-export function renderUsagePanelView(container: HTMLElement, rateLimits: RateLimitSnapshot | null, error?: string | null, loading = false): void {
-  const usage = formatRateLimitUsage(rateLimits);
-  container.empty();
-  const title = container.createDiv({ cls: "codex-usage-panel-title" });
-  const icon = title.createSpan({ cls: "codex-usage-panel-icon" });
-  setIcon(icon, "gauge");
-  title.createSpan({ text: "剩余额度" });
-  if (!usage.primary && !usage.secondary) {
-    if (loading) {
-      container.createDiv({ cls: "codex-usage-loading", text: "正在读取 Codex 用量..." });
-      return;
-    }
-    if (error) {
-      container.createDiv({ cls: "codex-usage-error", text: `读取失败：${error}` });
-      return;
-    }
-    container.createDiv({ cls: "codex-usage-empty", text: "暂未读取到 Codex 用量。" });
-    return;
-  }
-  if (usage.primary) renderUsageRow(container, usage.primary);
-  if (usage.secondary) renderUsageRow(container, usage.secondary);
-  if (loading) container.createDiv({ cls: "codex-usage-loading", text: "正在更新..." });
-  if (error) container.createDiv({ cls: "codex-usage-error", text: `更新失败：${error}` });
-}
-
-function renderUsageRow(container: HTMLElement, item: RateLimitWindowView): void {
-  const row = container.createDiv({ cls: "codex-usage-row" });
-  row.createDiv({ cls: "codex-usage-label", text: item.label });
-  row.createDiv({ cls: "codex-usage-percent", text: `${item.remainingPercent}%` });
-  row.createDiv({ cls: "codex-usage-reset", text: item.resetLabel });
 }
 
 function addArticlePanelRow(container: HTMLElement, label: string, value: string): void {

@@ -5,7 +5,6 @@ import type { TurnOptions } from "../../core/codex-service";
 import type { EditorActionStatusView } from "../../editor-actions/types";
 import type { EchoInkResource } from "../../resources/types";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
-import type { ServiceTierChoice } from "../../types/app-server";
 import type { ComposerPrimaryActionState } from "../composer-state";
 import type { QueuedTurnItem, RuntimeTurnQueue } from "../turn-queue";
 import type { ArticleUnderstandingPanelState } from "./header";
@@ -91,7 +90,6 @@ export interface CodexViewEditorActionContext extends CodexViewRunnerBaseContext
   editorActionThreadId: string;
   readonly editorActionCurrentItemIds: Set<string>;
   articleUnderstandingPanelState: ArticleUnderstandingPanelState;
-  readonly selectedServiceTier: ServiceTierChoice;
   editorActionStartBlockReason(): string | null;
   setEditorActionStatus(status: EditorActionStatusView): void;
   withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T>;
@@ -111,7 +109,6 @@ export interface CodexViewPromptEnhanceContext {
   promptEnhancerRunning: boolean;
   promptEnhancerRunId: string;
   promptEnhancerTurnId: string;
-  readonly selectedServiceTier: ServiceTierChoice;
   applyStatus(): void;
   renderToolbar(): void;
   onInputChanged(): void;
