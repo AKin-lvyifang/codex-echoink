@@ -5655,15 +5655,16 @@ body.theme-light .codex-container {
   align-items: center;
   gap: 4px;
   height: 24px;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
-  border-radius: 999px;
+  padding: 0 6px;
+  border: 0 !important;
+  border-radius: 6px;
   color: var(--text-muted);
-  background: transparent;
-  box-shadow: none;
+  background: transparent !important;
+  box-shadow: none !important;
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .codex-composer-enhance-restore svg {
@@ -5671,9 +5672,11 @@ body.theme-light .codex-container {
   height: 12px;
 }
 
-.codex-composer-enhance-restore:hover {
+.codex-composer-enhance-restore:hover,
+.codex-composer-enhance-restore:focus-visible {
   color: var(--text-normal);
-  background: var(--background-modifier-hover);
+  background: var(--background-modifier-hover) !important;
+  outline: none;
 }
 
 .codex-turn-queue {

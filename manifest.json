@@ -1,9 +1,9 @@
 {
   "id": "codex-echoink",
   "name": "Codex EchoInk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "1.4.5",
-  "description": "Use Codex CLI or OpenCode to manage knowledge, ask vault questions, and review local agent work.",
+  "description": "Use Codex, OpenCode, or Hermes to manage knowledge, ask vault questions, and review local agent work.",
   "author": "AKin-lvyifang",
   "isDesktopOnly": true
 }

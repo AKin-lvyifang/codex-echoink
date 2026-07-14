@@ -1,6 +1,8 @@
-<a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v1.1.0 发布图，展示工具代理、过程时间线和四步提炼。" src="docs/images/codex-echoink-v1.1.0-release.png">
-</a>
+<p align="center">
+  <a href="https://github.com/AKin-lvyifang/codex-echoink">
+    <img width="620" alt="Codex EchoInk v1.2.0 侧栏，展示统一 Agent 过程、后端切换和新版输入区。" src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+  </a>
+</p>
 
 <h1 align="center">Codex EchoInk</h1>
 
@@ -22,14 +24,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.1.0-0EA5E9?style=flat-square" alt="版本 v1.1.0">
+    <img src="https://img.shields.io/badge/version-v1.2.0-0EA5E9?style=flat-square" alt="版本 v1.2.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.1.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.2.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -53,6 +55,8 @@
 
 - 在 Obsidian 侧栏中打开 EchoInk Agent。
 - 支持 Codex CLI、OpenCode API、Hermes 作为可切换 Agent 后端。
+- 三个后端统一进入 EchoInk Harness，共用运行状态、上下文规则、会话管理和对话投影。
+- 可从侧栏顶部切换主 Agent，不会清空当前 EchoInk 会话。
 - 普通会话需要先选择一个文件夹作为工作区。
 - 附加笔记只作为本轮上下文，不会把整个 Vault 变成工作区。
 - 知识库频道才默认绑定当前 Vault，用来维护 Raw、Wiki、Outputs 和 Inbox。
@@ -61,9 +65,11 @@
 
 ### Agent 式过程时间线
 
-- 将思考、命令、文件编辑、MCP 调用和上下文用量渲染成可读过程卡片。
+- Codex、OpenCode、Hermes 使用同一套 EchoInk 对话格式，不随后端切换界面。
+- 最终回答优先显示；思考、命令、文件编辑和 MCP 调用收进可展开的处理时间线。
+- 收起时只显示处理时长，展开后再查看完整过程。
 - 被处理的文件会显示为文件 chip，vault 内文件可回到 Obsidian 打开。
-- 大输出和原始详情默认折叠，避免对话被日志淹没。
+- 每轮 token 和上下文占用保持可见，但原始日志不会淹没回答。
 - 支持 Agent / Plan 模式、模型选择、思考强度、速度和文件权限模式。
 
 ### 任务队列
@@ -138,7 +144,7 @@
 - 可刷新并选择 OpenCode Agent，让不同知识库工作流使用不同 Agent 配置。
 - 新增 Hermes CLI/API 设置，适合使用 Hermes profile、memory 和 provider 配置。
 - Hermes 的推理 provider 建议继续通过 Hermes 官方 `hermes model` 或环境文件配置；EchoInk 只保存当前连接元信息。
-- Codex 仍保留最完整的过程时间线；OpenCode/Hermes 在没有 richer event API 时使用更简化的运行状态。
+- EchoInk 为所有后端提供统一对话格式和终止状态；可展示的原生事件细节仍取决于对应 Agent 是否提供。
 
 ### 写作上下文 Harness
 
@@ -149,8 +155,16 @@
 - 小幅连续改写、扩写、续写或翻译会复用已有文章理解，避免每次都重新理解全文。
 - 返回灰色候选，按 `Enter` 接受，按 `Esc` 取消。
 - 可按写作后端设置走 Codex、OpenCode 或 Hermes。
+- 改写、扩写、续写等操作作为独立轻量任务使用自己的快速模型路由，不改变主 Agent 的聊天模型。
 
 这个功能仍处于实验阶段，默认关闭；但 v0.3.0 已经把它升级成更完整、可见、可控的写作流程。
+
+### 提示词增强与收藏路由
+
+- 输入区新增 Sparkles 图标，可在发送前把简短需求增强为更完整的提示词。
+- 提示词增强拥有独立的 Agent 后端、Provider、API 路径和模型设置，不与主 Agent 或编辑区写作设置混用。
+- 默认使用内置 WorkBuddy Meta-Prompt，增强后可继续编辑，也可一键还原原输入。
+- 公众号和公开网页合并为一个“收藏”入口，插件会根据粘贴的链接自动选择采集路径。
 
 <a id="为什么叫-echoink"></a>
 ## 为什么叫 EchoInk
@@ -165,6 +179,38 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.2.0
+
+<img width="620" alt="Codex EchoInk v1.2.0 侧栏，展示统一 Agent 过程和新版输入区。" src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+
+**统一 Agent Harness 与全新侧栏：** EchoInk 现在为 Codex、OpenCode、Hermes 统一管理运行生命周期、上下文和对话投影；整个侧栏也围绕“先看结论、按需展开过程”和更轻量的响应式输入区重新设计。
+
+**后端大改版：**
+
+- 普通对话、知识库、写作和提示词增强统一进入 EchoInk Harness，再由 Adapter 对接具体后端。
+- Codex、OpenCode、Hermes 共用运行状态、上下文规则、原生会话租约、停止和超时口径。
+- 切换主 Agent 后下一轮立即生效，不清空当前会话；单项能力明确固定的后端仍保持优先。
+
+**UI 完全重构：**
+
+- 最终回答成为视觉主线，思考、命令、编辑和工具调用收进可展开的处理时间线。
+- 工作区、Plan 状态、收藏、Skill、提示词增强、权限、模型、推理和速度统一为响应式 Codex 风格输入区。
+- 顶部新增三 Agent 切换器，MCP 和设置按钮改为轻量透明样式；参数菜单会根据窄侧栏自动调整方向。
+
+**新增功能与修复：**
+
+- 新增独立提示词增强设置、WorkBuddy Meta-Prompt 和简洁的“还原”操作。
+- 写作和提示词等轻量任务默认使用快速模型路由，不改动主 Agent 聊天模型。
+- 公众号和公开网页合并为一个“收藏”入口。
+- 修复消息吸底、知识库任务与报告抖动、终止状态不一致、部分升级仍显示旧输入区，以及窄侧栏溢出。
+
+**使用方法：**
+
+1. 安装 `v1.2.0` 并重载 Obsidian。
+2. 在 EchoInk 顶部选择 Codex、OpenCode 或 Hermes。
+3. 点击 Sparkles 图标增强当前输入；需要指定轻量任务模型时，再到设置中单独配置。
+4. 已有 Vault 文件、会话和自定义模型设置无需迁移。
 
 ### v1.1.0
 

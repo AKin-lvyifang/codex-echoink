@@ -1,6 +1,8 @@
-<a href="https://github.com/AKin-lvyifang/codex-echoink">
-  <img width="1024" alt="Codex EchoInk v1.1.0 release poster showing Tool Broker, Process Timeline, and Four-Step Digest." src="docs/images/codex-echoink-v1.1.0-release.png">
-</a>
+<p align="center">
+  <a href="https://github.com/AKin-lvyifang/codex-echoink">
+    <img width="620" alt="Codex EchoInk v1.2.0 sidebar with the unified Agent timeline, backend switcher, and rebuilt composer." src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+  </a>
+</p>
 
 <h1 align="center">Codex EchoInk</h1>
 
@@ -21,14 +23,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.1.0-0EA5E9?style=flat-square" alt="Version v1.1.0">
+    <img src="https://img.shields.io/badge/version-v1.2.0-0EA5E9?style=flat-square" alt="Version v1.2.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.1.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.2.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -51,6 +53,8 @@
 
 - Opens EchoInk Agent in the Obsidian sidebar.
 - Supports Codex CLI, OpenCode API, and Hermes as switchable Agent backends.
+- Routes all three backends through one EchoInk Harness, with shared run states, context rules, session handling, and conversation projection.
+- Switches the main Agent from the sidebar header without clearing the current EchoInk session.
 - Requires a folder picker for ordinary chat sessions before sending.
 - Treats attached notes as turn context only; attaching a note does not make the whole vault the workspace.
 - Keeps the `Knowledge` channel bound to the current vault for Raw, Wiki, Outputs, and Inbox maintenance.
@@ -59,9 +63,11 @@
 
 ### Agent-style Process Timeline
 
-- Renders reasoning, commands, file edits, MCP calls, and context usage as readable process cards.
+- Uses the same EchoInk timeline for Codex, OpenCode, and Hermes instead of changing the conversation layout with the backend.
+- Keeps the final answer prominent while reasoning, commands, file edits, and MCP calls stay in an expandable processing timeline.
+- Shows only processing time when collapsed, then reveals the full process when expanded.
 - Shows file chips for touched files, with vault files opening back in Obsidian.
-- Keeps large outputs and raw details folded away so the conversation stays readable.
+- Keeps per-turn tokens and context usage visible without letting raw logs dominate the conversation.
 - Supports Agent / Plan mode, model selection, reasoning effort, speed, and file permission modes.
 
 ### Turn Queue
@@ -136,7 +142,7 @@
 - Can refresh and choose OpenCode Agents, so different knowledge management workflows can use different agent profiles.
 - Adds Hermes CLI/API settings for users who want Hermes profiles, memory, and provider configuration as the backend.
 - Hermes provider/model setup is intentionally left to Hermes official configuration such as `hermes model` or its environment files; EchoInk stores only the selected connection metadata.
-- Codex keeps rich process timelines. OpenCode and Hermes currently use a simpler running/completed/failed flow unless richer event APIs are available.
+- EchoInk applies one conversation layout and one set of terminal states across backends. The amount of native event detail still depends on what each Agent exposes.
 
 ### Writing Context Harness
 
@@ -147,8 +153,16 @@
 - Reuses article understanding after small edits, so continuous rewrite / expand / continue / translate runs do not repeatedly re-read the whole note.
 - Shows an inline candidate that can be accepted with `Enter` or canceled with `Esc`.
 - Can run through Codex, OpenCode, or Hermes depending on the configured writing backend.
+- Treats rewrite, expand, continue, and other writing actions as utility tasks with their own fast model routing, without changing the main chat model.
 
 This feature is still experimental and disabled by default, but v0.3.0 makes it a much more deliberate writing workflow.
+
+### Prompt Enhancement and Bookmark Routing
+
+- Adds a Sparkles action to the sidebar composer for improving a draft request before it is sent.
+- Gives prompt enhancement its own Agent backend, provider, API path, and model settings, independent from the main chat Agent and editor writing actions.
+- Uses the built-in WorkBuddy Meta-Prompt and lets the user keep editing or restore the original input.
+- Combines WeChat article and public web-page capture into one Bookmark action that routes the pasted URL automatically.
 
 ## Why EchoInk
 
@@ -161,6 +175,38 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.2.0
+
+<img width="620" alt="Codex EchoInk v1.2.0 sidebar showing the unified Agent process timeline and rebuilt composer." src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+
+**Unified Agent Harness and rebuilt sidebar:** EchoInk now owns one run lifecycle, context path, and conversation projection for Codex, OpenCode, and Hermes. The entire sidebar has also been rebuilt around a clearer answer-first conversation and a lighter, responsive composer.
+
+**Backend redesign:**
+
+- Chat, Knowledge, writing, and prompt enhancement now enter one EchoInk Harness before an adapter talks to the selected backend.
+- Codex, OpenCode, and Hermes share run states, context rules, native-session leases, stop behavior, and timeout semantics.
+- Switching the main Agent applies to the next turn without clearing the current EchoInk session. Explicit per-capability overrides still take priority.
+
+**UI rebuild:**
+
+- Final answers stay prominent while reasoning, commands, edits, and tool calls live in an expandable processing timeline.
+- Workspace selection, Plan state, Bookmark, Skill, prompt enhancement, permissions, model, reasoning, and speed now use a responsive Codex-style composer.
+- The header adds a three-Agent switcher and lighter MCP / Settings buttons. Parameter menus reposition themselves to stay inside narrow sidebars.
+
+**New capabilities and fixes:**
+
+- Added independent prompt-enhancement settings with the WorkBuddy Meta-Prompt and a concise Restore action.
+- Added automatic fast-model routing for writing and prompt utility tasks without changing the main chat model.
+- Combined WeChat and public web-page capture into one Bookmark entry.
+- Fixed message scroll snapping, Knowledge task/report jitter, inconsistent terminal states, stale composer or prompt-enhancer upgrades, and narrow-sidebar overflow.
+
+**How to use:**
+
+1. Install `v1.2.0` and reload Obsidian.
+2. Choose Codex, OpenCode, or Hermes from the EchoInk header.
+3. Use the Sparkles icon to enhance a draft prompt, or open settings when you want to override its utility model.
+4. Existing Vault files, sessions, and custom model settings do not require migration.
 
 ### v1.1.0
 

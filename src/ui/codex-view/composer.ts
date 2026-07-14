@@ -147,10 +147,10 @@ export function renderPromptEnhanceReview(container: HTMLElement, callbacks: { o
   status.createSpan({ cls: "codex-composer-enhance-review-dot", text: "·" });
   const restoreButton = container.createEl("button", {
     cls: "codex-composer-enhance-restore",
-    attr: { type: "button", title: "恢复原文", "aria-label": "恢复原文" }
+    attr: { type: "button", title: "还原", "aria-label": "还原" }
   });
   setIcon(restoreButton, "rotate-ccw");
-  restoreButton.createSpan({ text: "恢复原文" });
+  restoreButton.createSpan({ text: "还原" });
   restoreButton.onclick = callbacks.onRestore;
 }
 

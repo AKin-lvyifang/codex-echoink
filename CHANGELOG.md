@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+## v1.2.0 - 2026-07-15
+
+版本号：`v1.2.0`
+
+### 中文
+
+#### 后端大改版：统一 Agent Harness
+
+1. 普通对话、知识库、编辑区写作和提示词增强统一进入 EchoInk Harness，不再由各功能分别拼接 Agent 后端。
+2. Codex、OpenCode、Hermes 通过统一 Adapter 接入，共用运行状态、事件、上下文、原生会话租约和停止/超时口径。
+3. 切换 Agent 后，下一轮立即使用新后端，不清空当前 EchoInk 会话；能力设置中明确固定的后端仍保持优先。
+4. 后端差异由 Adapter 吸收，EchoInk 负责统一对话过程和最终结果展示，后续增加新的 Agent 后端不需要重写整套侧栏。
+
+#### UI 完全重构
+
+1. 对话区默认突出最终回答；思考、命令、文件编辑和工具过程收进可展开的处理时间线，并保留本轮 token 和上下文占用。
+2. 输入区将工作区放到左上角，Plan 模式显示“计划”标记；收藏、Skill、提示词增强、权限、模型、推理和速度改为轻量、响应式控件。
+3. 顶部“活跃”状态改为 Codex / OpenCode / Hermes 切换器；MCP 和设置按钮改为透明图标样式。
+4. 模型、推理和速度菜单会根据侧栏空间自动调整位置，避免浮层越界或被遮挡。
+
+#### 新增小功能
+
+1. 新增独立提示词增强：可单独选择 Agent 后端、Provider、API 路径和模型，内置 WorkBuddy Meta-Prompt，并支持一键“还原”原输入。
+2. 改写、扩写、续写和提示词增强作为独立轻量任务调用模型，不再改动主 Agent 聊天模型；未指定时优先使用对应后端的快速模型。
+3. 公众号和公开网页合并为一个“收藏”入口，插件根据链接自动选择采集路径。
+
+#### 修复
+
+1. 修复消息区上滑后被新内容强制吸回底部的问题。
+2. 修复知识库任务状态、报告卡片和滚动抖动，并统一失败、中断、取消和超时显示。
+3. 修复部分升级路径仍显示旧输入区、缺少独立提示词增强设置或继续使用旧提示词模板的问题。
+4. 修复窄侧栏下工作区名称、Plan 标记和参数菜单的溢出问题。
+
+升级说明：从 `v1.1.0` 直接覆盖安装 `main.js`、`manifest.json`、`styles.css` 即可，不需要迁移 Vault 文件或重建会话。
+
+### English
+
+#### Backend redesign: one Agent Harness
+
+1. Chat, Knowledge, editor writing, and prompt enhancement now enter the EchoInk Harness instead of assembling backend-specific flows independently.
+2. Codex, OpenCode, and Hermes connect through shared adapters and use the same run states, events, context rules, native-session leases, stop behavior, and timeout semantics.
+3. Switching the main Agent applies to the next turn without clearing the current EchoInk session. Explicit per-capability backend overrides still take priority.
+4. Backend differences are absorbed by adapters while EchoInk owns the conversation projection, making future Agent backends easier to add without rebuilding the sidebar.
+
+#### Complete UI rebuild
+
+1. Final answers stay prominent while reasoning, commands, file edits, and tool activity live in an expandable processing timeline with per-turn tokens and context usage.
+2. The composer moves workspace selection to the upper-left and shows a Plan marker when needed. Bookmark, Skill, prompt enhancement, permissions, model, reasoning, and speed controls now use lightweight responsive controls.
+3. The old active-state pill is now a Codex / OpenCode / Hermes switcher. MCP and Settings use transparent icon buttons.
+4. Model, reasoning, and speed menus reposition themselves within narrow sidebars so popovers stay visible.
+
+#### Smaller additions
+
+1. Prompt enhancement is now an independent capability with its own Agent backend, provider, API path, and model. It uses the built-in WorkBuddy Meta-Prompt and includes a concise Restore action.
+2. Rewrite, expand, continue, and prompt enhancement run as lightweight utility tasks without changing the main chat model. Automatic routing favors the fast model for each backend.
+3. WeChat articles and public web pages now share one Bookmark entry that routes each URL automatically.
+
+#### Fixes
+
+1. Fixed message lists snapping back to the bottom after the user scrolls upward.
+2. Stabilized Knowledge task states, report cards, and scrolling, with consistent failed, interrupted, canceled, and timed-out states.
+3. Fixed upgrade paths that could still show the old composer, omit the independent prompt-enhancer settings, or keep an outdated prompt template.
+4. Fixed workspace-name, Plan-marker, and parameter-menu overflow in narrow sidebars.
+
+Upgrade: replace `main.js`, `manifest.json`, and `styles.css` from `v1.2.0`. No Vault migration or session reset is required.
+
 ## v1.1.0 - 2026-07-10
 
 版本号：`v1.1.0`
