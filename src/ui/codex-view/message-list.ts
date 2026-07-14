@@ -1,6 +1,6 @@
 import { Notice, normalizePath, Platform, setIcon, TFile, type App, type Component } from "obsidian";
 import type { ChatMessage, DiffSummary, StoredAttachment } from "../../settings/settings";
-import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary } from "../../knowledge-base/types";
+import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeWorkflowEvent, KnowledgeWorkflowPhaseId } from "../../knowledge-base/types";
 import type { ProcessFileRef, TokenUsage } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
 import { basename, contextUsageView, normalizeProcessFileRef } from "../../core/mapping";
@@ -90,6 +90,34 @@ export function knowledgeBaseRunProgressState(status: string | undefined, create
     ? -1
     : Math.min(Math.floor(filledCells / KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT), phaseCount - 2);
   return { totalCells, filledCells, activeIndex };
+}
+
+export function knowledgeBaseRunProgressStateFromEvents(status: string | undefined, events: KnowledgeWorkflowEvent[], phaseCount: number): KnowledgeBaseRunProgressState | null {
+  if (!events.length) return null;
+  const totalCells = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, phaseCount - 1);
+  if (status === "completed" || events.some((event) => event.type === "workflow.completed" && event.status === "success")) {
+    return { totalCells, filledCells: totalCells, activeIndex: -1 };
+  }
+  const phaseOrder: KnowledgeWorkflowPhaseId[] = ["prepare", "digest", "organize", "report", "complete"];
+  const completed = new Set(events.filter((event) => event.type === "workflow.phase.completed" && event.phaseId).map((event) => event.phaseId as KnowledgeWorkflowPhaseId));
+  const lastPhaseEvent = events.slice().reverse().find((event) => event.phaseId && (event.type === "workflow.phase.started" || event.type === "workflow.phase.progress" || event.type === "workflow.phase.failed"));
+  const activePhase = lastPhaseEvent?.phaseId;
+  const activeIndex = status === "running" && activePhase ? phaseOrder.indexOf(activePhase) : -1;
+  const completedSegments = Math.min(
+    Math.max(0, phaseCount - 1),
+    phaseOrder.slice(0, Math.max(0, phaseCount - 1)).filter((phase) => completed.has(phase)).length
+  );
+  const progressEvent = activePhase
+    ? events.slice().reverse().find((event) => event.phaseId === activePhase && event.type === "workflow.phase.progress" && typeof event.current === "number" && typeof event.total === "number" && event.total > 0)
+    : undefined;
+  const progressCells = progressEvent
+    ? Math.floor(Math.max(0, Math.min(1, (progressEvent.current ?? 0) / (progressEvent.total ?? 1))) * KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT)
+    : 0;
+  return {
+    totalCells,
+    filledCells: Math.max(0, Math.min(totalCells, completedSegments * KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT + progressCells)),
+    activeIndex
+  };
 }
 
 export function messageListVirtualHeight(contentHeight: number, viewportHeight: number): number {
@@ -441,8 +469,9 @@ export class CodexMessageListRenderer {
     text.createDiv({ cls: "codex-kb-run-title", text: knowledgeBaseRunDisplayTitle(payload, message.status) });
     const track = card.createDiv({ cls: "codex-kb-run-track" });
     const cellsPerSegment = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT;
-    const { totalCells, filledCells, activeIndex } = knowledgeBaseRunProgressState(message.status, message.createdAt, Date.now(), payload.phases.length);
-    if (message.status === "running") env.onScheduleRunProgress();
+    const eventProgress = knowledgeBaseRunProgressStateFromEvents(message.status, payload.events ?? [], payload.phases.length);
+    const { totalCells, filledCells, activeIndex } = eventProgress ?? knowledgeBaseRunProgressState(message.status, message.createdAt, Date.now(), payload.phases.length);
+    if (message.status === "running" && !eventProgress) env.onScheduleRunProgress();
     payload.phases.forEach((phase, index) => {
       const node = track.createDiv({ cls: `codex-kb-run-node codex-kb-run-node-${phase.id} codex-kb-run-motion-${phase.motion}` });
       node.toggleClass("is-done", filledCells >= totalCells || index < activeIndex);

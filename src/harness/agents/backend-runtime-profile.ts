@@ -7,8 +7,7 @@ import type { NativeExecutionKind, NativeExecutionPersistence } from "../contrac
 export interface HarnessBackendRuntimeProfile {
   displayName: string;
   adapterVersion: string;
-  thinkingMessage: boolean;
-  editorActionThreadPrewarm: boolean;
+  nativeThreadPrewarm: boolean;
   deferMessageModelUntilRunResult: boolean;
   knowledgeLintRequiresWorkspaceWrite: boolean;
 }
@@ -17,24 +16,21 @@ const RUNTIME_PROFILES: Record<AgentBackendKind, HarnessBackendRuntimeProfile> =
   "codex-cli": {
     displayName: agentBackendDisplayName("codex-cli"),
     adapterVersion: "rich-runtime",
-    thinkingMessage: true,
-    editorActionThreadPrewarm: true,
+    nativeThreadPrewarm: true,
     deferMessageModelUntilRunResult: false,
     knowledgeLintRequiresWorkspaceWrite: true
   },
   opencode: {
     displayName: agentBackendDisplayName("opencode"),
     adapterVersion: "legacy-runtime",
-    thinkingMessage: false,
-    editorActionThreadPrewarm: false,
+    nativeThreadPrewarm: false,
     deferMessageModelUntilRunResult: true,
     knowledgeLintRequiresWorkspaceWrite: false
   },
   hermes: {
     displayName: agentBackendDisplayName("hermes"),
     adapterVersion: "legacy-runtime",
-    thinkingMessage: false,
-    editorActionThreadPrewarm: false,
+    nativeThreadPrewarm: false,
     deferMessageModelUntilRunResult: false,
     knowledgeLintRequiresWorkspaceWrite: false
   }
@@ -52,12 +48,8 @@ export function harnessBackendAdapterVersion(backend: AgentBackendKind): string 
   return harnessBackendRuntimeProfile(backend).adapterVersion;
 }
 
-export function harnessBackendUsesThinkingMessage(backend: AgentBackendKind): boolean {
-  return harnessBackendRuntimeProfile(backend).thinkingMessage;
-}
-
-export function harnessBackendUsesEditorActionThreadPrewarm(backend: AgentBackendKind): boolean {
-  return harnessBackendRuntimeProfile(backend).editorActionThreadPrewarm;
+export function harnessBackendUsesNativeThreadPrewarm(backend: AgentBackendKind): boolean {
+  return harnessBackendRuntimeProfile(backend).nativeThreadPrewarm;
 }
 
 export function harnessMessageModelId(settings: CodexForObsidianSettings | null | undefined, backend: AgentBackendKind, turnModel?: string): string {

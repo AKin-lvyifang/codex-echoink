@@ -10,6 +10,7 @@ export interface AgentCapabilities {
   output: {
     streaming: CapabilityLevel;
     reasoningSummary: CapabilityLevel;
+    thinkingTrace: CapabilityLevel;
     planEvents: CapabilityLevel;
     usage: CapabilityLevel;
   };
@@ -35,7 +36,7 @@ export interface AgentCapabilities {
 export function noCapabilities(): AgentCapabilities {
   return {
     sessions: { resume: "none", fork: "none" },
-    output: { streaming: "none", reasoningSummary: "none", planEvents: "none", usage: "none" },
+    output: { streaming: "none", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "none" },
     tools: { structuredCalls: "none", nativeMcp: "none", nativeSkills: "none", approvals: "none" },
     files: { read: "none", write: "none", diffEvents: "none" },
     input: { text: "none", image: "none", pdf: "none" },

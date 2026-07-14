@@ -16,6 +16,7 @@ export interface TaskRuntimeAgentAdapterOptions {
   nativeRefContext?: Pick<NativeExecutionRef, "deviceKey" | "vaultId" | "providerEndpoint">;
   capabilities: AgentCapabilities | "legacy";
   legacyTaskDefaults?: {
+    system?: string;
     resources?: PreparedAgentResources;
     toolBridge?: AgentToolBridgeRuntime | null;
     timeoutMs?: number;
@@ -23,6 +24,7 @@ export interface TaskRuntimeAgentAdapterOptions {
     model?: AgentTaskInput["model"];
     agent?: string;
     profile?: string;
+    requireDirectAgent?: boolean;
     abortSignal?: AbortSignal;
     onRunId?: (runId: string) => void;
   };
@@ -114,6 +116,7 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
     let nativeRunId = "";
     const taskInput: AgentTaskInput & { toolBridge?: AgentToolBridgeRuntime | null } = {
       prompt: buildPrompt(request),
+      system: this.options.legacyTaskDefaults?.system,
       nativeSessionId: request.nativeSessionId,
       sources: request.input.attachments.map((attachment) => ({
         type: "file",
@@ -130,6 +133,7 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       model: this.options.legacyTaskDefaults?.model,
       agent: this.options.legacyTaskDefaults?.agent,
       profile: this.options.legacyTaskDefaults?.profile,
+      requireDirectAgent: this.options.legacyTaskDefaults?.requireDirectAgent,
       abortSignal: this.options.legacyTaskDefaults?.abortSignal,
       onRunId: (runId) => {
         nativeRunId = runId;
@@ -158,6 +162,7 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
 }
 
 function buildPrompt(request: AgentRunRequest): string {
+  if (request.workflow === "prompt.enhance") return request.input.text;
   const context = [
     ...request.context.corePolicy,
     ...request.context.workflowContract,
@@ -193,11 +198,21 @@ function mapLegacyEvent(event: AgentEvent, manifest: AgentManifest): HarnessEven
     case "completed":
       return incompleteHarnessEvent("agent.message.completed", backendId, event.text, undefined, undefined, undefined, event.data);
     case "thinking_delta":
-      if (manifest.capabilities.output.reasoningSummary === "none") return null;
-      return incompleteHarnessEvent("agent.reasoning.summary.delta", backendId, event.text, undefined, undefined, undefined, event.data);
+      if (manifest.capabilities.output.reasoningSummary !== "none") {
+        return incompleteHarnessEvent("agent.reasoning.summary.delta", backendId, event.text, undefined, undefined, undefined, event.data);
+      }
+      if (manifest.capabilities.output.thinkingTrace !== "none") {
+        return incompleteHarnessEvent("agent.thinking.delta", backendId, event.text, undefined, undefined, undefined, event.data);
+      }
+      return null;
     case "thinking_completed":
-      if (manifest.capabilities.output.reasoningSummary === "none") return null;
-      return incompleteHarnessEvent("agent.reasoning.summary.completed", backendId, event.text, undefined, undefined, undefined, event.data);
+      if (manifest.capabilities.output.reasoningSummary !== "none") {
+        return incompleteHarnessEvent("agent.reasoning.summary.completed", backendId, event.text, undefined, undefined, undefined, event.data);
+      }
+      if (manifest.capabilities.output.thinkingTrace !== "none") {
+        return incompleteHarnessEvent("agent.thinking.completed", backendId, event.text, undefined, undefined, undefined, event.data);
+      }
+      return null;
     case "tool_call_requested":
       return incompleteHarnessEvent("tool.requested", backendId, event.text, event.error, event.toolName, event.resourceId, event.data);
     case "tool_call_delta":
@@ -352,7 +367,13 @@ function legacyTaskRuntimeCapabilities(backendId: string): AgentCapabilities {
   return {
     ...noCapabilities(),
     sessions: { resume: backendId === "opencode" ? "native" : "emulated", fork: "none" },
-    output: { streaming: backendId === "hermes" ? "native" : "emulated", reasoningSummary: "none", planEvents: "emulated", usage: "emulated" },
+    output: {
+      streaming: backendId === "hermes" ? "native" : "emulated",
+      reasoningSummary: "none",
+      thinkingTrace: backendId === "hermes" ? "native" : "none",
+      planEvents: "emulated",
+      usage: "emulated"
+    },
     tools: { structuredCalls: "none", nativeMcp: "none", nativeSkills: "none", approvals: "emulated" },
     files: { read: "emulated", write: "emulated", diffEvents: "none" },
     input: { text: "native", image: "emulated", pdf: "emulated" },

@@ -43,6 +43,7 @@ import {
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_PROMPT_ENHANCER_MODEL,
   DEFAULT_REVIEW_OUTPUT_DIR,
   getApiProviderModels,
   getActiveApiProvider,
@@ -101,6 +102,7 @@ import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCo
 import { formatOpenCodeError } from "../core/opencode-errors";
 import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
+import { isOpenCodeServerHealthy } from "../core/opencode-server-health";
 import { expandHome } from "../core/path-utils";
 import {
   buildOpenCodeRunArgs,
@@ -126,7 +128,7 @@ import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
 import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
-import { CodexMessageListRenderer, knowledgeBaseRunProgressState, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
+import { CodexMessageListRenderer, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
 import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
 import {
@@ -166,7 +168,7 @@ import {
 } from "../editor-actions/selection";
 import { editorActionStartBlockReason, editorActionStatusFromResult, extractEditorActionNotificationIds, isEditorActionCurrentRunNotification, isEditorActionHiddenNotification, routeEditorActionNotification } from "../editor-actions/state";
 import { buildEditorActionTurnOptions, DEFAULT_EDITOR_ACTION_MODEL, resolveEditorActionModel } from "../editor-actions/turn-options";
-import { buildEnhancePromptTemplate, detectEnhanceStyle, ENHANCE_META_PROMPT, isAlreadyDetailed } from "../prompt-enhancer/meta-prompt";
+import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT } from "../prompt-enhancer/meta-prompt";
 import { discoverKnowledgeBaseSources } from "../knowledge-base/discovery";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardFile, type KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { verifyDigestEvidence, type KnowledgeTransactionSnapshot } from "../knowledge-base/digest-evidence";
@@ -476,6 +478,15 @@ const codexThreadResumeParams = codexThreadRequests.find((request) => request.me
 assert.equal(codexThreadResumeParams?.sandboxPolicy?.type, "workspaceWrite");
 assert.ok(!codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw")));
 assert.ok(codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
+const promptEnhancerTurnOptions = { ...kbTurnOptions, developerInstructions: "WorkBuddy Meta-Prompt", ephemeral: true };
+await codexService.startThread(promptEnhancerTurnOptions);
+const codexPromptEnhancerStartParams = codexThreadRequests.filter((request) => request.method === "thread/start").at(-1)?.params;
+assert.equal(codexPromptEnhancerStartParams?.ephemeral, true);
+assert.equal(codexPromptEnhancerStartParams?.developerInstructions, "WorkBuddy Meta-Prompt");
+await codexService.resumeThread("thread-kb", promptEnhancerTurnOptions);
+const codexPromptEnhancerResumeParams = codexThreadRequests.filter((request) => request.method === "thread/resume").at(-1)?.params;
+assert.equal("ephemeral" in codexPromptEnhancerResumeParams, false, "thread/resume 不支持 ephemeral 参数");
+assert.equal(codexPromptEnhancerResumeParams?.developerInstructions, "WorkBuddy Meta-Prompt");
 await codexService.startTurn("thread-kb", [{ type: "text", text: "lint", text_elements: [] }], kbLintTurnOptions);
 const codexTurnStartParams = codexThreadRequests.find((request) => request.method === "turn/start")?.params;
 assert.equal(codexTurnStartParams?.sandbox, "workspace-write");
@@ -588,7 +599,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 29);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 31);
 assert.equal(DEFAULT_SETTINGS.settingsLanguage, "zh-CN");
 assert.equal(DEFAULT_SETTINGS.settingsTab, "agents");
 assert.equal(DEFAULT_SETTINGS.agentBackend, "codex-cli");
@@ -600,6 +611,23 @@ assert.equal(DEFAULT_SETTINGS.agents.hermes.apiKey, "");
 assert.equal(DEFAULT_SETTINGS.capabilities.chatBackend, "default");
 assert.equal(DEFAULT_SETTINGS.capabilities.knowledgeBackend, "default");
 assert.equal(DEFAULT_SETTINGS.capabilities.editorActionBackend, "default");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.enabled, true);
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "default");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.codexProviderMode, "default");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.activeApiProviderId, "");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.providerId, "");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.model, DEFAULT_PROMPT_ENHANCER_MODEL);
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.timeoutMs, 45000);
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.maxInputChars, 4000);
+assert.equal(normalizeSettingsData({
+  settingsVersion: 30,
+  promptEnhancer: { agent: "enhance-prompt" }
+}).settings.promptEnhancer.agent, "");
+assert.equal(normalizeSettingsData({
+  settingsVersion: 31,
+  promptEnhancer: { agent: "custom-backend-agent" }
+}).settings.promptEnhancer.agent, "custom-backend-agent");
 assert.ok(AGENT_BACKEND_DEFINITIONS.some((definition) => definition.kind === "hermes"));
 assert.equal(getAgentBackendDefinition("hermes").label, "Hermes");
 assert.equal(getAgentBackendDefinition("hermes").capabilities.richEvents, true);
@@ -988,25 +1016,16 @@ assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsBefore, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.contextCharsAfter, 300);
 assert.equal(DEFAULT_SETTINGS.editorActions.timeoutMs, 45000);
 assert.deepEqual(DEFAULT_SETTINGS.editorActions.articleUnderstandingCache, {});
-assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue", "translate", "enhance"]);
-assert.equal(DEFAULT_SETTINGS.editorActions.actions.find((action) => action.id === "enhance")?.enabled, false);
-assert.equal(isAlreadyDetailed("# 角色\n" + Array.from({ length: 90 }, (_, index) => `词${index}`).join(" ")), true);
-assert.equal(isAlreadyDetailed("## 角色\n你是一位资深产品经理，请基于当前业务背景拆解目标、范围、用户场景、关键约束、验收标准和风险边界，并输出结构化方案，要求用中文表达，避免空话。"), true);
-assert.equal(isAlreadyDetailed("帮我写周报"), false);
-assert.equal(detectEnhanceStyle("帮我写一份周报"), "writing");
-assert.equal(detectEnhanceStyle("分析这份销售数据"), "analysis");
-assert.equal(detectEnhanceStyle("写一个 React 登录组件"), "code");
-assert.equal(detectEnhanceStyle("帮我整理一下"), "general");
-assert.match(ENHANCE_META_PROMPT, /分析流程/);
-assert.match(ENHANCE_META_PROMPT, /评估原始提示词/);
-assert.match(ENHANCE_META_PROMPT, /禁止行为/);
-assert.match(ENHANCE_META_PROMPT, /不要回答用户的问题/);
-assert.match(ENHANCE_META_PROMPT, /不要建议特定技术/);
-assert.match(ENHANCE_META_PROMPT, /语言匹配是最高优先级/);
-assert.match(ENHANCE_META_PROMPT, /800\s*字符/);
-assert.match(ENHANCE_META_PROMPT, /输入：["“]帮我写周报/);
-assert.match(buildEnhancePromptTemplate("code"), /场景提示/);
-assert.match(buildEnhancePromptTemplate("code"), /不是硬性要求/);
+assert.deepEqual(DEFAULT_SETTINGS.editorActions.actions.map((action) => action.id), ["rewrite", "expand", "continue", "translate"]);
+assert.equal(DEFAULT_SETTINGS.editorActions.actions.some((action) => action.id === "enhance"), false);
+assert.match(ENHANCE_META_PROMPT, /Prompt Engineering Expert/);
+assert.match(ENHANCE_META_PROMPT, /ANALYSIS PROCESS/);
+assert.match(ENHANCE_META_PROMPT, /Do NOT answer questions/);
+assert.match(ENHANCE_META_PROMPT, /Do NOT suggest specific technologies unless mentioned/);
+assert.match(ENHANCE_META_PROMPT, /Language matching is the highest priority/);
+assert.match(ENHANCE_META_PROMPT, /maximum length should be around 800 characters/);
+assert.match(ENHANCE_META_PROMPT, /"A website for my dog"/);
+assert.equal(cleanPromptEnhancerOutput("```markdown\n请写一份周报\n```"), "请写一份周报");
 assert.equal(DEFAULT_SETTINGS.opencode.autoStart, true);
 assert.equal(DEFAULT_SETTINGS.opencode.hostname, "127.0.0.1");
 assert.equal(DEFAULT_SETTINGS.opencode.port, 4096);
@@ -3013,6 +3032,8 @@ const codexViewComposerSource = await readFile(path.join(process.cwd(), "src/ui/
 const codexViewSessionMessageStoreSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/session-message-store.ts"), "utf8");
 const codexViewMessageControllerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-controller.ts"), "utf8");
 const codexViewShellSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/view-shell.ts"), "utf8");
+const promptEnhancerRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/prompt-enhancer-runner.ts"), "utf8");
+const promptEnhancerServiceSource = await readFile(path.join(process.cwd(), "src/prompt-enhancer/service.ts"), "utf8");
 const knowledgeBaseManagerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/manager.ts"), "utf8");
 const knowledgeBaseCommandRouterSource = await readFile(path.join(process.cwd(), "src/knowledge-base/command-router.ts"), "utf8");
 const knowledgeBaseScheduledMaintenanceSource = await readFile(path.join(process.cwd(), "src/knowledge-base/scheduled-maintenance.ts"), "utf8");
@@ -3155,6 +3176,7 @@ assert.doesNotMatch(codexViewSource, /codex-kb-dashboard-history/);
 assert.match(pluginBootstrapSource, /VIEW_TYPE_ECHOINK_HOME/);
 assert.match(pluginBootstrapSource, /id: "open-echoink-home"/);
 assert.match(pluginBootstrapSource, /activateHomeAndSidebar/);
+assert.doesNotMatch(pluginBootstrapSource, /editor-action-enhance|runEditorActionById\([^)]*"enhance"/);
 assert.match(pluginViewServiceSource, /ensureHomeWorkspaceSpace/);
 assert.match(pluginViewServiceSource, /rightSplit\.collapse/);
 assert.match(pluginViewServiceSource, /leftSplit\.collapse/);
@@ -3504,19 +3526,26 @@ assert.match(settingsStyles, /\.codex-kb-run-track\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-scan/);
 assert.match(settingsStyles, /\.codex-kb-run-motion-work/);
 assert.match(codexViewComposerSource, /onEnhancePrompt/);
-assert.match(codexViewComposerSource, /codex-composer-enhance-button/);
-assert.match(codexViewComposerSource, /setIcon\(enhanceButton,\s*"sparkles"\)/);
+assert.match(codexViewComposerSource, /createComposerIconButton\(left,\s*"sparkles",\s*"增强提示词"\)/);
+assert.match(codexViewComposerSource, /createComposerIconButton\(left,\s*"bookmark-plus",\s*"收藏"\)/);
+assert.match(codexViewComposerSource, /codex-model-summary-button/);
+assert.doesNotMatch(codexViewComposerSource, /codex-composer-enhance-button/);
+assert.doesNotMatch(codexViewComposerSource, /onCaptureWeChatArticle|onCaptureWebPage|onPickKnowledgeBaseFiles|file-plus/);
 assert.match(codexViewComposerSource, /renderPromptEnhanceReview/);
 assert.match(codexViewComposerSource, /codex-composer-enhance-review/);
 assert.match(codexViewComposerSource, /恢复原文/);
-assert.match(codexViewShellSource, /enhanceChatInput/);
-assert.match(editorActionRunnerSourceForAgentEvents, /export async function enhanceChatInput/);
+assert.match(codexViewShellSource, /prompt-enhancer-runner/);
+assert.match(codexViewSource, /enhancePrompt\(\)/);
+assert.match(promptEnhancerRunnerSource, /runPromptEnhancer/);
+assert.match(promptEnhancerServiceSource, /resolvePromptEnhancerBackend/);
+assert.doesNotMatch(promptEnhancerServiceSource, /buildPromptEnhancerPrompt/);
+assert.match(promptEnhancerServiceSource, /input:\s*\{\s*text:\s*input\.prompt,\s*attachments:\s*\[\]/);
 assert.match(codexViewSource, /promptEnhanceReviewEl/);
 assert.match(codexViewSource, /private updateContext\(tokenUsage:[\s\S]*this\.updateContextForSession\(this\.ensureSession\(\), tokenUsage, persist\)/);
-assert.match(editorActionRunnerSourceForAgentEvents, /detectEnhanceStyle/);
-assert.match(editorActionRunnerSourceForAgentEvents, /renderPromptEnhanceReview/);
-assert.match(editorActionRunnerSourceForAgentEvents, /const qualityMode:\s*EditorActionQualityMode\s*=\s*"quality"/);
-assert.match(settingsStyles, /\.codex-composer-enhance-button/);
+assert.doesNotMatch(editorActionRunnerSourceForAgentEvents, /export async function enhanceChatInput|detectEnhanceStyle|renderPromptEnhanceReview|request\.action\.id === "enhance"/);
+assert.doesNotMatch(settingsStyles, /\.codex-composer-enhance-button/);
+assert.match(settingsStyles, /\.codex-model-summary-button/);
+assert.match(settingsStyles, /\.codex-prompt-enhancer-meta/);
 assert.match(settingsStyles, /\.codex-composer-enhance-review/);
 assert.match(settingsStyles, /\.codex-kb-maintain-card\s*\{/);
 assert.match(settingsStyles, /\.codex-kb-maintain-section\s*\{/);
@@ -3552,6 +3581,15 @@ assert.equal(maintainRunPayload.mode, "maintain");
 assert.equal(maintainRunPayload.icon, "bot");
 assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.label), ["准备", "消化", "整理", "报告", "完成"]);
 assert.deepEqual(maintainRunPayload.phases.map((phase) => phase.icon), ["book-open", "file-pen", "network", "clipboard-check", "check-circle"]);
+const eventDrivenRunProgress = knowledgeBaseRunProgressStateFromEvents("running", [
+  { type: "workflow.started", status: "running", createdAt: 1 },
+  { type: "workflow.phase.started", phaseId: "prepare", status: "running", createdAt: 1 },
+  { type: "workflow.phase.completed", phaseId: "prepare", status: "success", createdAt: 2 },
+  { type: "workflow.phase.started", phaseId: "digest", status: "running", createdAt: 3 },
+  { type: "workflow.phase.progress", phaseId: "digest", status: "running", current: 1, total: 2, createdAt: 4 }
+], maintainRunPayload.phases.length);
+assert.equal(eventDrivenRunProgress?.filledCells, 27);
+assert.equal(eventDrivenRunProgress?.activeIndex, 1);
 const interruptedRunProgress = knowledgeBaseRunProgressState("interrupted", 1000, 1000 + 60_000, maintainRunPayload.phases.length);
 assert.equal(interruptedRunProgress.totalCells, 72);
 assert.equal(interruptedRunProgress.filledCells, 0);
@@ -4889,6 +4927,24 @@ assert.match(acpRuntimeSource, /new AcpJsonRpcError/);
 assert.match(acpRuntimeSource, /Unsupported ACP request/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /错误码：upstream_timeout/);
 assert.match(formatOpenCodeError({ status: 504, data: { code: "upstream_timeout", message: "upstream timed out" } }), /状态：504/);
+let openCodeHealthChecks = 0;
+const openCodeHealthServer = http.createServer((_request, response) => {
+  openCodeHealthChecks += 1;
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({ healthy: openCodeHealthChecks === 1, version: "test" }));
+});
+const openCodeHealthPort = await new Promise<number>((resolve) => {
+  openCodeHealthServer.listen(0, "127.0.0.1", () => {
+    const address = openCodeHealthServer.address();
+    assert.ok(address && typeof address === "object");
+    resolve(address.port);
+  });
+});
+const openCodeHealthUrl = `http://127.0.0.1:${openCodeHealthPort}`;
+assert.equal(await isOpenCodeServerHealthy(openCodeHealthUrl), true);
+assert.equal(await isOpenCodeServerHealthy(openCodeHealthUrl), false);
+await new Promise<void>((resolve, reject) => openCodeHealthServer.close((error) => error ? reject(error) : resolve()));
+assert.equal(await isOpenCodeServerHealthy(openCodeHealthUrl, 200), false);
 const openCodeFetchSeen = new Promise<{ method: string; body: string; header: string }>((resolve) => {
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -5024,6 +5080,7 @@ assert.deepEqual(buildOpenCodeRunArgs({
 const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");
 assert.match(openCodeBackendSource, /import \{ emptyArrayOnMissingPathOrWarn \} from "\.\/error-handling";/);
 assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(emptyArrayOnMissingPathOrWarn\("list OpenCode CLI models"\)\);\s*if \(cliModels\.length\) return cliModels;/);
+assert.match(openCodeBackendSource, /const canReuse = await isOpenCodeServerHealthy\(serverUrl\);\s*if \(!canReuse\) \{/);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {
@@ -5202,6 +5259,46 @@ await hermesCliSyntheticBackend.connect();
 assert.deepEqual(await hermesCliSyntheticBackend.listModels(), []);
 assert.equal((await hermesCliSyntheticBackend.runTask({ prompt: "只回复 PONG", permission: "read-only", timeoutMs: 5000 })).text, "PONG");
 assert.deepEqual(hermesCliSyntheticArgs.at(-1), ["-z", "只回复 PONG"]);
+
+const hermesPromptEnhancerCalls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+const hermesPromptEnhancerBackend = new HermesBackend({
+  cliPath: "/usr/local/bin/hermes",
+  serverUrl: "",
+  autoStart: true,
+  hostname: "127.0.0.1",
+  port: 8642,
+  profile: "enhancer-profile",
+  providerId: "deepseek",
+  modelId: "deepseek-chat",
+  apiKey: "",
+  vaultPath: "/vault",
+  commandExists: (candidate) => candidate === "/usr/local/bin/hermes",
+  processRunner: async (_command, args, options) => {
+    hermesPromptEnhancerCalls.push({ args, env: options.env });
+    if (args.includes("--version")) return { stdout: "Hermes Agent v0.18.0 (2026.7.1)\n", stderr: "" };
+    if (args.includes("sessions")) return { stdout: "deleted\n", stderr: "" };
+    return { stdout: "增强结果\n", stderr: "\nsession_id: enhancer-session\n" };
+  }
+});
+await hermesPromptEnhancerBackend.connect();
+assert.equal((await hermesPromptEnhancerBackend.runTask({
+  prompt: "  保留原始空格  ",
+  system: ENHANCE_META_PROMPT,
+  permission: "read-only",
+  timeoutMs: 5000,
+  tools: { read: false, write: false, edit: false, bash: false }
+})).text, "增强结果");
+const hermesPromptEnhancerRun = hermesPromptEnhancerCalls.find((call) => call.args.includes("chat"));
+assert.deepEqual(hermesPromptEnhancerRun?.args, [
+  "--profile", "enhancer-profile",
+  "chat", "-q", "  保留原始空格  ", "--quiet", "--ignore-rules", "--source", "tool",
+  "--toolsets", "context_engine",
+  "--provider", "deepseek",
+  "--model", "deepseek-chat"
+]);
+assert.equal(hermesPromptEnhancerRun?.env.HERMES_EPHEMERAL_SYSTEM_PROMPT, ENHANCE_META_PROMPT);
+assert.equal(hermesPromptEnhancerRun?.env.HERMES_IGNORE_RULES, "1");
+assert.deepEqual(hermesPromptEnhancerCalls.at(-1)?.args, ["--profile", "enhancer-profile", "sessions", "delete", "enhancer-session", "--yes"]);
 
 const hermesRunFetchCalls: Array<{ url: string; init: any }> = [];
 const hermesRunBackend = new HermesBackend({

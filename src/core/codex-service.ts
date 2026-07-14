@@ -86,6 +86,8 @@ export interface CodexCommandResolveOptions {
 export interface TurnOptions {
   cwd?: string;
   model: string;
+  developerInstructions?: string;
+  ephemeral?: boolean;
   reasoning: ReasoningEffort;
   serviceTier: ServiceTierChoice;
   permission: PermissionMode;
@@ -325,6 +327,8 @@ export class CodexService implements AgentBackend {
       {
         model: options.model || null,
         cwd,
+        ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
+        ...(options.ephemeral ? { ephemeral: true } : {}),
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
         sandboxPolicy,
@@ -354,6 +358,7 @@ export class CodexService implements AgentBackend {
         threadId,
         model: options.model || null,
         cwd,
+        ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
         approvalPolicy: options.permission === "danger-full-access" ? "never" : "on-request",
         sandbox: options.permission,
         sandboxPolicy,

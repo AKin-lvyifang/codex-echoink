@@ -29,6 +29,7 @@ export interface CreateHarnessAgentAdapterInput {
   codexRich?: CodexRichAdapterFactoryOptions;
   createCodexRichAdapter?: CodexRichAdapterFactory;
   task?: {
+    system?: string;
     resources?: PreparedAgentResources;
     toolBridge?: AgentToolBridgeRuntime | null;
     timeoutMs?: number;
@@ -36,6 +37,7 @@ export interface CreateHarnessAgentAdapterInput {
     model?: AgentTaskInput["model"];
     agent?: string;
     profile?: string;
+    requireDirectAgent?: boolean;
     abortSignal?: AbortSignal;
     onRunId?: (runId: string) => void;
   };

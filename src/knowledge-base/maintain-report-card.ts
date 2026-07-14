@@ -1,4 +1,4 @@
-import type { KnowledgeBaseCommandUiMode, KnowledgeBaseRunResult, KnowledgeBaseSource, StructureNormalizationResult } from "./types";
+import type { KnowledgeBaseCommandUiMode, KnowledgeBaseRunResult, KnowledgeBaseSource, KnowledgeWorkflowEvent, StructureNormalizationResult } from "./types";
 
 export type KnowledgeBaseMessageUiPayload = KnowledgeBaseRunPayload | KnowledgeBaseMaintainReportPayload;
 
@@ -9,6 +9,7 @@ export interface KnowledgeBaseRunPayload {
   subtitle: string;
   icon: KnowledgeBaseCommandIcon;
   phases: KnowledgeBaseRunPhase[];
+  events?: KnowledgeWorkflowEvent[];
 }
 
 export interface KnowledgeBaseRunPhase {

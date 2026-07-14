@@ -9,7 +9,7 @@ import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory"
 import {
   harnessBackendAdapterVersion,
   harnessBackendDisplayName,
-  harnessBackendUsesThinkingMessage,
+  harnessBackendUsesNativeThreadPrewarm,
   harnessInitialMessageModelId,
   harnessMessageProfileId,
   harnessProviderModelId,
@@ -234,13 +234,14 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.renderMessagesIfActive(session);
     view.renderToolbar();
     view.applyStatus();
-    if (chatUsesThinkingMessage(backend)) {
-      view.ensureThinkingMessage(session, "连接中", "正在连接 Codex...");
-      view.armTurnWatchdog();
-      if (!codexNativeThreadIdForSession(session) && view.threadPrewarmPromise && view.threadPrewarmSessionId === session.id) {
-        const warmed = await view.threadPrewarmPromise.catch(() => false);
-        if (!warmed && !codexNativeThreadIdForSession(session)) throw new Error("新会话连接超时，请重试");
-      }
+    view.ensureThinkingMessage(session, "初始化", "正在初始化 EchoInk 运行...");
+    view.armTurnWatchdog();
+    if (harnessBackendUsesNativeThreadPrewarm(backend)
+      && !codexNativeThreadIdForSession(session)
+      && view.threadPrewarmPromise
+      && view.threadPrewarmSessionId === session.id) {
+      const warmed = await view.threadPrewarmPromise.catch(() => false);
+      if (!warmed && !codexNativeThreadIdForSession(session)) throw new Error("新会话连接超时，请重试");
     }
     await view.plugin.saveSettings(true);
     const { adapter, resources } = await createChatAgentAdapter(view, session, item, turnAttachments, backend);
@@ -249,6 +250,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       sessionProvider: () => session,
       request: buildChatHarnessRequest(view, session, item, runId, turnAttachments, backend, resources),
       sink: (event: HarnessEvent) => {
+        updateEchoInkThinkingLifecycle(view, session, event);
         const agentEvent = harnessEventToAgentEvent(event, backend);
         if (!agentEvent) return;
         renderState = reduceAgentEventForChat(renderState, agentEvent);
@@ -300,6 +302,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     assistantMessage.completedAt = Date.now();
     syncInlineAgentProcessMessages(session, assistantMessage, renderState, runId, view.plugin.getVaultPath());
     settleInlineAgentProcessMessages(session, runId, output.status === "completed" ? "completed" : "failed");
+    view.finishThinkingMessage(session, output.status === "completed" ? "完成" : "失败");
+    view.finishRunningProcessMessages(session, output.status === "completed" ? "completed" : "failed");
+    view.finishPlanMessage(session);
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     cancelInlineAgentProcessPersistence(view);
     await view.plugin.saveSettings(true);
@@ -313,6 +318,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     assistantMessage.completedAt = Date.now();
     applyMessageProvenance(assistantMessage, provenance);
     settleInlineAgentProcessMessages(session, runId, "failed");
+    view.finishThinkingMessage(session, "失败");
+    view.finishRunningProcessMessages(session, "failed");
+    view.finishPlanMessage(session);
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
     cancelInlineAgentProcessPersistence(view);
     new Notice(`${agentChatTitle(backend)} 发送失败：${message}`);
@@ -570,12 +578,38 @@ async function prepareChatBackendConnection(view: CodexViewTurnContext, backend:
   }
 }
 
-function chatUsesThinkingMessage(backend: AgentBackendKind): boolean {
-  return harnessBackendUsesThinkingMessage(backend);
-}
-
 function agentChatTitle(backend: AgentBackendKind): string {
   return harnessBackendDisplayName(backend);
+}
+
+function updateEchoInkThinkingLifecycle(view: CodexViewTurnContext, session: StoredSession, event: HarnessEvent): void {
+  if (event.type === "agent.connecting") {
+    view.ensureThinkingMessage(session, "初始化", "正在连接 Agent 后端...");
+    return;
+  }
+  if (event.type === "agent.connected" || event.type === "session.context.bootstrap.compiled") {
+    view.ensureThinkingMessage(session, "初始化", "正在准备运行上下文...");
+    return;
+  }
+  if (event.type === "run.started") {
+    view.ensureThinkingMessage(session, "思考中", "正在等待模型响应...");
+    return;
+  }
+  if (event.type === "agent.thinking.delta"
+    || event.type === "agent.thinking.completed"
+    || event.type === "agent.reasoning.started"
+    || event.type === "agent.reasoning.summary.delta"
+    || event.type === "agent.reasoning.summary.completed") {
+    view.ensureThinkingMessage(session, "思考中", "正在分析问题...");
+    return;
+  }
+  if (event.type === "agent.message.delta") {
+    view.ensureThinkingMessage(session, "生成中", "正在生成回复...");
+    return;
+  }
+  if (event.type.startsWith("tool.") || event.type.startsWith("file.change.")) {
+    view.ensureThinkingMessage(session, "处理中", "正在执行任务...");
+  }
 }
 
 function codexNativeThreadIdForSession(session: StoredSession): string | undefined {
@@ -680,8 +714,10 @@ function harnessEventToAgentEvent(event: HarnessEvent, backend: AgentBackendKind
       return { ...base, type: "message_completed" };
     case "agent.reasoning.started":
     case "agent.reasoning.summary.delta":
+    case "agent.thinking.delta":
       return { ...base, type: "thinking_delta" };
     case "agent.reasoning.summary.completed":
+    case "agent.thinking.completed":
       return { ...base, type: "thinking_completed" };
     case "adapter.fallback.started":
       return { ...base, type: "fallback_started" };

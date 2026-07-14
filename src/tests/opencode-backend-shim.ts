@@ -19,15 +19,26 @@ export class OpenCodeBackend {
     await hooks().onListModels?.(this);
     return hooks().models ?? [];
   }
-  async startSession(): Promise<{ sessionId: string; title: string }> {
-    await hooks().onStartSession?.(this);
+  async listAgents(): Promise<any[]> {
+    await hooks().onListAgents?.(this);
+    return hooks().agents ?? [];
+  }
+  async startSession(options?: any): Promise<{ sessionId: string; title: string }> {
+    hooks().startSessionOptions?.push?.(options);
+    await hooks().onStartSession?.(options, this);
     return hooks().session ?? { sessionId: "test-opencode-session", title: "test" };
   }
-  async sendPrompt(): Promise<string> {
+  async sendPrompt(options?: any): Promise<string> {
     hooks().sendPromptCalls = (hooks().sendPromptCalls ?? 0) + 1;
-    await hooks().onSendPrompt?.(this);
+    hooks().sendPromptOptions?.push?.(options);
+    await hooks().onSendPrompt?.(options, this);
     if (hooks().sendPromptError) throw hooks().sendPromptError;
     return hooks().sendPromptResult ?? "";
+  }
+  async deleteSession(sessionId: string): Promise<boolean> {
+    hooks().deleteSessionCalls?.push?.(sessionId);
+    await hooks().onDeleteSession?.(sessionId, this);
+    return true;
   }
   async runCliTask(options?: any): Promise<{ text: string; runId: string }> {
     hooks().runCliTaskCalls = (hooks().runCliTaskCalls ?? 0) + 1;

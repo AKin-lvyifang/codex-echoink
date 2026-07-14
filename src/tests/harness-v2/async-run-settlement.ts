@@ -1013,7 +1013,7 @@ async function assertCancelBeforeAdapterRunSettlesCancelledWithoutInvokingAdapte
         capabilities: {
           ...noCapabilities(),
           sessions: { resume: "emulated", fork: "none" },
-          output: { streaming: "emulated", reasoningSummary: "none", planEvents: "none", usage: "none" },
+          output: { streaming: "emulated", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "none" },
           input: { text: "native", image: "none", pdf: "none" },
           cancellation: "emulated"
         }
@@ -1184,7 +1184,7 @@ async function assertCancelDuringAdapterRunStillForwardsToOwner(): Promise<void>
         capabilities: {
           ...noCapabilities(),
           sessions: { resume: "emulated", fork: "none" },
-          output: { streaming: "emulated", reasoningSummary: "none", planEvents: "none", usage: "none" },
+          output: { streaming: "emulated", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "none" },
           input: { text: "native", image: "none", pdf: "none" },
           cancellation: "emulated"
         }
@@ -1236,7 +1236,7 @@ async function assertCancelDuringRejectingAdapterRunWritesOneCancelledTerminal()
         capabilities: {
           ...noCapabilities(),
           sessions: { resume: "emulated", fork: "none" },
-          output: { streaming: "emulated", reasoningSummary: "none", planEvents: "none", usage: "none" },
+          output: { streaming: "emulated", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "none" },
           input: { text: "native", image: "none", pdf: "none" },
           cancellation: "emulated"
         }
@@ -1360,7 +1360,7 @@ function createStaticAdapter(input: {
       capabilities: {
         ...noCapabilities(),
         sessions: { resume: "emulated", fork: "none" },
-        output: { streaming: "emulated", reasoningSummary: "none", planEvents: "none", usage: "none" },
+        output: { streaming: "emulated", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "none" },
         input: { text: "native", image: "none", pdf: "none" },
         cancellation: "emulated"
       }

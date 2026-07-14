@@ -65,7 +65,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       capabilities: {
         ...noCapabilities(),
         sessions: { resume: "native", fork: "none" },
-        output: { streaming: "native", reasoningSummary: "native", planEvents: "native", usage: "native" },
+        output: { streaming: "native", reasoningSummary: "native", thinkingTrace: "none", planEvents: "native", usage: "native" },
         tools: { structuredCalls: "none", nativeMcp: "native", nativeSkills: "native", approvals: "native" },
         files: { read: "native", write: "native", diffEvents: "native" },
         input: { text: "native", image: "native", pdf: "native" },
@@ -476,7 +476,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       backendId: this.manifest.id,
       id: threadId,
       kind: "thread",
-      persistence: "provider-persistent",
+      persistence: this.options.turnOptions?.ephemeral ? "none" : "provider-persistent",
       providerEndpoint: context.providerEndpoint,
       deviceKey: context.deviceKey,
       vaultId: context.vaultId,

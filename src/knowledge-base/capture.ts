@@ -48,6 +48,16 @@ export class KnowledgeBaseCaptureService {
     return this.captureWebUrl(url);
   }
 
+  async captureLink(): Promise<string[]> {
+    const { textInputModal } = await import("../ui/modals");
+    const value = await textInputModal(this.plugin.app, "收藏", "粘贴公众号或网页链接");
+    if (!value?.trim()) return [];
+    const url = extractFirstUrl(value);
+    if (!url) throw new Error("请输入公众号或网页链接");
+    if (isWeChatUrl(url)) return this.captureWeChatUrl(url);
+    return this.captureWebUrl(url, value);
+  }
+
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
     return this.copyFilesToRaw(files);
   }

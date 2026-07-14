@@ -485,6 +485,7 @@ export class RunOrchestrator {
       const result = adapter.run({
         runId: request.runId,
         sessionId: request.sessionId,
+        workflow: request.workflow,
         nativeSessionId: binding?.nativeSessionId,
         input: request.input,
         permissions: request.permissions,
@@ -724,6 +725,7 @@ function leaseIdForResult(
   reusePreviousLease: boolean,
   createdAt: number
 ): string | undefined {
+  if (request.workflow === "prompt.enhance") return undefined;
   if (request.surface !== "chat" && request.workflow !== "knowledge.ask") return undefined;
   const nativeId = result.nativeExecution?.id ?? result.nativeSessionId ?? result.nativeThreadId;
   if (!nativeId) return undefined;

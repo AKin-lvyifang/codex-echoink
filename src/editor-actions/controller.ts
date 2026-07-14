@@ -194,20 +194,17 @@ function actionIcon(actionId: string): string {
   if (actionId === "expand") return "text";
   if (actionId === "continue") return "forward";
   if (actionId === "translate") return "languages";
-  if (actionId === "enhance") return "sparkles";
   return "wand-sparkles";
 }
 
 function confirmedActionMessage(actionId: string): string {
   if (actionId === "continue") return "已续写";
   if (actionId === "translate") return "已翻译";
-  if (actionId === "enhance") return "已增强";
   return "已替换";
 }
 
 function confirmedActionNotice(actionId: string): string {
   if (actionId === "continue") return "已插入 Agent 续写";
   if (actionId === "translate") return "已替换为英文译文";
-  if (actionId === "enhance") return "已替换为增强提示词";
   return "已替换为 Agent 候选";
 }

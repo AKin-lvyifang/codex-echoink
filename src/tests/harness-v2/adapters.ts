@@ -31,6 +31,7 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors();
   await assertCodexRichRunDriverMapsNotificationsToHarnessEvents();
   await assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent();
+  await assertCodexRichRunDriverMapsInterruptedTerminalStatusesToCancelled();
   await assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput();
   await assertCodexRichRunDriverSettlesFinalAnswerWithoutTurnCompleted();
   await assertCodexRichRunDriverPrefersOfficialTurnCompletedDuringGrace();
@@ -298,9 +299,12 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
   assert.equal(result.status, "completed");
   assert.equal(result.outputText, "rich pong");
   assert.equal(events.some((event) => event.type.startsWith("agent.reasoning.")), false);
+  assert.equal(events.some((event) => event.type.startsWith("agent.thinking.")), true);
   assert.deepEqual(events.map((event) => event.type), [
     "adapter.fallback.started",
     "agent.message.delta",
+    "agent.thinking.delta",
+    "agent.thinking.completed",
     "agent.message.completed"
   ]);
 }
@@ -899,6 +903,28 @@ async function assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdemp
     "agent.message.delta",
     "run.completed"
   ]);
+}
+
+async function assertCodexRichRunDriverMapsInterruptedTerminalStatusesToCancelled(): Promise<void> {
+  for (const status of ["cancelled", "canceled", "interrupted", "aborted"]) {
+    const { driver, events } = createDriverHarness(`run-${status}`, {
+      threadId: `thread-${status}`,
+      turnId: `turn-${status}`
+    });
+
+    driver.handleNotification({
+      method: "turn/completed",
+      params: {
+        threadId: `thread-${status}`,
+        turn: { id: `turn-${status}`, status }
+      }
+    });
+
+    const result = await driver.awaitResult();
+    assert.equal(result.status, "cancelled", `${status} 不能被误记为 completed`);
+    assert.equal(result.outputText, undefined);
+    assert.deepEqual(events.map((event) => event.type), ["run.cancelled"]);
+  }
 }
 
 async function assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput(): Promise<void> {
@@ -2567,6 +2593,7 @@ async function assertEmulatedResumeBackendRebuildsContextForEachRun(): Promise<v
   });
   assert.equal(adapter.manifest.capabilities.output.streaming, "native");
   assert.equal(adapter.manifest.capabilities.output.reasoningSummary, "none");
+  assert.equal(adapter.manifest.capabilities.output.thinkingTrace, "native");
   const orchestrator = new RunOrchestrator({
     adapters: [adapter],
     ledger: new InMemoryRunLedger(),

@@ -29,6 +29,8 @@ export type HarnessEventType =
   | "agent.reasoning.started"
   | "agent.reasoning.summary.delta"
   | "agent.reasoning.summary.completed"
+  | "agent.thinking.delta"
+  | "agent.thinking.completed"
   | "agent.plan.updated"
   | "tool.requested"
   | "tool.approval.requested"

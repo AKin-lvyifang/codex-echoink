@@ -5,6 +5,7 @@ export type HarnessSurface = "chat" | "knowledge" | "editor" | "review";
 
 export type HarnessWorkflow =
   | "chat.generic"
+  | "prompt.enhance"
   | "knowledge.ask"
   | "knowledge.check"
   | "knowledge.maintain"

@@ -297,8 +297,8 @@ body.theme-light .codex-container {
   height: 24px;
   flex: 0 0 24px;
   border-radius: 50%;
-  color: var(--background-primary);
-  background: color-mix(in srgb, var(--interactive-accent) 76%, var(--text-accent));
+  color: #f8f7ff;
+  background: #8b5cf6;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
 }
 
@@ -2266,6 +2266,42 @@ body.theme-light .codex-code-wrapper pre {
 .codex-api-provider-textarea {
   min-height: 58px;
   resize: vertical;
+}
+
+.codex-prompt-enhancer-meta {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.codex-prompt-enhancer-meta-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.codex-prompt-enhancer-meta-summary::marker {
+  color: var(--text-muted);
+}
+
+.codex-prompt-enhancer-meta-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.codex-prompt-enhancer-meta-text {
+  min-height: 220px;
+  margin-top: 8px;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .codex-rules-file-picker {
@@ -5611,43 +5647,6 @@ body.theme-light .codex-container {
   border-radius: 18px;
 }
 
-.codex-input {
-  padding-right: 124px;
-}
-
-.codex-composer-enhance-button {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
-  border-radius: 999px;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--background-primary) 88%, transparent);
-  box-shadow: none;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.codex-composer-enhance-button svg {
-  width: 13px;
-  height: 13px;
-}
-
-.codex-composer-enhance-button:hover {
-  color: var(--text-normal);
-  border-color: color-mix(in srgb, var(--interactive-accent) 34%, var(--background-modifier-border));
-  background: var(--background-modifier-hover);
-}
-
 .codex-composer-enhance-review {
   display: none;
   align-items: center;
@@ -5851,6 +5850,7 @@ body.theme-light .codex-container {
 
 .codex-composer-left {
   flex: 0 1 auto;
+  gap: 2px;
 }
 
 .codex-composer-right {
@@ -5897,6 +5897,33 @@ body.theme-light .codex-container {
 .codex-composer-icon-button svg {
   width: 18px;
   height: 18px;
+}
+
+.codex-composer-icon-button.is-loading svg {
+  animation: codex-composer-spin 0.9s linear infinite;
+}
+
+@keyframes codex-composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.codex-composer-icon-button:disabled,
+.codex-composer-send-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none !important;
+}
+
+.codex-composer-left .codex-composer-icon-button {
+  width: 26px;
+  flex-basis: 26px;
+}
+
+.codex-composer-left .codex-composer-icon-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .codex-composer-icon-button:hover,
@@ -5978,21 +6005,84 @@ body.theme-light .codex-container {
   text-overflow: ellipsis;
 }
 
-.codex-workspace-button {
+.codex-model-summary-button {
+  height: 26px;
   max-width: 132px;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: 6px;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--background-secondary) 86%, var(--background-primary)) !important;
+  font-size: 12px;
+  font-weight: 400;
 }
 
-.codex-workspace-button.is-missing,
+.codex-model-summary-button .codex-composer-model-icon {
+  display: none !important;
+}
+
+.codex-model-summary-button .codex-composer-chevron {
+  display: inline-flex !important;
+  color: var(--text-faint);
+}
+
+.codex-composer-model-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.codex-composer-reasoning-label {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.codex-model-summary-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover) !important;
+}
+
+.codex-workspace-button {
+  height: 28px;
+  max-width: calc(16ch + 40px);
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--background-secondary) 86%, var(--background-primary)) !important;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.codex-workspace-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover) !important;
+}
+
+.codex-workspace-button .codex-composer-model-text {
+  max-width: 16ch;
+}
+
+.codex-workspace-button .codex-composer-chevron {
+  display: none !important;
+}
+
 .codex-workspace-button.is-invalid {
   color: var(--text-error);
 }
 
 .codex-context-meter {
-  min-width: 48px;
-  padding: 0 6px;
+  min-width: auto;
+  margin-left: 8px;
+  padding: 0 2px;
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-weight: 650;
+  background: transparent !important;
+  font-size: 11.5px;
+  font-weight: 400;
 }
 
 .codex-context-meter.is-hidden {
@@ -6072,8 +6162,7 @@ body.theme-light .codex-container {
 }
 
 @container (max-width: 430px) {
-  .codex-context-value,
-  .codex-composer-chevron {
+  .codex-context-value {
     display: none;
   }
 
@@ -6652,7 +6741,7 @@ body.theme-light .codex-container {
   margin-bottom: 6px;
   color: var(--text-faint);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 @keyframes codex-brain-breathe {
@@ -6769,7 +6858,7 @@ body.theme-light .codex-container {
   align-items: baseline;
   gap: 6px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   white-space: nowrap;
 }
 
@@ -6839,7 +6928,7 @@ body.theme-light .codex-container {
   overflow: hidden;
   color: var(--text-normal);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6847,7 +6936,7 @@ body.theme-light .codex-container {
 .codex-process-file-link.codex-diff-file-path {
   color: color-mix(in srgb, var(--interactive-accent) 78%, var(--text-normal));
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 400;
 }
 
 .codex-diff-file-previous {

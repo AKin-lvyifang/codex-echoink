@@ -10,7 +10,8 @@ export function legacyCapabilitySnapshotFromDefinition(definition: AgentBackendD
     },
     output: {
       streaming: capabilities.richEvents ? "native" : "emulated",
-      reasoningSummary: capabilities.richEvents ? "native" : "none",
+      reasoningSummary: definition.kind !== "hermes" && capabilities.richEvents ? "native" : "none",
+      thinkingTrace: definition.kind === "hermes" && capabilities.richEvents ? "native" : "none",
       planEvents: capabilities.richEvents ? "native" : "none",
       usage: definition.kind === "codex-cli" ? "native" : "emulated"
     },

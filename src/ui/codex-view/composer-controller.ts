@@ -50,6 +50,7 @@ export interface CodexComposerHost {
   selectedMode: UiMode;
   skillsRequested: boolean;
   running: boolean;
+  promptEnhancerRunning: boolean;
   activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   ensureSession(): StoredSession;
   isKnowledgeBaseSession(session: StoredSession): boolean;
@@ -58,6 +59,7 @@ export interface CodexComposerHost {
   activeProviderModels(): string[];
   effectiveModel(): string;
   renderToolbar(): void;
+  enhancePrompt(): void;
   renderQueue(): void;
   renderAttachments(): void;
   updateContext(tokenUsage: StoredSession["tokenUsage"], persist: boolean): void;
@@ -99,10 +101,12 @@ export function renderToolbar(host: CodexComposerHost): void {
       selectedSkill: host.selectedSkill,
       selectedPermission: host.selectedPermission,
       running: host.running,
+      promptEnhancerRunning: host.promptEnhancerRunning,
       viewRunKind: host.activeRunKind,
       hasDraft: hasComposerDraft(host),
       hasQueuedItems: host.turnQueue.hasQueuedItems(session.id),
-      currentComposerSummary: currentComposerSummary(host),
+      currentComposerModel: shortModelLabel(host.effectiveModel()),
+      currentComposerReasoning: compactReasoningLabel(host.selectedReasoning),
       currentComposerSummaryTitle: currentComposerSummaryTitle(host),
       currentKnowledgeComposerSummaryTitle: currentKnowledgeComposerSummaryTitle(host),
       workspacePath,
@@ -112,15 +116,11 @@ export function renderToolbar(host: CodexComposerHost): void {
     {
       onOpenAddMenu: (event) => openAddMenu(host, event),
       onOpenSkillMenu: (event) => openSkillMenu(host, event),
-      onCaptureWeChatArticle: () => host.runKnowledgeBaseShortcut("公众号收集", async () => {
-        const paths = await host.plugin.getKnowledgeBaseManager()?.captureWeChatArticle();
-        return paths?.length ? `已收集公众号：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收集内容。";
+      onEnhancePrompt: () => host.enhancePrompt(),
+      onCaptureKnowledgeSource: () => host.runKnowledgeBaseShortcut("收藏", async () => {
+        const paths = await host.plugin.getKnowledgeBaseManager()?.captureLink();
+        return paths?.length ? `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收藏内容。";
       }),
-      onCaptureWebPage: () => host.runKnowledgeBaseShortcut("网页收藏", async () => {
-        const paths = await host.plugin.getKnowledgeBaseManager()?.captureWebPage();
-        return paths?.length ? `已收藏网页：\n${paths.map((item) => `- ${item}`).join("\n")}` : "未收藏内容。";
-      }),
-      onPickKnowledgeBaseFiles: () => host.pickKnowledgeBaseFiles(),
       onOpenKnowledgeModelMenu: (event) => host.openKnowledgeModelMenu(event),
       onOpenKnowledgeCommandMenu: (event) => host.openKnowledgeCommandMenu(event),
       onPermissionChange: (value) => {
@@ -157,7 +157,7 @@ export function renderQueue(host: CodexComposerHost): void {
     {
       items: host.turnQueue.itemsForSession(session.id),
       paused: host.turnQueue.isSessionQueuePaused(session.id),
-      canResume: !host.running && !host.plugin.getKnowledgeBaseManager()?.isRunning,
+      canResume: !host.running && !host.promptEnhancerRunning && !host.plugin.getKnowledgeBaseManager()?.isRunning,
       draggedItemId: host.draggedQueueItemId
     },
     {

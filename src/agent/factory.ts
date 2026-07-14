@@ -1,5 +1,6 @@
 import { HermesBackend } from "../core/hermes-backend";
 import { OpenCodeBackend } from "../core/opencode-backend";
+import { requireDirectOpenCodeAgent } from "../core/opencode-agent-selection";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime, selectOpenCodeModelForTask } from "../core/opencode-models";
 import { resolveHermesCommand } from "../core/hermes-models";
 import type { CodexForObsidianSettings } from "../settings/settings";
@@ -79,11 +80,12 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
     },
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
       throwIfTaskAborted(task.abortSignal);
+      const selectedAgent = task.agent || input.settings.opencode.agent;
+      if (task.requireDirectAgent && selectedAgent) {
+        requireDirectOpenCodeAgent(selectedAgent, await backend.listAgents());
+      }
       const sources = task.sources ?? [];
-      const parts = [
-        { type: "text" as const, text: withResourcePrefix(task.prompt, task.resources) },
-        ...sources
-      ];
+      const parts = [{ type: "text" as const, text: task.system ? task.prompt : withResourcePrefix(task.prompt, task.resources) }, ...sources];
       const required = requiredModalities(parts);
       const selectedModel = selectOpenCodeModelForTask(
         await backend.listModels(),
@@ -99,11 +101,37 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
         input.settings.opencode.imageEnabled = selectedModel.inputModalities.includes("image");
         input.settings.opencode.pdfEnabled = selectedModel.inputModalities.includes("pdf");
       }
+      if (task.system) {
+        const session = await backend.startSession({
+          title: "EchoInk Prompt Enhancer",
+          ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
+          agent: selectedAgent,
+          permission: "read-only"
+        });
+        task.onRunId?.(session.sessionId);
+        try {
+          const text = await backend.sendPrompt({
+            sessionId: session.sessionId,
+            parts,
+            ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
+            agent: selectedAgent,
+            system: task.system,
+            tools: task.tools
+          });
+          return {
+            text,
+            runId: session.sessionId,
+            ...(selectedModel ? { effectiveModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {})
+          };
+        } finally {
+          await backend.deleteSession(session.sessionId).catch(() => undefined);
+        }
+      }
       const result = await backend.runCliTask({
         prompt: withResourcePrefix(task.prompt, task.resources),
         nativeSessionId: task.nativeSessionId,
         parts: sources,
-        agent: input.settings.opencode.agent,
+        agent: selectedAgent,
         ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
         timeoutMs: task.timeoutMs,
         abortSignal: task.abortSignal,

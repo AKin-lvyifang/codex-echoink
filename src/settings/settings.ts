@@ -111,11 +111,13 @@ export interface StoredSession {
   updatedAt: number;
 }
 
-export type SettingsTab = "agents" | "general" | "providers" | "resources" | "editorActions" | "knowledgeBase" | "review";
+export type SettingsTab = "agents" | "general" | "providers" | "resources" | "promptEnhancer" | "editorActions" | "knowledgeBase" | "review";
 export type ProviderMode = "codex-login" | "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type AgentBackendMode = AgentBackendKind;
 export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
+export type PromptEnhancerBackendMode = "default" | AgentBackendMode;
+export type PromptEnhancerProviderMode = "default" | ProviderMode;
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
@@ -186,6 +188,18 @@ export interface CapabilityBackendSettings {
   chatBackend: CapabilityBackendChoice;
   knowledgeBackend: CapabilityBackendChoice;
   editorActionBackend: CapabilityBackendChoice;
+}
+
+export interface PromptEnhancerSettings {
+  enabled: boolean;
+  backend: PromptEnhancerBackendMode;
+  codexProviderMode: PromptEnhancerProviderMode;
+  activeApiProviderId: string;
+  providerId: string;
+  model: string;
+  agent: string;
+  timeoutMs: number;
+  maxInputChars: number;
 }
 
 export interface SetupSettings {
@@ -338,6 +352,7 @@ export interface CodexForObsidianSettings {
   showContext: boolean;
   setup: SetupSettings;
   resourceManagementTab: ResourceManagementTab;
+  promptEnhancer: PromptEnhancerSettings;
   editorActions: EditorAiActionSettings;
   opencode: OpenCodeSettings;
   knowledgeBase: KnowledgeBaseSettings;
@@ -469,27 +484,6 @@ const DEFAULT_EDITOR_ACTIONS: EditorAiActionConfig[] = [
       "4. 不要解释，不要输出多个版本。",
       "5. 如果原文已有英文，保持自然英文表达，可轻微润色但不要新增信息。"
     ].join("\n")
-  },
-  {
-    id: "enhance",
-    label: "增强提示词",
-    enabled: false,
-    promptTemplate: [
-      "请将以下「选中文字」视为用户的原始需求，按提示词增强规则改写为更清晰、更具体、更可执行的提示词。",
-      "",
-      "要求：",
-      "1. 保留用户原始目的，不回答问题，不编造新需求。",
-      "2. 补齐必要上下文、约束、输出格式和验收标准。",
-      "3. 不要建议用户未提及的具体技术。",
-      "4. 保持与输入相同的语言，结果控制在约 800 字符内。",
-      "5. 只输出增强后的提示词，不输出解释。",
-      "",
-      "用户原始需求：{{selected_text}}",
-      "",
-      "文件上下文（仅供参考）：",
-      "{{before_context}}",
-      "{{after_context}}"
-    ].join("\n")
   }
 ];
 
@@ -505,6 +499,7 @@ const DEFAULT_EDITOR_STYLES: EditorAiStyleConfig[] = [
 ];
 
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
+export const DEFAULT_PROMPT_ENHANCER_MODEL = "";
 
 export const DEFAULT_EDITOR_ACTION_MODE_CONFIGS: Record<EditorActionQualityMode, EditorActionModeConfig> = {
   fast: {
@@ -546,6 +541,18 @@ const DEFAULT_OPENCODE_SETTINGS: OpenCodeSettings = {
   lastError: ""
 };
 
+const DEFAULT_PROMPT_ENHANCER_SETTINGS: PromptEnhancerSettings = {
+  enabled: true,
+  backend: "default",
+  codexProviderMode: "default",
+  activeApiProviderId: "",
+  providerId: "",
+  model: DEFAULT_PROMPT_ENHANCER_MODEL,
+  agent: "",
+  timeoutMs: 45000,
+  maxInputChars: 4000
+};
+
 const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
   cliPath: "",
   serverUrl: "",
@@ -565,7 +572,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 29,
+  settingsVersion: 31,
   settingsLanguage: "zh-CN",
   settingsTab: "agents",
   agentBackend: "codex-cli",
@@ -612,6 +619,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     dismissedVersion: ""
   },
   resourceManagementTab: "plugins",
+  promptEnhancer: DEFAULT_PROMPT_ENHANCER_SETTINGS,
   editorActions: {
     enabled: false,
     statusSlotEnabled: true,
@@ -721,6 +729,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     apiProviders: normalizeApiProviders(data?.apiProviders),
     setup: normalizeSetupSettings(data?.setup),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
+    promptEnhancer: normalizePromptEnhancerSettings(data?.promptEnhancer, previousVersion),
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
     opencode: normalizedOpenCode,
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
@@ -927,6 +936,23 @@ export function normalizeEditorActionSettings(input: unknown, previousVersion = 
   };
 }
 
+export function normalizePromptEnhancerSettings(input: unknown, previousVersion = DEFAULT_SETTINGS.settingsVersion): PromptEnhancerSettings {
+  const value = settingsRecord(input) ?? {};
+  const defaults = DEFAULT_PROMPT_ENHANCER_SETTINGS;
+  const configuredAgent = normalizeOptionalText(value.agent);
+  return {
+    enabled: typeof value.enabled === "boolean" ? value.enabled : defaults.enabled,
+    backend: normalizePromptEnhancerBackendMode(value.backend),
+    codexProviderMode: normalizePromptEnhancerProviderMode(value.codexProviderMode),
+    activeApiProviderId: normalizeOptionalText(value.activeApiProviderId),
+    providerId: normalizeOptionalText(value.providerId),
+    model: normalizeText(value.model, defaults.model),
+    agent: previousVersion < 31 && configuredAgent === "enhance-prompt" ? "" : configuredAgent,
+    timeoutMs: normalizePositiveInteger(value.timeoutMs, defaults.timeoutMs, 10000, 300000),
+    maxInputChars: normalizePositiveInteger(value.maxInputChars, defaults.maxInputChars, 100, 20000)
+  };
+}
+
 export function resolveEditorActionModeConfig(settings: EditorAiActionSettings, mode = settings.qualityMode): EditorActionModeConfig {
   return settings.modeConfigs[mode] ?? settings.modeConfigs.quality ?? settings.modeConfigs.fast ?? DEFAULT_EDITOR_ACTION_MODE_CONFIGS.quality;
 }
@@ -1122,7 +1148,7 @@ function normalizeResourceManagementTab(value: unknown): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: unknown): SettingsTab {
-  return value === "agents" || value === "providers" || value === "resources" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  return value === "agents" || value === "providers" || value === "resources" || value === "promptEnhancer" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 export function normalizeSettingsLanguage(value: unknown): SettingsLanguage {
@@ -1139,6 +1165,14 @@ export function normalizeAgentBackendMode(value: unknown): AgentBackendMode {
 
 export function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBaseBackendMode {
   return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+}
+
+export function normalizePromptEnhancerBackendMode(value: unknown): PromptEnhancerBackendMode {
+  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+}
+
+export function normalizePromptEnhancerProviderMode(value: unknown): PromptEnhancerProviderMode {
+  return value === "codex-login" || value === "custom-api" ? value : "default";
 }
 
 function normalizeCapabilityBackendChoice(value: unknown): CapabilityBackendChoice {
@@ -1863,6 +1897,7 @@ function normalizeEditorActionConfigs(value: unknown, defaults: EditorAiActionCo
   for (const item of source) {
     const record = settingsRecord(item) ?? {};
     const id = normalizeEditorActionId(record.id);
+    if (id === "enhance") continue;
     if (!id || used.has(id)) continue;
     const fallback = defaultById.get(id);
     used.add(id);

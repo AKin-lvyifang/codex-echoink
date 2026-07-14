@@ -465,6 +465,10 @@ export class KnowledgeBaseManager {
     return this.captureService.captureWebPage();
   }
 
+  async captureLink(): Promise<string[]> {
+    return this.captureService.captureLink();
+  }
+
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
     return this.captureService.captureExternalFiles(files);
   }

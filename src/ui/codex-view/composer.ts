@@ -31,10 +31,12 @@ export interface ComposerToolbarState {
   selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
   running: boolean;
+  promptEnhancerRunning: boolean;
   viewRunKind?: "chat" | "knowledge-base" | "editor" | "";
   hasDraft: boolean;
   hasQueuedItems: boolean;
-  currentComposerSummary: string;
+  currentComposerModel: string;
+  currentComposerReasoning: string;
   currentComposerSummaryTitle: string;
   currentKnowledgeComposerSummaryTitle: string;
   workspacePath: string;
@@ -51,9 +53,8 @@ export interface ComposerToolbarRefs {
 export interface ComposerToolbarCallbacks {
   onOpenAddMenu: (event: MouseEvent) => void;
   onOpenSkillMenu: (event: MouseEvent) => void;
-  onCaptureWeChatArticle: () => void;
-  onCaptureWebPage: () => void;
-  onPickKnowledgeBaseFiles: () => void;
+  onEnhancePrompt: () => void;
+  onCaptureKnowledgeSource: () => void;
   onOpenKnowledgeModelMenu: (event: MouseEvent) => void;
   onOpenKnowledgeCommandMenu: (event: MouseEvent) => void;
   onPermissionChange: (value: PermissionMode) => void;
@@ -108,13 +109,6 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
       callbacks.onSendMessage();
     }
   });
-  const enhanceButton = inputWrap.createEl("button", {
-    cls: "codex-composer-enhance-button",
-    attr: { type: "button", "aria-label": "增强提示词", title: "增强提示词" }
-  });
-  setIcon(enhanceButton, "sparkles");
-  enhanceButton.createSpan({ text: "增强提示词" });
-  enhanceButton.onclick = callbacks.onEnhancePrompt;
   const promptEnhanceReviewEl = inputWrap.createDiv({ cls: "codex-composer-enhance-review" });
   inputWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -171,17 +165,23 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
   skillButton.toggleClass("is-active", Boolean(state.selectedSkill));
   skillButton.onclick = callbacks.onOpenSkillMenu;
 
+  const enhanceButton = createComposerIconButton(left, "sparkles", "增强提示词");
+  enhanceButton.toggleClass("is-loading", state.promptEnhancerRunning);
+  enhanceButton.disabled = state.promptEnhancerRunning;
+  if (state.promptEnhancerRunning) {
+    setIcon(enhanceButton, "loader-circle");
+    enhanceButton.setAttribute("aria-busy", "true");
+    enhanceButton.setAttribute("title", "正在增强提示词");
+  }
+  enhanceButton.onclick = callbacks.onEnhancePrompt;
+
   const refs: ComposerToolbarRefs = {};
   if (state.knowledgeSession) {
-    const wechatButton = createComposerIconButton(left, "newspaper", "公众号收集");
-    wechatButton.onclick = callbacks.onCaptureWeChatArticle;
-    const webButton = createComposerIconButton(left, "bookmark-plus", "网页收藏");
-    webButton.onclick = callbacks.onCaptureWebPage;
-    const fileButton = createComposerIconButton(left, "file-plus", "文件收藏");
-    fileButton.onclick = callbacks.onPickKnowledgeBaseFiles;
+    const captureButton = createComposerIconButton(left, "bookmark-plus", "收藏");
+    captureButton.onclick = callbacks.onCaptureKnowledgeSource;
 
     if (state.knowledgeBackend === "codex-cli") {
-      const modelButton = addModelButton(right, "知识库模型和思考强度", state.currentKnowledgeComposerSummaryTitle, state.currentComposerSummary);
+      const modelButton = addModelButton(right, "知识库模型和思考强度", state.currentKnowledgeComposerSummaryTitle, state.currentComposerModel, state.currentComposerReasoning);
       modelButton.onclick = callbacks.onOpenKnowledgeModelMenu;
     }
 
@@ -201,7 +201,7 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
     refs.contextRingEl.createSpan({ cls: "codex-context-ring-hole" });
     refs.contextValueEl = refs.contextEl.createSpan({ cls: "codex-context-value", text: "--" });
 
-    const modelButton = addModelButton(right, "模型和运行参数", state.currentComposerSummaryTitle, state.currentComposerSummary);
+    const modelButton = addModelButton(right, "模型和运行参数", state.currentComposerSummaryTitle, state.currentComposerModel, state.currentComposerReasoning);
     modelButton.onclick = callbacks.onOpenModelMenu;
 
     const micButton = createComposerIconButton(right, "mic", "语音输入");
@@ -222,6 +222,11 @@ export function renderComposerToolbar(container: HTMLElement, state: ComposerToo
     attr: { type: "button", "aria-label": sendButtonView.label, title: sendButtonView.title }
   });
   sendButton.toggleClass("is-queue-action", action === "enqueue" || action === "resume-queue");
+  sendButton.disabled = state.promptEnhancerRunning;
+  if (state.promptEnhancerRunning) {
+    sendButton.setAttribute("aria-label", "提示词增强中");
+    sendButton.setAttribute("title", "提示词增强完成后再发送");
+  }
   setIcon(sendButton, sendButtonView.icon);
   sendButton.onclick = () => {
     if (action === "cancel-knowledge-task") callbacks.onCancelKnowledgeTask();
@@ -303,7 +308,7 @@ export function compactReasoningLabel(value: ReasoningEffort): string {
     low: "低",
     medium: "中",
     high: "高",
-    xhigh: "超高"
+    xhigh: "极高"
   };
   return labels[value] ?? value;
 }
@@ -373,14 +378,13 @@ function createComposerIconButton(container: HTMLElement, iconName: string, titl
   return button;
 }
 
-function addModelButton(container: HTMLElement, ariaLabel: string, title: string, text: string): HTMLButtonElement {
+function addModelButton(container: HTMLElement, ariaLabel: string, title: string, model: string, reasoning: string): HTMLButtonElement {
   const modelButton = container.createEl("button", {
-    cls: "codex-composer-model-button",
+    cls: "codex-composer-model-button codex-model-summary-button",
     attr: { type: "button", "aria-label": ariaLabel, title }
   });
-  const modelIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
-  setIcon(modelIcon, "zap");
-  modelButton.createSpan({ cls: "codex-composer-model-text", text });
+  modelButton.createSpan({ cls: "codex-composer-model-name", text: model });
+  modelButton.createSpan({ cls: "codex-composer-reasoning-label", text: reasoning });
   const chevron = modelButton.createSpan({ cls: "codex-composer-chevron" });
   setIcon(chevron, "chevron-down");
   return modelButton;
@@ -413,11 +417,10 @@ function addWorkspaceButton(container: HTMLElement, state: ComposerToolbarState,
     cls: "codex-composer-model-button codex-workspace-button",
     attr: { type: "button", title, "aria-label": "选择工作区" }
   });
-  button.toggleClass("is-missing", !state.workspacePath);
   button.toggleClass("is-invalid", Boolean(state.workspacePath && !state.workspaceValid));
   const icon = button.createSpan({ cls: "codex-composer-model-icon" });
-  setIcon(icon, state.workspacePath ? "folder-open" : "folder-plus");
-  button.createSpan({ cls: "codex-composer-model-text", text: state.workspacePath ? state.workspaceDisplayName : "选工作区" });
+  setIcon(icon, state.workspacePath ? "folder-open" : "folder");
+  button.createSpan({ cls: "codex-composer-model-text", text: state.workspacePath ? state.workspaceDisplayName : "请选择文件夹" });
   const chevron = button.createSpan({ cls: "codex-composer-chevron" });
   setIcon(chevron, "chevron-down");
   button.onclick = (event) => callbacks.onOpenWorkspaceMenu(event, state.session);

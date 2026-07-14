@@ -24,6 +24,7 @@ import {
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_PROMPT_ENHANCER_MODEL,
   ensureModelChoices,
   getActiveApiProvider,
   getApiProviderModels,
@@ -58,6 +59,8 @@ import {
   type SettingsTab,
   type WorkspaceResourceToggles
 } from "./settings";
+import { ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "../prompt-enhancer/meta-prompt";
+import { promptEnhancerModelChoices } from "../prompt-enhancer/service";
 import type { CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
 import { skillResourceFromHermesSkill } from "../resources/skill-loader";
@@ -177,6 +180,10 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       if (this.plugin.settings.settingsTab === "resources") {
         this.renderWorkspaceResourceManager(bodyEl);
+        return;
+      }
+      if (this.plugin.settings.settingsTab === "promptEnhancer") {
+        this.renderPromptEnhancerSettings(bodyEl, status);
         return;
       }
       if (this.plugin.settings.settingsTab === "editorActions") {
@@ -959,6 +966,142 @@ export class CodexSettingTab extends PluginSettingTab {
     for (const provider of this.plugin.settings.apiProviders) {
       this.renderApiProviderRow(body, provider);
     }
+  }
+
+  private renderPromptEnhancerSettings(container: HTMLElement, status: CodexStatusSnapshot | null): void {
+    const settings = this.plugin.settings.promptEnhancer;
+    const effectiveBackend = settings.backend === "default" ? this.plugin.settings.agentBackend : settings.backend;
+    const usesCodex = effectiveBackend === "codex-cli";
+    const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-prompt-enhancer-settings" });
+    const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
+    const title = header.createDiv({ cls: "codex-resource-manager-title" });
+    const icon = title.createSpan({ cls: "codex-setting-icon" });
+    setIcon(icon, "sparkles");
+    title.createSpan({ text: "提示词增强" });
+
+    wrapper.createDiv({
+      cls: "codex-resource-note",
+      text: `内置子代理 ${ENHANCE_PROMPT_AGENT_NAME} 只处理侧边栏输入框文字：无工具、无文件上下文、无写作候选确认。结果会回填输入框，发送前仍可编辑。`
+    });
+
+    this.decorateSetting(new Setting(wrapper).setName("启用增强提示词").setDesc("控制侧边栏左下角星号按钮。").addToggle((toggle) =>
+      toggle.setValue(settings.enabled).onChange(async (value) => {
+        settings.enabled = value;
+        await this.plugin.saveSettings();
+      })
+    ), "toggle-right");
+
+    this.decorateSetting(new Setting(wrapper).setName("增强 Agent 后端").setDesc("默认跟随全局后端，也可以只为提示词增强单独固定。").addDropdown((dropdown) => {
+      dropdown.addOption("default", `跟随全局（${agentBackendLabel(this.plugin.settings.agentBackend, this.copy)}）`);
+      for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
+      dropdown.setValue(settings.backend);
+      dropdown.onChange(async (value) => {
+        settings.backend = value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+        await this.plugin.saveSettings();
+        this.scheduleDisplay();
+      });
+    }), "route");
+
+    if (usesCodex) {
+      wrapper.createDiv({
+        cls: "codex-resource-note codex-prompt-enhancer-backend-note",
+        text: `当前实际使用 Codex：由内置子代理 ${ENHANCE_PROMPT_AGENT_NAME} 执行，不复用改写、续写或普通聊天会话。`
+      });
+      this.decorateSetting(new Setting(wrapper).setName("Codex API 路径").setDesc("只在增强 Agent 使用 Codex 时生效，不影响普通聊天。").addDropdown((dropdown) => {
+        dropdown.addOption("default", `跟随全局（${providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage)}）`);
+        dropdown.addOption("codex-login", "Codex 登录态");
+        for (const provider of this.plugin.settings.apiProviders) {
+          dropdown.addOption(`provider:${provider.id}`, `API Provider：${provider.name || "未命名"} · ${providerModelLabel(provider, this.plugin.settings.settingsLanguage)}`);
+        }
+        dropdown.setValue(settings.codexProviderMode === "custom-api" && settings.activeApiProviderId ? `provider:${settings.activeApiProviderId}` : settings.codexProviderMode);
+        dropdown.onChange(async (value) => {
+          if (value.startsWith("provider:")) {
+            settings.codexProviderMode = "custom-api";
+            settings.activeApiProviderId = value.slice("provider:".length);
+          } else {
+            settings.codexProviderMode = value === "codex-login" ? "codex-login" : "default";
+            settings.activeApiProviderId = "";
+          }
+          await this.plugin.saveSettings();
+          this.scheduleDisplay();
+        });
+      }), "key-round");
+    } else {
+      wrapper.createDiv({
+        cls: "codex-resource-note codex-prompt-enhancer-backend-note",
+        text: `当前实际使用 ${agentBackendLabel(effectiveBackend, this.copy)}：可指定 Provider、模型和 ${effectiveBackend === "hermes" ? "Profile" : "Agent"}。`
+      });
+    }
+
+    const modelChoices = promptEnhancerModelChoices(this.plugin.settings, status?.models.map((model) => model.model) ?? []);
+    this.decorateSetting(new Setting(wrapper).setName("增强模型").setDesc(usesCodex ? "默认不指定模型，使用 Codex 或 API Provider 的默认模型。需要更快时可在这里单独固定。" : "默认不指定模型，使用当前后端默认模型。OpenCode/Hermes 需要同时填写模型 Provider ID 才会固定模型。").addDropdown((dropdown) => {
+      dropdown.addOption("", "自动（后端默认）");
+      for (const model of modelChoices) dropdown.addOption(model, model);
+      dropdown.setValue(modelChoices.includes(settings.model) ? settings.model : DEFAULT_PROMPT_ENHANCER_MODEL);
+      dropdown.onChange(async (value) => {
+        settings.model = value.trim();
+        await this.plugin.saveSettings();
+      });
+    }), "box");
+
+    if (!usesCodex) {
+      this.addProviderText(wrapper, "模型 Provider ID", settings.providerId, "可选，例如 openai / anthropic / deepseek", async (value) => {
+        settings.providerId = value.trim();
+        await this.plugin.saveSettings();
+      });
+      this.addProviderText(wrapper, effectiveBackend === "hermes" ? "后端 Profile（可选）" : "自定义后端 Agent（可选）", settings.agent, effectiveBackend === "opencode" ? `留空使用内置 ${ENHANCE_PROMPT_AGENT_NAME}` : "留空使用后端默认", async (value) => {
+        settings.agent = value.trim();
+        await this.plugin.saveSettings();
+      });
+      if (effectiveBackend === "opencode") {
+        wrapper.createDiv({
+          cls: "codex-resource-note",
+          text: `OpenCode 留空时使用隔离的内置 ${ENHANCE_PROMPT_AGENT_NAME}；自定义 Agent 必须是可直接运行的 primary Agent，不能选择 build 等 subagent。`
+        });
+      }
+    }
+
+    this.renderPromptEnhancerMetaPrompt(wrapper);
+
+    this.addEditorActionNumber(wrapper, "输入长度上限", settings.maxInputChars, 100, 20000, async (value) => {
+      settings.maxInputChars = value;
+      await this.plugin.saveSettings();
+    });
+    this.addEditorActionNumber(wrapper, "超时秒数", Math.round(settings.timeoutMs / 1000), 10, 300, async (value) => {
+      settings.timeoutMs = value * 1000;
+      await this.plugin.saveSettings();
+    });
+  }
+
+  private renderPromptEnhancerMetaPrompt(container: HTMLElement): void {
+    const details = container.createEl("details", { cls: "codex-prompt-enhancer-meta" });
+    const summary = details.createEl("summary", { cls: "codex-prompt-enhancer-meta-summary" });
+    const icon = summary.createSpan({ cls: "codex-setting-icon" });
+    setIcon(icon, "file-text");
+    summary.createSpan({ text: "查看内置 Meta-Prompt" });
+    details.createDiv({
+      cls: "codex-resource-note",
+      text: "这是提示词增强的默认提示词。它不是外部文件；当前版本内置在插件代码里。"
+    });
+    const actions = details.createDiv({ cls: "codex-prompt-enhancer-meta-actions" });
+    const copyButton = actions.createEl("button", {
+      cls: "codex-resource-refresh",
+      text: "复制",
+      attr: { type: "button" }
+    });
+    copyButton.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(ENHANCE_META_PROMPT);
+        new Notice("已复制内置 Meta-Prompt");
+      } catch (error) {
+        new Notice(`复制失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    const textarea = details.createEl("textarea", {
+      cls: "codex-api-provider-textarea codex-prompt-enhancer-meta-text",
+      attr: { readonly: "true" }
+    }) as HTMLTextAreaElement;
+    textarea.value = ENHANCE_META_PROMPT;
   }
 
   private renderEditorActionSettings(container: HTMLElement): void {
@@ -2045,6 +2188,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; icon: string }> = [
   { id: "general", icon: "settings" },
   { id: "providers", icon: "key-round" },
   { id: "resources", icon: "blocks" },
+  { id: "promptEnhancer", icon: "sparkles" },
   { id: "editorActions", icon: "wand-sparkles" },
   { id: "knowledgeBase", icon: "library" },
   { id: "review", icon: "bar-chart-3" }

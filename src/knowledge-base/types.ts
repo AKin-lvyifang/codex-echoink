@@ -1,7 +1,32 @@
 import type { AgentInputModality } from "../agent/types";
+import type { HarnessEventType } from "../harness/contracts/event";
 
 export type KnowledgeBaseRunMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox";
 export type KnowledgeBaseCommandUiMode = KnowledgeBaseRunMode | "calibrate";
+export type KnowledgeWorkflowPhaseId = "prepare" | "digest" | "organize" | "report" | "complete";
+
+export interface KnowledgeWorkflowEvent {
+  type: Extract<HarnessEventType,
+    | "workflow.started"
+    | "workflow.phase.started"
+    | "workflow.phase.progress"
+    | "workflow.phase.completed"
+    | "workflow.phase.failed"
+    | "workflow.validation.result"
+    | "workflow.transaction.committed"
+    | "workflow.transaction.rolled_back"
+    | "workflow.artifact.created"
+    | "workflow.report.ready"
+    | "workflow.completed">;
+  phaseId?: KnowledgeWorkflowPhaseId;
+  title?: string;
+  status?: "running" | "success" | "failed" | "canceled";
+  current?: number;
+  total?: number;
+  message?: string;
+  createdAt: number;
+}
+
 export type KnowledgeBaseCitationBucket = "wiki" | "journal" | "outputs";
 export type KnowledgeBaseEvidenceStatus = "strong" | "weak" | "none";
 

@@ -9,6 +9,7 @@ import { buildActionTimeline } from "../../ui/codex-view/action-timeline";
 import { buildAgentTurnProjection } from "../../ui/codex-view/agent-turn-process";
 import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAgentEventForChat } from "../../ui/codex-view/agent-event-renderer";
 import { messageProvenanceMetaItems } from "../../ui/codex-view/message-list";
+import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
 import { messageRenderOptionsForRunUpdate, startChatTurn } from "../../ui/codex-view/turn-runner";
 import { renderTabsView } from "../../ui/codex-view/session-controller";
 
@@ -48,12 +49,12 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
     createdAt: 1
   };
   const hermesState = reduceAgentEventForChat(createAgentEventRenderState("hermes"), hermesThinking);
-  assert.equal(hermesState.thinkingBlocks.length, 0);
+  assert.equal(hermesState.thinkingBlocks.length, 1);
   assert.equal(buildInlineAgentProcessMessages(hermesState, {
     runId: "run-hermes",
     backendId: "hermes",
     createdAt: 1
-  }).some((message) => message.itemType === "reasoning"), false);
+  }).some((message) => message.itemType === "reasoning"), true);
 
   const codexState = reduceAgentEventForChat(createAgentEventRenderState("codex-cli"), {
     ...hermesThinking,
@@ -62,6 +63,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   });
   assert.equal(codexState.thinkingBlocks.length, 1);
 
+  testCompletedTurnKeepsBackendNeutralProcessSummary();
   await testUnifiedChatHarnessTurn();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
 
@@ -74,15 +76,56 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.match(turnRunnerSource, /createHarnessAgentAdapter/);
   assert.match(turnRunnerSource, /runHarnessWithAdapter/);
   assert.doesNotMatch(turnRunnerSource, /runAgentTaskWithEvents/);
+  assert.doesNotMatch(turnRunnerSource, /harnessBackendUsesThinkingMessage/);
   assert.match(messageListSource, /buildAgentTurnProjection\(messages\)/);
   assert.match(messageListSource, /tryUpdateMessage\(message:\s*ChatMessage\)/);
   assert.match(messageListSource, /message\.status !== "running"/);
+  assert.match(messageListSource, /COLD_START_STATUS_TEXTS/);
+  assert.match(messageListSource, /本轮 \$\{formatCompactNumber\(lastTokens\)\} tokens/);
+  assert.match(messageListSource, /上下文 \$\{usage\.label\}/);
+  assert.match(messageListSource, /formatAgentTurnDuration/);
   for (const selector of [".codex-agent-header", ".codex-message-type-actionStream", ".codex-turn-process", ".codex-action-region"]) {
     assert.ok(styles.includes(`${selector} {`) || styles.includes(`${selector},`), `Missing UI selector ${selector}`);
+  }
+  assert.match(styles, /\.codex-agent-avatar\s*\{[\s\S]*background:\s*#8b5cf6/);
+  for (const selector of [".codex-process-raw-title", ".codex-diff-stats", ".codex-diff-file-path", ".codex-process-file-link.codex-diff-file-path"]) {
+    const escaped = selector.replaceAll(".", "\\.");
+    assert.match(styles, new RegExp(`${escaped}\\s*(?:,[^{}]+)?\\{[^{}]*font-weight:\\s*400`));
   }
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name-row\s*\{[\s\S]*flex-wrap:\s*wrap/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name\s*\{[\s\S]*white-space:\s*nowrap/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-kb-maintain-report-path\s*\{[\s\S]*overflow-wrap:\s*anywhere[\s\S]*white-space:\s*normal/);
+}
+
+function testCompletedTurnKeepsBackendNeutralProcessSummary(): void {
+  const session: StoredSession = {
+    id: "chat-process-fallback",
+    title: "Process fallback",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [
+      { id: "user-fallback", role: "user", text: "ping", runId: "run-fallback", createdAt: 1_000 },
+      { id: "answer-fallback", role: "assistant", itemType: "assistant", text: "pong", status: "completed", runId: "run-fallback", createdAt: 2_000, completedAt: 3_000 }
+    ],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const store = new SessionMessageStore({
+    getActiveRunId: () => "run-fallback",
+    getActiveTurnId: () => "",
+    getVaultPath: () => "/tmp/echoink-chat-ui",
+    externalizeMessageText: async () => undefined,
+    renderMessagesIfActive: () => undefined,
+    scheduleSessionSave: () => undefined
+  });
+
+  store.ensureThinkingMessage(session, "初始化", "正在初始化 EchoInk 运行...");
+  store.finishThinkingMessage(session, "完成");
+
+  const fallback = session.messages.find((message) => message.itemType === "thinking");
+  assert.equal(fallback?.status, "completed");
+  assert.equal(fallback?.text, "处理完成");
+  const projection = buildAgentTurnProjection(session.messages);
+  assert.equal(projection.some((item) => item.kind === "completedProcess"), true);
 }
 
 async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> {
@@ -213,10 +256,11 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
       harnessRuns += 1;
       capturedRequest = input.request;
       const runId = String(input.request.runId);
-      await input.sink(harnessEvent(runId, 1, "agent.message.delta", { text: "统一答复" }));
-      await input.sink(harnessEvent(runId, 2, "tool.requested", { toolName: "read_file", data: { toolCallId: "tool-1" } }));
-      await input.sink(harnessEvent(runId, 3, "tool.completed", { toolName: "read_file", data: { toolCallId: "tool-1", output: "ok" } }));
-      await input.sink(harnessEvent(runId, 4, "run.completed", { text: "统一答复", status: "completed" }));
+      await input.sink(harnessEvent(runId, 1, "agent.thinking.delta", { text: "正在分析" }));
+      await input.sink(harnessEvent(runId, 2, "agent.message.delta", { text: "统一答复" }));
+      await input.sink(harnessEvent(runId, 3, "tool.requested", { toolName: "read_file", data: { toolCallId: "tool-1" } }));
+      await input.sink(harnessEvent(runId, 4, "tool.completed", { toolName: "read_file", data: { toolCallId: "tool-1", output: "ok" } }));
+      await input.sink(harnessEvent(runId, 5, "run.completed", { text: "统一答复", status: "completed" }));
       return {
         runId,
         status: "completed" as const,
@@ -237,6 +281,8 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   let activeRunKind = "";
   let activeRunSessionId = "";
   let running = false;
+  let thinkingStarts = 0;
+  let thinkingFinishes = 0;
   const view: any = {
     plugin,
     get running() { return running; },
@@ -264,10 +310,10 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
       activeRunKind = "";
       activeRunSessionId = "";
     },
-    ensureThinkingMessage: () => undefined,
+    ensureThinkingMessage: () => { thinkingStarts += 1; },
     armTurnWatchdog: () => undefined,
     attachTurnIdToRun: () => undefined,
-    finishThinkingMessage: () => undefined,
+    finishThinkingMessage: () => { thinkingFinishes += 1; },
     finishRunningProcessMessages: () => undefined,
     finishPlanMessage: () => undefined,
     afterTurnSettled: async () => undefined
@@ -284,6 +330,9 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   assert.equal(answer?.text, "统一答复");
   assert.equal(answer?.backendId, "hermes");
   assert.equal(answer?.nativeLeaseId, "lease-hermes-1");
+  assert.equal(thinkingStarts > 0, true, "Hermes must use the same EchoInk thinking lifecycle as other backends");
+  assert.equal(thinkingFinishes, 1);
+  assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "reasoning" && /正在分析/.test(message.text)), true);
   assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "dynamicToolCall" && message.processKind === "view"), true);
 }
 

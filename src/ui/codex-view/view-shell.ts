@@ -3,7 +3,7 @@ import type CodexForObsidianPlugin from "../../main";
 import type { StoredSession } from "../../settings/settings";
 import { shouldCloseComposerMenusForClick } from "../composer-menu";
 import { renderComposerShell } from "./composer";
-import { enhanceChatInput as enhanceChatInputRunner } from "./editor-action-runner";
+import { enhanceChatInput as enhanceChatInputRunner } from "./prompt-enhancer-runner";
 import { renderCodexHeader } from "./header";
 import type { CodexViewPromptEnhanceContext } from "./runner-context";
 
@@ -57,7 +57,7 @@ export interface CodexViewShellHost extends Component {
   renderEditorActionStatus(): void;
 }
 
-export function renderViewShell(host: CodexViewShellHost, editorActionRunnerContext: CodexViewPromptEnhanceContext): void {
+export function renderViewShell(host: CodexViewShellHost, promptEnhancerRunnerContext: CodexViewPromptEnhanceContext): void {
   host.clearKnowledgeDashboardHealthTooltips();
   host.contentEl.empty();
   host.rootEl = host.contentEl.createDiv({ cls: "codex-container" });
@@ -105,7 +105,7 @@ export function renderViewShell(host: CodexViewShellHost, editorActionRunnerCont
   const composerRefs = renderComposerShell(host.rootEl, {
     onInputChanged: () => host.onInputChanged(),
     onPasteFiles: (event) => void host.handlePastedFiles(event),
-    onEnhancePrompt: () => void enhanceChatInputRunner(editorActionRunnerContext),
+    onEnhancePrompt: () => void enhanceChatInputRunner(promptEnhancerRunnerContext),
     onSendMessage: () => void host.sendMessage(),
     onDropFiles: (event) => host.handleDroppedFiles(event)
   });

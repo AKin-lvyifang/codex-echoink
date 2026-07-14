@@ -30,6 +30,7 @@ import {
   sendEditorActionRequest as sendEditorActionRequestRunner,
   setArticleUnderstandingPanelState as setArticleUnderstandingPanelStateRunner
 } from "./codex-view/editor-action-runner";
+import { enhanceChatInput as enhanceChatInputRunner } from "./codex-view/prompt-enhancer-runner";
 import {
   afterTurnSettled as afterTurnSettledRunner,
   createQueuedTurnFromComposer as createQueuedTurnFromComposerRunner,
@@ -43,7 +44,7 @@ import {
   startQueuedTurnItem as startQueuedTurnItemRunner,
   startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner
 } from "./codex-view/turn-runner";
-import type { CodexViewPromptEnhanceContext, CodexViewTurnContext } from "./codex-view/runner-context";
+import type { CodexViewEditorActionContext, CodexViewPromptEnhanceContext, CodexViewTurnContext } from "./codex-view/runner-context";
 import { type ArticleUnderstandingPanelState } from "./codex-view/header";
 import { createKnowledgeDashboardTooltipState, disposeKnowledgeDashboardTooltipState } from "./codex-view/knowledge-dashboard";
 import { CodexNotificationRouter, type CodexNotificationRouterContext } from "./codex-view/notification-router";
@@ -202,6 +203,9 @@ export class CodexView extends ItemView {
   private activeRunKind: "chat" | "knowledge-base" | "editor" | "";
   private activeRunSessionId = "";
   private activeTurnId = "";
+  private promptEnhancerRunning = false;
+  private promptEnhancerRunId = "";
+  private promptEnhancerTurnId = "";
   private turnStartedAt = 0;
   private turnWatchdog: number | null = null;
   private sessionSaveTimer: number | null = null;
@@ -242,7 +246,8 @@ export class CodexView extends ItemView {
   private queueStartInProgress = false;
   private draggedQueueItemId = "";
   private readonly turnRunnerContext: CodexViewTurnContext;
-  private readonly editorActionRunnerContext: CodexViewPromptEnhanceContext;
+  private readonly editorActionRunnerContext: CodexViewEditorActionContext;
+  private readonly promptEnhancerRunnerContext: CodexViewPromptEnhanceContext;
   private readonly notificationRouter: CodexNotificationRouter;
 
   get messagesBottomFollowPaused(): boolean {
@@ -263,6 +268,7 @@ export class CodexView extends ItemView {
     this.activeRunKind = "";
     this.turnRunnerContext = this.createTurnRunnerContext();
     this.editorActionRunnerContext = this.createEditorActionRunnerContext();
+    this.promptEnhancerRunnerContext = this.createPromptEnhancerRunnerContext();
     this.notificationRouter = new CodexNotificationRouter(this.createNotificationRouterContext());
   }
 
@@ -288,12 +294,20 @@ export class CodexView extends ItemView {
     } satisfies CodexViewTurnContext;
   }
 
-  private createEditorActionRunnerContext(): CodexViewPromptEnhanceContext {
+  private createEditorActionRunnerContext(): CodexViewEditorActionContext {
     const view = this;
     return {
       get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return view.running; }, set running(value) { view.running = value; }, get activeRunId() { return view.activeRunId; }, set activeRunId(value) { view.activeRunId = value; }, get activeRunKind() { return view.activeRunKind; }, set activeRunKind(value) { view.activeRunKind = value; }, get activeRunSessionId() { return view.activeRunSessionId; }, set activeRunSessionId(value) { view.activeRunSessionId = value; }, get activeTurnId() { return view.activeTurnId; }, set activeTurnId(value) { view.activeTurnId = value; },
-      get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
+      get editorActionHarnessRunId() { return view.editorActionHarnessRunId; }, set editorActionHarnessRunId(value) { view.editorActionHarnessRunId = value; }, get editorActionActiveTimeoutMs() { return view.editorActionActiveTimeoutMs; }, set editorActionActiveTimeoutMs(value) { view.editorActionActiveTimeoutMs = value; }, get editorActionThreadId() { return view.editorActionThreadId; }, set editorActionThreadId(value) { view.editorActionThreadId = value; }, get editorActionCurrentItemIds() { return view.editorActionCurrentItemIds; }, get articleUnderstandingPanelState() { return view.articleUnderstandingPanelState; }, set articleUnderstandingPanelState(value) { view.articleUnderstandingPanelState = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), editorActionStartBlockReason: () => view.editorActionStartBlockReason(), setEditorActionStatus: (status) => view.setEditorActionStatus(status), withEditorActionTimeout: (promise, timeoutMs, message) => view.withEditorActionTimeout(promise, timeoutMs, message), prewarmEditorActionThread: () => view.prewarmEditorActionThread(), effectiveEditorActionModel: (availableModels, configuredModel) => view.effectiveEditorActionModel(availableModels, configuredModel), takeEditorActionThread: (turnOptions) => view.takeEditorActionThread(turnOptions), releaseEditorActionRunLock: (runId) => view.releaseEditorActionRunLock(runId), renderEditorActionStatus: () => view.renderEditorActionStatus(), activeProviderModels: () => view.activeProviderModels()
+    } satisfies CodexViewEditorActionContext;
+  }
+
+  private createPromptEnhancerRunnerContext(): CodexViewPromptEnhanceContext {
+    const view = this;
+    return {
+      get plugin() { return view.plugin; }, get normalTaskRunning() { return view.running; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; }, get promptEnhancerRunning() { return view.promptEnhancerRunning; }, set promptEnhancerRunning(value) { view.promptEnhancerRunning = value; }, get promptEnhancerRunId() { return view.promptEnhancerRunId; }, set promptEnhancerRunId(value) { view.promptEnhancerRunId = value; }, get promptEnhancerTurnId() { return view.promptEnhancerTurnId; }, set promptEnhancerTurnId(value) { view.promptEnhancerTurnId = value; }, get selectedServiceTier() { return view.selectedServiceTier; },
+      applyStatus: () => view.applyStatus(), renderToolbar: () => view.renderToolbar(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
     } satisfies CodexViewPromptEnhanceContext;
   }
 
@@ -336,6 +350,15 @@ export class CodexView extends ItemView {
     this.clearEditorActionStatusTimers();
     this.clearKnowledgeBaseRunProgressTimer();
     disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
+    const promptEnhancerRunId = this.promptEnhancerRunId;
+    this.promptEnhancerRunning = false;
+    this.promptEnhancerRunId = "";
+    this.promptEnhancerTurnId = "";
+    if (promptEnhancerRunId) {
+      await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
+        console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
+      });
+    }
     const activeRunId = this.activeRunId;
     const activeRunKind = this.activeRunKind;
     const activeRunSessionId = activeRunId && activeRunKind !== "editor" ? this.activeRunSession().id : "";
@@ -413,7 +436,7 @@ export class CodexView extends ItemView {
     window.setTimeout(() => this.inputEl?.focus(), 50);
   }
 
-  private render(): void { renderViewShell(this.shellHost(), this.editorActionRunnerContext); }
+  private render(): void { renderViewShell(this.shellHost(), this.promptEnhancerRunnerContext); }
   private updateInputPlaceholder(): void { updateInputPlaceholderAction(this.headerHost()); }
   private renderHeaderHistory(): void { renderHeaderHistoryAction(this.headerHost()); }
   private applyStatus(): void { applyStatusAction(this.headerHost()); }
@@ -442,6 +465,7 @@ export class CodexView extends ItemView {
 
   private clearKnowledgeDashboardHealthTooltips(): void { clearKnowledgeDashboardTooltips(this.knowledgeDashboardHost()); }
   private renderToolbar(): void { renderToolbarAction(this.composerHost()); }
+  private enhancePrompt(): void { void enhanceChatInputRunner(this.promptEnhancerRunnerContext); }
   private renderQueue(): void { renderQueueAction(this.composerHost()); }
   private renderAttachments(): void { renderAttachmentsView(this.attachmentHost()); }
   private closeComposerMenus(): void { closeComposerMenusAction(this.composerHost()); }
@@ -480,8 +504,21 @@ export class CodexView extends ItemView {
   private pauseQueueForSession(sessionId: string): void { pauseQueueForSessionAction(this.composerHost(), sessionId); }
   private sessionById(sessionId: string): StoredSession | null { return sessionByIdAction(this.sessionHost(), sessionId); }
 
-  private async sendMessage(): Promise<void> { await sendMessageRunner(this.turnRunnerContext); }
-  private async enqueueComposerDraft(): Promise<void> { await enqueueComposerDraftRunner(this.turnRunnerContext); }
+  private async sendMessage(): Promise<void> {
+    if (this.promptEnhancerRunning) {
+      new Notice("提示词正在增强，请稍候");
+      return;
+    }
+    await sendMessageRunner(this.turnRunnerContext);
+  }
+
+  private async enqueueComposerDraft(): Promise<void> {
+    if (this.promptEnhancerRunning) {
+      new Notice("提示词正在增强，请稍候");
+      return;
+    }
+    await enqueueComposerDraftRunner(this.turnRunnerContext);
+  }
   private async resumeQueuedTurns(sessionId: string): Promise<void> { await resumeQueuedTurnsRunner(this.turnRunnerContext, sessionId); }
   private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> { await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded); }
   private async startNextQueuedTurn(sessionId: string): Promise<void> { await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId); }

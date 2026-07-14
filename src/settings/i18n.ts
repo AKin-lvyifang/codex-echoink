@@ -70,6 +70,7 @@ const ZH_CN = {
     general: "基础设置",
     providers: "API Provider",
     resources: "工作区能力",
+    promptEnhancer: "提示词增强",
     editorActions: "写作操作",
     knowledgeBase: "知识库管理",
     review: "复盘"
@@ -438,6 +439,7 @@ const EN: SettingsCopy = {
     general: "General",
     providers: "API Provider",
     resources: "Capabilities",
+    promptEnhancer: "Prompt enhancer",
     editorActions: "Writing",
     knowledgeBase: "Knowledge",
     review: "Review"

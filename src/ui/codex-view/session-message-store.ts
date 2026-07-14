@@ -3,7 +3,7 @@ import type { ProcessFileRef } from "../../types/app-server";
 import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../../core/diff-summary";
 import { basename, reasoningTextFromPayload, summarizeProcessEvent } from "../../core/mapping";
 import { newId } from "../../settings/settings";
-import { isProcessItemType } from "./message-list";
+import { insertAgentProcessMessage, isAgentProcessItemType as isProcessItemType } from "./agent-turn-process";
 
 export type SessionMessageInput = Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>;
 
@@ -125,11 +125,22 @@ export class SessionMessageStore {
     this.context.renderMessagesIfActive(session);
   }
 
-  finishThinkingMessage(session: StoredSession, _status: string): void {
+  finishThinkingMessage(session: StoredSession, status: string): void {
     const messageIndex = session.messages.findIndex((item) => item.id === this.activeThinkingMessageId);
     const message = messageIndex >= 0 ? session.messages[messageIndex] : null;
     if (!message) return;
+    const hasNativeProcess = session.messages.some((item) => item.id !== message.id
+      && sameAgentRun(item, message)
+      && isProcessItemType(item.itemType));
     session.messages.splice(messageIndex, 1);
+    if (!hasNativeProcess) {
+      const settled = settledThinkingMessage(status);
+      message.title = "处理过程";
+      message.text = settled.text;
+      message.status = settled.status;
+      message.completedAt = Date.now();
+      insertAgentProcessMessage(session.messages, message);
+    }
     session.updatedAt = Date.now();
     this.activeThinkingMessageId = "";
     this.context.renderMessagesIfActive(session);
@@ -343,6 +354,17 @@ export class SessionMessageStore {
     const vaultPath = this.context.getVaultPath();
     return summarizeProcessEvent(itemType, payload, vaultPath, session.cwd || vaultPath);
   }
+}
+
+function sameAgentRun(left: ChatMessage, right: ChatMessage): boolean {
+  if (left.runId || right.runId) return Boolean(left.runId && right.runId && left.runId === right.runId);
+  return Boolean(left.turnId && right.turnId && left.turnId === right.turnId);
+}
+
+function settledThinkingMessage(status: string): { status: string; text: string } {
+  if (/完成|成功/.test(status)) return { status: "completed", text: "处理完成" };
+  if (/中断|取消/.test(status)) return { status: "interrupted", text: "处理已中断" };
+  return { status: "failed", text: "处理失败" };
 }
 
 function roleForProcessItem(itemType: string): ChatMessage["role"] {

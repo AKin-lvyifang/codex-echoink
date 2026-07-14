@@ -75,6 +75,9 @@ export function createAgentEventRuntimeWithFallback(
     deleteNativeSession: fallbackRuntime.deleteNativeSession ? (sessionId) => fallbackRuntime.deleteNativeSession!(sessionId) : undefined,
     runTask: (input) => fallbackRuntime.runTask(input),
     async runTaskEvents(input, emit) {
+      if (input.system) {
+        return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
+      }
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {
         return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
       }

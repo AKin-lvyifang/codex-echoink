@@ -1,7 +1,7 @@
 import type { AgentCapabilities } from "../contracts/capability";
 import type { ContextBundle } from "../contracts/context";
 import type { HarnessEventSink } from "../contracts/event";
-import type { BackendSessionBinding, HarnessPermissionPolicy, HarnessRunRequest, HarnessUserInput, OutputContract, ResourceSelectionSnapshot } from "../contracts/run";
+import type { BackendSessionBinding, HarnessPermissionPolicy, HarnessRunRequest, HarnessUserInput, HarnessWorkflow, OutputContract, ResourceSelectionSnapshot } from "../contracts/run";
 import type {
   NativeExecutionCapabilities,
   NativeExecutionDispositionRequest,
@@ -57,6 +57,7 @@ export interface AgentNativeSessionPreparationResult {
 export interface AgentRunRequest {
   runId: string;
   sessionId: string;
+  workflow?: HarnessWorkflow;
   nativeSessionId?: string;
   input: HarnessUserInput;
   permissions: HarnessPermissionPolicy;

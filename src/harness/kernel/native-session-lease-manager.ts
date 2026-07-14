@@ -203,6 +203,7 @@ export function nativeSessionLeasesFromSessions(sessions: StoredSession[]): Nati
 }
 
 function workflowUsesEphemeralRun(request: Pick<HarnessRunRequest, "surface" | "workflow">): boolean {
+  if (request.workflow === "prompt.enhance") return true;
   if (request.surface === "chat") return false;
   if (request.workflow === "knowledge.ask") return false;
   return true;

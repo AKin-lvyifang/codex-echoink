@@ -228,7 +228,7 @@ export class CodexRichRunDriver {
         });
         return;
       }
-      if (status === "cancelled") {
+      if (isCancelledStatus(status)) {
         await this.settle({ status: "cancelled", error: "Run cancelled" }, { type: "run.cancelled", source: "kernel" });
         return;
       }
@@ -550,6 +550,13 @@ function normalizeStatus(status: unknown): string {
   return typeof status === "string"
     ? status.trim().toLowerCase()
     : "";
+}
+
+function isCancelledStatus(status: string): boolean {
+  return status === "cancelled"
+    || status === "canceled"
+    || status === "interrupted"
+    || status === "aborted";
 }
 
 function isRetryingCodexError(params: any): boolean {

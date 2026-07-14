@@ -5,8 +5,10 @@ import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
 import { formatOpenCodeError, isOpenCodeNotFoundError } from "./opencode-errors";
 import { nodeFetch } from "./opencode-fetch";
 import { collectOpenCodeHistoryMessages, normalizeOpenCodeTimeMs, type OpenCodeHistorySnapshot } from "./opencode-history-loader";
+import { assertOpenCodeAgentSelection } from "./opencode-agent-selection";
 import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
 import { runOpenCodeCommand, stopOpenCodeProcess } from "./opencode-process";
+import { isOpenCodeServerHealthy } from "./opencode-server-health";
 import {
   buildOpenCodeRunArgs,
   latestOpenCodeAssistantText,
@@ -80,15 +82,20 @@ export class OpenCodeBackend implements AgentBackend {
     let serverUrl = normalizeOpenCodeServerUrl(this.options.serverUrl, this.options.hostname, this.options.port);
     let command = "";
     if (!this.options.serverUrl.trim()) {
-      command = resolveOpenCodeCommand(this.options.cliPath);
       if (this.options.autoStart) {
-        this.startedServer = await startOpenCodeServer({
-          command,
-          hostname: this.options.hostname,
-          port: this.options.port,
-          cwd: this.options.vaultPath
-        });
-        serverUrl = this.startedServer.url;
+        const canReuse = await isOpenCodeServerHealthy(serverUrl);
+        if (!canReuse) {
+          command = resolveOpenCodeCommand(this.options.cliPath);
+          this.startedServer = await startOpenCodeServer({
+            command,
+            hostname: this.options.hostname,
+            port: this.options.port,
+            cwd: this.options.vaultPath
+          });
+          serverUrl = this.startedServer.url;
+        }
+      } else {
+        command = resolveOpenCodeCommand(this.options.cliPath);
       }
     }
 
@@ -205,15 +212,17 @@ export class OpenCodeBackend implements AgentBackend {
 
   async sendPrompt(options: AgentPromptOptions): Promise<string> {
     const client = this.requireClient();
+    const requestedAgent = options.agent ?? this.options.agent;
     const result = await unwrapOpenCodeResult(client.session.prompt({
       sessionID: options.sessionId,
       directory: this.options.vaultPath,
-      agent: options.agent ?? this.options.agent,
+      agent: requestedAgent,
       ...(options.model ? { model: { providerID: options.model.providerId, modelID: options.model.modelId } } : {}),
       ...(options.system ? { system: options.system } : {}),
       ...(options.tools ? { tools: options.tools } : {}),
       parts: options.parts.map((part) => toOpenCodePromptPart(part))
     }), "OpenCode 执行任务失败");
+    assertOpenCodeAgentSelection(requestedAgent, String(result?.info?.agent ?? ""));
     return openCodePromptText(result?.parts ?? []);
   }
 

@@ -106,6 +106,7 @@ export interface AgentBackend {
 
 export interface AgentTaskInput {
   prompt: string;
+  system?: string;
   nativeSessionId?: string;
   sources?: AgentPromptPart[];
   permission?: PermissionMode;
@@ -116,6 +117,7 @@ export interface AgentTaskInput {
   };
   agent?: string;
   profile?: string;
+  requireDirectAgent?: boolean;
   resources?: PreparedAgentResources;
   toolBridge?: AgentToolBridgeRuntime | null;
   timeoutMs?: number;

@@ -98,9 +98,4 @@ function registerEditorActionCommands(plugin: CodexForObsidianPlugin): void {
     name: "翻译选中文字为英文",
     editorCallback: (editor, view) => void plugin.getEditorActions()?.runEditorActionById(editor, view, "translate")
   });
-  plugin.addCommand({
-    id: "editor-action-enhance",
-    name: "增强提示词",
-    editorCallback: (editor, view) => void plugin.getEditorActions()?.runEditorActionById(editor, view, "enhance")
-  });
 }

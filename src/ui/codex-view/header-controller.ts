@@ -24,6 +24,7 @@ export interface CodexHeaderHost {
   readonly app: App;
   readonly plugin: CodexForObsidianPlugin;
   running: boolean;
+  promptEnhancerRunning: boolean;
   headerStatusEl: HTMLElement;
   headerStatusTextEl: HTMLElement;
   editorActionStatusEl: HTMLElement;
@@ -70,10 +71,10 @@ export function renderHeaderHistory(host: CodexHeaderHost): void {
 
 export function applyStatus(host: CodexHeaderHost): void {
   const status = host.plugin.lastStatus;
-  host.headerStatusTextEl.setText(host.running ? "思考中" : status?.connected ? "活跃" : "未连接");
+  host.headerStatusTextEl.setText(host.promptEnhancerRunning ? "增强中" : host.running ? "思考中" : status?.connected ? "活跃" : "未连接");
   host.headerStatusEl.toggleClass("has-warning", Boolean(status?.errors?.length) || !status?.connected);
   host.headerStatusEl.toggleClass("is-ok", Boolean(status?.connected && !status?.errors?.length));
-  host.headerStatusEl.toggleClass("is-active", host.running);
+  host.headerStatusEl.toggleClass("is-active", host.running || host.promptEnhancerRunning);
   const providerLabel = providerConnectionLabel(host.plugin.settings);
   host.headerStatusEl.setAttr("title", status?.errors?.length ? status.errors.join("\n") : `${status?.accountLabel ?? "未连接"}\n${providerLabel}`);
   updateUsageHeader(host, status?.rateLimits ?? null, host.usageLoading, host.usageError);

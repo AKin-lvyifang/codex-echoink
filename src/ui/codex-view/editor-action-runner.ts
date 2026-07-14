@@ -14,96 +14,9 @@ import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options"
 import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache } from "../../editor-actions/summary-cache";
 import type { ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionRequest } from "../../editor-actions/types";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../../editor-actions/output";
-import { buildEnhancePromptTemplate, detectEnhanceStyle, isAlreadyDetailed } from "../../prompt-enhancer/meta-prompt";
 import type { ArticleUnderstandingPanelState } from "./header";
 import { agentEventToEditorStatus } from "./agent-event-renderer";
-import { clearPromptEnhanceReview, renderPromptEnhanceReview } from "./composer";
-import type { CodexViewEditorActionContext, CodexViewPromptEnhanceContext } from "./runner-context";
-
-export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Promise<void> {
-  const originalInput = view.inputEl.value;
-  const inputText = originalInput.trim();
-  if (!inputText) {
-    new Notice("请先输入要增强的文本");
-    return;
-  }
-  if (isAlreadyDetailed(inputText)) {
-    new Notice("当前输入已经足够详细，无需增强");
-    return;
-  }
-  const blockReason = view.editorActionStartBlockReason();
-  if (blockReason) {
-    new Notice(blockReason);
-    return;
-  }
-  clearPromptEnhanceReview(view.promptEnhanceReviewEl);
-  const settings = view.plugin.settings.editorActions;
-  const qualityMode: EditorActionQualityMode = "quality";
-  const modeConfig = resolveEditorActionModeConfig(settings, qualityMode);
-  const enhanceStyle = detectEnhanceStyle(inputText);
-  const action = {
-    id: "enhance",
-    label: "增强提示词",
-    enabled: true,
-    promptTemplate: buildEnhancePromptTemplate(enhanceStyle)
-  };
-  const style = resolveEditorActionStyle(settings);
-  const now = Date.now();
-  const snapshot = {
-    filePath: "chat-input",
-    fileName: "聊天输入",
-    fromOffset: 0,
-    toOffset: inputText.length,
-    from: { line: 0, ch: 0 },
-    to: { line: 0, ch: inputText.length },
-    selectedText: inputText,
-    beforeContext: "",
-    afterContext: ""
-  };
-  const source = {
-    filePath: "chat-input",
-    fileName: "聊天输入",
-    text: inputText,
-    mtime: now,
-    size: inputText.length
-  };
-  try {
-    const raw = await sendEditorActionRequest(view, {
-      id: newId("chat-enhance"),
-      action,
-      style,
-      snapshot,
-      source,
-      qualityMode,
-      modeConfig,
-      prompt: buildEditorActionPrompt({ action, style, snapshot, qualityMode, modeLabel: modeConfig.label }),
-      createdAt: now
-    });
-    const cleaned = cleanEditorActionOutput(raw).trim();
-    const validation = validateEditorActionCandidateText(cleaned);
-    if (!validation.ok) throw new Error(validation.reason);
-    view.inputEl.value = cleaned;
-    view.inputEl.setSelectionRange(cleaned.length, cleaned.length);
-    view.onInputChanged();
-    renderPromptEnhanceReview(view.promptEnhanceReviewEl, {
-      onRestore: () => {
-        view.inputEl.value = originalInput;
-        view.inputEl.setSelectionRange(originalInput.length, originalInput.length);
-        clearPromptEnhanceReview(view.promptEnhanceReviewEl);
-        view.onInputChanged();
-        view.focusInput();
-        new Notice("已恢复原输入");
-      }
-    });
-    view.setEditorActionStatus({ status: "confirmed", actionLabel: action.label, message: "提示词已增强" });
-    view.focusInput();
-    new Notice("提示词已增强，可编辑后发送");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    view.setEditorActionStatus({ status: "failed", actionLabel: action.label, error: message });
-    new Notice(`增强失败：${message}`);
-  }
-}
+import type { CodexViewEditorActionContext } from "./runner-context";
 
 export async function sendEditorActionRequest(view: CodexViewEditorActionContext, request: EditorActionRequest): Promise<string> {
   const blockReason = view.editorActionStartBlockReason();
@@ -194,7 +107,7 @@ export async function ensureArticleUnderstanding(
   timeoutMs: number,
   forceRefresh = false
 ): Promise<ArticleUnderstandingEntry | null> {
-  if (request.qualityMode === "fast" || request.action.id === "enhance") {
+  if (request.qualityMode === "fast") {
     setArticleUnderstandingPanelState(view, {
       status: "idle",
       source: request.source,
@@ -463,6 +376,11 @@ function harnessEventToAgentEvent(event: HarnessEvent, backend: AgentBackendKind
     case "run.started": return { ...base, type: "run_started" };
     case "agent.message.delta": return { ...base, type: "message_delta" };
     case "agent.message.completed": return { ...base, type: "message_completed" };
+    case "agent.reasoning.started":
+    case "agent.reasoning.summary.delta":
+    case "agent.thinking.delta": return { ...base, type: "thinking_delta" };
+    case "agent.reasoning.summary.completed":
+    case "agent.thinking.completed": return { ...base, type: "thinking_completed" };
     case "adapter.fallback.started": return { ...base, type: "fallback_started" };
     case "agent.plan.updated": return { ...base, type: "plan_updated" };
     case "tool.requested":

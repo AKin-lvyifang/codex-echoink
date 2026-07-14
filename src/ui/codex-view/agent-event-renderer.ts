@@ -95,7 +95,6 @@ export function reduceAgentEventForChat(state: AgentChatRenderState, event: Agen
     return next;
   }
   if (event.type === "thinking_delta") {
-    if (state.backend === "hermes") return next;
     const current = next.thinkingBlocks.at(-1);
     if (current && current.status === "running") {
       next.thinkingBlocks[next.thinkingBlocks.length - 1] = { ...current, text: `${current.text}${event.text ?? ""}` };
@@ -105,7 +104,6 @@ export function reduceAgentEventForChat(state: AgentChatRenderState, event: Agen
     return next;
   }
   if (event.type === "thinking_completed") {
-    if (state.backend === "hermes") return next;
     const current = next.thinkingBlocks.at(-1);
     if (current) {
       next.thinkingBlocks[next.thinkingBlocks.length - 1] = { ...current, status: "completed", text: event.text ?? current.text };

@@ -103,9 +103,17 @@ export interface CodexViewEditorActionContext extends CodexViewRunnerBaseContext
   activeProviderModels(): string[];
 }
 
-export interface CodexViewPromptEnhanceContext extends CodexViewEditorActionContext {
+export interface CodexViewPromptEnhanceContext {
+  readonly plugin: CodexForObsidianPlugin;
+  readonly normalTaskRunning: boolean;
   readonly inputEl: HTMLTextAreaElement;
   readonly promptEnhanceReviewEl: HTMLElement;
+  promptEnhancerRunning: boolean;
+  promptEnhancerRunId: string;
+  promptEnhancerTurnId: string;
+  readonly selectedServiceTier: ServiceTierChoice;
+  applyStatus(): void;
+  renderToolbar(): void;
   onInputChanged(): void;
   focusInput(): void;
 }

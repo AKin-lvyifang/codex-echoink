@@ -47,6 +47,7 @@ export type HermesFetch = (url: string, init?: any) => Promise<{
 const HERMES_INITIAL_POLL_DELAY_MS = 500;
 const HERMES_MAX_POLL_DELAY_MS = 5_000;
 const HERMES_POLL_JITTER_MS = 250;
+const HERMES_PROMPT_ONLY_TOOLSET = "context_engine";
 
 export class HermesBackend implements AgentBackend {
   readonly kind = "hermes" as const;
@@ -141,7 +142,7 @@ export class HermesBackend implements AgentBackend {
 
   async sendPrompt(options: AgentPromptOptions): Promise<string> {
     const text = options.parts.map((part) => part.type === "text" ? part.text : `[file] ${part.path}`).join("\n\n");
-    return (await this.runTask({ prompt: text, model: options.model, agent: options.agent })).text;
+    return (await this.runTask({ prompt: text, system: options.system, model: options.model, agent: options.agent, tools: options.tools })).text;
   }
 
   async abort(runId: string): Promise<void> {
@@ -154,6 +155,7 @@ export class HermesBackend implements AgentBackend {
 
   async runTask(input: AgentTaskInput): Promise<AgentTaskResult> {
     const prompt = buildHermesPrompt(input);
+    const profile = input.profile?.trim() || this.options.profile.trim();
     if (this.options.serverUrl.trim()) {
       throwIfAborted(input.abortSignal);
       const run = await this.fetchJson(`${this.connectionInfo.serverUrl || normalizeHermesServerUrl(this.options.serverUrl, this.options.hostname, this.options.port)}/runs`, {
@@ -163,7 +165,8 @@ export class HermesBackend implements AgentBackend {
           input: prompt,
           model: input.model?.modelId || this.options.modelId || undefined,
           provider: input.model?.providerId || this.options.providerId || undefined,
-          profile: input.profile || this.options.profile || undefined,
+          profile: profile || undefined,
+          instructions: input.system?.trim() || undefined,
           cwd: this.options.vaultPath,
           permission: input.permission ?? "workspace-write"
         })
@@ -179,14 +182,33 @@ export class HermesBackend implements AgentBackend {
       };
     }
     const command = resolveHermesCommand(this.options.cliPath, { exists: this.options.commandExists });
-    const args = ["-z", prompt];
+    const promptOnly = Boolean(input.system?.trim());
+    const noTools = input.tools !== undefined && Object.values(input.tools).every((enabled) => !enabled);
+    const args = profile ? ["--profile", profile] : [];
+    if (promptOnly) args.push("chat", "-q", prompt, "--quiet", "--ignore-rules", "--source", "tool");
+    else args.push("-z", prompt);
+    if (noTools) args.push("--toolsets", HERMES_PROMPT_ONLY_TOOLSET);
     const useConfiguredModel = !isSyntheticHermesDefaultModel(this.options.providerId, this.options.modelId);
     if (useConfiguredModel && this.options.providerId) args.push("--provider", this.options.providerId);
     if (useConfiguredModel && this.options.modelId) args.push("--model", this.options.modelId);
-    if (this.options.profile) args.push("--profile", this.options.profile);
     const localRunId = `hermes-cli-${Date.now()}`;
     input.onRunId?.(localRunId);
-    const output = await this.runProcess(command, args, input.timeoutMs ?? 20 * 60 * 1000, input.abortSignal);
+    const env = input.system?.trim()
+      ? { HERMES_EPHEMERAL_SYSTEM_PROMPT: input.system.trim(), HERMES_IGNORE_RULES: "1" }
+      : undefined;
+    const output = await this.runProcess(
+      command,
+      args,
+      input.timeoutMs ?? 20 * 60 * 1000,
+      input.abortSignal,
+      env
+    );
+    const sessionId = promptOnly ? parseHermesQuietSessionId(output.stderr) : "";
+    if (sessionId) {
+      const cleanupArgs = profile ? ["--profile", profile] : [];
+      cleanupArgs.push("sessions", "delete", sessionId, "--yes");
+      await this.runProcess(command, cleanupArgs, 15_000).catch(swallowError("delete Hermes prompt enhancer session"));
+    }
     return { text: output.stdout.trim() };
   }
 
@@ -232,13 +254,13 @@ export class HermesBackend implements AgentBackend {
     };
   }
 
-  private async runProcess(command: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
+  private async runProcess(command: string, args: string[], timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
     const runner = this.options.processRunner ?? defaultProcessRunner;
     try {
       throwIfAborted(signal);
       return await runner(command, args, {
         cwd: this.options.vaultPath,
-        env: { ...process.env, PATH: process.env.PATH ?? "" },
+        env: { ...process.env, PATH: process.env.PATH ?? "", ...env },
         timeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         signal
@@ -255,6 +277,10 @@ function buildHermesPrompt(input: AgentTaskInput): string {
     input.resources?.warnings?.length ? `资源提示：\n${input.resources.warnings.map((item) => `- ${item}`).join("\n")}` : "",
     input.prompt
   ].filter(Boolean).join("\n\n");
+}
+
+function parseHermesQuietSessionId(stderr: string): string {
+  return stderr.match(/(?:^|\n)session_id:\s*([^\s]+)/)?.[1]?.trim() ?? "";
 }
 
 function configuredHermesModel(providerId: string, modelId: string): AgentModelInfo {

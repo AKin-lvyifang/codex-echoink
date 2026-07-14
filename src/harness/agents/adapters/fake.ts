@@ -27,7 +27,7 @@ export class FakeAgentAdapter implements AgentAdapter {
           resume: options.resumeCapability ?? (options.nativeSessionId || options.nativeExecution?.kind === "session" || options.nativeExecution?.kind === "thread" ? "native" : "emulated"),
           fork: "none"
         },
-        output: { streaming: "emulated", reasoningSummary: "none", planEvents: "none", usage: "emulated" },
+        output: { streaming: "emulated", reasoningSummary: "none", thinkingTrace: "none", planEvents: "none", usage: "emulated" },
         input: { text: "native", image: "none", pdf: "none" },
         cancellation: "emulated"
       },
