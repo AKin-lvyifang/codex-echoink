@@ -4,6 +4,7 @@ import { filterSkillResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
 import type { CodexModel, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
 import { knowledgeCommandOptions, type KnowledgeBaseCommandOption } from "../../knowledge-base/commands";
+import { selectKnowledgeCommandItem, setKnowledgeCommandMenuOpen } from "../knowledge-command-menu";
 import { labelFor } from "./composer";
 import { positionAnchoredMenu, positionSubmenu } from "./floating-menu-position";
 
@@ -258,12 +259,19 @@ export function renderSkillMatches(container: HTMLElement, query: string, state:
   container.addClass("is-visible");
 }
 
-export function renderKnowledgeCommandMatches(container: HTMLElement, query: string, onFillCommand: (command: string) => void): void {
+export function renderKnowledgeCommandMatches(
+  container: HTMLElement,
+  input: HTMLTextAreaElement,
+  query: string,
+  onFillCommand: (command: string) => void
+): void {
   container.empty();
   const matches = knowledgeCommandOptions(query);
-  for (const command of matches) container.appendChild(createKnowledgeCommandItem(command, onFillCommand));
+  matches.forEach((command, index) => container.appendChild(createKnowledgeCommandItem(container, input, command, index, onFillCommand)));
   if (matches.length === 0) container.createDiv({ cls: "codex-skill-empty", text: "没有匹配的知识库命令" });
-  container.addClass("is-visible");
+  container.scrollTop = 0;
+  setKnowledgeCommandMenuOpen(input, container, true);
+  selectKnowledgeCommandItem(input, container, matches.length > 0 ? 0 : -1);
 }
 
 function modelChoicesForState(state: ModelMenuState): CodexModel[] {
@@ -540,8 +548,18 @@ function positionActiveSubmenu(active: ActiveComposerParameterMenu): void {
   active.submenu.style.visibility = "visible";
 }
 
-function createKnowledgeCommandItem(command: KnowledgeBaseCommandOption, onFillCommand: (command: string) => void): HTMLElement {
-  const item = document.createElement("div");
+function createKnowledgeCommandItem(
+  container: HTMLElement,
+  input: HTMLTextAreaElement,
+  command: KnowledgeBaseCommandOption,
+  index: number,
+  onFillCommand: (command: string) => void
+): HTMLElement {
+  const item = document.createElement("button");
+  item.setAttribute("type", "button");
+  item.setAttribute("role", "option");
+  item.setAttribute("aria-selected", "false");
+  item.id = `${container.id}-option-${index}`;
   item.addClass("codex-command-item");
   const icon = item.createSpan({ cls: "codex-command-icon" });
   setIcon(icon, command.icon);
@@ -550,6 +568,8 @@ function createKnowledgeCommandItem(command: KnowledgeBaseCommandOption, onFillC
   heading.createSpan({ cls: "codex-command-text", text: command.text.trim() });
   heading.createSpan({ cls: "codex-command-title", text: command.title });
   body.createDiv({ cls: "codex-command-desc", text: command.description });
+  item.onmouseenter = () => selectKnowledgeCommandItem(input, container, index);
+  item.onmousedown = (event) => event.preventDefault();
   item.onclick = () => onFillCommand(command.text);
   return item;
 }

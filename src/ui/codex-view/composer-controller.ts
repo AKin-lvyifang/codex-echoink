@@ -8,6 +8,7 @@ import { knowledgeCommandQueryForInput } from "../../knowledge-base/commands";
 import { contextUsageView } from "../../core/mapping";
 import { composerStateForRuntimeState, type ComposerPrimaryActionState } from "../composer-state";
 import { RuntimeTurnQueue } from "../turn-queue";
+import { setKnowledgeCommandMenuOpen } from "../knowledge-command-menu";
 import {
   clearPromptEnhanceReview,
   compactReasoningLabel,
@@ -186,10 +187,13 @@ export function renderQueue(host: CodexComposerHost): void {
 
 export function closeComposerMenus(host: CodexComposerHost): void {
   host.skillMenuEl?.removeClass("is-visible");
-  host.knowledgeCommandMenuEl?.removeClass("is-visible");
+  if (host.inputEl && host.knowledgeCommandMenuEl) {
+    setKnowledgeCommandMenuOpen(host.inputEl, host.knowledgeCommandMenuEl, false);
+  }
 }
 
 export function openSkillMenu(host: CodexComposerHost, event: MouseEvent): void {
+  setKnowledgeCommandMenuOpen(host.inputEl, host.knowledgeCommandMenuEl, false);
   showSkillMenu(
     event,
     { skillMenuEl: host.skillMenuEl, knowledgeCommandMenuEl: host.knowledgeCommandMenuEl },
@@ -313,7 +317,7 @@ export function onInputChanged(host: CodexComposerHost): void {
   host.renderToolbar();
   const query = knowledgeCommandQueryForInput(host.inputEl.value, host.isKnowledgeBaseSession(host.ensureSession()));
   if (query === null) {
-    host.knowledgeCommandMenuEl.removeClass("is-visible");
+    setKnowledgeCommandMenuOpen(host.inputEl, host.knowledgeCommandMenuEl, false);
     return;
   }
   host.renderKnowledgeCommandMatches(query);
@@ -340,7 +344,7 @@ export function renderSkillMatches(host: CodexComposerHost, query = ""): void {
 }
 
 export function renderKnowledgeCommandMatches(host: CodexComposerHost, query: string): void {
-  renderKnowledgeCommandMatchesView(host.knowledgeCommandMenuEl, query, (command) => fillKnowledgeBaseCommand(host, command));
+  renderKnowledgeCommandMatchesView(host.knowledgeCommandMenuEl, host.inputEl, query, (command) => fillKnowledgeBaseCommand(host, command));
 }
 
 export function hasComposerDraft(host: CodexComposerHost): boolean {

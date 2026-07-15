@@ -212,6 +212,7 @@ import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMar
 import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
 import type { RawSnapshotEntry } from "../knowledge-base/raw-integrity";
 import { KNOWLEDGE_BASE_COMMAND_GUIDE, getTrailingSlashQuery, knowledgeBaseHelpText, knowledgeCommandOptions, knowledgeCommandQueryForInput, parseKnowledgeBaseCommand, shouldHandleKnowledgeBaseCommand } from "../knowledge-base/commands";
+import { nextKnowledgeCommandSelectionIndex } from "../ui/knowledge-command-menu";
 import { buildKnowledgeBaseCitationSummary, findKnowledgeBaseAskMatches, stripAskCommand } from "../knowledge-base/query";
 import {
   compactKnowledgeBaseMessagesToActiveDay,
@@ -1607,6 +1608,12 @@ assert.deepEqual(knowledgeCommandOptions("").map((item) => item.text), ["/ask ",
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/maintain "));
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/history"));
 assert.ok(knowledgeCommandOptions("").some((item) => item.text === "/clear"));
+assert.equal(nextKnowledgeCommandSelectionIndex(-1, 4, 1), 0);
+assert.equal(nextKnowledgeCommandSelectionIndex(-1, 4, -1), 3);
+assert.equal(nextKnowledgeCommandSelectionIndex(0, 4, 1), 1);
+assert.equal(nextKnowledgeCommandSelectionIndex(3, 4, 1), 0);
+assert.equal(nextKnowledgeCommandSelectionIndex(0, 4, -1), 3);
+assert.equal(nextKnowledgeCommandSelectionIndex(2, 0, 1), -1);
 assert.deepEqual(parseKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？").intent, "chat");
 assert.equal(shouldHandleKnowledgeBaseCommand("Harness Engineering 和 Vibe Coding 有什么关系？"), false);
 assert.equal(shouldHandleKnowledgeBaseCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), true);
@@ -3199,6 +3206,11 @@ assert.equal(
 );
 
 const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
+const knowledgeCommandMenuCss = cssRuleBody(settingsStyles, ".codex-knowledge-command-menu");
+const knowledgeCommandItemCss = cssRuleBody(settingsStyles, ".codex-command-item");
+const knowledgeCommandSelectedCss = cssRuleBody(settingsStyles, ".codex-command-item.is-selected");
+const knowledgeCommandIconCss = cssRuleBody(settingsStyles, ".codex-command-icon");
+const knowledgeCommandTextCss = cssRuleBody(settingsStyles, ".codex-command-text");
 const codexViewSource = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
 const codexViewHeaderSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/header.ts"), "utf8");
 const codexViewHistoryModalSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/history-modal.ts"), "utf8");
@@ -3590,6 +3602,14 @@ assert.match(settingsStyles, /\.codex-resource-empty\.is-hidden/);
 assert.match(processFileLinkCss, /background:\s*transparent;/);
 assert.match(processFileLinkCss, /border:\s*0;/);
 assert.doesNotMatch(processFileLinkCss, /box-shadow:\s*var\(/);
+assert.match(knowledgeCommandMenuCss, /background:\s*var\(--background-primary\);/);
+assert.match(knowledgeCommandMenuCss, /container-type:\s*inline-size;/);
+assert.match(knowledgeCommandItemCss, /background:\s*transparent;/);
+assert.match(knowledgeCommandItemCss, /border:\s*0;/);
+assert.doesNotMatch(knowledgeCommandItemCss, /border-bottom/);
+assert.match(knowledgeCommandSelectedCss, /background:\s*var\(--background-modifier-hover\);/);
+assert.match(knowledgeCommandIconCss, /color:\s*var\(--text-muted\);/);
+assert.match(knowledgeCommandTextCss, /color:\s*var\(--text-normal\);/);
 assert.match(processIconCss, /color:\s*color-mix\(in srgb,\s*var\(--interactive-accent\)/);
 assert.match(processEditIconCss, /color:\s*var\(--text-accent\);/);
 assert.match(settingsStatusErrorCss, /var\(--text-error\)/);

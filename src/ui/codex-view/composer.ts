@@ -3,7 +3,10 @@ import type { EchoInkResource } from "../../resources/types";
 import type { AgentBackendMode, StoredAttachment, StoredSession } from "../../settings/settings";
 import type { PermissionMode, ReasoningEffort, UiMode } from "../../types/app-server";
 import { composerPrimaryActionForState, composerStateForRuntimeState } from "../composer-state";
+import { handleKnowledgeCommandMenuKeyDown } from "../knowledge-command-menu";
 import type { QueuedTurnItem } from "../turn-queue";
+
+let knowledgeCommandMenuId = 0;
 
 export interface ComposerShellRefs {
   queueEl: HTMLElement;
@@ -104,19 +107,34 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
   const queueEl = inputWrap.createDiv({ cls: "codex-turn-queue" });
   const attachmentsEl = inputWrap.createDiv({ cls: "codex-attachments" });
   const workspaceEl = inputWrap.createDiv({ cls: "codex-composer-workspace" });
+  const commandMenuId = `codex-knowledge-command-menu-${++knowledgeCommandMenuId}`;
   const inputEl = inputWrap.createEl("textarea", {
     cls: "codex-input",
-    attr: { placeholder: "问 Codex，让它管理当前 Obsidian 仓库" }
+    attr: {
+      placeholder: "问 Codex，让它管理当前 Obsidian 仓库",
+      role: "combobox",
+      "aria-autocomplete": "list",
+      "aria-haspopup": "listbox",
+      "aria-expanded": "false",
+      "aria-controls": commandMenuId
+    }
   });
+  const promptEnhanceReviewEl = inputWrap.createDiv({ cls: "codex-composer-enhance-review" });
+  const skillMenuEl = inputWrap.createDiv({ cls: "codex-skill-menu" });
+  const knowledgeCommandMenuEl = inputWrap.createDiv({
+    cls: "codex-knowledge-command-menu",
+    attr: { id: commandMenuId, role: "listbox", "aria-label": "知识库命令" }
+  });
+  const toolbarEl = inputWrap.createDiv({ cls: "codex-toolbar" });
   inputEl.addEventListener("input", callbacks.onInputChanged);
   inputEl.addEventListener("paste", callbacks.onPasteFiles);
   inputEl.addEventListener("keydown", (event) => {
+    if (handleKnowledgeCommandMenuKeyDown(event, inputEl, knowledgeCommandMenuEl)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       callbacks.onSendMessage();
     }
   });
-  const promptEnhanceReviewEl = inputWrap.createDiv({ cls: "codex-composer-enhance-review" });
   inputWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
     inputWrap.addClass("is-dragging");
@@ -134,9 +152,9 @@ export function renderComposerShell(rootEl: HTMLElement, callbacks: ComposerShel
     workspaceEl,
     inputEl,
     promptEnhanceReviewEl,
-    skillMenuEl: inputWrap.createDiv({ cls: "codex-skill-menu" }),
-    knowledgeCommandMenuEl: inputWrap.createDiv({ cls: "codex-knowledge-command-menu" }),
-    toolbarEl: inputWrap.createDiv({ cls: "codex-toolbar" })
+    skillMenuEl,
+    knowledgeCommandMenuEl,
+    toolbarEl
   };
 }
 
