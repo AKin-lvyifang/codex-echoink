@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.png">
+    <img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.jpg">
   </a>
 </p>
 
@@ -182,7 +182,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 ### v1.2.0
 
-<img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.png">
+<img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.jpg">
 
 **统一 Agent Harness 与全新侧栏：** EchoInk 现在为 Codex、OpenCode、Hermes 统一管理运行生命周期、上下文和对话投影；整个侧栏也围绕“先看结论、按需展开过程”和更轻量的响应式输入区重新设计。
 

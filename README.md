@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.png">
+    <img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.jpg">
   </a>
 </p>
 
@@ -178,7 +178,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 ### v1.2.0
 
-<img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.png">
+<img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.jpg">
 
 **Unified Agent Harness and rebuilt sidebar:** EchoInk now owns one run lifecycle, context path, and conversation projection for Codex, OpenCode, and Hermes. The entire sidebar has also been rebuilt around a clearer answer-first conversation and a lighter, responsive composer.
 
