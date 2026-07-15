@@ -572,13 +572,16 @@ export async function listMemoryTransactionIssues(vaultPath: string): Promise<Me
 }
 
 export async function dismissMemoryTransaction(vaultPath: string, transactionId: string, reason: string): Promise<boolean> {
-  return await withMemoryFormalMutation(vaultPath, async () => await dismissMemoryTransactionUnlocked(vaultPath, transactionId, reason));
+  return await withMemoryFormalMutation(vaultPath, async () => {
+    await recoverMemoryTransactionsUnlocked(vaultPath);
+    return await dismissMemoryTransactionUnlocked(vaultPath, transactionId, reason);
+  });
 }
 
 async function dismissMemoryTransactionUnlocked(vaultPath: string, transactionId: string, reason: string): Promise<boolean> {
   const layout = await initializeEchoInkMemoryV2(vaultPath);
   const transaction = await readTransaction(layout.transactions, transactionId).catch(() => null);
-  if (!transaction || transaction.state === "committed" || transaction.state === "recovered") return false;
+  if (!transaction || transaction.state === "committed" || (transaction.state === "recovered" && transaction.outcome !== "pending")) return false;
   await removeCommittedEvents(vaultPath, transaction.eventIds);
   const dismissed = updateTransaction(transaction, {
     state: "committed",

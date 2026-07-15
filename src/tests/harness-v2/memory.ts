@@ -60,6 +60,7 @@ export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertConcurrentRunSyncsSerializeWithoutIssues();
   await assertFormalMutationLanePreservesConcurrentSettingsChanges();
   await assertTransactionIssueActionsShareFormalMutationLane();
+  await assertInterruptedCommittingTransactionRecoversBeforeDismissal();
   await assertFormalSettingsWritesRecoverAfterInterruption();
   await assertInterruptedCommitIsRecoveredBeforeReusingRevision();
   await assertProjectionRepairCasPreservesConcurrentFormalCommit();
@@ -575,6 +576,56 @@ async function assertTransactionIssueActionsShareFormalMutationLane(): Promise<v
   assert.equal(retryIndex.memories.some((item) => item.id === "memory-retry-issue" && !item.deletedAt), true);
   assert.equal(retryIndex.memories.some((item) => item.id === "memory-retry-lane-seed" && item.deletedAt), true);
   assert.equal((await readMemoryManifestV2(retryVault)).revision, retryIndex.revision);
+}
+
+async function assertInterruptedCommittingTransactionRecoversBeforeDismissal(): Promise<void> {
+  const rollForwardVault = await mkdtemp(path.join(tmpdir(), "echoink-memory-v2-dismiss-roll-forward-"));
+  await appendTestPendingEvent(rollForwardVault, "event-dismiss-interrupted", "请记住 DISMISS-INTERRUPTED");
+  const source = await prepareMemoryTransaction(rollForwardVault, ["event-dismiss-interrupted"]);
+  assert.ok(source);
+  const applied = await applyMemoryCuratorResult(
+    rollForwardVault,
+    source.transactionId,
+    curatorWrite(source.transactionId, "event-dismiss-interrupted", "memory-dismiss-interrupted", "DISMISS-INTERRUPTED")
+  );
+  assert.equal(applied.outcome, "write");
+
+  const interrupted = await commitMemoryTransaction(rollForwardVault, source.transactionId, { failAfterIndexWrite: true });
+  assert.equal(interrupted.outcome, "failed");
+  assert.equal((await readPendingMemoryEvents(rollForwardVault)).length, 1);
+  assert.notEqual((await readMemoryManifestV2(rollForwardVault)).revision, (await readMemoryIndexV2(rollForwardVault)).revision);
+
+  const dismissed = await new FileMemoryProvider({ vaultPath: rollForwardVault })
+    .dismissTransaction(source.transactionId, "must recover before dismissal");
+  assert.equal(dismissed, false, "a rolled-forward committing transaction must not be discarded after recovery");
+  const index = await readMemoryIndexV2<MemoryRecordV2>(rollForwardVault);
+  assert.equal(index.memories.some((item) => item.id === "memory-dismiss-interrupted"), true);
+  assert.equal((await readMemoryManifestV2(rollForwardVault)).revision, index.revision);
+  assert.equal((await readPendingMemoryEvents(rollForwardVault)).length, 0);
+
+  const rollBackVault = await mkdtemp(path.join(tmpdir(), "echoink-memory-v2-dismiss-roll-back-"));
+  await appendTestPendingEvent(rollBackVault, "event-dismiss-roll-back", "请记住 DISMISS-ROLL-BACK");
+  const rollBackSource = await prepareMemoryTransaction(rollBackVault, ["event-dismiss-roll-back"]);
+  assert.ok(rollBackSource);
+  const rollBackApplied = await applyMemoryCuratorResult(
+    rollBackVault,
+    rollBackSource.transactionId,
+    curatorWrite(rollBackSource.transactionId, "event-dismiss-roll-back", "memory-dismiss-roll-back", "DISMISS-ROLL-BACK")
+  );
+  assert.equal(rollBackApplied.outcome, "write");
+  const interruptedBeforeIndex = await commitMemoryTransaction(rollBackVault, rollBackSource.transactionId, {
+    beforeIndexWrite: async () => { throw new Error("fail before index write"); }
+  });
+  assert.equal(interruptedBeforeIndex.outcome, "failed");
+  assert.equal((await readPendingMemoryEvents(rollBackVault)).length, 1);
+
+  const dismissedAfterRollback = await new FileMemoryProvider({ vaultPath: rollBackVault })
+    .dismissTransaction(rollBackSource.transactionId, "discard after rollback");
+  assert.equal(dismissedAfterRollback, true, "a rolled-back recovered/pending transaction must still honor explicit dismissal");
+  const rolledBackIndex = await readMemoryIndexV2<MemoryRecordV2>(rollBackVault);
+  assert.equal(rolledBackIndex.memories.some((item) => item.id === "memory-dismiss-roll-back"), false);
+  assert.equal((await readMemoryManifestV2(rollBackVault)).revision, rolledBackIndex.revision);
+  assert.equal((await readPendingMemoryEvents(rollBackVault)).length, 0);
 }
 
 async function assertFormalSettingsWritesRecoverAfterInterruption(): Promise<void> {
