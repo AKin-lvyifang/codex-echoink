@@ -23,14 +23,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.2.1-0EA5E9?style=flat-square" alt="Version v1.2.1">
+    <img src="https://img.shields.io/badge/version-v1.2.2-0EA5E9?style=flat-square" alt="Version v1.2.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.2.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.2.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -175,6 +175,13 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.2.2
+
+**Obsidian review compatibility fix:** Agent parameter menus now follow Obsidian's approved styling APIs, resolving the automated source-review failure reported for `v1.2.1`.
+
+- Menu positioning, visibility, and interaction behavior remain unchanged.
+- Existing Vault files, sessions, and settings do not require migration.
 
 ### v1.2.1
 

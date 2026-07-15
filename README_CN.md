@@ -24,14 +24,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.2.1-0EA5E9?style=flat-square" alt="版本 v1.2.1">
+    <img src="https://img.shields.io/badge/version-v1.2.2-0EA5E9?style=flat-square" alt="版本 v1.2.2">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.2.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.2.2</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -179,6 +179,13 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.2.2
+
+**Obsidian 审核兼容修复：** Agent 参数菜单现在使用 Obsidian 允许的样式接口，修复 `v1.2.1` 被自动源码审核标记为失败的问题。
+
+- 菜单定位、显隐和交互行为保持不变。
+- 现有 Vault 文件、会话和设置无需迁移。
 
 ### v1.2.1
 

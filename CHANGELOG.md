@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v1.2.2 - 2026-07-16
+
+版本号：`v1.2.2`
+
+### 中文
+
+#### 审核兼容修复
+
+1. 修复 Agent 参数菜单使用直接样式赋值导致 Obsidian 自动审核失败的问题。
+2. 保持菜单的定位、显隐和交互行为不变，并扩大源码防回归检查范围，覆盖全部 Agent 侧栏模块。
+
+升级说明：从 `v1.2.1` 直接覆盖安装 `main.js`、`manifest.json`、`styles.css` 即可，不需要迁移 Vault 文件或重建会话。
+
+### English
+
+#### Review compatibility fix
+
+1. Fixed the direct style assignments in Agent parameter menus that caused Obsidian's automated source review to fail.
+2. Preserved menu positioning, visibility, and interaction behavior while extending regression coverage across all Agent sidebar modules.
+
+Upgrade: replace `main.js`, `manifest.json`, and `styles.css` from `v1.2.2`. No Vault migration or session reset is required.
+
 ## v1.2.1 - 2026-07-15
 
 版本号：`v1.2.1`
