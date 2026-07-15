@@ -29,9 +29,8 @@ export function detectHermesCommand(customPath: string, options: HermesCommandRe
   const platform = options.platform ?? process.platform;
   const exists = options.exists ?? ((candidate: string) => fs.existsSync(candidate));
   const envPath = typeof options.envPath === "string" ? options.envPath : process.env.PATH ?? "";
-  const candidates = customPath.trim()
-    ? [expandHome(customPath.trim(), home)]
-    : hermesCommandCandidates(home, platform, envPath, options.appData);
+  const custom = customPath.trim() ? expandHome(customPath.trim(), home) : "";
+  const candidates = [custom, ...hermesCommandCandidates(home, platform, envPath, options.appData)].filter(Boolean);
   return candidates.find((candidate) => candidate && exists(candidate)) ?? null;
 }
 

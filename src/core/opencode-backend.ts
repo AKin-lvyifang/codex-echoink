@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
+import { createOpencodeClient, type OpencodeClient, type ProviderAuthAuthorization, type ProviderAuthMethod } from "@opencode-ai/sdk/v2";
 import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions, AgentTaskResult } from "../agent/types";
 import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
 import { formatOpenCodeError, isOpenCodeNotFoundError } from "./opencode-errors";
@@ -135,6 +135,58 @@ export class OpenCodeBackend implements AgentBackend {
     const client = this.requireClient();
     const response = await unwrapOpenCodeResult(client.app.agents({ directory: this.options.vaultPath }), "读取 OpenCode Agent 失败");
     return flattenOpenCodeAgents(response ?? []);
+  }
+
+  async listProviderAuthMethods(): Promise<Record<string, ProviderAuthMethod[]>> {
+    const response = await unwrapOpenCodeResult(
+      this.requireClient().provider.auth({ directory: this.options.vaultPath }),
+      "读取 OpenCode Provider 授权方式失败"
+    );
+    return response ?? {};
+  }
+
+  async listConnectedProviders(): Promise<string[]> {
+    const response = await unwrapOpenCodeResult(
+      this.requireClient().provider.list({ directory: this.options.vaultPath }),
+      "读取 OpenCode Provider 状态失败"
+    );
+    return Array.isArray(response?.connected) ? response.connected : [];
+  }
+
+  async beginProviderOAuth(providerId: string, method: number, inputs: Record<string, string> = {}): Promise<ProviderAuthAuthorization> {
+    return await unwrapOpenCodeResult(
+      this.requireClient().provider.oauth.authorize({
+        providerID: providerId,
+        directory: this.options.vaultPath,
+        method,
+        inputs
+      }),
+      "启动 OpenCode OAuth 失败"
+    );
+  }
+
+  async completeProviderOAuth(providerId: string, method: number, code?: string): Promise<boolean> {
+    return await unwrapOpenCodeResult(
+      this.requireClient().provider.oauth.callback({
+        providerID: providerId,
+        directory: this.options.vaultPath,
+        method,
+        ...(code?.trim() ? { code: code.trim() } : {})
+      }),
+      "完成 OpenCode OAuth 失败"
+    );
+  }
+
+  async setProviderApiKey(providerId: string, key: string, metadata?: Record<string, string>): Promise<boolean> {
+    const secret = key.trim();
+    if (!secret) throw new Error("OpenCode API Key 不能为空");
+    return await unwrapOpenCodeResult(
+      this.requireClient().auth.set({
+        providerID: providerId,
+        auth: { type: "api", key: secret, ...(metadata ? { metadata } : {}) }
+      }),
+      "保存 OpenCode Provider 凭据失败"
+    );
   }
 
   async collectHistoryMessages(input: { startMs: number; endMs: number; maxSessions?: number; maxMessages?: number; maxChars?: number }): Promise<OpenCodeHistorySnapshot> {

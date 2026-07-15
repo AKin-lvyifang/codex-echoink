@@ -1,5 +1,5 @@
 import { Notice, normalizePath, Platform, setIcon, TFile, type App, type Component } from "obsidian";
-import type { ChatMessage, DiffSummary, SettingsLanguage, StoredAttachment } from "../../settings/settings";
+import type { AgentBackendMode, ChatMessage, DiffSummary, SettingsLanguage, StoredAttachment } from "../../settings/settings";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeWorkflowEvent, KnowledgeWorkflowPhaseId } from "../../knowledge-base/types";
 import type { ProcessFileRef, TokenUsage } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
@@ -13,7 +13,7 @@ import { formatMessageHeaderTime } from "../message-time";
 import { openImageOverlay, renderRichText } from "../render-message";
 import { buildActionTimeline, isActionTimelineItem, type ActionGroupKind, type ActionItemViewModel } from "./action-timeline";
 import { buildAgentTurnProjection, formatAgentTurnDuration, isAgentAnswerMessage, isAgentProcessItemType, type CompletedAgentTurn } from "./agent-turn-process";
-import { codexRecoveryCopy, isMissingCodexCliMessage } from "../codex-recovery";
+import { agentRecoveryCopy, missingAgentCliBackend } from "../codex-recovery";
 
 type MessageRenderRow =
   | { id: string; kind: "message"; message: ChatMessage; showAgentHeader: boolean; showAgentFooter: boolean; processExpanded: boolean }
@@ -40,8 +40,8 @@ export interface MessageListRenderInput {
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
   onOpenKnowledgeHistory: () => void;
-  onAutoRepairCodex: () => void;
-  onOpenPluginSettings: () => void;
+  onAutoRepairAgent: (backend: AgentBackendMode) => void;
+  onOpenAgentSettings: (backend: AgentBackendMode) => void;
   onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
@@ -361,8 +361,9 @@ export class CodexMessageListRenderer {
     wrapper.dataset.messageId = message.id;
     wrapper.toggleClass("codex-message-streaming", message.status === "running");
     wrapper.toggleClass(`codex-message-type-${message.itemType ?? "text"}`, true);
-    if (isMissingCodexCliMessage(message)) {
-      this.renderMissingCodexRecovery(wrapper, message);
+    const missingBackend = missingAgentCliBackend(message);
+    if (missingBackend) {
+      this.renderMissingAgentRecovery(wrapper, message, missingBackend);
       return;
     }
     if (options.showAgentHeader) this.renderAgentHeader(wrapper, {
@@ -415,9 +416,9 @@ export class CodexMessageListRenderer {
     if (options.showAgentFooter) this.renderAgentFooter(wrapper, message);
   }
 
-  private renderMissingCodexRecovery(container: HTMLElement, message: ChatMessage): void {
+  private renderMissingAgentRecovery(container: HTMLElement, message: ChatMessage, backend: AgentBackendMode): void {
     const env = this.requireEnv();
-    const copy = codexRecoveryCopy(env.settingsLanguage);
+    const copy = agentRecoveryCopy(env.settingsLanguage, backend);
     container.addClass("codex-cli-recovery");
     const mark = container.createSpan({ cls: "codex-cli-recovery-icon", attr: { "aria-hidden": "true" } });
     setIcon(mark, "terminal");
@@ -426,9 +427,9 @@ export class CodexMessageListRenderer {
     body.createDiv({ cls: "codex-cli-recovery-detail", text: copy.detail });
     const actions = body.createDiv({ cls: "codex-cli-recovery-actions" });
     const repair = actions.createEl("button", { cls: "codex-cli-recovery-primary", text: copy.repair, attr: { type: "button" } });
-    repair.onclick = env.onAutoRepairCodex;
+    repair.onclick = () => env.onAutoRepairAgent(backend);
     const settings = actions.createEl("button", { cls: "codex-cli-recovery-secondary", text: copy.settings, attr: { type: "button" } });
-    settings.onclick = env.onOpenPluginSettings;
+    settings.onclick = () => env.onOpenAgentSettings(backend);
     const diagnostic = body.createEl("details", { cls: "codex-cli-recovery-diagnostic" });
     diagnostic.createEl("summary", { text: copy.diagnostic });
     diagnostic.createEl("pre", {

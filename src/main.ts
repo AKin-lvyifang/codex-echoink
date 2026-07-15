@@ -19,7 +19,7 @@ import type {
   KnowledgeBaseStorageStats
 } from "./knowledge-base/history-store";
 import type { ReviewManager } from "./review/manager";
-import type { ChatMessage, CodexForObsidianSettings, ResourceManagementTab, StoredSession } from "./settings/settings";
+import type { AgentBackendMode, ChatMessage, CodexForObsidianSettings, ResourceManagementTab, StoredSession } from "./settings/settings";
 import type { CodexNotification, CodexSkill, CodexStatusSnapshot, UserInput } from "./types/app-server";
 import type { CodexView } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
@@ -41,6 +41,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
   lastStatus: CodexStatusSnapshot | null = null;
+  agentSetupTarget: AgentBackendMode | null = null;
   private editorActions: EditorActionController | null = null;
   private knowledgeBase: KnowledgeBaseManager | null = null;
   private review: ReviewManager | null = null;
@@ -76,6 +77,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   refreshKnowledgeBaseSurfaces(): void { this.getViewService().refreshKnowledgeBaseSurfaces(); }
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> { return this.getViewService().openWorkspaceResourceSettings(tab); }
   async openCodexSetup(options: { autoRepair?: boolean } = {}): Promise<void> { return this.getViewService().openCodexSetup(options); }
+  async openAgentSetup(options: { backend: AgentBackendMode; autoRepair?: boolean }): Promise<void> { return this.getViewService().openAgentSetup(options); }
   async openReviewHtmlPreview(relativePath: string): Promise<void> { return this.getViewService().openReviewHtmlPreview(relativePath); }
 
   async ensureCodexConnected(force = false, options: { silent?: boolean; refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {

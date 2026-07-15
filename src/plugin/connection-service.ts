@@ -151,13 +151,14 @@ export class EchoInkConnectionService {
         hermes.modelId = selectedModel.modelId;
       }
       try {
-        await backend.runTask({
+        const probe = await backend.runTask({
           prompt: "只回复 PONG",
           permission: "read-only",
           timeoutMs: 60000,
           ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
           profile: hermes.profile
         });
+        if (!/\bPONG\b/i.test(probe.text.trim())) throw new Error("Hermes 最小连接检查没有返回 PONG");
         hermes.providerConfigured = true;
         hermes.lastProviderCheckAt = Date.now();
         hermes.lastProviderError = "";

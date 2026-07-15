@@ -2005,6 +2005,201 @@ body.theme-light .codex-code-wrapper pre {
   margin-left: 30px;
 }
 
+.codex-agent-installer {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0 16px;
+}
+
+.codex-agent-installer.is-compact {
+  margin: 8px 0 14px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 58%, transparent);
+}
+
+.codex-agent-installer-header {
+  display: grid;
+  gap: 3px;
+}
+
+.codex-agent-installer-list {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.codex-agent-installer-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-normal);
+  background: transparent;
+  text-align: left;
+  box-shadow: none;
+}
+
+.codex-agent-installer-row:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.codex-agent-installer-row.is-selected {
+  background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
+}
+
+.codex-agent-installer-row:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.codex-agent-installer-row:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.codex-agent-installer-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.codex-agent-installer-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.codex-agent-installer-row-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.codex-agent-installer-name {
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-agent-installer-description {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-agent-installer-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.codex-agent-installer-status.is-ready {
+  color: var(--text-success);
+}
+
+.codex-agent-installer-status.is-failed {
+  color: var(--text-error);
+}
+
+.codex-agent-installer-detail {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 10px 0 40px;
+}
+
+.codex-agent-installer-detail-text,
+.codex-agent-installer-path {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.codex-agent-installer-path {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+}
+
+.codex-agent-installer-logs {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.codex-agent-installer-logs summary {
+  cursor: pointer;
+}
+
+.codex-agent-installer-logs pre {
+  max-height: 160px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 0;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.codex-agent-installer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 40px;
+}
+
+.codex-agent-installer-fallback {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.codex-agent-installer-fallback:hover {
+  color: var(--text-normal);
+  text-decoration: underline;
+}
+
+.codex-agent-installer .codex-setup-last-checked {
+  margin-left: 40px;
+}
+
+@media (max-width: 460px) {
+  .codex-agent-installer-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .codex-agent-installer-status {
+    grid-column: 2;
+  }
+
+  .codex-agent-installer-description {
+    white-space: normal;
+  }
+
+  .codex-agent-installer-detail,
+  .codex-agent-installer-actions {
+    padding-left: 38px;
+  }
+
+  .codex-agent-installer .codex-setup-last-checked {
+    margin-left: 38px;
+  }
+}
+
 .codex-settings-tabs {
   display: flex;
   flex-wrap: wrap;

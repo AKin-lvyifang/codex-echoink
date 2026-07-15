@@ -21,7 +21,7 @@ export function detectOpenCodeCommand(customPath: string, options: OpenCodeComma
   const custom = customPath.trim();
   if (custom) {
     const expanded = expandHome(custom, home);
-    return exists(expanded) ? expanded : null;
+    if (exists(expanded)) return expanded;
   }
   return openCodeCommandCandidates(
     home,
@@ -167,6 +167,12 @@ export function selectOpenCodeModelForTask(
     ?? capable[0]
     ?? models.find((model) => model.providerId === "opencode")
     ?? models[0]
+    ?? null;
+}
+
+export function selectOpenCodeSetupModel(models: AgentModelInfo[]): AgentModelInfo | null {
+  return models.find((model) => model.id === "opencode/deepseek-v4-flash-free" || model.modelId === "opencode/deepseek-v4-flash-free")
+    ?? models.find((model) => model.providerId === "opencode" && /(?:^|[-_/])free(?:$|[-_/])/i.test(model.id))
     ?? null;
 }
 

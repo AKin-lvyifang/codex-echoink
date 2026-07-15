@@ -351,37 +351,15 @@ function codexLoginActions(): SetupAction[] {
   ];
 }
 
-function openCodeInstallActions(os: string): SetupAction[] {
-  if (os === "win32") {
-    return [
-      { kind: "copy-command", label: "复制 npm 命令", value: "npm install -g opencode-ai" },
-      { kind: "open-url", label: "打开 OpenCode 文档", value: OPENCODE_DOCS_URL }
-    ];
-  }
-  if (os === "darwin") {
-    return [
-      { kind: "copy-command", label: "复制 npm 命令", value: "npm install -g opencode-ai" },
-      { kind: "copy-command", label: "复制安装脚本", value: "curl -fsSL https://opencode.ai/install | bash" },
-      { kind: "copy-command", label: "复制 Homebrew 命令", value: "brew install anomalyco/tap/opencode" },
-      { kind: "open-url", label: "打开 OpenCode 文档", value: OPENCODE_DOCS_URL }
-    ];
-  }
+function openCodeInstallActions(_os: string): SetupAction[] {
   return [
-    { kind: "copy-command", label: "复制 npm 命令", value: "npm install -g opencode-ai" },
-    { kind: "copy-command", label: "复制安装脚本", value: "curl -fsSL https://opencode.ai/install | bash" },
+    { kind: "copy-command", label: "复制 npm 命令", value: "npm install --global --prefix ~/.npm-global opencode-ai" },
     { kind: "open-url", label: "打开 OpenCode 文档", value: OPENCODE_DOCS_URL }
   ];
 }
 
-function hermesInstallActions(os: string): SetupAction[] {
-  const command = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser";
-  if (os === "win32") {
-    return [
-      { kind: "open-url", label: "打开 Hermes 文档", value: HERMES_DOCS_URL }
-    ];
-  }
+function hermesInstallActions(_os: string): SetupAction[] {
   return [
-    { kind: "copy-command", label: "复制安装脚本", value: command },
     { kind: "open-url", label: "打开 Hermes 文档", value: HERMES_DOCS_URL }
   ];
 }

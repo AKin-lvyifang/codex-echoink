@@ -7,9 +7,9 @@ export function confirmModal(app: App, title: string, body: string, acceptText =
   });
 }
 
-export function textInputModal(app: App, title: string, label: string, initialValue = ""): Promise<string | null> {
+export function textInputModal(app: App, title: string, label: string, initialValue = "", options: { secret?: boolean } = {}): Promise<string | null> {
   return new Promise((resolve) => {
-    const modal = new TextInputModal(app, title, label, initialValue, resolve);
+    const modal = new TextInputModal(app, title, label, initialValue, options.secret === true, resolve);
     modal.open();
   });
 }
@@ -69,6 +69,7 @@ class TextInputModal extends Modal {
     private readonly titleText: string,
     private readonly label: string,
     initialValue: string,
+    private readonly secret: boolean,
     private readonly done: (value: string | null) => void
   ) {
     super(app);
@@ -80,6 +81,7 @@ class TextInputModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: this.titleText });
     new Setting(contentEl).setName(this.label).addText((text) => {
+      if (this.secret) text.inputEl.type = "password";
       text.setValue(this.value).onChange((value) => {
         this.value = value;
       });

@@ -1,5 +1,6 @@
 import * as assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
@@ -107,8 +108,24 @@ import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVer
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
 import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, detectCodexInstallation, inspectCodexInstallation, resolveCodexCommand } from "../core/codex-service";
 import { CODEX_NPM_INSTALL_ARGS, installCodexCli } from "../core/codex-installer";
+import { agentSetupRowStatus, createAgentSetupSnapshot, limitedAgentSetupLog, resolveAgentSetupPrimary } from "../core/agent-setup";
+import { installNpmCli, NPM_CLI_INSTALL_SPECS, npmCliInstallArgs, npmCliPrefixArgs } from "../core/npm-cli-installer";
+import {
+  HERMES_INSTALL_COMMIT,
+  HERMES_INSTALL_MAX_DOWNLOAD_BYTES,
+  HERMES_INSTALL_RELEASE,
+  HERMES_UNIX_INSTALL_SHA256,
+  HERMES_UNIX_INSTALL_URL,
+  HERMES_WINDOWS_INSTALL_SHA256,
+  HERMES_WINDOWS_INSTALL_URL,
+  hermesInstallInvocation,
+  hermesInstallSource,
+  installHermesCli,
+  verifyHermesInstallerBytes
+} from "../core/hermes-installer";
+import { authorizeHermesNous, HERMES_NOUS_AUTH_ARGS, HERMES_NOUS_DEFAULT_MODEL, HERMES_NOUS_PROVIDER } from "../core/hermes-setup";
 import { CodexLoginError, startCodexLogin } from "../core/codex-login";
-import { codexRecoveryCopy, isMissingCodexCliMessage } from "../ui/codex-recovery";
+import { agentRecoveryCopy, codexRecoveryCopy, isMissingCodexCliMessage, missingAgentCliBackend } from "../ui/codex-recovery";
 import { formatOpenCodeError } from "../core/opencode-errors";
 import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
@@ -132,6 +149,7 @@ import {
   modelInputModalities,
   requiredModalityForMime,
   resolveOpenCodeCommand,
+  selectOpenCodeSetupModel,
   selectOpenCodeModelForTask
 } from "../core/opencode-models";
 import { SETTINGS_GEAR_ICON_PATHS } from "../ui/codex-icon";
@@ -423,16 +441,18 @@ assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
 const setupGuideStateSource = settingsTabSource.slice(
-  settingsTabSource.indexOf("private renderSetupGuide"),
-  settingsTabSource.indexOf("private async runSetupPrimaryAction")
+  settingsTabSource.indexOf("private renderAgentInstaller"),
+  settingsTabSource.indexOf("private async runAgentSetupAction")
 );
-assert.match(setupGuideStateSource, /setupPhase === "installing"[\s\S]*?disabled: true/);
-assert.match(setupGuideStateSource, /setupPhase === "logging-in"[\s\S]*?disabled: true/);
-assert.match(setupGuideStateSource, /requirement\.actions/);
-assert.match(setupGuideStateSource, /addSetupRequirementActionButton/);
+assert.match(setupGuideStateSource, /backend: "codex-cli"/);
+assert.match(setupGuideStateSource, /backend: "opencode"/);
+assert.match(setupGuideStateSource, /backend: "hermes"/);
+assert.match(setupGuideStateSource, /this\.setupSelectedBackend = definition\.backend/);
+assert.equal((setupGuideStateSource.match(/codex-setup-primary/g) ?? []).length, 1);
+assert.doesNotMatch(setupGuideStateSource, /settings\.agentBackend\s*=/);
 const setupCheckConnectionSource = settingsTabSource.slice(
-  settingsTabSource.indexOf("private async runSetupCheck"),
-  settingsTabSource.indexOf("private async loginCodex")
+  settingsTabSource.indexOf("private async connectCodexAgent"),
+  settingsTabSource.indexOf("private async connectOpenCodeAgent")
 );
 assert.match(setupCheckConnectionSource, /if \(!status\.connected \|\| status\.accountReadError\) throw new Error/);
 assert.match(settingsTabSource, /private memoryStatusError: string \| null = null;/);
@@ -5338,6 +5358,17 @@ assert.deepEqual(parsedOpenCodeCliModels[0], {
   displayName: "opencode/deepseek-v4-flash-free",
   inputModalities: ["text"]
 });
+assert.equal(selectOpenCodeSetupModel([
+  { id: "opencode/other-free", providerId: "opencode", modelId: "other-free", displayName: "Other free", inputModalities: ["text"] },
+  { id: "opencode/deepseek-v4-flash-free", providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free", displayName: "DeepSeek", inputModalities: ["text"] }
+])?.id, "opencode/deepseek-v4-flash-free");
+assert.equal(selectOpenCodeSetupModel([
+  { id: "requesty/free", providerId: "requesty", modelId: "free", displayName: "Third party free", inputModalities: ["text"] },
+  { id: "opencode/qwen-free", providerId: "opencode", modelId: "qwen-free", displayName: "Qwen free", inputModalities: ["text"] }
+])?.id, "opencode/qwen-free");
+assert.equal(selectOpenCodeSetupModel([
+  { id: "opencode/paid", providerId: "opencode", modelId: "paid", displayName: "Paid", inputModalities: ["text"] }
+]), null);
 assert.equal(openCodeRunSessionIdFromLine(JSON.stringify({ type: "step_start", sessionID: "ses_early" })), "ses_early");
 assert.throws(() => parseOpenCodeRunJsonLines(JSON.stringify({ type: "error", error: { data: { message: "Model not found" } } })), /Model not found/);
 assert.equal(openCodeCliModelId({ providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free" }), "opencode/deepseek-v4-flash-free");
@@ -5370,6 +5401,11 @@ const openCodeBackendSource = await readFile(path.join(process.cwd(), "src/core/
 assert.match(openCodeBackendSource, /import \{ emptyArrayOnMissingPathOrWarn \} from "\.\/error-handling";/);
 assert.match(openCodeBackendSource, /const cliModels = await this\.listCliModels\(\)\.catch\(emptyArrayOnMissingPathOrWarn\("list OpenCode CLI models"\)\);\s*if \(cliModels\.length\) return cliModels;/);
 assert.match(openCodeBackendSource, /const canReuse = await isOpenCodeServerHealthy\(serverUrl\);\s*if \(!canReuse\) \{/);
+assert.match(openCodeBackendSource, /provider\.auth\(/);
+assert.match(openCodeBackendSource, /provider\.oauth\.authorize\(/);
+assert.match(openCodeBackendSource, /provider\.oauth\.callback\(/);
+assert.match(openCodeBackendSource, /auth\.set\(/);
+assert.doesNotMatch(openCodeBackendSource, /settings[^\n]{0,120}(?:api[_-]?key|secret)/i);
 assert.equal(diagnoseCodexError(websocketDiagnostic.text).text, websocketDiagnostic.text);
 assert.match(diagnoseCodexError("mystery failure").text, /mystery failure/);
 const missingCliEnglishDiagnostic = diagnoseCodexError("找不到 Codex CLI：/definitely/missing/codex。请先安装 Codex CLI，或在设置里填写正确路径。", {
@@ -5435,6 +5471,11 @@ assert.equal(detectOpenCodeCommand("", {
   envPath: "/custom/bin",
   exists: (candidate) => candidate === "/custom/bin/opencode"
 }), "/custom/bin/opencode");
+assert.equal(detectOpenCodeCommand("/stale/opencode", {
+  home: "/Users/demo",
+  envPath: "/custom/bin",
+  exists: (candidate) => candidate === "/custom/bin/opencode"
+}), "/custom/bin/opencode");
 assert.equal(detectOpenCodeCommand("", {
   home: "C:\\Users\\demo",
   envPath: "",
@@ -5465,6 +5506,11 @@ assert.equal(resolveHermesCommand("", {
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/.local/bin/hermes"
 }), "/Users/demo/.local/bin/hermes");
+assert.equal(resolveHermesCommand("/stale/hermes", {
+  home: "/Users/demo",
+  envPath: "/custom/bin",
+  exists: (candidate) => candidate === "/custom/bin/hermes"
+}), "/custom/bin/hermes");
 assert.equal(resolveHermesCommand("", {
   home: "C:\\Users\\demo",
   envPath: "",
@@ -5488,6 +5534,8 @@ assert.match(formatHermesError({ status: 401, data: { error: { message: "invalid
 assert.match(formatHermesError("No inference provider configured"), /Hermes 推理 provider 未配置/);
 
 const hermesBackendSource = await readFile(path.join(process.cwd(), "src/core/hermes-backend.ts"), "utf8");
+const connectionServiceSource = await readFile(path.join(process.cwd(), "src/plugin/connection-service.ts"), "utf8");
+assert.match(connectionServiceSource, /if \(!\/\\bPONG\\b\/i\.test\(probe\.text\.trim\(\)\)\) throw new Error/);
 const hermesPollRunSource = hermesBackendSource.slice(hermesBackendSource.indexOf("private async pollRun"), hermesBackendSource.indexOf("private async fetchJson"));
 assert.match(hermesBackendSource, /const HERMES_INITIAL_POLL_DELAY_MS = 500/);
 assert.match(hermesBackendSource, /const HERMES_MAX_POLL_DELAY_MS = 5_000/);
@@ -5780,25 +5828,151 @@ const limitedInstallLog = await installCodexCli({
 assert.ok(limitedInstallLog.logs.length <= 258);
 assert.match(limitedInstallLog.logs, /…$/);
 
+assert.equal(NPM_CLI_INSTALL_SPECS.opencode.packageName, "opencode-ai");
+assert.deepEqual(npmCliInstallArgs("opencode", "/Users/demo", "darwin"), [
+  "install", "--global", "--prefix", "/Users/demo/.npm-global", "opencode-ai"
+]);
+assert.deepEqual(npmCliPrefixArgs("opencode", "/Users/demo", "darwin"), [
+  "prefix", "--global", "--prefix", "/Users/demo/.npm-global"
+]);
+const openCodeInstallerCalls: Array<{ command: string; args: string[]; shell: boolean }> = [];
+const installedOpenCodePath = "/Users/demo/.npm-global/bin/opencode";
+const openCodeInstallResult = await installNpmCli("opencode", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === installedOpenCodePath,
+  runner: async (command, args, options) => {
+    openCodeInstallerCalls.push({ command, args: [...args], shell: options.shell });
+    if (command === installedOpenCodePath) return { stdout: "1.0.200\n", stderr: "" };
+    if (args[0] === "prefix") return { stdout: "/Users/demo/.npm-global\n", stderr: "" };
+    return { stdout: "installed", stderr: "" };
+  }
+});
+assert.equal(openCodeInstallResult.command, installedOpenCodePath);
+assert.equal(openCodeInstallResult.version, "1.0.200");
+assert.equal(openCodeInstallerCalls[0].shell, false);
+assert.deepEqual(openCodeInstallerCalls[0].args, ["install", "--global", "--prefix", "/Users/demo/.npm-global", "opencode-ai"]);
+assert.equal(openCodeInstallerCalls.some((call) => /sudo|curl|bash/.test(call.args.join(" "))), false);
+
+assert.equal(HERMES_INSTALL_COMMIT.length, 40);
+assert.equal(HERMES_INSTALL_RELEASE, "v2026.7.7.2");
+assert.equal(HERMES_UNIX_INSTALL_SHA256.length, 64);
+assert.equal(HERMES_WINDOWS_INSTALL_SHA256.length, 64);
+assert.equal(HERMES_UNIX_INSTALL_URL, `https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_INSTALL_COMMIT}/scripts/install.sh`);
+assert.equal(HERMES_WINDOWS_INSTALL_URL, `https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_INSTALL_COMMIT}/scripts/install.ps1`);
+assert.deepEqual(hermesInstallSource("darwin"), { url: HERMES_UNIX_INSTALL_URL, sha256: HERMES_UNIX_INSTALL_SHA256, filename: "install.sh" });
+const hermesUnixInvocation = hermesInstallInvocation("darwin", "/Users/demo", "/tmp/fixed/install.sh");
+assert.equal(hermesUnixInvocation.command, "/bin/bash");
+assert.deepEqual(hermesUnixInvocation.args, [
+  "/tmp/fixed/install.sh",
+  "--commit", HERMES_INSTALL_COMMIT,
+  "--dir", "/Users/demo/.hermes/hermes-agent",
+  "--hermes-home", "/Users/demo/.hermes",
+  "--skip-setup",
+  "--skip-browser",
+  "--non-interactive"
+]);
+assert.equal(/curl\s*\||sudo|shell/.test(hermesUnixInvocation.args.join(" ")), false);
+const hermesWindowsInvocation = hermesInstallInvocation("win32", "C:\\Users\\demo", "C:\\Temp\\install.ps1");
+assert.equal(hermesWindowsInvocation.command, "powershell.exe");
+assert.equal(hermesWindowsInvocation.args.includes("-ExecutionPolicy"), true);
+assert.equal(hermesWindowsInvocation.args.includes(HERMES_INSTALL_COMMIT), true);
+const hermesFixture = Buffer.from("verified Hermes installer fixture");
+const hermesFixtureHash = createHash("sha256").update(hermesFixture).digest("hex");
+assert.deepEqual(verifyHermesInstallerBytes(hermesFixture, hermesFixtureHash, HERMES_INSTALL_MAX_DOWNLOAD_BYTES), hermesFixture);
+assert.throws(() => verifyHermesInstallerBytes(hermesFixture, "0".repeat(64), HERMES_INSTALL_MAX_DOWNLOAD_BYTES), /完整性校验失败/);
+assert.throws(() => verifyHermesInstallerBytes(Buffer.alloc(1025), createHash("sha256").update(Buffer.alloc(1025)).digest("hex"), 1024), /超过允许的下载大小/);
+const abortedHermesController = new AbortController();
+abortedHermesController.abort();
+assert.equal((await installHermesCli({ signal: abortedHermesController.signal })).status, "cancelled");
+const rejectedHermesDownload = await installHermesCli({
+  fetch: async () => ({ ok: true, status: 200, arrayBuffer: async () => hermesFixture.buffer.slice(hermesFixture.byteOffset, hermesFixture.byteOffset + hermesFixture.byteLength) as ArrayBuffer })
+});
+assert.equal(rejectedHermesDownload.errorKind, "integrity");
+assert.deepEqual(HERMES_NOUS_AUTH_ARGS, ["auth", "add", "nous", "--type", "oauth", "--timeout", "180"]);
+const hermesAuthCalls: Array<{ command: string; args: string[]; shell: boolean }> = [];
+const hermesAuthResult = await authorizeHermesNous({
+  command: "/Users/demo/.local/bin/hermes",
+  cwd: "/vault",
+  runner: async (command, args, options) => {
+    hermesAuthCalls.push({ command, args: [...args], shell: options.shell });
+    if (args[0] === "auth") return { stdout: "Saved nous OAuth device-code credentials", stderr: "" };
+    return { stdout: "updated", stderr: "" };
+  }
+});
+assert.equal(hermesAuthResult.status, "authorized");
+assert.equal(hermesAuthResult.providerId, HERMES_NOUS_PROVIDER);
+assert.equal(hermesAuthResult.modelId, HERMES_NOUS_DEFAULT_MODEL);
+assert.deepEqual(hermesAuthCalls.map((call) => call.args), [
+  [...HERMES_NOUS_AUTH_ARGS],
+  ["config", "set", "model.provider", HERMES_NOUS_PROVIDER],
+  ["config", "set", "model.default", HERMES_NOUS_DEFAULT_MODEL]
+]);
+assert.equal(hermesAuthCalls.every((call) => call.shell === false), true);
+const cancelledHermesAuthController = new AbortController();
+cancelledHermesAuthController.abort();
+assert.equal((await authorizeHermesNous({
+  command: "hermes",
+  cwd: "/vault",
+  signal: cancelledHermesAuthController.signal,
+  runner: async () => { const error = new Error("aborted"); error.name = "AbortError"; throw error; }
+})).status, "cancelled");
+
 assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "spawn codex ENOENT", title: "Codex 发送失败" }), true);
 assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "request timed out", title: "Codex 发送失败" }), false);
 assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "Codex missing model configuration", title: "模型配置错误" }), false);
 assert.equal(isMissingCodexCliMessage({ itemType: "text", text: "找不到 Codex CLI", title: "普通消息" }), false);
+assert.equal(missingAgentCliBackend({ itemType: "error", text: "spawn opencode ENOENT", title: "OpenCode 启动失败" }), "opencode");
+assert.equal(missingAgentCliBackend({ itemType: "error", text: "找不到 Hermes CLI：~/.local/bin/hermes", title: "Hermes 启动失败" }), "hermes");
+assert.equal(missingAgentCliBackend({ itemType: "error", text: "OpenCode model not found", title: "模型配置错误" }), null);
+assert.equal(missingAgentCliBackend({ itemType: "error", text: "Hermes provider missing", title: "Provider 配置错误" }), null);
 assert.equal(codexRecoveryCopy("zh-CN").repair, "自动修复");
 assert.equal(codexRecoveryCopy("en").repair, "Auto repair");
+assert.equal(agentRecoveryCopy("zh-CN", "opencode").title, "OpenCode 尚未就绪");
+assert.equal(agentRecoveryCopy("en", "hermes").title, "Hermes is not ready");
 assert.equal(settingsCopy("en").setup.primary.checkingTitle, "Checking the current environment");
 assert.doesNotMatch(settingsCopy("en").setup.installErrors.permission, /[\u3400-\u9fff]/);
 assert.doesNotMatch(settingsCopy("en").setup.loginErrors.timeout, /[\u3400-\u9fff]/);
 const messageListRecoverySource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
 const messageControllerRecoverySource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-controller.ts"), "utf8");
-assert.match(messageListRecoverySource, /isMissingCodexCliMessage\(message\)/);
-assert.match(messageListRecoverySource, /codexRecoveryCopy\(env\.settingsLanguage\)/);
+assert.match(messageListRecoverySource, /missingAgentCliBackend\(message\)/);
+assert.match(messageListRecoverySource, /agentRecoveryCopy\(env\.settingsLanguage, backend\)/);
 assert.match(messageListRecoverySource, /createEl\("details"/);
-assert.match(messageControllerRecoverySource, /openCodexSetup\(\{ autoRepair: true \}\)/);
+assert.match(messageControllerRecoverySource, /openAgentSetup\(\{ backend, autoRepair: true \}\)/);
 for (const sourcePath of await collectTypeScriptSourceFiles(path.join(process.cwd(), "src"))) {
   const source = await readFile(sourcePath, "utf8");
   assert.doesNotMatch(source, /\.style\.[A-Za-z0-9_]+\s*=/, `禁止直接写 DOM style：${path.relative(process.cwd(), sourcePath)}`);
+  if (!sourcePath.includes(`${path.sep}tests${path.sep}`)) {
+    assert.doesNotMatch(source, /curl[^\n|]*\|\s*(?:bash|sh)\b/i, `禁止管道执行远程脚本：${path.relative(process.cwd(), sourcePath)}`);
+    assert.doesNotMatch(source, /npm[^\n]*\bhermes-agent\b/i, `禁止安装 npm 第三方 hermes-agent：${path.relative(process.cwd(), sourcePath)}`);
+  }
 }
+
+const detectingAgentSetup = createAgentSetupSnapshot("codex-cli");
+assert.equal(resolveAgentSetupPrimary(detectingAgentSetup).label, "正在检测");
+assert.equal(resolveAgentSetupPrimary(detectingAgentSetup).disabled, true);
+const missingOpenCodeSetup = createAgentSetupSnapshot("opencode", "missing");
+assert.equal(resolveAgentSetupPrimary(missingOpenCodeSetup).action, "install");
+assert.equal(resolveAgentSetupPrimary(missingOpenCodeSetup).label, "安装 OpenCode");
+assert.equal(agentSetupRowStatus(missingOpenCodeSetup), "未安装");
+const installedOpenCodeSetup = createAgentSetupSnapshot("opencode", "installed", {
+  command: "/Users/demo/.local/bin/opencode",
+});
+assert.equal(resolveAgentSetupPrimary(installedOpenCodeSetup).action, "connect");
+assert.equal(agentSetupRowStatus(installedOpenCodeSetup), "已安装");
+const installingHermesSetup = createAgentSetupSnapshot("hermes", "installing");
+assert.equal(resolveAgentSetupPrimary(installingHermesSetup).action, "cancel");
+assert.equal(resolveAgentSetupPrimary(installingHermesSetup).disabled, false);
+const authHermesSetup = createAgentSetupSnapshot("hermes", "needs-auth", { command: "/Users/demo/.local/bin/hermes" });
+assert.equal(resolveAgentSetupPrimary(authHermesSetup).action, "authorize");
+assert.equal(agentSetupRowStatus(authHermesSetup), "需授权");
+const readyHermesSetup = createAgentSetupSnapshot("hermes", "ready", { command: "/Users/demo/.local/bin/hermes" });
+assert.equal(resolveAgentSetupPrimary(readyHermesSetup).action, "start");
+assert.equal(agentSetupRowStatus(readyHermesSetup), "已就绪");
+const safeSetupLog = limitedAgentSetupLog("api_key=sk-secret\nAuthorization: Bearer hidden\nnormal line", 80);
+assert.doesNotMatch(safeSetupLog, /sk-secret|Bearer hidden/);
+assert.match(safeSetupLog, /normal line/);
 
 const setupDisconnectedStatus = {
   connected: false,

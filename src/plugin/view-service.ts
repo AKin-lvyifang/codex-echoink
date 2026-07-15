@@ -1,6 +1,6 @@
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { ensureKnowledgeBaseSession, type ResourceManagementTab } from "../settings/settings";
+import { ensureKnowledgeBaseSession, type AgentBackendMode, type ResourceManagementTab } from "../settings/settings";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { isReviewHtmlPath } from "../review/schedule";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -77,8 +77,13 @@ export class EchoInkViewService {
   }
 
   async openCodexSetup(options: { autoRepair?: boolean } = {}): Promise<void> {
+    return this.openAgentSetup({ backend: "codex-cli", ...options });
+  }
+
+  async openAgentSetup(options: { backend: AgentBackendMode; autoRepair?: boolean }): Promise<void> {
     this.plugin.settings.settingsTab = "agents";
-    if (options.autoRepair) {
+    this.plugin.agentSetupTarget = options.backend;
+    if (options.autoRepair && options.backend === "codex-cli") {
       const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
       if (status.connected && status.loggedIn) {
         await this.plugin.saveSettings(true);
@@ -86,7 +91,6 @@ export class EchoInkViewService {
         return;
       }
     }
-    this.plugin.settings.setup.completedAt = 0;
     await this.plugin.saveSettings(true);
     const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting?.openTabById) {
