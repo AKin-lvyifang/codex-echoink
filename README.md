@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="620" alt="Codex EchoInk v1.2.0 sidebar with the unified Agent timeline, backend switcher, and rebuilt composer." src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+    <img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.png">
   </a>
 </p>
 
@@ -178,7 +178,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 
 ### v1.2.0
 
-<img width="620" alt="Codex EchoInk v1.2.0 sidebar showing the unified Agent process timeline and rebuilt composer." src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+<img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.png">
 
 **Unified Agent Harness and rebuilt sidebar:** EchoInk now owns one run lifecycle, context path, and conversation projection for Codex, OpenCode, and Hermes. The entire sidebar has also been rebuilt around a clearer answer-first conversation and a lighter, responsive composer.
 
@@ -581,6 +581,12 @@ Try these steps:
 - MCP and Skill resources are imported into an EchoInk vault-local registry. Per-scope switches affect EchoInk only and are not written back to Codex, OpenCode, or Hermes global configs. MCP tool calls that go through EchoInk's broker require explicit connection config, approval, and local logs.
 
 ## Screenshots
+
+![Codex EchoInk v1.2.0 real Home workspace and Agent sidebar](docs/images/codex-echoink-v1.2.0-real-home.png)
+
+![Codex EchoInk v1.2.0 Codex, OpenCode, and Hermes switcher](docs/images/codex-echoink-v1.2.0-real-agent-switcher.png)
+
+![Codex EchoInk v1.2.0 Plan mode and rebuilt composer](docs/images/codex-echoink-v1.2.0-real-plan-composer.png)
 
 ![Codex EchoInk Home Dashboard](docs/images/codex-echoink-home-dashboard-v1.0.0.png)
 

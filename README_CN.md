@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="620" alt="Codex EchoInk v1.2.0 侧栏，展示统一 Agent 过程、后端切换和新版输入区。" src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+    <img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.png">
   </a>
 </p>
 
@@ -182,7 +182,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 ### v1.2.0
 
-<img width="620" alt="Codex EchoInk v1.2.0 侧栏，展示统一 Agent 过程和新版输入区。" src="docs/images/codex-echoink-v1.2.0-agent-ui.png">
+<img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.png">
 
 **统一 Agent Harness 与全新侧栏：** EchoInk 现在为 Codex、OpenCode、Hermes 统一管理运行生命周期、上下文和对话投影；整个侧栏也围绕“先看结论、按需展开过程”和更轻量的响应式输入区重新设计。
 
@@ -590,6 +590,12 @@ codex-echoink/
 
 <a id="截图"></a>
 ## 截图
+
+![Codex EchoInk v1.2.0 真实首页与新版 Agent 侧栏](docs/images/codex-echoink-v1.2.0-real-home.png)
+
+![Codex EchoInk v1.2.0 Codex、OpenCode、Hermes 切换菜单](docs/images/codex-echoink-v1.2.0-real-agent-switcher.png)
+
+![Codex EchoInk v1.2.0 Plan 模式与新版输入区](docs/images/codex-echoink-v1.2.0-real-plan-composer.png)
 
 ![Codex EchoInk 首页工作台](docs/images/codex-echoink-home-dashboard-v1.0.0.png)
 
