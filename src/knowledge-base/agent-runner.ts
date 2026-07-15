@@ -9,6 +9,7 @@ import { TaskRuntimeAgentAdapter, type TaskRuntimeAgentAdapterOptions } from "..
 import type { HarnessRunResult, HarnessWorkflow, OutputContract } from "../harness/contracts/run";
 import type { ContextSection } from "../harness/contracts/context";
 import type { HarnessRunWithAdapterInput } from "../harness/kernel/harness-kernel";
+import { memoryRequestPolicy } from "../harness/memory/workflow-policy";
 import { resourceSelectionFromPreparedResources } from "../resources/registry";
 import type { CodexForObsidianSettings } from "../settings/settings";
 import type { UserInput } from "../types/app-server";
@@ -448,10 +449,7 @@ export async function runKnowledgeAgentTask(
           ? resourceSelectionFromPreparedResources(input.resources, runtime.kind)
           : { selected: [], resolvedAt: Date.now(), warnings: [] })
       },
-      memoryPolicy: {
-        enabled: workflow === "knowledge.ask",
-        maxItems: workflow === "knowledge.ask" ? 8 : 0
-      },
+      memoryPolicy: memoryRequestPolicy(workflow),
       outputContract: {
         kind: input.outputKind ?? "knowledge-ledger"
       },

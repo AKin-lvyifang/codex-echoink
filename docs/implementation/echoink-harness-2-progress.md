@@ -1,6 +1,6 @@
 # EchoInk Harness 2.0 Progress Handoff
 
-更新时间：2026-07-14 CST
+更新时间：2026-07-16 CST
 
 ## 当前结论
 
@@ -37,7 +37,10 @@ Harness 2.0 主计划与 V3 补充计划已经完成，并已按领域移植到 
 - OpenCode leased-conversation、JSONL 主消息聚合、provider/model provenance、进程取消与 not-found 幂等 cleanup 已修复。
 - Hermes raw thought 不再冒充 reasoning summary，原生 message delta 按真实能力投影。
 - Session Revision 生产递增、全局 Lease LRU、Conversation Store 删除和会话级 Agent 缓存重置均已接入生产路径。
-- Memory Candidate 过滤残句、占位符和弱语义候选；Codex / Hermes 新会话均能读取同一份 EchoInk Memory。
+- EchoInk Memory V2 已接入完整 Run 生命周期：显式 Chat/ask 信号覆盖输入、工具/文件影响和最终结果；维护类 workflow 只在本地提交成功后记录。Codex、OpenCode、Hermes 新会话读取同一份 `index.json` 真源。
+- Memory Run 观察已从业务 Run commit lane 解耦；启动时会从持久 Run Ledger 重放尚未投递的 terminal/local-commit 事件。pending journal 与完整 sync/formal write 分别按 Vault 串行，确认、删除、迁移和过期写入都使用可恢复 staged transaction。
+- 正式 index 记录 commit identity，恢复不能只凭 revision；V1 迁移和缺失投影会从严格验证后的全量 index 重建，并用 repair marker 跨崩溃续完。投影修复会在写后重检 revision/identity，正式 commit 并发获胜时自动按新 index 再投影。损坏或未来 schema 的正式文件、部分写入或 checksum 错误的 pending journal 都 fail-closed，不会被默认空数据覆盖或在下一次 mutation 中丢字节。
+- Curator 只接受裸 JSON 对象并严格校验覆盖、字段、类型、长度与 `pending ⇔ unresolved`；Curator 输入和检索结果都按不可信数据处理。active-memory 快照限制为 64 条、32,000 个序列化字符，本地重复/冲突仍使用全量 index。`.codex-memory` 预览显示真实文件数/字节并在 1000 文件或 4 MiB 以上阻断导入。
 
 ## DoD 证据索引
 
@@ -48,7 +51,7 @@ Harness 2.0 主计划与 V3 补充计划已经完成，并已按领域移植到 
 - Resource Plane V2：`src/resources/registry.ts`、`src/resources/vault-resource-catalog.ts`、`src/tests/harness-v2/resources.ts`。
 - Knowledge Workflow / Ledger：`src/knowledge-base/manager.ts`、`src/knowledge-base/maintain-report-card.ts`、`src/knowledge-base/report.ts`、`src/workflows/knowledge/ledger/knowledge-run-ledger.ts`。
 - Core Policy / Vault Profile：`src/workflows/knowledge/policy/core-policy.ts`、`src/workflows/knowledge/profile/profile-parser.ts`、`src/tests/harness-v2/knowledge-policy-profile.ts`。
-- Memory Provider / `.codex-memory` migration preview：`src/harness/memory/file-memory.ts`、`src/tests/harness-v2/memory.ts`、`src/settings/settings-tab.ts`。
+- Memory V2 / `.codex-memory` migration：`src/harness/memory/workflow-policy.ts`、`src/harness/memory/v2-store.ts`、`src/harness/memory/v2-engine.ts`、`src/harness/memory/backend-curator.ts`、`src/harness/memory/file-memory.ts`、`src/tests/harness-v2/memory.ts`、`src/settings/settings-tab.ts`。
 - Raw 安全、Evidence、回滚：`src/knowledge-base/raw-integrity.ts`、`src/knowledge-base/digest-evidence.ts`、`src/knowledge-base/transaction-snapshot.ts`，对应回归在 `src/tests/run-tests.ts`。
 
 ## 当前完成到哪个 Phase
@@ -57,11 +60,21 @@ Harness 2.0 主计划与 V3 补充计划已经完成，并已按领域移植到 
 - Phase 2：完成到当前 DoD。Chat / Editor / Knowledge 业务入口调用 Harness / Adapter，后端特性由 runtime profile / adapter factory / session binding 承担。
 - Phase 3-4：完成。EchoInk Vault Skill / MCP、Agent Native Skill / MCP、资源来源 UI/日志区分、Conversation Store、Settings history 外置均有代码和测试。
 - Phase 5：完成到当前 DoD。Core Policy 从 `LLM-WIKI.md` 抽出，Vault Profile 只承载偏好；Workflow Event 驱动 UI，Ledger 驱动报告卡和 Markdown Ledger 区块。
-- Phase 6：完成。Memory Provider 是正式扩展点，初始化和 `.codex-memory` 只读迁移预览已接入。
-- Phase 7：完成。FileMemoryProvider 支持候选过滤、冲突与去重、确认、检索、删除/过期、supersede、审计、导出和备份；真实 Test Vault 已验证候选质量、新会话恢复和跨 Agent 读取。
+- Phase 6：完成。Memory Provider 是正式扩展点；`.echoink/memory` V2 manifest、pending journal、事务、覆盖校验、原子提交和恢复均已接入。
+- Phase 7：完成自动化与设置页实现。FileMemoryProvider 支持确认/冲突、检索、删除/过期、supersede、审计、导出、备份和显式 `.codex-memory` 导入；真实 Vault UI 结论以 `docs/implementation/echoink-memory-v2.md` 后续验收记录为准。
 - Phase 8：完成当前清理目标。`managedThreads`、保存态 `threadId`、旧 Knowledge Context Bridge、非 Codex one-shot Chat 旁路、旧 `workspaceResources` 运行桥均已退出。
 
 ## 验证记录
+
+2026-07-16 EchoInk Memory V2 独立分支收口验证：
+
+- `npm run test`：`All tests passed`。
+- `npm run typecheck`：通过。
+- `npm run build`：通过。
+- `OBSIDIAN_VAULT=<target-vault> npm run deploy`：部署到目标 Vault 的 `.obsidian/plugins/codex-echoink`。
+- `npm run check:public`：273 个 tracked files 通过。
+- `git diff --check`：通过。
+- 真实 Obsidian UI 验收不在本分支任务中冒充完成，由父任务统一在 `testing/` 收口；旧 `.codex-memory` 在真实 Vault 仅预览，不执行整库导入。
 
 本轮已跑并通过：
 

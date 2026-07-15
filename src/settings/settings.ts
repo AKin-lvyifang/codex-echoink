@@ -129,6 +129,7 @@ export type ReviewReportKind = "knowledge-base" | "agent-chat";
 export type ReviewRunStatus = "idle" | "running" | "success" | "failed";
 export type ReviewRangeMode = "previous-week" | "current-week";
 export type SettingsLanguage = "zh-CN" | "en";
+export type MemoryCuratorBackendMode = "default" | AgentBackendMode;
 
 export interface OpenCodeSettings {
   cliPath: string;
@@ -206,6 +207,13 @@ export interface SetupSettings {
   completedAt: number;
   lastCheckedAt: number;
   dismissedVersion: string;
+}
+
+export interface EchoInkMemorySettings {
+  enabled: boolean;
+  autoSync: boolean;
+  curatorBackend: MemoryCuratorBackendMode;
+  curatorModel: string;
 }
 
 export interface KnowledgeBaseProcessedSource {
@@ -351,6 +359,7 @@ export interface CodexForObsidianSettings {
   autoOpenHome: boolean;
   showContext: boolean;
   setup: SetupSettings;
+  memory: EchoInkMemorySettings;
   resourceManagementTab: ResourceManagementTab;
   promptEnhancer: PromptEnhancerSettings;
   editorActions: EditorAiActionSettings;
@@ -577,7 +586,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 34,
+  settingsVersion: 35,
   settingsLanguage: "zh-CN",
   settingsTab: "agents",
   agentBackend: "codex-cli",
@@ -622,6 +631,12 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     completedAt: 0,
     lastCheckedAt: 0,
     dismissedVersion: ""
+  },
+  memory: {
+    enabled: true,
+    autoSync: true,
+    curatorBackend: "default",
+    curatorModel: ""
   },
   resourceManagementTab: "plugins",
   promptEnhancer: DEFAULT_PROMPT_ENHANCER_SETTINGS,
@@ -733,6 +748,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(data?.apiProviders),
     setup: normalizeSetupSettings(data?.setup),
+    memory: normalizeMemorySettings(data?.memory),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     promptEnhancer: normalizePromptEnhancerSettings(data?.promptEnhancer, previousVersion),
     editorActions: normalizeEditorActionSettings(data?.editorActions, previousVersion),
@@ -1423,6 +1439,18 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
     completedAt: normalizeNonNegativeNumber(value?.completedAt),
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion)
+  };
+}
+
+function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
+  const value = settingsRecord(input) ?? {};
+  return {
+    enabled: value?.enabled !== false,
+    autoSync: value?.autoSync !== false,
+    curatorBackend: value?.curatorBackend === "codex-cli" || value?.curatorBackend === "opencode" || value?.curatorBackend === "hermes"
+      ? value.curatorBackend
+      : "default",
+    curatorModel: normalizeOptionalText(value?.curatorModel)
   };
 }
 

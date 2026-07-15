@@ -94,6 +94,13 @@ async function assertFakeAdapterGenericChatRun(): Promise<void> {
   assert.equal(result.status, "completed");
   assert.equal(result.outputText, "pong");
   assert.equal(result.backendBinding?.nativeSessionId, "fake-session-1");
+  assert.equal(events[1]?.text, "ping", "run.started must keep the full user instruction in the local Harness ledger");
+  assert.deepEqual(events[1]?.data, {
+    sessionId: "session-chat",
+    surface: "chat",
+    workflow: "chat.generic",
+    attachments: []
+  });
   assert.deepEqual(events.map((event) => event.type), [
     "run.created",
     "run.started",

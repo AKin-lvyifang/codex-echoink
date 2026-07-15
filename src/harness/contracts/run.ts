@@ -18,7 +18,8 @@ export type HarnessWorkflow =
   | "editor.expand"
   | "editor.continue"
   | "editor.translate"
-  | "review.weekly";
+  | "review.weekly"
+  | "memory.curate";
 
 export interface HarnessWorkspace {
   vaultPath: string;

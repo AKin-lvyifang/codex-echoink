@@ -74,6 +74,9 @@ export function registerEchoInkStartupTasks(plugin: CodexForObsidianPlugin): voi
   }
   plugin.app.workspace.onLayoutReady(() => {
     window.setTimeout(() => void plugin.runDeferredStartupMaintenance(), 1200);
+    if (plugin.settings.memory.enabled) {
+      window.setTimeout(() => void plugin.recoverEchoInkMemory().catch(() => undefined), 1500);
+    }
   });
 }
 
