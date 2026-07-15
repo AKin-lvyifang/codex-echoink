@@ -1641,6 +1641,7 @@ function normalizeBackendSessionBindings(value: unknown, legacyThreadId?: string
         syncedSessionRevision: normalizeSessionRevision(item.syncedSessionRevision),
         snapshotVersion: normalizeOptionalText(item.snapshotVersion) || undefined,
         contextCursor: normalizeContextSyncCursor(item.contextCursor, item),
+        vaultProfileFingerprint: normalizeOptionalText(item.vaultProfileFingerprint) || undefined,
         lastUsedAt: normalizeNonNegativeNumber(item.lastUsedAt),
         ...(item.capabilitySnapshot ? { capabilitySnapshot: item.capabilitySnapshot as BackendSessionBinding["capabilitySnapshot"] } : {})
       };

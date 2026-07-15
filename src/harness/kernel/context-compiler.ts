@@ -19,6 +19,7 @@ export interface CompileContextBundleInput {
   userInput: HarnessUserInput;
   memory: MemoryBundle;
   corePolicySections: ContextSection[];
+  vaultProfileSections?: ContextSection[];
   mode?: ContextCompileMode;
   cursor?: ContextSyncCursor | null;
   sessionRevision?: number;
@@ -29,6 +30,7 @@ export function compileContextBundle(input: CompileContextBundleInput): ContextB
   const mode = input.mode ?? "bootstrap";
   const bundle = emptyContextBundle();
   bundle.corePolicy = [...input.corePolicySections].sort(sortSectionByPriority);
+  bundle.vaultProfile = [...(input.vaultProfileSections ?? [])].sort(sortSectionByPriority);
   bundle.workflowContract = [workflowContractSection(input.workflow)];
   bundle.turnInstruction = [{
     id: "turn-instruction",

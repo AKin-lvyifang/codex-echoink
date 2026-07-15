@@ -105,7 +105,7 @@
 - Keeps only the latest active Knowledge day in the channel; older chat history is stored by day under the plugin `history/` data folder and browsed through `/history`.
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
-- Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Agent backends.
+- Uses `LLM-WIKI.md` as the knowledge-base rules source by default, or another Vault Markdown selected in settings. Before every Knowledge run, EchoInk reads the latest content, validates it, and injects it into system context; an unreadable or missing file blocks the Agent from starting. `AGENTS.md` may be absent and is never merged as Knowledge rules.
 - Optionally recommends [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) for longer-lived knowledge context; your Agent installs the skill and runs its bootstrap in the workspace, while the plugin does not bundle the skill or modify your `AGENTS.md`.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Uses a four-step digest protocol: understand Raw, extract reusable knowledge, merge structured knowledge in Wiki / Projects, then mark Raw only after source evidence is verified.
@@ -448,7 +448,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 - Added Codex CLI model and reasoning-effort controls directly in the Knowledge channel composer. The Knowledge task no longer has to use a hard-coded reasoning level.
 - Added search boxes to the current-vault `Plugins`, `MCP`, and `Skills` capability tabs. Search covers name, id/path, metadata, and description, and multiple words work as an AND filter.
 - Fixed long capability rows by clipping names, paths, and descriptions with ellipses, so the right-side checkbox remains visible and clickable.
-- Kept `LLM-WIKI.md` as the default knowledge rules file, with `AGENTS.md` preserved as a compatibility option and runtime background.
+- Kept `LLM-WIKI.md` as the default Knowledge rules file while allowing another Vault Markdown to be selected. EchoInk now force-loads the selected file for every run and no longer falls back to `AGENTS.md`.
 
 **How to use:**
 

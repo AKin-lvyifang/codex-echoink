@@ -15,7 +15,7 @@ import {
   buildPromptWithPreparedResources,
   type KnowledgeAgentTaskOutput
 } from "./agent-runner";
-import { AGENTS_RULES_FILE } from "./constants";
+import { DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./constants";
 import { KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
@@ -32,6 +32,8 @@ import { KnowledgeBaseMaintenanceRunner } from "./maintenance-runner";
 import { KnowledgeBaseAgentTaskService } from "./agent-task-service";
 import { KnowledgeBaseRawDigestCalibrationRunner } from "./raw-digest-calibration-runner";
 import { exists } from "./utils";
+import { loadKnowledgeBaseRulesContext } from "./rules-context";
+import { resolveKnowledgeBaseRulesFilePath } from "./rules-repair";
 const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
 
 export class KnowledgeBaseManager {
@@ -273,7 +275,7 @@ export class KnowledgeBaseManager {
     settings.initialization.rulesFilePath = result.rulesFilePath;
     settings.initialization.templateVersion = result.templateVersion;
     settings.initialization.lastPreviewSummary = preview.summary.slice(0, 2000);
-    settings.useCustomRulesFile = result.rulesFilePath !== AGENTS_RULES_FILE;
+    settings.useCustomRulesFile = true;
     settings.rulesFilePath = result.rulesFilePath;
     await this.plugin.saveSettings(true);
     return { summary: result.summary, rulesFilePath: result.rulesFilePath };
@@ -359,6 +361,10 @@ export class KnowledgeBaseManager {
     turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides;
     managedKind: KnowledgeBaseManagedThreadKind;
   }): Promise<KnowledgeAgentTaskOutput> {
+    throwIfKnowledgeBaseCanceled(this.cancelRequested);
+    const rules = await this.resolveRulesFile();
+    const rulesContext = await loadKnowledgeBaseRulesContext(this.plugin.getVaultPath(), rules.relativePath);
+    throwIfKnowledgeBaseCanceled(this.cancelRequested);
     const backend = this.resolveKnowledgeBackend();
     const resources = await this.prepareKnowledgeAgentResources(backend);
     const toolBridge = harnessKnowledgeUsesEchoInkToolBridge(backend) ? await this.prepareKnowledgeAgentToolBridge() : null;
@@ -374,7 +380,8 @@ export class KnowledgeBaseManager {
       turnOptionOverrides: input.turnOptionOverrides,
       managedKind: input.managedKind,
       resources,
-      toolBridge
+      toolBridge,
+      vaultProfileSections: [rulesContext.section]
     });
   }
 
@@ -426,14 +433,14 @@ export class KnowledgeBaseManager {
     return [
       `后端：${backend}`,
       modelLabel ? `模型：${modelLabel}` : "",
-      `规则文件：${kb.useCustomRulesFile ? kb.rulesFilePath : AGENTS_RULES_FILE}`,
+      `规则文件：${resolveKnowledgeBaseRulesFilePath(kb)}`,
       reportPath ? `报告：${reportPath}` : ""
     ].filter(Boolean).join("\n");
   }
 
   private async resolveRulesFile(): Promise<{ relativePath: string; absolutePath: string; exists: boolean; useCustomRulesFile: boolean }> {
     const settings = this.plugin.settings.knowledgeBase;
-    const relativePath = normalizeRulesPath(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE);
+    const relativePath = normalizeRulesPath(resolveKnowledgeBaseRulesFilePath(settings));
     const absolutePath = path.join(this.plugin.getVaultPath(), relativePath);
     return {
       relativePath,
@@ -508,5 +515,5 @@ function reviewKindLabel(kind: ReviewReportKind): string {
 }
 
 function normalizeRulesPath(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/") || AGENTS_RULES_FILE;
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/") || DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
 }

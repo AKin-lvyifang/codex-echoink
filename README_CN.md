@@ -107,7 +107,7 @@
 - 知识库频道只保留最近有记录的一天；更早聊天按天保存到插件 `history/` 数据目录，并通过 `/history` 查看。
 - Codex CLI 知识库任务会展示与普通 Agent 对话一致的过程卡片：思考、命令、文件改动、工具调用和最终结果。
 - 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
-- 默认读取 `LLM-WIKI.md` 作为知识库规则真源；`AGENTS.md` 只保留 Agent 运行层背景。
+- 默认把 `LLM-WIKI.md` 作为知识库规则真源，也可以在设置里选择 Vault 内其他 Markdown。每轮知识库任务开始前，EchoInk 都会读取最新内容、校验文件并注入系统上下文；文件缺失或不可读时不会启动 Agent。`AGENTS.md` 可不存在，也不会被合并为知识库规则。
 - 可选推荐 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 来增强跨会话长期记忆；由你的 Agent 安装这个 Skill，并在工作区运行 bootstrap，插件不内置这套 Skills，也不会修改你的 `AGENTS.md`。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 四步提炼：读懂 Raw，拆出可复用知识，写入 Wiki / Projects 结构化正文，再在来源证据通过后回写 Raw 托管状态。
@@ -452,7 +452,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 - Codex CLI 模式下，知识库频道底部可以直接选择模型和思考强度；知识库任务不再固定使用同一个强度。
 - 当前 vault 的能力管理页新增搜索栏，`插件`、`MCP`、`Skills` 三个标签都可以搜名称、id/路径、元信息和描述；多个词会同时匹配。
 - 修复 Skills 等长文本把列表撑太宽的问题：名称、路径和描述写不下时用省略号，右侧勾选框不会被挤出去。
-- 默认知识库规则文件保持为 `LLM-WIKI.md`，`AGENTS.md` 仍作为兼容选项和运行层背景。
+- 默认知识库规则文件保持为 `LLM-WIKI.md`，也可以选择 Vault 内其他 Markdown；规则由 EchoInk 每轮强制加载，不再回退到 `AGENTS.md`。
 
 **使用方法：**
 

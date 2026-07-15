@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### 中文
+
+1. 知识库任务现在由 EchoInk 在每轮开始前强制读取设置中指定的 Markdown 规则文件，并把最新内容作为必需系统上下文注入 Codex、OpenCode 或 Hermes。
+2. 规则文件缺失、为空、不可读、不是有效 UTF-8、超出 Vault 或超过大小上限时，任务会在启动 Agent 前失败。
+3. 知识库规则不再回退或合并 `AGENTS.md`；没有 `AGENTS.md` 的普通 Obsidian Vault 也可以直接使用，默认规则文件仍为 `LLM-WIKI.md`。
+4. 规则上下文记录来源路径和 SHA-256 哈希，修改规则后下一轮立即生效；Codex 复用线程时也会刷新本轮系统指令。
+
+### English
+
+1. Before every Knowledge run, EchoInk now force-loads the configured Markdown rules file and injects its latest content as required system context for Codex, OpenCode, or Hermes.
+2. Missing, empty, unreadable, invalid UTF-8, out-of-vault, or oversized rule files now fail before the Agent starts.
+3. Knowledge rules no longer fall back to or merge `AGENTS.md`; ordinary Obsidian vaults without `AGENTS.md` work directly, with `LLM-WIKI.md` still the default.
+4. The injected rules context records its source path and SHA-256 hash, so edits apply on the next run, including reused Codex threads.
+
 ## v1.2.2 - 2026-07-16
 
 版本号：`v1.2.2`

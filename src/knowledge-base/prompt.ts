@@ -27,8 +27,8 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
   const skippedSourceLines = formatSkippedSources(input.skippedSources ?? []);
   const task = taskForMode(input.mode);
   const rulesMode = input.useCustomRulesFile
-    ? `自定义规则文件：${input.rulesFilePath}。知识库结构以这个文件为准；不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
-    : `默认规则文件：${input.rulesFilePath}。如果存在，必须读取；如果不存在，按本提示的安全边界执行。`;
+    ? `自定义规则文件：${input.rulesFilePath}。EchoInk 已强制读取并注入本轮系统上下文；知识库结构以该注入内容为准，不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
+    : `默认规则文件：${input.rulesFilePath}。EchoInk 已强制读取并注入本轮系统上下文；不依赖 ${AGENTS_RULES_FILE}。`;
   return [
     "你正在 Obsidian Vault 内执行知识库维护任务。",
     "",
@@ -46,7 +46,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "",
     "## 必读文件状态",
     `- 知识库操作指南：${rulesMode}`,
-    `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，必须读取" : "不存在"}`,
+    `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，已由 EchoInk 强制加载" : "不存在，任务不会启动"}`,
     `- raw/index.md: ${input.hasRawIndex ? "存在，必须读取" : "不存在"}`,
     `- wiki/index.md: ${input.hasWikiIndex ? "存在，必须读取" : "不存在"}`,
     `- outputs/.ingest-tracker.md: ${input.hasTracker ? "存在，必须读取" : "不存在，可创建或补齐"}`,
@@ -127,8 +127,8 @@ export interface KnowledgeBaseAskPromptInput {
 
 export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput): string {
   const rulesMode = input.useCustomRulesFile
-    ? `自定义规则文件：${input.rulesFilePath}。知识库结构以这个文件为准；不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
-    : `默认规则文件：${input.rulesFilePath}。如果存在，必须读取；如果不存在，按本提示的安全边界执行。`;
+    ? `自定义规则文件：${input.rulesFilePath}。EchoInk 已强制读取并注入本轮系统上下文；知识库结构以该注入内容为准，不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
+    : `默认规则文件：${input.rulesFilePath}。EchoInk 已强制读取并注入本轮系统上下文；不依赖 ${AGENTS_RULES_FILE}。`;
   return [
     "你正在 Obsidian Vault 内回答知识库问题。",
     "",
@@ -145,7 +145,7 @@ export function buildKnowledgeBaseAskPrompt(input: KnowledgeBaseAskPromptInput):
     "",
     "## 必读文件状态",
     `- 知识库操作指南：${rulesMode}`,
-    `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，必须读取" : "不存在"}`,
+    `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，已由 EchoInk 强制加载" : "不存在，任务不会启动"}`,
     "",
     "## 相关本地来源",
     formatAskMatchesForPrompt(input.matches),

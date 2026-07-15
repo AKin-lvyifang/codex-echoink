@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as path from "path";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentRunResult } from "../harness/agents/adapter";
@@ -16,6 +17,7 @@ import type {
   NativeSessionPolicy
 } from "../harness/contracts/native-execution";
 import type { HarnessRunResult, HarnessWorkflow } from "../harness/contracts/run";
+import type { ContextSection } from "../harness/contracts/context";
 import type { SettleRunTerminalInput } from "../harness/kernel/run-orchestrator";
 import { sessionBackendBinding, updateSessionBackendBinding } from "../harness/kernel/session-service";
 import { resourceSelectionFromPreparedResources } from "../resources/registry";
@@ -74,6 +76,7 @@ export interface KnowledgeBaseHarnessTaskInput {
   resources?: PreparedAgentResources;
   toolBridge?: AgentToolBridgeRuntime | null;
   artifactRecovery?: KnowledgeAgentArtifactRecovery;
+  vaultProfileSections?: ContextSection[];
 }
 
 export class KnowledgeBaseAgentTaskService {
@@ -103,7 +106,8 @@ export class KnowledgeBaseAgentTaskService {
         turnOptionOverrides: input.turnOptionOverrides as KnowledgeBaseTurnOptionOverrides | undefined,
         managedKind: input.managedKind as KnowledgeBaseManagedThreadKind,
         resources: input.resources,
-        artifactRecovery: input.artifactRecovery
+        artifactRecovery: input.artifactRecovery,
+        vaultProfileSections: input.vaultProfileSections
       })
     });
   }
@@ -211,6 +215,7 @@ export class KnowledgeBaseAgentTaskService {
         outputKind: input.managedKind === "ask" ? "plain-text" : "knowledge-ledger",
         managedKind: input.managedKind,
         artifactRecovery: input.artifactRecovery,
+        vaultProfileSections: input.vaultProfileSections,
         onNativeRunId: recordNativeRun
       });
       if (input.backend !== "codex-cli") await queueNativeCommit("success", output.harnessResult);
@@ -284,6 +289,7 @@ export class KnowledgeBaseAgentTaskService {
     managedKind: KnowledgeBaseManagedThreadKind;
     resources?: PreparedAgentResources;
     artifactRecovery?: KnowledgeAgentArtifactRecovery;
+    vaultProfileSections?: ContextSection[];
   }): Promise<KnowledgeAgentTaskOutput> {
     let status = await this.plugin.ensureCodexConnected(false, { silent: true });
     if (!status.connected) status = await this.plugin.ensureCodexConnected(true, { silent: true }).catch(() => status);
@@ -304,8 +310,11 @@ export class KnowledgeBaseAgentTaskService {
       input.managedKind === "ask" ? ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath()) : undefined
     );
     const harnessSessionId = harnessSession?.id || this.plugin.settings.knowledgeBase.sessionId || "knowledge";
-    let threadId = input.managedKind === "ask" && harnessSession
-      ? sessionBackendBinding(harnessSession, "codex-cli")?.nativeThreadId ?? ""
+    const vaultProfileFingerprint = fingerprintVaultProfile(input.vaultProfileSections);
+    const existingBinding = harnessSession ? sessionBackendBinding(harnessSession, "codex-cli") : null;
+    let threadId = input.managedKind === "ask" && existingBinding
+      && (!vaultProfileFingerprint || existingBinding.vaultProfileFingerprint === vaultProfileFingerprint)
+      ? existingBinding.nativeThreadId ?? ""
       : "";
     const harnessRunId = input.harnessRunId || newId("knowledge-codex");
     let nativeRecordPromise: Promise<string> | null = null;
@@ -345,7 +354,7 @@ export class KnowledgeBaseAgentTaskService {
           return await this.plugin.startCodexHarnessThread(requestOptions ?? options);
         }
       },
-      resumeThread: async () => undefined,
+      resumeThread: async (currentThreadId, requestOptions) => await this.plugin.resumeCodexHarnessThread(currentThreadId, requestOptions ?? options),
       startTurn: async (currentThreadId, requestInput, requestOptions) => await rejectAfterTimeout(
         this.plugin.startCodexHarnessTurn(currentThreadId, requestInput, requestOptions ?? options),
         inactivityTimeoutMs,
@@ -383,13 +392,17 @@ export class KnowledgeBaseAgentTaskService {
             ? resourceSelectionFromPreparedResources(input.resources, "codex-cli")
             : { selected: [], resolvedAt: Date.now(), warnings: [] },
           memoryPolicy: { enabled: input.managedKind === "ask", maxItems: input.managedKind === "ask" ? 8 : 0 },
-          outputContract: { kind: input.managedKind === "ask" ? "plain-text" : "knowledge-ledger" }
+          outputContract: { kind: input.managedKind === "ask" ? "plain-text" : "knowledge-ledger" },
+          vaultProfileSections: input.vaultProfileSections
         }
       });
       if (harnessResult.status === "cancelled") throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
       if (harnessResult.status !== "running") throw new Error(harnessResult.error || "Codex 知识库任务未启动");
       if (input.managedKind === "ask" && harnessSession && harnessResult.backendBinding) {
-        updateSessionBackendBinding(harnessSession, harnessResult.backendBinding);
+        updateSessionBackendBinding(harnessSession, {
+          ...harnessResult.backendBinding,
+          ...(vaultProfileFingerprint ? { vaultProfileFingerprint } : {})
+        });
       }
       if (!nativeRecordPromise && harnessResult.nativeExecution) {
         nativeRecordPromise = this.recordNativeExecution({
@@ -593,6 +606,19 @@ export class KnowledgeBaseAgentTaskService {
   private throwIfCanceled(): void {
     if (this.context.isCancelRequested()) throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
   }
+}
+
+function fingerprintVaultProfile(sections: ContextSection[] | undefined): string {
+  const serialized = (sections ?? [])
+    .filter((section) => section.channel === "system")
+    .map((section) => ({
+      id: section.id,
+      source: section.source,
+      content: section.content
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id) || left.source.localeCompare(right.source));
+  if (!serialized.length) return "";
+  return createHash("sha256").update(JSON.stringify(serialized)).digest("hex");
 }
 
 export function knowledgeWorkflowForManagedKind(kind: KnowledgeBaseManagedThreadKind): HarnessWorkflow {

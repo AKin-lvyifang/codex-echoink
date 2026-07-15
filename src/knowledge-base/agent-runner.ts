@@ -7,6 +7,7 @@ import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../co
 import { harnessBackendDisplayName, harnessTaskAgent, harnessTaskModel, harnessTaskProfile } from "../harness/agents/backend-runtime-profile";
 import { TaskRuntimeAgentAdapter, type TaskRuntimeAgentAdapterOptions } from "../harness/agents/adapters/task-runtime-adapter";
 import type { HarnessRunResult, HarnessWorkflow, OutputContract } from "../harness/contracts/run";
+import type { ContextSection } from "../harness/contracts/context";
 import type { HarnessRunWithAdapterInput } from "../harness/kernel/harness-kernel";
 import { resourceSelectionFromPreparedResources } from "../resources/registry";
 import type { CodexForObsidianSettings } from "../settings/settings";
@@ -32,6 +33,7 @@ export type KnowledgeAgentTaskInput = AgentTaskInput & {
   harnessRunId?: string;
   workflow?: HarnessWorkflow;
   outputKind?: OutputContract["kind"];
+  vaultProfileSections?: ContextSection[];
 };
 
 export type KnowledgeAgentTaskOutput = {
@@ -59,6 +61,7 @@ export interface KnowledgeCodexRuntimeTaskRequest {
   managedKind: string;
   resources?: PreparedAgentResources;
   artifactRecovery?: KnowledgeAgentArtifactRecovery;
+  vaultProfileSections?: ContextSection[];
 }
 
 type ActiveKnowledgeRuntimeRun = {
@@ -94,6 +97,7 @@ export interface KnowledgeRuntimeTaskRequest {
   onNativeRunId?: (backend: AgentBackendKind, runId: string) => void;
   managedKind?: string;
   artifactRecovery?: KnowledgeAgentArtifactRecovery;
+  vaultProfileSections?: ContextSection[];
 }
 
 type KnowledgeRuntimeRunner = (
@@ -199,7 +203,8 @@ export class KnowledgeAgentRuntimeController {
       turnOptionOverrides: input.turnOptionOverrides,
       managedKind: input.managedKind ?? "unknown",
       resources: input.resources,
-      artifactRecovery: input.artifactRecovery
+      artifactRecovery: input.artifactRecovery,
+      vaultProfileSections: input.vaultProfileSections
     });
   }
 
@@ -229,7 +234,8 @@ export class KnowledgeAgentRuntimeController {
           edit: input.permission !== "read-only",
           read: true,
           bash: false
-        }
+        },
+        vaultProfileSections: input.vaultProfileSections
       }, timeoutMs, input.workflow, input.outputKind, input.harnessRunId);
     } catch (error) {
       if (!this.options.isCanceled() && !isKnowledgeBaseCancelError(error instanceof Error ? error.message : String(error))) {
@@ -252,7 +258,7 @@ export class KnowledgeAgentRuntimeController {
   private async sendTaskWithGuards(
     backend: AgentBackendKind,
     runtime: AgentTaskRuntime,
-    input: AgentTaskInput,
+    input: KnowledgeAgentTaskInput,
     timeoutMs: number,
     workflow: HarnessWorkflow,
     outputKind: OutputContract["kind"],
@@ -448,7 +454,8 @@ export async function runKnowledgeAgentTask(
       },
       outputContract: {
         kind: input.outputKind ?? "knowledge-ledger"
-      }
+      },
+      vaultProfileSections: input.vaultProfileSections
     },
     sink: (event) => {
       onEvent?.({ type: event.type, runId: event.runId });

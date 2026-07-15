@@ -1,4 +1,4 @@
-import type { ContextManifest, ContextSyncCursor } from "./context";
+import type { ContextManifest, ContextSection, ContextSyncCursor } from "./context";
 import type { NativeExecutionKind, NativeExecutionRef, NativeSessionLease } from "./native-execution";
 
 export type HarnessSurface = "chat" | "knowledge" | "editor" | "review";
@@ -76,6 +76,7 @@ export interface HarnessRunRequest {
   resourceSelection: ResourceSelectionSnapshot;
   memoryPolicy: MemoryPolicy;
   outputContract: OutputContract;
+  vaultProfileSections?: ContextSection[];
 }
 
 export interface BackendSessionBinding {
@@ -98,6 +99,7 @@ export interface BackendSessionBinding {
   syncedSessionRevision: number;
   snapshotVersion?: string;
   contextCursor?: ContextSyncCursor;
+  vaultProfileFingerprint?: string;
   lastUsedAt: number;
   capabilitySnapshot?: unknown;
 }

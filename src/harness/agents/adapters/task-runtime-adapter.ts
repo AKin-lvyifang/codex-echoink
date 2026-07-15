@@ -116,7 +116,7 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
     let nativeRunId = "";
     const taskInput: AgentTaskInput & { toolBridge?: AgentToolBridgeRuntime | null } = {
       prompt: buildPrompt(request),
-      system: this.options.legacyTaskDefaults?.system,
+      system: buildSystemContext(request, this.options.legacyTaskDefaults?.system),
       nativeSessionId: request.nativeSessionId,
       sources: request.input.attachments.map((attachment) => ({
         type: "file",
@@ -163,7 +163,36 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
 
 function buildPrompt(request: AgentRunRequest): string {
   if (request.workflow === "prompt.enhance") return request.input.text;
-  const context = [
+  const enforcedSystemIds = new Set(enforcedSystemSections(request).map((section) => section.id));
+  const context = allContextSections(request)
+    .filter((section) => !enforcedSystemIds.has(section.id))
+    .map((section) => section.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return context || request.input.text;
+}
+
+function buildSystemContext(request: AgentRunRequest, legacySystem?: string): string | undefined {
+  if (request.workflow === "prompt.enhance") return legacySystem?.trim() || undefined;
+  const system = [
+    enforcedSystemSections(request)
+      .map((section) => section.content.trim())
+      .filter(Boolean)
+      .join("\n\n"),
+    legacySystem?.trim() ?? ""
+  ].filter(Boolean).join("\n\n");
+  return system || undefined;
+}
+
+function enforcedSystemSections(request: AgentRunRequest) {
+  return [
+    ...request.context.corePolicy,
+    ...request.context.vaultProfile
+  ].filter((section) => section.channel === "system");
+}
+
+function allContextSections(request: AgentRunRequest) {
+  return [
     ...request.context.corePolicy,
     ...request.context.workflowContract,
     ...request.context.vaultProfile,
@@ -173,11 +202,7 @@ function buildPrompt(request: AgentRunRequest): string {
     ...request.context.echoInkSkills,
     ...request.context.nativeResourceHints,
     ...request.context.turnInstruction
-  ]
-    .map((section) => section.content.trim())
-    .filter(Boolean)
-    .join("\n\n");
-  return context || request.input.text;
+  ];
 }
 
 function legacyEventSink(emit: HarnessEventSink, manifest: AgentManifest): LegacyAgentEventSink {

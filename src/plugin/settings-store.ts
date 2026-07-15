@@ -14,7 +14,7 @@ import {
   type CodexForObsidianSettings,
   type StoredSession
 } from "../settings/settings";
-import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
+import { DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import {
   collectKnowledgeBaseStorageStats,
   compactOldKnowledgeBaseProcessHistory,
@@ -235,16 +235,11 @@ export class EchoInkSettingsStore {
     if (hasExplicitRules) return false;
 
     const vaultPath = this.plugin.getVaultPath();
-    const agentsPath = path.join(vaultPath, AGENTS_RULES_FILE);
     const llmWikiPath = path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
-    const [agents, llmWiki] = await Promise.all([
-      fsp.readFile(agentsPath, "utf8").catch(() => ""),
-      fsp.readFile(llmWikiPath, "utf8").catch(() => "")
-    ]);
-    if (!agents || !llmWiki) return false;
-    const agentsLooksLikeCodexMemory = /codex-memory|CODEX-MEMORY|项目级上下文管理/.test(agents);
+    const llmWiki = await fsp.readFile(llmWikiPath, "utf8").catch(() => "");
+    if (!llmWiki) return false;
     const llmWikiLooksLikeKnowledgeRules = /知识库|Raw Sources|Ingest|Lint|Wiki/.test(llmWiki);
-    if (!agentsLooksLikeCodexMemory || !llmWikiLooksLikeKnowledgeRules) return false;
+    if (!llmWikiLooksLikeKnowledgeRules) return false;
 
     this.plugin.settings.knowledgeBase.useCustomRulesFile = true;
     this.plugin.settings.knowledgeBase.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;

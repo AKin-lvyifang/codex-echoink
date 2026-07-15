@@ -169,7 +169,16 @@ async function assertTaskRuntimeAdapterRunsThroughHarnessContract(): Promise<voi
       workflow: "chat.generic",
       userInput: { text: "ping", attachments: [] },
       memory: { providerId: "noop", items: [], sections: [] },
-      corePolicySections: []
+      corePolicySections: [],
+      vaultProfileSections: [{
+        id: "vault-profile:knowledge-rules",
+        priority: 9_000,
+        channel: "system",
+        content: "INJECTED-KNOWLEDGE-RULES",
+        source: "vault:LLM-WIKI.md#sha256:test",
+        required: true,
+        sensitive: true
+      }]
     }),
     outputContract: { kind: "plain-text" }
   }, (event) => events.push(event));
@@ -179,6 +188,8 @@ async function assertTaskRuntimeAdapterRunsThroughHarnessContract(): Promise<voi
   assert.equal(result.nativeSessionId, "native-run-1");
   assert.equal(calls.length, 1);
   assert.match(calls[0].prompt, /ping/);
+  assert.doesNotMatch(calls[0].prompt, /INJECTED-KNOWLEDGE-RULES/);
+  assert.match(calls[0].system ?? "", /INJECTED-KNOWLEDGE-RULES/);
   assert.deepEqual(events.map((event) => event.type), ["agent.message.completed"]);
 }
 
@@ -469,6 +480,8 @@ async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
   const archived: string[] = [];
   let threadId = "";
   let turnId = "";
+  let startThreadDeveloperInstructions = "";
+  let startTurnDeveloperInstructions = "";
   const adapter = new CodexRichAgentAdapter({
     displayName: "Codex",
     version: "test",
@@ -480,15 +493,17 @@ async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
       calls.push(`buildInput:${currentThreadId}`);
       return [{ type: "text" as const, text: "ping", text_elements: [] }];
     },
-    startThread: async () => {
+    startThread: async (options) => {
       calls.push("startThread");
+      startThreadDeveloperInstructions = options?.developerInstructions ?? "";
       return { threadId: "codex-thread-1", title: "Thread" };
     },
     resumeThread: async (id) => {
       calls.push(`resumeThread:${id}`);
     },
-    startTurn: async (id, input) => {
+    startTurn: async (id, input, options) => {
       calls.push(`startTurn:${id}:${input[0]?.type}`);
+      startTurnDeveloperInstructions = options?.developerInstructions ?? "";
       return "codex-turn-1";
     },
     archiveThread: async (id) => {
@@ -514,7 +529,16 @@ async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
       workflow: "chat.generic",
       userInput: { text: "ping", attachments: [] },
       memory: { providerId: "noop", items: [], sections: [] },
-      corePolicySections: []
+      corePolicySections: [],
+      vaultProfileSections: [{
+        id: "vault-profile:knowledge-rules",
+        priority: 9_000,
+        channel: "system",
+        content: "CODEX-INJECTED-KNOWLEDGE-RULES",
+        source: "vault:LLM-WIKI.md#sha256:test",
+        required: true,
+        sensitive: true
+      }]
     }),
     outputContract: { kind: "plain-text" }
   }, () => undefined);
@@ -527,6 +551,8 @@ async function assertCodexRichAdapterStartsThreadAndTurn(): Promise<void> {
   assert.equal(adapter.manifest.nativeExecution?.dispositions.archive, true);
   assert.equal(adapter.manifest.nativeExecution?.dispositions.delete, false);
   assert.equal(turnId, "codex-turn-1");
+  assert.match(startThreadDeveloperInstructions, /CODEX-INJECTED-KNOWLEDGE-RULES/);
+  assert.match(startTurnDeveloperInstructions, /CODEX-INJECTED-KNOWLEDGE-RULES/);
   assert.deepEqual(calls, ["startThread", "buildInput:codex-thread-1", "startTurn:codex-thread-1:text"]);
   const disposed = await adapter.disposeNativeExecution({
     ref: result.nativeExecution!,

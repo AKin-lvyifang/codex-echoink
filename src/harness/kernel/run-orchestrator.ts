@@ -284,6 +284,7 @@ export class RunOrchestrator {
         userInput: request.input,
         memory,
         corePolicySections: this.options.corePolicySections ?? [],
+        vaultProfileSections: request.vaultProfileSections,
         mode: leaseDecision.mode,
         cursor: leaseDecision.cursor,
         sessionRevision: session.revision ?? 1,

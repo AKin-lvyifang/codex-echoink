@@ -1,8 +1,12 @@
 import * as assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { CORE_KNOWLEDGE_POLICY, coreKnowledgePolicySections } from "../../workflows/knowledge/policy/core-policy";
 import { buildVaultProfileTemplate, parseVaultProfile } from "../../workflows/knowledge/profile/profile-parser";
 import { buildKnowledgeBaseRulesTemplate } from "../../knowledge-base/initializer";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../../knowledge-base/prompt";
+import { loadKnowledgeBaseRulesContext } from "../../knowledge-base/rules-context";
 
 export async function runHarnessV2KnowledgePolicyProfileTests(): Promise<void> {
   assertCorePolicyContainsNonOverridableRules();
@@ -11,6 +15,8 @@ export async function runHarnessV2KnowledgePolicyProfileTests(): Promise<void> {
   assertVaultProfileTemplateDoesNotContainCorePolicy();
   assertInitializerRulesTemplateUsesVaultProfileOnly();
   assertInvalidVaultProfileFallsBackSafely();
+  await assertKnowledgeRulesAreLoadedFreshAsRequiredSystemContext();
+  await assertKnowledgeRulesFailClosedBeforeAgentStart();
 }
 
 function assertCorePolicyContainsNonOverridableRules(): void {
@@ -125,4 +131,45 @@ function assertInvalidVaultProfileFallsBackSafely(): void {
   assert.equal(parsed.profile.automation.delete, false);
   assert.match(parsed.body, /正文保留/);
   assert.equal(parsed.issues.length > 0, true);
+}
+
+async function assertKnowledgeRulesAreLoadedFreshAsRequiredSystemContext(): Promise<void> {
+  const vaultPath = await mkdtemp(path.join(tmpdir(), "echoink-rules-context-"));
+  try {
+    const rulesPath = path.join(vaultPath, "rules", "knowledge.md");
+    await mkdir(path.dirname(rulesPath), { recursive: true });
+    await writeFile(rulesPath, "# Knowledge Rules\n\nRULE-V1", "utf8");
+
+    const first = await loadKnowledgeBaseRulesContext(vaultPath, "rules/knowledge.md");
+    assert.equal(first.section.channel, "system");
+    assert.equal(first.section.required, true);
+    assert.equal(first.section.sensitive, true);
+    assert.match(first.section.content, /RULE-V1/);
+    assert.match(first.section.source, /sha256:/);
+
+    await writeFile(rulesPath, "# Knowledge Rules\n\nRULE-V2", "utf8");
+    const second = await loadKnowledgeBaseRulesContext(vaultPath, "rules/knowledge.md");
+    assert.match(second.section.content, /RULE-V2/);
+    assert.notEqual(second.sha256, first.sha256);
+    assert.notEqual(second.section.source, first.section.source);
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertKnowledgeRulesFailClosedBeforeAgentStart(): Promise<void> {
+  const vaultPath = await mkdtemp(path.join(tmpdir(), "echoink-rules-context-failure-"));
+  try {
+    await assert.rejects(
+      () => loadKnowledgeBaseRulesContext(vaultPath, "missing.md"),
+      /知识库规则文件不存在/
+    );
+    await writeFile(path.join(vaultPath, "empty.md"), "  \n", "utf8");
+    await assert.rejects(
+      () => loadKnowledgeBaseRulesContext(vaultPath, "empty.md"),
+      /知识库规则文件为空/
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }

@@ -182,12 +182,13 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       cancelGate: new CodexRunCancellationGate(),
       driver,
       emit,
-      toolCallCount: 0
+      toolCallCount: 0,
+      turnOptions: this.turnOptionsForRequest(request)
     };
     this.runs.set(request.runId, state);
     this.options.notificationHub?.register(driver);
     try {
-      const threadId = await this.ensureThread();
+      const threadId = await this.ensureThread(state.turnOptions);
       state.threadId = threadId;
       driver.setThreadId(threadId);
       const input = await this.buildInitialTurnInput(threadId, request);
@@ -201,7 +202,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
           nativeThreadId: threadId
         };
       }
-      const turnId = await this.options.startTurn(threadId, input, this.options.turnOptions);
+      const turnId = await this.options.startTurn(threadId, input, state.turnOptions);
       state.turnId = turnId;
       driver.setTurnId(turnId);
       this.options.onTurnStarted?.({ threadId, turnId });
@@ -391,7 +392,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       const turnId = await this.options.startTurn(
         state.threadId,
         [textUserInput(buildEchoInkToolResultTurnPrompt(request, output))],
-        this.options.turnOptions
+        state.turnOptions
       );
       state.turnId = turnId;
       driver.setTurnId(turnId);
@@ -449,22 +450,23 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     return this.injectToolBridgePrompt(input);
   }
 
-  private async ensureThread(): Promise<string> {
+  private async ensureThread(turnOptions?: TurnOptions): Promise<string> {
     if (this.preparedThreadId) {
       const prepared = this.preparedThreadId;
       this.preparedThreadId = "";
+      if (turnOptions !== this.options.turnOptions) await this.options.resumeThread(prepared, turnOptions);
       return prepared;
     }
     const existing = this.options.getNativeThreadId()?.trim();
     if (existing) {
       try {
-        await this.options.resumeThread(existing, this.options.turnOptions);
+        await this.options.resumeThread(existing, turnOptions);
         return existing;
       } catch {
         // Fall through and create a replacement thread.
       }
     }
-    const started = await this.options.startThread(this.options.turnOptions);
+    const started = await this.options.startThread(turnOptions);
     this.options.setNativeThreadId(started.threadId);
     return started.threadId;
   }
@@ -481,6 +483,33 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       deviceKey: context.deviceKey,
       vaultId: context.vaultId,
       createdAt: Date.now()
+    };
+  }
+
+  private turnOptionsForRequest(request: AgentRunRequest): TurnOptions | undefined {
+    if (request.workflow === "prompt.enhance") return this.options.turnOptions;
+    const systemContext = [
+      ...request.context.corePolicy,
+      ...request.context.vaultProfile
+    ]
+      .filter((section) => section.channel === "system")
+      .map((section) => section.content.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    if (!systemContext) return this.options.turnOptions;
+    const base: TurnOptions = this.options.turnOptions ?? {
+      model: "",
+      reasoning: "medium",
+      serviceTier: "standard",
+      permission: request.permissions.mode,
+      mode: "agent",
+      mcpEnabled: false
+    };
+    return {
+      ...base,
+      developerInstructions: [systemContext, base.developerInstructions?.trim() ?? ""]
+        .filter(Boolean)
+        .join("\n\n")
     };
   }
 
@@ -583,6 +612,7 @@ interface CodexRunState {
   driver: CodexRichRunDriver;
   emit: HarnessEventSink;
   toolCallCount: number;
+  turnOptions?: TurnOptions;
   resultPromise?: Promise<AgentRunResult>;
 }
 

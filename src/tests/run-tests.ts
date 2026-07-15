@@ -6577,9 +6577,9 @@ try {
   assert.ok(kbPrompt.includes("报告不能代替 Wiki / Projects 正文"));
   assert.ok(kbPrompt.includes("优先更新已有主题页"));
   assert.ok(kbPrompt.includes(`自定义规则文件：${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`));
-  assert.ok(kbPrompt.includes("知识库结构以这个文件为准"));
+  assert.ok(kbPrompt.includes("知识库结构以该注入内容为准"));
   assert.ok(kbPrompt.includes("不要把 AGENTS.md 当作知识库规则合并"));
-  assert.ok(kbPrompt.includes(`${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}: 存在，必须读取`));
+  assert.ok(kbPrompt.includes(`${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}: 存在，已由 EchoInk 强制加载`));
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
   assert.ok(kbPrompt.includes("只适用于本次知识库管理任务"));
@@ -7734,6 +7734,40 @@ try {
   await rm(askPinnedHermesBackendVault, { recursive: true, force: true });
 }
 
+const forcedRulesContextVault = await createMaintenanceVaultForTest("codex-kb-rules-system-context-");
+try {
+  const customRulesPath = path.join(forcedRulesContextVault, "rules", "custom-knowledge.md");
+  await mkdir(path.dirname(customRulesPath), { recursive: true });
+  await writeFile(customRulesPath, "# Custom Knowledge Rules\n\nRULE-CONTEXT-V1", "utf8");
+  const capturedTaskInputs: any[] = [];
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(forcedRulesContextVault, { capturedTaskInputs });
+  settings.knowledgeBase.useCustomRulesFile = true;
+  settings.knowledgeBase.rulesFilePath = "rules/custom-knowledge.md";
+
+  const first = await manager.handleUserMessage("/ask 验证规则系统上下文");
+  assert.equal(first.status, "success");
+  assert.equal(capturedTaskInputs.length, 1);
+  assert.match(capturedTaskInputs[0].vaultProfileSections?.[0]?.content ?? "", /RULE-CONTEXT-V1/);
+  const firstSource = capturedTaskInputs[0].vaultProfileSections?.[0]?.source ?? "";
+  assert.match(firstSource, /vault:rules\/custom-knowledge\.md#sha256:/);
+  assert.equal(await fileExists(path.join(forcedRulesContextVault, "AGENTS.md")), false);
+
+  await writeFile(customRulesPath, "# Custom Knowledge Rules\n\nRULE-CONTEXT-V2", "utf8");
+  const second = await manager.handleUserMessage("/ask 再次验证规则系统上下文");
+  assert.equal(second.status, "success");
+  assert.equal(capturedTaskInputs.length, 2);
+  assert.match(capturedTaskInputs[1].vaultProfileSections?.[0]?.content ?? "", /RULE-CONTEXT-V2/);
+  assert.notEqual(capturedTaskInputs[1].vaultProfileSections?.[0]?.source, firstSource);
+
+  settings.knowledgeBase.rulesFilePath = "rules/missing.md";
+  const missing = await manager.handleUserMessage("/ask 缺失规则文件不能启动 Agent");
+  assert.equal(missing.status, "failed");
+  assert.match(missing.message, /知识库操作指南文件不存在/);
+  assert.equal(capturedTaskInputs.length, 2);
+} finally {
+  await rm(forcedRulesContextVault, { recursive: true, force: true });
+}
+
 const maintenanceOpenCodeCancelBeforePromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-before-prompt-");
 try {
   let managerForHook: KnowledgeBaseManager | null = null;
@@ -7751,7 +7785,7 @@ try {
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 前取消");
   assert.equal(result.status, "canceled");
   assert.equal(result.processedSources.length, 0);
-  assert.equal((globalThis as any).__opencodeBackendTestHooks.runCliTaskCalls ?? 0, 0);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 0);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
 } finally {
@@ -7765,10 +7799,10 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onRunCliTask: async () => {
+    onSendPrompt: async () => {
       await managerForHook?.cancelMaintenance();
     },
-    runCliTaskError: new Error("OpenCode aborted")
+    sendPromptError: new Error("OpenCode aborted")
   };
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelDuringPromptVault, {
     agentBackend: "opencode",
@@ -7778,7 +7812,7 @@ try {
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 中取消");
   assert.equal(result.status, "canceled");
   assert.equal(result.processedSources.length, 0);
-  assert.equal((globalThis as any).__opencodeBackendTestHooks.runCliTaskCalls ?? 0, 1);
+  assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 1);
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal(settings.opencode.lastError, "");
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
@@ -7793,7 +7827,7 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onRunCliTask: async () => await new Promise(() => undefined)
+    onSendPrompt: async () => await new Promise(() => undefined)
   };
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeStalledPromptTimeoutVault, {
     agentBackend: "opencode",
@@ -7821,7 +7855,7 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
-    onRunCliTask: async () => {
+    onSendPrompt: async () => {
       await managerForHook?.cancelMaintenance();
       await new Promise(() => undefined);
     }
@@ -11310,6 +11344,7 @@ function makeKnowledgeBaseManagerForTest(
     hermesTaskCalls?: Array<{ permission: string }>;
     useRealOpenCodeTask?: boolean;
     useRealHermesTask?: boolean;
+    capturedTaskInputs?: any[];
     throwOnDashboardRefresh?: boolean;
     throwOnGetVaultPath?: boolean;
   } = {}
@@ -11374,6 +11409,7 @@ function makeKnowledgeBaseManagerForTest(
   manager = new KnowledgeBaseManager(plugin as any);
   const realRunTask = (manager as any).agentTaskService.runTask.bind((manager as any).agentTaskService);
   (manager as any).agentTaskService.runTask = async (input: any) => {
+    options.capturedTaskInputs?.push(input);
     const useReal = input.backend === "opencode" ? options.useRealOpenCodeTask : input.backend === "hermes" ? options.useRealHermesTask : false;
     if (useReal) return await realRunTask(input);
     if (input.backend === "codex-cli") options.codexTaskCalls?.push({ permission: input.permission, writeScope: input.codexWriteScope });

@@ -12,11 +12,12 @@ import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
 import { runKnowledgeAgentTask } from "../../knowledge-base/agent-runner";
 import { KnowledgeBaseManager } from "../../knowledge-base/manager";
-import { AGENTS_RULES_FILE } from "../../knowledge-base/constants";
+import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../../knowledge-base/constants";
 import { KNOWLEDGE_BASE_SESSION_TITLE, normalizeSettingsData, type CodexForObsidianSettings } from "../../settings/settings";
 
 export async function runHarnessV2KnowledgeAskLeaseTests(): Promise<void> {
   await assertKnowledgeAskFollowUpPersistsAndReusesCodexLease();
+  await assertKnowledgeRulesChangeStartsFreshCodexThread();
   await assertKnowledgeAgentSwitchBootstrapsFromStoredSession();
 }
 
@@ -84,6 +85,54 @@ async function assertKnowledgeAskFollowUpPersistsAndReusesCodexLease(): Promise<
   }
 }
 
+async function assertKnowledgeRulesChangeStartsFreshCodexThread(): Promise<void> {
+  const vaultPath = await createKnowledgeVault();
+  try {
+    const settings = normalizeSettingsData({
+      settingsVersion: 29,
+      agentBackend: "codex-cli",
+      knowledgeBase: {
+        backend: "codex-cli",
+        sessionId: "kb-rules-session",
+        rulesFilePath: DEFAULT_KNOWLEDGE_BASE_RULES_FILE
+      },
+      sessions: [{
+        id: "kb-rules-session",
+        kind: "knowledge-base",
+        title: KNOWLEDGE_BASE_SESSION_TITLE,
+        cwd: vaultPath,
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }]
+    }).settings;
+    const harness = createKnowledgeAskHarness(settings, vaultPath);
+
+    await writeFile(path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# Knowledge Rules\n\nRULE-V1\n", "utf8");
+    const first = await harness.manager.handleUserMessage("/ask current acceptance marker");
+    const firstFingerprint = settings.sessions[0]?.backendBindings?.["codex-cli"]?.vaultProfileFingerprint;
+
+    await writeFile(path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# Knowledge Rules\n\nRULE-V2\n", "utf8");
+    const second = await harness.manager.handleUserMessage("/ask current acceptance marker");
+    const secondFingerprint = settings.sessions[0]?.backendBindings?.["codex-cli"]?.vaultProfileFingerprint;
+
+    assert.equal(first.status, "success");
+    assert.equal(second.status, "success");
+    assert.ok(firstFingerprint);
+    assert.ok(secondFingerprint);
+    assert.notEqual(secondFingerprint, firstFingerprint, "changed rules must replace the persisted Vault profile fingerprint");
+    assert.notEqual(
+      second.harnessResult?.backendBinding?.nativeThreadId,
+      first.harnessResult?.backendBinding?.nativeThreadId,
+      "Codex must start a fresh native thread when required Vault rules change"
+    );
+    assert.equal(harness.startedThreads.length, 2);
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
 async function assertKnowledgeAgentSwitchBootstrapsFromStoredSession(): Promise<void> {
   const session = {
     id: "kb-switch-session",
@@ -146,6 +195,8 @@ function createKnowledgeAskHarness(settings: CodexForObsidianSettings, vaultPath
   manager: KnowledgeBaseManager;
   requestSessionIds: string[];
   events: HarnessEvent[];
+  startedThreads: string[];
+  resumedThreads: string[];
 } {
   const requestSessionIds: string[] = [];
   const events: HarnessEvent[] = [];
@@ -227,7 +278,7 @@ function createKnowledgeAskHarness(settings: CodexForObsidianSettings, vaultPath
   };
 
   manager = new KnowledgeBaseManager(plugin as any);
-  return { manager, requestSessionIds, events };
+  return { manager, requestSessionIds, events, startedThreads, resumedThreads };
 }
 
 function completeCodexTurn(notificationHub: CodexRichNotificationHub, threadId: string, turnId: string): void {
@@ -251,6 +302,7 @@ async function createKnowledgeVault(): Promise<string> {
   await mkdir(path.join(vaultPath, "raw", "articles"), { recursive: true });
   await mkdir(path.join(vaultPath, "wiki"), { recursive: true });
   await writeFile(path.join(vaultPath, AGENTS_RULES_FILE), "# Knowledge Rules\n", "utf8");
+  await writeFile(path.join(vaultPath, DEFAULT_KNOWLEDGE_BASE_RULES_FILE), "# Knowledge Rules\n", "utf8");
   await writeFile(path.join(vaultPath, "raw", "articles", "echoink.md"), "# EchoInk\n\nEchoInk 是知识库 Harness。\n", "utf8");
   await writeFile(path.join(vaultPath, "wiki", "echoink.md"), "# EchoInk\n\nEchoInk 是知识库 Harness。\n", "utf8");
   return vaultPath;

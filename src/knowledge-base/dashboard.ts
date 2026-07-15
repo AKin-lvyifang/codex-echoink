@@ -3,7 +3,8 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
-import { AGENTS_RULES_FILE } from "./constants";
+import { DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "./constants";
+import { resolveKnowledgeBaseRulesFilePath } from "./rules-repair";
 import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
@@ -200,7 +201,7 @@ const RISK_HEALTH_PENALTY = 2;
 
 export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings, options: KnowledgeBaseDashboardOptions = {}): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
-  const rulesFilePath = normalizeRelativePath(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE, AGENTS_RULES_FILE);
+  const rulesFilePath = normalizeRelativePath(resolveKnowledgeBaseRulesFilePath(settings), DEFAULT_KNOWLEDGE_BASE_RULES_FILE);
   const processedSources = settings.processedSources ?? {};
   const raw = await scanDashboardDirectory(vaultPath, "raw", { skipHidden: true });
   const wiki = await scanDashboardDirectory(vaultPath, "wiki", { skipHidden: true });

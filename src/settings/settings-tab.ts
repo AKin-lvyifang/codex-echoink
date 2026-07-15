@@ -70,7 +70,7 @@ import type { CodexModel, CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpS
 import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
 import { skillResourceFromHermesSkill } from "../resources/skill-loader";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
-import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
+import { repairKnowledgeBaseRulesFile, resolveKnowledgeBaseRulesFilePath } from "../knowledge-base/rules-repair";
 import { confirmModal, textInputModal } from "../ui/modals";
 import { openPathInElectron } from "../core/electron";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
@@ -480,7 +480,7 @@ export class CodexSettingTab extends PluginSettingTab {
     summary.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.statusHeading });
     summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.recentStatus(knowledgeStatusLabel(settings.lastRunStatus, copy), settings.lastRunAt ? new Date(settings.lastRunAt).toLocaleString() : "") });
     summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.initialization(knowledgeInitStatusLabel(settings.initialization.status, copy), settings.initialization.rulesFilePath) });
-    summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.guide(settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE, settings.useCustomRulesFile) });
+    summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.guide(resolveKnowledgeBaseRulesFilePath(settings), true) });
     if (settings.lastReportPath) summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.recentReport(settings.lastReportPath) });
     if (settings.lastError) summary.createDiv({ cls: "codex-resource-error", text: settings.lastError });
 
@@ -524,14 +524,6 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }), "route");
 
-    this.decorateSetting(new Setting(wrapper).setName(copy.knowledge.customRules).setDesc(copy.knowledge.customRulesDesc(DEFAULT_KNOWLEDGE_BASE_RULES_FILE, AGENTS_RULES_FILE)).addToggle((toggle) =>
-      toggle.setValue(settings.useCustomRulesFile).onChange(async (value) => {
-        settings.useCustomRulesFile = value;
-        if (value && (!settings.rulesFilePath || settings.rulesFilePath === AGENTS_RULES_FILE)) settings.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
-        await this.plugin.saveSettings();
-        this.scheduleDisplay();
-      })
-    ), "file-cog");
     this.addKnowledgeBaseRulesFilePicker(wrapper);
     this.addKnowledgeBaseMemoryRecommendation(wrapper);
 
@@ -1807,7 +1799,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private addKnowledgeBaseRulesFilePicker(container: HTMLElement): void {
     const copy = this.copy;
     const settings = this.plugin.settings.knowledgeBase;
-    const currentPath = settings.useCustomRulesFile ? settings.rulesFilePath : AGENTS_RULES_FILE;
+    const currentPath = resolveKnowledgeBaseRulesFilePath(settings);
     const field = container.createDiv({ cls: "codex-api-provider-field" });
     field.createDiv({ cls: "codex-api-provider-label", text: copy.knowledge.rulesFile });
     const picker = field.createDiv({ cls: "codex-rules-file-picker" });
@@ -1832,7 +1824,7 @@ export class CodexSettingTab extends PluginSettingTab {
       text: copy.knowledge.useRulesFile(DEFAULT_KNOWLEDGE_BASE_RULES_FILE),
       attr: { type: "button" }
     });
-    resetButton.disabled = settings.useCustomRulesFile && currentPath === DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
+    resetButton.disabled = currentPath === DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
     resetButton.onclick = async () => {
       settings.useCustomRulesFile = true;
       settings.rulesFilePath = DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
@@ -1849,9 +1841,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
     field.createDiv({
       cls: "codex-resource-note codex-rules-file-note",
-      text: settings.useCustomRulesFile
-        ? copy.knowledge.rulesFileNoteCustom(settings.rulesFilePath || DEFAULT_KNOWLEDGE_BASE_RULES_FILE, AGENTS_RULES_FILE)
-        : copy.knowledge.rulesFileNoteLegacy(AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE)
+      text: copy.knowledge.rulesFileNoteCustom(currentPath, AGENTS_RULES_FILE)
     });
   }
 
