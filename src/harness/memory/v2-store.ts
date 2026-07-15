@@ -10,6 +10,7 @@ export const MAX_PENDING_MEMORY_EVENTS = 500;
 const pendingJournalTails = new Map<string, Promise<void>>();
 const formalMutationTails = new Map<string, Promise<void>>();
 const MEMORY_RECORD_KINDS = new Set(["current-state", "preference", "decision", "constraint", "open-loop", "task-state", "workflow-rule", "lesson"]);
+const PENDING_MEMORY_EVENT_TYPES = new Set<PendingMemoryEventType>(["user-input", "tool-effect", "file-effect", "final-result", "workflow-result"]);
 const UNSAFE_MEMORY_CONTROL_CHARACTER = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 export interface EchoInkMemoryV2Layout {
@@ -258,10 +259,11 @@ export interface MemoryRunStateV2 {
 
 export async function writeMemoryRunState(vaultPath: string, state: MemoryRunStateV2): Promise<void> {
   const layout = await initializeEchoInkMemoryV2(vaultPath);
-  const sanitized = sanitizeMemoryPayload({ text: state.finalText });
+  const sanitized = sanitizeMemoryPayload({ text: state.finalText, data: state.localCommitData });
   await atomicWriteJson(path.join(layout.runs, `${safeName(state.runId)}.json`), {
     ...state,
-    finalText: sanitized.payload.text
+    finalText: sanitized.payload.text,
+    localCommitData: sanitized.payload.data
   });
 }
 
@@ -422,7 +424,13 @@ function redactSecrets(value: string): string {
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]")
     .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_API_KEY]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer [REDACTED_TOKEN]")
-    .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]");
+    .replace(
+      /((?:"?(?:api[_-]?key|token|secret|password)"?)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi,
+      (_match, prefix: string, secret: string) => {
+        const quote = secret.startsWith("\"") ? "\"" : secret.startsWith("'") ? "'" : "";
+        return `${prefix}${quote}[REDACTED]${quote}`;
+      }
+    );
 }
 
 function checksum(value: unknown): string {
@@ -433,17 +441,29 @@ function checksum(value: unknown): string {
 }
 
 function isPendingMemoryEvent(value: unknown): value is PendingMemoryEvent {
-  if (!value || typeof value !== "object") return false;
+  if (!isRecord(value)) return false;
   const event = value as Partial<PendingMemoryEvent>;
   return event.schemaVersion === ECHOINK_MEMORY_SCHEMA_VERSION
-    && typeof event.eventId === "string"
-    && typeof event.runId === "string"
-    && typeof event.sessionId === "string"
-    && typeof event.workflow === "string"
-    && typeof event.backendId === "string"
-    && typeof event.eventType === "string"
-    && typeof event.createdAt === "number"
-    && typeof event.checksum === "string";
+    && isSafeStoredText(event.eventId, 320, false)
+    && isSafeStoredText(event.runId, 240, false)
+    && isSafeStoredText(event.sessionId, 240, false)
+    && isSafeStoredText(event.workflow, 120, false)
+    && isSafeStoredText(event.backendId, 120, false)
+    && PENDING_MEMORY_EVENT_TYPES.has(event.eventType as PendingMemoryEventType)
+    && isStoredTimestamp(event.createdAt)
+    && isRecord(event.payload)
+    && (event.payload.text === undefined || (
+      typeof event.payload.text === "string"
+      && event.payload.text.length <= MAX_MEMORY_EVENT_TEXT_CHARS
+      && !UNSAFE_MEMORY_CONTROL_CHARACTER.test(event.payload.text)
+    ))
+    && (event.payload.data === undefined || (
+      isRecord(event.payload.data)
+      && JSON.stringify(event.payload.data).length <= MAX_MEMORY_EVENT_DATA_CHARS + 128
+    ))
+    && typeof event.redacted === "boolean"
+    && typeof event.checksum === "string"
+    && /^[a-f0-9]{64}$/.test(event.checksum);
 }
 
 function isMemoryRunState(value: unknown): value is MemoryRunStateV2 {

@@ -22,6 +22,7 @@ import { harnessInitialMessageModelId, harnessMessageModelId } from "../../harne
 
 export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertTaskRuntimeAdapterRunsThroughHarnessContract();
+  await assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext();
   await assertTaskRuntimeAdapterMapsFallbackEvents();
   await assertTaskRuntimeAdapterMapsToolBridgeResourceEvents();
   await assertTaskRuntimeAdapterPreservesLegacyTaskDefaults();
@@ -73,6 +74,56 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertEmulatedResumeBackendRebuildsContextForEachRun();
   await assertAdapterFactoryUsesRegisteredBuilders();
   await assertFakeFourthAgentOnlyNeedsAdapterAndManifest();
+}
+
+async function assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext(): Promise<void> {
+  for (const backendId of ["opencode", "hermes"] as const) {
+    const calls: AgentTaskInput[] = [];
+    const adapter = new TaskRuntimeAgentAdapter({
+      backendId,
+      displayName: backendId,
+      version: "test",
+      runtime: fakeRuntime({
+        kind: backendId,
+        result: { text: "ok", runId: `${backendId}-native-memory` },
+        onRunTask: (input) => calls.push(input)
+      }),
+      capabilities: "legacy"
+    });
+    await adapter.run({
+      runId: `run-${backendId}-native-memory`,
+      sessionId: "session-native-memory",
+      workflow: "chat.generic",
+      input: { text: "查找旧记录", attachments: [] },
+      permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+      resources: { selected: [], resolvedAt: 0, warnings: [] },
+      context: compileContextBundle({
+        session: { id: "session-native-memory", title: "Native memory", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+        backendId,
+        workflow: "chat.generic",
+        userInput: { text: "查找旧记录", attachments: [] },
+        memory: {
+          providerId: "file-memory",
+          items: [],
+          sections: [{
+            id: "memory:local-usage-archive",
+            priority: 560,
+            channel: "system",
+            content: "[EchoInk Local Usage Archive]\nSearch on demand.",
+            source: "echoink-local-history",
+            required: true,
+            sensitive: false
+          }]
+        },
+        corePolicySections: []
+      }),
+      outputContract: { kind: "plain-text" }
+    }, () => undefined);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].system, undefined, `${backendId} ordinary runs must not receive a system override that suppresses native memory or rules`);
+    assert.match(calls[0].prompt, /EchoInk Local Usage Archive/, `${backendId} must still receive the EchoInk local archive catalog`);
+  }
 }
 
 async function assertTaskRuntimeAdapterMapsToolBridgeResourceEvents(): Promise<void> {
@@ -1914,7 +1965,7 @@ async function assertCodexRichAdapterInjectsEchoInkMemoryIntoStartTurn(): Promis
 
   const injectedText = joinedTextInput(startedInput);
   assert.match(injectedText, /\[EchoInk Long-term Memory\]/);
-  assert.match(injectedText, /without searching local files/);
+  assert.match(injectedText, /on-demand local search paths/);
   assert.match(injectedText, /跨会话口令 MEMORY-713/);
   assert.equal(countOccurrences(injectedText, "口令是什么？"), 1);
 }

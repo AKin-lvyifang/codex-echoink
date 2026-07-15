@@ -18,6 +18,7 @@ import type {
 import type { HarnessRunResult, HarnessWorkflow } from "../harness/contracts/run";
 import type { SettleRunTerminalInput } from "../harness/kernel/run-orchestrator";
 import { sessionBackendBinding, updateSessionBackendBinding } from "../harness/kernel/session-service";
+import { memoryRequestPolicy } from "../harness/memory/workflow-policy";
 import { resourceSelectionFromPreparedResources } from "../resources/registry";
 import {
   ensureKnowledgeBaseSession,
@@ -382,7 +383,7 @@ export class KnowledgeBaseAgentTaskService {
           resourceSelection: input.resources
             ? resourceSelectionFromPreparedResources(input.resources, "codex-cli")
             : { selected: [], resolvedAt: Date.now(), warnings: [] },
-          memoryPolicy: { enabled: input.managedKind === "ask", maxItems: input.managedKind === "ask" ? 8 : 0 },
+          memoryPolicy: memoryRequestPolicy(knowledgeWorkflowForManagedKind(input.managedKind)),
           outputContract: { kind: input.managedKind === "ask" ? "plain-text" : "knowledge-ledger" }
         }
       });

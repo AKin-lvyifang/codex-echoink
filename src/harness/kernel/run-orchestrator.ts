@@ -166,7 +166,23 @@ export class RunOrchestrator {
     try {
 
       await emit({ type: "run.created", source: "kernel" });
-      await emit({ type: "run.started", source: "kernel", backendId: adapter.manifest.id });
+      await emit({
+        type: "run.started",
+        source: "kernel",
+        backendId: adapter.manifest.id,
+        text: request.input.text,
+        data: {
+          sessionId: request.sessionId,
+          surface: request.surface,
+          workflow: request.workflow,
+          attachments: request.input.attachments.map((attachment) => ({
+            type: attachment.type,
+            path: attachment.path,
+            ...(attachment.name ? { name: attachment.name } : {}),
+            ...(attachment.mime ? { mime: attachment.mime } : {})
+          }))
+        }
+      });
       await this.beginMemoryRun(request);
       await emit({ type: "agent.connecting", source: "agent", backendId: adapter.manifest.id });
       const connection = await adapter.connect({

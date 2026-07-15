@@ -572,6 +572,10 @@ export async function listMemoryTransactionIssues(vaultPath: string): Promise<Me
 }
 
 export async function dismissMemoryTransaction(vaultPath: string, transactionId: string, reason: string): Promise<boolean> {
+  return await withMemoryFormalMutation(vaultPath, async () => await dismissMemoryTransactionUnlocked(vaultPath, transactionId, reason));
+}
+
+async function dismissMemoryTransactionUnlocked(vaultPath: string, transactionId: string, reason: string): Promise<boolean> {
   const layout = await initializeEchoInkMemoryV2(vaultPath);
   const transaction = await readTransaction(layout.transactions, transactionId).catch(() => null);
   if (!transaction || transaction.state === "committed" || transaction.state === "recovered") return false;
@@ -591,16 +595,25 @@ export async function retryMemoryTransaction(
   transactionId: string,
   curator: MemoryCurator
 ): Promise<MemorySyncResult> {
+  return await withMemoryFormalMutation(vaultPath, async () => await retryMemoryTransactionUnlocked(vaultPath, transactionId, curator));
+}
+
+async function retryMemoryTransactionUnlocked(
+  vaultPath: string,
+  transactionId: string,
+  curator: MemoryCurator
+): Promise<MemorySyncResult> {
   const layout = await initializeEchoInkMemoryV2(vaultPath);
-  const transaction = await readTransaction(layout.transactions, transactionId).catch(() => null);
+  let transaction = await readTransaction(layout.transactions, transactionId).catch(() => null);
   if (!transaction || transaction.state === "committed" || transaction.state === "recovered") {
     const manifest = await readMemoryManifestV2(vaultPath);
     return { outcome: "no-pending", revision: manifest.revision, committedMemoryIds: [], confirmationIds: [] };
   }
   if (transaction.state === "committing") {
-    await recoverMemoryTransactions(vaultPath);
+    await recoverMemoryTransactionsUnlocked(vaultPath);
     const recovered = await readTransaction(layout.transactions, transactionId);
-    if (recovered.outcome !== "pending" || !(await readPendingMemoryEvents(vaultPath)).some((event) => transaction.eventIds.includes(event.eventId))) {
+    transaction = recovered;
+    if (recovered.outcome !== "pending" || !(await readPendingMemoryEvents(vaultPath)).some((event) => recovered.eventIds.includes(event.eventId))) {
       return syncResult(recovered);
     }
   }
@@ -611,7 +624,7 @@ export async function retryMemoryTransaction(
   });
   await writeTransaction(layout.transactions, retried);
   await appendAudit(layout.audit, retried, "retried");
-  return await syncPendingMemory(vaultPath, curator, transaction.eventIds);
+  return await syncPendingMemoryUnlocked(vaultPath, curator, transaction.eventIds);
 }
 
 function buildStagedIndex(
@@ -638,7 +651,9 @@ function buildStagedIndex(
     if (duplicate) continue;
     const conflicts = next.memories
       .filter((item) => isActive(item, now) && item.kind === candidate.kind)
-      .filter((item) => conflictKey(item.statement) === conflictKey(statement) && normalize(item.statement) !== normalize(statement));
+      .filter((item) => normalize(item.statement) !== normalize(statement))
+      .filter((item) => conflictKey(item.statement) === conflictKey(statement)
+        || memoryIdentityKey(item.id) === memoryIdentityKey(candidate.candidateId));
     const record = candidateRecord(candidate, eventById, now);
     if (candidate.requiresConfirmation || conflicts.length) {
       const id = `confirmation:${candidate.candidateId}`;
@@ -851,7 +866,13 @@ function normalize(value: string): string {
 
 function conflictKey(value: string): string {
   const normalized = normalize(value).replace(/^(?:用户)?(?:偏好|决定|约束|规则)\s*/, "");
-  return (normalized.split(/[:：=]|\s(?:是|为)\s/)[0] || normalized).slice(0, 80).trim();
+  return (normalized.split(/[:：=]|\s+(?:is|are|was|equals?)\s+|(?:是|为)(?=\s+|["'“‘「『【[(]|\d|[a-z])/i)[0] || normalized)
+    .slice(0, 80)
+    .trim();
+}
+
+function memoryIdentityKey(value: string): string {
+  return value.toLowerCase().replace(/(?:[-_.:](?:update|updated|replacement|new|latest|revision[-_.:]?\d+))+$/, "");
 }
 
 function errorMessage(error: unknown): string {

@@ -289,6 +289,7 @@ export class EchoInkHarnessService {
     this.fileMemoryProviderKey = key;
     this.fileMemoryProvider = new FileMemoryProvider({
       vaultPath,
+      pluginDir: this.plugin.getPluginDataDirName(),
       autoSync: this.plugin.settings.memory.autoSync,
       curator: new BackendNeutralMemoryCurator(this.plugin)
     });

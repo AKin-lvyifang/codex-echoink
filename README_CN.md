@@ -108,7 +108,7 @@
 - Codex CLI 知识库任务会展示与普通 Agent 对话一致的过程卡片：思考、命令、文件改动、工具调用和最终结果。
 - 知识库频道顶部状态面板升级为健康仪表盘：默认展示规则文件、Raw/Wiki/Inbox 数量和健康状态，展开后展示 Wiki 一级目录表、Raw/Inbox 表和年度体检热力图。
 - 默认读取 `LLM-WIKI.md` 作为知识库规则真源；`AGENTS.md` 只保留 Agent 运行层背景。
-- 内置 EchoInk Memory V2：普通 Agent 对话和 `/ask` 可跨会话、跨后端读取同一份长期记忆；维护类工作流只在本地提交成功后记录结果。正式数据保存在 Vault 的 `.echoink/memory/index.json`，设置页可初始化、同步、恢复、处理冲突、删除记录，并显式导入旧 `.codex-memory`。外部 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 仍可独立兼容使用，但不再是 EchoInk 长期记忆的必需依赖。
+- 内置 EchoInk Memory V2，作为并行的本地记忆层，不禁用也不替代 Codex、OpenCode、Hermes 自带的 memory。普通 Agent 对话和 `/ask` 会在系统上下文里收到一份精简目录，需要旧信息时可按需搜索完整的插件本地使用记录，不会把全部历史一次性塞进上下文；同时可跨会话、跨后端读取同一份提炼后的本地记忆。维护类工作流只在本地提交成功后记录结果。正式提炼数据保存在 Vault 的 `.echoink/memory/index.json`，设置页可初始化、同步、恢复、处理冲突、删除记录，并显式导入旧 `.codex-memory`。外部 [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) 仍可独立兼容使用，但不再是 EchoInk 长期记忆的必需依赖。
 - 支持把公众号、网页、文本资料先收进 Raw Sources。
 - 四步提炼：读懂 Raw，拆出可复用知识，写入 Wiki / Projects 结构化正文，再在来源证据通过后回写 Raw 托管状态。
 - 提炼 = 写入 Wiki / Projects + 来源证据 + Raw 托管状态，不等于摘要。

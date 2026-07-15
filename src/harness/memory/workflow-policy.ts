@@ -1,4 +1,4 @@
-import type { HarnessWorkflow } from "../contracts/run";
+import type { HarnessWorkflow, MemoryPolicy } from "../contracts/run";
 
 export type MemoryCaptureMode = "none" | "signal" | "workflow-result";
 export type MemorySyncGate = "never" | "run-terminal" | "local-commit";
@@ -34,6 +34,14 @@ const POLICIES: Partial<Record<HarnessWorkflow, MemoryWorkflowPolicy>> = {
 
 export function memoryWorkflowPolicy(workflow: HarnessWorkflow | string): MemoryWorkflowPolicy {
   return POLICIES[workflow as HarnessWorkflow] ?? DISABLED_POLICY;
+}
+
+export function memoryRequestPolicy(workflow: HarnessWorkflow | string, maxReadItems = 8): MemoryPolicy {
+  const policy = memoryWorkflowPolicy(workflow);
+  return {
+    enabled: policy.read || policy.capture !== "none",
+    maxItems: policy.read ? Math.max(0, maxReadItems) : 0
+  };
 }
 
 export function hasExplicitMemorySignal(text: string): boolean {

@@ -506,7 +506,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     const sections = [
       sessionSections.length ? `[EchoInk Session Context]\n${sessionSections.join("\n\n")}` : "",
       memorySections.length
-        ? `[EchoInk Long-term Memory]\nThe following items were retrieved and injected by EchoInk. Use them as context without searching local files.\n${memorySections.map((item) => `- ${item}`).join("\n")}`
+        ? `[EchoInk Long-term Memory]\nUse injected curated items directly. If the local usage archive catalog says earlier details are needed, follow its on-demand local search paths instead of loading the whole archive.\n${memorySections.join("\n\n")}`
         : ""
     ].filter(Boolean);
     return {
