@@ -5,7 +5,7 @@ import type { BackendSessionBinding, HarnessRunRequest, HarnessRunResult } from 
 import type { AgentAdapter, AgentRunResult } from "../agents/adapter";
 import type { NativeExecutionKind, NativeExecutionRef, NativeSessionLease } from "../contracts/native-execution";
 import type { RunLedger } from "../ledger/run-ledger";
-import type { MemoryProvider } from "../memory/provider";
+import type { MemoryBundle, MemoryProvider } from "../memory/provider";
 import { resolveResourceContext } from "../resources/resource-resolver";
 import { compileContextBundle } from "./context-compiler";
 import { NativeSessionLeaseManager, type NativeSessionLeaseLimits } from "./native-session-lease-manager";
@@ -77,6 +77,7 @@ export class RunOrchestrator {
   private readonly cancelRequestedRuns = new Set<string>();
   private readonly leaseManager: NativeSessionLeaseManager;
   private readonly runLanes = new Map<string, RunLane>();
+  private readonly memoryObservationTails = new Map<string, Promise<void>>();
   private readonly runStarts = new Map<string, Promise<HarnessRunResult>>();
   private readonly now: () => number;
 
@@ -166,6 +167,7 @@ export class RunOrchestrator {
 
       await emit({ type: "run.created", source: "kernel" });
       await emit({ type: "run.started", source: "kernel", backendId: adapter.manifest.id });
+      await this.beginMemoryRun(request);
       await emit({ type: "agent.connecting", source: "agent", backendId: adapter.manifest.id });
       const connection = await adapter.connect({
         runId: request.runId,
@@ -182,13 +184,16 @@ export class RunOrchestrator {
         data: { version: connection.version, errors: connection.errors }
       });
 
-      const memory = await this.options.memoryProvider.retrieve({
-        runId: request.runId,
-        sessionId: request.sessionId,
-        workspace: request.workspace,
-        query: request.input.text,
-        maxItems: request.memoryPolicy.maxItems
-      });
+      const memory: MemoryBundle = request.memoryPolicy.enabled
+        ? await this.options.memoryProvider.retrieve({
+          runId: request.runId,
+          sessionId: request.sessionId,
+          workspace: request.workspace,
+          workflow: request.workflow,
+          query: request.input.text,
+          maxItems: request.memoryPolicy.maxItems
+        })
+        : { providerId: "disabled", items: [], sections: [] };
       const cancelledAfterMemory = await settleRequestedCancellation();
       if (cancelledAfterMemory) return cancelledAfterMemory;
       const session = await this.resolveSession(request, runOptions.sessionProvider);
@@ -447,7 +452,37 @@ export class RunOrchestrator {
         lane.terminal = event;
         this.releaseRun(input.runId);
       }
+      this.scheduleMemoryRunEvent(event);
       return event;
+    });
+  }
+
+  private async beginMemoryRun(request: HarnessRunRequest): Promise<void> {
+    try {
+      await this.options.memoryProvider.beginRun?.(request);
+    } catch (error) {
+      console.warn("EchoInk Memory run capture failed", error);
+    }
+  }
+
+  private async observeMemoryRunEvent(event: HarnessEvent): Promise<void> {
+    try {
+      await this.options.memoryProvider.observeRunEvent?.(event);
+    } catch (error) {
+      console.warn("EchoInk Memory lifecycle event failed", error);
+    }
+  }
+
+  private scheduleMemoryRunEvent(event: HarnessEvent): void {
+    const previous = this.memoryObservationTails.get(event.runId) ?? Promise.resolve();
+    const observation = previous
+      .catch(() => undefined)
+      .then(async () => await this.observeMemoryRunEvent(event));
+    this.memoryObservationTails.set(event.runId, observation);
+    void observation.finally(() => {
+      if (this.memoryObservationTails.get(event.runId) === observation) {
+        this.memoryObservationTails.delete(event.runId);
+      }
     });
   }
 

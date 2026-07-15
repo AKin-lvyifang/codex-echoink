@@ -106,7 +106,7 @@
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
 - Reads `LLM-WIKI.md` as the knowledge-base rules source by default; `AGENTS.md` remains runtime background for Agent backends.
-- Optionally recommends [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) for longer-lived knowledge context; your Agent installs the skill and runs its bootstrap in the workspace, while the plugin does not bundle the skill or modify your `AGENTS.md`.
+- Includes EchoInk Memory V2. Regular Agent chat and `/ask` can retrieve the same long-term memory across sessions and backends, while maintenance workflows record results only after the local commit succeeds. Canonical data lives in Vault `.echoink/memory/index.json`; settings supports initialization, sync, recovery, conflict handling, deletion, and explicit import from legacy `.codex-memory`. External [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) remains compatible as a separate tool, but is no longer required for EchoInk long-term memory.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Uses a four-step digest protocol: understand Raw, extract reusable knowledge, merge structured knowledge in Wiki / Projects, then mark Raw only after source evidence is verified.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki / Projects, Outputs, Journal, and tracker files.
@@ -468,7 +468,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 - Added command templates: `/check`, `/maintain`, `/outputs`, `/journal`, and `/inbox`.
 - Added WeChat, web page, and file capture entry points for Raw Sources.
 - Added configurable knowledge base rules file. `LLM-WIKI.md` is the default; a custom Markdown file can replace it.
-- Added an optional `codex-memory-lite` recommendation in settings for users who want long-term memory across knowledge-base runs.
+- That release added an external `codex-memory-lite` compatibility entry. Current releases include EchoInk Memory V2 and no longer require an external skill for long-term memory.
 - Added OpenCode model selection and OpenCode Agent selection for OpenCode API mode.
 - Added selected-text translation to English from the editor context menu.
 - Improved the knowledge base settings page alignment, status copy, and rules-file picker.

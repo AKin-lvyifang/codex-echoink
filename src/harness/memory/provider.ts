@@ -1,10 +1,13 @@
 import type { ContextSection } from "../contracts/context";
-import type { HarnessWorkspace } from "../contracts/run";
+import type { HarnessEvent } from "../contracts/event";
+import type { HarnessRunRequest, HarnessWorkflow, HarnessWorkspace } from "../contracts/run";
+import type { MemorySyncResult } from "./v2-engine";
 
 export interface MemoryRetrievalRequest {
   runId: string;
   sessionId: string;
   workspace: HarnessWorkspace;
+  workflow?: HarnessWorkflow;
   query: string;
   maxItems: number;
 }
@@ -61,4 +64,8 @@ export interface MemoryProvider {
   propose(request: MemoryProposalRequest): Promise<MemoryCandidate[]>;
   commit(candidates: MemoryCandidate[]): Promise<MemoryCommitResult>;
   supersede(memoryId: string, reason: string): Promise<void>;
+  beginRun?(request: HarnessRunRequest): Promise<void>;
+  observeRunEvent?(event: HarnessEvent): Promise<MemorySyncResult | void>;
+  syncPending?(): Promise<MemorySyncResult>;
+  recover?(): Promise<unknown>;
 }

@@ -27,6 +27,8 @@ import { EchoInkConnectionService } from "./plugin/connection-service";
 import { EchoInkSettingsStore, type SettingsSaveOptions } from "./plugin/settings-store";
 import { EchoInkViewService } from "./plugin/view-service";
 import { EchoInkHarnessService } from "./plugin/harness-service";
+import type { MemoryStoreStatus, CodexMemoryImportResult, CodexMemoryMigrationPreview, InitializeEchoInkMemoryResult } from "./harness/memory/file-memory";
+import type { MemorySyncResult } from "./harness/memory/v2-engine";
 
 export interface HermesConnectionTestResult {
   connected: boolean;
@@ -95,6 +97,16 @@ export default class CodexForObsidianPlugin extends Plugin {
   async settleHarnessRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> { return await this.getHarnessService().settleRunTerminal(input, sink); }
   async appendHarnessRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink) { return await this.getHarnessService().appendRunEvent(input, sink); }
   async cancelHarnessRun(runId: string): Promise<void> { return await this.getHarnessService().cancelRun(runId); }
+  async getEchoInkMemoryStatus(): Promise<MemoryStoreStatus> { return await this.getHarnessService().getMemoryStatus(); }
+  async initializeEchoInkMemory(): Promise<InitializeEchoInkMemoryResult> { return await this.getHarnessService().initializeMemory(); }
+  async syncEchoInkMemoryNow(): Promise<MemorySyncResult> { return await this.getHarnessService().syncMemoryNow(); }
+  async recoverEchoInkMemory(): Promise<unknown> { return await this.getHarnessService().recoverMemory(); }
+  async previewCodexMemoryMigration(): Promise<CodexMemoryMigrationPreview> { return await this.getHarnessService().previewCodexMemoryMigration(); }
+  async importCodexMemory(): Promise<CodexMemoryImportResult> { return await this.getHarnessService().importCodexMemory(); }
+  async resolveEchoInkMemoryConfirmation(id: string, decision: "accept" | "dismiss"): Promise<boolean> { return await this.getHarnessService().resolveMemoryConfirmation(id, decision); }
+  async dismissEchoInkMemoryTransaction(id: string, reason: string): Promise<boolean> { return await this.getHarnessService().dismissMemoryTransaction(id, reason); }
+  async retryEchoInkMemoryTransaction(id: string): Promise<MemorySyncResult> { return await this.getHarnessService().retryMemoryTransaction(id); }
+  async deleteEchoInkMemory(id: string, reason: string): Promise<boolean> { return await this.getHarnessService().deleteMemory(id, reason); }
   async recoverInterruptedHarnessRuns(sessionId?: string): Promise<number> { return await this.getSettingsStore().recoverInterruptedHarnessRuns(sessionId); }
   getNativeExecutionRefContext(backendId?: AgentBackendKind) { return this.getHarnessService().getNativeExecutionRefContext(backendId); }
   async recordNativeExecution(record: NativeExecutionRecord): Promise<void> { return await this.getHarnessService().recordNativeExecution(record); }

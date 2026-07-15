@@ -24,6 +24,7 @@ export async function runHarnessV2AsyncRunSettlementTests(): Promise<void> {
   await assertLateAdapterTerminalAfterExternalSettlementIsIgnored();
   await assertAsyncSettlementMapsFailedAndCancelled();
   await assertSynchronousTerminalOrderRemainsStable();
+  await assertTerminalDoesNotWaitForMemoryObservation();
   await assertBlockedDeliveryDoesNotDelayTerminalCommitBeforeAdapterRun();
   await assertTerminalCannotCommitInsideAdapterStartBoundary();
   await assertTerminalSinkThrowStillKeepsTerminalAuthoritativeDuringAdapterRun();
@@ -43,6 +44,65 @@ export async function runHarnessV2AsyncRunSettlementTests(): Promise<void> {
   await assertCancelTargetsOnlyOwningAdapter();
   await assertCancelOwnerReleasedAfterSynchronousTerminal();
   await assertCancelOwnerReleasedAfterAsyncSettlement();
+}
+
+async function assertTerminalDoesNotWaitForMemoryObservation(): Promise<void> {
+  const terminalObserved = deferred<void>();
+  const releaseObservation = deferred<void>();
+  let failingTerminalObserved = false;
+  const memoryProvider: MemoryProvider = {
+    async retrieve() {
+      return { providerId: "test", items: [], sections: [] };
+    },
+    async propose() {
+      return [];
+    },
+    async commit() {
+      return { committed: [], skipped: [] };
+    },
+    async supersede() {
+      return undefined;
+    },
+    async observeRunEvent(event) {
+      if (event.type !== "run.completed" || failingTerminalObserved) return;
+      failingTerminalObserved = true;
+      terminalObserved.resolve();
+      await releaseObservation.promise;
+      throw new Error("curator failed after terminal commit");
+    }
+  };
+  const orchestrator = new RunOrchestrator({
+    adapters: [createStaticAdapter({
+      backendId: "memory-non-blocking",
+      result: { status: "completed", outputText: "done" }
+    })],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider,
+    now: fixedClock(1500)
+  });
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    if (args[0] === "EchoInk Memory lifecycle event failed") warnings.push(args);
+    else originalWarn(...args);
+  };
+  try {
+    const run = orchestrator.run(genericChatRequest("run-memory-non-blocking", "memory-non-blocking"));
+    const outcome = await Promise.race([
+      run.then((result) => result.status),
+      waitMs(50).then(() => "timed-out" as const)
+    ]);
+    assert.equal(outcome, "completed", "terminal run must not wait for memory curator work");
+    await terminalObserved.promise;
+    releaseObservation.resolve();
+    await waitMs(0);
+    assert.equal(warnings.length, 1, "memory observation failure must be isolated and reported");
+
+    const next = await orchestrator.run(genericChatRequest("run-memory-after-failure", "memory-non-blocking"));
+    assert.equal(next.status, "completed", "memory failure must stay isolated from later runs");
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 async function assertKernelSettlesAsyncRunningRunToCompleted(): Promise<void> {
@@ -463,7 +523,9 @@ async function assertBlockedDeliveryDoesNotDelayTerminalCommitBeforeAdapterRun()
     now: fixedClock(4500)
   });
 
-  const runPromise = orchestrator.run(genericChatRequest(runId, "runlane-gate"));
+  const request = genericChatRequest(runId, "runlane-gate");
+  request.memoryPolicy.enabled = true;
+  const runPromise = orchestrator.run(request);
   await retrieveStarted.promise;
   const blockingAppend = orchestrator.appendRunEvent({
     runId,
@@ -1440,7 +1502,7 @@ function genericChatRequest(runId: string, backendId: string): HarnessRunRequest
     input: { text: "ping", attachments: [] },
     permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
-    memoryPolicy: { enabled: false, maxItems: 0 },
+    memoryPolicy: { enabled: true, maxItems: 0 },
     outputContract: { kind: "plain-text" }
   };
 }

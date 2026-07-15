@@ -15,7 +15,17 @@ import { NativeSessionLeaseManager, type NativeSessionLeaseCleanupExecutionResul
 import { sessionNativeExecutionRefs } from "../harness/kernel/session-service";
 import type { AppendRunEventInput, SettleRunTerminalInput } from "../harness/kernel/run-orchestrator";
 import { FileRunLedger } from "../harness/ledger/run-ledger";
-import { FileMemoryProvider } from "../harness/memory/file-memory";
+import {
+  buildCodexMemoryMigrationPreview,
+  FileMemoryProvider,
+  type CodexMemoryImportResult,
+  type CodexMemoryMigrationPreview,
+  type InitializeEchoInkMemoryResult,
+  type MemoryStoreStatus
+} from "../harness/memory/file-memory";
+import type { MemorySyncResult } from "../harness/memory/v2-engine";
+import { NoopMemoryProvider } from "../harness/memory/noop-provider";
+import { BackendNeutralMemoryCurator } from "../harness/memory/backend-curator";
 import { NativeExecutionManager, type NativeCleanupResult, type SettleNativeExecutionInput } from "../harness/native/native-execution-manager";
 import { NativeExecutionStore } from "../harness/native/native-execution-store";
 import { buildEchoInkResourceCatalog } from "../resources/registry";
@@ -27,6 +37,8 @@ import type { CodexNotification, UserInput } from "../types/app-server";
 export class EchoInkHarnessService {
   private harnessKernel: EchoInkHarnessKernel | null = null;
   private harnessKernelKey = "";
+  private fileMemoryProvider: FileMemoryProvider | null = null;
+  private fileMemoryProviderKey = "";
   private nativeExecutionManager: NativeExecutionManager | null = null;
   private nativeExecutionManagerKey = "";
   private nativeExecutionDeviceKey = "";
@@ -50,6 +62,50 @@ export class EchoInkHarnessService {
 
   async cancelRun(runId: string): Promise<void> {
     await this.getHarnessKernel().cancelRun(runId);
+  }
+
+  async getMemoryStatus(): Promise<MemoryStoreStatus> {
+    return await this.getFileMemoryProvider().status();
+  }
+
+  async initializeMemory(): Promise<InitializeEchoInkMemoryResult> {
+    return await this.getFileMemoryProvider().initialize();
+  }
+
+  async syncMemoryNow(): Promise<MemorySyncResult> {
+    return await this.getFileMemoryProvider().syncPending();
+  }
+
+  async recoverMemory(): Promise<unknown> {
+    const provider = this.getFileMemoryProvider();
+    const transactions = await provider.recover();
+    const ledger = this.createRunLedger();
+    const lifecycle = await provider.reconcileRunLedger(async (runId) => await ledger.readRun(runId));
+    return { transactions, lifecycle };
+  }
+
+  async previewCodexMemoryMigration(): Promise<CodexMemoryMigrationPreview> {
+    return await buildCodexMemoryMigrationPreview({ vaultPath: this.plugin.getVaultPath() });
+  }
+
+  async importCodexMemory(): Promise<CodexMemoryImportResult> {
+    return await this.getFileMemoryProvider().importCodexMemory();
+  }
+
+  async resolveMemoryConfirmation(confirmationId: string, decision: "accept" | "dismiss"): Promise<boolean> {
+    return await this.getFileMemoryProvider().resolveConfirmation(confirmationId, decision);
+  }
+
+  async dismissMemoryTransaction(transactionId: string, reason: string): Promise<boolean> {
+    return await this.getFileMemoryProvider().dismissTransaction(transactionId, reason);
+  }
+
+  async retryMemoryTransaction(transactionId: string): Promise<MemorySyncResult> {
+    return await this.getFileMemoryProvider().retryTransaction(transactionId);
+  }
+
+  async deleteMemory(memoryId: string, reason: string): Promise<boolean> {
+    return await this.getFileMemoryProvider().remove(memoryId, reason);
   }
 
   getNativeExecutionRefContext(backendId?: AgentBackendKind): { deviceKey: string; vaultId: string; providerEndpoint?: string } {
@@ -198,14 +254,45 @@ export class EchoInkHarnessService {
   private getHarnessKernel(): EchoInkHarnessKernel {
     const vaultPath = this.plugin.getVaultPath();
     const pluginDir = this.plugin.getPluginDataDirName();
-    const key = `${vaultPath}\u0000${pluginDir}`;
+    const key = JSON.stringify({
+      vaultPath,
+      pluginDir,
+      memoryEnabled: this.plugin.settings.memory.enabled,
+      memoryAutoSync: this.plugin.settings.memory.autoSync,
+      memoryBackend: this.plugin.settings.memory.curatorBackend,
+      memoryModel: this.plugin.settings.memory.curatorModel
+    });
     if (this.harnessKernel && this.harnessKernelKey === key) return this.harnessKernel;
     this.harnessKernelKey = key;
     this.harnessKernel = new EchoInkHarnessKernel({
-      ledger: new FileRunLedger({ rootPath: path.join(pluginDataDir(vaultPath, pluginDir), "harness-runs") }),
-      memoryProvider: new FileMemoryProvider({ vaultPath })
+      ledger: this.createRunLedger(),
+      memoryProvider: this.plugin.settings.memory.enabled ? this.getFileMemoryProvider() : new NoopMemoryProvider()
     });
     return this.harnessKernel;
+  }
+
+  private createRunLedger(): FileRunLedger {
+    return new FileRunLedger({
+      rootPath: path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "harness-runs")
+    });
+  }
+
+  private getFileMemoryProvider(): FileMemoryProvider {
+    const vaultPath = this.plugin.getVaultPath();
+    const key = JSON.stringify({
+      vaultPath,
+      autoSync: this.plugin.settings.memory.autoSync,
+      backend: this.plugin.settings.memory.curatorBackend,
+      model: this.plugin.settings.memory.curatorModel
+    });
+    if (this.fileMemoryProvider && this.fileMemoryProviderKey === key) return this.fileMemoryProvider;
+    this.fileMemoryProviderKey = key;
+    this.fileMemoryProvider = new FileMemoryProvider({
+      vaultPath,
+      autoSync: this.plugin.settings.memory.autoSync,
+      curator: new BackendNeutralMemoryCurator(this.plugin)
+    });
+    return this.fileMemoryProvider;
   }
 
   private getNativeExecutionManager(): NativeExecutionManager {

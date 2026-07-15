@@ -73,6 +73,7 @@ import { confirmModal, textInputModal } from "../ui/modals";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 import { buildSetupCheck, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
+import type { CodexMemoryMigrationPreview, MemoryStoreStatus } from "../harness/memory/file-memory";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -92,6 +93,11 @@ export class CodexSettingTab extends PluginSettingTab {
   private hermesChecking = false;
   private hermesCheckError = "";
   private setupChecking = false;
+  private memoryStatus: MemoryStoreStatus | null = null;
+  private memoryStatusLoading = false;
+  private memoryStatusError: string | null = null;
+  private memoryActionRunning = false;
+  private memoryMigrationPreview: CodexMemoryMigrationPreview | null = null;
   private displayFrame: number | null = null;
   private settingsTitleEl: HTMLElement | null = null;
   private settingsStatusEl: HTMLElement | null = null;
@@ -1715,13 +1721,253 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-resource-note",
       text: copy.knowledge.memoryNote2
     });
+
+    this.decorateSetting(new Setting(section).setName(copy.knowledge.memoryEnabled).setDesc(copy.knowledge.memoryEnabledDesc).addToggle((toggle) =>
+      toggle.setValue(this.plugin.settings.memory.enabled).onChange(async (value) => {
+        this.plugin.settings.memory.enabled = value;
+        await this.plugin.saveSettings(true);
+        this.scheduleDisplay();
+      })
+    ), "brain-circuit");
+
+    this.decorateSetting(new Setting(section).setName(copy.knowledge.memoryAutoSync).setDesc(copy.knowledge.memoryAutoSyncDesc).addToggle((toggle) =>
+      toggle.setValue(this.plugin.settings.memory.autoSync).onChange(async (value) => {
+        this.plugin.settings.memory.autoSync = value;
+        await this.plugin.saveSettings(true);
+        this.scheduleDisplay();
+      })
+    ), "refresh-cw");
+
+    this.decorateSetting(new Setting(section).setName(copy.knowledge.memoryCuratorBackend).setDesc(copy.knowledge.memoryCuratorBackendDesc).addDropdown((dropdown) => {
+      dropdown.addOption("default", copy.knowledge.followGlobal(agentBackendLabel(this.plugin.settings.agentBackend, copy)));
+      for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
+      dropdown.setValue(this.plugin.settings.memory.curatorBackend);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.memory.curatorBackend = value === "codex-cli" || value === "opencode" || value === "hermes" ? value : "default";
+        await this.plugin.saveSettings(true);
+        this.scheduleDisplay();
+      });
+    }), "route");
+
+    this.decorateSetting(new Setting(section).setName(copy.knowledge.memoryCuratorModel).setDesc(copy.knowledge.memoryCuratorModelDesc).addText((text) => {
+      text.setPlaceholder(DEFAULT_CODEX_UTILITY_MODEL).setValue(this.plugin.settings.memory.curatorModel).onChange(async (value) => {
+        this.plugin.settings.memory.curatorModel = value.trim();
+        await this.plugin.saveSettings();
+      });
+    }), "box");
+
+    const status = section.createDiv({ cls: "codex-api-provider-row" });
+    if (!this.memoryStatus && !this.memoryStatusLoading && !this.memoryStatusError) void this.loadMemoryStatus();
+    if (this.memoryStatusLoading && !this.memoryStatus) {
+      status.createDiv({ cls: "codex-resource-note", text: copy.common.loading });
+    } else if (this.memoryStatus) {
+      status.createDiv({
+        cls: "codex-resource-note",
+        text: copy.knowledge.memoryStatusLine(
+          this.memoryStatus.initialized,
+          this.memoryStatus.revision,
+          this.memoryStatus.pendingEventCount,
+          this.memoryStatus.confirmations.length,
+          this.memoryStatus.transactionIssues.length
+        )
+      });
+      status.createDiv({
+        cls: this.memoryStatus.lastError ? "codex-resource-error" : "codex-resource-note",
+        text: copy.knowledge.memoryLastSync(
+          this.memoryStatus.lastOutcome,
+          this.memoryStatus.lastSyncAt ? new Date(this.memoryStatus.lastSyncAt).toLocaleString() : ""
+        )
+      });
+      if (this.memoryStatus.lastError) status.createDiv({ cls: "codex-resource-error", text: this.memoryStatus.lastError });
+    }
+    if (this.memoryStatusError) {
+      status.createDiv({ cls: "codex-resource-error", text: copy.knowledge.memoryStatusFailed(this.memoryStatusError) });
+    }
+
     const actions = section.createDiv({ cls: "codex-api-provider-actions" });
-    const openMemorySkill = actions.createEl("button", {
+    const reload = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryReload, attr: { type: "button" } });
+    reload.disabled = this.memoryStatusLoading || this.memoryActionRunning;
+    reload.onclick = () => void this.loadMemoryStatus(true);
+
+    const initialize = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryInitialize, attr: { type: "button" } });
+    initialize.disabled = this.memoryActionRunning;
+    initialize.onclick = () => void this.runMemoryAction(async () => {
+      await this.plugin.initializeEchoInkMemory();
+      new Notice(copy.knowledge.memoryInitialize);
+    });
+
+    const sync = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memorySync, attr: { type: "button" } });
+    sync.disabled = this.memoryActionRunning || !this.memoryStatus?.initialized;
+    sync.onclick = () => void this.runMemoryAction(async () => {
+      const result = await this.plugin.syncEchoInkMemoryNow();
+      if (result.outcome !== "no-pending" && result.outcome !== "no-op") new Notice(`${copy.knowledge.memorySync}: ${result.outcome}`);
+    });
+
+    const recover = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryRecover, attr: { type: "button" } });
+    recover.disabled = this.memoryActionRunning || (!this.memoryStatusError && !this.memoryStatus?.initialized);
+    recover.onclick = () => void this.runMemoryAction(async () => {
+      await this.plugin.recoverEchoInkMemory();
+      new Notice(copy.knowledge.memoryRecover);
+    });
+
+    const previewMigration = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryPreviewMigration, attr: { type: "button" } });
+    previewMigration.disabled = this.memoryActionRunning;
+    previewMigration.onclick = () => void this.runMemoryAction(async () => {
+      this.memoryMigrationPreview = await this.plugin.previewCodexMemoryMigration();
+      new Notice(this.memoryMigrationPreview.mappings.length
+        ? copy.knowledge.memoryPreviewSummary(
+          this.memoryMigrationPreview.mappings.length,
+          this.memoryMigrationPreview.markdownFileCount,
+          formatStorageBytes(this.memoryMigrationPreview.totalBytes)
+        )
+        : copy.knowledge.memoryNoMigration);
+    }, false);
+
+    const importMigration = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryImportMigration, attr: { type: "button" } });
+    importMigration.disabled = this.memoryActionRunning || this.memoryMigrationPreview?.mappings.length === 0 || this.memoryMigrationPreview?.blocked === true;
+    importMigration.onclick = () => void this.runMemoryAction(async () => {
+      const preview = this.memoryMigrationPreview ?? await this.plugin.previewCodexMemoryMigration();
+      if (!preview.mappings.length) {
+        new Notice(copy.knowledge.memoryNoMigration);
+        return;
+      }
+      if (preview.blocked) {
+        new Notice(copy.knowledge.memoryMigrationBlocked(
+          preview.markdownFileCount,
+          formatStorageBytes(preview.totalBytes),
+          preview.maxMarkdownFiles,
+          formatStorageBytes(preview.maxTotalBytes)
+        ));
+        return;
+      }
+      const accepted = await confirmModal(
+        this.app,
+        copy.knowledge.memoryImportMigration,
+        copy.knowledge.memoryImportConfirm(preview.markdownFileCount, formatStorageBytes(preview.totalBytes)),
+        copy.knowledge.memoryImportMigration,
+        copy.common.cancel
+      );
+      if (!accepted) return;
+      const result = await this.plugin.importCodexMemory();
+      new Notice(copy.knowledge.memoryImported(result.imported.length, result.skipped.length));
+    });
+
+    if (this.memoryMigrationPreview) {
+      section.createDiv({
+        cls: "codex-resource-note",
+        text: copy.knowledge.memoryPreviewSummary(
+          this.memoryMigrationPreview.mappings.length,
+          this.memoryMigrationPreview.markdownFileCount,
+          formatStorageBytes(this.memoryMigrationPreview.totalBytes)
+        )
+      });
+      for (const mapping of this.memoryMigrationPreview.mappings) {
+        section.createDiv({
+          cls: "codex-resource-note",
+          text: copy.knowledge.memoryMigrationMapping(mapping.kind, mapping.markdownFileCount, formatStorageBytes(mapping.totalBytes))
+        });
+      }
+      if (this.memoryMigrationPreview.blocked) {
+        section.createDiv({
+          cls: "codex-resource-error",
+          text: copy.knowledge.memoryMigrationBlocked(
+            this.memoryMigrationPreview.markdownFileCount,
+            formatStorageBytes(this.memoryMigrationPreview.totalBytes),
+            this.memoryMigrationPreview.maxMarkdownFiles,
+            formatStorageBytes(this.memoryMigrationPreview.maxTotalBytes)
+          )
+        });
+      }
+    }
+
+    if (this.memoryStatus?.confirmations.length) {
+      section.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.memoryConfirmations });
+      for (const confirmation of this.memoryStatus.confirmations.slice(0, 20)) {
+        const row = section.createDiv({ cls: "codex-api-provider-row" });
+        row.createDiv({ cls: "codex-resource-note", text: confirmation.candidate.statement });
+        if (confirmation.conflictsWith.length) row.createDiv({ cls: "codex-resource-error", text: copy.knowledge.memoryConflicts(confirmation.conflictsWith.join(", ")) });
+        const rowActions = row.createDiv({ cls: "codex-api-provider-actions" });
+        const accept = rowActions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryAccept, attr: { type: "button" } });
+        accept.onclick = () => void this.runMemoryAction(async () => { await this.plugin.resolveEchoInkMemoryConfirmation(confirmation.id, "accept"); });
+        const dismiss = rowActions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryDismiss, attr: { type: "button" } });
+        dismiss.onclick = () => void this.runMemoryAction(async () => { await this.plugin.resolveEchoInkMemoryConfirmation(confirmation.id, "dismiss"); });
+      }
+    }
+
+    if (this.memoryStatus?.transactionIssues.length) {
+      section.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.memoryIssues });
+      for (const issue of this.memoryStatus.transactionIssues.slice(0, 20)) {
+        const row = section.createDiv({ cls: "codex-api-provider-row" });
+        row.createDiv({ cls: "codex-resource-note", text: `${issue.state} · ${issue.transactionId}` });
+        if (issue.error) row.createDiv({ cls: "codex-resource-error", text: issue.error });
+        const rowActions = row.createDiv({ cls: "codex-api-provider-actions" });
+        const retry = rowActions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryRetry, attr: { type: "button" } });
+        retry.onclick = () => void this.runMemoryAction(async () => { await this.plugin.retryEchoInkMemoryTransaction(issue.transactionId); });
+        const drop = rowActions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.memoryDrop, attr: { type: "button" } });
+        drop.onclick = async () => {
+          const accepted = await confirmModal(this.app, copy.knowledge.memoryDrop, issue.error || issue.transactionId, copy.knowledge.memoryDrop, copy.common.cancel);
+          if (!accepted) return;
+          await this.runMemoryAction(async () => { await this.plugin.dismissEchoInkMemoryTransaction(issue.transactionId, "settings dismissal"); });
+        };
+      }
+    }
+
+    if (this.memoryStatus?.active.length) {
+      section.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.memoryItems });
+      for (const item of this.memoryStatus.active.slice(0, 30)) {
+        const row = section.createDiv({ cls: "codex-api-provider-row" });
+        row.createDiv({ cls: "codex-resource-note", text: `${item.kind} · ${item.statement}` });
+        const rowActions = row.createDiv({ cls: "codex-api-provider-actions" });
+        const remove = rowActions.createEl("button", { cls: "codex-resource-tab", text: copy.common.delete, attr: { type: "button" } });
+        remove.onclick = async () => {
+          const accepted = await confirmModal(this.app, copy.common.delete, copy.knowledge.memoryDeleteConfirm(item.statement), copy.common.delete, copy.common.cancel);
+          if (!accepted) return;
+          await this.runMemoryAction(async () => { await this.plugin.deleteEchoInkMemory(item.id, "settings deletion"); });
+        };
+      }
+    }
+
+    section.createDiv({ cls: "codex-resource-note", text: copy.knowledge.memoryExternalCompatibility });
+    const compatibilityActions = section.createDiv({ cls: "codex-api-provider-actions" });
+    const openMemorySkill = compatibilityActions.createEl("button", {
       cls: "codex-resource-tab",
       text: copy.knowledge.openMemorySkill,
       attr: { type: "button", title: CODEX_MEMORY_LITE_URL }
     });
     openMemorySkill.onclick = () => window.open(CODEX_MEMORY_LITE_URL);
+  }
+
+  private async loadMemoryStatus(force = false): Promise<void> {
+    if (this.memoryStatusLoading || (!force && this.memoryStatusError)) return;
+    this.memoryStatusLoading = true;
+    try {
+      this.memoryStatus = await this.plugin.getEchoInkMemoryStatus();
+      this.memoryStatusError = null;
+    } catch (error) {
+      this.memoryStatusError = error instanceof Error ? error.message : String(error);
+      new Notice(this.copy.knowledge.memoryActionFailed(this.memoryStatusError));
+    } finally {
+      this.memoryStatusLoading = false;
+      this.scheduleDisplay();
+    }
+  }
+
+  private async runMemoryAction(action: () => Promise<void>, reload = true): Promise<void> {
+    if (this.memoryActionRunning) return;
+    this.memoryActionRunning = true;
+    try {
+      await action();
+      if (reload) {
+        this.memoryStatus = await this.plugin.getEchoInkMemoryStatus();
+        this.memoryStatusError = null;
+      }
+    } catch (error) {
+      this.memoryStatusError = error instanceof Error ? error.message : String(error);
+      new Notice(this.copy.knowledge.memoryActionFailed(this.memoryStatusError));
+    } finally {
+      this.memoryActionRunning = false;
+      this.scheduleDisplay();
+    }
   }
 
   private async repairKnowledgeBaseRulesFile(): Promise<void> {
