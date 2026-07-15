@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v1.2.1 - 2026-07-15
+
+版本号：`v1.2.1`
+
+### 中文
+
+#### 知识库命令菜单优化
+
+1. 重新设计知识库频道输入 `/` 后的命令菜单：移除厚重卡片和粉色文字，默认使用透明列表、黑色命令名与灰色说明，仅当前项显示浅灰选中背景。
+2. 支持 `↑` / `↓` 循环选择命令，并在长列表中自动滚动到当前项。
+3. `Enter` 将当前命令填入输入框但不自动发送，`Esc` 关闭菜单，避免误触发知识库任务。
+
+升级说明：从 `v1.2.0` 直接覆盖安装 `main.js`、`manifest.json`、`styles.css` 即可，不需要迁移 Vault 文件或重建会话。
+
+### English
+
+#### Knowledge command menu polish
+
+1. Redesigned the `/` command menu in the Knowledge channel with a transparent list, neutral text and icons, concise descriptions, and a light-gray background only for the active item.
+2. Added wraparound `ArrowUp` / `ArrowDown` navigation with automatic scrolling for long command lists.
+3. `Enter` now fills the selected command without sending it, while `Escape` closes the menu to prevent accidental Knowledge runs.
+
+Upgrade: replace `main.js`, `manifest.json`, and `styles.css` from `v1.2.1`. No Vault migration or session reset is required.
+
 ## v1.2.0 - 2026-07-15
 
 版本号：`v1.2.0`
