@@ -3234,13 +3234,14 @@ const introducedEvidenceLineFlagsSource = digestEvidenceSource.slice(
   digestEvidenceSource.indexOf("function introducedEvidenceLineFlags"),
   digestEvidenceSource.indexOf("function evidenceVectorValue")
 );
+const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
 const codexViewUiSources = [
   codexViewSource,
-  codexViewHeaderSource,
-  codexViewHistoryModalSource,
-  codexViewKnowledgeDashboardSource,
-  codexViewMessageListSource,
-  codexViewSessionMessageStoreSource
+  ...(await Promise.all(
+    codexViewModules
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFile(path.join(process.cwd(), "src/ui/codex-view", name), "utf8"))
+  ))
 ].join("\n");
 const codexViewLineCount = codexViewSource.split(/\r?\n/).length;
 const codexViewOnOpenSource = codexViewSource.slice(
@@ -3255,7 +3256,6 @@ assert.ok(
   codexViewOnOpenSource.indexOf("this.renderMessages({ forceBottom: true })") < codexViewOnOpenSource.indexOf("await this.plugin.ensureCodexConnected()"),
   "the sidebar must restore local messages before a slow Codex connection settles"
 );
-const codexViewModules = await readdir(path.join(process.cwd(), "src/ui/codex-view")).catch(() => []);
 const sessionMessageStoreAddMessageSource = codexViewSessionMessageStoreSource.slice(
   codexViewSessionMessageStoreSource.indexOf("addMessageToSession"),
   codexViewSessionMessageStoreSource.indexOf("moveMessageToEnd")
@@ -3294,7 +3294,11 @@ assert.doesNotMatch(codexViewSource, /private handleEditorSummaryNotification/);
 assert.match(codexViewSource, /CodexNotificationRouter/);
 assert.doesNotMatch(codexViewSource, /private addKnowledgeDashboardHealthTooltip/);
 assert.doesNotMatch(codexViewSource, /private positionKnowledgeDashboardHealthTooltip/);
-assert.doesNotMatch(codexViewUiSources, /\.style\./);
+assert.doesNotMatch(
+  codexViewUiSources,
+  /\.style(?:\.|\[)|\.setAttribute\(\s*["']style["']/,
+  "Codex view modules must use CSS classes, setCssProps, or setCssStyles instead of direct style access or style attributes"
+);
 assert.match(codexViewUiSources, /setCssStyles/);
 assert.match(codexViewUiSources, /setCssProps/);
 assert.match(codexViewSessionMessageStoreSource, /renderMessagesIfActive\(session,\s*message\)/);

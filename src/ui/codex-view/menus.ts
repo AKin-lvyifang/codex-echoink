@@ -365,7 +365,7 @@ function openComposerParameterMenu(event: MouseEvent, sections: ComposerParamete
   root.className = "codex-composer-parameter-menu";
   root.setAttribute("role", "menu");
   root.setAttribute("aria-label", ariaLabel);
-  root.style.visibility = "hidden";
+  root.setCssStyles({ visibility: "hidden" });
   doc.body.appendChild(root);
 
   const active: ActiveComposerParameterMenu = {
@@ -405,10 +405,12 @@ function openComposerParameterMenu(event: MouseEvent, sections: ComposerParamete
     const rootRect = root.getBoundingClientRect();
     const viewport = { width: doc.documentElement.clientWidth, height: doc.documentElement.clientHeight };
     const placement = positionAnchoredMenu(anchorRect, rootRect, viewport);
-    root.style.left = `${placement.left}px`;
-    root.style.top = `${placement.top}px`;
+    root.setCssStyles({
+      left: `${placement.left}px`,
+      top: `${placement.top}px`
+    });
     root.dataset.verticalSide = placement.verticalSide;
-    root.style.visibility = "visible";
+    root.setCssStyles({ visibility: "visible" });
     positionActiveSubmenu(active);
   };
   active.reposition = reposition;
@@ -497,7 +499,7 @@ function openParameterSubmenu(
   panel.className = "codex-composer-parameter-submenu";
   panel.setAttribute("role", "menu");
   panel.setAttribute("aria-label", section.label);
-  panel.style.visibility = "hidden";
+  panel.setCssStyles({ visibility: "hidden" });
   panel.createDiv({ cls: "codex-parameter-submenu-title", text: section.label });
   for (const option of section.options) {
     const button = panel.createEl("button", {
@@ -542,10 +544,12 @@ function positionActiveSubmenu(active: ActiveComposerParameterMenu): void {
   const panelRect = active.submenu.getBoundingClientRect();
   const viewport = { width: doc.documentElement.clientWidth, height: doc.documentElement.clientHeight };
   const placement = positionSubmenu(triggerRect, rootRect, panelRect, viewport);
-  active.submenu.style.left = `${placement.left}px`;
-  active.submenu.style.top = `${placement.top}px`;
+  active.submenu.setCssStyles({
+    left: `${placement.left}px`,
+    top: `${placement.top}px`
+  });
   active.submenu.dataset.horizontalSide = placement.horizontalSide;
-  active.submenu.style.visibility = "visible";
+  active.submenu.setCssStyles({ visibility: "visible" });
 }
 
 function createKnowledgeCommandItem(
