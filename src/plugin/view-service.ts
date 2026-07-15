@@ -76,6 +76,27 @@ export class EchoInkViewService {
     setting.openTabById(this.plugin.manifest.id);
   }
 
+  async openCodexSetup(options: { autoRepair?: boolean } = {}): Promise<void> {
+    this.plugin.settings.settingsTab = "agents";
+    if (options.autoRepair) {
+      const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
+      if (status.connected && status.loggedIn) {
+        await this.plugin.saveSettings(true);
+        new Notice(this.plugin.settings.settingsLanguage === "en" ? "Codex connected automatically. You can continue." : "Codex 已自动连接，可以继续使用。");
+        return;
+      }
+    }
+    this.plugin.settings.setup.completedAt = 0;
+    await this.plugin.saveSettings(true);
+    const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
+    if (!setting?.open || !setting?.openTabById) {
+      new Notice(this.plugin.settings.settingsLanguage === "en" ? "Unable to open plugin settings." : "无法打开插件设置页");
+      return;
+    }
+    setting.open();
+    setting.openTabById(this.plugin.manifest.id);
+  }
+
   async openReviewHtmlPreview(relativePath: string): Promise<void> {
     const normalized = relativePath.replace(/\\/g, "/");
     if (!isReviewHtmlPath(normalized, this.plugin.settings.review.outputDir)) {

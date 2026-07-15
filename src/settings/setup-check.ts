@@ -1,5 +1,6 @@
 import type { AgentBackendMode, CodexForObsidianSettings, SetupSettings } from "./settings";
 import type { CodexStatusSnapshot } from "../types/app-server";
+import type { CodexInstallationDetection } from "../core/codex-service";
 
 export type SetupCheckStatus = "ok" | "warning" | "blocking";
 export type SetupRequirementId = "codex-cli" | "codex-login" | "opencode-cli" | "opencode-server" | "opencode-models" | "opencode-agent" | "hermes-cli" | "hermes-server" | "hermes-model";
@@ -10,6 +11,7 @@ export interface SetupPlatform {
   codexCommand: string | null;
   openCodeCommand: string | null;
   hermesCommand: string | null;
+  codexDetection?: CodexInstallationDetection | null;
 }
 
 export interface SetupAction {
@@ -35,6 +37,64 @@ export interface SetupCheckResult {
   requirements: SetupRequirement[];
 }
 
+export type SetupPrimaryAction = "checking" | "start" | "login" | "install" | "retry";
+
+export interface SetupPrimaryState {
+  action: SetupPrimaryAction;
+  title: string;
+  detail: string;
+  buttonLabel: string;
+  disabled: boolean;
+  tone: "neutral" | "success" | "error";
+  showTerminalFallback: boolean;
+}
+
+export interface SetupPrimaryCopy {
+  checkingTitle: string;
+  checkingDetail: string;
+  checkingButton: string;
+  retryTitle: string;
+  retryButton: string;
+  readyTitle: string;
+  readyDetail: string;
+  startButton: string;
+  loginTitle: string;
+  loginDetail: string;
+  loginButton: string;
+  installTitle: string;
+  installDetail: string;
+  installButton: string;
+  backendTitle: string;
+  backendDetail: string;
+  fallbackCustom: (source: string, command: string) => string;
+  sourceChatGpt: string;
+  sourceCodexApp: string;
+  sourceLocal: string;
+}
+
+const DEFAULT_SETUP_PRIMARY_COPY: SetupPrimaryCopy = {
+  checkingTitle: "正在检测当前环境",
+  checkingDetail: "检查当前后端需要的本机能力…",
+  checkingButton: "正在连接…",
+  retryTitle: "连接没有完成",
+  retryButton: "重试",
+  readyTitle: "环境已就绪",
+  readyDetail: "必要环境已通过",
+  startButton: "开始使用",
+  loginTitle: "还差一步登录",
+  loginDetail: "已找到 Codex。登录会在浏览器中完成。",
+  loginButton: "登录 Codex",
+  installTitle: "没有找到 Codex",
+  installDetail: "可以由 EchoInk 安装官方 Codex CLI；安装前会再次确认。",
+  installButton: "安装并连接",
+  backendTitle: "环境还未就绪",
+  backendDetail: "请检查当前 Agent 后端后重试。",
+  fallbackCustom: (source, command) => `自定义路径已失效，已自动改用 ${source}：${command}`,
+  sourceChatGpt: "ChatGPT 内置 Codex",
+  sourceCodexApp: "Codex App",
+  sourceLocal: "本机 Codex"
+};
+
 export const CODEX_CLI_INSTALL_COMMAND = "npm i -g @openai/codex";
 export const CODEX_CLI_DOCS_URL = "https://help.openai.com/en/articles/11096431-openai-codex-cli-getting-started";
 export const OPENCODE_DOCS_URL = "https://opencode.ai/docs";
@@ -54,46 +114,32 @@ export function buildSetupCheck(
   const codexConnected = Boolean(lastStatus?.connected);
   const codexLoggedIn = Boolean(lastStatus?.loggedIn);
   const codexRequired = knowledgeBackend === "codex-cli" || settings.agentBackend === "codex-cli";
-  const openCodeRequired = knowledgeBackend === "opencode";
-  const hermesRequired = knowledgeBackend === "hermes";
+  const openCodeRequired = knowledgeBackend === "opencode" || settings.agentBackend === "opencode";
+  const hermesRequired = knowledgeBackend === "hermes" || settings.agentBackend === "hermes";
 
-  requirements.push({
-    id: "codex-cli",
-    status: codexInstalled ? "ok" : codexRequired ? "blocking" : "warning",
-    title: codexInstalled ? "Codex CLI 已安装" : codexRequired ? "缺少 Codex CLI" : "Codex CLI 未配置",
-    message: codexInstalled
-      ? `已检测到：${platform.codexCommand}`
-      : codexRequired
-        ? "当前 Agent 后端需要本机 Codex CLI。安装后先在终端运行 codex 完成登录。"
-      : "普通聊天和 Codex CLI 后端需要本机 Codex CLI。安装后先在终端运行 codex 完成登录。",
-    actions: codexInstalled ? [] : codexInstallActions()
-  });
-
-  requirements.push({
-    id: "codex-login",
-    status: codexInstalled && codexConnected && codexLoggedIn ? "ok" : codexRequired ? "blocking" : "warning",
-    title: codexInstalled && codexConnected && codexLoggedIn ? "Codex 登录态可用" : "Codex 还未连接或未登录",
-    message: codexInstalled && codexConnected && codexLoggedIn
-      ? lastStatus?.accountLabel || "Codex 已连接"
-      : codexInstalled && codexRequired
-        ? "安装后需要点击重新检测；如果仍失败，请在终端运行 codex 并完成登录。"
-        : codexRequired ? "先安装 Codex CLI，再回来重新检测。" : "当前能力不依赖 Codex 登录态。",
-    actions: codexInstalled && (!codexConnected || !codexLoggedIn) ? codexLoginActions() : []
-  });
-
-  requirements.push({
-    id: "opencode-cli",
-    status: openCodeInstalled ? "ok" : openCodeRequired ? "blocking" : "warning",
-    title: openCodeInstalled ? "OpenCode 已安装" : openCodeRequired ? "缺少 OpenCode" : "OpenCode 未配置",
-    message: openCodeInstalled
-      ? `已检测到：${platform.openCodeCommand}`
-      : openCodeRequired
-        ? "当前知识库后端使用 OpenCode API，需要本机 OpenCode runtime。"
-        : "普通聊天可以先用 Codex CLI；只有选择 OpenCode 知识库后端时才需要安装。",
-    actions: openCodeInstalled ? [] : openCodeInstallActions(platform.os)
-  });
+  if (codexRequired) {
+    const ready = codexInstalled && codexConnected && codexLoggedIn;
+    requirements.push({
+      id: "codex-cli",
+      status: ready ? "ok" : "blocking",
+      title: ready ? "Codex 已就绪" : codexInstalled ? "Codex 需要登录" : "缺少 Codex",
+      message: ready
+        ? lastStatus?.accountLabel || `已连接：${platform.codexCommand}`
+        : codexInstalled
+          ? `已找到：${platform.codexCommand}。在浏览器完成登录后会自动继续。`
+          : "EchoInk 可以安全安装官方 Codex CLI；安装前会再次确认。",
+      actions: ready ? [] : codexInstalled ? codexLoginActions() : codexInstallActions()
+    });
+  }
 
   if (openCodeRequired) {
+    requirements.push({
+      id: "opencode-cli",
+      status: openCodeInstalled ? "ok" : "blocking",
+      title: openCodeInstalled ? "OpenCode 已安装" : "缺少 OpenCode",
+      message: openCodeInstalled ? `已检测到：${platform.openCodeCommand}` : "当前知识库后端使用 OpenCode API，需要本机 OpenCode runtime。",
+      actions: openCodeInstalled ? [] : openCodeInstallActions(platform.os)
+    });
     const serverReady = openCodeInstalled && settings.opencode.lastConnectedAt > 0 && !settings.opencode.lastError;
     requirements.push({
       id: "opencode-server",
@@ -127,19 +173,14 @@ export function buildSetupCheck(
     });
   }
 
-  requirements.push({
-    id: "hermes-cli",
-    status: hermesInstalled ? "ok" : hermesRequired ? "blocking" : "warning",
-    title: hermesInstalled ? "Hermes CLI 已安装" : hermesRequired ? "缺少 Hermes CLI" : "Hermes 未配置",
-    message: hermesInstalled
-      ? `已检测到：${platform.hermesCommand}`
-      : hermesRequired
-        ? "当前知识库后端使用 Hermes，需要本机 Hermes CLI。"
-        : "只有选择 Hermes 后端时才需要安装。",
-    actions: hermesInstalled ? [] : hermesInstallActions(platform.os)
-  });
-
   if (hermesRequired) {
+    requirements.push({
+      id: "hermes-cli",
+      status: hermesInstalled ? "ok" : "blocking",
+      title: hermesInstalled ? "Hermes CLI 已安装" : "缺少 Hermes CLI",
+      message: hermesInstalled ? `已检测到：${platform.hermesCommand}` : "当前知识库后端使用 Hermes，需要本机 Hermes CLI。",
+      actions: hermesInstalled ? [] : hermesInstallActions(platform.os)
+    });
     const hermes = settings.agents.hermes;
     const serverReady = hermesInstalled && hermes.lastConnectedAt > 0 && !hermes.lastError;
     requirements.push({
@@ -177,6 +218,109 @@ export function buildSetupCheck(
     knowledgeBackend,
     requirements
   };
+}
+
+export function buildSetupPrimaryState(
+  check: SetupCheckResult,
+  input: { checking: boolean; error: string; status: CodexStatusSnapshot | null; platform: SetupPlatform; copy?: SetupPrimaryCopy }
+): SetupPrimaryState {
+  const copy = input.copy ?? DEFAULT_SETUP_PRIMARY_COPY;
+  if (input.checking) {
+    return {
+      action: "checking",
+      title: copy.checkingTitle,
+      detail: copy.checkingDetail,
+      buttonLabel: copy.checkingButton,
+      disabled: true,
+      tone: "neutral",
+      showTerminalFallback: false
+    };
+  }
+  if (input.error) {
+    return {
+      action: "retry",
+      title: copy.retryTitle,
+      detail: input.error,
+      buttonLabel: copy.retryButton,
+      disabled: false,
+      tone: "error",
+      showTerminalFallback: check.requirements.some((item) => item.id === "codex-cli")
+    };
+  }
+  if (check.canStart) {
+    return {
+      action: "start",
+      title: copy.readyTitle,
+      detail: setupReadyDetail(check, input.status, input.platform.codexDetection, copy),
+      buttonLabel: copy.startButton,
+      disabled: false,
+      tone: "success",
+      showTerminalFallback: false
+    };
+  }
+  const codex = check.requirements.find((item) => item.id === "codex-cli" && item.status !== "ok");
+  if (codex && input.platform.codexCommand && input.status?.connected && !input.status.accountReadError) {
+    return {
+      action: "login",
+      title: copy.loginTitle,
+      detail: fallbackDetail(input.platform.codexDetection, copy) || copy.loginDetail,
+      buttonLabel: copy.loginButton,
+      disabled: false,
+      tone: "neutral",
+      showTerminalFallback: false
+    };
+  }
+  if (codex && input.platform.codexCommand) {
+    return {
+      action: "retry",
+      title: copy.retryTitle,
+      detail: copy.backendDetail,
+      buttonLabel: copy.retryButton,
+      disabled: false,
+      tone: "error",
+      showTerminalFallback: false
+    };
+  }
+  if (codex) {
+    return {
+      action: "install",
+      title: copy.installTitle,
+      detail: copy.installDetail,
+      buttonLabel: copy.installButton,
+      disabled: false,
+      tone: "error",
+      showTerminalFallback: true
+    };
+  }
+  return {
+    action: "retry",
+    title: copy.backendTitle,
+    detail: copy.backendDetail,
+    buttonLabel: copy.retryButton,
+    disabled: false,
+    tone: "error",
+    showTerminalFallback: false
+  };
+}
+
+function setupReadyDetail(check: SetupCheckResult, status: CodexStatusSnapshot | null, detection: CodexInstallationDetection | null | undefined, copy: SetupPrimaryCopy): string {
+  const codexRequired = check.requirements.some((item) => item.id === "codex-cli");
+  const parts = [codexRequired ? status?.accountLabel || copy.readyDetail : copy.readyDetail];
+  if (codexRequired && detection?.version) parts.push(detection.version);
+  const fallback = codexRequired ? fallbackDetail(detection, copy) : "";
+  if (fallback) parts.push(fallback);
+  return parts.join(" · ");
+}
+
+function fallbackDetail(detection: CodexInstallationDetection | null | undefined, copy: SetupPrimaryCopy): string {
+  if (!detection?.invalidCustomPath || !detection.command) return "";
+  return copy.fallbackCustom(codexSourceLabel(detection, copy), detection.command);
+}
+
+function codexSourceLabel(detection: CodexInstallationDetection, copy: SetupPrimaryCopy): string {
+  if (detection.source === "chatgpt-system" || detection.source === "chatgpt-user") return copy.sourceChatGpt;
+  if (detection.source === "codex-system" || detection.source === "codex-user") return copy.sourceCodexApp;
+  return copy.sourceLocal;
 }
 
 export function completeSetupState(setup: SetupSettings, completedAt: number, version = ""): SetupSettings {

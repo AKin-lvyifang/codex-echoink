@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { execFile } from "child_process";
-import { Notice } from "obsidian";
 import type {
   CodexModel,
   CodexNotification,
@@ -24,6 +23,7 @@ import { mergeMcpServers } from "./workspace-resources";
 import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiProviderConfig, type ProviderMode, type WorkspaceResourceToggles } from "../settings/settings";
 import type { AgentBackend, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions } from "../agent/types";
 import { expandHome } from "./path-utils";
+import { startCodexLogin, type CodexLoginOptions, type CodexLoginResult } from "./codex-login";
 
 export interface CodexServiceOptions {
   cliPath: string;
@@ -79,6 +79,17 @@ export interface CodexCommandResolveOptions {
   appData?: string;
   programData?: string;
   exists?: (candidate: string) => boolean;
+  versionRunner?: (command: string, args: readonly string[]) => Promise<{ stdout: string; stderr: string }>;
+}
+
+export type CodexCommandSource = "custom" | "chatgpt-system" | "chatgpt-user" | "codex-system" | "codex-user" | "npm-global" | "windows-npm" | "scoop" | "chocolatey" | "homebrew" | "local-bin" | "path";
+
+export interface CodexInstallationDetection {
+  command: string | null;
+  source: CodexCommandSource | null;
+  invalidCustomPath: string | null;
+  version: string | null;
+  versionError: string | null;
 }
 
 export interface TurnOptions {
@@ -119,6 +130,7 @@ const NOTIFICATION_METHODS = [
   "serverRequest/resolved",
   "mcpServer/startupStatus/updated",
   "account/updated",
+  "account/login/completed",
   "account/rateLimits/updated",
   "error"
 ];
@@ -206,6 +218,7 @@ export class CodexService implements AgentBackend {
 
   async refreshStatus(options: { refreshToken?: boolean } = {}): Promise<CodexAgentStatusSnapshot> {
     const errors: string[] = [];
+    const accountErrors: string[] = [];
     if (!this.client) {
       return {
         connected: false,
@@ -222,10 +235,11 @@ export class CodexService implements AgentBackend {
     }
 
     const [account, models, skills] = await Promise.all([
-      this.safeRequest<CodexAccountReadResponse>("account/read", { refreshToken: options.refreshToken === true }, options.refreshToken ? 15000 : 3000, errors),
+      this.safeRequest<CodexAccountReadResponse>("account/read", { refreshToken: options.refreshToken === true }, options.refreshToken ? 15000 : 3000, accountErrors),
       this.safeRequest<CodexRpcListResponse>("model/list", { cursor: null }, 3000, errors),
       Promise.resolve({ data: this.cachedSkills } satisfies CodexRpcListResponse)
     ]);
+    errors.unshift(...accountErrors);
 
     return {
       connected: true,
@@ -234,6 +248,7 @@ export class CodexService implements AgentBackend {
       platform: this.initResult?.platformOs,
       accountLabel: formatAccountLabel(account),
       loggedIn: Boolean(account?.account),
+      accountReadError: accountErrors[0] ?? null,
       configModel: null,
       profile: null,
       models: normalizeModels(models?.data),
@@ -416,9 +431,8 @@ export class CodexService implements AgentBackend {
     }
   }
 
-  async login(): Promise<unknown> {
-    const client = this.requireClient();
-    return client.request("account/login/start", { authMode: "chatgpt" }, 15000);
+  async login(options: CodexLoginOptions = {}): Promise<CodexLoginResult> {
+    return startCodexLogin(this.requireClient(), options);
   }
 
   async startMcpOAuth(name: string): Promise<string> {
@@ -496,8 +510,8 @@ export class CodexService implements AgentBackend {
 
 export function resolveCodexCommand(customPath: string, options: CodexCommandResolveOptions = {}): string {
   const custom = customPath.trim();
-  const found = detectCodexCommand(customPath, options);
-  if (found) return found;
+  const detection = detectCodexInstallation(customPath, options);
+  if (detection.command) return detection.command;
   if (custom) {
     const expanded = expandHome(custom, options.home ?? os.homedir());
     throw new Error(`找不到 Codex CLI：${expanded}。请先安装 Codex CLI，或在设置里填写正确路径。`);
@@ -506,20 +520,53 @@ export function resolveCodexCommand(customPath: string, options: CodexCommandRes
 }
 
 export function detectCodexCommand(customPath: string, options: CodexCommandResolveOptions = {}): string | null {
+  return detectCodexInstallation(customPath, options).command;
+}
+
+export function detectCodexInstallation(customPath: string, options: CodexCommandResolveOptions = {}): CodexInstallationDetection {
   const home = options.home ?? os.homedir();
   const exists = options.exists ?? ((candidate: string) => fs.existsSync(candidate));
   const custom = customPath.trim();
+  let invalidCustomPath: string | null = null;
   if (custom) {
     const expanded = expandHome(custom, home);
-    return exists(expanded) ? expanded : null;
+    if (exists(expanded)) return { command: expanded, source: "custom", invalidCustomPath: null, version: null, versionError: null };
+    invalidCustomPath = expanded;
   }
-  return codexCommandCandidateList(
+  const found = codexCommandCandidatesWithSource(
     home,
     options.envPath ?? process.env.PATH ?? "",
     options.platform ?? process.platform,
     options.appData ?? process.env.APPDATA ?? "",
     options.programData ?? process.env.ProgramData ?? "C:\\ProgramData"
-  ).find((candidate) => exists(candidate)) ?? null;
+  ).find((candidate) => exists(candidate.command)) ?? null;
+  return {
+    command: found?.command ?? null,
+    source: found?.source ?? null,
+    invalidCustomPath,
+    version: null,
+    versionError: null
+  };
+}
+
+export async function inspectCodexInstallation(customPath: string, options: CodexCommandResolveOptions = {}): Promise<CodexInstallationDetection> {
+  const detection = detectCodexInstallation(customPath, options);
+  if (!detection.command) return detection;
+  const runner = options.versionRunner ?? codexVersionRunner;
+  try {
+    const result = await runner(detection.command, ["--version"]);
+    return {
+      ...detection,
+      version: firstNonEmptyLine(result.stdout || result.stderr),
+      versionError: null
+    };
+  } catch (error) {
+    return {
+      ...detection,
+      version: null,
+      versionError: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 export function buildCodexLaunchConfig(options: {
@@ -629,32 +676,63 @@ function codexCommandCandidates(home: string, envPath: string): string[] {
 }
 
 function codexCommandCandidateList(home: string, envPath: string, platform: string, appData: string, programData: string): string[] {
+  return codexCommandCandidatesWithSource(home, envPath, platform, appData, programData).map((candidate) => candidate.command);
+}
+
+function codexCommandCandidatesWithSource(home: string, envPath: string, platform: string, appData: string, programData: string): Array<{ command: string; source: CodexCommandSource }> {
+  const macAppCandidates = platform === "darwin"
+    ? [
+      { command: "/Applications/ChatGPT.app/Contents/Resources/codex", source: "chatgpt-system" as const },
+      { command: path.join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"), source: "chatgpt-user" as const },
+      { command: "/Applications/Codex.app/Contents/Resources/codex", source: "codex-system" as const },
+      { command: path.join(home, "Applications", "Codex.app", "Contents", "Resources", "codex"), source: "codex-user" as const }
+    ]
+    : [];
   const windowsCandidates = platform === "win32"
     ? [
-      appData ? path.win32.join(appData, "npm", "codex.cmd") : "",
-      appData ? path.win32.join(appData, "npm", "codex.ps1") : "",
-      path.win32.join(home, "scoop", "shims", "codex.cmd"),
-      path.win32.join(programData, "chocolatey", "bin", "codex.exe")
-    ].filter(Boolean)
+      appData ? { command: path.win32.join(appData, "npm", "codex.cmd"), source: "windows-npm" as const } : null,
+      appData ? { command: path.win32.join(appData, "npm", "codex.ps1"), source: "windows-npm" as const } : null,
+      { command: path.win32.join(home, "scoop", "shims", "codex.cmd"), source: "scoop" as const },
+      { command: path.win32.join(programData, "chocolatey", "bin", "codex.exe"), source: "chocolatey" as const }
+    ].filter((candidate): candidate is { command: string; source: "windows-npm" | "scoop" | "chocolatey" } => Boolean(candidate))
     : [];
   return [
-    path.join(home, ".npm-global", "bin", "codex"),
-    ...codexAppCommandCandidates(home),
+    ...macAppCandidates.slice(0, 2),
+    { command: path.join(home, ".npm-global", "bin", "codex"), source: "npm-global" },
+    ...macAppCandidates.slice(2),
     ...windowsCandidates,
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
+    { command: "/opt/homebrew/bin/codex", source: "homebrew" },
+    { command: "/usr/local/bin/codex", source: "local-bin" },
     ...String(envPath || "")
       .split(path.delimiter)
       .filter(Boolean)
-      .map((part) => path.join(part, "codex"))
-  ];
+      .map((part) => ({ command: path.join(part, "codex"), source: "path" as const }))
+  ] satisfies Array<{ command: string; source: CodexCommandSource }>;
 }
 
 function codexAppCommandCandidates(home: string): string[] {
   return [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    path.join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
     "/Applications/Codex.app/Contents/Resources/codex",
     path.join(home, "Applications", "Codex.app", "Contents", "Resources", "codex")
   ];
+}
+
+function codexVersionRunner(command: string, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(command, [...args], { timeout: 5_000, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error([error.message, stderr].filter(Boolean).join("\n")));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function firstNonEmptyLine(value: string): string {
+  return String(value ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
 function normalizeProxyUrl(value: string): string {

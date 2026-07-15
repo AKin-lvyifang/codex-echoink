@@ -1,5 +1,5 @@
 import { Notice, normalizePath, Platform, setIcon, TFile, type App, type Component } from "obsidian";
-import type { ChatMessage, DiffSummary, StoredAttachment } from "../../settings/settings";
+import type { ChatMessage, DiffSummary, SettingsLanguage, StoredAttachment } from "../../settings/settings";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeWorkflowEvent, KnowledgeWorkflowPhaseId } from "../../knowledge-base/types";
 import type { ProcessFileRef, TokenUsage } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
@@ -13,6 +13,7 @@ import { formatMessageHeaderTime } from "../message-time";
 import { openImageOverlay, renderRichText } from "../render-message";
 import { buildActionTimeline, isActionTimelineItem, type ActionGroupKind, type ActionItemViewModel } from "./action-timeline";
 import { buildAgentTurnProjection, formatAgentTurnDuration, isAgentAnswerMessage, isAgentProcessItemType, type CompletedAgentTurn } from "./agent-turn-process";
+import { codexRecoveryCopy, isMissingCodexCliMessage } from "../codex-recovery";
 
 type MessageRenderRow =
   | { id: string; kind: "message"; message: ChatMessage; showAgentHeader: boolean; showAgentFooter: boolean; processExpanded: boolean }
@@ -32,12 +33,15 @@ export interface MessageListRenderInput {
   virtualListEl: HTMLElement;
   sessionId: string;
   knowledgeSession: boolean;
+  settingsLanguage: SettingsLanguage;
   messages: ChatMessage[];
   hiddenKnowledgeMessageCount: number;
   tokenUsage?: TokenUsage;
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
   onOpenKnowledgeHistory: () => void;
+  onAutoRepairCodex: () => void;
+  onOpenPluginSettings: () => void;
   onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
@@ -357,6 +361,10 @@ export class CodexMessageListRenderer {
     wrapper.dataset.messageId = message.id;
     wrapper.toggleClass("codex-message-streaming", message.status === "running");
     wrapper.toggleClass(`codex-message-type-${message.itemType ?? "text"}`, true);
+    if (isMissingCodexCliMessage(message)) {
+      this.renderMissingCodexRecovery(wrapper, message);
+      return;
+    }
     if (options.showAgentHeader) this.renderAgentHeader(wrapper, {
       message,
       statusLabel: agentHeaderStatusLabel(message),
@@ -405,6 +413,27 @@ export class CodexMessageListRenderer {
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     if (message.citations) this.renderKnowledgeBaseCitations(wrapper, message.id, message.citations);
     if (options.showAgentFooter) this.renderAgentFooter(wrapper, message);
+  }
+
+  private renderMissingCodexRecovery(container: HTMLElement, message: ChatMessage): void {
+    const env = this.requireEnv();
+    const copy = codexRecoveryCopy(env.settingsLanguage);
+    container.addClass("codex-cli-recovery");
+    const mark = container.createSpan({ cls: "codex-cli-recovery-icon", attr: { "aria-hidden": "true" } });
+    setIcon(mark, "terminal");
+    const body = container.createDiv({ cls: "codex-cli-recovery-body" });
+    body.createDiv({ cls: "codex-cli-recovery-title", text: copy.title });
+    body.createDiv({ cls: "codex-cli-recovery-detail", text: copy.detail });
+    const actions = body.createDiv({ cls: "codex-cli-recovery-actions" });
+    const repair = actions.createEl("button", { cls: "codex-cli-recovery-primary", text: copy.repair, attr: { type: "button" } });
+    repair.onclick = env.onAutoRepairCodex;
+    const settings = actions.createEl("button", { cls: "codex-cli-recovery-secondary", text: copy.settings, attr: { type: "button" } });
+    settings.onclick = env.onOpenPluginSettings;
+    const diagnostic = body.createEl("details", { cls: "codex-cli-recovery-diagnostic" });
+    diagnostic.createEl("summary", { text: copy.diagnostic });
+    diagnostic.createEl("pre", {
+      text: [message.title, displayTextForMessage(message), message.details].filter(Boolean).join("\n\n")
+    });
   }
 
   private renderAgentHeader(container: HTMLElement, input: { message?: ChatMessage; statusLabel: string; compact: boolean }): void {

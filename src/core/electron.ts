@@ -51,8 +51,8 @@ export async function openPathInElectron(filePath: string): Promise<boolean> {
   if (!filePath) return false;
   const shell = getElectronShell();
   if (!shell?.openPath) return false;
-  await shell.openPath(filePath);
-  return true;
+  const result = await shell.openPath(filePath);
+  return typeof result !== "string" || result.length === 0;
 }
 
 function electronModule(): ElectronModule | null {

@@ -2,7 +2,9 @@ import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFi
 import type CodexForObsidianPlugin from "../main";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { swallowError } from "../core/error-handling";
-import { detectCodexCommand } from "../core/codex-service";
+import { detectCodexCommand, detectCodexInstallation, inspectCodexInstallation, type CodexInstallationDetection } from "../core/codex-service";
+import { installCodexCli, type CodexInstallErrorKind } from "../core/codex-installer";
+import { CodexLoginError } from "../core/codex-login";
 import { HermesBackend } from "../core/hermes-backend";
 import { detectHermesCommand } from "../core/hermes-models";
 import { OpenCodeBackend } from "../core/opencode-backend";
@@ -70,9 +72,10 @@ import { skillResourceFromHermesSkill } from "../resources/skill-loader";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile } from "../knowledge-base/rules-repair";
 import { confirmModal, textInputModal } from "../ui/modals";
+import { openPathInElectron } from "../core/electron";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
-import { buildSetupCheck, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
+import { buildSetupCheck, buildSetupPrimaryState, CODEX_CLI_INSTALL_COMMAND, completeSetupState, type SetupAction, type SetupCheckResult, type SetupPlatform } from "./setup-check";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -92,6 +95,11 @@ export class CodexSettingTab extends PluginSettingTab {
   private hermesChecking = false;
   private hermesCheckError = "";
   private setupChecking = false;
+  private setupPhase: "idle" | "detecting" | "installing" | "logging-in" = "idle";
+  private setupError = "";
+  private setupDetection: CodexInstallationDetection | null = null;
+  private setupAutoCheckStarted = false;
+  private setupInstallAbort: AbortController | null = null;
   private displayFrame: number | null = null;
   private settingsTitleEl: HTMLElement | null = null;
   private settingsStatusEl: HTMLElement | null = null;
@@ -116,6 +124,11 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     this.renderSettingsShell();
     this.renderSettingsContent();
+    const setupCheck = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
+    if (!this.setupAutoCheckStarted && this.shouldShowSetupGuide(setupCheck)) {
+      this.setupAutoCheckStarted = true;
+      window.setTimeout(() => void this.runSetupCheck(), 0);
+    }
   }
 
   private renderSettingsShell(): void {
@@ -255,8 +268,9 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(codexSection, copy.general.cliPath, settings.cliPath, "~/.npm-global/bin/codex", async (value) => {
       settings.cliPath = value.trim();
       settings.agents.codex.cliPath = settings.cliPath;
+      this.setupDetection = null;
       await this.plugin.saveSettings();
-      this.scheduleDisplay();
+      await this.runSetupCheck();
     });
     this.decorateSetting(new Setting(codexSection).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
       toggle.setValue(settings.proxyEnabled).onChange(async (value) => {
@@ -730,95 +744,231 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSetupGuide(container: HTMLElement, check: SetupCheckResult): void {
-    const copy = this.copy;
+    const platform = this.detectSetupPlatform();
+    let primary = buildSetupPrimaryState(check, {
+      checking: this.setupChecking,
+      error: this.setupError,
+      status: this.plugin.lastStatus,
+      platform,
+      copy: this.copy.setup.primary
+    });
+    if (this.setupPhase === "installing") {
+      primary = {
+        ...primary,
+        title: this.copy.setup.installingTitle,
+        detail: this.copy.setup.installingDetail,
+        buttonLabel: this.copy.setup.installingButton,
+        disabled: true
+      };
+    } else if (this.setupPhase === "logging-in") {
+      primary = {
+        ...primary,
+        title: this.copy.setup.loggingInTitle,
+        detail: this.copy.setup.loggingInDetail,
+        buttonLabel: this.copy.setup.loggingInButton,
+        disabled: true
+      };
+    }
     container.addClass("codex-setup-guide");
-    container.toggleClass("is-ready", check.canStart);
-    container.toggleClass("is-blocking", !check.canStart);
+    container.toggleClass("is-ready", primary.tone === "success");
+    container.toggleClass("is-error", primary.tone === "error");
 
     const header = container.createDiv({ cls: "codex-setup-header" });
     const icon = header.createSpan({ cls: "codex-settings-status-icon" });
-    setIcon(icon, check.canStart ? "rocket" : "wrench");
+    setIcon(icon, primary.tone === "success" ? "circle-check" : primary.tone === "error" ? "circle-alert" : "loader-circle");
     const title = header.createDiv({ cls: "codex-setup-title" });
-    title.createDiv({
-      cls: "codex-setup-heading",
-      text: this.setupChecking
-        ? copy.setup.checking
-        : check.canStart
-          ? copy.setup.readyTitle
-          : copy.setup.blockedTitle(check.blockingCount)
-    });
-    title.createDiv({
-      cls: "codex-setup-subtitle",
-      text: check.canStart ? copy.setup.readyDesc : copy.setup.blockedDesc
-    });
+    title.createDiv({ cls: "codex-setup-heading", text: primary.title });
+    title.createDiv({ cls: "codex-setup-subtitle", text: primary.detail });
 
-    const list = container.createDiv({ cls: "codex-setup-list" });
-    for (const requirement of check.requirements) {
-      const row = list.createDiv({ cls: `codex-setup-item is-${requirement.status}` });
-      const statusIcon = row.createSpan({ cls: "codex-setup-item-icon" });
-      setIcon(statusIcon, setupRequirementIcon(requirement.status));
-      const body = row.createDiv({ cls: "codex-setup-item-body" });
-      body.createDiv({ cls: "codex-setup-item-title", text: requirement.title });
-      body.createDiv({ cls: "codex-setup-item-message", text: requirement.message });
-      if (requirement.actions.length) {
-        const actions = body.createDiv({ cls: "codex-setup-item-actions" });
-        for (const action of requirement.actions) this.addSetupActionButton(actions, action);
+    const backendRequirements = check.requirements.filter((requirement) => requirement.id !== "codex-cli");
+    if (backendRequirements.length) {
+      const list = container.createDiv({ cls: "codex-setup-list" });
+      for (const requirement of backendRequirements) {
+        const row = list.createDiv({ cls: `codex-setup-item is-${requirement.status}` });
+        const statusIcon = row.createSpan({ cls: "codex-setup-item-icon" });
+        setIcon(statusIcon, setupRequirementIcon(requirement.status));
+        const body = row.createDiv({ cls: "codex-setup-item-body" });
+        body.createDiv({ cls: "codex-setup-item-title", text: requirement.title });
+        body.createDiv({ cls: "codex-setup-item-message", text: requirement.message });
+        if (requirement.actions.length) {
+          const rowActions = body.createDiv({ cls: "codex-setup-item-actions" });
+          for (const action of requirement.actions) this.addSetupRequirementActionButton(rowActions, action);
+        }
       }
     }
 
-    const actions = container.createDiv({ cls: "codex-settings-status-actions codex-setup-actions" });
-    const refresh = actions.createEl("button", {
-      cls: "codex-resource-refresh",
-      text: this.setupChecking ? copy.setup.checkingButton : copy.setup.recheck,
+    const actions = container.createDiv({ cls: "codex-setup-actions" });
+    const actionButton = actions.createEl("button", {
+      cls: "codex-setup-primary",
+      text: primary.buttonLabel,
       attr: { type: "button" }
     });
-    refresh.disabled = this.setupChecking;
-    refresh.onclick = () => void this.runSetupCheck();
-    if (check.canStart) {
-      const start = actions.createEl("button", {
-        cls: "codex-setup-start",
-        text: copy.setup.start,
-        attr: { type: "button" }
-      });
-      start.disabled = this.setupChecking;
-      start.onclick = () => void this.completeSetupAndStart();
+    actionButton.disabled = primary.disabled;
+    actionButton.onclick = () => void this.runSetupPrimaryAction(primary.action);
+
+    if (this.setupPhase === "installing") {
+      const cancel = actions.createEl("button", { cls: "codex-setup-secondary", text: this.copy.setup.cancelInstall, attr: { type: "button" } });
+      cancel.onclick = () => this.setupInstallAbort?.abort();
+    } else if (primary.showTerminalFallback) {
+      const terminal = actions.createEl("button", { cls: "codex-setup-secondary", text: this.copy.setup.terminalFallback, attr: { type: "button" } });
+      terminal.onclick = () => void this.openTerminalFallback();
     }
 
     if (this.plugin.settings.setup.lastCheckedAt > 0) {
-      container.createDiv({ cls: "codex-setup-last-checked", text: copy.setup.lastChecked(formatSetupTime(this.plugin.settings.setup.lastCheckedAt)) });
+      container.createDiv({ cls: "codex-setup-last-checked", text: this.copy.setup.lastChecked(formatSetupTime(this.plugin.settings.setup.lastCheckedAt)) });
     }
   }
 
-  private addSetupActionButton(container: HTMLElement, action: SetupAction): void {
-    const button = container.createEl("button", { cls: "codex-setup-action", text: action.label, attr: { type: "button" } });
+  private addSetupRequirementActionButton(container: HTMLElement, action: SetupAction): void {
+    const button = container.createEl("button", { cls: "codex-setup-secondary", text: action.label, attr: { type: "button" } });
     button.onclick = async () => {
       if (action.kind === "open-url") {
         window.open(action.value);
         return;
       }
       await navigator.clipboard.writeText(action.value);
-      const original = action.label;
+      const label = action.label;
       button.setText(this.copy.setup.copied);
-      window.setTimeout(() => button.setText(original), 1200);
+      window.setTimeout(() => button.setText(label), 1200);
     };
+  }
+
+  private async runSetupPrimaryAction(action: ReturnType<typeof buildSetupPrimaryState>["action"]): Promise<void> {
+    if (action === "start") return this.completeSetupAndStart();
+    if (action === "login") return this.loginCodex();
+    if (action === "install") return this.installAndConnectCodex();
+    if (action === "retry") return this.runSetupCheck();
   }
 
   private async runSetupCheck(): Promise<void> {
     if (this.setupChecking) return;
     this.setupChecking = true;
+    this.setupPhase = "detecting";
+    this.setupError = "";
     this.scheduleDisplay();
     try {
-      await this.plugin.reconnectCodex({ refreshLogin: true });
+      const initialCheck = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
+      const codexRequired = initialCheck.requirements.some((item) => item.id === "codex-cli");
+      if (codexRequired) {
+        this.setupDetection = await inspectCodexInstallation(this.plugin.settings.cliPath);
+        if (this.setupDetection.command && this.setupDetection.versionError) {
+          throw new Error(this.copy.setup.versionCheckFailed(this.setupDetection.versionError));
+        }
+        if (this.setupDetection.command) {
+          const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
+          if (!status.connected || status.accountReadError) throw new Error(status.accountReadError ?? status.errors[0] ?? this.copy.setup.loginErrors.connection);
+        } else {
+          await this.plugin.codex?.disconnect();
+          this.plugin.codex = null;
+          this.plugin.lastStatus = null;
+        }
+      }
       const check = buildSetupCheck(this.plugin.settings, this.plugin.lastStatus, this.detectSetupPlatform());
-      if (check.knowledgeBackend === "opencode" || check.requirements.some((item) => item.id === "opencode-cli" && item.status === "ok")) {
+      if (check.requirements.some((item) => item.id === "opencode-cli")) {
         await this.refreshOpenCodeRuntimeOptions({ models: true, agents: true });
       }
+      if (check.requirements.some((item) => item.id === "hermes-cli")) await this.plugin.testHermesConnection({ notify: false });
       this.plugin.settings.setup.lastCheckedAt = Date.now();
       await this.plugin.saveSettings(true);
+    } catch (error) {
+      this.setupError = error instanceof Error ? error.message : String(error);
     } finally {
       this.setupChecking = false;
+      this.setupPhase = "idle";
       this.scheduleDisplay();
     }
+  }
+
+  private async loginCodex(): Promise<void> {
+    if (this.setupChecking) return;
+    this.setupChecking = true;
+    this.setupPhase = "logging-in";
+    this.setupError = "";
+    this.scheduleDisplay();
+    try {
+      if (!this.plugin.codex?.isConnected()) await this.plugin.ensureCodexConnected(true, { silent: true });
+      if (!this.plugin.codex?.isConnected()) throw new Error(this.plugin.lastStatus?.errors[0] ?? this.copy.setup.loginErrors.connection);
+      await this.plugin.codex.login({ openUrl: (url) => window.open(url) });
+      this.plugin.lastStatus = await this.plugin.codex.refreshStatus({ refreshToken: true });
+      if (this.plugin.lastStatus.accountReadError) throw new Error(this.plugin.lastStatus.accountReadError);
+      if (!this.plugin.lastStatus.loggedIn) throw new CodexLoginError("failed", this.copy.setup.loginErrors.failed);
+      this.plugin.settings.setup.lastCheckedAt = Date.now();
+      await this.plugin.saveSettings(true);
+    } catch (error) {
+      this.setupError = this.setupLoginError(error);
+    } finally {
+      this.setupChecking = false;
+      this.setupPhase = "idle";
+      this.scheduleDisplay();
+    }
+  }
+
+  private async installAndConnectCodex(): Promise<void> {
+    if (this.setupChecking) return;
+    const accepted = await confirmModal(
+      this.app,
+      this.copy.setup.installConfirmTitle,
+      this.copy.setup.installConfirmBody,
+      this.copy.setup.installConfirmAccept,
+      this.copy.setup.installConfirmCancel
+    );
+    if (!accepted) return;
+    this.setupChecking = true;
+    this.setupPhase = "installing";
+    this.setupError = "";
+    this.setupInstallAbort = new AbortController();
+    this.scheduleDisplay();
+    let shouldReconnect = false;
+    try {
+      const result = await installCodexCli({ signal: this.setupInstallAbort.signal });
+      if (result.status === "cancelled") {
+        this.setupError = this.copy.setup.installErrors.cancelled;
+      } else if (result.status === "failed" || !result.command) {
+        this.setupError = [this.setupInstallError(result.errorKind), result.logs].filter(Boolean).join("\n");
+      } else {
+        this.plugin.settings.cliPath = result.command;
+        this.plugin.settings.agents.codex.cliPath = result.command;
+        this.setupDetection = {
+          command: result.command,
+          source: "custom",
+          invalidCustomPath: null,
+          version: result.version,
+          versionError: null
+        };
+        await this.plugin.saveSettings(true);
+        shouldReconnect = true;
+      }
+    } catch (error) {
+      this.setupError = [this.copy.setup.installErrors.failed, error instanceof Error ? error.message : String(error)].filter(Boolean).join("\n");
+    } finally {
+      this.setupInstallAbort = null;
+      this.setupChecking = false;
+      this.setupPhase = "idle";
+      this.scheduleDisplay();
+    }
+    if (shouldReconnect) await this.runSetupCheck();
+  }
+
+  private setupInstallError(kind: CodexInstallErrorKind | undefined): string {
+    if (kind === "npm-missing") return this.copy.setup.installErrors.npmMissing;
+    if (kind === "permission") return this.copy.setup.installErrors.permission;
+    if (kind === "timeout") return this.copy.setup.installErrors.timeout;
+    if (kind === "cli-missing") return this.copy.setup.installErrors.cliMissing;
+    return this.copy.setup.installErrors.failed;
+  }
+
+  private setupLoginError(error: unknown): string {
+    if (!(error instanceof CodexLoginError)) return error instanceof Error ? error.message : String(error);
+    if (error.kind === "timeout") return this.copy.setup.loginErrors.timeout;
+    if (error.kind === "cancelled") return this.copy.setup.loginErrors.cancelled;
+    if (error.kind === "invalid-response") return this.copy.setup.loginErrors.invalidResponse;
+    return this.copy.setup.loginErrors.failed;
+  }
+
+  private async openTerminalFallback(): Promise<void> {
+    await navigator.clipboard.writeText(CODEX_CLI_INSTALL_COMMAND);
+    const opened = await openTerminalForSetup(process.platform);
+    new Notice(opened ? this.copy.setup.terminalOpened : this.copy.setup.terminalCopied);
   }
 
   private async completeSetupAndStart(): Promise<void> {
@@ -834,11 +984,13 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private detectSetupPlatform(): SetupPlatform {
+    const codexDetection = this.setupDetection ?? detectCodexInstallation(this.plugin.settings.cliPath);
     return {
       os: process.platform,
-      codexCommand: detectCodexCommand(this.plugin.settings.cliPath),
+      codexCommand: codexDetection.command,
       openCodeCommand: detectOpenCodeCommand(this.plugin.settings.opencode.cliPath),
-      hermesCommand: detectHermesCommand(this.plugin.settings.agents.hermes.cliPath)
+      hermesCommand: detectHermesCommand(this.plugin.settings.agents.hermes.cliPath),
+      codexDetection
     };
   }
 
@@ -2309,6 +2461,22 @@ function setupRequirementIcon(status: string): string {
   if (status === "ok") return "check-circle-2";
   if (status === "warning") return "circle-alert";
   return "circle-x";
+}
+
+async function openTerminalForSetup(platform: NodeJS.Platform | string): Promise<boolean> {
+  const candidates = platform === "darwin"
+    ? ["/System/Applications/Utilities/Terminal.app", "/Applications/Utilities/Terminal.app"]
+    : platform === "win32"
+      ? [`${process.env.SystemRoot || "C:\\Windows"}\\System32\\cmd.exe`]
+      : ["/usr/bin/x-terminal-emulator", "/usr/bin/gnome-terminal", "/usr/bin/konsole"];
+  for (const candidate of candidates) {
+    try {
+      if (await openPathInElectron(candidate)) return true;
+    } catch {
+      // Try the next known terminal path without running a shell command.
+    }
+  }
+  return false;
 }
 
 function formatSetupTime(value: number): string {

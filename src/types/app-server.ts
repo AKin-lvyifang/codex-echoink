@@ -95,6 +95,7 @@ export interface CodexStatusSnapshot {
   platform?: string;
   accountLabel: string;
   loggedIn: boolean;
+  accountReadError?: string | null;
   configModel?: string | null;
   profile?: string | null;
   models: CodexModel[];

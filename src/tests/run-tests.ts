@@ -82,7 +82,7 @@ import {
 } from "../settings/settings";
 import { promptEnhancerModelChoices, resolvePromptEnhancerBackend, resolvePromptEnhancerCodexProvider, resolvePromptEnhancerModel, resolvePromptEnhancerProviderId } from "../prompt-enhancer/service";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "../settings/settings-scroll";
-import { buildSetupCheck, completeSetupState } from "../settings/setup-check";
+import { buildSetupCheck, buildSetupPrimaryState, completeSetupState } from "../settings/setup-check";
 import { AGENT_BACKEND_DEFINITIONS, agentBackendDisplayName, getAgentBackendDefinition, resolveCapabilityBackend } from "../agent/registry";
 import { agentEventDisplayText, makeAgentLifecycleEvents, type AgentEvent } from "../agent/events";
 import { createAgentEventRuntimeWithFallback, runTaskWithLifecycleEvents } from "../agent/event-task";
@@ -105,7 +105,10 @@ import { formatHermesError } from "../core/hermes-errors";
 import { HermesBackend } from "../core/hermes-backend";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "../core/hermes-models";
 import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../settings/i18n";
-import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, resolveCodexCommand } from "../core/codex-service";
+import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, detectCodexInstallation, inspectCodexInstallation, resolveCodexCommand } from "../core/codex-service";
+import { CODEX_NPM_INSTALL_ARGS, installCodexCli } from "../core/codex-installer";
+import { CodexLoginError, startCodexLogin } from "../core/codex-login";
+import { codexRecoveryCopy, isMissingCodexCliMessage } from "../ui/codex-recovery";
 import { formatOpenCodeError } from "../core/opencode-errors";
 import { collectOpenCodeHistoryMessages } from "../core/opencode-history-loader";
 import { nodeFetch as openCodeNodeFetch } from "../core/opencode-fetch";
@@ -313,6 +316,7 @@ const codexServiceSourceForQuotaRemoval = await readFile(path.join(process.cwd()
 const headerSourceForQuotaRemoval = await readFile(path.join(process.cwd(), "src/ui/codex-view/header.ts"), "utf8");
 const viewSourceForQuotaRemoval = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
 assert.doesNotMatch(codexServiceSourceForQuotaRemoval, /account\/rateLimits\/read/);
+assert.match(codexServiceSourceForQuotaRemoval, /accountReadError: accountErrors\[0\] \?\? null/);
 assert.doesNotMatch(headerSourceForQuotaRemoval, /codex-usage|Codex 用量|剩余额度/);
 assert.doesNotMatch(viewSourceForQuotaRemoval, /refreshHeaderRateLimits|refreshCodexHarnessRateLimits/);
 const loadSettingsStart = mainSourceForStartupPerformance.indexOf("async loadSettings(): Promise<void>");
@@ -418,6 +422,19 @@ assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
+const setupGuideStateSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderSetupGuide"),
+  settingsTabSource.indexOf("private async runSetupPrimaryAction")
+);
+assert.match(setupGuideStateSource, /setupPhase === "installing"[\s\S]*?disabled: true/);
+assert.match(setupGuideStateSource, /setupPhase === "logging-in"[\s\S]*?disabled: true/);
+assert.match(setupGuideStateSource, /requirement\.actions/);
+assert.match(setupGuideStateSource, /addSetupRequirementActionButton/);
+const setupCheckConnectionSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async runSetupCheck"),
+  settingsTabSource.indexOf("private async loginCodex")
+);
+assert.match(setupCheckConnectionSource, /if \(!status\.connected \|\| status\.accountReadError\) throw new Error/);
 const knowledgeBaseUtilsSource = await readFile(path.join(process.cwd(), "src/knowledge-base/utils.ts"), "utf8");
 const rawIntegritySource = await readFile(path.join(process.cwd(), "src/knowledge-base/raw-integrity.ts"), "utf8");
 const structureNormalizerSource = await readFile(path.join(process.cwd(), "src/knowledge-base/structure-normalizer.ts"), "utf8");
@@ -5342,7 +5359,7 @@ assert.match(missingCliEnglishDiagnostic.text, /Model Auto/);
 assert.doesNotMatch(missingCliEnglishDiagnostic.text, /可能原因|建议处理|当前上下文|原始错误/);
 assert.match(diagnoseCodexError(websocketDiagnostic.text, { language: "en" }).text, /Suggested fix/);
 assert.throws(
-  () => resolveCodexCommand("/definitely/missing/codex"),
+  () => resolveCodexCommand("/definitely/missing/codex", { exists: () => false }),
   /找不到 Codex CLI/
 );
 
@@ -5594,6 +5611,168 @@ assert.equal(hermesRunOutput.text, "Hermes 完成");
 assert.ok(JSON.parse(hermesRunFetchCalls.find((call) => call.url.endsWith("/runs"))!.init.body).input.includes("使用 /answer skill"));
 assert.equal(hermesRunFetchCalls.some((call) => call.init.headers.Authorization === "Bearer local-key"), true);
 
+const chatGptSystemCodex = "/Applications/ChatGPT.app/Contents/Resources/codex";
+const chatGptUserCodex = "/Users/demo/Applications/ChatGPT.app/Contents/Resources/codex";
+const detectedChatGptSystem = detectCodexInstallation("", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptSystemCodex
+});
+assert.equal(detectedChatGptSystem.command, chatGptSystemCodex);
+assert.equal(detectedChatGptSystem.source, "chatgpt-system");
+const detectedChatGptUser = detectCodexInstallation("", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptUserCodex
+});
+assert.equal(detectedChatGptUser.command, chatGptUserCodex);
+assert.equal(detectedChatGptUser.source, "chatgpt-user");
+const detectedFallback = detectCodexInstallation("~/missing/codex", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptSystemCodex
+});
+assert.equal(detectedFallback.command, chatGptSystemCodex);
+assert.equal(detectedFallback.invalidCustomPath, "/Users/demo/missing/codex");
+assert.equal(resolveCodexCommand("~/missing/codex", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptSystemCodex
+}), chatGptSystemCodex);
+const detectedWindowsCodex = detectCodexInstallation("", {
+  home: "C:\\Users\\demo",
+  platform: "win32",
+  appData: "C:\\Users\\demo\\AppData\\Roaming",
+  programData: "C:\\ProgramData",
+  envPath: "",
+  exists: (candidate) => candidate === "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd"
+});
+assert.equal(detectedWindowsCodex.source, "windows-npm");
+const windowsDoesNotSeeMacApps = detectCodexInstallation("", {
+  home: "C:\\Users\\demo",
+  platform: "win32",
+  appData: "",
+  programData: "C:\\ProgramData",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptSystemCodex
+});
+assert.equal(windowsDoesNotSeeMacApps.command, null);
+const inspectedCodex = await inspectCodexInstallation("~/missing/codex", {
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === chatGptSystemCodex,
+  versionRunner: async (command, args) => {
+    assert.equal(command, chatGptSystemCodex);
+    assert.deepEqual(args, ["--version"]);
+    return { stdout: "codex-cli 0.144.2\n", stderr: "" };
+  }
+});
+assert.equal(inspectedCodex.version, "codex-cli 0.144.2");
+
+const loginHandlers = new Set<(params: unknown) => void>();
+const loginOpenedUrls: string[] = [];
+const loginResultPromise = startCodexLogin({
+  request: async () => ({ loginId: "login-1", authUrl: "https://auth.openai.com/codex" }),
+  onNotification: (_method, handler) => {
+    loginHandlers.add(handler);
+    return () => loginHandlers.delete(handler);
+  }
+}, {
+  timeoutMs: 200,
+  openUrl: (url) => loginOpenedUrls.push(url)
+});
+for (const handler of loginHandlers) handler({ loginId: "other-login", success: true });
+for (const handler of loginHandlers) handler({ loginId: "login-1", success: true });
+assert.equal((await loginResultPromise).loginId, "login-1");
+assert.deepEqual(loginOpenedUrls, ["https://auth.openai.com/codex"]);
+await assert.rejects(() => startCodexLogin({
+  request: async () => ({ loginId: "login-timeout", authUrl: "https://auth.openai.com/codex" }),
+  onNotification: () => () => undefined
+}, { timeoutMs: 5 }), (error: unknown) => error instanceof CodexLoginError && error.kind === "timeout");
+const failedLoginHandlers = new Set<(params: unknown) => void>();
+const failedLoginPromise = startCodexLogin({
+  request: async () => ({ loginId: "login-failed", authUrl: "https://auth.openai.com/codex" }),
+  onNotification: (_method, handler) => {
+    failedLoginHandlers.add(handler);
+    return () => failedLoginHandlers.delete(handler);
+  }
+}, { timeoutMs: 200 });
+for (const handler of failedLoginHandlers) handler({ loginId: "login-failed", success: false, error: "denied" });
+await assert.rejects(() => failedLoginPromise, (error: unknown) => error instanceof CodexLoginError && error.kind === "failed");
+
+const installerCalls: Array<{ command: string; args: string[]; shell: boolean }> = [];
+const installedCodexPath = "/Users/demo/.npm-global/bin/codex";
+const installerResult = await installCodexCli({
+  home: "/Users/demo",
+  platform: "darwin",
+  envPath: "",
+  exists: (candidate) => candidate === installedCodexPath,
+  runner: async (command, args, options) => {
+    installerCalls.push({ command, args: [...args], shell: options.shell });
+    if (args[0] === "prefix") return { stdout: "/Users/demo/.npm-global\n", stderr: "" };
+    if (command === installedCodexPath) return { stdout: "codex-cli 0.144.2\n", stderr: "" };
+    return { stdout: "installed", stderr: "" };
+  }
+});
+assert.deepEqual(installerCalls[0], { command: "npm", args: [...CODEX_NPM_INSTALL_ARGS], shell: false });
+assert.equal(installerCalls.some((call) => call.args.join(" ").includes("sudo") || call.args.join(" ").includes("curl")), false);
+assert.equal(installerResult.command, installedCodexPath);
+assert.equal(installerResult.version, "codex-cli 0.144.2");
+const cancelledInstall = await installCodexCli({
+  runner: async () => { const error = new Error("aborted") as Error & { name: string }; error.name = "AbortError"; throw error; }
+});
+assert.equal(cancelledInstall.status, "cancelled");
+const missingNpmInstall = await installCodexCli({
+  runner: async () => { const error = new Error("spawn npm ENOENT") as Error & { code: string }; error.code = "ENOENT"; throw error; }
+});
+assert.equal(missingNpmInstall.errorKind, "npm-missing");
+const permissionInstall = await installCodexCli({
+  runner: async () => { const error = new Error("EACCES") as Error & { code: string }; error.code = "EACCES"; throw error; }
+});
+assert.equal(permissionInstall.errorKind, "permission");
+const timeoutInstall = await installCodexCli({
+  runner: async () => { const error = new Error("process timed out") as Error & { killed: boolean }; error.killed = true; throw error; }
+});
+assert.equal(timeoutInstall.errorKind, "timeout");
+const limitedInstallLog = await installCodexCli({
+  home: "/Users/demo",
+  platform: "darwin",
+  maxLogChars: 256,
+  exists: (candidate) => candidate === installedCodexPath,
+  runner: async (command, args) => {
+    if (args[0] === "prefix") return { stdout: "/Users/demo/.npm-global\n", stderr: "" };
+    if (command === installedCodexPath) return { stdout: "codex-cli 0.144.2\n", stderr: "" };
+    return { stdout: "x".repeat(400), stderr: "" };
+  }
+});
+assert.ok(limitedInstallLog.logs.length <= 258);
+assert.match(limitedInstallLog.logs, /…$/);
+
+assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "spawn codex ENOENT", title: "Codex 发送失败" }), true);
+assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "request timed out", title: "Codex 发送失败" }), false);
+assert.equal(isMissingCodexCliMessage({ itemType: "error", text: "Codex missing model configuration", title: "模型配置错误" }), false);
+assert.equal(isMissingCodexCliMessage({ itemType: "text", text: "找不到 Codex CLI", title: "普通消息" }), false);
+assert.equal(codexRecoveryCopy("zh-CN").repair, "自动修复");
+assert.equal(codexRecoveryCopy("en").repair, "Auto repair");
+assert.equal(settingsCopy("en").setup.primary.checkingTitle, "Checking the current environment");
+assert.doesNotMatch(settingsCopy("en").setup.installErrors.permission, /[\u3400-\u9fff]/);
+assert.doesNotMatch(settingsCopy("en").setup.loginErrors.timeout, /[\u3400-\u9fff]/);
+const messageListRecoverySource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-list.ts"), "utf8");
+const messageControllerRecoverySource = await readFile(path.join(process.cwd(), "src/ui/codex-view/message-controller.ts"), "utf8");
+assert.match(messageListRecoverySource, /isMissingCodexCliMessage\(message\)/);
+assert.match(messageListRecoverySource, /codexRecoveryCopy\(env\.settingsLanguage\)/);
+assert.match(messageListRecoverySource, /createEl\("details"/);
+assert.match(messageControllerRecoverySource, /openCodexSetup\(\{ autoRepair: true \}\)/);
+for (const sourcePath of await collectTypeScriptSourceFiles(path.join(process.cwd(), "src"))) {
+  const source = await readFile(sourcePath, "utf8");
+  assert.doesNotMatch(source, /\.style\.[A-Za-z0-9_]+\s*=/, `禁止直接写 DOM style：${path.relative(process.cwd(), sourcePath)}`);
+}
+
 const setupDisconnectedStatus = {
   connected: false,
   accountLabel: "未连接",
@@ -5611,6 +5790,15 @@ const setupConnectedStatus = {
   accountLabel: "ChatGPT：demo@example.com",
   loggedIn: true
 };
+const setupConnectedNotLoggedInStatus = {
+  ...setupDisconnectedStatus,
+  connected: true
+};
+const setupConnectedAccountReadFailedStatus = {
+  ...setupConnectedNotLoggedInStatus,
+  accountReadError: "account/read timed out",
+  errors: ["account/read timed out"]
+};
 const setupMissingCodex = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
   os: "darwin",
   codexCommand: null,
@@ -5622,7 +5810,7 @@ assert.equal(setupMissingCodex.canStart, false);
 assert.ok(setupMissingCodex.requirements.some((item) => item.id === "codex-cli" && item.status === "blocking"));
 assert.ok(setupMissingCodex.requirements.find((item) => item.id === "codex-cli")?.actions.some((action) => action.value.includes("@openai/codex")));
 
-const setupCodexInstalledNotLoggedIn = buildSetupCheck(DEFAULT_SETTINGS, setupDisconnectedStatus, {
+const setupCodexInstalledNotLoggedIn = buildSetupCheck(DEFAULT_SETTINGS, setupConnectedNotLoggedInStatus, {
   os: "darwin",
   codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
   openCodeCommand: null,
@@ -5630,9 +5818,37 @@ const setupCodexInstalledNotLoggedIn = buildSetupCheck(DEFAULT_SETTINGS, setupDi
 });
 assert.equal(setupCodexInstalledNotLoggedIn.status, "blocking");
 assert.equal(setupCodexInstalledNotLoggedIn.canStart, false);
-assert.ok(setupCodexInstalledNotLoggedIn.requirements.some((item) => item.id === "codex-cli" && item.status === "ok"));
-assert.ok(setupCodexInstalledNotLoggedIn.requirements.some((item) => item.id === "codex-login" && item.status === "blocking"));
-assert.ok(setupCodexInstalledNotLoggedIn.requirements.find((item) => item.id === "codex-login")?.actions.some((action) => action.value === "codex"));
+assert.ok(setupCodexInstalledNotLoggedIn.requirements.some((item) => item.id === "codex-cli" && item.status === "blocking"));
+assert.equal(buildSetupPrimaryState(setupCodexInstalledNotLoggedIn, {
+  checking: false,
+  error: "",
+  status: setupConnectedNotLoggedInStatus,
+  platform: { os: "darwin", codexCommand: "/Applications/Codex.app/Contents/Resources/codex", openCodeCommand: null, hermesCommand: null }
+}).action, "login");
+assert.equal(buildSetupPrimaryState(setupCodexInstalledNotLoggedIn, {
+  checking: false,
+  error: "",
+  status: setupConnectedNotLoggedInStatus,
+  platform: { os: "darwin", codexCommand: "/Applications/Codex.app/Contents/Resources/codex", openCodeCommand: null, hermesCommand: null },
+  copy: settingsCopy("en").setup.primary
+}).buttonLabel, "Sign in to Codex");
+assert.equal(buildSetupPrimaryState(setupCodexInstalledNotLoggedIn, {
+  checking: false,
+  error: "",
+  status: setupDisconnectedStatus,
+  platform: { os: "darwin", codexCommand: "/Applications/Codex.app/Contents/Resources/codex", openCodeCommand: null, hermesCommand: null }
+}).action, "retry");
+assert.equal(buildSetupPrimaryState(buildSetupCheck(DEFAULT_SETTINGS, setupConnectedAccountReadFailedStatus, {
+  os: "darwin",
+  codexCommand: "/Applications/Codex.app/Contents/Resources/codex",
+  openCodeCommand: null,
+  hermesCommand: null
+}), {
+  checking: false,
+  error: "",
+  status: setupConnectedAccountReadFailedStatus,
+  platform: { os: "darwin", codexCommand: "/Applications/Codex.app/Contents/Resources/codex", openCodeCommand: null, hermesCommand: null }
+}).action, "retry");
 
 const setupCodexOnly = buildSetupCheck(DEFAULT_SETTINGS, setupConnectedStatus, {
   os: "darwin",
@@ -5641,8 +5857,14 @@ const setupCodexOnly = buildSetupCheck(DEFAULT_SETTINGS, setupConnectedStatus, {
   hermesCommand: null
 });
 assert.equal(setupCodexOnly.canStart, true);
-assert.equal(setupCodexOnly.requirements.find((item) => item.id === "opencode-cli")?.status, "warning");
-assert.equal(setupCodexOnly.requirements.find((item) => item.id === "hermes-cli")?.status, "warning");
+assert.equal(setupCodexOnly.requirements.some((item) => item.id === "opencode-cli"), false);
+assert.equal(setupCodexOnly.requirements.some((item) => item.id === "hermes-cli"), false);
+assert.equal(buildSetupPrimaryState(setupCodexOnly, {
+  checking: false,
+  error: "",
+  status: setupConnectedStatus,
+  platform: { os: "darwin", codexCommand: chatGptSystemCodex, openCodeCommand: null, hermesCommand: null }
+}).buttonLabel, "开始使用");
 
 const setupOpenCodeRequired = buildSetupCheck({
   ...DEFAULT_SETTINGS,
@@ -5656,6 +5878,18 @@ const setupOpenCodeRequired = buildSetupCheck({
 assert.equal(setupOpenCodeRequired.status, "blocking");
 assert.equal(setupOpenCodeRequired.canStart, false);
 assert.ok(setupOpenCodeRequired.requirements.some((item) => item.id === "opencode-cli" && item.status === "blocking"));
+assert.ok(setupOpenCodeRequired.requirements.find((item) => item.id === "opencode-cli")?.actions.some((action) => action.kind === "open-url"));
+assert.equal(buildSetupPrimaryState(setupOpenCodeRequired, {
+  checking: false,
+  error: "",
+  status: setupConnectedStatus,
+  platform: {
+    os: "win32",
+    codexCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+    openCodeCommand: null,
+    hermesCommand: null
+  }
+}).action, "retry");
 
 const setupOpenCodeServerFailed = buildSetupCheck({
   ...DEFAULT_SETTINGS,
@@ -5693,8 +5927,35 @@ const setupOpenCodeReady = buildSetupCheck({
   openCodeCommand: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd",
   hermesCommand: null
 });
-assert.equal(setupOpenCodeReady.status, "warning");
+assert.equal(setupOpenCodeReady.status, "ok");
 assert.equal(setupOpenCodeReady.canStart, true);
+const setupPureOpenCodeReady = buildSetupCheck({
+  ...DEFAULT_SETTINGS,
+  agentBackend: "opencode",
+  agents: { ...DEFAULT_SETTINGS.agents, defaultBackend: "opencode" },
+  knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, backend: "default" },
+  opencode: {
+    ...DEFAULT_SETTINGS.opencode,
+    providerId: "anthropic",
+    modelId: "claude-sonnet-4-20250514",
+    agent: "build",
+    lastConnectedAt: 1700000000000,
+    lastError: ""
+  }
+}, setupDisconnectedStatus, {
+  os: "darwin",
+  codexCommand: null,
+  openCodeCommand: "/opt/homebrew/bin/opencode",
+  hermesCommand: null
+});
+const setupPureOpenCodePrimary = buildSetupPrimaryState(setupPureOpenCodeReady, {
+  checking: false,
+  error: "",
+  status: setupDisconnectedStatus,
+  platform: { os: "darwin", codexCommand: null, openCodeCommand: "/opt/homebrew/bin/opencode", hermesCommand: null }
+});
+assert.equal(setupPureOpenCodePrimary.action, "start");
+assert.doesNotMatch(setupPureOpenCodePrimary.detail, /未连接/);
 const setupHermesRequired = buildSetupCheck({
   ...DEFAULT_SETTINGS,
   agentBackend: "hermes",
@@ -5709,7 +5970,7 @@ const setupHermesRequired = buildSetupCheck({
 assert.equal(setupHermesRequired.status, "blocking");
 assert.equal(setupHermesRequired.canStart, false);
 assert.ok(setupHermesRequired.requirements.some((item) => item.id === "hermes-cli" && item.status === "blocking"));
-assert.ok(!setupHermesRequired.requirements.some((item) => item.id === "codex-login" && item.status === "blocking"));
+assert.ok(!setupHermesRequired.requirements.some((item) => item.id === "codex-cli"));
 const setupHermesProviderMissing = buildSetupCheck({
   ...DEFAULT_SETTINGS,
   agentBackend: "hermes",
@@ -11151,6 +11412,16 @@ function makeKnowledgeBaseManagerForTest(
     };
   }
   return { manager, settings, saveCalls: () => saveCalls };
+}
+
+async function collectTypeScriptSourceFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...await collectTypeScriptSourceFiles(entryPath));
+    else if (entry.isFile() && entry.name.endsWith(".ts")) files.push(entryPath);
+  }
+  return files;
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
