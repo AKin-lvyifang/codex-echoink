@@ -1934,6 +1934,15 @@ body.theme-light .codex-code-wrapper pre {
   background: transparent;
 }
 
+.codex-settings-status.codex-settings-status--dashboard {
+  display: block;
+  margin: 10px 0 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .codex-setup-header {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
@@ -2089,211 +2098,406 @@ body.theme-light .codex-code-wrapper pre {
   margin-left: 30px;
 }
 
-.codex-agent-installer {
-  display: grid;
-  gap: 12px;
+.codex-agent-dashboard {
+  position: relative;
+  isolation: isolate;
+  container-type: inline-size;
   min-width: 0;
-  padding: 12px 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 
-.codex-agent-installer.is-compact {
-  margin: 8px 0 14px;
-  padding: 8px 0 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 58%, transparent);
+.codex-agent-dashboard > * {
+  position: relative;
+  z-index: 2;
 }
 
-.codex-agent-installer-header {
-  display: grid;
-  gap: 3px;
+.codex-agent-dashboard-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.codex-agent-installer-list {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
+.codex-agent-dashboard.is-busy {
+  border-color: transparent;
 }
 
-.codex-agent-installer-row-shell {
+.codex-agent-dashboard.is-busy::before,
+.codex-agent-dashboard.is-busy::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+
+.codex-agent-dashboard.is-busy::before {
+  inset: -140%;
+  z-index: 0;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 275deg,
+    color-mix(in srgb, var(--interactive-accent) 24%, transparent) 315deg,
+    color-mix(in srgb, var(--interactive-accent) 68%, transparent) 340deg,
+    transparent 360deg
+  );
+  animation: codex-agent-dashboard-border-spin 2.6s linear infinite;
+}
+
+.codex-agent-dashboard.is-busy::after {
+  inset: 1px;
+  z-index: 1;
+  border-radius: 7px;
+  background: var(--background-primary);
+}
+
+@keyframes codex-agent-dashboard-border-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.codex-agent-dashboard-header {
   display: grid;
   gap: 4px;
-  min-width: 0;
-  border-radius: 7px;
+  padding: 14px 16px 10px;
 }
 
-.codex-agent-installer-row-shell.is-selected {
-  padding-bottom: 9px;
-  background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
-}
-
-.codex-agent-installer-row {
+.codex-agent-dashboard-tabs {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
   min-width: 0;
-  min-height: 52px;
-  padding: 8px 10px;
+  padding: 4px 8px 8px;
+}
+
+.codex-agent-dashboard-tab {
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  align-content: center;
+  align-items: center;
+  justify-content: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   color: var(--text-normal);
   background: transparent;
-  text-align: left;
   box-shadow: none;
 }
 
-.codex-agent-installer-row:hover:not(:disabled) {
+.codex-agent-dashboard-tab:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--background-modifier-hover) 58%, transparent);
+}
+
+.codex-agent-dashboard-tab.is-selected,
+.codex-agent-dashboard-tab.is-selected:hover:not(:disabled) {
   background: var(--background-modifier-hover);
 }
 
-.codex-agent-installer-row-shell.is-selected .codex-agent-installer-row,
-.codex-agent-installer-row-shell.is-selected .codex-agent-installer-row:hover:not(:disabled) {
-  background: transparent;
-}
-
-.codex-agent-installer-row:focus-visible {
+.codex-agent-dashboard-tab:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
 
-.codex-agent-installer-row:disabled {
-  cursor: default;
-  opacity: 0.72;
+.codex-agent-dashboard-tab:disabled {
+  cursor: progress;
+  opacity: 0.58;
 }
 
-.codex-agent-installer-icon {
-  display: inline-flex;
-  color: var(--text-muted);
+.codex-agent-dashboard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--text-faint);
 }
 
-.codex-agent-installer-icon svg {
-  width: 16px;
-  height: 16px;
+.codex-agent-dashboard-tab.is-ready .codex-agent-dashboard-dot {
+  background: var(--text-success);
 }
 
-.codex-agent-installer-row-body {
-  display: grid;
-  gap: 2px;
+.codex-agent-dashboard-tab.is-failed .codex-agent-dashboard-dot {
+  background: var(--text-error);
+}
+
+.codex-agent-dashboard-tab.is-attention .codex-agent-dashboard-dot {
+  background: var(--text-warning);
+}
+
+.codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot {
+  background: var(--interactive-accent);
+  animation: codex-agent-dashboard-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes codex-agent-dashboard-dot-pulse {
+  50% {
+    opacity: 0.38;
+    transform: scale(0.78);
+  }
+}
+
+.codex-agent-dashboard-tab-label {
   min-width: 0;
-}
-
-.codex-agent-installer-name {
   overflow: hidden;
-  color: var(--text-normal);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.codex-agent-installer-description {
+.codex-agent-dashboard-default {
+  padding: 1px 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.codex-agent-dashboard-tab-status {
+  grid-column: 1 / -1;
+  min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 400;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.codex-agent-installer-status {
+.codex-agent-dashboard-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.codex-agent-dashboard-panel[hidden] {
+  display: none;
+}
+
+.codex-agent-dashboard-detail {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codex-agent-dashboard-title {
+  color: var(--text-normal);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.codex-agent-dashboard-description {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.codex-agent-dashboard-path,
+.codex-agent-dashboard-meta-row {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 64%, transparent);
+}
+
+.codex-agent-dashboard-path > span,
+.codex-agent-dashboard-meta-label {
   color: var(--text-muted);
   font-size: 12px;
-  white-space: nowrap;
 }
 
-.codex-agent-installer-status.is-ready {
-  color: var(--text-success);
-}
-
-.codex-agent-installer-status.is-failed {
-  color: var(--text-error);
-}
-
-.codex-agent-installer-detail {
-  display: grid;
-  gap: 4px;
+.codex-agent-dashboard-path code,
+.codex-agent-dashboard-meta-value {
   min-width: 0;
-  padding: 0 10px 0 40px;
-}
-
-.codex-agent-installer-detail-text,
-.codex-agent-installer-path {
   overflow-wrap: anywhere;
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.codex-agent-installer-path {
+.codex-agent-dashboard-path code {
+  padding: 0;
+  background: transparent;
   font-family: var(--font-monospace);
-  font-size: 11px;
 }
 
-.codex-agent-installer-logs {
+.codex-agent-dashboard-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  min-width: 0;
+}
+
+.codex-agent-dashboard-diagnostics {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.codex-agent-installer-logs summary {
+.codex-agent-dashboard-diagnostics summary,
+.codex-agent-advanced-summary {
   cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
-.codex-agent-installer-logs pre {
+.codex-agent-dashboard-diagnostics-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.codex-agent-dashboard-diagnostics-body pre {
   max-height: 160px;
-  margin: 6px 0 0;
+  margin: 0;
   padding: 8px;
   overflow: auto;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-normal);
   background: var(--background-secondary);
   font: inherit;
   line-height: 1.45;
   white-space: pre-wrap;
 }
 
-.codex-agent-installer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-left: 40px;
-}
-
-.codex-agent-installer-fallback {
+.codex-agent-dashboard-secondary {
+  width: fit-content;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  background: transparent;
+  font: inherit;
   text-decoration: none;
 }
 
-.codex-agent-installer-fallback:hover {
+.codex-agent-dashboard-secondary:hover:not(:disabled) {
   color: var(--text-normal);
+  background: var(--background-modifier-hover);
   text-decoration: underline;
 }
 
-.codex-agent-installer .codex-setup-last-checked {
-  margin-left: 40px;
+.codex-agent-dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-@media (max-width: 460px) {
-  .codex-agent-installer-row {
-    grid-template-columns: 18px minmax(0, 1fr);
+.codex-agent-dashboard-actions .codex-setup-primary {
+  min-width: min(190px, 100%);
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.codex-agent-settings {
+  display: grid;
+  min-width: 0;
+  margin: 12px 0 18px;
+}
+
+.codex-agent-advanced {
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.codex-agent-advanced-body {
+  min-width: 0;
+  margin: 0;
+  padding-top: 8px;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+  border: 0;
+}
+
+@container (max-width: 460px) {
+  .codex-agent-dashboard-header {
+    padding: 12px 12px 8px;
   }
 
-  .codex-agent-installer-status {
-    grid-column: 2;
+  .codex-agent-dashboard-tabs {
+    gap: 2px;
+    padding: 4px 4px 6px;
   }
 
-  .codex-agent-installer-description {
-    white-space: normal;
+  .codex-agent-dashboard-tab {
+    column-gap: 4px;
+    min-height: 48px;
+    padding: 6px 4px;
   }
 
-  .codex-agent-installer-detail,
-  .codex-agent-installer-actions {
-    padding-left: 38px;
+  .codex-agent-dashboard-tab-label {
+    font-size: 12px;
   }
 
-  .codex-agent-installer .codex-setup-last-checked {
-    margin-left: 38px;
+  .codex-agent-dashboard-default {
+    padding-inline: 4px;
+    font-size: 9px;
+  }
+
+  .codex-agent-dashboard-panel {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .codex-agent-dashboard-path,
+  .codex-agent-dashboard-meta-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .codex-agent-dashboard-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .codex-agent-dashboard-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .codex-agent-dashboard-actions .codex-setup-primary {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-agent-dashboard.is-busy::before {
+    inset: 0;
+    background: color-mix(in srgb, var(--interactive-accent) 46%, var(--background-modifier-border));
+    animation: none;
+  }
+
+  .codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot {
+    animation: none;
   }
 }
 

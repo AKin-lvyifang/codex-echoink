@@ -95,7 +95,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async reconnectCodex(options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> { return this.getConnectionService().reconnectCodex(options); }
   async listEchoInkMcpTools(resourceId: string, timeoutMs = 30000): Promise<unknown[]> { return this.getConnectionService().listEchoInkMcpTools(resourceId, timeoutMs); }
   async callEchoInkMcpTool(input: CallEchoInkMcpToolInput): Promise<unknown> { return this.getConnectionService().callEchoInkMcpTool(input); }
-  async testHermesConnection(options: { notify?: boolean } = {}): Promise<HermesConnectionTestResult> { return this.getConnectionService().testHermesConnection(options); }
+  async testHermesConnection(options: { notify?: boolean; signal?: AbortSignal } = {}): Promise<HermesConnectionTestResult> {
+    return this.getConnectionService().testHermesConnection(options);
+  }
 
   async runHarnessWithAdapter(input: HarnessRunWithAdapterInput) { return await this.getHarnessService().runWithAdapter(input); }
   async settleHarnessRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> { return await this.getHarnessService().settleRunTerminal(input, sink); }

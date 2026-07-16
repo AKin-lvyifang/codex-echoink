@@ -1,7 +1,6 @@
 import { App, FuzzySuggestModal, Notice, PluginSettingTab, Setting, setIcon, TFile, type FuzzyMatch } from "obsidian";
 import { execFile } from "child_process";
 import type CodexForObsidianPlugin from "../main";
-import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { swallowError } from "../core/error-handling";
 import { detectCodexCommand, detectCodexInstallation, inspectCodexInstallation } from "../core/codex-service";
 import { CodexLoginError } from "../core/codex-login";
@@ -10,15 +9,18 @@ import { detectHermesCommand } from "../core/hermes-models";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { detectOpenCodeCommand, resolveOpenCodeLaunch, selectOpenCodeConnectionModel } from "../core/opencode-models";
 import {
-  agentSetupRowStatus,
   createAgentSetupSnapshot,
+  isAgentSetupDetectionRevisionCurrent,
   limitedAgentSetupLog,
   readyAgentBackendToCommit,
-  resolveAgentSetupPrimary,
+  resolveAgentSetupDashboardState,
+  resolveAgentSetupProviderModelLabel,
   runAgentInstallerAction,
   type AgentInstaller,
+  type AgentInstallerAction,
   type AgentInstallerRegistry,
   type AgentSetupContext,
+  type AgentSetupNextAction,
   type AgentSetupSnapshot
 } from "../core/agent-setup";
 import { installNpmCli } from "../core/npm-cli-installer";
@@ -68,7 +70,6 @@ import {
   providerModelLabel,
   providerConnectionLabel,
   removeApiProvider,
-  normalizeAgentBackendMode,
   normalizeEditorActionQualityMode,
   normalizeKnowledgeBaseBackendMode,
   normalizeKnowledgeBaseHistoryRetentionDays,
@@ -115,15 +116,34 @@ export class CodexSettingTab extends PluginSettingTab {
   private openCodeAgentsLoaded = false;
   private openCodeAgentsLoading = false;
   private openCodeAgentsError = "";
-  private hermesChecking = false;
-  private hermesCheckError = "";
   private setupSelectedBackend: AgentBackendMode;
   private setupSnapshots: Record<AgentBackendMode, AgentSetupSnapshot>;
   private setupBusy = false;
   private setupActiveBackend: AgentBackendMode | null = null;
   private setupAutoCheckStarted = false;
   private setupConnectSelectedOnNextCheck: boolean;
+  private setupAutoRepairPending = false;
+  private setupDetectionPending = false;
+  private setupPendingConnectSelected = false;
+  private setupDetectionDrainActive = false;
+  private setupSessionGeneration = 0;
+  private setupSessionActive = false;
+  private setupDetectionTimer: number | null = null;
   private setupAbort: AbortController | null = null;
+  private readonly setupDeepCheckedBackends = new Set<AgentBackendMode>();
+  private readonly setupPendingInvalidations = new Set<AgentBackendMode>();
+  private readonly setupConfigRevisions: Record<AgentBackendMode, number> = {
+    "codex-cli": 0,
+    opencode: 0,
+    hermes: 0
+  };
+  private readonly setupVerifiedRevisions: Record<AgentBackendMode, number> = {
+    "codex-cli": -1,
+    opencode: -1,
+    hermes: -1
+  };
+  private setupTabFocusTarget: AgentBackendMode | null = null;
+  private setupAdvancedOpen = false;
   private memoryStatus: MemoryStoreStatus | null = null;
   private memoryStatusLoading = false;
   private memoryStatusError: string | null = null;
@@ -134,11 +154,13 @@ export class CodexSettingTab extends PluginSettingTab {
   private settingsStatusEl: HTMLElement | null = null;
   private settingsTabsEl: HTMLElement | null = null;
   private settingsBodyEl: HTMLElement | null = null;
+  private settingsAgentLiveEl: HTMLElement | null = null;
+  private settingsAgentLiveText = "";
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
     this.setupSelectedBackend = plugin.settings.agentBackend;
-    this.setupConnectSelectedOnNextCheck = plugin.settings.setup.completedAt <= 0;
+    this.setupConnectSelectedOnNextCheck = true;
     this.setupSnapshots = {
       "codex-cli": createAgentSetupSnapshot("codex-cli"),
       opencode: createAgentSetupSnapshot("opencode"),
@@ -169,13 +191,20 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    if (!this.setupSessionActive) {
+      this.setupSessionActive = true;
+      this.setupSessionGeneration += 1;
+    }
     if (this.plugin.agentSetupTarget) {
       this.setupSelectedBackend = this.plugin.agentSetupTarget;
-      this.setupConnectSelectedOnNextCheck = this.plugin.agentSetupAutoRepair || this.plugin.settings.setup.completedAt <= 0;
+      this.setupDeepCheckedBackends.delete(this.setupSelectedBackend);
+      this.setupConnectSelectedOnNextCheck = true;
+      this.setupAutoRepairPending = this.plugin.agentSetupAutoRepair;
       this.plugin.agentSetupTarget = null;
       this.plugin.agentSetupAutoRepair = false;
       this.setupAutoCheckStarted = false;
     }
+    if (!this.setupAutoCheckStarted) this.downgradeUnverifiedReadySnapshots();
     if (this.displayFrame !== null) {
       window.cancelAnimationFrame(this.displayFrame);
       this.displayFrame = null;
@@ -186,22 +215,64 @@ export class CodexSettingTab extends PluginSettingTab {
       this.setupAutoCheckStarted = true;
       const connectSelected = this.setupConnectSelectedOnNextCheck;
       this.setupConnectSelectedOnNextCheck = false;
-      window.setTimeout(() => void this.detectAllAgents(connectSelected), 0);
+      const sessionGeneration = this.setupSessionGeneration;
+      this.setupDetectionTimer = window.setTimeout(() => {
+        this.setupDetectionTimer = null;
+        if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+        void this.detectAllAgents(connectSelected, sessionGeneration);
+      }, 0);
     }
   }
 
   hide(): void {
+    this.setupSessionActive = false;
+    this.setupSessionGeneration += 1;
+    if (this.setupDetectionTimer !== null) {
+      window.clearTimeout(this.setupDetectionTimer);
+      this.setupDetectionTimer = null;
+    }
+    if (this.displayFrame !== null) {
+      window.cancelAnimationFrame(this.displayFrame);
+      this.displayFrame = null;
+    }
     this.setupAbort?.abort();
+    this.setupDeepCheckedBackends.clear();
+    this.setupAutoCheckStarted = false;
+    this.setupConnectSelectedOnNextCheck = true;
+    this.setupAutoRepairPending = false;
+    this.setupDetectionPending = false;
+    this.setupPendingConnectSelected = false;
+    this.setupVerifiedRevisions["codex-cli"] = -1;
+    this.setupVerifiedRevisions.opencode = -1;
+    this.setupVerifiedRevisions.hermes = -1;
+    this.setupTabFocusTarget = null;
+    this.setupSelectedBackend = this.plugin.settings.agentBackend;
+    this.setupAdvancedOpen = false;
     super.hide();
   }
 
   private renderSettingsShell(): void {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.onpointerdown = (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.closest(".codex-agent-dashboard-tab")) {
+        this.setupTabFocusTarget = null;
+      }
+    };
     this.settingsTitleEl = containerEl.createDiv({ cls: "codex-settings-title" });
     this.settingsStatusEl = containerEl.createDiv({ cls: "codex-settings-status" });
     this.settingsTabsEl = containerEl.createDiv({ cls: "codex-settings-tabs-slot" });
     this.settingsBodyEl = containerEl.createDiv({ cls: "codex-settings-body" });
+    this.settingsAgentLiveText = "";
+    this.settingsAgentLiveEl = containerEl.createDiv({
+      cls: "codex-agent-dashboard-live",
+      attr: {
+        "aria-live": "polite",
+        "aria-atomic": "true",
+        "aria-label": this.copy.setup.agentInstaller.dashboard.liveRegionLabel
+      }
+    });
   }
 
   private ensureSettingsShell(): void {
@@ -220,6 +291,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const tabsEl = this.settingsTabsEl;
       const bodyEl = this.settingsBodyEl;
       if (!titleEl || !statusEl || !tabsEl || !bodyEl) return;
+      this.captureAgentDashboardTabFocus();
       titleEl.empty();
       statusEl.empty();
       tabsEl.empty();
@@ -228,25 +300,10 @@ export class CodexSettingTab extends PluginSettingTab {
 
       const status = this.plugin.lastStatus;
       const statusBox = statusEl;
-      if (this.shouldShowSetupGuide()) {
-        this.renderAgentInstaller(statusBox, false);
+      this.renderAgentDashboard(statusBox);
+      if (this.shouldShowSetupGuide() || this.isAgentDashboardBusy()) {
         return;
       }
-      this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
-      this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
-      this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
-      this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
-      this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
-      this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
-      this.addStatusRow(statusBox, "sparkles", "Hermes", detectHermesPath(this.plugin.settings.agents.hermes.cliPath, copy));
-      this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
-      this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
-      this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
-      this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
-      this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
-      this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
-      this.addStatusErrors(statusBox, status?.errors ?? []);
-      this.addStatusActions(statusBox);
 
       this.renderTopTabs(tabsEl);
       if (this.plugin.settings.settingsTab === "agents") {
@@ -285,6 +342,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private scheduleDisplay(): void {
+    if (!this.setupSessionActive) return;
+    this.captureAgentDashboardTabFocus();
     if (this.displayFrame !== null) return;
     this.displayFrame = window.requestAnimationFrame(() => {
       this.displayFrame = null;
@@ -292,89 +351,105 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
+  private isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  }
+
+  private captureAgentDashboardTabFocus(): void {
+    const activeElement = this.containerEl.ownerDocument.activeElement;
+    const focusedDefinition = activeElement instanceof HTMLElement
+      ? this.agentDashboardDefinitions().find(
+        (definition) => activeElement.id === this.agentDashboardTabId(definition.backend)
+      )
+      : undefined;
+    if (this.setupTabFocusTarget !== null) {
+      if (focusedDefinition) return;
+      const document = this.containerEl.ownerDocument;
+      if (activeElement instanceof HTMLElement
+        && activeElement.isConnected
+        && activeElement !== document.body
+        && activeElement !== document.documentElement) {
+        this.setupTabFocusTarget = null;
+      }
+      return;
+    }
+    if (focusedDefinition) this.setupTabFocusTarget = focusedDefinition.backend;
+  }
+
   private renderAgentSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
     const copy = this.copy;
     const settings = this.plugin.settings;
-    const wrapper = containerEl.createDiv({ cls: "codex-api-provider-manager codex-agent-settings" });
-    const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
-    const title = header.createDiv({ cls: "codex-resource-manager-title" });
-    const icon = title.createSpan({ cls: "codex-setting-icon" });
-    setIcon(icon, "route");
-    title.createSpan({ text: "Agent 后端" });
+    const dashboardCopy = copy.setup.agentInstaller.dashboard;
+    const wrapper = containerEl.createDiv({ cls: "codex-agent-settings" });
 
-    wrapper.createDiv({
-      cls: "codex-resource-note",
-      text: "Codex、OpenCode、Hermes 是可切换后端；知识库、写作、资源管理属于 EchoInk 通用能力。"
+    const definition = this.agentDashboardDefinitions().find((item) => item.backend === this.setupSelectedBackend);
+    const advanced = wrapper.createEl("details", { cls: "codex-agent-advanced" });
+    advanced.open = this.setupAdvancedOpen;
+    advanced.ontoggle = () => {
+      this.setupAdvancedOpen = advanced.open;
+    };
+    advanced.createEl("summary", {
+      cls: "codex-agent-advanced-summary",
+      text: `${definition?.label ?? "Agent"} · ${dashboardCopy.advancedTitle}`
     });
+    const advancedBody = advanced.createEl("fieldset", { cls: "codex-agent-advanced-body" }) as HTMLFieldSetElement;
+    advancedBody.disabled = this.isAgentDashboardBusy();
 
-    if (!this.shouldShowSetupGuide()) this.renderAgentInstaller(wrapper, true);
-
-    this.decorateSetting(
-      new Setting(wrapper)
-        .setName(copy.general.agentBackend)
-        .setDesc("选择默认 Agent。具体能力仍可在知识库等页面单独固定后端。")
-        .addDropdown((dropdown) => {
-          for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
-          dropdown.setValue(settings.agentBackend);
-          dropdown.onChange(async (value) => {
-            const backend = normalizeAgentBackendMode(value);
-            settings.agentBackend = backend;
-            settings.agents.defaultBackend = backend;
-            await this.plugin.saveSettings();
-            this.scheduleDisplay();
-          });
-        }),
-      "route"
-    );
-
-    const codexSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
-    codexSection.createDiv({ cls: "codex-editor-actions-heading", text: "Codex" });
-    codexSection.createDiv({ cls: "codex-resource-note", text: detectCliPath(settings.cliPath, copy) });
-    this.addProviderText(codexSection, copy.general.cliPath, settings.cliPath, "~/.npm-global/bin/codex", async (value) => {
-      settings.cliPath = value.trim();
-      settings.agents.codex.cliPath = settings.cliPath;
-      await this.plugin.saveSettings();
-      await this.detectAllAgents(true);
-    });
-    this.decorateSetting(new Setting(codexSection).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
-      toggle.setValue(settings.proxyEnabled).onChange(async (value) => {
+    if (this.setupSelectedBackend === "codex-cli") {
+      const codexSection = advancedBody.createDiv({ cls: "codex-editor-actions-section" });
+      codexSection.createDiv({ cls: "codex-resource-note", text: detectCliPath(settings.cliPath, copy) });
+      this.addProviderText(codexSection, copy.general.cliPath, settings.cliPath, "~/.npm-global/bin/codex", async (value) => {
+        settings.cliPath = value.trim();
+        settings.agents.codex.cliPath = settings.cliPath;
+        this.invalidateAgentSetupReadiness("codex-cli");
+        await this.plugin.saveSettings();
+        await this.detectAllAgents(true);
+      });
+      this.decorateSetting(new Setting(codexSection).setName(copy.general.proxyEnabled).setDesc(copy.general.proxyEnabledDesc).addToggle((toggle) =>
+        toggle.setValue(settings.proxyEnabled).onChange(async (value) => {
         settings.proxyEnabled = value;
         settings.agents.codex.proxyEnabled = value;
+        this.invalidateAgentSetupReadiness("codex-cli");
         await this.plugin.saveSettings();
-      })
-    ), "waypoints");
-    this.addProviderText(codexSection, copy.general.proxyUrl, settings.proxyUrl, "http://127.0.0.1:7890", async (value) => {
+        })
+      ), "waypoints");
+      this.addProviderText(codexSection, copy.general.proxyUrl, settings.proxyUrl, "http://127.0.0.1:7890", async (value) => {
       settings.proxyUrl = value.trim();
       settings.agents.codex.proxyUrl = settings.proxyUrl;
+      this.invalidateAgentSetupReadiness("codex-cli");
       await this.plugin.saveSettings();
-    });
-    this.decorateSetting(
-      new Setting(codexSection)
-        .setName(copy.general.defaultModel)
-        .setDesc(copy.general.defaultModelDesc)
-        .addDropdown((dropdown) => {
-          dropdown.addOption("", copy.general.auto);
-          for (const model of ensureModelChoices(status?.models ?? [], settings.defaultModel, DEFAULT_SETTINGS.defaultModel)) {
-            dropdown.addOption(model.model, model.displayName || model.model);
-          }
-          dropdown.setValue(settings.defaultModel);
-          dropdown.onChange(async (value) => {
-            settings.defaultModel = value;
-            settings.agents.codex.defaultModel = value;
-            await this.plugin.saveSettings();
-            this.plugin.applyComposerDefaultsToView();
-          });
-        }),
-      "box"
-    );
+      });
+      this.decorateSetting(
+        new Setting(codexSection)
+          .setName(copy.general.defaultModel)
+          .setDesc(copy.general.defaultModelDesc)
+          .addDropdown((dropdown) => {
+            dropdown.addOption("", copy.general.auto);
+            for (const model of ensureModelChoices(status?.models ?? [], settings.defaultModel, DEFAULT_SETTINGS.defaultModel)) {
+              dropdown.addOption(model.model, model.displayName || model.model);
+            }
+            dropdown.setValue(settings.defaultModel);
+            dropdown.onChange(async (value) => {
+              settings.defaultModel = value;
+              settings.agents.codex.defaultModel = value;
+              this.invalidateAgentSetupReadiness("codex-cli");
+              await this.plugin.saveSettings();
+              this.plugin.applyComposerDefaultsToView();
+            });
+          }),
+        "box"
+      );
+      return;
+    }
 
-    const openCodeSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
-    openCodeSection.createDiv({ cls: "codex-editor-actions-heading", text: "OpenCode" });
-    this.renderOpenCodeAgentSettings(openCodeSection);
+    if (this.setupSelectedBackend === "opencode") {
+      const openCodeSection = advancedBody.createDiv({ cls: "codex-editor-actions-section" });
+      this.renderOpenCodeAgentSettings(openCodeSection);
+      return;
+    }
 
     const hermes = settings.agents.hermes;
-    const hermesSection = wrapper.createDiv({ cls: "codex-editor-actions-section" });
-    hermesSection.createDiv({ cls: "codex-editor-actions-heading", text: "Hermes" });
+    const hermesSection = advancedBody.createDiv({ cls: "codex-editor-actions-section" });
     hermesSection.createDiv({ cls: "codex-resource-note", text: detectHermesPath(hermes.cliPath, copy) });
     if (hermes.lastConnectedAt) {
       hermesSection.createDiv({ cls: "codex-resource-note", text: `最近检测：${formatSetupTime(hermes.lastConnectedAt)}${hermes.version ? ` · ${hermes.version}` : ""}` });
@@ -387,45 +462,53 @@ export class CodexSettingTab extends PluginSettingTab {
           : `推理 provider 未通过：${hermes.lastProviderError || "未配置"}`
       });
     }
-    if (hermes.lastError || this.hermesCheckError) hermesSection.createDiv({ cls: "codex-resource-error", text: this.hermesCheckError || hermes.lastError });
+    if (hermes.lastError) hermesSection.createDiv({ cls: "codex-resource-error", text: hermes.lastError });
     this.addProviderText(hermesSection, "Hermes CLI 路径", hermes.cliPath, "~/.local/bin/hermes", async (value) => {
       hermes.cliPath = value.trim();
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
-      this.scheduleDisplay();
+      await this.detectAllAgents(true);
     });
     this.addProviderText(hermesSection, "API Server URL", hermes.serverUrl, "http://127.0.0.1:8642/v1", async (value) => {
       hermes.serverUrl = value.trim().replace(/\/$/, "");
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     });
     this.decorateSetting(new Setting(hermesSection).setName("自动启动 Hermes").setDesc("第一版只记录偏好；正式启动优先使用 API server，CLI one-shot 只做兜底。").addToggle((toggle) =>
       toggle.setValue(hermes.autoStart).onChange(async (value) => {
         hermes.autoStart = value;
+        this.invalidateAgentSetupReadiness("hermes");
         await this.plugin.saveSettings();
       })
     ), "power");
     this.addProviderText(hermesSection, "Host", hermes.hostname, "127.0.0.1", async (value) => {
       hermes.hostname = value.trim() || "127.0.0.1";
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     });
     this.addProviderText(hermesSection, "Port", String(hermes.port), "8642", async (value) => {
       hermes.port = parseClampedInteger(value, 8642, 1024, 65535);
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
-      this.scheduleDisplay();
     });
     this.addProviderText(hermesSection, "Profile", hermes.profile, "default", async (value) => {
       hermes.profile = value.trim();
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     });
     this.addProviderText(hermesSection, "Provider", hermes.providerId, "deepseek", async (value) => {
       hermes.providerId = value.trim();
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     });
     this.addProviderText(hermesSection, "Model", hermes.modelId, "deepseek-chat", async (value) => {
       hermes.modelId = value.trim();
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     });
     this.addProviderText(hermesSection, "API Server Key", hermes.apiKey, "API_SERVER_KEY", async (value) => {
       hermes.apiKey = value.trim();
+      this.invalidateAgentSetupReadiness("hermes");
       await this.plugin.saveSettings();
     }, "password");
     hermesSection.createDiv({
@@ -433,9 +516,8 @@ export class CodexSettingTab extends PluginSettingTab {
       text: "DeepSeek 等第三方 provider 仍建议先用 Hermes 官方 hermes model / ~/.hermes/.env 配置；插件会用最小 prompt 验证 provider 是否真的可用。"
     });
     const hermesActions = hermesSection.createDiv({ cls: "codex-api-provider-actions" });
-    const testHermes = hermesActions.createEl("button", { cls: "codex-resource-tab", text: this.hermesChecking ? copy.common.loading : "检测 Hermes", attr: { type: "button" } });
-    testHermes.disabled = this.hermesChecking;
-    testHermes.onclick = () => void this.testHermesConnection();
+    const testHermes = hermesActions.createEl("button", { cls: "codex-resource-tab", text: "检测 Hermes", attr: { type: "button" } });
+    testHermes.onclick = () => void this.connectAgent("hermes");
     const copyHermesModel = hermesActions.createEl("button", { cls: "codex-resource-tab", text: "复制 hermes model", attr: { type: "button" } });
     copyHermesModel.onclick = async () => {
       await navigator.clipboard?.writeText("hermes model").catch(swallowError("copy Hermes model command"));
@@ -450,45 +532,48 @@ export class CodexSettingTab extends PluginSettingTab {
     this.addProviderText(container, copy.knowledge.opencodePath, opencode.cliPath, "/opt/homebrew/bin/opencode", async (value) => {
       opencode.cliPath = value.trim();
       this.plugin.settings.agents.opencode = opencode;
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
-      this.scheduleDisplay();
+      await this.detectAllAgents(true);
     });
     this.addProviderText(container, copy.knowledge.serverUrl, opencode.serverUrl, "http://127.0.0.1:4096", async (value) => {
       opencode.serverUrl = value.trim().replace(/\/$/, "");
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
     });
     this.decorateSetting(new Setting(container).setName(copy.knowledge.autoStartServer).addToggle((toggle) =>
       toggle.setValue(opencode.autoStart).onChange(async (value) => {
         opencode.autoStart = value;
+        this.invalidateAgentSetupReadiness("opencode");
         await this.plugin.saveSettings();
       })
     ), "power");
     this.addProviderText(container, copy.opencode.host, opencode.hostname, "127.0.0.1", async (value) => {
       opencode.hostname = value.trim() || "127.0.0.1";
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
     });
     this.addProviderText(container, copy.opencode.port, String(opencode.port), "4096", async (value) => {
       opencode.port = parseClampedInteger(value, 4096, 1024, 65535);
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
-      this.scheduleDisplay();
     });
     this.addOpenCodeModelPicker(container);
     this.addProviderText(container, copy.opencode.providerId, opencode.providerId, "anthropic", async (value) => {
       opencode.providerId = value.trim();
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
     });
     this.addProviderText(container, copy.opencode.modelId, opencode.modelId, "claude-sonnet-4-20250514", async (value) => {
       opencode.modelId = value.trim();
+      this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings();
     });
     this.addOpenCodeAgentPicker(container);
     if (opencode.lastError) container.createDiv({ cls: "codex-resource-error", text: opencode.lastError });
     const actions = container.createDiv({ cls: "codex-api-provider-actions" });
     const testOpenCode = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.testConnection, attr: { type: "button" } });
-    testOpenCode.onclick = async () => {
-      await this.refreshOpenCodeRuntimeOptions();
-      this.scheduleDisplay();
-    };
+    testOpenCode.onclick = () => void this.connectAgent("opencode");
   }
 
   private renderGeneralSettings(containerEl: HTMLElement, status: CodexStatusSnapshot | null): void {
@@ -799,117 +884,579 @@ export class CodexSettingTab extends PluginSettingTab {
     return this.plugin.settings.setup.completedAt <= 0;
   }
 
-  private renderAgentInstaller(container: HTMLElement, compact: boolean): void {
-    const selected = this.setupSnapshots[this.setupSelectedBackend];
+  private renderAgentDashboard(container: HTMLElement): void {
+    container.addClass("codex-settings-status--dashboard");
     const copy = this.copy.setup.agentInstaller;
-    const primary = resolveAgentSetupPrimary(selected, copy);
-    const root = container.createDiv({ cls: compact ? "codex-agent-installer is-compact" : "codex-agent-installer" });
-    const header = root.createDiv({ cls: "codex-agent-installer-header" });
-    header.createDiv({ cls: "codex-setup-heading", text: compact ? copy.compactHeading : copy.heading });
+    const dashboardCopy = copy.dashboard;
+    const selected = this.setupSnapshots[this.setupSelectedBackend];
+    const selectedState = resolveAgentSetupDashboardState(selected);
+    const dashboardBusy = this.isAgentDashboardBusy();
+    const definitions = this.agentDashboardDefinitions();
+    const selectedDefinition = definitions.find((item) => item.backend === this.setupSelectedBackend) ?? definitions[0];
+    const selectedStatusLabel = dashboardCopy.status[selectedState.status];
+    const liveText = dashboardCopy.tabAria(
+      selectedDefinition.label,
+      selectedStatusLabel,
+      selected.backend === this.plugin.settings.agentBackend
+    );
+    if (liveText !== this.settingsAgentLiveText) {
+      this.settingsAgentLiveText = liveText;
+      this.settingsAgentLiveEl?.setText(liveText);
+    }
+    const root = container.createDiv({
+      cls: `codex-agent-dashboard is-${selectedState.tone}${dashboardBusy ? " is-busy" : ""}`,
+      attr: {
+        "aria-busy": dashboardBusy ? "true" : "false"
+      }
+    });
+    const header = root.createDiv({ cls: "codex-agent-dashboard-header" });
+    header.createDiv({ cls: "codex-setup-heading", text: copy.compactHeading });
     header.createDiv({ cls: "codex-setup-subtitle", text: copy.subtitle });
 
-    const definitions: Array<{ backend: AgentBackendMode; label: string; description: string; icon: string }> = [
-      { backend: "codex-cli", ...copy.agents["codex-cli"], icon: "sparkles" },
-      { backend: "opencode", ...copy.agents.opencode, icon: "code-2" },
-      { backend: "hermes", ...copy.agents.hermes, icon: "bot" }
-    ];
-    const list = root.createDiv({ cls: "codex-agent-installer-list" });
+    const tabList = root.createDiv({
+      cls: "codex-agent-dashboard-tabs",
+      attr: { role: "tablist", "aria-label": dashboardCopy.ariaLabel }
+    });
     for (const definition of definitions) {
       const snapshot = this.setupSnapshots[definition.backend];
+      const state = resolveAgentSetupDashboardState(snapshot);
       const isSelected = definition.backend === this.setupSelectedBackend;
-      const rowShell = list.createDiv({
-        cls: `codex-agent-installer-row-shell${isSelected ? " is-selected" : ""}`
+      const isDefault = definition.backend === this.plugin.settings.agentBackend;
+      const statusLabel = dashboardCopy.status[state.status];
+      const tab = tabList.createEl("button", {
+        cls: `codex-agent-dashboard-tab is-${state.tone}${isSelected ? " is-selected" : ""}`,
+        attr: {
+          id: this.agentDashboardTabId(definition.backend),
+          type: "button",
+          role: "tab",
+          tabindex: isSelected ? "0" : "-1",
+          "aria-selected": isSelected ? "true" : "false",
+          "aria-controls": this.agentDashboardPanelId(definition.backend),
+          "aria-label": dashboardCopy.tabAria(definition.label, statusLabel, isDefault)
+        }
       });
-      const row = rowShell.createEl("button", {
-        cls: "codex-agent-installer-row",
-        attr: { type: "button", "aria-pressed": isSelected ? "true" : "false" }
-      });
-      row.disabled = this.setupBusy;
-      const mark = row.createSpan({ cls: "codex-agent-installer-icon" });
-      setIcon(mark, definition.icon);
-      const body = row.createSpan({ cls: "codex-agent-installer-row-body" });
-      body.createSpan({ cls: "codex-agent-installer-name", text: definition.label });
-      if (isSelected) {
-        body.createSpan({ cls: "codex-agent-installer-description", text: definition.description });
-      }
-      row.createSpan({ cls: `codex-agent-installer-status is-${snapshot.phase}`, text: agentSetupRowStatus(snapshot, copy) });
-      row.onclick = () => {
-        if (this.setupBusy || isSelected) return;
-        this.setupSelectedBackend = definition.backend;
-        this.scheduleDisplay();
-        if (snapshot.phase === "installed") void this.connectAgent(definition.backend);
+      tab.disabled = dashboardBusy && !isSelected;
+      tab.createSpan({ cls: "codex-agent-dashboard-dot", attr: { "aria-hidden": "true" } });
+      tab.createSpan({ cls: "codex-agent-dashboard-tab-label", text: definition.label });
+      if (isDefault) tab.createSpan({ cls: "codex-agent-dashboard-default", text: dashboardCopy.defaultBadge });
+      tab.createSpan({ cls: "codex-agent-dashboard-tab-status", text: statusLabel });
+      tab.onclick = () => this.selectAgentDashboardBackend(definition.backend, true);
+      tab.onfocus = () => {
+        this.setupTabFocusTarget = definition.backend;
       };
-      if (!isSelected) continue;
+      tab.onkeydown = (event) => this.handleAgentDashboardKeydown(event, definition.backend);
+    }
 
-      const detail = rowShell.createDiv({ cls: "codex-agent-installer-detail" });
-      detail.createDiv({
-        cls: "codex-agent-installer-detail-text",
-        text: selected.error || selected.detail || (selected.phase === "detecting" ? copy.detection.checking : copy.idle)
+    for (const definition of definitions) {
+      if (definition.backend === this.setupSelectedBackend) continue;
+      root.createDiv({
+        cls: "codex-agent-dashboard-panel",
+        attr: {
+          id: this.agentDashboardPanelId(definition.backend),
+          role: "tabpanel",
+          hidden: "true",
+          "aria-labelledby": this.agentDashboardTabId(definition.backend)
+        }
       });
-      if (selected.command) detail.createDiv({ cls: "codex-agent-installer-path", text: selected.version ? `${selected.command} · ${selected.version}` : selected.command });
-      if (selected.logs) {
-        const logs = detail.createEl("details", { cls: "codex-agent-installer-logs" });
-        logs.createEl("summary", { text: copy.logsSummary });
-        logs.createEl("pre", { text: selected.logs });
-      }
+    }
 
-      const actions = rowShell.createDiv({ cls: "codex-agent-installer-actions" });
-      const actionButton = actions.createEl("button", { cls: "codex-setup-primary", text: primary.label, attr: { type: "button" } });
-      actionButton.disabled = primary.disabled || (this.setupBusy && this.setupActiveBackend !== this.setupSelectedBackend);
-      actionButton.onclick = () => void this.runAgentSetupAction(primary.action);
-      if (selected.phase === "failed" || selected.phase === "cancelled" || selected.phase === "missing") {
+    const panel = root.createDiv({
+      cls: "codex-agent-dashboard-panel",
+      attr: {
+        id: this.agentDashboardPanelId(this.setupSelectedBackend),
+        role: "tabpanel",
+        tabindex: "0",
+        "aria-labelledby": this.agentDashboardTabId(this.setupSelectedBackend),
+        "aria-label": dashboardCopy.panelAria(selectedDefinition.label)
+      }
+    });
+    const detail = panel.createDiv({ cls: "codex-agent-dashboard-detail" });
+    detail.createDiv({ cls: "codex-agent-dashboard-title", text: dashboardCopy.title[selectedState.status] });
+    detail.createDiv({
+      cls: "codex-agent-dashboard-description",
+      text: selected.detail || dashboardCopy.description[selectedState.status]
+    });
+    const path = detail.createDiv({ cls: "codex-agent-dashboard-path" });
+    path.createSpan({ text: dashboardCopy.meta.cliPath });
+    path.createEl("code", { text: selected.command || dashboardCopy.meta.unavailable });
+    const meta = detail.createDiv({ cls: "codex-agent-dashboard-meta" });
+    for (const item of this.agentDashboardMeta(selected)) {
+      const row = meta.createDiv({ cls: "codex-agent-dashboard-meta-row" });
+      row.createSpan({ cls: "codex-agent-dashboard-meta-label", text: item.label });
+      row.createSpan({ cls: "codex-agent-dashboard-meta-value", text: item.value });
+    }
+
+    const diagnostics = detail.createEl("details", { cls: "codex-agent-dashboard-diagnostics" });
+    diagnostics.createEl("summary", { text: dashboardCopy.diagnosticsSummary });
+    const diagnosticBody = diagnostics.createDiv({ cls: "codex-agent-dashboard-diagnostics-body" });
+    diagnosticBody.createDiv({ text: `${this.copy.status.pluginDir}：${pluginInstallDir(this.plugin)}` });
+    if (selected.error) diagnosticBody.createEl("pre", { text: selected.error });
+    if (selected.logs) diagnosticBody.createEl("pre", { text: selected.logs });
+    const recheck = diagnosticBody.createEl("button", {
+      cls: "codex-agent-dashboard-secondary",
+      text: dashboardCopy.recheck,
+      attr: { type: "button" }
+    });
+    recheck.disabled = dashboardBusy;
+    recheck.onclick = () => {
+      if (this.isAgentDashboardBusy()) return;
+      this.setupDeepCheckedBackends.delete(this.setupSelectedBackend);
+      void this.detectAllAgents(true);
+    };
+
+    const actions = panel.createDiv({ cls: "codex-agent-dashboard-actions" });
+    const actionButton = actions.createEl("button", {
+      cls: "codex-setup-primary",
+      text: this.agentDashboardPrimaryLabel(selected, selectedDefinition.label),
+      attr: { type: "button" }
+    });
+    actionButton.disabled = selectedState.primaryAction === null
+      || (this.setupBusy && selectedState.primaryAction !== "cancel");
+    actionButton.onclick = () => void this.runAgentSetupAction(selectedState.primaryAction, selectedState.retryTarget);
+    if (selected.phase === "failed" || selected.phase === "cancelled" || selected.phase === "missing") {
+      if (selected.backend === "hermes") {
         const fallback = actions.createEl("a", {
-          cls: "codex-agent-installer-fallback",
-          text: selected.backend === "hermes" ? copy.fallbackDocs : copy.fallbackTerminal,
-          href: "#"
+          cls: "codex-agent-dashboard-secondary codex-agent-dashboard-fallback",
+          text: dashboardCopy.officialDocs,
+          href: HERMES_DOCS_URL,
+          attr: { target: "_blank", rel: "noopener noreferrer" }
         });
         fallback.onclick = (event) => {
           event.preventDefault();
+          void this.openAgentTerminalFallback("hermes");
+        };
+      } else {
+        const fallback = actions.createEl("button", {
+          cls: "codex-agent-dashboard-secondary codex-agent-dashboard-fallback",
+          text: dashboardCopy.terminalFallback,
+          attr: { type: "button" }
+        });
+        fallback.onclick = () => {
           void this.openAgentTerminalFallback(selected.backend);
         };
       }
     }
-    if (this.plugin.settings.setup.lastCheckedAt > 0) {
-      root.createDiv({ cls: "codex-setup-last-checked", text: this.copy.setup.lastChecked(formatSetupTime(this.plugin.settings.setup.lastCheckedAt)) });
+
+    if (this.setupTabFocusTarget) {
+      const target = root.querySelector<HTMLElement>(`#${this.agentDashboardTabId(this.setupTabFocusTarget)}`);
+      this.setupTabFocusTarget = null;
+      target?.focus();
     }
   }
 
-  private async runAgentSetupAction(action: ReturnType<typeof resolveAgentSetupPrimary>["action"]): Promise<void> {
+  private agentDashboardDefinitions(): Array<{ backend: AgentBackendMode; label: string; description: string }> {
+    const agents = this.copy.setup.agentInstaller.agents;
+    return [
+      { backend: "codex-cli", ...agents["codex-cli"] },
+      { backend: "opencode", ...agents.opencode },
+      { backend: "hermes", ...agents.hermes }
+    ];
+  }
+
+  private agentDashboardTabId(backend: AgentBackendMode): string {
+    return `codex-agent-dashboard-tab-${backend}`;
+  }
+
+  private agentDashboardPanelId(backend: AgentBackendMode): string {
+    return `codex-agent-dashboard-panel-${backend}`;
+  }
+
+  private isAgentDashboardBusy(): boolean {
+    return this.setupBusy || Object.values(this.setupSnapshots).some((snapshot) => resolveAgentSetupDashboardState(snapshot).busy);
+  }
+
+  private selectAgentDashboardBackend(backend: AgentBackendMode, focus = false): void {
+    if (this.isAgentDashboardBusy()) return;
+    if (focus) this.setupTabFocusTarget = backend;
+    if (backend === this.setupSelectedBackend) return;
+    this.setupSelectedBackend = backend;
+    this.scheduleDisplay();
+    void this.deepCheckAgentOnce(backend);
+  }
+
+  private handleAgentDashboardKeydown(event: KeyboardEvent, backend: AgentBackendMode): void {
+    if (event.key === "Tab") {
+      this.setupTabFocusTarget = null;
+      return;
+    }
+    if (this.isAgentDashboardBusy()) return;
+    const backends = this.agentDashboardDefinitions().map((item) => item.backend);
+    const currentIndex = Math.max(0, backends.indexOf(backend));
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % backends.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + backends.length) % backends.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = backends.length - 1;
+    else return;
+    event.preventDefault();
+    this.selectAgentDashboardBackend(backends[nextIndex], true);
+  }
+
+  private agentDashboardMeta(snapshot: AgentSetupSnapshot): Array<{ label: string; value: string }> {
+    const copy = this.copy.setup.agentInstaller.dashboard.meta;
+    const unavailable = copy.unavailable;
+    const rows: Array<{ label: string; value: string }> = [];
+    rows.push({ label: copy.version, value: snapshot.version || unavailable });
+    if (snapshot.backend === "codex-cli") {
+      const status = this.plugin.lastStatus;
+      rows.push({ label: copy.account, value: status?.loggedIn ? (status.accountLabel || this.copy.common.connected) : unavailable });
+    } else if (snapshot.backend === "opencode") {
+      const settings = this.plugin.settings.opencode;
+      const agent = settings.agent ? ` · ${settings.agent}` : "";
+      rows.push({
+        label: copy.providerModel,
+        value: resolveAgentSetupProviderModelLabel({
+          providerId: settings.providerId,
+          modelId: settings.modelId,
+          suffix: agent,
+          defaultVerified: false,
+          defaultVerifiedLabel: copy.defaultVerified,
+          unavailableLabel: unavailable
+        })
+      });
+    } else {
+      const settings = this.plugin.settings.agents.hermes;
+      const profile = settings.profile ? ` · ${settings.profile}` : "";
+      const defaultVerified = snapshot.phase === "ready"
+        && settings.providerConfigured
+        && this.isAgentSetupVerificationCurrent("hermes");
+      rows.push({
+        label: copy.providerModel,
+        value: resolveAgentSetupProviderModelLabel({
+          providerId: settings.providerId,
+          modelId: settings.modelId,
+          suffix: profile,
+          defaultVerified,
+          defaultVerifiedLabel: copy.defaultVerified,
+          unavailableLabel: unavailable
+        })
+      });
+    }
+    const checkedAt = snapshot.checkedAt || this.plugin.settings.setup.lastCheckedAt;
+    rows.push({ label: copy.lastChecked, value: checkedAt > 0 ? formatSetupTime(checkedAt) : unavailable });
+    return rows;
+  }
+
+  private agentDashboardPrimaryLabel(snapshot: AgentSetupSnapshot, label: string): string {
+    const copy = this.copy.setup.agentInstaller.dashboard.primary;
+    const state = resolveAgentSetupDashboardState(snapshot);
+    if (state.status === "detecting") return copy.detecting;
+    if (state.status === "missing") return copy.install(label);
+    if (state.status === "installing") return copy.cancelInstall;
+    if (state.status === "installed") return copy.connect;
+    if (state.status === "connecting") return copy.connecting;
+    if (state.status === "needs-auth") return snapshot.backend === "codex-cli" ? copy.codexLogin : copy.authorize(label);
+    if (state.status === "authorizing") return copy.cancelAuthorization;
+    if (state.status === "ready") {
+      return this.shouldShowSetupGuide() || snapshot.backend === this.plugin.settings.agentBackend
+        ? copy.start
+        : copy.setDefault;
+    }
+    return copy.retry;
+  }
+
+  private async runAgentSetupAction(action: AgentSetupNextAction, retryTarget: AgentInstallerAction | null = null): Promise<void> {
     if (action === "cancel") {
       this.setupAbort?.abort();
       return;
     }
     if (this.setupBusy || !action) return;
-    if (action === "install") return this.installAgent(this.setupSelectedBackend);
-    if (action === "authorize") return this.authorizeAgent(this.setupSelectedBackend);
-    if (action === "connect") return this.connectAgent(this.setupSelectedBackend);
+    const sessionGeneration = this.setupSessionGeneration;
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    const effectiveAction = action === "retry" ? retryTarget : action;
+    if (effectiveAction === "install") return this.installAgent(this.setupSelectedBackend, sessionGeneration);
+    if (effectiveAction === "authorize") return this.authorizeAgent(this.setupSelectedBackend, sessionGeneration);
+    if (effectiveAction === "connect") return this.connectAgent(this.setupSelectedBackend, sessionGeneration);
     if (action === "start") return this.completeAgentSetup();
     if (action === "retry") return this.detectAllAgents(true);
   }
 
-  private async detectAllAgents(connectSelected: boolean): Promise<void> {
-    if (this.setupBusy) return;
+  private async deepCheckAgentOnce(
+    backend: AgentBackendMode,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    if (this.setupBusy || this.setupDeepCheckedBackends.has(backend)) return;
+    if (backend !== this.setupSelectedBackend || this.setupSnapshots[backend].phase !== "installed") return;
+    this.setupDeepCheckedBackends.add(backend);
+    try {
+      await this.connectAgent(backend, sessionGeneration);
+    } catch (error) {
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      const current = this.setupSnapshots[backend];
+      this.setupSnapshots[backend] = this.failedAgentSnapshot(backend, current.command, error, current.version, "connect");
+      this.scheduleDisplay();
+    }
+  }
+
+  private invalidateAgentSetupReadiness(backend: AgentBackendMode): void {
+    this.setupConfigRevisions[backend] += 1;
+    this.setupVerifiedRevisions[backend] = -1;
+    this.setupDeepCheckedBackends.delete(backend);
+    const current = this.setupSnapshots[backend];
+    if (resolveAgentSetupDashboardState(current).busy) {
+      this.setupPendingInvalidations.add(backend);
+      this.scheduleDisplay();
+      return;
+    }
+    this.applyAgentSetupInvalidation(backend);
+    this.scheduleDisplay();
+  }
+
+  private recordAgentSetupVerification(
+    backend: AgentBackendMode,
+    snapshot: AgentSetupSnapshot,
+    configRevision: number,
+    sessionGeneration: number
+  ): void {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    if (snapshot.phase !== "ready" || this.setupConfigRevisions[backend] !== configRevision) return;
+    this.setupVerifiedRevisions[backend] = configRevision;
+    this.setupDeepCheckedBackends.add(backend);
+  }
+
+  private isAgentSetupVerificationCurrent(backend: AgentBackendMode): boolean {
+    return this.setupVerifiedRevisions[backend] === this.setupConfigRevisions[backend];
+  }
+
+  private downgradeUnverifiedReadySnapshots(): void {
+    for (const backend of this.agentDashboardDefinitions().map((definition) => definition.backend)) {
+      const current = this.setupSnapshots[backend];
+      if (current.phase !== "ready" || this.isAgentSetupVerificationCurrent(backend)) continue;
+      this.setupSnapshots[backend] = createAgentSetupSnapshot(
+        backend,
+        current.command ? "installed" : "missing",
+        {
+          command: current.command,
+          version: current.version,
+          detail: current.command
+            ? this.copy.setup.agentInstaller.detection.cliInstalled
+            : this.copy.setup.agentInstaller.detection.cliMissing(this.copy.setup.agentInstaller.agents[backend].label),
+          checkedAt: current.checkedAt
+        }
+      );
+    }
+  }
+
+  private canPreserveReadyAgentAfterDetection(
+    backend: AgentBackendMode,
+    previous: AgentSetupSnapshot,
+    detected: AgentSetupSnapshot
+  ): boolean {
+    return previous.phase === "ready"
+      && detected.phase === "installed"
+      && previous.command === detected.command
+      && previous.version === detected.version
+      && this.setupDeepCheckedBackends.has(backend)
+      && this.isAgentSetupVerificationCurrent(backend);
+  }
+
+  private applyAgentSetupInvalidation(backend: AgentBackendMode): void {
+    const current = this.setupSnapshots[backend];
+    if (!current.command) return;
+    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installed", {
+      command: current.command,
+      version: current.version,
+      detail: this.copy.setup.agentInstaller.detection.cliInstalled,
+      checkedAt: current.checkedAt
+    });
+  }
+
+  private flushPendingAgentSetupInvalidations(): void {
+    for (const backend of Array.from(this.setupPendingInvalidations)) {
+      this.setupPendingInvalidations.delete(backend);
+      this.applyAgentSetupInvalidation(backend);
+    }
+  }
+
+  private invalidateActiveCodexProvider(providerId: string): void {
+    if (this.plugin.settings.providerMode !== "custom-api") return;
+    if (this.plugin.settings.activeApiProviderId !== providerId) return;
+    this.invalidateAgentSetupReadiness("codex-cli");
+  }
+
+  private async runPendingAgentAutoRepair(sessionGeneration = this.setupSessionGeneration): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    if (!this.setupAutoRepairPending || this.setupBusy || this.setupDetectionPending) return;
+    this.setupAutoRepairPending = false;
+    const snapshot = this.setupSnapshots[this.setupSelectedBackend];
+    const state = resolveAgentSetupDashboardState(snapshot);
+    const retryAction = state.primaryAction === "retry" ? state.retryTarget : state.primaryAction;
+    try {
+      if (state.primaryAction === "install" || state.primaryAction === "authorize" || state.primaryAction === "connect") {
+        await this.runAgentSetupAction(state.primaryAction, state.retryTarget);
+        return;
+      }
+      if (state.primaryAction === "retry" && state.retryTarget) {
+        await this.runAgentSetupAction("retry", state.retryTarget);
+      }
+    } catch (error) {
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      const current = this.setupSnapshots[this.setupSelectedBackend];
+      const lastAction = retryAction === "install" || retryAction === "authorize" || retryAction === "connect"
+        ? retryAction
+        : null;
+      this.setupSnapshots[this.setupSelectedBackend] = this.failedAgentSnapshot(
+        this.setupSelectedBackend,
+        current.command,
+        error,
+        current.version,
+        lastAction
+      );
+    } finally {
+      if (this.isSetupSessionCurrent(sessionGeneration)) this.scheduleDisplay();
+    }
+  }
+
+  private async drainPendingSetupDetection(sessionGeneration = this.setupSessionGeneration): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration) || this.setupDetectionDrainActive) return;
+    this.setupDetectionDrainActive = true;
+    try {
+      while (this.isSetupSessionCurrent(sessionGeneration) && !this.setupBusy && this.setupDetectionPending) {
+        const connectSelected = this.setupPendingConnectSelected;
+        this.setupDetectionPending = false;
+        this.setupPendingConnectSelected = false;
+        if (connectSelected) this.setupDeepCheckedBackends.delete(this.setupSelectedBackend);
+        try {
+          await this.runAgentDetectionCycle(connectSelected, sessionGeneration);
+        } catch (error) {
+          if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+          const current = this.setupSnapshots[this.setupSelectedBackend];
+          this.setupSnapshots[this.setupSelectedBackend] = this.failedAgentSnapshot(
+            this.setupSelectedBackend,
+            current.command,
+            error,
+            current.version
+          );
+          this.scheduleDisplay();
+        }
+      }
+    } finally {
+      this.setupDetectionDrainActive = false;
+      if (this.setupSessionActive
+        && this.setupDetectionPending
+        && this.setupSessionGeneration !== sessionGeneration) {
+        void this.drainPendingSetupDetection(this.setupSessionGeneration);
+      }
+    }
+  }
+
+  private async detectAllAgents(
+    connectSelected: boolean,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    this.setupDetectionPending = true;
+    this.setupPendingConnectSelected = this.setupPendingConnectSelected || connectSelected;
+    if (this.setupBusy || this.setupDetectionDrainActive) return;
+    await this.drainPendingSetupDetection(sessionGeneration);
+  }
+
+  private async runAgentDetectionCycle(
+    connectSelected: boolean,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    const backends = ["codex-cli", "opencode", "hermes"] as const;
+    const previousSnapshots = { ...this.setupSnapshots };
+    const detectionRevisions = { ...this.setupConfigRevisions };
+    let selectedDetectionIsCurrent = true;
     this.setupBusy = true;
     this.setupActiveBackend = null;
-    for (const backend of ["codex-cli", "opencode", "hermes"] as AgentBackendMode[]) {
+    for (const backend of backends) {
       this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "detecting");
     }
     this.scheduleDisplay();
     try {
-      const [codex, opencode, hermes] = await Promise.all([
-        this.agentInstallers["codex-cli"].detect(),
-        this.agentInstallers.opencode.detect(),
-        this.agentInstallers.hermes.detect()
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => this.agentInstallers["codex-cli"].detect()),
+        Promise.resolve().then(() => this.agentInstallers.opencode.detect()),
+        Promise.resolve().then(() => this.agentInstallers.hermes.detect())
       ]);
-      this.setupSnapshots = { "codex-cli": codex, opencode, hermes };
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      const nextSnapshots = { ...this.setupSnapshots };
+      results.forEach((result, index) => {
+        const backend = backends[index];
+        const previous = previousSnapshots[backend];
+        if (!isAgentSetupDetectionRevisionCurrent(detectionRevisions[backend], this.setupConfigRevisions[backend])) {
+          nextSnapshots[backend] = createAgentSetupSnapshot(backend, "detecting");
+          this.setupDetectionPending = true;
+          if (backend === this.setupSelectedBackend) {
+            selectedDetectionIsCurrent = false;
+            this.setupPendingConnectSelected = this.setupPendingConnectSelected || connectSelected;
+          }
+          return;
+        }
+        const detected = result.status === "fulfilled"
+          ? result.value
+          : this.failedAgentSnapshot(backend, previous.command, result.reason, previous.version);
+        if (this.canPreserveReadyAgentAfterDetection(backend, previous, detected)) {
+          nextSnapshots[backend] = {
+            ...previous,
+            checkedAt: detected.checkedAt || previous.checkedAt
+          };
+          return;
+        }
+        if (previous.command !== detected.command || previous.version !== detected.version) {
+          this.setupDeepCheckedBackends.delete(backend);
+          this.setupVerifiedRevisions[backend] = -1;
+        }
+        nextSnapshots[backend] = detected;
+      });
+      this.setupSnapshots = nextSnapshots;
       this.plugin.settings.setup.lastCheckedAt = Date.now();
-      await this.plugin.saveSettings(true);
+      try {
+        await this.plugin.saveSettings(true);
+      } catch (error) {
+        if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+        const current = this.setupSnapshots[this.setupSelectedBackend];
+        this.setupSnapshots[this.setupSelectedBackend] = this.failedAgentSnapshot(
+          this.setupSelectedBackend,
+          current.command,
+          error,
+          current.version,
+          current.lastAction ?? null
+        );
+      }
+    } catch (error) {
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      const current = this.setupSnapshots[this.setupSelectedBackend];
+      this.setupSnapshots[this.setupSelectedBackend] = this.failedAgentSnapshot(
+        this.setupSelectedBackend,
+        current.command,
+        error,
+        current.version,
+        current.lastAction ?? null
+      );
     } finally {
       this.setupBusy = false;
-      this.scheduleDisplay();
+      this.setupActiveBackend = null;
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.flushPendingAgentSetupInvalidations();
+        this.scheduleDisplay();
+      }
     }
-    if (connectSelected && this.setupSnapshots[this.setupSelectedBackend].phase === "installed") {
-      await this.connectAgent(this.setupSelectedBackend);
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+    try {
+      if (connectSelected && selectedDetectionIsCurrent) {
+        await this.deepCheckAgentOnce(this.setupSelectedBackend, sessionGeneration);
+      }
+      await this.runPendingAgentAutoRepair(sessionGeneration);
+    } catch (error) {
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      const current = this.setupSnapshots[this.setupSelectedBackend];
+      this.setupSnapshots[this.setupSelectedBackend] = this.failedAgentSnapshot(
+        this.setupSelectedBackend,
+        current.command,
+        error,
+        current.version,
+        current.lastAction ?? null
+      );
+    } finally {
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.flushPendingAgentSetupInvalidations();
+        this.scheduleDisplay();
+      }
     }
   }
 
@@ -957,7 +1504,11 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async installAgent(backend: AgentBackendMode): Promise<void> {
+  private async installAgent(
+    backend: AgentBackendMode,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
     const copy = this.copy.setup.agentInstaller;
     const label = copy.agents[backend].label;
     const accepted = await confirmModal(
@@ -969,7 +1520,7 @@ export class CodexSettingTab extends PluginSettingTab {
       copy.install.accept,
       copy.install.cancel
     );
-    if (!accepted || this.setupBusy) return;
+    if (!this.isSetupSessionCurrent(sessionGeneration) || !accepted || this.setupBusy) return;
     this.setupBusy = true;
     this.setupActiveBackend = backend;
     const controller = new AbortController();
@@ -980,17 +1531,28 @@ export class CodexSettingTab extends PluginSettingTab {
     let installed = false;
     try {
       const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "install", { signal: controller.signal });
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
       this.setupSnapshots[backend] = snapshot;
       installed = snapshot.phase === "installed";
     } catch (error) {
-      this.setupSnapshots[backend] = this.failedAgentSnapshot(backend, previous.command, error);
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+          ? this.cancelledAgentSnapshot(backend, previous, copy.install.cancelled, "install")
+          : this.failedAgentSnapshot(backend, previous.command, error, previous.version, "install");
+      }
     } finally {
-      this.setupAbort = null;
+      if (this.setupAbort === controller) this.setupAbort = null;
       this.setupBusy = false;
       this.setupActiveBackend = null;
-      this.scheduleDisplay();
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.flushPendingAgentSetupInvalidations();
+        this.scheduleDisplay();
+      }
     }
-    if (installed) await this.connectAgent(backend);
+    if (installed && this.isSetupSessionCurrent(sessionGeneration)) {
+      await this.connectAgent(backend, sessionGeneration);
+    }
+    await this.drainPendingSetupDetection(this.setupSessionGeneration);
   }
 
   private async performAgentInstall(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
@@ -1025,13 +1587,21 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
-  private async connectAgent(backend: AgentBackendMode): Promise<void> {
-    if (this.setupBusy) return;
-    const current = this.setupSnapshots[backend];
+  private async connectAgent(
+    backend: AgentBackendMode,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration) || this.setupBusy) return;
+    let current = this.setupSnapshots[backend];
     if (!current.command) {
-      await this.detectAllAgents(false);
+      await this.detectAllAgents(false, sessionGeneration);
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
       if (!this.setupSnapshots[backend].command) return;
+      current = this.setupSnapshots[backend];
     }
+    const configRevision = this.setupConfigRevisions[backend];
+    const controller = new AbortController();
+    this.setupAbort = controller;
     this.setupBusy = true;
     this.setupActiveBackend = backend;
     this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "connecting", {
@@ -1042,27 +1612,43 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     this.scheduleDisplay();
     try {
-      this.setupSnapshots[backend] = await runAgentInstallerAction(this.agentInstallers, backend, "connect");
+      const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "connect", {
+        signal: controller.signal
+      });
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      this.setupSnapshots[backend] = snapshot;
+      this.recordAgentSetupVerification(backend, snapshot, configRevision, sessionGeneration);
     } catch (error) {
-      this.setupSnapshots[backend] = this.failedAgentSnapshot(backend, current.command, error, current.version);
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+          ? this.cancelledAgentSnapshot(backend, current, this.copy.setup.agentInstaller.connection.cancelled, "connect")
+          : this.failedAgentSnapshot(backend, current.command, error, current.version, "connect");
+      }
     } finally {
+      if (this.setupAbort === controller) this.setupAbort = null;
       this.setupBusy = false;
       this.setupActiveBackend = null;
-      this.scheduleDisplay();
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.flushPendingAgentSetupInvalidations();
+        this.scheduleDisplay();
+      }
     }
+    await this.drainPendingSetupDetection(this.setupSessionGeneration);
   }
 
-  private async performAgentConnection(backend: AgentBackendMode, _context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
-    if (backend === "codex-cli") return this.connectCodexAgent();
-    if (backend === "opencode") return this.connectOpenCodeAgent();
-    return this.connectHermesAgent();
+  private async performAgentConnection(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    if (backend === "codex-cli") return this.connectCodexAgent(context);
+    if (backend === "opencode") return this.connectOpenCodeAgent(context);
+    return this.connectHermesAgent(context);
   }
 
-  private async connectCodexAgent(): Promise<AgentSetupSnapshot> {
+  private async connectCodexAgent(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
     const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots["codex-cli"];
+    throwIfAgentSetupAborted(context.signal);
     if (current.command) this.writeAgentCliPath("codex-cli", current.command);
     const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
+    throwIfAgentSetupAborted(context.signal);
     if (!status.connected || status.accountReadError) throw new Error(status.accountReadError ?? status.errors[0] ?? this.copy.setup.loginErrors.connection);
     if (!status.loggedIn) {
       const snapshot = createAgentSetupSnapshot("codex-cli", "needs-auth", {
@@ -1077,22 +1663,25 @@ export class CodexSettingTab extends PluginSettingTab {
     const snapshot = createAgentSetupSnapshot("codex-cli", "ready", {
       command: current.command,
       version: current.version,
-      detail: status.accountLabel || copy.codexReady,
+      detail: copy.codexReady,
       checkedAt: Date.now()
     });
     await this.plugin.saveSettings(true);
     return snapshot;
   }
 
-  private async connectOpenCodeAgent(): Promise<AgentSetupSnapshot> {
+  private async connectOpenCodeAgent(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
     const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots.opencode;
+    throwIfAgentSetupAborted(context.signal);
     if (current.command) this.writeAgentCliPath("opencode", current.command);
     const backend = this.createOpenCodeSetupBackend(current.command || this.plugin.settings.opencode.cliPath);
     let probeSessionId = "";
     try {
       await backend.connect();
+      throwIfAgentSetupAborted(context.signal);
       const [models, agents] = await Promise.all([backend.listModels(), backend.listAgents()]);
+      throwIfAgentSetupAborted(context.signal);
       const configuredProvider = this.plugin.settings.opencode.providerId.trim();
       const configuredModel = this.plugin.settings.opencode.modelId.trim();
       const hasExistingProvider = Boolean(configuredProvider || configuredModel);
@@ -1120,8 +1709,10 @@ export class CodexSettingTab extends PluginSettingTab {
         prompt: "只回复 OPENCODE_PONG",
         model: { providerId: model.providerId, modelId: model.modelId },
         agent: agent?.id || "build",
-        timeoutMs: 60_000
+        timeoutMs: 60_000,
+        abortSignal: context.signal
       });
+      throwIfAgentSetupAborted(context.signal);
       probeSessionId = probe.runId || "";
       if (!/\bOPENCODE_PONG\b/i.test(probe.text.trim())) throw new Error(copy.opencodeProbeFailed);
       const info = backend.getConnectionInfo();
@@ -1145,14 +1736,16 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async connectHermesAgent(): Promise<AgentSetupSnapshot> {
+  private async connectHermesAgent(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
     const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots.hermes;
+    throwIfAgentSetupAborted(context.signal);
     if (current.command) {
       this.writeAgentCliPath("hermes", current.command);
       await this.plugin.saveSettings(true);
     }
-    const result = await this.plugin.testHermesConnection({ notify: false });
+    const result = await this.plugin.testHermesConnection({ notify: false, signal: context.signal });
+    throwIfAgentSetupAborted(context.signal);
     if (!result.connected) throw new Error(result.message);
     if (!result.providerConfigured) {
       const savedProvider = this.plugin.settings.agents.hermes.providerId.trim();
@@ -1193,14 +1786,18 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
-  private async authorizeAgent(backend: AgentBackendMode): Promise<void> {
-    if (this.setupBusy) return;
+  private async authorizeAgent(
+    backend: AgentBackendMode,
+    sessionGeneration = this.setupSessionGeneration
+  ): Promise<void> {
+    if (!this.isSetupSessionCurrent(sessionGeneration) || this.setupBusy) return;
     const current = this.setupSnapshots[backend];
     if (backend === "hermes" && !current.command) return;
     this.setupBusy = true;
     this.setupActiveBackend = backend;
     const controller = new AbortController();
     this.setupAbort = controller;
+    const configRevision = this.setupConfigRevisions[backend];
     const copy = this.copy.setup.agentInstaller.authorization;
     this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "authorizing", {
       command: current.command,
@@ -1217,19 +1814,29 @@ export class CodexSettingTab extends PluginSettingTab {
       const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "authorize", {
         signal: controller.signal
       });
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
       this.setupSnapshots[backend] = snapshot;
+      this.recordAgentSetupVerification(backend, snapshot, configRevision, sessionGeneration);
       shouldConnect = snapshot.phase === "installed";
     } catch (error) {
-      this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
-        ? this.cancelledAgentSnapshot(backend, current, copy.cancelled)
-        : this.failedAgentSnapshot(backend, current.command, error, current.version);
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+          ? this.cancelledAgentSnapshot(backend, current, copy.cancelled, "authorize")
+          : this.failedAgentSnapshot(backend, current.command, error, current.version, "authorize");
+      }
     } finally {
       if (this.setupAbort === controller) this.setupAbort = null;
       this.setupBusy = false;
       this.setupActiveBackend = null;
-      this.scheduleDisplay();
+      if (this.isSetupSessionCurrent(sessionGeneration)) {
+        this.flushPendingAgentSetupInvalidations();
+        this.scheduleDisplay();
+      }
     }
-    if (shouldConnect) await this.connectAgent(backend);
+    if (shouldConnect && this.isSetupSessionCurrent(sessionGeneration)) {
+      await this.connectAgent(backend, sessionGeneration);
+    }
+    await this.drainPendingSetupDetection(this.setupSessionGeneration);
   }
 
   private async performAgentAuthorization(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
@@ -1400,11 +2007,17 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
-  private cancelledAgentSnapshot(backend: AgentBackendMode, current: AgentSetupSnapshot, detail: string): AgentSetupSnapshot {
+  private cancelledAgentSnapshot(
+    backend: AgentBackendMode,
+    current: AgentSetupSnapshot,
+    detail: string,
+    lastAction: AgentInstallerAction | null = current.lastAction ?? null
+  ): AgentSetupSnapshot {
     return createAgentSetupSnapshot(backend, "cancelled", {
       command: current.command,
       version: current.version,
       detail,
+      lastAction,
       checkedAt: Date.now()
     });
   }
@@ -1426,7 +2039,13 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
-  private failedAgentSnapshot(backend: AgentBackendMode, command: string | null, error: unknown, version: string | null = null): AgentSetupSnapshot {
+  private failedAgentSnapshot(
+    backend: AgentBackendMode,
+    command: string | null,
+    error: unknown,
+    version: string | null = null,
+    lastAction: AgentInstallerAction | null = null
+  ): AgentSetupSnapshot {
     const rawMessage = error instanceof Error ? error.message : String(error);
     const message = limitedAgentSetupLog(rawMessage, 2_000);
     return createAgentSetupSnapshot(backend, "failed", {
@@ -1435,6 +2054,7 @@ export class CodexSettingTab extends PluginSettingTab {
       detail: this.copy.setup.agentInstaller.genericFailure,
       error: message,
       logs: limitedAgentSetupLog(rawMessage),
+      lastAction,
       checkedAt: Date.now()
     });
   }
@@ -1461,63 +2081,60 @@ export class CodexSettingTab extends PluginSettingTab {
     const command = backend === "codex-cli"
       ? CODEX_CLI_INSTALL_COMMAND
       : "npm install --global --prefix ~/.npm-global opencode-ai";
-    await navigator.clipboard.writeText(command);
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
     const opened = await openTerminalForSetup(process.platform);
-    new Notice(opened ? this.copy.setup.terminalOpened : this.copy.setup.terminalCopied);
+    const notice = opened
+      ? copied
+        ? this.copy.setup.terminalOpened
+        : this.copy.setup.terminalOpenedWithoutCopy
+      : copied
+        ? this.copy.setup.terminalCopied
+        : this.copy.setup.terminalUnavailable;
+    new Notice(notice);
   }
 
   private async completeAgentSetup(): Promise<void> {
+    if (this.setupBusy) return;
     const selected = this.setupSnapshots[this.setupSelectedBackend];
     const backend = readyAgentBackendToCommit(this.setupSelectedBackend, selected);
-    if (!backend) {
+    if (!backend || !this.isAgentSetupVerificationCurrent(backend)) {
       new Notice(this.copy.setup.startBlocked);
       return;
     }
-    this.plugin.settings.agentBackend = backend;
-    this.plugin.settings.agents.defaultBackend = backend;
-    this.plugin.settings.setup = completeSetupState(this.plugin.settings.setup, Date.now(), this.plugin.manifest.version);
-    await this.plugin.saveSettings(true);
-    await this.plugin.activateView();
+    const previousAgentBackend = this.plugin.settings.agentBackend;
+    const previousDefaultBackend = this.plugin.settings.agents.defaultBackend;
+    const previousSetup = this.plugin.settings.setup;
+    this.setupBusy = true;
     this.scheduleDisplay();
-  }
-
-  private addStatusActions(container: HTMLElement): void {
-    const copy = this.copy;
-    const actions = container.createDiv({ cls: "codex-settings-status-actions" });
-    const refresh = actions.createEl("button", {
-      cls: "codex-resource-refresh",
-      attr: { type: "button", title: copy.status.refreshTitle }
-    });
-    const icon = refresh.createSpan({ cls: "codex-resource-refresh-icon" });
-    setIcon(icon, "refresh-cw");
-    const label = refresh.createSpan({ text: copy.status.refreshLogin });
-    refresh.onclick = async () => {
-      refresh.disabled = true;
-      label.setText(copy.status.refreshing);
-      const status = await this.plugin.reconnectCodex({ refreshLogin: true });
-      if (status.connected) new Notice(copy.status.refreshSuccess(status.accountLabel));
-      else new Notice(copy.status.refreshFailed(status.errors[0] ?? copy.common.unknown));
+    try {
+      this.plugin.settings.agentBackend = backend;
+      this.plugin.settings.agents.defaultBackend = backend;
+      this.plugin.settings.setup = completeSetupState(previousSetup, Date.now(), this.plugin.manifest.version);
+      try {
+        await this.plugin.saveSettings(true);
+      } catch {
+        this.plugin.settings.agentBackend = previousAgentBackend;
+        this.plugin.settings.agents.defaultBackend = previousDefaultBackend;
+        this.plugin.settings.setup = previousSetup;
+        new Notice(this.copy.setup.startSaveFailed);
+        return;
+      }
+      try {
+        await this.plugin.activateView();
+      } catch {
+        new Notice(this.copy.setup.startActivateFailed);
+      }
+    } finally {
+      this.setupBusy = false;
       this.scheduleDisplay();
-    };
-  }
-
-  private addStatusErrors(container: HTMLElement, errors: string[]): void {
-    if (!errors.length) return;
-    const copy = this.copy;
-    for (const error of errors.slice(0, 3)) {
-      const diagnostic = diagnoseCodexError(error, {
-        model: this.plugin.settings.defaultModel,
-        providerLabel: providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage),
-        proxyEnabled: this.plugin.settings.proxyEnabled,
-        proxyUrl: this.plugin.settings.proxyUrl,
-        language: this.plugin.settings.settingsLanguage
-      });
-      const card = container.createDiv({ cls: "codex-settings-status-error" });
-      const title = card.createDiv({ cls: "codex-settings-status-error-title" });
-      const icon = title.createSpan({ cls: "codex-settings-status-icon" });
-      setIcon(icon, "triangle-alert");
-      title.createSpan({ text: copy.status.diagnostics });
-      card.createEl("pre", { cls: "codex-settings-status-error-body", text: diagnostic.text });
     }
   }
 
@@ -1570,6 +2187,7 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     loginButton.onclick = async () => {
       this.plugin.settings.providerMode = "codex-login";
+      this.invalidateAgentSetupReadiness("codex-cli");
       await this.plugin.saveSettings(true);
       await this.plugin.reconnectCodex();
       this.scheduleDisplay();
@@ -1595,6 +2213,7 @@ export class CodexSettingTab extends PluginSettingTab {
       };
       this.plugin.settings.apiProviders.push(provider);
       this.plugin.settings.activeApiProviderId = provider.id;
+      this.invalidateActiveCodexProvider(provider.id);
       await this.plugin.saveSettings(true);
       this.scheduleDisplay();
     };
@@ -2009,6 +2628,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       this.plugin.settings.providerMode = "custom-api";
       this.plugin.settings.activeApiProviderId = provider.id;
+      this.invalidateAgentSetupReadiness("codex-cli");
       await this.plugin.saveSettings(true);
       await this.plugin.reconnectCodex();
       this.scheduleDisplay();
@@ -2023,6 +2643,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (!window.confirm(copy.providers.deleteConfirm(provider.name))) return;
       const wasActive = this.plugin.settings.providerMode === "custom-api" && this.plugin.settings.activeApiProviderId === provider.id;
       removeApiProvider(this.plugin.settings, provider.id);
+      if (wasActive) this.invalidateAgentSetupReadiness("codex-cli");
       await this.plugin.saveSettings(true);
       if (wasActive) await this.plugin.reconnectCodex();
       this.scheduleDisplay();
@@ -2035,6 +2656,7 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     this.addProviderText(row, copy.providers.baseUrl, provider.baseUrl, "https://api.openai.com/v1", async (value) => {
       provider.baseUrl = value.trim();
+      this.invalidateActiveCodexProvider(provider.id);
       await this.plugin.saveSettings();
     });
     row.createDiv({ cls: "codex-resource-note", text: copy.providers.responseApiRequirement });
@@ -2042,16 +2664,19 @@ export class CodexSettingTab extends PluginSettingTab {
       const models = parseModelList(value);
       provider.models = models;
       provider.model = models[0] ?? "";
+      this.invalidateActiveCodexProvider(provider.id);
       await this.plugin.saveSettings();
       this.scheduleDisplay();
     });
     this.addProviderText(row, copy.providers.apiKey, provider.apiKey, "sk-...", async (value) => {
       provider.apiKey = value.trim();
+      this.invalidateActiveCodexProvider(provider.id);
       await this.plugin.saveSettings();
     }, "password");
     this.addProviderTextArea(row, copy.providers.queryParams, formatQueryParams(provider.queryParams), "api-version=2026-04-28", async (value) => {
       provider.queryParams = parseQueryParams(value);
       if (!Object.keys(provider.queryParams).length) delete provider.queryParams;
+      this.invalidateActiveCodexProvider(provider.id);
       await this.plugin.saveSettings();
     });
 
@@ -2110,8 +2735,8 @@ export class CodexSettingTab extends PluginSettingTab {
         const selected = this.openCodeModelChoices.find((model) => model.providerId === parsed.providerId && model.modelId === parsed.modelId);
         if (!selected) return;
         this.applyOpenCodeModelChoice(selected);
+        this.invalidateAgentSetupReadiness("opencode");
         await this.plugin.saveSettings(true);
-        this.scheduleDisplay();
       };
     } else {
       controls.createDiv({
@@ -2163,8 +2788,8 @@ export class CodexSettingTab extends PluginSettingTab {
         if (!selectedName) return;
         const selected = this.openCodeAgentChoices.find((agent) => agent.name === selectedName);
         opencode.agent = selected?.name ?? selectedName;
+        this.invalidateAgentSetupReadiness("opencode");
         await this.plugin.saveSettings(true);
-        this.scheduleDisplay();
       };
     } else {
       const input = controls.createEl("input", {
@@ -2178,8 +2803,8 @@ export class CodexSettingTab extends PluginSettingTab {
       }) as HTMLInputElement;
       input.onchange = async () => {
         opencode.agent = input.value.trim() || "build";
+        this.invalidateAgentSetupReadiness("opencode");
         await this.plugin.saveSettings(true);
-        this.scheduleDisplay();
       };
     }
 
@@ -2212,6 +2837,11 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private async refreshOpenCodeRuntimeOptions(options: { models?: boolean; agents?: boolean } = { models: true, agents: true }): Promise<void> {
     const copy = this.copy;
+    const setupConfigBeforeRefresh = [
+      this.plugin.settings.opencode.providerId,
+      this.plugin.settings.opencode.modelId,
+      this.plugin.settings.opencode.agent
+    ].join("\u0000");
     const shouldLoadModels = options.models !== false;
     const shouldLoadAgents = options.agents !== false;
     if ((shouldLoadModels && this.openCodeModelsLoading) || (shouldLoadAgents && this.openCodeAgentsLoading)) return;
@@ -2248,6 +2878,8 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       opencode.lastConnectedAt = Date.now();
       opencode.lastError = "";
+      const setupConfigAfterRefresh = [opencode.providerId, opencode.modelId, opencode.agent].join("\u0000");
+      if (setupConfigAfterRefresh !== setupConfigBeforeRefresh) this.invalidateAgentSetupReadiness("opencode");
       await this.plugin.saveSettings(true);
       const notices: string[] = [];
       if (shouldLoadModels) notices.push(copy.opencode.modelsCount(this.openCodeModelChoices.length));
@@ -2264,20 +2896,6 @@ export class CodexSettingTab extends PluginSettingTab {
       await backend.disconnect().catch(swallowError("disconnect OpenCode settings backend"));
       if (shouldLoadModels) this.openCodeModelsLoading = false;
       if (shouldLoadAgents) this.openCodeAgentsLoading = false;
-      this.scheduleDisplay();
-    }
-  }
-
-  private async testHermesConnection(): Promise<void> {
-    if (this.hermesChecking) return;
-    this.hermesChecking = true;
-    this.hermesCheckError = "";
-    this.scheduleDisplay();
-    try {
-      const result = await this.plugin.testHermesConnection();
-      this.hermesCheckError = result.connected ? "" : result.message;
-    } finally {
-      this.hermesChecking = false;
       this.scheduleDisplay();
     }
   }
@@ -3075,14 +3693,6 @@ export class CodexSettingTab extends PluginSettingTab {
     } finally {
       await backend.disconnect().catch(swallowError("disconnect Hermes settings backend"));
     }
-  }
-
-  private addStatusRow(container: HTMLElement, iconName: string, label: string, value: string): void {
-    const row = container.createDiv({ cls: "codex-settings-status-row" });
-    const icon = row.createSpan({ cls: "codex-settings-status-icon" });
-    setIcon(icon, iconName);
-    row.createSpan({ cls: "codex-settings-status-label", text: label });
-    row.createSpan({ cls: "codex-settings-status-value", text: value });
   }
 
   private decorateSetting(setting: Setting, iconName: string): Setting {

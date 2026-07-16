@@ -111,8 +111,11 @@ import { CODEX_NPM_INSTALL_ARGS, installCodexCli } from "../core/codex-installer
 import {
   agentSetupRowStatus,
   createAgentSetupSnapshot,
+  isAgentSetupDetectionRevisionCurrent,
   limitedAgentSetupLog,
   readyAgentBackendToCommit,
+  resolveAgentSetupDashboardState,
+  resolveAgentSetupProviderModelLabel,
   resolveAgentSetupPrimary,
   runAgentInstallerAction,
   type AgentInstaller,
@@ -463,8 +466,25 @@ settingsScrollHost.scrollTop = 0;
 restoreSettingsScrollSnapshot(settingsScrollSnapshot);
 assert.equal(settingsScrollHost.scrollTop, 640);
 const settingsTabSource = await readFile(path.join(process.cwd(), "src/settings/settings-tab.ts"), "utf8");
+function extractClassMethodBody(source: string, signature: string): string {
+  const signatureIndex = source.indexOf(signature);
+  assert.ok(signatureIndex >= 0, `找不到方法：${signature}`);
+  const bodyStart = source.indexOf("{", signatureIndex + signature.length);
+  assert.ok(bodyStart >= 0, `找不到方法体：${signature}`);
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") depth += 1;
+    if (character !== "}") continue;
+    depth -= 1;
+    if (depth === 0) return source.slice(bodyStart + 1, index);
+  }
+  assert.fail(`方法体未闭合：${signature}`);
+}
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: string[]
+) => (...args: unknown[]) => Promise<unknown>;
 assert.doesNotMatch(settingsTabSource, /normalize[A-Za-z]+ForUi/);
-assert.match(settingsTabSource, /normalizeAgentBackendMode\(value\)/);
 assert.match(settingsTabSource, /normalizeKnowledgeBaseBackendMode\(value\)/);
 assert.match(settingsTabSource, /normalizeKnowledgeBaseHistoryRetentionDays\(value,\s*DEFAULT_SETTINGS\.knowledgeBase\.historyRetentionDays\)/);
 assert.match(settingsTabSource, /normalizeEditorActionQualityMode\(value,\s*"quality"\)/);
@@ -485,37 +505,990 @@ const settingsTabScheduleDisplaySource = settingsTabSource.slice(
 assert.match(settingsTabDisplaySource, /this\.renderSettingsShell\(\)/);
 assert.match(settingsTabDisplaySource, /this\.renderSettingsContent\(\)/);
 assert.match(
+  settingsTabDisplaySource,
+  /if \(!this\.setupAutoCheckStarted\) this\.downgradeUnverifiedReadySnapshots\(\)/,
+  "新设置会话首帧必须先撤销未经当前 revision 验证的绿色 ready"
+);
+assert.match(settingsTabSource, /private setupSessionGeneration = 0/);
+assert.match(settingsTabSource, /private setupSessionActive = false/);
+assert.match(settingsTabSource, /private setupDetectionTimer: number \| null = null/);
+assert.match(settingsTabDisplaySource, /const sessionGeneration = this\.setupSessionGeneration/);
+assert.match(settingsTabDisplaySource, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return/);
+assert.match(
   settingsTabContentSource,
-  /if \(this\.shouldShowSetupGuide\(\)\) \{\s*this\.renderAgentInstaller\(statusBox, false\);\s*return;\s*\}/,
-  "初始化未完成时必须在完整安装器后停止渲染，避免默认后端下拉绕过 ready 门禁"
+  /this\.renderAgentDashboard\(statusBox\);\s*if \(this\.shouldShowSetupGuide\(\)(?: \|\| this\.isAgentDashboardBusy\(\))?\) \{\s*return;\s*\}/,
+  "初始化未完成时必须只显示顶部仪表盘并早返回，避免其它设置绕过 ready 门禁"
+);
+const setupGuideGuardIndex = settingsTabContentSource.search(
+  /if \(this\.shouldShowSetupGuide\(\)(?: \|\| this\.isAgentDashboardBusy\(\))?\)/
 );
 assert.ok(
-  settingsTabContentSource.indexOf("this.renderTopTabs(tabsEl)") > settingsTabContentSource.indexOf("this.renderAgentInstaller(statusBox, false)"),
-  "普通设置页只能在 setup guide 的早返回之后渲染"
+  settingsTabContentSource.indexOf("this.renderAgentDashboard(statusBox)") < setupGuideGuardIndex,
+  "首次与日常模式都必须先渲染顶部 Agent 仪表盘"
+);
+assert.ok(
+  settingsTabContentSource.indexOf("this.renderTopTabs(tabsEl)") > setupGuideGuardIndex,
+  "普通设置分页只能在 setup guide 的早返回之后渲染"
 );
 assert.doesNotMatch(settingsTabScheduleDisplaySource, /this\.display\(\)/);
+assert.match(
+  settingsTabScheduleDisplaySource,
+  /this\.captureAgentDashboardTabFocus\(\);\s*if \(this\.displayFrame !== null\) return;/,
+  "异步重绘必须在安排 animation frame 时先保存标签焦点"
+);
 assert.match(settingsTabScheduleDisplaySource, /this\.renderSettingsContent\(\)/);
 assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
-const setupGuideStateSource = settingsTabSource.slice(
-  settingsTabSource.indexOf("private renderAgentInstaller"),
+const agentDashboardSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderAgentDashboard"),
   settingsTabSource.indexOf("private async runAgentSetupAction")
 );
-assert.match(setupGuideStateSource, /backend: "codex-cli"/);
-assert.match(setupGuideStateSource, /backend: "opencode"/);
-assert.match(setupGuideStateSource, /backend: "hermes"/);
-assert.match(setupGuideStateSource, /this\.setupSelectedBackend = definition\.backend/);
-assert.match(setupGuideStateSource, /codex-agent-installer-row-shell/);
-assert.match(
-  setupGuideStateSource,
-  /if \(!isSelected\) continue;[\s\S]*rowShell\.createDiv\(\{ cls: "codex-agent-installer-detail" \}\)[\s\S]*rowShell\.createDiv\(\{ cls: "codex-agent-installer-actions" \}\)/,
-  "选中 Agent 的详情和动作必须内联到同一个 row shell"
+assert.match(agentDashboardSource, /backend: "codex-cli"/);
+assert.match(agentDashboardSource, /backend: "opencode"/);
+assert.match(agentDashboardSource, /backend: "hermes"/);
+assert.match(agentDashboardSource, /resolveAgentSetupDashboardState\(snapshot\)/);
+assert.match(agentDashboardSource, /codex-agent-dashboard/);
+assert.equal((settingsTabSource.match(/codex-setup-primary/g) ?? []).length, 1, "整个设置页只能由顶部仪表盘提供一个主按钮");
+assert.doesNotMatch(agentDashboardSource, /settings\.agentBackend\s*=/, "切换查看分页不能修改默认 Agent");
+assert.match(agentDashboardSource, /this\.copy\.setup\.agentInstaller/);
+assert.match(agentDashboardSource, /snapshot\.phase === "ready"/);
+assert.match(agentDashboardSource, /settings\.providerConfigured/);
+assert.match(agentDashboardSource, /this\.isAgentSetupVerificationCurrent\("hermes"\)/);
+assert.match(agentDashboardSource, /resolveAgentSetupProviderModelLabel\(\{/);
+assert.doesNotMatch(settingsTabSource, /renderAgentInstaller|codex-agent-installer/, "下方不能保留重复的 compact 安装器");
+
+const renderAgentSettingsSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderAgentSettings"),
+  settingsTabSource.indexOf("private renderOpenCodeAgentSettings")
 );
-assert.equal((setupGuideStateSource.match(/codex-setup-primary/g) ?? []).length, 1);
-assert.doesNotMatch(setupGuideStateSource, /settings\.agentBackend\s*=/);
-assert.match(setupGuideStateSource, /this\.copy\.setup\.agentInstaller/);
+assert.doesNotMatch(renderAgentSettingsSource, /renderAgentInstaller|codex-agent-installer|normalizeAgentBackendMode/);
+assert.doesNotMatch(renderAgentSettingsSource, /settings\.agentBackend\s*=|settings\.agents\.defaultBackend\s*=/);
+assert.doesNotMatch(renderAgentSettingsSource, /codex-setup-primary/);
+assert.match(renderAgentSettingsSource, /if \(this\.setupSelectedBackend === "codex-cli"\)[\s\S]*return;/);
+assert.match(renderAgentSettingsSource, /if \(this\.setupSelectedBackend === "opencode"\)[\s\S]*return;/);
+assert.match(renderAgentSettingsSource, /const hermes = settings\.agents\.hermes;/);
+assert.match(
+  renderAgentSettingsSource,
+  /const advancedBody = advanced\.createEl\("fieldset", \{ cls: "codex-agent-advanced-body" \}\) as HTMLFieldSetElement/
+);
+assert.match(renderAgentSettingsSource, /advancedBody\.disabled = this\.isAgentDashboardBusy\(\)/);
+assert.ok(
+  renderAgentSettingsSource.indexOf("advancedBody.disabled = this.isAgentDashboardBusy()")
+    < renderAgentSettingsSource.indexOf("if (this.setupSelectedBackend"),
+  "忙碌门禁必须在渲染任一 Agent 高级配置前生效"
+);
+
+assert.match(agentDashboardSource, /attr: \{ role: "tablist", "aria-label": dashboardCopy\.ariaLabel \}/);
+assert.match(agentDashboardSource, /role: "tab"/);
+assert.match(agentDashboardSource, /tabindex: isSelected \? "0" : "-1"/);
+assert.match(agentDashboardSource, /"aria-selected": isSelected \? "true" : "false"/);
+assert.match(agentDashboardSource, /"aria-controls": this\.agentDashboardPanelId\(definition\.backend\)/);
+assert.match(agentDashboardSource, /role: "tabpanel"/);
+assert.match(agentDashboardSource, /"aria-labelledby": this\.agentDashboardTabId/);
+const renderSettingsShellSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderSettingsShell"),
+  settingsTabSource.indexOf("private ensureSettingsShell")
+);
+assert.match(renderSettingsShellSource, /this\.settingsAgentLiveEl = containerEl\.createDiv/);
+assert.match(renderSettingsShellSource, /codex-agent-dashboard-live/);
+assert.match(renderSettingsShellSource, /"aria-live": "polite"/);
+assert.match(renderSettingsShellSource, /"aria-atomic": "true"/);
+assert.match(
+  renderSettingsShellSource,
+  /containerEl\.onpointerdown = \(event\) => \{[\s\S]*!target\.closest\("\.codex-agent-dashboard-tab"\)[\s\S]*this\.setupTabFocusTarget = null/,
+  "点击仪表盘标签之外的区域必须释放键盘焦点所有权"
+);
+assert.ok(
+  renderSettingsShellSource.indexOf("this.settingsAgentLiveEl =") > renderSettingsShellSource.indexOf("this.settingsBodyEl ="),
+  "live region 必须是设置页 shell 中独立且稳定的兄弟节点"
+);
+assert.match(settingsTabSource, /private settingsAgentLiveText = ""/);
+assert.match(agentDashboardSource, /if \(liveText !== this\.settingsAgentLiveText\)/);
+assert.match(agentDashboardSource, /this\.settingsAgentLiveText = liveText/);
+assert.match(agentDashboardSource, /this\.settingsAgentLiveEl\?\.setText\(liveText\)/);
+const agentDashboardDetailSource = agentDashboardSource.slice(
+  agentDashboardSource.indexOf("const detail = panel.createDiv"),
+  agentDashboardSource.indexOf("const path = detail.createDiv")
+);
+assert.doesNotMatch(agentDashboardDetailSource, /aria-live|aria-atomic/);
+assert.doesNotMatch(settingsTabContentSource, /settingsAgentLiveEl\??\.empty\(\)/);
+assert.match(agentDashboardSource, /codex-agent-dashboard-tab-status", text: statusLabel/);
+assert.match(agentDashboardSource, /recheck\.disabled = dashboardBusy/);
+assert.match(agentDashboardSource, /tab\.onclick = \(\) => this\.selectAgentDashboardBackend\(definition\.backend, true\)/);
+assert.match(agentDashboardSource, /event\.key === "ArrowRight"/);
+assert.match(agentDashboardSource, /event\.key === "ArrowLeft"/);
+assert.match(agentDashboardSource, /event\.key === "Home"/);
+assert.match(agentDashboardSource, /event\.key === "End"/);
+assert.match(agentDashboardSource, /tab\.onfocus = \(\) => \{\s*this\.setupTabFocusTarget = definition\.backend/);
+assert.match(agentDashboardSource, /event\.key === "Tab"\) \{\s*this\.setupTabFocusTarget = null;\s*return;/);
+assert.match(agentDashboardSource, /event\.preventDefault\(\)/);
+assert.match(agentDashboardSource, /if \(this\.setupTabFocusTarget\) \{[\s\S]*target\?\.focus\(\)/);
+assert.match(settingsTabContentSource, /this\.captureAgentDashboardTabFocus\(\);[\s\S]*statusEl\.empty\(\)/);
+
+const captureAgentDashboardTabFocusForTest = new Function(
+  extractClassMethodBody(settingsTabSource, "private captureAgentDashboardTabFocus(")
+) as (this: any) => void;
+const focusCaptureHarness: any = {
+  containerEl: {
+    ownerDocument: {
+      activeElement: { id: "codex-agent-dashboard-tab-opencode" }
+    }
+  },
+  setupTabFocusTarget: null,
+  agentDashboardDefinitions: () => [
+    { backend: "codex-cli" },
+    { backend: "opencode" },
+    { backend: "hermes" }
+  ],
+  agentDashboardTabId: (backend: AgentBackendMode) => `codex-agent-dashboard-tab-${backend}`
+};
+const originalHTMLElement = globalThis.HTMLElement;
+class TestHTMLElement {
+  id = "";
+  isConnected = true;
+}
+Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+focusCaptureHarness.containerEl.ownerDocument.activeElement = Object.assign(new TestHTMLElement(), {
+  id: "codex-agent-dashboard-tab-opencode"
+});
+captureAgentDashboardTabFocusForTest.call(focusCaptureHarness);
+assert.equal(focusCaptureHarness.setupTabFocusTarget, "opencode", "异步重绘前必须记住当前键盘焦点标签");
+focusCaptureHarness.containerEl.ownerDocument.activeElement = Object.assign(new TestHTMLElement(), {
+  id: "codex-agent-dashboard-tab-codex-cli"
+});
+captureAgentDashboardTabFocusForTest.call(focusCaptureHarness);
+assert.equal(
+  focusCaptureHarness.setupTabFocusTarget,
+  "opencode",
+  "键盘切换已经指定新标签时，旧 activeElement 不能覆盖显式焦点目标"
+);
+focusCaptureHarness.containerEl.ownerDocument.activeElement = Object.assign(new TestHTMLElement(), {
+  id: "settings-search-input"
+});
+captureAgentDashboardTabFocusForTest.call(focusCaptureHarness);
+assert.equal(
+  focusCaptureHarness.setupTabFocusTarget,
+  null,
+  "焦点进入已连接的外部设置控件后，异步重绘不能抢回 Agent 标签焦点"
+);
+if (originalHTMLElement === undefined) delete (globalThis as typeof globalThis & { HTMLElement?: unknown }).HTMLElement;
+else Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: originalHTMLElement });
+
+const handleAgentDashboardKeydownForTest = new Function(
+  "event",
+  "backend",
+  extractClassMethodBody(settingsTabSource, "private handleAgentDashboardKeydown(")
+) as (this: any, event: { key: string; preventDefault: () => void }, backend: AgentBackendMode) => void;
+const keyboardSelections: Array<{ backend: AgentBackendMode; focus: boolean }> = [];
+let dashboardKeyPrevented = false;
+const keyboardDashboardHarness: any = {
+  isAgentDashboardBusy: () => false,
+  agentDashboardDefinitions: () => [
+    { backend: "codex-cli" },
+    { backend: "opencode" },
+    { backend: "hermes" }
+  ],
+  selectAgentDashboardBackend: (backend: AgentBackendMode, focus: boolean) => {
+    keyboardSelections.push({ backend, focus });
+  }
+};
+handleAgentDashboardKeydownForTest.call(
+  keyboardDashboardHarness,
+  { key: "ArrowRight", preventDefault: () => { dashboardKeyPrevented = true; } },
+  "codex-cli"
+);
+assert.deepEqual(keyboardSelections, [{ backend: "opencode", focus: true }]);
+assert.equal(dashboardKeyPrevented, true);
+keyboardDashboardHarness.setupTabFocusTarget = "opencode";
+handleAgentDashboardKeydownForTest.call(
+  keyboardDashboardHarness,
+  { key: "Tab", preventDefault: () => { throw new Error("Tab must keep its default behavior"); } },
+  "opencode"
+);
+assert.equal(keyboardDashboardHarness.setupTabFocusTarget, null, "Tab 离开 Agent 标签时必须释放焦点所有权");
+
+const selectAgentDashboardSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private selectAgentDashboardBackend"),
+  settingsTabSource.indexOf("private handleAgentDashboardKeydown")
+);
+assert.match(selectAgentDashboardSource, /this\.setupSelectedBackend = backend/);
+assert.match(selectAgentDashboardSource, /void this\.deepCheckAgentOnce\(backend\)/);
+assert.doesNotMatch(
+  selectAgentDashboardSource,
+  /backend === this\.setupSelectedBackend[\s\S]*setupTabFocusTarget = null/,
+  "点击当前标签不能清掉异步重绘需要的焦点所有权"
+);
+assert.doesNotMatch(selectAgentDashboardSource, /settings\.agentBackend|agents\.defaultBackend|saveSettings/);
+
+const runAgentSetupActionSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async runAgentSetupAction"),
+  settingsTabSource.indexOf("private async deepCheckAgentOnce")
+);
+assert.match(runAgentSetupActionSource, /const effectiveAction = action === "retry" \? retryTarget : action/);
+assert.match(runAgentSetupActionSource, /effectiveAction === "install"/);
+assert.match(runAgentSetupActionSource, /effectiveAction === "authorize"/);
+assert.match(runAgentSetupActionSource, /effectiveAction === "connect"/);
+assert.match(runAgentSetupActionSource, /if \(action === "retry"\) return this\.detectAllAgents\(true\)/);
+
+const deepCheckAgentSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async deepCheckAgentOnce"),
+  settingsTabSource.indexOf("private async detectAllAgents")
+);
+assert.match(settingsTabSource, /private readonly setupDeepCheckedBackends = new Set<AgentBackendMode>\(\)/);
+assert.match(deepCheckAgentSource, /this\.setupDeepCheckedBackends\.has\(backend\)/);
+assert.match(deepCheckAgentSource, /backend !== this\.setupSelectedBackend/);
+assert.match(deepCheckAgentSource, /this\.setupSnapshots\[backend\]\.phase !== "installed"/);
+assert.match(deepCheckAgentSource, /this\.setupDeepCheckedBackends\.add\(backend\)/);
+assert.match(deepCheckAgentSource, /await this\.connectAgent\(backend, sessionGeneration\)/);
+assert.match(deepCheckAgentSource, /catch \(error\)[\s\S]*this\.failedAgentSnapshot\(backend, current\.command, error, current\.version, "connect"\)/);
+const deepCheckAgentBody = extractClassMethodBody(settingsTabSource, "private async deepCheckAgentOnce(");
+assert.doesNotMatch(deepCheckAgentBody, /this\.setupBusy\s*=|this\.setupActiveBackend\s*=|this\.setupAbort\s*=/);
+const deepCheckAgentOnceForTest = new AsyncFunction(
+  "backend",
+  "sessionGeneration",
+  deepCheckAgentBody
+) as (this: any, backend: AgentBackendMode, sessionGeneration: number) => Promise<void>;
+let deepCheckCount = 0;
+const deepCheckHarness: any = {
+  setupBusy: false,
+  setupSessionGeneration: 7,
+  setupSessionActive: true,
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(),
+  setupSelectedBackend: "opencode",
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "installed", { command: "/bin/opencode" })
+  },
+  connectAgent: async () => { deepCheckCount += 1; },
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  },
+  failedAgentSnapshot: () => { throw new Error("unexpected deep-check failure"); },
+  scheduleDisplay(): void {}
+};
+await Promise.all([
+  deepCheckAgentOnceForTest.call(deepCheckHarness, "opencode", 7),
+  deepCheckAgentOnceForTest.call(deepCheckHarness, "opencode", 7)
+]);
+assert.equal(deepCheckCount, 1, "同一设置会话每个 Agent 只能自动深测一次");
+deepCheckHarness.setupDeepCheckedBackends.clear();
+deepCheckHarness.setupBusy = true;
+await deepCheckAgentOnceForTest.call(deepCheckHarness, "opencode", 7);
+assert.equal(deepCheckCount, 1, "其它安装或连接忙碌时不能启动第二个深测");
+deepCheckHarness.setupBusy = false;
+await deepCheckAgentOnceForTest.call(deepCheckHarness, "opencode", 6);
+assert.equal(deepCheckCount, 1, "旧设置会话不能继续启动深测");
+
+const detectAllAgentsBody = extractClassMethodBody(settingsTabSource, "private async detectAllAgents(");
+const runAgentDetectionCycleBody = extractClassMethodBody(settingsTabSource, "private async runAgentDetectionCycle(");
+assert.match(settingsTabSource, /private setupDetectionPending = false/);
+assert.match(settingsTabSource, /private setupPendingConnectSelected = false/);
+assert.match(settingsTabSource, /private setupDetectionDrainActive = false/);
+assert.match(detectAllAgentsBody, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return/);
+assert.match(detectAllAgentsBody, /this\.setupDetectionPending = true/);
+assert.match(detectAllAgentsBody, /this\.setupPendingConnectSelected = this\.setupPendingConnectSelected \|\| connectSelected/);
+assert.match(detectAllAgentsBody, /if \(this\.setupBusy \|\| this\.setupDetectionDrainActive\) return/);
+assert.match(detectAllAgentsBody, /await this\.drainPendingSetupDetection\(sessionGeneration\)/);
+assert.doesNotMatch(runAgentDetectionCycleBody, /setupDeepCheckedBackends\.clear\(\)/);
+assert.match(runAgentDetectionCycleBody, /Promise\.allSettled\(\[/);
+assert.match(
+  runAgentDetectionCycleBody,
+  /Promise\.allSettled\([\s\S]*if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return;[\s\S]*const nextSnapshots/,
+  "旧设置会话的 CLI 检测结果必须在任何写回前丢弃"
+);
+assert.match(runAgentDetectionCycleBody, /const detectionRevisions = \{ \.\.\.this\.setupConfigRevisions \}/);
+assert.match(
+  runAgentDetectionCycleBody,
+  /!isAgentSetupDetectionRevisionCurrent\(detectionRevisions\[backend\], this\.setupConfigRevisions\[backend\]\)/
+);
+assert.match(runAgentDetectionCycleBody, /this\.setupDetectionPending = true/);
+assert.match(runAgentDetectionCycleBody, /selectedDetectionIsCurrent = false/);
+assert.match(runAgentDetectionCycleBody, /this\.agentInstallers\["codex-cli"\]\.detect\(\)/);
+assert.match(runAgentDetectionCycleBody, /this\.agentInstallers\.opencode\.detect\(\)/);
+assert.match(runAgentDetectionCycleBody, /this\.agentInstallers\.hermes\.detect\(\)/);
+assert.match(runAgentDetectionCycleBody, /result\.status === "fulfilled"/);
+assert.match(runAgentDetectionCycleBody, /this\.canPreserveReadyAgentAfterDetection\(backend, previous, detected\)/);
+assert.match(runAgentDetectionCycleBody, /previous\.command !== detected\.command \|\| previous\.version !== detected\.version/);
+assert.match(runAgentDetectionCycleBody, /this\.failedAgentSnapshot\(backend, previous\.command, result\.reason, previous\.version\)/);
+assert.match(
+  runAgentDetectionCycleBody,
+  /try \{\s*await this\.plugin\.saveSettings\(true\);\s*\} catch \(error\) \{[\s\S]*this\.failedAgentSnapshot\(/
+);
+assert.match(
+  runAgentDetectionCycleBody,
+  /await this\.plugin\.saveSettings\(true\);\s*\} catch \(error\) \{\s*if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return;/,
+  "旧设置会话的保存失败不能覆盖新会话快照"
+);
+assert.match(
+  runAgentDetectionCycleBody,
+  /if \(connectSelected && selectedDetectionIsCurrent\) \{\s*await this\.deepCheckAgentOnce\(this\.setupSelectedBackend, sessionGeneration\)/,
+  "检测期间配置变化后不能深测旧 CLI 结果"
+);
+assert.match(runAgentDetectionCycleBody, /await this\.runPendingAgentAutoRepair\(sessionGeneration\)/);
+assert.ok(
+  runAgentDetectionCycleBody.indexOf("await this.deepCheckAgentOnce(this.setupSelectedBackend, sessionGeneration)")
+    < runAgentDetectionCycleBody.indexOf("await this.runPendingAgentAutoRepair(sessionGeneration)"),
+  "聊天自动修复必须在轻量检测和所选 Agent 的首次深测之后执行"
+);
+assert.match(runAgentDetectionCycleBody, /finally \{[\s\S]*this\.setupBusy = false;[\s\S]*this\.flushPendingAgentSetupInvalidations\(\)/);
+assert.doesNotMatch(runAgentDetectionCycleBody, /await this\.drainPendingSetupDetection\(\)/);
+assert.equal(isAgentSetupDetectionRevisionCurrent(4, 4), true);
+assert.equal(isAgentSetupDetectionRevisionCurrent(4, 5), false, "旧 detection revision 必须被拒绝");
+
+const runAgentDetectionCycleForTest = new AsyncFunction(
+  "connectSelected",
+  "sessionGeneration",
+  "createAgentSetupSnapshot",
+  "isAgentSetupDetectionRevisionCurrent",
+  runAgentDetectionCycleBody.replace(" as const", "")
+) as (
+  this: any,
+  connectSelected: boolean,
+  sessionGeneration: number,
+  createSnapshot: typeof createAgentSetupSnapshot,
+  isRevisionCurrent: typeof isAgentSetupDetectionRevisionCurrent
+) => Promise<void>;
+let rejectDetectionSave!: (error: Error) => void;
+let detectionSaveStarted!: () => void;
+const detectionSaveGate = new Promise<void>((_resolve, reject) => { rejectDetectionSave = reject; });
+const detectionSaveStartedGate = new Promise<void>((resolve) => { detectionSaveStarted = resolve; });
+let staleDetectionFailureWrites = 0;
+const staleDetectionHarness: any = {
+  setupSessionGeneration: 21,
+  setupSessionActive: true,
+  setupSnapshots: {
+    "codex-cli": createAgentSetupSnapshot("codex-cli", "installed", { command: "/bin/codex", version: "1.0.0" }),
+    opencode: createAgentSetupSnapshot("opencode", "installed", { command: "/bin/opencode", version: "2.0.0" }),
+    hermes: createAgentSetupSnapshot("hermes", "installed", { command: "/bin/hermes", version: "3.0.0" })
+  },
+  setupConfigRevisions: { "codex-cli": 0, opencode: 0, hermes: 0 },
+  setupVerifiedRevisions: { "codex-cli": -1, opencode: -1, hermes: -1 },
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(),
+  setupPendingInvalidations: new Set<AgentBackendMode>(),
+  setupDetectionPending: false,
+  setupPendingConnectSelected: false,
+  setupBusy: false,
+  setupActiveBackend: null,
+  setupSelectedBackend: "codex-cli",
+  agentInstallers: {
+    "codex-cli": { detect: async () => createAgentSetupSnapshot("codex-cli", "installed", { command: "/bin/codex", version: "1.0.0" }) },
+    opencode: { detect: async () => createAgentSetupSnapshot("opencode", "installed", { command: "/bin/opencode", version: "2.0.0" }) },
+    hermes: { detect: async () => createAgentSetupSnapshot("hermes", "installed", { command: "/bin/hermes", version: "3.0.0" }) }
+  },
+  plugin: {
+    settings: { setup: { lastCheckedAt: 0 } },
+    saveSettings: async () => {
+      detectionSaveStarted();
+      await detectionSaveGate;
+    }
+  },
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  },
+  canPreserveReadyAgentAfterDetection: () => false,
+  failedAgentSnapshot(backend: AgentBackendMode): ReturnType<typeof createAgentSetupSnapshot> {
+    staleDetectionFailureWrites += 1;
+    return createAgentSetupSnapshot(backend, "failed", { error: "stale save failure" });
+  },
+  flushPendingAgentSetupInvalidations(): void {},
+  scheduleDisplay(): void {},
+  deepCheckAgentOnce(): Promise<void> { return Promise.resolve(); },
+  runPendingAgentAutoRepair(): Promise<void> { return Promise.resolve(); }
+};
+const staleDetectionCycle = runAgentDetectionCycleForTest.call(
+  staleDetectionHarness,
+  false,
+  21,
+  createAgentSetupSnapshot,
+  isAgentSetupDetectionRevisionCurrent
+);
+await detectionSaveStartedGate;
+staleDetectionHarness.setupSessionGeneration = 22;
+staleDetectionHarness.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "ready", {
+  command: "/new-session/codex",
+  detail: "new session"
+});
+rejectDetectionSave(new Error("old session save failed"));
+await staleDetectionCycle;
+assert.equal(staleDetectionFailureWrites, 0, "旧会话 save rejection 不能写入 failed 快照");
+assert.equal(staleDetectionHarness.setupSnapshots["codex-cli"].detail, "new session");
+
+const drainPendingSetupDetectionSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async drainPendingSetupDetection"),
+  settingsTabSource.indexOf("private async detectAllAgents")
+);
+const drainPendingSetupDetectionBody = extractClassMethodBody(settingsTabSource, "private async drainPendingSetupDetection(");
+assert.match(drainPendingSetupDetectionBody, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\) \|\| this\.setupDetectionDrainActive\) return/);
+assert.match(drainPendingSetupDetectionSource, /while \(this\.isSetupSessionCurrent\(sessionGeneration\) && !this\.setupBusy && this\.setupDetectionPending\)/);
+assert.match(drainPendingSetupDetectionSource, /const connectSelected = this\.setupPendingConnectSelected/);
+assert.match(drainPendingSetupDetectionSource, /this\.setupDetectionPending = false/);
+assert.match(drainPendingSetupDetectionSource, /this\.setupPendingConnectSelected = false/);
+assert.match(drainPendingSetupDetectionSource, /await this\.runAgentDetectionCycle\(connectSelected, sessionGeneration\)/);
+assert.doesNotMatch(drainPendingSetupDetectionBody, /detectAllAgents\(/);
+assert.match(drainPendingSetupDetectionSource, /catch \(error\)/);
+assert.match(drainPendingSetupDetectionSource, /this\.failedAgentSnapshot\(/);
+assert.match(drainPendingSetupDetectionBody, /finally \{\s*this\.setupDetectionDrainActive = false/);
+assert.doesNotMatch(drainPendingSetupDetectionBody, /this\.setupBusy\s*=|this\.setupActiveBackend\s*=|this\.setupAbort\s*=/);
+
+const runPendingAgentAutoRepairForTest = new AsyncFunction(
+  "sessionGeneration",
+  "resolveAgentSetupDashboardState",
+  extractClassMethodBody(settingsTabSource, "private async runPendingAgentAutoRepair(")
+);
+const foreignAbortOwner = new AbortController();
+const autoRepairOwnershipHarness: any = {
+  setupAutoRepairPending: true,
+  setupSessionGeneration: 11,
+  setupSessionActive: true,
+  setupBusy: false,
+  setupDetectionPending: false,
+  setupSelectedBackend: "hermes",
+  setupSnapshots: {
+    hermes: createAgentSetupSnapshot("hermes", "missing")
+  },
+  setupActiveBackend: null,
+  setupAbort: null,
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  },
+  async runAgentSetupAction(): Promise<void> {
+    this.setupBusy = true;
+    this.setupActiveBackend = "opencode";
+    this.setupAbort = foreignAbortOwner;
+  },
+  failedAgentSnapshot(): never {
+    throw new Error("unexpected auto-repair failure");
+  },
+  scheduleDisplay(): void {}
+};
+await runPendingAgentAutoRepairForTest.call(autoRepairOwnershipHarness, 11, resolveAgentSetupDashboardState);
+assert.equal(autoRepairOwnershipHarness.setupBusy, true, "auto-repair wrapper 不能清理其它 operation 的 busy");
+assert.equal(autoRepairOwnershipHarness.setupActiveBackend, "opencode");
+assert.equal(autoRepairOwnershipHarness.setupAbort, foreignAbortOwner);
+
+const drainPendingSetupDetectionForTest = new AsyncFunction(
+  "sessionGeneration",
+  extractClassMethodBody(settingsTabSource, "private async drainPendingSetupDetection(")
+);
+const detectionCycles: boolean[] = [];
+let activeDetectionCycles = 0;
+let maxActiveDetectionCycles = 0;
+const detectionDrainHarness: any = {
+  setupSessionGeneration: 13,
+  setupSessionActive: true,
+  setupDetectionDrainActive: false,
+  setupBusy: false,
+  setupDetectionPending: true,
+  setupPendingConnectSelected: true,
+  setupSelectedBackend: "codex-cli",
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(["codex-cli", "opencode"]),
+  setupSnapshots: {
+    "codex-cli": createAgentSetupSnapshot("codex-cli", "installed", { command: "/bin/codex" })
+  },
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  },
+  drainPendingSetupDetection(): Promise<void> {
+    return Promise.resolve();
+  },
+  async runAgentDetectionCycle(connectSelected: boolean): Promise<void> {
+    activeDetectionCycles += 1;
+    maxActiveDetectionCycles = Math.max(maxActiveDetectionCycles, activeDetectionCycles);
+    detectionCycles.push(connectSelected);
+    if (detectionCycles.length === 1) {
+      this.setupDetectionPending = true;
+      this.setupPendingConnectSelected = false;
+    }
+    await Promise.resolve();
+    activeDetectionCycles -= 1;
+  },
+  failedAgentSnapshot(): never {
+    throw new Error("unexpected detection failure");
+  },
+  scheduleDisplay(): void {}
+};
+await drainPendingSetupDetectionForTest.call(detectionDrainHarness, 13);
+assert.deepEqual(detectionCycles, [true, false], "排队检测应由同一个 drain 循环顺序消费");
+assert.equal(maxActiveDetectionCycles, 1, "排队检测不能递归或并行执行");
+assert.equal(detectionDrainHarness.setupDetectionDrainActive, false);
+assert.equal(detectionDrainHarness.setupDeepCheckedBackends.has("codex-cli"), false, "显式重检应清当前 Agent 深测缓存");
+assert.equal(detectionDrainHarness.setupDeepCheckedBackends.has("opencode"), true, "显式重检不能清其它 Agent 深测缓存");
+
+const settingsTabHideSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("hide(): void"),
+  settingsTabSource.indexOf("private renderSettingsShell")
+);
+assert.match(settingsTabHideSource, /this\.setupDetectionPending = false/);
+assert.match(settingsTabHideSource, /this\.setupPendingConnectSelected = false/);
+assert.match(settingsTabHideSource, /this\.setupSessionActive = false/);
+assert.match(settingsTabHideSource, /this\.setupSessionGeneration \+= 1/);
+assert.match(settingsTabHideSource, /window\.clearTimeout\(this\.setupDetectionTimer\)/);
+assert.match(settingsTabHideSource, /window\.cancelAnimationFrame\(this\.displayFrame\)/);
+
+const downgradeUnverifiedReadySnapshotsForTest = new Function(
+  "createAgentSetupSnapshot",
+  extractClassMethodBody(settingsTabSource, "private downgradeUnverifiedReadySnapshots(")
+) as (this: any, createSnapshot: typeof createAgentSetupSnapshot) => void;
+const staleReadyHarness: any = {
+  setupSnapshots: {
+    "codex-cli": createAgentSetupSnapshot("codex-cli", "ready", { command: "/bin/codex", version: "1.0.0" }),
+    opencode: createAgentSetupSnapshot("opencode", "ready", { command: "/bin/opencode", version: "2.0.0" }),
+    hermes: createAgentSetupSnapshot("hermes", "ready", { command: "/bin/hermes", version: "3.0.0" })
+  },
+  agentDashboardDefinitions: () => [
+    { backend: "codex-cli" },
+    { backend: "opencode" },
+    { backend: "hermes" }
+  ],
+  isAgentSetupVerificationCurrent: (backend: AgentBackendMode) => backend === "hermes",
+  copy: {
+    setup: {
+      agentInstaller: {
+        agents: {
+          "codex-cli": { label: "Codex" },
+          opencode: { label: "OpenCode" },
+          hermes: { label: "Hermes" }
+        },
+        detection: {
+          cliInstalled: "installed",
+          cliMissing: (label: string) => `${label} missing`
+        }
+      }
+    }
+  }
+};
+downgradeUnverifiedReadySnapshotsForTest.call(staleReadyHarness, createAgentSetupSnapshot);
+assert.equal(staleReadyHarness.setupSnapshots["codex-cli"].phase, "installed");
+assert.equal(staleReadyHarness.setupSnapshots.opencode.phase, "installed");
+assert.equal(staleReadyHarness.setupSnapshots.hermes.phase, "ready", "当前 revision 已验证的快照不应被降级");
+
+for (const [methodStart, methodEnd] of [
+  ["private async installAgent", "private async performAgentInstall"],
+  ["private async connectAgent", "private async performAgentConnection"],
+  ["private async authorizeAgent", "private async performAgentAuthorization"]
+] as const) {
+  const operationSource = settingsTabSource.slice(
+    settingsTabSource.indexOf(methodStart),
+    settingsTabSource.indexOf(methodEnd)
+  );
+  assert.match(operationSource, /finally \{/);
+  assert.match(operationSource, /await this\.drainPendingSetupDetection\(this\.setupSessionGeneration\)/);
+  assert.ok(
+    operationSource.indexOf("finally {") < operationSource.indexOf("await this.drainPendingSetupDetection(this.setupSessionGeneration)"),
+    `${methodStart} 必须在 finally 释放 busy 后再消费排队检测`
+  );
+}
+const connectAgentSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async connectAgent"),
+  settingsTabSource.indexOf("private async performAgentConnection")
+);
+assert.match(connectAgentSource, /const controller = new AbortController\(\)/);
+assert.match(connectAgentSource, /runAgentInstallerAction\([\s\S]*signal: controller\.signal/);
+assert.match(connectAgentSource, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return;[\s\S]*this\.setupSnapshots\[backend\] = snapshot/);
+assert.match(connectAgentSource, /recordAgentSetupVerification\(backend, snapshot, configRevision, sessionGeneration\)/);
+assert.match(connectAgentSource, /if \(this\.setupAbort === controller\) this\.setupAbort = null/);
+
+const invalidateAgentSetupReadinessSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private invalidateAgentSetupReadiness"),
+  settingsTabSource.indexOf("private async runPendingAgentAutoRepair")
+);
+assert.match(settingsTabSource, /private readonly setupConfigRevisions: Record<AgentBackendMode, number>/);
+assert.match(settingsTabSource, /private readonly setupVerifiedRevisions: Record<AgentBackendMode, number>/);
+assert.match(invalidateAgentSetupReadinessSource, /this\.setupConfigRevisions\[backend\] \+= 1/);
+assert.match(invalidateAgentSetupReadinessSource, /this\.setupVerifiedRevisions\[backend\] = -1/);
+assert.match(invalidateAgentSetupReadinessSource, /this\.setupDeepCheckedBackends\.delete\(backend\)/);
+assert.match(invalidateAgentSetupReadinessSource, /createAgentSetupSnapshot\(backend, "installed"/);
+assert.match(invalidateAgentSetupReadinessSource, /command: current\.command/);
+assert.match(invalidateAgentSetupReadinessSource, /version: current\.version/);
+assert.doesNotMatch(invalidateAgentSetupReadinessSource, /createAgentSetupSnapshot\(backend, "ready"/);
+
+const invalidateAgentSetupReadinessForTest = new Function(
+  "backend",
+  "resolveAgentSetupDashboardState",
+  extractClassMethodBody(settingsTabSource, "private invalidateAgentSetupReadiness(")
+) as (this: any, backend: AgentBackendMode, resolver: typeof resolveAgentSetupDashboardState) => void;
+const revisionHarness: any = {
+  setupConfigRevisions: { "codex-cli": 0, opencode: 0, hermes: 0 },
+  setupVerifiedRevisions: { "codex-cli": 0, opencode: 0, hermes: 0 },
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(["opencode"]),
+  setupPendingInvalidations: new Set<AgentBackendMode>(),
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "ready", { command: "/bin/opencode", version: "1.0.0" })
+  },
+  applyAgentSetupInvalidation(backend: AgentBackendMode): void {
+    const current = this.setupSnapshots[backend];
+    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installed", {
+      command: current.command,
+      version: current.version
+    });
+  },
+  scheduleDisplay(): void {}
+};
+invalidateAgentSetupReadinessForTest.call(revisionHarness, "opencode", resolveAgentSetupDashboardState);
+assert.equal(revisionHarness.setupConfigRevisions.opencode, 1);
+assert.equal(revisionHarness.setupVerifiedRevisions.opencode, -1);
+assert.equal(revisionHarness.setupDeepCheckedBackends.has("opencode"), false);
+assert.equal(revisionHarness.setupSnapshots.opencode.phase, "installed");
+
+const recordAgentSetupVerificationForTest = new Function(
+  "backend",
+  "snapshot",
+  "configRevision",
+  "sessionGeneration",
+  extractClassMethodBody(settingsTabSource, "private recordAgentSetupVerification(")
+) as (this: any, backend: AgentBackendMode, snapshot: ReturnType<typeof createAgentSetupSnapshot>, configRevision: number, sessionGeneration: number) => void;
+const verificationRevisionHarness: any = {
+  setupSessionGeneration: 17,
+  setupSessionActive: true,
+  setupConfigRevisions: { "codex-cli": 2, opencode: 0, hermes: 0 },
+  setupVerifiedRevisions: { "codex-cli": -1, opencode: -1, hermes: -1 },
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(),
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  }
+};
+const revisionReadySnapshot = createAgentSetupSnapshot("codex-cli", "ready", { command: "/bin/codex", version: "2.0.0" });
+recordAgentSetupVerificationForTest.call(verificationRevisionHarness, "codex-cli", revisionReadySnapshot, 1, 17);
+assert.equal(verificationRevisionHarness.setupVerifiedRevisions["codex-cli"], -1, "旧配置完成的连接不能验证新配置");
+recordAgentSetupVerificationForTest.call(verificationRevisionHarness, "codex-cli", revisionReadySnapshot, 2, 16);
+assert.equal(verificationRevisionHarness.setupVerifiedRevisions["codex-cli"], -1, "旧设置会话不能写回绿色验证状态");
+recordAgentSetupVerificationForTest.call(verificationRevisionHarness, "codex-cli", revisionReadySnapshot, 2, 17);
+assert.equal(verificationRevisionHarness.setupVerifiedRevisions["codex-cli"], 2);
+assert.equal(verificationRevisionHarness.setupDeepCheckedBackends.has("codex-cli"), true);
+
+const preserveReadyAfterDetectionForTest = new Function(
+  "backend",
+  "previous",
+  "detected",
+  extractClassMethodBody(settingsTabSource, "private canPreserveReadyAgentAfterDetection(")
+) as (this: any, backend: AgentBackendMode, previous: ReturnType<typeof createAgentSetupSnapshot>, detected: ReturnType<typeof createAgentSetupSnapshot>) => boolean;
+const readyPreservationHarness = {
+  setupDeepCheckedBackends: new Set<AgentBackendMode>(["hermes"]),
+  isAgentSetupVerificationCurrent: (backend: AgentBackendMode) => backend === "hermes"
+};
+const readyHermesBeforeLightCheck = createAgentSetupSnapshot("hermes", "ready", { command: "/bin/hermes", version: "3.0.0" });
+const installedHermesAfterLightCheck = createAgentSetupSnapshot("hermes", "installed", { command: "/bin/hermes", version: "3.0.0" });
+assert.equal(
+  preserveReadyAfterDetectionForTest.call(readyPreservationHarness, "hermes", readyHermesBeforeLightCheck, installedHermesAfterLightCheck),
+  true,
+  "同命令、同版本且本会话已深测的 ready 应跨轻检保留"
+);
+assert.equal(
+  preserveReadyAfterDetectionForTest.call(
+    readyPreservationHarness,
+    "hermes",
+    readyHermesBeforeLightCheck,
+    createAgentSetupSnapshot("hermes", "installed", { command: "/bin/hermes", version: "3.1.0" })
+  ),
+  false,
+  "CLI 版本变化后必须重新深测"
+);
+
+const codexDefaultModelSettingsSource = renderAgentSettingsSource.slice(
+  renderAgentSettingsSource.indexOf(".setName(copy.general.defaultModel)"),
+  renderAgentSettingsSource.indexOf("return;", renderAgentSettingsSource.indexOf(".setName(copy.general.defaultModel)"))
+);
+assert.match(codexDefaultModelSettingsSource, /await this\.plugin\.saveSettings\(\)/);
+assert.match(codexDefaultModelSettingsSource, /this\.invalidateAgentSetupReadiness\("codex-cli"\)/);
+assert.equal((renderAgentSettingsSource.match(/this\.invalidateAgentSetupReadiness\("codex-cli"\)/g) ?? []).length, 4);
+assert.equal((renderAgentSettingsSource.match(/this\.invalidateAgentSetupReadiness\("hermes"\)/g) ?? []).length, 9);
+assert.doesNotMatch(
+  renderAgentSettingsSource,
+  /await this\.plugin\.saveSettings\([^\n]*\);\s*this\.invalidateAgentSetupReadiness\(/,
+  "Agent 高级配置必须在第一个 await 前同步撤销 ready"
+);
+assert.match(
+  renderAgentSettingsSource,
+  /settings\.agents\.codex\.cliPath = settings\.cliPath;[\s\S]*this\.invalidateAgentSetupReadiness\("codex-cli"\);[\s\S]*await this\.plugin\.saveSettings\(\);[\s\S]*await this\.detectAllAgents\(true\)/
+);
+assert.match(
+  renderAgentSettingsSource,
+  /hermes\.cliPath = value\.trim\(\);[\s\S]*this\.invalidateAgentSetupReadiness\("hermes"\);[\s\S]*await this\.plugin\.saveSettings\(\);[\s\S]*await this\.detectAllAgents\(true\)/
+);
+
+const renderOpenCodeAgentSettingsSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderOpenCodeAgentSettings"),
+  settingsTabSource.indexOf("private renderGeneralSettings")
+);
+assert.equal((renderOpenCodeAgentSettingsSource.match(/this\.invalidateAgentSetupReadiness\("opencode"\)/g) ?? []).length, 7);
+assert.doesNotMatch(
+  renderOpenCodeAgentSettingsSource,
+  /await this\.plugin\.saveSettings\([^\n]*\);\s*this\.invalidateAgentSetupReadiness\(/,
+  "OpenCode 高级配置必须在第一个 await 前同步撤销 ready"
+);
+assert.match(renderOpenCodeAgentSettingsSource, /testOpenCode\.onclick = \(\) => void this\.connectAgent\("opencode"\)/);
+assert.match(renderAgentSettingsSource, /testHermes\.onclick = \(\) => void this\.connectAgent\("hermes"\)/);
+assert.match(
+  renderOpenCodeAgentSettingsSource,
+  /opencode\.cliPath = value\.trim\(\);[\s\S]*this\.invalidateAgentSetupReadiness\("opencode"\);[\s\S]*await this\.plugin\.saveSettings\(\);[\s\S]*await this\.detectAllAgents\(true\)/
+);
+const openCodeModelPickerSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private addOpenCodeModelPicker"),
+  settingsTabSource.indexOf("private addOpenCodeAgentPicker")
+);
+const openCodeAgentPickerSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private addOpenCodeAgentPicker"),
+  settingsTabSource.indexOf("private async refreshOpenCodeModels")
+);
+assert.equal((openCodeModelPickerSource.match(/this\.invalidateAgentSetupReadiness\("opencode"\)/g) ?? []).length, 1);
+assert.equal((openCodeAgentPickerSource.match(/this\.invalidateAgentSetupReadiness\("opencode"\)/g) ?? []).length, 2);
+assert.doesNotMatch(
+  `${openCodeModelPickerSource}\n${openCodeAgentPickerSource}`,
+  /await this\.plugin\.saveSettings\([^\n]*\);\s*this\.invalidateAgentSetupReadiness\(/,
+  "OpenCode 模型与 Agent 选择必须先撤销 ready 再保存"
+);
+
+const displayAgentSetupTargetSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("display(): void"),
+  settingsTabSource.indexOf("hide(): void")
+);
+assert.match(
+  displayAgentSetupTargetSource,
+  /if \(this\.plugin\.agentSetupTarget\) \{[\s\S]*this\.setupAutoRepairPending = this\.plugin\.agentSetupAutoRepair;[\s\S]*this\.plugin\.agentSetupAutoRepair = false;/
+);
+assert.match(settingsTabSource, /private setupAutoRepairPending = false/);
+assert.equal((settingsTabSource.match(/setupAutoRepairPending = this\.plugin\.agentSetupAutoRepair/g) ?? []).length, 1);
+assert.doesNotMatch(settingsTabSource, /setupAutoRepairPending = true/);
+const runPendingAgentAutoRepairSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async runPendingAgentAutoRepair"),
+  settingsTabSource.indexOf("private async detectAllAgents")
+);
+const runPendingAgentAutoRepairBody = extractClassMethodBody(settingsTabSource, "private async runPendingAgentAutoRepair(");
+assert.match(runPendingAgentAutoRepairSource, /if \(!this\.setupAutoRepairPending \|\| this\.setupBusy \|\| this\.setupDetectionPending\) return/);
+assert.ok(
+  runPendingAgentAutoRepairSource.indexOf("this.setupAutoRepairPending = false")
+    < runPendingAgentAutoRepairSource.indexOf("await this.runAgentSetupAction"),
+  "自动修复必须先消费 pending 标记，确保每次聊天恢复只执行一次"
+);
+assert.match(runPendingAgentAutoRepairSource, /state\.primaryAction === "install"/);
+assert.match(runPendingAgentAutoRepairSource, /state\.primaryAction === "authorize"/);
+assert.match(runPendingAgentAutoRepairSource, /state\.primaryAction === "connect"/);
+assert.match(runPendingAgentAutoRepairSource, /state\.primaryAction === "retry" && state\.retryTarget/);
+assert.match(runPendingAgentAutoRepairSource, /catch \(error\)[\s\S]*this\.failedAgentSnapshot\(/);
+assert.doesNotMatch(runPendingAgentAutoRepairBody, /this\.setupBusy\s*=|this\.setupActiveBackend\s*=|this\.setupAbort\s*=/);
+assert.equal((settingsTabSource.match(/await this\.runPendingAgentAutoRepair\(sessionGeneration\)/g) ?? []).length, 1);
+
+const completeAgentSetupSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async completeAgentSetup"),
+  settingsTabSource.indexOf("private renderTopTabs")
+);
+assert.match(completeAgentSetupSource, /readyAgentBackendToCommit\(this\.setupSelectedBackend, selected\)/);
+assert.match(completeAgentSetupSource, /if \(!backend \|\| !this\.isAgentSetupVerificationCurrent\(backend\)\) \{[\s\S]*return;[\s\S]*\}/);
+assert.ok(
+  completeAgentSetupSource.indexOf("isAgentSetupVerificationCurrent") < completeAgentSetupSource.indexOf("this.plugin.settings.agentBackend = backend"),
+  "只有当前配置 revision 的 ready 快照才能提交默认 Agent"
+);
+assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agentBackend = backend/);
+assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agents\.defaultBackend = backend/);
+assert.match(completeAgentSetupSource, /if \(this\.setupBusy\) return/);
+assert.match(completeAgentSetupSource, /const previousAgentBackend = this\.plugin\.settings\.agentBackend/);
+assert.match(completeAgentSetupSource, /const previousDefaultBackend = this\.plugin\.settings\.agents\.defaultBackend/);
+assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agentBackend = previousAgentBackend/);
+assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agents\.defaultBackend = previousDefaultBackend/);
+assert.match(completeAgentSetupSource, /finally \{[\s\S]*this\.setupBusy = false/);
+
+const completeAgentSetupForTest = new AsyncFunction(
+  "Notice",
+  "readyAgentBackendToCommit",
+  "completeSetupState",
+  extractClassMethodBody(settingsTabSource, "private async completeAgentSetup(")
+) as (
+  this: any,
+  NoticeCtor: new (message: string) => unknown,
+  readyBackend: typeof readyAgentBackendToCommit,
+  completeState: typeof completeSetupState
+) => Promise<void>;
+const setupNotices: string[] = [];
+const SetupNotice = function (this: unknown, message: string): void {
+  setupNotices.push(message);
+} as unknown as new (message: string) => unknown;
+const failedSaveOriginalSetup = { completedAt: 0, lastCheckedAt: 10, dismissedVersion: "" };
+let failedSaveActivateCount = 0;
+const failedSaveHarness: any = {
+  setupBusy: false,
+  setupSelectedBackend: "opencode",
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "ready", { command: "/bin/opencode" })
+  },
+  isAgentSetupVerificationCurrent: () => true,
+  plugin: {
+    manifest: { version: "1.2.2" },
+    settings: {
+      agentBackend: "codex-cli",
+      agents: { defaultBackend: "codex-cli" },
+      setup: failedSaveOriginalSetup
+    },
+    saveSettings: async () => { throw new Error("disk unavailable"); },
+    activateView: async () => { failedSaveActivateCount += 1; }
+  },
+  copy: {
+    setup: {
+      startBlocked: "blocked",
+      startSaveFailed: "save failed",
+      startActivateFailed: "activate failed"
+    }
+  },
+  scheduleDisplay(): void {}
+};
+await completeAgentSetupForTest.call(
+  failedSaveHarness,
+  SetupNotice,
+  readyAgentBackendToCommit,
+  completeSetupState
+);
+assert.equal(failedSaveHarness.plugin.settings.agentBackend, "codex-cli");
+assert.equal(failedSaveHarness.plugin.settings.agents.defaultBackend, "codex-cli");
+assert.equal(failedSaveHarness.plugin.settings.setup, failedSaveOriginalSetup, "保存失败必须恢复原 setup 对象");
+assert.equal(failedSaveHarness.setupBusy, false);
+assert.equal(failedSaveActivateCount, 0, "保存失败后不能打开聊天面板");
+assert.ok(setupNotices.includes("save failed"));
+
+let releaseSetupSave!: () => void;
+const setupSaveGate = new Promise<void>((resolve) => { releaseSetupSave = resolve; });
+let setupSaveCount = 0;
+let setupActivateCount = 0;
+const singleFlightHarness: any = {
+  setupBusy: false,
+  setupSelectedBackend: "hermes",
+  setupSnapshots: {
+    hermes: createAgentSetupSnapshot("hermes", "ready", { command: "/bin/hermes" })
+  },
+  isAgentSetupVerificationCurrent: () => true,
+  plugin: {
+    manifest: { version: "1.2.2" },
+    settings: {
+      agentBackend: "codex-cli",
+      agents: { defaultBackend: "codex-cli" },
+      setup: { completedAt: 0, lastCheckedAt: 10, dismissedVersion: "" }
+    },
+    saveSettings: async () => {
+      setupSaveCount += 1;
+      await setupSaveGate;
+    },
+    activateView: async () => { setupActivateCount += 1; }
+  },
+  copy: failedSaveHarness.copy,
+  scheduleDisplay(): void {}
+};
+const firstSetupCompletion = completeAgentSetupForTest.call(
+  singleFlightHarness,
+  SetupNotice,
+  readyAgentBackendToCommit,
+  completeSetupState
+);
+await Promise.resolve();
+const secondSetupCompletion = completeAgentSetupForTest.call(
+  singleFlightHarness,
+  SetupNotice,
+  readyAgentBackendToCommit,
+  completeSetupState
+);
+await Promise.resolve();
+assert.equal(setupSaveCount, 1, "开始使用双击只能触发一次保存");
+assert.equal(singleFlightHarness.setupBusy, true);
+releaseSetupSave();
+await Promise.all([firstSetupCompletion, secondSetupCompletion]);
+assert.equal(setupActivateCount, 1, "开始使用双击只能打开一次聊天面板");
+assert.equal(singleFlightHarness.setupBusy, false);
+
+const openAgentTerminalFallbackSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async openAgentTerminalFallback"),
+  settingsTabSource.indexOf("private async completeAgentSetup")
+);
+assert.match(openAgentTerminalFallbackSource, /catch \{\s*copied = false/);
+assert.ok(
+  openAgentTerminalFallbackSource.indexOf("catch {") < openAgentTerminalFallbackSource.indexOf("await openTerminalForSetup"),
+  "剪贴板失败后仍必须继续打开终端"
+);
+const openAgentTerminalFallbackForTest = new AsyncFunction(
+  "navigator",
+  "openTerminalForSetup",
+  "process",
+  "Notice",
+  "backend",
+  extractClassMethodBody(settingsTabSource, "private async openAgentTerminalFallback(")
+) as (
+  this: any,
+  navigatorValue: unknown,
+  openTerminal: (platform: NodeJS.Platform) => Promise<boolean>,
+  processValue: { platform: NodeJS.Platform },
+  NoticeCtor: new (message: string) => unknown,
+  backend: AgentBackendMode
+) => Promise<void>;
+let terminalOpenCount = 0;
+const terminalNotices: string[] = [];
+const TerminalNotice = function (this: unknown, message: string): void {
+  terminalNotices.push(message);
+} as unknown as new (message: string) => unknown;
+await openAgentTerminalFallbackForTest.call(
+  {
+    copy: {
+      setup: {
+        terminalOpened: "opened-and-copied",
+        terminalOpenedWithoutCopy: "opened-without-copy",
+        terminalCopied: "copied-only",
+        terminalUnavailable: "unavailable",
+        agentInstaller: { hermesDocsOpenFailed: "docs failed" }
+      }
+    }
+  },
+  { clipboard: { writeText: async () => { throw new Error("clipboard denied"); } } },
+  async () => { terminalOpenCount += 1; return true; },
+  { platform: "darwin" },
+  TerminalNotice,
+  "opencode"
+);
+assert.equal(terminalOpenCount, 1, "剪贴板拒绝时仍应打开终端");
+assert.deepEqual(terminalNotices, ["opened-without-copy"]);
+
+const invalidateActiveCodexProviderSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private invalidateActiveCodexProvider"),
+  settingsTabSource.indexOf("private async runPendingAgentAutoRepair")
+);
+assert.match(invalidateActiveCodexProviderSource, /this\.plugin\.settings\.providerMode !== "custom-api"/);
+assert.match(invalidateActiveCodexProviderSource, /this\.plugin\.settings\.activeApiProviderId !== providerId/);
+assert.match(invalidateActiveCodexProviderSource, /this\.invalidateAgentSetupReadiness\("codex-cli"\)/);
+
+const renderApiProviderManagerSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderApiProviderManager"),
+  settingsTabSource.indexOf("private renderPromptEnhancerSettings")
+);
+assert.match(
+  renderApiProviderManagerSource,
+  /loginButton\.onclick = async \(\) => \{[\s\S]*providerMode = "codex-login";[\s\S]*this\.invalidateAgentSetupReadiness\("codex-cli"\);[\s\S]*await this\.plugin\.saveSettings\(true\);[\s\S]*await this\.plugin\.reconnectCodex\(\)/
+);
+assert.match(
+  renderApiProviderManagerSource,
+  /this\.plugin\.settings\.activeApiProviderId = provider\.id;[\s\S]*this\.invalidateActiveCodexProvider\(provider\.id\);[\s\S]*await this\.plugin\.saveSettings\(true\)/
+);
+
+const renderApiProviderRowSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private renderApiProviderRow"),
+  settingsTabSource.indexOf("private addProviderText")
+);
+assert.match(
+  renderApiProviderRowSource,
+  /enable\.onclick = async \(\) => \{[\s\S]*providerMode = "custom-api";[\s\S]*activeApiProviderId = provider\.id;[\s\S]*this\.invalidateAgentSetupReadiness\("codex-cli"\);[\s\S]*await this\.plugin\.saveSettings\(true\);[\s\S]*await this\.plugin\.reconnectCodex\(\)/
+);
+assert.match(
+  renderApiProviderRowSource,
+  /const wasActive = [^;]+;[\s\S]*removeApiProvider\(this\.plugin\.settings, provider\.id\);[\s\S]*if \(wasActive\) this\.invalidateAgentSetupReadiness\("codex-cli"\);[\s\S]*await this\.plugin\.saveSettings\(true\)/
+);
+assert.equal((renderApiProviderRowSource.match(/this\.invalidateActiveCodexProvider\(provider\.id\)/g) ?? []).length, 4);
+assert.doesNotMatch(
+  renderApiProviderRowSource,
+  /await this\.plugin\.saveSettings\([^\n]*\);\s*this\.invalidate(?:ActiveCodexProvider|AgentSetupReadiness)\(/,
+  "当前 Codex Provider 的关键字段必须先撤销 ready 再保存"
+);
+for (const criticalFieldPattern of [
+  /provider\.baseUrl = value\.trim\(\);[\s\S]*this\.invalidateActiveCodexProvider\(provider\.id\)/,
+  /provider\.models = models;[\s\S]*this\.invalidateActiveCodexProvider\(provider\.id\)/,
+  /provider\.apiKey = value\.trim\(\);[\s\S]*this\.invalidateActiveCodexProvider\(provider\.id\)/,
+  /provider\.queryParams = parseQueryParams\(value\);[\s\S]*this\.invalidateActiveCodexProvider\(provider\.id\)/
+]) {
+  assert.match(renderApiProviderRowSource, criticalFieldPattern);
+}
 const setupCheckConnectionSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private async connectCodexAgent"),
   settingsTabSource.indexOf("private async connectOpenCodeAgent")
@@ -3753,6 +4726,42 @@ assert.equal(
 );
 
 const settingsStyles = await readFile(path.join(process.cwd(), "styles.css"), "utf8");
+const agentDashboardCssStart = settingsStyles.indexOf(".codex-agent-dashboard {");
+const agentDashboardCssEndCandidate = settingsStyles.indexOf(".codex-settings-tabs {", agentDashboardCssStart);
+const agentDashboardCss = settingsStyles.slice(
+  agentDashboardCssStart,
+  agentDashboardCssEndCandidate > agentDashboardCssStart ? agentDashboardCssEndCandidate : settingsStyles.length
+);
+assert.ok(agentDashboardCssStart >= 0, "缺少 Agent 仪表盘 CSS");
+assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard"), /container-type:\s*inline-size/);
+const agentDashboardLiveCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-live");
+assert.match(agentDashboardLiveCss, /position:\s*absolute/);
+assert.match(agentDashboardLiveCss, /width:\s*1px/);
+assert.match(agentDashboardLiveCss, /height:\s*1px/);
+assert.match(agentDashboardLiveCss, /overflow:\s*hidden/);
+assert.match(agentDashboardCss, /@container \(max-width:\s*460px\)/);
+assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy"), /border-color:\s*transparent/);
+assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy::before"), /conic-gradient/);
+assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy::before"), /animation:\s*codex-agent-dashboard-border-spin/);
+assert.match(agentDashboardCss, /@keyframes codex-agent-dashboard-border-spin[\s\S]*transform:\s*rotate\(1turn\)/);
+assert.match(
+  agentDashboardCss,
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard\.is-busy::before\s*\{[^}]*animation:\s*none/
+);
+assert.match(
+  agentDashboardCss,
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard-tab\.is-busy \.codex-agent-dashboard-dot\s*\{[^}]*animation:\s*none/
+);
+const dashboardMissingDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-dot");
+const dashboardReadyDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-ready .codex-agent-dashboard-dot");
+const dashboardFailedDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-failed .codex-agent-dashboard-dot");
+const dashboardAttentionDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-attention .codex-agent-dashboard-dot");
+const dashboardBusyDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot");
+assert.match(dashboardMissingDotCss, /background:\s*var\(--text-faint\)/);
+assert.match(dashboardReadyDotCss, /background:\s*var\(--text-success\)/);
+assert.match(dashboardFailedDotCss, /background:\s*var\(--text-error\)/);
+assert.match(dashboardAttentionDotCss, /background:\s*var\(--text-warning\)/);
+assert.match(dashboardBusyDotCss, /background:\s*var\(--interactive-accent\)/);
 const knowledgeCommandMenuCss = cssRuleBody(settingsStyles, ".codex-knowledge-command-menu");
 const knowledgeCommandItemCss = cssRuleBody(settingsStyles, ".codex-command-item");
 const knowledgeCommandSelectedCss = cssRuleBody(settingsStyles, ".codex-command-item.is-selected");
@@ -6218,6 +7227,19 @@ assert.match(formatHermesError("No inference provider configured"), /Hermes 推�
 const hermesBackendSource = await readFile(path.join(process.cwd(), "src/core/hermes-backend.ts"), "utf8");
 const connectionServiceSource = await readFile(path.join(process.cwd(), "src/plugin/connection-service.ts"), "utf8");
 assert.match(connectionServiceSource, /if \(!\/\\bPONG\\b\/i\.test\(probe\.text\.trim\(\)\)\) throw new Error/);
+const hermesConnectionCheckSource = connectionServiceSource.slice(
+  connectionServiceSource.indexOf("async testHermesConnection"),
+  connectionServiceSource.indexOf("private getServerRequestRouter")
+);
+assert.match(hermesConnectionCheckSource, /signal\?: AbortSignal/);
+assert.match(hermesConnectionCheckSource, /const previousHermes = \{ \.\.\.hermes \}/);
+assert.match(hermesConnectionCheckSource, /abortSignal: options\.signal/);
+assert.match(hermesConnectionCheckSource, /Object\.assign\(hermes, previousHermes\);\s*throw error/);
+assert.ok(
+  hermesConnectionCheckSource.indexOf("throwIfConnectionTestAborted(options.signal);")
+    < hermesConnectionCheckSource.indexOf("await this.plugin.saveSettings(true)"),
+  "Hermes 设置页连接检查必须在保存前响应设置会话取消"
+);
 const hermesPollRunSource = hermesBackendSource.slice(hermesBackendSource.indexOf("private async pollRun"), hermesBackendSource.indexOf("private async fetchJson"));
 assert.match(hermesBackendSource, /const HERMES_INITIAL_POLL_DELAY_MS = 500/);
 assert.match(hermesBackendSource, /const HERMES_MAX_POLL_DELAY_MS = 5_000/);
@@ -7582,6 +8604,135 @@ for (const sourceRoot of [path.join(process.cwd(), "src"), path.join(process.cwd
 
 const zhAgentInstallerCopy = settingsCopy("zh-CN").setup.agentInstaller;
 const enAgentInstallerCopy = settingsCopy("en").setup.agentInstaller;
+const dashboardPhaseCases = [
+  {
+    snapshot: createAgentSetupSnapshot("codex-cli", "detecting"),
+    expected: { status: "detecting", tone: "busy", busy: true, installed: false, primaryAction: null, retryTarget: null }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("opencode", "missing"),
+    expected: { status: "missing", tone: "missing", busy: false, installed: false, primaryAction: "install", retryTarget: "install" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("opencode", "installed", { command: "/bin/opencode" }),
+    expected: { status: "installed", tone: "attention", busy: false, installed: true, primaryAction: "connect", retryTarget: "connect" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("hermes", "installing"),
+    expected: { status: "installing", tone: "busy", busy: true, installed: false, primaryAction: "cancel", retryTarget: "install" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("hermes", "needs-auth", { command: "/bin/hermes" }),
+    expected: { status: "needs-auth", tone: "attention", busy: false, installed: true, primaryAction: "authorize", retryTarget: "authorize" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("hermes", "authorizing", { command: "/bin/hermes" }),
+    expected: { status: "authorizing", tone: "busy", busy: true, installed: true, primaryAction: "cancel", retryTarget: "authorize" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("codex-cli", "connecting", { command: "/bin/codex" }),
+    expected: { status: "connecting", tone: "busy", busy: true, installed: true, primaryAction: null, retryTarget: "connect" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("codex-cli", "ready", { command: "/bin/codex" }),
+    expected: { status: "ready", tone: "ready", busy: false, installed: true, primaryAction: "start", retryTarget: null }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("opencode", "failed"),
+    expected: { status: "failed", tone: "failed", busy: false, installed: false, primaryAction: "retry", retryTarget: null }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("opencode", "cancelled"),
+    expected: { status: "cancelled", tone: "missing", busy: false, installed: false, primaryAction: "retry", retryTarget: null }
+  }
+] as const;
+assert.equal(dashboardPhaseCases.length, 10);
+for (const { snapshot, expected } of dashboardPhaseCases) {
+  assert.deepEqual(resolveAgentSetupDashboardState(snapshot), expected, `仪表盘阶段映射错误：${snapshot.phase}`);
+}
+
+for (const retryCase of [
+  {
+    snapshot: createAgentSetupSnapshot("codex-cli", "failed", { lastAction: "install" }),
+    expected: { tone: "failed", installed: false, retryTarget: "install" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("codex-cli", "failed", { command: "/bin/codex", lastAction: "authorize" }),
+    expected: { tone: "failed", installed: true, retryTarget: "authorize" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("hermes", "cancelled", { lastAction: "install" }),
+    expected: { tone: "missing", installed: false, retryTarget: "install" }
+  },
+  {
+    snapshot: createAgentSetupSnapshot("hermes", "cancelled", { command: "/bin/hermes", lastAction: "connect" }),
+    expected: { tone: "attention", installed: true, retryTarget: "connect" }
+  }
+] as const) {
+  const resolved = resolveAgentSetupDashboardState(retryCase.snapshot);
+  assert.equal(resolved.tone, retryCase.expected.tone);
+  assert.equal(resolved.installed, retryCase.expected.installed);
+  assert.equal(resolved.primaryAction, "retry");
+  assert.equal(resolved.retryTarget, retryCase.expected.retryTarget);
+}
+
+const failedCliVersionDetection = resolveAgentSetupDashboardState(createAgentSetupSnapshot("codex-cli", "failed", {
+  command: "/Applications/ChatGPT.app/Contents/Resources/codex",
+  error: "version check failed"
+}));
+assert.equal(failedCliVersionDetection.retryTarget, null, "检测失败不能猜成连接，应先重新执行轻量检测");
+const cancelledCliVersionDetection = resolveAgentSetupDashboardState(createAgentSetupSnapshot("hermes", "cancelled", {
+  command: "/Users/demo/.local/bin/hermes",
+  version: "unknown",
+  detail: "version inspection cancelled"
+}));
+assert.equal(cancelledCliVersionDetection.retryTarget, null, "没有 lastAction 的取消快照也必须回到轻量检测");
+
+const invalidatedReadySnapshot = createAgentSetupSnapshot("opencode", "installed", {
+  command: "/Users/demo/.local/bin/opencode",
+  version: "1.0.0"
+});
+assert.equal(readyAgentBackendToCommit("opencode", invalidatedReadySnapshot), null, "高级配置变更后的 installed 快照不能沿用旧绿灯提交默认 Agent");
+
+assert.equal(resolveAgentSetupProviderModelLabel({
+  providerId: "",
+  modelId: "",
+  suffix: " · default",
+  defaultVerified: true,
+  defaultVerifiedLabel: "默认配置已验证",
+  unavailableLabel: "暂不可用"
+}), "默认配置已验证 · default");
+assert.equal(resolveAgentSetupProviderModelLabel({
+  providerId: "nous",
+  modelId: "hermes-3",
+  defaultVerified: true,
+  defaultVerifiedLabel: "默认配置已验证",
+  unavailableLabel: "暂不可用"
+}), "nous / hermes-3", "显式 Provider / 模型应优先于默认配置文案");
+assert.equal(resolveAgentSetupProviderModelLabel({
+  providerId: "",
+  modelId: "",
+  defaultVerified: false,
+  defaultVerifiedLabel: "默认配置已验证",
+  unavailableLabel: "暂不可用"
+}), "暂不可用", "未验证的 Hermes 默认配置不能显示为已验证");
+
+for (const language of ["zh-CN", "en"] as const) {
+  const dashboardCopy = settingsCopy(language).setup.agentInstaller.dashboard;
+  for (const phase of ["detecting", "missing", "installed", "installing", "needs-auth", "authorizing", "connecting", "ready", "failed", "cancelled"] as const) {
+    assert.ok(dashboardCopy.status[phase].trim().length > 0, `${language} 缺少 ${phase} 可见状态文案`);
+    assert.ok(dashboardCopy.title[phase].trim().length > 0, `${language} 缺少 ${phase} 状态标题`);
+    assert.ok(dashboardCopy.description[phase].trim().length > 0, `${language} 缺少 ${phase} 状态解释`);
+  }
+  assert.ok(dashboardCopy.ariaLabel.trim().length > 0);
+  assert.ok(dashboardCopy.liveRegionLabel.trim().length > 0);
+  assert.ok(dashboardCopy.meta.defaultVerified.trim().length > 0);
+  const setupCopy = settingsCopy(language).setup;
+  assert.ok(setupCopy.terminalOpenedWithoutCopy.trim().length > 0);
+  assert.ok(setupCopy.terminalUnavailable.trim().length > 0);
+  assert.ok(setupCopy.startSaveFailed.trim().length > 0);
+  assert.ok(setupCopy.startActivateFailed.trim().length > 0);
+}
 const detectingAgentSetup = createAgentSetupSnapshot("codex-cli");
 assert.equal(resolveAgentSetupPrimary(detectingAgentSetup, zhAgentInstallerCopy).label, "正在检测");
 assert.equal(resolveAgentSetupPrimary(detectingAgentSetup, zhAgentInstallerCopy).disabled, true);

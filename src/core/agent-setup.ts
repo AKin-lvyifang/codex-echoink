@@ -16,6 +16,18 @@ export type AgentSetupPhase =
   | "cancelled";
 
 export type AgentSetupNextAction = "install" | "authorize" | "connect" | "start" | "retry" | "cancel" | null;
+export type AgentInstallerAction = "install" | "authorize" | "connect";
+
+export type AgentSetupDashboardTone = "ready" | "failed" | "missing" | "attention" | "busy";
+
+export interface AgentSetupDashboardState {
+  status: AgentSetupPhase;
+  tone: AgentSetupDashboardTone;
+  busy: boolean;
+  installed: boolean;
+  primaryAction: AgentSetupNextAction;
+  retryTarget: AgentInstallerAction | null;
+}
 
 export interface AgentSetupSnapshot {
   backend: AgentSetupBackend;
@@ -26,6 +38,8 @@ export interface AgentSetupSnapshot {
   logs: string;
   error: string;
   nextAction: AgentSetupNextAction;
+  /** In-memory operation context used to retry a failed or cancelled action directly. */
+  lastAction?: AgentInstallerAction | null;
   checkedAt: number;
 }
 
@@ -45,7 +59,6 @@ export interface AgentInstaller {
 }
 
 export type AgentInstallerRegistry = Readonly<Record<AgentSetupBackend, AgentInstaller>>;
-export type AgentInstallerAction = "install" | "authorize" | "connect";
 export type AgentInstallerCopy = SettingsCopy["setup"]["agentInstaller"];
 
 export interface AgentSetupPrimaryState {
@@ -75,6 +88,7 @@ export function createAgentSetupSnapshot(
     logs: "",
     error: "",
     nextAction: defaultNextAction(phase),
+    lastAction: defaultLastAction(phase),
     checkedAt: 0,
     ...patch
   };
@@ -83,6 +97,65 @@ export function createAgentSetupSnapshot(
     logs: limitedAgentSetupLog(snapshot.logs),
     error: limitedAgentSetupLog(snapshot.error, 2_000)
   };
+}
+
+/**
+ * Resolves the setup snapshot into presentation-agnostic dashboard semantics.
+ * Labels remain in the settings i18n layer; this function only decides state,
+ * tone and actions. `lastAction` is intentionally transient and is never part
+ * of the persisted plugin settings schema.
+ */
+export function resolveAgentSetupDashboardState(snapshot: AgentSetupSnapshot): AgentSetupDashboardState {
+  const status = snapshot.phase;
+  const busy = status === "detecting"
+    || status === "installing"
+    || status === "authorizing"
+    || status === "connecting";
+
+  let tone: AgentSetupDashboardTone;
+  if (busy) tone = "busy";
+  else if (status === "ready") tone = "ready";
+  else if (status === "failed") tone = "failed";
+  else if (status === "missing") tone = "missing";
+  else if (status === "cancelled") tone = snapshot.command ? "attention" : "missing";
+  else tone = "attention";
+
+  let primaryAction: AgentSetupNextAction;
+  if (status === "detecting" || status === "connecting") primaryAction = null;
+  else if (status === "installing" || status === "authorizing") primaryAction = "cancel";
+  else if (status === "missing") primaryAction = "install";
+  else if (status === "installed") primaryAction = "connect";
+  else if (status === "needs-auth") primaryAction = "authorize";
+  else if (status === "ready") primaryAction = "start";
+  else primaryAction = "retry";
+
+  return {
+    status,
+    tone,
+    busy,
+    installed: isAgentSetupInstalled(snapshot),
+    primaryAction,
+    retryTarget: resolveAgentSetupRetryTarget(snapshot)
+  };
+}
+
+export function isAgentSetupDetectionRevisionCurrent(startRevision: number, currentRevision: number): boolean {
+  return startRevision === currentRevision;
+}
+
+export function resolveAgentSetupProviderModelLabel(input: {
+  providerId: string;
+  modelId: string;
+  suffix?: string;
+  defaultVerified: boolean;
+  defaultVerifiedLabel: string;
+  unavailableLabel: string;
+}): string {
+  const providerModel = [input.providerId.trim(), input.modelId.trim()].filter(Boolean).join(" / ");
+  const suffix = input.suffix ?? "";
+  if (providerModel) return `${providerModel}${suffix}`;
+  if (input.defaultVerified) return `${input.defaultVerifiedLabel}${suffix}`;
+  return input.unavailableLabel;
 }
 
 export function resolveAgentSetupPrimary(snapshot: AgentSetupSnapshot, copy: AgentInstallerCopy): AgentSetupPrimaryState {
@@ -134,10 +207,14 @@ export async function runAgentInstallerAction(
 ): Promise<AgentSetupSnapshot> {
   const installer = installers[backend];
   if (installer.backend !== backend) throw new Error(`Agent installer backend mismatch: ${backend}`);
-  if (action === "install") return await installer.install(context);
-  if (action === "connect") return await installer.connect(context);
-  if (!installer.authorize) throw new Error(`${BACKEND_LABELS[backend]} 不支持自动授权。`);
-  return await installer.authorize(context);
+  let snapshot: AgentSetupSnapshot;
+  if (action === "install") snapshot = await installer.install(context);
+  else if (action === "connect") snapshot = await installer.connect(context);
+  else {
+    if (!installer.authorize) throw new Error(`${BACKEND_LABELS[backend]} 不支持自动授权。`);
+    snapshot = await installer.authorize(context);
+  }
+  return { ...snapshot, lastAction: action };
 }
 
 export function readyAgentBackendToCommit(
@@ -154,5 +231,33 @@ function defaultNextAction(phase: AgentSetupPhase): AgentSetupNextAction {
   if (phase === "needs-auth") return "authorize";
   if (phase === "ready") return "start";
   if (phase === "failed" || phase === "cancelled") return "retry";
+  return null;
+}
+
+function defaultLastAction(phase: AgentSetupPhase): AgentInstallerAction | null {
+  if (phase === "installing") return "install";
+  if (phase === "authorizing") return "authorize";
+  if (phase === "connecting") return "connect";
+  return null;
+}
+
+function isAgentSetupInstalled(snapshot: AgentSetupSnapshot): boolean {
+  if (snapshot.phase === "installed"
+    || snapshot.phase === "needs-auth"
+    || snapshot.phase === "authorizing"
+    || snapshot.phase === "connecting"
+    || snapshot.phase === "ready") return true;
+  return Boolean(snapshot.command);
+}
+
+function resolveAgentSetupRetryTarget(snapshot: AgentSetupSnapshot): AgentInstallerAction | null {
+  if (snapshot.lastAction) return snapshot.lastAction;
+  if (snapshot.nextAction === "install" || snapshot.nextAction === "authorize" || snapshot.nextAction === "connect") {
+    return snapshot.nextAction;
+  }
+  if (snapshot.phase === "missing" || snapshot.phase === "installing") return "install";
+  if (snapshot.phase === "needs-auth" || snapshot.phase === "authorizing") return "authorize";
+  if (snapshot.phase === "installed" || snapshot.phase === "connecting") return "connect";
+  if (snapshot.phase === "failed" || snapshot.phase === "cancelled") return null;
   return null;
 }

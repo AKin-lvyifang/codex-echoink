@@ -123,9 +123,11 @@ export class EchoInkConnectionService {
     return await this.getEchoInkMcpBrokerService().callTool(input);
   }
 
-  async testHermesConnection(options: { notify?: boolean } = {}): Promise<HermesConnectionTestResult> {
+  async testHermesConnection(options: { notify?: boolean; signal?: AbortSignal } = {}): Promise<HermesConnectionTestResult> {
     const notify = options.notify !== false;
     const hermes = this.plugin.settings.agents.hermes;
+    const previousHermes = { ...hermes };
+    throwIfConnectionTestAborted(options.signal);
     if (isSyntheticHermesDefaultModel(hermes.providerId, hermes.modelId)) {
       hermes.providerId = "";
       hermes.modelId = "";
@@ -139,7 +141,9 @@ export class EchoInkConnectionService {
     });
     try {
       await backend.connect();
+      throwIfConnectionTestAborted(options.signal);
       const models = await backend.listModels();
+      throwIfConnectionTestAborted(options.signal);
       const info = backend.getConnectionInfo();
       hermes.version = info.version;
       hermes.lastConnectedAt = Date.now();
@@ -156,9 +160,11 @@ export class EchoInkConnectionService {
           prompt: "只回复 PONG",
           permission: "read-only",
           timeoutMs: 60000,
+          abortSignal: options.signal,
           ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
           profile: hermes.profile
         });
+        throwIfConnectionTestAborted(options.signal);
         if (!/\bPONG\b/i.test(probe.text.trim())) throw new Error("Hermes 最小连接检查没有返回 PONG");
         hermes.providerConfigured = true;
         hermes.lastProviderCheckAt = Date.now();
@@ -168,6 +174,7 @@ export class EchoInkConnectionService {
         hermes.lastProviderCheckAt = Date.now();
         hermes.lastProviderError = providerError instanceof Error ? providerError.message : String(providerError);
       }
+      throwIfConnectionTestAborted(options.signal);
       await this.plugin.saveSettings(true);
       const message = hermes.providerConfigured
         ? `Hermes 已检测：${info.version || "version unknown"}，provider 可用`
@@ -175,6 +182,10 @@ export class EchoInkConnectionService {
       if (notify) new Notice(message);
       return { connected: true, providerConfigured: hermes.providerConfigured, message, version: info.version };
     } catch (error) {
+      if (options.signal?.aborted || isConnectionTestAbortError(error)) {
+        Object.assign(hermes, previousHermes);
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       hermes.lastError = message;
       await this.plugin.saveSettings(true);
@@ -252,4 +263,15 @@ export class EchoInkConnectionService {
       await backend.disconnect().catch(swallowError("disconnect Hermes skill resource backend"));
     }
   }
+}
+
+function throwIfConnectionTestAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error("Hermes connection check cancelled");
+  error.name = "AbortError";
+  throw error;
+}
+
+function isConnectionTestAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
