@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import type { HarnessEvent } from "../../harness/contracts/event";
+import { normalizeHarnessRunUsage, type HarnessEvent } from "../../harness/contracts/event";
 import type { HarnessRunRequest } from "../../harness/contracts/run";
 import type { ContextBundle, ContextSection } from "../../harness/contracts/context";
 import { CAPABILITY_LEVELS } from "../../harness/contracts/capability";
@@ -18,6 +18,7 @@ import type { AgentRunRequest } from "../../harness/agents/adapter";
 import type { StoredSession } from "../../settings/settings";
 
 export async function runHarnessV2ContractTests(): Promise<void> {
+  assertHarnessRunUsageNormalization();
   await assertArchitectureDecisionRecords();
   await assertNoopMemoryProviderContract();
   await assertFakeAdapterGenericChatRun();
@@ -30,6 +31,68 @@ export async function runHarnessV2ContractTests(): Promise<void> {
   await assertFileRunLedgerPersistsJsonlEvents();
   assertCapabilityContractUsesLevels();
   assertLegacyBackendCapabilitySnapshots();
+}
+
+function assertHarnessRunUsageNormalization(): void {
+  assert.deepEqual(normalizeHarnessRunUsage({
+    totalTokens: 31,
+    inputTokens: 20,
+    outputTokens: 11,
+    reasoningOutputTokens: 4
+  }), {
+    totalTokens: 31,
+    inputTokens: 20,
+    outputTokens: 11,
+    reasoningTokens: 4
+  }, "Codex flat usage must map to the backend-neutral snapshot");
+
+  assert.deepEqual(normalizeHarnessRunUsage({
+    last: { totalTokens: 23, inputTokens: 17, outputTokens: 6 },
+    total: { totalTokens: 999 }
+  }), {
+    totalTokens: 23,
+    inputTokens: 17,
+    outputTokens: 6
+  }, "Codex per-turn last usage must win over cumulative thread totals");
+
+  assert.deepEqual(normalizeHarnessRunUsage({
+    usage: {
+      tokens: {
+        total: 15,
+        input: 10,
+        output: 2,
+        reasoning: 3,
+        cache: { read: 4, write: 1 }
+      },
+      cost: 0.01
+    }
+  }), {
+    totalTokens: 15,
+    inputTokens: 10,
+    outputTokens: 2,
+    reasoningTokens: 3,
+    cacheReadTokens: 4,
+    cacheWriteTokens: 1,
+    cost: 0.01
+  }, "OpenCode token records must preserve normalized usage details");
+
+  assert.deepEqual(normalizeHarnessRunUsage({
+    total_tokens: 12,
+    input_tokens: 10,
+    output_tokens: 2
+  }), {
+    totalTokens: 12,
+    inputTokens: 10,
+    outputTokens: 2
+  }, "Hermes snake_case usage must normalize without backend-specific UI logic");
+
+  assert.deepEqual(normalizeHarnessRunUsage({ inputTokens: 8, outputTokens: 3 }), {
+    totalTokens: 11,
+    inputTokens: 8,
+    outputTokens: 3
+  }, "a total may be derived only when both input and output counts are present");
+  assert.equal(normalizeHarnessRunUsage({ total: { totalTokens: 999 } }), undefined, "cumulative-only Codex usage must not masquerade as per-turn usage");
+  assert.equal(normalizeHarnessRunUsage({ totalTokens: -1, inputTokens: Number.NaN }), undefined, "invalid usage must be rejected");
 }
 
 async function assertArchitectureDecisionRecords(): Promise<void> {

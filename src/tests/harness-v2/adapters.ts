@@ -40,6 +40,7 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertAdaptersExposeNativeResourceProvider();
   await assertCodexRichAdapterStartsThreadAndTurn();
   await assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors();
+  await assertCodexTokenUsageRoutesWithoutConsumingViewNotifications();
   await assertCodexRichRunDriverMapsNotificationsToHarnessEvents();
   await assertHarnessProjectorPreservesProvidedCommandChannels();
   await assertCodexRichRunDriverNormalizesMissingIdsAndNonSuccessStatuses();
@@ -454,6 +455,12 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
       emit({ type: "message_delta", backend: "hermes", createdAt: 2, text: "rich " });
       emit({ type: "thinking_delta", backend: "hermes", createdAt: 3, text: "raw internal thought" });
       emit({ type: "thinking_completed", backend: "hermes", createdAt: 4, text: "raw internal thought" });
+      emit({
+        type: "usage",
+        backend: "hermes",
+        createdAt: 5,
+        data: { input_tokens: 12, output_tokens: 3, reasoning_tokens: 2 }
+      });
       emit({ type: "message_completed", backend: "hermes", createdAt: 5, text: "rich pong" });
       return {
         text: "rich pong",
@@ -507,8 +514,15 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
     "agent.message.delta",
     "agent.thinking.delta",
     "agent.thinking.completed",
+    "usage.updated",
     "agent.message.completed"
   ]);
+  assert.deepEqual(events.find((event) => event.type === "usage.updated")?.data, {
+    input_tokens: 12,
+    output_tokens: 3,
+    reasoning_tokens: 2,
+    usage: { totalTokens: 15, inputTokens: 12, outputTokens: 3, reasoningTokens: 2 }
+  });
 
   const orchestratorEvents: HarnessEvent[] = [];
   const orchestrator = new RunOrchestrator({
@@ -1177,6 +1191,81 @@ async function assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors(): Promise
   );
 }
 
+async function assertCodexTokenUsageRoutesWithoutConsumingViewNotifications(): Promise<void> {
+  const hub = new CodexRichNotificationHub();
+  const usageBeforeTerminal = createDriverHarness("run-usage-before-terminal", {
+    threadId: "thread-usage-before-terminal",
+    turnId: "turn-usage-before-terminal"
+  });
+  hub.register(usageBeforeTerminal.driver);
+
+  assert.equal(hub.dispatch({
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId: "thread-usage-before-terminal",
+      tokenUsage: {
+        last: { inputTokens: 8, outputTokens: 3 },
+        total: { totalTokens: 999 }
+      }
+    }
+  } as any), false, "usage must continue to the View router after reaching the active driver");
+  assert.equal(hub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-usage-before-terminal",
+      turn: { id: "turn-usage-before-terminal", status: "completed" }
+    }
+  }), true);
+  await usageBeforeTerminal.driver.awaitResult();
+  await delay(0);
+  assert.deepEqual(usageBeforeTerminal.events.map((event) => event.type), ["usage.updated", "run.completed"]);
+  assert.deepEqual(usageBeforeTerminal.events[0]?.data?.usage, {
+    totalTokens: 11,
+    inputTokens: 8,
+    outputTokens: 3
+  });
+
+  const usageAfterTerminal = createDriverHarness("run-usage-after-terminal", {
+    threadId: "thread-usage-after-terminal",
+    turnId: "turn-usage-after-terminal"
+  });
+  hub.register(usageAfterTerminal.driver);
+  assert.equal(hub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-usage-after-terminal",
+      turn: { id: "turn-usage-after-terminal", status: "completed" }
+    }
+  }), true);
+  assert.equal(hub.dispatch({
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId: "thread-usage-after-terminal",
+      tokenUsage: {
+        last: { inputTokens: 13, outputTokens: 5 },
+        total: { totalTokens: 1_111 }
+      }
+    }
+  } as any), false);
+  await usageAfterTerminal.driver.awaitResult();
+  await delay(0);
+  assert.deepEqual(usageAfterTerminal.events.map((event) => event.type), ["run.completed", "usage.updated"], "queued usage immediately after the terminal must not be dropped");
+  assert.equal(usageAfterTerminal.events.filter((event) => event.type === "run.completed").length, 1);
+  assert.deepEqual(usageAfterTerminal.events[1]?.data?.usage, {
+    totalTokens: 18,
+    inputTokens: 13,
+    outputTokens: 5
+  });
+
+  const countBeforeCompaction = usageAfterTerminal.events.length;
+  assert.equal(hub.dispatch({
+    method: "thread/compacted",
+    params: { threadId: "thread-usage-after-terminal", tokenUsage: { total: { totalTokens: 7 } } }
+  } as any), false);
+  await delay(0);
+  assert.equal(usageAfterTerminal.events.length, countBeforeCompaction, "compaction must remain a View-only notification");
+}
+
 async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promise<void> {
   const { driver, events } = createDriverHarness("run-map", {
     threadId: "thread-map",
@@ -1368,7 +1457,10 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
     params: {
       threadId: "thread-map",
       turn: { id: "turn-map", status: "completed" },
-      usage: { totalTokens: 11, outputTokens: 5 }
+      usage: {
+        last: { inputTokens: 6, outputTokens: 5 },
+        total: { totalTokens: 999 }
+      }
     }
   });
 
@@ -1422,6 +1514,11 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
   assert.equal(commandCompleted?.data?.output, "/vault\n");
   assert.equal(commandCompleted?.text, "/vault\n");
   assert.equal(events.find((event) => event.type === "file.change.proposed" && event.data?.callId === "file-1")?.data?.semanticKind, "edit");
+  assert.deepEqual(events.find((event) => event.type === "usage.updated")?.data?.usage, {
+    totalTokens: 11,
+    inputTokens: 6,
+    outputTokens: 5
+  }, "Codex usage must expose the per-turn last snapshot, not cumulative totals");
 }
 
 async function assertHarnessProjectorPreservesProvidedCommandChannels(): Promise<void> {

@@ -31,7 +31,14 @@ async function assertSettingsStoreMigratesAndRestoresConversationHistory(): Prom
       threadId: "legacy-thread-reload",
       messages: [
         { id: "reload-user", role: "user", text: "记住 V3 口令", createdAt: 1 },
-        { id: "reload-assistant", role: "assistant", text: "已记住", createdAt: 2, backendId: "codex-cli" }
+        {
+          id: "reload-assistant",
+          role: "assistant",
+          text: "已记住",
+          createdAt: 2,
+          backendId: "codex-cli",
+          runUsage: { total_tokens: 3, input_tokens: 2, output_tokens: 1 }
+        }
       ],
       createdAt: 1,
       updatedAt: 2
@@ -54,6 +61,7 @@ async function assertSettingsStoreMigratesAndRestoresConversationHistory(): Prom
   await secondStore.loadSettings();
   const restored = secondPlugin.settings.sessions.find((session) => session.id === "chat-reload");
   assert.deepEqual(restored?.messages.map((message) => message.text), ["记住 V3 口令", "已记住"]);
+  assert.deepEqual(restored?.messages[1]?.runUsage, { totalTokens: 3, inputTokens: 2, outputTokens: 1 });
   assert.equal(restored?.backendBindings?.["codex-cli"]?.nativeThreadId, "legacy-thread-reload");
   assert.equal(restored?.contextSnapshot?.summarizedThroughMessageId, "reload-assistant");
 }
@@ -102,7 +110,16 @@ async function assertConversationStorePersistsChatAndKnowledgeSessions(): Promis
         },
         messages: [
           { id: "c1", role: "user", text: "hello", createdAt: 1 },
-          { id: "c2", role: "assistant", text: "world", createdAt: 2, backendId: "codex-cli", model: "gpt-5.5", profile: "writer" }
+          {
+            id: "c2",
+            role: "assistant",
+            text: "world",
+            createdAt: 2,
+            backendId: "codex-cli",
+            model: "gpt-5.5",
+            profile: "writer",
+            runUsage: { totalTokens: 11, inputTokens: 8, outputTokens: 3 }
+          }
         ],
         createdAt: 1,
         updatedAt: 2
@@ -138,6 +155,7 @@ async function assertConversationStorePersistsChatAndKnowledgeSessions(): Promis
   assert.equal(chat?.messages[1]?.backendId, "codex-cli");
   assert.equal(chat?.messages[1]?.modelId, "gpt-5.5");
   assert.equal(chat?.messages[1]?.profileId, "writer");
+  assert.deepEqual(chat?.messages[1]?.runUsage, { totalTokens: 11, inputTokens: 8, outputTokens: 3 });
   assert.equal(chat?.contextSnapshot?.summarizedFromMessageId, "c1");
   assert.equal(chat?.contextSnapshot?.summarizedThroughMessageId, "c2");
   assert.equal(chat?.contextSnapshot?.sourceMessageCount, 2);
@@ -146,6 +164,7 @@ async function assertConversationStorePersistsChatAndKnowledgeSessions(): Promis
   assert.equal(knowledge?.kind, "knowledge-base");
   assert.equal(knowledge?.messages[1]?.backendId, "hermes");
   assert.match(chatMessages, /"id":"c1"/);
+  assert.match(chatMessages, /"runUsage":\{"totalTokens":11,"inputTokens":8,"outputTokens":3\}/);
 }
 
 async function assertConversationStoreCanTrimMigratedSettingsMessages(): Promise<void> {

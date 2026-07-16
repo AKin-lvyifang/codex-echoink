@@ -1,5 +1,5 @@
 import type { CodexNotification } from "../../../types/app-server";
-import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
+import { normalizeHarnessRunUsage, type HarnessEvent, type HarnessEventSink, type HarnessEventType } from "../../contracts/event";
 import type { AgentRunResult } from "../adapter";
 
 export interface CodexRichArtifactRecoveryInput {
@@ -151,8 +151,8 @@ export class CodexRichRunDriver {
   }
 
   private async processNotification(notification: CodexNotification): Promise<void> {
-    if (this.terminalResolved) return;
     const method = notification.method;
+    if (this.terminalResolved && method !== "thread/tokenUsage/updated") return;
     const params = notificationParams(notification.params);
     const itemId = stringValue(params?.itemId, params?.item?.id);
     const threadId = stringValue(params?.threadId, params?.thread?.id, params?.turn?.threadId, params?.item?.threadId);
@@ -160,6 +160,10 @@ export class CodexRichRunDriver {
     if (threadId) this.threadId = threadId;
     if (turnId) this.turnId = turnId;
     if (itemId) this.itemIds.add(itemId);
+    if (method === "thread/tokenUsage/updated") {
+      await this.emitUsageUpdated(recordValue(params?.tokenUsage, params?.usage));
+      return;
+    }
     this.clearFinalAnswerTimerForFollowUp(method);
     this.armInactivityTimer();
 
@@ -236,10 +240,7 @@ export class CodexRichRunDriver {
     }
 
     if (method === "turn/completed") {
-      const usage = recordValue(params?.usage, params?.turn?.usage, params?.tokenUsage);
-      if (usage) {
-        await this.emitEvent("usage.updated", "agent", { data: sanitizeData(usage) });
-      }
+      await this.emitUsageUpdated(recordValue(params?.usage, params?.turn?.usage, params?.tokenUsage));
       const status = normalizeStatus(params?.turn?.status);
       if (isFailedStatus(status)) {
         await this.settle({ status: "failed", error: stringValue(params?.turn?.error, params?.error, params?.message) || "Codex run failed" }, {
@@ -460,6 +461,15 @@ export class CodexRichRunDriver {
       .map((itemId) => this.assistantTextByItem.get(itemId) ?? "")
       .join("")
       .trim();
+  }
+
+  private async emitUsageUpdated(usage?: Record<string, unknown> | null): Promise<void> {
+    if (!usage) return;
+    const rawUsage = sanitizeData(usage);
+    const normalizedUsage = normalizeHarnessRunUsage(rawUsage);
+    await this.emitEvent("usage.updated", "agent", {
+      data: normalizedUsage ? { ...rawUsage, usage: normalizedUsage } : rawUsage
+    });
   }
 
   private async emitEvent(type: HarnessEventType, source: HarnessEvent["source"], input: {

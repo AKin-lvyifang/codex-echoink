@@ -5,7 +5,8 @@ import {
   HarnessEventProjector,
   applyHarnessProjectionBatch
 } from "../ui/codex-view/harness-event-projector";
-import { LatestByKeyFrameBatcher, isDirectProcessVirtualRow } from "../ui/codex-view/message-list";
+import { buildAgentTurnProjection } from "../ui/codex-view/agent-turn-process";
+import { LatestByKeyFrameBatcher, isDirectProcessVirtualRow, terminalAnswerFooterMessageIds } from "../ui/codex-view/message-list";
 
 runHarnessEventProjectorRegressionTests();
 
@@ -19,6 +20,8 @@ export function runHarnessEventProjectorRegressionTests(): void {
   testStableAnswerAndIncrementalUpsert();
   testReplayDeduplicationAcrossSequences();
   testAnswerToolAnswerKeepsWireOrder();
+  testFailedAndCancelledSettlementPreserveWireOrder();
+  testUsageSnapshotStaysOnFinalAnswer();
   testRepeatedReasoningBlockSplitsAtCompletionOnlyTool();
   testPlanToolWithoutCompletionStaysUnconfirmed();
   testCanonicalStreamIsBackendAgnostic();
@@ -299,6 +302,18 @@ function testStableAnswerAndIncrementalUpsert(): void {
   assert.equal(sessionMessages.find((message) => message.id === answer.id), answer);
   assert.equal(answer.text, "Hello");
   assert.equal(sessionMessages.filter((message) => message.id === answer.id).length, 1);
+  assert.equal(answer.status, "running", "provider message completion must wait for the Harness run terminal");
+  assert.equal(answer.completedAt, undefined, "provider message completion must not publish terminal footer time early");
+  assert.equal(terminalAnswerFooterMessageIds(sessionMessages).has(answer.id), false, "the answer footer must stay hidden while the run can still emit tools or reasoning");
+  assert.equal(buildAgentTurnProjection(sessionMessages).some((item) => item.kind === "completedProcess"), false, "the turn process must not fold before the run terminal");
+
+  applyHarnessProjectionBatch(sessionMessages, projector.project(event("run-upsert", 6, "run.completed", {
+    text: "Hello"
+  })), answer.id);
+  assert.equal(answer.status, "completed");
+  assert.equal(answer.completedAt, 1_006);
+  assert.equal(terminalAnswerFooterMessageIds(sessionMessages).has(answer.id), true);
+  assert.equal(buildAgentTurnProjection(sessionMessages).some((item) => item.kind === "completedProcess"), true);
 }
 
 function testReplayDeduplicationAcrossSequences(): void {
@@ -341,13 +356,15 @@ function testAnswerToolAnswerKeepsWireOrder(): void {
     );
   };
 
-  apply(1, "agent.message.delta", { text: "先说明。", data: { messageId: "answer-before" } });
+  apply(1, "agent.message.completed", { text: "先说明。", data: { messageId: "answer-before" } });
   const canonicalAnswer = answer;
+  assert.equal(answer.status, "running");
+  assert.equal(answer.completedAt, undefined);
   apply(2, "tool.started", {
     toolName: "read_file",
     data: { callId: "call-between", semanticKind: "read", toolStatus: "running", inputState: "provided", input: { path: "testing/a.md" } }
   });
-  assert.equal(answer.completedAt, 1_002, "closing the first answer segment must mark it completed");
+  assert.equal(answer.completedAt, undefined, "a tool after provider message completion must not settle the canonical answer before a new segment exists");
   answer.details = "stale answer detail";
   answer.rawRef = ".echoink/raw/stale-answer.md";
   answer.rawSize = 99;
@@ -365,6 +382,8 @@ function testAnswerToolAnswerKeepsWireOrder(): void {
   const firstAnswer = sessionMessages.find((message) => message.id.endsWith("answer-before"));
   const tool = sessionMessages.find((message) => message.id.endsWith("call-between"));
   assert.ok(firstAnswer && tool);
+  assert.equal(firstAnswer.status, "completed", "demoting a provider-completed canonical answer must settle only the historical segment");
+  assert.equal(firstAnswer.completedAt, 1_004);
   assert.deepEqual(
     sessionMessages.filter((message) => message.runId === "run-answer-tool-answer" && message.role !== "user").map((message) => message.itemType),
     ["assistant", "dynamicToolCall", "assistant"]
@@ -384,6 +403,120 @@ function testAnswerToolAnswerKeepsWireOrder(): void {
     answer.id
   );
   assert.equal(answer.text, "再回答完毕", "an aggregate terminal payload must not duplicate an earlier interleaved answer segment");
+}
+
+function testFailedAndCancelledSettlementPreserveWireOrder(): void {
+  for (const terminal of [
+    { runId: "run-answer-tool-failed", type: "run.failed" as const, expectedStatus: "failed", expectedText: "Agent 执行失败" },
+    { runId: "run-answer-tool-cancelled", type: "run.cancelled" as const, expectedStatus: "interrupted", expectedText: "已停止生成" }
+  ]) {
+    const answer = createAnswer(terminal.runId);
+    const stableAnswer = answer;
+    const projector = createProjector(answer);
+    const sessionMessages: ChatMessage[] = [
+      { id: `user:${terminal.runId}`, role: "user", text: "hello", runId: terminal.runId, createdAt: 1 },
+      answer
+    ];
+    const apply = (sequence: number, type: HarnessEvent["type"], patch: Partial<HarnessEvent>) => {
+      applyHarnessProjectionBatch(sessionMessages, projector.project(event(terminal.runId, sequence, type, patch)), answer.id);
+    };
+
+    apply(1, "agent.message.completed", { text: "先说明。", data: { messageId: "answer-before" } });
+    apply(2, "tool.started", {
+      toolName: "read_file",
+      data: { callId: "tool-after-answer", semanticKind: "read", toolStatus: "running" }
+    });
+    apply(3, terminal.type, {});
+
+    const runMessages = sessionMessages.filter((message) => message.runId === terminal.runId && message.role !== "user");
+    assert.deepEqual(runMessages.map((message) => message.itemType), ["assistant", "dynamicToolCall", "error"]);
+    const historical = runMessages[0];
+    const tool = runMessages[1];
+    const finalAnswer = runMessages[2];
+    assert.match(historical.id, /inline-answer:.*answer-before$/);
+    assert.equal(historical.text, "先说明。");
+    assert.equal(historical.status, "completed");
+    assert.equal(tool.status, "interrupted");
+    assert.equal(finalAnswer, stableAnswer, "terminal settlement must retain the stable answer object identity");
+    assert.equal(finalAnswer.id, `answer:${terminal.runId}`);
+    assert.equal(finalAnswer.status, terminal.expectedStatus);
+    assert.equal(finalAnswer.text, terminal.expectedText, "a missing terminal error must not duplicate the preserved prelude");
+    assert.equal(sessionMessages.indexOf(historical) < sessionMessages.indexOf(tool), true);
+    assert.equal(sessionMessages.indexOf(tool) < sessionMessages.indexOf(finalAnswer), true);
+  }
+
+  const runId = "run-empty-answer-tool-cancelled";
+  const answer = createAnswer(runId);
+  const projector = createProjector(answer);
+  const sessionMessages: ChatMessage[] = [
+    { id: `user:${runId}`, role: "user", text: "hello", runId, createdAt: 1 },
+    answer
+  ];
+  const apply = (sequence: number, type: HarnessEvent["type"], patch: Partial<HarnessEvent>) => {
+    applyHarnessProjectionBatch(sessionMessages, projector.project(event(runId, sequence, type, patch)), answer.id);
+  };
+  apply(1, "agent.message.completed", { text: " \n ", data: { messageId: "empty-answer" } });
+  apply(2, "tool.started", { toolName: "read_file", data: { callId: "tool-after-empty", semanticKind: "read", toolStatus: "running" } });
+  apply(3, "run.cancelled", {});
+  const runMessages = sessionMessages.filter((message) => message.runId === runId && message.role !== "user");
+  assert.deepEqual(runMessages.map((message) => message.itemType), ["dynamicToolCall", "error"], "an empty pre-tool answer must not leave a blank historical row");
+  assert.equal(runMessages.at(-1), answer);
+  assert.equal(answer.text, "已停止生成");
+}
+
+function testUsageSnapshotStaysOnFinalAnswer(): void {
+  const answer = createAnswer("run-usage-final", "opencode");
+  const projector = createProjector(answer);
+  const sessionMessages: ChatMessage[] = [
+    { id: "user-usage-final", role: "user", text: "hello", runId: "run-usage-final", createdAt: 1 },
+    answer
+  ];
+  const apply = (sequence: number, type: HarnessEvent["type"], patch: Partial<HarnessEvent>) => {
+    applyHarnessProjectionBatch(
+      sessionMessages,
+      projector.project(event("run-usage-final", sequence, type, patch)),
+      answer.id
+    );
+  };
+
+  apply(1, "agent.message.delta", { text: "先说明。", data: { messageId: "answer-before" } });
+  apply(2, "usage.updated", {
+    data: { usage: { totalTokens: 11, inputTokens: 8, outputTokens: 3 } }
+  });
+  apply(3, "tool.started", {
+    toolName: "read_file",
+    data: { callId: "usage-read", semanticKind: "read", toolStatus: "running" }
+  });
+  apply(4, "tool.completed", {
+    toolName: "read_file",
+    data: { callId: "usage-read", semanticKind: "read", toolStatus: "completed", outputState: "provided", output: "A" }
+  });
+  apply(5, "agent.message.delta", { text: "最终回答。", data: { messageId: "answer-final" } });
+  apply(6, "usage.updated", {
+    data: { usage: { totalTokens: 22, inputTokens: 15, outputTokens: 7 } }
+  });
+  apply(7, "run.completed", { text: "先说明。\n\n最终回答。" });
+
+  const prelude = sessionMessages.find((message) => message.id.endsWith("answer-before"));
+  assert.ok(prelude);
+  assert.equal(prelude.runUsage, undefined, "interleaved answer preludes must not receive the run footer snapshot");
+  assert.deepEqual(answer.runUsage, { totalTokens: 22, inputTokens: 15, outputTokens: 7 }, "the latest provider snapshot must be frozen on the final answer");
+
+  const lateUsageBatch = projector.project(event("run-usage-final", 8, "usage.updated", {
+    data: { usage: { total_tokens: 31, input_tokens: 21, output_tokens: 10 } }
+  }));
+  assert.deepEqual(lateUsageBatch.updates.map((message) => message.id), [answer.id], "usage arriving after the terminal must update the completed answer in place");
+  assert.deepEqual(lateUsageBatch.updates[0]?.runUsage, { totalTokens: 31, inputTokens: 21, outputTokens: 10 });
+  applyHarnessProjectionBatch(sessionMessages, lateUsageBatch, answer.id);
+  assert.deepEqual(answer.runUsage, { totalTokens: 31, inputTokens: 21, outputTokens: 10 }, "late provider usage must replace the provisional terminal snapshot");
+
+  const laterAnswer = createAnswer("run-usage-later", "hermes");
+  const laterProjector = createProjector(laterAnswer);
+  applyHarnessProjectionBatch([laterAnswer], laterProjector.project(event("run-usage-later", 1, "usage.updated", {
+    data: { usage: { totalTokens: 99, inputTokens: 70, outputTokens: 29 } }
+  })), laterAnswer.id);
+  applyHarnessProjectionBatch([laterAnswer], laterProjector.project(event("run-usage-later", 2, "run.completed", { text: "later" })), laterAnswer.id);
+  assert.equal(answer.runUsage?.totalTokens, 31, "a later run must not mutate an earlier answer snapshot");
 }
 
 function testRepeatedReasoningBlockSplitsAtCompletionOnlyTool(): void {
@@ -458,6 +591,7 @@ function testCanonicalStreamIsBackendAgnostic(): void {
         data: { blockId: "reasoning-2", reasoningKind: "provider", visibility: "public" }
       }],
       ["agent.message.delta", { text: "完成", data: { messageId: "answer-1" } }],
+      ["usage.updated", { data: { usage: { totalTokens: 15, inputTokens: 10, outputTokens: 5 } } }],
       ["run.completed", { text: "完成" }]
     ];
     canonicalEvents.forEach(([type, patch], index) => {

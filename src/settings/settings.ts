@@ -4,6 +4,7 @@ import type { CapabilityBackendChoice } from "../agent/registry";
 import type { BackendSessionBinding } from "../harness/contracts/run";
 import type { NativeCleanupStatus, NativeExecutionRef, NativeLocalCommitStatus } from "../harness/contracts/native-execution";
 import type { ContextCompileMode, ContextSyncCursor, SessionContextSnapshot } from "../harness/contracts/context";
+import { normalizeHarnessRunUsage, type HarnessRunUsage } from "../harness/contracts/event";
 import { defaultResourceSettings } from "../resources/registry";
 import { normalizeMcpBrokerSettings } from "../resources/mcp-broker";
 import { normalizeMcpConnectionRecords } from "../resources/mcp-connections";
@@ -88,6 +89,7 @@ export interface ChatMessage {
   attachments?: StoredAttachment[];
   files?: ProcessFileRef[];
   images?: StoredAttachment[];
+  runUsage?: HarnessRunUsage;
   createdAt: number;
   completedAt?: number;
 }
@@ -1619,6 +1621,8 @@ function normalizeChatMessages(value: unknown): ChatMessage[] {
       else delete message.nativeLeaseReused;
       if (typeof item.runTerminalRecovered === "boolean") message.runTerminalRecovered = item.runTerminalRecovered;
       else delete message.runTerminalRecovered;
+      message.runUsage = normalizeHarnessRunUsage(item.runUsage);
+      if (!message.runUsage) delete message.runUsage;
       message.createdAt = normalizeNonNegativeNumber(item.createdAt);
       message.completedAt = normalizeOptionalPositiveNumber(item.completedAt);
       return message;
