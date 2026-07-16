@@ -24,22 +24,35 @@ export function createEditorActionExtension(handlers: {
   confirm: (candidate: EditorActionCandidate) => boolean;
   cancel: (candidate: EditorActionCandidate) => boolean;
 }): Extension {
+  const confirmCandidate = (view: EditorView): boolean => {
+    const candidate = view.state.field(editorActionCandidateField, false);
+    return candidate ? handlers.confirm(candidate) : false;
+  };
+  const cancelCandidate = (view: EditorView): boolean => {
+    const candidate = view.state.field(editorActionCandidateField, false);
+    return candidate ? handlers.cancel(candidate) : false;
+  };
   return [
     editorActionCandidateField,
+    // Obsidian installs its own Enter handler at a high precedence. Handle the
+    // candidate before the shared keymap so Enter cannot insert a newline and
+    // invalidate the candidate before our command gets a chance to run.
+    Prec.highest(EditorView.domEventHandlers({
+      keydown(event, view) {
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+        if (event.key === "Enter") return confirmCandidate(view);
+        if (event.key === "Escape") return cancelCandidate(view);
+        return false;
+      }
+    })),
     Prec.highest(keymap.of([
       {
         key: "Enter",
-        run(view) {
-          const candidate = view.state.field(editorActionCandidateField, false);
-          return candidate ? handlers.confirm(candidate) : false;
-        }
+        run: confirmCandidate
       },
       {
         key: "Escape",
-        run(view) {
-          const candidate = view.state.field(editorActionCandidateField, false);
-          return candidate ? handlers.cancel(candidate) : false;
-        }
+        run: cancelCandidate
       }
     ]))
   ];
@@ -77,7 +90,7 @@ function candidateDecorations(candidate: EditorActionCandidate | null): Decorati
   ]);
 }
 
-function editorViewFromEditor(editor: Editor): EditorView | null {
+export function editorViewFromEditor(editor: Editor): EditorView | null {
   const view = (editor as any)?.cm;
   return view && typeof view.dispatch === "function" && view.state ? view as EditorView : null;
 }

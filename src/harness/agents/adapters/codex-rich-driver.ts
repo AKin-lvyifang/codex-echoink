@@ -35,6 +35,12 @@ export class CodexRichRunDriver {
   private readonly toolItems = new Map<string, ToolItemState>();
   private readonly assistantTextByItem = new Map<string, string>();
   private readonly assistantOrder: string[] = [];
+  private fallbackMessageCounter = 0;
+  private fallbackReasoningCounter = 0;
+  private fallbackToolCounter = 0;
+  private activeFallbackMessageId = "";
+  private activeFallbackReasoningId = "";
+  private readonly fallbackToolIdsByType = new Map<string, string[]>();
   private readonly onSettled?: (result: AgentRunResult) => void | Promise<void>;
   private readonly artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   private readonly inactivityTimeoutMs?: number;
@@ -159,20 +165,31 @@ export class CodexRichRunDriver {
 
     if (method === "item/agentMessage/delta") {
       const delta = textValue(params?.delta);
-      if (itemId) this.appendAssistantDelta(itemId, delta);
-      await this.emitEvent("agent.message.delta", "agent", { text: delta, data: sanitizeNotificationData(params) });
+      this.activeFallbackReasoningId = "";
+      const messageId = this.resolveMessageId(itemId);
+      this.appendAssistantDelta(messageId, delta);
+      await this.emitEvent("agent.message.delta", "agent", {
+        text: delta,
+        data: withMessageIdentity(sanitizeNotificationData(params), messageId)
+      });
       return;
     }
 
     if (method === "item/reasoning/summaryPartAdded") {
-      await this.emitEvent("agent.reasoning.started", "agent", { data: sanitizeNotificationData(params) });
+      this.activeFallbackMessageId = "";
+      const blockId = this.resolveReasoningId(itemId, true);
+      await this.emitEvent("agent.reasoning.started", "agent", {
+        data: withReasoningIdentity(sanitizeNotificationData(params), blockId)
+      });
       return;
     }
 
     if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
+      this.activeFallbackMessageId = "";
+      const blockId = this.resolveReasoningId(itemId);
       await this.emitEvent("agent.reasoning.summary.delta", "agent", {
         text: textValue(params?.delta),
-        data: sanitizeNotificationData(params)
+        data: withReasoningIdentity(sanitizeNotificationData(params), blockId)
       });
       return;
     }
@@ -186,20 +203,24 @@ export class CodexRichRunDriver {
     }
 
     if (method === "item/commandExecution/outputDelta") {
-      await this.emitToolDelta(itemId, textValue(params?.delta), params);
+      this.closeFallbackContentSegments();
+      await this.emitToolDelta(this.resolveToolProgressId(itemId, "commandExecution"), textValue(params?.delta), params);
       return;
     }
 
     if (method === "item/mcpToolCall/progress") {
-      await this.emitToolDelta(itemId, textValue(params?.message, params?.delta), params);
+      this.closeFallbackContentSegments();
+      await this.emitToolDelta(this.resolveToolProgressId(itemId, "mcpToolCall"), textValue(params?.message, params?.delta), params);
       return;
     }
 
     if (method === "item/fileChange/outputDelta") {
+      this.closeFallbackContentSegments();
+      const fileChangeId = this.resolveToolProgressId(itemId, "fileChange");
       await this.emitEvent("file.change.proposed", "agent", {
         text: textValue(params?.delta),
-        toolName: this.toolItems.get(itemId)?.toolName ?? "文件改动",
-        data: sanitizeNotificationData(params)
+        toolName: this.toolItems.get(fileChangeId)?.toolName ?? "文件改动",
+        data: withToolIdentity(sanitizeNotificationData(params), fileChangeId, "edit", "running")
       });
       return;
     }
@@ -220,7 +241,7 @@ export class CodexRichRunDriver {
         await this.emitEvent("usage.updated", "agent", { data: sanitizeData(usage) });
       }
       const status = normalizeStatus(params?.turn?.status);
-      if (status === "failed") {
+      if (isFailedStatus(status)) {
         await this.settle({ status: "failed", error: stringValue(params?.turn?.error, params?.error, params?.message) || "Codex run failed" }, {
           type: "run.failed",
           source: "kernel",
@@ -251,15 +272,18 @@ export class CodexRichRunDriver {
   }
 
   private async handleStartedItem(item: any): Promise<void> {
-    const itemId = stringValue(item?.id);
-    if (itemId) this.itemIds.add(itemId);
+    const explicitItemId = stringValue(item?.id);
     const itemType = codexItemType(item);
+    if (isCodexToolItemType(itemType)) this.closeFallbackContentSegments();
+    const itemId = explicitItemId || (isCodexToolItemType(itemType) ? this.startFallbackToolId(itemType) : "");
+    if (itemId) this.itemIds.add(itemId);
+    if (itemId && isCodexToolItemType(itemType)) this.trackStartedToolId(itemType, itemId);
     if (itemType === "commandExecution" || itemType === "mcpToolCall") {
       const toolName = toolNameFromItem(item);
       if (itemId) this.toolItems.set(itemId, { itemType, toolName });
       await this.emitEvent("tool.started", "tool", {
         toolName,
-        data: sanitizeData(item)
+        data: normalizedCodexToolData(item, itemId || `${this.runId}:tool`, itemType, "running")
       });
       return;
     }
@@ -268,20 +292,33 @@ export class CodexRichRunDriver {
       await this.emitEvent("file.change.proposed", "agent", {
         toolName: "文件改动",
         text: stringValue(item?.title, item?.path, item?.name),
-        data: sanitizeData(item)
+        data: normalizedCodexToolData(item, itemId || `${this.runId}:file-change`, itemType, "running")
       });
     }
   }
 
   private async handleCompletedItem(item: any): Promise<void> {
-    const itemId = stringValue(item?.id);
-    if (itemId) this.itemIds.add(itemId);
+    const explicitItemId = stringValue(item?.id);
     const itemType = codexItemType(item);
+    if (itemType === "agentMessage") this.activeFallbackReasoningId = "";
+    else if (itemType === "reasoning") this.activeFallbackMessageId = "";
+    else if (isCodexToolItemType(itemType)) this.closeFallbackContentSegments();
+    const itemId = itemType === "agentMessage"
+      ? this.resolveMessageId(explicitItemId, true)
+      : itemType === "reasoning"
+        ? this.resolveReasoningId(explicitItemId, false, true)
+        : isCodexToolItemType(itemType)
+          ? this.resolveCompletedToolId(explicitItemId, itemType)
+          : explicitItemId;
+    if (itemId) this.itemIds.add(itemId);
     if (itemType === "agentMessage") {
-      if (itemId) this.ensureAssistantItem(itemId);
-      const text = textValue(item?.text, item?.output) || (itemId ? this.assistantTextByItem.get(itemId) ?? "" : "");
-      if (itemId) this.assistantTextByItem.set(itemId, text);
-      await this.emitEvent("agent.message.completed", "agent", { text, data: sanitizeData(item) });
+      this.ensureAssistantItem(itemId);
+      const text = textValue(item?.text, item?.output) || this.assistantTextByItem.get(itemId) || "";
+      this.assistantTextByItem.set(itemId, text);
+      await this.emitEvent("agent.message.completed", "agent", {
+        text,
+        data: withMessageIdentity(sanitizeData(item), itemId)
+      });
       if (stringValue(item?.phase).toLowerCase() === "final_answer") {
         this.armFinalAnswerTimer();
       }
@@ -290,40 +327,51 @@ export class CodexRichRunDriver {
     if (itemType === "reasoning") {
       await this.emitEvent("agent.reasoning.summary.completed", "agent", {
         text: textValue(item?.text, item?.output),
-        data: sanitizeData(item)
+        data: withReasoningIdentity(sanitizeData(item), itemId)
       });
       return;
     }
     if (itemType === "commandExecution" || itemType === "mcpToolCall") {
-      const status = normalizeStatus(item?.status);
-      await this.emitEvent(status === "failed" ? "tool.failed" : "tool.completed", "tool", {
+      const toolStatus = completedToolStatus(item?.status);
+      await this.emitEvent(isToolFailureStatus(toolStatus) ? "tool.failed" : "tool.completed", "tool", {
         toolName: toolNameFromItem(item, this.toolItems.get(itemId)?.toolName),
-        text: textValue(item?.output, item?.text),
+        text: itemType === "commandExecution"
+          ? textValue(item?.aggregatedOutput, item?.output, item?.text)
+          : textValue(item?.output, item?.text),
         error: stringValue(item?.error),
-        data: sanitizeData(item)
+        data: normalizedCodexToolData(item, itemId, itemType, toolStatus)
       });
       return;
     }
     if (itemType === "fileChange") {
-      const status = normalizeStatus(item?.status);
-      const eventType = status === "failed"
+      const toolStatus = completedToolStatus(item?.status);
+      const eventType = isToolFailureStatus(toolStatus)
         ? "file.change.reverted"
-        : "file.change.applied";
+        : toolStatus === "completed"
+          ? "file.change.applied"
+          : "file.change.proposed";
       await this.emitEvent(eventType, "agent", {
         toolName: "文件改动",
         text: textValue(item?.output, item?.text, item?.title),
         error: stringValue(item?.error),
-        data: sanitizeData(item)
+        data: normalizedCodexToolData(item, itemId, itemType, toolStatus)
       });
     }
   }
 
   private async emitToolDelta(itemId: string, text: string, params: any): Promise<void> {
     const toolState = this.toolItems.get(itemId);
+    const data = withToolIdentity(
+      sanitizeNotificationData(params),
+      itemId || `${this.runId}:tool`,
+      semanticKindForCodexItem(toolState?.itemType),
+      "running"
+    );
+    if (toolState?.itemType === "commandExecution") data.outputState = "provided";
     await this.emitEvent("tool.output.delta", "tool", {
       toolName: toolState?.toolName,
       text,
-      data: sanitizeNotificationData(params)
+      data
     });
   }
 
@@ -336,6 +384,75 @@ export class CodexRichRunDriver {
     if (this.assistantTextByItem.has(itemId)) return;
     this.assistantOrder.push(itemId);
     this.assistantTextByItem.set(itemId, "");
+  }
+
+  private resolveMessageId(explicitId: string, completed = false): string {
+    if (explicitId) {
+      this.activeFallbackMessageId = completed ? "" : explicitId;
+      return explicitId;
+    }
+    if (!this.activeFallbackMessageId) {
+      this.fallbackMessageCounter += 1;
+      this.activeFallbackMessageId = `${this.runId}:message:${this.fallbackMessageCounter}`;
+    }
+    const id = this.activeFallbackMessageId;
+    if (completed) this.activeFallbackMessageId = "";
+    return id;
+  }
+
+  private closeFallbackContentSegments(): void {
+    this.activeFallbackMessageId = "";
+    this.activeFallbackReasoningId = "";
+  }
+
+  private resolveReasoningId(explicitId: string, started = false, completed = false): string {
+    if (explicitId) {
+      this.activeFallbackReasoningId = completed ? "" : explicitId;
+      return explicitId;
+    }
+    if (started || !this.activeFallbackReasoningId) {
+      this.fallbackReasoningCounter += 1;
+      this.activeFallbackReasoningId = `${this.runId}:reasoning:${this.fallbackReasoningCounter}`;
+    }
+    const id = this.activeFallbackReasoningId;
+    if (completed) this.activeFallbackReasoningId = "";
+    return id;
+  }
+
+  private startFallbackToolId(itemType: string): string {
+    this.fallbackToolCounter += 1;
+    return `${this.runId}:tool:${this.fallbackToolCounter}`;
+  }
+
+  private trackStartedToolId(itemType: string, id: string): void {
+    const queue = this.fallbackToolIdsByType.get(itemType) ?? [];
+    if (!queue.includes(id)) queue.push(id);
+    this.fallbackToolIdsByType.set(itemType, queue);
+  }
+
+  private resolveToolProgressId(explicitId: string, itemType: string): string {
+    if (explicitId) return explicitId;
+    const queued = this.fallbackToolIdsByType.get(itemType)?.[0];
+    if (queued) return queued;
+    const generated = this.startFallbackToolId(itemType);
+    this.trackStartedToolId(itemType, generated);
+    return generated;
+  }
+
+  private completeFallbackToolId(itemType: string): string {
+    const queue = this.fallbackToolIdsByType.get(itemType);
+    const id = queue?.shift() ?? this.startFallbackToolId(itemType);
+    if (queue && !queue.length) this.fallbackToolIdsByType.delete(itemType);
+    return id;
+  }
+
+  private resolveCompletedToolId(explicitId: string, itemType: string): string {
+    if (!explicitId) return this.completeFallbackToolId(itemType);
+    const queue = this.fallbackToolIdsByType.get(itemType);
+    const index = queue?.indexOf(explicitId) ?? -1;
+    if (queue && index >= 0) queue.splice(index, 1);
+    if (queue && !queue.length) this.fallbackToolIdsByType.delete(itemType);
+    return explicitId;
   }
 
   private finalAssistantText(): string {
@@ -362,7 +479,7 @@ export class CodexRichRunDriver {
       text: input.text,
       error: input.error,
       toolName: input.toolName,
-      data: input.data
+      data: { streamSource: "codex-native", ...input.data }
     });
   }
 
@@ -559,6 +676,26 @@ function isCancelledStatus(status: string): boolean {
     || status === "aborted";
 }
 
+function isFailedStatus(status: string): boolean {
+  return status === "failed"
+    || status === "error"
+    || status === "denied"
+    || status === "rejected";
+}
+
+function completedToolStatus(status: unknown): "completed" | "failed" | "denied" | "interrupted" | "unconfirmed" {
+  const normalized = normalizeStatus(status);
+  if (!normalized || normalized === "completed" || normalized === "complete" || normalized === "success" || normalized === "succeeded") return "completed";
+  if (normalized === "denied" || normalized === "rejected") return "denied";
+  if (isCancelledStatus(normalized)) return "interrupted";
+  if (isFailedStatus(normalized)) return "failed";
+  return "unconfirmed";
+}
+
+function isToolFailureStatus(status: string): boolean {
+  return status === "failed" || status === "denied" || status === "interrupted";
+}
+
 function isRetryingCodexError(params: any): boolean {
   return params?.willRetry === true || params?.error?.willRetry === true;
 }
@@ -591,6 +728,99 @@ function sanitizeNotificationData(params: any): Record<string, unknown> {
       ? sanitizeData(params.item)
       : params?.item
   });
+}
+
+function withMessageIdentity(data: Record<string, unknown>, messageId: string): Record<string, unknown> {
+  return { ...data, messageId };
+}
+
+function withReasoningIdentity(data: Record<string, unknown>, blockId: string): Record<string, unknown> {
+  return {
+    ...data,
+    blockId,
+    reasoningKind: "summary",
+    visibility: "public"
+  };
+}
+
+function withToolIdentity(
+  data: Record<string, unknown>,
+  callId: string,
+  semanticKind: string,
+  toolStatus: string
+): Record<string, unknown> {
+  return {
+    ...data,
+    callId,
+    toolCallId: callId,
+    semanticKind,
+    toolStatus
+  };
+}
+
+function normalizedCodexToolData(
+  item: any,
+  callId: string,
+  itemType: string,
+  toolStatus: string
+): Record<string, unknown> {
+  const data = withToolIdentity(sanitizeData(item), callId, semanticKindForCodexItem(itemType), toolStatus);
+  const input = firstPresentValue(item, ["input", "arguments", "command", "changes"]);
+  const output = itemType === "commandExecution" && item?.aggregatedOutput !== null && item?.aggregatedOutput !== undefined
+    ? { present: true, value: item.aggregatedOutput }
+    : firstPresentValue(item, ["output", "result", "text"]);
+  const inputState = contentAvailability(input.present, input.value);
+  const outputState = contentAvailability(output.present, output.value);
+  data.inputState = inputState;
+  data.outputState = outputState;
+  if (inputState === "provided") data.input = input.value;
+  if (outputState === "provided") data.output = output.value;
+  const files = codexToolFiles(item);
+  if (files.length) data.files = files;
+  const diff = firstPresentValue(item, ["diff", "changes", "patch"]);
+  if (diff.present) data.diff = diff.value;
+  return data;
+}
+
+function codexToolFiles(item: any): string[] {
+  const candidates: unknown[] = [item?.path, item?.file, item?.filePath];
+  for (const collection of [item?.files, item?.locations, item?.changes]) {
+    if (!Array.isArray(collection)) continue;
+    for (const entry of collection) {
+      if (typeof entry === "string") candidates.push(entry);
+      else if (entry && typeof entry === "object") {
+        candidates.push(entry.path, entry.file, entry.filePath, entry.uri);
+      }
+    }
+  }
+  return [...new Set(candidates.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim()))];
+}
+
+function isCodexToolItemType(itemType: string): boolean {
+  return itemType === "commandExecution" || itemType === "mcpToolCall" || itemType === "fileChange";
+}
+
+function semanticKindForCodexItem(itemType: string | undefined): string {
+  if (itemType === "commandExecution") return "command";
+  if (itemType === "fileChange") return "edit";
+  if (itemType === "mcpToolCall") return "mcp";
+  return "tool";
+}
+
+function firstPresentValue(value: any, keys: string[]): { present: boolean; value: unknown } {
+  if (!value || typeof value !== "object") return { present: false, value: undefined };
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return { present: true, value: value[key] };
+  }
+  return { present: false, value: undefined };
+}
+
+function contentAvailability(present: boolean, value: unknown): "provided" | "empty" | "unavailable" {
+  if (!present) return "unavailable";
+  if (value === undefined || value === null || value === "") return "empty";
+  if (Array.isArray(value) && value.length === 0) return "empty";
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return "empty";
+  return "provided";
 }
 
 function sanitizeData(value: unknown): Record<string, unknown> {

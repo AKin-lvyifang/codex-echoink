@@ -2,14 +2,15 @@ import type { TurnOptions } from "../../../core/codex-service";
 import {
   buildEchoInkToolLoopExceededError,
   buildEchoInkToolResultTurnPrompt,
-  parseEchoInkToolCall,
+  classifyEchoInkToolCallCandidate,
+  parseExactEchoInkToolCall,
   truncateEchoInkToolResult,
   type EchoInkToolCallRequest
 } from "../../../agent/tool-bridge";
 import type { AgentToolBridgeRuntime } from "../../../agent/runtime";
 import type { UserInput } from "../../../types/app-server";
 import { noCapabilities } from "../../contracts/capability";
-import type { HarnessEventSink, HarnessEventType } from "../../contracts/event";
+import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
 import type { NativeExecutionDispositionRequest, NativeExecutionDispositionResult, NativeExecutionRef } from "../../contracts/native-execution";
 import type {
   AgentAdapter,
@@ -99,9 +100,10 @@ export class CodexRichAgentAdapter implements AgentAdapter {
 
     const settlements = activeStates.map(async (state) => {
       this.signalRunCancellation(state);
+      if (!state.resultPromise) state.resultPromise = this.awaitLogicalResult(state);
       await state.driver.cancel().catch(() => undefined);
       this.options.notificationHub?.unregister(state.runId);
-      return await state.driver.awaitResult();
+      return await state.resultPromise;
     });
 
     this.runs.clear();
@@ -174,7 +176,8 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   }
 
   async run(request: AgentRunRequest, emit: HarnessEventSink): Promise<AgentRunResult> {
-    const driver = this.createDriver(request.runId, emit);
+    const terminalGate: CodexRunTerminalGate = { emitted: false };
+    const driver = this.createDriver(request.runId, emit, terminalGate);
     const state: CodexRunState = {
       runId: request.runId,
       threadId: "",
@@ -182,16 +185,17 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       cancelGate: new CodexRunCancellationGate(),
       driver,
       emit,
+      terminalGate,
       toolCallCount: 0,
       turnOptions: this.turnOptionsForRequest(request)
     };
     this.runs.set(request.runId, state);
     this.options.notificationHub?.register(driver);
     try {
-      const threadId = await this.ensureThread(state.turnOptions);
+      let threadId = await this.ensureThread(state.turnOptions);
       state.threadId = threadId;
       driver.setThreadId(threadId);
-      const input = await this.buildInitialTurnInput(threadId, request);
+      let input = await this.buildInitialTurnInput(threadId, request);
       if (state.cancelRequested) {
         this.runs.delete(request.runId);
         this.options.notificationHub?.unregister(request.runId);
@@ -202,7 +206,30 @@ export class CodexRichAgentAdapter implements AgentAdapter {
           nativeThreadId: threadId
         };
       }
-      const turnId = await this.options.startTurn(threadId, input, state.turnOptions);
+      let turnId: string;
+      try {
+        turnId = await this.options.startTurn(threadId, input, state.turnOptions);
+      } catch (error) {
+        if (!isMissingCodexThreadError(error) || state.cancelRequested) throw error;
+        this.options.setNativeThreadId("");
+        const replacement = await this.options.startThread(state.turnOptions);
+        threadId = replacement.threadId;
+        this.options.setNativeThreadId(threadId);
+        state.threadId = threadId;
+        driver.setThreadId(threadId);
+        input = await this.buildInitialTurnInput(threadId, request);
+        if (state.cancelRequested) {
+          this.runs.delete(request.runId);
+          this.options.notificationHub?.unregister(request.runId);
+          return {
+            status: "cancelled",
+            error: "Run cancelled",
+            nativeExecution: this.buildNativeExecutionRef(threadId),
+            nativeThreadId: threadId
+          };
+        }
+        turnId = await this.options.startTurn(threadId, input, state.turnOptions);
+      }
       state.turnId = turnId;
       driver.setTurnId(turnId);
       this.options.onTurnStarted?.({ threadId, turnId });
@@ -254,7 +281,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     const state = this.runs.get(runId);
     if (!state) throw new Error(`Unknown Codex run: ${runId}`);
     if (!state.resultPromise) {
-      state.resultPromise = this.awaitResultLoop(state);
+      state.resultPromise = this.awaitLogicalResult(state);
     }
     try {
       return await state.resultPromise;
@@ -263,11 +290,54 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     }
   }
 
-  private createDriver(runId: string, emit: HarnessEventSink): CodexRichRunDriver {
+  private createDriver(
+    runId: string,
+    emit: HarnessEventSink,
+    terminalGate: CodexRunTerminalGate
+  ): CodexRichRunDriver {
+    const bufferedMessageEvents: HarnessEvent[] = [];
+    let bufferedMessageText = "";
+    let messagePrefixResolved = !this.hasActiveToolBridge();
+    const flushBufferedMessages = async (): Promise<void> => {
+      while (bufferedMessageEvents.length) await emit(bufferedMessageEvents.shift()!);
+      bufferedMessageText = "";
+    };
     return new CodexRichRunDriver({
       runId,
       backendId: this.manifest.id,
-      emit,
+      emit: async (event) => {
+        if (!messagePrefixResolved && isAgentMessageEvent(event.type)) {
+          bufferedMessageEvents.push(event);
+          const replacement = event.type === "agent.message.completed" || event.data?.replace === true;
+          const eventText = event.text ?? "";
+          if (!replacement) bufferedMessageText = `${bufferedMessageText}${eventText}`;
+          else if (eventText) bufferedMessageText = eventText;
+          const candidate = classifyEchoInkToolCallCandidate(bufferedMessageText, {
+            messageCompleted: event.type === "agent.message.completed"
+          });
+          if (candidate !== "visible") return;
+          messagePrefixResolved = true;
+          await flushBufferedMessages();
+          return;
+        }
+        if (event.type === "run.completed") {
+          if (!parseExactEchoInkToolCall(event.text ?? bufferedMessageText)) {
+            await flushBufferedMessages();
+          } else {
+            bufferedMessageEvents.length = 0;
+            bufferedMessageText = "";
+          }
+          terminalGate.pendingCompleted = event;
+          return;
+        }
+        if (event.type === "run.failed" || event.type === "run.cancelled") {
+          await flushBufferedMessages();
+          await emit(event);
+          terminalGate.emitted = true;
+          return;
+        }
+        await emit(event);
+      },
       interruptTurn: this.options.interruptTurn,
       inactivityTimeoutMs: this.options.inactivityTimeoutMs,
       finalAnswerGraceMs: this.options.finalAnswerGraceMs,
@@ -278,6 +348,12 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     });
   }
 
+  private async awaitLogicalResult(state: CodexRunState): Promise<AgentRunResult> {
+    const result = await this.awaitResultLoop(state);
+    if (!state.terminalGate.emitted) await this.emitLogicalTerminal(state, result);
+    return result;
+  }
+
   private async awaitResultLoop(state: CodexRunState): Promise<AgentRunResult> {
     try {
       while (true) {
@@ -286,9 +362,8 @@ export class CodexRichAgentAdapter implements AgentAdapter {
           return this.finalizeRunState(state, turnResult);
         }
         const bridgeRequest = this.readToolBridgeRequest(turnResult.outputText);
-        if (!bridgeRequest) {
-          return this.finalizeRunState(state, turnResult);
-        }
+        if (!bridgeRequest) return this.finalizeRunState(state, turnResult);
+        state.terminalGate.pendingCompleted = undefined;
         const bridgedResult = await this.continueWithEchoInkToolBridge(state, bridgeRequest);
         if (bridgedResult) return bridgedResult;
       }
@@ -300,9 +375,29 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     }
   }
 
+  private async emitLogicalTerminal(state: CodexRunState, result: AgentRunResult): Promise<void> {
+    const type = terminalEventType(result.status);
+    const bufferedCompleted = type === "run.completed" ? state.terminalGate.pendingCompleted : undefined;
+    const event = bufferedCompleted ?? {
+      eventId: "",
+      runId: state.runId,
+      sequence: 0,
+      createdAt: Date.now(),
+      source: "kernel",
+      type,
+      backendId: this.manifest.id,
+      text: type === "run.completed" ? result.outputText : undefined,
+      error: type === "run.completed" ? undefined : result.error,
+      data: result.terminalData
+    } satisfies HarnessEvent;
+    state.terminalGate.pendingCompleted = undefined;
+    await state.emit(event);
+    state.terminalGate.emitted = true;
+  }
+
   private readToolBridgeRequest(outputText: string | undefined): EchoInkToolCallRequest | null {
     if (!this.hasActiveToolBridge()) return null;
-    return parseEchoInkToolCall(outputText ?? "");
+    return parseExactEchoInkToolCall(outputText ?? "");
   }
 
   private async continueWithEchoInkToolBridge(
@@ -325,6 +420,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     const resourceId = bridge.toolResourceIds?.[request.tool];
     await this.emitToolEvent(state, "tool.requested", request.tool, resourceId, undefined, {
       toolCallId,
+      controlProtocol: "echoink-tool-call",
       input: request.arguments
     });
     if (resourceId) {
@@ -379,7 +475,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     request: EchoInkToolCallRequest,
     output: string
   ): Promise<boolean> {
-    const driver = this.createDriver(state.runId, state.emit);
+    const driver = this.createDriver(state.runId, state.emit, state.terminalGate);
     state.driver = driver;
     state.turnId = undefined;
     this.options.notificationHub?.register(driver);
@@ -592,6 +688,11 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   }
 }
 
+function isMissingCodexThreadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:thread\s+not\s+found|unknown\s+thread)/i.test(message);
+}
+
 function nativeRefContextMismatch(
   ref: NativeExecutionRef,
   context?: Pick<NativeExecutionRef, "deviceKey" | "vaultId" | "providerEndpoint">
@@ -611,15 +712,31 @@ interface CodexRunState {
   cancelGate: CodexRunCancellationGate;
   driver: CodexRichRunDriver;
   emit: HarnessEventSink;
+  terminalGate: CodexRunTerminalGate;
   toolCallCount: number;
   turnOptions?: TurnOptions;
   resultPromise?: Promise<AgentRunResult>;
+}
+
+interface CodexRunTerminalGate {
+  emitted: boolean;
+  pendingCompleted?: HarnessEvent;
 }
 
 type BridgeCallOutcome =
   | { status: "completed"; value: unknown }
   | { status: "failed"; error: unknown }
   | { status: "cancelled" };
+
+function isAgentMessageEvent(type: HarnessEventType): boolean {
+  return type === "agent.message.delta" || type === "agent.message.completed";
+}
+
+function terminalEventType(status: AgentRunResult["status"]): "run.completed" | "run.failed" | "run.cancelled" {
+  if (status === "completed") return "run.completed";
+  if (status === "cancelled") return "run.cancelled";
+  return "run.failed";
+}
 
 class CodexRunCancellationGate {
   signalled = false;

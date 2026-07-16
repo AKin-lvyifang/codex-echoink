@@ -2,7 +2,6 @@ import { Notice } from "obsidian";
 import * as path from "path";
 import { getAgentBackendDefinition } from "../../agent/registry";
 import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
-import type { AgentEvent } from "../../agent/events";
 import type { AgentBackendKind, AgentFilePart } from "../../agent/types";
 import type { AgentAdapter, AgentRunResult } from "../../harness/agents/adapter";
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
@@ -31,12 +30,11 @@ import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
 import { persistAndSettleChatRun } from "./turn-lifecycle";
 import {
-  buildInlineAgentProcessMessages,
-  createAgentEventRenderState,
-  inlineAgentProcessMessagePrefix,
-  reduceAgentEventForChat,
-  type AgentChatRenderState
-} from "./agent-event-renderer";
+  HarnessEventProjector,
+  applyHarnessProjectionBatch,
+  type HarnessProjectionBatch,
+  type HarnessProjectionSettlement
+} from "./harness-event-projector";
 import type { CodexViewTurnContext, MessageRenderFollowContext, QueuedTurnOutcome, QueuedTurnSource } from "./runner-context";
 
 const INLINE_AGENT_PROCESS_SAVE_DELAY_MS = 750;
@@ -120,7 +118,7 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
   view.queueStartInProgress = true;
   view.renderQueue();
   view.renderToolbar();
-  let outcome: "running" | "completed" | "failed" = "failed";
+  let outcome: QueuedTurnOutcome = "failed";
   try {
     outcome = await view.startQueuedTurnItemSafely(item, "queue");
   } finally {
@@ -219,7 +217,12 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     runId,
     createdAt: Date.now()
   };
-  let renderState = createAgentEventRenderState(backend);
+  const projector = new HarnessEventProjector({
+    runId,
+    backendId: backend,
+    vaultPath: view.plugin.getVaultPath(),
+    answerMessage: assistantMessage
+  });
   let keepRunOpen = false;
   session.messages.push(userMessage, assistantMessage);
   try {
@@ -251,14 +254,11 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       request: buildChatHarnessRequest(view, session, item, runId, turnAttachments, backend, resources),
       sink: (event: HarnessEvent) => {
         updateEchoInkThinkingLifecycle(view, session, event);
-        const agentEvent = harnessEventToAgentEvent(event, backend);
-        if (!agentEvent) return;
-        renderState = reduceAgentEventForChat(renderState, agentEvent);
-        applyAgentChatRenderState(assistantMessage, renderState);
-        syncInlineAgentProcessMessages(session, assistantMessage, renderState, runId, view.plugin.getVaultPath());
-        scheduleInlineAgentProcessPersistence(view);
-        session.updatedAt = Date.now();
-        view.renderMessagesIfActive(session);
+        const batch = projector.project(event);
+        if (batch.updates.length) {
+          applyProjectedChatBatch(view, session, assistantMessage.id, batch);
+          scheduleInlineAgentProcessPersistence(view);
+        }
         view.renderToolbar();
       }
     });
@@ -275,7 +275,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         runId,
         backend,
         assistantMessage,
-        getRenderState: () => renderState
+        projector
       }).catch((error) => {
         void recoverRunningChatSettlementFailure({
           view,
@@ -283,6 +283,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
           runId,
           backend,
           assistantMessage,
+          projector,
           error
         });
       });
@@ -294,32 +295,36 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       return "running";
     }
     applyHarnessRunProvenance(assistantMessage, output);
-    assistantMessage.status = output.status === "completed" ? "completed" : "failed";
-    assistantMessage.itemType = output.status === "completed" ? "assistant" : "error";
-    assistantMessage.title = output.status === "completed" ? agentChatTitle(backend) : `${agentChatTitle(backend)} 发送失败`;
-    assistantMessage.text = (renderState.text || output.outputText || output.error || "").trim() || "Agent 未返回内容。";
-    assistantMessage.details = formatAgentEventDetails(renderState);
+    applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+      status: output.status === "completed" ? "completed" : output.status === "cancelled" ? "cancelled" : "failed",
+      text: output.outputText,
+      error: output.error,
+      createdAt: Date.now()
+    });
+    const completed = output.status === "completed";
+    const cancelled = output.status === "cancelled";
+    assistantMessage.title = completed ? agentChatTitle(backend) : cancelled ? "已中断" : `${agentChatTitle(backend)} 发送失败`;
+    assistantMessage.text = (assistantMessage.text || output.outputText || output.error || "").trim() || "Agent 未返回内容。";
     assistantMessage.completedAt = Date.now();
-    syncInlineAgentProcessMessages(session, assistantMessage, renderState, runId, view.plugin.getVaultPath());
-    settleInlineAgentProcessMessages(session, runId, output.status === "completed" ? "completed" : "failed");
-    view.finishThinkingMessage(session, output.status === "completed" ? "完成" : "失败");
-    view.finishRunningProcessMessages(session, output.status === "completed" ? "completed" : "failed");
+    view.finishThinkingMessage(session, cancelled ? "中断" : completed ? "完成" : "失败");
+    view.finishRunningProcessMessages(session, completed ? "completed" : "interrupted");
     view.finishPlanMessage(session);
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     cancelInlineAgentProcessPersistence(view);
     await view.plugin.saveSettings(true);
-    return output.status === "completed" ? "completed" : "failed";
+    return completed ? "completed" : cancelled ? "cancelled" : "failed";
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    assistantMessage.status = "failed";
+    applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+      status: "failed",
+      error: message,
+      createdAt: Date.now()
+    });
     assistantMessage.title = `${agentChatTitle(backend)} 发送失败`;
-    assistantMessage.itemType = "error";
-    assistantMessage.text = message;
     assistantMessage.completedAt = Date.now();
     applyMessageProvenance(assistantMessage, provenance);
-    settleInlineAgentProcessMessages(session, runId, "failed");
     view.finishThinkingMessage(session, "失败");
-    view.finishRunningProcessMessages(session, "failed");
+    view.finishRunningProcessMessages(session, "interrupted");
     view.finishPlanMessage(session);
     await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
     cancelInlineAgentProcessPersistence(view);
@@ -352,18 +357,20 @@ async function recoverRunningChatSettlementFailure(input: {
   runId: string;
   backend: AgentBackendKind;
   assistantMessage: ChatMessage;
+  projector: HarnessEventProjector;
   error: unknown;
 }): Promise<void> {
-  const { view, session, runId, backend, assistantMessage } = input;
+  const { view, session, runId, backend, assistantMessage, projector } = input;
   const completed = assistantMessage.status === "completed";
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   if (!completed) {
-    assistantMessage.status = "failed";
-    assistantMessage.itemType = "error";
+    applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+      status: "failed",
+      error: message || "Agent 收口失败",
+      createdAt: Date.now()
+    });
     assistantMessage.title = `${agentChatTitle(backend)} 收口失败`;
-    assistantMessage.text = message || "Agent 收口失败";
     assistantMessage.completedAt = Date.now();
-    settleInlineAgentProcessMessages(session, runId, "failed");
     await view.plugin.externalizeMessageText?.(assistantMessage, assistantMessage.text).catch(() => undefined);
     await persistAndSettleChatRun(view.plugin, {
       runId,
@@ -392,9 +399,9 @@ async function settleRunningChatTurn(input: {
   runId: string;
   backend: AgentBackendKind;
   assistantMessage: ChatMessage;
-  getRenderState: () => AgentChatRenderState;
+  projector: HarnessEventProjector;
 }): Promise<void> {
-  const { view, adapter, session, runId, backend } = input;
+  const { view, adapter, session, runId, backend, projector } = input;
   let result: AgentRunResult;
   try {
     result = await adapter.awaitResult?.(runId) ?? { status: "failed", error: "Agent 不支持异步结果收口" };
@@ -406,21 +413,21 @@ async function settleRunningChatTurn(input: {
   }
 
   const assistantMessage = input.assistantMessage;
-  const renderState = input.getRenderState();
 
   const externallyCleared = view.activeRunId !== runId;
   const completed = result.status === "completed";
   const cancelled = result.status === "cancelled";
-  assistantMessage.status = completed ? "completed" : cancelled ? "canceled" : "failed";
-  assistantMessage.itemType = completed ? "assistant" : "error";
+  applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+    status: completed ? "completed" : cancelled ? "cancelled" : "failed",
+    text: result.outputText,
+    error: result.error,
+    createdAt: Date.now()
+  });
   assistantMessage.title = completed ? agentChatTitle(backend) : cancelled ? "已中断" : `${agentChatTitle(backend)} 发送失败`;
-  assistantMessage.text = (renderState.text || result.outputText || result.error || (cancelled ? "本轮对话已中断。" : "")).trim() || "Agent 未返回内容。";
-  assistantMessage.details = formatAgentEventDetails(renderState);
+  assistantMessage.text = (assistantMessage.text || result.outputText || result.error || (cancelled ? "本轮对话已中断。" : "")).trim() || "Agent 未返回内容。";
   assistantMessage.completedAt = Date.now();
-  syncInlineAgentProcessMessages(session, assistantMessage, renderState, runId, view.plugin.getVaultPath());
-  settleInlineAgentProcessMessages(session, runId, completed ? "completed" : "failed");
   view.finishThinkingMessage?.(session, cancelled ? "中断" : completed ? "完成" : "失败");
-  view.finishRunningProcessMessages?.(session, cancelled ? "interrupted" : completed ? "completed" : "failed");
+  view.finishRunningProcessMessages?.(session, completed ? "completed" : "interrupted");
   view.finishPlanMessage?.(session);
   await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
   cancelInlineAgentProcessPersistence(view);
@@ -627,32 +634,6 @@ function setCodexNativeThreadIdForSession(session: StoredSession, threadId: stri
   });
 }
 
-function applyAgentChatRenderState(message: ChatMessage, state: AgentChatRenderState): void {
-  message.status = state.status;
-  message.itemType = state.itemType;
-  message.title = state.title;
-  message.text = state.text || message.text;
-  if (state.runId) message.runId = state.runId;
-  message.details = formatAgentEventDetails(state);
-}
-
-function syncInlineAgentProcessMessages(session: StoredSession, assistantMessage: ChatMessage, state: AgentChatRenderState, runId: string, vaultPath: string): void {
-  const prefix = inlineAgentProcessMessagePrefix(runId);
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    if (session.messages[index].id.startsWith(prefix)) session.messages.splice(index, 1);
-  }
-  const processMessages = buildInlineAgentProcessMessages(state, {
-    runId,
-    backendId: state.backend,
-    modelId: assistantMessage.modelId,
-    profileId: assistantMessage.profileId,
-    createdAt: assistantMessage.createdAt,
-    vaultPath
-  });
-  const assistantIndex = session.messages.indexOf(assistantMessage);
-  session.messages.splice(assistantIndex >= 0 ? assistantIndex : session.messages.length, 0, ...processMessages);
-}
-
 function scheduleInlineAgentProcessPersistence(view: object & { plugin?: { saveSettings?: (immediate?: boolean) => Promise<unknown> } }): void {
   if (inlineAgentProcessSaveTimers.has(view) || typeof view.plugin?.saveSettings !== "function") return;
   const timer = setTimeout(() => {
@@ -669,88 +650,31 @@ function cancelInlineAgentProcessPersistence(view: object): void {
   inlineAgentProcessSaveTimers.delete(view);
 }
 
-function settleInlineAgentProcessMessages(session: StoredSession, runId: string, status: "completed" | "failed"): void {
-  const prefix = inlineAgentProcessMessagePrefix(runId);
-  for (const message of session.messages) {
-    if (!message.id.startsWith(prefix)) continue;
-    if (message.status === "running" || message.status === "approval") message.status = status;
-  }
+function applyProjectedChatBatch(
+  view: CodexViewTurnContext,
+  session: StoredSession,
+  answerMessageId: string,
+  batch: HarnessProjectionBatch
+): ChatMessage[] {
+  const applied = applyHarnessProjectionBatch(session.messages, batch, answerMessageId);
+  if (!applied.length) return applied;
+  session.updatedAt = Date.now();
+  for (const message of applied) renderProjectedChatMessage(view, session, message);
+  return applied;
 }
 
-function formatAgentEventDetails(state: AgentChatRenderState): string {
-  const thinking = state.thinkingBlocks
-    .filter((block) => block.text.trim())
-    .map((block) => `Thinking: ${block.text.trim()}`);
-  const tools = state.toolCalls.map((tool) => {
-    const suffix = tool.output ? ` — ${tool.output}` : "";
-    return `Tool ${tool.status}: ${tool.name}${suffix}`;
-  });
-  return [...thinking, ...tools].join("\n");
+function applyProjectedChatSettlement(
+  view: CodexViewTurnContext,
+  session: StoredSession,
+  assistantMessage: ChatMessage,
+  projector: HarnessEventProjector,
+  settlement: HarnessProjectionSettlement
+): void {
+  applyProjectedChatBatch(view, session, assistantMessage.id, projector.settle(settlement));
 }
 
-function harnessEventToAgentEvent(event: HarnessEvent, backend: AgentBackendKind): AgentEvent | null {
-  const base = {
-    backend,
-    createdAt: event.createdAt,
-    runId: event.runId,
-    title: event.title,
-    text: event.text,
-    status: event.status,
-    toolName: event.toolName,
-    resourceId: event.resourceId,
-    data: event.data,
-    error: event.error
-  };
-  switch (event.type) {
-    case "agent.connecting":
-      return { ...base, type: "connecting" };
-    case "agent.connected":
-      return { ...base, type: "connected" };
-    case "run.started":
-      return { ...base, type: "run_started" };
-    case "agent.message.delta":
-      return { ...base, type: "message_delta" };
-    case "agent.message.completed":
-      return { ...base, type: "message_completed" };
-    case "agent.reasoning.started":
-    case "agent.reasoning.summary.delta":
-    case "agent.thinking.delta":
-      return { ...base, type: "thinking_delta" };
-    case "agent.reasoning.summary.completed":
-    case "agent.thinking.completed":
-      return { ...base, type: "thinking_completed" };
-    case "adapter.fallback.started":
-      return { ...base, type: "fallback_started" };
-    case "agent.plan.updated":
-      return { ...base, type: "plan_updated" };
-    case "tool.requested":
-      return { ...base, type: "tool_call_requested" };
-    case "tool.started":
-    case "tool.output.delta":
-      return { ...base, type: "tool_call_delta" };
-    case "tool.approval.requested":
-      return { ...base, type: "permission_requested" };
-    case "tool.completed":
-      return { ...base, type: "tool_call_completed" };
-    case "tool.failed":
-      return { ...base, type: "tool_call_failed" };
-    case "file.change.proposed":
-      return { ...base, type: "tool_call_requested", toolName: event.toolName ?? "文件改动", data: { ...event.data, itemType: "fileChange", processKind: "edit" } };
-    case "file.change.applied":
-      return { ...base, type: "tool_call_completed", toolName: event.toolName ?? "文件改动", data: { ...event.data, itemType: "fileChange", processKind: "edit" } };
-    case "file.change.reverted":
-      return { ...base, type: "tool_call_failed", toolName: event.toolName ?? "文件改动", data: { ...event.data, itemType: "fileChange", processKind: "edit" } };
-    case "usage.updated":
-      return { ...base, type: "usage" };
-    case "run.completed":
-      return { ...base, type: "completed" };
-    case "run.failed":
-      return { ...base, type: "failed" };
-    case "run.cancelled":
-      return { ...base, type: "cancelled" };
-    default:
-      return null;
-  }
+function renderProjectedChatMessage(view: CodexViewTurnContext, session: StoredSession, message: ChatMessage): void {
+  view.renderMessagesIfActive(session, message);
 }
 
 export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource): Promise<"completed" | "failed"> {

@@ -1,5 +1,8 @@
+import type { AgentModelInfo } from "../agent/types";
+
 export interface OpenCodeRunJsonParseResult {
   text: string;
+  hasAuthoritativeFinal: boolean;
   sessionId?: string;
   usage?: Record<string, unknown>;
 }
@@ -15,12 +18,14 @@ export interface OpenCodeRunArgsInput {
   };
   agent?: string;
   files?: string[];
+  thinking?: boolean;
 }
 
 export function buildOpenCodeRunArgs(input: OpenCodeRunArgsInput): string[] {
   const args = ["run", "--format", "json", "--dir", input.directory];
   if (input.serverUrl) args.push("--attach", input.serverUrl);
   if (input.sessionId) args.push("--session", input.sessionId);
+  if (input.thinking) args.push("--thinking");
   const model = openCodeCliModelId(input.model);
   if (model) args.push("--model", model);
   if (input.agent) args.push("--agent", input.agent);
@@ -65,11 +70,15 @@ export function latestOpenCodeAssistantText(messages: unknown[], excludedMessage
 export function parseOpenCodeRunJsonLines(output: string): OpenCodeRunJsonParseResult {
   const textByMessage = new Map<string, string[]>();
   const messageOrder: string[] = [];
+  const finishedMessageOrder: string[] = [];
+  const finishReasonByMessage = new Map<string, string>();
   const unscopedTextParts: string[] = [];
   const usageByMessage = new Map<string, Record<string, unknown>>();
-  let firstStepMessageId = "";
   let sessionId = "";
   let unscopedUsage: Record<string, unknown> | undefined;
+  const registerMessage = (messageId: string): void => {
+    if (messageId && !messageOrder.includes(messageId)) messageOrder.push(messageId);
+  };
   for (const rawLine of output.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || !line.startsWith("{")) continue;
@@ -81,12 +90,13 @@ export function parseOpenCodeRunJsonLines(output: string): OpenCodeRunJsonParseR
     }
     if (typeof event.sessionID === "string" && event.sessionID) sessionId = event.sessionID;
     const messageId = typeof event.part?.messageID === "string" ? event.part.messageID : "";
-    if (event.type === "step_start" && messageId && !firstStepMessageId) firstStepMessageId = messageId;
+    if (event.type === "step_start" || event.type === "text" || event.type === "step_finish") {
+      registerMessage(messageId);
+    }
     if (event.type === "text" && typeof event.part?.text === "string") {
       if (messageId) {
         if (!textByMessage.has(messageId)) {
           textByMessage.set(messageId, []);
-          messageOrder.push(messageId);
         }
         textByMessage.get(messageId)!.push(event.part.text);
       } else {
@@ -95,6 +105,12 @@ export function parseOpenCodeRunJsonLines(output: string): OpenCodeRunJsonParseR
     }
     if (event.type === "error") throw new Error(openCodeRunErrorMessage(event));
     if (event.type === "step_finish") {
+      if (messageId) {
+        const priorFinishIndex = finishedMessageOrder.indexOf(messageId);
+        if (priorFinishIndex >= 0) finishedMessageOrder.splice(priorFinishIndex, 1);
+        finishedMessageOrder.push(messageId);
+        finishReasonByMessage.set(messageId, typeof event.part?.reason === "string" ? event.part.reason : "");
+      }
       const tokens = event.part?.tokens;
       if (tokens && typeof tokens === "object") {
         const parsedUsage = {
@@ -107,15 +123,30 @@ export function parseOpenCodeRunJsonLines(output: string): OpenCodeRunJsonParseR
       }
     }
   }
-  const selectedMessageId = firstStepMessageId && textByMessage.get(firstStepMessageId)?.length
-    ? firstStepMessageId
-    : messageOrder.find((messageId) => Boolean(textByMessage.get(messageId)?.length)) ?? "";
-  const textParts = selectedMessageId ? textByMessage.get(selectedMessageId)! : unscopedTextParts;
+  const completedAnswerMessageId = [...finishedMessageOrder]
+    .reverse()
+    .find((messageId) => !isOpenCodeToolContinuationReason(finishReasonByMessage.get(messageId) ?? ""));
+  const hasScopedFinish = finishedMessageOrder.length > 0;
+  const selectedMessageId = completedAnswerMessageId
+    ?? (hasScopedFinish
+      ? ""
+      : [...messageOrder].reverse().find((messageId) => textByMessage.has(messageId)) ?? "");
+  const textParts = selectedMessageId
+    ? textByMessage.get(selectedMessageId) ?? []
+    : hasScopedFinish
+      ? []
+      : unscopedTextParts;
   return {
     text: textParts.join("").trim(),
+    hasAuthoritativeFinal: completedAnswerMessageId !== undefined,
     sessionId: sessionId || undefined,
     usage: selectedMessageId ? usageByMessage.get(selectedMessageId) : unscopedUsage
   };
+}
+
+function isOpenCodeToolContinuationReason(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return normalized === "tool-calls" || normalized === "tool-call" || normalized === "tool-use" || normalized === "tool-uses";
 }
 
 export function parseOpenCodeModelListOutput(output: string): AgentModelInfo[] {
@@ -136,13 +167,17 @@ export function parseOpenCodeModelListOutput(output: string): AgentModelInfo[] {
 }
 
 export function openCodeRunSessionIdFromLine(line: string): string {
+  const event = parseOpenCodeRunJsonLine(line);
+  return typeof (event as any)?.sessionID === "string" ? (event as any).sessionID : "";
+}
+
+export function parseOpenCodeRunJsonLine(line: string): unknown | null {
   const value = line.trim();
-  if (!value.startsWith("{")) return "";
+  if (!value.startsWith("{")) return null;
   try {
-    const event = JSON.parse(value);
-    return typeof event?.sessionID === "string" ? event.sessionID : "";
+    return JSON.parse(value);
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -182,4 +217,3 @@ function openCodeRecord(value: unknown): Record<string, unknown> {
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
-import type { AgentModelInfo } from "../agent/types";

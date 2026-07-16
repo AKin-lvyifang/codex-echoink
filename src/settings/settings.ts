@@ -77,6 +77,11 @@ export interface ChatMessage {
   title?: string;
   status?: string;
   details?: string;
+  processContentAvailability?: "provided" | "empty" | "unavailable";
+  processInput?: string;
+  processOutput?: string;
+  processInputAvailability?: "provided" | "empty" | "unavailable";
+  processOutputAvailability?: "provided" | "empty" | "unavailable";
   diffSummary?: DiffSummary;
   citations?: KnowledgeBaseCitationSummary;
   knowledgeBaseUi?: KnowledgeBaseMessageUiPayload;

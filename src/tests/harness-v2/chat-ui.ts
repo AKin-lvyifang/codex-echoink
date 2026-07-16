@@ -8,7 +8,7 @@ import type { QueuedTurnItem } from "../../ui/turn-queue";
 import { buildActionTimeline } from "../../ui/codex-view/action-timeline";
 import { buildAgentTurnProjection } from "../../ui/codex-view/agent-turn-process";
 import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAgentEventForChat } from "../../ui/codex-view/agent-event-renderer";
-import { messageProvenanceMetaItems } from "../../ui/codex-view/message-list";
+import { actionVerb, messageProvenanceMetaItems } from "../../ui/codex-view/message-list";
 import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
 import { messageRenderOptionsForRunUpdate, startChatTurn } from "../../ui/codex-view/turn-runner";
 import { renderTabsView } from "../../ui/codex-view/session-controller";
@@ -34,6 +34,8 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.equal(timeline.totalCount, 1);
   assert.deepEqual(timeline.groups.map((group) => group.kind), ["command"]);
   assert.equal(timeline.groups.some((group) => group.items.some((item) => item.id === "knowledge")), false);
+
+  testUnconfirmedAndInterruptedActionsStayHonest();
 
   assert.deepEqual(messageProvenanceMetaItems(completedMessages[4]), [
     "OpenCode · openai/gpt-5.5 · build",
@@ -65,6 +67,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
 
   testCompletedTurnKeepsBackendNeutralProcessSummary();
   await testUnifiedChatHarnessTurn();
+  await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
@@ -95,6 +98,41 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name-row\s*\{[\s\S]*flex-wrap:\s*wrap/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name\s*\{[\s\S]*white-space:\s*nowrap/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-kb-maintain-report-path\s*\{[\s\S]*overflow-wrap:\s*anywhere[\s\S]*white-space:\s*normal/);
+}
+
+function testUnconfirmedAndInterruptedActionsStayHonest(): void {
+  const unconfirmed = buildActionTimeline([{
+    id: "unconfirmed-command",
+    role: "tool",
+    itemType: "commandExecution",
+    processKind: "command",
+    title: "shell",
+    details: "npm test",
+    text: "partial stdout",
+    status: "unconfirmed",
+    runId: "run-unconfirmed-action",
+    createdAt: 1
+  }]);
+  assert.equal(unconfirmed.runStatus, "unconfirmed");
+  assert.equal(unconfirmed.summaryTitle, "1 个动作状态未回传");
+  assert.equal(unconfirmed.groups[0]?.title, "命令状态未回传");
+  assert.equal(actionVerb(unconfirmed.groups[0].items[0]), "运行状态未回传");
+
+  const interrupted = buildActionTimeline([{
+    id: "interrupted-read",
+    role: "tool",
+    itemType: "dynamicToolCall",
+    processKind: "view",
+    title: "read_file",
+    text: "",
+    status: "interrupted",
+    runId: "run-interrupted-action",
+    createdAt: 2
+  }]);
+  assert.equal(interrupted.runStatus, "interrupted");
+  assert.equal(interrupted.summaryTitle, "1 个动作已中断");
+  assert.equal(interrupted.groups[0]?.title, "读取已中断");
+  assert.equal(actionVerb(interrupted.groups[0].items[0]), "读取已中断");
 }
 
 function testCompletedTurnKeepsBackendNeutralProcessSummary(): void {
@@ -334,6 +372,89 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   assert.equal(thinkingFinishes, 1);
   assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "reasoning" && /正在分析/.test(message.text)), true);
   assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "dynamicToolCall" && message.processKind === "view"), true);
+}
+
+async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "hermes";
+  settings.capabilities.chatBackend = "hermes";
+  const session: StoredSession = {
+    id: "chat-ui-cancelled-session",
+    title: "Cancel",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const item: QueuedTurnItem = {
+    id: "queued-chat-ui-cancelled",
+    sessionId: session.id,
+    text: "取消这轮",
+    attachments: [],
+    skill: null,
+    turnOptions: {
+      model: "",
+      reasoning: "high",
+      serviceTier: "fast",
+      permission: "workspace-write",
+      mode: "agent",
+      mcpEnabled: false
+    },
+    kind: "chat",
+    createdAt: 2
+  };
+  const thinkingLabels: string[] = [];
+  let activeRunId = "";
+  const view: any = {
+    plugin: {
+      settings,
+      ensureHarnessBackendConnected: async () => undefined,
+      getVaultPath: () => "/tmp/echoink-chat-ui",
+      getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: "test-vault" }),
+      listEchoInkMcpTools: async () => [],
+      callEchoInkMcpTool: async () => ({ content: [] }),
+      externalizeMessageText: async () => undefined,
+      saveSettings: async () => undefined,
+      settleHarnessRunTerminal: async () => undefined,
+      runHarnessWithAdapter: async (input: { request: Record<string, unknown>; sink: (event: HarnessEvent) => void | Promise<void> }) => {
+        const runId = String(input.request.runId);
+        await input.sink(harnessEvent(runId, 1, "run.cancelled", { error: "Run cancelled" }));
+        return { runId, status: "cancelled" as const, error: "Run cancelled" };
+      }
+    },
+    running: false,
+    get activeRunId() { return activeRunId; },
+    set activeRunId(value: string) { activeRunId = value; },
+    activeRunKind: "",
+    activeRunSessionId: "",
+    activeTurnId: "",
+    turnStartedAt: 0,
+    threadPrewarmPromise: null,
+    threadPrewarmSessionId: "",
+    messagesBottomFollowPaused: false,
+    clearComposerDraft: () => undefined,
+    renderTabs: () => undefined,
+    renderMessagesIfActive: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    clearTurnWatchdog: () => undefined,
+    clearActiveRun: () => { activeRunId = ""; },
+    ensureThinkingMessage: () => undefined,
+    armTurnWatchdog: () => undefined,
+    attachTurnIdToRun: () => undefined,
+    finishThinkingMessage: (_session: StoredSession, label: string) => { thinkingLabels.push(label); },
+    finishRunningProcessMessages: () => undefined,
+    finishPlanMessage: () => undefined,
+    afterTurnSettled: async () => undefined
+  };
+
+  const outcome = await startChatTurn(view, session, item, "composer");
+  const answer = session.messages.find((message) => message.runId && message.role === "assistant");
+  assert.equal(outcome, "cancelled");
+  assert.equal(answer?.title, "已中断");
+  assert.doesNotMatch(answer?.title ?? "", /发送失败/);
+  assert.deepEqual(thinkingLabels, ["中断"]);
 }
 
 function harnessEvent(runId: string, sequence: number, type: HarnessEvent["type"], patch: Partial<HarnessEvent>): HarnessEvent {

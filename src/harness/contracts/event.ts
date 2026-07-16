@@ -1,5 +1,61 @@
 export type HarnessEventSource = "kernel" | "agent" | "workflow" | "tool" | "memory";
 
+export type HarnessContentAvailability = "provided" | "empty" | "unavailable";
+
+export type HarnessReasoningKind = "summary" | "trace" | "provider";
+
+export type HarnessReasoningVisibility = "public";
+
+export type HarnessToolSemanticKind =
+  | "read"
+  | "search"
+  | "command"
+  | "edit"
+  | "mcp"
+  | "agent"
+  | "plan"
+  | "tool";
+
+export type HarnessToolStatus =
+  | "requested"
+  | "running"
+  | "approval"
+  | "completed"
+  | "failed"
+  | "denied"
+  | "interrupted"
+  | "unconfirmed";
+
+/**
+ * Backend-neutral process metadata consumed by UI projections.
+ *
+ * Provider payloads may retain additional diagnostic fields, but UI code must
+ * use these normalized fields instead of branching on a backend's raw shape.
+ */
+export interface HarnessProcessEventData extends Record<string, unknown> {
+  messageId?: string;
+  blockId?: string;
+  reasoningKind?: HarnessReasoningKind;
+  visibility?: HarnessReasoningVisibility;
+  callId?: string;
+  toolCallId?: string;
+  semanticKind?: HarnessToolSemanticKind;
+  toolStatus?: HarnessToolStatus;
+  inputState?: HarnessContentAvailability;
+  outputState?: HarnessContentAvailability;
+  input?: unknown;
+  output?: unknown;
+  files?: string[];
+  locations?: unknown;
+  changes?: unknown;
+  diff?: unknown;
+  diffSummary?: unknown;
+  displayPreview?: string;
+  streamSource?: string;
+  promptSubmitted?: boolean;
+  unconfirmedToolCallCount?: number;
+}
+
 export type HarnessEventType =
   | "run.created"
   | "run.started"
@@ -72,7 +128,7 @@ export interface HarnessEvent {
   toolName?: string;
   resourceId?: string;
   error?: string;
-  data?: Record<string, unknown>;
+  data?: HarnessProcessEventData;
 }
 
 export type HarnessEventSink = (event: HarnessEvent) => void | Promise<void>;

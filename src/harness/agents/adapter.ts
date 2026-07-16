@@ -77,6 +77,8 @@ export interface AgentRunResult {
     modelId: string;
   };
   usage?: Record<string, unknown>;
+  /** Diagnostics preserved on the canonical run.completed/run.failed/run.cancelled event. */
+  terminalData?: Record<string, unknown>;
   error?: string;
 }
 

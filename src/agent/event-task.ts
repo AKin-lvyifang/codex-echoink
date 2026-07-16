@@ -44,9 +44,10 @@ export async function runTaskWithLifecycleEvents(
     const result = await resultPromise;
     if (!runStartedEmitted && result.runId) emitRunStarted(result.runId);
     await emitQueue;
-    await emitNow({ type: "message_completed", text: result.text });
+    const messageData = lifecycleMessageData(runId, result);
+    await emitNow({ type: "message_completed", text: result.text, data: messageData });
     if (result.usage) await emitNow({ type: "usage", data: result.usage });
-    await emitNow({ type: "completed", text: result.text });
+    await emitNow({ type: "completed", text: result.text, data: messageData });
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -60,6 +61,7 @@ export function createAgentEventRuntimeWithFallback(
   fallbackRuntime: AgentTaskRuntime,
   richRuntime?: AgentRichStreamRuntime
 ): AgentEventTaskRuntime {
+  let selectedRuntime: "fallback" | "rich" = "fallback";
   return {
     kind: fallbackRuntime.kind,
     connect: () => fallbackRuntime.connect(),
@@ -73,40 +75,50 @@ export function createAgentEventRuntimeWithFallback(
     listAgents: fallbackRuntime.listAgents ? () => fallbackRuntime.listAgents?.() ?? Promise.resolve([]) : undefined,
     hasNativeSession: fallbackRuntime.hasNativeSession ? (sessionId) => fallbackRuntime.hasNativeSession!(sessionId) : undefined,
     deleteNativeSession: fallbackRuntime.deleteNativeSession ? (sessionId) => fallbackRuntime.deleteNativeSession!(sessionId) : undefined,
-    runTask: (input) => fallbackRuntime.runTask(input),
+    runTask: (input) => {
+      selectedRuntime = "fallback";
+      return fallbackRuntime.runTask(input);
+    },
     async runTaskEvents(input, emit) {
-      if (input.system) {
-        return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
-      }
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {
+        selectedRuntime = "fallback";
         return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
       }
       if (richRuntime && shouldAttemptRichRuntime(input.timeoutMs)) {
+        selectedRuntime = "rich";
         let richOutputStarted = false;
+        let promptSubmitted = false;
         try {
           return await richRuntime.runTaskStream(input, async (event) => {
             if (isRichOutputEvent(event)) richOutputStarted = true;
+            if (event.data?.promptSubmitted === true) promptSubmitted = true;
             await emit(event);
           });
         } catch (error) {
-          if (input.abortSignal?.aborted || richOutputStarted) throw error;
+          // Once a provider may have accepted the prompt, starting the fallback
+          // runtime could execute writes twice. Recovery must stay on the same
+          // native session instead of launching a second task.
+          if (input.abortSignal?.aborted || promptSubmitted || richOutputStarted) throw error;
           const message = error instanceof Error ? error.message : String(error);
           await emit({
             type: "fallback_started",
             backend: fallbackRuntime.kind,
             createdAt: Date.now(),
-            error: message
+            error: message,
+            data: { streamSource: "lifecycle", promptSubmitted: false }
           });
           await richRuntime.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} rich runtime fallback disconnect`));
         }
       }
+      selectedRuntime = "fallback";
       return await runTaskWithLifecycleEvents(fallbackRuntime, input, emit);
     },
     async abort(runId: string) {
-      await Promise.all([
-        fallbackRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} fallback abort cleanup`)),
-        richRuntime?.abort(runId).catch(swallowError(`${fallbackRuntime.kind} rich abort cleanup`))
-      ]);
+      if (selectedRuntime === "rich" && richRuntime) {
+        await richRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} rich abort cleanup`));
+        return;
+      }
+      await fallbackRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} fallback abort cleanup`));
     }
   };
 }
@@ -148,9 +160,10 @@ async function runConnectedTaskWithLifecycleEvents(
     const result = await resultPromise;
     if (!runStartedEmitted && result.runId) emitRunStarted(result.runId);
     await emitQueue;
-    await emitNow({ type: "message_completed", text: result.text });
+    const messageData = lifecycleMessageData(runId, result);
+    await emitNow({ type: "message_completed", text: result.text, data: messageData });
     if (result.usage) await emitNow({ type: "usage", data: result.usage });
-    await emitNow({ type: "completed", text: result.text });
+    await emitNow({ type: "completed", text: result.text, data: messageData });
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -162,6 +175,13 @@ async function runConnectedTaskWithLifecycleEvents(
 
 function shouldAttemptRichRuntime(timeoutMs: number | undefined): boolean {
   return !timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs >= 1000;
+}
+
+function lifecycleMessageData(runId: string, result: AgentTaskResult): Record<string, unknown> {
+  return {
+    streamSource: "lifecycle",
+    messageId: `${runId || result.runId || "lifecycle"}:message:1`
+  };
 }
 
 function isRichOutputEvent(event: AgentEvent): boolean {

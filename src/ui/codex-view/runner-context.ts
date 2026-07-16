@@ -11,7 +11,7 @@ import type { ArticleUnderstandingPanelState } from "./header";
 
 export type RunnerRunKind = "chat" | "knowledge-base" | "editor" | "";
 export type QueuedTurnSource = "composer" | "queue";
-export type QueuedTurnOutcome = "running" | "completed" | "failed";
+export type QueuedTurnOutcome = "running" | "completed" | "failed" | "cancelled";
 export type KnowledgeBaseTurnOutcome = "completed" | "failed";
 
 export interface RunnerMessageRenderOptions {
@@ -72,7 +72,7 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   renderQueue(): void;
   renderTabs(): void;
   renderMessages(options?: RunnerMessageRenderOptions): void;
-  renderMessagesIfActive(session: StoredSession): void;
+  renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void;
   ensureThinkingMessage(session: StoredSession, title: string, text: string): void;
   attachTurnIdToRun(session: StoredSession, turnId: string): void;
   finishThinkingMessage(session: StoredSession, status: string): void;

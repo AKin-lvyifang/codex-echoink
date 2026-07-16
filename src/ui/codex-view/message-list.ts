@@ -52,6 +52,34 @@ interface MessageListEnvironment extends MessageListRenderInput {
   options: MessageListRenderOptions;
 }
 
+interface PendingProcessMessageUpdate {
+  message: ChatMessage;
+  sessionId: string;
+  shouldPinBottom: boolean;
+}
+
+export class LatestByKeyFrameBatcher<T> {
+  private readonly pending = new Map<string, T>();
+  private scheduled = false;
+
+  enqueue(
+    key: string,
+    value: T,
+    scheduleFrame: (callback: () => void) => void,
+    flush: (values: T[]) => void
+  ): void {
+    this.pending.set(key, value);
+    if (this.scheduled) return;
+    this.scheduled = true;
+    scheduleFrame(() => {
+      this.scheduled = false;
+      const values = Array.from(this.pending.values());
+      this.pending.clear();
+      if (values.length) flush(values);
+    });
+  }
+}
+
 const KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT = 18;
 const KNOWLEDGE_BASE_RUN_CELL_MS = 360;
 const MESSAGE_LIST_BOTTOM_SPACER_PX = 0;
@@ -59,6 +87,7 @@ const MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX = 2;
 const VIRTUAL_RERENDER_BURST_LIMIT = 24;
 const VIRTUAL_RERENDER_WINDOW_MS = 1000;
 const AGENT_LIVE_COPY_INTERVAL_MS = 1800;
+const PROCESS_CONTENT_UNAVAILABLE_TEXT = "后端未提供可展示内容";
 const COLD_START_STATUS_TEXTS = ["正在理解输入", "正在等待模型响应", "正在整理上下文"];
 const COLD_START_COPY_TEXTS = ["先把问题看明白", "等模型接上话", "把上下文放到手边"];
 const REPLY_COPY_TEXTS = ["正在组织回答", "把结论排清楚", "尽量说人话"];
@@ -139,6 +168,10 @@ export function shouldPinMessageListBottom(options: MessageListRenderOptions, ne
 export class CodexMessageListRenderer {
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
+  private viewportResizeObserver: ResizeObserver | null = null;
+  private observedMessagesEl: HTMLElement | null = null;
+  private viewportWidth = 0;
+  private viewportHeight = 0;
   private rawTextCache = new Map<string, string>();
   private openProcessItems = new Map<string, boolean>();
   private openActionItemDetails = new Map<string, boolean>();
@@ -148,14 +181,21 @@ export class CodexMessageListRenderer {
   private virtualRerenderScheduled = false;
   private virtualRerenderBurst = 0;
   private virtualRerenderWindowStartedAt = 0;
+  private virtualRerenderTrailingTimer: number | null = null;
+  private virtualRerenderPendingForceBottom = false;
+  private readonly processMessageBatcher = new LatestByKeyFrameBatcher<PendingProcessMessageUpdate>();
+  private readonly answerMessageBatcher = new LatestByKeyFrameBatcher<PendingProcessMessageUpdate>();
 
   render(input: MessageListRenderInput): void {
     const env: MessageListEnvironment = { ...input, options: input.options ?? {} };
     this.env = env;
     const { messagesEl, virtualListEl, knowledgeSession, messages, hiddenKnowledgeMessageCount } = env;
+    this.observeMessageViewport(messagesEl);
     if (this.virtualSessionId !== env.sessionId) {
       this.virtualSessionId = env.sessionId;
       this.virtualRowHeights.clear();
+      this.cancelVirtualRerenderTrailing(true);
+      this.resetVirtualRerenderThrottle();
     }
     const previousScrollTop = messagesEl.scrollTop;
     const shouldPinBottom = shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
@@ -210,12 +250,18 @@ export class CodexMessageListRenderer {
   }
 
   measureVisibleVirtualRows(messagesEl: HTMLElement, virtualListEl: HTMLElement, forceBottom = false, options: { rerender?: boolean } = {}): boolean {
+    if (messagesEl.clientHeight === 0) return false;
+    if (forceBottom && (this.virtualRerenderScheduled || this.virtualRerenderTrailingTimer !== null)) {
+      this.virtualRerenderPendingForceBottom = true;
+    }
     let changed = false;
     for (const child of Array.from(virtualListEl.children)) {
       if (!(child instanceof HTMLElement)) continue;
       const id = child.dataset.rowId;
       if (!id) continue;
-      const height = Math.max(1, Math.ceil(child.getBoundingClientRect().height));
+      const measuredHeight = child.getBoundingClientRect().height;
+      if (!Number.isFinite(measuredHeight) || measuredHeight <= 0) continue;
+      const height = Math.ceil(measuredHeight);
       if (this.virtualRowHeights.get(id) !== height) {
         this.virtualRowHeights.set(id, height);
         changed = true;
@@ -223,8 +269,7 @@ export class CodexMessageListRenderer {
     }
     if (changed && options.rerender !== false) this.scheduleMeasuredRowsRerender(forceBottom);
     if (!changed) {
-      this.virtualRerenderBurst = 0;
-      this.virtualRerenderWindowStartedAt = 0;
+      this.resetVirtualRerenderThrottle();
     }
     if (forceBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -234,17 +279,32 @@ export class CodexMessageListRenderer {
 
   tryUpdateMessage(message: ChatMessage): boolean {
     const env = this.env;
-    if (!env || message.status !== "running" || message.rawRef || message.citations) return false;
-    if (message.itemType === "knowledgeBase" || isAgentProcessItemType(message.itemType)) return false;
+    if (!env || message.rawRef || message.citations || message.itemType === "knowledgeBase") return false;
+    const processMessage = isAgentProcessItemType(message.itemType);
+    if (!processMessage && message.status !== "running") return false;
     const target = this.findRenderedMessageElement(message.id);
     const wrapper = target?.hasClass("codex-message") ? target : target?.closest<HTMLElement>(".codex-message");
-    const content = wrapper?.querySelector<HTMLElement>("[data-message-content]");
-    if (!wrapper || !content) return false;
-    const shouldPinBottom = (env.shouldFollowBottom?.() ?? true) && this.isAtBottom(env.messagesEl, env.virtualListEl);
-    wrapper.toggleClass("codex-message-streaming", true);
-    content.empty();
-    renderRichText(env.app, env.component, content, displayTextForMessage(message));
-    env.onScheduleMeasure(shouldPinBottom);
+    if (!wrapper) return false;
+    const shouldPinBottom = env.shouldFollowBottom
+      ? env.shouldFollowBottom()
+      : this.isAtBottom(env.messagesEl, env.virtualListEl);
+    if (processMessage) {
+      const virtualRow = wrapper.closest<HTMLElement>(".codex-virtual-row");
+      if (!isDirectProcessVirtualRow(virtualRow?.dataset.rowId, message)) return false;
+      this.processMessageBatcher.enqueue(
+        message.id,
+        { message, sessionId: env.sessionId, shouldPinBottom },
+        (callback) => window.requestAnimationFrame(callback),
+        (updates) => this.flushProcessMessageUpdates(updates)
+      );
+      return true;
+    }
+    this.answerMessageBatcher.enqueue(
+      message.id,
+      { message, sessionId: env.sessionId, shouldPinBottom },
+      (callback) => window.requestAnimationFrame(callback),
+      (updates) => this.flushAnswerMessageUpdates(updates)
+    );
     return true;
   }
 
@@ -268,11 +328,73 @@ export class CodexMessageListRenderer {
   resetVirtualWindow(): void {
     this.virtualSessionId = "";
     this.virtualRowHeights.clear();
+    this.cancelVirtualRerenderTrailing(true);
+    this.resetVirtualRerenderThrottle();
+  }
+
+  dispose(): void {
+    this.disconnectViewportObserver();
+    this.env = null;
+    this.resetVirtualWindow();
   }
 
   private requireEnv(): MessageListEnvironment {
     if (!this.env) throw new Error("Message list renderer has not been initialized");
     return this.env;
+  }
+
+  private observeMessageViewport(messagesEl: HTMLElement): void {
+    if (this.observedMessagesEl === messagesEl && this.viewportResizeObserver) return;
+    this.disconnectViewportObserver();
+    this.observedMessagesEl = messagesEl;
+    this.viewportWidth = Math.max(0, messagesEl.clientWidth);
+    this.viewportHeight = Math.max(0, messagesEl.clientHeight);
+    const ownerWindow = messagesEl.ownerDocument?.defaultView as (Window & { ResizeObserver?: typeof ResizeObserver }) | null;
+    const ResizeObserverCtor = ownerWindow?.ResizeObserver
+      ?? (typeof globalThis.ResizeObserver === "function" ? globalThis.ResizeObserver : null);
+    if (!ResizeObserverCtor) return;
+    this.viewportResizeObserver = new ResizeObserverCtor(() => {
+      if (this.observedMessagesEl !== messagesEl) return;
+      const previousWidth = this.viewportWidth;
+      const previousHeight = this.viewportHeight;
+      const nextWidth = Math.max(0, messagesEl.clientWidth);
+      const nextHeight = Math.max(0, messagesEl.clientHeight);
+      this.viewportWidth = nextWidth;
+      this.viewportHeight = nextHeight;
+      if (nextHeight <= 0) return;
+      const becameVisible = previousHeight <= 0;
+      const widthChanged = nextWidth > 0 && nextWidth !== previousWidth;
+      const heightChanged = nextHeight !== previousHeight;
+      if (!becameVisible && !widthChanged && !heightChanged) return;
+      if (becameVisible || widthChanged) {
+        this.virtualRowHeights.clear();
+        this.cancelVirtualRerenderTrailing(true);
+        this.resetVirtualRerenderThrottle();
+      }
+      this.scheduleMeasuredRowsRerender(false);
+    });
+    this.viewportResizeObserver.observe(messagesEl);
+  }
+
+  private disconnectViewportObserver(): void {
+    this.viewportResizeObserver?.disconnect();
+    this.viewportResizeObserver = null;
+    this.observedMessagesEl = null;
+    this.viewportWidth = 0;
+    this.viewportHeight = 0;
+  }
+
+  private resetVirtualRerenderThrottle(): void {
+    this.virtualRerenderBurst = 0;
+    this.virtualRerenderWindowStartedAt = 0;
+  }
+
+  private cancelVirtualRerenderTrailing(clearPendingForceBottom = false): void {
+    if (this.virtualRerenderTrailingTimer !== null) {
+      window.clearTimeout(this.virtualRerenderTrailingTimer);
+      this.virtualRerenderTrailingTimer = null;
+    }
+    if (clearPendingForceBottom) this.virtualRerenderPendingForceBottom = false;
   }
 
   private findRenderedMessageElement(messageId: string): HTMLElement | null {
@@ -283,21 +405,89 @@ export class CodexMessageListRenderer {
     return null;
   }
 
+  private flushProcessMessageUpdates(updates: PendingProcessMessageUpdate[]): void {
+    const env = this.env;
+    if (!env) return;
+    let updated = false;
+    let shouldPinBottom = false;
+    for (const update of updates) {
+      if (update.sessionId !== env.sessionId) continue;
+      const target = this.findRenderedMessageElement(update.message.id);
+      const wrapper = target?.hasClass("codex-message") ? target : target?.closest<HTMLElement>(".codex-message");
+      const virtualRow = wrapper?.closest<HTMLElement>(".codex-virtual-row");
+      if (!wrapper || !virtualRow) continue;
+      if (!isDirectProcessVirtualRow(virtualRow.dataset.rowId, update.message)) continue;
+      const showAgentHeader = Boolean(wrapper.querySelector(".codex-agent-header"));
+      virtualRow.empty();
+      if (isActionTimelineItem(update.message)) {
+        this.renderActionStreamItem(virtualRow, update.message, showAgentHeader);
+      } else {
+        this.renderMessage(virtualRow, update.message, {
+          showAgentHeader,
+          showAgentFooter: false,
+          processExpanded: true
+        });
+      }
+      updated = true;
+      shouldPinBottom = shouldPinBottom || update.shouldPinBottom;
+    }
+    if (updated) env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+  }
+
+  private flushAnswerMessageUpdates(updates: PendingProcessMessageUpdate[]): void {
+    const env = this.env;
+    if (!env) return;
+    let updated = false;
+    let shouldPinBottom = false;
+    for (const update of updates) {
+      if (update.sessionId !== env.sessionId) continue;
+      const target = this.findRenderedMessageElement(update.message.id);
+      const wrapper = target?.hasClass("codex-message") ? target : target?.closest<HTMLElement>(".codex-message");
+      const virtualRow = wrapper?.closest<HTMLElement>(".codex-virtual-row");
+      if (!wrapper || !virtualRow || virtualRow.dataset.rowId !== messageRowId(update.message)) continue;
+      const content = wrapper.querySelector<HTMLElement>("[data-message-content]");
+      if (!content) continue;
+      wrapper.toggleClass("codex-message-streaming", update.message.status === "running");
+      renderRichText(env.app, env.component, content, displayTextForMessage(update.message));
+      updated = true;
+      shouldPinBottom = shouldPinBottom || update.shouldPinBottom;
+    }
+    if (updated) env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+  }
+
   private scheduleMeasuredRowsRerender(forceBottom: boolean): void {
-    if (!this.env || this.virtualRerenderScheduled) return;
+    if (!this.env) return;
+    this.virtualRerenderPendingForceBottom = this.virtualRerenderPendingForceBottom || forceBottom;
+    if (this.virtualRerenderScheduled) return;
     const now = Date.now();
     if (!this.virtualRerenderWindowStartedAt || now - this.virtualRerenderWindowStartedAt > VIRTUAL_RERENDER_WINDOW_MS) {
       this.virtualRerenderWindowStartedAt = now;
       this.virtualRerenderBurst = 0;
     }
-    if (this.virtualRerenderBurst >= VIRTUAL_RERENDER_BURST_LIMIT) return;
+    if (this.virtualRerenderBurst >= VIRTUAL_RERENDER_BURST_LIMIT) {
+      if (this.virtualRerenderTrailingTimer === null) {
+        const remainingWindowMs = Math.max(
+          0,
+          this.virtualRerenderWindowStartedAt + VIRTUAL_RERENDER_WINDOW_MS - now
+        );
+        this.virtualRerenderTrailingTimer = window.setTimeout(() => {
+          this.virtualRerenderTrailingTimer = null;
+          this.resetVirtualRerenderThrottle();
+          this.scheduleMeasuredRowsRerender(false);
+        }, remainingWindowMs);
+      }
+      return;
+    }
+    this.cancelVirtualRerenderTrailing();
     this.virtualRerenderBurst += 1;
     this.virtualRerenderScheduled = true;
     window.requestAnimationFrame(() => {
       this.virtualRerenderScheduled = false;
+      const effectiveForceBottom = this.virtualRerenderPendingForceBottom;
+      this.virtualRerenderPendingForceBottom = false;
       const env = this.env;
       if (!env) return;
-      const stillPinnedBottom = forceBottom && (env.shouldFollowBottom?.() ?? true) && isNearVirtualBottom(
+      const stillPinnedBottom = effectiveForceBottom && (env.shouldFollowBottom?.() ?? true) && isNearVirtualBottom(
         env.messagesEl.scrollTop,
         Math.max(1, env.messagesEl.clientHeight),
         Math.max(env.virtualListEl.scrollHeight, env.messagesEl.scrollHeight),
@@ -672,6 +862,7 @@ export class CodexMessageListRenderer {
     const item = timeline.groups[0]?.items[0];
     if (!item) return;
     const wrapper = container.createDiv({ cls: "codex-message codex-message-tool codex-message-type-actionStream" });
+    wrapper.dataset.messageId = message.id;
     if (showAgentHeader) this.renderAgentHeader(wrapper, {
       message,
       statusLabel: message.status === "running" || message.status === "approval" ? "深度思考" : "",
@@ -908,14 +1099,28 @@ export class CodexMessageListRenderer {
   }
 
   private renderProcessBody(body: HTMLElement, message: ChatMessage): void {
+    const hasExplicitChannels = hasExplicitProcessChannels(message);
     const env = this.requireEnv();
+    if (!hasExplicitChannels && message.processContentAvailability === "unavailable") {
+      body.createDiv({ cls: "codex-process-raw-loading", text: PROCESS_CONTENT_UNAVAILABLE_TEXT });
+      return;
+    }
     const fallback = message.status === "running" ? "正在接收过程内容..." : "暂无内容";
     if (message.itemType === "commandExecution") {
-      this.renderCommandExecutionBody(body, message, fallback);
+      if (hasExplicitChannels) this.renderProcessChannels(body, message);
+      else this.renderCommandExecutionBody(body, message, fallback);
       return;
     }
     if (message.itemType === "fileChange" && message.diffSummary) {
-      this.renderFileChangeBody(body, message, fallback);
+      if (hasExplicitChannels) this.renderProcessChannels(body, message);
+      const diffBody = hasExplicitChannels
+        ? body.createDiv({ cls: "codex-process-channel codex-process-channel-diff" })
+        : body;
+      this.renderFileChangeBody(diffBody, message, fallback);
+      return;
+    }
+    if (hasExplicitChannels) {
+      this.renderProcessChannels(body, message);
       return;
     }
     const rawLike = message.itemType === "commandExecution" || message.itemType === "fileChange" || message.itemType === "mcpToolCall" || message.itemType === "dynamicToolCall" || message.itemType === "collabAgentToolCall";
@@ -930,6 +1135,31 @@ export class CodexMessageListRenderer {
       return;
     }
     renderRichText(env.app, env.component, body, text);
+  }
+
+  private renderProcessChannels(body: HTMLElement, message: ChatMessage): void {
+    this.renderProcessChannel(body, "输入", message.processInputAvailability, message.processInput);
+    this.renderProcessChannel(body, "输出", message.processOutputAvailability, message.processOutput);
+  }
+
+  private renderProcessChannel(
+    body: HTMLElement,
+    label: string,
+    availability: ChatMessage["processInputAvailability"],
+    text: string | undefined
+  ): void {
+    if (!availability) return;
+    const channel = body.createDiv({ cls: "codex-process-channel" });
+    channel.createDiv({ cls: "codex-process-raw-title", text: label });
+    if (availability === "unavailable") {
+      channel.createDiv({ cls: "codex-process-raw-loading", text: PROCESS_CONTENT_UNAVAILABLE_TEXT });
+      return;
+    }
+    if (availability === "empty") {
+      channel.createDiv({ cls: "codex-process-raw-loading", text: "后端返回空内容" });
+      return;
+    }
+    this.renderPlainTextBlock(channel, text?.trim() ? text : PROCESS_CONTENT_UNAVAILABLE_TEXT);
   }
 
   private renderFileChangeBody(body: HTMLElement, message: ChatMessage, fallback: string): void {
@@ -1351,12 +1581,16 @@ function backendDisplayName(backendId: string): string {
   return backendId;
 }
 
-function messageRowId(message: ChatMessage): string {
+function messageRowId(message: Pick<ChatMessage, "id">): string {
   return `message:${message.id}`;
 }
 
-function actionItemRowId(message: ChatMessage): string {
+function actionItemRowId(message: Pick<ChatMessage, "id">): string {
   return `actionItem:${message.id}`;
+}
+
+export function isDirectProcessVirtualRow(rowId: string | undefined, message: Pick<ChatMessage, "id" | "itemType" | "role">): boolean {
+  return rowId === (isActionTimelineItem(message) ? actionItemRowId(message) : messageRowId(message));
 }
 
 function completedTurnRowId(turn: CompletedAgentTurn): string {
@@ -1375,17 +1609,30 @@ function actionItemTarget(item: ActionItemViewModel): string {
   if (item.kind === "command" && item.command?.summary) return item.command.summary;
   const prefix = actionVerb(item);
   const title = item.title.startsWith(prefix) ? item.title.slice(prefix.length).trim() : item.title;
-  return title.replace(/^命令\s*/, "").trim();
+  return title
+    .replace(/^(?:已运行|已读取|已搜索|已编辑|已调用|已处理|已更新|已验证|已记录|正在编辑|创建失败)\s*/, "")
+    .replace(/^命令\s*/, "")
+    .trim();
 }
 
 function hasActionItemDetails(item: ActionItemViewModel): boolean {
+  if (item.source.processContentAvailability === "unavailable" || hasExplicitProcessChannels(item.source)) return true;
+  const hasToolPayload = Boolean(
+    item.source.rawRef
+    || item.source.text.trim()
+    || item.source.files?.length
+    || item.source.diffSummary?.files.length
+  );
   return Boolean(
     item.source.rawRef ||
     item.kind === "command" ||
     item.kind === "edit" ||
-    item.kind === "tool" ||
-    item.kind === "agent"
+    ((item.kind === "tool" || item.kind === "agent") && hasToolPayload)
   );
+}
+
+function hasExplicitProcessChannels(message: ChatMessage): boolean {
+  return Boolean(message.processInputAvailability || message.processOutputAvailability);
 }
 
 function actionItemDetailLabel(item: ActionItemViewModel): string {
@@ -1395,16 +1642,50 @@ function actionItemDetailLabel(item: ActionItemViewModel): string {
   return "查看详情";
 }
 
-function actionVerb(item: ActionItemViewModel): string {
+export function actionVerb(item: ActionItemViewModel): string {
+  if (item.status === "unconfirmed") return statusActionVerb(item.kind, "状态未回传");
+  if (item.status === "interrupted" || item.status === "canceled") return statusActionVerb(item.kind, "已中断");
+  if (item.status === "running" || item.status === "blocked") return runningActionVerb(item.kind);
+  if (item.status === "failed") return statusActionVerb(item.kind, "失败");
   if (item.kind === "read") return "已读取";
   if (item.kind === "search") return "已搜索";
   if (item.kind === "command") return "已运行";
-  if (item.kind === "edit") return item.status === "running" ? "正在编辑" : "已编辑";
+  if (item.kind === "edit") return "已编辑";
   if (item.kind === "tool") return "已调用";
-  if (item.kind === "agent") return item.status === "failed" ? "创建失败" : "已处理";
+  if (item.kind === "agent") return "已处理";
   if (item.kind === "plan") return "已更新";
   if (item.kind === "verify") return "已验证";
   return "已记录";
+}
+
+function statusActionVerb(kind: ActionGroupKind, suffix: string): string {
+  const labels: Record<ActionGroupKind, string> = {
+    read: "读取",
+    search: "搜索",
+    command: "运行",
+    edit: "编辑",
+    tool: "工具调用",
+    agent: "智能体动作",
+    plan: "计划更新",
+    verify: "验证",
+    system: "系统动作"
+  };
+  return `${labels[kind]}${suffix}`;
+}
+
+function runningActionVerb(kind: ActionGroupKind): string {
+  const labels: Record<ActionGroupKind, string> = {
+    read: "正在读取",
+    search: "正在搜索",
+    command: "正在运行",
+    edit: "正在编辑",
+    tool: "正在调用",
+    agent: "正在处理",
+    plan: "正在更新",
+    verify: "正在验证",
+    system: "正在处理"
+  };
+  return labels[kind];
 }
 
 function iconForActionKind(kind: ActionGroupKind, status?: string): string {
@@ -1497,7 +1778,8 @@ function labelForStatus(status: string): string {
     failed: "失败",
     canceled: "已取消",
     blocked: "等待确认",
-    interrupted: "中断"
+    interrupted: "中断",
+    unconfirmed: "状态未回传"
   };
   return labels[status] ?? status;
 }

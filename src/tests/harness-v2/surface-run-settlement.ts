@@ -41,6 +41,7 @@ export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertUsageAndCompactionNotificationsBypassActiveDriver();
   await assertUsageAndCompactionOnlyUpdateMatchingSessionThread();
   await assertViewCloseCancelsActiveRunDuringReload();
+  await assertViewCloseDisposesRendererWhenRecoveryFails();
   await assertReloadRecoveryCommitsLocalHistoryBeforeLedgerTerminal();
   await assertReloadRecoveryKeepsTerminalPendingWhenLocalCommitFails();
   await assertReloadRecoveryRetriesFailedLedgerTerminal();
@@ -881,6 +882,7 @@ async function assertViewCloseCancelsActiveRunDuringReload(): Promise<void> {
     clearActiveRun: () => { calls.push("clear"); view.activeRunId = ""; },
     rejectEditorActionRun: () => undefined,
     rejectEditorSummaryRun: () => undefined,
+    messageListRenderer: { dispose: () => { calls.push("message-list-dispose"); } },
     flushSessionSave: async () => { calls.push("save"); },
     plugin: {
       cancelHarnessRun: async (runId: string) => { calls.push(`cancel:${runId}`); },
@@ -894,6 +896,38 @@ async function assertViewCloseCancelsActiveRunDuringReload(): Promise<void> {
   assert.ok(calls.includes("cancel:run-view-close"));
   assert.ok(calls.includes("recover:session-view-close"));
   assert.ok(calls.includes("save"));
+  assert.ok(calls.includes("message-list-dispose"));
+}
+
+async function assertViewCloseDisposesRendererWhenRecoveryFails(): Promise<void> {
+  let disposeCalls = 0;
+  const session = {
+    id: "session-view-close-failure",
+    messages: [{ id: "answer", role: "assistant", text: "partial", status: "running", runId: "run-view-close-failure", createdAt: 1 }]
+  };
+  const view: any = {
+    activeRunId: "run-view-close-failure",
+    activeRunKind: "chat",
+    running: true,
+    activeRunSession: () => session,
+    clearTurnWatchdog: () => undefined,
+    clearEditorActionStatusTimers: () => undefined,
+    clearKnowledgeBaseRunProgressTimer: () => undefined,
+    knowledgeDashboardTooltipState: { panels: [], tooltips: [], closeTimers: new Set(), cleanups: [] },
+    clearActiveRun: () => { view.activeRunId = ""; },
+    messageListRenderer: { dispose: () => { disposeCalls += 1; } },
+    flushSessionSave: async () => undefined,
+    plugin: {
+      cancelHarnessRun: async () => undefined,
+      recoverInterruptedHarnessRuns: async () => { throw new Error("recovery failed"); }
+    }
+  };
+
+  await assert.rejects(
+    () => CodexView.prototype.onClose.call(view),
+    /recovery failed/
+  );
+  assert.equal(disposeCalls, 1);
 }
 
 async function assertReloadRecoveryCommitsLocalHistoryBeforeLedgerTerminal(): Promise<void> {

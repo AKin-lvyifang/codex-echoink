@@ -5,9 +5,10 @@ import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime, selectOpenCo
 import { resolveHermesCommand } from "../core/hermes-models";
 import type { CodexForObsidianSettings } from "../settings/settings";
 import type { AgentBackend, AgentBackendKind, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput, AgentTaskResult } from "./types";
-import type { AgentTaskRuntime } from "./runtime";
+import type { AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
 import { AcpAgentRuntime } from "./acp-runtime";
 import { createAgentEventRuntimeWithFallback } from "./event-task";
+import { createOpenCodeRichRuntime } from "./opencode-rich-runtime";
 
 export interface AgentRuntimeFactoryInput {
   backend: AgentBackendKind;
@@ -54,6 +55,39 @@ function createCodexTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunti
 
 function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRuntime {
   const backend = new OpenCodeBackend({ ...input.settings.opencode, vaultPath: input.vaultPath });
+  const prepareTask = async (task: AgentTaskInput) => {
+    throwIfTaskAborted(task.abortSignal);
+    const selectedAgent = task.agent || input.settings.opencode.agent;
+    if (task.requireDirectAgent && selectedAgent) {
+      requireDirectOpenCodeAgent(selectedAgent, await backend.listAgents());
+    }
+    const sources = task.sources ?? [];
+    const parts = [{ type: "text" as const, text: withResourcePrefix(task.prompt, task.resources) }, ...sources];
+    const selectedModel = selectOpenCodeModelForTask(
+      await backend.listModels(),
+      task.model?.providerId ?? input.settings.opencode.providerId,
+      task.model?.modelId ?? input.settings.opencode.modelId,
+      requiredModalities(parts)
+    );
+    ensureOpenCodeModelSupportsFiles(selectedModel, parts);
+    if (selectedModel) {
+      input.settings.opencode.providerId = selectedModel.providerId;
+      input.settings.opencode.modelId = selectedModel.modelId;
+      input.settings.opencode.textEnabled = selectedModel.inputModalities.includes("text");
+      input.settings.opencode.imageEnabled = selectedModel.inputModalities.includes("image");
+      input.settings.opencode.pdfEnabled = selectedModel.inputModalities.includes("pdf");
+    }
+    const model = selectedModel
+      ? { providerId: selectedModel.providerId, modelId: selectedModel.modelId }
+      : task.model;
+    return {
+      task: { ...task, agent: selectedAgent, ...(model ? { model } : {}) },
+      selectedAgent,
+      selectedModel,
+      sources,
+      parts
+    };
+  };
   const fallbackRuntime: AgentTaskRuntime = {
     kind: "opencode",
     async connect(): Promise<AgentConnectionStatus> {
@@ -79,34 +113,15 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
       return await backend.deleteSession(sessionId);
     },
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
-      throwIfTaskAborted(task.abortSignal);
-      const selectedAgent = task.agent || input.settings.opencode.agent;
-      if (task.requireDirectAgent && selectedAgent) {
-        requireDirectOpenCodeAgent(selectedAgent, await backend.listAgents());
-      }
-      const sources = task.sources ?? [];
-      const parts = [{ type: "text" as const, text: task.system ? task.prompt : withResourcePrefix(task.prompt, task.resources) }, ...sources];
-      const required = requiredModalities(parts);
-      const selectedModel = selectOpenCodeModelForTask(
-        await backend.listModels(),
-        task.model?.providerId ?? input.settings.opencode.providerId,
-        task.model?.modelId ?? input.settings.opencode.modelId,
-        required
-      );
-      ensureOpenCodeModelSupportsFiles(selectedModel, parts);
-      if (selectedModel) {
-        input.settings.opencode.providerId = selectedModel.providerId;
-        input.settings.opencode.modelId = selectedModel.modelId;
-        input.settings.opencode.textEnabled = selectedModel.inputModalities.includes("text");
-        input.settings.opencode.imageEnabled = selectedModel.inputModalities.includes("image");
-        input.settings.opencode.pdfEnabled = selectedModel.inputModalities.includes("pdf");
-      }
+      const prepared = await prepareTask(task);
+      const { selectedAgent, selectedModel, sources, parts } = prepared;
       if (task.system) {
         const session = await backend.startSession({
           title: "EchoInk Prompt Enhancer",
           ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
           agent: selectedAgent,
-          permission: "read-only"
+          permission: task.permission ?? "read-only",
+          writableRoots: task.writableRoots
         });
         task.onRunId?.(session.sessionId);
         try {
@@ -127,6 +142,13 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
           await backend.deleteSession(session.sessionId).catch(() => undefined);
         }
       }
+      if (task.nativeSessionId && await backend.hasSession(task.nativeSessionId)) {
+        await backend.updateSessionPermissions(
+          task.nativeSessionId,
+          task.permission ?? "workspace-write",
+          task.writableRoots
+        );
+      }
       const result = await backend.runCliTask({
         prompt: withResourcePrefix(task.prompt, task.resources),
         nativeSessionId: task.nativeSessionId,
@@ -146,9 +168,38 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
       await backend.abort(runId);
     }
   };
-  // OpenCode 1.4 `opencode acp` starts an HTTP ACP server, not a stdio JSON-RPC process.
-  // Keep the real OpenCode path on lifecycle events until EchoInk owns an HTTP ACP client.
-  return createAgentEventRuntimeWithFallback(fallbackRuntime);
+  const openCodeRichRuntime = createOpenCodeRichRuntime(backend, { manageBackendConnection: false });
+  const richRuntime: AgentRichStreamRuntime = {
+    kind: "opencode",
+    connect: () => openCodeRichRuntime.connect(),
+    disconnect: () => openCodeRichRuntime.disconnect(),
+    listModels: () => openCodeRichRuntime.listModels(),
+    listAgents: () => openCodeRichRuntime.listAgents(),
+    async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
+      const prepared = await prepareTask(task);
+      const result = await openCodeRichRuntime.runTask(prepared.task);
+      return {
+        ...result,
+        ...(prepared.selectedModel ? { effectiveModel: {
+          providerId: prepared.selectedModel.providerId,
+          modelId: prepared.selectedModel.modelId
+        } } : {})
+      };
+    },
+    async runTaskStream(task, emit): Promise<AgentTaskResult> {
+      const prepared = await prepareTask(task);
+      const result = await openCodeRichRuntime.runTaskStream(prepared.task, emit);
+      return {
+        ...result,
+        ...(prepared.selectedModel ? { effectiveModel: {
+          providerId: prepared.selectedModel.providerId,
+          modelId: prepared.selectedModel.modelId
+        } } : {})
+      };
+    },
+    abort: (runId) => openCodeRichRuntime.abort(runId)
+  };
+  return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime);
 }
 
 function createHermesTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRuntime {

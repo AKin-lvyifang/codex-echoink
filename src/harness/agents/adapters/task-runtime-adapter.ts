@@ -2,6 +2,7 @@ import type { AgentEvent, AgentEventSink as LegacyAgentEventSink } from "../../.
 import type { AgentEventTaskRuntime, AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../../../agent/runtime";
 import { runAgentTaskWithToolBridge } from "../../../agent/tool-bridge";
 import type { AgentTaskInput, AgentTaskResult } from "../../../agent/types";
+import { swallowError } from "../../../core/error-handling";
 import type { EchoInkResource } from "../../../resources/types";
 import { noCapabilities, type AgentCapabilities } from "../../contracts/capability";
 import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
@@ -34,6 +35,7 @@ export interface TaskRuntimeAgentAdapterOptions {
 export class TaskRuntimeAgentAdapter implements AgentAdapter {
   readonly manifest: AgentManifest;
   private readonly activeNativeRunIds = new Map<string, string>();
+  private readonly activeRunControllers = new Map<string, AbortController>();
 
   constructor(private readonly options: TaskRuntimeAgentAdapterOptions) {
     this.manifest = {
@@ -56,6 +58,9 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
   }
 
   async dispose(): Promise<void> {
+    for (const controller of this.activeRunControllers.values()) controller.abort();
+    this.activeRunControllers.clear();
+    this.activeNativeRunIds.clear();
     await this.options.runtime.disconnect?.();
   }
 
@@ -114,6 +119,9 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
 
   async run(request: AgentRunRequest, emit: HarnessEventSink): Promise<AgentRunResult> {
     let nativeRunId = "";
+    const runController = new AbortController();
+    const removeLegacyAbort = forwardAbort(this.options.legacyTaskDefaults?.abortSignal, runController);
+    this.activeRunControllers.set(request.runId, runController);
     const taskInput: AgentTaskInput & { toolBridge?: AgentToolBridgeRuntime | null } = {
       prompt: buildPrompt(request),
       system: buildSystemContext(request, this.options.legacyTaskDefaults?.system),
@@ -134,11 +142,14 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       agent: this.options.legacyTaskDefaults?.agent,
       profile: this.options.legacyTaskDefaults?.profile,
       requireDirectAgent: this.options.legacyTaskDefaults?.requireDirectAgent,
-      abortSignal: this.options.legacyTaskDefaults?.abortSignal,
+      abortSignal: runController.signal,
       onRunId: (runId) => {
         nativeRunId = runId;
         this.activeNativeRunIds.set(request.runId, runId);
         this.options.legacyTaskDefaults?.onRunId?.(runId);
+        if (runController.signal.aborted) {
+          void this.options.runtime.abort(runId).catch(swallowError(`${this.manifest.id} late native run abort`));
+        }
       }
     };
 
@@ -151,14 +162,25 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       }
       return mapTaskResult(this.manifest.id, result, nativeRunId, this.options.nativeRefContext);
     } finally {
+      removeLegacyAbort();
+      this.activeRunControllers.delete(request.runId);
       this.activeNativeRunIds.delete(request.runId);
     }
   }
 
   async cancel(runId: string): Promise<void> {
+    this.activeRunControllers.get(runId)?.abort();
     const nativeRunId = this.activeNativeRunIds.get(runId);
     if (nativeRunId) await this.options.runtime.abort(nativeRunId);
   }
+}
+
+function forwardAbort(signal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!signal) return () => undefined;
+  const abort = () => controller.abort();
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
 }
 
 function buildPrompt(request: AgentRunRequest): string {
@@ -220,8 +242,12 @@ function mapLegacyEvent(event: AgentEvent, manifest: AgentManifest): HarnessEven
     case "message_delta":
       return incompleteHarnessEvent("agent.message.delta", backendId, event.text, undefined, undefined, undefined, event.data);
     case "message_completed":
-    case "completed":
       return incompleteHarnessEvent("agent.message.completed", backendId, event.text, undefined, undefined, undefined, event.data);
+    case "completed":
+      // The Harness orchestrator emits the canonical run.completed event from
+      // the adapter result. Projecting this legacy lifecycle signal as another
+      // answer completion would create a duplicate answer segment.
+      return null;
     case "thinking_delta":
       if (manifest.capabilities.output.reasoningSummary !== "none") {
         return incompleteHarnessEvent("agent.reasoning.summary.delta", backendId, event.text, undefined, undefined, undefined, event.data);
@@ -285,6 +311,11 @@ function normalizeLegacyFileStatus(status: unknown): string {
 }
 
 function incompleteHarnessEvent(type: HarnessEventType, backendId: string, text?: string, error?: string, toolName?: string, resourceId?: string, data?: Record<string, unknown>): HarnessEvent {
+  const status = typeof data?.toolStatus === "string"
+    ? data.toolStatus
+    : typeof data?.status === "string"
+      ? data.status
+      : undefined;
   return {
     eventId: "",
     runId: "",
@@ -297,6 +328,7 @@ function incompleteHarnessEvent(type: HarnessEventType, backendId: string, text?
     error,
     toolName,
     resourceId,
+    status,
     data
   };
 }
@@ -311,6 +343,7 @@ function mapTaskResult(
   return {
     status: "completed",
     outputText: result.text,
+    terminalData: result.terminalData,
     nativeExecution: nativeId ? nativeExecutionRefForRuntime(backendId, nativeId, nativeRefContext) : undefined,
     nativeSessionId: nativeId,
     effectiveModel: result.effectiveModel,
@@ -389,6 +422,23 @@ function nativeExecutionPersistenceForRuntime(backendId: string): NativeExecutio
 }
 
 function legacyTaskRuntimeCapabilities(backendId: string): AgentCapabilities {
+  if (backendId === "opencode") {
+    return {
+      ...noCapabilities(),
+      sessions: { resume: "native", fork: "none" },
+      output: {
+        streaming: "native",
+        reasoningSummary: "native",
+        thinkingTrace: "none",
+        planEvents: "native",
+        usage: "native"
+      },
+      tools: { structuredCalls: "native", nativeMcp: "none", nativeSkills: "none", approvals: "native" },
+      files: { read: "native", write: "native", diffEvents: "native" },
+      input: { text: "native", image: "emulated", pdf: "emulated" },
+      cancellation: "native"
+    };
+  }
   return {
     ...noCapabilities(),
     sessions: { resume: backendId === "opencode" ? "native" : "emulated", fork: "none" },

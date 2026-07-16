@@ -33,7 +33,7 @@ async function assertCandidateConfirmReplacesBodyAndClearsState(): Promise<void>
   assert.equal(setup.editor.focusCalls, 1);
   assert.deepEqual(setup.view.statuses.map((status) => status.status), ["preparing", "awaiting-confirm"]);
 
-  assert.equal(pressEditorActionKey(setup.editor, "Enter"), true);
+  assert.deepEqual(setup.editor.pressWindowKey("Enter"), { defaultPrevented: true, immediatePropagationStopped: true });
   assert.equal(setup.editor.getValue(), "前文新句子后文");
   assert.equal(readCandidate(setup.editor), null);
   assert.equal(setup.view.lastStatus()?.status, "confirmed");
@@ -48,7 +48,7 @@ async function assertEscapeCancelsCandidateAndKeepsBodyUntouched(): Promise<void
   });
   await setup.controller.runEditorActionById(setup.editor as any, setup.info as any, "rewrite");
 
-  assert.equal(pressEditorActionKey(setup.editor, "Escape"), true);
+  assert.deepEqual(setup.editor.pressWindowKey("Escape"), { defaultPrevented: true, immediatePropagationStopped: true });
   assert.equal(setup.editor.getValue(), "前文旧句子后文");
   assert.equal(readCandidate(setup.editor), null);
   assert.equal(setup.view.lastStatus()?.status, "canceled");
@@ -291,7 +291,9 @@ class FakePlugin {
 }
 
 class FakeEditor {
-  readonly cm: { state: EditorState; dispatch: (spec: any) => void };
+  readonly cm: { state: EditorState; dispatch: (spec: any) => void; contentDOM: any };
+  private readonly keyWindow = new FakeKeyWindow();
+  private readonly contentTarget = {};
   focusCalls = 0;
   private selectionStart = 0;
   private selectionEnd = 0;
@@ -300,8 +302,16 @@ class FakeEditor {
     let state = EditorState.create({ doc: text, extensions });
     this.cm = {
       get state() { return state; },
-      dispatch(spec: any) { state = state.update(spec).state; }
+      dispatch(spec: any) { state = state.update(spec).state; },
+      contentDOM: {
+        ownerDocument: { defaultView: this.keyWindow },
+        contains: (target: unknown) => target === this.contentTarget
+      }
     };
+  }
+
+  pressWindowKey(key: "Enter" | "Escape"): { defaultPrevented: boolean; immediatePropagationStopped: boolean } {
+    return this.keyWindow.press(key, this.contentTarget);
   }
 
   setSelection(from: number, to: number): void {
@@ -346,5 +356,37 @@ class FakeEditor {
 
   focus(): void {
     this.focusCalls += 1;
+  }
+}
+
+class FakeKeyWindow {
+  private readonly listeners = new Set<(event: any) => void>();
+
+  addEventListener(type: string, listener: (event: any) => void): void {
+    if (type === "keydown") this.listeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: (event: any) => void): void {
+    if (type === "keydown") this.listeners.delete(listener);
+  }
+
+  press(key: string, target: unknown): { defaultPrevented: boolean; immediatePropagationStopped: boolean } {
+    const result = { defaultPrevented: false, immediatePropagationStopped: false };
+    const event = {
+      key,
+      target,
+      isComposing: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      preventDefault: () => { result.defaultPrevented = true; },
+      stopImmediatePropagation: () => { result.immediatePropagationStopped = true; }
+    };
+    for (const listener of [...this.listeners]) {
+      listener(event);
+      if (result.immediatePropagationStopped) break;
+    }
+    return result;
   }
 }

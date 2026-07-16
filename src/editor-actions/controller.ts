@@ -4,13 +4,29 @@ import { newId, resolveEditorActionModeConfig } from "../settings/settings";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "./output";
 import { buildEditorActionPrompt, resolveEditorActionStyle } from "./prompt";
 import { buildEditorActionSelectionSnapshot, confirmEditorActionCandidate, editorActionCandidateInvalidationReason, editorActionCandidateReplacementRange, enabledEditorActionConfigs, validateEditorActionSelection } from "./selection";
-import { createEditorActionExtension, setEditorActionCandidate } from "./editor-extension";
+import { createEditorActionExtension, editorViewFromEditor, setEditorActionCandidate } from "./editor-extension";
 import { resolveArticleUnderstandingCache, type EditorActionSummarySource } from "./summary-cache";
 import type { EditorActionCandidate, EditorActionRequest, EditorAiActionConfig } from "./types";
 
 export class EditorActionController {
   private active: { editor: Editor; candidate: EditorActionCandidate } | null = null;
   private confirming = false;
+  private candidateKeyWindow: Window | null = null;
+  private readonly onCandidateKeyDown = (event: KeyboardEvent): void => {
+    const active = this.active;
+    if (!active || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== "Enter" && event.key !== "Escape") return;
+    const view = editorViewFromEditor(active.editor);
+    const target = event.target as Node | null;
+    if (!view?.contentDOM || !target || !view.contentDOM.contains(target)) return;
+    // Capture on the editor window before Obsidian's document handlers. Some
+    // host keymaps otherwise insert a newline first and invalidate the active
+    // candidate before the CodeMirror extension can confirm it.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.key === "Enter") this.confirmActiveCandidate();
+    else this.cancelActiveCandidate("canceled", true);
+  };
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
@@ -33,10 +49,12 @@ export class EditorActionController {
         this.cancelActiveCandidate("canceled", false, "已切换文件，候选已取消");
       }
     }));
+    this.plugin.register?.(() => this.detachCandidateKeyCapture());
   }
 
   cancelActiveCandidate(status: "canceled" | "failed" = "canceled", showNotice = false, message?: string): boolean {
     if (!this.active) return false;
+    this.detachCandidateKeyCapture();
     setEditorActionCandidate(this.active.editor, null);
     this.active = null;
     this.plugin.getCodexView()?.setEditorActionStatus({ status, message: message ?? (status === "failed" ? "候选已失效" : "已取消") });
@@ -148,6 +166,7 @@ export class EditorActionController {
       };
       if (!setEditorActionCandidate(editor, candidate)) throw new Error("当前编辑器不支持灰色候选预览");
       this.active = { editor, candidate };
+      this.attachCandidateKeyCapture(editor);
       view.setEditorActionStatus({ status: "awaiting-confirm", actionLabel: action.label, message: "Enter 确认 / Esc 取消" });
       editor.focus();
     } catch (error) {
@@ -177,6 +196,7 @@ export class EditorActionController {
     this.confirming = true;
     try {
       const range = editorActionCandidateReplacementRange(candidate);
+      this.detachCandidateKeyCapture();
       setEditorActionCandidate(editor, null);
       editor.replaceRange(candidate.candidateText, editor.offsetToPos(range.fromOffset), editor.offsetToPos(range.toOffset), "codex-editor-action");
       this.active = null;
@@ -187,6 +207,20 @@ export class EditorActionController {
       this.confirming = false;
     }
     return true;
+  }
+
+  private attachCandidateKeyCapture(editor: Editor): void {
+    this.detachCandidateKeyCapture();
+    const contentDOM = editorViewFromEditor(editor)?.contentDOM;
+    const ownerWindow = contentDOM?.ownerDocument.defaultView;
+    if (!ownerWindow) return;
+    ownerWindow.addEventListener("keydown", this.onCandidateKeyDown, true);
+    this.candidateKeyWindow = ownerWindow;
+  }
+
+  private detachCandidateKeyCapture(): void {
+    this.candidateKeyWindow?.removeEventListener("keydown", this.onCandidateKeyDown, true);
+    this.candidateKeyWindow = null;
   }
 }
 

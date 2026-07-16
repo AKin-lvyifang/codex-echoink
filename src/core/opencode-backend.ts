@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "child_process";
+import * as path from "node:path";
 import { createOpencodeClient, type OpencodeClient, type ProviderAuthAuthorization, type ProviderAuthMethod } from "@opencode-ai/sdk/v2";
 import type { AgentBackend, AgentFileStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions, AgentTaskResult } from "../agent/types";
+import type { PermissionMode } from "../types/app-server";
 import { emptyArrayOnMissingPathOrWarn } from "./error-handling";
 import { formatOpenCodeError, isOpenCodeNotFoundError } from "./opencode-errors";
 import { nodeFetch } from "./opencode-fetch";
@@ -14,6 +16,7 @@ import {
   latestOpenCodeAssistantText,
   openCodeAssistantMessageIds,
   openCodeRunSessionIdFromLine,
+  parseOpenCodeRunJsonLine,
   parseOpenCodeModelListOutput,
   parseOpenCodeRunJsonLines
 } from "./opencode-run";
@@ -54,6 +57,9 @@ export interface OpenCodeCliTaskOptions {
   timeoutMs?: number;
   abortSignal?: AbortSignal;
   onRunId?: (runId: string) => void;
+  onPromptSubmitted?: () => void;
+  onEvent?: (event: unknown) => void;
+  thinking?: boolean;
 }
 
 interface StartedOpenCodeServer {
@@ -270,11 +276,13 @@ export class OpenCodeBackend implements AgentBackend {
   async startSession(options: AgentSessionOptions): Promise<{ sessionId: string; title: string }> {
     const client = this.requireClient();
     const model = options.model ?? defaultOpenCodeModel(this.options);
+    const sdkModel = model ? openCodeSdkModelReference(model) : null;
     const session = await unwrapOpenCodeResult(client.session.create({
       directory: this.options.vaultPath,
       title: options.title,
       agent: options.agent ?? this.options.agent,
-      ...(model ? { model: { id: model.modelId, providerID: model.providerId } } : {})
+      ...(sdkModel ? { model: { id: sdkModel.modelID, providerID: sdkModel.providerID } } : {}),
+      permission: openCodePermissionRules(options.permission ?? "workspace-write", options.writableRoots, this.options.vaultPath)
     }), "创建 OpenCode 会话失败");
     return {
       sessionId: session.id,
@@ -285,11 +293,12 @@ export class OpenCodeBackend implements AgentBackend {
   async sendPrompt(options: AgentPromptOptions): Promise<string> {
     const client = this.requireClient();
     const requestedAgent = options.agent ?? this.options.agent;
+    const sdkModel = options.model ? openCodeSdkModelReference(options.model) : null;
     const result = await unwrapOpenCodeResult(client.session.prompt({
       sessionID: options.sessionId,
       directory: this.options.vaultPath,
       agent: requestedAgent,
-      ...(options.model ? { model: { providerID: options.model.providerId, modelID: options.model.modelId } } : {}),
+      ...(sdkModel ? { model: sdkModel } : {}),
       ...(options.system ? { system: options.system } : {}),
       ...(options.tools ? { tools: options.tools } : {}),
       parts: options.parts.map((part) => toOpenCodePromptPart(part))
@@ -298,17 +307,18 @@ export class OpenCodeBackend implements AgentBackend {
     return openCodePromptText(result?.parts ?? []);
   }
 
-  async sendPromptAsync(options: AgentPromptOptions): Promise<void> {
+  async sendPromptAsync(options: AgentPromptOptions, signal?: AbortSignal): Promise<void> {
     const client = this.requireClient();
+    const sdkModel = options.model ? openCodeSdkModelReference(options.model) : null;
     await unwrapOpenCodeResult(client.session.promptAsync({
       sessionID: options.sessionId,
       directory: this.options.vaultPath,
       agent: options.agent ?? this.options.agent,
-      ...(options.model ? { model: { providerID: options.model.providerId, modelID: options.model.modelId } } : {}),
+      ...(sdkModel ? { model: sdkModel } : {}),
       ...(options.system ? { system: options.system } : {}),
       ...(options.tools ? { tools: options.tools } : {}),
       parts: options.parts.map((part) => toOpenCodePromptPart(part))
-    }), "OpenCode 启动异步任务失败");
+    }, { signal }), "OpenCode 启动异步任务失败");
   }
 
   async hasSession(sessionId: string): Promise<boolean> {
@@ -321,6 +331,50 @@ export class OpenCodeBackend implements AgentBackend {
     } catch {
       return false;
     }
+  }
+
+  async updateSessionPermissions(sessionId: string, permission: PermissionMode, writableRoots: string[] = []): Promise<void> {
+    await unwrapOpenCodeResult(this.requireClient().session.update({
+      sessionID: sessionId,
+      directory: this.options.vaultPath,
+      permission: openCodePermissionRules(permission, writableRoots, this.options.vaultPath)
+    }), `更新 OpenCode 会话权限失败：${sessionId}`);
+  }
+
+  async subscribeEvents(signal: AbortSignal): Promise<AsyncIterable<unknown>> {
+    let streamError: unknown;
+    const result = await this.requireClient().event.subscribe({
+      directory: this.options.vaultPath
+    }, {
+      signal,
+      sseMaxRetryAttempts: 1,
+      onSseError: (error) => {
+        streamError = error;
+      }
+    });
+    const source = result.stream as AsyncIterable<unknown>;
+    return {
+      async *[Symbol.asyncIterator]() {
+        for await (const event of source) yield event;
+        if (streamError && !signal.aborted) throw normalizeOpenCodeStreamError(streamError);
+      }
+    };
+  }
+
+  async replyPermission(requestId: string, reply: "once" | "always" | "reject"): Promise<void> {
+    await unwrapOpenCodeResult(this.requireClient().permission.reply({
+      requestID: requestId,
+      directory: this.options.vaultPath,
+      reply
+    }), "回复 OpenCode 权限请求失败");
+  }
+
+  async getSessionStatus(sessionId: string): Promise<string | undefined> {
+    const statuses = await unwrapOpenCodeResult(this.requireClient().session.status({
+      directory: this.options.vaultPath
+    }), "读取 OpenCode 会话状态失败");
+    const status = (statuses as Record<string, { type?: unknown }> | undefined)?.[sessionId];
+    return typeof status?.type === "string" ? status.type : undefined;
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
@@ -345,12 +399,39 @@ export class OpenCodeBackend implements AgentBackend {
       prompt: options.prompt,
       directory: this.options.vaultPath,
       sessionId: options.nativeSessionId,
+      serverUrl: this.connectionInfo.serverUrl,
       model: options.model,
       agent: options.agent ?? this.options.agent,
-      files
+      files,
+      thinking: options.thinking
     });
     let lineBuffer = "";
     let emittedRunId = false;
+    let eventCallbackError: unknown;
+    let promptSubmitted = false;
+    const markPromptSubmitted = (): void => {
+      if (promptSubmitted) return;
+      promptSubmitted = true;
+      try {
+        options.onPromptSubmitted?.();
+      } catch (error) {
+        eventCallbackError = error;
+      }
+    };
+    const consumeLine = (line: string): void => {
+      const runId = openCodeRunSessionIdFromLine(line);
+      if (runId && !emittedRunId) {
+        emittedRunId = true;
+        options.onRunId?.(runId);
+      }
+      const event = parseOpenCodeRunJsonLine(line);
+      if (!event || !options.onEvent) return;
+      try {
+        options.onEvent(event);
+      } catch (error) {
+        eventCallbackError = error;
+      }
+    };
     const output = await runOpenCodeCommand({
       command: launch.command,
       argsPrefix: launch.argsPrefix,
@@ -358,6 +439,9 @@ export class OpenCodeBackend implements AgentBackend {
       cwd: this.options.vaultPath,
       timeoutMs: options.timeoutMs,
       abortSignal: options.abortSignal,
+      // runOpenCodeCommand invokes this only after Node emits the successful
+      // `spawn` event; asynchronous ENOENT/EACCES never cross this boundary.
+      onSpawn: () => markPromptSubmitted(),
       onStdoutChunk: (chunk) => {
         lineBuffer += chunk;
         for (;;) {
@@ -365,22 +449,20 @@ export class OpenCodeBackend implements AgentBackend {
           if (index < 0) break;
           const line = lineBuffer.slice(0, index);
           lineBuffer = lineBuffer.slice(index + 1);
-          const runId = openCodeRunSessionIdFromLine(line);
-          if (runId && !emittedRunId) {
-            emittedRunId = true;
-            options.onRunId?.(runId);
-          }
+          consumeLine(line);
         }
       }
     });
+    if (lineBuffer.trim()) consumeLine(lineBuffer);
+    if (eventCallbackError) throw eventCallbackError;
     const parsed = parseOpenCodeRunJsonLines(output);
     const sessionId = parsed.sessionId || options.nativeSessionId;
     if (sessionId && !emittedRunId) options.onRunId?.(sessionId);
-    const recoveredText = !parsed.text && sessionId && knownAssistantIds
+    const recoveredText = !parsed.hasAuthoritativeFinal && !parsed.text && sessionId && knownAssistantIds
       ? await this.recoverLatestAssistantText(sessionId, knownAssistantIds)
       : "";
-    const text = parsed.text || recoveredText;
-    if (!text) throw new Error("OpenCode CLI 未返回内容。");
+    const text = parsed.hasAuthoritativeFinal ? parsed.text : parsed.text || recoveredText;
+    if (!parsed.hasAuthoritativeFinal && !text) throw new Error("OpenCode CLI 未返回内容。");
     return { text, runId: sessionId, usage: parsed.usage };
   }
 
@@ -413,7 +495,7 @@ export class OpenCodeBackend implements AgentBackend {
     }
   }
 
-  private async readSessionMessages(sessionId: string): Promise<unknown[]> {
+  async readSessionMessages(sessionId: string): Promise<unknown[]> {
     const messages = await unwrapOpenCodeResult(this.requireClient().session.messages({
       sessionID: sessionId,
       directory: this.options.vaultPath,
@@ -460,6 +542,68 @@ async function unwrapOpenCodeResult<T>(promise: Promise<{ data: T; error: undefi
 function defaultOpenCodeModel(options: OpenCodeBackendOptions): { providerId: string; modelId: string } | null {
   if (!options.providerId || !options.modelId) return null;
   return { providerId: options.providerId, modelId: options.modelId };
+}
+
+function openCodeSdkModelReference(model: { providerId: string; modelId: string }): { providerID: string; modelID: string } {
+  const providerID = model.providerId.trim();
+  const configuredModelID = model.modelId.trim();
+  const qualifiedPrefix = providerID ? `${providerID}/` : "";
+  return {
+    providerID,
+    // `opencode models` returns provider-qualified IDs, while the SDK sends
+    // provider and model as separate fields. Passing both unchanged makes the
+    // server resolve e.g. `opencode/opencode/big-pickle`.
+    modelID: qualifiedPrefix && configuredModelID.startsWith(qualifiedPrefix)
+      ? configuredModelID.slice(qualifiedPrefix.length)
+      : configuredModelID
+  };
+}
+
+export function openCodePermissionRules(
+  mode: PermissionMode,
+  writableRoots: string[] = [],
+  vaultPath = ""
+): Array<{ permission: string; pattern: string; action: "allow" | "deny" }> {
+  if (mode === "danger-full-access") {
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      // EchoInk does not currently expose OpenCode's interactive question API.
+      { permission: "question", pattern: "*", action: "deny" }
+    ];
+  }
+  if (mode === "workspace-write") {
+    const externalWritableRoots = writableRoots
+      .map((root) => root.trim())
+      .filter(Boolean)
+      .filter((root) => !vaultPath || !isPathInside(root, vaultPath));
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "deny" },
+      ...externalWritableRoots.flatMap((root) => [
+        { permission: "external_directory", pattern: path.resolve(root), action: "allow" as const },
+        { permission: "external_directory", pattern: `${path.resolve(root)}${path.sep}**`, action: "allow" as const }
+      ]),
+      { permission: "question", pattern: "*", action: "deny" }
+    ];
+  }
+  return [
+    { permission: "*", pattern: "*", action: "deny" },
+    ...["read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "todowrite"].map((permission) => ({
+      permission,
+      pattern: "*",
+      action: "allow" as const
+    }))
+  ];
+}
+
+function isPathInside(candidate: string, parent: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+function normalizeOpenCodeStreamError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  return new Error(`OpenCode SSE 连接失败：${String(error)}`);
 }
 
 async function startOpenCodeServer(input: { launch: OpenCodeCommandLaunch; hostname: string; port: number; cwd: string; requireLoopback: boolean; timeoutMs?: number }): Promise<StartedOpenCodeServer> {

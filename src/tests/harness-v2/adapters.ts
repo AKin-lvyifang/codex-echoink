@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import * as path from "node:path";
+import { PassThrough } from "node:stream";
 import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runtime-adapter";
 import { CodexRichAgentAdapter } from "../../harness/agents/adapters/codex-rich-adapter";
 import { CodexRichRunDriver } from "../../harness/agents/adapters/codex-rich-driver";
@@ -8,10 +9,12 @@ import { CodexRichNotificationHub } from "../../harness/agents/adapters/codex-ri
 import { FakeFourthAgentAdapter } from "../../harness/agents/adapters/fake-fourth";
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
 import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
+import { createAgentEventRuntimeWithFallback } from "../../agent/event-task";
+import { AcpAgentRuntime, type AcpSubprocessLike } from "../../agent/acp-runtime";
 import { RunOrchestrator } from "../../harness/kernel/run-orchestrator";
 import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
-import { DEFAULT_SETTINGS } from "../../settings/settings";
+import { DEFAULT_SETTINGS, type ChatMessage } from "../../settings/settings";
 import type { AgentTaskRuntime } from "../../agent/runtime";
 import type { AgentTaskInput, AgentTaskResult } from "../../agent/types";
 import type { AgentConnectionStatus } from "../../agent/types";
@@ -19,18 +22,27 @@ import type { AgentRunResult } from "../../harness/agents/adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import { compileContextBundle } from "../../harness/kernel/context-compiler";
 import { harnessInitialMessageModelId, harnessMessageModelId } from "../../harness/agents/backend-runtime-profile";
+import { HarnessEventProjector } from "../../ui/codex-view/harness-event-projector";
+import { runCodexBrokerOrchestratorRegressionTests } from "../codex-broker-orchestrator-regression";
 
 export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertTaskRuntimeAdapterRunsThroughHarnessContract();
+  await assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents();
   await assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext();
   await assertTaskRuntimeAdapterMapsFallbackEvents();
+  await assertLifecycleFallbackKeepsOneStableAnswerMessage();
   await assertTaskRuntimeAdapterMapsToolBridgeResourceEvents();
   await assertTaskRuntimeAdapterPreservesLegacyTaskDefaults();
+  await assertTaskRuntimeAdapterCancelsBeforeNativeRunId();
+  await assertTaskRuntimeAdapterMergesLegacyAbortSignal();
+  await assertHermesAcpConsumesAbortBeforePromptAndWhileWaiting();
   await assertTaskRuntimeAdapterDeclaresTruthfulNativeCleanupFallback();
   await assertAdaptersExposeNativeResourceProvider();
   await assertCodexRichAdapterStartsThreadAndTurn();
   await assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors();
   await assertCodexRichRunDriverMapsNotificationsToHarnessEvents();
+  await assertHarnessProjectorPreservesProvidedCommandChannels();
+  await assertCodexRichRunDriverNormalizesMissingIdsAndNonSuccessStatuses();
   await assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent();
   await assertCodexRichRunDriverMapsInterruptedTerminalStatusesToCancelled();
   await assertCodexRichRunDriverUsesCompletedOnlyAssistantAsFinalOutput();
@@ -55,6 +67,7 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichAdapterReleasesTerminalRunStatesAfterAwaitResult();
   await assertCodexRichAdapterDisposeCancelsAllActiveRuns();
   await assertCodexRichAdapterFallsBackToStartThreadWhenResumeThreadThrows();
+  await assertCodexRichAdapterReplacesStalePrewarmedThreadBeforePromptSubmission();
   await assertCodexRichAdapterInjectsBootstrapContextIntoStartTurn();
   await assertCodexRichAdapterInjectsEchoInkMemoryIntoStartTurn();
   await assertCodexRichAdapterInjectsCatchUpContextIntoStartTurn();
@@ -68,12 +81,124 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichAdapterFailsUnknownBrokerToolWithoutHanging();
   await assertCodexRichAdapterFailsBrokerErrorWithoutHanging();
   await assertCodexRichAdapterFailsWhenBrokerLoopExceedsMaxToolCalls();
+  await runCodexBrokerOrchestratorRegressionTests();
   await assertOrchestratorRebuildsContextWhenNativeSessionResumeFails();
   await assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns();
   await assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext();
   await assertEmulatedResumeBackendRebuildsContextForEachRun();
   await assertAdapterFactoryUsesRegisteredBuilders();
   await assertFakeFourthAgentOnlyNeedsAdapterAndManifest();
+}
+
+async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Promise<void> {
+  const hooks: any = {
+    models: [{
+      id: "opencode/big-pickle",
+      providerId: "opencode",
+      modelId: "opencode/big-pickle",
+      displayName: "OpenCode",
+      inputModalities: ["text"]
+    }],
+    session: { sessionId: "factory-rich-session", title: "Factory rich" },
+    sessionMessages: []
+  };
+  hooks.onSubscribeEvents = () => (async function* () {
+    yield { type: "server.connected", properties: {} };
+    while (!hooks.sendPromptAsyncCalls) await new Promise((resolve) => setTimeout(resolve, 0));
+    yield {
+      type: "message.updated",
+      properties: { info: { id: "factory-assistant", sessionID: "factory-rich-session", role: "assistant" } }
+    };
+    yield {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "factory-reasoning",
+        sessionID: "factory-rich-session",
+        messageID: "factory-assistant",
+        type: "reasoning",
+        text: "先检查文件"
+      } }
+    };
+    yield {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "factory-tool",
+        sessionID: "factory-rich-session",
+        messageID: "factory-assistant",
+        type: "tool",
+        callID: "factory-call",
+        tool: "read",
+        state: { status: "pending", input: { filePath: "testing/a.md" } }
+      } }
+    };
+    yield {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "factory-tool",
+        sessionID: "factory-rich-session",
+        messageID: "factory-assistant",
+        type: "tool",
+        callID: "factory-call",
+        tool: "read",
+        state: { status: "completed", input: { filePath: "testing/a.md" }, output: "file contents" }
+      } }
+    };
+    yield {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "factory-text",
+        sessionID: "factory-rich-session",
+        messageID: "factory-assistant",
+        type: "text",
+        text: "FACTORY_DONE"
+      } }
+    };
+    yield { type: "session.idle", properties: { sessionID: "factory-rich-session" } };
+  })();
+  (globalThis as any).__opencodeBackendTestHooks = hooks;
+
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.opencode.providerId = "opencode";
+  settings.opencode.modelId = "opencode/big-pickle";
+  const adapter = createHarnessAgentAdapter({
+    backendId: "opencode",
+    settings,
+    vaultPath: "/vault",
+    task: { timeoutMs: 2_000 }
+  });
+  const events: HarnessEvent[] = [];
+  try {
+    const result = await adapter.run({
+      runId: "factory-rich-run",
+      sessionId: "factory-rich-chat",
+      workflow: "chat.generic",
+      input: { text: "inspect", attachments: [] },
+      permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+      resources: { selected: [], resolvedAt: 0, warnings: [] },
+      context: compileContextBundle({
+        session: { id: "factory-rich-chat", title: "Factory rich", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+        backendId: "opencode",
+        workflow: "chat.generic",
+        userInput: { text: "inspect", attachments: [] },
+        memory: { providerId: "noop", items: [], sections: [] },
+        corePolicySections: []
+      }),
+      outputContract: { kind: "plain-text" }
+    }, (event) => events.push(event));
+
+    assert.equal(result.outputText, "FACTORY_DONE");
+    assert.equal(hooks.sendPromptAsyncCalls, 1);
+    assert.equal(hooks.runCliTaskCalls ?? 0, 0);
+    assert.equal(events.some((event) => event.type === "agent.reasoning.summary.delta" && event.text === "先检查文件"), true);
+    assert.equal(events.some((event) => event.type === "agent.reasoning.summary.completed"), true);
+    assert.equal(events.some((event) => event.type === "tool.requested" && event.data?.callId === "factory-call"), true);
+    assert.equal(events.some((event) => event.type === "tool.completed" && event.data?.output === "file contents"), true);
+    assert.equal(events.some((event) => event.type === "agent.message.delta" && event.text === "FACTORY_DONE"), true);
+    assert.ok(events.filter((event) => event.backendId === "opencode").every((event) => event.data?.streamSource === "sse"));
+  } finally {
+    await adapter.dispose();
+    delete (globalThis as any).__opencodeBackendTestHooks;
+  }
 }
 
 async function assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext(): Promise<void> {
@@ -330,7 +455,16 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
       emit({ type: "thinking_delta", backend: "hermes", createdAt: 3, text: "raw internal thought" });
       emit({ type: "thinking_completed", backend: "hermes", createdAt: 4, text: "raw internal thought" });
       emit({ type: "message_completed", backend: "hermes", createdAt: 5, text: "rich pong" });
-      return { text: "rich pong", runId: input.onRunId ? "ignored" : "hermes-run" };
+      return {
+        text: "rich pong",
+        runId: input.onRunId ? "ignored" : "hermes-run",
+        terminalData: {
+          streamSource: "acp",
+          promptSubmitted: true,
+          unconfirmedToolCallCount: 2,
+          unconfirmedToolCallIds: ["tool-a", "tool-b"]
+        }
+      };
     }
   };
   const adapter = new TaskRuntimeAgentAdapter({
@@ -360,6 +494,12 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
 
   assert.equal(result.status, "completed");
   assert.equal(result.outputText, "rich pong");
+  assert.deepEqual(result.terminalData, {
+    streamSource: "acp",
+    promptSubmitted: true,
+    unconfirmedToolCallCount: 2,
+    unconfirmedToolCallIds: ["tool-a", "tool-b"]
+  });
   assert.equal(events.some((event) => event.type.startsWith("agent.reasoning.")), false);
   assert.equal(events.some((event) => event.type.startsWith("agent.thinking.")), true);
   assert.deepEqual(events.map((event) => event.type), [
@@ -369,6 +509,107 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
     "agent.thinking.completed",
     "agent.message.completed"
   ]);
+
+  const orchestratorEvents: HarnessEvent[] = [];
+  const orchestrator = new RunOrchestrator({
+    adapters: [adapter],
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    now: () => 100,
+    sessionProvider: () => ({
+      id: "session-terminal-data",
+      title: "Terminal data",
+      cwd: "/vault",
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+  });
+  const orchestrated = await orchestrator.run({
+    runId: "run-hermes-terminal-data",
+    sessionId: "session-terminal-data",
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "hermes",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resourceSelection: { selected: [], resolvedAt: 0, warnings: [] },
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  }, (event) => orchestratorEvents.push(event));
+  assert.equal(orchestrated.status, "completed");
+  assert.deepEqual(orchestratorEvents.find((event) => event.type === "run.completed")?.data, {
+    streamSource: "acp",
+    promptSubmitted: true,
+    unconfirmedToolCallCount: 2,
+    unconfirmedToolCallIds: ["tool-a", "tool-b"]
+  });
+}
+
+async function assertLifecycleFallbackKeepsOneStableAnswerMessage(): Promise<void> {
+  const runtime = createAgentEventRuntimeWithFallback(fakeRuntime({
+    kind: "hermes",
+    result: { text: "LIFECYCLE ONCE", runId: "hermes-lifecycle-run" }
+  }));
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+  const events: HarnessEvent[] = [];
+  await adapter.run({
+    runId: "run-lifecycle-answer",
+    sessionId: "session-lifecycle-answer",
+    workflow: "chat.generic",
+    input: { text: "ping", attachments: [] },
+    permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
+    resources: { selected: [], resolvedAt: 0, warnings: [] },
+    context: compileContextBundle({
+      session: { id: "session-lifecycle-answer", title: "Lifecycle", cwd: "/vault", messages: [], createdAt: 1, updatedAt: 1 },
+      backendId: "hermes",
+      workflow: "chat.generic",
+      userInput: { text: "ping", attachments: [] },
+      memory: { providerId: "noop", items: [], sections: [] },
+      corePolicySections: []
+    }),
+    outputContract: { kind: "plain-text" }
+  }, (event) => events.push(event));
+
+  const completions = events.filter((event) => event.type === "agent.message.completed");
+  assert.equal(completions.length, 1, "legacy run completion must not be projected as a second answer row");
+  assert.equal(new Set(completions.map((event) => event.data?.messageId)).size, 1);
+  assert.ok(completions.every((event) => typeof event.data?.messageId === "string"));
+
+  const answer: ChatMessage = {
+    id: "answer:lifecycle",
+    role: "assistant",
+    itemType: "assistant",
+    status: "running",
+    text: "Agent 正在处理...",
+    backendId: "hermes",
+    runId: "run-lifecycle-answer",
+    createdAt: 1
+  };
+  const projector = new HarnessEventProjector({
+    runId: "run-lifecycle-answer",
+    backendId: "hermes",
+    vaultPath: "/vault",
+    answerMessage: answer
+  });
+  completions.forEach((event, index) => {
+    projector.project({
+      ...event,
+      eventId: `lifecycle:${index + 1}`,
+      runId: "run-lifecycle-answer",
+      sequence: index + 1,
+      createdAt: index + 1
+    });
+  });
+  assert.equal(projector.snapshot().at(-1)?.text, "LIFECYCLE ONCE");
+  assert.equal(projector.snapshot().filter((message) => message.itemType === "assistant").length, 1);
 }
 
 async function assertTaskRuntimeAdapterPreservesLegacyTaskDefaults(): Promise<void> {
@@ -418,6 +659,142 @@ async function assertTaskRuntimeAdapterPreservesLegacyTaskDefaults(): Promise<vo
   assert.equal(calls[0].resources?.promptPrefix, "legacy resource prefix");
   assert.equal(calls[0].timeoutMs, 1234);
   assert.equal(calls[0].tools?.write, false);
+}
+
+async function assertTaskRuntimeAdapterCancelsBeforeNativeRunId(): Promise<void> {
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let releaseRun!: () => void;
+  const blocked = new Promise<void>((resolve) => { releaseRun = resolve; });
+  let observedSignal: AbortSignal | undefined;
+  let promptSubmitted = false;
+  const abortedNativeRuns: string[] = [];
+  const runtime: AgentTaskRuntime = {
+    kind: "opencode",
+    async connect() { return { connected: true, label: "OpenCode", errors: [] }; },
+    async listModels() { return []; },
+    async runTask(input) {
+      observedSignal = input.abortSignal;
+      markStarted();
+      await blocked;
+      // Simulate a backend that learns its native id just after cancellation.
+      input.onRunId?.("late-native-run");
+      await delay(0);
+      if (input.abortSignal?.aborted) throw new Error("Agent 任务已取消。");
+      promptSubmitted = true;
+      return { text: "must not execute", runId: "late-native-run" };
+    },
+    async abort(runId) { abortedNativeRuns.push(runId); }
+  };
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy"
+  });
+
+  const runPromise = adapter.run(agentRunRequest("run-cancel-before-native-id", { inputText: "cancel early" }), () => undefined);
+  const rejected = assert.rejects(runPromise, /任务已取消/);
+  await started;
+  await adapter.cancel("run-cancel-before-native-id");
+  assert.equal(observedSignal?.aborted, true);
+  assert.deepEqual(abortedNativeRuns, [], "cancel before onRunId must use the per-run AbortSignal first");
+  releaseRun();
+  await rejected;
+  assert.equal(promptSubmitted, false);
+  assert.deepEqual(abortedNativeRuns, ["late-native-run"], "a native id reported after cancellation must be aborted immediately");
+
+  const cancelledSignal = observedSignal;
+  const nextResult = await adapter.run(agentRunRequest("run-after-early-cancel", { inputText: "fresh run" }), () => undefined);
+  assert.notEqual(observedSignal, cancelledSignal, "a later Harness run must receive a fresh AbortController");
+  assert.equal(observedSignal?.aborted, false);
+  assert.equal(nextResult.status, "completed");
+}
+
+async function assertTaskRuntimeAdapterMergesLegacyAbortSignal(): Promise<void> {
+  const legacyController = new AbortController();
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let releaseRun!: () => void;
+  const blocked = new Promise<void>((resolve) => { releaseRun = resolve; });
+  let observedSignal: AbortSignal | undefined;
+  const runtime: AgentTaskRuntime = {
+    kind: "opencode",
+    async connect() { return { connected: true, label: "OpenCode", errors: [] }; },
+    async listModels() { return []; },
+    async runTask(input) {
+      observedSignal = input.abortSignal;
+      markStarted();
+      await blocked;
+      if (input.abortSignal?.aborted) throw new Error("Agent 任务已取消。");
+      return { text: "must not execute" };
+    },
+    async abort() {}
+  };
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "opencode",
+    displayName: "OpenCode",
+    version: "test",
+    runtime,
+    capabilities: "legacy",
+    legacyTaskDefaults: { abortSignal: legacyController.signal }
+  });
+
+  const runPromise = adapter.run(agentRunRequest("run-legacy-abort", { inputText: "legacy abort" }), () => undefined);
+  const rejected = assert.rejects(runPromise, /任务已取消/);
+  await started;
+  assert.notEqual(observedSignal, legacyController.signal, "each Harness run must own an independent AbortController");
+  legacyController.abort();
+  assert.equal(observedSignal?.aborted, true);
+  releaseRun();
+  await rejected;
+}
+
+async function assertHermesAcpConsumesAbortBeforePromptAndWhileWaiting(): Promise<void> {
+  const beforePrompt = createAcpCancellationHarness();
+  const beforePromptAdapter = taskRuntimeAdapterForAcp(beforePrompt.process);
+  const beforePromptRun = beforePromptAdapter.run(
+    agentRunRequest("run-hermes-cancel-before-prompt", { inputText: "cancel before prompt" }),
+    () => undefined
+  );
+  const beforePromptRejected = assert.rejects(beforePromptRun, /任务已取消/);
+  await settleWithin(beforePrompt.next("session/new"), 250);
+  await beforePromptAdapter.cancel("run-hermes-cancel-before-prompt");
+  await beforePromptRejected;
+  assert.equal(beforePrompt.count("session/prompt"), 0, "ACP must not submit a prompt after an early cancel");
+  assert.equal(beforePrompt.killed(), true);
+
+  const waiting = createAcpCancellationHarness();
+  const waitingAdapter = taskRuntimeAdapterForAcp(waiting.process);
+  const waitingRun = waitingAdapter.run(
+    agentRunRequest("run-hermes-cancel-waiting", { inputText: "cancel while waiting" }),
+    () => undefined
+  );
+  const waitingRejected = assert.rejects(waitingRun, /任务已取消/);
+  const newSession = await settleWithin(waiting.next("session/new"), 250);
+  waiting.respond(newSession, { sessionId: "hermes-waiting-session" });
+  await settleWithin(waiting.next("session/prompt"), 250);
+  await waitingAdapter.cancel("run-hermes-cancel-waiting");
+  await waitingRejected;
+  assert.equal(waiting.count("session/prompt"), 1, "cancelling a submitted ACP prompt must not replay it");
+  assert.equal(waiting.count("session/cancel") >= 1, true, "a waiting ACP prompt must receive native cancellation");
+  assert.equal(waiting.killed(), true);
+}
+
+function taskRuntimeAdapterForAcp(process: AcpSubprocessLike): TaskRuntimeAgentAdapter {
+  return new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime: new AcpAgentRuntime({
+      backend: "hermes",
+      command: { command: "hermes", args: ["acp"], cwd: "/vault" },
+      processFactory: () => process,
+      requestTimeoutMs: 1_000
+    }),
+    capabilities: "legacy"
+  });
 }
 
 async function assertTaskRuntimeAdapterDeclaresTruthfulNativeCleanupFallback(): Promise<void> {
@@ -651,6 +1028,98 @@ async function assertCodexRichAdapterFallsBackToStartThreadWhenResumeThreadThrow
   assert.deepEqual(calls, ["resume:missing-thread", "start", "turn:replacement-thread"]);
 }
 
+async function assertCodexRichAdapterReplacesStalePrewarmedThreadBeforePromptSubmission(): Promise<void> {
+  const calls: string[] = [];
+  let started = 0;
+  let activeThreadId = "";
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: (threadId) => { activeThreadId = threadId; },
+    buildInput: (threadId) => {
+      calls.push(`input:${threadId}`);
+      return [{ type: "text", text: "translate", text_elements: [] }];
+    },
+    resumeThread: async () => undefined,
+    startThread: async () => {
+      const threadId = started++ === 0 ? "stale-prewarm" : "replacement-thread";
+      calls.push(`start:${threadId}`);
+      return { threadId, title: "Editor action" };
+    },
+    startTurn: async (threadId) => {
+      calls.push(`turn:${threadId}`);
+      if (threadId === "stale-prewarm") throw new Error("JSON-RPC -32600: thread not found: stale-prewarm");
+      return "replacement-turn";
+    }
+  });
+
+  const result = await adapter.run(agentRunRequest("run-stale-prewarm-recovery"), () => undefined);
+
+  assert.equal(result.nativeThreadId, "replacement-thread");
+  assert.equal(activeThreadId, "replacement-thread");
+  assert.deepEqual(calls, [
+    "start:stale-prewarm",
+    "input:stale-prewarm",
+    "turn:stale-prewarm",
+    "start:replacement-thread",
+    "input:replacement-thread",
+    "turn:replacement-thread"
+  ]);
+
+  let ambiguousStarts = 0;
+  const ambiguousAdapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "do not duplicate", text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => ({ threadId: `ambiguous-${++ambiguousStarts}`, title: "Ambiguous" }),
+    startTurn: async () => { throw new Error("connection closed after write"); }
+  });
+
+  await assert.rejects(
+    ambiguousAdapter.run(agentRunRequest("run-ambiguous-start-turn"), () => undefined),
+    /connection closed after write/
+  );
+  assert.equal(ambiguousStarts, 1, "ambiguous startTurn failures must never resubmit the prompt");
+
+  let releaseReplacement: (() => void) | undefined;
+  let replacementStarted: (() => void) | undefined;
+  const replacementStartedPromise = new Promise<void>((resolve) => { replacementStarted = resolve; });
+  const releaseReplacementPromise = new Promise<void>((resolve) => { releaseReplacement = resolve; });
+  const cancellationTurns: string[] = [];
+  let cancellationStarts = 0;
+  const cancellationAdapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: (threadId) => [{ type: "text", text: threadId, text_elements: [] }],
+    resumeThread: async () => undefined,
+    startThread: async () => {
+      cancellationStarts += 1;
+      if (cancellationStarts === 1) return { threadId: "cancel-stale", title: "Stale" };
+      replacementStarted?.();
+      await releaseReplacementPromise;
+      return { threadId: "cancel-replacement", title: "Replacement" };
+    },
+    startTurn: async (threadId) => {
+      cancellationTurns.push(threadId);
+      if (threadId === "cancel-stale") throw new Error("thread not found: cancel-stale");
+      return "must-not-submit";
+    }
+  });
+  const cancellationRun = cancellationAdapter.run(agentRunRequest("run-cancel-stale-recovery"), () => undefined);
+  await replacementStartedPromise;
+  await cancellationAdapter.cancel("run-cancel-stale-recovery");
+  releaseReplacement?.();
+  const cancellationResult = await cancellationRun;
+  assert.equal(cancellationResult.status, "cancelled");
+  assert.deepEqual(cancellationTurns, ["cancel-stale"], "cancellation during recovery must not submit on the replacement thread");
+}
+
 async function assertCodexRichNotificationHubRoutesByIdsAndNoIdErrors(): Promise<void> {
   const hub = new CodexRichNotificationHub();
   const runA = createDriverHarness("run-a", { threadId: "thread-a", turnId: "turn-a" });
@@ -783,8 +1252,13 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
         threadId: "thread-map",
         turnId: "turn-map",
         type: "commandExecution",
-        title: "pwd",
-        command: "pwd"
+        command: "pwd",
+        cwd: "/vault",
+        processId: null,
+        status: "inProgress",
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null
       }
     }
   });
@@ -794,7 +1268,7 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
       threadId: "thread-map",
       turnId: "turn-map",
       itemId: "cmd-1",
-      delta: "/vault"
+      delta: "/vault\n"
     }
   });
   driver.handleNotification({
@@ -806,7 +1280,12 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
         turnId: "turn-map",
         type: "commandExecution",
         status: "completed",
-        output: "/vault"
+        command: "pwd",
+        cwd: "/vault",
+        processId: null,
+        aggregatedOutput: "/vault\n",
+        exitCode: 0,
+        durationMs: 8
       }
     }
   });
@@ -924,6 +1403,222 @@ async function assertCodexRichRunDriverMapsNotificationsToHarnessEvents(): Promi
     assert.equal("turnId" in (event.data ?? {}), false);
     assert.equal("itemId" in (event.data ?? {}), false);
   }
+  assert.equal(events.find((event) => event.type === "agent.message.delta")?.data?.messageId, "assistant-1");
+  assert.deepEqual(
+    pickProcessIdentity(events.find((event) => event.type === "agent.reasoning.summary.delta")?.data),
+    { blockId: "reason-1", reasoningKind: "summary", visibility: "public" }
+  );
+  const commandStarted = events.find((event) => event.type === "tool.started" && event.data?.callId === "cmd-1");
+  assert.equal(commandStarted?.data?.semanticKind, "command");
+  assert.equal(commandStarted?.data?.inputState, "provided");
+  assert.equal(commandStarted?.data?.input, "pwd");
+  assert.equal(commandStarted?.data?.outputState, "unavailable");
+  const commandDelta = events.find((event) => event.type === "tool.output.delta" && event.data?.callId === "cmd-1");
+  assert.equal(commandDelta?.data?.outputState, "provided", "streamed command stdout must remain expandable before completion");
+  const mcpProgress = events.find((event) => event.type === "tool.output.delta" && event.data?.callId === "tool-1");
+  assert.notEqual(mcpProgress?.data?.outputState, "provided", "MCP progress text is not raw tool output");
+  const commandCompleted = events.find((event) => event.type === "tool.completed" && event.data?.callId === "cmd-1");
+  assert.equal(commandCompleted?.data?.outputState, "provided");
+  assert.equal(commandCompleted?.data?.output, "/vault\n");
+  assert.equal(commandCompleted?.text, "/vault\n");
+  assert.equal(events.find((event) => event.type === "file.change.proposed" && event.data?.callId === "file-1")?.data?.semanticKind, "edit");
+}
+
+async function assertHarnessProjectorPreservesProvidedCommandChannels(): Promise<void> {
+  const answer: ChatMessage = {
+    id: "answer:run-command-projection",
+    role: "assistant",
+    itemType: "assistant",
+    status: "running",
+    title: "Codex",
+    text: "Agent 正在处理...",
+    backendId: "codex-cli",
+    runId: "run-command-projection",
+    createdAt: 1_000
+  };
+  const projector = new HarnessEventProjector({
+    runId: "run-command-projection",
+    backendId: "codex-cli",
+    vaultPath: "/vault",
+    answerMessage: answer
+  });
+  const project = (sequence: number, type: HarnessEvent["type"], patch: Partial<HarnessEvent>): void => {
+    projector.project({
+      eventId: `run-command-projection:${sequence}`,
+      runId: "run-command-projection",
+      sequence,
+      createdAt: 1_000 + sequence,
+      source: "tool",
+      type,
+      backendId: "codex-cli",
+      ...patch
+    });
+  };
+
+  project(1, "tool.started", {
+    toolName: "pwd",
+    data: {
+      callId: "cmd-real-shape",
+      semanticKind: "command",
+      toolStatus: "running",
+      inputState: "provided",
+      input: "pwd",
+      outputState: "unavailable",
+      aggregatedOutput: null
+    }
+  });
+  project(2, "tool.output.delta", {
+    toolName: "pwd",
+    text: "/vault\n",
+    data: {
+      callId: "cmd-real-shape",
+      semanticKind: "command",
+      toolStatus: "running",
+      outputState: "provided"
+    }
+  });
+  project(3, "tool.completed", {
+    toolName: "pwd",
+    data: {
+      callId: "cmd-real-shape",
+      semanticKind: "command",
+      toolStatus: "completed",
+      inputState: "empty",
+      outputState: "unavailable",
+      aggregatedOutput: "/vault\n"
+    }
+  });
+  project(4, "tool.completed", {
+    toolName: "pwd",
+    data: {
+      callId: "cmd-real-shape",
+      semanticKind: "command",
+      toolStatus: "completed",
+      outputState: "empty"
+    }
+  });
+
+  const command = projector.snapshot().find((message) => message.id.endsWith("cmd-real-shape"));
+  assert.equal(command?.status, "completed");
+  assert.equal(command?.processInputAvailability, "provided", "a sparse completion must not erase a provided command input");
+  assert.equal(command?.processInput, "pwd");
+  assert.equal(command?.processOutputAvailability, "provided", "unavailable/empty completion metadata must not erase streamed stdout");
+  assert.equal(command?.processOutput, "/vault\n");
+  assert.equal(command?.text, "/vault\n");
+}
+
+function pickProcessIdentity(data: HarnessEvent["data"]): Record<string, unknown> {
+  return {
+    blockId: data?.blockId,
+    reasoningKind: data?.reasoningKind,
+    visibility: data?.visibility
+  };
+}
+
+async function assertCodexRichRunDriverNormalizesMissingIdsAndNonSuccessStatuses(): Promise<void> {
+  const { driver, events } = createDriverHarness("run-missing-ids", {
+    threadId: "thread-missing-ids",
+    turnId: "turn-missing-ids"
+  });
+
+  driver.handleNotification({ method: "item/agentMessage/delta", params: { delta: "Before tool" } });
+  driver.handleNotification({
+    method: "item/started",
+    params: { item: { type: "mcpToolCall", title: "boundary tool" } }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: { item: { type: "mcpToolCall", status: "completed", output: "boundary done" } }
+  });
+  driver.handleNotification({ method: "item/agentMessage/delta", params: { delta: "After tool" } });
+
+  for (const text of ["First", "Second"]) {
+    driver.handleNotification({
+      method: "item/completed",
+      params: { item: { type: "agentMessage", text } }
+    });
+  }
+  for (const text of ["Reason one", "Reason two"]) {
+    driver.handleNotification({ method: "item/reasoning/summaryPartAdded", params: {} });
+    driver.handleNotification({ method: "item/reasoning/summaryTextDelta", params: { delta: text } });
+    driver.handleNotification({ method: "item/completed", params: { item: { type: "reasoning", text } } });
+  }
+  driver.handleNotification({
+    method: "item/started",
+    params: { item: { type: "commandExecution", title: "first command", command: "echo first" } }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: { item: { type: "commandExecution", title: "second command", command: "echo second" } }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: { item: { type: "commandExecution", status: "cancelled", error: "stopped" } }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: { item: { type: "commandExecution", status: "denied", error: "not approved" } }
+  });
+  driver.handleNotification({
+    method: "item/started",
+    params: {
+      item: {
+        type: "fileChange",
+        title: "testing/a.md",
+        changes: [{ path: "testing/a.md", kind: "update", added: 1, removed: 0 }]
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        type: "fileChange",
+        status: "error",
+        error: "patch failed",
+        changes: [{ path: "testing/a.md", kind: "update", added: 1, removed: 0 }]
+      }
+    }
+  });
+  driver.handleNotification({
+    method: "turn/completed",
+    params: { turn: { status: "error", error: "provider error" } }
+  });
+
+  const result = await driver.awaitResult();
+  assert.equal(result.status, "failed");
+
+  const messageIds = events
+    .filter((event) => event.type === "agent.message.completed")
+    .map((event) => event.data?.messageId);
+  assert.equal(new Set(messageIds).size, 2);
+  assert.ok(messageIds.every(Boolean));
+  const boundaryMessageIds = events
+    .filter((event) => event.type === "agent.message.delta")
+    .map((event) => event.data?.messageId);
+  assert.equal(new Set(boundaryMessageIds).size, 2);
+
+  const blockIds = events
+    .filter((event) => event.type === "agent.reasoning.summary.completed")
+    .map((event) => event.data?.blockId);
+  assert.equal(new Set(blockIds).size, 2);
+  assert.ok(blockIds.every(Boolean));
+
+  const startedCommands = events.filter((event) => event.type === "tool.started" && event.data?.semanticKind === "command");
+  assert.equal(startedCommands.length, 2);
+  assert.equal(new Set(startedCommands.map((event) => event.data?.callId)).size, 2);
+  const interrupted = events.find((event) => event.type === "tool.failed" && event.data?.toolStatus === "interrupted");
+  const denied = events.find((event) => event.type === "tool.failed" && event.data?.toolStatus === "denied");
+  assert.equal(interrupted?.data?.callId, startedCommands[0].data?.callId);
+  assert.equal(denied?.data?.callId, startedCommands[1].data?.callId);
+
+  const proposedFile = events.find((event) => event.type === "file.change.proposed" && Array.isArray(event.data?.files));
+  const revertedFile = events.find((event) => event.type === "file.change.reverted");
+  assert.deepEqual(proposedFile?.data?.files, ["testing/a.md"]);
+  assert.deepEqual(proposedFile?.data?.diff, [{ path: "testing/a.md", kind: "update", added: 1, removed: 0 }]);
+  assert.equal(revertedFile?.data?.toolStatus, "failed");
+  assert.equal(revertedFile?.data?.callId, proposedFile?.data?.callId);
+  assert.equal(events.at(-1)?.type, "run.failed");
 }
 
 async function assertCodexRichRunDriverAggregatesAssistantTextAndTerminalIsIdempotent(): Promise<void> {
@@ -2747,6 +3442,10 @@ async function assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns(): Promise<
     capabilities: "legacy"
   });
   assert.equal(adapter.manifest.capabilities.sessions.resume, "native");
+  assert.equal(adapter.manifest.capabilities.output.streaming, "native");
+  assert.equal(adapter.manifest.capabilities.output.reasoningSummary, "native");
+  assert.equal(adapter.manifest.capabilities.tools.structuredCalls, "native");
+  assert.equal(adapter.manifest.capabilities.files.diffEvents, "native");
   const events: HarnessEvent[] = [];
   const orchestrator = new RunOrchestrator({
     adapters: [adapter],
@@ -3133,6 +3832,77 @@ function createCodexHangingBrokerHarness(prefix: string): {
     resolveBridge,
     bridgeAborted: () => bridgeAborted,
     startTurnCalls: () => turnCount
+  };
+}
+
+function createAcpCancellationHarness(): {
+  process: AcpSubprocessLike;
+  next(method: string): Promise<Record<string, unknown>>;
+  respond(request: Record<string, unknown>, result: unknown): void;
+  count(method: string): number;
+  killed(): boolean;
+} {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const messages: Record<string, unknown>[] = [];
+  const queued = new Map<string, Record<string, unknown>[]>();
+  const waiters = new Map<string, Array<(message: Record<string, unknown>) => void>>();
+  let inputBuffer = "";
+  let processKilled = false;
+  const respond = (request: Record<string, unknown>, result: unknown): void => {
+    stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result })}\n`);
+  };
+  const record = (message: Record<string, unknown>): void => {
+    messages.push(message);
+    if (message.method === "initialize") respond(message, { protocolVersion: 1, agentCapabilities: {} });
+    const method = typeof message.method === "string" ? message.method : "";
+    const waiter = waiters.get(method)?.shift();
+    if (waiter) {
+      waiter(message);
+      return;
+    }
+    const current = queued.get(method) ?? [];
+    current.push(message);
+    queued.set(method, current);
+  };
+  stdin.setEncoding("utf8");
+  stdin.on("data", (chunk) => {
+    inputBuffer += String(chunk);
+    for (;;) {
+      const newline = inputBuffer.indexOf("\n");
+      if (newline < 0) break;
+      const line = inputBuffer.slice(0, newline).trim();
+      inputBuffer = inputBuffer.slice(newline + 1);
+      if (!line) continue;
+      record(JSON.parse(line) as Record<string, unknown>);
+    }
+  });
+  const process: AcpSubprocessLike = {
+    stdin,
+    stdout,
+    stderr,
+    get killed() { return processKilled; },
+    kill() {
+      processKilled = true;
+      return true;
+    }
+  };
+  return {
+    process,
+    next(method) {
+      const current = queued.get(method);
+      const message = current?.shift();
+      if (message) return Promise.resolve(message);
+      return new Promise<Record<string, unknown>>((resolve) => {
+        const currentWaiters = waiters.get(method) ?? [];
+        currentWaiters.push(resolve);
+        waiters.set(method, currentWaiters);
+      });
+    },
+    respond,
+    count: (method) => messages.filter((message) => message.method === method).length,
+    killed: () => processKilled
   };
 }
 

@@ -16,6 +16,7 @@ export interface AgentToolBridgeRuntime {
   prompt: string;
   toolResourceIds?: Record<string, string>;
   callTool(input: {
+    toolCallId?: string;
     tool: string;
     arguments?: Record<string, unknown>;
     scope: EchoInkResourceScope;

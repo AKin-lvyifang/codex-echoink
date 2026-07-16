@@ -283,7 +283,7 @@ export class CodexView extends ItemView {
       get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return view.queueStartInProgress; }, set queueStartInProgress(value) { view.queueStartInProgress = value; }, get turnStartedAt() { return view.turnStartedAt; }, set turnStartedAt(value) { view.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get threadPrewarmPromise() { return view.threadPrewarmPromise; }, get threadPrewarmSessionId() { return view.threadPrewarmSessionId; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
       applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => view.armTurnWatchdog(timeoutMs, timeoutText), clearTurnWatchdog: () => view.clearTurnWatchdog(), clearActiveRun: () => view.clearActiveRun(), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => view.enqueueComposerDraft(), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
       createQueuedTurnFromComposer: (options) => view.createQueuedTurnFromComposer(options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), startKnowledgeBaseTurn: (session, item, source) => view.startKnowledgeBaseTurn(session, item, source), clearComposerDraft: () => view.clearComposerDraft(), isKnowledgeBaseSession: (session) => view.isKnowledgeBaseSession(session), clearKnowledgeBasePage: (session) => view.clearKnowledgeBasePage(session), openKnowledgeBaseHistory: (session) => view.openKnowledgeBaseHistory(session),
-      ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session) => view.renderMessagesIfActive(session), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command), refreshKnowledgeDashboard: (force) => view.refreshKnowledgeDashboard(force)
+      ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command), refreshKnowledgeDashboard: (force) => view.refreshKnowledgeDashboard(force)
     } satisfies CodexViewTurnContext;
   }
 
@@ -337,47 +337,51 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    closeComposerParameterMenu();
-    this.clearTurnWatchdog();
-    this.clearEditorActionStatusTimers();
-    this.clearKnowledgeBaseRunProgressTimer();
-    disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
-    const promptEnhancerRunId = this.promptEnhancerRunId;
-    this.promptEnhancerRunning = false;
-    this.promptEnhancerRunId = "";
-    this.promptEnhancerTurnId = "";
-    if (promptEnhancerRunId) {
-      await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
-        console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
-      });
-    }
-    const activeRunId = this.activeRunId;
-    const activeRunKind = this.activeRunKind;
-    const activeRunSessionId = activeRunId && activeRunKind !== "editor" ? this.activeRunSession().id : "";
-    if (activeRunId) {
-      const cancelError = await this.plugin.cancelHarnessRun(activeRunId).then(
-        () => null,
-        (error) => error instanceof Error ? error : new Error(String(error))
-      );
-      if (activeRunKind === "editor") {
-        this.setEditorActionStatus(cancelError
-          ? { status: "failed", message: "中断失败", error: cancelError.message }
-          : { status: "canceled", message: "侧栏已关闭" });
-      }
-      this.running = false;
-      this.clearActiveRun();
-      if (activeRunSessionId) {
-        await this.plugin.recoverInterruptedHarnessRuns(activeRunSessionId);
-      } else if (activeRunKind === "editor") {
-        await this.plugin.saveSettings(true);
-        await this.plugin.settleHarnessRunTerminal({
-          runId: activeRunId,
-          status: cancelError ? "failed" : "cancelled",
-          error: cancelError?.message ?? "侧栏关闭"
+    try {
+      closeComposerParameterMenu();
+      this.clearTurnWatchdog();
+      this.clearEditorActionStatusTimers();
+      this.clearKnowledgeBaseRunProgressTimer();
+      disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
+      const promptEnhancerRunId = this.promptEnhancerRunId;
+      this.promptEnhancerRunning = false;
+      this.promptEnhancerRunId = "";
+      this.promptEnhancerTurnId = "";
+      if (promptEnhancerRunId) {
+        await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
+          console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
         });
       }
+      const activeRunId = this.activeRunId;
+      const activeRunKind = this.activeRunKind;
+      const activeRunSessionId = activeRunId && activeRunKind !== "editor" ? this.activeRunSession().id : "";
+      if (activeRunId) {
+        const cancelError = await this.plugin.cancelHarnessRun(activeRunId).then(
+          () => null,
+          (error) => error instanceof Error ? error : new Error(String(error))
+        );
+        if (activeRunKind === "editor") {
+          this.setEditorActionStatus(cancelError
+            ? { status: "failed", message: "中断失败", error: cancelError.message }
+            : { status: "canceled", message: "侧栏已关闭" });
+        }
+        this.running = false;
+        this.clearActiveRun();
+        if (activeRunSessionId) {
+          await this.plugin.recoverInterruptedHarnessRuns(activeRunSessionId);
+        } else if (activeRunKind === "editor") {
+          await this.plugin.saveSettings(true);
+          await this.plugin.settleHarnessRunTerminal({
+            runId: activeRunId,
+            status: cancelError ? "failed" : "cancelled",
+            error: cancelError?.message ?? "侧栏关闭"
+          });
+        }
+      }
+      await this.flushSessionSave();
+    } finally {
+      this.messageListRenderer.dispose();
     }
-    await this.flushSessionSave();
   }
 
   applySavedComposerDefaults(): void {
@@ -510,9 +514,9 @@ export class CodexView extends ItemView {
   private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> { await afterTurnSettledRunner(this.turnRunnerContext, sessionId, succeeded); }
   private async startNextQueuedTurn(sessionId: string): Promise<void> { await startNextQueuedTurnRunner(this.turnRunnerContext, sessionId); }
   private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> { return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options); }
-  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source); }
-  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source); }
-  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed"> { return await startChatTurnRunner(this.turnRunnerContext, session, item, source); }
+  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startQueuedTurnItemRunner(this.turnRunnerContext, item, source); }
+  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startQueuedTurnItemSafelyRunner(this.turnRunnerContext, item, source); }
+  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startChatTurnRunner(this.turnRunnerContext, session, item, source); }
   private async startKnowledgeBaseTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"completed" | "failed"> { return await startKnowledgeBaseTurnRunner(this.turnRunnerContext, session, item, source); }
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
   async sendEditorActionRequest(request: EditorActionRequest): Promise<string> { return await sendEditorActionRequestRunner(this.editorActionRunnerContext, request); }

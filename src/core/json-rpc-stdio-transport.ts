@@ -81,7 +81,12 @@ export abstract class JsonRpcStdioTransport {
     return Boolean(child && !this.disposed && !this.processExited && !child.killed && child.stdin.writable);
   }
 
-  request<T = unknown>(method: string, params?: unknown, timeoutMs = this.options.defaultTimeoutMs ?? 30000): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeoutMs = this.options.defaultTimeoutMs ?? 30000,
+    onWritten?: () => void
+  ): Promise<T> {
     if (!this.isAlive()) return Promise.reject(new Error(this.options.closedMessage ?? "JSON-RPC transport is closed."));
     const id = this.nextId++;
     const message: JsonRpcMessage = { jsonrpc: "2.0", id, method, params };
@@ -96,6 +101,11 @@ export abstract class JsonRpcStdioTransport {
       this.pending.set(id, { method, resolve: resolve as (value: unknown) => void, reject, timer });
       try {
         this.write(message);
+        try {
+          onWritten?.();
+        } catch {
+          // A write observer must not turn an already-submitted request into a retryable failure.
+        }
       } catch (error) {
         if (timer) clearTimeout(timer);
         this.pending.delete(id);

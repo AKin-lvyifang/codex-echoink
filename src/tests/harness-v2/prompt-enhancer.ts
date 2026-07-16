@@ -235,7 +235,7 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   assert.doesNotMatch(serviceSource, /buildPromptEnhancerPrompt/);
   assert.match(serviceSource, /outputContract:\s*\{\s*kind:\s*"plain-text"\s*\}/);
   assert.match(taskAdapterSource, /request\.workflow === "prompt\.enhance"/);
-  assert.match(eventRuntimeSource, /input\.system/);
+  assert.doesNotMatch(eventRuntimeSource, /if\s*\(input\.system\)[\s\S]{0,160}runConnectedTaskWithLifecycleEvents/);
   assert.match(promptEnhancerRunnerSource, /view\.promptEnhancerRunning = true/);
   assert.doesNotMatch(promptEnhancerRunnerSource, /selectedServiceTier/);
   assert.doesNotMatch(promptEnhancerRunnerSource, /view\.running = true|view\.activeRunId\s*=/);

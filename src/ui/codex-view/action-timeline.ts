@@ -12,7 +12,7 @@ export type ActionGroupKind =
   | "verify"
   | "system";
 
-export type ActionStatus = "running" | "completed" | "failed" | "blocked" | "canceled";
+export type ActionStatus = "running" | "completed" | "failed" | "blocked" | "canceled" | "unconfirmed" | "interrupted";
 
 export interface ActionItemViewModel {
   id: string;
@@ -116,7 +116,7 @@ export function buildActionTimeline(messages: ChatMessage[]): ActionTimelineView
     stateId: actionTimelineStateId(items),
     runId,
     runStatus,
-    summaryTitle: actionSummaryTitle(items.length),
+    summaryTitle: actionSummaryTitle(items.length, runStatus),
     summaryDetail: countLabelsValue.join(" · "),
     activeLabel: activeLabelForItems(items, runStatus),
     totalCount: items.length,
@@ -194,6 +194,8 @@ function sameStatusFamily(a: ActionStatus, b: ActionStatus): boolean {
   if (a === "failed" || b === "failed") return a === b;
   if (a === "blocked" || b === "blocked") return a === b;
   if (a === "canceled" || b === "canceled") return a === b;
+  if (a === "unconfirmed" || b === "unconfirmed") return a === b;
+  if (a === "interrupted" || b === "interrupted") return a === b;
   return true;
 }
 
@@ -201,7 +203,9 @@ function statusForItems(items: ActionItemViewModel[]): ActionStatus {
   if (items.some((item) => item.status === "running")) return "running";
   if (items.some((item) => item.status === "failed")) return "failed";
   if (items.some((item) => item.status === "blocked")) return "blocked";
+  if (items.some((item) => item.status === "interrupted")) return "interrupted";
   if (items.some((item) => item.status === "canceled")) return "canceled";
+  if (items.some((item) => item.status === "unconfirmed")) return "unconfirmed";
   return "completed";
 }
 
@@ -209,7 +213,9 @@ function normalizeStatus(status: string | undefined): ActionStatus {
   if (status === "running" || status === "in_progress" || status === "inProgress") return "running";
   if (status === "error" || status === "failed") return "failed";
   if (status === "blocked" || status === "approval") return "blocked";
-  if (status === "canceled" || status === "cancelled" || status === "interrupted") return "canceled";
+  if (status === "interrupted") return "interrupted";
+  if (status === "unconfirmed") return "unconfirmed";
+  if (status === "canceled" || status === "cancelled") return "canceled";
   return "completed";
 }
 
@@ -225,20 +231,26 @@ function actionTimelineStateId(items: ActionItemViewModel[]): string {
   return `run:${first?.id ?? "empty"}`;
 }
 
-function actionSummaryTitle(count: number): string {
+function actionSummaryTitle(count: number, status: ActionStatus = "completed"): string {
+  if (status === "running") return `正在处理 ${count} 个动作`;
+  if (status === "failed") return `${count} 个动作失败`;
+  if (status === "blocked") return `${count} 个动作等待确认`;
+  if (status === "unconfirmed") return `${count} 个动作状态未回传`;
+  if (status === "interrupted" || status === "canceled") return `${count} 个动作已中断`;
   return count === 1 ? "已处理 1 个动作" : `已处理 ${count} 个动作`;
 }
 
 function activeLabelForItems(items: ActionItemViewModel[], status: ActionStatus): string {
-  const active = items.slice().reverse().find((item) => item.status === "running" || item.status === "blocked") ?? items[items.length - 1];
+  const active = items.slice().reverse().find((item) => item.status === "running" || item.status === "blocked" || item.status === "unconfirmed" || item.status === "interrupted") ?? items[items.length - 1];
   if (!active) return "";
   if (status === "failed") {
     const failed = items.slice().reverse().find((item) => item.status === "failed") ?? active;
     return liveLabelForItem(failed, "failed");
   }
   if (status === "running" || status === "blocked") return liveLabelForItem(active, status);
-  if (status === "canceled") return "过程已中断";
-  return actionSummaryTitle(items.length);
+  if (status === "unconfirmed") return "工具状态未回传";
+  if (status === "interrupted" || status === "canceled") return "过程已中断";
+  return actionSummaryTitle(items.length, status);
 }
 
 function liveLabelForItem(item: ActionItemViewModel, status: ActionStatus): string {
@@ -286,6 +298,10 @@ function countLabels(items: ActionItemViewModel[]): string[] {
 
 function titleForGroup(kind: ActionGroupKind, items: ActionItemViewModel[]): string {
   const count = items.length;
+  const status = statusForItems(items);
+  const label = COUNT_LABELS[kind];
+  if (status === "unconfirmed") return count === 1 ? `${label}状态未回传` : `${label}状态未回传（${count}）`;
+  if (status === "interrupted" || status === "canceled") return count === 1 ? `${label}已中断` : `${label}已中断（${count}）`;
   if (kind === "read") {
     const fileCount = uniqueFileCount(items);
     return `已读取 ${fileCount || count} 个文件`;

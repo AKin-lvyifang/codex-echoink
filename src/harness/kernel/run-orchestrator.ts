@@ -19,6 +19,7 @@ export interface SettleRunTerminalInput {
   backendId?: string;
   text?: string;
   error?: string;
+  data?: Record<string, unknown>;
 }
 
 export interface AppendRunEventInput {
@@ -376,7 +377,12 @@ export class RunOrchestrator {
         const backendBinding = buildBackendBinding(adapter, request, result, context.manifest, binding, this.now(), this.leaseManager.limits, leaseDecision.reusable);
         await emitNativeLeaseCreatedIfNeeded(emit, adapter.manifest.id, backendBinding, leaseDecision.mode, leaseDecision.reusable);
         await start.releaseTerminalEvents();
-        const terminal = await emitTerminal({ status: "completed", backendId: adapter.manifest.id, text: result.outputText });
+        const terminal = await emitTerminal({
+          status: "completed",
+          backendId: adapter.manifest.id,
+          text: result.outputText,
+          data: result.terminalData
+        });
         if (terminal.type !== "run.completed") return resultFromTerminalEvent(terminal);
         return {
           runId: request.runId,
@@ -453,7 +459,8 @@ export class RunOrchestrator {
       type: terminalEventType(input.status),
       backendId: input.backendId,
       text: input.text,
-      error: input.error
+      error: input.error,
+      data: input.data
     }, options.sink);
   }
 

@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "backend": "hermes",
+    "version": "0.18.0",
+    "transport": "ACP session/update",
+    "source": "Anonymized from a local production Hermes ACP capture; identifiers and user content sanitized"
+  },
+  "sessionId": "hermes-fixture-session",
+  "updates": [
+    {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "First provider thought." }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "tc-fixture-a",
+      "title": "memory manage: memory",
+      "kind": "other",
+      "status": "pending",
+      "rawInput": null,
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "Memory manage (memory)" }
+        }
+      ]
+    },
+    {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "Second provider thought." }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "tc-fixture-b",
+      "title": "memory manage: memory",
+      "kind": "edit",
+      "status": "pending",
+      "rawInput": { "operation": "add", "content": "fixture marker" },
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "Memory manage (memory)" }
+        }
+      ]
+    },
+    {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "Third provider thought." }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "tc-fixture-b",
+      "status": "completed",
+      "rawOutput": null,
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "Saved fixture marker" }
+        }
+      ]
+    },
+    {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "FIXTURE_DONE" }
+    }
+  ]
+}

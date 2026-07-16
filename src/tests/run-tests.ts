@@ -262,6 +262,10 @@ import { runHarnessV2ArchitectureBoundaryTests } from "./harness-v2/architecture
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
 import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
+import { runOpenCodeRichRuntimeRegressionTests } from "./opencode-rich-runtime-regression";
+import { runToolBridgeRichEventRegressionTests } from "./tool-bridge-rich-event-regression";
+import "./hermes-rich-stream-regression";
+import "./harness-event-projector-regression";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, collectEchoInkJournalEvidenceFromSessions, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
@@ -843,7 +847,7 @@ assert.equal(getAgentBackendDefinition("hermes").label, "Hermes");
 assert.equal(getAgentBackendDefinition("hermes").capabilities.richEvents, true);
 assert.equal(getAgentBackendDefinition("hermes").capabilities.structuredToolCalls, false);
 assert.equal(getAgentBackendDefinition("hermes").capabilities.nativeMcpPassThrough, false);
-assert.equal(getAgentBackendDefinition("opencode").capabilities.richEvents, false);
+assert.equal(getAgentBackendDefinition("opencode").capabilities.richEvents, true);
 assert.equal(agentBackendDisplayName("hermes"), "Hermes");
 assert.equal(resolveCapabilityBackend("default", DEFAULT_SETTINGS.agents.defaultBackend), "codex-cli");
 assert.equal(resolveCapabilityBackend("hermes", DEFAULT_SETTINGS.agents.defaultBackend), "hermes");
@@ -934,7 +938,7 @@ const richEvents = normalizeRichStreamEvents([
   { type: "agent_message_chunk", text: "lo" },
   { type: "agent_thought_chunk", text: "Need read file" },
   { type: "tool_call", toolCallId: "tool-1", title: "Read note", status: "in_progress", rawInput: { path: "testing/a.md" } },
-  { type: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", text: "done" }] },
+  { type: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "done" } }] },
   { type: "usage_update", inputTokens: 10, outputTokens: 2 }
 ], { backend: "opencode", runId: "run-1", now: () => 1 });
 assert.deepEqual(richEvents.map((event) => event.type), [
@@ -948,6 +952,11 @@ assert.deepEqual(richEvents.map((event) => event.type), [
 assert.equal(richEvents[0].text, "Hel");
 assert.equal(richEvents[2].text, "Need read file");
 assert.equal(richEvents[3].toolName, "Read note");
+assert.equal(richEvents[3].data?.inputState, "provided");
+assert.deepEqual(richEvents[3].data?.input, { path: "testing/a.md" });
+assert.equal(richEvents[4].data?.outputState, "unavailable");
+assert.equal(Object.prototype.hasOwnProperty.call(richEvents[4].data ?? {}, "output"), false);
+assert.equal(richEvents[4].data?.displayPreview, "done");
 assert.equal(agentEventDisplayText({
   type: "thinking_delta",
   backend: "hermes",
@@ -1011,14 +1020,14 @@ const fakeAcp = createFakeAcpProcess((message, write) => {
     write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } } } });
     write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Need inspect file" } } } });
     write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Read", status: "pending", rawInput: { path: "testing/a.md" } } } });
-    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", title: "Read", status: "completed", content: [{ type: "content", text: "done" }] } } });
+    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", title: "Read", status: "completed", content: [{ type: "content", content: { type: "text", text: "done" } }] } } });
     write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-session-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "lo" } } } });
     write({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
   }
 });
 const acpRuntime = new AcpAgentRuntime({
-  backend: "opencode",
-  command: { command: "opencode", args: ["acp"], cwd: "/vault" },
+  backend: "hermes",
+  command: { command: "hermes", args: ["acp"], cwd: "/vault" },
   processFactory: () => fakeAcp.process
 });
 const acpEvents: AgentEvent[] = [];
@@ -1032,6 +1041,7 @@ assert.deepEqual(acpEvents.map((event) => event.type), [
   "waiting",
   "message_delta",
   "thinking_delta",
+  "thinking_completed",
   "tool_call_requested",
   "tool_call_completed",
   "message_delta",
@@ -1039,6 +1049,10 @@ assert.deepEqual(acpEvents.map((event) => event.type), [
 ]);
 assert.deepEqual(fakeAcp.requests.map((request) => request.method), ["initialize", "session/new", "session/prompt"]);
 assert.equal(acpEvents.find((event) => event.type === "tool_call_requested")?.data?.toolCallId, "tool-1");
+const completedAcpTool = acpEvents.find((event) => event.type === "tool_call_completed");
+assert.equal(completedAcpTool?.data?.outputState, "unavailable");
+assert.equal(Object.prototype.hasOwnProperty.call(completedAcpTool?.data ?? {}, "output"), false);
+assert.equal(completedAcpTool?.data?.displayPreview, "done");
 
 const richStartupFailureRuntime: AgentRichStreamRuntime = {
   ...fakeLifecycleRuntime,
@@ -1099,6 +1113,80 @@ await assert.rejects(
 );
 assert.equal(streamedFallbackCalls, 0);
 assert.equal(streamedFallbackEvents.some((event) => event.type === "fallback_started"), false);
+let submittedFallbackCalls = 0;
+const submittedFailureEvents: AgentEvent[] = [];
+const submittedFailureRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async runTask() {
+    submittedFallbackCalls += 1;
+    return { text: "must not run twice" };
+  }
+}, {
+  ...richStartupFailureRuntime,
+  async runTaskStream(_input, emit) {
+    await emit({
+      type: "prompt_sent",
+      backend: "opencode",
+      createdAt: 1,
+      data: { promptSubmitted: true, streamSource: "sdk-sse" }
+    });
+    throw new Error("SSE disconnected after prompt submission");
+  }
+});
+await assert.rejects(
+  submittedFailureRuntime.runTaskEvents({ prompt: "do not duplicate" }, (event) => submittedFailureEvents.push(event)),
+  /SSE disconnected after prompt submission/
+);
+assert.equal(submittedFallbackCalls, 0);
+assert.equal(submittedFailureEvents.some((event) => event.type === "fallback_started"), false);
+let unsubmittedFallbackCalls = 0;
+const unsubmittedFailureEvents: AgentEvent[] = [];
+const unsubmittedFailureRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async runTask() {
+    unsubmittedFallbackCalls += 1;
+    return { text: "safe fallback", runId: "fallback-after-unsubmitted" };
+  }
+}, {
+  ...richStartupFailureRuntime,
+  async runTaskStream(_input, emit) {
+    await emit({
+      type: "prompt_sent",
+      backend: "hermes",
+      createdAt: 1,
+      data: { promptSubmitted: false, streamSource: "acp" }
+    });
+    throw new Error("ACP request was not written");
+  }
+});
+const unsubmittedResult = await unsubmittedFailureRuntime.runTaskEvents({ prompt: "safe to retry" }, (event) => unsubmittedFailureEvents.push(event));
+assert.equal(unsubmittedResult.text, "safe fallback");
+assert.equal(unsubmittedFallbackCalls, 1);
+assert.equal(unsubmittedFailureEvents.some((event) => event.type === "fallback_started"), true);
+let selectedFallbackAbortCalls = 0;
+let selectedRichAbortCalls = 0;
+const selectedAbortRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async abort() {
+    selectedFallbackAbortCalls += 1;
+  }
+}, {
+  ...fakeLifecycleRuntime,
+  async runTaskStream() {
+    return { text: "rich", runId: "rich-selected" };
+  },
+  async abort() {
+    selectedRichAbortCalls += 1;
+  }
+});
+await selectedAbortRuntime.runTaskEvents({ prompt: "select rich" }, () => undefined);
+await selectedAbortRuntime.abort("rich-selected");
+assert.equal(selectedRichAbortCalls, 1);
+assert.equal(selectedFallbackAbortCalls, 0);
+await selectedAbortRuntime.runTaskEvents({ prompt: "select fallback", timeoutMs: 10 }, () => undefined);
+await selectedAbortRuntime.abort("fallback-selected");
+assert.equal(selectedRichAbortCalls, 1);
+assert.equal(selectedFallbackAbortCalls, 1);
 let agentChatState = createAgentEventRenderState("hermes");
 agentChatState = reduceAgentEventForChat(agentChatState, { type: "connecting", backend: "hermes", createdAt: 1 });
 assert.equal(agentChatState.status, "running");
@@ -1133,8 +1221,11 @@ assert.equal(agentChatState.toolCalls?.[0]?.status, "denied");
 const openCodeEventRuntime = createAgentTaskRuntime({ backend: "opencode", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
 assert.equal(typeof (openCodeEventRuntime as any).runTaskEvents, "function");
 let staleOpenCodeTaskModel: any = null;
+const factorySystemPromptOptions: any[] = [];
 (globalThis as any).__opencodeBackendTestHooks = {
   models: [{ id: "opencode/deepseek-v4-flash-free", providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free", displayName: "OpenCode free", inputModalities: ["text"] }],
+  sendPromptOptions: factorySystemPromptOptions,
+  sendPromptResult: "PONG",
   onRunCliTask: async (options: any) => {
     staleOpenCodeTaskModel = options.model;
   },
@@ -1145,6 +1236,21 @@ await openCodeEventRuntime.runTask({
   model: { providerId: "302ai", modelId: "chatgpt-4o-latest" }
 });
 assert.deepEqual(staleOpenCodeTaskModel, { providerId: "opencode", modelId: "opencode/deepseek-v4-flash-free" });
+await openCodeEventRuntime.runTask({
+  prompt: "USER-PROMPT",
+  system: "SYSTEM-BOUNDARY",
+  resources: {
+    promptPrefix: "RESOURCE-PREFIX",
+    enabledResources: [],
+    warnings: ["RESOURCE-WARNING"],
+    mcpConfig: null,
+    toolBridge: null
+  }
+});
+assert.equal(factorySystemPromptOptions[0]?.system, "SYSTEM-BOUNDARY");
+assert.match(factorySystemPromptOptions[0]?.parts?.[0]?.text ?? "", /RESOURCE-PREFIX/);
+assert.match(factorySystemPromptOptions[0]?.parts?.[0]?.text ?? "", /RESOURCE-WARNING/);
+assert.match(factorySystemPromptOptions[0]?.parts?.[0]?.text ?? "", /USER-PROMPT/);
 delete (globalThis as any).__opencodeBackendTestHooks;
 const hermesEventRuntime = createAgentTaskRuntime({ backend: "hermes", settings: DEFAULT_SETTINGS, vaultPath: "/vault" });
 assert.equal(typeof (hermesEventRuntime as any).runTaskEvents, "function");
@@ -1184,10 +1290,17 @@ const simpleTaskSource = await readFile(path.join(process.cwd(), "src/agent/simp
 assert.match(simpleTaskSource, /createAgentTaskRuntime/);
 assert.doesNotMatch(simpleTaskSource, /new OpenCodeBackend|new HermesBackend/);
 const turnRunnerSourceForAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view/turn-runner.ts"), "utf8");
+const codexViewSourceForIncrementalAgentEvents = await readFile(path.join(process.cwd(), "src/ui/codex-view.ts"), "utf8");
+const openCodeBackendSourceForSubmissionBoundary = await readFile(path.join(process.cwd(), "src/core/opencode-backend.ts"), "utf8");
 assert.doesNotMatch(turnRunnerSourceForAgentEvents, /runAgentTaskWithEvents/);
 assert.match(turnRunnerSourceForAgentEvents, /createHarnessAgentAdapter/);
 assert.match(turnRunnerSourceForAgentEvents, /runHarnessWithAdapter/);
-assert.match(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
+assert.match(turnRunnerSourceForAgentEvents, /HarnessEventProjector/);
+assert.match(turnRunnerSourceForAgentEvents, /applyHarnessProjectionBatch/);
+assert.doesNotMatch(turnRunnerSourceForAgentEvents, /reduceAgentEventForChat/);
+assert.match(codexViewSourceForIncrementalAgentEvents, /renderMessagesIfActive:\s*\(session, updatedMessage\)\s*=>\s*view\.renderMessagesIfActive\(session, updatedMessage\)/);
+assert.match(openCodeBackendSourceForSubmissionBoundary, /onSpawn:\s*\(\)\s*=>\s*markPromptSubmitted\(\)/);
+assert.doesNotMatch(openCodeBackendSourceForSubmissionBoundary, /options\.onPromptSubmitted\?\.\(\);\s*\n\s*const output = await runOpenCodeCommand/);
 assert.match(turnRunnerSourceForAgentEvents, /buildCallableMcpToolCatalog/);
 assert.match(turnRunnerSourceForAgentEvents, /createEchoInkMcpToolBridgeRuntime/);
 assert.doesNotMatch(turnRunnerSourceForAgentEvents, /hermesTaskTimeoutMs:\s*120000/);
@@ -1775,7 +1888,12 @@ const messageListIncrementalMethod = messageListBottomPinSource.slice(
   messageListBottomPinSource.indexOf("  tryUpdateMessage(message: ChatMessage): boolean"),
   messageListBottomPinSource.indexOf("  isNearBottom(")
 );
-assert.match(messageListIncrementalMethod, /onScheduleMeasure\(shouldPinBottom\)/);
+const messageListIncrementalFlushMethods = messageListBottomPinSource.slice(
+  messageListBottomPinSource.indexOf("  private flushProcessMessageUpdates("),
+  messageListBottomPinSource.indexOf("  private scheduleMeasuredRowsRerender(")
+);
+assert.match(messageListIncrementalMethod, /requestAnimationFrame/);
+assert.equal((messageListIncrementalFlushMethods.match(/onScheduleMeasure\(/g) ?? []).length, 2);
 assert.doesNotMatch(messageListIncrementalMethod, /messagesEl\.scrollTop\s*=/);
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true, isMessagesNearBottom: () => true }), { forceBottom: false, preserveScroll: true });
 assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false, isMessagesNearBottom: () => false }), { forceBottom: true, preserveScroll: false });
@@ -1826,6 +1944,88 @@ assert.equal(wheelPauseMeasureForceBottom, false);
 const wheelDownFollow = new MessageScrollFollowController();
 wheelDownFollow.handleWheel({ deltaY: 1 });
 assert.equal(wheelDownFollow.paused, false);
+const previousWindowForCrossFrameTest = (globalThis as any).window;
+try {
+  const updateFrames: Array<() => void> = [];
+  const measureFrames: Array<() => void> = [];
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      updateFrames.push(callback);
+      return updateFrames.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  const follow = new MessageScrollFollowController();
+  const messagesEl: any = { scrollTop: 600, clientHeight: 200, scrollHeight: 800 };
+  const virtualListEl: any = { scrollHeight: 800, querySelectorAll: () => [wrapper] };
+  let renderedText = "";
+  const content: any = {
+    empty: () => {
+      renderedText = "";
+      messagesEl.scrollHeight += 100;
+      virtualListEl.scrollHeight = messagesEl.scrollHeight;
+    },
+    createDiv: () => content,
+    createEl: () => content,
+    createSpan: () => content,
+    appendText: (value: string) => { renderedText += value; },
+    setText: (value: string) => { renderedText = value; }
+  };
+  const row: any = { dataset: { rowId: "message:cross-frame-answer" } };
+  const wrapper: any = {
+    dataset: { messageId: "cross-frame-answer" },
+    hasClass: (name: string) => name === "codex-message",
+    closest: (selector: string) => selector === ".codex-virtual-row" ? row : null,
+    querySelector: (selector: string) => selector === "[data-message-content]" ? content : null,
+    toggleClass: () => undefined
+  };
+  const measureForces: boolean[] = [];
+  (renderer as any).env = {
+    app: { vault: { adapter: { getBasePath: () => "/vault" } } },
+    component: {},
+    messagesEl,
+    virtualListEl,
+    sessionId: "cross-frame-follow",
+    shouldFollowBottom: () => !follow.paused,
+    onScheduleMeasure: (forceBottom = false) => follow.scheduleMeasure(
+      forceBottom,
+      (callback) => {
+        measureFrames.push(callback);
+        return measureFrames.length;
+      },
+      (shouldForceBottom) => {
+        measureForces.push(shouldForceBottom);
+        if (shouldForceBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+    )
+  };
+  const answer: ChatMessage = {
+    id: "cross-frame-answer",
+    role: "assistant",
+    itemType: "assistant",
+    text: "first",
+    status: "running",
+    createdAt: 1
+  };
+
+  assert.equal(renderer.tryUpdateMessage(answer), true);
+  updateFrames.shift()?.();
+  assert.equal(messagesEl.scrollHeight, 900);
+  assert.equal(measureFrames.length, 1);
+  answer.text = "second";
+  assert.equal(renderer.tryUpdateMessage(answer), true);
+  assert.equal(updateFrames.length, 1);
+  measureFrames.shift()?.();
+  assert.equal(messagesEl.scrollTop, 900);
+  updateFrames.shift()?.();
+  assert.equal(messagesEl.scrollHeight, 1_000);
+  measureFrames.shift()?.();
+  assert.deepEqual(measureForces, [true, true]);
+  assert.equal(messagesEl.scrollTop, messagesEl.scrollHeight, "stream follow must survive update RAF -> token -> measure RAF races");
+  assert.equal(renderedText, "second");
+} finally {
+  (globalThis as any).window = previousWindowForCrossFrameTest;
+}
 const previousHTMLElement = (globalThis as any).HTMLElement;
 const previousWindowForMessageListTest = (globalThis as any).window;
 try {
@@ -1842,25 +2042,174 @@ try {
   const row = new FakeHTMLElement() as any;
   row.dataset = { rowId: "message:1" };
   row.getBoundingClientRect = () => ({ height: 123 });
+  const messagesEl = { scrollTop: 400, clientHeight: 100, scrollHeight: 500 } as HTMLElement;
+  const virtualListEl = { children: [row], scrollHeight: 500 } as any;
   let renderCalls = 0;
   let renderedSessionId = "";
-  (renderer as any).env = { options: {}, sessionId: "before-measure" };
-  (renderer as any).render = (input: { sessionId?: string }) => {
+  let renderedOptions: unknown = null;
+  (renderer as any).env = { options: {}, sessionId: "before-measure", messagesEl, virtualListEl };
+  (renderer as any).render = (input: { sessionId?: string; options?: unknown }) => {
     renderCalls += 1;
     renderedSessionId = input.sessionId ?? "";
+    renderedOptions = input.options;
   };
   const changed = renderer.measureVisibleVirtualRows(
-    { scrollTop: 0, scrollHeight: 500 } as HTMLElement,
-    { children: [row] } as any,
+    messagesEl,
+    virtualListEl,
     false
   );
   assert.equal(changed, true);
   assert.equal(renderCalls, 0);
   assert.equal(frameCallbacks.length, 1);
-  (renderer as any).env = { options: {}, sessionId: "after-measure" };
+  (renderer as any).env = { options: {}, sessionId: "after-measure", messagesEl, virtualListEl };
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, true), false);
   frameCallbacks[0]();
   assert.equal(renderCalls, 1);
   assert.equal(renderedSessionId, "after-measure");
+  assert.deepEqual(renderedOptions, { forceBottom: true, preserveScroll: false });
+} finally {
+  (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  class FakeHTMLElement {}
+  const frameCallbacks: Array<() => void> = [];
+  const timeoutCallbacks = new Map<number, () => void>();
+  const clearedTimeouts: number[] = [];
+  let nextTimeoutId = 1;
+  (globalThis as any).HTMLElement = FakeHTMLElement;
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    },
+    setTimeout: (callback: () => void) => {
+      const id = nextTimeoutId++;
+      timeoutCallbacks.set(id, callback);
+      return id;
+    },
+    clearTimeout: (id: number) => {
+      clearedTimeouts.push(id);
+      timeoutCallbacks.delete(id);
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  let rowHeight = 123;
+  const row = new FakeHTMLElement() as any;
+  row.dataset = { rowId: "message:trailing-rerender" };
+  row.getBoundingClientRect = () => ({ height: rowHeight });
+  const messagesEl = { scrollTop: 0, clientHeight: 100, scrollHeight: 500 } as HTMLElement;
+  const virtualListEl = { children: [row], scrollHeight: 500 } as any;
+  let renderCalls = 0;
+  let renderOptions: unknown = null;
+  (renderer as any).env = {
+    options: {},
+    sessionId: "trailing-rerender-session",
+    messagesEl,
+    virtualListEl,
+    shouldFollowBottom: () => false
+  };
+  (renderer as any).render = (input: { options?: unknown }) => {
+    renderCalls += 1;
+    renderOptions = input.options;
+  };
+  (renderer as any).virtualRerenderBurst = 24;
+  (renderer as any).virtualRerenderWindowStartedAt = Date.now();
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl), true);
+  assert.equal(frameCallbacks.length, 0, "a saturated burst should defer exactly one final layout render");
+  assert.equal(timeoutCallbacks.size, 1);
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, true), false);
+  assert.equal(timeoutCallbacks.size, 1, "saturated measurements must share one trailing timer");
+  assert.equal((renderer as any).virtualRerenderPendingForceBottom, true);
+  assert.equal(timeoutCallbacks.size, 1, "a no-change measurement must not cancel the pending final layout render");
+  const trailingTimerId = Array.from(timeoutCallbacks.keys())[0];
+  const trailingCallback = timeoutCallbacks.get(trailingTimerId);
+  assert.ok(trailingCallback);
+  timeoutCallbacks.delete(trailingTimerId);
+  trailingCallback();
+  assert.equal(frameCallbacks.length, 1);
+  frameCallbacks.shift()?.();
+  assert.equal(renderCalls, 1);
+  assert.deepEqual(renderOptions, { forceBottom: false, preserveScroll: true });
+
+  rowHeight = 124;
+  (renderer as any).virtualRerenderBurst = 24;
+  (renderer as any).virtualRerenderWindowStartedAt = Date.now();
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl), true);
+  const disposeTimerId = Array.from(timeoutCallbacks.keys())[0];
+  assert.ok(disposeTimerId);
+  renderer.dispose();
+  assert.ok(clearedTimeouts.includes(disposeTimerId));
+  assert.equal(timeoutCallbacks.has(disposeTimerId), false);
+} finally {
+  (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  class FakeHTMLElement {}
+  let rowHeight = 0;
+  const hiddenRowFrameCallbacks: Array<() => void> = [];
+  let resizeObserver: {
+    trigger: () => void;
+    disconnected: boolean;
+  } | null = null;
+  class FakeResizeObserver {
+    disconnected = false;
+    private readonly callback: () => void;
+
+    constructor(callback: () => void) {
+      this.callback = callback;
+      resizeObserver = this;
+    }
+
+    observe(): void {}
+
+    disconnect(): void {
+      this.disconnected = true;
+    }
+
+    trigger(): void {
+      this.callback();
+    }
+  }
+  (globalThis as any).HTMLElement = FakeHTMLElement;
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      hiddenRowFrameCallbacks.push(callback);
+      return hiddenRowFrameCallbacks.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  const row = new FakeHTMLElement() as any;
+  row.dataset = { rowId: "message:hidden-long-row" };
+  row.getBoundingClientRect = () => ({ height: rowHeight });
+  const messagesEl: any = {
+    clientWidth: 0,
+    clientHeight: 0,
+    scrollTop: 0,
+    scrollHeight: 0,
+    ownerDocument: { defaultView: { ResizeObserver: FakeResizeObserver } }
+  };
+  const virtualListEl: any = { children: [row], scrollHeight: 0 };
+  (renderer as any).env = { options: {}, sessionId: "hidden-row-session", messagesEl, virtualListEl };
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl), false);
+  assert.equal((renderer as any).virtualRowHeights.has("message:hidden-long-row"), false);
+
+  (renderer as any).virtualRowHeights.set("message:hidden-long-row", 1);
+  (renderer as any).virtualRerenderBurst = 24;
+  (renderer as any).virtualRerenderWindowStartedAt = Date.now();
+  (renderer as any).observeMessageViewport(messagesEl);
+  messagesEl.clientWidth = 360;
+  messagesEl.clientHeight = 500;
+  rowHeight = 240;
+  resizeObserver?.trigger();
+  assert.equal(hiddenRowFrameCallbacks.length, 1, "visibility recovery must bypass a saturated row-measure throttle");
+  assert.equal((renderer as any).virtualRerenderBurst, 1);
+  assert.equal((renderer as any).virtualRowHeights.size, 0);
+  assert.equal(renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, false, { rerender: false }), true);
+  assert.equal((renderer as any).virtualRowHeights.get("message:hidden-long-row"), 240);
+  renderer.dispose();
+  assert.equal(resizeObserver?.disconnected, true);
 } finally {
   (globalThis as any).HTMLElement = previousHTMLElement;
   (globalThis as any).window = previousWindowForMessageListTest;
@@ -1948,6 +2297,78 @@ try {
   assert.deepEqual(renderOptions, { forceBottom: false, preserveScroll: true });
 } finally {
   (globalThis as any).HTMLElement = previousHTMLElement;
+  (globalThis as any).window = previousWindowForMessageListTest;
+}
+try {
+  const frameCallbacks: Array<() => void> = [];
+  (globalThis as any).window = {
+    requestAnimationFrame: (callback: () => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+  const renderer = new CodexMessageListRenderer();
+  let emptyCalls = 0;
+  let renderedText = "";
+  const content: any = {
+    empty: () => {
+      emptyCalls += 1;
+      renderedText = "";
+    },
+    createDiv: () => content,
+    createEl: () => content,
+    createSpan: () => content,
+    appendText: (value: string) => {
+      renderedText += value;
+    },
+    setText: (value: string) => {
+      renderedText = value;
+    }
+  };
+  const row: any = { dataset: { rowId: "message:stream-answer" } };
+  const wrapper: any = {
+    dataset: { messageId: "stream-answer" },
+    hasClass: (name: string) => name === "codex-message",
+    closest: (selector: string) => selector === ".codex-virtual-row" ? row : null,
+    querySelector: (selector: string) => selector === "[data-message-content]" ? content : null,
+    toggleClass: () => undefined
+  };
+  const messagesEl: any = { scrollTop: 321, clientHeight: 200, scrollHeight: 800 };
+  const virtualListEl: any = {
+    scrollHeight: 800,
+    querySelectorAll: () => [wrapper]
+  };
+  const measurePins: boolean[] = [];
+  (renderer as any).env = {
+    app: { vault: { adapter: { getBasePath: () => "/vault" } } },
+    component: {},
+    messagesEl,
+    virtualListEl,
+    sessionId: "answer-raf",
+    shouldFollowBottom: () => false,
+    onScheduleMeasure: (forceBottom = false) => measurePins.push(forceBottom)
+  };
+  const answerDelta: ChatMessage = {
+    id: "stream-answer",
+    role: "assistant",
+    itemType: "assistant",
+    text: "",
+    status: "running",
+    createdAt: 1
+  };
+  for (let index = 0; index < 100; index += 1) {
+    answerDelta.text = `token-${index}`;
+    assert.equal(renderer.tryUpdateMessage(answerDelta), true);
+  }
+  assert.equal(frameCallbacks.length, 1, "answer deltas must share one animation-frame render");
+  assert.equal(emptyCalls, 0, "answer DOM must not be rebuilt before the scheduled frame");
+  assert.equal(messagesEl.scrollTop, 321);
+  frameCallbacks[0]();
+  assert.equal(emptyCalls, 1);
+  assert.equal(renderedText, "token-99");
+  assert.deepEqual(measurePins, [false]);
+  assert.equal(messagesEl.scrollTop, 321, "incremental answer rendering must preserve the scroll anchor");
+} finally {
   (globalThis as any).window = previousWindowForMessageListTest;
 }
 const menuTarget = {} as Node;
@@ -5379,6 +5800,28 @@ const parsedOpenCodeRun = parseOpenCodeRunJsonLines([
 assert.equal(parsedOpenCodeRun.text, "OPENCODE");
 assert.equal(parsedOpenCodeRun.sessionId, "ses_1");
 assert.deepEqual(parsedOpenCodeRun.usage, { inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+const parsedOpenCodeMultiStepRun = parseOpenCodeRunJsonLines([
+  JSON.stringify({ type: "step_start", sessionID: "ses_multi", part: { messageID: "msg_tool" } }),
+  JSON.stringify({ type: "text", sessionID: "ses_multi", part: { messageID: "msg_tool", text: "I will inspect the file." } }),
+  JSON.stringify({ type: "step_finish", sessionID: "ses_multi", part: { messageID: "msg_tool", reason: "tool_calls", tokens: { input: 20, output: 4, total: 24 } } }),
+  JSON.stringify({ type: "step_start", sessionID: "ses_multi", part: { messageID: "msg_final" } }),
+  JSON.stringify({ type: "text", sessionID: "ses_multi", part: { messageID: "msg_final", text: "FINAL_ANSWER" } }),
+  JSON.stringify({ type: "step_finish", sessionID: "ses_multi", part: { messageID: "msg_final", reason: "stop", tokens: { input: 30, output: 2, total: 32 } } })
+].join("\n"));
+assert.equal(parsedOpenCodeMultiStepRun.text, "FINAL_ANSWER");
+assert.equal(parsedOpenCodeMultiStepRun.hasAuthoritativeFinal, true);
+assert.equal(parsedOpenCodeMultiStepRun.sessionId, "ses_multi");
+assert.deepEqual(parsedOpenCodeMultiStepRun.usage, { inputTokens: 30, outputTokens: 2, totalTokens: 32 });
+const parsedOpenCodeEmptyFinalRun = parseOpenCodeRunJsonLines([
+  JSON.stringify({ type: "step_start", sessionID: "ses_empty", part: { messageID: "msg_tool" } }),
+  JSON.stringify({ type: "text", sessionID: "ses_empty", part: { messageID: "msg_tool", text: "This is not the final answer." } }),
+  JSON.stringify({ type: "step_finish", sessionID: "ses_empty", part: { messageID: "msg_tool", reason: "tool-use" } }),
+  JSON.stringify({ type: "step_start", sessionID: "ses_empty", part: { messageID: "msg_final" } }),
+  JSON.stringify({ type: "step_finish", sessionID: "ses_empty", part: { messageID: "msg_final", reason: "stop", tokens: { input: 12, output: 0, total: 12 } } })
+].join("\n"));
+assert.equal(parsedOpenCodeEmptyFinalRun.text, "");
+assert.equal(parsedOpenCodeEmptyFinalRun.hasAuthoritativeFinal, true);
+assert.deepEqual(parsedOpenCodeEmptyFinalRun.usage, { inputTokens: 12, outputTokens: 0, totalTokens: 12 });
 const openCodeMessagesForRecovery = [
   {
     info: { id: "msg-user-1", role: "user", time: { created: 10 } },
@@ -12988,5 +13431,7 @@ await runHarnessV2ArchitectureBoundaryTests();
 await runEditorActionControllerTests();
 await runPromptEnhancerHarnessTests();
 await runHarnessV3ChatUiTests();
+await runOpenCodeRichRuntimeRegressionTests();
+await runToolBridgeRichEventRegressionTests();
 
 console.log("All tests passed");

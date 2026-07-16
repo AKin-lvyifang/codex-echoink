@@ -4,6 +4,7 @@ import * as https from "node:https";
 export async function nodeFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const requestInput = typeof Request !== "undefined" && input instanceof Request ? input : null;
   const mergedSignal = mergeAbortSignals(requestInput?.signal, init.signal);
+  let streamingResponse = false;
   try {
     throwIfAborted(mergedSignal.signal);
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -18,9 +19,19 @@ export async function nodeFetch(input: RequestInfo | URL, init: RequestInit = {}
           ? await requestBodyFromRequest(requestInput)
           : null;
     throwIfAborted(mergedSignal.signal);
-    return await nodeHttpRequest({ url, transport, method, headers, body, signal: mergedSignal.signal });
+    const result = await nodeHttpRequest({
+      url,
+      transport,
+      method,
+      headers,
+      body,
+      signal: mergedSignal.signal,
+      onStreamingResponseClosed: mergedSignal.cleanup
+    });
+    streamingResponse = result.streaming;
+    return result.response;
   } finally {
-    mergedSignal.cleanup();
+    if (!streamingResponse) mergedSignal.cleanup();
   }
 }
 
@@ -31,16 +42,24 @@ async function nodeHttpRequest(input: {
   headers: Headers;
   body: Buffer | null;
   signal?: AbortSignal;
-}): Promise<Response> {
-  return await new Promise<Response>((resolve, reject) => {
+  onStreamingResponseClosed: () => void;
+}): Promise<{ response: Response; streaming: boolean }> {
+  return await new Promise<{ response: Response; streaming: boolean }>((resolve, reject) => {
     let settled = false;
     let responseStream: http.IncomingMessage | null = null;
+    let streamingCleanupComplete = false;
+    const cleanupStreamingResponse = (): void => {
+      if (streamingCleanupComplete) return;
+      streamingCleanupComplete = true;
+      input.signal?.removeEventListener("abort", abort);
+      input.onStreamingResponseClosed();
+    };
     const finish = (error: Error | null, response?: Response): void => {
       if (settled) return;
       settled = true;
       input.signal?.removeEventListener("abort", abort);
       if (error) reject(error);
-      else resolve(response as Response);
+      else resolve({ response: response as Response, streaming: false });
     };
     const request = input.transport.request(input.url, {
       method: input.method,
@@ -48,6 +67,29 @@ async function nodeHttpRequest(input: {
       timeout: 120000
     }, (response) => {
       responseStream = response;
+      const responseHeaders = responseHeadersToWeb(response.headers);
+      const status = response.statusCode ?? 0;
+      if (responseAllowsBody(status) && isEventStreamResponse(responseHeaders)) {
+        request.setTimeout(0);
+        try {
+          const streamingBody = incomingMessageBody(response, request, cleanupStreamingResponse);
+          const streamingWebResponse = new Response(streamingBody, {
+            status,
+            statusText: response.statusMessage,
+            headers: responseHeaders
+          });
+          response.once("close", cleanupStreamingResponse);
+          response.once("error", cleanupStreamingResponse);
+          settled = true;
+          resolve({ response: streamingWebResponse, streaming: true });
+        } catch (error) {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          response.destroy(normalized);
+          cleanupStreamingResponse();
+          finish(normalized);
+        }
+        return;
+      }
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => {
         if (!settled) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -55,11 +97,15 @@ async function nodeHttpRequest(input: {
       response.once("aborted", () => finish(new Error("OpenCode 响应已中断")));
       response.once("error", (error) => finish(error));
       response.once("end", () => {
-        finish(null, new Response(Buffer.concat(chunks), {
-          status: response.statusCode ?? 0,
-          statusText: response.statusMessage,
-          headers: responseHeadersToWeb(response.headers)
-        }));
+        try {
+          finish(null, new Response(responseAllowsBody(status) ? Buffer.concat(chunks) : null, {
+            status,
+            statusText: response.statusMessage,
+            headers: responseHeaders
+          }));
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
       });
     });
     const abort = (): void => {
@@ -81,6 +127,88 @@ async function nodeHttpRequest(input: {
     input.signal?.addEventListener("abort", abort, { once: true });
     if (input.body) request.write(input.body);
     request.end();
+  });
+}
+
+function isEventStreamResponse(headers: Headers): boolean {
+  return headers.get("content-type")?.toLowerCase().includes("text/event-stream") === true;
+}
+
+function responseAllowsBody(status: number): boolean {
+  return status !== 204 && status !== 205 && status !== 304;
+}
+
+function incomingMessageBody(
+  response: http.IncomingMessage,
+  request: http.ClientRequest,
+  onClosed: () => void
+): ReadableStream<Uint8Array> {
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let settled = false;
+  let cleaned = false;
+
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    response.removeListener("data", onData);
+    response.removeListener("end", onEnd);
+    response.removeListener("aborted", onAborted);
+    response.removeListener("error", onError);
+    response.removeListener("close", onClose);
+    onClosed();
+  };
+  const close = (): void => {
+    if (settled) return;
+    settled = true;
+    controller?.close();
+    cleanup();
+  };
+  const fail = (error: Error): void => {
+    if (settled) return;
+    settled = true;
+    controller?.error(error);
+    cleanup();
+  };
+  const onData = (chunk: Buffer | Uint8Array | string): void => {
+    if (settled || !controller) return;
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    controller.enqueue(Uint8Array.from(bytes));
+    if ((controller.desiredSize ?? 1) <= 0) response.pause();
+  };
+  const onEnd = (): void => close();
+  const onAborted = (): void => fail(new Error("OpenCode 响应已中断"));
+  const onError = (error: Error): void => fail(error);
+  const onClose = (): void => {
+    if (!settled) fail(new Error("OpenCode 响应在流结束前已关闭"));
+  };
+
+  // Construct the body with the current global ReadableStream implementation.
+  // Electron can expose Response and Web Streams from a different realm than
+  // node:stream's Readable.toWeb(), which makes an otherwise healthy SSE body
+  // appear as an immediate EOF inside the OpenCode SDK.
+  return new ReadableStream<Uint8Array>({
+    start(nextController) {
+      controller = nextController;
+      response.on("data", onData);
+      response.once("end", onEnd);
+      response.once("aborted", onAborted);
+      response.once("error", onError);
+      response.once("close", onClose);
+    },
+    pull() {
+      if (!settled && response.isPaused()) response.resume();
+    },
+    cancel(reason) {
+      if (settled) {
+        cleanup();
+        return;
+      }
+      settled = true;
+      cleanup();
+      const error = reason instanceof Error ? reason : undefined;
+      response.destroy(error);
+      request.destroy(error);
+    }
   });
 }
 

@@ -466,7 +466,9 @@ function assertLegacyBackendCapabilitySnapshots(): void {
 
   assert.equal(opencode.tools.nativeMcp, "none");
   assert.equal(opencode.files.diffEvents, "native");
-  assert.equal(opencode.output.streaming, "emulated");
+  assert.equal(opencode.output.streaming, "native");
+  assert.equal(opencode.output.reasoningSummary, "native");
+  assert.equal(opencode.output.planEvents, "native");
 
   assert.equal(hermes.output.streaming, "native");
   assert.equal(hermes.tools.structuredCalls, "none");

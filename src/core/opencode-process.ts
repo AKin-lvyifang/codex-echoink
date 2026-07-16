@@ -22,7 +22,6 @@ export async function runOpenCodeCommand(input: RunOpenCodeCommandInput): Promis
       detached: process.platform !== "win32",
       shell: false
     });
-    input.onSpawn?.(child);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -39,6 +38,14 @@ export async function runOpenCodeCommand(input: RunOpenCodeCommandInput): Promis
       stopOpenCodeProcess(child, input.killGraceMs);
       finish(new Error("Agent 任务已取消。"));
     };
+    child.once("spawn", () => {
+      try {
+        input.onSpawn?.(child);
+      } catch (error) {
+        stopOpenCodeProcess(child, input.killGraceMs);
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
     timer = input.timeoutMs && input.timeoutMs > 0
       ? setTimeout(() => {
         stopOpenCodeProcess(child, input.killGraceMs);

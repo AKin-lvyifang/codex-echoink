@@ -129,6 +129,8 @@ export interface AgentTaskInput {
 export interface AgentTaskResult {
   text: string;
   runId?: string;
+  /** Backend-neutral diagnostics to merge into the canonical Harness terminal event. */
+  terminalData?: Record<string, unknown>;
   effectiveModel?: {
     providerId: string;
     modelId: string;

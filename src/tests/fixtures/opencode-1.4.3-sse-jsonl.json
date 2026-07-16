@@ -1,0 +1,597 @@
+{
+  "metadata": {
+    "backend": "opencode",
+    "version": "1.4.3",
+    "capturedAt": "2026-07-16",
+    "source": "Anonymized minimal subset of a local production OpenCode 1.4.3 /event SSE capture plus opencode run --format json --thinking capture; identifiers, paths, timestamps and usage values sanitized",
+    "notes": "The provider session.diff event was empty; the actual edit diff was carried by the edit tool state metadata."
+  },
+  "sessionId": "ses_fixture_143",
+  "messageId": "msg_fixture_final",
+  "sseEvents": [
+    { "type": "server.connected", "properties": {} },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "info": {
+          "id": "msg_fixture_read",
+          "role": "assistant",
+          "modelID": "fixture-model",
+          "providerID": "opencode",
+          "time": { "created": 10 },
+          "sessionID": "ses_fixture_143"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_read",
+          "messageID": "msg_fixture_read",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "",
+          "time": { "start": 11 }
+        },
+        "time": 11
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_read",
+        "partID": "prt_fixture_reasoning_read",
+        "field": "text",
+        "delta": "Inspect "
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_read",
+        "partID": "prt_fixture_reasoning_read",
+        "field": "text",
+        "delta": "the fixture."
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_read",
+          "messageID": "msg_fixture_read",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "Inspect the fixture.",
+          "time": { "start": 11, "end": 12 }
+        },
+        "time": 12
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_tool_read",
+          "messageID": "msg_fixture_read",
+          "sessionID": "ses_fixture_143",
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": { "status": "pending", "input": {}, "raw": "" }
+        },
+        "time": 13
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": {
+            "status": "running",
+            "input": { "filePath": "/fixture-vault/testing/OpenCode rich fixture.md" },
+            "raw": "",
+            "time": { "start": 14 }
+          },
+          "id": "prt_fixture_tool_read",
+          "sessionID": "ses_fixture_143",
+          "messageID": "msg_fixture_read"
+        },
+        "time": 14
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": {
+            "status": "completed",
+            "input": { "filePath": "/fixture-vault/testing/OpenCode rich fixture.md" },
+            "output": "<path>/fixture-vault/testing/OpenCode rich fixture.md</path>\n<type>file</type>\n<content>\n1: BASELINE\n</content>",
+            "metadata": {
+              "preview": "BASELINE",
+              "truncated": false,
+              "loaded": []
+            },
+            "title": "fixture-vault/testing/OpenCode rich fixture.md",
+            "time": { "start": 14, "end": 15 }
+          },
+          "id": "prt_fixture_tool_read",
+          "sessionID": "ses_fixture_143",
+          "messageID": "msg_fixture_read"
+        },
+        "time": 15
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_finish_read",
+          "reason": "tool-calls",
+          "messageID": "msg_fixture_read",
+          "sessionID": "ses_fixture_143",
+          "type": "step-finish",
+          "tokens": {
+            "total": 120,
+            "input": 40,
+            "output": 12,
+            "reasoning": 8,
+            "cache": { "write": 0, "read": 60 }
+          },
+          "cost": 0
+        },
+        "time": 16
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "info": {
+          "id": "msg_fixture_edit",
+          "role": "assistant",
+          "modelID": "fixture-model",
+          "providerID": "opencode",
+          "time": { "created": 20 },
+          "sessionID": "ses_fixture_143"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_edit",
+          "messageID": "msg_fixture_edit",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "",
+          "time": { "start": 21 }
+        },
+        "time": 21
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_edit",
+        "partID": "prt_fixture_reasoning_edit",
+        "field": "text",
+        "delta": "Prepare "
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_edit",
+        "partID": "prt_fixture_reasoning_edit",
+        "field": "text",
+        "delta": "the edit."
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_edit",
+          "messageID": "msg_fixture_edit",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "Prepare the edit.",
+          "time": { "start": 21, "end": 22 }
+        },
+        "time": 22
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_tool_edit",
+          "messageID": "msg_fixture_edit",
+          "sessionID": "ses_fixture_143",
+          "type": "tool",
+          "tool": "edit",
+          "callID": "call_fixture_edit",
+          "state": { "status": "pending", "input": {}, "raw": "" }
+        },
+        "time": 23
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "type": "tool",
+          "tool": "edit",
+          "callID": "call_fixture_edit",
+          "state": {
+            "status": "running",
+            "input": {
+              "filePath": "/fixture-vault/testing/OpenCode rich fixture.md",
+              "oldString": "BASELINE",
+              "newString": "BASELINE\nFIXTURE_MARKER"
+            },
+            "raw": "",
+            "time": { "start": 24 }
+          },
+          "id": "prt_fixture_tool_edit",
+          "sessionID": "ses_fixture_143",
+          "messageID": "msg_fixture_edit"
+        },
+        "time": 24
+      }
+    },
+    {
+      "type": "permission.asked",
+      "properties": {
+        "id": "per_fixture_edit",
+        "permission": "edit",
+        "patterns": ["fixture-vault/testing/OpenCode rich fixture.md"],
+        "always": ["*"],
+        "metadata": {
+          "filepath": "/fixture-vault/testing/OpenCode rich fixture.md",
+          "diff": "Index: /fixture-vault/testing/OpenCode rich fixture.md\n===================================================================\n--- /fixture-vault/testing/OpenCode rich fixture.md\n+++ /fixture-vault/testing/OpenCode rich fixture.md\n@@ -1,1 +1,2 @@\n BASELINE\n+FIXTURE_MARKER\n"
+        },
+        "sessionID": "ses_fixture_143",
+        "tool": {
+          "messageID": "msg_fixture_edit",
+          "callID": "call_fixture_edit"
+        }
+      }
+    },
+    {
+      "type": "permission.replied",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "requestID": "per_fixture_edit",
+        "reply": "once"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "type": "tool",
+          "tool": "edit",
+          "callID": "call_fixture_edit",
+          "state": {
+            "metadata": {
+              "diff": "Index: /fixture-vault/testing/OpenCode rich fixture.md\n===================================================================\n--- /fixture-vault/testing/OpenCode rich fixture.md\n+++ /fixture-vault/testing/OpenCode rich fixture.md\n@@ -1,1 +1,2 @@\n BASELINE\n+FIXTURE_MARKER\n",
+              "filediff": {
+                "file": "/fixture-vault/testing/OpenCode rich fixture.md",
+                "patch": "Index: /fixture-vault/testing/OpenCode rich fixture.md\n===================================================================\n--- /fixture-vault/testing/OpenCode rich fixture.md\n+++ /fixture-vault/testing/OpenCode rich fixture.md\n@@ -1,1 +1,2 @@\n BASELINE\n+FIXTURE_MARKER\n",
+                "additions": 1,
+                "deletions": 0
+              },
+              "diagnostics": {}
+            },
+            "status": "running",
+            "input": {
+              "filePath": "/fixture-vault/testing/OpenCode rich fixture.md",
+              "oldString": "BASELINE",
+              "newString": "BASELINE\nFIXTURE_MARKER"
+            },
+            "time": { "start": 25 }
+          },
+          "id": "prt_fixture_tool_edit",
+          "sessionID": "ses_fixture_143",
+          "messageID": "msg_fixture_edit"
+        },
+        "time": 25
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "type": "tool",
+          "tool": "edit",
+          "callID": "call_fixture_edit",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "/fixture-vault/testing/OpenCode rich fixture.md",
+              "oldString": "BASELINE",
+              "newString": "BASELINE\nFIXTURE_MARKER"
+            },
+            "output": "Edit applied successfully.",
+            "metadata": {
+              "diagnostics": {},
+              "diff": "Index: /fixture-vault/testing/OpenCode rich fixture.md\n===================================================================\n--- /fixture-vault/testing/OpenCode rich fixture.md\n+++ /fixture-vault/testing/OpenCode rich fixture.md\n@@ -1,1 +1,2 @@\n BASELINE\n+FIXTURE_MARKER\n",
+              "filediff": {
+                "file": "/fixture-vault/testing/OpenCode rich fixture.md",
+                "patch": "Index: /fixture-vault/testing/OpenCode rich fixture.md\n===================================================================\n--- /fixture-vault/testing/OpenCode rich fixture.md\n+++ /fixture-vault/testing/OpenCode rich fixture.md\n@@ -1,1 +1,2 @@\n BASELINE\n+FIXTURE_MARKER\n",
+                "additions": 1,
+                "deletions": 0
+              },
+              "truncated": false
+            },
+            "title": "fixture-vault/testing/OpenCode rich fixture.md",
+            "time": { "start": 25, "end": 26 }
+          },
+          "id": "prt_fixture_tool_edit",
+          "sessionID": "ses_fixture_143",
+          "messageID": "msg_fixture_edit"
+        },
+        "time": 26
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_finish_edit",
+          "reason": "tool-calls",
+          "messageID": "msg_fixture_edit",
+          "sessionID": "ses_fixture_143",
+          "type": "step-finish",
+          "tokens": {
+            "total": 180,
+            "input": 60,
+            "output": 20,
+            "reasoning": 10,
+            "cache": { "write": 0, "read": 90 }
+          },
+          "cost": 0
+        },
+        "time": 27
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "info": {
+          "id": "msg_fixture_final",
+          "role": "assistant",
+          "modelID": "fixture-model",
+          "providerID": "opencode",
+          "time": { "created": 30 },
+          "sessionID": "ses_fixture_143"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_final",
+          "messageID": "msg_fixture_final",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "",
+          "time": { "start": 31 }
+        },
+        "time": 31
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_final",
+        "partID": "prt_fixture_reasoning_final",
+        "field": "text",
+        "delta": "Confirm "
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_final",
+        "partID": "prt_fixture_reasoning_final",
+        "field": "text",
+        "delta": "the result."
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_reasoning_final",
+          "messageID": "msg_fixture_final",
+          "sessionID": "ses_fixture_143",
+          "type": "reasoning",
+          "text": "Confirm the result.",
+          "time": { "start": 31, "end": 32 }
+        },
+        "time": 32
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_text",
+          "messageID": "msg_fixture_final",
+          "sessionID": "ses_fixture_143",
+          "type": "text",
+          "text": "",
+          "time": { "start": 33 }
+        },
+        "time": 33
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_final",
+        "partID": "prt_fixture_text",
+        "field": "text",
+        "delta": "FIX"
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "messageID": "msg_fixture_final",
+        "partID": "prt_fixture_text",
+        "field": "text",
+        "delta": "TURE_CAPTURE_DONE"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_text",
+          "messageID": "msg_fixture_final",
+          "sessionID": "ses_fixture_143",
+          "type": "text",
+          "text": "FIXTURE_CAPTURE_DONE",
+          "time": { "start": 33, "end": 34 }
+        },
+        "time": 34
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "part": {
+          "id": "prt_fixture_finish_final",
+          "reason": "stop",
+          "messageID": "msg_fixture_final",
+          "sessionID": "ses_fixture_143",
+          "type": "step-finish",
+          "tokens": {
+            "total": 210,
+            "input": 70,
+            "output": 8,
+            "reasoning": 12,
+            "cache": { "write": 0, "read": 120 }
+          },
+          "cost": 0
+        },
+        "time": 35
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_fixture_143",
+        "status": { "type": "idle" }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": { "sessionID": "ses_fixture_143" }
+    }
+  ],
+  "cliJsonl": [
+    {
+      "type": "step_start",
+      "sessionID": "ses_fixture_143",
+      "part": {
+        "id": "prt_cli_start",
+        "messageID": "msg_fixture_assistant",
+        "sessionID": "ses_fixture_143",
+        "type": "step-start"
+      }
+    },
+    {
+      "type": "reasoning",
+      "sessionID": "ses_fixture_143",
+      "part": {
+        "id": "prt_cli_reasoning",
+        "messageID": "msg_fixture_assistant",
+        "sessionID": "ses_fixture_143",
+        "type": "reasoning",
+        "text": "Inspect the request.",
+        "time": { "start": 2, "end": 3 }
+      }
+    },
+    {
+      "type": "text",
+      "sessionID": "ses_fixture_143",
+      "part": {
+        "id": "prt_cli_text",
+        "messageID": "msg_fixture_assistant",
+        "sessionID": "ses_fixture_143",
+        "type": "text",
+        "text": "FIXTURE_OK",
+        "time": { "start": 4, "end": 5 }
+      }
+    },
+    {
+      "type": "step_finish",
+      "sessionID": "ses_fixture_143",
+      "part": {
+        "id": "prt_cli_finish",
+        "messageID": "msg_fixture_assistant",
+        "sessionID": "ses_fixture_143",
+        "type": "step-finish",
+        "reason": "stop",
+        "tokens": {
+          "total": 42,
+          "input": 30,
+          "output": 4,
+          "reasoning": 8,
+          "cache": { "write": 0, "read": 0 }
+        },
+        "cost": 0
+      }
+    }
+  ]
+}

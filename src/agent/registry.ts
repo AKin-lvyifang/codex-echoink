@@ -39,7 +39,7 @@ export const AGENT_BACKEND_DEFINITIONS: AgentBackendDefinition[] = [
       listModels: true,
       listAgents: true,
       fileStatus: true,
-      richEvents: false,
+      richEvents: true,
       structuredToolCalls: false,
       nativeMcpPassThrough: false,
       promptInstructionInjection: true,
