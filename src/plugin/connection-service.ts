@@ -144,8 +144,9 @@ export class EchoInkConnectionService {
       hermes.version = info.version;
       hermes.lastConnectedAt = Date.now();
       hermes.lastError = "";
+      const hasConfiguredModel = Boolean(hermes.providerId.trim() || hermes.modelId.trim());
       const configuredModel = models.find((model) => model.providerId === hermes.providerId && model.modelId === hermes.modelId);
-      const selectedModel = configuredModel ?? (hermes.providerId || hermes.modelId ? models[0] : null);
+      const selectedModel = configuredModel ?? (!hasConfiguredModel ? models[0] ?? null : null);
       if (selectedModel) {
         hermes.providerId = selectedModel.providerId;
         hermes.modelId = selectedModel.modelId;

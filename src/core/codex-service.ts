@@ -24,6 +24,7 @@ import { getApiProviderModels, hasResourceOverrides, resourceEnabled, type ApiPr
 import type { AgentBackend, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptOptions, AgentPromptPart, AgentSessionOptions } from "../agent/types";
 import { expandHome } from "./path-utils";
 import { startCodexLogin, type CodexLoginOptions, type CodexLoginResult } from "./codex-login";
+import { resolveWindowsCodexCommand, splitWindowsPath, windowsCodexNativeCandidates } from "./windows-cli-launch";
 
 export interface CodexServiceOptions {
   cliPath: string;
@@ -76,6 +77,7 @@ export interface CodexCommandResolveOptions {
   home?: string;
   envPath?: string;
   platform?: NodeJS.Platform | string;
+  arch?: string;
   appData?: string;
   programData?: string;
   exists?: (candidate: string) => boolean;
@@ -526,20 +528,31 @@ export function detectCodexCommand(customPath: string, options: CodexCommandReso
 export function detectCodexInstallation(customPath: string, options: CodexCommandResolveOptions = {}): CodexInstallationDetection {
   const home = options.home ?? os.homedir();
   const exists = options.exists ?? ((candidate: string) => fs.existsSync(candidate));
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
   const custom = customPath.trim();
   let invalidCustomPath: string | null = null;
   if (custom) {
     const expanded = expandHome(custom, home);
-    if (exists(expanded)) return { command: expanded, source: "custom", invalidCustomPath: null, version: null, versionError: null };
+    const resolved = normalizeCodexCandidate(expanded, platform, arch, exists);
+    if (resolved) return { command: resolved, source: "custom", invalidCustomPath: null, version: null, versionError: null };
     invalidCustomPath = expanded;
   }
-  const found = codexCommandCandidatesWithSource(
+  let found: { command: string; source: CodexCommandSource } | null = null;
+  for (const candidate of codexCommandCandidatesWithSource(
     home,
     options.envPath ?? process.env.PATH ?? "",
-    options.platform ?? process.platform,
+    platform,
     options.appData ?? process.env.APPDATA ?? "",
-    options.programData ?? process.env.ProgramData ?? "C:\\ProgramData"
-  ).find((candidate) => exists(candidate.command)) ?? null;
+    options.programData ?? process.env.ProgramData ?? "C:\\ProgramData",
+    arch
+  )) {
+    const command = normalizeCodexCandidate(candidate.command, platform, arch, exists);
+    if (command) {
+      found = { command, source: candidate.source };
+      break;
+    }
+  }
   return {
     command: found?.command ?? null,
     source: found?.source ?? null,
@@ -672,14 +685,14 @@ function codexCommandCandidates(home: string, envPath: string): string[] {
   const platform = process.platform;
   const appData = process.env.APPDATA || "";
   const programData = process.env.ProgramData || "C:\\ProgramData";
-  return codexCommandCandidateList(home, envPath, platform, appData, programData);
+  return codexCommandCandidateList(home, envPath, platform, appData, programData, process.arch);
 }
 
-function codexCommandCandidateList(home: string, envPath: string, platform: string, appData: string, programData: string): string[] {
-  return codexCommandCandidatesWithSource(home, envPath, platform, appData, programData).map((candidate) => candidate.command);
+function codexCommandCandidateList(home: string, envPath: string, platform: string, appData: string, programData: string, arch: string): string[] {
+  return codexCommandCandidatesWithSource(home, envPath, platform, appData, programData, arch).map((candidate) => candidate.command);
 }
 
-function codexCommandCandidatesWithSource(home: string, envPath: string, platform: string, appData: string, programData: string): Array<{ command: string; source: CodexCommandSource }> {
+function codexCommandCandidatesWithSource(home: string, envPath: string, platform: string, appData: string, programData: string, arch: string): Array<{ command: string; source: CodexCommandSource }> {
   const macAppCandidates = platform === "darwin"
     ? [
       { command: "/Applications/ChatGPT.app/Contents/Resources/codex", source: "chatgpt-system" as const },
@@ -688,19 +701,34 @@ function codexCommandCandidatesWithSource(home: string, envPath: string, platfor
       { command: path.join(home, "Applications", "Codex.app", "Contents", "Resources", "codex"), source: "codex-user" as const }
     ]
     : [];
-  const windowsCandidates = platform === "win32"
-    ? [
-      appData ? { command: path.win32.join(appData, "npm", "codex.cmd"), source: "windows-npm" as const } : null,
-      appData ? { command: path.win32.join(appData, "npm", "codex.ps1"), source: "windows-npm" as const } : null,
-      { command: path.win32.join(home, "scoop", "shims", "codex.cmd"), source: "scoop" as const },
-      { command: path.win32.join(programData, "chocolatey", "bin", "codex.exe"), source: "chocolatey" as const }
-    ].filter((candidate): candidate is { command: string; source: "windows-npm" | "scoop" | "chocolatey" } => Boolean(candidate))
-    : [];
+  if (platform === "win32") {
+    const userPrefix = path.win32.join(home, ".npm-global");
+    const appDataPrefix = appData ? path.win32.join(appData, "npm") : "";
+    const pathCandidates = splitWindowsPath(envPath).flatMap((directory) => [
+      { command: path.win32.join(directory, "codex.exe"), source: "path" as const },
+      { command: path.win32.join(directory, "codex.ps1"), source: "path" as const },
+      { command: path.win32.join(directory, "codex.cmd"), source: "path" as const }
+    ]);
+    return [
+      ...windowsCodexNativeCandidates(userPrefix, arch).map((command) => ({ command, source: "npm-global" as const })),
+      { command: path.win32.join(userPrefix, "codex.ps1"), source: "npm-global" },
+      { command: path.win32.join(userPrefix, "codex.cmd"), source: "npm-global" },
+      ...(appDataPrefix ? windowsCodexNativeCandidates(appDataPrefix, arch).map((command) => ({ command, source: "windows-npm" as const })) : []),
+      ...(appDataPrefix ? [
+        { command: path.win32.join(appDataPrefix, "codex.ps1"), source: "windows-npm" as const },
+        { command: path.win32.join(appDataPrefix, "codex.cmd"), source: "windows-npm" as const }
+      ] : []),
+      { command: path.win32.join(home, "scoop", "shims", "codex.exe"), source: "scoop" },
+      { command: path.win32.join(home, "scoop", "shims", "codex.ps1"), source: "scoop" },
+      { command: path.win32.join(home, "scoop", "shims", "codex.cmd"), source: "scoop" },
+      { command: path.win32.join(programData, "chocolatey", "bin", "codex.exe"), source: "chocolatey" },
+      ...pathCandidates
+    ];
+  }
   return [
     ...macAppCandidates.slice(0, 2),
     { command: path.join(home, ".npm-global", "bin", "codex"), source: "npm-global" },
     ...macAppCandidates.slice(2),
-    ...windowsCandidates,
     { command: "/opt/homebrew/bin/codex", source: "homebrew" },
     { command: "/usr/local/bin/codex", source: "local-bin" },
     ...String(envPath || "")
@@ -708,6 +736,17 @@ function codexCommandCandidatesWithSource(home: string, envPath: string, platfor
       .filter(Boolean)
       .map((part) => ({ command: path.join(part, "codex"), source: "path" as const }))
   ] satisfies Array<{ command: string; source: CodexCommandSource }>;
+}
+
+function normalizeCodexCandidate(
+  candidate: string,
+  platform: NodeJS.Platform | string,
+  arch: string,
+  exists: (candidate: string) => boolean
+): string | null {
+  if (!exists(candidate)) return null;
+  if (platform !== "win32") return candidate;
+  return resolveWindowsCodexCommand(candidate, exists, arch);
 }
 
 function codexAppCommandCandidates(home: string): string[] {

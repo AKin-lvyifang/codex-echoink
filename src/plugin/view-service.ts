@@ -83,9 +83,12 @@ export class EchoInkViewService {
   async openAgentSetup(options: { backend: AgentBackendMode; autoRepair?: boolean }): Promise<void> {
     this.plugin.settings.settingsTab = "agents";
     this.plugin.agentSetupTarget = options.backend;
+    this.plugin.agentSetupAutoRepair = options.autoRepair === true;
     if (options.autoRepair && options.backend === "codex-cli") {
       const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
       if (status.connected && status.loggedIn) {
+        this.plugin.agentSetupTarget = null;
+        this.plugin.agentSetupAutoRepair = false;
         await this.plugin.saveSettings(true);
         new Notice(this.plugin.settings.settingsLanguage === "en" ? "Codex connected automatically. You can continue." : "Codex 已自动连接，可以继续使用。");
         return;
@@ -94,6 +97,8 @@ export class EchoInkViewService {
     await this.plugin.saveSettings(true);
     const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting?.openTabById) {
+      this.plugin.agentSetupTarget = null;
+      this.plugin.agentSetupAutoRepair = false;
       new Notice(this.plugin.settings.settingsLanguage === "en" ? "Unable to open plugin settings." : "无法打开插件设置页");
       return;
     }

@@ -42,6 +42,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   codex: CodexService | null = null;
   lastStatus: CodexStatusSnapshot | null = null;
   agentSetupTarget: AgentBackendMode | null = null;
+  agentSetupAutoRepair = false;
   private editorActions: EditorActionController | null = null;
   private knowledgeBase: KnowledgeBaseManager | null = null;
   private review: ReviewManager | null = null;

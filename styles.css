@@ -2029,6 +2029,18 @@ body.theme-light .codex-code-wrapper pre {
   min-width: 0;
 }
 
+.codex-agent-installer-row-shell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 7px;
+}
+
+.codex-agent-installer-row-shell.is-selected {
+  padding-bottom: 9px;
+  background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
+}
+
 .codex-agent-installer-row {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -2050,8 +2062,9 @@ body.theme-light .codex-code-wrapper pre {
   background: var(--background-modifier-hover);
 }
 
-.codex-agent-installer-row.is-selected {
-  background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
+.codex-agent-installer-row-shell.is-selected .codex-agent-installer-row,
+.codex-agent-installer-row-shell.is-selected .codex-agent-installer-row:hover:not(:disabled) {
+  background: transparent;
 }
 
 .codex-agent-installer-row:focus-visible {

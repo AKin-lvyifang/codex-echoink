@@ -6,7 +6,7 @@ import { formatOpenCodeError, isOpenCodeNotFoundError } from "./opencode-errors"
 import { nodeFetch } from "./opencode-fetch";
 import { collectOpenCodeHistoryMessages, normalizeOpenCodeTimeMs, type OpenCodeHistorySnapshot } from "./opencode-history-loader";
 import { assertOpenCodeAgentSelection } from "./opencode-agent-selection";
-import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeCommand, toOpenCodePromptPart } from "./opencode-models";
+import { flattenOpenCodeAgents, flattenOpenCodeModels, normalizeOpenCodeServerUrl, resolveOpenCodeLaunch, toOpenCodePromptPart, type OpenCodeCommandLaunch } from "./opencode-models";
 import { runOpenCodeCommand, stopOpenCodeProcess } from "./opencode-process";
 import { isOpenCodeServerHealthy } from "./opencode-server-health";
 import {
@@ -30,6 +30,8 @@ export interface OpenCodeBackendOptions {
   providerId: string;
   modelId: string;
   agent: string;
+  requireOwnedServer?: boolean;
+  startTimeoutMs?: number;
 }
 
 export interface OpenCodeConnectionInfo {
@@ -60,12 +62,13 @@ interface StartedOpenCodeServer {
   process: ChildProcess;
 }
 
-const OPENCODE_START_TIMEOUT_MS = 8000;
+const OPENCODE_START_TIMEOUT_MS = 30_000;
 
 export class OpenCodeBackend implements AgentBackend {
   readonly kind = "opencode" as const;
   private client: OpencodeClient | null = null;
   private startedServer: StartedOpenCodeServer | null = null;
+  private commandLaunch: OpenCodeCommandLaunch | null = null;
   private connectionInfo: OpenCodeConnectionInfo = {
     connected: false,
     serverUrl: "",
@@ -79,25 +82,36 @@ export class OpenCodeBackend implements AgentBackend {
   async connect(): Promise<void> {
     await this.disconnect();
     const errors: string[] = [];
+    if (this.options.requireOwnedServer && this.options.serverUrl.trim()) {
+      throw new Error("OpenCode 授权只允许使用 EchoInk 本次启动的本地服务");
+    }
     let serverUrl = normalizeOpenCodeServerUrl(this.options.serverUrl, this.options.hostname, this.options.port);
     let command = "";
     if (!this.options.serverUrl.trim()) {
       if (this.options.autoStart) {
-        const canReuse = await isOpenCodeServerHealthy(serverUrl);
+        const canReuse = !this.options.requireOwnedServer && await isOpenCodeServerHealthy(serverUrl);
         if (!canReuse) {
-          command = resolveOpenCodeCommand(this.options.cliPath);
+          const launch = resolveOpenCodeLaunch(this.options.cliPath);
+          this.commandLaunch = launch;
+          command = launch.resolvedPath;
           this.startedServer = await startOpenCodeServer({
-            command,
+            launch,
             hostname: this.options.hostname,
             port: this.options.port,
-            cwd: this.options.vaultPath
+            cwd: this.options.vaultPath,
+            requireLoopback: Boolean(this.options.requireOwnedServer),
+            timeoutMs: this.options.startTimeoutMs
           });
           serverUrl = this.startedServer.url;
         }
       } else {
-        command = resolveOpenCodeCommand(this.options.cliPath);
+        const launch = resolveOpenCodeLaunch(this.options.cliPath);
+        this.commandLaunch = launch;
+        command = launch.resolvedPath;
       }
     }
+
+    if (this.options.requireOwnedServer) this.assertOwnedAuthorizationServer();
 
     this.client = createOpencodeClient({ baseUrl: serverUrl, directory: this.options.vaultPath, fetch: nodeFetch });
     const health = await unwrapOpenCodeResult(this.client.global.health(), "OpenCode 连接失败");
@@ -116,6 +130,7 @@ export class OpenCodeBackend implements AgentBackend {
       this.startedServer = null;
     }
     this.client = null;
+    this.commandLaunch = null;
     this.connectionInfo = { ...this.connectionInfo, connected: false };
   }
 
@@ -137,54 +152,59 @@ export class OpenCodeBackend implements AgentBackend {
     return flattenOpenCodeAgents(response ?? []);
   }
 
-  async listProviderAuthMethods(): Promise<Record<string, ProviderAuthMethod[]>> {
+  async listProviderAuthMethods(signal?: AbortSignal): Promise<Record<string, ProviderAuthMethod[]>> {
+    if (this.options.requireOwnedServer) this.assertOwnedAuthorizationServer();
     const response = await unwrapOpenCodeResult(
-      this.requireClient().provider.auth({ directory: this.options.vaultPath }),
+      this.requireClient().provider.auth({ directory: this.options.vaultPath }, { signal }),
       "读取 OpenCode Provider 授权方式失败"
     );
     return response ?? {};
   }
 
-  async listConnectedProviders(): Promise<string[]> {
+  async listConnectedProviders(signal?: AbortSignal): Promise<string[]> {
+    if (this.options.requireOwnedServer) this.assertOwnedAuthorizationServer();
     const response = await unwrapOpenCodeResult(
-      this.requireClient().provider.list({ directory: this.options.vaultPath }),
+      this.requireClient().provider.list({ directory: this.options.vaultPath }, { signal }),
       "读取 OpenCode Provider 状态失败"
     );
     return Array.isArray(response?.connected) ? response.connected : [];
   }
 
-  async beginProviderOAuth(providerId: string, method: number, inputs: Record<string, string> = {}): Promise<ProviderAuthAuthorization> {
+  async beginProviderOAuth(providerId: string, method: number, inputs: Record<string, string> = {}, signal?: AbortSignal): Promise<ProviderAuthAuthorization> {
+    this.assertOwnedAuthorizationServer();
     return await unwrapOpenCodeResult(
       this.requireClient().provider.oauth.authorize({
         providerID: providerId,
         directory: this.options.vaultPath,
         method,
         inputs
-      }),
+      }, { signal }),
       "启动 OpenCode OAuth 失败"
     );
   }
 
-  async completeProviderOAuth(providerId: string, method: number, code?: string): Promise<boolean> {
+  async completeProviderOAuth(providerId: string, method: number, code?: string, signal?: AbortSignal): Promise<boolean> {
+    this.assertOwnedAuthorizationServer();
     return await unwrapOpenCodeResult(
       this.requireClient().provider.oauth.callback({
         providerID: providerId,
         directory: this.options.vaultPath,
         method,
         ...(code?.trim() ? { code: code.trim() } : {})
-      }),
+      }, { signal }),
       "完成 OpenCode OAuth 失败"
     );
   }
 
-  async setProviderApiKey(providerId: string, key: string, metadata?: Record<string, string>): Promise<boolean> {
+  async setProviderApiKey(providerId: string, key: string, metadata?: Record<string, string>, signal?: AbortSignal): Promise<boolean> {
+    this.assertOwnedAuthorizationServer();
     const secret = key.trim();
     if (!secret) throw new Error("OpenCode API Key 不能为空");
     return await unwrapOpenCodeResult(
       this.requireClient().auth.set({
         providerID: providerId,
         auth: { type: "api", key: secret, ...(metadata ? { metadata } : {}) }
-      }),
+      }, { signal }),
       "保存 OpenCode Provider 凭据失败"
     );
   }
@@ -316,7 +336,7 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   async runCliTask(options: OpenCodeCliTaskOptions): Promise<AgentTaskResult> {
-    const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const launch = this.commandLaunch ?? resolveOpenCodeLaunch(this.options.cliPath);
     const knownAssistantIds = options.nativeSessionId
       ? await this.readSessionMessages(options.nativeSessionId).then(openCodeAssistantMessageIds).catch(() => null)
       : new Set<string>();
@@ -332,7 +352,8 @@ export class OpenCodeBackend implements AgentBackend {
     let lineBuffer = "";
     let emittedRunId = false;
     const output = await runOpenCodeCommand({
-      command,
+      command: launch.command,
+      argsPrefix: launch.argsPrefix,
       args,
       cwd: this.options.vaultPath,
       timeoutMs: options.timeoutMs,
@@ -385,6 +406,13 @@ export class OpenCodeBackend implements AgentBackend {
     return this.client;
   }
 
+  private assertOwnedAuthorizationServer(): void {
+    const server = this.startedServer;
+    if (!this.options.requireOwnedServer || !server || server.process.exitCode !== null || server.process.signalCode !== null || server.process.killed) {
+      throw new Error("OpenCode 授权服务不属于当前 EchoInk 进程，已拒绝发送凭据");
+    }
+  }
+
   private async readSessionMessages(sessionId: string): Promise<unknown[]> {
     const messages = await unwrapOpenCodeResult(this.requireClient().session.messages({
       sessionID: sessionId,
@@ -404,9 +432,10 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   private async listCliModels(): Promise<AgentModelInfo[]> {
-    const command = this.connectionInfo.command || resolveOpenCodeCommand(this.options.cliPath);
+    const launch = this.commandLaunch ?? resolveOpenCodeLaunch(this.options.cliPath);
     const output = await runOpenCodeCommand({
-      command,
+      command: launch.command,
+      argsPrefix: launch.argsPrefix,
       args: ["models"],
       cwd: this.options.vaultPath,
       timeoutMs: 15000
@@ -433,48 +462,80 @@ function defaultOpenCodeModel(options: OpenCodeBackendOptions): { providerId: st
   return { providerId: options.providerId, modelId: options.modelId };
 }
 
-async function startOpenCodeServer(input: { command: string; hostname: string; port: number; cwd: string }): Promise<StartedOpenCodeServer> {
-  const args = ["serve", `--hostname=${input.hostname || "127.0.0.1"}`, `--port=${input.port || 4096}`];
-  const proc = spawn(input.command, args, {
+async function startOpenCodeServer(input: { launch: OpenCodeCommandLaunch; hostname: string; port: number; cwd: string; requireLoopback: boolean; timeoutMs?: number }): Promise<StartedOpenCodeServer> {
+  const port = Number.isInteger(input.port) && input.port >= 0 ? input.port : 4096;
+  const timeoutMs = typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs) && input.timeoutMs > 0
+    ? Math.max(1_000, input.timeoutMs)
+    : OPENCODE_START_TIMEOUT_MS;
+  const args = ["serve", `--hostname=${input.hostname || "127.0.0.1"}`, `--port=${port}`];
+  const proc = spawn(input.launch.command, [...input.launch.argsPrefix, ...args], {
     cwd: input.cwd,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
-    detached: true
+    detached: process.platform !== "win32",
+    shell: false
   });
   const fallbackUrl = normalizeOpenCodeServerUrl("", input.hostname, input.port);
   let output = "";
   const started = new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`OpenCode server 启动超时：${output.trim() || fallbackUrl}`));
-    }, OPENCODE_START_TIMEOUT_MS);
-    const finish = (value: string) => {
+    let settled = false;
+    const cleanup = () => {
       clearTimeout(timer);
-      resolve(value);
+      proc.stdout?.off("data", onStdout);
+      proc.stderr?.off("data", onStderr);
+      proc.off("error", onError);
+      proc.off("exit", onExit);
     };
-    proc.stdout?.on("data", (chunk) => {
+    const finish = (error: Error | null, value = "") => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onStdout = (chunk: Buffer | string) => {
       output += chunk.toString();
       const match = output.match(/opencode server listening.*\s(on\s+)?(https?:\/\/[^\s]+)/);
-      if (match?.[2]) finish(match[2].replace(/\/$/, ""));
-    });
-    proc.stderr?.on("data", (chunk) => {
+      if (match?.[2]) finish(null, match[2].replace(/\/$/, ""));
+    };
+    const onStderr = (chunk: Buffer | string) => {
       output += chunk.toString();
-    });
-    proc.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    proc.on("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`OpenCode server 已退出：${code ?? "unknown"}${output.trim() ? `\n${output.trim()}` : ""}`));
-    });
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = (code: number | null) => finish(new Error(
+      `OpenCode server 已退出：${code ?? "unknown"}${output.trim() ? `\n${output.trim()}` : ""}`
+    ));
+    const timer = setTimeout(() => finish(new Error(
+      `OpenCode server 启动超时：${output.trim() || fallbackUrl}`
+    )), timeoutMs);
+    proc.stdout?.on("data", onStdout);
+    proc.stderr?.on("data", onStderr);
+    proc.on("error", onError);
+    proc.on("exit", onExit);
   });
   try {
-    const url = await started;
-    return { url, command: input.command, process: proc };
+    const url = normalizedStartedOpenCodeUrl(await started, input.requireLoopback);
+    return { url, command: input.launch.resolvedPath, process: proc };
   } catch (error) {
     stopOpenCodeServer(proc);
     throw error;
   }
+}
+
+function normalizedStartedOpenCodeUrl(value: string, requireLoopback: boolean): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("OpenCode server 返回了无效监听地址");
+  }
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const loopback = hostname === "localhost" || hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname)
+    && hostname.split(".").every((part) => Number(part) <= 255);
+  if (requireLoopback && ((url.protocol !== "http:" && url.protocol !== "https:") || !loopback || Number(url.port) <= 0)) {
+    throw new Error("OpenCode 授权服务没有返回安全的本机监听地址");
+  }
+  return value.replace(/\/$/, "");
 }
 
 function stopOpenCodeServer(proc: ChildProcess): void {

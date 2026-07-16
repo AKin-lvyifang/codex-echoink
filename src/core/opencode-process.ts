@@ -3,6 +3,7 @@ import { parseOpenCodeRunJsonLines } from "./opencode-run";
 
 export interface RunOpenCodeCommandInput {
   command: string;
+  argsPrefix?: string[];
   args: string[];
   cwd: string;
   timeoutMs?: number;
@@ -14,11 +15,12 @@ export interface RunOpenCodeCommandInput {
 
 export async function runOpenCodeCommand(input: RunOpenCodeCommandInput): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
-    const child = spawn(input.command, input.args, {
+    const child = spawn(input.command, [...(input.argsPrefix ?? []), ...input.args], {
       cwd: input.cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32"
+      detached: process.platform !== "win32",
+      shell: false
     });
     input.onSpawn?.(child);
     let stdout = "";

@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { resolveWindowsNpmLaunch, resolveWindowsOpenCodeLaunch, windowsCodexNativeCandidates, windowsOpenCodeNativeCandidates } from "./windows-cli-launch";
 
 export type NpmCliKind = "codex" | "opencode";
 export type NpmCliInstallStatus = "installed" | "cancelled" | "failed";
@@ -51,7 +52,10 @@ export type NpmCliRunner = (
 export interface NpmCliInstallOptions {
   home?: string;
   platform?: NodeJS.Platform | string;
+  arch?: string;
   envPath?: string;
+  programFiles?: string;
+  systemRoot?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   maxLogChars?: number;
@@ -93,7 +97,7 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
   const home = options.home ?? os.homedir();
   const runner = options.runner ?? execFileRunner;
   const exists = options.exists ?? fs.existsSync;
-  const npmCommand = platform === "win32" ? "npm.cmd" : "npm";
+  const envPath = options.envPath ?? process.env.PATH ?? "";
   const timeoutMs = Math.max(1_000, options.timeoutMs ?? 120_000);
   const maxLogChars = Math.max(256, options.maxLogChars ?? 8_000);
   const userPrefix = npmCliUserPrefix(home, platform);
@@ -101,7 +105,7 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
-    PATH: [prefixBin, options.envPath ?? process.env.PATH ?? ""].filter(Boolean).join(path.delimiter)
+    PATH: [prefixBin, envPath].filter(Boolean).join(platform === "win32" ? ";" : path.delimiter)
   };
   const runnerOptions: NpmCliRunnerOptions = {
     shell: false,
@@ -112,9 +116,18 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
   };
 
   try {
-    const install = await runner(npmCommand, npmCliInstallArgs(kind, home, platform), runnerOptions);
-    const prefix = await runner(npmCommand, npmCliPrefixArgs(kind, home, platform), runnerOptions);
-    const command = installedNpmCliCommand(spec, prefix.stdout, platform, exists);
+    const npmLaunch = platform === "win32"
+      ? resolveWindowsNpmLaunch({
+        envPath,
+        exists,
+        programFiles: options.programFiles,
+        systemRoot: options.systemRoot
+      })
+      : { command: "npm", argsPrefix: [] as string[] };
+    if (!npmLaunch) throw missingNpmError();
+    const install = await runner(npmLaunch.command, [...npmLaunch.argsPrefix, ...npmCliInstallArgs(kind, home, platform)], runnerOptions);
+    const prefix = await runner(npmLaunch.command, [...npmLaunch.argsPrefix, ...npmCliPrefixArgs(kind, home, platform)], runnerOptions);
+    const command = installedNpmCliCommand(spec, prefix.stdout, platform, exists, options.arch ?? process.arch);
     if (!command) {
       return {
         status: "failed",
@@ -126,7 +139,11 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
         error: `安装命令已结束，但没有找到 ${displayName(kind)} CLI。请打开终端重试。`
       };
     }
-    const versionResult = await runner(command, ["--version"], { ...runnerOptions, timeoutMs: 10_000 });
+    const versionLaunch = platform === "win32" && kind === "opencode"
+      ? resolveWindowsOpenCodeLaunch(command, exists, options.systemRoot, options.arch ?? process.arch)
+      : { command, argsPrefix: [] as string[] };
+    if (!versionLaunch) throw unsafeInstalledCliError(kind);
+    const versionResult = await runner(versionLaunch.command, [...versionLaunch.argsPrefix, "--version"], { ...runnerOptions, timeoutMs: 10_000 });
     return {
       status: "installed",
       kind,
@@ -155,15 +172,31 @@ export function installedNpmCliCommand(
   spec: Pick<NpmCliInstallSpec, "executableName">,
   prefixOutput: string,
   platform: string,
-  exists: (candidate: string) => boolean = fs.existsSync
+  exists: (candidate: string) => boolean = fs.existsSync,
+  arch: string = process.arch
 ): string | null {
   const prefix = firstNonEmptyLine(prefixOutput);
   if (!prefix) return null;
-  const executable = platform === "win32" ? `${spec.executableName}.cmd` : spec.executableName;
   const candidates = platform === "win32"
-    ? [path.win32.join(prefix, executable), path.win32.join(prefix, "bin", executable)]
-    : [path.join(prefix, "bin", executable)];
+    ? spec.executableName === "codex"
+      ? windowsCodexNativeCandidates(prefix, arch)
+      : [
+        path.win32.join(prefix, "opencode.ps1"),
+        path.win32.join(prefix, "bin", "opencode.ps1"),
+        ...windowsOpenCodeNativeCandidates(prefix, arch)
+      ]
+    : [path.join(prefix, "bin", spec.executableName)];
   return candidates.find((candidate) => exists(candidate)) ?? null;
+}
+
+function missingNpmError(): Error & { code: string } {
+  const error = new Error("没有找到可安全执行的 npm.ps1") as Error & { code: string };
+  error.code = "ENOENT";
+  return error;
+}
+
+function unsafeInstalledCliError(kind: NpmCliKind): Error {
+  return new Error(`安装后的 ${displayName(kind)} CLI 无法通过安全启动器执行`);
 }
 
 function execFileRunner(command: string, args: readonly string[], options: NpmCliRunnerOptions): Promise<{ stdout: string; stderr: string }> {

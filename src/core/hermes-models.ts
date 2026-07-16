@@ -31,7 +31,11 @@ export function detectHermesCommand(customPath: string, options: HermesCommandRe
   const envPath = typeof options.envPath === "string" ? options.envPath : process.env.PATH ?? "";
   const custom = customPath.trim() ? expandHome(customPath.trim(), home) : "";
   const candidates = [custom, ...hermesCommandCandidates(home, platform, envPath, options.appData)].filter(Boolean);
-  return candidates.find((candidate) => candidate && exists(candidate)) ?? null;
+  for (const candidate of candidates) {
+    const resolved = normalizeHermesCandidate(candidate, platform, exists);
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 export function normalizeHermesServerUrl(serverUrl: string, hostname: string, port: number): string {
@@ -52,16 +56,18 @@ export function isSyntheticHermesDefaultModel(providerId: string, modelId: strin
 }
 
 function hermesCommandCandidates(home: string, platform: NodeJS.Platform | string, envPath: string, appData?: string): string[] {
+  const platformPath = platform === "win32" ? path.win32 : path;
+  const delimiter = platform === "win32" ? path.win32.delimiter : path.delimiter;
   const pathCandidates = envPath
-    .split(path.delimiter)
+    .split(delimiter)
     .filter(Boolean)
-    .map((part) => path.join(part, platform === "win32" ? "hermes.exe" : "hermes"));
+    .map((part) => platformPath.join(part, platform === "win32" ? "hermes.exe" : "hermes"));
   if (platform === "win32") {
     const roaming = appData || path.win32.join(home, "AppData", "Roaming");
     return [
       ...pathCandidates,
+      path.win32.join(home, ".hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
       path.win32.join(roaming, "Python", "Scripts", "hermes.exe"),
-      path.win32.join(roaming, "npm", "hermes.cmd"),
       path.win32.join(home, ".local", "bin", "hermes.exe")
     ];
   }
@@ -72,4 +78,15 @@ function hermesCommandCandidates(home: string, platform: NodeJS.Platform | strin
     "/opt/homebrew/bin/hermes",
     "/usr/local/bin/hermes"
   ];
+}
+
+function normalizeHermesCandidate(
+  candidate: string,
+  platform: NodeJS.Platform | string,
+  exists: (candidate: string) => boolean
+): string | null {
+  if (!candidate || !exists(candidate)) return null;
+  if (platform !== "win32") return candidate;
+  if (!path.win32.isAbsolute(candidate) || path.win32.extname(candidate).toLowerCase() !== ".exe") return null;
+  return candidate;
 }

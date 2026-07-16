@@ -27,9 +27,26 @@ await esbuild.build({
   }]
 });
 
+await esbuild.build({
+  entryPoints: ["src/tests/opencode-backend-security-test.ts"],
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "cjs",
+  outfile: ".tmp/opencode-backend-security-test.cjs",
+  logLevel: "silent"
+});
+
 const result = spawnSync(process.execPath, [".tmp/run-tests.mjs"], {
   env: { ...process.env, ECHOINK_DISABLE_ACP: "1" },
   stdio: "inherit"
 });
 
-process.exit(result.status ?? 1);
+if (result.status !== 0) process.exit(result.status ?? 1);
+
+const openCodeSecurityResult = spawnSync(process.execPath, [".tmp/opencode-backend-security-test.cjs"], {
+  env: { ...process.env, ECHOINK_DISABLE_ACP: "1" },
+  stdio: "inherit"
+});
+
+process.exit(openCodeSecurityResult.status ?? 1);

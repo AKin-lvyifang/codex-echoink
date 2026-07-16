@@ -14,6 +14,18 @@ export function textInputModal(app: App, title: string, label: string, initialVa
   });
 }
 
+export function selectInputModal(
+  app: App,
+  title: string,
+  label: string,
+  options: Array<{ value: string; label: string }>
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const modal = new SelectInputModal(app, title, label, options, resolve);
+    modal.open();
+  });
+}
+
 export function requestUserInputModal(app: App, questions: any[]): Promise<Record<string, { answers: string[] }>> {
   return new Promise((resolve) => {
     const modal = new RequestInputModal(app, questions, resolve);
@@ -22,6 +34,8 @@ export function requestUserInputModal(app: App, questions: any[]): Promise<Recor
 }
 
 class ConfirmModal extends Modal {
+  private settled = false;
+
   constructor(
     app: App,
     private readonly titleText: string,
@@ -41,7 +55,7 @@ class ConfirmModal extends Modal {
     new Setting(contentEl)
       .addButton((button) =>
         button.setButtonText(this.declineText).onClick(() => {
-          this.done(false);
+          this.finish(false);
           this.close();
         })
       )
@@ -50,19 +64,27 @@ class ConfirmModal extends Modal {
           .setButtonText(this.acceptText)
           .setCta()
           .onClick(() => {
-            this.done(true);
+            this.finish(true);
             this.close();
           })
       );
   }
 
   onClose(): void {
+    this.finish(false);
     this.contentEl.empty();
+  }
+
+  private finish(value: boolean): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.done(value);
   }
 }
 
 class TextInputModal extends Modal {
   private value: string;
+  private settled = false;
 
   constructor(
     app: App,
@@ -90,7 +112,7 @@ class TextInputModal extends Modal {
     new Setting(contentEl)
       .addButton((button) =>
         button.setButtonText("取消").onClick(() => {
-          this.done(null);
+          this.finish(null);
           this.close();
         })
       )
@@ -99,15 +121,82 @@ class TextInputModal extends Modal {
           .setButtonText("保存")
           .setCta()
           .onClick(() => {
-            this.done(this.value.trim());
+            this.finish(this.value.trim());
             this.close();
           })
       );
+  }
+
+  onClose(): void {
+    this.finish(null);
+    this.contentEl.empty();
+  }
+
+  private finish(value: string | null): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.done(value);
+  }
+}
+
+class SelectInputModal extends Modal {
+  private value: string;
+  private settled = false;
+
+  constructor(
+    app: App,
+    private readonly titleText: string,
+    private readonly label: string,
+    private readonly options: Array<{ value: string; label: string }>,
+    private readonly done: (value: string | null) => void
+  ) {
+    super(app);
+    this.value = options[0]?.value ?? "";
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: this.titleText });
+    new Setting(contentEl).setName(this.label).addDropdown((dropdown) => {
+      for (const option of this.options) dropdown.addOption(option.value, option.label);
+      dropdown.setValue(this.value).onChange((value) => {
+        this.value = value;
+      });
+    });
+    new Setting(contentEl)
+      .addButton((button) =>
+        button.setButtonText("取消").onClick(() => {
+          this.finish(null);
+          this.close();
+        })
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("继续")
+          .setCta()
+          .onClick(() => {
+            this.finish(this.value);
+            this.close();
+          })
+      );
+  }
+
+  onClose(): void {
+    this.finish(null);
+    this.contentEl.empty();
+  }
+
+  private finish(value: string | null): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.done(value);
   }
 }
 
 class RequestInputModal extends Modal {
   private answers: Record<string, string[]> = {};
+  private settled = false;
 
   constructor(app: App, private readonly questions: any[], private readonly done: (answers: Record<string, { answers: string[] }>) => void) {
     super(app);
@@ -141,7 +230,7 @@ class RequestInputModal extends Modal {
     new Setting(contentEl)
       .addButton((button) =>
         button.setButtonText("取消").onClick(() => {
-          this.done({});
+          this.finish({});
           this.close();
         })
       )
@@ -151,9 +240,20 @@ class RequestInputModal extends Modal {
           .setCta()
           .onClick(() => {
             const result = Object.fromEntries(Object.entries(this.answers).map(([key, value]) => [key, { answers: value }]));
-            this.done(result);
+            this.finish(result);
             this.close();
           })
       );
+  }
+
+  onClose(): void {
+    this.finish({});
+    this.contentEl.empty();
+  }
+
+  private finish(value: Record<string, { answers: string[] }>): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.done(value);
   }
 }

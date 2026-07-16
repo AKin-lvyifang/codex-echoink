@@ -8,11 +8,29 @@ import { CodexLoginError } from "../core/codex-login";
 import { HermesBackend } from "../core/hermes-backend";
 import { detectHermesCommand } from "../core/hermes-models";
 import { OpenCodeBackend } from "../core/opencode-backend";
-import { detectOpenCodeCommand, selectOpenCodeSetupModel } from "../core/opencode-models";
-import { agentSetupRowStatus, createAgentSetupSnapshot, limitedAgentSetupLog, resolveAgentSetupPrimary, type AgentSetupSnapshot } from "../core/agent-setup";
+import { detectOpenCodeCommand, resolveOpenCodeLaunch, selectOpenCodeConnectionModel } from "../core/opencode-models";
+import {
+  agentSetupRowStatus,
+  createAgentSetupSnapshot,
+  limitedAgentSetupLog,
+  readyAgentBackendToCommit,
+  resolveAgentSetupPrimary,
+  runAgentInstallerAction,
+  type AgentInstaller,
+  type AgentInstallerRegistry,
+  type AgentSetupContext,
+  type AgentSetupSnapshot
+} from "../core/agent-setup";
 import { installNpmCli } from "../core/npm-cli-installer";
 import { installHermesCli } from "../core/hermes-installer";
-import { authorizeHermesNous } from "../core/hermes-setup";
+import { authorizeHermesNous, HERMES_NOUS_PROVIDER, inspectHermesModelConfig } from "../core/hermes-setup";
+import {
+  openCodeApiCredential,
+  openCodeAuthorizationConnectionOverrides,
+  openCodeAutomaticOAuthInstructions,
+  redactOpenCodeAuthSecrets,
+  shouldRequestOpenCodeAuthPrompt
+} from "../core/opencode-auth";
 import { AGENT_BACKEND_DEFINITIONS } from "../agent/registry";
 import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import { buildEchoInkResourceCatalog } from "../resources/registry";
@@ -75,8 +93,8 @@ import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
 import { skillResourceFromHermesSkill } from "../resources/skill-loader";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile, resolveKnowledgeBaseRulesFilePath } from "../knowledge-base/rules-repair";
-import { confirmModal, textInputModal } from "../ui/modals";
-import { openPathInElectron } from "../core/electron";
+import { confirmModal, selectInputModal, textInputModal } from "../ui/modals";
+import { openExternalInElectron, openPathInElectron } from "../core/electron";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 import { CODEX_CLI_INSTALL_COMMAND, HERMES_DOCS_URL, OPENCODE_DOCS_URL, completeSetupState } from "./setup-check";
@@ -104,6 +122,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private setupBusy = false;
   private setupActiveBackend: AgentBackendMode | null = null;
   private setupAutoCheckStarted = false;
+  private setupConnectSelectedOnNextCheck: boolean;
   private setupAbort: AbortController | null = null;
   private memoryStatus: MemoryStoreStatus | null = null;
   private memoryStatusLoading = false;
@@ -119,6 +138,7 @@ export class CodexSettingTab extends PluginSettingTab {
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
     this.setupSelectedBackend = plugin.settings.agentBackend;
+    this.setupConnectSelectedOnNextCheck = plugin.settings.setup.completedAt <= 0;
     this.setupSnapshots = {
       "codex-cli": createAgentSetupSnapshot("codex-cli"),
       opencode: createAgentSetupSnapshot("opencode"),
@@ -133,10 +153,27 @@ export class CodexSettingTab extends PluginSettingTab {
     return settingsCopy(this.plugin.settings.settingsLanguage);
   }
 
+  private get agentInstallers(): AgentInstallerRegistry {
+    const createInstaller = (backend: AgentBackendMode): AgentInstaller => ({
+      backend,
+      detect: (context) => this.detectAgentBackend(backend, context),
+      install: (context) => this.performAgentInstall(backend, context),
+      authorize: (context) => this.performAgentAuthorization(backend, context),
+      connect: (context) => this.performAgentConnection(backend, context)
+    });
+    return {
+      "codex-cli": createInstaller("codex-cli"),
+      opencode: createInstaller("opencode"),
+      hermes: createInstaller("hermes")
+    };
+  }
+
   display(): void {
     if (this.plugin.agentSetupTarget) {
       this.setupSelectedBackend = this.plugin.agentSetupTarget;
+      this.setupConnectSelectedOnNextCheck = this.plugin.agentSetupAutoRepair || this.plugin.settings.setup.completedAt <= 0;
       this.plugin.agentSetupTarget = null;
+      this.plugin.agentSetupAutoRepair = false;
       this.setupAutoCheckStarted = false;
     }
     if (this.displayFrame !== null) {
@@ -147,8 +184,15 @@ export class CodexSettingTab extends PluginSettingTab {
     this.renderSettingsContent();
     if (!this.setupAutoCheckStarted) {
       this.setupAutoCheckStarted = true;
-      window.setTimeout(() => void this.detectAllAgents(true), 0);
+      const connectSelected = this.setupConnectSelectedOnNextCheck;
+      this.setupConnectSelectedOnNextCheck = false;
+      window.setTimeout(() => void this.detectAllAgents(connectSelected), 0);
     }
+  }
+
+  hide(): void {
+    this.setupAbort?.abort();
+    super.hide();
   }
 
   private renderSettingsShell(): void {
@@ -186,23 +230,23 @@ export class CodexSettingTab extends PluginSettingTab {
       const statusBox = statusEl;
       if (this.shouldShowSetupGuide()) {
         this.renderAgentInstaller(statusBox, false);
-      } else {
-        this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
-        this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
-        this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
-        this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
-        this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
-        this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
-        this.addStatusRow(statusBox, "sparkles", "Hermes", detectHermesPath(this.plugin.settings.agents.hermes.cliPath, copy));
-        this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
-        this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
-        this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
-        this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
-        this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
-        this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
-        this.addStatusErrors(statusBox, status?.errors ?? []);
-        this.addStatusActions(statusBox);
+        return;
       }
+      this.addStatusRow(statusBox, "activity", copy.status.codexStatus, status?.connected ? copy.common.connected : copy.common.disconnected);
+      this.addStatusRow(statusBox, "user-check", copy.status.accountStatus, status?.connected ? (status.accountLabel ?? copy.common.unknown) : copy.common.disconnected);
+      this.addStatusRow(statusBox, "route", copy.status.agentBackend, agentBackendLabel(this.plugin.settings.agentBackend, copy));
+      this.addStatusRow(statusBox, "key-round", copy.status.connection, providerConnectionLabel(this.plugin.settings, this.plugin.settings.settingsLanguage));
+      this.addStatusRow(statusBox, "terminal", copy.status.cliPath, detectCliPath(this.plugin.settings.cliPath, copy));
+      this.addStatusRow(statusBox, "terminal-square", copy.status.opencode, detectOpenCodePath(this.plugin.settings.opencode.cliPath, copy));
+      this.addStatusRow(statusBox, "sparkles", "Hermes", detectHermesPath(this.plugin.settings.agents.hermes.cliPath, copy));
+      this.addStatusRow(statusBox, "waypoints", copy.status.proxy, this.plugin.settings.proxyEnabled ? this.plugin.settings.proxyUrl : copy.common.disabled);
+      this.addStatusRow(statusBox, "blocks", copy.status.chatMcp, this.plugin.settings.mcpEnabled ? copy.common.enabled : copy.common.disabled);
+      this.addStatusRow(statusBox, "box", copy.status.modelCount, `${status?.models.length ?? 0}`);
+      this.addStatusRow(statusBox, "sparkles", copy.status.skillsCount, `${status?.skills.length ?? 0}`);
+      this.addStatusRow(statusBox, "blocks", copy.status.mcpCount, `${status?.mcpServers.length ?? 0}`);
+      this.addStatusRow(statusBox, "package-check", copy.status.pluginDir, pluginInstallDir(this.plugin));
+      this.addStatusErrors(statusBox, status?.errors ?? []);
+      this.addStatusActions(statusBox);
 
       this.renderTopTabs(tabsEl);
       if (this.plugin.settings.settingsTab === "agents") {
@@ -752,65 +796,78 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private shouldShowSetupGuide(): boolean {
-    if (this.plugin.settings.setup.completedAt <= 0) return true;
-    const selected = this.setupSnapshots[this.setupSelectedBackend];
-    return selected.phase !== "ready" && selected.phase !== "detecting";
+    return this.plugin.settings.setup.completedAt <= 0;
   }
 
   private renderAgentInstaller(container: HTMLElement, compact: boolean): void {
     const selected = this.setupSnapshots[this.setupSelectedBackend];
-    const primary = resolveAgentSetupPrimary(selected);
+    const copy = this.copy.setup.agentInstaller;
+    const primary = resolveAgentSetupPrimary(selected, copy);
     const root = container.createDiv({ cls: compact ? "codex-agent-installer is-compact" : "codex-agent-installer" });
     const header = root.createDiv({ cls: "codex-agent-installer-header" });
-    header.createDiv({ cls: "codex-setup-heading", text: compact ? "安装或切换 Agent" : "选择一个 Agent，EchoInk 帮你完成安装与连接" });
-    header.createDiv({ cls: "codex-setup-subtitle", text: "三项只做轻量检测；安装、登录和连接只作用于当前选中项。" });
+    header.createDiv({ cls: "codex-setup-heading", text: compact ? copy.compactHeading : copy.heading });
+    header.createDiv({ cls: "codex-setup-subtitle", text: copy.subtitle });
 
     const definitions: Array<{ backend: AgentBackendMode; label: string; description: string; icon: string }> = [
-      { backend: "codex-cli", label: "Codex", description: "自动识别 ChatGPT 内置版本，也支持官方 CLI", icon: "sparkles" },
-      { backend: "opencode", label: "OpenCode", description: "安装后优先使用官方免费模型", icon: "code-2" },
-      { backend: "hermes", label: "Hermes", description: "官方固定版本安装，默认 Nous Portal 授权", icon: "bot" }
+      { backend: "codex-cli", ...copy.agents["codex-cli"], icon: "sparkles" },
+      { backend: "opencode", ...copy.agents.opencode, icon: "code-2" },
+      { backend: "hermes", ...copy.agents.hermes, icon: "bot" }
     ];
     const list = root.createDiv({ cls: "codex-agent-installer-list" });
     for (const definition of definitions) {
       const snapshot = this.setupSnapshots[definition.backend];
-      const row = list.createEl("button", {
-        cls: `codex-agent-installer-row${definition.backend === this.setupSelectedBackend ? " is-selected" : ""}`,
-        attr: { type: "button", "aria-pressed": definition.backend === this.setupSelectedBackend ? "true" : "false" }
+      const isSelected = definition.backend === this.setupSelectedBackend;
+      const rowShell = list.createDiv({
+        cls: `codex-agent-installer-row-shell${isSelected ? " is-selected" : ""}`
+      });
+      const row = rowShell.createEl("button", {
+        cls: "codex-agent-installer-row",
+        attr: { type: "button", "aria-pressed": isSelected ? "true" : "false" }
       });
       row.disabled = this.setupBusy;
       const mark = row.createSpan({ cls: "codex-agent-installer-icon" });
       setIcon(mark, definition.icon);
       const body = row.createSpan({ cls: "codex-agent-installer-row-body" });
       body.createSpan({ cls: "codex-agent-installer-name", text: definition.label });
-      body.createSpan({ cls: "codex-agent-installer-description", text: definition.description });
-      row.createSpan({ cls: `codex-agent-installer-status is-${snapshot.phase}`, text: agentSetupRowStatus(snapshot) });
+      if (isSelected) {
+        body.createSpan({ cls: "codex-agent-installer-description", text: definition.description });
+      }
+      row.createSpan({ cls: `codex-agent-installer-status is-${snapshot.phase}`, text: agentSetupRowStatus(snapshot, copy) });
       row.onclick = () => {
-        if (this.setupBusy || definition.backend === this.setupSelectedBackend) return;
+        if (this.setupBusy || isSelected) return;
         this.setupSelectedBackend = definition.backend;
         this.scheduleDisplay();
         if (snapshot.phase === "installed") void this.connectAgent(definition.backend);
       };
-    }
+      if (!isSelected) continue;
 
-    const detail = root.createDiv({ cls: "codex-agent-installer-detail" });
-    detail.createDiv({ cls: "codex-agent-installer-detail-text", text: selected.error || selected.detail || "等待操作" });
-    if (selected.command) detail.createDiv({ cls: "codex-agent-installer-path", text: selected.version ? `${selected.command} · ${selected.version}` : selected.command });
-    if (selected.logs) {
-      const logs = detail.createEl("details", { cls: "codex-agent-installer-logs" });
-      logs.createEl("summary", { text: "查看有限日志" });
-      logs.createEl("pre", { text: selected.logs });
-    }
+      const detail = rowShell.createDiv({ cls: "codex-agent-installer-detail" });
+      detail.createDiv({
+        cls: "codex-agent-installer-detail-text",
+        text: selected.error || selected.detail || (selected.phase === "detecting" ? copy.detection.checking : copy.idle)
+      });
+      if (selected.command) detail.createDiv({ cls: "codex-agent-installer-path", text: selected.version ? `${selected.command} · ${selected.version}` : selected.command });
+      if (selected.logs) {
+        const logs = detail.createEl("details", { cls: "codex-agent-installer-logs" });
+        logs.createEl("summary", { text: copy.logsSummary });
+        logs.createEl("pre", { text: selected.logs });
+      }
 
-    const actions = root.createDiv({ cls: "codex-agent-installer-actions" });
-    const actionButton = actions.createEl("button", { cls: "codex-setup-primary", text: primary.label, attr: { type: "button" } });
-    actionButton.disabled = primary.disabled || (this.setupBusy && this.setupActiveBackend !== this.setupSelectedBackend);
-    actionButton.onclick = () => void this.runAgentSetupAction(primary.action);
-    if (selected.phase === "failed" || selected.phase === "cancelled" || selected.phase === "missing") {
-      const fallback = actions.createEl("a", { cls: "codex-agent-installer-fallback", text: selected.backend === "hermes" ? "查看官方安装说明" : "打开终端手动安装", href: "#" });
-      fallback.onclick = (event) => {
-        event.preventDefault();
-        void this.openAgentTerminalFallback(selected.backend);
-      };
+      const actions = rowShell.createDiv({ cls: "codex-agent-installer-actions" });
+      const actionButton = actions.createEl("button", { cls: "codex-setup-primary", text: primary.label, attr: { type: "button" } });
+      actionButton.disabled = primary.disabled || (this.setupBusy && this.setupActiveBackend !== this.setupSelectedBackend);
+      actionButton.onclick = () => void this.runAgentSetupAction(primary.action);
+      if (selected.phase === "failed" || selected.phase === "cancelled" || selected.phase === "missing") {
+        const fallback = actions.createEl("a", {
+          cls: "codex-agent-installer-fallback",
+          text: selected.backend === "hermes" ? copy.fallbackDocs : copy.fallbackTerminal,
+          href: "#"
+        });
+        fallback.onclick = (event) => {
+          event.preventDefault();
+          void this.openAgentTerminalFallback(selected.backend);
+        };
+      }
     }
     if (this.plugin.settings.setup.lastCheckedAt > 0) {
       root.createDiv({ cls: "codex-setup-last-checked", text: this.copy.setup.lastChecked(formatSetupTime(this.plugin.settings.setup.lastCheckedAt)) });
@@ -840,9 +897,9 @@ export class CodexSettingTab extends PluginSettingTab {
     this.scheduleDisplay();
     try {
       const [codex, opencode, hermes] = await Promise.all([
-        this.detectCodexAgent(),
-        this.detectSimpleCli("opencode", detectOpenCodeCommand(this.plugin.settings.opencode.cliPath)),
-        this.detectSimpleCli("hermes", detectHermesCommand(this.plugin.settings.agents.hermes.cliPath))
+        this.agentInstallers["codex-cli"].detect(),
+        this.agentInstallers.opencode.detect(),
+        this.agentInstallers.hermes.detect()
       ]);
       this.setupSnapshots = { "codex-cli": codex, opencode, hermes };
       this.plugin.settings.setup.lastCheckedAt = Date.now();
@@ -856,22 +913,31 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  private async detectAgentBackend(backend: AgentBackendMode, _context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    if (backend === "codex-cli") return this.detectCodexAgent();
+    if (backend === "opencode") {
+      return this.detectSimpleCli("opencode", detectOpenCodeCommand(this.plugin.settings.opencode.cliPath));
+    }
+    return this.detectSimpleCli("hermes", detectHermesCommand(this.plugin.settings.agents.hermes.cliPath));
+  }
+
   private async detectCodexAgent(): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.detection;
     try {
       const detection = await inspectCodexInstallation(this.plugin.settings.cliPath);
-      if (!detection.command) return createAgentSetupSnapshot("codex-cli", "missing", { detail: "本机未找到 Codex。" , checkedAt: Date.now() });
+      if (!detection.command) return createAgentSetupSnapshot("codex-cli", "missing", { detail: copy.codexMissing, checkedAt: Date.now() });
       if (detection.versionError) {
         return createAgentSetupSnapshot("codex-cli", "failed", {
           command: detection.command,
           version: detection.version,
-          detail: "已找到 Codex，但版本检查失败。",
+          detail: copy.codexVersionFailed,
           error: detection.versionError,
           checkedAt: Date.now()
         });
       }
       const detail = detection.invalidCustomPath
-        ? `自定义路径已失效，已自动回退到 ${detection.command}`
-        : "已找到 Codex，等待连接检查。";
+        ? copy.codexFallback(detection.command)
+        : copy.codexFound;
       return createAgentSetupSnapshot("codex-cli", "installed", { command: detection.command, version: detection.version, detail, checkedAt: Date.now() });
     } catch (error) {
       return this.failedAgentSnapshot("codex-cli", null, error);
@@ -879,59 +945,43 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private async detectSimpleCli(backend: "opencode" | "hermes", command: string | null): Promise<AgentSetupSnapshot> {
-    if (!command) return createAgentSetupSnapshot(backend, "missing", { detail: `本机未找到 ${backend === "opencode" ? "OpenCode" : "Hermes"}。`, checkedAt: Date.now() });
+    const copy = this.copy.setup.agentInstaller;
+    const label = copy.agents[backend].label;
+    if (!command) return createAgentSetupSnapshot(backend, "missing", { detail: copy.detection.cliMissing(label), checkedAt: Date.now() });
     try {
-      const version = await inspectCliVersion(command);
-      return createAgentSetupSnapshot(backend, "installed", { command, version, detail: "已安装，选中后会验证真实连接。", checkedAt: Date.now() });
+      const launch = backend === "opencode" ? resolveOpenCodeLaunch(command) : { command, argsPrefix: [] as string[] };
+      const version = await inspectCliVersion(launch.command, launch.argsPrefix);
+      return createAgentSetupSnapshot(backend, "installed", { command, version, detail: copy.detection.cliInstalled, checkedAt: Date.now() });
     } catch (error) {
       return this.failedAgentSnapshot(backend, command, error);
     }
   }
 
   private async installAgent(backend: AgentBackendMode): Promise<void> {
-    const label = backend === "codex-cli" ? "Codex" : backend === "opencode" ? "OpenCode" : "Hermes";
+    const copy = this.copy.setup.agentInstaller;
+    const label = copy.agents[backend].label;
     const accepted = await confirmModal(
       this.app,
-      `安装 ${label}`,
+      copy.install.confirmTitle(label),
       backend === "hermes"
-        ? "EchoInk 将下载固定版本的 Hermes 官方安装器，校验哈希后安装到用户目录。不会使用 sudo。"
-        : `EchoInk 将使用固定 npm 包把 ${label} 安装到${backend === "opencode" ? "用户目录" : "全局 npm 目录"}。不会使用 sudo。`,
-      "安装",
-      "取消"
+        ? copy.install.confirmHermes
+        : copy.install.confirmNpm(label, backend === "opencode" ? copy.install.userDirectory : copy.install.globalNpmDirectory),
+      copy.install.accept,
+      copy.install.cancel
     );
     if (!accepted || this.setupBusy) return;
     this.setupBusy = true;
     this.setupActiveBackend = backend;
-    this.setupAbort = new AbortController();
+    const controller = new AbortController();
+    this.setupAbort = controller;
     const previous = this.setupSnapshots[backend];
-    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installing", { command: previous.command, detail: `正在安装 ${label}…` });
+    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installing", { command: previous.command, detail: copy.install.installing(label) });
     this.scheduleDisplay();
     let installed = false;
     try {
-      const result = backend === "hermes"
-        ? await installHermesCli({ signal: this.setupAbort.signal })
-        : await installNpmCli(backend === "codex-cli" ? "codex" : "opencode", { signal: this.setupAbort.signal });
-      if (result.status === "cancelled") {
-        this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "cancelled", { command: previous.command, detail: "安装已取消。", logs: limitedAgentSetupLog(result.logs) });
-      } else if (result.status === "failed" || !result.command) {
-        this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "failed", {
-          command: previous.command,
-          detail: "安装没有完成，可以重试或使用安全兜底。",
-          error: result.error || "安装失败",
-          logs: limitedAgentSetupLog(result.logs)
-        });
-      } else {
-        this.writeAgentCliPath(backend, result.command);
-        await this.plugin.saveSettings(true);
-        this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installed", {
-          command: result.command,
-          version: result.version,
-          detail: "安装完成，正在准备连接。",
-          logs: limitedAgentSetupLog(result.logs),
-          checkedAt: Date.now()
-        });
-        installed = true;
-      }
+      const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "install", { signal: controller.signal });
+      this.setupSnapshots[backend] = snapshot;
+      installed = snapshot.phase === "installed";
     } catch (error) {
       this.setupSnapshots[backend] = this.failedAgentSnapshot(backend, previous.command, error);
     } finally {
@@ -941,6 +991,38 @@ export class CodexSettingTab extends PluginSettingTab {
       this.scheduleDisplay();
     }
     if (installed) await this.connectAgent(backend);
+  }
+
+  private async performAgentInstall(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.install;
+    const previous = this.setupSnapshots[backend];
+    const result = backend === "hermes"
+      ? await installHermesCli({ signal: context.signal })
+      : await installNpmCli(backend === "codex-cli" ? "codex" : "opencode", { signal: context.signal });
+    if (result.status === "cancelled") {
+      return createAgentSetupSnapshot(backend, "cancelled", {
+        command: previous.command,
+        detail: copy.cancelled,
+        logs: limitedAgentSetupLog(result.logs)
+      });
+    }
+    if (result.status === "failed" || !result.command) {
+      return createAgentSetupSnapshot(backend, "failed", {
+        command: previous.command,
+        detail: copy.failed,
+        error: result.error || copy.failedError,
+        logs: limitedAgentSetupLog(result.logs)
+      });
+    }
+    this.writeAgentCliPath(backend, result.command);
+    await this.plugin.saveSettings(true);
+    return createAgentSetupSnapshot(backend, "installed", {
+      command: result.command,
+      version: result.version,
+      detail: copy.completed,
+      logs: limitedAgentSetupLog(result.logs),
+      checkedAt: Date.now()
+    });
   }
 
   private async connectAgent(backend: AgentBackendMode): Promise<void> {
@@ -955,14 +1037,12 @@ export class CodexSettingTab extends PluginSettingTab {
     this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "connecting", {
       command: this.setupSnapshots[backend].command,
       version: this.setupSnapshots[backend].version,
-      detail: "正在验证真实连接…",
+      detail: this.copy.setup.agentInstaller.connection.checking,
       nextAction: null
     });
     this.scheduleDisplay();
     try {
-      if (backend === "codex-cli") await this.connectCodexAgent();
-      else if (backend === "opencode") await this.connectOpenCodeAgent();
-      else await this.connectHermesAgent();
+      this.setupSnapshots[backend] = await runAgentInstallerAction(this.agentInstallers, backend, "connect");
     } catch (error) {
       this.setupSnapshots[backend] = this.failedAgentSnapshot(backend, current.command, error, current.version);
     } finally {
@@ -972,31 +1052,40 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async connectCodexAgent(): Promise<void> {
+  private async performAgentConnection(backend: AgentBackendMode, _context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    if (backend === "codex-cli") return this.connectCodexAgent();
+    if (backend === "opencode") return this.connectOpenCodeAgent();
+    return this.connectHermesAgent();
+  }
+
+  private async connectCodexAgent(): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots["codex-cli"];
     if (current.command) this.writeAgentCliPath("codex-cli", current.command);
     const status = await this.plugin.ensureCodexConnected(true, { silent: true, refreshLogin: true });
     if (!status.connected || status.accountReadError) throw new Error(status.accountReadError ?? status.errors[0] ?? this.copy.setup.loginErrors.connection);
     if (!status.loggedIn) {
-      this.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "needs-auth", {
+      const snapshot = createAgentSetupSnapshot("codex-cli", "needs-auth", {
         command: current.command,
         version: current.version,
-        detail: "Codex 已连接，还差浏览器登录。",
+        detail: copy.codexNeedsAuth,
         checkedAt: Date.now()
       });
       await this.plugin.saveSettings(true);
-      return;
+      return snapshot;
     }
-    this.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "ready", {
+    const snapshot = createAgentSetupSnapshot("codex-cli", "ready", {
       command: current.command,
       version: current.version,
-      detail: status.accountLabel || "Codex 已就绪。",
+      detail: status.accountLabel || copy.codexReady,
       checkedAt: Date.now()
     });
     await this.plugin.saveSettings(true);
+    return snapshot;
   }
 
-  private async connectOpenCodeAgent(): Promise<void> {
+  private async connectOpenCodeAgent(): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots.opencode;
     if (current.command) this.writeAgentCliPath("opencode", current.command);
     const backend = this.createOpenCodeSetupBackend(current.command || this.plugin.settings.opencode.cliPath);
@@ -1004,20 +1093,25 @@ export class CodexSettingTab extends PluginSettingTab {
     try {
       await backend.connect();
       const [models, agents] = await Promise.all([backend.listModels(), backend.listAgents()]);
-      const configured = models.find((model) => model.providerId === this.plugin.settings.opencode.providerId
-        && (model.modelId === this.plugin.settings.opencode.modelId || model.id === this.plugin.settings.opencode.modelId));
-      const model = configured
-        ?? selectOpenCodeSetupModel(models)
-        ?? (this.plugin.settings.opencode.providerId ? models.find((item) => item.providerId === this.plugin.settings.opencode.providerId) ?? null : null);
+      const configuredProvider = this.plugin.settings.opencode.providerId.trim();
+      const configuredModel = this.plugin.settings.opencode.modelId.trim();
+      const hasExistingProvider = Boolean(configuredProvider || configuredModel);
+      const model = selectOpenCodeConnectionModel(models, {
+        providerId: configuredProvider,
+        modelId: configuredModel
+      });
       if (!model) {
-        this.setupSnapshots.opencode = createAgentSetupSnapshot("opencode", "needs-auth", {
+        const snapshot = createAgentSetupSnapshot("opencode", hasExistingProvider ? "failed" : "needs-auth", {
           command: current.command,
           version: backend.getConnectionInfo().version || current.version,
-          detail: "OpenCode 已连接，但没有可直接使用的官方免费模型。请配置 Provider。",
+          detail: hasExistingProvider
+            ? copy.opencodeExistingUnavailable
+            : copy.opencodeNoFreeModel,
+          error: hasExistingProvider ? copy.opencodeExistingError : "",
           checkedAt: Date.now()
         });
         await this.plugin.saveSettings(true);
-        return;
+        return snapshot;
       }
       const agent = agents.find((item) => item.id.toLowerCase() === this.plugin.settings.opencode.agent.toLowerCase())
         ?? agents.find((item) => item.id.toLowerCase() === "build")
@@ -1029,7 +1123,7 @@ export class CodexSettingTab extends PluginSettingTab {
         timeoutMs: 60_000
       });
       probeSessionId = probe.runId || "";
-      if (!/\bOPENCODE_PONG\b/i.test(probe.text.trim())) throw new Error("OpenCode 最小连接检查没有返回 OPENCODE_PONG");
+      if (!/\bOPENCODE_PONG\b/i.test(probe.text.trim())) throw new Error(copy.opencodeProbeFailed);
       const info = backend.getConnectionInfo();
       this.plugin.settings.opencode.cliPath = current.command || info.command || this.plugin.settings.opencode.cliPath;
       this.plugin.settings.agents.opencode = this.plugin.settings.opencode;
@@ -1039,10 +1133,10 @@ export class CodexSettingTab extends PluginSettingTab {
       this.plugin.settings.opencode.lastConnectedAt = Date.now();
       this.plugin.settings.opencode.lastError = "";
       await this.plugin.saveSettings(true);
-      this.setupSnapshots.opencode = createAgentSetupSnapshot("opencode", "ready", {
+      return createAgentSetupSnapshot("opencode", "ready", {
         command: current.command,
         version: info.version || current.version,
-        detail: `已使用 ${model.id} 完成 OPENCODE_PONG。`,
+        detail: copy.opencodeReady(model.id),
         checkedAt: Date.now()
       });
     } finally {
@@ -1051,7 +1145,8 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async connectHermesAgent(): Promise<void> {
+  private async connectHermesAgent(): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.connection;
     const current = this.setupSnapshots.hermes;
     if (current.command) {
       this.writeAgentCliPath("hermes", current.command);
@@ -1060,146 +1155,258 @@ export class CodexSettingTab extends PluginSettingTab {
     const result = await this.plugin.testHermesConnection({ notify: false });
     if (!result.connected) throw new Error(result.message);
     if (!result.providerConfigured) {
-      const hasExistingProvider = Boolean(this.plugin.settings.agents.hermes.providerId || this.plugin.settings.agents.hermes.modelId);
-      this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", hasExistingProvider ? "failed" : "needs-auth", {
+      const savedProvider = this.plugin.settings.agents.hermes.providerId.trim();
+      const savedModel = this.plugin.settings.agents.hermes.modelId.trim();
+      let canResumeIncompleteNousConfig = savedProvider === HERMES_NOUS_PROVIDER && !savedModel;
+      let hasExistingProvider = Boolean(savedProvider || savedModel) && !canResumeIncompleteNousConfig;
+      let inspectionError = "";
+      if (!hasExistingProvider && current.command) {
+        try {
+          const inspected = await inspectHermesModelConfig({
+            command: current.command,
+            cwd: this.plugin.getVaultPath()
+          });
+          canResumeIncompleteNousConfig = inspected.provider === HERMES_NOUS_PROVIDER && !inspected.defaultModel;
+          hasExistingProvider = inspected.hasExistingModelConfig && !canResumeIncompleteNousConfig;
+        } catch (error) {
+          hasExistingProvider = true;
+          inspectionError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      return createAgentSetupSnapshot("hermes", hasExistingProvider ? "failed" : "needs-auth", {
         command: current.command,
         version: result.version || current.version,
-        detail: hasExistingProvider ? "Hermes 已安装，但现有 Provider 没有通过验证；EchoInk 未覆盖原配置。" : "Hermes 已安装，需要登录 Nous Portal。",
-        error: hasExistingProvider ? this.plugin.settings.agents.hermes.lastProviderError : "",
+        detail: hasExistingProvider
+          ? copy.hermesExistingInvalid
+          : canResumeIncompleteNousConfig
+            ? copy.hermesResumeNous
+            : copy.hermesNeedsAuth,
+        error: hasExistingProvider ? (inspectionError || this.plugin.settings.agents.hermes.lastProviderError) : "",
         checkedAt: Date.now()
       });
-      return;
     }
-    this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", "ready", {
+    return createAgentSetupSnapshot("hermes", "ready", {
       command: current.command,
       version: result.version || current.version,
-      detail: "Hermes 已完成真实 PONG 检查。",
+      detail: copy.hermesReady,
       checkedAt: Date.now()
     });
   }
 
   private async authorizeAgent(backend: AgentBackendMode): Promise<void> {
     if (this.setupBusy) return;
-    if (backend === "codex-cli") return this.authorizeCodexAgent();
-    if (backend === "opencode") return this.authorizeOpenCodeAgent();
-    return this.authorizeHermesAgent();
-  }
-
-  private async authorizeCodexAgent(): Promise<void> {
-    const current = this.setupSnapshots["codex-cli"];
+    const current = this.setupSnapshots[backend];
+    if (backend === "hermes" && !current.command) return;
     this.setupBusy = true;
-    this.setupActiveBackend = "codex-cli";
-    this.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "authorizing", { command: current.command, version: current.version, detail: "请在浏览器完成 Codex 登录…" });
+    this.setupActiveBackend = backend;
+    const controller = new AbortController();
+    this.setupAbort = controller;
+    const copy = this.copy.setup.agentInstaller.authorization;
+    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "authorizing", {
+      command: current.command,
+      version: current.version,
+      detail: backend === "codex-cli"
+        ? copy.progressCodex
+        : backend === "opencode"
+          ? copy.progressOpenCode
+          : copy.progressHermes
+    });
     this.scheduleDisplay();
+    let shouldConnect = false;
     try {
-      if (!this.plugin.codex?.isConnected()) await this.plugin.ensureCodexConnected(true, { silent: true });
-      if (!this.plugin.codex?.isConnected()) throw new Error(this.plugin.lastStatus?.errors[0] ?? this.copy.setup.loginErrors.connection);
-      await this.plugin.codex.login({ openUrl: (url) => window.open(url) });
-      this.plugin.lastStatus = await this.plugin.codex.refreshStatus({ refreshToken: true });
-      if (this.plugin.lastStatus.accountReadError) throw new Error(this.plugin.lastStatus.accountReadError);
-      if (!this.plugin.lastStatus.loggedIn) throw new CodexLoginError("failed", this.copy.setup.loginErrors.failed);
-      this.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "ready", {
-        command: current.command,
-        version: current.version,
-        detail: this.plugin.lastStatus.accountLabel || "Codex 已登录。",
-        checkedAt: Date.now()
+      const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "authorize", {
+        signal: controller.signal
       });
+      this.setupSnapshots[backend] = snapshot;
+      shouldConnect = snapshot.phase === "installed";
     } catch (error) {
-      this.setupSnapshots["codex-cli"] = this.failedAgentSnapshot("codex-cli", current.command, error, current.version);
+      this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+        ? this.cancelledAgentSnapshot(backend, current, copy.cancelled)
+        : this.failedAgentSnapshot(backend, current.command, error, current.version);
     } finally {
+      if (this.setupAbort === controller) this.setupAbort = null;
       this.setupBusy = false;
       this.setupActiveBackend = null;
       this.scheduleDisplay();
     }
+    if (shouldConnect) await this.connectAgent(backend);
   }
 
-  private async authorizeOpenCodeAgent(): Promise<void> {
+  private async performAgentAuthorization(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    if (backend === "codex-cli") return this.performCodexAuthorization(context);
+    if (backend === "opencode") return this.performOpenCodeAuthorization(context);
+    return this.performHermesAuthorization(context);
+  }
+
+  private async performCodexAuthorization(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.authorization;
+    const current = this.setupSnapshots["codex-cli"];
+    throwIfAgentSetupAborted(context.signal);
+    if (!this.plugin.codex?.isConnected()) await this.plugin.ensureCodexConnected(true, { silent: true });
+    throwIfAgentSetupAborted(context.signal);
+    if (!this.plugin.codex?.isConnected()) throw new Error(this.plugin.lastStatus?.errors[0] ?? this.copy.setup.loginErrors.connection);
+    await this.plugin.codex.login({
+      signal: context.signal,
+      openUrl: (url) => openExternalInElectron(url)
+    });
+    throwIfAgentSetupAborted(context.signal);
+    this.plugin.lastStatus = await this.plugin.codex.refreshStatus({ refreshToken: true });
+    throwIfAgentSetupAborted(context.signal);
+    if (this.plugin.lastStatus.accountReadError) throw new Error(this.plugin.lastStatus.accountReadError);
+    if (!this.plugin.lastStatus.loggedIn) throw new CodexLoginError("failed", this.copy.setup.loginErrors.failed);
+    return createAgentSetupSnapshot("codex-cli", "ready", {
+      command: current.command,
+      version: current.version,
+      detail: this.plugin.lastStatus.accountLabel || copy.codexLoggedIn,
+      checkedAt: Date.now()
+    });
+  }
+
+  private async performOpenCodeAuthorization(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.authorization;
     const current = this.setupSnapshots.opencode;
-    this.setupBusy = true;
-    this.setupActiveBackend = "opencode";
-    this.setupSnapshots.opencode = createAgentSetupSnapshot("opencode", "authorizing", { command: current.command, version: current.version, detail: "正在读取 OpenCode Provider 授权方式…" });
-    this.scheduleDisplay();
-    const backend = this.createOpenCodeSetupBackend(current.command || this.plugin.settings.opencode.cliPath);
-    let authorized = false;
+    const backend = this.createOpenCodeAuthorizationBackend(current.command || this.plugin.settings.opencode.cliPath);
+    const sensitiveInputs = new Set<string>();
     try {
+      throwIfAgentSetupAborted(context.signal);
       await backend.connect();
-      const authMethods = await backend.listProviderAuthMethods();
-      const initialProvider = this.plugin.settings.opencode.providerId || Object.keys(authMethods)[0] || "";
-      const providerId = await textInputModal(this.app, "配置 OpenCode Provider", "Provider ID", initialProvider);
-      if (!providerId) throw new Error("已取消 Provider 配置");
+      throwIfAgentSetupAborted(context.signal);
+      const authMethods = await backend.listProviderAuthMethods(context.signal);
+      const providerIds = Object.keys(authMethods).filter((providerId) => (authMethods[providerId]?.length ?? 0) > 0);
+      if (!providerIds.length) throw new Error(copy.noOpenCodeProviders);
+      const configuredProvider = this.plugin.settings.opencode.providerId;
+      const orderedProviderIds = configuredProvider && providerIds.includes(configuredProvider)
+        ? [configuredProvider, ...providerIds.filter((providerId) => providerId !== configuredProvider)]
+        : providerIds;
+      const providerId = orderedProviderIds.length === 1
+        ? orderedProviderIds[0]
+        : await selectInputModal(this.app, copy.configureProvider, copy.selectProvider, orderedProviderIds.map((value) => ({ value, label: value })));
+      if (providerId === null) return this.cancelledAgentSnapshot("opencode", current, copy.providerCancelled);
+      throwIfAgentSetupAborted(context.signal);
       const methods = authMethods[providerId] ?? [];
-      const methodIndex = Math.max(0, methods.findIndex((method) => method.type === "oauth"));
+      if (!methods.length) throw new Error(copy.noProviderMethods(providerId));
+      const methodChoice = methods.length === 1
+        ? "0"
+        : await selectInputModal(this.app, copy.configureNamedProvider(providerId), copy.authMethod, methods.map((method, index) => ({
+          value: String(index),
+          label: `${method.label} · ${method.type === "oauth" ? copy.browserAuth : copy.apiKey}`
+        })));
+      if (methodChoice === null) return this.cancelledAgentSnapshot("opencode", current, copy.openCodeCancelled);
+      throwIfAgentSetupAborted(context.signal);
+      const methodIndex = Number.parseInt(methodChoice, 10);
       const method = methods[methodIndex];
-      if (!method) throw new Error(`OpenCode 没有提供 ${providerId} 的授权方式`);
-      if (method.type === "oauth") {
-        const inputs: Record<string, string> = {};
-        for (const prompt of method.prompts ?? []) {
-          const initial = prompt.type === "select" ? prompt.options[0]?.value ?? "" : "";
-          const label = prompt.type === "select"
-            ? `${prompt.message}（${prompt.options.map((option) => option.value).join(" / ")}）`
-            : prompt.message;
-          const value = await textInputModal(this.app, method.label, label, initial);
-          if (value === null) throw new Error("已取消 OpenCode OAuth");
-          inputs[prompt.key] = value;
-        }
-        const authorization = await backend.beginProviderOAuth(providerId, methodIndex, inputs);
-        window.open(authorization.url);
-        const code = authorization.method === "code"
-          ? await textInputModal(this.app, "完成 OpenCode OAuth", authorization.instructions || "粘贴授权码")
-          : undefined;
-        if (authorization.method === "code" && !code) throw new Error("未提供 OpenCode OAuth 授权码");
-        await backend.completeProviderOAuth(providerId, methodIndex, code ?? undefined);
-      } else {
-        const key = await textInputModal(this.app, `配置 ${providerId}`, "API Key", "", { secret: true });
-        if (!key) throw new Error("未提供 API Key");
-        await backend.setProviderApiKey(providerId, key);
+      if (!method) throw new Error(copy.noProviderMethods(providerId));
+      const inputs: Record<string, string> = {};
+      for (const prompt of method.prompts ?? []) {
+        if (!shouldRequestOpenCodeAuthPrompt(prompt, inputs)) continue;
+        const isSecretPrompt = method.type === "api" || /(?:key|token|secret|password)/i.test(prompt.key);
+        const value = prompt.type === "select"
+          ? await selectInputModal(this.app, method.label, prompt.message, prompt.options.map((option) => ({
+            value: option.value,
+            label: option.hint ? `${option.label} · ${option.hint}` : option.label
+          })))
+          : await textInputModal(this.app, method.label, prompt.message, "", {
+            secret: isSecretPrompt
+          });
+        if (value === null) return this.cancelledAgentSnapshot("opencode", current, copy.openCodeCancelled);
+        throwIfAgentSetupAborted(context.signal);
+        inputs[prompt.key] = value;
+        if (isSecretPrompt && value) sensitiveInputs.add(value);
       }
-      const connected = await backend.listConnectedProviders();
-      if (!connected.includes(providerId)) throw new Error(`${providerId} 授权没有通过 OpenCode 复核`);
+      if (method.type === "oauth") {
+        const authorization = await backend.beginProviderOAuth(providerId, methodIndex, inputs, context.signal);
+        throwIfAgentSetupAborted(context.signal);
+        if (!await openExternalInElectron(authorization.url)) throw new Error(copy.invalidOpenCodeUrl);
+        const automaticInstructions = openCodeAutomaticOAuthInstructions(authorization);
+        if (automaticInstructions !== null) {
+          const completed = await confirmModal(
+            this.app,
+            copy.completeOpenCodeOauth,
+            automaticInstructions,
+            copy.completed,
+            copy.cancel
+          );
+          if (!completed) return this.cancelledAgentSnapshot("opencode", current, copy.oauthCancelled);
+          throwIfAgentSetupAborted(context.signal);
+        }
+        const code = authorization.method === "code"
+          ? await textInputModal(this.app, copy.completeOpenCodeOauth, authorization.instructions || copy.pasteCode, "", { secret: true })
+          : undefined;
+        if (authorization.method === "code" && code === null) return this.cancelledAgentSnapshot("opencode", current, copy.oauthCancelled);
+        if (authorization.method === "code" && !code) throw new Error(copy.missingOauthCode);
+        if (code) sensitiveInputs.add(code);
+        throwIfAgentSetupAborted(context.signal);
+        if (!await backend.completeProviderOAuth(providerId, methodIndex, code ?? undefined, context.signal)) {
+          throw new Error(copy.oauthFailed);
+        }
+      } else {
+        let credential = openCodeApiCredential(method, inputs);
+        if (!credential) {
+          const key = await textInputModal(this.app, copy.configureNamedProvider(providerId), copy.apiKey, "", { secret: true });
+          if (key === null) return this.cancelledAgentSnapshot("opencode", current, copy.apiKeyCancelled);
+          if (!key) throw new Error(copy.missingApiKey);
+          credential = { key, metadata: { ...inputs } };
+        }
+        sensitiveInputs.add(credential.key);
+        if (!await backend.setProviderApiKey(providerId, credential.key, credential.metadata, context.signal)) {
+          throw new Error(copy.apiKeySaveFailed);
+        }
+      }
+      throwIfAgentSetupAborted(context.signal);
+      const connected = await backend.listConnectedProviders(context.signal);
+      if (!connected.includes(providerId)) throw new Error(copy.providerVerifyFailed(providerId));
+      const previousProviderId = this.plugin.settings.opencode.providerId.trim();
+      if (previousProviderId !== providerId) this.plugin.settings.opencode.modelId = "";
       this.plugin.settings.opencode.providerId = providerId;
       await this.plugin.saveSettings(true);
-      this.setupSnapshots.opencode = createAgentSetupSnapshot("opencode", "installed", { command: current.command, version: current.version, detail: `${providerId} 已授权，正在选择模型。` });
-      authorized = true;
+      return createAgentSetupSnapshot("opencode", "installed", {
+        command: current.command,
+        version: current.version,
+        detail: copy.providerAuthorized(providerId)
+      });
     } catch (error) {
-      this.setupSnapshots.opencode = this.failedAgentSnapshot("opencode", current.command, error, current.version);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(redactOpenCodeAuthSecrets(rawMessage, sensitiveInputs));
     } finally {
       await backend.disconnect().catch(swallowError("disconnect OpenCode authorization backend"));
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      this.scheduleDisplay();
     }
-    if (authorized) await this.connectAgent("opencode");
   }
 
-  private async authorizeHermesAgent(): Promise<void> {
+  private async performHermesAuthorization(context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
+    const copy = this.copy.setup.agentInstaller.authorization;
     const current = this.setupSnapshots.hermes;
-    if (!current.command) return;
-    this.setupBusy = true;
-    this.setupActiveBackend = "hermes";
-    this.setupAbort = new AbortController();
-    this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", "authorizing", { command: current.command, version: current.version, detail: "Nous Portal 将在系统浏览器中打开…" });
-    this.scheduleDisplay();
-    let authorized = false;
-    try {
-      const result = await authorizeHermesNous({ command: current.command, cwd: this.plugin.getVaultPath(), signal: this.setupAbort.signal });
-      if (result.status === "cancelled") {
-        this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", "cancelled", { command: current.command, version: current.version, detail: "授权已取消。" });
-      } else if (result.status === "failed") {
-        this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", "failed", { command: current.command, version: current.version, detail: "Nous Portal 授权没有完成。", error: result.error || "授权失败", logs: result.logs });
-      } else {
-        this.plugin.settings.agents.hermes.providerId = result.providerId;
-        this.plugin.settings.agents.hermes.modelId = result.modelId;
-        await this.plugin.saveSettings(true);
-        this.setupSnapshots.hermes = createAgentSetupSnapshot("hermes", "installed", { command: current.command, version: current.version, detail: "Nous Portal 已授权，正在验证模型。", logs: result.logs });
-        authorized = true;
-      }
-    } finally {
-      this.setupAbort = null;
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      this.scheduleDisplay();
+    if (!current.command) throw new Error(copy.hermesMissing);
+    const result = await authorizeHermesNous({ command: current.command, cwd: this.plugin.getVaultPath(), signal: context.signal });
+    if (result.status === "cancelled") {
+      return createAgentSetupSnapshot("hermes", "cancelled", { command: current.command, version: current.version, detail: copy.cancelled });
     }
-    if (authorized) await this.connectAgent("hermes");
+    if (result.status === "failed") {
+      return createAgentSetupSnapshot("hermes", "failed", {
+        command: current.command,
+        version: current.version,
+        detail: copy.hermesFailed,
+        error: result.error || copy.failed,
+        logs: result.logs
+      });
+    }
+    this.plugin.settings.agents.hermes.providerId = result.providerId;
+    this.plugin.settings.agents.hermes.modelId = result.modelId;
+    await this.plugin.saveSettings(true);
+    return createAgentSetupSnapshot("hermes", "installed", {
+      command: current.command,
+      version: current.version,
+      detail: copy.hermesAuthorized,
+      logs: result.logs
+    });
+  }
+
+  private cancelledAgentSnapshot(backend: AgentBackendMode, current: AgentSetupSnapshot, detail: string): AgentSetupSnapshot {
+    return createAgentSetupSnapshot(backend, "cancelled", {
+      command: current.command,
+      version: current.version,
+      detail,
+      checkedAt: Date.now()
+    });
   }
 
   private createOpenCodeSetupBackend(command: string): OpenCodeBackend {
@@ -1210,14 +1417,24 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
+  private createOpenCodeAuthorizationBackend(command: string): OpenCodeBackend {
+    return new OpenCodeBackend({
+      ...this.plugin.settings.opencode,
+      cliPath: command,
+      vaultPath: this.plugin.getVaultPath(),
+      ...openCodeAuthorizationConnectionOverrides()
+    });
+  }
+
   private failedAgentSnapshot(backend: AgentBackendMode, command: string | null, error: unknown, version: string | null = null): AgentSetupSnapshot {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = limitedAgentSetupLog(rawMessage, 2_000);
     return createAgentSetupSnapshot(backend, "failed", {
       command,
       version,
-      detail: "连接或安装检查没有完成。",
+      detail: this.copy.setup.agentInstaller.genericFailure,
       error: message,
-      logs: limitedAgentSetupLog(message),
+      logs: limitedAgentSetupLog(rawMessage),
       checkedAt: Date.now()
     });
   }
@@ -1238,7 +1455,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private async openAgentTerminalFallback(backend: AgentBackendMode): Promise<void> {
     if (backend === "hermes") {
-      window.open(HERMES_DOCS_URL);
+      if (!await openExternalInElectron(HERMES_DOCS_URL)) new Notice(this.copy.setup.agentInstaller.hermesDocsOpenFailed);
       return;
     }
     const command = backend === "codex-cli"
@@ -1251,12 +1468,13 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private async completeAgentSetup(): Promise<void> {
     const selected = this.setupSnapshots[this.setupSelectedBackend];
-    if (selected.phase !== "ready") {
+    const backend = readyAgentBackendToCommit(this.setupSelectedBackend, selected);
+    if (!backend) {
       new Notice(this.copy.setup.startBlocked);
       return;
     }
-    this.plugin.settings.agentBackend = this.setupSelectedBackend;
-    this.plugin.settings.agents.defaultBackend = this.setupSelectedBackend;
+    this.plugin.settings.agentBackend = backend;
+    this.plugin.settings.agents.defaultBackend = backend;
     this.plugin.settings.setup = completeSetupState(this.plugin.settings.setup, Date.now(), this.plugin.manifest.version);
     await this.plugin.saveSettings(true);
     await this.plugin.activateView();
@@ -2970,9 +3188,9 @@ function setupRequirementIcon(status: string): string {
   return "circle-x";
 }
 
-function inspectCliVersion(command: string): Promise<string> {
+function inspectCliVersion(command: string, argsPrefix: string[] = []): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(command, ["--version"], { shell: false, timeout: 10_000, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, [...argsPrefix, "--version"], { shell: false, timeout: 10_000, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error([error.message, stderr].filter(Boolean).join("\n")));
         return;
@@ -2996,6 +3214,19 @@ async function openTerminalForSetup(platform: NodeJS.Platform | string): Promise
     }
   }
   return false;
+}
+
+function throwIfAgentSetupAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error("Agent 授权已取消");
+  error.name = "AbortError";
+  throw error;
+}
+
+function isAgentSetupAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const kind = "kind" in error ? String((error as Error & { kind?: unknown }).kind ?? "") : "";
+  return error.name === "AbortError" || kind === "cancelled" || /(?:已取消|cancelled|canceled|aborted|aborterror)/i.test(error.message);
 }
 
 function formatSetupTime(value: number): string {

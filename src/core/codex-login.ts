@@ -16,7 +16,7 @@ export interface CodexLoginRpc {
   onNotification(method: string, handler: (params: unknown) => void): () => void;
 }
 
-export type CodexLoginErrorKind = "failed" | "timeout" | "cancelled" | "invalid-response";
+export type CodexLoginErrorKind = "failed" | "timeout" | "cancelled" | "invalid-response" | "browser-open";
 
 export class CodexLoginError extends Error {
   constructor(readonly kind: CodexLoginErrorKind, message: string) {
@@ -33,7 +33,7 @@ export interface CodexLoginResult {
 export interface CodexLoginOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
-  openUrl?: (url: string) => void;
+  openUrl?: (url: string) => boolean | void | Promise<boolean | void>;
 }
 
 export async function startCodexLogin(rpc: CodexLoginRpc, options: CodexLoginOptions = {}): Promise<CodexLoginResult> {
@@ -77,10 +77,19 @@ export async function startCodexLogin(rpc: CodexLoginRpc, options: CodexLoginOpt
   try {
     if (options.signal?.aborted) throw new CodexLoginError("cancelled", "Codex 登录已取消");
     const response = await rpc.request<CodexLoginStartResponse>("account/login/start", { authMode: "chatgpt" }, 15_000);
+    if (options.signal?.aborted) throw new CodexLoginError("cancelled", "Codex 登录已取消");
     expectedLoginId = String(response?.loginId ?? "").trim();
     const authUrl = String(response?.authUrl ?? response?.authorizationUrl ?? "").trim();
     if (!expectedLoginId || !authUrl) throw new CodexLoginError("invalid-response", "Codex 登录没有返回有效的授权链接");
-    options.openUrl?.(authUrl);
+    if (options.openUrl) {
+      try {
+        const opened = await options.openUrl(authUrl);
+        if (opened === false) throw new Error("系统浏览器拒绝打开授权链接");
+      } catch (error) {
+        throw new CodexLoginError("browser-open", browserOpenFailureMessage(error));
+      }
+    }
+    if (options.signal?.aborted) throw new CodexLoginError("cancelled", "Codex 登录已取消");
     for (const notification of buffered) settleNotification(notification);
     if (!settled) {
       timer = setTimeout(() => {
@@ -117,4 +126,11 @@ function loginFailureMessage(error: unknown): string {
     return `Codex 登录失败：${(error as { message: string }).message}`;
   }
   return "Codex 登录失败，请重试";
+}
+
+function browserOpenFailureMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
+  return detail
+    ? `无法打开 Codex 登录页面：${detail}`
+    : "无法打开 Codex 登录页面，请检查系统浏览器权限后重试";
 }
