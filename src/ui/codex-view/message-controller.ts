@@ -116,6 +116,10 @@ export function ensureThinkingMessage(host: CodexMessageHost, session: StoredSes
   sessionMessageStoreFor(host).ensureThinkingMessage(session, title, text);
 }
 
+export function dismissThinkingMessage(host: CodexMessageHost, session: StoredSession): void {
+  sessionMessageStoreFor(host).dismissThinkingMessage(session);
+}
+
 export function markThinkingAsStreaming(host: CodexMessageHost, session: StoredSession): void {
   sessionMessageStoreFor(host).markThinkingAsStreaming(session);
 }

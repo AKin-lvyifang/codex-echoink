@@ -3,7 +3,9 @@ import type { ProcessFileRef } from "../../types/app-server";
 import { buildDiffSummary, diffSummaryLabel, serializeFileChanges } from "../../core/diff-summary";
 import { basename, reasoningTextFromPayload, summarizeProcessEvent } from "../../core/mapping";
 import { newId } from "../../settings/settings";
-import { insertAgentProcessMessage, isAgentProcessItemType as isProcessItemType } from "./agent-turn-process";
+import { insertAgentProcessMessage, isAgentProcessItemType as isProcessItemType, isAgentTurnTerminalMessage } from "./agent-turn-process";
+
+const TERMINAL_CARRIER_STATUSES = new Set(["completed", "failed", "error", "interrupted", "cancelled", "canceled"]);
 
 export type SessionMessageInput = Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>;
 
@@ -118,6 +120,17 @@ export class SessionMessageStore {
     this.context.renderMessagesIfActive(session);
   }
 
+  dismissThinkingMessage(session: StoredSession): void {
+    const activeId = this.activeThinkingMessageId;
+    this.activeThinkingMessageId = "";
+    if (!activeId) return;
+    const messageIndex = session.messages.findIndex((item) => item.id === activeId);
+    if (messageIndex < 0) return;
+    session.messages.splice(messageIndex, 1);
+    session.updatedAt = Date.now();
+    this.context.renderMessagesIfActive(session);
+  }
+
   markThinkingAsStreaming(session: StoredSession): void {
     const message = session.messages.find((item) => item.id === this.activeThinkingMessageId);
     if (!message || message.status !== "running") return;
@@ -126,14 +139,22 @@ export class SessionMessageStore {
   }
 
   finishThinkingMessage(session: StoredSession, status: string): void {
+    if (/完成|成功/.test(status)) {
+      this.dismissThinkingMessage(session);
+      return;
+    }
     const messageIndex = session.messages.findIndex((item) => item.id === this.activeThinkingMessageId);
     const message = messageIndex >= 0 ? session.messages[messageIndex] : null;
     if (!message) return;
     const hasNativeProcess = session.messages.some((item) => item.id !== message.id
       && sameAgentRun(item, message)
       && isProcessItemType(item.itemType));
+    const hasTerminalCarrier = session.messages.some((item) => item.id !== message.id
+      && sameAgentRun(item, message)
+      && isAgentTurnTerminalMessage(item)
+      && TERMINAL_CARRIER_STATUSES.has(item.status ?? ""));
     session.messages.splice(messageIndex, 1);
-    if (!hasNativeProcess) {
+    if (!hasNativeProcess && !hasTerminalCarrier) {
       const settled = settledThinkingMessage(status);
       message.title = "处理过程";
       message.text = settled.text;

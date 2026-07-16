@@ -38,7 +38,7 @@ export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertCodexChatProcessEventsRenderThroughHarnessSink();
   await assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue();
   await assertLateRunScopedNotificationsDoNotPolluteNextRunView();
-  await assertUsageAndCompactionNotificationsBypassActiveDriver();
+  await assertUsageNotificationsReachDriverWithoutConsumingViewRoute();
   await assertUsageAndCompactionOnlyUpdateMatchingSessionThread();
   await assertViewCloseCancelsActiveRunDuringReload();
   await assertViewCloseDisposesRendererWhenRecoveryFails();
@@ -665,6 +665,7 @@ async function assertKnowledgeWatchdogUsesHarnessCancel(): Promise<void> {
 }
 
 async function assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue(): Promise<void> {
+  const firstMarkdown = "\n\n- **第一轮答案**\n- [保留链接](https://example.com)\n\n";
   const session: StoredSession = {
     id: "session-chat-await",
     title: "Chat await",
@@ -674,7 +675,7 @@ async function assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue(): Pro
     updatedAt: 1
   };
   const harness = createChatSurfaceHarness(session, [
-    { threadId: "thread-chat-await", turnId: "turn-chat-await-1", text: "第一轮答案" },
+    { threadId: "thread-chat-await", turnId: "turn-chat-await-1", text: firstMarkdown },
     { threadId: "thread-chat-await", turnId: "turn-chat-await-2", text: "第二轮答案" }
   ]);
 
@@ -692,6 +693,11 @@ async function assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue(): Pro
   assert.equal(
     session.messages.filter((message) => message.role === "assistant" && message.itemType === "assistant" && message.status === "completed").length,
     2
+  );
+  assert.equal(
+    session.messages.find((message) => message.role === "assistant" && message.runId === harness.terminalCalls[0]?.runId)?.text,
+    firstMarkdown,
+    "asynchronous settlement must preserve nonblank Markdown byte-for-byte"
   );
 }
 
@@ -751,8 +757,9 @@ async function assertLateRunScopedNotificationsDoNotPolluteNextRunView(): Promis
   assert.equal(session.messages.length, 0);
 }
 
-async function assertUsageAndCompactionNotificationsBypassActiveDriver(): Promise<void> {
+async function assertUsageNotificationsReachDriverWithoutConsumingViewRoute(): Promise<void> {
   const hub = new CodexRichNotificationHub();
+  const events: string[] = [];
   const adapter = new CodexRichAgentAdapter({
     displayName: "Codex",
     version: "test",
@@ -773,13 +780,13 @@ async function assertUsageAndCompactionNotificationsBypassActiveDriver(): Promis
     resources: { selected: [], resolvedAt: 0, warnings: [] },
     context: emptyContextBundle(),
     outputContract: { kind: "plain-text" }
-  }, () => undefined);
+  }, (event) => { events.push(event.type); });
 
   assert.equal(hub.dispatch({
     method: "thread/tokenUsage/updated",
     params: {
       threadId: "thread-usage-active",
-      tokenUsage: { total: { totalTokens: 11 } }
+      tokenUsage: { last: { inputTokens: 8, outputTokens: 3 }, total: { totalTokens: 11 } }
     }
   } as any), false);
   assert.equal(hub.dispatch({
@@ -789,6 +796,19 @@ async function assertUsageAndCompactionNotificationsBypassActiveDriver(): Promis
       tokenUsage: { total: { totalTokens: 7 } }
     }
   } as any), false);
+  assert.equal(hub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-usage-active",
+      turn: { id: "turn-usage-active", status: "completed" }
+    }
+  } as any), true);
+  await adapter.awaitResult("run-usage-active");
+  assert.deepEqual(
+    events.filter((type) => type === "usage.updated" || type === "run.completed"),
+    ["usage.updated", "run.completed"],
+    "usage must reach the active driver while remaining available to the View router"
+  );
 }
 
 async function assertUsageAndCompactionOnlyUpdateMatchingSessionThread(): Promise<void> {

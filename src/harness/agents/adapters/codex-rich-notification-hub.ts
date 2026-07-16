@@ -13,7 +13,11 @@ export class CodexRichNotificationHub {
   }
 
   dispatch(notification: CodexNotification): boolean {
-    if (notification.method === "thread/tokenUsage/updated" || notification.method === "thread/compacted") {
+    if (notification.method === "thread/tokenUsage/updated") {
+      this.matchDriver(notification)?.handleNotification(notification);
+      return false;
+    }
+    if (notification.method === "thread/compacted") {
       return false;
     }
     const ids = extractNotificationIds(notification.params);

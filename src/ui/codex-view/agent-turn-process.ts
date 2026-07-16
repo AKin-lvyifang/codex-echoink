@@ -2,6 +2,7 @@ import type { ChatMessage } from "../../settings/settings";
 
 const ACTIVE_STATUSES = new Set(["running", "in_progress", "inProgress", "approval", "blocked"]);
 const FAILED_STATUSES = new Set(["failed", "error", "canceled", "cancelled", "interrupted"]);
+const ATTENTION_PROCESS_STATUSES = new Set(["unconfirmed", "interrupted", "failed", "error", "canceled", "cancelled"]);
 
 export interface CompletedAgentTurn {
   key: string;
@@ -13,6 +14,7 @@ export interface CompletedAgentTurn {
   finalAnswerIndex: number;
   durationMs: number;
   failed: boolean;
+  requiresAttention: boolean;
 }
 
 export type AgentTurnProjectionItem =
@@ -57,7 +59,7 @@ export function buildCompletedAgentTurns(messages: ChatMessage[]): CompletedAgen
     const finalAnswerIndex = indices.slice().reverse().find((index) => isAgentTurnTerminalMessage(messages[index]));
     if (finalAnswerIndex === undefined) continue;
     const relevantIndices = indices.filter((index) => index <= finalAnswerIndex);
-    if (relevantIndices.some((index) => ACTIVE_STATUSES.has(messages[index].status ?? ""))) continue;
+    if (indices.some((index) => ACTIVE_STATUSES.has(messages[index].status ?? ""))) continue;
     const processIndices = relevantIndices.filter((index) => {
       const message = messages[index];
       if (index === finalAnswerIndex || message.role === "user" || message.itemType === "knowledgeBase") return false;
@@ -80,7 +82,8 @@ export function buildCompletedAgentTurns(messages: ChatMessage[]): CompletedAgen
       processStartIndex,
       finalAnswerIndex,
       durationMs: Math.max(0, completedAt - startedAt),
-      failed: finalAnswer.itemType === "error" || FAILED_STATUSES.has(finalAnswer.status ?? "")
+      failed: finalAnswer.itemType === "error" || FAILED_STATUSES.has(finalAnswer.status ?? ""),
+      requiresAttention: processIndices.some((index) => ATTENTION_PROCESS_STATUSES.has(messages[index].status ?? ""))
     });
   }
   return turns.sort((a, b) => a.processStartIndex - b.processStartIndex);

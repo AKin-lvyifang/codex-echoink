@@ -1,11 +1,13 @@
 import { buildDiffSummary, serializeFileChanges, type RawFileChange } from "../../core/diff-summary";
 import { extractProcessFileRefs, normalizeProcessFileRef, summarizeProcessEvent } from "../../core/mapping";
-import type {
-  HarnessContentAvailability,
-  HarnessEvent,
-  HarnessProcessEventData,
-  HarnessToolSemanticKind,
-  HarnessToolStatus
+import {
+  normalizeHarnessRunUsage,
+  type HarnessRunUsage,
+  type HarnessContentAvailability,
+  type HarnessEvent,
+  type HarnessProcessEventData,
+  type HarnessToolSemanticKind,
+  type HarnessToolStatus
 } from "../../harness/contracts/event";
 import type { ChatMessage, DiffFileSummary, DiffSummary } from "../../settings/settings";
 import type { ProcessEventKind, ProcessFileRef } from "../../types/app-server";
@@ -73,6 +75,7 @@ export class HarnessEventProjector {
   private activeProviderMessageId = "";
   private canonicalMessageSegmentId = "";
   private terminalStatus: HarnessProjectionSettlement["status"] | "" = "";
+  private latestRunUsage?: HarnessRunUsage;
 
   constructor(private readonly input: HarnessEventProjectorInput) {
     this.answer = cloneMessage(input.answerMessage);
@@ -123,6 +126,17 @@ export class HarnessEventProjector {
   }
 
   private processEvent(event: HarnessEvent, markChanged: (message: ChatMessage) => void): void {
+    if (event.type === "usage.updated") {
+      const usage = normalizeHarnessRunUsage(event.data?.usage ?? event.data);
+      if (usage) {
+        this.latestRunUsage = { ...usage };
+        if (this.terminalStatus) {
+          this.answer.runUsage = { ...usage };
+          markChanged(this.answer);
+        }
+      }
+      return;
+    }
     if (isReasoningEvent(event.type)) {
       this.closeActiveAnswer("completed", event.createdAt, markChanged);
       this.projectReasoning(event, markChanged);
@@ -223,10 +237,10 @@ export class HarnessEventProjector {
         ? text
         : `${message.text}${text}`;
     }
-    message.status = event.type === "agent.message.completed" ? "completed" : "running";
+    message.status = "running";
     message.itemType = "assistant";
     if (event.type === "agent.message.completed") {
-      message.completedAt = eventTime(event, Date.now());
+      delete message.completedAt;
       this.activeMessageSegmentId = "";
       this.activeProviderMessageId = "";
     } else {
@@ -384,6 +398,7 @@ export class HarnessEventProjector {
       markChanged(message);
     }
 
+    const answerRepositioned = this.prepareTerminalFailureAnswer(settlement.status, createdAt, markChanged);
     const terminalText = visibleString(settlement.text);
     const terminalError = visibleString(settlement.error);
     const nextStatus = settlement.status === "completed" ? "completed" : settlement.status === "cancelled" ? "interrupted" : "failed";
@@ -391,7 +406,7 @@ export class HarnessEventProjector {
     const projectedAnswerText = visibleString(this.answer.text);
     const nextText = settlement.status === "completed"
       ? (this.canonicalMessageSegmentId ? projectedAnswerText || terminalText : terminalText || projectedAnswerText) || emptySettlementText(settlement.status)
-      : terminalError || terminalText || projectedAnswerText || emptySettlementText(settlement.status);
+      : terminalError || terminalText || (!answerRepositioned ? projectedAnswerText : "") || emptySettlementText(settlement.status);
     const alreadySettled = this.terminalStatus === settlement.status
       && this.answer.status === nextStatus
       && this.answer.itemType === nextItemType
@@ -401,7 +416,31 @@ export class HarnessEventProjector {
     this.answer.itemType = nextItemType;
     this.answer.text = nextText;
     this.answer.completedAt = createdAt;
+    if (this.latestRunUsage) this.answer.runUsage = { ...this.latestRunUsage };
     if (!alreadySettled) markChanged(this.answer);
+  }
+
+  private prepareTerminalFailureAnswer(
+    status: HarnessProjectionSettlement["status"],
+    createdAt: number,
+    markChanged: (message: ChatMessage) => void
+  ): boolean {
+    if (status === "completed" || this.terminalStatus) return false;
+    const answerIndex = this.rowOrder.lastIndexOf(this.answer.id);
+    if (answerIndex < 0 || !this.rowOrder.slice(answerIndex + 1).some((id) => this.processById.has(id))) return false;
+
+    if (this.canonicalMessageSegmentId && hasVisibleText(this.answer.text)) {
+      this.demoteCanonicalAnswer(createdAt, markChanged);
+    } else {
+      this.rowOrder.splice(answerIndex, 1);
+    }
+
+    resetAnswerMessage(this.answer, this.answerTemplate, createdAt);
+    this.canonicalMessageSegmentId = terminalAnswerSegmentId(this.input.runId);
+    this.activeMessageSegmentId = "";
+    this.activeProviderMessageId = "";
+    this.rowOrder.push(this.answer.id);
+    return true;
   }
 
   private closeActiveReasoning(status: "completed" | "interrupted", createdAt: number, markChanged: (message: ChatMessage) => void): void {
@@ -432,7 +471,7 @@ export class HarnessEventProjector {
     event: HarnessEvent,
     markChanged: (message: ChatMessage) => void
   ): void {
-    if (this.canonicalMessageSegmentId) this.demoteCanonicalAnswer(markChanged);
+    if (this.canonicalMessageSegmentId) this.demoteCanonicalAnswer(eventTime(event, Date.now()), markChanged);
     resetAnswerMessage(this.answer, this.answerTemplate, eventTime(event, this.answerTemplate.createdAt));
     this.canonicalMessageSegmentId = segmentId;
     this.activeMessageSegmentId = segmentId;
@@ -440,10 +479,12 @@ export class HarnessEventProjector {
     this.rowOrder.push(this.answer.id);
   }
 
-  private demoteCanonicalAnswer(markChanged: (message: ChatMessage) => void): void {
+  private demoteCanonicalAnswer(completedAt: number, markChanged: (message: ChatMessage) => void): void {
     if (!this.canonicalMessageSegmentId) return;
     const historical = cloneMessage(this.answer);
     historical.id = answerSegmentMessageId(this.input.runId, this.canonicalMessageSegmentId);
+    historical.status = "completed";
+    historical.completedAt = completedAt;
     this.answerSegments.set(this.canonicalMessageSegmentId, historical);
     const canonicalIndex = this.rowOrder.lastIndexOf(this.answer.id);
     if (canonicalIndex >= 0) this.rowOrder[canonicalIndex] = historical.id;
@@ -517,7 +558,8 @@ function clearMissingProjectedFields(existing: ChatMessage, projected: ChatMessa
     "processOutput",
     "processInputAvailability",
     "processOutputAvailability",
-    "processContentAvailability"
+    "processContentAvailability",
+    "runUsage"
   ];
   for (const field of optionalFields) {
     if (!hasOwn(projected, field)) delete existing[field];
@@ -942,6 +984,14 @@ function answerSegmentMessageId(runId: string, segmentId: string): string {
   return `inline-answer:${runId}:${segmentId}`;
 }
 
+function terminalAnswerSegmentId(runId: string): string {
+  return `${runId}:terminal`;
+}
+
+function hasVisibleText(value: string): boolean {
+  return value.trim().length > 0;
+}
+
 function nextSegmentId(providerId: string, counts: Map<string, number>): string {
   const count = (counts.get(providerId) ?? 0) + 1;
   counts.set(providerId, count);
@@ -990,6 +1040,7 @@ function hasOwn(value: object, key: PropertyKey): boolean {
 function cloneMessage(message: ChatMessage): ChatMessage {
   return {
     ...message,
+    runUsage: message.runUsage ? { ...message.runUsage } : undefined,
     files: message.files ? [...message.files] : undefined,
     diffSummary: message.diffSummary
       ? { ...message.diffSummary, files: message.diffSummary.files.map((file) => ({ ...file })) }

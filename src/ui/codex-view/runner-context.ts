@@ -74,6 +74,7 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   renderMessages(options?: RunnerMessageRenderOptions): void;
   renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void;
   ensureThinkingMessage(session: StoredSession, title: string, text: string): void;
+  dismissThinkingMessage?(session: StoredSession): void;
   attachTurnIdToRun(session: StoredSession, turnId: string): void;
   finishThinkingMessage(session: StoredSession, status: string): void;
   finishRunningProcessMessages(session: StoredSession, status: string): void;

@@ -264,6 +264,7 @@ import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
 import { runOpenCodeRichRuntimeRegressionTests } from "./opencode-rich-runtime-regression";
 import { runToolBridgeRichEventRegressionTests } from "./tool-bridge-rich-event-regression";
+import { runAnswerCopyRegressionTests } from "./answer-copy-regression";
 import "./hermes-rich-stream-regression";
 import "./harness-event-projector-regression";
 import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, calendarMonthLabel, filterHomeCards, filterHomeCardsByFolder, HOME_CARD_ACTION_LABELS, HOME_CARDS_PAGE_SIZE, HOME_FOLDER_ALL, HOME_SORT_OPTIONS, homeCardFolderScope, homeCardMarkdownLinkToCopy, homeCardObsidianLinkToCopy, homeCardPathToCopy, homeRefineCommandForCard, isSystemHomeCardPath, resolveActiveHomeFilter, resolveDefaultHomeFilter, shiftCalendarMonth, sortHomeCards } from "../home/home-view";
@@ -13433,5 +13434,6 @@ await runPromptEnhancerHarnessTests();
 await runHarnessV3ChatUiTests();
 await runOpenCodeRichRuntimeRegressionTests();
 await runToolBridgeRichEventRegressionTests();
+await runAnswerCopyRegressionTests();
 
 console.log("All tests passed");

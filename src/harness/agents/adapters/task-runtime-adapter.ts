@@ -5,7 +5,7 @@ import type { AgentTaskInput, AgentTaskResult } from "../../../agent/types";
 import { swallowError } from "../../../core/error-handling";
 import type { EchoInkResource } from "../../../resources/types";
 import { noCapabilities, type AgentCapabilities } from "../../contracts/capability";
-import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
+import { normalizeHarnessRunUsage, type HarnessEvent, type HarnessEventSink, type HarnessEventType } from "../../contracts/event";
 import type { NativeExecutionDispositionRequest, NativeExecutionDispositionResult, NativeExecutionKind, NativeExecutionPersistence, NativeExecutionRef } from "../../contracts/native-execution";
 import type { AgentAdapter, AgentConnectContext, AgentConnectionStatus, AgentManifest, AgentRunRequest, AgentRunResult, NativeResourceSnapshot } from "../adapter";
 
@@ -279,8 +279,12 @@ function mapLegacyEvent(event: AgentEvent, manifest: AgentManifest): HarnessEven
       return incompleteHarnessEvent(legacyFileStatusEventType(event), backendId, event.text, event.error, event.toolName, event.resourceId, event.data);
     case "plan_updated":
       return incompleteHarnessEvent("agent.plan.updated", backendId, event.text, undefined, undefined, undefined, event.data);
-    case "usage":
-      return incompleteHarnessEvent("usage.updated", backendId, event.text, undefined, undefined, undefined, event.data);
+    case "usage": {
+      const usage = normalizeHarnessRunUsage(event.data);
+      return incompleteHarnessEvent("usage.updated", backendId, event.text, undefined, undefined, undefined, usage
+        ? { ...event.data, usage }
+        : event.data);
+    }
     default:
       return null;
   }

@@ -3,7 +3,7 @@ import type { AgentBackendMode, ChatMessage, DiffSummary, SettingsLanguage, Stor
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeWorkflowEvent, KnowledgeWorkflowPhaseId } from "../../knowledge-base/types";
 import type { ProcessFileRef, TokenUsage } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
-import { basename, contextUsageView, normalizeProcessFileRef } from "../../core/mapping";
+import { basename, normalizeProcessFileRef } from "../../core/mapping";
 import { diffSummaryLabel, parseFileChangeDiff, type ParsedDiffFile } from "../../core/diff-summary";
 import { displayTextForMessage, isLargeRawMessage } from "../../core/raw-message-store";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../../core/virtual-window";
@@ -13,6 +13,7 @@ import { formatMessageHeaderTime } from "../message-time";
 import { openImageOverlay, renderRichText } from "../render-message";
 import { buildActionTimeline, isActionTimelineItem, type ActionGroupKind, type ActionItemViewModel } from "./action-timeline";
 import { buildAgentTurnProjection, formatAgentTurnDuration, isAgentAnswerMessage, isAgentProcessItemType, type CompletedAgentTurn } from "./agent-turn-process";
+import { copyAnswerMarkdown } from "./answer-copy";
 import { agentRecoveryCopy, missingAgentCliBackend } from "../codex-recovery";
 
 type MessageRenderRow =
@@ -88,20 +89,8 @@ const VIRTUAL_RERENDER_BURST_LIMIT = 24;
 const VIRTUAL_RERENDER_WINDOW_MS = 1000;
 const AGENT_LIVE_COPY_INTERVAL_MS = 1800;
 const PROCESS_CONTENT_UNAVAILABLE_TEXT = "后端未提供可展示内容";
-const COLD_START_STATUS_TEXTS = ["正在理解输入", "正在等待模型响应", "正在整理上下文"];
+const COLD_START_STATUS_TEXT = "正在整理上下文";
 const COLD_START_COPY_TEXTS = ["先把问题看明白", "等模型接上话", "把上下文放到手边"];
-const REPLY_COPY_TEXTS = ["正在组织回答", "把结论排清楚", "尽量说人话"];
-const ACTION_COPY_TEXTS = {
-  read: ["正在翻找相关内容", "把文件线索拎出来", "先看清上下文"],
-  search: ["正在定位相关内容", "把关键词对齐", "缩小搜索范围"],
-  command: ["正在跑检查", "等命令把结果吐出来", "先让终端说实话"],
-  edit: ["正在整理文件改动", "把改动收拢到一处", "对齐文件变化"],
-  tool: ["正在等工具返回", "把工具结果接回来", "检查工具输出"],
-  agent: ["正在等待智能体", "把子任务结果收回来", "等协作结果落地"],
-  plan: ["正在排步骤", "把任务顺序理一下", "先对齐下一步"],
-  verify: ["正在验证结果", "把检查跑完", "确认没有明显回归"],
-  system: ["正在处理系统事件", "把运行状态同步好", "记录过程变化"]
-} as const;
 
 export interface KnowledgeBaseRunProgressState {
   totalCells: number;
@@ -448,6 +437,7 @@ export class CodexMessageListRenderer {
       const content = wrapper.querySelector<HTMLElement>("[data-message-content]");
       if (!content) continue;
       wrapper.toggleClass("codex-message-streaming", update.message.status === "running");
+      wrapper.toggleClass("codex-message-empty-running", update.message.status === "running" && !displayTextForMessage(update.message).trim());
       renderRichText(env.app, env.component, content, displayTextForMessage(update.message));
       updated = true;
       shouldPinBottom = shouldPinBottom || update.shouldPinBottom;
@@ -500,7 +490,7 @@ export class CodexMessageListRenderer {
   private buildVirtualRows(messages: ChatMessage[]): MessageRenderRow[] {
     const rows: MessageRenderRow[] = [];
     const agentHeaderKeys = new Set<string>();
-    const footerMessageId = latestAssistantFooterMessageId(messages);
+    const footerMessageIds = terminalAnswerFooterMessageIds(messages);
     for (const item of buildAgentTurnProjection(messages)) {
       if (item.kind === "completedProcess") {
         const completedTurn = item.turn;
@@ -519,14 +509,14 @@ export class CodexMessageListRenderer {
         continue;
       }
       const headerKey = agentRunHeaderKey(message);
-      const showAgentHeader = isAgentAnswerMessage(message) && !agentHeaderKeys.has(headerKey);
+      const showAgentHeader = isAgentHeaderCandidate(message) && !agentHeaderKeys.has(headerKey);
       if (showAgentHeader) agentHeaderKeys.add(headerKey);
       rows.push({
         id: messageRowId(message),
         kind: "message",
         message,
         showAgentHeader,
-        showAgentFooter: message.id === footerMessageId,
+        showAgentFooter: footerMessageIds.has(message.id),
         processExpanded: isAgentProcessItemType(message.itemType)
       });
     }
@@ -551,6 +541,9 @@ export class CodexMessageListRenderer {
     wrapper.dataset.messageId = message.id;
     wrapper.toggleClass("codex-message-streaming", message.status === "running");
     wrapper.toggleClass(`codex-message-type-${message.itemType ?? "text"}`, true);
+    const emptyRunningAnswer = isAgentAnswerMessage(message) && message.status === "running" && !displayTextForMessage(message).trim();
+    wrapper.toggleClass("codex-message-empty-running", emptyRunningAnswer);
+    wrapper.toggleClass("has-agent-header", options.showAgentHeader);
     const missingBackend = missingAgentCliBackend(message);
     if (missingBackend) {
       this.renderMissingAgentRecovery(wrapper, message, missingBackend);
@@ -558,13 +551,13 @@ export class CodexMessageListRenderer {
     }
     if (options.showAgentHeader) this.renderAgentHeader(wrapper, {
       message,
-      statusLabel: agentHeaderStatusLabel(message),
+      statusLabel: "",
       compact: false
     });
-    if (message.title && !options.showAgentHeader && !isProcessItemType(message.itemType)) {
+    if (!emptyRunningAnswer && shouldRenderMessageTitle(message, options.showAgentHeader)) {
       const title = wrapper.createDiv({ cls: "codex-message-title" });
-      title.createSpan({ cls: "codex-message-title-label", text: message.title });
-      const time = formatMessageHeaderTime(message.createdAt);
+      title.createSpan({ cls: "codex-message-title-label", text: message.title ?? "" });
+      const time = messageTitleTime(message);
       if (time) {
         title.createSpan({
           cls: "codex-message-title-time",
@@ -573,7 +566,6 @@ export class CodexMessageListRenderer {
         });
       }
     }
-    if (shouldRenderProvenanceMeta(message, options.showAgentHeader)) this.renderMessageProvenanceMeta(wrapper, message);
     if (message.attachments?.length) {
       this.renderUserAttachmentChips(wrapper.createDiv({ cls: "codex-message-attachments" }), message.attachments);
     }
@@ -590,6 +582,11 @@ export class CodexMessageListRenderer {
     content.dataset.messageContent = "true";
     if (message.itemType === "thinking") {
       this.renderThinkingMessage(content, message);
+      return;
+    }
+    if (message.itemType === "reasoning") {
+      content.addClass("codex-inline-reasoning");
+      renderRichText(env.app, env.component, content, displayTextForMessage(message));
       return;
     }
     if (isProcessItemType(message.itemType)) {
@@ -636,23 +633,48 @@ export class CodexMessageListRenderer {
     const nameRow = main.createDiv({ cls: "codex-agent-name-row" });
     nameRow.createSpan({ cls: "codex-agent-name", text: "EchoInk" });
     const agent = input.message ? agentModelLine(input.message) : "";
-    if (agent) nameRow.createSpan({ cls: "codex-agent-model-pill", text: agent });
+    if (agent) nameRow.createSpan({ cls: "codex-agent-model-pill", text: `· ${agent}` });
     if (input.statusLabel) main.createDiv({ cls: "codex-agent-status-line", text: input.statusLabel });
   }
 
   private renderAgentFooter(container: HTMLElement, message: ChatMessage): void {
-    const items = agentFooterItems(message, this.requireEnv().tokenUsage);
-    if (!items.length) return;
-    if (message.status === "running") this.requireEnv().onScheduleRunProgress();
+    const env = this.requireEnv();
+    const items = agentFooterItems(message);
     const footer = container.createDiv({ cls: "codex-agent-footer" });
-    for (const item of items) footer.createSpan({ cls: "codex-agent-footer-item", text: item });
-  }
-
-  private renderMessageProvenanceMeta(container: HTMLElement, message: ChatMessage): void {
-    const items = messageProvenanceMetaItems(message);
-    if (!items.length) return;
-    const meta = container.createDiv({ cls: "codex-message-meta" });
-    for (const item of items) meta.createSpan({ cls: "codex-message-meta-item", text: item });
+    const meta = footer.createDiv({ cls: "codex-agent-footer-meta" });
+    for (const item of items) meta.createSpan({ cls: "codex-agent-footer-item", text: item });
+    const copyButton = footer.createEl("button", {
+      cls: "codex-answer-copy",
+      attr: { type: "button", title: "复制回答", "aria-label": "复制回答" }
+    });
+    setIcon(copyButton, "copy");
+    copyButton.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (copyButton.disabled) return;
+      copyButton.disabled = true;
+      const result = await copyAnswerMarkdown(message, env.readRawMessageText, (text) => navigator.clipboard.writeText(text));
+      copyButton.empty();
+      if (result.status === "success") {
+        setIcon(copyButton, "check");
+        copyButton.createSpan({ text: "已复制" });
+        copyButton.setAttr("title", "已复制");
+        copyButton.setAttr("aria-label", "回答已复制");
+      } else {
+        setIcon(copyButton, "triangle-alert");
+        copyButton.createSpan({ text: "复制失败" });
+        copyButton.setAttr("title", "复制失败");
+        copyButton.setAttr("aria-label", "回答复制失败");
+        new Notice(`复制失败：${result.error instanceof Error ? result.error.message : String(result.error)}`);
+      }
+      window.setTimeout(() => {
+        copyButton.empty();
+        setIcon(copyButton, "copy");
+        copyButton.setAttr("title", "复制回答");
+        copyButton.setAttr("aria-label", "复制回答");
+        copyButton.disabled = false;
+      }, 1400);
+    };
   }
 
   private renderKnowledgeBaseResultContent(container: HTMLElement, message: ChatMessage, text: string): boolean {
@@ -865,20 +887,16 @@ export class CodexMessageListRenderer {
     wrapper.dataset.messageId = message.id;
     if (showAgentHeader) this.renderAgentHeader(wrapper, {
       message,
-      statusLabel: message.status === "running" || message.status === "approval" ? "深度思考" : "",
+      statusLabel: "",
       compact: true
     });
     const region = wrapper.createDiv({ cls: "codex-action-region codex-action-stream" });
     this.renderActionItem(region, item, { standalone: false });
-    if (message.status === "running" || message.status === "approval") {
-      this.renderAgentLiveFooter(region, agentLivePhaseForAction(timeline.activeLabel), agentLiveCopyForAction(timeline.activeLabel, message.createdAt));
-      this.requireEnv().onScheduleRunProgress();
-    }
   }
 
   private renderCompletedTurnProcess(container: HTMLElement, turn: CompletedAgentTurn, showAgentHeader: boolean): void {
     const stateId = `${turn.key}:${turn.finalAnswer.id}`;
-    const open = this.openCompletedTurns.get(stateId) ?? turn.failed;
+    const open = this.openCompletedTurns.get(stateId) ?? (turn.failed || turn.requiresAttention);
     const wrapper = container.createDiv({ cls: "codex-message codex-message-tool codex-message-type-turnProcess" });
     if (showAgentHeader) this.renderAgentHeader(wrapper, { message: turn.finalAnswer, statusLabel: "", compact: true });
     const region = wrapper.createDiv({ cls: "codex-turn-process" });
@@ -1048,18 +1066,12 @@ export class CodexMessageListRenderer {
     if (message.status === "running") {
       const row = shell.createDiv({ cls: "codex-thinking-live" });
       row.createSpan({ cls: "codex-thinking-dot" });
-      row.createSpan({ text: thinkingStatusText(message) });
-      this.renderAgentLiveFooter(container, agentLivePhaseForMessage(message), agentLiveCopyForMessage(message));
+      row.createSpan({ text: COLD_START_STATUS_TEXT });
+      row.createSpan({ cls: "codex-agent-live-copy", text: ` · ${rotatingChoice(COLD_START_COPY_TEXTS, message.createdAt)}` });
       env.onScheduleRunProgress();
       return;
     }
     shell.createEl("em", { cls: "codex-response-footer", text: message.text || "思考完成" });
-  }
-
-  private renderAgentLiveFooter(container: HTMLElement, phase: string, copy: string): void {
-    const footer = container.createDiv({ cls: "codex-agent-live-footer" });
-    footer.createSpan({ cls: "codex-agent-live-phase", text: phase });
-    if (copy) footer.createSpan({ cls: "codex-agent-live-copy", text: copy });
   }
 
   private renderProcessMessage(container: HTMLElement, message: ChatMessage, nested = false, forceOpen = false): void {
@@ -1463,106 +1475,64 @@ export function messageProvenanceMetaItems(message: ChatMessage): string[] {
   return items;
 }
 
-function shouldRenderProvenanceMeta(message: ChatMessage, hasAgentHeader: boolean): boolean {
-  if (message.role === "user") return false;
-  if (hasAgentHeader) return false;
-  if (message.itemType === "knowledgeBase") return false;
-  return messageProvenanceMetaItems(message).length > 0;
-}
+const ACTIVE_ANSWER_FOOTER_STATUSES = new Set(["running", "in_progress", "inProgress", "approval", "blocked"]);
+const FAILED_ANSWER_STATUSES = new Set(["failed", "error", "canceled", "cancelled", "interrupted"]);
 
-function latestAssistantFooterMessageId(messages: ChatMessage[]): string {
-  return messages.slice().reverse().find(isAgentAnswerMessage)?.id ?? "";
+export function terminalAnswerFooterMessageIds(messages: ChatMessage[]): Set<string> {
+  const activeKeys = new Set<string>();
+  const finalAnswerByKey = new Map<string, ChatMessage>();
+  for (const message of messages) {
+    const key = agentRunHeaderKey(message);
+    if (ACTIVE_ANSWER_FOOTER_STATUSES.has(message.status ?? "")) activeKeys.add(key);
+    if (isAgentAnswerMessage(message)) finalAnswerByKey.set(key, message);
+  }
+  return new Set(Array.from(finalAnswerByKey.entries())
+    .filter(([key, message]) => !activeKeys.has(key) && !ACTIVE_ANSWER_FOOTER_STATUSES.has(message.status ?? ""))
+    .map(([, message]) => message.id));
 }
 
 function agentRunHeaderKey(message: ChatMessage): string {
-  return message.runId ? `run:${message.runId}` : `message:${message.id}`;
+  if (message.runId) return `run:${message.runId}`;
+  if (message.turnId) return `turn:${message.turnId}`;
+  return `message:${message.id}`;
 }
 
-function agentHeaderStatusLabel(message: ChatMessage): string {
-  if (message.itemType === "thinking") return "";
-  if (message.status === "running") return "深度思考";
-  if (message.status === "failed" || message.status === "error") return "回复失败";
-  return "";
+function isAgentHeaderCandidate(message: ChatMessage): boolean {
+  if (message.role === "user" || message.itemType === "knowledgeBase") return false;
+  return message.itemType !== "thinking" && message.itemType !== "contextCompaction";
+}
+
+export function shouldRenderMessageTitle(message: ChatMessage, hasAgentHeader: boolean): boolean {
+  if (!message.title || isProcessItemType(message.itemType)) return false;
+  if (isAgentAnswerMessage(message)) return FAILED_ANSWER_STATUSES.has(message.status ?? "");
+  return !hasAgentHeader;
+}
+
+export function messageTitleTime(message: ChatMessage): string {
+  return isAgentAnswerMessage(message) ? "" : formatMessageHeaderTime(message.createdAt);
 }
 
 function agentModelLine(message: ChatMessage): string {
-  const backend = message.backendId ? backendDisplayName(message.backendId) : "";
-  return [backend, message.modelId].filter(Boolean).join(" · ");
+  return message.backendId ? backendDisplayName(message.backendId) : "";
 }
 
-function agentFooterItems(message: ChatMessage, tokenUsage?: TokenUsage): string[] {
+export function agentFooterItems(message: ChatMessage): string[] {
   const items: string[] = [];
-  const status = message.status === "running"
-    ? "生成回复中"
-    : message.status === "failed" || message.status === "error"
-      ? "失败"
-      : "已完成";
-  items.push(status);
-  if (message.status === "running") items.push(agentLiveCopyForMessage(message));
-  const model = agentModelLine(message);
-  if (model) items.push(model);
-  const usage = tokenUsage ? contextUsageView(tokenUsage) : null;
-  const lastTokens = tokenUsage?.last?.totalTokens ?? tokenUsage?.last?.inputTokens ?? 0;
-  if (lastTokens > 0) items.push(`本轮 ${formatCompactNumber(lastTokens)} tokens`);
-  if (usage?.percent !== null && usage?.label && usage.label !== "--") items.push(`上下文 ${usage.label}`);
+  const time = formatAnswerFooterTime(message.completedAt ?? message.createdAt);
+  if (time) items.push(time);
+  const totalTokens = message.runUsage?.totalTokens ?? 0;
+  if (totalTokens > 0) items.push(`本轮 ${formatCompactNumber(totalTokens)} tokens`);
   return items;
+}
+
+function formatAnswerFooterTime(value: number): string {
+  return formatMessageHeaderTime(value)
+    .replace(/^星期/, "周")
+    .replace(/([一二三四五六日天])(?=\d{2}:\d{2}$)/, "$1 ");
 }
 
 function formatCompactNumber(value: number): string {
   return Math.round(value).toLocaleString("en-US");
-}
-
-function thinkingStatusText(message: ChatMessage): string {
-  const text = (message.text || "").trim();
-  if (/生成|回复/.test(text)) return "深度思考";
-  if (/上下文|整理/.test(text)) return "正在整理上下文";
-  if (/连接|等待|模型|响应/.test(text)) return COLD_START_STATUS_TEXTS[(rotatingIndex(message.createdAt) + 1) % COLD_START_STATUS_TEXTS.length];
-  if (/理解|输入/.test(text)) return "正在理解输入";
-  return rotatingChoice(COLD_START_STATUS_TEXTS, message.createdAt);
-}
-
-function agentLivePhaseForMessage(message: ChatMessage): string {
-  if (message.status === "failed" || message.status === "error") return "回复失败";
-  if (message.status !== "running") return "已完成";
-  if (message.itemType === "thinking" && thinkingStatusText(message) !== "深度思考") return thinkingStatusText(message);
-  return "生成回复中";
-}
-
-function agentLiveCopyForMessage(message: ChatMessage): string {
-  if (message.status !== "running") return "";
-  if (message.itemType === "thinking" && thinkingStatusText(message) !== "深度思考") return rotatingChoice(COLD_START_COPY_TEXTS, message.createdAt);
-  return rotatingChoice(REPLY_COPY_TEXTS, message.createdAt);
-}
-
-function agentLivePhaseForAction(label: string): string {
-  const kind = actionLiveKind(label);
-  if (kind === "command") return "运行命令中";
-  if (kind === "edit") return "编辑文件中";
-  if (kind === "read") return "读取文件中";
-  if (kind === "search") return "检索内容中";
-  if (kind === "tool") return "调用工具中";
-  if (kind === "agent") return "等待智能体";
-  if (kind === "plan") return "更新计划中";
-  if (kind === "verify") return "运行验证中";
-  if (/等待确认/.test(label)) return "等待确认";
-  if (/失败/.test(label)) return "动作失败";
-  return "处理过程中";
-}
-
-function agentLiveCopyForAction(label: string, createdAt?: number): string {
-  return rotatingChoice(ACTION_COPY_TEXTS[actionLiveKind(label)], createdAt);
-}
-
-function actionLiveKind(label: string): keyof typeof ACTION_COPY_TEXTS {
-  if (/命令|运行/.test(label)) return "command";
-  if (/编辑|文件改动/.test(label)) return "edit";
-  if (/读取/.test(label)) return "read";
-  if (/检索|搜索/.test(label)) return "search";
-  if (/工具/.test(label)) return "tool";
-  if (/智能体/.test(label)) return "agent";
-  if (/计划/.test(label)) return "plan";
-  if (/验证|检查/.test(label)) return "verify";
-  return "system";
 }
 
 function rotatingChoice<T>(items: readonly T[], createdAt?: number): T {
@@ -1745,7 +1715,6 @@ function iconForProcessMessage(message: ChatMessage): string {
 
 function iconForItemType(itemType?: string): string {
   const icons: Record<string, string> = {
-    reasoning: "brain",
     plan: "list-checks",
     commandExecution: "terminal",
     fileChange: "file-diff",
@@ -1759,7 +1728,6 @@ function iconForItemType(itemType?: string): string {
 function titleForItemType(message: ChatMessage): string {
   if (message.title) return message.title;
   const titles: Record<string, string> = {
-    reasoning: "已思考",
     plan: "更新计划",
     commandExecution: "使用命令",
     fileChange: "编辑文件",

@@ -103,6 +103,29 @@ export function messageRenderOptionsForRunUpdate(view: MessageRenderFollowContex
   return { forceBottom, preserveScroll: !forceBottom };
 }
 
+export function selectFirstNonBlankText(...candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return "";
+}
+
+export function shouldDismissThinkingForHarnessEvent(event: HarnessEvent): boolean {
+  if (event.type.startsWith("tool.") || event.type.startsWith("file.change.")) return true;
+  const hasVisibleText = typeof event.text === "string" && Boolean(event.text.trim());
+  if (event.type === "agent.message.delta" || event.type === "agent.message.completed" || event.type === "agent.plan.updated") {
+    return hasVisibleText;
+  }
+  if (event.type === "agent.thinking.delta"
+    || event.type === "agent.thinking.completed"
+    || event.type === "agent.reasoning.started"
+    || event.type === "agent.reasoning.summary.delta"
+    || event.type === "agent.reasoning.summary.completed") {
+    return hasVisibleText && (!event.data?.visibility || event.data.visibility === "public");
+  }
+  return false;
+}
+
 export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId: string): Promise<void> {
   if (!canStartQueuedTurn({
     queueStartInProgress: view.queueStartInProgress,
@@ -209,10 +232,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   const assistantMessage: ChatMessage = {
     id: newId("msg"),
     role: "assistant",
-    title: agentChatTitle(backend),
     itemType: "assistant",
     status: "running",
-    text: `${agentChatTitle(backend)} 正在处理...`,
+    text: "",
     ...provenance,
     runId,
     createdAt: Date.now()
@@ -303,8 +325,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     });
     const completed = output.status === "completed";
     const cancelled = output.status === "cancelled";
-    assistantMessage.title = completed ? agentChatTitle(backend) : cancelled ? "已中断" : `${agentChatTitle(backend)} 发送失败`;
-    assistantMessage.text = (assistantMessage.text || output.outputText || output.error || "").trim() || "Agent 未返回内容。";
+    if (completed) delete assistantMessage.title;
+    else assistantMessage.title = cancelled ? "已中断" : "回复失败";
+    assistantMessage.text = selectFirstNonBlankText(assistantMessage.text, output.outputText, output.error) || "Agent 未返回内容。";
     assistantMessage.completedAt = Date.now();
     view.finishThinkingMessage(session, cancelled ? "中断" : completed ? "完成" : "失败");
     view.finishRunningProcessMessages(session, completed ? "completed" : "interrupted");
@@ -320,7 +343,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       error: message,
       createdAt: Date.now()
     });
-    assistantMessage.title = `${agentChatTitle(backend)} 发送失败`;
+    assistantMessage.title = "回复失败";
     assistantMessage.completedAt = Date.now();
     applyMessageProvenance(assistantMessage, provenance);
     view.finishThinkingMessage(session, "失败");
@@ -369,8 +392,9 @@ async function recoverRunningChatSettlementFailure(input: {
       error: message || "Agent 收口失败",
       createdAt: Date.now()
     });
-    assistantMessage.title = `${agentChatTitle(backend)} 收口失败`;
+    assistantMessage.title = "回复失败";
     assistantMessage.completedAt = Date.now();
+    view.finishThinkingMessage?.(session, "失败");
     await view.plugin.externalizeMessageText?.(assistantMessage, assistantMessage.text).catch(() => undefined);
     await persistAndSettleChatRun(view.plugin, {
       runId,
@@ -423,8 +447,14 @@ async function settleRunningChatTurn(input: {
     error: result.error,
     createdAt: Date.now()
   });
-  assistantMessage.title = completed ? agentChatTitle(backend) : cancelled ? "已中断" : `${agentChatTitle(backend)} 发送失败`;
-  assistantMessage.text = (assistantMessage.text || result.outputText || result.error || (cancelled ? "本轮对话已中断。" : "")).trim() || "Agent 未返回内容。";
+  if (completed) delete assistantMessage.title;
+  else assistantMessage.title = cancelled ? "已中断" : "回复失败";
+  assistantMessage.text = selectFirstNonBlankText(
+    assistantMessage.text,
+    result.outputText,
+    result.error,
+    cancelled ? "本轮对话已中断。" : ""
+  ) || "Agent 未返回内容。";
   assistantMessage.completedAt = Date.now();
   view.finishThinkingMessage?.(session, cancelled ? "中断" : completed ? "完成" : "失败");
   view.finishRunningProcessMessages?.(session, completed ? "completed" : "interrupted");
@@ -602,21 +632,7 @@ function updateEchoInkThinkingLifecycle(view: CodexViewTurnContext, session: Sto
     view.ensureThinkingMessage(session, "思考中", "正在等待模型响应...");
     return;
   }
-  if (event.type === "agent.thinking.delta"
-    || event.type === "agent.thinking.completed"
-    || event.type === "agent.reasoning.started"
-    || event.type === "agent.reasoning.summary.delta"
-    || event.type === "agent.reasoning.summary.completed") {
-    view.ensureThinkingMessage(session, "思考中", "正在分析问题...");
-    return;
-  }
-  if (event.type === "agent.message.delta") {
-    view.ensureThinkingMessage(session, "生成中", "正在生成回复...");
-    return;
-  }
-  if (event.type.startsWith("tool.") || event.type.startsWith("file.change.")) {
-    view.ensureThinkingMessage(session, "处理中", "正在执行任务...");
-  }
+  if (shouldDismissThinkingForHarnessEvent(event)) view.dismissThinkingMessage?.(session);
 }
 
 function codexNativeThreadIdForSession(session: StoredSession): string | undefined {

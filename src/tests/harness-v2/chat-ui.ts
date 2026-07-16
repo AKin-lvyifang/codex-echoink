@@ -8,9 +8,9 @@ import type { QueuedTurnItem } from "../../ui/turn-queue";
 import { buildActionTimeline } from "../../ui/codex-view/action-timeline";
 import { buildAgentTurnProjection } from "../../ui/codex-view/agent-turn-process";
 import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAgentEventForChat } from "../../ui/codex-view/agent-event-renderer";
-import { actionVerb, messageProvenanceMetaItems } from "../../ui/codex-view/message-list";
+import { actionVerb, agentFooterItems, messageProvenanceMetaItems, messageTitleTime, shouldRenderMessageTitle, terminalAnswerFooterMessageIds } from "../../ui/codex-view/message-list";
 import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
-import { messageRenderOptionsForRunUpdate, startChatTurn } from "../../ui/codex-view/turn-runner";
+import { messageRenderOptionsForRunUpdate, selectFirstNonBlankText, shouldDismissThinkingForHarnessEvent, startChatTurn } from "../../ui/codex-view/turn-runner";
 import { renderTabsView } from "../../ui/codex-view/session-controller";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
@@ -29,6 +29,8 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.ok(completedProcess && completedProcess.kind === "completedProcess");
   assert.deepEqual(completedProcess.turn.processMessages.map((message) => message.id), ["reasoning", "command"]);
   assert.equal(completedProcess.turn.finalAnswer.id, "answer");
+  testActiveProcessAfterAnswerPreventsFolding();
+  testExceptionalProcessRequiresAttention();
 
   const timeline = buildActionTimeline(completedMessages);
   assert.equal(timeline.totalCount, 1);
@@ -65,7 +67,10 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   });
   assert.equal(codexState.thinkingBlocks.length, 1);
 
-  testCompletedTurnKeepsBackendNeutralProcessSummary();
+  testCompletedTurnRemovesColdStartFallback();
+  testColdStartWaitsForVisibleProviderContent();
+  testAnswerFooterIsFrozenPerRun();
+  testProductionSettlementPreservesNonBlankMarkdown();
   await testUnifiedChatHarnessTurn();
   await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
@@ -82,22 +87,65 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.doesNotMatch(turnRunnerSource, /harnessBackendUsesThinkingMessage/);
   assert.match(messageListSource, /buildAgentTurnProjection\(messages\)/);
   assert.match(messageListSource, /tryUpdateMessage\(message:\s*ChatMessage\)/);
-  assert.match(messageListSource, /message\.status !== "running"/);
-  assert.match(messageListSource, /COLD_START_STATUS_TEXTS/);
-  assert.match(messageListSource, /本轮 \$\{formatCompactNumber\(lastTokens\)\} tokens/);
-  assert.match(messageListSource, /上下文 \$\{usage\.label\}/);
+  assert.match(messageListSource, /COLD_START_STATUS_TEXT = "正在整理上下文"/);
+  assert.match(messageListSource, /` · \$\{rotatingChoice\(COLD_START_COPY_TEXTS/);
+  assert.match(messageListSource, /content\.addClass\("codex-inline-reasoning"\)/);
+  assert.doesNotMatch(messageListSource, /setIcon\([^\n]*"brain"/);
+  assert.match(messageListSource, /message\.runUsage\?\.totalTokens/);
+  assert.match(messageListSource, /copyAnswerMarkdown\(message/);
+  assert.doesNotMatch(messageListSource, /renderMessageProvenanceMeta/);
+  assert.doesNotMatch(messageListSource, /上下文 \$\{usage\.label\}/);
   assert.match(messageListSource, /formatAgentTurnDuration/);
-  for (const selector of [".codex-agent-header", ".codex-message-type-actionStream", ".codex-turn-process", ".codex-action-region"]) {
+  assert.match(messageListSource, /turn\.failed\s*\|\|\s*turn\.requiresAttention/);
+  for (const selector of [".codex-agent-header", ".codex-message-type-actionStream", ".codex-turn-process", ".codex-action-region", ".codex-inline-reasoning", ".codex-agent-footer-meta", ".codex-answer-copy"]) {
     assert.ok(styles.includes(`${selector} {`) || styles.includes(`${selector},`), `Missing UI selector ${selector}`);
   }
+  assert.match(styles, /\.codex-message-empty-running:not\(\.has-agent-header\)\s*\{[\s\S]*display:\s*none/);
+  assert.match(styles, /\.codex-message-empty-running\.has-agent-header\s*>\s*\.codex-message-content\s*\{[\s\S]*display:\s*none/);
+  assert.match(styles, /\.codex-thinking-live\s+\.codex-agent-live-copy::before\s*\{[^{}]*content:\s*none[^{}]*margin:\s*0/);
   assert.match(styles, /\.codex-agent-avatar\s*\{[\s\S]*background:\s*#8b5cf6/);
   for (const selector of [".codex-process-raw-title", ".codex-diff-stats", ".codex-diff-file-path", ".codex-process-file-link.codex-diff-file-path"]) {
     const escaped = selector.replaceAll(".", "\\.");
     assert.match(styles, new RegExp(`${escaped}\\s*(?:,[^{}]+)?\\{[^{}]*font-weight:\\s*400`));
   }
-  assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name-row\s*\{[\s\S]*flex-wrap:\s*wrap/);
+  const narrow420Start = styles.indexOf("@container (max-width: 420px)");
+  const narrow360Start = styles.indexOf("@container (max-width: 360px)", narrow420Start);
+  assert.ok(narrow420Start >= 0 && narrow360Start > narrow420Start, "narrow chat breakpoints must exist in descending order");
+  const narrow420Styles = styles.slice(narrow420Start, narrow360Start);
+  const narrow360Styles = styles.slice(narrow360Start);
+  assert.match(narrow420Styles, /\.codex-agent-name-row\s*\{[^{}]*flex-wrap:\s*nowrap/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-agent-name\s*\{[\s\S]*white-space:\s*nowrap/);
+  assert.match(narrow420Styles, /\.codex-agent-model-pill\s*\{[^{}]*min-width:\s*0/);
+  assert.match(narrow420Styles, /\.codex-agent-model-pill\s*\{[^{}]*flex:\s*0\s+1\s+auto/);
+  assert.doesNotMatch(narrow420Styles, /\.codex-agent-model-pill\s*\{[^{}]*flex:\s*1\s+1\s+100%/);
+  assert.doesNotMatch(narrow360Styles, /\.codex-agent-model-pill\s*\{[^{}]*flex:\s*1\s+1\s+100%/);
   assert.match(styles, /@container\s*\(max-width:\s*420px\)[\s\S]*\.codex-kb-maintain-report-path\s*\{[\s\S]*overflow-wrap:\s*anywhere[\s\S]*white-space:\s*normal/);
+}
+
+function testActiveProcessAfterAnswerPreventsFolding(): void {
+  const messages: ChatMessage[] = [
+    { id: "user-active-after", role: "user", text: "继续", runId: "run-active-after", createdAt: 1 },
+    { id: "reasoning-active-after", role: "assistant", itemType: "reasoning", processKind: "reasoning", text: "先分析", status: "completed", runId: "run-active-after", createdAt: 2, completedAt: 3 },
+    { id: "answer-active-after", role: "assistant", itemType: "assistant", text: "先说明", status: "completed", runId: "run-active-after", createdAt: 4, completedAt: 5 },
+    { id: "tool-active-after", role: "tool", itemType: "dynamicToolCall", processKind: "view", text: "读取中", status: "running", runId: "run-active-after", createdAt: 6 }
+  ];
+
+  const projection = buildAgentTurnProjection(messages);
+  assert.equal(projection.some((item) => item.kind === "completedProcess"), false, "a process row after the answer must keep the whole run expanded while it is active");
+  assert.equal(projection.some((item) => item.kind === "message" && item.message.id === "tool-active-after"), true);
+}
+
+function testExceptionalProcessRequiresAttention(): void {
+  for (const status of ["unconfirmed", "interrupted", "failed", "error", "cancelled"] as const) {
+    const messages = createAgentTurn("completed");
+    const command = messages.find((message) => message.id === "command");
+    assert.ok(command);
+    command.status = status;
+    const turn = buildAgentTurnProjection(messages).find((item) => item.kind === "completedProcess");
+    assert.ok(turn && turn.kind === "completedProcess");
+    assert.equal(turn.turn.failed, false, `${status} process state must not impersonate a failed final answer`);
+    assert.equal(turn.turn.requiresAttention, true, `${status} process state must default the completed process disclosure open`);
+  }
 }
 
 function testUnconfirmedAndInterruptedActionsStayHonest(): void {
@@ -135,7 +183,7 @@ function testUnconfirmedAndInterruptedActionsStayHonest(): void {
   assert.equal(actionVerb(interrupted.groups[0].items[0]), "读取已中断");
 }
 
-function testCompletedTurnKeepsBackendNeutralProcessSummary(): void {
+function testCompletedTurnRemovesColdStartFallback(): void {
   const session: StoredSession = {
     id: "chat-process-fallback",
     title: "Process fallback",
@@ -160,10 +208,141 @@ function testCompletedTurnKeepsBackendNeutralProcessSummary(): void {
   store.finishThinkingMessage(session, "完成");
 
   const fallback = session.messages.find((message) => message.itemType === "thinking");
-  assert.equal(fallback?.status, "completed");
-  assert.equal(fallback?.text, "处理完成");
+  assert.equal(fallback, undefined, "successful turns must remove the cold-start row instead of inserting a completed fallback");
   const projection = buildAgentTurnProjection(session.messages);
-  assert.equal(projection.some((item) => item.kind === "completedProcess"), true);
+  assert.equal(projection.some((item) => item.kind === "completedProcess"), false);
+
+  const failedSession: StoredSession = {
+    ...session,
+    id: "chat-process-failure",
+    messages: [
+      { id: "user-failure", role: "user", text: "ping", runId: "run-fallback", createdAt: 4_000 },
+      { id: "answer-failure", role: "assistant", itemType: "error", title: "回复失败", text: "boom", status: "failed", runId: "run-fallback", createdAt: 5_000, completedAt: 6_000 }
+    ]
+  };
+  store.ensureThinkingMessage(failedSession, "初始化", "正在初始化 EchoInk 运行...");
+  store.finishThinkingMessage(failedSession, "失败");
+  const failureFallback = failedSession.messages.find((message) => message.itemType === "thinking");
+  assert.equal(failureFallback, undefined, "a terminal error answer must be the only failure state for its run");
+  assert.equal(failedSession.messages.filter((message) => message.runId === "run-fallback" && message.status === "failed").length, 1);
+
+  const cancelledSession: StoredSession = {
+    ...session,
+    id: "chat-process-cancelled",
+    messages: [
+      { id: "user-cancelled", role: "user", text: "ping", runId: "run-fallback", createdAt: 7_000 },
+      { id: "answer-cancelled", role: "assistant", itemType: "error", title: "已中断", text: "cancelled", status: "interrupted", runId: "run-fallback", createdAt: 8_000, completedAt: 9_000 }
+    ]
+  };
+  store.ensureThinkingMessage(cancelledSession, "初始化", "正在初始化 EchoInk 运行...");
+  store.finishThinkingMessage(cancelledSession, "中断");
+  assert.equal(cancelledSession.messages.some((message) => message.itemType === "thinking"), false);
+  assert.equal(cancelledSession.messages.filter((message) => message.runId === "run-fallback" && message.status === "interrupted").length, 1);
+
+  const legacyFailureSession: StoredSession = {
+    ...session,
+    id: "chat-process-legacy-failure",
+    messages: [{ id: "user-legacy-failure", role: "user", text: "ping", runId: "run-fallback", createdAt: 10_000 }]
+  };
+  store.ensureThinkingMessage(legacyFailureSession, "初始化", "正在初始化 EchoInk 运行...");
+  store.finishThinkingMessage(legacyFailureSession, "失败");
+  const legacyFallback = legacyFailureSession.messages.find((message) => message.itemType === "thinking");
+  assert.equal(legacyFallback?.status, "failed", "legacy callers without a terminal carrier must retain one honest fallback state");
+  assert.equal(legacyFallback?.text, "处理失败");
+}
+
+function testColdStartWaitsForVisibleProviderContent(): void {
+  const delayedReasoning = [
+    harnessEvent("run-delayed-reasoning", 1, "agent.reasoning.started", { data: { visibility: "public" } }),
+    harnessEvent("run-delayed-reasoning", 2, "agent.reasoning.summary.delta", { text: " \n ", data: { visibility: "public" } }),
+    harnessEvent("run-delayed-reasoning", 3, "agent.reasoning.summary.delta", { text: "真正可见的推理", data: { visibility: "public" } })
+  ];
+  assert.deepEqual(delayedReasoning.map(shouldDismissThinkingForHarnessEvent), [false, false, true]);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-message", 1, "agent.message.completed", { text: "" })), false);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-message", 2, "agent.message.delta", { text: "回答" })), true);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-plan", 1, "agent.plan.updated", { text: "" })), false);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-plan", 2, "agent.plan.updated", { text: "执行计划" })), true);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-tool", 1, "tool.started", {})), true);
+  assert.equal(shouldDismissThinkingForHarnessEvent(harnessEvent("run-visible-file", 1, "file.change.proposed", {})), true);
+}
+
+function testProductionSettlementPreservesNonBlankMarkdown(): void {
+  const markdown = "\n\n- **保留列表**\n- [保留链接](https://example.com)\n\n";
+  assert.equal(selectFirstNonBlankText("", " \n ", markdown, "fallback"), markdown);
+  assert.equal(selectFirstNonBlankText("", " \n "), "");
+
+  const failedAnswer: ChatMessage = {
+    id: "failed-answer-title-time",
+    role: "assistant",
+    itemType: "error",
+    title: "回复失败",
+    text: "boom",
+    status: "failed",
+    createdAt: new Date(2026, 6, 17, 1, 1).getTime(),
+    completedAt: new Date(2026, 6, 17, 1, 51).getTime()
+  };
+  assert.equal(shouldRenderMessageTitle(failedAnswer, true), true);
+  assert.equal(messageTitleTime(failedAnswer), "", "failed answer title must not repeat its createdAt timestamp");
+  assert.deepEqual(agentFooterItems(failedAnswer), ["周五 01:51"], "the answer footer must retain its terminal completedAt timestamp");
+}
+
+function testAnswerFooterIsFrozenPerRun(): void {
+  const firstCompletedAt = new Date(2026, 6, 17, 1, 51).getTime();
+  const secondCompletedAt = new Date(2026, 6, 17, 2, 3).getTime();
+  const first: ChatMessage = {
+    id: "answer-footer-first",
+    role: "assistant",
+    itemType: "assistant",
+    text: "first",
+    status: "completed",
+    runId: "run-footer-first",
+    backendId: "codex-cli",
+    contextMode: "incremental",
+    runUsage: { totalTokens: 31_287 },
+    createdAt: firstCompletedAt - 1_000,
+    completedAt: firstCompletedAt
+  };
+  const second: ChatMessage = {
+    id: "answer-footer-second",
+    role: "assistant",
+    itemType: "assistant",
+    text: "second",
+    status: "completed",
+    runId: "run-footer-second",
+    backendId: "hermes",
+    runUsage: { totalTokens: 99 },
+    createdAt: secondCompletedAt - 1_000,
+    completedAt: secondCompletedAt
+  };
+  const missingUsage: ChatMessage = {
+    id: "answer-footer-no-usage",
+    role: "assistant",
+    itemType: "assistant",
+    text: "no usage",
+    status: "completed",
+    runId: "run-footer-no-usage",
+    createdAt: secondCompletedAt,
+    completedAt: secondCompletedAt
+  };
+  const knowledge: ChatMessage = {
+    id: "knowledge-no-footer",
+    role: "assistant",
+    itemType: "knowledgeBase",
+    text: "report",
+    status: "completed",
+    runId: "run-knowledge-no-footer",
+    createdAt: secondCompletedAt
+  };
+  const footerIds = terminalAnswerFooterMessageIds([first, second, missingUsage, knowledge]);
+  assert.deepEqual(Array.from(footerIds), [first.id, second.id, missingUsage.id]);
+  assert.deepEqual(agentFooterItems(first), ["周五 01:51", "本轮 31,287 tokens"]);
+  assert.deepEqual(agentFooterItems(missingUsage), ["周五 02:03"], "missing usage must not render a fake zero");
+  assert.equal(agentFooterItems(first).some((item) => /Codex|上下文|Context|已完成/.test(item)), false);
+  assert.equal(shouldRenderMessageTitle({ ...first, title: "Codex", status: "completed" }, true), false, "successful answers must not repeat a title beside the run header");
+  assert.equal(shouldRenderMessageTitle({ ...first, itemType: "error", title: "回复失败", status: "failed" }, true), true, "failed state must remain visible even when the same row owns the run header");
+  assert.equal(shouldRenderMessageTitle({ ...first, itemType: "error", title: "已中断", status: "interrupted" }, true), true, "interrupted state must remain visible even when the same row owns the run header");
+  second.runUsage = { totalTokens: 100 };
+  assert.deepEqual(agentFooterItems(first), ["周五 01:51", "本轮 31,287 tokens"], "later run usage must not mutate an earlier footer");
 }
 
 async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> {
@@ -245,6 +424,7 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
 }
 
 async function testUnifiedChatHarnessTurn(): Promise<void> {
+  const expectedMarkdown = "\n\n- **统一答复**\n- [原始链接](https://example.com)\n\n";
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.agentBackend = "hermes";
   settings.capabilities.chatBackend = "hermes";
@@ -295,14 +475,15 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
       capturedRequest = input.request;
       const runId = String(input.request.runId);
       await input.sink(harnessEvent(runId, 1, "agent.thinking.delta", { text: "正在分析" }));
-      await input.sink(harnessEvent(runId, 2, "agent.message.delta", { text: "统一答复" }));
+      await input.sink(harnessEvent(runId, 2, "agent.message.delta", { text: expectedMarkdown }));
       await input.sink(harnessEvent(runId, 3, "tool.requested", { toolName: "read_file", data: { toolCallId: "tool-1" } }));
       await input.sink(harnessEvent(runId, 4, "tool.completed", { toolName: "read_file", data: { toolCallId: "tool-1", output: "ok" } }));
-      await input.sink(harnessEvent(runId, 5, "run.completed", { text: "统一答复", status: "completed" }));
+      await input.sink(harnessEvent(runId, 5, "usage.updated", { data: { usage: { totalTokens: 21, inputTokens: 16, outputTokens: 5 } } }));
+      await input.sink(harnessEvent(runId, 6, "run.completed", { text: expectedMarkdown, status: "completed" }));
       return {
         runId,
         status: "completed" as const,
-        outputText: "统一答复",
+        outputText: expectedMarkdown,
         backendBinding: {
           backendId: "hermes",
           nativeSessionId: "hermes-native-1",
@@ -321,6 +502,7 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   let running = false;
   let thinkingStarts = 0;
   let thinkingFinishes = 0;
+  let thinkingDismisses = 0;
   const view: any = {
     plugin,
     get running() { return running; },
@@ -349,6 +531,7 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
       activeRunSessionId = "";
     },
     ensureThinkingMessage: () => { thinkingStarts += 1; },
+    dismissThinkingMessage: () => { thinkingDismisses += 1; },
     armTurnWatchdog: () => undefined,
     attachTurnIdToRun: () => undefined,
     finishThinkingMessage: () => { thinkingFinishes += 1; },
@@ -365,10 +548,13 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   assert.equal(capturedRequest?.workflow, "chat.generic");
   assert.equal(session.messages.filter((message) => message.role === "user").length, 1);
   const answer = session.messages.find((message) => message.role === "assistant" && message.itemType === "assistant");
-  assert.equal(answer?.text, "统一答复");
+  assert.equal(answer?.text, expectedMarkdown, "synchronous settlement must preserve nonblank Markdown byte-for-byte");
   assert.equal(answer?.backendId, "hermes");
+  assert.equal(answer?.title, undefined);
+  assert.deepEqual(answer?.runUsage, { totalTokens: 21, inputTokens: 16, outputTokens: 5 });
   assert.equal(answer?.nativeLeaseId, "lease-hermes-1");
   assert.equal(thinkingStarts > 0, true, "Hermes must use the same EchoInk thinking lifecycle as other backends");
+  assert.equal(thinkingDismisses > 0, true, "the first public process event must dismiss the single cold-start row");
   assert.equal(thinkingFinishes, 1);
   assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "reasoning" && /正在分析/.test(message.text)), true);
   assert.equal(session.messages.some((message) => message.id.includes("inline-process") && message.itemType === "dynamicToolCall" && message.processKind === "view"), true);
