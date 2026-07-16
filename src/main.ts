@@ -1,6 +1,7 @@
 import { Plugin } from "obsidian";
 import type { CodexService, TurnOptions } from "./core/codex-service";
 import type { AgentBackendKind } from "./agent/types";
+import { AgentRuntimeHealthStore } from "./core/agent-runtime-health";
 import type { CodexRichAgentAdapterOptions } from "./harness/agents/adapters/codex-rich-adapter";
 import type { HarnessEventSink } from "./harness/contracts/event";
 import type { LocalRunCommitResult, NativeExecutionRecord } from "./harness/contracts/native-execution";
@@ -43,6 +44,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   lastStatus: CodexStatusSnapshot | null = null;
   agentSetupTarget: AgentBackendMode | null = null;
   agentSetupAutoRepair = false;
+  readonly agentRuntimeHealth = new AgentRuntimeHealthStore();
   private editorActions: EditorActionController | null = null;
   private knowledgeBase: KnowledgeBaseManager | null = null;
   private review: ReviewManager | null = null;
@@ -50,7 +52,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   private settingsStore: EchoInkSettingsStore | null = null;
   private viewService: EchoInkViewService | null = null;
   private harnessService: EchoInkHarnessService | null = null;
-
   async onload(): Promise<void> {
     await this.loadSettings();
     const controllers = registerEchoInkPluginFeatures(this);
@@ -171,6 +172,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   getEditorActions(): EditorActionController | null { return this.editorActions; }
 
   private handleCodexNotification(notification: CodexNotification): void {
+    if (notification.method === "error") this.agentRuntimeHealth.reportFailure("codex-cli", notification.params, { source: "codex-notification" });
     if (this.getHarnessService().handleCodexNotification(notification)) return;
     this.getCodexView()?.handleCodexNotification(notification);
   }

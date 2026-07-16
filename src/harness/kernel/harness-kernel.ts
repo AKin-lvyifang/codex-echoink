@@ -43,8 +43,8 @@ export class EchoInkHarnessKernel {
     return await this.orchestrator.run(input.request, input.sink, { sessionProvider: input.sessionProvider });
   }
 
-  async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> {
-    await this.orchestrator.settleRunTerminal(input, sink);
+  async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<HarnessEvent> {
+    return await this.orchestrator.settleRunTerminal(input, sink);
   }
 
   async appendRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink): Promise<HarnessEvent> {

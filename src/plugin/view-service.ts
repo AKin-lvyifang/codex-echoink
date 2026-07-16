@@ -81,7 +81,7 @@ export class EchoInkViewService {
   }
 
   async openAgentSetup(options: { backend: AgentBackendMode; autoRepair?: boolean }): Promise<void> {
-    this.plugin.settings.settingsTab = "agents";
+    this.plugin.settings.settingsTab = "general";
     this.plugin.agentSetupTarget = options.backend;
     this.plugin.agentSetupAutoRepair = options.autoRepair === true;
     if (options.autoRepair && options.backend === "codex-cli") {

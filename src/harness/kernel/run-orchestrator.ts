@@ -98,8 +98,8 @@ export class RunOrchestrator {
     return await this.commitRunEvent(input, sink);
   }
 
-  async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> {
-    await this.appendTerminalEvent(input, { sink });
+  async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<HarnessEvent> {
+    return await this.appendTerminalEvent(input, { sink });
   }
 
   async run(request: HarnessRunRequest, sink: HarnessEventSink = () => undefined, runOptions: RunOrchestratorRunOptions = {}): Promise<HarnessRunResult> {

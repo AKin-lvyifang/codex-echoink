@@ -123,8 +123,8 @@ const ZH_CN = {
     },
     agentInstaller: {
       heading: "选择一个 Agent，EchoInk 帮你完成安装与连接",
-      compactHeading: "Agent 状态",
-      subtitle: "查看、安装或切换 Agent；确认使用后才会修改默认后端。",
+      compactHeading: "Agent 后端",
+      subtitle: "查看、安装或启用执行引擎。",
       agents: {
         "codex-cli": { label: "Codex", description: "自动识别 ChatGPT 内置版本，也支持官方 CLI" },
         opencode: { label: "OpenCode", description: "安装后优先使用官方免费模型" },
@@ -133,9 +133,8 @@ const ZH_CN = {
       dashboard: {
         ariaLabel: "Agent 安装与连接状态",
         liveRegionLabel: "Agent 状态更新",
-        tabAria: (label: string, status: string, isDefault: boolean) => `${label}，${status}${isDefault ? "，当前默认 Agent" : ""}`,
+        tabAria: (label: string, status: string, isEnabled: boolean, installed: boolean) => `${label}，${status}，${isEnabled ? "正在使用" : "未在使用"}，${installed ? "已安装" : "未安装"}`,
         panelAria: (label: string) => `${label} 状态与操作`,
-        defaultBadge: "默认",
         status: {
           detecting: "检测中",
           missing: "未安装",
@@ -198,6 +197,7 @@ const ZH_CN = {
         recheck: "重新检测",
         officialDocs: "查看官方文档",
         terminalFallback: "打开终端",
+        enable: "启用",
         advancedTitle: "高级配置"
       },
       idle: "等待操作",
@@ -764,8 +764,8 @@ const EN: SettingsCopy = {
     },
     agentInstaller: {
       heading: "Choose an Agent and EchoInk will install and connect it",
-      compactHeading: "Agent status",
-      subtitle: "View, install, or switch Agents. The default changes only after you confirm.",
+      compactHeading: "Agent backend",
+      subtitle: "View, install, or enable an execution engine.",
       agents: {
         "codex-cli": { label: "Codex", description: "Finds the version bundled with ChatGPT or the official CLI" },
         opencode: { label: "OpenCode", description: "Prefers an official free model after installation" },
@@ -774,9 +774,8 @@ const EN: SettingsCopy = {
       dashboard: {
         ariaLabel: "Agent installation and connection status",
         liveRegionLabel: "Agent status updates",
-        tabAria: (label, status, isDefault) => `${label}, ${status}${isDefault ? ", current default Agent" : ""}`,
+        tabAria: (label, status, isEnabled, installed) => `${label}, ${status}, ${isEnabled ? "in use" : "not in use"}, ${installed ? "installed" : "not installed"}`,
         panelAria: (label) => `${label} status and actions`,
-        defaultBadge: "Default",
         status: {
           detecting: "Checking",
           missing: "Not installed",
@@ -839,6 +838,7 @@ const EN: SettingsCopy = {
         recheck: "Check again",
         officialDocs: "View official documentation",
         terminalFallback: "Open terminal",
+        enable: "Enable",
         advancedTitle: "Advanced configuration"
       },
       idle: "Waiting for an action",

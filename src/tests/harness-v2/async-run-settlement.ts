@@ -884,6 +884,7 @@ async function assertConcurrentTerminalSourcesResolveToFirstCommittedTerminal():
     runId,
     source: "kernel",
     type: "run.completed",
+    backendId: "terminal-race",
     text: "first terminal"
   }, async () => {
     sinkStarted.resolve();
@@ -913,6 +914,11 @@ async function assertConcurrentTerminalSourcesResolveToFirstCommittedTerminal():
   ]);
 
   assert.equal(concurrentOutcome, "completed");
+  const lateSettlementTerminal = await second;
+  assert.equal(lateSettlementTerminal.type, "run.completed");
+  assert.equal(lateSettlementTerminal.backendId, "terminal-race");
+  assert.equal(lateSettlementTerminal.text, "first terminal");
+  assert.equal(lateSettlementTerminal.error, undefined);
   releaseSink.resolve();
   await first;
 

@@ -3,6 +3,7 @@ import type CodexForObsidianPlugin from "../main";
 import type { TurnOptions } from "../core/codex-service";
 import { pluginDataDir } from "../core/raw-message-store";
 import type { AgentBackendKind } from "../agent/types";
+import { isAgentBackendKind } from "../agent/registry";
 import type { AgentAdapter } from "../harness/agents/adapter";
 import { createHarnessAgentAdapter } from "../harness/agents/adapter-factory";
 import { CodexRichAgentAdapter, type CodexRichAgentAdapterOptions } from "../harness/agents/adapters/codex-rich-adapter";
@@ -49,11 +50,28 @@ export class EchoInkHarnessService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   async runWithAdapter(input: HarnessRunWithAdapterInput) {
-    return await this.getHarnessKernel().runWithAdapter(input);
+    const backend = isAgentBackendKind(input.adapter.manifest.id) ? input.adapter.manifest.id : null;
+    try {
+      const result = await this.getHarnessKernel().runWithAdapter(input);
+      if (backend && result.status === "completed") this.plugin.agentRuntimeHealth.reportHealthy(backend);
+      else if (backend && result.status === "failed") {
+        this.plugin.agentRuntimeHealth.reportFailure(backend, result.error, { source: "terminal" });
+      }
+      return result;
+    } catch (error) {
+      if (backend) this.plugin.agentRuntimeHealth.reportFailure(backend, error, { source: "adapter-runtime" });
+      throw error;
+    }
   }
 
   async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> {
-    await this.getHarnessKernel().settleRunTerminal(input, sink);
+    const terminal = await this.getHarnessKernel().settleRunTerminal(input, sink);
+    if (!terminal.backendId || !isAgentBackendKind(terminal.backendId)) return;
+    if (terminal.type === "run.completed") {
+      this.plugin.agentRuntimeHealth.reportHealthy(terminal.backendId);
+    } else if (terminal.type === "run.failed") {
+      this.plugin.agentRuntimeHealth.reportFailure(terminal.backendId, terminal.error, { source: "terminal" });
+    }
   }
 
   async appendRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink) {

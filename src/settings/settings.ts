@@ -595,7 +595,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   settingsVersion: 35,
   settingsLanguage: "zh-CN",
-  settingsTab: "agents",
+  settingsTab: "general",
   agentBackend: "codex-cli",
   agents: {
     defaultBackend: "codex-cli",
@@ -1207,7 +1207,8 @@ function normalizeResourceManagementTab(value: unknown): ResourceManagementTab {
 }
 
 function normalizeSettingsTab(value: unknown): SettingsTab {
-  return value === "agents" || value === "providers" || value === "resources" || value === "promptEnhancer" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
+  if (value === "agents") return "general";
+  return value === "providers" || value === "resources" || value === "promptEnhancer" || value === "editorActions" || value === "knowledgeBase" || value === "review" || value === "general" ? value : DEFAULT_SETTINGS.settingsTab;
 }
 
 export function normalizeSettingsLanguage(value: unknown): SettingsLanguage {
