@@ -93,7 +93,12 @@ import {
   type WorkspaceResourceToggles
 } from "./settings";
 import { ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "../prompt-enhancer/meta-prompt";
-import { promptEnhancerModelChoices } from "../prompt-enhancer/service";
+import {
+  promptEnhancerBackendCapabilities,
+  promptEnhancerModelChoices,
+  resolvePromptEnhancerBackend,
+  resolvePromptEnhancerModel
+} from "../prompt-enhancer/service";
 import type { CodexModel, CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
 import { skillResourceFromHermesSkill } from "../resources/skill-loader";
@@ -2888,8 +2893,9 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderPromptEnhancerSettings(container: HTMLElement, status: CodexStatusSnapshot | null): void {
     const settings = this.plugin.settings.promptEnhancer;
-    const effectiveBackend = settings.backend === "default" ? "codex-cli" : settings.backend;
+    const effectiveBackend = resolvePromptEnhancerBackend(this.plugin.settings);
     const usesCodex = effectiveBackend === "codex-cli";
+    const capabilities = promptEnhancerBackendCapabilities(effectiveBackend);
     const wrapper = container.createDiv({ cls: "codex-api-provider-manager codex-prompt-enhancer-settings" });
     const header = wrapper.createDiv({ cls: "codex-resource-manager-header" });
     const title = header.createDiv({ cls: "codex-resource-manager-title" });
@@ -2922,42 +2928,8 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }), "route");
 
-    if (usesCodex) {
-      wrapper.createDiv({
-        cls: "codex-resource-note codex-prompt-enhancer-backend-note",
-        text: `当前实际使用 Codex：由内置子代理 ${ENHANCE_PROMPT_AGENT_NAME} 执行，不复用改写、续写或普通聊天会话。`
-      });
-      this.decorateSetting(new Setting(wrapper).setName("Codex API 路径").setDesc("只在增强 Agent 使用 Codex 时生效，不影响普通聊天。").addDropdown((dropdown) => {
-        dropdown.addOption("codex-login", "Codex 登录态");
-        for (const provider of this.plugin.settings.apiProviders) {
-          dropdown.addOption(`provider:${provider.id}`, `API Provider：${provider.name || "未命名"} · ${providerModelLabel(provider, this.plugin.settings.settingsLanguage)}`);
-        }
-        dropdown.setValue(settings.codexProviderMode === "custom-api" && settings.activeApiProviderId ? `provider:${settings.activeApiProviderId}` : settings.codexProviderMode);
-        dropdown.onChange(async (value) => {
-          if (value.startsWith("provider:")) {
-            settings.codexProviderMode = "custom-api";
-            settings.activeApiProviderId = value.slice("provider:".length);
-          } else {
-            settings.codexProviderMode = "codex-login";
-            settings.activeApiProviderId = "";
-          }
-          await this.plugin.saveSettings();
-          this.scheduleDisplay();
-        });
-      }), "key-round");
-    } else {
-      wrapper.createDiv({
-        cls: "codex-resource-note codex-prompt-enhancer-backend-note",
-        text: `当前实际使用 ${agentBackendLabel(effectiveBackend, this.copy)}：可指定 Provider、模型和 ${effectiveBackend === "hermes" ? "Profile" : "Agent"}。`
-      });
-    }
-
     const modelChoices = promptEnhancerModelChoices(this.plugin.settings, status?.models.map((model) => model.model) ?? []);
-    const automaticModelLabel = usesCodex
-      ? `自动（${DEFAULT_CODEX_UTILITY_MODEL}）`
-      : effectiveBackend === "opencode"
-        ? `自动（${DEFAULT_OPENCODE_UTILITY_MODEL}）`
-        : `自动（${DEFAULT_HERMES_UTILITY_MODEL}）`;
+    const automaticModelLabel = `自动（${resolvePromptEnhancerModel(this.plugin.settings, effectiveBackend)}）`;
     this.decorateSetting(new Setting(wrapper).setName("增强模型").setDesc("这是提示词增强自己的模型设置，不影响普通聊天或编辑区写作。").addDropdown((dropdown) => {
       dropdown.addOption("", automaticModelLabel);
       for (const model of modelChoices) dropdown.addOption(model, model);
@@ -2968,7 +2940,7 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }), "box");
 
-    if (usesCodex) {
+    if (capabilities.reasoning) {
       this.decorateSetting(new Setting(wrapper).setName("思考强度").setDesc("控制提示词增强的推理深度；建议使用中等，兼顾质量与速度。").addDropdown((dropdown) => {
         dropdown.addOption("low", "低");
         dropdown.addOption("medium", "中等（推荐）");
@@ -2980,7 +2952,9 @@ export class CodexSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       }), "brain");
+    }
 
+    if (capabilities.serviceTier) {
       this.decorateSetting(new Setting(wrapper).setName("响应速度").setDesc("控制 Codex 提示词增强的响应档位；建议使用快速。").addDropdown((dropdown) => {
         dropdown.addOption("standard", "标准");
         dropdown.addOption("fast", "快速（推荐）");

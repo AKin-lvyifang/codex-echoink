@@ -9,6 +9,11 @@ import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runt
 import { emptyContextBundle } from "../../harness/contracts/context";
 import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "../../prompt-enhancer/meta-prompt";
 import { createPromptEnhancerRuntimeWorkspace } from "../../prompt-enhancer/runtime-workspace";
+import {
+  promptEnhancerBackendCapabilities,
+  resolvePromptEnhancerCodexProvider,
+  resolvePromptEnhancerModel
+} from "../../prompt-enhancer/service";
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../../settings/settings";
 
 const WORKBUDDY_META_PROMPT_SHA256 = "60480d0bf677b6cb31170013a4d7cf2ab5c274844f523ba9467535b16c81ab94";
@@ -30,6 +35,9 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
   assert.equal(DEFAULT_SETTINGS.editorActions.actions.some((action) => action.id === "enhance"), false);
+  assert.deepEqual(promptEnhancerBackendCapabilities("codex-cli"), { reasoning: true, serviceTier: true });
+  assert.deepEqual(promptEnhancerBackendCapabilities("opencode"), { reasoning: false, serviceTier: false });
+  assert.deepEqual(promptEnhancerBackendCapabilities("hermes"), { reasoning: false, serviceTier: false });
 
   const normalized = normalizeSettingsData({
     settingsVersion: 29,
@@ -67,6 +75,28 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
   }).settings.promptEnhancer;
   assert.equal(invalidRuntimeOptions.reasoning, "medium");
   assert.equal(invalidRuntimeOptions.serviceTier, "fast");
+
+  const migratedAuthentication = normalizeSettingsData({
+    settingsVersion: 36,
+    providerMode: "custom-api",
+    activeApiProviderId: "top-provider",
+    apiProviders: [{
+      id: "top-provider",
+      name: "Top provider",
+      baseUrl: "https://example.com/v1",
+      model: "provider-fast-model",
+      models: ["provider-fast-model"],
+      apiKey: "test"
+    }],
+    promptEnhancer: {
+      codexProviderMode: "codex-login",
+      activeApiProviderId: "legacy-enhancer-provider"
+    }
+  }).settings;
+  assert.equal("codexProviderMode" in migratedAuthentication.promptEnhancer, false);
+  assert.equal("activeApiProviderId" in migratedAuthentication.promptEnhancer, false);
+  assert.equal(resolvePromptEnhancerModel(migratedAuthentication), "provider-fast-model");
+  assert.equal(resolvePromptEnhancerCodexProvider(migratedAuthentication).activeApiProvider?.id, "top-provider");
 }
 
 async function assertPromptEnhancerUsesWorkBuddyMetaPrompt(): Promise<void> {
@@ -207,6 +237,10 @@ async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void>
   const viewSource = await readFile(path.join(cwd, "src/ui/codex-view.ts"), "utf8");
   const styles = await readFile(path.join(cwd, "styles.css"), "utf8");
   const settingsTabSource = await readFile(path.join(cwd, "src/settings/settings-tab.ts"), "utf8");
+  const promptEnhancerSettingsSource = settingsTabSource.slice(
+    settingsTabSource.indexOf("private renderPromptEnhancerSettings"),
+    settingsTabSource.indexOf("private renderPromptEnhancerMetaPrompt")
+  );
 
   assert.match(composerSource, /createComposerIconButton\(left,\s*"sparkles",\s*"增强提示词"\)/);
   assert.doesNotMatch(composerSource, /codex-composer-enhance-button/);
@@ -231,13 +265,16 @@ async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void>
   assert.match(styles, /\.codex-composer-model-name[\s\S]*color:\s*var\(--text-normal\)/);
   assert.match(styles, /\.codex-composer-reasoning-label[\s\S]*color:\s*var\(--interactive-accent\)/);
   assert.match(styles, /\.codex-composer-mode-indicator\s*\{[^}]*border:\s*0[^}]*background:\s*transparent[^}]*pointer-events:\s*none/);
-  assert.match(settingsTabSource, /renderPromptEnhancerSettings/);
+  assert.match(promptEnhancerSettingsSource, /renderPromptEnhancerSettings/);
   assert.match(settingsTabSource, /查看内置 Meta-Prompt/);
-  assert.match(settingsTabSource, /Codex API 路径/);
-  assert.match(settingsTabSource, /独立于顶部主 Agent/);
-  assert.match(settingsTabSource, /addOption\("codex-cli",\s*"默认（Codex）"\)/);
-  assert.match(settingsTabSource, /setName\("思考强度"\)/);
-  assert.match(settingsTabSource, /setName\("响应速度"\)/);
+  assert.doesNotMatch(promptEnhancerSettingsSource, /Codex API 路径|Codex 登录态|当前实际使用/);
+  assert.match(promptEnhancerSettingsSource, /独立于顶部主 Agent/);
+  assert.match(promptEnhancerSettingsSource, /addOption\("codex-cli",\s*"默认（Codex）"\)/);
+  assert.match(promptEnhancerSettingsSource, /promptEnhancerBackendCapabilities\(effectiveBackend\)/);
+  assert.match(promptEnhancerSettingsSource, /if \(capabilities\.reasoning\)/);
+  assert.match(promptEnhancerSettingsSource, /if \(capabilities\.serviceTier\)/);
+  assert.match(promptEnhancerSettingsSource, /setName\("思考强度"\)/);
+  assert.match(promptEnhancerSettingsSource, /setName\("响应速度"\)/);
 }
 
 async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> {

@@ -10,6 +10,7 @@ import {
   DEFAULT_HERMES_UTILITY_PROVIDER,
   DEFAULT_OPENCODE_UTILITY_MODEL,
   DEFAULT_OPENCODE_UTILITY_PROVIDER,
+  getActiveApiProvider,
   getApiProviderModels,
   newId,
   type ApiProviderConfig,
@@ -28,6 +29,19 @@ export interface RunPromptEnhancerInput {
   prompt: string;
   onRunCreated?: (runId: string) => void;
   onTurnStarted?: (turnId: string) => void;
+}
+
+export interface PromptEnhancerBackendCapabilities {
+  reasoning: boolean;
+  serviceTier: boolean;
+}
+
+export function promptEnhancerBackendCapabilities(backend: AgentBackendKind): PromptEnhancerBackendCapabilities {
+  const usesCodex = backend === "codex-cli";
+  return {
+    reasoning: usesCodex,
+    serviceTier: usesCodex
+  };
 }
 
 export async function runPromptEnhancer(input: RunPromptEnhancerInput): Promise<string> {
@@ -54,9 +68,7 @@ export function resolvePromptEnhancerModel(settings: CodexForObsidianSettings, b
   if (configured) return configured;
   if (backend === "opencode") return DEFAULT_OPENCODE_UTILITY_MODEL;
   if (backend === "hermes") return DEFAULT_HERMES_UTILITY_MODEL;
-  const provider = settings.promptEnhancer.codexProviderMode === "custom-api"
-    ? settings.apiProviders.find((item) => item.id === settings.promptEnhancer.activeApiProviderId) ?? null
-    : null;
+  const provider = settings.providerMode === "custom-api" ? getActiveApiProvider(settings) : null;
   const providerModel = provider ? getApiProviderModels(provider)[0] : "";
   if (providerModel) return providerModel;
   return DEFAULT_CODEX_UTILITY_MODEL;
@@ -74,11 +86,10 @@ export function resolvePromptEnhancerCodexProvider(settings: CodexForObsidianSet
   providerMode: ProviderMode;
   activeApiProvider: ApiProviderConfig | null;
 } {
-  const enhancer = settings.promptEnhancer;
-  const providerMode = enhancer.codexProviderMode === "custom-api" ? "custom-api" : "codex-login";
+  const providerMode = settings.providerMode === "custom-api" ? "custom-api" : "codex-login";
   if (providerMode !== "custom-api") return { providerMode, activeApiProvider: null };
-  const activeApiProvider = settings.apiProviders.find((provider) => provider.id === enhancer.activeApiProviderId) ?? null;
-  if (!activeApiProvider) throw new Error("增强提示词 API Provider 未配置");
+  const activeApiProvider = getActiveApiProvider(settings);
+  if (!activeApiProvider) throw new Error("Codex API Provider 未配置");
   return { providerMode, activeApiProvider };
 }
 
@@ -305,8 +316,8 @@ function promptEnhancerTaskSettings(settings: CodexForObsidianSettings, backend:
 export function promptEnhancerModelChoices(settings: CodexForObsidianSettings, statusModels: string[] = []): string[] {
   const enhancer = settings.promptEnhancer;
   const backend = resolvePromptEnhancerBackend(settings);
-  const provider = enhancer.codexProviderMode === "custom-api" && enhancer.activeApiProviderId
-    ? settings.apiProviders.find((item) => item.id === enhancer.activeApiProviderId) ?? null
+  const provider = backend === "codex-cli" && settings.providerMode === "custom-api"
+    ? getActiveApiProvider(settings)
     : null;
   return Array.from(new Set([
     enhancer.model,

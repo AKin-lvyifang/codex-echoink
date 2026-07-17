@@ -88,7 +88,14 @@ import {
   type AgentBackendMode,
   type ChatMessage
 } from "../settings/settings";
-import { promptEnhancerModelChoices, resolvePromptEnhancerBackend, resolvePromptEnhancerCodexProvider, resolvePromptEnhancerModel, resolvePromptEnhancerProviderId } from "../prompt-enhancer/service";
+import {
+  promptEnhancerBackendCapabilities,
+  promptEnhancerModelChoices,
+  resolvePromptEnhancerBackend,
+  resolvePromptEnhancerCodexProvider,
+  resolvePromptEnhancerModel,
+  resolvePromptEnhancerProviderId
+} from "../prompt-enhancer/service";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "../settings/settings-scroll";
 import { buildSetupCheck, buildSetupPrimaryState, completeSetupState } from "../settings/setup-check";
 import { AGENT_BACKEND_DEFINITIONS, agentBackendDisplayName, getAgentBackendDefinition, resolveCapabilityBackend } from "../agent/registry";
@@ -2674,7 +2681,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 36);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 37);
 assert.deepEqual(DEFAULT_SETTINGS.memory, {
   enabled: true,
   autoSync: true,
@@ -2697,8 +2704,6 @@ assert.equal(DEFAULT_SETTINGS.capabilities.knowledgeBackend, "default");
 assert.equal(DEFAULT_SETTINGS.capabilities.editorActionBackend, "codex-cli");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.enabled, true);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "codex-cli");
-assert.equal(DEFAULT_SETTINGS.promptEnhancer.codexProviderMode, "codex-login");
-assert.equal(DEFAULT_SETTINGS.promptEnhancer.activeApiProviderId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.providerId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.model, DEFAULT_PROMPT_ENHANCER_MODEL);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
@@ -2706,19 +2711,46 @@ assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.timeoutMs, 45000);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.maxInputChars, 4000);
+assert.deepEqual(promptEnhancerBackendCapabilities("codex-cli"), { reasoning: true, serviceTier: true });
+assert.deepEqual(promptEnhancerBackendCapabilities("opencode"), { reasoning: false, serviceTier: false });
+assert.deepEqual(promptEnhancerBackendCapabilities("hermes"), { reasoning: false, serviceTier: false });
 assert.equal(resolvePromptEnhancerBackend(DEFAULT_SETTINGS), "codex-cli");
 assert.equal(resolvePromptEnhancerModel(DEFAULT_SETTINGS), DEFAULT_CODEX_UTILITY_MODEL);
 assert.ok(promptEnhancerModelChoices(DEFAULT_SETTINGS).includes(DEFAULT_CODEX_UTILITY_MODEL));
 const legacyDefaultPromptEnhancerSettings = structuredClone(DEFAULT_SETTINGS);
 legacyDefaultPromptEnhancerSettings.agentBackend = "hermes";
 legacyDefaultPromptEnhancerSettings.promptEnhancer.backend = "default";
-legacyDefaultPromptEnhancerSettings.promptEnhancer.codexProviderMode = "default";
 assert.equal(resolvePromptEnhancerBackend(legacyDefaultPromptEnhancerSettings), "codex-cli");
 assert.equal(resolvePromptEnhancerModel(legacyDefaultPromptEnhancerSettings), DEFAULT_CODEX_UTILITY_MODEL);
 assert.deepEqual(resolvePromptEnhancerCodexProvider(legacyDefaultPromptEnhancerSettings), {
   providerMode: "codex-login",
   activeApiProvider: null
 });
+const inheritedPromptEnhancerProvider = structuredClone(DEFAULT_SETTINGS);
+inheritedPromptEnhancerProvider.providerMode = "custom-api";
+inheritedPromptEnhancerProvider.activeApiProviderId = "top-provider";
+inheritedPromptEnhancerProvider.apiProviders = [{
+  id: "top-provider",
+  name: "Top provider",
+  baseUrl: "https://example.com/v1",
+  model: "provider-fast-model",
+  models: ["provider-fast-model"],
+  apiKey: "test"
+}];
+assert.equal(resolvePromptEnhancerModel(inheritedPromptEnhancerProvider), "provider-fast-model");
+assert.deepEqual(resolvePromptEnhancerCodexProvider(inheritedPromptEnhancerProvider), {
+  providerMode: "custom-api",
+  activeApiProvider: inheritedPromptEnhancerProvider.apiProviders[0]
+});
+const migratedPromptEnhancerAuthentication = normalizeSettingsData({
+  settingsVersion: 36,
+  promptEnhancer: {
+    codexProviderMode: "custom-api",
+    activeApiProviderId: "legacy-enhancer-provider"
+  }
+}).settings.promptEnhancer;
+assert.equal("codexProviderMode" in migratedPromptEnhancerAuthentication, false);
+assert.equal("activeApiProviderId" in migratedPromptEnhancerAuthentication, false);
 const openCodeUtilitySettings = structuredClone(DEFAULT_SETTINGS);
 openCodeUtilitySettings.promptEnhancer.backend = "opencode";
 openCodeUtilitySettings.opencode.providerId = "opencode";
@@ -5236,7 +5268,7 @@ assert.equal(correctedV32UtilityBoundary.opencode.providerId, "");
 assert.equal(correctedV32UtilityBoundary.opencode.modelId, "");
 assert.equal(correctedV32UtilityBoundary.capabilities.editorActionBackend, "codex-cli");
 assert.equal(correctedV32UtilityBoundary.promptEnhancer.backend, "codex-cli");
-assert.equal(correctedV32UtilityBoundary.promptEnhancer.codexProviderMode, "codex-login");
+assert.equal("codexProviderMode" in correctedV32UtilityBoundary.promptEnhancer, false);
 assert.equal(resolvePromptEnhancerModel(correctedV32UtilityBoundary), DEFAULT_CODEX_UTILITY_MODEL);
 assert.equal(normalizeSettingsData({
   settingsVersion: 32,
@@ -5254,7 +5286,7 @@ assert.equal(correctedV33IndependentUtilities.agentBackend, "hermes");
 assert.equal(correctedV33IndependentUtilities.defaultModel, "custom-chat-model");
 assert.equal(correctedV33IndependentUtilities.capabilities.editorActionBackend, "codex-cli");
 assert.equal(correctedV33IndependentUtilities.promptEnhancer.backend, "codex-cli");
-assert.equal(correctedV33IndependentUtilities.promptEnhancer.codexProviderMode, "codex-login");
+assert.equal("codexProviderMode" in correctedV33IndependentUtilities.promptEnhancer, false);
 
 const preservedCustomAgentModels = normalizeSettingsData({
   settingsVersion: 31,

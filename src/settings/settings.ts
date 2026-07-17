@@ -124,7 +124,6 @@ export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type AgentBackendMode = AgentBackendKind;
 export type KnowledgeBaseBackendMode = "default" | AgentBackendMode;
 export type PromptEnhancerBackendMode = "default" | AgentBackendMode;
-export type PromptEnhancerProviderMode = "default" | ProviderMode;
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
@@ -201,8 +200,6 @@ export interface CapabilityBackendSettings {
 export interface PromptEnhancerSettings {
   enabled: boolean;
   backend: PromptEnhancerBackendMode;
-  codexProviderMode: PromptEnhancerProviderMode;
-  activeApiProviderId: string;
   providerId: string;
   model: string;
   reasoning: ReasoningEffort;
@@ -567,8 +564,6 @@ const DEFAULT_OPENCODE_SETTINGS: OpenCodeSettings = {
 const DEFAULT_PROMPT_ENHANCER_SETTINGS: PromptEnhancerSettings = {
   enabled: true,
   backend: "codex-cli",
-  codexProviderMode: "codex-login",
-  activeApiProviderId: "",
   providerId: "",
   model: DEFAULT_PROMPT_ENHANCER_MODEL,
   reasoning: "medium",
@@ -597,7 +592,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 36,
+  settingsVersion: 37,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -835,10 +830,6 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     if (settings.promptEnhancer.backend === "default") {
       settings.promptEnhancer.backend = "codex-cli";
     }
-    if (settings.promptEnhancer.codexProviderMode === "default") {
-      settings.promptEnhancer.codexProviderMode = "codex-login";
-      settings.promptEnhancer.activeApiProviderId = "";
-    }
   }
 
   syncAgentsFromLegacyFields(settings);
@@ -1006,8 +997,6 @@ export function normalizePromptEnhancerSettings(input: unknown, previousVersion 
   return {
     enabled: typeof value.enabled === "boolean" ? value.enabled : defaults.enabled,
     backend: normalizePromptEnhancerBackendMode(value.backend),
-    codexProviderMode: normalizePromptEnhancerProviderMode(value.codexProviderMode),
-    activeApiProviderId: normalizeOptionalText(value.activeApiProviderId),
     providerId: normalizeOptionalText(value.providerId),
     model: normalizeText(value.model, defaults.model),
     reasoning: normalizeReasoningEffort(value.reasoning, defaults.reasoning),
@@ -1235,10 +1224,6 @@ export function normalizeKnowledgeBaseBackendMode(value: unknown): KnowledgeBase
 
 export function normalizePromptEnhancerBackendMode(value: unknown): PromptEnhancerBackendMode {
   return value === "opencode" || value === "hermes" ? value : DEFAULT_PROMPT_ENHANCER_SETTINGS.backend;
-}
-
-export function normalizePromptEnhancerProviderMode(value: unknown): PromptEnhancerProviderMode {
-  return value === "custom-api" ? value : DEFAULT_PROMPT_ENHANCER_SETTINGS.codexProviderMode;
 }
 
 function normalizeCapabilityBackendChoice(value: unknown): CapabilityBackendChoice {
