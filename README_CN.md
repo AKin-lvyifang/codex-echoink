@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.2.0 发布图，展示统一 Harness、全新对话区和快速小功能模型。" src="docs/images/codex-echoink-v1.2.0-release.jpg">
+    <img width="1024" alt="Codex EchoInk v1.3.0 发布图，展示统一安装、多 Agent 运行时、本地记忆和轻量模型。" src="docs/images/codex-echoink-v1.3.0-release.png">
   </a>
 </p>
 
@@ -24,14 +24,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.2.2-0EA5E9?style=flat-square" alt="版本 v1.2.2">
+    <img src="https://img.shields.io/badge/version-v1.3.0-0EA5E9?style=flat-square" alt="版本 v1.3.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.2.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.3.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -179,6 +179,19 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.3.0
+
+<img width="1024" alt="Codex EchoInk v1.3.0 发布图，展示统一安装、多 Agent 运行时、本地记忆和轻量模型。" src="docs/images/codex-echoink-v1.3.0-release.png">
+
+**稳定可用的多 Agent 工作区：** Codex、OpenCode、Hermes 现在共用一套安装引导、运行投影和恢复机制；EchoInk 同时新增本地 Memory V2 与按后端能力显示的轻量模型设置。
+
+- 在同一个设置面板中安装、修复、重新检测和查看三个 Agent 后端。
+- 三个后端使用同一套结论优先对话界面，公开推理和工具过程按需展开。
+- 使用 Memory V2 在本地提炼并跨会话、跨后端读取信息，同时保留各 Agent 原生记忆。
+- 每轮知识库任务开始前重新读取并校验指定的 Markdown 规则文件，不再依赖 `AGENTS.md`。
+- 提示词增强不改动主聊天模型，可独立选择后端模型，也可以输入模型 ID 新增选项。
+- 现有 Vault 文件和 EchoInk 会话无需迁移。
 
 ### v1.2.2
 

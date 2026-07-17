@@ -2,19 +2,65 @@
 
 ## Unreleased
 
+## v1.3.0 - 2026-07-17
+
+版本号：`v1.3.0`
+
 ### 中文
 
-1. 知识库任务现在由 EchoInk 在每轮开始前强制读取设置中指定的 Markdown 规则文件，并把最新内容作为必需系统上下文注入 Codex、OpenCode 或 Hermes。
-2. 规则文件缺失、为空、不可读、不是有效 UTF-8、超出 Vault 或超过大小上限时，任务会在启动 Agent 前失败。
-3. 知识库规则不再回退或合并 `AGENTS.md`；没有 `AGENTS.md` 的普通 Obsidian Vault 也可以直接使用，默认规则文件仍为 `LLM-WIKI.md`。
-4. 规则上下文记录来源路径和 SHA-256 哈希，修改规则后下一轮立即生效；Codex 复用线程时也会刷新本轮系统指令。
+#### 多 Agent 运行时
+
+1. 新增 Codex、OpenCode、Hermes 统一安装与连接面板，集中处理安装、修复、重新检测和运行状态。
+2. 三个后端统一展示公开推理、工具调用、处理时长和最终回答；切换后端不再改变对话结构。
+3. 加强 OpenCode 会话恢复、Hermes 工具终态和中断处理，避免断流后重复执行任务。
+
+#### Memory V2 与知识规则
+
+1. 新增 EchoInk Memory V2，在本地保存跨会话、跨后端可复用的信息，同时保留各 Agent 原生记忆。
+2. 知识库任务每轮都会重新读取并校验指定的 Markdown 规则文件，异常时在 Agent 启动前停止。
+3. 知识规则不再依赖或合并 `AGENTS.md`，默认继续使用 `LLM-WIKI.md`。
+
+#### 提示词增强
+
+1. 提示词增强拥有独立 Agent 后端与模型设置，不改动普通聊天主模型。
+2. 增强模型改为下拉列表，并支持通过“新增模型”加入自定义模型 ID。
+3. Codex 默认使用 `gpt-5.6-terra`、中等思考和快速响应；OpenCode 与 Hermes 只显示实际支持的选项。
+
+#### 修复
+
+1. 修复中断 Memory 事务可能留下不完整状态的问题。
+2. 修复提示词增强切换后端后残留不兼容模型、Agent 或 Profile 的问题。
+3. 修复部分后端仍显示不支持的思考强度或快速档位控件的问题。
+
+升级说明：从 `v1.2.2` 直接覆盖安装 `main.js`、`manifest.json`、`styles.css` 即可。现有 Vault 文件和 EchoInk 会话无需迁移。
 
 ### English
 
-1. Before every Knowledge run, EchoInk now force-loads the configured Markdown rules file and injects its latest content as required system context for Codex, OpenCode, or Hermes.
-2. Missing, empty, unreadable, invalid UTF-8, out-of-vault, or oversized rule files now fail before the Agent starts.
-3. Knowledge rules no longer fall back to or merge `AGENTS.md`; ordinary Obsidian vaults without `AGENTS.md` work directly, with `LLM-WIKI.md` still the default.
-4. The injected rules context records its source path and SHA-256 hash, so edits apply on the next run, including reused Codex threads.
+#### Multi-Agent runtime
+
+1. Added a unified setup and connection dashboard for Codex, OpenCode, and Hermes, covering installation, repair, rechecks, and runtime status.
+2. All three backends now share one presentation for public reasoning, tool calls, processing time, and final answers.
+3. Hardened OpenCode session recovery, Hermes tool terminal states, and interrupted runs to prevent duplicate execution after a dropped stream.
+
+#### Memory V2 and Knowledge rules
+
+1. Added EchoInk Memory V2 for locally curated recall across sessions and backends while preserving native Agent memory.
+2. Every Knowledge run now reloads and validates its configured Markdown rules file before the Agent starts.
+3. Knowledge rules no longer depend on or merge `AGENTS.md`; `LLM-WIKI.md` remains the default.
+
+#### Prompt enhancement
+
+1. Prompt enhancement now has its own Agent backend and model settings without changing the main chat model.
+2. Enhancer models now use a selectable list with an **Add model** action for custom model IDs.
+3. Codex defaults to `gpt-5.6-terra`, medium reasoning, and fast responses. OpenCode and Hermes show only supported controls.
+
+#### Fixes
+
+1. Fixed interrupted Memory transactions leaving incomplete state.
+2. Fixed incompatible model, Agent, or Profile selections carrying across prompt-enhancer backends.
+3. Fixed unsupported reasoning or fast-response controls appearing for some backends.
+
+Upgrade: replace `main.js`, `manifest.json`, and `styles.css` from `v1.3.0`. Existing Vault files and EchoInk sessions do not require migration.
 
 ## v1.2.2 - 2026-07-16
 

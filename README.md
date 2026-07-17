@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.2.0 release poster showing one Harness, rebuilt chat, and fast utilities." src="docs/images/codex-echoink-v1.2.0-release.jpg">
+    <img width="1024" alt="Codex EchoInk v1.3.0 release poster showing guided setup, one multi-Agent runtime, local memory, and utility models." src="docs/images/codex-echoink-v1.3.0-release.png">
   </a>
 </p>
 
@@ -23,14 +23,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.2.2-0EA5E9?style=flat-square" alt="Version v1.2.2">
+    <img src="https://img.shields.io/badge/version-v1.3.0-0EA5E9?style=flat-square" alt="Version v1.3.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.2.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.3.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -175,6 +175,19 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.3.0
+
+<img width="1024" alt="Codex EchoInk v1.3.0 release poster showing guided setup, one multi-Agent runtime, local memory, and utility models." src="docs/images/codex-echoink-v1.3.0-release.png">
+
+**Production-ready multi-Agent workspace:** Codex, OpenCode, and Hermes now share one guided setup path, runtime projection, and recovery model. EchoInk also adds local Memory V2 and backend-aware utility-model controls.
+
+- Set up, repair, recheck, and monitor all three Agent backends from one settings dashboard.
+- Read the same answer-first conversation layout across backends, with public reasoning and tools available in the expandable process timeline.
+- Use Memory V2 for locally curated recall across sessions and backends while preserving each Agent's native memory.
+- Reload and validate the selected Knowledge rules Markdown before every run without requiring `AGENTS.md`.
+- Keep prompt enhancement independent from the main chat model, choose a backend-specific model, or add a custom model ID.
+- Existing Vault files and EchoInk sessions do not require migration.
 
 ### v1.2.2
 
