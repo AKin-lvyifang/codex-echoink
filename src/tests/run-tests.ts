@@ -8049,11 +8049,13 @@ const codexAppCommand = "/Applications/Codex.app/Contents/Resources/codex";
 const windowsPowerShell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 assert.equal(resolveCodexCommand("", {
   home: "/Users/demo",
+  platform: "darwin",
   envPath: "",
   exists: (candidate) => candidate === codexAppCommand
 }), codexAppCommand);
 assert.equal(resolveCodexCommand("~/bin/codex", {
   home: "/Users/demo",
+  platform: "darwin",
   envPath: "",
   exists: (candidate) => candidate === "/Users/demo/bin/codex"
 }), "/Users/demo/bin/codex");
@@ -8071,6 +8073,7 @@ const appDataCodexShim = "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd";
 const appDataCodexNative = "C:\\Users\\demo\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe";
 assert.equal(resolveCodexCommand("", {
   home: "/Users/demo",
+  platform: "linux",
   envPath: "/custom/bin",
   exists: (candidate) => candidate === "/custom/bin/codex"
 }), "/custom/bin/codex");
