@@ -205,6 +205,8 @@ export interface PromptEnhancerSettings {
   activeApiProviderId: string;
   providerId: string;
   model: string;
+  reasoning: ReasoningEffort;
+  serviceTier: ServiceTierChoice;
   agent: string;
   timeoutMs: number;
   maxInputChars: number;
@@ -569,6 +571,8 @@ const DEFAULT_PROMPT_ENHANCER_SETTINGS: PromptEnhancerSettings = {
   activeApiProviderId: "",
   providerId: "",
   model: DEFAULT_PROMPT_ENHANCER_MODEL,
+  reasoning: "medium",
+  serviceTier: "fast",
   agent: "",
   timeoutMs: 45000,
   maxInputChars: 4000
@@ -593,7 +597,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 35,
+  settingsVersion: 36,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -1006,6 +1010,8 @@ export function normalizePromptEnhancerSettings(input: unknown, previousVersion 
     activeApiProviderId: normalizeOptionalText(value.activeApiProviderId),
     providerId: normalizeOptionalText(value.providerId),
     model: normalizeText(value.model, defaults.model),
+    reasoning: normalizeReasoningEffort(value.reasoning, defaults.reasoning),
+    serviceTier: normalizeServiceTierChoice(value.serviceTier, defaults.serviceTier),
     agent: previousVersion < 31 && configuredAgent === "enhance-prompt" ? "" : configuredAgent,
     timeoutMs: normalizePositiveInteger(value.timeoutMs, defaults.timeoutMs, 10000, 300000),
     maxInputChars: normalizePositiveInteger(value.maxInputChars, defaults.maxInputChars, 100, 20000)

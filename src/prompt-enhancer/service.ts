@@ -16,7 +16,6 @@ import {
   type CodexForObsidianSettings,
   type ProviderMode
 } from "../settings/settings";
-import type { ServiceTierChoice } from "../types/app-server";
 import type { AgentBackendKind } from "../agent/types";
 import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "./meta-prompt";
 import { createPromptEnhancerRuntimeWorkspace } from "./runtime-workspace";
@@ -27,7 +26,6 @@ const NO_TOOLS = { read: false, write: false, edit: false, bash: false };
 export interface RunPromptEnhancerInput {
   plugin: CodexForObsidianPlugin;
   prompt: string;
-  serviceTier?: ServiceTierChoice;
   onRunCreated?: (runId: string) => void;
   onTurnStarted?: (turnId: string) => void;
 }
@@ -111,8 +109,8 @@ async function runCodexPromptEnhancer(input: RunPromptEnhancerInput, runId: stri
       model: resolvePromptEnhancerModel(plugin.settings, "codex-cli"),
       developerInstructions: ENHANCE_META_PROMPT,
       ephemeral: true,
-      reasoning: "low",
-      serviceTier: input.serviceTier ?? "fast",
+      reasoning: settings.reasoning,
+      serviceTier: settings.serviceTier,
       permission: "read-only",
       mode: "agent",
       mcpEnabled: false,

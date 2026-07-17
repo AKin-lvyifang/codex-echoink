@@ -2491,7 +2491,10 @@ export class CodexSettingTab extends PluginSettingTab {
     ), "toggle-right");
 
     this.decorateSetting(new Setting(wrapper).setName("增强 Agent 后端").setDesc("独立于顶部主 Agent，只用于提示词增强。").addDropdown((dropdown) => {
-      for (const definition of AGENT_BACKEND_DEFINITIONS) dropdown.addOption(definition.kind, definition.label);
+      dropdown.addOption("codex-cli", "默认（Codex）");
+      for (const definition of AGENT_BACKEND_DEFINITIONS) {
+        if (definition.kind !== "codex-cli") dropdown.addOption(definition.kind, definition.label);
+      }
       dropdown.setValue(effectiveBackend);
       dropdown.onChange(async (value) => {
         settings.backend = value === "opencode" || value === "hermes" ? value : "codex-cli";
@@ -2545,6 +2548,31 @@ export class CodexSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       });
     }), "box");
+
+    if (usesCodex) {
+      this.decorateSetting(new Setting(wrapper).setName("思考强度").setDesc("控制提示词增强的推理深度；建议使用中等，兼顾质量与速度。").addDropdown((dropdown) => {
+        dropdown.addOption("low", "低");
+        dropdown.addOption("medium", "中等（推荐）");
+        dropdown.addOption("high", "高");
+        dropdown.addOption("xhigh", "极高");
+        dropdown.setValue(settings.reasoning);
+        dropdown.onChange(async (value) => {
+          settings.reasoning = value as ReasoningEffort;
+          await this.plugin.saveSettings();
+        });
+      }), "brain");
+
+      this.decorateSetting(new Setting(wrapper).setName("响应速度").setDesc("控制 Codex 提示词增强的响应档位；建议使用快速。").addDropdown((dropdown) => {
+        dropdown.addOption("standard", "标准");
+        dropdown.addOption("fast", "快速（推荐）");
+        dropdown.addOption("flex", "弹性");
+        dropdown.setValue(settings.serviceTier);
+        dropdown.onChange(async (value) => {
+          settings.serviceTier = value as ServiceTierChoice;
+          await this.plugin.saveSettings();
+        });
+      }), "gauge");
+    }
 
     if (!usesCodex) {
       this.addProviderText(wrapper, "模型 Provider ID", settings.providerId, "可选，例如 openai / anthropic / deepseek", async (value) => {

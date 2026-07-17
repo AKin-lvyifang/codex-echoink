@@ -27,6 +27,8 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.enabled, true);
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.backend, "codex-cli");
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
+  assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
+  assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
   assert.equal(DEFAULT_SETTINGS.editorActions.actions.some((action) => action.id === "enhance"), false);
 
   const normalized = normalizeSettingsData({
@@ -48,6 +50,23 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
     settingsVersion: 31,
     promptEnhancer: { agent: "custom-backend-agent" }
   }).settings.promptEnhancer.agent, "custom-backend-agent");
+  assert.deepEqual(
+    normalizeSettingsData({
+      settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+      promptEnhancer: { reasoning: "xhigh", serviceTier: "flex" }
+    }).settings.promptEnhancer,
+    {
+      ...DEFAULT_SETTINGS.promptEnhancer,
+      reasoning: "xhigh",
+      serviceTier: "flex"
+    }
+  );
+  const invalidRuntimeOptions = normalizeSettingsData({
+    settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+    promptEnhancer: { reasoning: "extreme", serviceTier: "turbo" }
+  }).settings.promptEnhancer;
+  assert.equal(invalidRuntimeOptions.reasoning, "medium");
+  assert.equal(invalidRuntimeOptions.serviceTier, "fast");
 }
 
 async function assertPromptEnhancerUsesWorkBuddyMetaPrompt(): Promise<void> {
@@ -216,6 +235,9 @@ async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void>
   assert.match(settingsTabSource, /查看内置 Meta-Prompt/);
   assert.match(settingsTabSource, /Codex API 路径/);
   assert.match(settingsTabSource, /独立于顶部主 Agent/);
+  assert.match(settingsTabSource, /addOption\("codex-cli",\s*"默认（Codex）"\)/);
+  assert.match(settingsTabSource, /setName\("思考强度"\)/);
+  assert.match(settingsTabSource, /setName\("响应速度"\)/);
 }
 
 async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> {
@@ -228,7 +250,10 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   assert.match(serviceSource, /workflow:\s*"prompt\.enhance"/);
   assert.match(serviceSource, /developerInstructions:\s*ENHANCE_META_PROMPT/);
   assert.match(serviceSource, /ephemeral:\s*true/);
-  assert.match(serviceSource, /serviceTier:\s*input\.serviceTier\s*\?\?\s*"fast"/);
+  assert.match(serviceSource, /reasoning:\s*settings\.reasoning/);
+  assert.match(serviceSource, /serviceTier:\s*settings\.serviceTier/);
+  assert.doesNotMatch(serviceSource, /reasoning:\s*"low"/);
+  assert.doesNotMatch(serviceSource, /input\.serviceTier/);
   assert.match(serviceSource, /sessionId:\s*`\$\{ENHANCE_PROMPT_AGENT_NAME\}:\$\{runId\}`/);
   assert.match(serviceSource, /withTimeout\(plugin\.runHarnessWithAdapter/);
   assert.match(serviceSource, /adapter\?\.cancel\(runId\)/);

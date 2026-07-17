@@ -1891,7 +1891,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 35);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 36);
 assert.deepEqual(DEFAULT_SETTINGS.memory, {
   enabled: true,
   autoSync: true,
@@ -1919,6 +1919,8 @@ assert.equal(DEFAULT_SETTINGS.promptEnhancer.activeApiProviderId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.providerId, "");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.model, DEFAULT_PROMPT_ENHANCER_MODEL);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
+assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.timeoutMs, 45000);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.maxInputChars, 4000);
 assert.equal(resolvePromptEnhancerBackend(DEFAULT_SETTINGS), "codex-cli");
