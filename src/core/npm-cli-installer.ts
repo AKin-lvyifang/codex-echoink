@@ -2,6 +2,10 @@ import { execFile } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import {
+  emitAgentSetupProgress,
+  type AgentSetupProgressHandler
+} from "./agent-setup";
 import { resolveWindowsNpmLaunch, resolveWindowsOpenCodeLaunch, windowsCodexNativeCandidates, windowsOpenCodeNativeCandidates } from "./windows-cli-launch";
 
 export type NpmCliKind = "codex" | "opencode";
@@ -61,6 +65,7 @@ export interface NpmCliInstallOptions {
   maxLogChars?: number;
   exists?: (candidate: string) => boolean;
   runner?: NpmCliRunner;
+  onProgress?: AgentSetupProgressHandler;
 }
 
 export interface NpmCliInstallResult {
@@ -115,7 +120,12 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
     env
   };
 
+  if (options.signal?.aborted) {
+    return { status: "cancelled", kind, command: null, version: null, logs: "", error: "安装已取消" };
+  }
+
   try {
+    emitAgentSetupProgress(options.onProgress, "checking-environment");
     const npmLaunch = platform === "win32"
       ? resolveWindowsNpmLaunch({
         envPath,
@@ -125,7 +135,9 @@ export async function installNpmCli(kind: NpmCliKind, options: NpmCliInstallOpti
       })
       : { command: "npm", argsPrefix: [] as string[] };
     if (!npmLaunch) throw missingNpmError();
+    emitAgentSetupProgress(options.onProgress, "installing-cli");
     const install = await runner(npmLaunch.command, [...npmLaunch.argsPrefix, ...npmCliInstallArgs(kind, home, platform)], runnerOptions);
+    emitAgentSetupProgress(options.onProgress, "verifying-version");
     const prefix = await runner(npmLaunch.command, [...npmLaunch.argsPrefix, ...npmCliPrefixArgs(kind, home, platform)], runnerOptions);
     const command = installedNpmCliCommand(spec, prefix.stdout, platform, exists, options.arch ?? process.arch);
     if (!command) {

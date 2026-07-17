@@ -18,6 +18,23 @@ export type AgentSetupPhase =
 export type AgentSetupNextAction = "install" | "authorize" | "connect" | "start" | "retry" | "cancel" | null;
 export type AgentInstallerAction = "install" | "authorize" | "connect";
 
+export const AGENT_SETUP_PROGRESS_STAGES = [
+  "checking-environment",
+  "installing-cli",
+  "verifying-version"
+] as const;
+
+export type AgentSetupProgressStage = typeof AGENT_SETUP_PROGRESS_STAGES[number];
+export type AgentSetupProgressStep = 1 | 2 | 3;
+
+export interface AgentSetupProgress {
+  stage: AgentSetupProgressStage;
+  step: AgentSetupProgressStep;
+  total: 3;
+}
+
+export type AgentSetupProgressHandler = (progress: Readonly<AgentSetupProgress>) => void;
+
 export type AgentSetupDashboardTone = "ready" | "failed" | "missing" | "attention" | "busy";
 
 export interface AgentSetupDashboardState {
@@ -34,6 +51,8 @@ export interface AgentSetupSnapshot {
   phase: AgentSetupPhase;
   command: string | null;
   version: string | null;
+  /** In-memory installer progress. This is never persisted to plugin settings. */
+  progress: AgentSetupProgress | null;
   detail: string;
   logs: string;
   error: string;
@@ -45,7 +64,7 @@ export interface AgentSetupSnapshot {
 
 export interface AgentSetupContext {
   signal?: AbortSignal;
-  onProgress?: (detail: string, logs?: string) => void;
+  onProgress?: AgentSetupProgressHandler;
   openUrl?: (url: string) => void;
   requestSecret?: (input: { title: string; label: string }) => Promise<string | null>;
 }
@@ -84,6 +103,7 @@ export function createAgentSetupSnapshot(
     phase,
     command: null,
     version: null,
+    progress: null,
     detail: "",
     logs: "",
     error: "",
@@ -143,6 +163,49 @@ export function isAgentSetupDetectionRevisionCurrent(startRevision: number, curr
   return startRevision === currentRevision;
 }
 
+export function resolveAgentCommandObservation(
+  observed: string | null | undefined,
+  detected: string | null,
+  operationActive: boolean
+): {
+  deferred: boolean;
+  changed: boolean;
+  nextObserved: string | null | undefined;
+} {
+  if (operationActive) {
+    return { deferred: true, changed: false, nextObserved: observed };
+  }
+  return {
+    deferred: false,
+    changed: observed !== undefined && observed !== detected,
+    nextObserved: detected
+  };
+}
+
+/**
+ * A cancellation can arrive after an installer has already placed a
+ * discoverable CLI. Keep the terminal message, but use the real detected
+ * command after a complete version-aware detection and make the next retry
+ * continue with connection instead of reinstalling the same CLI.
+ */
+export function reconcileTerminalAgentInstallDetection(
+  terminal: AgentSetupSnapshot,
+  detected: AgentSetupSnapshot
+): AgentSetupSnapshot {
+  if ((terminal.phase !== "cancelled" && terminal.phase !== "failed")
+    || detected.phase !== "installed"
+    || !detected.command) {
+    return terminal;
+  }
+  return {
+    ...terminal,
+    command: detected.command,
+    version: detected.version ?? terminal.version,
+    lastAction: "connect",
+    checkedAt: detected.checkedAt || terminal.checkedAt
+  };
+}
+
 export function resolveAgentSetupProviderModelLabel(input: {
   providerId: string;
   modelId: string;
@@ -197,6 +260,28 @@ export function limitedAgentSetupLog(value: string, maxChars = 8_000): string {
     .trim();
   if (redacted.length <= maxChars) return redacted;
   return `${redacted.slice(0, Math.max(0, maxChars))}\n…`;
+}
+
+/**
+ * Installer progress is best-effort presentation data. A rendering callback
+ * must never be able to interrupt or fail the fixed installation operation.
+ */
+export function emitAgentSetupProgress(
+  onProgress: AgentSetupProgressHandler | undefined,
+  stage: AgentSetupProgressStage
+): void {
+  if (!onProgress) return;
+  const index = AGENT_SETUP_PROGRESS_STAGES.indexOf(stage);
+  if (index < 0) return;
+  try {
+    onProgress({
+      stage,
+      step: (index + 1) as AgentSetupProgressStep,
+      total: AGENT_SETUP_PROGRESS_STAGES.length as 3
+    });
+  } catch {
+    // Progress reporting is isolated from the security-sensitive installer.
+  }
 }
 
 export async function runAgentInstallerAction(

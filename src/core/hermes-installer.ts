@@ -4,6 +4,10 @@ import * as fs from "fs";
 import { chmod, copyFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import {
+  emitAgentSetupProgress,
+  type AgentSetupProgressHandler
+} from "./agent-setup";
 
 export const HERMES_INSTALL_RELEASE = "v2026.7.7.2";
 export const HERMES_INSTALL_COMMIT = "9de9c25f620ff7f1ce0fd5457d596052d5159596";
@@ -139,6 +143,7 @@ export interface HermesInstallOptions {
   fetch?: HermesInstallerFetch;
   runner?: HermesInstallerRunner;
   exists?: (candidate: string) => boolean;
+  onProgress?: AgentSetupProgressHandler;
 }
 
 export interface HermesInstallResult {
@@ -247,6 +252,7 @@ export async function installHermesCli(options: HermesInstallOptions = {}): Prom
 
   try {
     throwIfAborted(options.signal);
+    emitAgentSetupProgress(options.onProgress, "checking-environment");
     if ((platform === "darwin" || platform === "linux") && (options.uid ?? process.getuid?.()) === 0) {
       throw new HermesInstallerError("permission", "EchoInk 拒绝以 root 身份安装 Hermes。请使用普通用户重试；安装过程不会执行 sudo。");
     }
@@ -306,6 +312,7 @@ export async function installHermesCli(options: HermesInstallOptions = {}): Prom
       if (isAbortError(error) || options.signal?.aborted) throw error;
       throw new HermesInstallerError("dependency", "系统未找到可用的 Git。EchoInk 不会自动安装系统依赖，请先安装 Git 后重试。");
     }
+    emitAgentSetupProgress(options.onProgress, "installing-cli");
     const uvArchive = await downloadPinnedUv(
       uvSource,
       fetcher,
@@ -373,6 +380,7 @@ export async function installHermesCli(options: HermesInstallOptions = {}): Prom
         await run(stagingCommand, ["--version"], { cwd: stagingDirectory, timeoutMs: 15_000 });
       },
       afterActivate: async () => {
+        emitAgentSetupProgress(options.onProgress, "verifying-version");
         assertSafeHermesInstallPaths(home, platform);
         for (const stage of safeStages) {
           throwIfAborted(options.signal);

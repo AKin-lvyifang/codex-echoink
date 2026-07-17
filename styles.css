@@ -2106,33 +2106,41 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 .codex-agent-dashboard.is-busy {
-  border-color: transparent;
+  border-color: var(--background-modifier-border);
 }
 
-.codex-agent-dashboard.is-busy::before,
-.codex-agent-dashboard.is-busy::after {
+.codex-agent-dashboard.is-progressing {
+  border-color: transparent;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.codex-agent-dashboard.is-progressing::before,
+.codex-agent-dashboard.is-progressing::after {
   position: absolute;
   content: "";
   pointer-events: none;
 }
 
-.codex-agent-dashboard.is-busy::before {
-  inset: -140%;
+.codex-agent-dashboard.is-progressing::before {
+  inset: -120%;
   z-index: 0;
   background: conic-gradient(
     from 0deg,
-    transparent 0deg 275deg,
-    color-mix(in srgb, var(--interactive-accent) 24%, transparent) 315deg,
-    color-mix(in srgb, var(--interactive-accent) 68%, transparent) 340deg,
-    transparent 360deg
+    color-mix(in srgb, var(--interactive-accent) 10%, transparent) 0deg 248deg,
+    color-mix(in srgb, var(--interactive-accent) 18%, transparent) 270deg,
+    color-mix(in srgb, var(--interactive-accent) 50%, transparent) 304deg,
+    color-mix(in srgb, var(--interactive-accent) 92%, transparent) 330deg,
+    color-mix(in srgb, var(--interactive-accent) 58%, var(--background-primary)) 342deg,
+    color-mix(in srgb, var(--interactive-accent) 10%, transparent) 360deg
   );
-  animation: codex-agent-dashboard-border-spin 2.6s linear infinite;
+  animation: codex-agent-dashboard-border-spin 2.2s linear infinite;
+  will-change: transform;
 }
 
-.codex-agent-dashboard.is-busy::after {
-  inset: 1px;
+.codex-agent-dashboard.is-progressing::after {
+  inset: 2px;
   z-index: 1;
-  border-radius: 11px;
+  border-radius: 10px;
   background: var(--background-primary);
 }
 
@@ -2210,16 +2218,8 @@ body.theme-light .codex-code-wrapper pre {
   background: var(--text-error);
 }
 
-.codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot {
+.codex-agent-dashboard-tab.is-enabled.is-working .codex-agent-dashboard-dot {
   background: var(--interactive-accent);
-  animation: codex-agent-dashboard-dot-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes codex-agent-dashboard-dot-pulse {
-  50% {
-    opacity: 0.38;
-    transform: scale(0.78);
-  }
 }
 
 .codex-agent-dashboard-tab-label {
@@ -2267,6 +2267,7 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-agent-dashboard-detail-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
@@ -2290,6 +2291,177 @@ body.theme-light .codex-code-wrapper pre {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.codex-agent-dashboard-install-flow {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 6px;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background-secondary) 78%, transparent);
+}
+
+.codex-agent-dashboard-operation-flow.is-attention {
+  background: color-mix(in srgb, var(--color-yellow) 8%, var(--background-secondary));
+}
+
+.codex-agent-dashboard-operation-flow.is-error {
+  background: color-mix(in srgb, var(--text-error) 7%, var(--background-secondary));
+}
+
+.codex-agent-dashboard-install-flow-title {
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.codex-agent-dashboard-install-flow-copy,
+.codex-agent-dashboard-install-safety {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.codex-agent-dashboard-install-safety {
+  display: flex;
+  gap: 7px;
+  margin-top: 2px;
+}
+
+.codex-agent-dashboard-install-safety-mark {
+  flex: 0 0 auto;
+  color: var(--text-success);
+  font-weight: 700;
+}
+
+.codex-agent-dashboard-install-progress {
+  height: 3px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+
+.codex-agent-dashboard-install-progress-fill {
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--interactive-accent);
+  transition: transform 220ms ease-out;
+  transform: scaleX(1);
+  transform-origin: left center;
+}
+
+.codex-agent-dashboard-install-progress.is-step-2 .codex-agent-dashboard-install-progress-fill {
+  transform: scaleX(2);
+}
+
+.codex-agent-dashboard-install-progress.is-step-3 .codex-agent-dashboard-install-progress-fill {
+  transform: scaleX(3);
+}
+
+.codex-agent-dashboard-install-progress.is-indeterminate .codex-agent-dashboard-install-progress-fill {
+  width: 42%;
+  animation: codex-agent-dashboard-progress-scan 1.25s ease-in-out infinite;
+  transform: translateX(-135%);
+}
+
+@keyframes codex-agent-dashboard-progress-scan {
+  50% {
+    transform: translateX(135%);
+  }
+
+  100% {
+    transform: translateX(245%);
+  }
+}
+
+.codex-agent-dashboard-install-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.codex-agent-dashboard-install-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.codex-agent-dashboard-install-step-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9999px;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.codex-agent-dashboard-install-step-mark svg {
+  width: 11px;
+  height: 11px;
+}
+
+.codex-agent-dashboard-install-step.is-current {
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.codex-agent-dashboard-install-step.is-current .codex-agent-dashboard-install-step-mark {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+}
+
+.codex-agent-dashboard-install-step.is-complete .codex-agent-dashboard-install-step-mark {
+  border-color: var(--text-success);
+  color: var(--background-primary);
+  background: var(--text-success);
+}
+
+.codex-agent-dashboard-install-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  min-width: 0;
+}
+
+.codex-agent-dashboard-install-fact {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 64%, transparent);
+}
+
+.codex-agent-dashboard-install-fact:first-child {
+  grid-column: 1 / -1;
+}
+
+.codex-agent-dashboard-install-fact code {
+  min-width: 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-normal);
+  background: transparent;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .codex-agent-dashboard-path,
@@ -2405,8 +2577,34 @@ body.theme-light .codex-code-wrapper pre {
   font-weight: 500;
 }
 
-.codex-agent-dashboard-action:hover:not(:disabled) {
+.codex-agent-dashboard-action.is-header-action {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.codex-agent-dashboard-action:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--background-modifier-hover);
+}
+
+.codex-agent-dashboard-action[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+.codex-agent-dashboard-action[aria-disabled="true"]:hover {
+  background: var(--background-secondary);
+}
+
+.codex-agent-dashboard-action.is-primary {
+  border-color: var(--interactive-accent);
+  border-radius: 9999px;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.codex-agent-dashboard-action.is-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--interactive-accent-hover);
 }
 
 .codex-agent-dashboard-enable {
@@ -2466,6 +2664,13 @@ body.theme-light .codex-code-wrapper pre {
   margin: 0;
 }
 
+.codex-agent-dashboard-first-run-gate {
+  margin: 10px 2px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .codex-agent-advanced {
   min-width: 0;
   padding: 10px 0;
@@ -2483,6 +2688,10 @@ body.theme-light .codex-code-wrapper pre {
 }
 
 @container (max-width: 460px) {
+  .codex-agent-dashboard.is-progressing::before {
+    inset: -90%;
+  }
+
   .codex-agent-dashboard-header {
     padding: 12px 12px 8px;
   }
@@ -2508,6 +2717,15 @@ body.theme-light .codex-code-wrapper pre {
     padding: 12px;
   }
 
+  .codex-agent-dashboard-detail-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .codex-agent-dashboard-action.is-header-action {
+    width: fit-content;
+  }
+
   .codex-agent-dashboard-path,
   .codex-agent-dashboard-meta-row {
     grid-template-columns: 1fr;
@@ -2518,24 +2736,50 @@ body.theme-light .codex-code-wrapper pre {
     grid-template-columns: 1fr;
   }
 
+  .codex-agent-dashboard-install-steps,
+  .codex-agent-dashboard-install-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .codex-agent-dashboard-install-fact:first-child {
+    grid-column: auto;
+  }
+
+  .codex-agent-dashboard-install-fact {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
   .codex-agent-dashboard-actions {
     align-items: flex-start;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .codex-agent-dashboard.is-busy::before {
-    inset: 0;
-    background: color-mix(in srgb, var(--interactive-accent) 46%, var(--background-modifier-border));
-    animation: none;
+  .codex-agent-dashboard.is-progressing {
+    border-color: color-mix(in srgb, var(--interactive-accent) 52%, var(--background-modifier-border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 10%, transparent);
   }
 
-  .codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot {
+  .codex-agent-dashboard.is-progressing::before,
+  .codex-agent-dashboard.is-progressing::after {
+    content: none;
     animation: none;
+    will-change: auto;
   }
 
   .codex-agent-dashboard-enable-thumb {
     transition: none;
+  }
+
+  .codex-agent-dashboard-install-progress-fill {
+    transition: none;
+  }
+
+  .codex-agent-dashboard-install-progress.is-indeterminate .codex-agent-dashboard-install-progress-fill {
+    width: 100%;
+    animation: none;
+    transform: none;
   }
 }
 

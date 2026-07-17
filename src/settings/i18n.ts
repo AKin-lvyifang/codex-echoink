@@ -135,6 +135,9 @@ const ZH_CN = {
         liveRegionLabel: "Agent 状态更新",
         tabAria: (label: string, status: string, isEnabled: boolean, installed: boolean) => `${label}，${status}，${isEnabled ? "正在使用" : "未在使用"}，${installed ? "已安装" : "未安装"}`,
         panelAria: (label: string) => `${label} 状态与操作`,
+        firstRunHeading: "Agent",
+        firstRunSubtitle: "选择一个 Agent 开始，EchoInk 只会安装你选中的这一项。",
+        firstRunGate: "先安装并启用一个 Agent，其他设置随后自动开放。",
         status: {
           detecting: "检测中",
           missing: "未安装",
@@ -192,6 +195,61 @@ const ZH_CN = {
           retry: "重试",
           start: "开始使用",
           setDefault: "设为默认并使用"
+        },
+        installFlow: {
+          missingTitle: (label: string) => `${label} 尚未安装`,
+          missingDescription: "EchoInk 可以帮你完成安装，无需复制命令或打开终端。",
+          needsAuthTitle: (label: string) => `${label} 已安装`,
+          authorizingTitle: (label: string) => `等待 ${label} 授权`,
+          connectingTitle: (label: string) => `正在验证 ${label}`,
+          failedTitle: (label: string) => `${label} 操作未完成`,
+          cancelledTitle: (label: string) => `${label} 操作已取消`,
+          confirmTitle: (label: string) => `安装 ${label}`,
+          confirmDescription: "只安装当前选择的这一项，确认前不会执行任何命令。",
+          confirmFlowTitle: "即将安装官方 CLI",
+          installingTitle: (label: string) => `正在安装 ${label}`,
+          confirmAction: "确认安装",
+          back: "暂不安装",
+          safety: "仅执行固定的官方安装步骤，不使用 sudo，安装过程不会读取或修改你的笔记。",
+          progressTitle: (step: number, total: number) => `安装进度 ${step}/${total}`,
+          progressDescription: "你可以留在当前页面，EchoInk 会在安装完成后自动继续。",
+          progressAria: (label: string, step: number, total: number) => `${label}，第 ${step} 步，共 ${total} 步`,
+          authorizationReadyTitle: (label: string) => `下一步：登录/授权 ${label}`,
+          authorizationReadyDescription: "EchoInk 会引导你完成官方登录或 Provider 授权；需要浏览器时会打开系统浏览器，完成后自动继续连接验证。",
+          authorizingFlowTitle: "正在完成授权",
+          authorizingFlowDescription: "如授权方式需要，EchoInk 会安全提示你输入授权码或 API Key；敏感内容不会进入安装日志。",
+          connectingFlowTitle: "正在做最后一次连接验证",
+          connectingFlowDescription: "验证通过后会出现一个小型“启用”开关。",
+          failedFlowTitle: "没有修改你的默认 Agent",
+          failedFlowDescription: "可以直接重试；如果仍然失败，再使用终端或官方文档兜底。",
+          cancelledFlowTitle: "已安全停止",
+          cancelledInstalledDescription: "CLI 已保留，下次会从连接或授权继续，不会重复安装。",
+          cancelledMissingDescription: "未完成的安装不会被标记为已安装，可以稍后重新开始。",
+          step: {
+            "checking-environment": "检查安装环境",
+            "installing-cli": "安装官方 CLI",
+            "verifying-version": "验证 CLI 版本"
+          },
+          fact: {
+            source: "安装来源",
+            location: "安装位置",
+            next: "接下来"
+          },
+          source: {
+            "codex-cli": "@openai/codex（OpenAI 官方）",
+            opencode: "opencode-ai（OpenCode 官方）",
+            hermes: "NousResearch/hermes-agent（官方固定版本）"
+          },
+          location: {
+            "codex-cli": "npm 全局目录",
+            opencode: "当前用户目录",
+            hermes: "当前用户目录"
+          },
+          next: {
+            "codex-cli": "安装 → 登录 → 连接 → 启用",
+            opencode: "安装 → 选择免费模型 → 连接 → 启用",
+            hermes: "安装 → Nous 授权 → 连接 → 启用"
+          }
         },
         diagnosticsSummary: "诊断与有限日志",
         recheck: "重新检测",
@@ -307,7 +365,7 @@ const ZH_CN = {
     agents: "Agent 后端",
     general: "基础设置",
     providers: "API Provider",
-    resources: "工作区能力",
+    resources: "Skills & MCP",
     promptEnhancer: "提示词增强",
     editorActions: "写作操作",
     knowledgeBase: "知识库管理",
@@ -609,7 +667,7 @@ const ZH_CN = {
     readFailed: (error: string) => `OpenCode 读取失败：${error}`
   },
   resources: {
-    title: "工作区能力管理",
+    title: "Skills & MCP",
     note: "这里只改当前 Obsidian 仓库的 EchoInk 资源目录；从 Codex/Hermes/OpenCode 导入的资源不会写回它们的全局配置。",
     tabs: {
       plugins: "插件",
@@ -776,6 +834,9 @@ const EN: SettingsCopy = {
         liveRegionLabel: "Agent status updates",
         tabAria: (label, status, isEnabled, installed) => `${label}, ${status}, ${isEnabled ? "in use" : "not in use"}, ${installed ? "installed" : "not installed"}`,
         panelAria: (label) => `${label} status and actions`,
+        firstRunHeading: "Agent",
+        firstRunSubtitle: "Choose one Agent to begin. EchoInk installs only the one you select.",
+        firstRunGate: "Install and enable one Agent first. The remaining settings will open automatically.",
         status: {
           detecting: "Checking",
           missing: "Not installed",
@@ -833,6 +894,61 @@ const EN: SettingsCopy = {
           retry: "Retry",
           start: "Start using",
           setDefault: "Set as default and start"
+        },
+        installFlow: {
+          missingTitle: (label) => `${label} is not installed`,
+          missingDescription: "EchoInk can install it for you without copying commands or opening a terminal.",
+          needsAuthTitle: (label) => `${label} is installed`,
+          authorizingTitle: (label) => `Waiting for ${label} authorization`,
+          connectingTitle: (label) => `Verifying ${label}`,
+          failedTitle: (label) => `${label} action did not finish`,
+          cancelledTitle: (label) => `${label} action was cancelled`,
+          confirmTitle: (label) => `Install ${label}`,
+          confirmDescription: "Only the selected Agent will be installed. No command runs until you confirm.",
+          confirmFlowTitle: "About to install the official CLI",
+          installingTitle: (label) => `Installing ${label}`,
+          confirmAction: "Confirm installation",
+          back: "Not now",
+          safety: "EchoInk only runs fixed official installation steps, never uses sudo, and does not read or modify your notes during installation.",
+          progressTitle: (step, total) => `Installation progress ${step}/${total}`,
+          progressDescription: "You can stay on this page. EchoInk will continue automatically after installation.",
+          progressAria: (label, step, total) => `${label}, step ${step} of ${total}`,
+          authorizationReadyTitle: (label) => `Next: sign in or authorize ${label}`,
+          authorizationReadyDescription: "EchoInk guides you through official sign-in or provider authorization, opens your system browser when needed, then continues with connection verification.",
+          authorizingFlowTitle: "Completing authorization",
+          authorizingFlowDescription: "If the provider requires it, EchoInk securely prompts for an authorization code or API key. Sensitive values never enter installation logs.",
+          connectingFlowTitle: "Running the final connection check",
+          connectingFlowDescription: "A compact Enable switch appears after the check passes.",
+          failedFlowTitle: "Your default Agent was not changed",
+          failedFlowDescription: "Retry directly. Use the terminal or official documentation only if it still fails.",
+          cancelledFlowTitle: "Stopped safely",
+          cancelledInstalledDescription: "The CLI remains installed. The next attempt continues from connection or authorization without reinstalling it.",
+          cancelledMissingDescription: "An incomplete installation is not marked as installed. You can restart it later.",
+          step: {
+            "checking-environment": "Check installation environment",
+            "installing-cli": "Install the official CLI",
+            "verifying-version": "Verify the CLI version"
+          },
+          fact: {
+            source: "Installation source",
+            location: "Install location",
+            next: "Next"
+          },
+          source: {
+            "codex-cli": "@openai/codex (official OpenAI package)",
+            opencode: "opencode-ai (official OpenCode package)",
+            hermes: "NousResearch/hermes-agent (pinned official release)"
+          },
+          location: {
+            "codex-cli": "Global npm directory",
+            opencode: "Current user directory",
+            hermes: "Current user directory"
+          },
+          next: {
+            "codex-cli": "Install → sign in → connect → enable",
+            opencode: "Install → choose a free model → connect → enable",
+            hermes: "Install → authorize Nous → connect → enable"
+          }
         },
         diagnosticsSummary: "Diagnostics and limited log",
         recheck: "Check again",
@@ -948,7 +1064,7 @@ const EN: SettingsCopy = {
     agents: "Agents",
     general: "General",
     providers: "API Provider",
-    resources: "Capabilities",
+    resources: "Skills & MCP",
     promptEnhancer: "Prompt enhancer",
     editorActions: "Writing",
     knowledgeBase: "Knowledge",
@@ -1250,7 +1366,7 @@ const EN: SettingsCopy = {
     readFailed: (error) => `OpenCode failed: ${error}`
   },
   resources: {
-    title: "Workspace capabilities",
+    title: "Skills & MCP",
     note: "Only changes EchoInk resources for the current Obsidian vault. Imported Codex/Hermes/OpenCode resources are not written back to global configs.",
     tabs: {
       plugins: "Plugins",

@@ -10,10 +10,13 @@ import { detectHermesCommand } from "../core/hermes-models";
 import { OpenCodeBackend } from "../core/opencode-backend";
 import { detectOpenCodeCommand, resolveOpenCodeLaunch, selectOpenCodeConnectionModel } from "../core/opencode-models";
 import {
+  AGENT_SETUP_PROGRESS_STAGES,
   createAgentSetupSnapshot,
   isAgentSetupDetectionRevisionCurrent,
   limitedAgentSetupLog,
   readyAgentBackendToCommit,
+  reconcileTerminalAgentInstallDetection,
+  resolveAgentCommandObservation,
   resolveAgentSetupDashboardState,
   resolveAgentSetupProviderModelLabel,
   runAgentInstallerAction,
@@ -22,6 +25,7 @@ import {
   type AgentInstallerRegistry,
   type AgentSetupContext,
   type AgentSetupNextAction,
+  type AgentSetupProgress,
   type AgentSetupSnapshot
 } from "../core/agent-setup";
 import { installNpmCli } from "../core/npm-cli-installer";
@@ -119,6 +123,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private openCodeAgentsError = "";
   private setupSelectedBackend: AgentBackendMode;
   private setupSnapshots: Record<AgentBackendMode, AgentSetupSnapshot>;
+  private setupInstallConfirmBackend: AgentBackendMode | null = null;
   private setupBusy = false;
   private setupActiveBackend: AgentBackendMode | null = null;
   private setupAutoCheckStarted = false;
@@ -126,8 +131,10 @@ export class CodexSettingTab extends PluginSettingTab {
   private setupDetectionPending = false;
   private setupPendingConnectSelected = false;
   private setupDetectionDrainActive = false;
+  private setupDetectionDrainGeneration: number | null = null;
   private setupSessionGeneration = 0;
   private setupSessionActive = false;
+  private setupOperationGeneration = 0;
   private setupDetectionTimer: number | null = null;
   private setupAbort: AbortController | null = null;
   private readonly setupDeepCheckedBackends = new Set<AgentBackendMode>();
@@ -149,6 +156,7 @@ export class CodexSettingTab extends PluginSettingTab {
     hermes: -1
   };
   private setupTabFocusTarget: AgentBackendMode | null = null;
+  private setupDashboardActionFocusPending = false;
   private setupAdvancedOpen = false;
   private memoryStatus: MemoryStoreStatus | null = null;
   private memoryStatusLoading = false;
@@ -232,6 +240,7 @@ export class CodexSettingTab extends PluginSettingTab {
   hide(): void {
     this.setupSessionActive = false;
     this.setupSessionGeneration += 1;
+    this.setupOperationGeneration += 1;
     if (this.setupDetectionTimer !== null) {
       window.clearTimeout(this.setupDetectionTimer);
       this.setupDetectionTimer = null;
@@ -240,13 +249,21 @@ export class CodexSettingTab extends PluginSettingTab {
       window.cancelAnimationFrame(this.displayFrame);
       this.displayFrame = null;
     }
-    this.setupAbort?.abort();
+    const setupAbort = this.setupAbort;
+    this.setupAbort = null;
+    setupAbort?.abort();
+    this.setupBusy = false;
+    this.setupActiveBackend = null;
+    this.setupDetectionDrainActive = false;
+    this.setupDetectionDrainGeneration = null;
     this.setupAutoCheckStarted = false;
     this.setupAutoRepairPending = false;
     this.setupDetectionPending = false;
     this.setupPendingConnectSelected = false;
     this.setupTabFocusTarget = null;
+    this.setupDashboardActionFocusPending = false;
     this.setupSelectedBackend = this.plugin.settings.agentBackend;
+    this.setupInstallConfirmBackend = null;
     this.setupAdvancedOpen = false;
     super.hide();
   }
@@ -302,6 +319,10 @@ export class CodexSettingTab extends PluginSettingTab {
       const statusBox = statusEl;
       this.renderAgentDashboard(statusBox);
       if (this.shouldShowSetupGuide()) {
+        statusBox.createDiv({
+          cls: "codex-agent-dashboard-first-run-gate",
+          text: copy.setup.agentInstaller.dashboard.firstRunGate
+        });
         return;
       }
 
@@ -351,8 +372,44 @@ export class CodexSettingTab extends PluginSettingTab {
     return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
   }
 
+  private beginAgentSetupOperation(
+    backend: AgentBackendMode | null,
+    controller: AbortController | null
+  ): number {
+    const operationGeneration = ++this.setupOperationGeneration;
+    this.setupBusy = true;
+    this.setupActiveBackend = backend;
+    this.setupAbort = controller;
+    return operationGeneration;
+  }
+
+  private isAgentSetupOperationOwner(
+    operationGeneration: number,
+    controller: AbortController | null
+  ): boolean {
+    return this.setupOperationGeneration === operationGeneration
+      && this.setupAbort === controller;
+  }
+
+  private finishAgentSetupOperation(
+    operationGeneration: number,
+    controller: AbortController | null
+  ): boolean {
+    if (!this.isAgentSetupOperationOwner(operationGeneration, controller)) return false;
+    this.setupAbort = null;
+    this.setupBusy = false;
+    this.setupActiveBackend = null;
+    return true;
+  }
+
   private captureAgentDashboardTabFocus(): void {
     const activeElement = this.containerEl.ownerDocument.activeElement;
+    if (activeElement instanceof HTMLElement
+      && activeElement.matches("[data-agent-dashboard-action='primary']")) {
+      this.setupDashboardActionFocusPending = true;
+      this.setupTabFocusTarget = null;
+      return;
+    }
     const focusedDefinition = activeElement instanceof HTMLElement
       ? this.agentDashboardDefinitions().find(
         (definition) => activeElement.id === this.agentDashboardTabId(definition.backend)
@@ -904,8 +961,16 @@ export class CodexSettingTab extends PluginSettingTab {
       const previous = this.setupSnapshots[backend];
       const command = commands[backend];
       const observedCommand = this.setupObservedCommands[backend];
-      const commandChanged = observedCommand !== undefined && observedCommand !== command;
-      this.setupObservedCommands[backend] = command;
+      const activeOperation = this.setupBusy
+        && ((this.setupActiveBackend === backend
+          && (previous.phase === "installing"
+          || previous.phase === "authorizing"
+          || previous.phase === "connecting"))
+          || (this.setupActiveBackend === null && previous.phase === "detecting"));
+      const observation = resolveAgentCommandObservation(observedCommand, command, activeOperation);
+      if (observation.deferred) continue;
+      const commandChanged = observation.changed;
+      this.setupObservedCommands[backend] = observation.nextObserved;
       if (!command) {
         if (previous.command || commandChanged) {
           this.clearAgentSetupVerification(backend);
@@ -1049,10 +1114,18 @@ export class CodexSettingTab extends PluginSettingTab {
     const dashboardCopy = copy.dashboard;
     const selected = this.setupSnapshots[this.setupSelectedBackend];
     const selectedState = resolveAgentSetupDashboardState(selected);
+    const installConfirming = selectedState.status === "missing"
+      && this.setupInstallConfirmBackend === this.setupSelectedBackend;
     const dashboardBusy = this.isAgentDashboardBusy();
     const definitions = this.agentDashboardDefinitions();
     const selectedDefinition = definitions.find((item) => item.backend === this.setupSelectedBackend) ?? definitions[0];
-    const selectedStatusLabel = dashboardCopy.status[selectedState.status];
+    const selectedStatusLabel = selected.progress
+      ? dashboardCopy.installFlow.progressAria(
+        dashboardCopy.installFlow.step[selected.progress.stage],
+        selected.progress.step,
+        selected.progress.total
+      )
+      : dashboardCopy.status[selectedState.status];
     const selectedEnabled = !this.shouldShowSetupGuide()
       && selected.backend === this.plugin.settings.agentBackend;
     const liveText = dashboardCopy.tabAria(
@@ -1065,15 +1138,29 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsAgentLiveText = liveText;
       this.settingsAgentLiveEl?.setText(liveText);
     }
+    const isProgressing = selectedState.status === "installing"
+      || selectedState.status === "authorizing"
+      || selectedState.status === "connecting";
     const root = container.createDiv({
-      cls: `codex-agent-dashboard is-${selectedState.tone}${dashboardBusy ? " is-busy" : ""}`,
+      cls: [
+        "codex-agent-dashboard",
+        `is-${selectedState.tone}`,
+        dashboardBusy ? "is-busy" : "",
+        isProgressing ? "is-progressing" : ""
+      ].filter(Boolean).join(" "),
       attr: {
         "aria-busy": dashboardBusy ? "true" : "false"
       }
     });
     const header = root.createDiv({ cls: "codex-agent-dashboard-header" });
-    header.createDiv({ cls: "codex-setup-heading", text: copy.compactHeading });
-    header.createDiv({ cls: "codex-setup-subtitle", text: copy.subtitle });
+    header.createDiv({
+      cls: "codex-setup-heading",
+      text: this.shouldShowSetupGuide() ? dashboardCopy.firstRunHeading : copy.compactHeading
+    });
+    header.createDiv({
+      cls: "codex-setup-subtitle",
+      text: this.shouldShowSetupGuide() ? dashboardCopy.firstRunSubtitle : copy.subtitle
+    });
 
     const tabList = root.createDiv({
       cls: "codex-agent-dashboard-tabs",
@@ -1086,7 +1173,9 @@ export class CodexSettingTab extends PluginSettingTab {
       const isEnabled = !this.shouldShowSetupGuide()
         && definition.backend === this.plugin.settings.agentBackend;
       const isDisconnected = isEnabled
-        && (state.status === "failed" || state.status === "missing" || state.status === "needs-auth");
+        && !state.busy
+        && state.status !== "ready";
+      const isWorking = isEnabled && state.busy;
       const statusLabel = dashboardCopy.status[state.status];
       const tab = tabList.createEl("button", {
         cls: [
@@ -1095,6 +1184,7 @@ export class CodexSettingTab extends PluginSettingTab {
           isSelected ? "is-selected" : "",
           isEnabled ? "is-enabled" : "",
           isDisconnected ? "is-disconnected" : "",
+          isWorking ? "is-working" : "",
           state.installed ? "is-installed" : ""
         ].filter(Boolean).join(" "),
         attr: {
@@ -1148,29 +1238,37 @@ export class CodexSettingTab extends PluginSettingTab {
     const detail = panel.createDiv({ cls: "codex-agent-dashboard-detail" });
     const detailHeader = detail.createDiv({ cls: "codex-agent-dashboard-detail-header" });
     const detailCopy = detailHeader.createDiv({ cls: "codex-agent-dashboard-detail-copy" });
-    detailCopy.createDiv({ cls: "codex-agent-dashboard-title", text: dashboardCopy.title[selectedState.status] });
+    const detailTitle = installConfirming
+      ? dashboardCopy.installFlow.confirmTitle(selectedDefinition.label)
+      : this.agentDashboardDetailTitle(selected, selectedDefinition.label);
+    const detailDescription = installConfirming
+      ? dashboardCopy.installFlow.confirmDescription
+      : selectedState.status === "missing"
+        ? dashboardCopy.installFlow.missingDescription
+        : selected.detail || dashboardCopy.description[selectedState.status];
+    detailCopy.createDiv({ cls: "codex-agent-dashboard-title", text: detailTitle });
     detailCopy.createDiv({
       cls: "codex-agent-dashboard-description",
-      text: selected.detail || dashboardCopy.description[selectedState.status]
+      text: detailDescription
     });
-    if (selectedState.installed) {
+    if (selectedState.status === "ready") {
       const enable = detailHeader.createEl("button", {
         cls: `codex-agent-dashboard-enable${selectedEnabled ? " is-on" : ""}`,
         attr: {
           type: "button",
           role: "switch",
           "aria-checked": selectedEnabled ? "true" : "false",
-          "aria-label": `${dashboardCopy.enable} ${selectedDefinition.label}`
+          "aria-label": `${dashboardCopy.enable} ${selectedDefinition.label}`,
+          "data-agent-dashboard-action": "primary"
         }
       });
       enable.createSpan({ text: dashboardCopy.enable });
       const track = enable.createSpan({ cls: "codex-agent-dashboard-enable-track", attr: { "aria-hidden": "true" } });
       track.createSpan({ cls: "codex-agent-dashboard-enable-thumb" });
-      const canEnable = selectedState.status === "ready" || selectedState.status === "installed";
       const enabledAndReady = selectedEnabled && selectedState.status === "ready";
-      enable.disabled = dashboardBusy || enabledAndReady || !canEnable;
+      enable.disabled = dashboardBusy || enabledAndReady;
       enable.onclick = async () => {
-        if (this.isAgentDashboardBusy() || enabledAndReady || !canEnable) return;
+        if (this.isAgentDashboardBusy() || enabledAndReady) return;
         const backend = this.setupSelectedBackend;
         const sessionGeneration = this.setupSessionGeneration;
         if (!this.isAgentSetupVerificationCurrent(backend)) {
@@ -1182,53 +1280,86 @@ export class CodexSettingTab extends PluginSettingTab {
           await this.completeAgentSetup();
         }
       };
-    }
-    const path = detail.createDiv({ cls: "codex-agent-dashboard-path" });
-    path.createSpan({ text: dashboardCopy.meta.cliPath });
-    path.createEl("code", { text: selected.command || dashboardCopy.meta.unavailable });
-    const meta = detail.createDiv({ cls: "codex-agent-dashboard-meta" });
-    for (const item of this.agentDashboardMeta(selected)) {
-      const row = meta.createDiv({ cls: "codex-agent-dashboard-meta-row" });
-      row.createSpan({ cls: "codex-agent-dashboard-meta-label", text: item.label });
-      row.createSpan({ cls: "codex-agent-dashboard-meta-value", text: item.value });
-    }
-
-    const diagnostics = detail.createEl("details", { cls: "codex-agent-dashboard-diagnostics" });
-    diagnostics.createEl("summary", { text: dashboardCopy.diagnosticsSummary });
-    const diagnosticBody = diagnostics.createDiv({ cls: "codex-agent-dashboard-diagnostics-body" });
-    diagnosticBody.createDiv({ text: `${this.copy.status.pluginDir}：${pluginInstallDir(this.plugin)}` });
-    if (selected.error) diagnosticBody.createEl("pre", { text: selected.error });
-    if (selected.logs) diagnosticBody.createEl("pre", { text: selected.logs });
-    const recheck = diagnosticBody.createEl("button", {
-      cls: "codex-agent-dashboard-secondary",
-      text: dashboardCopy.recheck,
-      attr: { type: "button" }
-    });
-    recheck.disabled = dashboardBusy;
-    recheck.onclick = () => {
-      if (this.isAgentDashboardBusy()) return;
-      this.clearAgentSetupVerification(this.setupSelectedBackend);
-      void this.detectAllAgents(true);
-    };
-
-    const shouldRenderSetupAction = selectedState.primaryAction !== null
-      && selectedState.status !== "ready"
-      && selectedState.status !== "installed";
-    const shouldRenderFallback = selected.phase === "failed"
-      || selected.phase === "cancelled"
-      || selected.phase === "missing";
-    const actions = shouldRenderSetupAction || shouldRenderFallback
-      ? panel.createDiv({ cls: "codex-agent-dashboard-actions" })
-      : null;
-    if (actions && shouldRenderSetupAction) {
-      const actionButton = actions.createEl("button", {
-        cls: "codex-agent-dashboard-action",
+    } else {
+      const actionButton = detailHeader.createEl("button", {
+        cls: [
+          "codex-agent-dashboard-action",
+          "is-header-action",
+          selectedState.status === "missing" ? "is-primary" : ""
+        ].filter(Boolean).join(" "),
         text: this.agentDashboardPrimaryLabel(selected, selectedDefinition.label),
+        attr: {
+          type: "button",
+          "data-agent-dashboard-action": "primary"
+        }
+      });
+      const actionDisabled = selectedState.primaryAction === null
+        || (this.setupBusy && selectedState.primaryAction !== "cancel");
+      actionButton.setAttr("aria-disabled", actionDisabled ? "true" : "false");
+      actionButton.onclick = () => {
+        if (actionDisabled || !selectedState.primaryAction) return;
+        actionButton.disabled = true;
+        actionButton.setAttr("aria-disabled", "true");
+        void this.runAgentSetupAction(
+          selectedState.primaryAction,
+          selectedState.retryTarget,
+          installConfirming
+        );
+      };
+    }
+
+    if (installConfirming || selectedState.status === "installing") {
+      this.renderAgentInstallFlow(detail, selected, selectedDefinition.label, installConfirming);
+    } else if (selectedState.status === "needs-auth"
+      || selectedState.status === "authorizing"
+      || selectedState.status === "connecting"
+      || selectedState.status === "failed"
+      || selectedState.status === "cancelled") {
+      this.renderAgentOperationFlow(detail, selected, selectedDefinition.label);
+    }
+
+    if (selectedState.installed) {
+      const path = detail.createDiv({ cls: "codex-agent-dashboard-path" });
+      path.createSpan({ text: dashboardCopy.meta.cliPath });
+      path.createEl("code", { text: selected.command || dashboardCopy.meta.unavailable });
+      const meta = detail.createDiv({ cls: "codex-agent-dashboard-meta" });
+      for (const item of this.agentDashboardMeta(selected)) {
+        const row = meta.createDiv({ cls: "codex-agent-dashboard-meta-row" });
+        row.createSpan({ cls: "codex-agent-dashboard-meta-label", text: item.label });
+        row.createSpan({ cls: "codex-agent-dashboard-meta-value", text: item.value });
+      }
+    } else {
+      this.renderAgentInstallFacts(detail, selected.backend);
+    }
+
+    const hideFirstRunDiagnostics = this.shouldShowSetupGuide()
+      && selectedState.status !== "failed"
+      && selectedState.status !== "cancelled";
+    if (!hideFirstRunDiagnostics) {
+      const diagnostics = detail.createEl("details", { cls: "codex-agent-dashboard-diagnostics" });
+      diagnostics.createEl("summary", { text: dashboardCopy.diagnosticsSummary });
+      const diagnosticBody = diagnostics.createDiv({ cls: "codex-agent-dashboard-diagnostics-body" });
+      diagnosticBody.createDiv({ text: `${this.copy.status.pluginDir}：${pluginInstallDir(this.plugin)}` });
+      if (selected.error) diagnosticBody.createEl("pre", { text: selected.error });
+      if (selected.logs) diagnosticBody.createEl("pre", { text: selected.logs });
+      const recheck = diagnosticBody.createEl("button", {
+        cls: "codex-agent-dashboard-secondary",
+        text: dashboardCopy.recheck,
         attr: { type: "button" }
       });
-      actionButton.disabled = this.setupBusy && selectedState.primaryAction !== "cancel";
-      actionButton.onclick = () => void this.runAgentSetupAction(selectedState.primaryAction, selectedState.retryTarget);
+      recheck.disabled = dashboardBusy;
+      recheck.onclick = () => {
+        if (this.isAgentDashboardBusy()) return;
+        this.clearAgentSetupVerification(this.setupSelectedBackend);
+        void this.detectAllAgents(true);
+      };
     }
+
+    const shouldRenderFallback = selected.phase === "failed"
+      || selected.phase === "cancelled";
+    const actions = shouldRenderFallback
+      ? panel.createDiv({ cls: "codex-agent-dashboard-actions" })
+      : null;
     if (actions && shouldRenderFallback) {
       if (selected.backend === "hermes") {
         const fallback = actions.createEl("a", {
@@ -1253,12 +1384,177 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     }
 
-    this.renderAgentSettings(panel, this.plugin.lastStatus);
+    const hideFirstRunAdvanced = this.shouldShowSetupGuide() && !selected.command;
+    if (!hideFirstRunAdvanced) this.renderAgentSettings(panel, this.plugin.lastStatus);
 
-    if (this.setupTabFocusTarget) {
+    if (this.setupDashboardActionFocusPending) {
+      const target = root.querySelector<HTMLElement>("[data-agent-dashboard-action='primary']");
+      this.setupDashboardActionFocusPending = false;
+      target?.focus();
+    } else if (this.setupTabFocusTarget) {
       const target = root.querySelector<HTMLElement>(`#${this.agentDashboardTabId(this.setupTabFocusTarget)}`);
       this.setupTabFocusTarget = null;
       target?.focus();
+    }
+  }
+
+  private renderAgentInstallFlow(
+    container: HTMLElement,
+    snapshot: AgentSetupSnapshot,
+    label: string,
+    confirming: boolean
+  ): void {
+    const copy = this.copy.setup.agentInstaller;
+    const flowCopy = copy.dashboard.installFlow;
+    const flow = container.createDiv({
+      cls: `codex-agent-dashboard-install-flow${confirming ? " codex-agent-dashboard-install-confirm" : ""}`
+    });
+    if (confirming) {
+      flow.createDiv({ cls: "codex-agent-dashboard-install-flow-title", text: flowCopy.confirmFlowTitle });
+      flow.createDiv({
+        cls: "codex-agent-dashboard-install-flow-copy",
+        text: snapshot.backend === "hermes"
+          ? copy.install.confirmHermes
+          : copy.install.confirmNpm(
+            label,
+            snapshot.backend === "opencode" ? copy.install.userDirectory : copy.install.globalNpmDirectory
+          )
+      });
+      const safety = flow.createDiv({ cls: "codex-agent-dashboard-install-safety" });
+      safety.createSpan({ cls: "codex-agent-dashboard-install-safety-mark", text: "✓", attr: { "aria-hidden": "true" } });
+      safety.createSpan({ text: flowCopy.safety });
+      const back = flow.createEl("button", {
+        cls: "codex-agent-dashboard-secondary",
+        text: flowCopy.back,
+        attr: { type: "button" }
+      });
+      back.onclick = () => {
+        this.setupInstallConfirmBackend = null;
+        this.setupDashboardActionFocusPending = true;
+        this.scheduleDisplay();
+      };
+      return;
+    }
+
+    const progress = snapshot.progress ?? {
+      stage: "checking-environment",
+      step: 1,
+      total: 3
+    } satisfies AgentSetupProgress;
+    const progressLabel = flowCopy.step[progress.stage];
+    flow.createDiv({
+      cls: "codex-agent-dashboard-install-flow-title",
+      text: flowCopy.progressTitle(progress.step, progress.total)
+    });
+    flow.createDiv({ cls: "codex-agent-dashboard-install-flow-copy", text: flowCopy.progressDescription });
+    const progressBar = flow.createDiv({
+      cls: `codex-agent-dashboard-install-progress is-step-${progress.step}`,
+      attr: {
+        role: "progressbar",
+        "aria-valuemin": "1",
+        "aria-valuemax": String(snapshot.progress?.total ?? progress.total),
+        "aria-valuenow": String(snapshot.progress?.step ?? progress.step),
+        "aria-valuetext": flowCopy.progressAria(progressLabel, progress.step, progress.total)
+      }
+    });
+    progressBar.createDiv({ cls: "codex-agent-dashboard-install-progress-fill" });
+    const steps = flow.createEl("ol", { cls: "codex-agent-dashboard-install-steps" });
+    AGENT_SETUP_PROGRESS_STAGES.forEach((stage, index) => {
+      const stepNumber = index + 1;
+      const item = steps.createEl("li", {
+        cls: [
+          "codex-agent-dashboard-install-step",
+          stepNumber < progress.step ? "is-complete" : "",
+          stepNumber === progress.step ? "is-current" : ""
+        ].filter(Boolean).join(" ")
+      });
+      const mark = item.createSpan({
+        cls: "codex-agent-dashboard-install-step-mark",
+        text: String(stepNumber),
+        attr: { "aria-hidden": "true" }
+      });
+      if (stepNumber < progress.step) {
+        mark.empty();
+        setIcon(mark, "check");
+      }
+      item.createSpan({ text: flowCopy.step[stage] });
+    });
+  }
+
+  private agentDashboardDetailTitle(snapshot: AgentSetupSnapshot, label: string): string {
+    const copy = this.copy.setup.agentInstaller.dashboard;
+    if (snapshot.phase === "missing") return copy.installFlow.missingTitle(label);
+    if (snapshot.phase === "installing") return copy.installFlow.installingTitle(label);
+    if (snapshot.phase === "needs-auth") return copy.installFlow.needsAuthTitle(label);
+    if (snapshot.phase === "authorizing") return copy.installFlow.authorizingTitle(label);
+    if (snapshot.phase === "connecting") return copy.installFlow.connectingTitle(label);
+    if (snapshot.phase === "failed") return copy.installFlow.failedTitle(label);
+    if (snapshot.phase === "cancelled") return copy.installFlow.cancelledTitle(label);
+    return copy.title[snapshot.phase];
+  }
+
+  private renderAgentOperationFlow(
+    container: HTMLElement,
+    snapshot: AgentSetupSnapshot,
+    label: string
+  ): void {
+    const copy = this.copy.setup.agentInstaller.dashboard.installFlow;
+    let title = "";
+    let description = "";
+    let tone = "";
+    let indeterminate = false;
+    if (snapshot.phase === "needs-auth") {
+      title = copy.authorizationReadyTitle(label);
+      description = copy.authorizationReadyDescription;
+      tone = " is-attention";
+    } else if (snapshot.phase === "authorizing") {
+      title = copy.authorizingFlowTitle;
+      description = copy.authorizingFlowDescription;
+      indeterminate = true;
+    } else if (snapshot.phase === "connecting") {
+      title = copy.connectingFlowTitle;
+      description = copy.connectingFlowDescription;
+      indeterminate = true;
+    } else if (snapshot.phase === "failed") {
+      title = copy.failedFlowTitle;
+      description = copy.failedFlowDescription;
+      tone = " is-error";
+    } else {
+      title = copy.cancelledFlowTitle;
+      description = snapshot.command
+        ? copy.cancelledInstalledDescription
+        : copy.cancelledMissingDescription;
+    }
+    const flow = container.createDiv({
+      cls: `codex-agent-dashboard-install-flow codex-agent-dashboard-operation-flow${tone}${indeterminate ? " is-indeterminate" : ""}`
+    });
+    flow.createDiv({ cls: "codex-agent-dashboard-install-flow-title", text: title });
+    flow.createDiv({ cls: "codex-agent-dashboard-install-flow-copy", text: description });
+    if (indeterminate) {
+      const progress = flow.createDiv({
+        cls: "codex-agent-dashboard-install-progress is-indeterminate",
+        attr: {
+          role: "progressbar",
+          "aria-label": title
+        }
+      });
+      progress.createDiv({ cls: "codex-agent-dashboard-install-progress-fill" });
+    }
+  }
+
+  private renderAgentInstallFacts(container: HTMLElement, backend: AgentBackendMode): void {
+    const copy = this.copy.setup.agentInstaller.dashboard.installFlow;
+    const facts = container.createDiv({ cls: "codex-agent-dashboard-install-facts" });
+    const rows = [
+      { label: copy.fact.source, value: copy.source[backend], code: true },
+      { label: copy.fact.location, value: copy.location[backend], code: false },
+      { label: copy.fact.next, value: copy.next[backend], code: false }
+    ];
+    for (const row of rows) {
+      const item = facts.createDiv({ cls: "codex-agent-dashboard-install-fact" });
+      item.createSpan({ cls: "codex-agent-dashboard-meta-label", text: row.label });
+      if (row.code) item.createEl("code", { text: row.value });
+      else item.createSpan({ cls: "codex-agent-dashboard-meta-value", text: row.value });
     }
   }
 
@@ -1285,8 +1581,10 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private selectAgentDashboardBackend(backend: AgentBackendMode, focus = false): void {
     if (this.isAgentDashboardBusy()) return;
+    this.setupDashboardActionFocusPending = false;
     if (focus) this.setupTabFocusTarget = backend;
     if (backend === this.setupSelectedBackend) return;
+    this.setupInstallConfirmBackend = null;
     this.setupSelectedBackend = backend;
     this.scheduleDisplay();
   }
@@ -1358,7 +1656,11 @@ export class CodexSettingTab extends PluginSettingTab {
     const copy = this.copy.setup.agentInstaller.dashboard.primary;
     const state = resolveAgentSetupDashboardState(snapshot);
     if (state.status === "detecting") return copy.detecting;
-    if (state.status === "missing") return copy.install(label);
+    if (state.status === "missing") {
+      return this.setupInstallConfirmBackend === snapshot.backend
+        ? this.copy.setup.agentInstaller.dashboard.installFlow.confirmAction
+        : copy.install(label);
+    }
     if (state.status === "installing") return copy.cancelInstall;
     if (state.status === "installed") return copy.connect;
     if (state.status === "connecting") return copy.connecting;
@@ -1372,7 +1674,11 @@ export class CodexSettingTab extends PluginSettingTab {
     return copy.retry;
   }
 
-  private async runAgentSetupAction(action: AgentSetupNextAction, retryTarget: AgentInstallerAction | null = null): Promise<void> {
+  private async runAgentSetupAction(
+    action: AgentSetupNextAction,
+    retryTarget: AgentInstallerAction | null = null,
+    installConfirmed = false
+  ): Promise<void> {
     if (action === "cancel") {
       this.setupAbort?.abort();
       return;
@@ -1381,7 +1687,18 @@ export class CodexSettingTab extends PluginSettingTab {
     const sessionGeneration = this.setupSessionGeneration;
     if (!this.isSetupSessionCurrent(sessionGeneration)) return;
     const effectiveAction = action === "retry" ? retryTarget : action;
-    if (effectiveAction === "install") return this.installAgent(this.setupSelectedBackend, sessionGeneration);
+    if (effectiveAction === "install") {
+      if (action === "install" && this.setupSnapshots[this.setupSelectedBackend].phase === "missing") {
+        if (!installConfirmed || this.setupInstallConfirmBackend !== this.setupSelectedBackend) {
+          this.setupInstallConfirmBackend = this.setupSelectedBackend;
+          this.scheduleDisplay();
+          return;
+        }
+      }
+      this.setupInstallConfirmBackend = null;
+      return this.installAgent(this.setupSelectedBackend, sessionGeneration);
+    }
+    this.setupInstallConfirmBackend = null;
     if (effectiveAction === "authorize") return this.authorizeAgent(this.setupSelectedBackend, sessionGeneration);
     if (effectiveAction === "connect") return this.connectAgent(this.setupSelectedBackend, sessionGeneration);
     if (action === "start") return this.completeAgentSetup();
@@ -1532,8 +1849,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private async drainPendingSetupDetection(sessionGeneration = this.setupSessionGeneration): Promise<void> {
-    if (!this.isSetupSessionCurrent(sessionGeneration) || this.setupDetectionDrainActive) return;
+    if (!this.isSetupSessionCurrent(sessionGeneration)
+      || (this.setupDetectionDrainActive && this.setupDetectionDrainGeneration === sessionGeneration)) return;
     this.setupDetectionDrainActive = true;
+    this.setupDetectionDrainGeneration = sessionGeneration;
     try {
       while (this.isSetupSessionCurrent(sessionGeneration) && !this.setupBusy && this.setupDetectionPending) {
         const connectSelected = this.setupPendingConnectSelected;
@@ -1555,7 +1874,10 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       }
     } finally {
-      this.setupDetectionDrainActive = false;
+      if (this.setupDetectionDrainGeneration === sessionGeneration) {
+        this.setupDetectionDrainActive = false;
+        this.setupDetectionDrainGeneration = null;
+      }
       if (this.setupSessionActive
         && this.setupDetectionPending
         && this.setupSessionGeneration !== sessionGeneration) {
@@ -1571,7 +1893,8 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!this.isSetupSessionCurrent(sessionGeneration)) return;
     this.setupDetectionPending = true;
     this.setupPendingConnectSelected = this.setupPendingConnectSelected || connectSelected;
-    if (this.setupBusy || this.setupDetectionDrainActive) return;
+    if (this.setupBusy
+      || (this.setupDetectionDrainActive && this.setupDetectionDrainGeneration === sessionGeneration)) return;
     await this.drainPendingSetupDetection(sessionGeneration);
   }
 
@@ -1584,8 +1907,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const previousSnapshots = { ...this.setupSnapshots };
     const detectionRevisions = { ...this.setupConfigRevisions };
     let selectedDetectionIsCurrent = true;
-    this.setupBusy = true;
-    this.setupActiveBackend = null;
+    const operationGeneration = this.beginAgentSetupOperation(null, null);
     for (const backend of backends) {
       this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "detecting");
     }
@@ -1652,9 +1974,8 @@ export class CodexSettingTab extends PluginSettingTab {
         current.lastAction ?? null
       );
     } finally {
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
+      const operationFinished = this.finishAgentSetupOperation(operationGeneration, null);
+      if (operationFinished && this.isSetupSessionCurrent(sessionGeneration)) {
         this.flushPendingAgentSetupInvalidations();
         this.scheduleDisplay();
       }
@@ -1734,40 +2055,91 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!this.isSetupSessionCurrent(sessionGeneration)) return;
     const copy = this.copy.setup.agentInstaller;
     const label = copy.agents[backend].label;
-    const accepted = await confirmModal(
-      this.app,
-      copy.install.confirmTitle(label),
-      backend === "hermes"
-        ? copy.install.confirmHermes
-        : copy.install.confirmNpm(label, backend === "opencode" ? copy.install.userDirectory : copy.install.globalNpmDirectory),
-      copy.install.accept,
-      copy.install.cancel
-    );
-    if (!this.isSetupSessionCurrent(sessionGeneration) || !accepted || this.setupBusy) return;
-    this.setupBusy = true;
-    this.setupActiveBackend = backend;
+    if (this.setupBusy) return;
     const controller = new AbortController();
-    this.setupAbort = controller;
+    const operationGeneration = this.beginAgentSetupOperation(backend, controller);
     const previous = this.setupSnapshots[backend];
-    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installing", { command: previous.command, detail: copy.install.installing(label) });
+    this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "installing", {
+      command: previous.command,
+      version: previous.version,
+      progress: {
+        stage: "checking-environment",
+        step: 1,
+        total: 3
+      },
+      detail: copy.install.installing(label)
+    });
     this.scheduleDisplay();
     let installed = false;
+    let latestProgressStep = 1;
+    let verifiedInstallSnapshot: AgentSetupSnapshot | null = null;
     try {
-      const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "install", { signal: controller.signal });
-      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      let snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "install", {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (!this.isSetupSessionCurrent(sessionGeneration)
+            || !this.isAgentSetupOperationOwner(operationGeneration, controller)
+            || controller.signal.aborted
+            || this.setupActiveBackend !== backend
+            || this.setupSnapshots[backend].phase !== "installing"
+            || progress.step < latestProgressStep) {
+            return;
+          }
+          latestProgressStep = progress.step;
+          this.setupSnapshots[backend] = {
+            ...this.setupSnapshots[backend],
+            progress,
+            detail: copy.dashboard.installFlow.step[progress.stage]
+          };
+          this.scheduleDisplay();
+        }
+      });
+      verifiedInstallSnapshot = snapshot.phase === "installed" ? snapshot : null;
+      if (snapshot.phase !== "failed") throwIfAgentSetupAborted(controller.signal);
+      if (!this.isSetupSessionCurrent(sessionGeneration)
+        || !this.isAgentSetupOperationOwner(operationGeneration, controller)) return;
+      snapshot = await this.reconcileTerminalAgentInstallReality(backend, snapshot, sessionGeneration);
+      if (!this.isSetupSessionCurrent(sessionGeneration)
+        || !this.isAgentSetupOperationOwner(operationGeneration, controller)) return;
+      const recoveredInstalledCommand = Boolean(snapshot.command && snapshot.command !== previous.command);
+      if (snapshot.command && (snapshot.phase === "installed" || recoveredInstalledCommand)) {
+        this.writeAgentCliPath(backend, snapshot.command);
+        if (snapshot.phase !== "installed") this.setupCommandsAwaitingVerification.add(backend);
+        await this.plugin.saveSettings(true);
+        throwIfAgentSetupAborted(controller.signal);
+        if (!this.isSetupSessionCurrent(sessionGeneration)
+          || !this.isAgentSetupOperationOwner(operationGeneration, controller)) return;
+      }
       this.setupSnapshots[backend] = snapshot;
       installed = snapshot.phase === "installed";
     } catch (error) {
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
-        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+      if (this.isSetupSessionCurrent(sessionGeneration)
+        && this.isAgentSetupOperationOwner(operationGeneration, controller)) {
+        const terminal = controller.signal.aborted || isAgentSetupAbortError(error)
           ? this.cancelledAgentSnapshot(backend, previous, copy.install.cancelled, "install")
           : this.failedAgentSnapshot(backend, previous.command, error, previous.version, "install");
+        if (verifiedInstallSnapshot?.command) {
+          terminal.command = verifiedInstallSnapshot.command;
+          terminal.version = verifiedInstallSnapshot.version;
+          terminal.lastAction = "connect";
+        }
+        const reconciled = await this.reconcileTerminalAgentInstallReality(
+          backend,
+          terminal,
+          sessionGeneration
+        );
+        if (this.isSetupSessionCurrent(sessionGeneration)
+          && this.isAgentSetupOperationOwner(operationGeneration, controller)) {
+          if (reconciled.command && reconciled.lastAction === "connect") {
+            this.writeAgentCliPath(backend, reconciled.command);
+            this.setupCommandsAwaitingVerification.add(backend);
+          }
+          this.setupSnapshots[backend] = reconciled;
+        }
       }
     } finally {
-      if (this.setupAbort === controller) this.setupAbort = null;
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
+      const operationFinished = this.finishAgentSetupOperation(operationGeneration, controller);
+      if (operationFinished && this.isSetupSessionCurrent(sessionGeneration)) {
         this.flushPendingAgentSetupInvalidations();
         this.scheduleDisplay();
       }
@@ -1775,15 +2147,20 @@ export class CodexSettingTab extends PluginSettingTab {
     if (installed && this.isSetupSessionCurrent(sessionGeneration)) {
       await this.connectAgent(backend, sessionGeneration);
     }
-    await this.drainPendingSetupDetection(this.setupSessionGeneration);
+    if (this.isSetupSessionCurrent(sessionGeneration)) {
+      await this.drainPendingSetupDetection(sessionGeneration);
+    }
   }
 
   private async performAgentInstall(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
     const copy = this.copy.setup.agentInstaller.install;
     const previous = this.setupSnapshots[backend];
     const result = backend === "hermes"
-      ? await installHermesCli({ signal: context.signal })
-      : await installNpmCli(backend === "codex-cli" ? "codex" : "opencode", { signal: context.signal });
+      ? await installHermesCli({ signal: context.signal, onProgress: context.onProgress })
+      : await installNpmCli(
+        backend === "codex-cli" ? "codex" : "opencode",
+        { signal: context.signal, onProgress: context.onProgress }
+      );
     if (result.status === "cancelled") {
       return createAgentSetupSnapshot(backend, "cancelled", {
         command: previous.command,
@@ -1799,8 +2176,6 @@ export class CodexSettingTab extends PluginSettingTab {
         logs: limitedAgentSetupLog(result.logs)
       });
     }
-    this.writeAgentCliPath(backend, result.command);
-    await this.plugin.saveSettings(true);
     return createAgentSetupSnapshot(backend, "installed", {
       command: result.command,
       version: result.version,
@@ -1808,6 +2183,21 @@ export class CodexSettingTab extends PluginSettingTab {
       logs: limitedAgentSetupLog(result.logs),
       checkedAt: Date.now()
     });
+  }
+
+  private async reconcileTerminalAgentInstallReality(
+    backend: AgentBackendMode,
+    terminal: AgentSetupSnapshot,
+    sessionGeneration: number
+  ): Promise<AgentSetupSnapshot> {
+    if (terminal.phase !== "cancelled" && terminal.phase !== "failed") return terminal;
+    try {
+      const detected = await this.agentInstallers[backend].detect();
+      if (!this.isSetupSessionCurrent(sessionGeneration)) return terminal;
+      return reconcileTerminalAgentInstallDetection(terminal, detected);
+    } catch {
+      return terminal;
+    }
   }
 
   private async connectAgent(
@@ -1826,9 +2216,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.plugin.agentRuntimeHealth.reset(backend);
     const configRevision = this.setupConfigRevisions[backend];
     const controller = new AbortController();
-    this.setupAbort = controller;
-    this.setupBusy = true;
-    this.setupActiveBackend = backend;
+    const operationGeneration = this.beginAgentSetupOperation(backend, controller);
     this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "connecting", {
       command: this.setupSnapshots[backend].command,
       version: this.setupSnapshots[backend].version,
@@ -1840,29 +2228,35 @@ export class CodexSettingTab extends PluginSettingTab {
       const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "connect", {
         signal: controller.signal
       });
-      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      throwIfAgentSetupAborted(controller.signal);
+      if (!this.isSetupSessionCurrent(sessionGeneration)
+        || !this.isAgentSetupOperationOwner(operationGeneration, controller)) return;
       this.setupCommandsAwaitingVerification.delete(backend);
       this.setupSnapshots[backend] = snapshot;
       this.plugin.agentRuntimeHealth.reportHealthy(backend);
       this.recordAgentSetupVerification(backend, snapshot, configRevision, sessionGeneration);
     } catch (error) {
-      this.setupCommandsAwaitingVerification.delete(backend);
-      this.plugin.agentRuntimeHealth.reportFailure(backend, error, { source: "setup-connect" });
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
-        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
+      const cancelled = controller.signal.aborted || isAgentSetupAbortError(error);
+      if (this.isSetupSessionCurrent(sessionGeneration)
+        && this.isAgentSetupOperationOwner(operationGeneration, controller)) {
+        this.setupCommandsAwaitingVerification.delete(backend);
+        if (!cancelled) {
+          this.plugin.agentRuntimeHealth.reportFailure(backend, error, { source: "setup-connect" });
+        }
+        this.setupSnapshots[backend] = cancelled
           ? this.cancelledAgentSnapshot(backend, current, this.copy.setup.agentInstaller.connection.cancelled, "connect")
           : this.failedAgentSnapshot(backend, current.command, error, current.version, "connect");
       }
     } finally {
-      if (this.setupAbort === controller) this.setupAbort = null;
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
+      const operationFinished = this.finishAgentSetupOperation(operationGeneration, controller);
+      if (operationFinished && this.isSetupSessionCurrent(sessionGeneration)) {
         this.flushPendingAgentSetupInvalidations();
         this.scheduleDisplay();
       }
     }
-    await this.drainPendingSetupDetection(this.setupSessionGeneration);
+    if (this.isSetupSessionCurrent(sessionGeneration)) {
+      await this.drainPendingSetupDetection(sessionGeneration);
+    }
   }
 
   private async performAgentConnection(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
@@ -2025,10 +2419,8 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!this.isSetupSessionCurrent(sessionGeneration) || this.setupBusy) return;
     const current = this.setupSnapshots[backend];
     if (backend === "hermes" && !current.command) return;
-    this.setupBusy = true;
-    this.setupActiveBackend = backend;
     const controller = new AbortController();
-    this.setupAbort = controller;
+    const operationGeneration = this.beginAgentSetupOperation(backend, controller);
     const configRevision = this.setupConfigRevisions[backend];
     const copy = this.copy.setup.agentInstaller.authorization;
     this.setupSnapshots[backend] = createAgentSetupSnapshot(backend, "authorizing", {
@@ -2042,25 +2434,34 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     this.scheduleDisplay();
     let shouldConnect = false;
+    let completedAuthorizationSnapshot: AgentSetupSnapshot | null = null;
     try {
       const snapshot = await runAgentInstallerAction(this.agentInstallers, backend, "authorize", {
         signal: controller.signal
       });
-      if (!this.isSetupSessionCurrent(sessionGeneration)) return;
+      if (snapshot.phase === "installed") completedAuthorizationSnapshot = snapshot;
+      if (snapshot.phase !== "failed") throwIfAgentSetupAborted(controller.signal);
+      if (!this.isSetupSessionCurrent(sessionGeneration)
+        || !this.isAgentSetupOperationOwner(operationGeneration, controller)) return;
       this.setupSnapshots[backend] = snapshot;
       this.recordAgentSetupVerification(backend, snapshot, configRevision, sessionGeneration);
       shouldConnect = snapshot.phase === "installed";
     } catch (error) {
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
-        this.setupSnapshots[backend] = controller.signal.aborted || isAgentSetupAbortError(error)
-          ? this.cancelledAgentSnapshot(backend, current, copy.cancelled, "authorize")
+      if (this.isSetupSessionCurrent(sessionGeneration)
+        && this.isAgentSetupOperationOwner(operationGeneration, controller)) {
+        const cancelled = controller.signal.aborted || isAgentSetupAbortError(error);
+        this.setupSnapshots[backend] = cancelled
+          ? this.cancelledAgentSnapshot(
+            backend,
+            completedAuthorizationSnapshot ?? current,
+            copy.cancelled,
+            completedAuthorizationSnapshot ? "connect" : "authorize"
+          )
           : this.failedAgentSnapshot(backend, current.command, error, current.version, "authorize");
       }
     } finally {
-      if (this.setupAbort === controller) this.setupAbort = null;
-      this.setupBusy = false;
-      this.setupActiveBackend = null;
-      if (this.isSetupSessionCurrent(sessionGeneration)) {
+      const operationFinished = this.finishAgentSetupOperation(operationGeneration, controller);
+      if (operationFinished && this.isSetupSessionCurrent(sessionGeneration)) {
         this.flushPendingAgentSetupInvalidations();
         this.scheduleDisplay();
       }
@@ -2068,7 +2469,9 @@ export class CodexSettingTab extends PluginSettingTab {
     if (shouldConnect && this.isSetupSessionCurrent(sessionGeneration)) {
       await this.connectAgent(backend, sessionGeneration);
     }
-    await this.drainPendingSetupDetection(this.setupSessionGeneration);
+    if (this.isSetupSessionCurrent(sessionGeneration)) {
+      await this.drainPendingSetupDetection(sessionGeneration);
+    }
   }
 
   private async performAgentAuthorization(backend: AgentBackendMode, context: AgentSetupContext = {}): Promise<AgentSetupSnapshot> {
@@ -2093,7 +2496,7 @@ export class CodexSettingTab extends PluginSettingTab {
     throwIfAgentSetupAborted(context.signal);
     if (this.plugin.lastStatus.accountReadError) throw new Error(this.plugin.lastStatus.accountReadError);
     if (!this.plugin.lastStatus.loggedIn) throw new CodexLoginError("failed", this.copy.setup.loginErrors.failed);
-    return createAgentSetupSnapshot("codex-cli", "ready", {
+    return createAgentSetupSnapshot("codex-cli", "installed", {
       command: current.command,
       version: current.version,
       detail: this.plugin.lastStatus.accountLabel || copy.codexLoggedIn,
@@ -2336,6 +2739,8 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private async completeAgentSetup(): Promise<void> {
     if (this.setupBusy) return;
+    const sessionGeneration = this.setupSessionGeneration;
+    if (!this.isSetupSessionCurrent(sessionGeneration)) return;
     const selected = this.setupSnapshots[this.setupSelectedBackend];
     const backend = readyAgentBackendToCommit(this.setupSelectedBackend, selected);
     if (!backend || !this.isAgentSetupVerificationCurrent(backend)) {
@@ -2346,24 +2751,37 @@ export class CodexSettingTab extends PluginSettingTab {
     const previousDefaultBackend = this.plugin.settings.agents.defaultBackend;
     const previousSetup = this.plugin.settings.setup;
     const completingFirstSetup = previousSetup.completedAt <= 0;
-    this.setupBusy = true;
+    const nextSetup = completingFirstSetup
+      ? completeSetupState(previousSetup, Date.now(), this.plugin.manifest.version)
+      : previousSetup;
+    const operationGeneration = this.beginAgentSetupOperation(null, null);
     this.scheduleDisplay();
     try {
       this.plugin.settings.agentBackend = backend;
       this.plugin.settings.agents.defaultBackend = backend;
       if (completingFirstSetup) {
-        this.plugin.settings.setup = completeSetupState(previousSetup, Date.now(), this.plugin.manifest.version);
+        this.plugin.settings.setup = nextSetup;
       }
       try {
         await this.plugin.saveSettings(true);
       } catch {
-        this.plugin.settings.agentBackend = previousAgentBackend;
-        this.plugin.settings.agents.defaultBackend = previousDefaultBackend;
-        this.plugin.settings.setup = previousSetup;
-        new Notice(this.copy.setup.startSaveFailed);
+        const setupMutationStillOwned = this.plugin.settings.agentBackend === backend
+          && this.plugin.settings.agents.defaultBackend === backend
+          && this.plugin.settings.setup === nextSetup;
+        if (setupMutationStillOwned) {
+          this.plugin.settings.agentBackend = previousAgentBackend;
+          this.plugin.settings.agents.defaultBackend = previousDefaultBackend;
+          this.plugin.settings.setup = previousSetup;
+        }
+        if (this.isSetupSessionCurrent(sessionGeneration)
+          && this.isAgentSetupOperationOwner(operationGeneration, null)) {
+          new Notice(this.copy.setup.startSaveFailed);
+        }
         return;
       }
-      if (completingFirstSetup) {
+      if (completingFirstSetup
+        && this.isSetupSessionCurrent(sessionGeneration)
+        && this.isAgentSetupOperationOwner(operationGeneration, null)) {
         try {
           await this.plugin.activateView();
         } catch {
@@ -2371,8 +2789,9 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       }
     } finally {
-      this.setupBusy = false;
-      this.scheduleDisplay();
+      if (this.finishAgentSetupOperation(operationGeneration, null)) {
+        this.scheduleDisplay();
+      }
     }
   }
 

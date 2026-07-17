@@ -116,17 +116,24 @@ import { SETTINGS_COPY, SETTINGS_LANGUAGE_OPTIONS, settingsCopy } from "../setti
 import { buildCodexLaunchConfig, codexRunIdForTurn, CodexService, detectCodexInstallation, inspectCodexInstallation, resolveCodexCommand } from "../core/codex-service";
 import { CODEX_NPM_INSTALL_ARGS, installCodexCli } from "../core/codex-installer";
 import {
+  AGENT_SETUP_PROGRESS_STAGES,
   agentSetupRowStatus,
   createAgentSetupSnapshot,
+  emitAgentSetupProgress,
   isAgentSetupDetectionRevisionCurrent,
   limitedAgentSetupLog,
   readyAgentBackendToCommit,
+  reconcileTerminalAgentInstallDetection,
+  resolveAgentCommandObservation,
   resolveAgentSetupDashboardState,
   resolveAgentSetupProviderModelLabel,
   resolveAgentSetupPrimary,
   runAgentInstallerAction,
   type AgentInstaller,
-  type AgentInstallerRegistry
+  type AgentInstallerAction,
+  type AgentInstallerRegistry,
+  type AgentSetupNextAction,
+  type AgentSetupProgress
 } from "../core/agent-setup";
 import { installNpmCli, NPM_CLI_INSTALL_SPECS, npmCliInstallArgs, npmCliPrefixArgs } from "../core/npm-cli-installer";
 import {
@@ -537,7 +544,12 @@ const reconcileAgentSetupSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private reconcileAgentSetupSnapshotsForDisplay"),
   settingsTabSource.indexOf("private agentRuntimeAvailabilityError")
 );
-assert.match(reconcileAgentSetupSource, /const commandChanged = observedCommand !== undefined && observedCommand !== command/);
+assert.match(reconcileAgentSetupSource, /resolveAgentCommandObservation\(observedCommand, command, activeOperation\)/);
+assert.match(
+  reconcileAgentSetupSource,
+  /if \(observation\.deferred\) continue;[\s\S]*this\.setupObservedCommands\[backend\] = observation\.nextObserved/,
+  "忙碌操作期间不能提前消费 CLI 路径变化"
+);
 assert.match(
   reconcileAgentSetupSource,
   /if \(commandChanged\) \{[\s\S]*clearAgentSetupVerification\(backend\)[\s\S]*setupCommandsAwaitingVerification\.add\(backend\)[\s\S]*agentRuntimeHealth\.reset\(backend\)[\s\S]*createAgentSetupSnapshot\(backend, "installed"[\s\S]*continue;/,
@@ -559,12 +571,13 @@ assert.doesNotMatch(
 );
 assert.match(settingsTabSource, /private setupSessionGeneration = 0/);
 assert.match(settingsTabSource, /private setupSessionActive = false/);
+assert.match(settingsTabSource, /private setupOperationGeneration = 0/);
 assert.match(settingsTabSource, /private setupDetectionTimer: number \| null = null/);
 assert.match(settingsTabDisplaySource, /const sessionGeneration = this\.setupSessionGeneration/);
 assert.match(settingsTabDisplaySource, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return/);
 assert.match(
   settingsTabContentSource,
-  /this\.renderAgentDashboard\(statusBox\);\s*if \(this\.shouldShowSetupGuide\(\)(?: \|\| this\.isAgentDashboardBusy\(\))?\) \{\s*return;\s*\}/,
+  /this\.renderAgentDashboard\(statusBox\);\s*if \(this\.shouldShowSetupGuide\(\)(?: \|\| this\.isAgentDashboardBusy\(\))?\) \{[\s\S]*codex-agent-dashboard-first-run-gate[\s\S]*return;\s*\}/,
   "初始化未完成时必须只显示顶部仪表盘并早返回，避免其它设置绕过 ready 门禁"
 );
 const setupGuideGuardIndex = settingsTabContentSource.search(
@@ -585,6 +598,26 @@ assert.match(
   "异步重绘必须在安排 animation frame 时先保存标签焦点"
 );
 assert.match(settingsTabScheduleDisplaySource, /this\.renderSettingsContent\(\)/);
+const finishAgentSetupOperationForTest = new Function(
+  "operationGeneration",
+  "controller",
+  extractClassMethodBody(settingsTabSource, "private finishAgentSetupOperation(")
+) as (this: any, operationGeneration: number, controller: AbortController | null) => boolean;
+const staleOperationController = {} as AbortController;
+const currentOperationController = {} as AbortController;
+const operationOwnerHarness: any = {
+  setupOperationGeneration: 2,
+  setupAbort: currentOperationController,
+  setupBusy: true,
+  setupActiveBackend: "hermes",
+  isAgentSetupOperationOwner(operationGeneration: number, controller: AbortController | null): boolean {
+    return this.setupOperationGeneration === operationGeneration && this.setupAbort === controller;
+  }
+};
+assert.equal(finishAgentSetupOperationForTest.call(operationOwnerHarness, 1, staleOperationController), false);
+assert.equal(operationOwnerHarness.setupBusy, true, "旧操作 finally 不能清除新操作 busy");
+assert.equal(operationOwnerHarness.setupActiveBackend, "hermes");
+assert.equal(operationOwnerHarness.setupAbort, currentOperationController);
 assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
@@ -593,11 +626,164 @@ const agentDashboardSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private renderAgentDashboard"),
   settingsTabSource.indexOf("private async runAgentSetupAction")
 );
+const installAgentSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async installAgent"),
+  settingsTabSource.indexOf("private async performAgentInstall")
+);
+const performAgentInstallSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async performAgentInstall"),
+  settingsTabSource.indexOf("private async connectAgent")
+);
+const performAgentInstallBody = extractClassMethodBody(settingsTabSource, "private async performAgentInstall(");
+const reconcileTerminalInstallRealitySource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async reconcileTerminalAgentInstallReality"),
+  settingsTabSource.indexOf("private async connectAgent")
+);
 assert.match(agentDashboardSource, /backend: "codex-cli"/);
 assert.match(agentDashboardSource, /backend: "opencode"/);
 assert.match(agentDashboardSource, /backend: "hermes"/);
 assert.match(agentDashboardSource, /resolveAgentSetupDashboardState\(snapshot\)/);
 assert.match(agentDashboardSource, /codex-agent-dashboard/);
+assert.match(
+  settingsTabSource,
+  /private setupInstallConfirmBackend: AgentBackendMode \| null = null/,
+  "首次安装确认必须是设置会话内存态，不能进入持久化 schema"
+);
+assert.doesNotMatch(installAgentSource, /confirmModal\(/, "Agent 安装确认必须内联显示，不能再弹出确认 Modal");
+assert.match(
+  agentDashboardSource,
+  /codex-agent-dashboard-install-confirm/,
+  "缺失 Agent 第一次点击安装后必须在仪表盘内展开确认"
+);
+assert.match(
+  agentDashboardSource,
+  /setupInstallConfirmBackend === this\.setupSelectedBackend/,
+  "内联确认只能属于当前查看的 Agent"
+);
+assert.match(
+  agentDashboardSource,
+  /actionButton\.disabled = true;[\s\S]*runAgentSetupAction\([\s\S]*installConfirming/,
+  "点击安装后必须同步禁用旧按钮，并只让新渲染的确认按钮携带确认令牌"
+);
+assert.match(
+  agentDashboardSource,
+  /setupInstallConfirmBackend = null[\s\S]{0,240}?scheduleDisplay\(\)/,
+  "取消内联确认必须清理内存态并立即重绘"
+);
+assert.match(installAgentSource, /onProgress:\s*\(progress\)/, "安装动作必须消费类型化进度回调");
+assert.doesNotMatch(performAgentInstallBody, /writeAgentCliPath|saveSettings/, "安装器晚返回时不能绕过外层 owner 门禁写设置");
+assert.match(
+  installAgentSource,
+  /isAgentSetupOperationOwner\(operationGeneration, controller\)[\s\S]*writeAgentCliPath\(backend, snapshot\.command\)/,
+  "安装路径只能在当前设置会话仍拥有操作时提交"
+);
+assert.match(
+  reconcileTerminalInstallRealitySource,
+  /await this\.agentInstallers\[backend\]\.detect\(\)/,
+  "取消或失败后必须重新运行完整 CLI 检测（含 --version），不能只判断文件存在"
+);
+assert.match(
+  reconcileTerminalInstallRealitySource,
+  /catch \{[\s\S]*return terminal/,
+  "终态复检失败时必须保留原始失败或取消快照，不能残留安装中状态"
+);
+assert.doesNotMatch(
+  reconcileTerminalInstallRealitySource,
+  /detectCodexCommand|detectOpenCodeCommand|detectHermesCommand/,
+  "安装终态复核不能退化为只检查路径存在"
+);
+const reconcileTerminalAgentInstallRealityForTest = new AsyncFunction(
+  "backend",
+  "terminal",
+  "sessionGeneration",
+  "reconcileTerminalAgentInstallDetection",
+  extractClassMethodBody(settingsTabSource, "private async reconcileTerminalAgentInstallReality(")
+) as (
+  this: any,
+  backend: AgentBackendMode,
+  terminal: AgentSetupSnapshot,
+  sessionGeneration: number,
+  reconcile: typeof reconcileTerminalAgentInstallDetection
+) => Promise<AgentSetupSnapshot>;
+const terminalDetectionFailure = createAgentSetupSnapshot("opencode", "failed", {
+  command: "/Users/demo/.npm-global/bin/opencode",
+  version: "1.4.3",
+  error: "settings write failed",
+  lastAction: "connect"
+});
+const terminalAfterDetectionFailure = await reconcileTerminalAgentInstallRealityForTest.call(
+  {
+    agentInstallers: {
+      opencode: {
+        detect: async () => {
+          throw new Error("transient version inspection failure");
+        }
+      }
+    },
+    isSetupSessionCurrent: () => true
+  },
+  "opencode",
+  terminalDetectionFailure,
+  5,
+  reconcileTerminalAgentInstallDetection
+);
+assert.equal(terminalAfterDetectionFailure, terminalDetectionFailure, "复检抛错也必须提交原始终态");
+assert.match(
+  installAgentSource,
+  /catch \(error\)[\s\S]*reconcileTerminalAgentInstallReality\([\s\S]*reconciled\.lastAction === "connect"[\s\S]*writeAgentCliPath\(backend, reconciled\.command\)/,
+  "安装成功但设置保存失败时，必须保留已验证的真实 CLI 路径并从连接继续"
+);
+assert.match(
+  installAgentSource,
+  /verifiedInstallSnapshot = snapshot\.phase === "installed" \? snapshot : null/,
+  "安装器已验证的 CLI 必须跨设置保存失败保留"
+);
+assert.match(
+  installAgentSource,
+  /await this\.plugin\.saveSettings\(true\);\s*throwIfAgentSetupAborted\(controller\.signal\)/,
+  "设置保存期间取消后不得继续提交 installed 或自动连接"
+);
+assert.match(
+  installAgentSource,
+  /if \(snapshot\.phase !== "failed"\) throwIfAgentSetupAborted\(controller\.signal\)/,
+  "显式安装失败必须优先于取消状态，保留 Hermes 回滚失败诊断"
+);
+const typedInstallProgressStages = [
+  { stage: "checking-environment", step: 1, total: 3 },
+  { stage: "installing-cli", step: 2, total: 3 },
+  { stage: "verifying-version", step: 3, total: 3 }
+] as const;
+assert.match(
+  performAgentInstallSource,
+  /installHermesCli\(\{[\s\S]{0,180}?onProgress:\s*context\.onProgress/,
+  "Hermes 安装必须把类型化进度回调传给真实安装器"
+);
+assert.match(
+  performAgentInstallSource,
+  /installNpmCli\([\s\S]{0,240}?onProgress:\s*context\.onProgress/,
+  "Codex/OpenCode 安装必须把类型化进度回调传给真实安装器"
+);
+const agentDashboardProgressingSource = agentDashboardSource.slice(
+  agentDashboardSource.indexOf("const isProgressing"),
+  agentDashboardSource.indexOf("const root")
+);
+assert.match(agentDashboardProgressingSource, /installing/);
+assert.match(agentDashboardProgressingSource, /authorizing/);
+assert.match(agentDashboardProgressingSource, /connecting/);
+assert.doesNotMatch(agentDashboardProgressingSource, /detecting/, "环境检测不能触发仪表盘流光");
+assert.match(agentDashboardSource, /is-progressing/, "安装、授权和连接必须给最大仪表盘增加流光状态类");
+assert.match(agentDashboardSource, /role:\s*"progressbar"/);
+assert.match(agentDashboardSource, /"aria-valuemin":\s*"1"/);
+assert.match(
+  agentDashboardSource,
+  /"aria-valuemax":\s*String\([^)]*\.progress\??\.total[^)]*\)/,
+  "安装进度条最大值必须读取类型化 progress.total"
+);
+assert.match(
+  agentDashboardSource,
+  /"aria-valuenow":\s*String\([^)]*\.progress\??\.step[^)]*\)/,
+  "安装进度条当前值必须读取类型化 progress.step"
+);
 assert.doesNotMatch(settingsTabSource, /codex-setup-primary/, "设置页不能再渲染宽大的开始使用主按钮");
 assert.doesNotMatch(agentDashboardSource, /settings\.agentBackend\s*=/, "切换查看分页不能修改默认 Agent");
 assert.match(agentDashboardSource, /this\.copy\.setup\.agentInstaller/);
@@ -694,10 +880,9 @@ assert.match(agentDashboardSource, /if \(state\.installed\)[\s\S]*setIcon\([^,]+
 assert.match(agentDashboardSource, /codex-agent-dashboard-enable/, "ready Agent 必须使用紧凑启用胶囊切换默认后端");
 assert.match(
   agentDashboardSource,
-  /if \(selectedState\.installed\)[\s\S]{0,1200}?codex-agent-dashboard-enable/,
-  "已安装 Agent 应显示紧凑启用胶囊；未安装项继续显示安装动作"
+  /if \(selectedState\.status === "ready"\)[\s\S]{0,1200}?codex-agent-dashboard-enable/,
+  "只有完成真实连接验证的 Agent 才能显示紧凑启用胶囊"
 );
-assert.match(agentDashboardSource, /const canEnable = selectedState\.status === "ready" \|\| selectedState\.status === "installed"/);
 assert.match(agentDashboardSource, /if \(!this\.isAgentSetupVerificationCurrent\(backend\)\) \{[\s\S]*await this\.connectAgent\(backend, sessionGeneration\)/, "启用未经当前会话验证的 Agent 前必须先深测");
 assert.match(agentDashboardSource, /aria-pressed|role:\s*"switch"/, "启用胶囊必须暴露可访问的开关状态");
 assert.match(agentDashboardSource, /completeAgentSetup\(\)/, "只有点击启用胶囊后才能提交默认 Agent");
@@ -710,7 +895,8 @@ assert.match(agentDashboardSource, /event\.key === "End"/);
 assert.match(agentDashboardSource, /tab\.onfocus = \(\) => \{\s*this\.setupTabFocusTarget = definition\.backend/);
 assert.match(agentDashboardSource, /event\.key === "Tab"\) \{\s*this\.setupTabFocusTarget = null;\s*return;/);
 assert.match(agentDashboardSource, /event\.preventDefault\(\)/);
-assert.match(agentDashboardSource, /if \(this\.setupTabFocusTarget\) \{[\s\S]*target\?\.focus\(\)/);
+assert.match(agentDashboardSource, /if \(this\.setupDashboardActionFocusPending\)[\s\S]*data-agent-dashboard-action[\s\S]*target\?\.focus\(\)/);
+assert.match(agentDashboardSource, /else if \(this\.setupTabFocusTarget\) \{[\s\S]*target\?\.focus\(\)/);
 assert.match(settingsTabContentSource, /this\.captureAgentDashboardTabFocus\(\);[\s\S]*statusEl\.empty\(\)/);
 
 const captureAgentDashboardTabFocusForTest = new Function(
@@ -723,6 +909,7 @@ const focusCaptureHarness: any = {
     }
   },
   setupTabFocusTarget: null,
+  setupDashboardActionFocusPending: false,
   agentDashboardDefinitions: () => [
     { backend: "codex-cli" },
     { backend: "opencode" },
@@ -734,6 +921,10 @@ const originalHTMLElement = globalThis.HTMLElement;
 class TestHTMLElement {
   id = "";
   isConnected = true;
+  matches(selector: string): boolean {
+    return selector === "[data-agent-dashboard-action='primary']"
+      && this.id === "agent-dashboard-primary-action";
+  }
 }
 Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
 focusCaptureHarness.containerEl.ownerDocument.activeElement = Object.assign(new TestHTMLElement(), {
@@ -759,6 +950,11 @@ assert.equal(
   null,
   "焦点进入已连接的外部设置控件后，异步重绘不能抢回 Agent 标签焦点"
 );
+focusCaptureHarness.containerEl.ownerDocument.activeElement = Object.assign(new TestHTMLElement(), {
+  id: "agent-dashboard-primary-action"
+});
+captureAgentDashboardTabFocusForTest.call(focusCaptureHarness);
+assert.equal(focusCaptureHarness.setupDashboardActionFocusPending, true, "仪表盘重绘前必须保存当前主动作焦点");
 if (originalHTMLElement === undefined) delete (globalThis as typeof globalThis & { HTMLElement?: unknown }).HTMLElement;
 else Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: originalHTMLElement });
 
@@ -818,6 +1014,485 @@ assert.match(runAgentSetupActionSource, /effectiveAction === "install"/);
 assert.match(runAgentSetupActionSource, /effectiveAction === "authorize"/);
 assert.match(runAgentSetupActionSource, /effectiveAction === "connect"/);
 assert.match(runAgentSetupActionSource, /if \(action === "retry"\) return this\.detectAllAgents\(true\)/);
+const inlineInstallActionSource = runAgentSetupActionSource.slice(
+  runAgentSetupActionSource.indexOf('effectiveAction === "install"'),
+  runAgentSetupActionSource.indexOf('effectiveAction === "authorize"')
+);
+assert.match(
+  inlineInstallActionSource,
+  /setupInstallConfirmBackend !== this\.setupSelectedBackend[\s\S]*setupInstallConfirmBackend = this\.setupSelectedBackend[\s\S]*scheduleDisplay\(\)[\s\S]*return/,
+  "第一次点击安装只能进入当前 Agent 的内联确认，不能执行安装器"
+);
+assert.match(
+  inlineInstallActionSource,
+  /setupInstallConfirmBackend = null[\s\S]*installAgent\(this\.setupSelectedBackend, sessionGeneration\)/,
+  "第二次确认后才允许安装当前选中的 Agent"
+);
+const runAgentSetupActionForTest = new AsyncFunction(
+  "action",
+  "retryTarget",
+  "installConfirmed",
+  extractClassMethodBody(settingsTabSource, "private async runAgentSetupAction(")
+) as (
+  this: any,
+  action: AgentSetupNextAction,
+  retryTarget?: AgentInstallerAction | null,
+  installConfirmed?: boolean
+) => Promise<void>;
+let inlineInstallCount = 0;
+let inlineInstallRenders = 0;
+const inlineInstallHarness: any = {
+  setupAbort: null,
+  setupBusy: false,
+  setupSessionGeneration: 5,
+  setupSessionActive: true,
+  setupSelectedBackend: "opencode",
+  setupInstallConfirmBackend: null,
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "missing")
+  },
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && this.setupSessionGeneration === sessionGeneration;
+  },
+  scheduleDisplay(): void {
+    inlineInstallRenders += 1;
+  },
+  async installAgent(backend: AgentBackendMode, sessionGeneration: number): Promise<void> {
+    assert.equal(backend, "opencode");
+    assert.equal(sessionGeneration, 5);
+    inlineInstallCount += 1;
+  },
+  authorizeAgent(): Promise<void> { throw new Error("unexpected authorize"); },
+  connectAgent(): Promise<void> { throw new Error("unexpected connect"); },
+  completeAgentSetup(): Promise<void> { throw new Error("unexpected complete"); },
+  detectAllAgents(): Promise<void> { throw new Error("unexpected detect"); }
+};
+await runAgentSetupActionForTest.call(inlineInstallHarness, "install", null);
+assert.equal(inlineInstallHarness.setupInstallConfirmBackend, "opencode");
+assert.equal(inlineInstallCount, 0, "第一次点击只能展开确认，不能执行安装器");
+assert.equal(inlineInstallRenders, 1);
+await runAgentSetupActionForTest.call(inlineInstallHarness, "install", null);
+assert.equal(inlineInstallHarness.setupInstallConfirmBackend, "opencode");
+assert.equal(inlineInstallCount, 0, "旧按钮快速双击不能绕过可见确认");
+assert.equal(inlineInstallRenders, 2);
+await runAgentSetupActionForTest.call(inlineInstallHarness, "install", null, true);
+assert.equal(inlineInstallHarness.setupInstallConfirmBackend, null);
+assert.equal(inlineInstallCount, 1, "只有新渲染的确认按钮才能执行一次安装器");
+inlineInstallHarness.setupBusy = true;
+inlineInstallHarness.setupInstallConfirmBackend = "opencode";
+await runAgentSetupActionForTest.call(inlineInstallHarness, "install", null);
+assert.equal(inlineInstallCount, 1, "已有安装或授权任务时不能启动第二个安装器");
+assert.equal(inlineInstallHarness.setupInstallConfirmBackend, "opencode", "忙碌门禁不能误清当前确认态");
+inlineInstallHarness.setupBusy = false;
+inlineInstallHarness.setupSessionActive = false;
+inlineInstallHarness.setupInstallConfirmBackend = "opencode";
+await runAgentSetupActionForTest.call(inlineInstallHarness, "install", null);
+assert.equal(inlineInstallCount, 1, "旧设置会话不能继续安装");
+
+const installAgentForTest = new AsyncFunction(
+  "backend",
+  "sessionGeneration",
+  "createAgentSetupSnapshot",
+  "runAgentInstallerAction",
+  "throwIfAgentSetupAborted",
+  "isAgentSetupAbortError",
+  extractClassMethodBody(settingsTabSource, "private async installAgent(")
+    .replace("let verifiedInstallSnapshot: AgentSetupSnapshot | null = null;", "let verifiedInstallSnapshot = null;")
+) as (
+  this: any,
+  backend: AgentBackendMode,
+  sessionGeneration: number,
+  createSnapshot: typeof createAgentSetupSnapshot,
+  runInstaller: typeof runAgentInstallerAction,
+  throwIfAborted: (signal?: AbortSignal) => void,
+  isAbortError: (error: unknown) => boolean
+) => Promise<void>;
+const throwIfTestSetupAborted = (signal?: AbortSignal): void => {
+  if (!signal?.aborted) return;
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  throw error;
+};
+const isTestSetupAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+const createInstallOrchestrationHarness = () => {
+  let connectCalls = 0;
+  let drainCalls = 0;
+  const writtenCommands: string[] = [];
+  const harness: any = {
+    setupBusy: false,
+    setupAbort: null,
+    setupActiveBackend: null,
+    setupOperationGeneration: 0,
+    setupSessionGeneration: 9,
+    setupSessionActive: true,
+    setupCommandsAwaitingVerification: new Set<AgentBackendMode>(),
+    setupSnapshots: {
+      opencode: createAgentSetupSnapshot("opencode", "missing")
+    },
+    copy: {
+      setup: {
+        agentInstaller: {
+          agents: { opencode: { label: "OpenCode" } },
+          install: {
+            installing: (label: string) => `installing ${label}`,
+            cancelled: "cancelled"
+          },
+          dashboard: {
+            installFlow: {
+              step: {
+                "checking-environment": "checking",
+                "installing-cli": "installing",
+                "verifying-version": "verifying"
+              }
+            }
+          }
+        }
+      }
+    },
+    plugin: {
+      saveSettings: async () => undefined
+    },
+    agentInstallers: {},
+    isSetupSessionCurrent(sessionGeneration: number): boolean {
+      return this.setupSessionActive && this.setupSessionGeneration === sessionGeneration;
+    },
+    beginAgentSetupOperation(backend: AgentBackendMode, controller: AbortController): number {
+      this.setupBusy = true;
+      this.setupActiveBackend = backend;
+      this.setupAbort = controller;
+      this.setupOperationGeneration += 1;
+      return this.setupOperationGeneration;
+    },
+    isAgentSetupOperationOwner(operationGeneration: number, controller: AbortController): boolean {
+      return this.setupOperationGeneration === operationGeneration && this.setupAbort === controller;
+    },
+    finishAgentSetupOperation(operationGeneration: number, controller: AbortController): boolean {
+      if (!this.isAgentSetupOperationOwner(operationGeneration, controller)) return false;
+      this.setupAbort = null;
+      this.setupBusy = false;
+      this.setupActiveBackend = null;
+      return true;
+    },
+    scheduleDisplay(): void {},
+    flushPendingAgentSetupInvalidations(): void {},
+    writeAgentCliPath(_backend: AgentBackendMode, command: string): void {
+      writtenCommands.push(command);
+    },
+    cancelledAgentSnapshot(
+      backend: AgentBackendMode,
+      current: AgentSetupSnapshot,
+      detail: string,
+      lastAction: AgentInstallerAction | null
+    ): AgentSetupSnapshot {
+      return createAgentSetupSnapshot(backend, "cancelled", {
+        command: current.command,
+        version: current.version,
+        detail,
+        lastAction
+      });
+    },
+    failedAgentSnapshot(
+      backend: AgentBackendMode,
+      command: string | null,
+      error: unknown,
+      version: string | null,
+      lastAction: AgentInstallerAction | null
+    ): AgentSetupSnapshot {
+      return createAgentSetupSnapshot(backend, "failed", {
+        command,
+        version,
+        error: error instanceof Error ? error.message : String(error),
+        lastAction
+      });
+    },
+    async reconcileTerminalAgentInstallReality(
+      _backend: AgentBackendMode,
+      terminal: AgentSetupSnapshot
+    ): Promise<AgentSetupSnapshot> {
+      return reconcileTerminalAgentInstallDetection(
+        terminal,
+        createAgentSetupSnapshot("opencode", "installed", {
+          command: "/Users/demo/.npm-global/bin/opencode",
+          version: "1.4.3",
+          checkedAt: 42
+        })
+      );
+    },
+    async connectAgent(): Promise<void> {
+      connectCalls += 1;
+    },
+    async drainPendingSetupDetection(): Promise<void> {
+      drainCalls += 1;
+    }
+  };
+  return {
+    harness,
+    connectCalls: () => connectCalls,
+    drainCalls: () => drainCalls,
+    writtenCommands
+  };
+};
+const lateCancelOrchestration = createInstallOrchestrationHarness();
+let lateCancelInstallCalls = 0;
+await installAgentForTest.call(
+  lateCancelOrchestration.harness,
+  "opencode",
+  9,
+  createAgentSetupSnapshot,
+  async () => {
+    lateCancelInstallCalls += 1;
+    lateCancelOrchestration.harness.setupAbort.abort();
+    return createAgentSetupSnapshot("opencode", "installed", {
+      command: "/Users/demo/.npm-global/bin/opencode",
+      version: "1.4.3"
+    });
+  },
+  throwIfTestSetupAborted,
+  isTestSetupAbortError
+);
+const lateCancelledSnapshot = lateCancelOrchestration.harness.setupSnapshots.opencode as AgentSetupSnapshot;
+assert.equal(lateCancelInstallCalls, 1, "用户取消后安装器晚返回也只能执行一次");
+assert.equal(lateCancelledSnapshot.phase, "cancelled", "用户取消必须保留取消终态");
+assert.equal(lateCancelledSnapshot.command, "/Users/demo/.npm-global/bin/opencode");
+assert.equal(resolveAgentSetupDashboardState(lateCancelledSnapshot).retryTarget, "connect");
+assert.equal(lateCancelOrchestration.connectCalls(), 0, "用户取消后不得偷偷继续连接");
+assert.equal(lateCancelOrchestration.drainCalls(), 1);
+assert.deepEqual(lateCancelOrchestration.writtenCommands, ["/Users/demo/.npm-global/bin/opencode"]);
+
+const failedSaveOrchestration = createInstallOrchestrationHarness();
+failedSaveOrchestration.harness.plugin.saveSettings = async () => {
+  throw new Error("settings write failed");
+};
+failedSaveOrchestration.harness.reconcileTerminalAgentInstallReality = async (
+  _backend: AgentBackendMode,
+  terminal: AgentSetupSnapshot
+) => terminal;
+let failedSaveInstallCalls = 0;
+await installAgentForTest.call(
+  failedSaveOrchestration.harness,
+  "opencode",
+  9,
+  createAgentSetupSnapshot,
+  async () => {
+    failedSaveInstallCalls += 1;
+    return createAgentSetupSnapshot("opencode", "installed", {
+      command: "/Users/demo/.npm-global/bin/opencode",
+      version: "1.4.3"
+    });
+  },
+  throwIfTestSetupAborted,
+  isTestSetupAbortError
+);
+const failedSaveSnapshot = failedSaveOrchestration.harness.setupSnapshots.opencode as AgentSetupSnapshot;
+assert.equal(failedSaveInstallCalls, 1);
+assert.equal(failedSaveSnapshot.phase, "failed");
+assert.equal(failedSaveSnapshot.command, "/Users/demo/.npm-global/bin/opencode");
+assert.equal(resolveAgentSetupDashboardState(failedSaveSnapshot).retryTarget, "connect");
+assert.equal(failedSaveOrchestration.connectCalls(), 0, "保存失败后不能重复安装或自动连接");
+
+const cancelDuringSaveOrchestration = createInstallOrchestrationHarness();
+let markDelayedSaveStarted!: () => void;
+const delayedSaveStarted = new Promise<void>((resolve) => {
+  markDelayedSaveStarted = resolve;
+});
+let releaseDelayedSave: (() => void) | null = null;
+cancelDuringSaveOrchestration.harness.plugin.saveSettings = async () => {
+  markDelayedSaveStarted();
+  await new Promise<void>((resolve) => {
+    releaseDelayedSave = resolve;
+  });
+};
+const cancelDuringSavePromise = installAgentForTest.call(
+  cancelDuringSaveOrchestration.harness,
+  "opencode",
+  9,
+  createAgentSetupSnapshot,
+  async () => createAgentSetupSnapshot("opencode", "installed", {
+    command: "/Users/demo/.npm-global/bin/opencode",
+    version: "1.4.3"
+  }),
+  throwIfTestSetupAborted,
+  isTestSetupAbortError
+);
+await delayedSaveStarted;
+cancelDuringSaveOrchestration.harness.setupAbort.abort();
+if (!releaseDelayedSave) throw new Error("delayed settings save did not start");
+releaseDelayedSave();
+await cancelDuringSavePromise;
+const cancelledDuringSaveSnapshot = cancelDuringSaveOrchestration.harness.setupSnapshots.opencode as AgentSetupSnapshot;
+assert.equal(cancelledDuringSaveSnapshot.phase, "cancelled", "设置保存期间取消必须保留取消终态");
+assert.equal(cancelledDuringSaveSnapshot.command, "/Users/demo/.npm-global/bin/opencode");
+assert.equal(resolveAgentSetupDashboardState(cancelledDuringSaveSnapshot).retryTarget, "connect");
+assert.equal(cancelDuringSaveOrchestration.connectCalls(), 0, "设置保存期间取消后不得自动连接");
+
+const rollbackFailureOrchestration = createInstallOrchestrationHarness();
+rollbackFailureOrchestration.harness.reconcileTerminalAgentInstallReality = async (
+  _backend: AgentBackendMode,
+  terminal: AgentSetupSnapshot
+) => terminal;
+await installAgentForTest.call(
+  rollbackFailureOrchestration.harness,
+  "opencode",
+  9,
+  createAgentSetupSnapshot,
+  async () => {
+    rollbackFailureOrchestration.harness.setupAbort.abort();
+    return createAgentSetupSnapshot("opencode", "failed", {
+      error: "Hermes 安装失败，且旧版自动恢复失败",
+      lastAction: "install"
+    });
+  },
+  throwIfTestSetupAborted,
+  isTestSetupAbortError
+);
+const preservedRollbackFailure = rollbackFailureOrchestration.harness.setupSnapshots.opencode as AgentSetupSnapshot;
+assert.equal(preservedRollbackFailure.phase, "failed", "显式回滚失败不能被 abort 覆盖成已取消");
+assert.match(preservedRollbackFailure.error, /旧版自动恢复失败/);
+assert.equal(rollbackFailureOrchestration.connectCalls(), 0);
+
+const authorizeAgentForTest = new AsyncFunction(
+  "backend",
+  "sessionGeneration",
+  "createAgentSetupSnapshot",
+  "runAgentInstallerAction",
+  "throwIfAgentSetupAborted",
+  "isAgentSetupAbortError",
+  extractClassMethodBody(settingsTabSource, "private async authorizeAgent(")
+    .replace(
+      "let completedAuthorizationSnapshot: AgentSetupSnapshot | null = null;",
+      "let completedAuthorizationSnapshot = null;"
+    )
+) as (
+  this: any,
+  backend: AgentBackendMode,
+  sessionGeneration: number,
+  createSnapshot: typeof createAgentSetupSnapshot,
+  runInstaller: typeof runAgentInstallerAction,
+  throwIfAborted: (signal?: AbortSignal) => void,
+  isAbortError: (error: unknown) => boolean
+) => Promise<void>;
+let authorizationConnectCalls = 0;
+let authorizationDrainCalls = 0;
+let authorizationActionCalls = 0;
+let authorizationVerificationCalls = 0;
+let markAuthorizationSaveStarted!: () => void;
+const authorizationSaveStarted = new Promise<void>((resolve) => {
+  markAuthorizationSaveStarted = resolve;
+});
+let releaseAuthorizationSave: (() => void) | null = null;
+const authorizationSaveGate = new Promise<void>((resolve) => {
+  releaseAuthorizationSave = resolve;
+});
+const authorizationCancelHarness: any = {
+  setupBusy: false,
+  setupAbort: null,
+  setupActiveBackend: null,
+  setupOperationGeneration: 0,
+  setupSessionGeneration: 12,
+  setupSessionActive: true,
+  setupConfigRevisions: { "codex-cli": 0, opencode: 0, hermes: 0 },
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "needs-auth", {
+      command: "/Users/demo/.npm-global/bin/opencode",
+      version: "1.4.3"
+    })
+  },
+  copy: {
+    setup: {
+      agentInstaller: {
+        authorization: {
+          progressCodex: "logging in",
+          progressOpenCode: "authorizing",
+          progressHermes: "authorizing",
+          cancelled: "cancelled"
+        }
+      }
+    }
+  },
+  agentInstallers: {},
+  isSetupSessionCurrent(sessionGeneration: number): boolean {
+    return this.setupSessionActive && this.setupSessionGeneration === sessionGeneration;
+  },
+  beginAgentSetupOperation(backend: AgentBackendMode, controller: AbortController): number {
+    this.setupBusy = true;
+    this.setupActiveBackend = backend;
+    this.setupAbort = controller;
+    this.setupOperationGeneration += 1;
+    return this.setupOperationGeneration;
+  },
+  isAgentSetupOperationOwner(operationGeneration: number, controller: AbortController): boolean {
+    return this.setupOperationGeneration === operationGeneration && this.setupAbort === controller;
+  },
+  finishAgentSetupOperation(operationGeneration: number, controller: AbortController): boolean {
+    if (!this.isAgentSetupOperationOwner(operationGeneration, controller)) return false;
+    this.setupAbort = null;
+    this.setupBusy = false;
+    this.setupActiveBackend = null;
+    return true;
+  },
+  recordAgentSetupVerification(): void {
+    authorizationVerificationCalls += 1;
+  },
+  cancelledAgentSnapshot(
+    backend: AgentBackendMode,
+    current: AgentSetupSnapshot,
+    detail: string,
+    lastAction: AgentInstallerAction | null
+  ): AgentSetupSnapshot {
+    return createAgentSetupSnapshot(backend, "cancelled", {
+      command: current.command,
+      version: current.version,
+      detail,
+      lastAction
+    });
+  },
+  failedAgentSnapshot(): never {
+    throw new Error("unexpected authorization failure");
+  },
+  scheduleDisplay(): void {},
+  flushPendingAgentSetupInvalidations(): void {},
+  async connectAgent(): Promise<void> {
+    authorizationConnectCalls += 1;
+  },
+  async drainPendingSetupDetection(): Promise<void> {
+    authorizationDrainCalls += 1;
+  }
+};
+const authorizationCancelPromise = authorizeAgentForTest.call(
+  authorizationCancelHarness,
+  "opencode",
+  12,
+  createAgentSetupSnapshot,
+  async () => {
+    authorizationActionCalls += 1;
+    markAuthorizationSaveStarted();
+    await authorizationSaveGate;
+    return createAgentSetupSnapshot("opencode", "installed", {
+      command: "/Users/demo/.npm-global/bin/opencode",
+      version: "1.4.3",
+      detail: "authorized"
+    });
+  },
+  throwIfTestSetupAborted,
+  isTestSetupAbortError
+);
+await authorizationSaveStarted;
+authorizationCancelHarness.setupAbort.abort();
+if (!releaseAuthorizationSave) throw new Error("authorization settings save did not start");
+releaseAuthorizationSave();
+await authorizationCancelPromise;
+const cancelledAfterAuthorization = authorizationCancelHarness.setupSnapshots.opencode as AgentSetupSnapshot;
+assert.equal(cancelledAfterAuthorization.phase, "cancelled", "授权保存期间取消必须保留取消终态");
+assert.equal(cancelledAfterAuthorization.command, "/Users/demo/.npm-global/bin/opencode");
+assert.equal(cancelledAfterAuthorization.version, "1.4.3");
+assert.equal(resolveAgentSetupDashboardState(cancelledAfterAuthorization).retryTarget, "connect");
+assert.equal(authorizationActionCalls, 1, "授权动作只能执行一次");
+assert.equal(authorizationVerificationCalls, 0, "取消后不得把未连接的 Agent 标为已验证");
+assert.equal(authorizationConnectCalls, 0, "授权保存期间取消后不得自动连接");
+assert.equal(authorizationDrainCalls, 1);
+assert.equal(authorizationCancelHarness.setupBusy, false);
+assert.equal(authorizationCancelHarness.setupAbort, null);
 
 const deepCheckAgentSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private async deepCheckAgentOnce"),
@@ -872,10 +1547,11 @@ const runAgentDetectionCycleBody = extractClassMethodBody(settingsTabSource, "pr
 assert.match(settingsTabSource, /private setupDetectionPending = false/);
 assert.match(settingsTabSource, /private setupPendingConnectSelected = false/);
 assert.match(settingsTabSource, /private setupDetectionDrainActive = false/);
+assert.match(settingsTabSource, /private setupDetectionDrainGeneration: number \| null = null/);
 assert.match(detectAllAgentsBody, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return/);
 assert.match(detectAllAgentsBody, /this\.setupDetectionPending = true/);
 assert.match(detectAllAgentsBody, /this\.setupPendingConnectSelected = this\.setupPendingConnectSelected \|\| connectSelected/);
-assert.match(detectAllAgentsBody, /if \(this\.setupBusy \|\| this\.setupDetectionDrainActive\) return/);
+assert.match(detectAllAgentsBody, /if \(this\.setupBusy[\s\S]*setupDetectionDrainGeneration === sessionGeneration\)\) return/);
 assert.match(detectAllAgentsBody, /await this\.drainPendingSetupDetection\(sessionGeneration\)/);
 assert.doesNotMatch(runAgentDetectionCycleBody, /setupDeepCheckedBackends\.clear\(\)/);
 assert.match(runAgentDetectionCycleBody, /Promise\.allSettled\(\[/);
@@ -918,7 +1594,7 @@ assert.ok(
     < runAgentDetectionCycleBody.indexOf("await this.runPendingAgentAutoRepair(sessionGeneration)"),
   "聊天自动修复必须在轻量检测和所选 Agent 的首次深测之后执行"
 );
-assert.match(runAgentDetectionCycleBody, /finally \{[\s\S]*this\.setupBusy = false;[\s\S]*this\.flushPendingAgentSetupInvalidations\(\)/);
+assert.match(runAgentDetectionCycleBody, /finally \{[\s\S]*this\.finishAgentSetupOperation\(operationGeneration, null\)[\s\S]*this\.flushPendingAgentSetupInvalidations\(\)/);
 assert.doesNotMatch(runAgentDetectionCycleBody, /await this\.drainPendingSetupDetection\(\)/);
 assert.equal(isAgentSetupDetectionRevisionCurrent(4, 4), true);
 assert.equal(isAgentSetupDetectionRevisionCurrent(4, 5), false, "旧 detection revision 必须被拒绝");
@@ -957,6 +1633,8 @@ const staleDetectionHarness: any = {
   setupPendingConnectSelected: false,
   setupBusy: false,
   setupActiveBackend: null,
+  setupOperationGeneration: 0,
+  setupAbort: null,
   setupSelectedBackend: "codex-cli",
   agentInstallers: {
     "codex-cli": { detect: async () => createAgentSetupSnapshot("codex-cli", "installed", { command: "/bin/codex", version: "1.0.0" }) },
@@ -972,6 +1650,23 @@ const staleDetectionHarness: any = {
   },
   isSetupSessionCurrent(sessionGeneration: number): boolean {
     return this.setupSessionActive && sessionGeneration === this.setupSessionGeneration;
+  },
+  beginAgentSetupOperation(backend: AgentBackendMode | null, controller: AbortController | null): number {
+    const operationGeneration = ++this.setupOperationGeneration;
+    this.setupBusy = true;
+    this.setupActiveBackend = backend;
+    this.setupAbort = controller;
+    return operationGeneration;
+  },
+  isAgentSetupOperationOwner(operationGeneration: number, controller: AbortController | null): boolean {
+    return this.setupOperationGeneration === operationGeneration && this.setupAbort === controller;
+  },
+  finishAgentSetupOperation(operationGeneration: number, controller: AbortController | null): boolean {
+    if (!this.isAgentSetupOperationOwner(operationGeneration, controller)) return false;
+    this.setupAbort = null;
+    this.setupBusy = false;
+    this.setupActiveBackend = null;
+    return true;
   },
   canPreserveReadyAgentAfterDetection: () => false,
   failedAgentSnapshot(backend: AgentBackendMode): ReturnType<typeof createAgentSetupSnapshot> {
@@ -992,6 +1687,8 @@ const staleDetectionCycle = runAgentDetectionCycleForTest.call(
 );
 await detectionSaveStartedGate;
 staleDetectionHarness.setupSessionGeneration = 22;
+staleDetectionHarness.setupOperationGeneration += 1;
+staleDetectionHarness.setupBusy = false;
 staleDetectionHarness.setupSnapshots["codex-cli"] = createAgentSetupSnapshot("codex-cli", "ready", {
   command: "/new-session/codex",
   detail: "new session"
@@ -1006,7 +1703,10 @@ const drainPendingSetupDetectionSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private async detectAllAgents")
 );
 const drainPendingSetupDetectionBody = extractClassMethodBody(settingsTabSource, "private async drainPendingSetupDetection(");
-assert.match(drainPendingSetupDetectionBody, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\) \|\| this\.setupDetectionDrainActive\) return/);
+assert.match(
+  drainPendingSetupDetectionBody,
+  /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)[\s\S]*setupDetectionDrainGeneration === sessionGeneration\)\) return/
+);
 assert.match(drainPendingSetupDetectionSource, /while \(this\.isSetupSessionCurrent\(sessionGeneration\) && !this\.setupBusy && this\.setupDetectionPending\)/);
 assert.match(drainPendingSetupDetectionSource, /const connectSelected = this\.setupPendingConnectSelected/);
 assert.match(drainPendingSetupDetectionSource, /this\.setupDetectionPending = false/);
@@ -1015,7 +1715,10 @@ assert.match(drainPendingSetupDetectionSource, /await this\.runAgentDetectionCyc
 assert.doesNotMatch(drainPendingSetupDetectionBody, /detectAllAgents\(/);
 assert.match(drainPendingSetupDetectionSource, /catch \(error\)/);
 assert.match(drainPendingSetupDetectionSource, /this\.failedAgentSnapshot\(/);
-assert.match(drainPendingSetupDetectionBody, /finally \{\s*this\.setupDetectionDrainActive = false/);
+assert.match(
+  drainPendingSetupDetectionBody,
+  /finally \{[\s\S]*if \(this\.setupDetectionDrainGeneration === sessionGeneration\)[\s\S]*this\.setupDetectionDrainActive = false[\s\S]*this\.setupDetectionDrainGeneration = null/
+);
 assert.doesNotMatch(drainPendingSetupDetectionBody, /this\.setupBusy\s*=|this\.setupActiveBackend\s*=|this\.setupAbort\s*=/);
 
 const runPendingAgentAutoRepairForTest = new AsyncFunction(
@@ -1065,6 +1768,7 @@ const detectionDrainHarness: any = {
   setupSessionGeneration: 13,
   setupSessionActive: true,
   setupDetectionDrainActive: false,
+  setupDetectionDrainGeneration: null,
   setupBusy: false,
   setupDetectionPending: true,
   setupPendingConnectSelected: true,
@@ -1104,6 +1808,7 @@ await drainPendingSetupDetectionForTest.call(detectionDrainHarness, 13);
 assert.deepEqual(detectionCycles, [true, false], "排队检测应由同一个 drain 循环顺序消费");
 assert.equal(maxActiveDetectionCycles, 1, "排队检测不能递归或并行执行");
 assert.equal(detectionDrainHarness.setupDetectionDrainActive, false);
+assert.equal(detectionDrainHarness.setupDetectionDrainGeneration, null);
 assert.equal(detectionDrainHarness.setupDeepCheckedBackends.has("codex-cli"), false, "显式重检应清当前 Agent 深测缓存");
 assert.equal(detectionDrainHarness.setupDeepCheckedBackends.has("opencode"), true, "显式重检不能清其它 Agent 深测缓存");
 
@@ -1115,6 +1820,10 @@ assert.match(settingsTabHideSource, /this\.setupDetectionPending = false/);
 assert.match(settingsTabHideSource, /this\.setupPendingConnectSelected = false/);
 assert.match(settingsTabHideSource, /this\.setupSessionActive = false/);
 assert.match(settingsTabHideSource, /this\.setupSessionGeneration \+= 1/);
+assert.match(settingsTabHideSource, /this\.setupOperationGeneration \+= 1/);
+assert.match(settingsTabHideSource, /this\.setupBusy = false/);
+assert.match(settingsTabHideSource, /this\.setupActiveBackend = null/);
+assert.match(settingsTabHideSource, /this\.setupDetectionDrainGeneration = null/);
 assert.match(settingsTabHideSource, /window\.clearTimeout\(this\.setupDetectionTimer\)/);
 assert.match(settingsTabHideSource, /window\.cancelAnimationFrame\(this\.displayFrame\)/);
 assert.doesNotMatch(
@@ -1175,9 +1884,9 @@ for (const [methodStart, methodEnd] of [
     settingsTabSource.indexOf(methodEnd)
   );
   assert.match(operationSource, /finally \{/);
-  assert.match(operationSource, /await this\.drainPendingSetupDetection\(this\.setupSessionGeneration\)/);
+  assert.match(operationSource, /if \(this\.isSetupSessionCurrent\(sessionGeneration\)\) \{\s*await this\.drainPendingSetupDetection\(sessionGeneration\)/);
   assert.ok(
-    operationSource.indexOf("finally {") < operationSource.indexOf("await this.drainPendingSetupDetection(this.setupSessionGeneration)"),
+    operationSource.indexOf("finally {") < operationSource.indexOf("await this.drainPendingSetupDetection(sessionGeneration)"),
     `${methodStart} 必须在 finally 释放 busy 后再消费排队检测`
   );
 }
@@ -1188,11 +1897,11 @@ const connectAgentSource = settingsTabSource.slice(
 assert.match(connectAgentSource, /const controller = new AbortController\(\)/);
 assert.match(connectAgentSource, /this\.clearAgentSetupVerification\(backend\)[\s\S]*this\.plugin\.agentRuntimeHealth\.reset\(backend\)/);
 assert.match(connectAgentSource, /runAgentInstallerAction\([\s\S]*signal: controller\.signal/);
-assert.match(connectAgentSource, /if \(!this\.isSetupSessionCurrent\(sessionGeneration\)\) return;[\s\S]*this\.setupSnapshots\[backend\] = snapshot/);
+assert.match(connectAgentSource, /!this\.isSetupSessionCurrent\(sessionGeneration\)[\s\S]*!this\.isAgentSetupOperationOwner\(operationGeneration, controller\)[\s\S]*this\.setupSnapshots\[backend\] = snapshot/);
 assert.match(connectAgentSource, /this\.setupCommandsAwaitingVerification\.delete\(backend\)[\s\S]*this\.setupSnapshots\[backend\] = snapshot/);
-assert.match(connectAgentSource, /reportFailure\(backend, error, \{ source: "setup-connect" \}\)/);
+assert.match(connectAgentSource, /if \(!cancelled\) \{[\s\S]*reportFailure\(backend, error, \{ source: "setup-connect" \}\)/);
 assert.match(connectAgentSource, /recordAgentSetupVerification\(backend, snapshot, configRevision, sessionGeneration\)/);
-assert.match(connectAgentSource, /if \(this\.setupAbort === controller\) this\.setupAbort = null/);
+assert.match(connectAgentSource, /finishAgentSetupOperation\(operationGeneration, controller\)/);
 
 const invalidateAgentSetupReadinessSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private invalidateAgentSetupReadiness"),
@@ -1408,7 +2117,8 @@ assert.match(completeAgentSetupSource, /const previousAgentBackend = this\.plugi
 assert.match(completeAgentSetupSource, /const previousDefaultBackend = this\.plugin\.settings\.agents\.defaultBackend/);
 assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agentBackend = previousAgentBackend/);
 assert.match(completeAgentSetupSource, /this\.plugin\.settings\.agents\.defaultBackend = previousDefaultBackend/);
-assert.match(completeAgentSetupSource, /finally \{[\s\S]*this\.setupBusy = false/);
+assert.match(completeAgentSetupSource, /const operationGeneration = this\.beginAgentSetupOperation\(null, null\)/);
+assert.match(completeAgentSetupSource, /finally \{[\s\S]*this\.finishAgentSetupOperation\(operationGeneration, null\)/);
 
 const completeAgentSetupForTest = new AsyncFunction(
   "Notice",
@@ -1425,9 +2135,37 @@ const setupNotices: string[] = [];
 const SetupNotice = function (this: unknown, message: string): void {
   setupNotices.push(message);
 } as unknown as new (message: string) => unknown;
+const attachSetupOperationHarness = (harness: any): any => {
+  harness.setupSessionGeneration = 1;
+  harness.setupSessionActive = true;
+  harness.setupOperationGeneration = 0;
+  harness.setupAbort = null;
+  harness.setupActiveBackend = null;
+  harness.isSetupSessionCurrent = function (sessionGeneration: number): boolean {
+    return this.setupSessionActive && this.setupSessionGeneration === sessionGeneration;
+  };
+  harness.beginAgentSetupOperation = function (backend: AgentBackendMode | null, controller: AbortController | null): number {
+    const operationGeneration = ++this.setupOperationGeneration;
+    this.setupBusy = true;
+    this.setupActiveBackend = backend;
+    this.setupAbort = controller;
+    return operationGeneration;
+  };
+  harness.isAgentSetupOperationOwner = function (operationGeneration: number, controller: AbortController | null): boolean {
+    return this.setupOperationGeneration === operationGeneration && this.setupAbort === controller;
+  };
+  harness.finishAgentSetupOperation = function (operationGeneration: number, controller: AbortController | null): boolean {
+    if (!this.isAgentSetupOperationOwner(operationGeneration, controller)) return false;
+    this.setupAbort = null;
+    this.setupBusy = false;
+    this.setupActiveBackend = null;
+    return true;
+  };
+  return harness;
+};
 const failedSaveOriginalSetup = { completedAt: 0, lastCheckedAt: 10, dismissedVersion: "" };
 let failedSaveActivateCount = 0;
-const failedSaveHarness: any = {
+const failedSaveHarness: any = attachSetupOperationHarness({
   setupBusy: false,
   setupSelectedBackend: "opencode",
   setupSnapshots: {
@@ -1452,7 +2190,7 @@ const failedSaveHarness: any = {
     }
   },
   scheduleDisplay(): void {}
-};
+});
 await completeAgentSetupForTest.call(
   failedSaveHarness,
   SetupNotice,
@@ -1470,7 +2208,7 @@ let releaseSetupSave!: () => void;
 const setupSaveGate = new Promise<void>((resolve) => { releaseSetupSave = resolve; });
 let setupSaveCount = 0;
 let setupActivateCount = 0;
-const singleFlightHarness: any = {
+const singleFlightHarness: any = attachSetupOperationHarness({
   setupBusy: false,
   setupSelectedBackend: "hermes",
   setupSnapshots: {
@@ -1492,7 +2230,7 @@ const singleFlightHarness: any = {
   },
   copy: failedSaveHarness.copy,
   scheduleDisplay(): void {}
-};
+});
 const firstSetupCompletion = completeAgentSetupForTest.call(
   singleFlightHarness,
   SetupNotice,
@@ -1513,6 +2251,51 @@ releaseSetupSave();
 await Promise.all([firstSetupCompletion, secondSetupCompletion]);
 assert.equal(setupActivateCount, 1, "开始使用双击只能打开一次聊天面板");
 assert.equal(singleFlightHarness.setupBusy, false);
+
+let rejectStaleSetupSave!: (error: Error) => void;
+const staleSetupSaveGate = new Promise<void>((_resolve, reject) => { rejectStaleSetupSave = reject; });
+const staleOriginalSetup = { completedAt: 0, lastCheckedAt: 1, dismissedVersion: "" };
+const staleReplacementSetup = { completedAt: 999, lastCheckedAt: 2, dismissedVersion: "new-session" };
+const staleCompletionHarness: any = attachSetupOperationHarness({
+  setupBusy: false,
+  setupSelectedBackend: "opencode",
+  setupSnapshots: {
+    opencode: createAgentSetupSnapshot("opencode", "ready", { command: "/bin/opencode" })
+  },
+  isAgentSetupVerificationCurrent: () => true,
+  plugin: {
+    manifest: { version: "1.2.2" },
+    settings: {
+      agentBackend: "codex-cli",
+      agents: { defaultBackend: "codex-cli" },
+      setup: staleOriginalSetup
+    },
+    saveSettings: async () => staleSetupSaveGate,
+    activateView: async () => { throw new Error("stale completion must not activate the view"); }
+  },
+  copy: failedSaveHarness.copy,
+  scheduleDisplay(): void {}
+});
+const staleNoticeCount = setupNotices.length;
+const staleCompletion = completeAgentSetupForTest.call(
+  staleCompletionHarness,
+  SetupNotice,
+  readyAgentBackendToCommit,
+  completeSetupState
+);
+await Promise.resolve();
+staleCompletionHarness.setupSessionGeneration += 1;
+staleCompletionHarness.setupOperationGeneration += 1;
+staleCompletionHarness.setupBusy = false;
+staleCompletionHarness.plugin.settings.agentBackend = "hermes";
+staleCompletionHarness.plugin.settings.agents.defaultBackend = "hermes";
+staleCompletionHarness.plugin.settings.setup = staleReplacementSetup;
+rejectStaleSetupSave(new Error("old save failed"));
+await staleCompletion;
+assert.equal(staleCompletionHarness.plugin.settings.agentBackend, "hermes", "旧会话保存失败不能回滚新会话 Agent");
+assert.equal(staleCompletionHarness.plugin.settings.agents.defaultBackend, "hermes");
+assert.equal(staleCompletionHarness.plugin.settings.setup, staleReplacementSetup);
+assert.equal(setupNotices.length, staleNoticeCount, "旧会话失败不能向新会话弹出 Notice");
 
 const openAgentTerminalFallbackSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private async openAgentTerminalFallback"),
@@ -4884,26 +5667,34 @@ assert.match(agentDashboardLiveCss, /width:\s*1px/);
 assert.match(agentDashboardLiveCss, /height:\s*1px/);
 assert.match(agentDashboardLiveCss, /overflow:\s*hidden/);
 assert.match(agentDashboardCss, /@container \(max-width:\s*460px\)/);
-assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy"), /border-color:\s*transparent/);
-assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy::before"), /conic-gradient/);
-assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-busy::before"), /animation:\s*codex-agent-dashboard-border-spin/);
+assert.match(cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-progressing"), /border-color:\s*transparent/);
+const agentDashboardProgressingBorderCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard.is-progressing::before");
+assert.match(agentDashboardProgressingBorderCss, /conic-gradient/);
+assert.match(agentDashboardProgressingBorderCss, /var\(--interactive-accent\)/, "流光必须跟随 Obsidian 主题强调色");
+assert.match(agentDashboardProgressingBorderCss, /animation:\s*codex-agent-dashboard-border-spin/);
 assert.match(agentDashboardCss, /@keyframes codex-agent-dashboard-border-spin[\s\S]*transform:\s*rotate\(1turn\)/);
 assert.match(
   agentDashboardCss,
-  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard\.is-busy::before\s*\{[^}]*animation:\s*none/
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard\.is-progressing\s*\{[^}]*border-color:\s*color-mix\([^}]*var\(--interactive-accent\)/,
+  "减弱动态效果时必须保留静态主题色边框"
 );
 assert.match(
   agentDashboardCss,
-  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard-tab\.is-busy \.codex-agent-dashboard-dot\s*\{[^}]*animation:\s*none/
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.codex-agent-dashboard\.is-progressing::before,[\s\S]*?\.codex-agent-dashboard\.is-progressing::after\s*\{[^}]*content:\s*none[^}]*animation:\s*none/,
+  "减弱动态效果时必须停止流光伪元素动画"
 );
 const dashboardInactiveDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-dot");
 const dashboardEnabledDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-enabled .codex-agent-dashboard-dot");
-const dashboardBusyDotCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-tab.is-busy .codex-agent-dashboard-dot");
 const dashboardInstallCheckCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-install-check");
 const dashboardEnableCss = cssRuleBody(settingsStyles, ".codex-agent-dashboard-enable");
 assert.match(dashboardInactiveDotCss, /background:\s*var\(--text-faint\)/);
 assert.match(dashboardEnabledDotCss, /background:\s*var\(--text-success\)/, "左侧绿点只表达当前启用的 Agent");
-assert.match(dashboardBusyDotCss, /background:\s*var\(--interactive-accent\)/);
+assert.doesNotMatch(
+  agentDashboardCss,
+  /\.codex-agent-dashboard-tab\.is-busy\s+\.codex-agent-dashboard-dot\s*\{[^}]*animation\s*:/,
+  "忙碌状态圆点不应继续脉冲"
+);
+assert.doesNotMatch(agentDashboardCss, /codex-agent-dashboard-dot-pulse/, "Agent 状态圆点不得保留脉冲关键帧");
 assert.match(dashboardInstallCheckCss, /width|inline-size/);
 assert.match(dashboardEnableCss, /border-radius:\s*(?:9999px|var\(--radius-[^)]+\))/, "启用操作必须是紧凑胶囊而不是宽按钮");
 assert.doesNotMatch(agentDashboardCss, /\.codex-agent-dashboard-tab-status|\.codex-agent-dashboard-default/);
@@ -7654,13 +8445,15 @@ await assert.rejects(() => startCodexLogin({
   && error.kind === "browser-open"
   && /desktop permission denied/.test(error.message));
 
-const installerCalls: Array<{ command: string; args: string[]; shell: boolean }> = [];
-const installedCodexPath = "/Users/demo/.npm-global/bin/codex";
-const installerResult = await installCodexCli({
-  home: "/Users/demo",
-  platform: "darwin",
-  envPath: "",
-  exists: (candidate) => candidate === installedCodexPath,
+  const installerCalls: Array<{ command: string; args: string[]; shell: boolean }> = [];
+  const codexInstallProgress: AgentSetupProgress[] = [];
+  const installedCodexPath = "/Users/demo/.npm-global/bin/codex";
+  const installerResult = await installCodexCli({
+    home: "/Users/demo",
+    platform: "darwin",
+    envPath: "",
+    onProgress: (progress) => codexInstallProgress.push(progress),
+    exists: (candidate) => candidate === installedCodexPath,
   runner: async (command, args, options) => {
     installerCalls.push({ command, args: [...args], shell: options.shell });
     if (args[0] === "prefix") return { stdout: "/Users/demo/.npm-global\n", stderr: "" };
@@ -7669,9 +8462,10 @@ const installerResult = await installCodexCli({
   }
 });
 assert.deepEqual(installerCalls[0], { command: "npm", args: [...CODEX_NPM_INSTALL_ARGS], shell: false });
-assert.equal(installerCalls.some((call) => call.args.join(" ").includes("sudo") || call.args.join(" ").includes("curl")), false);
-assert.equal(installerResult.command, installedCodexPath);
-assert.equal(installerResult.version, "codex-cli 0.144.2");
+  assert.equal(installerCalls.some((call) => call.args.join(" ").includes("sudo") || call.args.join(" ").includes("curl")), false);
+  assert.equal(installerResult.command, installedCodexPath);
+  assert.equal(installerResult.version, "codex-cli 0.144.2");
+  assert.deepEqual(codexInstallProgress, typedInstallProgressStages, "npm 安装器必须按真实节点上报三步进度");
 const cancelledInstall = await installCodexCli({
   runner: async () => { const error = new Error("aborted") as Error & { name: string }; error.name = "AbortError"; throw error; }
 });
@@ -8109,6 +8903,12 @@ assert.equal(oversizedHermesHeader.errorKind, "download-too-large");
 assert.equal(oversizedHermesHeaderSignal?.aborted, true);
 
 const hermesInstallerSourceText = await readFile(path.join(process.cwd(), "src/core/hermes-installer.ts"), "utf8");
+let previousHermesProgressIndex = -1;
+for (const { stage } of typedInstallProgressStages) {
+  const stageIndex = hermesInstallerSourceText.indexOf(`emitAgentSetupProgress(options.onProgress, "${stage}")`);
+  assert.ok(stageIndex > previousHermesProgressIndex, `Hermes 安装进度阶段顺序错误：${stage}`);
+  previousHermesProgressIndex = stageIndex;
+}
 assert.match(hermesInstallerSourceText, /finally\s*{[\s\S]*?rm\(tempDirectory,\s*{\s*recursive:\s*true,\s*force:\s*true\s*}\)/);
 assert.match(hermesInstallerSourceText, /if\s*\(expectedBytes !== undefined && declaredLength > 0 && declaredLength !== expectedBytes\)[\s\S]*?HermesInstallerError\("integrity"/);
 assert.match(hermesInstallerSourceText, /if\s*\(expectedBytes !== undefined && body\.byteLength !== expectedBytes\)[\s\S]*?HermesInstallerError\("integrity"/);
@@ -8750,6 +9550,64 @@ for (const sourceRoot of [path.join(process.cwd(), "src"), path.join(process.cwd
 
 const zhAgentInstallerCopy = settingsCopy("zh-CN").setup.agentInstaller;
 const enAgentInstallerCopy = settingsCopy("en").setup.agentInstaller;
+assert.equal(settingsCopy("zh-CN").tabs.resources, "Skills & MCP");
+assert.equal(settingsCopy("en").tabs.resources, "Skills & MCP");
+assert.equal(settingsCopy("zh-CN").resources.title, "Skills & MCP");
+assert.equal(settingsCopy("en").resources.title, "Skills & MCP");
+assert.doesNotMatch(
+  zhAgentInstallerCopy.dashboard.installFlow.authorizingFlowDescription,
+  /无需.*(?:授权码|API Key)/,
+  "OpenCode 可能要求输入授权码或 API Key，授权中说明不能承诺无需输入"
+);
+assert.doesNotMatch(
+  enAgentInstallerCopy.dashboard.installFlow.authorizingFlowDescription,
+  /never need to paste/i,
+  "OpenCode may require an authorization code or API key"
+);
+assert.match(zhAgentInstallerCopy.dashboard.installFlow.authorizingFlowDescription, /敏感内容不会进入安装日志/);
+assert.match(enAgentInstallerCopy.dashboard.installFlow.authorizingFlowDescription, /never enter installation logs/i);
+assert.deepEqual(AGENT_SETUP_PROGRESS_STAGES, typedInstallProgressStages.map(({ stage }) => stage));
+const emittedInstallProgress: AgentSetupProgress[] = [];
+for (const { stage } of typedInstallProgressStages) {
+  emitAgentSetupProgress((progress) => emittedInstallProgress.push(progress), stage);
+}
+assert.deepEqual(emittedInstallProgress, typedInstallProgressStages, "类型化安装进度必须严格按三步顺序上报");
+for (const progress of typedInstallProgressStages) {
+  const snapshot = createAgentSetupSnapshot("opencode", "installing", { progress });
+  assert.deepEqual(snapshot.progress, progress, `类型化安装进度快照错误：${progress.stage}`);
+}
+assert.deepEqual(
+  resolveAgentCommandObservation("/old/codex", "/new/codex", true),
+  { deferred: true, changed: false, nextObserved: "/old/codex" },
+  "安装或连接期间发现的新路径必须延后消费"
+);
+assert.deepEqual(
+  resolveAgentCommandObservation("/old/codex", "/new/codex", false),
+  { deferred: false, changed: true, nextObserved: "/new/codex" },
+  "操作结束后必须识别并记录 CLI 路径变化"
+);
+const cancelledAfterCliActivated = reconcileTerminalAgentInstallDetection(
+  createAgentSetupSnapshot("hermes", "cancelled", { lastAction: "install", detail: "cancelled" }),
+  createAgentSetupSnapshot("hermes", "installed", {
+    command: "/Users/demo/.local/bin/hermes",
+    version: "0.18.1",
+    checkedAt: 42
+  })
+);
+assert.equal(cancelledAfterCliActivated.phase, "cancelled", "取消文案必须保留");
+assert.equal(cancelledAfterCliActivated.command, "/Users/demo/.local/bin/hermes");
+assert.equal(cancelledAfterCliActivated.version, "0.18.1");
+assert.equal(cancelledAfterCliActivated.lastAction, "connect", "CLI 已落盘后重试必须继续连接，不能重复安装");
+assert.equal(resolveAgentSetupDashboardState(cancelledAfterCliActivated).installed, true);
+assert.equal(resolveAgentSetupDashboardState(cancelledAfterCliActivated).retryTarget, "connect");
+assert.deepEqual(
+  reconcileTerminalAgentInstallDetection(
+    createAgentSetupSnapshot("opencode", "cancelled", { lastAction: "install" }),
+    createAgentSetupSnapshot("opencode", "missing")
+  ),
+  createAgentSetupSnapshot("opencode", "cancelled", { lastAction: "install" }),
+  "未找到完整 CLI 时必须保留原取消状态"
+);
 const dashboardPhaseCases = [
   {
     snapshot: createAgentSetupSnapshot("codex-cli", "detecting"),
