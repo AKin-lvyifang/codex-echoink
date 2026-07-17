@@ -13,11 +13,12 @@ import {
   getActiveApiProvider,
   getApiProviderModels,
   newId,
+  promptEnhancerModelId,
   type ApiProviderConfig,
   type CodexForObsidianSettings,
   type ProviderMode
 } from "../settings/settings";
-import type { AgentBackendKind } from "../agent/types";
+import type { AgentBackendKind, AgentModelInfo } from "../agent/types";
 import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NAME } from "./meta-prompt";
 import { createPromptEnhancerRuntimeWorkspace } from "./runtime-workspace";
 
@@ -313,16 +314,34 @@ function promptEnhancerTaskSettings(settings: CodexForObsidianSettings, backend:
   return cloned;
 }
 
-export function promptEnhancerModelChoices(settings: CodexForObsidianSettings, statusModels: string[] = []): string[] {
+export function promptEnhancerModelChoices(
+  settings: CodexForObsidianSettings,
+  statusModels: string[] = [],
+  backendModels: AgentModelInfo[] = []
+): string[] {
   const enhancer = settings.promptEnhancer;
   const backend = resolvePromptEnhancerBackend(settings);
   const provider = backend === "codex-cli" && settings.providerMode === "custom-api"
     ? getActiveApiProvider(settings)
     : null;
+  const configuredId = promptEnhancerModelId(backend, enhancer.providerId, enhancer.model);
+  const inheritedId = backend === "opencode"
+    ? promptEnhancerModelId(backend, settings.opencode.providerId, settings.opencode.modelId)
+    : backend === "hermes"
+      ? promptEnhancerModelId(backend, settings.agents.hermes.providerId, settings.agents.hermes.modelId)
+      : "";
+  const automaticId = promptEnhancerModelId(
+    backend,
+    resolvePromptEnhancerProviderId(settings, backend),
+    resolvePromptEnhancerModel(settings, backend)
+  );
   return Array.from(new Set([
-    enhancer.model,
-    resolvePromptEnhancerModel(settings, backend),
+    configuredId,
+    ...enhancer.customModelIds[backend],
+    inheritedId,
+    automaticId,
     ...(backend === "codex-cli" && provider ? getApiProviderModels(provider) : []),
-    ...(backend === "codex-cli" ? statusModels : [])
+    ...(backend === "codex-cli" ? statusModels : []),
+    ...backendModels.map((model) => promptEnhancerModelId(backend, model.providerId, model.modelId))
   ].map((model) => model.trim()).filter(Boolean)));
 }

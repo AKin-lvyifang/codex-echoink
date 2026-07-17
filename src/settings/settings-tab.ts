@@ -72,6 +72,8 @@ import {
   openCodeModelChoiceValue,
   parseOpenCodeAgentChoiceValue,
   parseOpenCodeModelChoiceValue,
+  parsePromptEnhancerModelId,
+  promptEnhancerModelId,
   providerModelLabel,
   providerConnectionLabel,
   removeApiProvider,
@@ -2922,23 +2924,57 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       dropdown.setValue(effectiveBackend);
       dropdown.onChange(async (value) => {
-        settings.backend = value === "opencode" || value === "hermes" ? value : "codex-cli";
+        const nextBackend = value === "opencode" || value === "hermes" ? value : "codex-cli";
+        if (nextBackend !== effectiveBackend) {
+          settings.providerId = "";
+          settings.model = "";
+          settings.agent = "";
+        }
+        settings.backend = nextBackend;
         await this.plugin.saveSettings();
         this.scheduleDisplay();
       });
     }), "route");
 
-    const modelChoices = promptEnhancerModelChoices(this.plugin.settings, status?.models.map((model) => model.model) ?? []);
+    const backendModels = effectiveBackend === "opencode" ? this.openCodeModelChoices : [];
+    const modelChoices = promptEnhancerModelChoices(
+      this.plugin.settings,
+      status?.models.map((model) => model.model) ?? [],
+      backendModels
+    );
+    const configuredModelId = promptEnhancerModelId(effectiveBackend, settings.providerId, settings.model);
     const automaticModelLabel = `自动（${resolvePromptEnhancerModel(this.plugin.settings, effectiveBackend)}）`;
-    this.decorateSetting(new Setting(wrapper).setName("增强模型").setDesc("这是提示词增强自己的模型设置，不影响普通聊天或编辑区写作。").addDropdown((dropdown) => {
+    const modelSetting = new Setting(wrapper).setName("增强模型").setDesc("这是提示词增强自己的模型设置，不影响普通聊天或编辑区写作。").addDropdown((dropdown) => {
       dropdown.addOption("", automaticModelLabel);
       for (const model of modelChoices) dropdown.addOption(model, model);
-      dropdown.setValue(modelChoices.includes(settings.model) ? settings.model : DEFAULT_PROMPT_ENHANCER_MODEL);
+      dropdown.setValue(configuredModelId && modelChoices.includes(configuredModelId) ? configuredModelId : DEFAULT_PROMPT_ENHANCER_MODEL);
       dropdown.onChange(async (value) => {
-        settings.model = value.trim();
+        if (!value) {
+          settings.providerId = "";
+          settings.model = "";
+          await this.plugin.saveSettings();
+          return;
+        }
+        const parsed = parsePromptEnhancerModelId(effectiveBackend, value);
+        if (!parsed) {
+          new Notice("模型 ID 格式无效，请重新新增");
+          this.scheduleDisplay();
+          return;
+        }
+        settings.providerId = parsed.providerId;
+        settings.model = parsed.modelId;
         await this.plugin.saveSettings();
       });
-    }), "box");
+    }).addButton((button) => {
+      button
+        .setButtonText("新增模型")
+        .setIcon("plus")
+        .setTooltip("输入模型 ID 并加入增强模型列表")
+        .onClick(() => void this.addPromptEnhancerModel(effectiveBackend));
+      button.buttonEl.createSpan({ text: "新增模型" });
+    });
+    modelSetting.settingEl.addClass("codex-prompt-enhancer-choice-setting");
+    this.decorateSetting(modelSetting, "box");
 
     if (capabilities.reasoning) {
       this.decorateSetting(new Setting(wrapper).setName("思考强度").setDesc("控制提示词增强的推理深度；建议使用中等，兼顾质量与速度。").addDropdown((dropdown) => {
@@ -2967,22 +3003,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }), "gauge");
     }
 
-    if (!usesCodex) {
-      this.addProviderText(wrapper, "模型 Provider ID", settings.providerId, "可选，例如 openai / anthropic / deepseek", async (value) => {
-        settings.providerId = value.trim();
-        await this.plugin.saveSettings();
-      });
-      this.addProviderText(wrapper, effectiveBackend === "hermes" ? "后端 Profile（可选）" : "自定义后端 Agent（可选）", settings.agent, effectiveBackend === "opencode" ? `留空使用内置 ${ENHANCE_PROMPT_AGENT_NAME}` : "留空使用后端默认", async (value) => {
-        settings.agent = value.trim();
-        await this.plugin.saveSettings();
-      });
-      if (effectiveBackend === "opencode") {
-        wrapper.createDiv({
-          cls: "codex-resource-note",
-          text: `OpenCode 留空时使用隔离的内置 ${ENHANCE_PROMPT_AGENT_NAME}；自定义 Agent 必须是可直接运行的 primary Agent，不能选择 build 等 subagent。`
-        });
-      }
-    }
+    if (!usesCodex) this.renderPromptEnhancerAgentPicker(wrapper, effectiveBackend);
 
     this.renderPromptEnhancerMetaPrompt(wrapper);
 
@@ -2994,6 +3015,87 @@ export class CodexSettingTab extends PluginSettingTab {
       settings.timeoutMs = value * 1000;
       await this.plugin.saveSettings();
     });
+  }
+
+  private async addPromptEnhancerModel(backend: AgentBackendMode): Promise<void> {
+    const hint = backend === "codex-cli"
+      ? "输入 Codex 模型 ID，例如 gpt-5.6-terra"
+      : backend === "opencode"
+        ? "输入完整模型 ID，例如 opencode/deepseek-v4-flash-free"
+        : "输入完整模型 ID，例如 deepseek/deepseek-v4-flash";
+    const value = await textInputModal(this.app, "新增增强模型", hint);
+    if (value === null) return;
+    const parsed = parsePromptEnhancerModelId(backend, value);
+    if (!parsed) {
+      new Notice(backend === "codex-cli"
+        ? "模型 ID 无效，请输入不含空格的模型 ID"
+        : "模型 ID 无效，请使用 provider/model 格式");
+      return;
+    }
+
+    const settings = this.plugin.settings.promptEnhancer;
+    const models = settings.customModelIds[backend];
+    if (!models.includes(parsed.id)) models.push(parsed.id);
+    settings.providerId = parsed.providerId;
+    settings.model = parsed.modelId;
+    await this.plugin.saveSettings();
+    this.scheduleDisplay();
+    new Notice(`已新增并选择增强模型：${parsed.id}`);
+  }
+
+  private renderPromptEnhancerAgentPicker(container: HTMLElement, backend: Exclude<AgentBackendMode, "codex-cli">): void {
+    const settings = this.plugin.settings.promptEnhancer;
+    const current = settings.agent.trim();
+    if (backend === "opencode") {
+      const choices = this.openCodeAgentChoices.filter((agent) => agent.mode !== "subagent");
+      const values = new Set(choices.map((agent) => openCodeAgentChoiceValue(agent)));
+      const setting = new Setting(container)
+        .setName("增强 Agent")
+        .setDesc(`自动模式使用隔离的内置 ${ENHANCE_PROMPT_AGENT_NAME}；只允许选择可直接运行的 primary/all Agent。`)
+        .addDropdown((dropdown) => {
+          dropdown.addOption("", `自动（内置 ${ENHANCE_PROMPT_AGENT_NAME}）`);
+          if (current && !values.has(current)) dropdown.addOption(current, `当前配置：${current}`);
+          for (const agent of choices) {
+            dropdown.addOption(openCodeAgentChoiceValue(agent), openCodeAgentChoiceLabel(agent, this.plugin.settings.settingsLanguage));
+          }
+          dropdown.setValue(current);
+          dropdown.onChange(async (value) => {
+            settings.agent = parseOpenCodeAgentChoiceValue(value) ?? "";
+            await this.plugin.saveSettings();
+          });
+        })
+        .addButton((button) => {
+          const label = this.openCodeAgentsLoading ? "读取中" : "刷新";
+          button
+            .setButtonText(label)
+            .setIcon("refresh-cw")
+            .setTooltip("读取 OpenCode 可直接运行的 Agent 和模型")
+            .setDisabled(this.openCodeAgentsLoading || this.openCodeModelsLoading)
+            .onClick(() => void this.refreshPromptEnhancerOpenCodeOptions());
+          button.buttonEl.createSpan({ text: label });
+        });
+      setting.settingEl.addClass("codex-prompt-enhancer-choice-setting");
+      this.decorateSetting(setting, "bot");
+      return;
+    }
+
+    const topProfile = this.plugin.settings.agents.hermes.profile.trim();
+    const profiles = Array.from(new Set([topProfile, current].filter(Boolean)));
+    const automaticLabel = topProfile ? `自动（跟随顶部：${topProfile}）` : "自动（跟随顶部 Hermes Profile）";
+    const setting = new Setting(container)
+      .setName("增强 Profile")
+      .setDesc("复用顶部 Hermes 已配置的 Profile，不在这里重复输入连接或登录信息。")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", automaticLabel);
+        for (const profile of profiles) dropdown.addOption(profile, profile);
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          settings.agent = value.trim();
+          await this.plugin.saveSettings();
+        });
+      });
+    setting.settingEl.addClass("codex-prompt-enhancer-choice-setting");
+    this.decorateSetting(setting, "user-round");
   }
 
   private renderPromptEnhancerMetaPrompt(container: HTMLElement): void {
@@ -3494,7 +3596,15 @@ export class CodexSettingTab extends PluginSettingTab {
     await this.refreshOpenCodeRuntimeOptions({ models: false, agents: true });
   }
 
-  private async refreshOpenCodeRuntimeOptions(options: { models?: boolean; agents?: boolean } = { models: true, agents: true }): Promise<void> {
+  private async refreshPromptEnhancerOpenCodeOptions(): Promise<void> {
+    await this.refreshOpenCodeRuntimeOptions({ models: true, agents: true, syncConfiguredSelection: false });
+  }
+
+  private async refreshOpenCodeRuntimeOptions(options: {
+    models?: boolean;
+    agents?: boolean;
+    syncConfiguredSelection?: boolean;
+  } = { models: true, agents: true }): Promise<void> {
     const copy = this.copy;
     const setupConfigBeforeRefresh = [
       this.plugin.settings.opencode.providerId,
@@ -3503,6 +3613,7 @@ export class CodexSettingTab extends PluginSettingTab {
     ].join("\u0000");
     const shouldLoadModels = options.models !== false;
     const shouldLoadAgents = options.agents !== false;
+    const syncConfiguredSelection = options.syncConfiguredSelection !== false;
     if ((shouldLoadModels && this.openCodeModelsLoading) || (shouldLoadAgents && this.openCodeAgentsLoading)) return;
     const backend = new OpenCodeBackend({
       ...this.plugin.settings.opencode,
@@ -3524,16 +3635,20 @@ export class CodexSettingTab extends PluginSettingTab {
         const models = await backend.listModels();
         this.openCodeModelChoices = models;
         this.openCodeModelsLoaded = true;
-        const current = models.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
-        if (current) this.applyOpenCodeModelChoice(current);
+        if (syncConfiguredSelection) {
+          const current = models.find((model) => model.providerId === opencode.providerId && model.modelId === opencode.modelId);
+          if (current) this.applyOpenCodeModelChoice(current);
+        }
       }
       if (shouldLoadAgents) {
         const agents = await backend.listAgents();
         this.openCodeAgentChoices = agents;
         this.openCodeAgentsLoaded = true;
-        const current = agents.find((agent) => agent.name === opencode.agent);
-        if (current) opencode.agent = current.name;
-        if (!opencode.agent && agents[0]) opencode.agent = agents[0].name;
+        if (syncConfiguredSelection) {
+          const current = agents.find((agent) => agent.name === opencode.agent);
+          if (current) opencode.agent = current.name;
+          if (!opencode.agent && agents[0]) opencode.agent = agents[0].name;
+        }
       }
       opencode.lastConnectedAt = Date.now();
       opencode.lastError = "";

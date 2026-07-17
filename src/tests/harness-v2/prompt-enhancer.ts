@@ -11,10 +11,16 @@ import { cleanPromptEnhancerOutput, ENHANCE_META_PROMPT, ENHANCE_PROMPT_AGENT_NA
 import { createPromptEnhancerRuntimeWorkspace } from "../../prompt-enhancer/runtime-workspace";
 import {
   promptEnhancerBackendCapabilities,
+  promptEnhancerModelChoices,
   resolvePromptEnhancerCodexProvider,
   resolvePromptEnhancerModel
 } from "../../prompt-enhancer/service";
-import { DEFAULT_SETTINGS, normalizeSettingsData } from "../../settings/settings";
+import {
+  DEFAULT_SETTINGS,
+  normalizeSettingsData,
+  parsePromptEnhancerModelId,
+  promptEnhancerModelId
+} from "../../settings/settings";
 
 const WORKBUDDY_META_PROMPT_SHA256 = "60480d0bf677b6cb31170013a4d7cf2ab5c274844f523ba9467535b16c81ab94";
 
@@ -34,6 +40,11 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.agent, "");
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
   assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
+  assert.deepEqual(DEFAULT_SETTINGS.promptEnhancer.customModelIds, {
+    "codex-cli": [],
+    opencode: [],
+    hermes: []
+  });
   assert.equal(DEFAULT_SETTINGS.editorActions.actions.some((action) => action.id === "enhance"), false);
   assert.deepEqual(promptEnhancerBackendCapabilities("codex-cli"), { reasoning: true, serviceTier: true });
   assert.deepEqual(promptEnhancerBackendCapabilities("opencode"), { reasoning: false, serviceTier: false });
@@ -75,6 +86,53 @@ async function assertPromptEnhancerIsSeparateFromEditorActions(): Promise<void> 
   }).settings.promptEnhancer;
   assert.equal(invalidRuntimeOptions.reasoning, "medium");
   assert.equal(invalidRuntimeOptions.serviceTier, "fast");
+  assert.deepEqual(parsePromptEnhancerModelId("codex-cli", "gpt-5.6-terra"), {
+    id: "gpt-5.6-terra",
+    providerId: "",
+    modelId: "gpt-5.6-terra"
+  });
+  assert.deepEqual(parsePromptEnhancerModelId("opencode", "opencode/deepseek-v4-flash-free"), {
+    id: "opencode/deepseek-v4-flash-free",
+    providerId: "opencode",
+    modelId: "opencode/deepseek-v4-flash-free"
+  });
+  assert.deepEqual(parsePromptEnhancerModelId("hermes", "deepseek/deepseek-v4-flash"), {
+    id: "deepseek/deepseek-v4-flash",
+    providerId: "deepseek",
+    modelId: "deepseek-v4-flash"
+  });
+  assert.equal(parsePromptEnhancerModelId("opencode", "missing-provider"), null);
+  assert.equal(parsePromptEnhancerModelId("hermes", "deepseek/"), null);
+  assert.equal(parsePromptEnhancerModelId("codex-cli", "gpt 5.6"), null);
+  assert.equal(promptEnhancerModelId("codex-cli", "", "gpt-5.6-terra"), "gpt-5.6-terra");
+  assert.equal(promptEnhancerModelId("opencode", "opencode", "deepseek-v4-flash-free"), "opencode/deepseek-v4-flash-free");
+  assert.equal(promptEnhancerModelId("hermes", "deepseek", "deepseek/deepseek-v4-flash"), "deepseek/deepseek-v4-flash");
+
+  const customModels = normalizeSettingsData({
+    settingsVersion: 37,
+    promptEnhancer: {
+      backend: "opencode",
+      customModelIds: {
+        "codex-cli": ["gpt-5.6-terra", "gpt 5.6"],
+        opencode: ["opencode/deepseek-v4-flash-free", "opencode/deepseek-v4-flash-free", "missing-provider"],
+        hermes: ["deepseek/deepseek-v4-flash", "deepseek/"]
+      }
+    }
+  }).settings;
+  assert.deepEqual(customModels.promptEnhancer.customModelIds, {
+    "codex-cli": ["gpt-5.6-terra"],
+    opencode: ["opencode/deepseek-v4-flash-free"],
+    hermes: ["deepseek/deepseek-v4-flash"]
+  });
+  const modelChoices = promptEnhancerModelChoices(customModels, [], [{
+    id: "openai/gpt-5.4-mini",
+    providerId: "openai",
+    modelId: "openai/gpt-5.4-mini",
+    displayName: "GPT-5.4 mini",
+    inputModalities: ["text"]
+  }]);
+  assert.ok(modelChoices.includes("opencode/deepseek-v4-flash-free"));
+  assert.ok(modelChoices.includes("openai/gpt-5.4-mini"));
 
   const migratedAuthentication = normalizeSettingsData({
     settingsVersion: 36,
@@ -275,6 +333,11 @@ async function assertPromptEnhancerUiEntryIsComposerToolbarIcon(): Promise<void>
   assert.match(promptEnhancerSettingsSource, /if \(capabilities\.serviceTier\)/);
   assert.match(promptEnhancerSettingsSource, /setName\("思考强度"\)/);
   assert.match(promptEnhancerSettingsSource, /setName\("响应速度"\)/);
+  assert.match(promptEnhancerSettingsSource, /setButtonText\("新增模型"\)/);
+  assert.match(promptEnhancerSettingsSource, /if \(nextBackend !== effectiveBackend\)[\s\S]{0,180}settings\.model = ""/);
+  assert.match(settingsTabSource, /private async addPromptEnhancerModel\(/);
+  assert.match(settingsTabSource, /private renderPromptEnhancerAgentPicker\(/);
+  assert.doesNotMatch(promptEnhancerSettingsSource, /模型 Provider ID|自定义后端 Agent（可选）|后端 Profile（可选）/);
 }
 
 async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> {

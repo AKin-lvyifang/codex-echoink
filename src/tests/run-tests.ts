@@ -72,6 +72,8 @@ import {
   openCodeModelChoiceValue,
   parseOpenCodeAgentChoiceValue,
   parseOpenCodeModelChoiceValue,
+  parsePromptEnhancerModelId,
+  promptEnhancerModelId,
   providerModelLabel,
   providerConnectionLabel,
   KNOWLEDGE_BASE_SESSION_TITLE,
@@ -2681,7 +2683,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 37);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 38);
 assert.deepEqual(DEFAULT_SETTINGS.memory, {
   enabled: true,
   autoSync: true,
@@ -2711,12 +2713,29 @@ assert.equal(DEFAULT_SETTINGS.promptEnhancer.reasoning, "medium");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.serviceTier, "fast");
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.timeoutMs, 45000);
 assert.equal(DEFAULT_SETTINGS.promptEnhancer.maxInputChars, 4000);
+assert.deepEqual(DEFAULT_SETTINGS.promptEnhancer.customModelIds, {
+  "codex-cli": [],
+  opencode: [],
+  hermes: []
+});
 assert.deepEqual(promptEnhancerBackendCapabilities("codex-cli"), { reasoning: true, serviceTier: true });
 assert.deepEqual(promptEnhancerBackendCapabilities("opencode"), { reasoning: false, serviceTier: false });
 assert.deepEqual(promptEnhancerBackendCapabilities("hermes"), { reasoning: false, serviceTier: false });
 assert.equal(resolvePromptEnhancerBackend(DEFAULT_SETTINGS), "codex-cli");
 assert.equal(resolvePromptEnhancerModel(DEFAULT_SETTINGS), DEFAULT_CODEX_UTILITY_MODEL);
 assert.ok(promptEnhancerModelChoices(DEFAULT_SETTINGS).includes(DEFAULT_CODEX_UTILITY_MODEL));
+assert.deepEqual(parsePromptEnhancerModelId("opencode", "opencode/deepseek-v4-flash-free"), {
+  id: "opencode/deepseek-v4-flash-free",
+  providerId: "opencode",
+  modelId: "opencode/deepseek-v4-flash-free"
+});
+assert.deepEqual(parsePromptEnhancerModelId("hermes", "deepseek/deepseek-v4-flash"), {
+  id: "deepseek/deepseek-v4-flash",
+  providerId: "deepseek",
+  modelId: "deepseek-v4-flash"
+});
+assert.equal(parsePromptEnhancerModelId("hermes", "deepseek/"), null);
+assert.equal(promptEnhancerModelId("hermes", "deepseek", "deepseek-v4-flash"), "deepseek/deepseek-v4-flash");
 const legacyDefaultPromptEnhancerSettings = structuredClone(DEFAULT_SETTINGS);
 legacyDefaultPromptEnhancerSettings.agentBackend = "hermes";
 legacyDefaultPromptEnhancerSettings.promptEnhancer.backend = "default";

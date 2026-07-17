@@ -3220,6 +3220,40 @@ body.theme-light .codex-code-wrapper pre {
   line-height: 1.45;
 }
 
+.codex-prompt-enhancer-choice-setting .setting-item-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codex-prompt-enhancer-choice-setting .setting-item-control select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codex-prompt-enhancer-choice-setting .setting-item-control button {
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .codex-prompt-enhancer-choice-setting {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .codex-prompt-enhancer-choice-setting .setting-item-control {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .codex-prompt-enhancer-choice-setting .setting-item-control button {
+    justify-self: start;
+  }
+}
+
 .codex-rules-file-picker {
   display: flex;
   min-width: 0;

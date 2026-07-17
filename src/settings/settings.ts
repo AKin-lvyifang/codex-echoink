@@ -202,6 +202,7 @@ export interface PromptEnhancerSettings {
   backend: PromptEnhancerBackendMode;
   providerId: string;
   model: string;
+  customModelIds: Record<AgentBackendKind, string[]>;
   reasoning: ReasoningEffort;
   serviceTier: ServiceTierChoice;
   agent: string;
@@ -566,6 +567,11 @@ const DEFAULT_PROMPT_ENHANCER_SETTINGS: PromptEnhancerSettings = {
   backend: "codex-cli",
   providerId: "",
   model: DEFAULT_PROMPT_ENHANCER_MODEL,
+  customModelIds: {
+    "codex-cli": [],
+    opencode: [],
+    hermes: []
+  },
   reasoning: "medium",
   serviceTier: "fast",
   agent: "",
@@ -592,7 +598,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 37,
+  settingsVersion: 38,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -999,11 +1005,26 @@ export function normalizePromptEnhancerSettings(input: unknown, previousVersion 
     backend: normalizePromptEnhancerBackendMode(value.backend),
     providerId: normalizeOptionalText(value.providerId),
     model: normalizeText(value.model, defaults.model),
+    customModelIds: normalizePromptEnhancerCustomModelIds(value.customModelIds),
     reasoning: normalizeReasoningEffort(value.reasoning, defaults.reasoning),
     serviceTier: normalizeServiceTierChoice(value.serviceTier, defaults.serviceTier),
     agent: previousVersion < 31 && configuredAgent === "enhance-prompt" ? "" : configuredAgent,
     timeoutMs: normalizePositiveInteger(value.timeoutMs, defaults.timeoutMs, 10000, 300000),
     maxInputChars: normalizePositiveInteger(value.maxInputChars, defaults.maxInputChars, 100, 20000)
+  };
+}
+
+function normalizePromptEnhancerCustomModelIds(input: unknown): Record<AgentBackendKind, string[]> {
+  const value = settingsRecord(input) ?? {};
+  const normalize = (backend: AgentBackendKind): string[] => Array.from(new Set(
+    (Array.isArray(value[backend]) ? value[backend] : [])
+      .map((item) => parsePromptEnhancerModelId(backend, String(item ?? ""))?.id ?? "")
+      .filter(Boolean)
+  ));
+  return {
+    "codex-cli": normalize("codex-cli"),
+    opencode: normalize("opencode"),
+    hermes: normalize("hermes")
   };
 }
 
@@ -1187,6 +1208,36 @@ export function openCodeAgentChoiceValue(agent: Pick<AgentProfileInfo, "name">):
 export function parseOpenCodeAgentChoiceValue(value: string): string | null {
   const agent = String(value ?? "").trim();
   return agent ? agent : null;
+}
+
+export interface PromptEnhancerModelReference {
+  id: string;
+  providerId: string;
+  modelId: string;
+}
+
+export function parsePromptEnhancerModelId(backend: AgentBackendKind, value: string): PromptEnhancerModelReference | null {
+  const id = String(value ?? "").trim();
+  if (!id || /\s|\u0000/.test(id)) return null;
+  if (backend === "codex-cli") return { id, providerId: "", modelId: id };
+  const slash = id.indexOf("/");
+  if (slash <= 0 || slash === id.length - 1) return null;
+  const providerId = id.slice(0, slash);
+  return {
+    id,
+    providerId,
+    modelId: backend === "opencode" ? id : id.slice(slash + 1)
+  };
+}
+
+export function promptEnhancerModelId(backend: AgentBackendKind, providerId: string, modelId: string): string {
+  const provider = providerId.trim();
+  const model = modelId.trim();
+  if (!model) return "";
+  if (backend === "codex-cli" || !provider) return model;
+  const prefix = `${provider}/`;
+  if (backend === "opencode") return model.startsWith(prefix) ? model : `${prefix}${model}`;
+  return `${prefix}${model.startsWith(prefix) ? model.slice(prefix.length) : model}`;
 }
 
 export function openCodeAgentChoiceLabel(agent: Pick<AgentProfileInfo, "name" | "mode" | "native">, language: SettingsLanguage = "zh-CN"): string {
