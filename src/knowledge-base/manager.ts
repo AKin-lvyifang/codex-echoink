@@ -8,10 +8,11 @@ import type { AgentBackendKind } from "../agent/types";
 import { harnessKnowledgePromptUsesPreparedResources, harnessKnowledgeTaskPermission, harnessKnowledgeUsesEchoInkToolBridge, harnessMessageModelId } from "../harness/agents/backend-runtime-profile";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import {
-  buildEchoInkResourceCatalog,
+  buildActiveEchoInkResourceCatalog,
   MAINTENANCE_AGENT_RESOURCE_PROFILE,
   prepareAgentResources
 } from "../resources/registry";
+import type { EchoInkResource } from "../resources/types";
 import {
   recordKnowledgeBaseMaintenanceRun,
   type ChatMessage,
@@ -1195,7 +1196,7 @@ export class KnowledgeBaseManager {
     backend: AgentBackendKind,
     maintenanceResourceProfile = false
   ): Promise<PreparedAgentResources> {
-    const catalog = await this.runtimeEchoInkResourceCatalog();
+    const catalog = knowledgeWorkflowResourceCatalog(await this.runtimeEchoInkResourceCatalog());
     return prepareAgentResources(catalog, {
       scope: "knowledge",
       backendCapabilities: getAgentBackendDefinition(backend).capabilities,
@@ -1207,7 +1208,8 @@ export class KnowledgeBaseManager {
 
   private async prepareKnowledgeAgentToolBridge(): Promise<AgentToolBridgeRuntime | null> {
     const resourceSettings = this.plugin.settings.resources;
-    const catalog = await this.runtimeEchoInkResourceCatalog();
+    const catalog = knowledgeWorkflowResourceCatalog(await this.runtimeEchoInkResourceCatalog());
+    if (!catalog.length) return null;
     const callableTools = await buildCallableMcpToolCatalog({
       resources: catalog,
       scope: "knowledge",
@@ -1224,11 +1226,11 @@ export class KnowledgeBaseManager {
 
   private async runtimeEchoInkResourceCatalog() {
     const plugin = this.plugin as CodexForObsidianPlugin & {
-      buildRuntimeEchoInkResourceCatalog?: () => Promise<ReturnType<typeof buildEchoInkResourceCatalog>>;
+      buildRuntimeEchoInkResourceCatalog?: () => Promise<ReturnType<typeof buildActiveEchoInkResourceCatalog>>;
     };
     return typeof plugin.buildRuntimeEchoInkResourceCatalog === "function"
       ? await plugin.buildRuntimeEchoInkResourceCatalog()
-      : buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
+      : buildActiveEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
   }
 
   private resolveKnowledgeBackend(): AgentBackendKind {
@@ -1596,4 +1598,8 @@ function reviewKindLabel(kind: ReviewReportKind): string {
 
 function normalizeRulesPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/") || DEFAULT_KNOWLEDGE_BASE_RULES_FILE;
+}
+
+function knowledgeWorkflowResourceCatalog(catalog: EchoInkResource[]): EchoInkResource[] {
+  return catalog;
 }

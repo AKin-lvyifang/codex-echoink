@@ -5,6 +5,28 @@ export type KnowledgeBaseRunMode = "maintain" | "lint" | "reingest" | "outputs" 
 export type KnowledgeBaseCommandUiMode = KnowledgeBaseRunMode | "calibrate";
 export type KnowledgeWorkflowPhaseId = "prepare" | "digest" | "organize" | "report" | "complete";
 
+export interface KnowledgeBaseRunPhasePerformance {
+  id: KnowledgeWorkflowPhaseId;
+  title: string;
+  startedAt: number;
+  completedAt: number;
+  durationMs: number;
+  status: "success" | "failed" | "canceled";
+}
+
+export interface KnowledgeBaseRunPerformance {
+  startedAt: number;
+  completedAt: number;
+  totalMs: number;
+  agentCalled: boolean;
+  phases: KnowledgeBaseRunPhasePerformance[];
+  index?: {
+    reused: number;
+    refreshed: number;
+    targets: number;
+  };
+}
+
 export interface KnowledgeWorkflowEvent {
   type: Extract<HarnessEventType,
     | "workflow.started"
@@ -84,6 +106,10 @@ export interface KnowledgeBaseDiscovery {
   skippedSources: KnowledgeBaseSkippedSource[];
   reportPath: string;
   trackerPath: string;
+  indexStats?: {
+    reused: number;
+    refreshed: number;
+  };
 }
 
 export type KnowledgeBaseRunCompletion = "full" | "partial" | "recovered" | "noop";
@@ -198,6 +224,7 @@ export interface KnowledgeBaseRunResult {
   externalRawAdditions?: string[];
   digestEvidencePaths?: Record<string, string[]>;
   calibration?: KnowledgeBaseRawCalibrationResult;
+  performance?: KnowledgeBaseRunPerformance;
   error?: string;
 }
 

@@ -42,6 +42,7 @@ import {
   rawSnapshotChangeMessages,
   restoreRawSnapshot,
   snapshotRawFileContents,
+  snapshotRawFilesIncremental,
   snapshotRawFiles,
   type RawContentSnapshot,
   type RawSnapshot
@@ -199,7 +200,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
       checkCanceled
     });
     checkCanceled();
-    const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath);
+    const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath, rawBefore);
     const rawDigestChanges = classifyRawSnapshotChanges(rawBefore, rawAfterDigestMetadata, [], {
       allowedManagedFrontmatterPaths: new Set([...refreshedMarked, ...refreshedStatusUpdates].map((source) => source.relativePath))
     });
@@ -260,7 +261,7 @@ export async function runRawDigestCalibration(options: RawDigestCalibrationOptio
   } catch (error) {
     if (rawBeforeContents) {
       await restoreRawFileContents(vaultPath, rawBeforeContents).catch(swallowError("restore raw contents after calibration failure"));
-      const rawAfter = await snapshotKnowledgeRawFiles(vaultPath).catch(() => null);
+      const rawAfter = await snapshotKnowledgeRawFiles(vaultPath, rawBefore).catch(() => null);
       if (rawAfter) await restoreRawSnapshot(vaultPath, rawBeforeContents, rawBefore, rawAfter, [], { removeAdded: "unsafe" }).catch(swallowError("restore raw snapshot after calibration failure"));
     }
     await restoreKnowledgeTransactionOnFailure(outputsBefore);
@@ -445,8 +446,10 @@ export function fingerprintKnowledgeRawContentSnapshot(snapshot: RawContentSnaps
   return fingerprintRawContentSnapshot(snapshot, { fileFingerprint: rawDigestFingerprint });
 }
 
-export async function snapshotKnowledgeRawFiles(vaultPath: string): Promise<RawSnapshot> {
-  return snapshotRawFiles(vaultPath, { fileFingerprint: rawDigestFingerprint });
+export async function snapshotKnowledgeRawFiles(vaultPath: string, previous?: RawSnapshot): Promise<RawSnapshot> {
+  return previous
+    ? snapshotRawFilesIncremental(vaultPath, previous, { fileFingerprint: rawDigestFingerprint })
+    : snapshotRawFiles(vaultPath, { fileFingerprint: rawDigestFingerprint });
 }
 
 export function assertSafeRawRoot(snapshot: RawContentSnapshot): void {

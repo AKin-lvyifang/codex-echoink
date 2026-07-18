@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 function trackedFiles() {
   const output = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
   return output
     .split("\0")
     .filter(Boolean)
-    .map((file) => file.replace(/\\/g, "/"));
+    .map((file) => file.replace(/\\/g, "/"))
+    .filter((file) => existsSync(file));
 }
 
 const rules = [
@@ -19,6 +20,10 @@ const rules = [
   {
     reason: "internal Superpowers execution documents",
     matches: (file) => file.startsWith("docs/superpowers/")
+  },
+  {
+    reason: "private internal documentation",
+    matches: (file) => file.startsWith("docs/internal/")
   },
   {
     reason: "internal documentation directory",
@@ -38,6 +43,16 @@ const rules = [
   }
 ];
 
+const hardCodedSecretPattern =
+  /\b(?:OPENAI|ANTHROPIC|DEEPSEEK|GITHUB|GH|HERMES|OPENCODE)[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET)\b\s*[:=]\s*['"](?!\$\{\{)[^'"\n]{8,}['"]/i;
+
+if (!hardCodedSecretPattern.test("GH_" + "TOKEN = '" + "abcdefgh'")) {
+  throw new Error("Public repository guard must reject literal secret assignments.");
+}
+if (hardCodedSecretPattern.test('GH_TOKEN: "${{ github.token }}"')) {
+  throw new Error("Public repository guard must allow GitHub Actions secret expressions.");
+}
+
 const contentRules = [
   {
     reason: "local absolute user path",
@@ -53,7 +68,7 @@ const contentRules = [
   },
   {
     reason: "hard-coded secret or API key assignment",
-    pattern: /\b(?:OPENAI|ANTHROPIC|DEEPSEEK|GITHUB|GH|HERMES|OPENCODE)[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET)\b\s*[:=]\s*['"][^'"\n]{8,}['"]/i
+    pattern: hardCodedSecretPattern
   }
 ];
 

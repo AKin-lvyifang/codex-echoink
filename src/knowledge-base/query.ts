@@ -1,9 +1,7 @@
-import * as fsp from "fs/promises";
 import * as path from "path";
-import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseCitation, KnowledgeBaseCitationBucket, KnowledgeBaseCitationSummary, KnowledgeBaseEvidenceStatus, KnowledgeBaseSource } from "./types";
-import { contentFingerprint } from "./raw-integrity";
 import { DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES, readKnowledgeBaseTextPrefix } from "./io-budget";
+import { refreshKnowledgeBaseIndex, type KnowledgeBaseIndexEntry, type KnowledgeBaseIndexRoot } from "./incremental-index";
 
 export interface KnowledgeBaseAskMatch extends KnowledgeBaseSource {
   bucket: KnowledgeBaseCitationBucket;
@@ -32,44 +30,45 @@ const ASK_SOURCE_ROOTS: Array<{ bucket: KnowledgeBaseCitationBucket; dir: string
 
 export async function findKnowledgeBaseAskMatches(vaultPath: string, question: string, limit = WIKI_MATCH_LIMIT, options: KnowledgeBaseAskSearchOptions = {}): Promise<KnowledgeBaseAskMatch[]> {
   const terms = extractSearchTerms(question);
-  const matches: KnowledgeBaseAskMatch[] = [];
   const maxFileReadBytes = normalizePositiveLimit(options.maxFileReadBytes, DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES);
   const maxFilesPerRoot = normalizePositiveLimit(options.maxFilesPerRoot, Number.POSITIVE_INFINITY);
-  for (const root of ASK_SOURCE_ROOTS) {
-    const files = await listMarkdownFiles(path.join(vaultPath, root.dir), maxFilesPerRoot).catch(emptyArrayOnMissingPathOrWarn(`list ${root.dir} markdown files for ask search`));
-    for (const absolutePath of files) {
-      const relativePath = normalizeRelativePath(path.relative(vaultPath, absolutePath));
-      const stat = await fsp.stat(absolutePath).catch(() => null);
-      if (!stat?.isFile()) continue;
-      const raw = await readKnowledgeBaseTextPrefix(absolutePath, maxFileReadBytes).then((result) => result.text, () => "");
-      const text = raw.slice(0, MAX_FILE_CHARS);
-      const title = titleForKnowledgeFile(relativePath, text);
-      const score = scoreKnowledgeNote(question, terms, relativePath, title, text);
-      if (score <= 0) continue;
-      const excerptLines = buildExcerptLines(text, terms);
-      const relevance = relevanceForMatch(root.bucket, score);
-      matches.push({
-        relativePath,
-        absolutePath,
-        size: stat.size,
-        mtime: stat.mtimeMs,
-        fingerprint: contentFingerprint(Buffer.from(raw)),
-        mime: "text/markdown",
-        modality: "text",
-        changed: false,
-        bucket: root.bucket,
-        title,
-        score,
-        excerpt: excerptLines.join("\n"),
-        excerptLines,
-        relevance,
-        reason: reasonForMatch(root.bucket, score, question, terms, relativePath, title, text)
-      });
-    }
-  }
-  return matches
+  const refresh = await refreshKnowledgeBaseIndex(vaultPath, {
+    roots: ASK_SOURCE_ROOTS.map((root) => root.dir as KnowledgeBaseIndexRoot),
+    maxFilesPerRoot,
+    maxSearchChars: MAX_FILE_CHARS
+  });
+  const candidates = refresh.entries
+    .map((entry) => scoreIndexedKnowledgeEntry(entry, question, terms, maxFileReadBytes))
+    .filter((candidate): candidate is NonNullable<ReturnType<typeof scoreIndexedKnowledgeEntry>> => Boolean(candidate))
     .sort((left, right) => right.score - left.score || left.relativePath.localeCompare(right.relativePath))
     .slice(0, limit);
+  const matches: KnowledgeBaseAskMatch[] = [];
+  for (const candidate of candidates) {
+    const { entry, bucket, score, indexedText } = candidate;
+    const absolutePath = path.join(vaultPath, entry.path);
+    const text = await readKnowledgeBaseTextPrefix(absolutePath, maxFileReadBytes)
+      .then((result) => result.text.slice(0, MAX_FILE_CHARS), () => indexedText);
+    const excerptLines = buildExcerptLines(text, terms);
+    const relevance = relevanceForMatch(bucket, score);
+    matches.push({
+      relativePath: entry.path,
+      absolutePath,
+      size: entry.size,
+      mtime: entry.mtime,
+      fingerprint: entry.fingerprint,
+      mime: "text/markdown",
+      modality: "text",
+      changed: false,
+      bucket,
+      title: entry.title,
+      score,
+      excerpt: excerptLines.join("\n"),
+      excerptLines,
+      relevance,
+      reason: reasonForMatch(bucket, score, question, terms, entry.path, entry.title, indexedText)
+    });
+  }
+  return matches;
 }
 
 export function buildKnowledgeBaseCitationSummary(matches: KnowledgeBaseAskMatch[]): KnowledgeBaseCitationSummary {
@@ -111,22 +110,6 @@ export function formatAskMatchesForPrompt(matches: KnowledgeBaseAskMatch[]): str
       match.excerpt || "（无可用摘录）"
     ].join("\n");
   }).join("\n\n");
-}
-
-async function listMarkdownFiles(root: string, limit = Number.POSITIVE_INFINITY): Promise<string[]> {
-  const entries = await fsp.readdir(root, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (files.length >= limit) break;
-    if (entry.name.startsWith(".")) continue;
-    const absolutePath = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await listMarkdownFiles(absolutePath, Math.max(0, limit - files.length)));
-      continue;
-    }
-    if (entry.isFile() && /\.(md|markdown)$/i.test(entry.name)) files.push(absolutePath);
-  }
-  return files;
 }
 
 function normalizePositiveLimit(value: number | undefined, fallback: number): number {
@@ -189,12 +172,6 @@ function buildExcerptLines(text: string, terms: string[]): string[] {
   return excerpt;
 }
 
-function titleForKnowledgeFile(relativePath: string, text: string): string {
-  const heading = text.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  if (heading) return heading;
-  return path.basename(relativePath).replace(/\.(md|markdown)$/i, "");
-}
-
 function normalizeForSearch(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "");
 }
@@ -210,8 +187,23 @@ function countOccurrences(text: string, term: string): number {
   return count;
 }
 
-function normalizeRelativePath(value: string): string {
-  return value.replace(/\\/g, "/");
+function scoreIndexedKnowledgeEntry(
+  entry: KnowledgeBaseIndexEntry,
+  question: string,
+  terms: string[],
+  maxFileReadBytes: number
+): { entry: KnowledgeBaseIndexEntry; bucket: KnowledgeBaseCitationBucket; score: number; indexedText: string; relativePath: string } | null {
+  const bucket = bucketForIndexRoot(entry.root);
+  if (!bucket) return null;
+  const indexedText = entry.searchText.slice(0, Math.min(MAX_FILE_CHARS, maxFileReadBytes));
+  const score = scoreKnowledgeNote(question, terms, entry.path, entry.title, indexedText);
+  if (score <= 0) return null;
+  return { entry, bucket, score, indexedText, relativePath: entry.path };
+}
+
+function bucketForIndexRoot(root: KnowledgeBaseIndexRoot): KnowledgeBaseCitationBucket | null {
+  if (root === "wiki" || root === "journal" || root === "outputs") return root;
+  return null;
 }
 
 function relevanceForMatch(bucket: KnowledgeBaseCitationBucket, score: number): Exclude<KnowledgeBaseEvidenceStatus, "none"> {

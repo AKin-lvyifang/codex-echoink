@@ -103,7 +103,7 @@ Harness 2.0 主计划与 V3 补充计划已经完成，并已按领域移植到 
 - 分支：`codex/echoink-harness-v3-main-integration`。
 - 7 个领域提交和 `16fa335` 修复提交已存在；三份实施文档单独提交为 `docs(harness): 记录 main 集成验收`。
 - 每次提交只选择性暂存约定文件；禁止 `git add .`。参考文档、Test Vault 数据、运行存储、构建产物和两份被忽略计划不进入提交。
-- `docs/architecture/` 与 `docs/**/*plan*.md` 受 `.gitignore` 影响；不要误以为未跟踪计划文件会自动进入 Git。
+- `docs/internal/` 受 `.gitignore` 影响；不要误以为内部 PRD、计划、架构和原型会自动进入 Git。
 
 ## 剩余风险
 

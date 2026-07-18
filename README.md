@@ -447,7 +447,7 @@ The name matches the Obsidian loop: record, organize, and get prompted into the 
 - Updated install paths, release links, packaging output, and visible repository references for the new community name.
 - Kept compatibility with large raw message files stored by older manual installs under `.obsidian/plugins/obsidian-codex/raw`.
 - Added privacy and permission notes covering Codex CLI, OpenCode, model providers, local API keys, and vault write boundaries.
-- Prepared release assets for community installation: `main.js`, `manifest.json`, `styles.css`, and `codex-echoink-0.5.0.zip`.
+- Prepared the three assets that Obsidian Community installation reads: `main.js`, `manifest.json`, and `styles.css`. The separate `codex-echoink-0.5.0.zip` was a manual-install convenience bundle, not a Community asset.
 
 ### v0.4.1
 
@@ -602,12 +602,23 @@ Try these steps:
 ## Privacy and permissions
 
 - Codex EchoInk is desktop-only because it calls local command-line tools.
+- EchoInk itself does not require payment or an EchoInk account. Individual Agent or model providers can require their own account, authorization, subscription, or usage charges; those provider terms and privacy policies apply.
 - Codex CLI mode uses your local Codex CLI login and may send selected prompts, attachments, and chosen file context to the model provider configured in Codex.
 - OpenCode API mode connects to a local or user-configured OpenCode server. The plugin can start or stop `opencode serve`, but it does not silently install OpenCode.
 - Hermes mode calls your local Hermes CLI or configured Hermes API server. EchoInk can store the selected Hermes server URL, profile, provider, model, and optional API server key, but it does not silently rewrite your Hermes global provider setup.
 - Custom API provider keys are stored in Obsidian plugin data on your local machine. Use them only on a trusted device. Hermes inference provider keys should normally stay in Hermes' own configuration.
 - The plugin does not upload your whole vault by default. Ordinary chat requires choosing a workspace folder, and attached notes are turn context only.
 - Knowledge management runs keep Raw source bodies read-only and only update indexes or trackers. In ordinary Agent chat, Raw file organization follows your explicit instruction and the active permission mode.
+- Outside-vault access is used for workspaces and attachments you explicitly select, plus configuration, installation, temporary, and runtime paths required by configured local Agent tools. Agent sandbox modes may allow read access outside the selected workspace, and `Danger full access` removes filesystem restrictions; use that mode only with trusted prompts and tools. EchoInk does not silently scan unrelated system folders on its own.
+- During a Codex-backed `/journal` run, EchoInk may instruct the selected Agent to read only the target dates under `~/.codex/sessions/YYYY/MM/DD/*.jsonl` as optional evidence for the requested daily journal. EchoInk does not preload those files or scan unrelated session dates.
+- For WeChat Collection, EchoInk checks the fixed path `~/.codex/skills/wechat-article-to-obsidian-raw/scripts/wechat_capture.mjs` and runs that script with Node when it is present so the requested article can be archived. It does not search other Skill directories; if the script is unavailable or returns no note, EchoInk uses its built-in page capture.
+- EchoInk passes the current process environment to selected Agent CLIs, Agent installer or service subprocesses, and user-configured stdio MCP commands so they can find `PATH`, `HOME`, proxy, provider, and command-specific settings. Configure only trusted local commands. EchoInk itself does not use hostname, user information, or environment variables for fingerprinting or telemetry.
+- Setup network access is user-triggered: Codex and OpenCode setup use the npm registry configured on your machine. Hermes setup downloads a pinned Hermes revision from `github.com/NousResearch/hermes-agent` and a pinned `uv` archive from `github.com/astral-sh/uv`. It then runs `uv venv --python 3.11`, which may contact `api.github.com` and `github.com/astral-sh/python-build-standalone` to download a managed Python 3.11 runtime when none is available. The following `uv sync --locked` downloads the exact lockfile dependencies from Python package services, normally `pypi.org` and `files.pythonhosted.org`. These downloads are used only to install or repair Hermes.
+- When you paste a public webpage or WeChat URL into Collection, EchoInk directly requests the supplied URL with Obsidian `requestUrl` to download and extract the page. For WeChat, the fixed capture script above is tried first when available and built-in `requestUrl` capture is the fallback. EchoInk does not bypass login, verification, or CAPTCHA pages.
+- After you choose Nous authorization, EchoInk requests the recommended-model catalog from `portal.nousresearch.com`. Agent inference and MCP traffic goes only to the provider, API server, or MCP server you configured.
+- EchoInk has no client-side or server-side telemetry service of its own. Remote Agent, model, API, and MCP providers may retain service logs under their own privacy policies.
+- Vault-wide enumeration is reserved for explicit Knowledge search, dashboard, maintenance, initialization preview, and knowledge-rules file selection. Known file paths should be accessed directly instead of scanning the whole vault.
+- Clipboard access happens only when you paste an attachment, click a copy action, or choose the installation fallback labeled `Open terminal and copy command`. EchoInk does not read or monitor the clipboard in the background.
 - MCP and Skill resources are imported into an EchoInk vault-local registry. Per-scope switches affect EchoInk only and are not written back to Codex, OpenCode, or Hermes global configs. MCP tool calls that go through EchoInk's broker require explicit connection config, approval, and local logs.
 
 ## Screenshots

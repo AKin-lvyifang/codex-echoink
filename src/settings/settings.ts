@@ -633,7 +633,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 38,
+  settingsVersion: 39,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -877,6 +877,15 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     if (settings.promptEnhancer.backend === "default") {
       settings.promptEnhancer.backend = "codex-cli";
     }
+  }
+
+  if (previousVersion < 39) {
+    // v39 deliberately removes the Agent-global resource mirror from EchoInk.
+    // This only clears plugin-owned copies/caches; Codex, Hermes and OpenCode
+    // global Skill/MCP configuration is never modified.
+    settings.resources = defaultResourceSettings();
+    settings.workspaceResources = { plugins: {}, mcpServers: {}, skills: {} };
+    settings.workspaceResourceCache = {};
   }
 
   syncAgentsFromLegacyFields(settings);

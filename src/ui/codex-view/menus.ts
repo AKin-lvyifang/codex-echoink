@@ -19,8 +19,8 @@ export interface SkillMenuState {
 
 export interface SkillMenuCallbacks {
   onSkillsRequested: () => void;
-  onLoadSkills: () => Promise<unknown>;
-  onRenderMatches: () => void;
+  onLoadSkills: () => Promise<EchoInkResource[]>;
+  onRenderMatches: (skills?: EchoInkResource[]) => void;
 }
 
 export interface SkillMatchesState {
@@ -106,15 +106,15 @@ export function openSkillMenu(event: MouseEvent, elements: SkillMenuElements, st
     elements.skillMenuEl.removeClass("is-visible");
     return;
   }
+  callbacks.onSkillsRequested();
   if (!state.skillsRequested) {
-    callbacks.onSkillsRequested();
     elements.skillMenuEl.empty();
     elements.skillMenuEl.createDiv({ cls: "codex-skill-empty", text: "正在加载 skills..." });
     elements.skillMenuEl.addClass("is-visible");
-    void callbacks.onLoadSkills().then(() => callbacks.onRenderMatches());
-    return;
+  } else {
+    callbacks.onRenderMatches();
   }
-  callbacks.onRenderMatches();
+  void callbacks.onLoadSkills().then((skills) => callbacks.onRenderMatches(skills));
 }
 
 export function openAddMenu(event: MouseEvent, callbacks: AddMenuCallbacks): void {

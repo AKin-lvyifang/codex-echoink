@@ -20,7 +20,7 @@ import type { HarnessEvent } from "../../harness/contracts/event";
 import type { HarnessRunResult } from "../../harness/contracts/run";
 import { sessionBackendBinding, updateSessionBackendBinding } from "../../harness/kernel/session-service";
 import { buildCallableMcpToolCatalog } from "../../resources/mcp-tool-catalog";
-import { buildEchoInkResourceCatalog, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
+import { buildActiveEchoInkResourceCatalog, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
 import { newId } from "../../settings/settings";
 import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapping";
@@ -28,6 +28,7 @@ import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
+import type { KnowledgeBaseTurnOptionOverrides } from "../../knowledge-base/command-router";
 import { persistAndSettleChatRun } from "./turn-lifecycle";
 import {
   HarnessEventProjector,
@@ -523,7 +524,7 @@ async function createChatAgentAdapter(
   const resourceSettings = view.plugin.settings?.resources;
   const catalog = typeof view.plugin.buildRuntimeEchoInkResourceCatalog === "function"
     ? await view.plugin.buildRuntimeEchoInkResourceCatalog()
-    : buildEchoInkResourceCatalog({ settings: resourceSettings });
+    : buildActiveEchoInkResourceCatalog({ settings: resourceSettings });
   const resources = prepareAgentResources(catalog, {
     scope: "chat",
     backendCapabilities: getAgentBackendDefinition(backend).capabilities,
@@ -778,11 +779,16 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
   let turnError: unknown = null;
   try {
     await view.plugin.saveSettings(true);
-    const result = await manager.handleUserMessage(
-      item.text,
-      turnAttachments,
-      knowledgeBaseTurnOverrides(executionTurnOptions, session, runId)
-    );
+    const overrides = knowledgeBaseTurnOverrides(executionTurnOptions, session, runId);
+    if (runMode) {
+      overrides.onWorkflowEvent = (event) => {
+        const payload = assistantMessage.knowledgeBaseUi;
+        if (payload?.kind !== "maintain-run") return;
+        payload.events = [...(payload.events ?? []), event].slice(-80);
+        view.renderMessagesIfActive(session, assistantMessage);
+      };
+    }
+    const result = await manager.handleUserMessage(item.text, turnAttachments, overrides);
     succeeded = result.status === "success";
     const workflowRunId = result.workflowRunId?.trim() ?? "";
     const hasExplicitMaintenanceWinner = Object.prototype.hasOwnProperty.call(
@@ -1021,7 +1027,7 @@ function knowledgeBaseTurnOverrides(
   turnOptions: QueuedTurnItem["turnOptions"],
   session: StoredSession | undefined,
   workflowRunId: string
-) {
+): KnowledgeBaseTurnOptionOverrides {
   return {
     model: turnOptions.model,
     reasoning: turnOptions.reasoning,

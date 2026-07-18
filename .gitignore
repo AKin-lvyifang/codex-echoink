@@ -12,6 +12,7 @@ release/
 
 docs/PRD*.md
 docs/test-cases*.md
+docs/internal/
 docs/design/
 docs/architecture/
 docs/superpowers/

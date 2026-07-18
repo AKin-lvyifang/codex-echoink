@@ -255,7 +255,7 @@ const ZH_CN = {
         diagnosticsSummary: "诊断与有限日志",
         recheck: "重新检测",
         officialDocs: "查看官方文档",
-        terminalFallback: "打开终端",
+        terminalFallback: "打开终端并复制命令",
         enable: "启用",
         advancedTitle: "高级配置"
       },
@@ -680,7 +680,7 @@ const ZH_CN = {
   },
   resources: {
     title: "Skills & MCP",
-    note: "这里只改当前 Obsidian 仓库的 EchoInk 资源目录；从 Codex/Hermes/OpenCode 导入的资源不会写回它们的全局配置。",
+    note: "这里只显示 EchoInk 自建的 Skills 与 MCP；不再复制 Agent 的全局资源。当前列表已清空，未来新增的 EchoInk 知识库资源会按作用域正常注入。",
     tabs: {
       plugins: "插件",
       mcp: "MCP",
@@ -965,7 +965,7 @@ const EN: SettingsCopy = {
         diagnosticsSummary: "Diagnostics and limited log",
         recheck: "Check again",
         officialDocs: "View official documentation",
-        terminalFallback: "Open terminal",
+        terminalFallback: "Open terminal and copy command",
         enable: "Enable",
         advancedTitle: "Advanced configuration"
       },
@@ -1390,7 +1390,7 @@ const EN: SettingsCopy = {
   },
   resources: {
     title: "Skills & MCP",
-    note: "Only changes EchoInk resources for the current Obsidian vault. Imported Codex/Hermes/OpenCode resources are not written back to global configs.",
+    note: "Only EchoInk-owned Skills and MCP appear here. Agent-global resources are no longer copied. The list is currently empty; future EchoInk knowledge resources will be injected by scope.",
     tabs: {
       plugins: "Plugins",
       mcp: "MCP",

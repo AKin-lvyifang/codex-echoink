@@ -702,7 +702,6 @@ export class CodexMessageListRenderer {
   }
 
   private renderKnowledgeBaseRunCard(container: HTMLElement, payload: KnowledgeBaseRunPayload, message: ChatMessage): void {
-    const env = this.requireEnv();
     const card = container.createDiv({ cls: `codex-kb-run-card codex-kb-run-card-${message.status ?? "running"}` });
     const head = card.createDiv({ cls: "codex-kb-run-head" });
     const mark = head.createSpan({ cls: "codex-kb-run-mark" });
@@ -712,8 +711,11 @@ export class CodexMessageListRenderer {
     const track = card.createDiv({ cls: "codex-kb-run-track" });
     const cellsPerSegment = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT;
     const eventProgress = knowledgeBaseRunProgressStateFromEvents(message.status, payload.events ?? [], payload.phases.length);
-    const { totalCells, filledCells, activeIndex } = eventProgress ?? knowledgeBaseRunProgressState(message.status, message.createdAt, Date.now(), payload.phases.length);
-    if (message.status === "running" && !eventProgress) env.onScheduleRunProgress();
+    const { totalCells, filledCells, activeIndex } = eventProgress ?? {
+      totalCells: KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, payload.phases.length - 1),
+      filledCells: message.status === "completed" ? KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, payload.phases.length - 1) : 0,
+      activeIndex: -1
+    };
     payload.phases.forEach((phase, index) => {
       const node = track.createDiv({ cls: `codex-kb-run-node codex-kb-run-node-${phase.id} codex-kb-run-motion-${phase.motion}` });
       node.toggleClass("is-done", filledCells >= totalCells || index < activeIndex);

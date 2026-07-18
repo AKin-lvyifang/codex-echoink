@@ -10,6 +10,8 @@ export interface RawSnapshotEntry {
   kind?: RawContentSnapshotEntry["kind"];
   fingerprint: string;
   mtimeMs: number;
+  ctimeMs?: number;
+  size?: number;
   mode?: number;
   identity?: string;
   nlink?: number;
@@ -23,6 +25,7 @@ export interface RawFileContentSnapshotEntry {
   mode: number;
   atimeMs: number;
   mtimeMs: number;
+  ctimeMs: number;
   dev: number;
   ino: number;
   nlink: number;
@@ -34,6 +37,7 @@ export interface RawSymlinkContentSnapshotEntry {
   mode: number;
   atimeMs: number;
   mtimeMs: number;
+  ctimeMs: number;
   dev: number;
   ino: number;
   nlink: number;
@@ -44,6 +48,7 @@ export interface RawDirectoryContentSnapshotEntry {
   mode: number;
   atimeMs: number;
   mtimeMs: number;
+  ctimeMs: number;
   dev: number;
   ino: number;
   nlink: number;
@@ -54,6 +59,7 @@ export interface RawSpecialContentSnapshotEntry {
   mode: number;
   atimeMs: number;
   mtimeMs: number;
+  ctimeMs: number;
   dev: number;
   ino: number;
   nlink: number;
@@ -99,6 +105,7 @@ export async function snapshotRawFileContents(vaultPath: string): Promise<RawCon
         mode: stat.mode,
         atimeMs: stat.atimeMs,
         mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
         dev: stat.dev,
         ino: stat.ino,
         nlink: stat.nlink
@@ -112,6 +119,7 @@ export async function snapshotRawFileContents(vaultPath: string): Promise<RawCon
         mode: stat.mode,
         atimeMs: stat.atimeMs,
         mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
         dev: stat.dev,
         ino: stat.ino,
         nlink: stat.nlink
@@ -124,6 +132,7 @@ export async function snapshotRawFileContents(vaultPath: string): Promise<RawCon
         mode: stat.mode,
         atimeMs: stat.atimeMs,
         mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
         dev: stat.dev,
         ino: stat.ino,
         nlink: stat.nlink
@@ -137,6 +146,7 @@ export async function snapshotRawFileContents(vaultPath: string): Promise<RawCon
       mode: stat.mode,
       atimeMs: stat.atimeMs,
       mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
       dev: stat.dev,
       ino: stat.ino,
       nlink: stat.nlink
@@ -159,10 +169,66 @@ export function fingerprintRawContentSnapshot(snapshot: RawContentSnapshot, opti
     kind: entry.kind,
     fingerprint: rawEntryFingerprint(file, entry, options),
     mtimeMs: entry.kind === "directory" ? 0 : entry.mtimeMs,
+    ctimeMs: entry.ctimeMs,
+    size: entry.kind === "file" ? entry.content.length : undefined,
     mode: entry.mode,
     identity: rawEntryIdentity(entry),
     nlink: entry.nlink
   }]));
+}
+
+export async function snapshotRawFilesIncremental(
+  vaultPath: string,
+  previous: RawSnapshot,
+  options: RawSnapshotFingerprintOptions = {}
+): Promise<RawSnapshot> {
+  const rawDir = path.join(vaultPath, "raw");
+  const paths = await walkExistingRawEntries(rawDir);
+  const snapshot: RawSnapshot = new Map();
+  for (const entryPath of paths) {
+    const file = normalizeSlashes(path.relative(vaultPath, entryPath));
+    const stat = await fsp.lstat(entryPath);
+    const kind: RawContentSnapshotEntry["kind"] = stat.isDirectory()
+      ? "directory"
+      : stat.isSymbolicLink()
+        ? "symlink"
+        : stat.isFile()
+          ? "file"
+          : "special";
+    const identity = rawEntryIdentityFromStat(stat);
+    const prior = previous.get(file);
+    const reusable = prior
+      && prior.kind === kind
+      && prior.size === (stat.isFile() ? stat.size : undefined)
+      && Math.abs((prior.mtimeMs ?? 0) - (kind === "directory" ? 0 : stat.mtimeMs)) <= 5
+      && Math.abs((prior.ctimeMs ?? 0) - stat.ctimeMs) <= 5
+      && sameMode(prior.mode, stat.mode)
+      && prior.identity === identity;
+    let fingerprint = reusable ? prior.fingerprint : "";
+    if (!fingerprint) {
+      if (kind === "file") {
+        const content = await fsp.readFile(entryPath);
+        fingerprint = rawFingerprintForBuffer(file, kind, content, options);
+      } else if (kind === "symlink") {
+        fingerprint = rawFingerprintForBuffer(file, kind, Buffer.from(await fsp.readlink(entryPath)), options);
+      } else if (kind === "special") {
+        fingerprint = rawFingerprintForBuffer(file, kind, Buffer.from(String(stat.mode)), options);
+      } else {
+        fingerprint = rawFingerprintForBuffer(file, kind, Buffer.alloc(0), options);
+      }
+    }
+    snapshot.set(file, {
+      kind,
+      fingerprint,
+      mtimeMs: kind === "directory" ? 0 : stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+      size: stat.isFile() ? stat.size : undefined,
+      mode: stat.mode,
+      identity,
+      nlink: stat.nlink
+    });
+  }
+  return snapshot;
 }
 
 export function contentFingerprint(content: Buffer): string {
@@ -417,9 +483,26 @@ function rawEntryFingerprint(file: string, entry: RawContentSnapshotEntry, optio
   return contentFingerprint(Buffer.concat([prefix, content]));
 }
 
+function rawFingerprintForBuffer(
+  file: string,
+  kind: RawContentSnapshotEntry["kind"],
+  content: Buffer,
+  options: RawSnapshotFingerprintOptions
+): string {
+  const normalized = kind === "file"
+    ? Buffer.from(options.fileFingerprint?.(file, content) ?? content)
+    : content;
+  return contentFingerprint(Buffer.concat([Buffer.from(rawKindFingerprint(kind)), normalized]));
+}
+
 function rawEntryIdentity(entry: RawContentSnapshotEntry): string | undefined {
   if (entry.kind === "directory") return `${entry.dev}:${entry.ino}`;
   return `${entry.dev}:${entry.ino}:${entry.nlink}`;
+}
+
+function rawEntryIdentityFromStat(stat: { dev: number; ino: number; nlink: number; isDirectory(): boolean }): string {
+  if (stat.isDirectory()) return `${stat.dev}:${stat.ino}`;
+  return `${stat.dev}:${stat.ino}:${stat.nlink}`;
 }
 
 function rawKindFingerprint(kind: RawContentSnapshotEntry["kind"]): string {

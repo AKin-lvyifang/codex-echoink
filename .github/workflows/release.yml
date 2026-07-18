@@ -2,25 +2,12 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "*"
-    paths:
-      - ".github/workflows/release.yml"
-      - "src/**"
-      - "manifest.json"
-      - "package.json"
-      - "package-lock.json"
-      - "styles.css"
-      - "versions.json"
-      - "esbuild.config.mjs"
-      - "docs/images/**"
-      - "docs/releases/**"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to rebuild, attest, and update"
+        description: "Future tag containing this workflow to rebuild and attest without replacing public assets"
         required: true
         type: string
       skip_tests:
@@ -28,11 +15,10 @@ on:
         required: false
         default: false
         type: boolean
-      make_latest:
-        description: "Mark this release as latest"
-        required: false
-        default: true
-        type: boolean
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -45,38 +31,78 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+      EVENT_NAME: ${{ github.event_name }}
       EVENT_REF_TYPE: ${{ github.ref_type }}
       EVENT_REF_NAME: ${{ github.ref_name }}
+      ATTESTATION_SOURCE_REF: ${{ github.ref }}
+      ATTESTATION_SOURCE_DIGEST: ${{ github.sha }}
     steps:
       - name: Checkout release source
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.ref }}
+          fetch-depth: 0
 
       - name: Resolve release tag
         run: |
+          set -euo pipefail
           if [ -n "$REQUESTED_TAG" ]; then
             release_tag="$REQUESTED_TAG"
+            if [ "$EVENT_REF_TYPE" != "tag" ] || [ "$EVENT_REF_NAME" != "$release_tag" ]; then
+              echo "Re-attestation is supported only for a tag that already contains this safe workflow."
+              echo "The dispatch must run from the same tag ref; older tags require a separate audited recovery."
+              echo "Use: gh workflow run release.yml --ref \"$release_tag\" -f tag=\"$release_tag\""
+              exit 1
+            fi
           elif [ "$EVENT_REF_TYPE" = "tag" ]; then
             release_tag="$EVENT_REF_NAME"
           else
-            release_tag="$(node -p "require('./manifest.json').version")"
+            echo "Release publishing is allowed only from a tag push or an explicit historical rebuild."
+            exit 1
           fi
+
+          case "$release_tag" in
+            ""|*[!0-9A-Za-z._-]*)
+              echo "Invalid release tag: $release_tag"
+              exit 1
+              ;;
+          esac
+
+          release_source_digest="$(git rev-parse HEAD)"
+          if [ "$release_source_digest" != "$ATTESTATION_SOURCE_DIGEST" ]; then
+            echo "Checked-out source $release_source_digest does not match attestation source $ATTESTATION_SOURCE_DIGEST."
+            exit 1
+          fi
+
           echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
+          echo "RELEASE_SOURCE_DIGEST=$release_source_digest" >> "$GITHUB_ENV"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Obsidian release contract
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            npm run check:release -- --tag "$RELEASE_TAG" --allow-v-tag
+          else
+            npm run check:release -- --tag "$RELEASE_TAG"
+          fi
+
       - name: Check version and release notes
         env:
           ALLOW_MISSING_RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
+          if [ "$EVENT_NAME" = "push" ] && [[ "$RELEASE_TAG" == v* ]]; then
+            echo "New Obsidian release tags must not use a v prefix: $RELEASE_TAG"
+            exit 1
+          fi
+
           manifest_version="$(node -p "require('./manifest.json').version")"
           release_version="${RELEASE_TAG#v}"
           if [ "$release_version" != "$manifest_version" ]; then
@@ -118,6 +144,9 @@ jobs:
       - name: Check public repository files
         run: npm run check:public
 
+      - name: Check Obsidian review rules
+        run: npm run lint
+
       - name: Test
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
         run: npm run test
@@ -136,38 +165,145 @@ jobs:
           cp manifest.json release-assets/manifest.json
           cp styles.css release-assets/styles.css
 
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            npm run check:release -- --tag "$RELEASE_TAG" --allow-v-tag --artifacts release-assets
+          else
+            npm run check:release -- --tag "$RELEASE_TAG" --artifacts release-assets
+          fi
+
+      - name: Verify historical release assets before attesting
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf published-assets
+          mkdir -p published-assets
+
+          actual_assets="$(
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '[.assets[].name] | sort | join(",")'
+          )"
+          expected_assets="main.js,manifest.json,styles.css"
+          if [ "$actual_assets" != "$expected_assets" ]; then
+            echo "Historical release assets must already be exactly $expected_assets; found $actual_assets."
+            exit 1
+          fi
+
+          for asset in main.js manifest.json styles.css; do
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" \
+              --dir published-assets
+            cmp "release-assets/$asset" "published-assets/$asset"
+          done
+
       - name: Attest release assets
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
           subject-path: |
             release-assets/main.js
             release-assets/manifest.json
             release-assets/styles.css
 
-      - name: Remove unsupported zip assets
+      - name: Guard draft release state before upload
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null \
-            | grep -E '\.zip$' \
-            | while read -r asset; do
-                gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" -y || true
-              done
+          set -euo pipefail
+          gh api \
+            --paginate \
+            --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > release-inventory.json
+          release_state="$(
+            node -e '
+              const fs = require("fs");
+              const pages = JSON.parse(fs.readFileSync("release-inventory.json", "utf8"));
+              const releases = pages.flat();
+              const match = releases.find((release) => release.tag_name === process.argv[1]);
+              process.stdout.write(match ? (match.draft ? "draft" : "public") : "missing");
+            ' "$RELEASE_TAG"
+          )"
 
-      - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+          case "$release_state" in
+            public)
+              echo "Release $RELEASE_TAG is already public. Refusing to upload or mutate assets; perform a separate audited recovery."
+              exit 1
+              ;;
+            draft)
+              echo "Resuming the existing draft release $RELEASE_TAG."
+              ;;
+            missing)
+              echo "No existing release for $RELEASE_TAG; a new draft will be created."
+              ;;
+            *)
+              echo "Unexpected release state: $release_state"
+              exit 1
+              ;;
+          esac
+
+      - name: Create draft release with attested assets
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          make_latest: ${{ github.event_name != 'workflow_dispatch' || inputs.make_latest == true }}
+          draft: true
+          make_latest: false
           fail_on_unmatched_files: true
-          overwrite_files: true
+          overwrite_files: false
           files: |
             release-assets/main.js
             release-assets/manifest.json
             release-assets/styles.css
 
-      - name: Publish structured release notes
-        if: env.RELEASE_NOTES_FILE != ''
+      - name: Add structured release notes
+        if: ${{ github.event_name != 'workflow_dispatch' && env.RELEASE_NOTES_FILE != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RELEASE_NOTES_FILE"
+
+      - name: Verify published assets and attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf published-assets
+          mkdir -p published-assets
+
+          for asset in main.js manifest.json styles.css; do
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" \
+              --dir published-assets
+          done
+
+          actual_assets="$(
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '[.assets[].name] | sort | join(",")'
+          )"
+          expected_assets="main.js,manifest.json,styles.css"
+          if [ "$actual_assets" != "$expected_assets" ]; then
+            echo "Release assets must be exactly $expected_assets; found $actual_assets."
+            exit 1
+          fi
+
+          for asset in main.js manifest.json styles.css; do
+            cmp "release-assets/$asset" "published-assets/$asset"
+            gh attestation verify "published-assets/$asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$ATTESTATION_SOURCE_REF" \
+              --source-digest "$ATTESTATION_SOURCE_DIGEST" \
+              --cert-identity "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/release.yml@$ATTESTATION_SOURCE_REF"
+          done
+
+      - name: Publish verified release
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

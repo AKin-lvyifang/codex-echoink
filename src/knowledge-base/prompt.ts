@@ -18,6 +18,8 @@ export interface KnowledgeBasePromptInput {
   hasTracker: boolean;
   remainingSourceCount?: number;
   skippedSources?: KnowledgeBaseSkippedSource[];
+  targetPaths?: string[];
+  fullScan?: boolean;
 }
 
 export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): string {
@@ -25,6 +27,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     ? input.sources.map((source) => `- ${source.relativePath} | ${source.mime} | ${Math.round(source.size / 1024)} KB | ${source.changed ? "新增/变更" : "已处理"}`).join("\n")
     : "- 本轮没有检测到新增或变更 raw 文件；请执行体检并生成 no-op 体检报告。";
   const skippedSourceLines = formatSkippedSources(input.skippedSources ?? []);
+  const executionScope = formatExecutionScope(input);
   const task = taskForMode(input.mode);
   const rulesMode = input.useCustomRulesFile
     ? `自定义规则文件：${input.rulesFilePath}。EchoInk 已强制读取并注入本轮系统上下文；知识库结构以该注入内容为准，不要把 ${AGENTS_RULES_FILE} 当作知识库规则合并。`
@@ -56,16 +59,20 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "只有 Wiki / Projects 非索引正文页出现结构化知识，并且知识附近保留 raw 来源证据，才算提炼完成。",
     "报告不能代替 Wiki / Projects 正文；outputs/maintenance 只能记录过程和风险。",
     "",
+    executionScope,
+    "",
     "## 标准执行步骤",
-    "1. Discover 增量检测：读取 raw/index.md；用 find 列出 raw/、inbox/、outputs/、projects/ 下知识区文件及修改时间，重点对比 raw/ 与 outputs/.ingest-tracker.md。跳过 raw/ 中以 .base 结尾的辅助文件。",
+    "1. Discover 增量检测由 EchoInk 持久化清单完成：直接使用本轮来源和目标路径；不要再用 find 重新列出整个 Vault。跳过 raw/ 中以 .base 结尾的辅助文件。",
     "2. 读懂原文：识别主题、来源类型、适用范围和不确定点。",
     "3. 拆出知识：事实、观点、方法、案例、风险、行动项、问题。",
-    "4. 路由目标页：优先更新已有主题页，优先写入 wiki/projects 正文页；没有稳定承载页才新建。",
+    "4. 路由目标页：先读 wiki/index.md，再按来源标题、标签和链接定位最相关主题页；优先更新已有主题页，只有局部检索无法判断时才扩大范围，没有稳定承载页才新建。",
     "5. 融入正文：合并、去重、调整小节，不把摘要贴在页面底部。",
     "6. 写来源证据：每个 Raw 在目标页留下来源链接和附近实质内容。",
     "7. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径只记录建议或风险，不要移动、重命名或改写 raw 源文件。",
     "8. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md 和 projects/00-索引.md。raw/index.md 与 outputs/.ingest-tracker.md 由 EchoInk Harness 在证据验证后维护，Agent 只在报告中列出所需变更，不要直接改写。",
-    "9. Lint 体检：扫描 wiki/ 下 [[链接]]，检查断链、孤儿页面、过时或 draft 内容、根目录散落普通笔记、中文目录残留，以及 wiki/index.md 链接有效性。",
+    input.mode === "lint"
+      ? `9. Lint 体检：${input.fullScan ? "本轮是显式全库体检" : "只检查上面的变化文件及一跳引用邻域"}，检查断链、孤儿页面、过时或 draft 内容、结构偏差和索引有效性；局部验证失败时才升级扫描范围。`
+      : "9. 局部验证：只校验本轮改动文件、目标页及一跳引用邻域，检查断链、孤儿页面、过时或 draft 内容；发现索引或引用无法闭合时才升级为更大范围检查。",
     "10. 报告输出：列出 Raw、目标页、知识类型、证据位置、失败原因；如果无法判断归属领域，写入“待人工判断”，不要假装完成。",
     "",
     "## 本轮 raw 来源",
@@ -105,6 +112,29 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     input.mode === "lint" ? "- /check 只体检，不提炼；不要写 Raw 托管属性；不要写 Wiki / Projects 正文；不要更新 outputs/.ingest-tracker.md。" : "",
     "",
     "开始执行。"
+  ].join("\n");
+}
+
+function formatExecutionScope(input: KnowledgeBasePromptInput): string {
+  const paths = input.targetPaths ?? [];
+  if (input.fullScan) {
+    return [
+      "## 本轮执行范围",
+      "- 这是首次建基线或用户显式要求的全库任务；可以扫描对应命令的完整范围。",
+      "- 完成后 EchoInk 会把本轮指纹写入检查点，后续默认只处理变化。"
+    ].join("\n");
+  }
+  if (paths.length) {
+    return [
+      "## 本轮执行范围",
+      "- 只处理以下变化文件和必要的一跳引用邻域；不要重新阅读无关正文：",
+      ...paths.map((item) => `- ${item}`)
+    ].join("\n");
+  }
+  return [
+    "## 本轮执行范围",
+    "- 本轮范围已由 EchoInk 增量清单确定；不要自行扩大为全库扫描。",
+    "- 如果局部证据不足，在报告中说明需要全量体检，不要先读取全部文章。"
   ].join("\n");
 }
 

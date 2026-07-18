@@ -105,7 +105,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
   }
 
   async disconnect(): Promise<void> {
-    this.transport?.dispose();
+    await this.transport?.dispose();
     this.transport = null;
     this.initialized = false;
     this.process?.kill();
@@ -186,7 +186,8 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
         mcpServers: []
       }, input.timeoutMs);
       throwIfAborted(input.abortSignal);
-      sessionId = stringValue((session as any)?.sessionId ?? (session as any)?.id);
+      const sessionRecord = plainObject(session);
+      sessionId = stringValue(sessionRecord?.sessionId ?? sessionRecord?.id);
       if (!sessionId) throw new Error("ACP backend did not return a sessionId.");
       this.activeRunId = sessionId;
       input.onRunId?.(sessionId);

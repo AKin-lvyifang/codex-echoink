@@ -173,6 +173,50 @@ export function buildKnowledgeBaseFallbackReportContent(
   return lines.join("\n");
 }
 
+export async function writeKnowledgeBaseNoopReport(
+  vaultPath: string,
+  reportPath: string,
+  input: {
+    mode: KnowledgeBaseRunMode;
+    startedAt: number;
+    checkedCount: number;
+    scopeLabel: string;
+    summary: string;
+  }
+): Promise<void> {
+  const lines = [
+    "---",
+    `created: ${new Date(input.startedAt).toISOString()}`,
+    "source: codex-echoink",
+    `mode: ${input.mode}`,
+    "status: success",
+    "incremental: true",
+    "agent_called: false",
+    "---",
+    "",
+    `# 知识库${labelForRunMode(input.mode)}报告 — ${formatDateForTitle(new Date(input.startedAt))}`,
+    "",
+    "## 一眼结论",
+    "",
+    input.summary,
+    "",
+    "## 本轮固定流程",
+    "",
+    `- 已检查范围：${input.scopeLabel}。`,
+    `- 增量清单命中：${input.checkedCount} 个文件。`,
+    "- 内容变化：0 个。",
+    "- 没有变化时直接收口，不调用模型，也不重复扫描全部正文。",
+    "",
+    "## 未改动边界",
+    "",
+    "- 未改动 Raw 正文。",
+    "- 未改动 Wiki / Projects 正文。",
+    "- 未改动 tracker 和索引正文。",
+    ""
+  ];
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
+}
+
 export async function writeKnowledgeBaseFailureReport(
   vaultPath: string,
   reportPath: string,

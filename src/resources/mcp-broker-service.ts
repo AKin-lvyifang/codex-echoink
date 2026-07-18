@@ -2,7 +2,6 @@ import type CodexForObsidianPlugin from "../main";
 import { confirmModal } from "../ui/modals";
 import { EchoInkMcpBroker } from "./mcp-broker";
 import { resolveMcpConnectionConfig } from "./mcp-connections";
-import { buildEchoInkResourceCatalog } from "./registry";
 import type { EchoInkMcpConnectionRecord, EchoInkResource, EchoInkResourceScope } from "./types";
 
 export interface CallEchoInkMcpToolInput {
@@ -18,7 +17,7 @@ export class EchoInkMcpBrokerService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   async listTools(resourceId: string, timeoutMs = 30000): Promise<unknown[]> {
-    const resource = this.currentResource(resourceId);
+    const resource = await this.currentResource(resourceId);
     if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
     const broker = new EchoInkMcpBroker({
       settings: this.plugin.settings.resources.mcpBroker,
@@ -38,7 +37,7 @@ export class EchoInkMcpBrokerService {
   }
 
   async callTool(input: CallEchoInkMcpToolInput): Promise<unknown> {
-    const resource = this.currentResource(input.resourceId);
+    const resource = await this.currentResource(input.resourceId);
     if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
     const broker = new EchoInkMcpBroker({
       settings: this.plugin.settings.resources.mcpBroker,
@@ -74,8 +73,8 @@ export class EchoInkMcpBrokerService {
     }
   }
 
-  private currentResource(resourceId: string): EchoInkResource | null {
-    return buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources }).find((resource) => resource.id === resourceId) ?? null;
+  private async currentResource(resourceId: string): Promise<EchoInkResource | null> {
+    return (await this.plugin.buildRuntimeEchoInkResourceCatalog()).find((resource) => resource.id === resourceId) ?? null;
   }
 
   private recordConnectionSuccess(resource: EchoInkResource): void {

@@ -218,7 +218,7 @@ export function openSkillMenu(host: CodexComposerHost, event: MouseEvent): void 
         host.skillsRequested = true;
       },
       onLoadSkills: () => host.plugin.ensureEchoInkSkillResourcesLoaded(true),
-      onRenderMatches: () => renderSkillMatches(host)
+      onRenderMatches: (skills) => renderSkillMatches(host, "", skills)
     }
   );
 }
@@ -338,12 +338,12 @@ export function onInputChanged(host: CodexComposerHost): void {
   host.renderKnowledgeCommandMatches(query);
 }
 
-export function renderSkillMatches(host: CodexComposerHost, query = ""): void {
+export function renderSkillMatches(host: CodexComposerHost, query = "", loadedSkills?: EchoInkResource[]): void {
   renderSkillMatchesView(
     host.skillMenuEl,
     query,
     {
-      skills: skillResourcesForScope(host.currentEchoInkResourceCatalog(), "chat", host.plugin.settings.resources.enabledByScope),
+      skills: loadedSkills ?? skillResourcesForScope(host.currentEchoInkResourceCatalog(), "chat", host.plugin.settings.resources.enabledByScope),
       selectedSkill: host.selectedSkill
     },
     {

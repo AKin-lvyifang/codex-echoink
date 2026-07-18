@@ -1,10 +1,10 @@
-import * as fsp from "fs/promises";
 import * as path from "path";
 import { mimeForKnowledgeFile, requiredModalityForMime } from "../core/opencode-models";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
-import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
+import { isRawMarkdownPath, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
+import { refreshKnowledgeBaseIndex } from "./incremental-index";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
-import { formatDateForFile, isMissingPathError, normalizeSlashes, walkFiles } from "./utils";
+import { formatDateForFile } from "./utils";
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
@@ -15,81 +15,91 @@ export interface KnowledgeBaseDiscoveryOptions {
 
 export async function discoverKnowledgeBaseSources(
   vaultPath: string,
-  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
+  processed: Record<string, { size: number; mtime: number; fingerprint?: string; confidence?: string }>,
   mode: KnowledgeBaseRunMode = "maintain",
   options: KnowledgeBaseDiscoveryOptions = {}
 ): Promise<KnowledgeBaseDiscovery> {
-  const rawDir = path.join(vaultPath, "raw");
-  const all = await walkExistingRawFiles(rawDir);
   const sources: KnowledgeBaseSource[] = [];
   const skippedSources: KnowledgeBaseSkippedSource[] = [];
   const frontmatterProcessed: Record<string, { size: number; mtime: number; fingerprint?: string }> = {};
   const registry = await readRawDigestRegistry(vaultPath);
+  const refresh = await refreshKnowledgeBaseIndex(vaultPath, {
+    roots: ["raw"],
+    seeds: {
+      ...Object.fromEntries(Object.entries(processed ?? {})
+        .filter(([relativePath, entry]) => {
+          return !isRawMarkdownPath(relativePath)
+            || entry.confidence === "verified"
+            || entry.confidence === "repaired";
+        })
+        .map(([relativePath, entry]) => [relativePath, entry])),
+      ...Object.fromEntries(Object.entries(registry.entries).map(([relativePath, entry]) => [relativePath, entry]))
+    },
+    validateRawSafety: true
+  });
   const budget = createKnowledgeBaseIoBudget({
     maxFileBytes: options.maxRawFingerprintBytes,
     maxTotalBytes: options.maxTotalRawFingerprintBytes
   });
-  for (const file of all) {
-    const ext = path.extname(file).toLowerCase();
-    if (!SUPPORTED_RAW_EXTENSIONS.has(ext)) continue;
-    const stat = await fsp.stat(file);
-    const relativePath = normalizeSlashes(path.relative(vaultPath, file));
-    if (isRawRootIndexPath(relativePath)) continue;
-    const lowerPath = relativePath.toLowerCase();
-    if (lowerPath.endsWith(".base") || lowerPath.endsWith(".base.md") || lowerPath.includes(".assets/")) continue;
+  for (const entry of refresh.entries) {
+    const file = path.join(vaultPath, entry.path);
     const mime = mimeForKnowledgeFile(file);
     const modality = requiredModalityForMime(mime);
-    const cachedFingerprint = cachedRawFingerprint(relativePath, stat, processed, registry.entries);
-    if (cachedFingerprint) {
+    const authoritative = authoritativeRawFingerprint(entry.path, entry, processed, registry.entries);
+    if (authoritative) {
       sources.push({
-        relativePath,
+        relativePath: entry.path,
         absolutePath: file,
-        size: stat.size,
-        mtime: stat.mtimeMs,
-        fingerprint: cachedFingerprint,
+        size: entry.size,
+        mtime: entry.mtime,
+        fingerprint: entry.fingerprint,
         mime,
         modality,
         changed: false
       });
       continue;
     }
-    const readDecision = shouldReadKnowledgeBaseFileContent({ size: stat.size }, budget);
+    const readDecision = shouldReadKnowledgeBaseFileContent({ size: entry.size }, budget);
     if (!readDecision.ok) {
       skippedSources.push({
-        relativePath,
+        relativePath: entry.path,
         absolutePath: file,
-        size: stat.size,
-        mtime: stat.mtimeMs,
+        size: entry.size,
+        mtime: entry.mtime,
         mime,
         modality,
         reason: readDecision.reason ?? "文件超过读取预算"
       });
       continue;
     }
-    const content = await fsp.readFile(file);
-    const fingerprint = rawDigestFingerprint(relativePath, content);
-    const frontmatterRecord = rawDigestRecordFromMarkdown(content);
-    if (rawDigestRecordIsTrusted(frontmatterRecord, fingerprint)) {
-      frontmatterProcessed[relativePath] = {
-        size: stat.size,
-        mtime: stat.mtimeMs,
-        fingerprint
-      };
+    if (isRawMarkdownPath(entry.path)) {
+      const content = Buffer.from(entry.searchText, "utf8");
+      const frontmatterRecord = rawDigestRecordFromMarkdown(content);
+      if (rawDigestRecordIsTrusted(frontmatterRecord, entry.fingerprint)) {
+        frontmatterProcessed[entry.path] = {
+          size: entry.size,
+          mtime: entry.mtime,
+          fingerprint: entry.fingerprint
+        };
+      }
     }
     sources.push({
-      relativePath,
+      relativePath: entry.path,
       absolutePath: file,
-      size: stat.size,
-      mtime: stat.mtimeMs,
-      fingerprint,
+      size: entry.size,
+      mtime: entry.mtime,
+      fingerprint: entry.fingerprint,
       mime,
       modality,
       changed: true
     });
   }
   const trackerPath = path.join(vaultPath, "outputs", ".ingest-tracker.md");
-  const registryProcessed = processedSourcesFromRawDigestRegistry(sources, registry.entries);
-  const mergedProcessed = { ...processed, ...registryProcessed, ...frontmatterProcessed };
+  // Registry entries are the non-Markdown equivalent of managed frontmatter.
+  // A metadata match lets the index trust the seed without reading content;
+  // if metadata drifted, refreshKnowledgeBaseIndex recomputes the fingerprint
+  // first and this final comparison still detects real content changes.
+  const mergedProcessed = { ...processed, ...registry.entries, ...frontmatterProcessed };
   const resolvedSources = sources.map((source) => {
     const previous = mergedProcessed[source.relativePath];
     return {
@@ -103,44 +113,37 @@ export async function discoverKnowledgeBaseSources(
     sources: resolvedSources,
     changedSources: resolvedSources.filter((source) => source.changed),
     skippedSources,
-    reportPath: `outputs/maintenance/${reportFileNameForMode(mode, today)}`,
-    trackerPath
+    reportPath: knowledgeBaseReportPathForMode(mode, today),
+    trackerPath,
+    indexStats: {
+      reused: refresh.reusedCount,
+      refreshed: refresh.indexedCount
+    }
   };
 }
 
-function cachedRawFingerprint(
+export function knowledgeBaseReportPathForMode(mode: KnowledgeBaseRunMode, dateKey = formatDateForFile(new Date())): string {
+  return `outputs/maintenance/${reportFileNameForMode(mode, dateKey)}`;
+}
+
+function authoritativeRawFingerprint(
   relativePath: string,
-  stat: { size: number; mtimeMs: number },
+  entry: { size: number; mtime: number; fingerprint: string },
   processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
   registryEntries: Record<string, { size: number; mtime: number; fingerprint: string }>
 ): string {
   const registry = registryEntries[relativePath];
-  if (registry?.fingerprint && rawFileMetadataMatches(stat, registry)) return registry.fingerprint;
-  if (isRawMarkdownPath(relativePath)) return "";
+  if (registry?.fingerprint === entry.fingerprint && rawFileMetadataMatches(entry, registry)) return entry.fingerprint;
   const previous = processed[relativePath];
-  if (previous?.fingerprint && rawFileMetadataMatches(stat, previous)) return previous.fingerprint;
+  if (previous?.fingerprint === entry.fingerprint && rawFileMetadataMatches(entry, previous)) return entry.fingerprint;
   return "";
 }
 
-function rawFileMetadataMatches(stat: { size: number; mtimeMs: number }, cached: { size: number; mtime: number }): boolean {
-  return stat.size === cached.size && Math.abs(stat.mtimeMs - cached.mtime) < 1;
-}
-
-function processedSourcesFromRawDigestRegistry(
-  sources: KnowledgeBaseSource[],
-  entries: Record<string, { fingerprint: string }>
-): Record<string, { size: number; mtime: number; fingerprint?: string }> {
-  const processed: Record<string, { size: number; mtime: number; fingerprint?: string }> = {};
-  for (const source of sources) {
-    const entry = entries[source.relativePath];
-    if (!entry || entry.fingerprint !== source.fingerprint) continue;
-    processed[source.relativePath] = {
-      size: source.size,
-      mtime: source.mtime,
-      fingerprint: source.fingerprint
-    };
-  }
-  return processed;
+function rawFileMetadataMatches(
+  entry: { size: number; mtime: number },
+  cached: { size: number; mtime: number }
+): boolean {
+  return entry.size === cached.size && Math.abs(entry.mtime - cached.mtime) < 1;
 }
 
 function reportFileNameForMode(mode: KnowledgeBaseRunMode, dateKey: string): string {
@@ -148,23 +151,8 @@ function reportFileNameForMode(mode: KnowledgeBaseRunMode, dateKey: string): str
   return `${prefix}-${dateKey}.md`;
 }
 
-async function walkExistingRawFiles(rawDir: string): Promise<string[]> {
-  try {
-    return await walkFiles(rawDir, {
-      shouldSkipEntry: (entry) => entry.name.startsWith(".")
-    });
-  } catch (error) {
-    if (isMissingPathError(error)) return [];
-    throw error;
-  }
-}
-
 function isSourceChanged(source: KnowledgeBaseSource, previous?: { size: number; mtime: number; fingerprint?: string }): boolean {
   if (!previous) return true;
   if (previous.fingerprint) return previous.fingerprint !== source.fingerprint;
   return true;
-}
-
-function isRawRootIndexPath(relativePath: string): boolean {
-  return relativePath === "raw/index.md" || /^raw\/index \d+\.md$/i.test(relativePath);
 }

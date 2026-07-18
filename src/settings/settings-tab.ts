@@ -40,17 +40,14 @@ import {
 } from "../core/opencode-auth";
 import { AGENT_BACKEND_DEFINITIONS } from "../agent/registry";
 import type { AgentModelInfo, AgentProfileInfo } from "../agent/types";
-import { buildEchoInkResourceCatalog } from "../resources/registry";
+import { buildActiveEchoInkResourceCatalog } from "../resources/registry";
 import { mcpConnectionStatus, mcpConnectionStatusLabel } from "../resources/mcp-connections";
 import type { EchoInkResource, EchoInkResourceScope } from "../resources/types";
 import {
   emptyWorkspaceResourceSnapshot,
   errorsFromWorkspaceResourceCache,
   loadedTabsFromWorkspaceResourceCache,
-  mergeWorkspaceResourceSnapshot,
-  snapshotFromWorkspaceResourceCache,
-  updateWorkspaceResourceCache,
-  type WorkspaceResourceKind
+  snapshotFromWorkspaceResourceCache
 } from "../core/workspace-resources";
 import { filterWorkspaceResourceRows } from "../core/workspace-resource-filter";
 import {
@@ -101,9 +98,7 @@ import {
   resolvePromptEnhancerBackend,
   resolvePromptEnhancerModel
 } from "../prompt-enhancer/service";
-import type { CodexModel, CodexPluginInfo, CodexSkill, CodexStatusSnapshot, McpServerStatus, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
-import { mcpResourceFromHermesServer } from "../resources/mcp-loader";
-import { skillResourceFromHermesSkill } from "../resources/skill-loader";
+import type { CodexModel, CodexStatusSnapshot, PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode, WorkspaceResourceSnapshot } from "../types/app-server";
 import { AGENTS_RULES_FILE, CODEX_MEMORY_LITE_URL, DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import { repairKnowledgeBaseRulesFile, resolveKnowledgeBaseRulesFilePath } from "../knowledge-base/rules-repair";
 import { confirmModal, selectInputModal, textInputModal } from "../ui/modals";
@@ -115,6 +110,7 @@ import type { CodexMemoryMigrationPreview, MemoryStoreStatus } from "../harness/
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
+  private runtimeEchoInkResources: EchoInkResource[] = [];
   private resourceLoadingTab: ResourceManagementTab | null = null;
   private resourceLoaded: Record<ResourceManagementTab, boolean> = { plugins: false, mcp: false, skills: false };
   private resourceLoadErrors: Partial<Record<ResourceManagementTab, string>> = {};
@@ -4089,7 +4085,6 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-resource-note",
       text: copy.resources.note
     });
-
     const tabs = wrapper.createDiv({ cls: "codex-resource-tabs" });
     for (const tab of RESOURCE_TABS) {
       const button = tabs.createEl("button", {
@@ -4215,30 +4210,11 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private currentEchoInkResourceCatalog(snapshot: WorkspaceResourceSnapshot | null = this.resourceSnapshot): EchoInkResource[] {
-    return buildEchoInkResourceCatalog({
-      codex: snapshot ? {
-        plugins: snapshot.plugins,
-        skills: snapshot.skills,
-        mcpServers: snapshot.mcpServers
-      } : undefined,
-      settings: this.plugin.settings.resources
-    });
-  }
-
-  private syncEchoInkResourceCatalogFromSnapshot(snapshot: WorkspaceResourceSnapshot, extraResources: EchoInkResource[] = []): void {
-    this.plugin.settings.resources.catalog = buildEchoInkResourceCatalog({
-      codex: {
-        plugins: snapshot.plugins,
-        skills: snapshot.skills,
-        mcpServers: snapshot.mcpServers
-      },
+    void snapshot;
+    return buildActiveEchoInkResourceCatalog({
       settings: this.plugin.settings.resources,
-      manual: extraResources
+      manual: this.runtimeEchoInkResources
     });
-    if (snapshot.plugins.length || snapshot.skills.length || snapshot.mcpServers.length) this.plugin.settings.resources.importedFrom["codex-import"] = Date.now();
-    if (extraResources.some((resource) => resource.source === "hermes-import")) this.plugin.settings.resources.importedFrom["hermes-import"] = Date.now();
-    this.plugin.settings.resources.lastScannedAt = Date.now();
-    this.plugin.settings.resources.lastError = "";
   }
 
   private renderActiveResourceTab(container: HTMLElement, snapshot: WorkspaceResourceSnapshot): void {
@@ -4395,87 +4371,17 @@ export class CodexSettingTab extends PluginSettingTab {
     this.resourceLoadingTab = tab;
     delete this.resourceLoadErrors[tab];
     this.scheduleDisplay();
-    const kind = resourceKindForTab(tab);
-    let codexError = "";
-    let hermesError = "";
-    let hermesResources: EchoInkResource[] = [];
     try {
-      try {
-        const status = await this.plugin.ensureCodexConnected();
-        if (!status.connected || !this.plugin.codex) throw new Error(this.copy.resources.codexDisconnected);
-        const result = await this.loadResourceTab(tab);
-        this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, result.kind, result.data, result.error);
-        this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(
-          this.plugin.settings.workspaceResourceCache,
-          result.kind,
-          result.data,
-          result.error
-        );
-        if (this.plugin.lastStatus && this.resourceSnapshot) {
-          if (tab === "skills") this.plugin.lastStatus.skills = this.resourceSnapshot.skills;
-          if (tab === "mcp") this.plugin.lastStatus.mcpServers = this.resourceSnapshot.mcpServers;
-        }
-        codexError = result.error ?? "";
-      } catch (error) {
-        codexError = error instanceof Error ? error.message : String(error);
-        this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, kind, [], codexError);
-        this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache, kind, [], codexError);
-      }
-
-      try {
-        hermesResources = await this.loadHermesResourceTab(tab);
-      } catch (error) {
-        hermesError = error instanceof Error ? error.message : String(error);
-      }
-
+      this.runtimeEchoInkResources = await this.plugin.buildRuntimeEchoInkResourceCatalog();
+      this.resourceSnapshot = emptyWorkspaceResourceSnapshot();
       this.resourceLoaded[tab] = true;
-      this.syncEchoInkResourceCatalogFromSnapshot(this.resourceSnapshot ?? emptyWorkspaceResourceSnapshot(), hermesResources);
-      const errors = [codexError, hermesError].filter(Boolean);
-      if (errors.length) {
-        this.resourceLoadErrors[tab] = errors.join("\n");
-        this.plugin.settings.resources.lastError = this.resourceLoadErrors[tab] ?? "";
-      }
-      await this.plugin.saveSettings(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.resourceLoadErrors[tab] = message;
-      this.resourceSnapshot = mergeWorkspaceResourceSnapshot(this.resourceSnapshot, kind, [], message);
+      this.resourceLoadErrors[tab] = error instanceof Error ? error.message : String(error);
+      this.resourceSnapshot = emptyWorkspaceResourceSnapshot();
       this.resourceLoaded[tab] = true;
-      this.plugin.settings.workspaceResourceCache = updateWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache, kind, [], message);
-      this.plugin.settings.resources.lastError = message;
-      await this.plugin.saveSettings(true);
     } finally {
       this.resourceLoadingTab = null;
       this.scheduleDisplay();
-    }
-  }
-
-  private async loadResourceTab(tab: ResourceManagementTab): Promise<{ kind: WorkspaceResourceKind; data: CodexPluginInfo[] | CodexSkill[] | McpServerStatus[]; error: string | null }> {
-    if (!this.plugin.codex) throw new Error(this.copy.resources.codexDisconnected);
-    if (tab === "plugins") {
-      const result = await this.plugin.codex.refreshPluginResources();
-      return { kind: "plugins", data: result.plugins, error: result.error };
-    }
-    if (tab === "mcp") {
-      const result = await this.plugin.codex.refreshMcpStatus();
-      return { kind: "mcp", data: result.servers, error: result.error };
-    }
-    const result = await this.plugin.codex.refreshSkillResources();
-    return { kind: "skills", data: result.skills, error: result.error };
-  }
-
-  private async loadHermesResourceTab(tab: ResourceManagementTab): Promise<EchoInkResource[]> {
-    if (tab === "plugins") return [];
-    const backend = new HermesBackend({
-      ...this.plugin.settings.agents.hermes,
-      vaultPath: this.plugin.getVaultPath()
-    });
-    try {
-      await backend.connect();
-      if (tab === "skills") return (await backend.listSkills()).map(skillResourceFromHermesSkill);
-      return (await backend.listMcpServers()).map(mcpResourceFromHermesServer);
-    } finally {
-      await backend.disconnect().catch(swallowError("disconnect Hermes settings backend"));
     }
   }
 
@@ -4522,10 +4428,6 @@ function editorActionIcon(actionId: string): string {
   if (actionId === "continue") return "forward";
   if (actionId === "translate") return "languages";
   return "sparkles";
-}
-
-function resourceKindForTab(tab: ResourceManagementTab): WorkspaceResourceKind {
-  return tab === "mcp" ? "mcp" : tab === "skills" ? "skills" : "plugins";
 }
 
 function resourceKindForResourceTab(tab: ResourceManagementTab): EchoInkResource["kind"] {

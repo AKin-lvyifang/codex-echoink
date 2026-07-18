@@ -493,6 +493,7 @@ async function assertKnowledgeCleanupFailureDoesNotFailCompletedTurn(): Promise<
       "composer"
     );
     const assistant = session.messages.find((message) => message.role === "assistant");
+    await waitFor(() => assistant?.nativeCleanupStatus === "failed");
     assert.equal(outcome, "completed");
     assert.equal(assistant?.status, "completed");
     assert.equal(assistant?.text, "知识任务完成");

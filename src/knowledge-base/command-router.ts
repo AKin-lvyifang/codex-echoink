@@ -11,7 +11,7 @@ import {
   type KnowledgeBaseMessageUiPayload
 } from "./maintain-report-card";
 import { labelForRunMode } from "./maintenance";
-import type { KnowledgeBaseCitationSummary, KnowledgeBaseRunMode, KnowledgeBaseRunResult } from "./types";
+import type { KnowledgeBaseCitationSummary, KnowledgeBaseRunMode, KnowledgeBaseRunResult, KnowledgeWorkflowEvent } from "./types";
 
 export interface KnowledgeBaseChatResult {
   status: "success" | "failed" | "canceled";
@@ -41,6 +41,7 @@ export interface KnowledgeBaseTurnOptionOverrides extends Partial<Pick<TurnOptio
   opencodeTaskTimeoutMs?: number;
   hermesTaskTimeoutMs?: number;
   harnessSession?: StoredSession;
+  onWorkflowEvent?: (event: KnowledgeWorkflowEvent) => void;
 }
 
 export interface KnowledgeBaseCancellationResult {

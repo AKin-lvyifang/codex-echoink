@@ -48,6 +48,16 @@ export const MAINTENANCE_AGENT_RESOURCE_PROFILE = {
   "includeSkills" | "includePromptSkills" | "includeMcpResources" | "includeToolBundles"
 >;
 
+export function buildActiveEchoInkResourceCatalog(input: BuildEchoInkResourceCatalogInput = {}): EchoInkResource[] {
+  return uniqueResources([
+    ...(input.settings?.catalog ?? []),
+    ...(input.manual ?? [])
+  ].filter((resource) => {
+    return (resource.source === "echoink-local" || resource.source === "manual")
+      && (resource.kind === "skill" || resource.kind === "mcp-server");
+  }));
+}
+
 export function buildEchoInkResourceCatalog(input: BuildEchoInkResourceCatalogInput = {}): EchoInkResource[] {
   const resources: EchoInkResource[] = [
     ...buildBuiltinToolBundleResources(),

@@ -14,6 +14,8 @@ import { importEchoInkResourceToVault, loadVaultEchoInkResources } from "../../r
 import { loadVaultSkill } from "../../harness/resources/skill-loader";
 import { resolveResourceContext } from "../../harness/resources/resource-resolver";
 import { initializeVaultResourceStore, loadVaultResourceStore } from "../../harness/resources/vault-store";
+import { openSkillMenu } from "../../ui/codex-view/menus";
+import type { EchoInkResource } from "../../resources/types";
 
 export async function runHarnessV2ResourceTests(): Promise<void> {
   assertResourceRefNamespacesAreStable();
@@ -22,6 +24,7 @@ export async function runHarnessV2ResourceTests(): Promise<void> {
   await assertVaultResourceStoreSplitsCatalogConnectionBindingPolicy();
   await assertVaultResourceStoreRejectsPlainSecrets();
   await assertVaultResourceStoreFeedsProductionCatalogAndBroker();
+  await assertSkillMenuRendersFreshRuntimeResources();
   await assertImportToEchoInkCreatesVaultResourcesWithoutSecrets();
   assertPreparedResourcesProduceAuditableSelectionSnapshot();
   assertLocalToolBundlesDoNotBecomeVaultSkillRefs();
@@ -29,6 +32,50 @@ export async function runHarnessV2ResourceTests(): Promise<void> {
   await assertResourceResolverLoadsSelectedVaultSkillForAnyBackend();
   await assertResourceResolverSkipsMissingVaultSkillWithWarning();
   await assertResourceResolverDoesNotLeakNativeResourcesAcrossBackends();
+}
+
+async function assertSkillMenuRendersFreshRuntimeResources(): Promise<void> {
+  const classes = new Set<string>();
+  const skillMenuEl = {
+    hasClass: (name: string) => classes.has(name),
+    addClass: (name: string) => classes.add(name),
+    removeClass: (name: string) => classes.delete(name),
+    empty: () => undefined,
+    createDiv: () => ({})
+  } as unknown as HTMLElement;
+  const knowledgeCommandMenuEl = {
+    removeClass: () => undefined
+  } as unknown as HTMLElement;
+  const localSkill = {
+    id: "echoink-local:skill:future-vault-skill",
+    kind: "skill",
+    source: "echoink-local",
+    name: "future-vault-skill",
+    description: "Future EchoInk-local Skill",
+    enabled: true,
+    scopes: ["chat", "knowledge"],
+    bridgeMode: "prompt-only",
+    contentPath: "future-vault-skill"
+  } satisfies EchoInkResource;
+  let renderedSkills: EchoInkResource[] | undefined;
+  openSkillMenu(
+    {
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined
+    } as unknown as MouseEvent,
+    { skillMenuEl, knowledgeCommandMenuEl },
+    { skillsRequested: false },
+    {
+      onSkillsRequested: () => undefined,
+      onLoadSkills: async () => [localSkill],
+      onRenderMatches: (skills) => {
+        renderedSkills = skills;
+      }
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(renderedSkills?.map((resource) => resource.id), [localSkill.id]);
 }
 
 function assertPreparedResourcesProduceAuditableSelectionSnapshot(): void {

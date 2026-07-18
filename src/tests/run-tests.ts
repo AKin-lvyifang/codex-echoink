@@ -111,7 +111,7 @@ import { createAgentTaskRuntime } from "../agent/factory";
 import { createExactWriteFenceReceipt } from "../agent/write-fence";
 import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToolBridge, truncateEchoInkToolResult } from "../agent/tool-bridge";
 import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
-import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
+import { buildActiveEchoInkResourceCatalog, buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
 import { harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../harness/agents/backend-runtime-profile";
@@ -656,6 +656,9 @@ assert.match(settingsTabSource, /mcpConnectionStatus/);
 assert.match(settingsTabSource, /mcpConnectionStatusLabel/);
 assert.match(settingsTabSource, /补全连接配置|Configure connection/);
 assert.match(settingsTabSource, /测试连接|Test connection/);
+const loadWorkspaceResourcesSource = extractClassMethodBody(settingsTabSource, "private async loadWorkspaceResources(");
+assert.match(loadWorkspaceResourcesSource, /buildRuntimeEchoInkResourceCatalog\(\)/);
+assert.doesNotMatch(loadWorkspaceResourcesSource, /refreshPluginResources|refreshSkillResources|refreshMcpStatus|listSkills|listMcpServers/);
 const agentDashboardSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private renderAgentDashboard"),
   settingsTabSource.indexOf("private async runAgentSetupAction")
@@ -2750,7 +2753,7 @@ assert.equal(normalizeServiceTier("flex"), "flex");
 assert.equal(DEFAULT_SETTINGS.defaultModel, "");
 assert.equal(DEFAULT_SETTINGS.defaultReasoning, "high");
 assert.equal(DEFAULT_SETTINGS.proxyEnabled, false);
-assert.equal(DEFAULT_SETTINGS.settingsVersion, 38);
+assert.equal(DEFAULT_SETTINGS.settingsVersion, 39);
 assert.deepEqual(DEFAULT_SETTINGS.memory, {
   enabled: true,
   autoSync: true,
@@ -3068,6 +3071,33 @@ const completedAcpTool = acpEvents.find((event) => event.type === "tool_call_com
 assert.equal(completedAcpTool?.data?.outputState, "unavailable");
 assert.equal(Object.prototype.hasOwnProperty.call(completedAcpTool?.data ?? {}, "output"), false);
 assert.equal(completedAcpTool?.data?.displayPreview, "done");
+
+let releaseAcpDispose!: () => void;
+let acpDisconnectKilledProcess = false;
+const acpDisposeDeferred = new Promise<void>((resolve) => {
+  releaseAcpDispose = resolve;
+});
+const acpDisconnectRuntime = new AcpAgentRuntime({
+  backend: "hermes",
+  command: { command: "hermes", args: ["acp"], cwd: "/vault" }
+});
+const acpDisconnectInternals = acpDisconnectRuntime as unknown as {
+  transport: { dispose: () => Promise<void> } | null;
+  process: { kill: () => boolean } | null;
+};
+acpDisconnectInternals.transport = { dispose: () => acpDisposeDeferred };
+acpDisconnectInternals.process = {
+  kill: () => {
+    acpDisconnectKilledProcess = true;
+    return true;
+  }
+};
+const acpDisconnectPromise = acpDisconnectRuntime.disconnect();
+await Promise.resolve();
+assert.equal(acpDisconnectKilledProcess, false);
+releaseAcpDispose();
+await acpDisconnectPromise;
+assert.equal(acpDisconnectKilledProcess, true);
 
 const richStartupFailureRuntime: AgentRichStreamRuntime = {
   ...fakeLifecycleRuntime,
@@ -5516,7 +5546,7 @@ assert.equal(preservedCustomAgentModels.editorActions.model, "custom-editor-mode
 assert.deepEqual(Object.values(preservedCustomAgentModels.editorActions.modeConfigs).map((config) => config.model), ["custom-fast", "custom-quality", "custom-strict"]);
 
 const workspaceResources = normalizeSettingsData({
-  settingsVersion: 4,
+  settingsVersion: DEFAULT_SETTINGS.settingsVersion,
   workspaceResources: {
     plugins: { "browser-use@openai-bundled": false },
     mcpServers: { paper: true },
@@ -5556,6 +5586,68 @@ assert.deepEqual(
   ).map((skill) => skill.name),
   ["fix-bug"]
 );
+const clearedMirroredAgentResources = normalizeSettingsData({
+  settingsVersion: 38,
+  resources: {
+    catalog: [
+      {
+        id: "codex-import:skill:answer",
+        kind: "skill",
+        source: "codex-import",
+        name: "answer",
+        description: "Agent-global Skill copy",
+        enabled: true,
+        scopes: ["knowledge"],
+        bridgeMode: "prompt-only"
+      },
+      {
+        id: "codex-import:mcp-server:paper",
+        kind: "mcp-server",
+        source: "codex-import",
+        name: "paper",
+        description: "Agent-global MCP copy",
+        enabled: true,
+        scopes: ["knowledge"],
+        bridgeMode: "native-mcp"
+      }
+    ],
+    enabledByScope: {
+      knowledge: {
+        "codex-import:skill:answer": true,
+        "codex-import:mcp-server:paper": true
+      }
+    },
+    importedFrom: { "codex-import": 123 },
+    mcpConnections: {
+      "codex-import:mcp-server:paper": { transport: "stdio", command: "paper-mcp" }
+    }
+  },
+  workspaceResources: {
+    skills: { "/home/demo/.codex/skills/answer/SKILL.md": true },
+    mcpServers: { paper: true }
+  },
+  workspaceResourceCache: {
+    skills: {
+      fetchedAt: 123,
+      items: [{ name: "answer", path: "/home/demo/.codex/skills/answer/SKILL.md", description: "", scope: "personal", enabled: true }]
+    },
+    mcp: {
+      fetchedAt: 123,
+      items: [{ name: "paper", tools: {}, authStatus: "loggedIn" }]
+    }
+  }
+});
+assert.deepEqual(clearedMirroredAgentResources.settings.resources.catalog, []);
+assert.deepEqual(clearedMirroredAgentResources.settings.resources.enabledByScope, {
+  chat: {},
+  knowledge: {},
+  "editor-actions": {}
+});
+assert.deepEqual(clearedMirroredAgentResources.settings.resources.mcpConnections, {});
+assert.deepEqual(clearedMirroredAgentResources.settings.resources.importedFrom, {});
+assert.deepEqual(clearedMirroredAgentResources.settings.workspaceResources, { plugins: {}, mcpServers: {}, skills: {} });
+assert.deepEqual(clearedMirroredAgentResources.settings.workspaceResourceCache, {});
+assert.equal(clearedMirroredAgentResources.changed, true);
 const hermesSkillRows = parseHermesSkillListOutput([
   "Name                    Category             Source  Trust   Status",
   "obsidian                note-taking          builtin builtin enabled",
@@ -5590,6 +5682,26 @@ const echoInkCatalog = buildEchoInkResourceCatalog({
   ],
   settings: workspaceResources.settings.resources
 });
+assert.deepEqual(buildActiveEchoInkResourceCatalog({
+  codex: {
+    skills: [{ name: "answer", description: "回答", path: "/Users/demo/.codex/skills/answer/SKILL.md", enabled: true }],
+    mcpServers: [{ name: "paper", tools: { read: {} }, authStatus: "loggedIn" }]
+  },
+  settings: workspaceResources.settings.resources
+}), []);
+assert.deepEqual(buildActiveEchoInkResourceCatalog({
+  manual: [{
+    id: "echoink-local:skill:vault-maintainer",
+    kind: "skill",
+    source: "echoink-local",
+    name: "vault-maintainer",
+    description: "知识库专用维护协议",
+    enabled: true,
+    scopes: ["knowledge"],
+    bridgeMode: "prompt-only",
+    contentPath: "vault-maintainer"
+  }]
+}).map((resource) => resource.id), ["echoink-local:skill:vault-maintainer"]);
 assert.ok(echoInkCatalog.some((resource) => resource.id === "codex-import:skill:answer"));
 assert.ok(echoInkCatalog.some((resource) => resource.id === "codex-import:mcp-server:paper"));
 assert.ok(echoInkCatalog.some((resource) => resource.id === "hermes-import:skill:obsidian"));
@@ -5885,7 +5997,7 @@ assert.deepEqual(
   ["figma:configured:0", "paper:loggedIn:1"]
 );
 assert.equal(
-  normalizeSettingsData({ settingsVersion: 5, workspaceResourceCache: cachedResources }).settings.workspaceResourceCache.mcp?.items[0].name,
+  normalizeSettingsData({ settingsVersion: DEFAULT_SETTINGS.settingsVersion, workspaceResourceCache: cachedResources }).settings.workspaceResourceCache.mcp?.items[0].name,
   "paper"
 );
 
@@ -11060,6 +11172,7 @@ try {
   assert.ok(outputsPrompt.includes("用户原始指令：/outputs 只提炼长期方法论"));
   assert.equal(stripAskCommand("/ask Harness Engineering 和 Vibe Coding 有什么关系？"), "Harness Engineering 和 Vibe Coding 有什么关系？");
   const askMatches = await findKnowledgeBaseAskMatches(kbVault, "Harness Engineering 和 Vibe Coding 有什么关系？");
+  assert.ok(askMatches.length <= 8, "知识库问答只读取索引筛出的 Top 8 正文");
   assert.equal(askMatches[0]?.relativePath, "wiki/ai-intelligence/concepts/harness-engineering.md");
   assert.ok(askMatches[0]?.excerpt.includes("Vibe Coding"));
   assert.equal(askMatches[0]?.bucket, "wiki");
@@ -11482,6 +11595,9 @@ try {
     assert.equal(scheduledRefreshSettings.sessions.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages[0].status, "completed");
+    assert.equal(scheduledRefreshSettings.sessions[0].messages[0].knowledgeBaseUi?.kind, "maintain-report");
+    assert.equal(scheduledRefreshSettings.sessions[0].messages[0].knowledgeBaseUi?.mode, "maintain");
+    assert.notEqual(scheduledRefreshSettings.sessions[0].messages[0].knowledgeBaseUi?.kind, "maintain-run");
     assert.equal(scheduledRefreshSaveCalls, 3);
     assert.equal(scheduledRefreshWarnings.length, 1);
     assert.equal(scheduledRefreshWarnings[0][0], "每日维护消息刷新失败");
@@ -11745,6 +11861,47 @@ try {
 const maintenanceWorkflowTestStorageBase = await mkdtemp(
   path.join(tmpdir(), "codex-kb-maintenance-storage-")
 );
+
+const rawIncrementalSafetyVault = await mkdtemp(path.join(tmpdir(), "codex-kb-raw-index-safety-"));
+try {
+  const rawPath = "raw/articles/same-metadata.md";
+  const absoluteRawPath = path.join(rawIncrementalSafetyVault, rawPath);
+  await mkdir(path.dirname(absoluteRawPath), { recursive: true });
+  await writeFile(absoluteRawPath, "# Safe\n\nAAAA", "utf8");
+  const first = await discoverKnowledgeBaseSources(rawIncrementalSafetyVault, {});
+  const firstSource = first.sources.find((source) => source.relativePath === rawPath)!;
+  assert.equal(firstSource.changed, true);
+  assert.ok((first.indexStats?.refreshed ?? 0) >= 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await writeFile(absoluteRawPath, "# Safe\n\nBBBB", "utf8");
+  await utimes(absoluteRawPath, new Date(firstSource.mtime), new Date(firstSource.mtime));
+  const changed = await discoverKnowledgeBaseSources(rawIncrementalSafetyVault, {
+    [rawPath]: {
+      size: firstSource.size,
+      mtime: firstSource.mtime,
+      fingerprint: firstSource.fingerprint,
+      confidence: "verified"
+    }
+  });
+  const changedSource = changed.sources.find((source) => source.relativePath === rawPath)!;
+  assert.equal(changedSource.changed, true, "同大小且恢复 mtime 的 Raw 正文变化仍必须由 ctime 触发重算");
+  assert.notEqual(changedSource.fingerprint, firstSource.fingerprint);
+
+  const hot = await discoverKnowledgeBaseSources(rawIncrementalSafetyVault, {
+    [rawPath]: {
+      size: changedSource.size,
+      mtime: changedSource.mtime,
+      fingerprint: changedSource.fingerprint,
+      confidence: "verified"
+    }
+  });
+  assert.equal(hot.sources.find((source) => source.relativePath === rawPath)?.changed, false);
+  assert.ok((hot.indexStats?.reused ?? 0) >= 1, "热索引应复用未变化 Raw，不重读正文");
+} finally {
+  await rm(rawIncrementalSafetyVault, { recursive: true, force: true });
+}
+
 const maintenanceStartSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-start-save-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStartSaveFailureVault, { failSaveCall: 1 });
@@ -12734,7 +12891,7 @@ try {
   assert.equal(result.attempts?.[0]?.submitted, undefined);
   assert.match(
     result.attempts?.[0]?.failure?.message ?? "",
-    /Hermes Agent backend unavailable：proposal v1 需要至少一个 raw 文本来源/
+    /Hermes Agent backend unavailable：proposal v1 不支持来源 wiki\/index\.md \(text\)/
   );
   assert.equal((globalThis as any).__hermesBackendTestHooks.runTaskCalls ?? 0, 0);
   assert.deepEqual((globalThis as any).__hermesBackendTestHooks.abortCalls, []);
@@ -14617,8 +14774,10 @@ try {
 const maintenanceSuccessVault = await createMaintenanceVaultForTest("codex-kb-maintain-success-");
 try {
   const rawBeforeMaintain = await readFile(path.join(maintenanceSuccessVault, "raw", "articles", "new.md"));
+  let maintenanceAgentCalls = 0;
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSuccessVault, {
     beforeAgentReturn: async (taskVaultPath) => {
+      maintenanceAgentCalls += 1;
       await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
       await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "maintain-success.md"), [
         "# Maintain Success",
@@ -14665,8 +14824,69 @@ try {
   assert.ok((await readFile(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references", "maintain-success.md"), "utf8")).includes("[[raw/articles/new]]"));
   const rediscovered = await discoverKnowledgeBaseSources(maintenanceSuccessVault, settings.knowledgeBase.processedSources);
   assert.equal(rediscovered.changedSources.length, 0);
+  const noOpWorkflowEvents: any[] = [];
+  const noOpResult = await manager.runMaintenance("maintain", "/maintain", {
+    onWorkflowEvent: (event) => noOpWorkflowEvents.push(event)
+  });
+  assert.equal(noOpResult.status, "success");
+  assert.equal(noOpResult.performance?.agentCalled, false);
+  assert.equal(maintenanceAgentCalls, 1, "无变化 /maintain 不应再次调用 Agent");
+  assert.match(noOpResult.summary, /没有新增或变更 Raw/);
+  assert.match(await readFile(path.join(maintenanceSuccessVault, noOpResult.reportPath), "utf8"), /agent_called: false/);
+  assert.ok(noOpWorkflowEvents.some((event) => event.type === "workflow.phase.started" && event.phaseId === "prepare"));
+  assert.ok(noOpWorkflowEvents.some((event) => event.type === "workflow.phase.started" && event.phaseId === "report"));
+  assert.ok(noOpWorkflowEvents.some((event) => event.type === "workflow.completed" && event.status === "success"));
+  assert.equal(noOpWorkflowEvents.some((event) => event.phaseId === "digest"), false);
 } finally {
   await rm(maintenanceSuccessVault, { recursive: true, force: true });
+}
+
+const incrementalCommandVault = await createMaintenanceVaultForTest("codex-kb-incremental-commands-");
+try {
+  const capturedTaskInputs: any[] = [];
+  const { manager } = makeKnowledgeBaseManagerForTest(incrementalCommandVault, { capturedTaskInputs });
+  const firstCheck = await manager.runMaintenance("lint", "/check");
+  assert.equal(firstCheck.status, "success", firstCheck.error);
+  assert.equal(firstCheck.performance?.agentCalled, true);
+  assert.equal(capturedTaskInputs.length, 1);
+
+  const noOpCheck = await manager.runMaintenance("lint", "/check");
+  assert.equal(noOpCheck.status, "success", noOpCheck.error);
+  assert.equal(noOpCheck.performance?.agentCalled, false);
+  assert.equal(capturedTaskInputs.length, 1, "无变化 /check 不应再次调用 Agent");
+
+  const fullCheck = await manager.runMaintenance("lint", "/check --full");
+  assert.equal(fullCheck.status, "success", fullCheck.error);
+  assert.equal(fullCheck.performance?.agentCalled, true);
+  assert.equal(capturedTaskInputs.length, 2);
+  assert.match(capturedTaskInputs.at(-1)?.prompt ?? "", /本轮是显式全库体检/);
+} finally {
+  await rm(incrementalCommandVault, { recursive: true, force: true });
+}
+
+const incrementalTriageVault = await createMaintenanceVaultForTest("codex-kb-incremental-triage-");
+try {
+  await mkdir(path.join(incrementalTriageVault, "outputs"), { recursive: true });
+  await mkdir(path.join(incrementalTriageVault, "inbox"), { recursive: true });
+  await writeFile(path.join(incrementalTriageVault, "outputs", "draft.md"), "# Draft\n\n待提炼输出", "utf8");
+  await writeFile(path.join(incrementalTriageVault, "inbox", "capture.md"), "# Capture\n\n待分流内容", "utf8");
+  const capturedTaskInputs: any[] = [];
+  const { manager } = makeKnowledgeBaseManagerForTest(incrementalTriageVault, { capturedTaskInputs });
+
+  const firstOutputs = await manager.runMaintenance("outputs", "/outputs");
+  assert.equal(firstOutputs.status, "success", firstOutputs.error);
+  const noOpOutputs = await manager.runMaintenance("outputs", "/outputs");
+  assert.equal(noOpOutputs.status, "success", noOpOutputs.error);
+  assert.equal(noOpOutputs.performance?.agentCalled, false);
+
+  const firstInbox = await manager.runMaintenance("inbox", "/inbox");
+  assert.equal(firstInbox.status, "success", firstInbox.error);
+  const noOpInbox = await manager.runMaintenance("inbox", "/inbox");
+  assert.equal(noOpInbox.status, "success", noOpInbox.error);
+  assert.equal(noOpInbox.performance?.agentCalled, false);
+  assert.equal(capturedTaskInputs.length, 2, "outputs / inbox 各自只有首次变化时调用 Agent");
+} finally {
+  await rm(incrementalTriageVault, { recursive: true, force: true });
 }
 
 const maintenanceConcurrentRawAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-concurrent-raw-add-");
@@ -14782,7 +15002,7 @@ try {
     digestedAt: Date.now() - 86_400_000
   };
   const result = await manager.calibrateRawDigestStatus();
-  assert.equal(result.status, "success");
+  assert.equal(result.status, "success", result.error);
   assert.equal(result.processedSources.length, 4);
   const processed = settings.knowledgeBase.processedSources["raw/articles/new.md"];
   assert.ok(processed);
@@ -16339,7 +16559,7 @@ function makeKnowledgeBaseManagerForTest(
     cancelHarnessRun: async (runId: string) => await harnessKernel.cancelRun(runId),
     settleHarnessRunTerminal: async (input: any) => await harnessKernel.settleRunTerminal(input),
     getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: vaultPath }),
-    buildRuntimeEchoInkResourceCatalog: async () => buildEchoInkResourceCatalog({ settings: settings.resources }),
+    buildRuntimeEchoInkResourceCatalog: async () => buildActiveEchoInkResourceCatalog({ settings: settings.resources }),
     app: {
       workspace: {
         onLayoutReady: () => undefined,

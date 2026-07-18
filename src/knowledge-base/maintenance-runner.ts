@@ -67,9 +67,10 @@ import {
   recoveredLintReportSummary,
   planKnowledgeBaseMaintenanceReportWrite,
   writeKnowledgeBaseMaintenanceFinalBlock,
+  writeKnowledgeBaseNoopReport,
   writeKnowledgeBaseFailureReport
 } from "./report";
-import { discoverKnowledgeBaseSources } from "./discovery";
+import { discoverKnowledgeBaseSources, knowledgeBaseReportPathForMode } from "./discovery";
 import { buildKnowledgeBasePrompt } from "./prompt";
 import {
   classifyRawSnapshotChanges,
@@ -183,6 +184,18 @@ import {
 } from "./maintenance-routing";
 import { nativeTerminationReceiptFrom } from "./native-termination";
 import { formatDateForFile } from "./utils";
+import {
+  commitKnowledgeBaseIndexCheckpoint,
+  isKnowledgeBaseInboxWorkItem,
+  isKnowledgeBaseOutputWorkItem,
+  refreshKnowledgeBaseIndex,
+  selectKnowledgeBaseIncrementalScope,
+  type KnowledgeBaseIndexCheckpoint,
+  type KnowledgeBaseIndexEntry,
+  type KnowledgeBaseIndexRefreshResult,
+  type KnowledgeBaseIncrementalScope
+} from "./incremental-index";
+import { KnowledgeWorkflowProgress } from "./workflow-progress";
 
 const MAX_ATTACHED_SOURCES = 20;
 
@@ -227,6 +240,8 @@ interface ExecuteMaintenanceShadowAttemptInput {
   sources: KnowledgeBaseSource[];
   skippedSources: KnowledgeBaseDiscovery["skippedSources"];
   remainingSourceCount: number;
+  targetPaths?: string[];
+  fullScan?: boolean;
   rules: {
     relativePath: string;
     absolutePath: string;
@@ -420,7 +435,9 @@ export class KnowledgeBaseMaintenanceRunner {
         useCustomRulesFile: input.rules.useCustomRulesFile,
         hasRawIndex: await exists(path.join(handle.agentVaultPath, "raw", "index.md")),
         hasWikiIndex: await exists(path.join(handle.agentVaultPath, "wiki", "index.md")),
-        hasTracker: await exists(path.join(handle.agentVaultPath, "outputs", ".ingest-tracker.md"))
+        hasTracker: await exists(path.join(handle.agentVaultPath, "outputs", ".ingest-tracker.md")),
+        targetPaths: input.targetPaths,
+        fullScan: input.fullScan
       });
       const leaseToken = randomUUID();
       const expectedDeniedPaths = [
@@ -847,6 +864,8 @@ export class KnowledgeBaseMaintenanceRunner {
       };
     }
     this.context.beginRun();
+    const progress = new KnowledgeWorkflowProgress(turnOptionOverrides?.onWorkflowEvent);
+    progress.phase("prepare", "准备", "读取增量清单");
     const startedAt = Date.now();
     const workflowRunId = `knowledge-${mode}-${startedAt}`;
     const settings = this.plugin.settings.knowledgeBase;
@@ -865,6 +884,12 @@ export class KnowledgeBaseMaintenanceRunner {
     let lintReportRecoveryEligible = false;
     const runAttempts: KnowledgeRunAttemptRecord[] = [];
     let routingFailureCode = "";
+    let indexRefresh: KnowledgeBaseIndexRefreshResult | null = null;
+    let incrementalScope: KnowledgeBaseIncrementalScope | null = null;
+    let indexCheckpoint: KnowledgeBaseIndexCheckpoint | null = null;
+    let indexFilter: ((entry: KnowledgeBaseIndexEntry) => boolean) | undefined;
+    let targetPaths: string[] = [];
+    let indexedRunSources: KnowledgeBaseSource[] = [];
     const externalRawAdditionsDuringRun = new Set<string>();
     let conflictDuplicateCleanup: KnowledgeConflictDuplicateCleanup = { moved: [], backupRoot: "" };
     try {
@@ -884,6 +909,70 @@ export class KnowledgeBaseMaintenanceRunner {
       settings.lastFailureCode = "";
       await this.plugin.saveSettings(true);
       this.throwIfCanceled();
+      const rules = await this.context.resolveRulesFile();
+      if (rules.useCustomRulesFile && !rules.exists) {
+        throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
+      }
+      this.throwIfCanceled();
+      discovery = mode === "maintain" || mode === "reingest"
+        ? await discoverKnowledgeBaseSources(vaultPath, settings.processedSources, mode)
+        : emptyDiscoveryForMode(vaultPath, mode);
+      this.throwIfCanceled();
+      const incremental = await prepareIncrementalRunScope(vaultPath, mode, userRequest);
+      indexRefresh = incremental.refresh;
+      incrementalScope = incremental.scope;
+      indexCheckpoint = incremental.checkpoint;
+      indexFilter = incremental.filter;
+      targetPaths = incremental.targetPaths;
+      indexedRunSources = incremental.sources;
+      progress.progress(
+        (discovery.indexStats?.reused ?? 0) + (indexRefresh?.reusedCount ?? 0),
+        Math.max(1, discovery.sources.length + (indexRefresh?.entries.length ?? 0)),
+        `变化目标 ${targetPaths.length} 个`
+      );
+      if (shouldUseNoopFastPath(mode, userRequest, discovery, incrementalScope, targetPaths)) {
+        progress.phase("report", "报告", "没有变化，直接生成终态报告");
+        await ensureKnowledgeBaseFolders(vaultPath, mode);
+        const checkedCount = mode === "maintain"
+          ? discovery.sources.length
+          : indexRefresh?.entries.filter((entry) => indexFilter?.(entry) ?? true).length ?? 0;
+        const summary = noOpSummary(mode);
+        await writeKnowledgeBaseNoopReport(vaultPath, discovery.reportPath, {
+          mode,
+          startedAt,
+          checkedCount,
+          scopeLabel: noOpScopeLabel(mode),
+          summary
+        });
+        this.throwIfCanceled();
+        progress.phase("complete", "完成", "保存任务状态");
+        settings.lastRunAt = Date.now();
+        settings.lastRunStatus = "success";
+        settings.lastReportPath = discovery.reportPath;
+        settings.lastSummary = summary;
+        settings.lastError = "";
+        recordKnowledgeBaseMaintenanceRun(settings, { status: "success", mode, reportPath: discovery.reportPath });
+        await this.plugin.saveSettings(true);
+        if (indexRefresh && incrementalScope && indexCheckpoint) {
+          await commitKnowledgeBaseIndexCheckpoint(vaultPath, indexRefresh, indexCheckpoint, incrementalScope, indexFilter)
+            .catch((error) => console.warn("EchoInk knowledge index checkpoint failed", error));
+        }
+        this.throwIfCanceled();
+        const performance = progress.complete(summary);
+        performance.index = {
+          reused: (discovery.indexStats?.reused ?? 0) + (indexRefresh?.reusedCount ?? 0),
+          refreshed: (discovery.indexStats?.refreshed ?? 0) + (indexRefresh?.indexedCount ?? 0),
+          targets: 0
+        };
+        new Notice(`知识库${labelForRunMode(mode)}完成`);
+        return {
+          status: "success",
+          reportPath: discovery.reportPath,
+          summary,
+          processedSources: [],
+          performance
+        };
+      }
       const transactionRoots = knowledgeTransactionRootsForMode(mode);
       transactionBefore = await snapshotKnowledgeTransaction(vaultPath, transactionRoots);
       this.throwIfCanceled();
@@ -901,61 +990,47 @@ export class KnowledgeBaseMaintenanceRunner {
       rawBefore = fingerprintKnowledgeRawContentSnapshot(rawBeforeContents);
       assertSafeRawRoot(rawBeforeContents);
       assertSafeRawEntries(rawBeforeContents);
-      const runDiscovery = await discoverKnowledgeBaseSources(vaultPath, settings.processedSources, mode);
-      discovery = runDiscovery;
+      const runDiscovery = discovery ?? emptyDiscoveryForMode(vaultPath, mode);
       this.throwIfCanceled();
       reportMtimeBefore = await readKnowledgeBaseReportMtime(vaultPath, runDiscovery.reportPath);
       await ensureKnowledgeBaseFolders(vaultPath, mode);
       this.throwIfCanceled();
       const requestedRawPaths = extractRequestedRawPaths(userRequest);
-      const promptSources = selectSourcesForRunMode(mode, runDiscovery, userRequest);
+      const promptSources = mode === "lint" || mode === "outputs" || mode === "inbox"
+        ? indexedRunSources
+        : selectSourcesForRunMode(mode, runDiscovery, userRequest);
       const runSources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
       runSourcesForFailureReport = runSources;
       this.throwIfCanceled();
 
       lintReportRecoveryEligible = mode === "lint";
-      const deterministicNoop = (mode === "maintain" || mode === "reingest")
-        && runSources.length === 0;
-      let routedAgentOutput: MaintenanceRunExecutionResult;
-      if (deterministicNoop) {
-        routedAgentOutput = {
-          output: { text: "" },
-          completion: "noop",
-          verifiedSources: [],
-          pendingSources: [],
-          evidencePaths: {},
-          warnings: []
-        };
-      } else {
-        const rules = await this.context.resolveRulesFile();
-        if (rules.useCustomRulesFile && !rules.exists) {
-          throw new Error(`知识库操作指南文件不存在：${rules.relativePath}。请在设置里修正路径。`);
-        }
-        this.throwIfCanceled();
-        routedAgentOutput = await runSelectedMaintenanceAgentTask({
-          workflowRunId,
+      progress.phase("digest", "执行", `交给模型处理 ${runSources.length || targetPaths.length} 个目标`);
+      progress.markAgentCalled();
+      const routedAgentOutput = await runSelectedMaintenanceAgentTask({
+        workflowRunId,
+        selectedBackend,
+        attempts: runAttempts,
+        isBackendReady: async (backend) => await this.context.isMaintenanceBackendReady(backend, runSources),
+        execute: async (attempt) => await this.executeMaintenanceShadowAttempt({
+          attempt,
           selectedBackend,
-          attempts: runAttempts,
-          isBackendReady: async (backend) => await this.context.isMaintenanceBackendReady(backend, runSources),
-          execute: async (attempt) => await this.executeMaintenanceShadowAttempt({
-            attempt,
-            selectedBackend,
-            liveVaultPath: vaultPath,
-            shadowStorageRoot,
-            mode,
-            userRequest,
-            requestedRawPaths,
-            reportPath: runDiscovery.reportPath,
-            reportMtimeBefore,
-            sources: runSources,
-            skippedSources: runDiscovery.skippedSources,
-            remainingSourceCount: Math.max(0, promptSources.length - runSources.length),
-            rules,
-            processedSourcesBeforeRun,
-            turnOptionOverrides
-          })
-        });
-      }
+          liveVaultPath: vaultPath,
+          shadowStorageRoot,
+          mode,
+          userRequest,
+          requestedRawPaths,
+          reportPath: runDiscovery.reportPath,
+          reportMtimeBefore,
+          sources: runSources,
+          skippedSources: runDiscovery.skippedSources,
+          remainingSourceCount: Math.max(0, promptSources.length - runSources.length),
+          targetPaths,
+          fullScan: Boolean(incrementalScope?.full),
+          rules,
+          processedSourcesBeforeRun,
+          turnOptionOverrides
+        })
+      });
       if (
         !routedAgentOutput.handle
         || !routedAgentOutput.changeSet
@@ -1006,11 +1081,12 @@ export class KnowledgeBaseMaintenanceRunner {
       lintReportRecoveryEligible = false;
       this.throwIfCanceled();
 
+      progress.phase("organize", "整理", "校验本轮改动与引用邻域");
       await assertSafeKnowledgeTransactionCurrentState(vaultPath, transactionRoots, {
         allowedUnsafePaths: mode === "maintain" || mode === "reingest" ? new Set(["outputs/.ingest-tracker.md"]) : undefined
       });
 
-      const rawAfterAgent = await snapshotKnowledgeRawFiles(vaultPath);
+      const rawAfterAgent = await snapshotKnowledgeRawFiles(vaultPath, rawBefore);
       const rawAgentChanges = classifyRawSnapshotChanges(rawBefore, rawAfterAgent);
       collectExternalRawAdditions(externalRawAdditionsDuringRun, rawAgentChanges.externalAdditions);
       if (rawAgentChanges.blockingChanges.length) {
@@ -1032,7 +1108,7 @@ export class KnowledgeBaseMaintenanceRunner {
         nextProcessedSources = rewriteProcessedSources(nextProcessedSources, structure.pathRewrites);
       }
       const reportPath = structure ? rewriteKnowledgeBaseRelativePath(discovery.reportPath, structure.pathRewrites) : discovery.reportPath;
-      const rawAfter = await snapshotKnowledgeRawFiles(vaultPath);
+      const rawAfter = await snapshotKnowledgeRawFiles(vaultPath, rawAfterAgent);
       const rawChanges = classifyRawSnapshotChanges(rawBefore, rawAfter, structure?.pathRewrites ?? []);
       collectExternalRawAdditions(externalRawAdditionsDuringRun, rawChanges.externalAdditions);
       if (rawChanges.blockingChanges.length) {
@@ -1069,7 +1145,7 @@ export class KnowledgeBaseMaintenanceRunner {
           evidencePaths: digestEvidencePaths,
           confidence: "verified"
         });
-        const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath);
+        const rawAfterDigestMetadata = await snapshotKnowledgeRawFiles(vaultPath, rawAfter);
         const rawDigestChanges = classifyRawSnapshotChanges(rawBefore, rawAfterDigestMetadata, structure?.pathRewrites ?? [], {
           allowedManagedFrontmatterPaths: new Set(processedChangedSources.map((source) => source.relativePath))
         });
@@ -1096,6 +1172,7 @@ export class KnowledgeBaseMaintenanceRunner {
           };
         }
       }
+      progress.phase("report", "报告", "生成报告并提交本轮状态");
       const reportedSources = processedSourcesForRunMode(mode, processedChangedSources);
       await ensureKnowledgeBaseFallbackReport(vaultPath, reportPath, {
         mode,
@@ -1157,8 +1234,19 @@ export class KnowledgeBaseMaintenanceRunner {
         pendingSources: pendingSourcePaths,
         warnings: runWarnings
       });
+      progress.phase("complete", "完成", "保存终态");
       await this.plugin.saveSettings(true);
+      if (indexRefresh && incrementalScope && indexCheckpoint) {
+        await commitKnowledgeBaseIndexCheckpoint(vaultPath, indexRefresh, indexCheckpoint, incrementalScope, indexFilter)
+          .catch((error) => console.warn("EchoInk knowledge index checkpoint failed", error));
+      }
       this.throwIfCanceled();
+      const performance = progress.complete(settings.lastSummary);
+      performance.index = {
+        reused: (discovery?.indexStats?.reused ?? 0) + (indexRefresh?.reusedCount ?? 0),
+        refreshed: (discovery?.indexStats?.refreshed ?? 0) + (indexRefresh?.indexedCount ?? 0),
+        targets: runSources.length || targetPaths.length
+      };
       new Notice(`知识库${labelForRunMode(mode)}完成`);
       return {
         status: "success",
@@ -1171,7 +1259,8 @@ export class KnowledgeBaseMaintenanceRunner {
         attempts: runAttempts,
         completion: maintenanceCompletion,
         pendingSources: pendingSourcePaths,
-        warnings: runWarnings
+        warnings: runWarnings,
+        performance
       };
     } catch (error) {
       if (error instanceof MaintenanceAgentRoutingError) {
@@ -1179,11 +1268,12 @@ export class KnowledgeBaseMaintenanceRunner {
       }
       let message = error instanceof Error ? error.message : String(error);
       let canceled = this.context.isCancelRequested() || isKnowledgeBaseCancelError(message);
+      progress.phase("report", canceled ? "取消收口" : "失败收口", message);
       let rawAfterOnError: RawSnapshot | null = null;
       let rawSnapshotError: unknown = null;
       if (vaultPath) {
         try {
-          rawAfterOnError = await snapshotKnowledgeRawFiles(vaultPath);
+          rawAfterOnError = await snapshotKnowledgeRawFiles(vaultPath, rawBefore);
         } catch (error) {
           rawSnapshotError = error;
         }
@@ -1191,7 +1281,7 @@ export class KnowledgeBaseMaintenanceRunner {
       if (rawBeforeContents && rawSnapshotError && !isRawIntegrityErrorMessage(message)) {
         const rawContents = rawBeforeContents;
         const restored = mode === "lint" ? false : await restoreRawMetadata(vaultPath, rawContents).then(async () => {
-          const rawAfterRestore = await snapshotKnowledgeRawFiles(vaultPath).catch(() => rawBefore);
+          const rawAfterRestore = await snapshotKnowledgeRawFiles(vaultPath, rawBefore).catch(() => rawBefore);
           const remainingChanges = classifyRawSnapshotChanges(rawBefore, rawAfterRestore);
           collectExternalRawAdditions(externalRawAdditionsDuringRun, remainingChanges.externalAdditions);
           if (remainingChanges.blockingChanges.length) await restoreRawSnapshot(vaultPath, rawContents, rawBefore, rawAfterRestore, [], { removeAdded: "unsafe" });
@@ -1258,7 +1348,8 @@ export class KnowledgeBaseMaintenanceRunner {
           processedSources: [],
           error: cancelMessage,
           attempts: runAttempts,
-          failureCode: settings.lastFailureCode
+          failureCode: settings.lastFailureCode,
+          performance: progress.fail("canceled", cancelMessage)
         };
       };
       const saveFailureStatusWithRetry = async (failureMessage: string): Promise<string> => {
@@ -1335,9 +1426,15 @@ export class KnowledgeBaseMaintenanceRunner {
                 processedSources: [],
                 error: recoveredSaveMessage,
                 attempts: runAttempts,
-                ...(routingFailureCode ? { failureCode: routingFailureCode } : {})
+                failureCode: settings.lastFailureCode,
+                performance: progress.fail("failed", recoveredSaveMessage)
               };
             }
+            if (indexRefresh && incrementalScope && indexCheckpoint) {
+              await commitKnowledgeBaseIndexCheckpoint(vaultPath, indexRefresh, indexCheckpoint, incrementalScope, indexFilter)
+                .catch((error) => console.warn("EchoInk knowledge index checkpoint failed", error));
+            }
+            progress.phase("complete", "完成", "保存恢复后的体检终态");
             new Notice("知识库体检完成，Agent 状态有警告");
             return {
               status: "success",
@@ -1346,7 +1443,8 @@ export class KnowledgeBaseMaintenanceRunner {
               processedSources: [],
               externalRawAdditions: Array.from(externalRawAdditionsDuringRun),
               attempts: runAttempts,
-              completion: "recovered"
+              completion: "recovered",
+              performance: progress.complete(settings.lastSummary)
             };
           }
         } catch (recoveryError) {
@@ -1405,7 +1503,8 @@ export class KnowledgeBaseMaintenanceRunner {
         processedSources: [],
         error: message,
         attempts: runAttempts,
-        failureCode: settings.lastFailureCode
+        failureCode: settings.lastFailureCode,
+        performance: progress.fail("failed", message)
       };
     } finally {
       await disposeKnowledgeTransactionSnapshot(transactionBefore);
@@ -1447,6 +1546,8 @@ export class KnowledgeBaseMaintenanceRunner {
     }
 
     this.context.beginRun();
+    const progress = new KnowledgeWorkflowProgress(turnOptionOverrides?.onWorkflowEvent);
+    progress.phase("prepare", "准备", "恢复维护状态并读取增量清单");
     let workflowRunId = "";
     let workflowReportPath = "";
     let discovery: KnowledgeBaseDiscovery | null = null;
@@ -1520,6 +1621,11 @@ export class KnowledgeBaseMaintenanceRunner {
         baselineProcessedSources,
         mode
       );
+      progress.progress(
+        discovery.indexStats?.reused ?? 0,
+        Math.max(1, discovery.sources.length),
+        `变化来源 ${discovery.changedSources.length} 个`
+      );
       const reportMtimeBefore = await readKnowledgeBaseReportMtime(
         vaultPath,
         discovery.reportPath
@@ -1536,6 +1642,7 @@ export class KnowledgeBaseMaintenanceRunner {
 
       let routed: MaintenanceRunExecutionResult;
       if (deterministicNoop) {
+        progress.phase("report", "报告", "没有变化，生成可审计终态报告");
         routed = {
           output: { text: "" },
           completion: "noop",
@@ -1545,6 +1652,8 @@ export class KnowledgeBaseMaintenanceRunner {
           warnings: []
         };
       } else {
+        progress.phase("digest", "执行", `交给所选 Agent 处理 ${runSources.length} 个来源`);
+        progress.markAgentCalled();
         const rules = await this.context.resolveRulesFile();
         if (rules.useCustomRulesFile && !rules.exists) {
           throw new Error(
@@ -1596,6 +1705,7 @@ export class KnowledgeBaseMaintenanceRunner {
         });
         sealedAttempt = routed;
       }
+      progress.phase("organize", "整理", "校验 Shadow 成果与逐来源证据");
       terminalPhase = "verification";
       activeRunJournal = await updateActiveMaintenanceRunState(
         activeRunJournal,
@@ -1732,6 +1842,9 @@ export class KnowledgeBaseMaintenanceRunner {
           reportPath,
           { requireExisting: true }
         );
+      if (!deterministicNoop) {
+        progress.phase("report", "报告", "生成报告并准备原子提交");
+      }
       if (!reportBaseline.content && !deterministicNoop) {
         throw new Error("sealed winner 缺少维护报告");
       }
@@ -1762,18 +1875,13 @@ export class KnowledgeBaseMaintenanceRunner {
       let reportBaselineContent =
         reportBaseline.content?.toString("utf8") ?? "";
       if (deterministicNoop) {
-        reportBaselineContent =
-          buildKnowledgeBaseFallbackReportContent(
-            reportBaselineContent,
-            reportBaseline.mtimeMs || null,
-            {
-              mode,
-              output: "",
-              sources: [],
-              startedAt,
-              previousMtimeMs: reportMtimeBefore
-            }
-          ) ?? reportBaselineContent;
+        reportBaselineContent = buildKnowledgeBaseNoopReportContent({
+          mode,
+          startedAt,
+          checkedCount: discovery.sources.length,
+          scopeLabel: noOpScopeLabel(mode),
+          summary: noOpSummary(mode)
+        });
       }
       reportBaselineContent =
         buildExternalRawAdditionsReportContent(
@@ -1872,12 +1980,14 @@ export class KnowledgeBaseMaintenanceRunner {
       });
 
       const output = routed.output.text;
-      const summary = buildMaintenanceSummary(
-        output,
-        mode,
-        structure,
-        conflictDuplicateCleanup
-      );
+      const summary = deterministicNoop
+        ? noOpSummary(mode)
+        : buildMaintenanceSummary(
+          output,
+          mode,
+          structure,
+          conflictDuplicateCleanup
+        );
       const targetTerminal = {
         lastRunAt: completedAt,
         lastRunStatus: "success" as const,
@@ -1917,6 +2027,7 @@ export class KnowledgeBaseMaintenanceRunner {
       if (!this.context.tryEnterCommitPhase()) {
         throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
       }
+      progress.phase("complete", "完成", "提交 WAL 并保存终态");
       terminalPhase = "commit";
       await prepareAndCommitMaintenanceWorkflow({
         storageRootPath,
@@ -1997,6 +2108,12 @@ export class KnowledgeBaseMaintenanceRunner {
       activeRunJournal = null;
 
       const current = this.plugin.settings.knowledgeBase;
+      const performance = progress.complete(current.lastSummary || summary);
+      performance.index = {
+        reused: discovery.indexStats?.reused ?? 0,
+        refreshed: discovery.indexStats?.refreshed ?? 0,
+        targets: runSources.length
+      };
       new Notice(`知识库${labelForRunMode(mode)}完成`);
       return checkedDurableMaintenanceResult({
         status: "success",
@@ -2020,7 +2137,8 @@ export class KnowledgeBaseMaintenanceRunner {
         completion: historyEntry.completion,
         pendingSources: canonicalPendingSourcePaths,
         failureCode: null,
-        warnings: canonicalWarnings
+        warnings: canonicalWarnings,
+        performance
       });
     } catch (error) {
       if (error instanceof MaintenanceAgentRoutingError) {
@@ -2093,7 +2211,8 @@ export class KnowledgeBaseMaintenanceRunner {
               (pending) => pending.source.relativePath
             ),
             failureCode: null,
-            warnings: cloneList(intent.warnings)
+            warnings: cloneList(intent.warnings),
+            performance: progress.complete(intent.summary)
           });
         }
         const pendingTerminalPhase: KnowledgeBaseRunTerminalPhase =
@@ -2123,7 +2242,8 @@ export class KnowledgeBaseMaintenanceRunner {
             (pending) => pending.source.relativePath
           ),
           warnings: cloneList(intent.warnings),
-          failureCode: "maintenance-commit-pending"
+          failureCode: "maintenance-commit-pending",
+          performance: progress.fail("failed", pendingMessage)
         });
       }
 
@@ -2209,7 +2329,11 @@ export class KnowledgeBaseMaintenanceRunner {
         commitState: "pre-wal",
         error: finalMessage,
         attempts: cloneList(runAttempts),
-        failureCode: settings.lastFailureCode
+        failureCode: settings.lastFailureCode,
+        performance: progress.fail(
+          canceled ? "canceled" : "failed",
+          finalMessage
+        )
       });
     } finally {
       this.context.finishRun();
@@ -2659,4 +2783,156 @@ export async function runSelectedMaintenanceAgentTask(
       throw new MaintenanceAgentRoutingError(error, failure, decision.workflow, attempt);
     }
   }
+}
+
+async function prepareIncrementalRunScope(
+  vaultPath: string,
+  mode: KnowledgeBaseRunMode,
+  userRequest: string
+): Promise<{
+  refresh: KnowledgeBaseIndexRefreshResult | null;
+  scope: KnowledgeBaseIncrementalScope | null;
+  checkpoint: KnowledgeBaseIndexCheckpoint | null;
+  filter?: (entry: KnowledgeBaseIndexEntry) => boolean;
+  targetPaths: string[];
+  sources: KnowledgeBaseSource[];
+}> {
+  if (mode === "maintain" || mode === "reingest") {
+    return { refresh: null, scope: null, checkpoint: null, targetPaths: [], sources: [] };
+  }
+  const full = hasFullScanFlag(userRequest);
+  const roots = mode === "lint" ? ["wiki", "projects"] as const : mode === "outputs" ? ["outputs"] as const : ["inbox"] as const;
+  const checkpoint: KnowledgeBaseIndexCheckpoint = mode === "lint" ? "lint" : mode;
+  const filter = mode === "outputs"
+    ? isKnowledgeBaseOutputWorkItem
+    : mode === "inbox"
+      ? isKnowledgeBaseInboxWorkItem
+      : undefined;
+  const refresh = await refreshKnowledgeBaseIndex(vaultPath, { roots: [...roots] });
+  const scope = selectKnowledgeBaseIncrementalScope(refresh, checkpoint, {
+    full,
+    includeNeighbors: mode === "lint",
+    limit: mode === "lint" ? 80 : 200,
+    filter
+  });
+  const targetPaths = scope.paths;
+  const sources = targetPaths
+    .map((relativePath) => refresh.index.entries[relativePath])
+    .filter((entry): entry is KnowledgeBaseIndexEntry => Boolean(entry))
+    .map((entry) => indexEntryToKnowledgeSource(vaultPath, entry));
+  return { refresh, scope, checkpoint, filter, targetPaths, sources };
+}
+
+function indexEntryToKnowledgeSource(vaultPath: string, entry: KnowledgeBaseIndexEntry): KnowledgeBaseSource {
+  return {
+    relativePath: entry.path,
+    absolutePath: path.join(vaultPath, entry.path),
+    size: entry.size,
+    mtime: entry.mtime,
+    fingerprint: entry.fingerprint,
+    mime: "text/markdown",
+    modality: "text",
+    changed: true
+  };
+}
+
+function emptyDiscoveryForMode(vaultPath: string, mode: KnowledgeBaseRunMode): KnowledgeBaseDiscovery {
+  return {
+    vaultPath,
+    sources: [],
+    changedSources: [],
+    skippedSources: [],
+    reportPath: knowledgeBaseReportPathForMode(mode),
+    trackerPath: path.join(vaultPath, "outputs", ".ingest-tracker.md")
+  };
+}
+
+function shouldUseNoopFastPath(
+  mode: KnowledgeBaseRunMode,
+  userRequest: string,
+  discovery: KnowledgeBaseDiscovery,
+  scope: KnowledgeBaseIncrementalScope | null,
+  targetPaths: string[]
+): boolean {
+  if (!isBareKnowledgeCommand(mode, userRequest)) return false;
+  if (mode === "reingest") return false;
+  if (mode === "maintain") {
+    return discovery.changedSources.length === 0 && discovery.skippedSources.length === 0;
+  }
+  return Boolean(scope && targetPaths.length === 0 && scope.deletedPaths.length === 0);
+}
+
+function isBareKnowledgeCommand(mode: KnowledgeBaseRunMode, userRequest: string): boolean {
+  const text = userRequest.trim();
+  if (!text) return true;
+  const commands: Record<KnowledgeBaseRunMode, string[]> = {
+    maintain: ["maintain", "ingest", "digest", "维护"],
+    lint: ["check", "lint", "doctor", "体检", "检查"],
+    reingest: ["reingest", "redigest", "重新提炼"],
+    outputs: ["outputs", "output", "处理outputs", "处理输出"],
+    inbox: ["inbox", "处理inbox", "收件箱"]
+  };
+  const alternatives = commands[mode].map(escapeRegExp).join("|");
+  return new RegExp(`^/(?:${alternatives})\\s*$`, "iu").test(text);
+}
+
+function hasFullScanFlag(userRequest: string): boolean {
+  return /(?:^|\s)--full(?:\s|$)/i.test(userRequest) || /全库|完整体检|全量体检/.test(userRequest);
+}
+
+function buildKnowledgeBaseNoopReportContent(input: {
+  mode: KnowledgeBaseRunMode;
+  startedAt: number;
+  checkedCount: number;
+  scopeLabel: string;
+  summary: string;
+}): string {
+  return [
+    "---",
+    `created: ${new Date(input.startedAt).toISOString()}`,
+    "source: codex-echoink",
+    `mode: ${input.mode}`,
+    "status: success",
+    "incremental: true",
+    "agent_called: false",
+    "---",
+    "",
+    `# 知识库${labelForRunMode(input.mode)}报告 — ${formatDateForFile(new Date(input.startedAt))}`,
+    "",
+    "## 一眼结论",
+    "",
+    input.summary,
+    "",
+    "## 本轮固定流程",
+    "",
+    `- 已检查范围：${input.scopeLabel}。`,
+    `- 增量清单命中：${input.checkedCount} 个文件。`,
+    "- 内容变化：0 个。",
+    "- 没有变化时直接收口，不调用模型，也不重复扫描全部正文。",
+    "",
+    "## 未改动边界",
+    "",
+    "- 未改动 Raw 正文。",
+    "- 未改动 Wiki / Projects 正文。",
+    "- 未改动 tracker 和索引正文。",
+    ""
+  ].join("\n");
+}
+
+function noOpSummary(mode: KnowledgeBaseRunMode): string {
+  if (mode === "lint") return "增量体检完成：自上次成功体检后没有知识文件变化，本轮未调用模型。";
+  if (mode === "outputs") return "outputs 增量检查完成：没有新的待处理文件，本轮未调用模型。";
+  if (mode === "inbox") return "inbox 增量检查完成：没有新的待分流文件，本轮未调用模型。";
+  return "知识库增量维护完成：没有新增或变更 Raw，本轮未调用模型。";
+}
+
+function noOpScopeLabel(mode: KnowledgeBaseRunMode): string {
+  if (mode === "lint") return "Wiki / Projects 指纹及引用邻域";
+  if (mode === "outputs") return "outputs 待办区";
+  if (mode === "inbox") return "inbox 待办区";
+  return "Raw 增量清单";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

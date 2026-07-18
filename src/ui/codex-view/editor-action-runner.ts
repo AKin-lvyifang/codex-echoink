@@ -7,7 +7,7 @@ import { harnessBackendDisplayName, harnessEditorActionBackend, harnessEditorAct
 import type { AgentAdapter } from "../../harness/agents/adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { HarnessRunResult, HarnessWorkflow } from "../../harness/contracts/run";
-import { buildEchoInkResourceCatalog, codexResourceOverridesFromEchoInkResources, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
+import { buildActiveEchoInkResourceCatalog, codexResourceOverridesFromEchoInkResources, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
 import { newId, resolveEditorActionModeConfig } from "../../settings/settings";
 import type { CodexForObsidianSettings } from "../../settings/settings";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, resolveEditorActionStyle } from "../../editor-actions/prompt";
@@ -330,7 +330,7 @@ function appendPreparedResourcesToPrompt(prompt: string, resources: ReturnType<t
 async function runtimeEchoInkResourceCatalog(plugin: CodexViewEditorActionContext["plugin"]) {
   return typeof plugin.buildRuntimeEchoInkResourceCatalog === "function"
     ? await plugin.buildRuntimeEchoInkResourceCatalog()
-    : buildEchoInkResourceCatalog({ settings: plugin.settings.resources });
+    : buildActiveEchoInkResourceCatalog({ settings: plugin.settings.resources });
 }
 
 async function resolveEditorActionResult(adapter: AgentAdapter, runId: string, result: HarnessRunResult, timeoutMs: number): Promise<string> {

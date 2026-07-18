@@ -112,7 +112,13 @@ export function buildKnowledgeBaseRunPayload(mode: KnowledgeBaseCommandUiMode): 
     title: config.title,
     subtitle: "阶段进度见下方",
     icon: config.icon,
-    phases: config.phases
+    phases: config.phases,
+    events: [{
+      type: "workflow.started",
+      status: "running",
+      message: "等待真实阶段事件",
+      createdAt: Date.now()
+    }]
   };
 }
 

@@ -2,7 +2,7 @@ import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type { TurnOptions } from "../../core/codex-service";
 import { getActiveApiProvider, getApiProviderModels, type AgentBackendMode, type StoredSession } from "../../settings/settings";
-import { buildEchoInkResourceCatalog, hasEnabledMcpResources, workspaceResourcesFromEchoInkResources } from "../../resources/registry";
+import { buildActiveEchoInkResourceCatalog, hasEnabledMcpResources, workspaceResourcesFromEchoInkResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
 import type { PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
@@ -114,7 +114,7 @@ export function currentTurnOptions(host: CodexWorkspaceHost, session?: StoredSes
 }
 
 export function currentEchoInkResourceCatalog(host: CodexWorkspaceHost): EchoInkResource[] {
-  return buildEchoInkResourceCatalog({ settings: host.plugin.settings.resources });
+  return buildActiveEchoInkResourceCatalog({ settings: host.plugin.settings.resources });
 }
 
 export function activeProviderModels(host: CodexWorkspaceHost): string[] {

@@ -7,7 +7,7 @@ import { swallowError } from "../core/error-handling";
 import { HermesBackend } from "../core/hermes-backend";
 import { isSyntheticHermesDefaultModel } from "../core/hermes-models";
 import { CodexServerRequestRouter } from "../core/server-request-router";
-import { buildEchoInkResourceCatalog, skillResourcesForScope } from "../resources/registry";
+import { skillResourcesForScope } from "../resources/registry";
 import { EchoInkMcpBrokerService, type CallEchoInkMcpToolInput } from "../resources/mcp-broker-service";
 import type { EchoInkResource } from "../resources/types";
 import { getActiveApiProvider, providerConnectionLabel } from "../settings/settings";
@@ -16,7 +16,6 @@ import type { CodexNotification, CodexSkill, CodexStatusSnapshot } from "../type
 
 export class EchoInkConnectionService {
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
-  private echoInkSkillLoadPromise: Promise<EchoInkResource[]> | null = null;
   private connectPromise: Promise<CodexStatusSnapshot> | null = null;
   private serverRequestRouter: CodexServerRequestRouter | null = null;
   private echoInkMcpBroker: EchoInkMcpBrokerService | null = null;
@@ -97,15 +96,12 @@ export class EchoInkConnectionService {
   }
 
   async ensureEchoInkSkillResourcesLoaded(force = false): Promise<EchoInkResource[]> {
-    const currentCatalog = buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources });
-    const currentSkills = skillResourcesForScope(currentCatalog, "chat", this.plugin.settings.resources.enabledByScope);
-    if (!force && currentSkills.length) return currentSkills;
-    if (!this.echoInkSkillLoadPromise) {
-      this.echoInkSkillLoadPromise = this.loadEchoInkSkillResources(force).finally(() => {
-        this.echoInkSkillLoadPromise = null;
-      });
-    }
-    return this.echoInkSkillLoadPromise;
+    void force;
+    return skillResourcesForScope(
+      await this.plugin.buildRuntimeEchoInkResourceCatalog(),
+      "chat",
+      this.plugin.settings.resources.enabledByScope
+    );
   }
 
   async reconnectCodex(options: { refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
@@ -228,41 +224,6 @@ export class EchoInkConnectionService {
     return this.echoInkMcpBroker;
   }
 
-  private async loadEchoInkSkillResources(force: boolean): Promise<EchoInkResource[]> {
-    const codexSkills = await this.loadSkills(force).catch(() => this.plugin.lastStatus?.skills ?? []);
-    const hermesSkills = await this.loadHermesSkillResources().catch((error) => {
-      this.plugin.settings.resources.lastError = error instanceof Error ? error.message : String(error);
-      return [];
-    });
-    this.plugin.settings.resources.catalog = buildEchoInkResourceCatalog({
-      codex: { skills: codexSkills },
-      hermes: { skills: hermesSkills },
-      settings: this.plugin.settings.resources
-    });
-    if (codexSkills.length) this.plugin.settings.resources.importedFrom["codex-import"] = Date.now();
-    if (hermesSkills.length) this.plugin.settings.resources.importedFrom["hermes-import"] = Date.now();
-    this.plugin.settings.resources.lastScannedAt = Date.now();
-    if (codexSkills.length || hermesSkills.length) this.plugin.settings.resources.lastError = "";
-    await this.plugin.saveSettings(true);
-    return skillResourcesForScope(
-      buildEchoInkResourceCatalog({ settings: this.plugin.settings.resources }),
-      "chat",
-      this.plugin.settings.resources.enabledByScope
-    );
-  }
-
-  private async loadHermesSkillResources() {
-    const backend = new HermesBackend({
-      ...this.plugin.settings.agents.hermes,
-      vaultPath: this.plugin.getVaultPath()
-    });
-    try {
-      await backend.connect();
-      return await backend.listSkills();
-    } finally {
-      await backend.disconnect().catch(swallowError("disconnect Hermes skill resource backend"));
-    }
-  }
 }
 
 function throwIfConnectionTestAborted(signal?: AbortSignal): void {

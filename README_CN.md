@@ -451,7 +451,7 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 - 安装路径、Release 链接、打包产物和公开仓库引用都切换到新名称。
 - 兼容旧手动安装版放在 `.obsidian/plugins/obsidian-codex/raw` 下的大型原文缓存。
 - 新增隐私与权限说明，覆盖 Codex CLI、OpenCode、模型服务、自定义 API key 和知识库写入边界。
-- 准备社区安装所需 Release 资产：`main.js`、`manifest.json`、`styles.css` 和 `codex-echoink-0.5.0.zip`。
+- 准备 Obsidian Community 安装会读取的 3 个资产：`main.js`、`manifest.json`、`styles.css`。单独的 `codex-echoink-0.5.0.zip` 只是方便手动安装的压缩包，不是 Community 资产。
 
 ### v0.4.1
 
@@ -610,12 +610,23 @@ codex-echoink/
 ## 隐私与权限
 
 - Codex EchoInk 仅支持桌面端，因为它会调用本机命令行工具。
+- EchoInk 本身不收费，也不要求 EchoInk 账号。不同 Agent 或模型 provider 可能要求自己的账号、授权、订阅或按量付费，并适用对应 provider 的服务条款与隐私政策。
 - Codex CLI 模式复用本机 Codex CLI 登录态，可能把你选择的 prompt、附件和文件上下文发送给 Codex 配置的模型服务。
 - OpenCode API 模式连接本机或用户配置的 OpenCode server；插件可以启动或停止 `opencode serve`，但不会静默安装 OpenCode。
 - Hermes 模式调用本机 Hermes CLI 或配置的 Hermes API server。EchoInk 可以保存 Hermes server URL、profile、provider、model 和可选 API server key，但不会静默改写 Hermes 全局 provider 配置。
 - 自定义 API Provider 的 key 会保存在本机 Obsidian 插件数据中，只建议在可信设备上使用。Hermes 推理 provider key 建议继续放在 Hermes 自己的配置里。
 - 插件默认不会上传整个 vault。普通会话必须先选择工作区文件夹，附加笔记只作为当前轮上下文。
 - 知识库管理任务会保护 Raw 来源内容：正文、标题、路径和对应 `.assets` 附件目录不可改；Markdown raw 的提炼指纹按正文计算。只有 Wiki / Projects 已有结构化知识和来源证据后，EchoInk 后处理才会写入 `已处理`、`提炼状态`、`提炼指纹` 等托管元属性。普通 Agent 对话中，Raw 文件整理按你的明确指令和当前权限执行。
+- Vault 外访问用于你明确选择的工作区和附件，以及已配置本机 Agent 工具需要的配置、安装、临时和运行目录。Agent 沙箱模式可能允许读取所选工作区以外的文件；`危险完全访问` 会解除文件系统限制，只应在提示词和工具可信时使用。EchoInk 自身不会静默扫描无关系统目录。
+- 使用 Codex 后端执行 `/journal` 时，EchoInk 可能让当前 Agent 按需读取目标日期对应的 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`，只作为本次日记的可选证据。EchoInk 不会预加载这些文件，也不会扫描无关日期的会话。
+- 使用公众号收藏时，EchoInk 会探测固定路径 `~/.codex/skills/wechat-article-to-obsidian-raw/scripts/wechat_capture.mjs`；文件存在时，会用 Node 执行它来归档本次指定文章。插件不会搜索其他 Skill 目录；脚本不可用或没有返回笔记时，才改用内置网页采集。
+- EchoInk 会把当前进程环境传给你选择的 Agent CLI、Agent 安装或服务子进程，以及你配置的 stdio MCP 命令，让它们找到 `PATH`、`HOME`、代理、provider 和命令专用配置；只应配置可信的本机命令。EchoInk 自身不使用 hostname、用户信息或环境变量做设备指纹或遥测。
+- 安装阶段的网络访问只由你的操作触发：Codex 和 OpenCode 安装会使用本机配置的 npm registry。Hermes 安装会从 `github.com/NousResearch/hermes-agent` 下载固定 Hermes revision，并从 `github.com/astral-sh/uv` 下载固定版本 `uv`。随后执行的 `uv venv --python 3.11` 在本机没有可用版本时，可能访问 `api.github.com` 和 `github.com/astral-sh/python-build-standalone` 下载托管的 Python 3.11 runtime；`uv sync --locked` 会从 Python 包服务下载锁文件指定的依赖，通常是 `pypi.org` 和 `files.pythonhosted.org`。这些下载只用于安装或修复 Hermes。
+- 你把公开网页或公众号 URL 粘贴到收藏入口后，EchoInk 会通过 Obsidian `requestUrl` 直接请求该 URL，用于下载并提取页面。公众号链接会在固定采集脚本可用时优先使用脚本，内置 `requestUrl` 作为回退；EchoInk 不会绕过登录、验证或验证码页面。
+- 你选择 Nous 授权后，EchoInk 会从 `portal.nousresearch.com` 请求推荐模型目录。Agent 推理与 MCP 流量只会发往你配置的 provider、API server 或 MCP server。
+- EchoInk 自身没有客户端或服务端遥测服务。远程 Agent、模型、API 和 MCP provider 可能按各自隐私政策保留服务日志。
+- 全 Vault 枚举只用于你明确使用的知识库搜索、首页统计、维护、初始化预览和知识规则文件选择；已知文件路径应直接访问，不得为了找一个文件扫描全库。
+- 剪贴板只在你粘贴附件、点击复制操作，或选择标为“打开终端并复制命令”的安装回退操作时访问；EchoInk 不在后台读取或监听剪贴板。
 - MCP 和 Skill 会导入到 EchoInk 当前 vault 的资源目录；按 scope 的开关只影响 EchoInk，不写回 Codex、OpenCode 或 Hermes 全局配置。经 EchoInk broker 执行的 MCP 工具调用需要显式连接配置、审批和本地日志。
 
 <a id="截图"></a>

@@ -29,7 +29,7 @@ import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import { BackendNeutralMemoryCurator } from "../harness/memory/backend-curator";
 import { NativeExecutionManager, type NativeCleanupResult, type SettleNativeExecutionInput } from "../harness/native/native-execution-manager";
 import { NativeExecutionStore } from "../harness/native/native-execution-store";
-import { buildEchoInkResourceCatalog } from "../resources/registry";
+import { buildActiveEchoInkResourceCatalog } from "../resources/registry";
 import { loadVaultEchoInkResources } from "../resources/vault-resource-catalog";
 import type { EchoInkResource } from "../resources/types";
 import type { StoredSession } from "../settings/settings";
@@ -263,7 +263,7 @@ export class EchoInkHarnessService {
       this.plugin.settings.resources.lastError = error instanceof Error ? error.message : String(error);
       return { resources: [], warnings: [] };
     });
-    return buildEchoInkResourceCatalog({
+    return buildActiveEchoInkResourceCatalog({
       settings: this.plugin.settings.resources,
       manual: vaultResources.resources
     });

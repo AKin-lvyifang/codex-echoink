@@ -255,11 +255,11 @@ OpenCode / Hermes truthful cleanup fallback
 ### 文档位置判断
 
 - 当前工作树可直接读取：
-  - `docs/ECHOINK_HARNESS_2_OPTIMIZATION_PLAN.md`
+  - `docs/internal/archive/2026/echoink-harness-2-optimization-plan.md`
   - `docs/implementation/echoink-harness-2-progress.md`
   - `docs/implementation/echoink-harness-2-log.md`
 - V3 权威相对路径仍为：
-  - `docs/architecture/ECHOINK_HARNESS_2_SESSION_CONTEXT_AND_NATIVE_LEASE_AMENDMENT_V3.md`
+  - `docs/internal/archive/2026/echoink-harness-2-session-context-native-lease-v3.md`
 - 当前隔离 worktree 的 `docs/architecture/` 尚未同步该文件。继续实施前，不得把旧 Native Lifecycle V1 / V2 当作执行计划。
 
 ### 下一步入口
@@ -408,7 +408,7 @@ npm run package
 用户要求在上一会话已提交的 Harness Kernel 交接点基础上继续，并提供 V3 权威文件路径。公开交接文档只记录仓库内相对位置：
 
 ```text
-docs/architecture/ECHOINK_HARNESS_2_SESSION_CONTEXT_AND_NATIVE_LEASE_AMENDMENT_V3.md
+docs/internal/archive/2026/echoink-harness-2-session-context-native-lease-v3.md
 ```
 
 ### 本轮执行范围
@@ -424,9 +424,9 @@ docs/architecture/ECHOINK_HARNESS_2_SESSION_CONTEXT_AND_NATIVE_LEASE_AMENDMENT_V
 - 读取用户粘贴目标文件：
   - Codex 附件中的 Harness 2.0 + V3 续接目标说明
 - 读取 Harness 2.0 主计划：
-  - `docs/ECHOINK_HARNESS_2_OPTIMIZATION_PLAN.md`
+  - `docs/internal/archive/2026/echoink-harness-2-optimization-plan.md`
 - 读取 V3 权威文件：
-  - `docs/architecture/ECHOINK_HARNESS_2_SESSION_CONTEXT_AND_NATIVE_LEASE_AMENDMENT_V3.md`
+  - `docs/internal/archive/2026/echoink-harness-2-session-context-native-lease-v3.md`
 - 读取当前实施记录：
   - `docs/implementation/echoink-harness-2-progress.md`
   - `docs/implementation/echoink-harness-2-log.md`
@@ -524,7 +524,7 @@ npm run check:public
 ### 真实检查记录
 
 - 读取计划文件：
-  - `docs/ECHOINK_HARNESS_2_OPTIMIZATION_PLAN.md`
+  - `docs/internal/archive/2026/echoink-harness-2-optimization-plan.md`
   - 确认总体 DoD 位于第 18 节，当前没有满足总完成标准。
 - 检查 Git 状态：
   - 当前分支：`codex/echoink-big-plan`
