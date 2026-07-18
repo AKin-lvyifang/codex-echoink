@@ -35,7 +35,8 @@ EchoInk owns five related but separate record classes:
 2. `Workflow Run` is the auditable record of one logical user operation or automated workflow. It owns one or more Attempt Runs, and each Attempt Run corresponds to one Harness invocation.
 3. `Native Execution` is a disposable backend thread, session, run, or process used to execute work.
 4. `Workflow Artifact` is a durable business result such as a maintenance report, tracker update, Wiki page, WAL, or accepted editor change.
-5. `Long-term Memory` is a curated formal fact set with explicit source lineage.
+5. `Long-term Memory` includes formal active facts, pending or unresolved
+   candidates, and their recoverable source transactions.
 
 Codex threads, OpenCode sessions, Hermes sessions/runs, and future backend-native executions are never the only source of conversation continuity or business truth. Chat and `knowledge.ask` may reuse them through a bounded lease. Structured workflows use an isolated native execution per attempt. When a lease is invalidated or a backend execution disappears, EchoInk rebuilds the required context from its Conversation, snapshot, workflow, artifact, and Memory records.
 
@@ -43,12 +44,43 @@ Detailed Harness events are diagnostic payload, not conversation history. They h
 
 Native cleanup starts only after the required EchoInk local commit is durable. Cleanup failure cannot reverse a successful business result. Failed cleanup uses bounded retries, then enters quarantine for manual review instead of retrying forever.
 
+Local record mutation and Native cleanup use orthogonal state machines. A local
+mutation reaches `committed` or `aborted`; its linked cleanup independently
+reaches `disposed`, `unsupported`, `retained`, or `quarantined`. A deletion
+receipt reports both states and never rewrites a committed local result as
+failed because later cleanup is pending or quarantined.
+
+Conversation rotation creates each Native retirement record as
+`awaiting-local-commit` with a target Conversation generation and commit
+identity. Startup recovery reconciles both `awaiting-local-commit` and pending
+records. A retirement is promoted only when that exact target commit is durable,
+aborted when the Conversation remains before the uncommitted target, and
+quarantined without cleanup when later or contradictory state prevents a unique
+decision.
+
 User actions have separate contracts:
 
 - Start new context: retain records, advance the Conversation revision, invalidate all backend leases, and rebuild on the next turn.
 - Reset Agent cache: retain EchoInk records and dispose only linked Native Executions.
 - Clear Conversation records: retain the Conversation shell while deleting its dialogue payload, snapshots, exclusively owned raw bodies, and policy-selected run detail.
-- Delete Conversation: remove the shell and the same owned payload, then dispose linked Native Executions. Confirmed Memory and published Workflow Artifacts require an explicit, separate deletion choice.
+- Delete Conversation: remove the shell and the same owned payload, then dispose
+  linked Native Executions. Every linked EchoInk Memory state and each published
+  Workflow Artifact follow their own contract below.
+
+Conversation clearing or deletion must enumerate linked EchoInk Memory by state:
+
+- confirmed formal active Memory and automatically accepted formal active Memory
+  (`requiresConfirmation=false`) are equally durable. They are retained by
+  default and receive `sourceDeleted` through a formal Memory transaction;
+  deleting either requires a separate explicit choice;
+- pending-confirmation and unresolved Memory require an explicit choice to
+  retain with `sourceDeleted` or discard;
+- a pending Memory journal must first replay, commit, or abort into a
+  deterministic state before the Conversation mutation can commit.
+
+Unknown schemas, corrupt indexes, incomplete lineage, or a failed Memory
+transaction block the Conversation mutation. EchoInk does not infer a deletion
+choice and does not represent `sourceDeleted` only in a deletion receipt.
 
 The existing Knowledge `/clear` action means **Start new context**. It does not
 mean Clear Conversation records or Delete Conversation.
@@ -56,8 +88,8 @@ mean Clear Conversation records or Delete Conversation.
 Detailed run payload is retained for 30 days by default and bounded run summary
 metadata for 90 days by default. Recovery evidence for an unsettled local
 commit, WAL, cleanup, or quarantine is exempt from ordinary retention until it
-reaches a safe terminal state. Conversation, Workflow Artifact, and confirmed
-Memory retention remain independent.
+reaches a safe terminal state. Conversation, Workflow Artifact, formal active
+Memory, and pending Memory recovery-state retention remain independent.
 
 Native cleanup is attempted automatically at most six times. A sixth failure
 moves the record to quarantine. Cleanup scheduling reserves capacity for new
@@ -95,7 +127,11 @@ The `/maintain` selected-first routing, Shadow Vault, write fence, artifact reco
 - Run Ledger separates retained summary metadata from bounded detailed payload.
 - Native lifecycle code gains finite retry, quarantine, fairness, terminal compaction, and explicit cleanup receipts.
 - Raw sidecars are reclaimed from a reference graph, never by deleting one caller's reference blindly.
-- Storage migration always starts with a metadata-only dry-run and stable snapshot fingerprint. Existing records are not bulk-deleted during schema adoption.
+- Storage migration always starts with a metadata-only dry-run and stable
+  structural snapshot fingerprint. The fingerprint is derived from normalized
+  directory entries, paths, file type, size, mtime, Store schema versions,
+  record metadata, and relations; it never reads or hashes Raw body bytes.
+  Existing records are not bulk-deleted during schema adoption.
 - Backends expose truthful runtime capabilities. Hermes can use native load/resume/delete only when the installed version proves those capabilities; otherwise it remains in explicit context-rehydrated mode.
 
 ## Rejected Alternatives
