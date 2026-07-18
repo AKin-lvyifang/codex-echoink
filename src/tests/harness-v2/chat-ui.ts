@@ -11,7 +11,8 @@ import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAge
 import { actionVerb, agentFooterItems, messageProvenanceMetaItems, messageTitleTime, shouldRenderMessageTitle, terminalAnswerFooterMessageIds } from "../../ui/codex-view/message-list";
 import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
 import { messageRenderOptionsForRunUpdate, selectFirstNonBlankText, shouldDismissThinkingForHarnessEvent, startChatTurn } from "../../ui/codex-view/turn-runner";
-import { renderTabsView } from "../../ui/codex-view/session-controller";
+import { deleteSessions, renderTabsView } from "../../ui/codex-view/session-controller";
+import { buildCodexSessionNavigatorModel, formatSessionUpdatedAt } from "../../ui/codex-view/tabs";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
   const runningMessages = createAgentTurn("running");
@@ -74,6 +75,8 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   await testUnifiedChatHarnessTurn();
   await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
+  testSessionNavigatorModel();
+  await testBatchSessionDeletion();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true }), { forceBottom: false, preserveScroll: true });
@@ -370,23 +373,7 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   let releaseSave!: () => void;
   const saveBlocked = new Promise<void>((resolve) => { releaseSave = resolve; });
   let placeholderUpdates = 0;
-  let buttons: any[] = [];
-  const tabBarEl = {
-    empty() { buttons = []; },
-    createEl(_tag: string, options: any) {
-      const button = {
-        className: options?.cls ?? "",
-        textContent: options?.text ?? "",
-        attrs: options?.attr ?? {},
-        onclick: null as null | (() => void),
-        oncontextmenu: null,
-        ondblclick: null,
-        getAttribute(name: string) { return this.attrs[name] ?? null; }
-      };
-      buttons.push(button);
-      return button;
-    }
-  };
+  const tabBarEl = new FakeSessionNavigatorElement("div");
   const host: any = {
     plugin: {
       settings,
@@ -413,14 +400,222 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   };
 
   renderTabsView(host);
-  const chatButton = buttons.find((button) => button.getAttribute("title") === chat.title);
-  assert.ok(chatButton?.onclick);
-  chatButton.onclick();
+  const allSessionsButton = tabBarEl.find((element) => element.getAttribute("aria-label") === "查看全部 1 个会话");
+  assert.ok(allSessionsButton?.onclick);
+  allSessionsButton.onclick({} as MouseEvent);
+  const picker = tabBarEl.find((element) => element.getAttribute("aria-label") === "全部会话");
+  const searchInput = tabBarEl.find((element) => element.getAttribute("aria-label") === "搜索会话");
+  assert.ok(picker?.onkeydown);
+  picker.onkeydown({
+    key: "Enter",
+    target: searchInput,
+    isComposing: false,
+    preventDefault: () => undefined
+  } as unknown as KeyboardEvent);
 
   assert.equal(settings.activeSessionId, chat.id);
   assert.equal(placeholderUpdates, 1, "chat placeholder must update before asynchronous settings persistence finishes");
   releaseSave();
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function testSessionNavigatorModel(): void {
+  const sessions: StoredSession[] = [
+    {
+      id: "knowledge-nav",
+      title: "知识库管理",
+      kind: "knowledge-base",
+      cwd: "",
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    },
+    {
+      id: "chat-old",
+      title: "旧会话",
+      cwd: "",
+      messages: [],
+      createdAt: 2,
+      updatedAt: 200
+    },
+    {
+      id: "chat-new",
+      title: "排查 Graphify",
+      cwd: "",
+      messages: [],
+      createdAt: 3,
+      updatedAt: 500
+    },
+    {
+      id: "chat-running",
+      title: "正在维护",
+      cwd: "",
+      messages: [],
+      createdAt: 4,
+      updatedAt: 300
+    }
+  ];
+
+  const model = buildCodexSessionNavigatorModel(sessions, "chat-new", "knowledge-nav", "chat-running", "");
+  assert.equal(model.knowledgeSession?.id, "knowledge-nav");
+  assert.equal(model.chatCount, 3);
+  assert.deepEqual(model.chatSessions.map((session) => session.id), ["chat-new", "chat-running", "chat-old"]);
+  assert.equal(model.activeSession?.id, "chat-new");
+  assert.equal(model.runningSessionId, "chat-running");
+
+  const filtered = buildCodexSessionNavigatorModel(sessions, "chat-new", "knowledge-nav", "chat-running", "graph");
+  assert.deepEqual(filtered.chatSessions.map((session) => session.id), ["chat-new"]);
+  assert.equal(formatSessionUpdatedAt(1_000_000 - 8 * 60_000, 1_000_000), "8 分钟前");
+}
+
+async function testBatchSessionDeletion(): Promise<void> {
+  const knowledge: StoredSession = {
+    id: "knowledge-delete",
+    title: "知识库管理",
+    kind: "knowledge-base",
+    cwd: "",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const chatA: StoredSession = {
+    id: "chat-delete-a",
+    title: "删除 A",
+    cwd: "",
+    messages: [],
+    createdAt: 2,
+    updatedAt: 2
+  };
+  const chatB: StoredSession = {
+    id: "chat-delete-b",
+    title: "删除 B",
+    cwd: "",
+    messages: [],
+    createdAt: 3,
+    updatedAt: 3
+  };
+  const running: StoredSession = {
+    id: "chat-running-protected",
+    title: "运行中",
+    cwd: "",
+    messages: [],
+    createdAt: 4,
+    updatedAt: 4
+  };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.knowledgeBase.sessionId = knowledge.id;
+  settings.sessions = [knowledge, chatA, chatB, running];
+  settings.activeSessionId = chatB.id;
+  const committed: string[] = [];
+  const clearedQueues: string[] = [];
+  let resetCalls = 0;
+  const host: any = {
+    plugin: {
+      settings,
+      saveSettings: async () => undefined,
+      commitEchoInkSessionDeletion: async (session: StoredSession) => {
+        committed.push(session.id);
+        return [];
+      }
+    },
+    turnQueue: { clearSessionQueue: (sessionId: string) => clearedQueues.push(sessionId) },
+    running: true,
+    activeRunSessionId: running.id,
+    resetVirtualWindow: () => { resetCalls += 1; },
+    renderTabs: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    renderKnowledgeDashboard: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined,
+    updateInputPlaceholder: () => undefined,
+    prewarmActiveThread: () => undefined,
+    createSession: () => {
+      throw new Error("知识库常驻时不应补建空会话");
+    },
+    isKnowledgeBaseSession: (session: StoredSession) => session.id === knowledge.id
+  };
+
+  await deleteSessions(host, [chatA.id, chatB.id, running.id, knowledge.id]);
+
+  assert.deepEqual(committed, [chatA.id, chatB.id]);
+  assert.deepEqual(clearedQueues, [chatA.id, chatB.id]);
+  assert.deepEqual(settings.sessions.map((session) => session.id), [knowledge.id, running.id]);
+  assert.equal(settings.activeSessionId, running.id);
+  assert.equal(resetCalls, 1);
+}
+
+class FakeSessionNavigatorElement {
+  readonly children: FakeSessionNavigatorElement[] = [];
+  readonly attrs: Record<string, string> = {};
+  className = "";
+  textContent = "";
+  value = "";
+  disabled = false;
+  onclick: ((event: MouseEvent) => void) | null = null;
+  oncontextmenu: ((event: MouseEvent) => void) | null = null;
+  ondblclick: (() => void) | null = null;
+  oninput: (() => void) | null = null;
+  onkeydown: ((event: KeyboardEvent) => void) | null = null;
+
+  constructor(readonly tagName: string, options: any = {}) {
+    this.className = options.cls ?? "";
+    this.textContent = options.text ?? "";
+    Object.assign(this.attrs, options.attr ?? {});
+  }
+
+  empty(): void {
+    this.children.length = 0;
+  }
+
+  createEl(tag: string, options: any = {}): FakeSessionNavigatorElement {
+    const child = new FakeSessionNavigatorElement(tag, options);
+    this.children.push(child);
+    return child;
+  }
+
+  createDiv(options: any = {}): FakeSessionNavigatorElement {
+    return this.createEl("div", options);
+  }
+
+  createSpan(options: any = {}): FakeSessionNavigatorElement {
+    return this.createEl("span", options);
+  }
+
+  addClass(...classes: string[]): void {
+    const next = new Set(this.className.split(/\s+/).filter(Boolean));
+    classes.forEach((className) => next.add(className));
+    this.className = [...next].join(" ");
+  }
+
+  removeClass(...classes: string[]): void {
+    const removed = new Set(classes);
+    this.className = this.className.split(/\s+/).filter((className) => className && !removed.has(className)).join(" ");
+  }
+
+  toggleClass(className: string, enabled: boolean): void {
+    if (enabled) this.addClass(className);
+    else this.removeClass(className);
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attrs[name] ?? null;
+  }
+
+  focus(): void {}
+  scrollIntoView(): void {}
+
+  find(predicate: (element: FakeSessionNavigatorElement) => boolean): FakeSessionNavigatorElement | undefined {
+    if (predicate(this)) return this;
+    for (const child of this.children) {
+      const match = child.find(predicate);
+      if (match) return match;
+    }
+    return undefined;
+  }
 }
 
 async function testUnifiedChatHarnessTurn(): Promise<void> {

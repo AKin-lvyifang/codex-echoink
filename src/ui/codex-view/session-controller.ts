@@ -5,7 +5,7 @@ import { clearKnowledgeBaseVisibleHistory } from "../../knowledge-base/session-h
 import { advanceSessionRevision, sessionBackendBinding } from "../../harness/kernel/session-service";
 import { ensureKnowledgeBaseSession, isKnowledgeBaseSession as isKnowledgeSession, newId, type StoredAttachment, type StoredSession } from "../../settings/settings";
 import { RuntimeTurnQueue } from "../turn-queue";
-import { textInputModal } from "../modals";
+import { confirmModal, textInputModal } from "../modals";
 import { KnowledgeBaseHistoryModal } from "./history-modal";
 import { openSessionMenu as showSessionMenu } from "./menus";
 import { renderCodexTabs } from "./tabs";
@@ -66,6 +66,7 @@ export function renderTabsView(host: CodexSessionHost): void {
         }
         void host.renameSession(session);
       },
+      onDeleteSessions: (sessionIds) => void confirmDeleteSessions(host, sessionIds),
       onCreateSession: () => void (async () => {
         host.createSession();
         host.resetVirtualWindow();
@@ -78,7 +79,8 @@ export function renderTabsView(host: CodexSessionHost): void {
         host.updateInputPlaceholder();
         host.prewarmActiveThread();
       })()
-    }
+    },
+    host.running ? host.activeRunSessionId : ""
   );
 }
 
@@ -86,7 +88,7 @@ export function openSessionMenuView(host: CodexSessionHost, event: MouseEvent, s
   showSessionMenu(event, host.isKnowledgeBaseSession(session), {
     onRename: () => void host.renameSession(session),
     onResetCache: () => void resetSessionNativeCache(host, session),
-    onDelete: () => void host.deleteSession(session.id)
+    onDelete: () => void confirmDeleteSessions(host, [session.id])
   });
 }
 
@@ -115,27 +117,54 @@ export async function renameSession(host: CodexSessionHost, session: StoredSessi
 }
 
 export async function deleteSession(host: CodexSessionHost, sessionId: string): Promise<void> {
-  const sessions = host.plugin.settings.sessions;
-  const index = sessions.findIndex((session) => session.id === sessionId);
-  if (index < 0) return;
-  const session = sessions[index];
-  if (host.isKnowledgeBaseSession(session)) {
-    new Notice("知识库管理频道不能删除");
+  await deleteSessions(host, [sessionId]);
+}
+
+export async function confirmDeleteSessions(host: CodexSessionHost, sessionIds: string[]): Promise<void> {
+  const candidates = deletableSessions(host, sessionIds);
+  if (!candidates.length) {
+    new Notice("所选会话不可删除；知识库和运行中会话会被保留");
     return;
   }
+  const count = candidates.length;
+  const accepted = await confirmModal(
+    host.app,
+    count === 1 ? "删除这个会话？" : `删除 ${count} 个会话？`,
+    count === 1
+      ? "会话记录和关联的 Agent 缓存将一起清理。此操作不能撤销。"
+      : `这 ${count} 个会话的记录和关联 Agent 缓存将一起清理。此操作不能撤销。`,
+    "确认删除",
+    "取消"
+  );
+  if (!accepted) return;
+  await deleteSessions(host, candidates.map((session) => session.id));
+}
+
+export async function deleteSessions(host: CodexSessionHost, sessionIds: string[]): Promise<void> {
+  const sessions = host.plugin.settings.sessions;
+  const candidates = deletableSessions(host, sessionIds);
+  if (!candidates.length) return;
+  const deletingIds = new Set(candidates.map((session) => session.id));
+  const skippedCount = new Set(sessionIds).size - deletingIds.size;
   const previousSessions = sessions.slice();
   const previousActiveSessionId = host.plugin.settings.activeSessionId;
-  const wasActive = host.plugin.settings.activeSessionId === sessionId;
-  sessions.splice(index, 1);
-  if (!sessions.length) {
+  const wasActive = deletingIds.has(host.plugin.settings.activeSessionId);
+  host.plugin.settings.sessions = sessions.filter((session) => !deletingIds.has(session.id));
+  if (!host.plugin.settings.sessions.length) {
     host.createSession();
   } else if (wasActive) {
-    host.plugin.settings.activeSessionId = sessions[Math.max(0, index - 1)]?.id ?? sessions[0].id;
+    const fallback = host.plugin.settings.sessions
+      .filter((session) => !host.isKnowledgeBaseSession(session))
+      .sort((left, right) => right.updatedAt - left.updatedAt || right.createdAt - left.createdAt)[0]
+      ?? host.plugin.settings.sessions[0];
+    host.plugin.settings.activeSessionId = fallback.id;
     host.resetVirtualWindow();
   }
-  let cleanupResults = [] as Awaited<ReturnType<CodexForObsidianPlugin["commitEchoInkSessionDeletion"]>>;
+  const cleanupResults = [] as Awaited<ReturnType<CodexForObsidianPlugin["commitEchoInkSessionDeletion"]>>;
   try {
-    cleanupResults = await host.plugin.commitEchoInkSessionDeletion(session);
+    for (const session of candidates) {
+      cleanupResults.push(...await host.plugin.commitEchoInkSessionDeletion(session));
+    }
   } catch (error) {
     host.plugin.settings.sessions = previousSessions;
     host.plugin.settings.activeSessionId = previousActiveSessionId;
@@ -143,11 +172,27 @@ export async function deleteSession(host: CodexSessionHost, sessionId: string): 
     new Notice(`删除会话失败：${error instanceof Error ? error.message : String(error)}`);
     return;
   }
-  host.turnQueue.clearSessionQueue(sessionId);
+  for (const session of candidates) host.turnQueue.clearSessionQueue(session.id);
   host.renderTabs();
   host.renderMessages({ forceBottom: true });
+  host.renderToolbar();
+  host.renderKnowledgeDashboard();
+  void host.refreshKnowledgeDashboard();
+  host.updateInputPlaceholder();
+  if (wasActive) host.prewarmActiveThread();
   const retained = cleanupResults.filter((result) => result.cleanup !== "disposed").length;
-  new Notice(retained ? `已删除会话；${retained} 个原生缓存已保留或等待重试` : "已删除会话");
+  const deletedCopy = candidates.length === 1 ? "已删除会话" : `已删除 ${candidates.length} 个会话`;
+  const retainedCopy = retained ? `；${retained} 个原生缓存已保留或等待重试` : "";
+  const skippedCopy = skippedCount > 0 ? `；${skippedCount} 个受保护会话已保留` : "";
+  new Notice(`${deletedCopy}${retainedCopy}${skippedCopy}`);
+}
+
+function deletableSessions(host: CodexSessionHost, sessionIds: string[]): StoredSession[] {
+  const requested = new Set(sessionIds);
+  return host.plugin.settings.sessions.filter((session) => {
+    if (!requested.has(session.id) || host.isKnowledgeBaseSession(session)) return false;
+    return !(host.running && host.activeRunSessionId === session.id);
+  });
 }
 
 export async function clearKnowledgeBasePage(host: CodexSessionHost, session: StoredSession): Promise<void> {
