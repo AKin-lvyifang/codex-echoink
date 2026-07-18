@@ -688,6 +688,16 @@ export class CodexSettingTab extends PluginSettingTab {
     const summary = wrapper.createDiv({ cls: "codex-api-provider-row" });
     summary.createDiv({ cls: "codex-editor-actions-heading", text: copy.knowledge.statusHeading });
     summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.recentStatus(knowledgeStatusLabel(settings.lastRunStatus, copy), settings.lastRunAt ? new Date(settings.lastRunAt).toLocaleString() : "") });
+    if (settings.lastCompletion) {
+      summary.createDiv({
+        cls: "codex-resource-note",
+        text: copy.knowledge.recentCompletion(
+          copy.knowledge.completionLabels[settings.lastCompletion],
+          settings.lastAttempts?.length ?? 0,
+          settings.lastPendingSources?.length ?? 0
+        )
+      });
+    }
     summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.initialization(knowledgeInitStatusLabel(settings.initialization.status, copy), settings.initialization.rulesFilePath) });
     summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.guide(resolveKnowledgeBaseRulesFilePath(settings), true) });
     if (settings.lastReportPath) summary.createDiv({ cls: "codex-resource-note", text: copy.knowledge.recentReport(settings.lastReportPath) });

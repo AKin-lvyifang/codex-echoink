@@ -4,6 +4,15 @@ import type { AgentConnectionStatus, AgentModelInfo, AgentProfileInfo, AgentProm
 import type { OpenCodeBackend, OpenCodeCliTaskOptions, OpenCodeConnectionInfo } from "../core/opencode-backend";
 import { openCodeAssistantMessageIds } from "../core/opencode-run";
 import type { PermissionMode } from "../types/app-server";
+import {
+  ExactWriteFenceUnavailableError,
+  assertExactWriteFenceRequest,
+  createExactWriteFenceReceipt,
+  deliverExactWriteFenceReceipt,
+  exactWriteFenceEventData,
+  exactWriteFenceUnavailable
+} from "./write-fence";
+import type { AgentExactWriteFenceReceipt } from "./types";
 
 type AgentEventDraft = Omit<AgentEvent, "backend" | "createdAt" | "runId">;
 type OpenCodeStreamSource = "sse" | "cli-jsonl" | "session-readback";
@@ -35,6 +44,7 @@ export interface OpenCodeRichRuntimeOptions {
   sseReadyTimeoutMs?: number;
   recoveryPollMs?: number;
   manageBackendConnection?: boolean;
+  vaultPath?: string;
 }
 
 export interface OpenCodeProjectionResult {
@@ -96,6 +106,7 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
   async runTaskStream(input: AgentTaskInput, sink: AgentEventSink): Promise<AgentTaskResult> {
     if (this.activeController) throw new Error("OpenCode rich runtime 已有任务在运行。");
     throwIfAborted(input.abortSignal);
+    assertExactWriteFenceRequest("opencode", input, this.options.vaultPath ?? "");
 
     const runController = new AbortController();
     this.activeController = runController;
@@ -104,6 +115,7 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
     const deadline = Date.now() + normalizeTimeout(input.timeoutMs);
     let sessionId = "";
     let promptSubmitted = false;
+    let exactWriteFenceReceipt: AgentExactWriteFenceReceipt | undefined;
     let failedEmitted = false;
     let outputText = "";
     let usage: Record<string, unknown> | undefined;
@@ -156,6 +168,20 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
         });
         sessionId = session.sessionId;
       }
+      if (input.requireExactWriteFence) {
+        exactWriteFenceReceipt = createExactWriteFenceReceipt({
+          backend: "opencode",
+          task: input,
+          transport: "opencode-sdk-session-permissions",
+          transportAck: {
+            operation: resumed ? "session.permissions.update" : "session.start",
+            sessionId,
+            permission: input.permission,
+            writableRoots: input.writableRoots ?? []
+          }
+        });
+        await deliverExactWriteFenceReceipt(input, exactWriteFenceReceipt);
+      }
       this.activeRunId = sessionId;
       input.onRunId?.(sessionId);
       await emitDraft({ type: "run_started", data: { streamSource: "sse", promptSubmitted: false } });
@@ -187,6 +213,13 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
       } catch (error) {
         streamController.abort();
         if (runController.signal.aborted) throw createCancelledError();
+        if (input.requireExactWriteFence) {
+          throw exactWriteFenceUnavailable(
+            "opencode",
+            `SSE transport 在提交 prompt 前不可用，禁止降级到不带可证明 scoped permission 的 CLI：${errorMessage(error)}`,
+            error
+          );
+        }
         activeStreamSource = "cli-jsonl";
         return await this.runCliFallback({
           input,
@@ -340,6 +373,7 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
         messageId: projector.lastAssistantMessageId,
         streamSource: activeStreamSource,
         promptSubmitted,
+        ...(exactWriteFenceReceipt ? { exactWriteFenceReceipt } : {}),
         unconfirmedToolCallCount: unconfirmedToolCallIds.length,
         ...(unconfirmedToolCallIds.length ? { unconfirmedToolCallIds } : {})
       };
@@ -378,6 +412,7 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
           type: "failed",
           error: normalized.message,
           data: {
+            ...(error instanceof ExactWriteFenceUnavailableError ? exactWriteFenceEventData(error) : {}),
             interruptedToolCallCount: interruptedToolCallIds.length,
             ...(interruptedToolCallIds.length ? { interruptedToolCallIds } : {})
           }

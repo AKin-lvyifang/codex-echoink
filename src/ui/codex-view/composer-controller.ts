@@ -92,6 +92,10 @@ export function renderToolbar(host: CodexComposerHost): void {
   const knowledgeSession = host.isKnowledgeBaseSession(session);
   const knowledgeManager = host.plugin.getKnowledgeBaseManager();
   const knowledgeTaskRunning = Boolean(knowledgeManager?.isRunning);
+  const knowledgeRecoveryStatus = knowledgeManager?.maintenanceRecoveryStatus ?? {
+    state: "ready" as const,
+    message: ""
+  };
   const workspacePath = normalizeWorkspacePath(session.cwd);
   const refs = renderComposerToolbar(
     host.toolbarEl,
@@ -100,6 +104,8 @@ export function renderToolbar(host: CodexComposerHost): void {
       session,
       knowledgeSession,
       knowledgeTaskRunning,
+      knowledgeRecoveryState: knowledgeRecoveryStatus.state,
+      knowledgeRecoveryMessage: knowledgeRecoveryStatus.message,
       knowledgeBackend: host.resolvedKnowledgeBackend(),
       selectedSkill: host.selectedSkill,
       selectedPermission: host.selectedPermission,
@@ -136,8 +142,11 @@ export function renderToolbar(host: CodexComposerHost): void {
       onOpenModelMenu: (event) => host.openModelMenu(event),
       onMicInput: () => new Notice("语音输入暂未接入"),
       onCancelKnowledgeTask: () => {
-        host.pauseQueueForSession(session.id);
-        void knowledgeManager?.cancelMaintenance();
+        void knowledgeManager?.cancelMaintenance().then((cancellation) => {
+          if (cancellation.accepted) {
+            host.pauseQueueForSession(session.id);
+          }
+        });
       },
       onStopTurn: () => void host.stopTurn(),
       onEnqueueDraft: () => void host.enqueueComposerDraft(),
@@ -156,12 +165,18 @@ export function renderToolbar(host: CodexComposerHost): void {
 export function renderQueue(host: CodexComposerHost): void {
   if (!host.queueEl) return;
   const session = host.ensureSession();
+  const knowledgeManager = host.plugin.getKnowledgeBaseManager();
+  const maintenanceReady = knowledgeManager?.maintenanceRecoveryStatus.state !== "pending"
+    && knowledgeManager?.maintenanceRecoveryStatus.state !== "blocked";
   renderTurnQueue(
     host.queueEl,
     {
       items: host.turnQueue.itemsForSession(session.id),
       paused: host.turnQueue.isSessionQueuePaused(session.id),
-      canResume: !host.running && !host.promptEnhancerRunning && !host.plugin.getKnowledgeBaseManager()?.isRunning,
+      canResume: !host.running
+        && !host.promptEnhancerRunning
+        && !knowledgeManager?.isRunning
+        && maintenanceReady,
       draggedItemId: host.draggedQueueItemId
     },
     {

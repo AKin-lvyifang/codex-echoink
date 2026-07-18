@@ -31,6 +31,8 @@ export interface ComposerToolbarState {
   session: StoredSession;
   knowledgeSession: boolean;
   knowledgeTaskRunning: boolean;
+  knowledgeRecoveryState: "pending" | "ready" | "blocked";
+  knowledgeRecoveryMessage: string;
   knowledgeBackend: AgentBackendMode;
   selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
@@ -225,11 +227,28 @@ export function renderComposerToolbar(
       modelButton.onclick = callbacks.onOpenKnowledgeModelMenu;
     }
 
-    const kbChip = right.createEl("button", { cls: "codex-composer-model-button codex-kb-channel-chip", attr: { type: "button", title: "知识库常用命令" } });
+    const recoveryPending = state.knowledgeRecoveryState === "pending";
+    const recoveryBlocked = state.knowledgeRecoveryState === "blocked";
+    const kbChipLabel = state.knowledgeTaskRunning
+      ? "知识库运行中"
+      : recoveryPending
+        ? "正在恢复维护"
+        : recoveryBlocked
+          ? "维护恢复受阻"
+          : "知识库命令";
+    const kbChip = right.createEl("button", {
+      cls: "codex-composer-model-button codex-kb-channel-chip",
+      attr: {
+        type: "button",
+        title: state.knowledgeRecoveryMessage || "知识库常用命令"
+      }
+    });
     kbChip.toggleClass("is-running", state.knowledgeTaskRunning);
+    kbChip.toggleClass("is-recovery-pending", recoveryPending);
+    kbChip.toggleClass("is-recovery-blocked", recoveryBlocked);
     const kbIcon = kbChip.createSpan({ cls: "codex-composer-model-icon" });
     setIcon(kbIcon, "library");
-    kbChip.createSpan({ cls: "codex-composer-model-text", text: state.knowledgeTaskRunning ? "知识库运行中" : "知识库命令" });
+    kbChip.createSpan({ cls: "codex-composer-model-text", text: kbChipLabel });
     const chevron = kbChip.createSpan({ cls: "codex-composer-chevron" });
     setIcon(chevron, "chevron-down");
     kbChip.onclick = callbacks.onOpenKnowledgeCommandMenu;

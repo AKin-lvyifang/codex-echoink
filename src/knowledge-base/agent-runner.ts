@@ -1,9 +1,9 @@
 import * as path from "path";
 import { createAgentTaskRuntime } from "../agent/factory";
-import type { AgentTaskRuntime, PreparedAgentResources } from "../agent/runtime";
+import type { AgentEventTaskRuntime, AgentTaskRuntime, PreparedAgentResources } from "../agent/runtime";
 import type { AgentBackendKind, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput } from "../agent/types";
 import { OpenCodeBackend, type OpenCodeHistorySnapshot } from "../core/opencode-backend";
-import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime } from "../core/opencode-models";
+import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime, selectOpenCodeModelForTask } from "../core/opencode-models";
 import { harnessBackendDisplayName, harnessTaskAgent, harnessTaskModel, harnessTaskProfile } from "../harness/agents/backend-runtime-profile";
 import { TaskRuntimeAgentAdapter, type TaskRuntimeAgentAdapterOptions } from "../harness/agents/adapters/task-runtime-adapter";
 import type { HarnessRunResult, HarnessWorkflow, OutputContract } from "../harness/contracts/run";
@@ -15,6 +15,11 @@ import type { CodexForObsidianSettings } from "../settings/settings";
 import type { UserInput } from "../types/app-server";
 import { formatAgentTaskFailureContext, isKnowledgeBaseCancelError, KNOWLEDGE_BASE_CANCEL_ERROR } from "./failure";
 import type { KnowledgeBaseSource } from "./types";
+import {
+  isTrustedKnowledgeAgentNativeTerminationReceipt,
+  issueKnowledgeAgentNativeTerminationReceipt,
+  type KnowledgeAgentNativeTerminationReceipt
+} from "./native-termination";
 
 const MAX_ATTACHED_SOURCES = 20;
 const CODEX_KNOWLEDGE_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
@@ -35,11 +40,17 @@ export type KnowledgeAgentTaskInput = AgentTaskInput & {
   workflow?: HarnessWorkflow;
   outputKind?: OutputContract["kind"];
   vaultProfileSections?: ContextSection[];
+  onSubmitted?: () => void;
 };
 
 export type KnowledgeAgentTaskOutput = {
   text: string;
   harnessResult?: HarnessRunResult;
+  harnessRunId?: string;
+  workflowRunId?: string;
+  attemptId?: string;
+  backend?: AgentBackendKind;
+  submittedAt?: number;
 };
 
 export type KnowledgeJournalNativeHistory = OpenCodeHistorySnapshot | null;
@@ -63,6 +74,13 @@ export interface KnowledgeCodexRuntimeTaskRequest {
   resources?: PreparedAgentResources;
   artifactRecovery?: KnowledgeAgentArtifactRecovery;
   vaultProfileSections?: ContextSection[];
+  onSubmitted?: () => void;
+  vaultPathOverride?: string;
+  writableRootsOverride?: string[];
+  requireExactWriteFence?: boolean;
+  exactWriteFence?: AgentTaskInput["exactWriteFence"];
+  onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
+  onNativeRunId?: (backend: AgentBackendKind, runId: string) => void;
 }
 
 type ActiveKnowledgeRuntimeRun = {
@@ -78,7 +96,7 @@ export interface KnowledgeAgentRuntimeControllerOptions {
   vaultPath(): string;
   saveSettings(): Promise<void>;
   isCanceled(): boolean;
-  harness(): KnowledgeAgentHarnessOptions;
+  harness(vaultPathOverride?: string): KnowledgeAgentHarnessOptions;
   runCodexTask?(input: KnowledgeCodexRuntimeTaskRequest): Promise<KnowledgeAgentTaskOutput>;
 }
 
@@ -99,6 +117,25 @@ export interface KnowledgeRuntimeTaskRequest {
   managedKind?: string;
   artifactRecovery?: KnowledgeAgentArtifactRecovery;
   vaultProfileSections?: ContextSection[];
+  /** Fires once, immediately before the runtime can submit the Agent prompt. */
+  onSubmitted?: () => void;
+  /** Per-attempt isolated Vault root used by runtime, cwd and Harness workspace. */
+  vaultPathOverride?: string;
+  /** Exact per-attempt write roots; maintenance must not default to the whole Shadow. */
+  writableRootsOverride?: string[];
+  /**
+   * Fail closed unless the selected backend can preserve the exact Shadow
+   * writable-root fence without falling back to a broader transport.
+   */
+  requireExactWriteFence?: boolean;
+  exactWriteFence?: AgentTaskInput["exactWriteFence"];
+  onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
+}
+
+export interface KnowledgeRuntimePreflightRequest {
+  backend: Exclude<AgentBackendKind, "codex-cli">;
+  sources: KnowledgeBaseSource[];
+  vaultPathOverride?: string;
 }
 
 type KnowledgeRuntimeRunner = (
@@ -193,6 +230,60 @@ export class KnowledgeAgentRuntimeController {
     return await runner(this, input);
   }
 
+  /**
+   * Checks a task-runtime backend without submitting a prompt. Maintenance uses
+   * this before an attempt so only definitive infrastructure/model failures can
+   * move to the next Agent.
+   */
+  async preflight(input: KnowledgeRuntimePreflightRequest): Promise<void> {
+    const runtime = this.createRuntime(input.backend, input.vaultPathOverride);
+    try {
+      const status = await runtime.connect();
+      if (!status.connected) {
+        throw knowledgeBackendUnavailableError(
+          input.backend,
+          status.errors[0] || `${status.label || harnessBackendDisplayName(input.backend)} 连接未就绪`
+        );
+      }
+      throwIfKnowledgeTaskCanceled(this.options.isCanceled());
+      const models = await runtime.listModels();
+      throwIfKnowledgeTaskCanceled(this.options.isCanceled());
+      const parts = knowledgeSourcesToPromptParts(input.sources);
+      const required = requiredModalities(parts);
+      const configured = harnessTaskModel(this.options.settings, input.backend);
+      const selected = input.backend === "opencode"
+        ? selectOpenCodeModelForTask(
+          models,
+          configured?.providerId ?? this.options.settings.opencode.providerId,
+          configured?.modelId ?? this.options.settings.opencode.modelId,
+          required
+        )
+        : selectAgentModel(
+          models,
+          configured?.providerId ?? this.options.settings.agents.hermes.providerId,
+          configured?.modelId ?? this.options.settings.agents.hermes.modelId
+        );
+      if (!selected) {
+        throw knowledgeBackendUnavailableError(input.backend, "预检没有发现可用模型");
+      }
+      const missing = required.filter((modality) => !selected.inputModalities.includes(modality));
+      if (missing.length) {
+        throw knowledgeBackendUnavailableError(
+          input.backend,
+          `模型 ${selected.displayName || selected.modelId} 不支持 ${missing.join(" / ")} 输入`
+        );
+      }
+    } catch (error) {
+      if (shouldPreserveMaintenancePreflightError(error, this.options.isCanceled())) throw error;
+      throw knowledgeBackendUnavailableError(
+        input.backend,
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      await runtime.disconnect?.().catch(() => undefined);
+    }
+  }
+
   async runCodexTask(input: KnowledgeRuntimeTaskRequest): Promise<KnowledgeAgentTaskOutput> {
     if (!this.options.runCodexTask) throw new Error("Codex knowledge task runner is unavailable.");
     return await this.options.runCodexTask({
@@ -205,12 +296,19 @@ export class KnowledgeAgentRuntimeController {
       managedKind: input.managedKind ?? "unknown",
       resources: input.resources,
       artifactRecovery: input.artifactRecovery,
-      vaultProfileSections: input.vaultProfileSections
+      vaultProfileSections: input.vaultProfileSections,
+      onSubmitted: input.onSubmitted,
+      vaultPathOverride: input.vaultPathOverride,
+      writableRootsOverride: input.writableRootsOverride,
+      requireExactWriteFence: input.requireExactWriteFence,
+      exactWriteFence: input.exactWriteFence,
+      onExactWriteFenceConfigured: input.onExactWriteFenceConfigured,
+      onNativeRunId: input.onNativeRunId
     });
   }
 
   async runTaskRuntime(input: KnowledgeRuntimeTaskRequest): Promise<KnowledgeAgentTaskOutput> {
-    const runtime = this.createRuntime(input.backend);
+    const runtime = this.createRuntime(input.backend, input.vaultPathOverride);
     const timeoutMs = normalizeKnowledgeTaskTimeoutMs(input.backend, input.timeoutMs);
     try {
       await runtime.connect();
@@ -223,6 +321,9 @@ export class KnowledgeAgentRuntimeController {
         prompt: input.prompt,
         sources: knowledgeSourcesToPromptParts(input.sources),
         permission: input.permission,
+        writableRoots: input.permission === "read-only"
+          ? []
+          : input.writableRootsOverride ?? [input.vaultPathOverride ?? this.options.vaultPath()],
         resources: input.resources,
         toolBridge: input.toolBridge,
         timeoutMs,
@@ -236,8 +337,12 @@ export class KnowledgeAgentRuntimeController {
           read: true,
           bash: false
         },
-        vaultProfileSections: input.vaultProfileSections
-      }, timeoutMs, input.workflow, input.outputKind, input.harnessRunId);
+        requireExactWriteFence: input.requireExactWriteFence,
+        exactWriteFence: input.exactWriteFence,
+        onExactWriteFenceConfigured: input.onExactWriteFenceConfigured,
+        vaultProfileSections: input.vaultProfileSections,
+        onSubmitted: input.onSubmitted
+      }, timeoutMs, input.workflow, input.outputKind, input.harnessRunId, input.vaultPathOverride);
     } catch (error) {
       if (!this.options.isCanceled() && !isKnowledgeBaseCancelError(error instanceof Error ? error.message : String(error))) {
         this.recordRuntimeError(input.backend, error);
@@ -248,11 +353,11 @@ export class KnowledgeAgentRuntimeController {
     }
   }
 
-  private createRuntime(backend: AgentBackendKind): AgentTaskRuntime {
+  private createRuntime(backend: AgentBackendKind, vaultPathOverride?: string): AgentTaskRuntime {
     return createAgentTaskRuntime({
       backend,
       settings: this.options.settings,
-      vaultPath: this.options.vaultPath()
+      vaultPath: vaultPathOverride ?? this.options.vaultPath()
     });
   }
 
@@ -263,7 +368,8 @@ export class KnowledgeAgentRuntimeController {
     timeoutMs: number,
     workflow: HarnessWorkflow,
     outputKind: OutputContract["kind"],
-    harnessRunId?: string
+    harnessRunId?: string,
+    vaultPathOverride?: string
   ): Promise<KnowledgeAgentTaskOutput> {
     const abortController = new AbortController();
     const activeRun: ActiveKnowledgeRuntimeRun = {
@@ -276,6 +382,7 @@ export class KnowledgeAgentRuntimeController {
     this.activeRun = activeRun;
     return await new Promise<KnowledgeAgentTaskOutput>((resolve, reject) => {
       let settled = false;
+      let timeoutStarted = false;
       let timer: ReturnType<typeof setTimeout>;
       const finish = (callback: () => void): void => {
         if (settled) return;
@@ -287,22 +394,35 @@ export class KnowledgeAgentRuntimeController {
       };
       const fail = (error: Error): void => finish(() => reject(this.options.isCanceled() ? new Error(KNOWLEDGE_BASE_CANCEL_ERROR) : error));
       timer = setTimeout(() => {
-        abortController.abort();
+        timeoutStarted = true;
         const timeoutError = new Error(formatAgentTaskFailureContext({
           backend,
           phase: lastPhase,
           runId: activeRun.nativeRunId,
           message: `${harnessBackendDisplayName(backend)} 长时间没有返回（${formatDurationForError(timeoutMs)}），已请求中断。`
         }));
-        if (activeRun.nativeRunId) {
-          void runtime.abort(activeRun.nativeRunId).catch(() => undefined);
+        void (async () => {
+          abortController.abort();
+          if (!activeRun.nativeRunId) {
+            await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 20));
+          }
+          const nativeRunId = activeRun.nativeRunId;
+          if (nativeRunId) {
+            const nativeTerminationReceipt = await confirmRuntimeAbort(
+              backend,
+              runtime,
+              nativeRunId,
+              harnessRunId ?? activeRun.nativeRunId
+            );
+            if (nativeTerminationReceipt) {
+              Object.assign(timeoutError, {
+                terminationConfirmedAt: nativeTerminationReceipt.confirmedAt,
+                nativeTerminationReceipt
+              });
+            }
+          }
           fail(timeoutError);
-          return;
-        }
-        setTimeout(() => {
-          if (activeRun.nativeRunId) void runtime.abort(activeRun.nativeRunId).catch(() => undefined);
-          fail(timeoutError);
-        }, 20);
+        })();
       }, Math.max(1, timeoutMs));
       activeRun.cancel = (error: Error) => {
         abortController.abort();
@@ -322,9 +442,13 @@ export class KnowledgeAgentRuntimeController {
           }
         }, (event) => {
           lastPhase = event.type;
-        }, this.options.harness()).then(
-          (output) => finish(() => resolve({ text: output.text, harnessResult: output.harnessResult })),
-          (error) => fail(formatAgentTaskGuardError(backend, lastPhase, activeRun.nativeRunId, error))
+        }, this.options.harness(vaultPathOverride)).then(
+          (output) => {
+            if (!timeoutStarted) finish(() => resolve({ text: output.text, harnessResult: output.harnessResult }));
+          },
+          (error) => {
+            if (!timeoutStarted) fail(formatAgentTaskGuardError(backend, lastPhase, activeRun.nativeRunId, error));
+          }
         );
       } catch (error) {
         fail(error instanceof Error ? error : new Error(String(error)));
@@ -400,7 +524,7 @@ export async function runKnowledgeAgentTask(
     backendId: runtime.kind,
     displayName: harnessBackendDisplayName(runtime.kind),
     version: "legacy-runtime",
-    runtime,
+    runtime: runtimeWithSubmissionBoundary(runtime, input.onSubmitted),
     nativeRefContext: harness.nativeRefContextForBackend?.(runtime.kind),
     capabilities: "legacy",
     legacyTaskDefaults: {
@@ -411,6 +535,9 @@ export async function runKnowledgeAgentTask(
       model: input.model,
       agent: input.agent,
       profile: input.profile,
+      requireExactWriteFence: input.requireExactWriteFence,
+      exactWriteFence: input.exactWriteFence,
+      onExactWriteFenceConfigured: input.onExactWriteFenceConfigured,
       abortSignal: input.abortSignal,
       onRunId: input.onRunId
     }
@@ -469,10 +596,117 @@ export async function runKnowledgeAgentTask(
   };
 }
 
+function runtimeWithSubmissionBoundary(
+  runtime: AgentTaskRuntime,
+  onSubmitted: (() => void) | undefined
+): AgentTaskRuntime & Partial<AgentEventTaskRuntime> {
+  if (!onSubmitted) return runtime;
+  let submitted = false;
+  const markSubmitted = (): void => {
+    if (submitted) return;
+    submitted = true;
+    onSubmitted();
+  };
+  const eventRuntime = runtime as AgentTaskRuntime & Partial<AgentEventTaskRuntime>;
+  return {
+    kind: runtime.kind,
+    connect: () => runtime.connect(),
+    disconnect: runtime.disconnect ? () => runtime.disconnect!() : undefined,
+    listModels: () => runtime.listModels(),
+    listAgents: runtime.listAgents ? () => runtime.listAgents!() : undefined,
+    hasNativeSession: runtime.hasNativeSession ? (sessionId) => runtime.hasNativeSession!(sessionId) : undefined,
+    deleteNativeSession: runtime.deleteNativeSession ? (sessionId) => runtime.deleteNativeSession!(sessionId) : undefined,
+    runTask: (task) => runtime.runTask(withExactFenceSubmissionBoundary(task, markSubmitted)),
+    ...(eventRuntime.runTaskEvents ? {
+      runTaskEvents: (task: AgentTaskInput, emit: Parameters<AgentEventTaskRuntime["runTaskEvents"]>[1]) => {
+        return eventRuntime.runTaskEvents!(withExactFenceSubmissionBoundary(task, markSubmitted), emit);
+      }
+    } : {}),
+    abort: (runId) => runtime.abort(runId)
+  };
+}
+
+function withExactFenceSubmissionBoundary(
+  task: AgentTaskInput,
+  markSubmitted: () => void
+): AgentTaskInput {
+  if (!task.requireExactWriteFence) {
+    markSubmitted();
+    return task;
+  }
+  const onExactWriteFenceConfigured = task.onExactWriteFenceConfigured;
+  return {
+    ...task,
+    onExactWriteFenceConfigured: async (receipt) => {
+      await onExactWriteFenceConfigured?.(receipt);
+      // The trusted transport calls this hook after its exact policy ACK and
+      // immediately before the prompt crosses the native submission boundary.
+      markSubmitted();
+    }
+  };
+}
+
+function knowledgeBackendUnavailableError(backend: AgentBackendKind, detail: string): Error {
+  return Object.assign(
+    new Error(`${harnessBackendDisplayName(backend)} Agent backend unavailable：${detail}`),
+    { code: "BACKEND_UNAVAILABLE" }
+  );
+}
+
+function shouldPreserveMaintenancePreflightError(error: unknown, canceled: boolean): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (canceled || isKnowledgeBaseCancelError(message)) return true;
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: unknown }).code ?? "").trim().toUpperCase();
+  return code === "BACKEND_UNAVAILABLE"
+    || code === "AUTH_REQUIRED"
+    || code === "UNAUTHENTICATED"
+    || code === "POLICY_DENIED"
+    || code === "UNSAFE_VAULT"
+    || code === "EXACT_WRITE_FENCE_UNAVAILABLE";
+}
+
 export function formatAgentTaskGuardError(backend: AgentBackendKind, phase: string, runId: string, error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   if (isKnowledgeBaseCancelError(message)) return error instanceof Error ? error : new Error(message);
-  return new Error(formatAgentTaskFailureContext({ backend, phase, runId, message }));
+  const formatted = new Error(formatAgentTaskFailureContext({ backend, phase, runId, message }));
+  if (error && typeof error === "object") {
+    const code = (error as { code?: unknown }).code;
+    const terminationConfirmedAt = (error as { terminationConfirmedAt?: unknown }).terminationConfirmedAt;
+    const nativeTerminationReceipt = (error as { nativeTerminationReceipt?: unknown }).nativeTerminationReceipt;
+    if (typeof code === "string" && code) Object.assign(formatted, { code });
+    if (typeof terminationConfirmedAt === "number" && Number.isFinite(terminationConfirmedAt)) {
+      Object.assign(formatted, { terminationConfirmedAt });
+    }
+    if (isTrustedKnowledgeAgentNativeTerminationReceipt(nativeTerminationReceipt)) {
+      Object.assign(formatted, { nativeTerminationReceipt });
+    }
+  }
+  return formatted;
+}
+
+async function confirmRuntimeAbort(
+  backend: AgentBackendKind,
+  runtime: AgentTaskRuntime,
+  runId: string,
+  harnessRunId: string
+): Promise<KnowledgeAgentNativeTerminationReceipt | undefined> {
+  try {
+    await rejectAfterTimeout(
+      runtime.abort(runId),
+      5_000,
+      () => undefined,
+      "Agent abort acknowledgement timed out"
+    );
+    return issueKnowledgeAgentNativeTerminationReceipt({
+      backend,
+      harnessRunId,
+      nativeExecutionId: runId,
+      kind: "abort-ack"
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 export function buildPromptWithPreparedResources(prompt: string, resources: PreparedAgentResources): string {

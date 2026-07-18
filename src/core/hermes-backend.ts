@@ -5,6 +5,7 @@ import { formatHermesError } from "./hermes-errors";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "./hermes-models";
 import { parseHermesMcpListOutput, type HermesMcpServerInfo } from "../resources/mcp-loader";
 import { parseHermesSkillListOutput, type HermesSkillInfo } from "../resources/skill-loader";
+import { exactWriteFenceUnavailable } from "../agent/write-fence";
 
 export interface HermesBackendOptions {
   cliPath: string;
@@ -154,6 +155,12 @@ export class HermesBackend implements AgentBackend {
   }
 
   async runTask(input: AgentTaskInput): Promise<AgentTaskResult> {
+    if (input.requireExactWriteFence) {
+      throw exactWriteFenceUnavailable(
+        "hermes",
+        "Hermes API/CLI 当前不会把 writableRoots 下发为可证明的精确写隔离策略。"
+      );
+    }
     const prompt = buildHermesPrompt(input);
     const profile = input.profile?.trim() || this.options.profile.trim();
     if (this.options.serverUrl.trim()) {

@@ -9,7 +9,7 @@ import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
 import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
-import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus } from "./types";
+import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus, KnowledgeBaseRunCompletion } from "./types";
 import { exists, normalizeSlashes, walkFiles } from "./utils";
 
 export interface KnowledgeBaseDashboardFile {
@@ -140,6 +140,9 @@ export interface KnowledgeBaseDashboardSnapshot {
   };
   lastRun: {
     status: string;
+    completion: KnowledgeBaseRunCompletion | "";
+    attemptCount: number;
+    pendingSourceCount: number;
     at: number;
     reportPath: string;
     reportExists: boolean;
@@ -296,6 +299,9 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     },
     lastRun: {
       status: settings.lastRunStatus,
+      completion: settings.lastCompletion ?? "",
+      attemptCount: settings.lastAttempts?.length ?? 0,
+      pendingSourceCount: settings.lastPendingSources?.length ?? 0,
       at: settings.lastRunAt,
       reportPath,
       reportExists,
@@ -622,11 +628,17 @@ function buildActivityLogs(input: ActivityLogsInput): KnowledgeBaseDashboardActi
 
   if (input.latestMaintenance) {
     const failed = input.latestMaintenance.status === "failed";
+    const canceled = input.latestMaintenance.status === "canceled";
     add({
-      label: failed ? "任务失败" : maintenanceModeDoneLabel(input.latestMaintenance.mode),
-      text: input.latestMaintenance.reportPath || `知识健康度 ${input.health.score}/100`,
+      label: failed
+        ? "任务失败"
+        : canceled
+          ? maintenanceModeCanceledLabel(input.latestMaintenance.mode)
+          : maintenanceCompletionDoneLabel(input.latestMaintenance),
+      text: input.latestMaintenance.reportPath
+        || (canceled ? "本轮没有继续改动知识库" : `知识健康度 ${input.health.score}/100`),
       at: input.latestMaintenance.at,
-      tone: failed ? "red" : "green",
+      tone: failed ? "red" : canceled ? "muted" : "green",
       path: input.latestMaintenance.reportPath || undefined
     });
   }
@@ -680,6 +692,21 @@ function maintenanceModeDoneLabel(mode: KnowledgeBaseMaintenanceMode): string {
   if (mode === "outputs") return "输出整理完成";
   if (mode === "inbox") return "Inbox 整理完成";
   return "体检完成";
+}
+
+function maintenanceModeCanceledLabel(mode: KnowledgeBaseMaintenanceMode): string {
+  if (mode === "maintain") return "维护已取消";
+  if (mode === "reingest") return "重新提炼已取消";
+  if (mode === "outputs") return "输出整理已取消";
+  if (mode === "inbox") return "Inbox 整理已取消";
+  return "体检已取消";
+}
+
+function maintenanceCompletionDoneLabel(entry: KnowledgeBaseMaintenanceHistoryEntry): string {
+  if (entry.completion === "partial") return "维护部分完成";
+  if (entry.completion === "recovered") return "维护恢复后完成";
+  if (entry.completion === "noop") return "维护已检查（无新来源）";
+  return maintenanceModeDoneLabel(entry.mode);
 }
 
 interface RecommendationInput {
@@ -986,7 +1013,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
   const latestHistory = latestHealthEntry(history);
-  const latestMaintenance = latestMaintenanceEntry(input.maintenanceHistory);
+  const latestMaintenance = latestCompletedMaintenanceEntry(input.maintenanceHistory);
   const latestRecordedAt = Math.max(latestHistory?.at ?? 0, latestMaintenance?.at ?? 0);
   const latestRecordedStatus = latestMaintenance && latestMaintenance.at >= (latestHistory?.at ?? 0) ? latestMaintenance.status : latestHistory?.status;
   const latestCheckAt = Math.max(latestRecordedAt, input.latestExternalCheckAt);
@@ -1068,7 +1095,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
 function buildCheckFreshness(history: KnowledgeBaseHealthHistoryEntry[], generatedAt: number, externalCheckAt = 0, maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[] = []): KnowledgeBaseDashboardCheckFreshness {
   const normalized = normalizeHealthHistory(history);
   const latestHistory = latestHealthEntry(normalized);
-  const latestMaintenance = latestMaintenanceEntry(maintenanceHistory);
+  const latestMaintenance = latestCompletedMaintenanceEntry(maintenanceHistory);
   const latestCheckAt = Math.max(latestHistory?.at ?? 0, latestMaintenance?.at ?? 0, externalCheckAt);
   if (!latestCheckAt) {
     return {
@@ -1142,21 +1169,30 @@ function isSameLocalDay(leftMs: number, rightMs: number): boolean {
 }
 
 function normalizeMaintenanceHistory(history: KnowledgeBaseMaintenanceHistoryEntry[], legacyHistory: KnowledgeBaseHealthHistoryEntry[]): KnowledgeBaseMaintenanceHistoryEntry[] {
-  const byDate = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
+  const byDateAndKind = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
   const add = (entry: KnowledgeBaseMaintenanceHistoryEntry) => {
     if (!isKnowledgeBaseHeatmapMode(entry.mode)) return;
-    const current = byDate.get(entry.date);
+    const key = `${entry.date}:${entry.status === "canceled" ? "canceled" : "check"}`;
+    const current = byDateAndKind.get(key);
     if (current && current.at > entry.at) return;
-    byDate.set(entry.date, entry);
+    byDateAndKind.set(key, entry);
   };
   for (const entry of normalizeHealthHistory(legacyHistory)) {
     add({ ...entry, mode: "lint", reportPath: "" });
   }
   for (const entry of history) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || (entry.status !== "success" && entry.status !== "failed")) continue;
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+      || (
+        entry.status !== "success"
+        && entry.status !== "failed"
+        && entry.status !== "canceled"
+      )
+    ) continue;
     add(entry);
   }
-  return Array.from(byDate.values()).sort((left, right) => left.date.localeCompare(right.date));
+  return Array.from(byDateAndKind.values()).sort((left, right) =>
+    left.date.localeCompare(right.date) || left.at - right.at);
 }
 
 function isKnowledgeBaseHeatmapMode(mode: string): boolean {
@@ -1166,6 +1202,7 @@ function isKnowledgeBaseHeatmapMode(mode: string): boolean {
 function statusByCheckDate(history: KnowledgeBaseHealthHistoryEntry[], maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[]): Map<string, KnowledgeBaseDashboardCheckStatus> {
   const byDate = new Map<string, KnowledgeBaseDashboardCheckStatus>();
   for (const entry of normalizeMaintenanceHistory(maintenanceHistory, [])) {
+    if (entry.status === "canceled") continue;
     byDate.set(entry.date, entry.status);
   }
   for (const entry of normalizeHealthHistory(history)) {
@@ -1205,6 +1242,12 @@ function countHealthStreakDays(history: KnowledgeBaseHealthHistoryEntry[], maint
 
 function latestMaintenanceEntry(history: KnowledgeBaseMaintenanceHistoryEntry[]): KnowledgeBaseMaintenanceHistoryEntry | null {
   const normalized = normalizeMaintenanceHistory(history, []);
+  return normalized.length ? normalized[normalized.length - 1] : null;
+}
+
+function latestCompletedMaintenanceEntry(history: KnowledgeBaseMaintenanceHistoryEntry[]): KnowledgeBaseMaintenanceHistoryEntry | null {
+  const normalized = normalizeMaintenanceHistory(history, [])
+    .filter((entry) => entry.status !== "canceled");
   return normalized.length ? normalized[normalized.length - 1] : null;
 }
 

@@ -28,7 +28,25 @@ export interface PrepareAgentResourcesInput {
   backendCapabilities: AgentBackendCapabilities;
   enabledByScope?: Partial<Record<EchoInkResourceScope, Record<string, boolean>>>;
   mcpConnections?: EchoInkMcpConnectionRecords;
+  /** Excludes every Skill resource while preserving tool bundles and MCP resources. Defaults to true. */
+  includeSkills?: boolean;
+  /** Controls the compact Skill summary injected into the prompt. Defaults to true. */
+  includePromptSkills?: boolean;
+  /** Excludes every MCP resource and its native/broker bridge. Defaults to true. */
+  includeMcpResources?: boolean;
+  /** Excludes optional plugin/tool-bundle resources. Defaults to true. */
+  includeToolBundles?: boolean;
 }
+
+export const MAINTENANCE_AGENT_RESOURCE_PROFILE = {
+  includeSkills: false,
+  includePromptSkills: false,
+  includeMcpResources: false,
+  includeToolBundles: false
+} as const satisfies Pick<
+  PrepareAgentResourcesInput,
+  "includeSkills" | "includePromptSkills" | "includeMcpResources" | "includeToolBundles"
+>;
 
 export function buildEchoInkResourceCatalog(input: BuildEchoInkResourceCatalogInput = {}): EchoInkResource[] {
   const resources: EchoInkResource[] = [
@@ -45,8 +63,16 @@ export function buildEchoInkResourceCatalog(input: BuildEchoInkResourceCatalogIn
 }
 
 export function prepareAgentResources(catalog: EchoInkResource[], input: PrepareAgentResourcesInput): PreparedAgentResources {
-  const enabledResources = enabledResourcesForScope(catalog, input.scope, input.enabledByScope);
-  const promptSkills = enabledResources.filter((resource) => resource.kind === "skill" && resource.bridgeMode === "prompt-only");
+  const scopedResources = enabledResourcesForScope(catalog, input.scope, input.enabledByScope);
+  const enabledResources = scopedResources.filter((resource) => {
+    if (resource.kind === "skill" && input.includeSkills === false) return false;
+    if (resource.kind === "mcp-server" && input.includeMcpResources === false) return false;
+    if (resource.kind === "tool-bundle" && input.includeToolBundles === false) return false;
+    return true;
+  });
+  const promptSkills = input.includePromptSkills === false
+    ? []
+    : enabledResources.filter((resource) => resource.kind === "skill" && resource.bridgeMode === "prompt-only");
   const promptPrefix = promptSkills.length
     ? [
       "本轮 EchoInk 已启用以下 Skill 说明。你必须按这些说明工作，但资源开关只作用于当前 EchoInk 插件，不代表修改任何 Agent 全局配置。",

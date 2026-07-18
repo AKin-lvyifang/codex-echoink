@@ -58,6 +58,12 @@ export interface AgentRunRequest {
   runId: string;
   sessionId: string;
   workflow?: HarnessWorkflow;
+  /**
+   * The workspace frozen by the Harness for this run. Production callers
+   * always provide it; optionality only preserves compatibility for direct
+   * adapter test doubles that do not execute workspace-scoped operations.
+   */
+  workspace?: HarnessRunRequest["workspace"];
   nativeSessionId?: string;
   input: HarnessUserInput;
   permissions: HarnessPermissionPolicy;

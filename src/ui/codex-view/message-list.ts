@@ -1615,6 +1615,8 @@ function actionItemDetailLabel(item: ActionItemViewModel): string {
 export function actionVerb(item: ActionItemViewModel): string {
   if (item.status === "unconfirmed") return statusActionVerb(item.kind, "状态未回传");
   if (item.status === "interrupted" || item.status === "canceled") return statusActionVerb(item.kind, "已中断");
+  if (item.status === "recovery-pending") return statusActionVerb(item.kind, "等待恢复");
+  if (item.status === "recovery-blocked") return statusActionVerb(item.kind, "恢复受阻");
   if (item.status === "running" || item.status === "blocked") return runningActionVerb(item.kind);
   if (item.status === "failed") return statusActionVerb(item.kind, "失败");
   if (item.kind === "read") return "已读取";
@@ -1659,7 +1661,7 @@ function runningActionVerb(kind: ActionGroupKind): string {
 }
 
 function iconForActionKind(kind: ActionGroupKind, status?: string): string {
-  if (status === "failed") return "triangle-alert";
+  if (status === "failed" || status === "recovery-blocked") return "triangle-alert";
   const icons: Record<ActionGroupKind, string> = {
     read: "book-open",
     search: "search",
@@ -1747,7 +1749,9 @@ function labelForStatus(status: string): string {
     canceled: "已取消",
     blocked: "等待确认",
     interrupted: "中断",
-    unconfirmed: "状态未回传"
+    unconfirmed: "状态未回传",
+    "recovery-pending": "等待恢复",
+    "recovery-blocked": "恢复受阻"
   };
   return labels[status] ?? status;
 }
@@ -1785,6 +1789,8 @@ function formatAbsoluteTime(value: number): string {
 }
 
 function knowledgeBaseRunDisplayTitle(payload: KnowledgeBaseRunPayload, status?: string): string {
+  if (status === "recovery-pending") return "正在恢复上次知识库维护";
+  if (status === "recovery-blocked") return "知识库维护恢复被阻断";
   if (status === "interrupted") return "知识库任务已中断";
   if (status === "canceled") return "知识库任务已取消";
   if (status === "failed") return "知识库任务失败";

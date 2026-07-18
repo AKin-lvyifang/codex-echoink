@@ -3,12 +3,13 @@ import { chmod, copyFile, link, mkdtemp, rm, writeFile } from "node:fs/promises"
 import * as http from "node:http";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { OpenCodeBackend } from "../core/opencode-backend";
+import { OpenCodeBackend, openCodePermissionRules } from "../core/opencode-backend";
 import { openCodeAuthorizationConnectionOverrides } from "../core/opencode-auth";
 
 const SECURITY_SERVER_START_TIMEOUT_MS = 30_000;
 
 async function main(): Promise<void> {
+  testMaintenanceShadowPermissionRules();
   await testProviderQualifiedModelIdsAtSdkBoundary();
   await testCliCompletedEmptyDoesNotRecoverToolPrelude();
   const fixtureDirectory = await mkdtemp(path.join(tmpdir(), "echoink opencode [owned]-"));
@@ -125,6 +126,31 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => unknownServer.close(() => resolve()));
     await rm(fixtureDirectory, { recursive: true, force: true });
   }
+}
+
+function testMaintenanceShadowPermissionRules(): void {
+  const shadowRoot = path.resolve(path.join(tmpdir(), "echoink-shadow-permission"));
+  const rules = openCodePermissionRules("workspace-write", [
+    path.join(shadowRoot, "wiki"),
+    path.join(shadowRoot, "projects"),
+    path.join(shadowRoot, "outputs"),
+    path.join(shadowRoot, "inbox")
+  ], shadowRoot);
+  assert.deepEqual(rules[0], { permission: "*", pattern: "*", action: "deny" });
+  assert.equal(rules.some((rule) =>
+    rule.permission === "edit" && rule.pattern === "wiki/**" && rule.action === "allow"
+  ), true);
+  assert.equal(rules.some((rule) =>
+    rule.permission === "edit" && rule.pattern === "raw/**" && rule.action === "allow"
+  ), false);
+  const outputsAllow = rules.findIndex((rule) =>
+    rule.permission === "edit" && rule.pattern === "outputs/**" && rule.action === "allow"
+  );
+  const trackerDeny = rules.findIndex((rule) =>
+    rule.permission === "edit" && rule.pattern === "outputs/.ingest-tracker.md" && rule.action === "deny"
+  );
+  assert.equal(outputsAllow >= 0, true);
+  assert.equal(trackerDeny > outputsAllow, true);
 }
 
 async function testCliCompletedEmptyDoesNotRecoverToolPrelude(): Promise<void> {

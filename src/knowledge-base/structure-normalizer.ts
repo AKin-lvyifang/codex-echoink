@@ -13,6 +13,13 @@ import { exists, normalizeSlashes, walkFiles } from "./utils";
 export interface StructureNormalizationOptions {
   lastReportPath?: string;
   includeRawMoves?: boolean;
+  /**
+   * Shadow commits currently serialize file-level changes. When a case-only
+   * target is proven to be the same inode as its source on a case-insensitive
+   * file system, it cannot be represented as an independent missing target.
+   * Keep the original casing when this guard is enabled.
+   */
+  skipAliasedCaseOnlyMoves?: boolean;
 }
 
 interface MoveCandidate {
@@ -70,7 +77,7 @@ export async function normalizeKnowledgeBaseStructure(
   for (const candidate of candidates) {
     if (seen.has(candidate.from)) continue;
     seen.add(candidate.from);
-    await applyMoveCandidate(vaultPath, candidate, result);
+    await applyMoveCandidate(vaultPath, candidate, result, options);
   }
   if (result.pathRewrites.length) {
     result.updatedLinks = await updateKnowledgeBaseTextReferences(vaultPath, result.pathRewrites);
@@ -173,7 +180,12 @@ async function projectPhaseMoveCandidates(vaultPath: string): Promise<MoveCandid
   return candidates;
 }
 
-async function applyMoveCandidate(vaultPath: string, candidate: MoveCandidate, result: StructureNormalizationResult): Promise<void> {
+async function applyMoveCandidate(
+  vaultPath: string,
+  candidate: MoveCandidate,
+  result: StructureNormalizationResult,
+  options: StructureNormalizationOptions
+): Promise<void> {
   const from = normalizeSlashes(candidate.from);
   const to = normalizeSlashes(candidate.to);
   if (!isKnowledgeRelativePath(from) || !isKnowledgeRelativePath(to)) {
@@ -190,6 +202,18 @@ async function applyMoveCandidate(vaultPath: string, candidate: MoveCandidate, r
   }
   const targetExists = await exists(toAbs);
   const caseOnlyMove = targetExists && isCaseOnlyMove(fromAbs, toAbs);
+  if (
+    options.skipAliasedCaseOnlyMoves
+    && caseOnlyMove
+    && await pathsAliasSameEntry(fromAbs, toAbs)
+  ) {
+    addSkip(result, {
+      from,
+      to,
+      reason: "仅大小写重命名无法由 Shadow 文件级事务安全表达，保留原路径"
+    });
+    return;
+  }
   const shouldMergeDirectory = targetExists && !caseOnlyMove && candidate.kind === "directory";
   if (targetExists && !caseOnlyMove) {
     if (!shouldMergeDirectory) {
@@ -416,6 +440,21 @@ function isCaseOnlyMove(fromAbs: string, toAbs: string): boolean {
   const from = path.resolve(fromAbs);
   const to = path.resolve(toAbs);
   return from !== to && from.toLowerCase() === to.toLowerCase();
+}
+
+async function pathsAliasSameEntry(leftPath: string, rightPath: string): Promise<boolean> {
+  const [left, right] = await Promise.all([
+    fsp.lstat(leftPath).catch(() => null),
+    fsp.lstat(rightPath).catch(() => null)
+  ]);
+  return Boolean(
+    left
+    && right
+    && !left.isSymbolicLink()
+    && !right.isSymbolicLink()
+    && left.dev === right.dev
+    && left.ino === right.ino
+  );
 }
 
 function addSkip(result: StructureNormalizationResult, skipped: StructureNormalizationSkipped): void {

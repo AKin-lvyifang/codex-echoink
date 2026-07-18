@@ -6,6 +6,7 @@ export interface KnowledgeBaseDailyScheduleState {
   lastRunStatus?: "idle" | "running" | "success" | "failed" | "canceled";
   lastScheduledRunAt?: number;
   lastScheduledRunStatus?: "idle" | "running" | "success" | "failed" | "canceled";
+  lastScheduledRunId?: string;
 }
 
 export function shouldRunScheduledKnowledgeBaseMaintenance(
@@ -18,7 +19,18 @@ export function shouldRunScheduledKnowledgeBaseMaintenance(
   const scheduled = scheduledTimeForToday(settings.scheduleTime, now);
   if (!scheduled || now.getTime() < scheduled.getTime()) return false;
   const lastScheduled = settings.lastScheduledRunAt ? new Date(settings.lastScheduledRunAt) : null;
-  if (lastScheduled && lastScheduled.toDateString() === now.toDateString()) return false;
+  const completedToday = lastScheduled
+    && lastScheduled.toDateString() === now.toDateString()
+    && (settings.lastScheduledRunStatus === "success" || settings.lastScheduledRunStatus === "canceled");
+  if (completedToday) return false;
+  // A durable running id is owned by startup recovery. Retrying it here could
+  // launch a second Agent while the first workflow is committed or recoverable.
+  if (
+    settings.lastScheduledRunStatus === "running"
+    && Boolean(settings.lastScheduledRunId?.trim())
+  ) {
+    return false;
+  }
   if (forceCatchUp) return settings.catchUpOnStartup;
   if (schedulerStartedAt > scheduled.getTime() && !settings.catchUpOnStartup) return false;
   return true;

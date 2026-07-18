@@ -38,6 +38,9 @@ export interface CreateHarnessAgentAdapterInput {
     agent?: string;
     profile?: string;
     requireDirectAgent?: boolean;
+    requireExactWriteFence?: boolean;
+    exactWriteFence?: AgentTaskInput["exactWriteFence"];
+    onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
     abortSignal?: AbortSignal;
     onRunId?: (runId: string) => void;
   };
@@ -66,8 +69,11 @@ function createCodexRichHarnessAdapter(input: CreateHarnessAgentAdapterInput): A
   return factory({
     displayName,
     version: input.version ?? "rich-runtime",
+    ...input.codexRich,
     toolBridge: input.task?.toolBridge ?? null,
-    ...input.codexRich
+    requireExactWriteFence: input.task?.requireExactWriteFence,
+    exactWriteFence: input.task?.exactWriteFence,
+    onExactWriteFenceConfigured: input.task?.onExactWriteFenceConfigured
   });
 }
 

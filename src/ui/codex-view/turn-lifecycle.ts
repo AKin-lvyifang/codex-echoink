@@ -48,8 +48,10 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
     const manager = host.plugin.getKnowledgeBaseManager();
     if (manager) {
       const session = host.activeRunSession();
-      host.pauseQueueForSession(session.id);
-      await manager.cancelMaintenance();
+      const cancellation = await manager.cancelMaintenance();
+      if (cancellation.accepted) {
+        host.pauseQueueForSession(session.id);
+      }
       return;
     }
   }

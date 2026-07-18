@@ -406,6 +406,8 @@ export class CodexView extends ItemView {
   }
 
   refreshKnowledgeBaseDashboard(): void {
+    this.renderToolbar();
+    this.renderKnowledgeDashboard();
     void this.refreshKnowledgeDashboard(true);
   }
 

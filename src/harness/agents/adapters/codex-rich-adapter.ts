@@ -8,6 +8,12 @@ import {
   type EchoInkToolCallRequest
 } from "../../../agent/tool-bridge";
 import type { AgentToolBridgeRuntime } from "../../../agent/runtime";
+import type { AgentExactWriteFenceContext, AgentExactWriteFenceReceipt, AgentTaskInput } from "../../../agent/types";
+import {
+  assertExactWriteFenceRequest,
+  createExactWriteFenceReceipt,
+  deliverExactWriteFenceReceipt
+} from "../../../agent/write-fence";
 import type { UserInput } from "../../../types/app-server";
 import { noCapabilities } from "../../contracts/capability";
 import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
@@ -51,6 +57,9 @@ export interface CodexRichAgentAdapterOptions {
   artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   inactivityTimeoutMs?: number;
   finalAnswerGraceMs?: number;
+  requireExactWriteFence?: boolean;
+  exactWriteFence?: AgentExactWriteFenceContext;
+  onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
 }
 
 export class CodexRichAgentAdapter implements AgentAdapter {
@@ -195,6 +204,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       let threadId = await this.ensureThread(state.turnOptions);
       state.threadId = threadId;
       driver.setThreadId(threadId);
+      state.exactWriteFenceReceipt = await this.configureExactWriteFence(request, state.turnOptions, threadId);
       let input = await this.buildInitialTurnInput(threadId, request);
       if (state.cancelRequested) {
         this.runs.delete(request.runId);
@@ -217,6 +227,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         this.options.setNativeThreadId(threadId);
         state.threadId = threadId;
         driver.setThreadId(threadId);
+        state.exactWriteFenceReceipt = await this.configureExactWriteFence(request, state.turnOptions, threadId);
         input = await this.buildInitialTurnInput(threadId, request);
         if (state.cancelRequested) {
           this.runs.delete(request.runId);
@@ -509,11 +520,49 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   private finalizeRunState(state: CodexRunState, result: AgentRunResult): AgentRunResult {
     const finalized: AgentRunResult = {
       ...result,
+      terminalData: state.exactWriteFenceReceipt
+        ? { ...(result.terminalData ?? {}), exactWriteFenceReceipt: state.exactWriteFenceReceipt }
+        : result.terminalData,
       nativeExecution: result.nativeExecution ?? (state.threadId ? this.buildNativeExecutionRef(state.threadId) : undefined),
       nativeThreadId: result.nativeThreadId ?? (state.threadId || undefined),
       nativeSessionId: result.nativeSessionId ?? state.turnId
     };
     return finalized;
+  }
+
+  private async configureExactWriteFence(
+    request: AgentRunRequest,
+    turnOptions: TurnOptions | undefined,
+    threadId: string
+  ): Promise<AgentExactWriteFenceReceipt | undefined> {
+    if (!this.options.requireExactWriteFence) return undefined;
+    const task: AgentTaskInput = {
+      prompt: "",
+      permission: turnOptions?.permission ?? request.permissions.mode,
+      writableRoots: turnOptions?.writableRoots ?? request.permissions.writableRoots,
+      requireExactWriteFence: true,
+      exactWriteFence: this.options.exactWriteFence,
+      onExactWriteFenceConfigured: this.options.onExactWriteFenceConfigured
+    };
+    const vaultPath = turnOptions?.cwd?.trim()
+      || request.workspace?.cwd?.trim()
+      || request.workspace?.vaultPath?.trim()
+      || "";
+    assertExactWriteFenceRequest("codex-cli", task, vaultPath);
+    const receipt = createExactWriteFenceReceipt({
+      backend: "codex-cli",
+      task,
+      transport: "codex-app-server-thread-sandbox",
+      transportAck: {
+        operation: "thread.start-or-resume",
+        threadId,
+        cwd: vaultPath,
+        permission: task.permission,
+        writableRoots: task.writableRoots ?? []
+      }
+    });
+    await deliverExactWriteFenceReceipt(task, receipt);
+    return receipt;
   }
 
   private releaseRunState(state: CodexRunState): void {
@@ -583,16 +632,9 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   }
 
   private turnOptionsForRequest(request: AgentRunRequest): TurnOptions | undefined {
-    if (request.workflow === "prompt.enhance") return this.options.turnOptions;
-    const systemContext = [
-      ...request.context.corePolicy,
-      ...request.context.vaultProfile
-    ]
-      .filter((section) => section.channel === "system")
-      .map((section) => section.content.trim())
-      .filter(Boolean)
-      .join("\n\n");
-    if (!systemContext) return this.options.turnOptions;
+    const workspaceCwd = request.workspace?.cwd?.trim()
+      || request.workspace?.vaultPath?.trim()
+      || "";
     const base: TurnOptions = this.options.turnOptions ?? {
       model: "",
       reasoning: "medium",
@@ -601,9 +643,25 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       mode: "agent",
       mcpEnabled: false
     };
-    return {
+    const scoped: TurnOptions = {
       ...base,
-      developerInstructions: [systemContext, base.developerInstructions?.trim() ?? ""]
+      ...(base.cwd?.trim() ? {} : workspaceCwd ? { cwd: workspaceCwd } : {}),
+      permission: request.permissions.mode,
+      writableRoots: [...request.permissions.writableRoots]
+    };
+    if (request.workflow === "prompt.enhance") return scoped;
+    const systemContext = [
+      ...request.context.corePolicy,
+      ...request.context.vaultProfile
+    ]
+      .filter((section) => section.channel === "system")
+      .map((section) => section.content.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    if (!systemContext) return scoped;
+    return {
+      ...scoped,
+      developerInstructions: [systemContext, scoped.developerInstructions?.trim() ?? ""]
         .filter(Boolean)
         .join("\n\n")
     };
@@ -715,6 +773,7 @@ interface CodexRunState {
   terminalGate: CodexRunTerminalGate;
   toolCallCount: number;
   turnOptions?: TurnOptions;
+  exactWriteFenceReceipt?: AgentExactWriteFenceReceipt;
   resultPromise?: Promise<AgentRunResult>;
 }
 

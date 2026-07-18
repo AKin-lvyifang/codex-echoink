@@ -17,11 +17,18 @@ export async function recoverStaleHarnessRuns(input: {
   messages: ChatMessage[];
   commitLocalHistory: () => Promise<void>;
   settleRunTerminal: (recovery: PendingRunTerminalRecovery) => Promise<void>;
+  deferRunIds?: ReadonlySet<string>;
 }): Promise<StaleHarnessRunRecoveryResult> {
-  const settledMessageCount = settleStaleRunningMessages(input.messages);
+  const settledMessageCount = settleStaleRunningMessages(
+    input.messages,
+    input.deferRunIds
+  );
   if (settledMessageCount > 0) await input.commitLocalHistory();
 
-  const recoveries = pendingRunTerminalRecoveries(input.messages);
+  const recoveries = pendingRunTerminalRecoveries(
+    input.messages,
+    input.deferRunIds
+  );
   const settledRunIds: string[] = [];
   const failedRunIds: string[] = [];
   for (const recovery of recoveries) {
@@ -37,12 +44,16 @@ export async function recoverStaleHarnessRuns(input: {
   return { settledMessageCount, settledRunIds, failedRunIds };
 }
 
-export function settleStaleRunningMessages(messages: ChatMessage[]): number {
+export function settleStaleRunningMessages(
+  messages: ChatMessage[],
+  deferRunIds: ReadonlySet<string> = new Set()
+): number {
   let settled = 0;
   const pendingByRun = new Map<string, "cancelled" | "failed">();
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.status !== "running") continue;
+    if (message.runId && deferRunIds.has(message.runId)) continue;
 
     if (message.runId) {
       const status = isKnowledgeBaseRunMessage(message) ? "failed" : "cancelled";
@@ -84,11 +95,15 @@ export function settleStaleRunningMessages(messages: ChatMessage[]): number {
   return settled;
 }
 
-export function pendingRunTerminalRecoveries(messages: ChatMessage[]): PendingRunTerminalRecovery[] {
+export function pendingRunTerminalRecoveries(
+  messages: ChatMessage[],
+  deferRunIds: ReadonlySet<string> = new Set()
+): PendingRunTerminalRecovery[] {
   const recoveries = new Map<string, PendingRunTerminalRecovery>();
   for (const message of messages) {
     const status = message.runTerminalRecoveryPending;
     if (!message.runId || !status) continue;
+    if (deferRunIds.has(message.runId)) continue;
     const current = recoveries.get(message.runId);
     recoveries.set(message.runId, {
       runId: message.runId,

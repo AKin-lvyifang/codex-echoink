@@ -39,6 +39,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   assert.equal(timeline.groups.some((group) => group.items.some((item) => item.id === "knowledge")), false);
 
   testUnconfirmedAndInterruptedActionsStayHonest();
+  testMaintenanceRecoverySettlesWithoutGenericFailure();
 
   assert.deepEqual(messageProvenanceMetaItems(completedMessages[4]), [
     "OpenCode · openai/gpt-5.5 · build",
@@ -184,6 +185,91 @@ function testUnconfirmedAndInterruptedActionsStayHonest(): void {
   assert.equal(interrupted.summaryTitle, "1 个动作已中断");
   assert.equal(interrupted.groups[0]?.title, "读取已中断");
   assert.equal(actionVerb(interrupted.groups[0].items[0]), "读取已中断");
+}
+
+function testMaintenanceRecoverySettlesWithoutGenericFailure(): void {
+  let activeRunId = "run-recovery-pending";
+  const store = new SessionMessageStore({
+    getActiveRunId: () => activeRunId,
+    getActiveTurnId: () => "",
+    getVaultPath: () => "/tmp/echoink-chat-ui",
+    externalizeMessageText: async () => undefined,
+    renderMessagesIfActive: () => undefined,
+    scheduleSessionSave: () => undefined
+  });
+  const pendingThinkingSession: StoredSession = {
+    id: "chat-recovery-pending-thinking",
+    title: "Recovery pending",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  store.ensureThinkingMessage(
+    pendingThinkingSession,
+    "知识库维护",
+    "正在等待维护结果"
+  );
+  store.finishThinkingMessage(pendingThinkingSession, "recovery-pending");
+  const pendingThinking = pendingThinkingSession.messages.find((message) =>
+    message.itemType === "thinking"
+  );
+  assert.equal(pendingThinking?.status, "recovery-pending");
+  assert.equal(pendingThinking?.text, "安全恢复中");
+  assert.equal(
+    pendingThinkingSession.messages.some((message) =>
+      message.status === "failed" || message.status === "error"
+    ),
+    false
+  );
+
+  const pendingActionSession: StoredSession = {
+    id: "chat-recovery-pending-action",
+    title: "Recovery pending action",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  store.appendProcessDelta(
+    pendingActionSession,
+    "recovery-command",
+    "commandExecution",
+    "partial output",
+    { command: "maintain", status: "running" }
+  );
+  store.finishRunningProcessMessages(
+    pendingActionSession,
+    "recovery-pending"
+  );
+  const pendingAction = pendingActionSession.messages.find((message) =>
+    message.id === "recovery-command"
+  );
+  assert.equal(pendingAction?.status, "recovery-pending");
+  const pendingTimeline = buildActionTimeline(pendingActionSession.messages);
+  assert.equal(pendingTimeline.runStatus, "recovery-pending");
+  assert.equal(pendingTimeline.groups[0]?.status, "recovery-pending");
+
+  activeRunId = "run-recovery-blocked";
+  const blockedThinkingSession: StoredSession = {
+    id: "chat-recovery-blocked-thinking",
+    title: "Recovery blocked",
+    cwd: "/tmp/echoink-chat-ui",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  store.ensureThinkingMessage(
+    blockedThinkingSession,
+    "知识库维护",
+    "正在等待维护结果"
+  );
+  store.finishThinkingMessage(blockedThinkingSession, "recovery-blocked");
+  const blockedThinking = blockedThinkingSession.messages.find((message) =>
+    message.itemType === "thinking"
+  );
+  assert.equal(blockedThinking?.status, "recovery-blocked");
+  assert.equal(blockedThinking?.text, "安全恢复受阻");
 }
 
 function testCompletedTurnRemovesColdStartFallback(): void {

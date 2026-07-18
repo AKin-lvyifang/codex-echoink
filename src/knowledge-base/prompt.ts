@@ -49,7 +49,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     `- ${input.rulesFilePath}: ${input.rulesFileExists ? "存在，已由 EchoInk 强制加载" : "不存在，任务不会启动"}`,
     `- raw/index.md: ${input.hasRawIndex ? "存在，必须读取" : "不存在"}`,
     `- wiki/index.md: ${input.hasWikiIndex ? "存在，必须读取" : "不存在"}`,
-    `- outputs/.ingest-tracker.md: ${input.hasTracker ? "存在，必须读取" : "不存在，可创建或补齐"}`,
+    `- outputs/.ingest-tracker.md: ${input.hasTracker ? "存在，只读参考" : "不存在，由 EchoInk Harness 在验证后创建；不要自行创建"}`,
     "",
     "## 四步提炼协议",
     "提炼不等于摘要。固定协议是：读懂原文 -> 拆出知识 -> 融入 Wiki / Projects -> 回写 Raw 已提炼状态。",
@@ -64,7 +64,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "5. 融入正文：合并、去重、调整小节，不把摘要贴在页面底部。",
     "6. 写来源证据：每个 Raw 在目标页留下来源链接和附近实质内容。",
     "7. Structure Normalize：你可以整理 wiki/、outputs/、inbox/、projects/ 的文件夹结构；raw 路径只记录建议或风险，不要移动、重命名或改写 raw 源文件。",
-    "8. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md、raw/index.md、projects/00-索引.md 和 outputs/.ingest-tracker.md。",
+    "8. 索引更新：新增、移动或更新页面后，同步更新 wiki/index.md、对应领域 00-索引.md 和 projects/00-索引.md。raw/index.md 与 outputs/.ingest-tracker.md 由 EchoInk Harness 在证据验证后维护，Agent 只在报告中列出所需变更，不要直接改写。",
     "9. Lint 体检：扫描 wiki/ 下 [[链接]]，检查断链、孤儿页面、过时或 draft 内容、根目录散落普通笔记、中文目录残留，以及 wiki/index.md 链接有效性。",
     "10. 报告输出：列出 Raw、目标页、知识类型、证据位置、失败原因；如果无法判断归属领域，写入“待人工判断”，不要假装完成。",
     "",
@@ -80,7 +80,8 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "",
     "## 知识库管理写入边界",
     "- 以下边界只适用于本次知识库管理任务；不要把它扩展成普通 Agent 对话的全局限制。",
-    "- 可以写入和整理：wiki/、outputs/、inbox/、projects/；raw/index.md 可更新索引。",
+    "- 可以写入和整理：wiki/、inbox/、projects/，以及 outputs/ 中除 .ingest-tracker.md 之外的普通报告和过程文件。",
+    "- raw/index.md 与 outputs/.ingest-tracker.md 是 EchoInk Harness 托管文件：Agent 可以读取，但不得创建、修改、删除、移动或重命名。",
     "- 不纳入每日自动整理：journal/、work/、templates/、testing/、顶层 assets/。",
     "- raw/ 源文件内容边界：正文、标题、路径、来源内容和 .assets 附件目录都不可由 Agent 改写；Agent 不得写入、覆盖、格式化、补 frontmatter、改 updated 字段、移动或重命名 raw 源文件。",
     "- 只有 EchoInk 插件后处理阶段可以写入 raw Markdown 的托管元属性：已处理、提炼状态、提炼时间、提炼指纹、提炼报告、提炼证据；Agent 不要直接写这些属性。",
@@ -89,14 +90,14 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     "- 禁止删除 raw/，禁止自动归档 raw/，禁止合并 raw/ 原文。",
     "- 禁止用 `标题 2.md`、`标题 3.md`、`标题 4.md` 这类数字后缀避让同名 wiki；同标题知识页已存在时，必须读取并更新原始正式文件。",
     "- 如果不确定是否应该覆盖或合并同名 wiki，只在报告中说明冲突，不要新建数字后缀副本，不要把副本写入 tracker。",
-    "- 低风险自动执行：只移动 wiki/outputs/inbox/projects 文件或目录；目标目录规则明确；无同名冲突；引用和 tracker 可自动同步。",
+    "- 低风险自动执行：只移动 wiki/outputs/inbox/projects 文件或目录；目标目录规则明确；无同名冲突；普通引用可自动同步。tracker 由 EchoInk Harness 在验证后重建。",
     "- 不确定或会断链的改动只写进报告：目标目录不确定、同名冲突、附件不匹配、跨出知识区、涉及删除/合并/归档、涉及 journal/work/templates/testing/assets。",
-    "- wiki/、outputs/、inbox/、projects/ 文件移动后必须同步相关索引、引用和 tracker；raw 文件路径只记录风险，不自动移动。",
+    "- wiki/、outputs/、inbox/、projects/ 文件移动后必须同步可写的相关索引和引用；tracker 变更写进报告，由 EchoInk Harness 重建。raw 文件路径只记录风险，不自动移动。",
     "",
     "## 输出要求",
     `- ${input.mode === "lint" ? "体检报告" : "维护报告"}必须写入：${input.reportPath}`,
     "- 报告包含：一眼结论、新增/变更文件、已消化、结构整理、体检发现、索引更新、风险/需确认。",
-    "- 如果本轮消化了 raw 文件，必须更新 outputs/.ingest-tracker.md。",
+    "- 如果本轮消化了 raw 文件，Agent 必须在报告中列出逐来源证据；不要直接更新 outputs/.ingest-tracker.md，EchoInk Harness 只会在证据验证通过后重建 tracker。",
     "- 消化后的 wiki 页面必须包含 raw 来源回链。",
     "- 每个本轮 raw 都要在非索引正文页留下结构层证据：新建页可用顶部 `> 来源：[[raw/...]]` + 后续正文；聚合页要按日期或来源独立写小节。只写报告、tracker、索引或来源清单不算消化。",
     "- 证据块硬要求：来源链接和实质内容必须在同一证据块；来源行后不要空行、标题或分隔线。推荐写成 `- 关键结论：... 来源：[[raw/...]]`，或 `> 来源：[[raw/...]]` 后下一行立刻写正文。",
@@ -185,5 +186,5 @@ function taskForMode(mode: KnowledgeBaseRunMode): string {
   if (mode === "reingest") return "强制重新执行四步提炼，旧摘要型产物不算完成。按用户指定资料重新融入 Wiki / Projects；如果未指定具体资料，只处理最近 raw，不全库重写。";
   if (mode === "outputs") return "处理 outputs：只把长期复用价值提炼进 Wiki / Projects，也就是只把长期价值提炼进 Wiki / Projects，过程稿留在 outputs；临时报告、发布草稿、一次性过程记录只在报告中说明，不要全量搬运。";
   if (mode === "inbox") return "处理 inbox：分流 inbox，只有可长期复用内容才进入 Wiki / Projects；不要删除原文件，处理结果写报告。";
-  return "执行四步提炼协议：读懂原文、拆出知识、融入 Wiki / Projects、由插件验证后回写 Raw 已提炼状态；同时整理知识区结构、更新索引、tracker 与维护报告。";
+  return "执行四步提炼协议：读懂原文、拆出知识、融入 Wiki / Projects、由插件验证后回写 Raw 已提炼状态；同时整理知识区结构、更新可写索引与维护报告。raw/index 和 tracker 由 EchoInk Harness 在验证后维护。";
 }

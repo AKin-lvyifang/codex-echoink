@@ -4,6 +4,7 @@ import type CodexForObsidianPlugin from "../main";
 import { ensureKnowledgeBaseSession, newId, type ChatMessage, type StoredSession } from "../settings/settings";
 import { resolveRawRef } from "../core/raw-message-store";
 import { appendKnowledgeBaseWarning, saveSettingsSafely } from "./maintenance";
+import { buildKnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
 import { readKnowledgeBaseReportExcerpt } from "./report";
 import { buildScheduledKnowledgeBaseMessage } from "./scheduled-message";
 import type { KnowledgeBaseRunResult } from "./types";
@@ -28,15 +29,7 @@ export async function appendScheduledMaintenanceMessage(
     const reportText = result.reportPath
       ? await readKnowledgeBaseReportExcerpt(vaultPath, result.reportPath, 3000).catch(() => null)
       : null;
-    const message: ChatMessage = {
-      id: newId("msg"),
-      role: "assistant",
-      title: "每日知识库维护",
-      itemType: "knowledgeBase",
-      status: result.status === "success" ? "completed" : result.status === "canceled" ? "canceled" : "failed",
-      text: buildScheduledKnowledgeBaseMessage(result, reportText ?? ""),
-      createdAt: Date.now()
-    };
+    const message = buildScheduledMaintenanceChatMessage(result, reportText ?? "");
     scheduledMessageId = message.id;
     await plugin.externalizeMessageText(message, message.text);
     scheduledRawRef = message.rawRef ?? null;
@@ -70,6 +63,31 @@ export async function appendScheduledMaintenanceMessage(
   } catch (error) {
     console.warn("每日维护消息刷新失败", error);
   }
+}
+
+export function buildScheduledMaintenanceChatMessage(
+  result: KnowledgeBaseRunResult,
+  reportText = "",
+  createdAt = Date.now()
+): ChatMessage {
+  const ui = buildKnowledgeBaseMaintainReportPayload("maintain", result);
+  return {
+    id: newId("msg"),
+    role: "assistant",
+    title: "每日知识库维护",
+    itemType: "knowledgeBase",
+    status: result.status === "success"
+      ? "completed"
+      : result.status === "canceled"
+        ? "canceled"
+        : "failed",
+    text: buildScheduledKnowledgeBaseMessage(result, reportText),
+    ...(ui.runId ? { runId: ui.runId } : {}),
+    ...(ui.backend ? { backendId: ui.backend } : {}),
+    knowledgeBaseUi: ui,
+    createdAt,
+    completedAt: createdAt
+  };
 }
 
 function rollbackScheduledMaintenanceMessage(

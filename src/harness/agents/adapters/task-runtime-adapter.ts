@@ -26,6 +26,9 @@ export interface TaskRuntimeAgentAdapterOptions {
     agent?: string;
     profile?: string;
     requireDirectAgent?: boolean;
+    requireExactWriteFence?: boolean;
+    exactWriteFence?: AgentTaskInput["exactWriteFence"];
+    onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
     abortSignal?: AbortSignal;
     onRunId?: (runId: string) => void;
   };
@@ -142,6 +145,9 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       agent: this.options.legacyTaskDefaults?.agent,
       profile: this.options.legacyTaskDefaults?.profile,
       requireDirectAgent: this.options.legacyTaskDefaults?.requireDirectAgent,
+      requireExactWriteFence: this.options.legacyTaskDefaults?.requireExactWriteFence,
+      exactWriteFence: this.options.legacyTaskDefaults?.exactWriteFence,
+      onExactWriteFenceConfigured: this.options.legacyTaskDefaults?.onExactWriteFenceConfigured,
       abortSignal: runController.signal,
       onRunId: (runId) => {
         nativeRunId = runId;

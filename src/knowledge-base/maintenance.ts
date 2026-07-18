@@ -1,16 +1,45 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
-import { swallowError } from "../core/error-handling";
+import type {
+  MaintenanceWorkflowCasFile,
+  MaintenanceWorkflowIndexCommitRecord,
+  MaintenanceWorkflowManagedUpsertDraft
+} from "../harness/maintenance/workflow-wal";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { isKnowledgeBaseCancelError } from "./failure";
+import {
+  asMaintenanceWorkflowManagedUpsertDraft,
+  maintenanceContentFileCas,
+  maintenanceContentUpsertPlan,
+  readMaintenanceContentFileBaseline
+} from "./maintenance-content-plan";
 import { rawDigestFingerprint } from "./raw-digest";
 import { readKnowledgeBaseReportText, writeKnowledgeBaseReportFile } from "./report";
 import { rewriteKnowledgeBaseRelativePath } from "./structure-normalizer";
 import type { KnowledgeConflictDuplicateCleanup } from "./transaction-snapshot";
 import type { KnowledgeBaseRunMode, KnowledgeBaseSource, StructureNormalizationPathRewrite, StructureNormalizationResult } from "./types";
-import { isMissingPathError, writeFileAtomic } from "./utils";
+import { writeFileAtomic } from "./utils";
+
+const KNOWLEDGE_BASE_TRACKER_FALLBACK = "---\nupdated: \n---\n\n# Ingest Tracker\n";
+
+export interface KnowledgeBaseRawIndexWritePlan
+  extends MaintenanceWorkflowManagedUpsertDraft {
+  kind: "index";
+  result: MaintenanceWorkflowCasFile;
+  sourcePaths: string[];
+}
+
+export function rawIndexCommitRecord(
+  plan: KnowledgeBaseRawIndexWritePlan
+): MaintenanceWorkflowIndexCommitRecord {
+  return {
+    relativePath: plan.relativePath,
+    result: { ...plan.result },
+    sourcePaths: [...plan.sourcePaths]
+  };
+}
 
 export async function ensureKnowledgeBaseFolders(vaultPath: string, mode: KnowledgeBaseRunMode): Promise<void> {
   await fsp.mkdir(path.join(vaultPath, "outputs"), { recursive: true });
@@ -25,6 +54,17 @@ export async function ensureKnowledgeBaseFolders(vaultPath: string, mode: Knowle
 
 export async function appendStructureNormalizationReport(vaultPath: string, reportPath: string, structure: StructureNormalizationResult): Promise<void> {
   const current = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  await writeKnowledgeBaseReportFile(
+    vaultPath,
+    reportPath,
+    buildStructureNormalizationReportContent(current, structure)
+  );
+}
+
+export function buildStructureNormalizationReportContent(
+  current: string,
+  structure: StructureNormalizationResult
+): string {
   const markerStart = "<!-- codex-echoink-structure:start -->";
   const markerEnd = "<!-- codex-echoink-structure:end -->";
   const lines = [
@@ -62,12 +102,24 @@ export async function appendStructureNormalizationReport(vaultPath: string, repo
   const next = pattern.test(current)
     ? current.replace(pattern, lines.trimEnd())
     : `${current.trimEnd()}\n\n${lines}`;
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+  return next;
 }
 
 export async function appendConflictDuplicateCleanupReport(vaultPath: string, reportPath: string, cleanup: KnowledgeConflictDuplicateCleanup): Promise<void> {
   if (!cleanup.moved.length) return;
   const current = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  await writeKnowledgeBaseReportFile(
+    vaultPath,
+    reportPath,
+    buildConflictDuplicateCleanupReportContent(current, cleanup)
+  );
+}
+
+export function buildConflictDuplicateCleanupReportContent(
+  current: string,
+  cleanup: KnowledgeConflictDuplicateCleanup
+): string {
+  if (!cleanup.moved.length) return current;
   const markerStart = "<!-- codex-echoink-conflict-duplicates:start -->";
   const markerEnd = "<!-- codex-echoink-conflict-duplicates:end -->";
   const lines = [
@@ -87,7 +139,7 @@ export async function appendConflictDuplicateCleanupReport(vaultPath: string, re
   const next = pattern.test(current)
     ? current.replace(pattern, lines.trimEnd())
     : `${current.trimEnd()}\n\n${lines}`;
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+  return next;
 }
 
 export function collectExternalRawAdditions(target: Set<string>, additions: Array<{ file: string }>): void {
@@ -97,9 +149,18 @@ export function collectExternalRawAdditions(target: Set<string>, additions: Arra
 }
 
 export async function appendExternalRawAdditionsReport(vaultPath: string, reportPath: string, additions: string[]): Promise<void> {
-  const unique = Array.from(new Set(additions.map((item) => normalizePath(item)).filter(Boolean))).sort((left, right) => left.localeCompare(right));
-  if (!unique.length) return;
   const current = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  const next = buildExternalRawAdditionsReportContent(current, additions);
+  if (next === current) return;
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+}
+
+export function buildExternalRawAdditionsReportContent(
+  current: string,
+  additions: string[]
+): string {
+  const unique = Array.from(new Set(additions.map((item) => normalizePath(item)).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  if (!unique.length) return current;
   const markerStart = "<!-- codex-echoink-external-raw:start -->";
   const markerEnd = "<!-- codex-echoink-external-raw:end -->";
   const lines = [
@@ -118,15 +179,43 @@ export async function appendExternalRawAdditionsReport(vaultPath: string, report
   const next = pattern.test(current)
     ? current.replace(pattern, lines.trimEnd())
     : `${current.trimEnd()}\n\n${lines}`;
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+  return next;
 }
 
 export async function writeKnowledgeBaseTracker(vaultPath: string, processed: Record<string, KnowledgeBaseProcessedSource>, updatedAt: number): Promise<void> {
-  const tracker = path.join(vaultPath, "outputs", ".ingest-tracker.md");
+  const plan = await planKnowledgeBaseTrackerWrite(vaultPath, processed, updatedAt);
+  const tracker = path.join(vaultPath, plan.relativePath);
   await fsp.mkdir(path.dirname(tracker), { recursive: true });
+  await writeFileAtomic(tracker, plan.desiredContent);
+  await fsp.chmod(tracker, plan.desiredMode);
+}
+
+export async function planKnowledgeBaseTrackerWrite(
+  vaultPath: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  updatedAt: number
+): Promise<MaintenanceWorkflowManagedUpsertDraft> {
+  const baseline = await readMaintenanceContentFileBaseline(
+    vaultPath,
+    "outputs/.ingest-tracker.md"
+  );
+  const current = baseline.content?.toString("utf8") ?? KNOWLEDGE_BASE_TRACKER_FALLBACK;
+  return asMaintenanceWorkflowManagedUpsertDraft(
+    "tracker",
+    maintenanceContentUpsertPlan(
+      baseline,
+      buildKnowledgeBaseTrackerContent(current, processed, updatedAt)
+    )
+  );
+}
+
+export function buildKnowledgeBaseTrackerContent(
+  current: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  updatedAt: number
+): string {
   const markerStart = "<!-- codex-echoink-kb:start -->";
   const markerEnd = "<!-- codex-echoink-kb:end -->";
-  const current = await readExistingTrackerText(tracker);
   const entries = Object.values(processed)
     .sort((left, right) => left.path.localeCompare(right.path))
     .map((item) => `- \`${item.path}\` | size=${item.size} | mtime=${Math.round(item.mtime)}${item.fingerprint ? ` | fingerprint=${item.fingerprint}` : ""} | digested=${new Date(item.digestedAt).toISOString()}`);
@@ -140,8 +229,88 @@ export async function writeKnowledgeBaseTracker(vaultPath: string, processed: Re
     markerEnd
   ].join("\n");
   const pattern = new RegExp(`${escapeRegExp(markerStart)}[\\s\\S]*?${escapeRegExp(markerEnd)}`);
-  const next = pattern.test(current) ? current.replace(pattern, block) : `${current.trim()}\n\n${block}\n`;
-  await writeFileAtomic(tracker, next);
+  return pattern.test(current) ? current.replace(pattern, block) : `${current.trim()}\n\n${block}\n`;
+}
+
+export async function writeKnowledgeBaseRawIndex(
+  vaultPath: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  updatedAt: number
+): Promise<void> {
+  const plan = await planKnowledgeBaseRawIndexWrite(vaultPath, processed, updatedAt);
+  const rawIndex = path.join(vaultPath, plan.relativePath);
+  await fsp.mkdir(path.dirname(rawIndex), { recursive: true });
+  await writeFileAtomic(rawIndex, plan.desiredContent);
+  await fsp.chmod(rawIndex, plan.desiredMode);
+}
+
+export async function planKnowledgeBaseRawIndexWrite(
+  vaultPath: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  updatedAt: number,
+  options: { verifiedSourcePaths?: readonly string[] } = {}
+): Promise<KnowledgeBaseRawIndexWritePlan> {
+  const baseline = await readMaintenanceContentFileBaseline(
+    vaultPath,
+    "raw/index.md"
+  );
+  const current = baseline.content?.toString("utf8") ?? "# Raw\n";
+  const draft = asMaintenanceWorkflowManagedUpsertDraft(
+    "index",
+    maintenanceContentUpsertPlan(
+      baseline,
+      buildKnowledgeBaseRawIndexContent(current, processed, updatedAt)
+    )
+  );
+  const result = maintenanceContentFileCas(
+    draft.desiredContent,
+    draft.desiredMode
+  );
+  const sourcePaths = Array.from(new Set(
+    (options.verifiedSourcePaths ?? []).map((sourcePath) =>
+      normalizePath(sourcePath))
+  )).sort();
+  for (const sourcePath of sourcePaths) {
+    if (
+      !sourcePath.startsWith("raw/")
+      || !Object.prototype.hasOwnProperty.call(processed, sourcePath)
+    ) {
+      throw new Error(`Raw 托管索引 verified source 非法：${sourcePath}`);
+    }
+  }
+  return {
+    ...draft,
+    kind: "index",
+    result,
+    sourcePaths
+  };
+}
+
+export function buildKnowledgeBaseRawIndexContent(
+  current: string,
+  processed: Record<string, KnowledgeBaseProcessedSource>,
+  updatedAt: number
+): string {
+  const markerStart = "<!-- codex-echoink-raw-index:start -->";
+  const markerEnd = "<!-- codex-echoink-raw-index:end -->";
+  const entries = Object.values(processed)
+    .filter((item) => normalizePath(item.path).startsWith("raw/") && normalizePath(item.path) !== "raw/index.md")
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map((item) => `- [[${normalizePath(item.path).replace(/\.md$/i, "")}]]`);
+  const block = [
+    markerStart,
+    "",
+    `## EchoInk 已提炼来源（${new Date(updatedAt).toISOString()}）`,
+    "",
+    ...(entries.length ? entries : ["- 暂无"]),
+    "",
+    markerEnd
+  ].join("\n");
+  const pattern = new RegExp(`${escapeRegExp(markerStart)}[\\s\\S]*?${escapeRegExp(markerEnd)}`);
+  const next = pattern.test(current)
+    ? current.replace(pattern, block)
+    : `${current.trimEnd()}\n\n${block}\n`;
+  return next;
 }
 
 export function formatCancelResultMessage(message: string, saveError: string | null): string {
@@ -262,21 +431,6 @@ export function cloneProcessedSources(processed: Record<string, KnowledgeBasePro
 
 export function cloneList<T extends object>(items: T[] | undefined): T[] {
   return (items ?? []).map((item) => ({ ...item }));
-}
-
-async function readExistingTrackerText(tracker: string): Promise<string> {
-  const fallback = "---\nupdated: \n---\n\n# Ingest Tracker\n";
-  const stat = await fsp.lstat(tracker).catch((error) => {
-    if (isMissingPathError(error)) return null;
-    throw error;
-  });
-  if (!stat) return fallback;
-  if (!stat.isFile()) {
-    if (!stat.isSymbolicLink()) await fsp.rm(tracker, { recursive: true, force: true }).catch(swallowError("remove unsafe tracker path"));
-    return fallback;
-  }
-  if (stat.nlink > 1) return fallback;
-  return fsp.readFile(tracker, "utf8").catch(() => fallback);
 }
 
 function isRewrittenRawPath(relativePath: string, rewrites: StructureNormalizationPathRewrite[]): boolean {

@@ -1,4 +1,14 @@
-import type { KnowledgeBaseCommandUiMode, KnowledgeBaseRunResult, KnowledgeBaseSource, KnowledgeWorkflowEvent, StructureNormalizationResult } from "./types";
+import type { AgentBackendKind } from "../agent/types";
+import type {
+  KnowledgeBaseCommandUiMode,
+  KnowledgeBaseRunCompletion,
+  KnowledgeBaseRunResult,
+  KnowledgeBaseRunWarning,
+  KnowledgeBaseSource,
+  KnowledgeRunAttemptRecord,
+  KnowledgeWorkflowEvent,
+  StructureNormalizationResult
+} from "./types";
 
 export type KnowledgeBaseMessageUiPayload = KnowledgeBaseRunPayload | KnowledgeBaseMaintainReportPayload;
 
@@ -23,6 +33,18 @@ export interface KnowledgeBaseMaintainReportPayload {
   kind: "maintain-report";
   mode: KnowledgeBaseCommandUiMode;
   status: KnowledgeBaseRunResult["status"];
+  runId?: string;
+  backend?: AgentBackendKind;
+  selectedBackend?: AgentBackendKind;
+  winnerBackend?: AgentBackendKind | null;
+  terminalPhase?: KnowledgeBaseRunResult["terminalPhase"];
+  commitState?: KnowledgeBaseRunResult["commitState"];
+  failureCode?: string | null;
+  completion?: KnowledgeBaseRunCompletion;
+  attemptCount?: number;
+  attempts?: KnowledgeRunAttemptRecord[];
+  pendingSourceCount?: number;
+  warnings?: KnowledgeBaseRunWarning[];
   title: string;
   reportPath: string;
   careItems: KnowledgeBaseMaintainCareItem[];
@@ -97,15 +119,67 @@ export function buildKnowledgeBaseRunPayload(mode: KnowledgeBaseCommandUiMode): 
 export function buildKnowledgeBaseMaintainReportPayload(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseRunResult): KnowledgeBaseMaintainReportPayload {
   const structureCount = structureOperationCount(result.structure);
   const externalRawCount = result.externalRawAdditions?.length ?? 0;
+  const attempts = result.attempts?.length ? [...result.attempts] : [];
+  const runId = maintenanceResultRunId(result);
+  const backend = maintenanceResultBackend(result, attempts);
+  const hasAttempts = Object.prototype.hasOwnProperty.call(result, "attempts");
+  const hasWinnerBackend = Object.prototype.hasOwnProperty.call(
+    result,
+    "winnerBackend"
+  );
+  const hasFailureCode = Object.prototype.hasOwnProperty.call(
+    result,
+    "failureCode"
+  );
   return {
     kind: "maintain-report",
     mode,
     status: result.status,
-    title: reportTitle(mode, result.status),
+    ...(runId ? { runId } : {}),
+    ...(backend ? { backend } : {}),
+    ...(result.selectedBackend
+      ? { selectedBackend: result.selectedBackend }
+      : {}),
+    ...(hasWinnerBackend
+      ? { winnerBackend: result.winnerBackend ?? null }
+      : {}),
+    ...(result.terminalPhase
+      ? { terminalPhase: result.terminalPhase }
+      : {}),
+    ...(result.commitState
+      ? { commitState: result.commitState }
+      : {}),
+    ...(hasFailureCode
+      ? { failureCode: result.failureCode ?? null }
+      : {}),
+    ...(result.completion ? { completion: result.completion } : {}),
+    ...(hasAttempts ? { attemptCount: attempts.length, attempts } : {}),
+    ...(result.pendingSources?.length ? { pendingSourceCount: result.pendingSources.length } : {}),
+    ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+    title: reportTitle(mode, result),
     reportPath: result.reportPath,
     careItems: buildCareItems(mode, result, structureCount, externalRawCount),
     sections: buildReportSections(mode, result, structureCount, externalRawCount)
   };
+}
+
+function maintenanceResultRunId(result: KnowledgeBaseRunResult): string | undefined {
+  if (result.workflowRunId?.trim()) return result.workflowRunId.trim();
+  const value = (result as KnowledgeBaseRunResult & { runId?: unknown }).runId;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function maintenanceResultBackend(
+  result: KnowledgeBaseRunResult,
+  attempts: KnowledgeRunAttemptRecord[]
+): AgentBackendKind | undefined {
+  if (Object.prototype.hasOwnProperty.call(result, "winnerBackend")) {
+    return result.winnerBackend ?? undefined;
+  }
+  const explicit = (result as KnowledgeBaseRunResult & { backend?: unknown }).backend;
+  if (explicit === "codex-cli" || explicit === "opencode" || explicit === "hermes") return explicit;
+  const completed = [...attempts].reverse().find((attempt) => attempt.terminal?.status === "completed");
+  return completed?.backend ?? attempts.at(-1)?.backend;
 }
 
 function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseRunResult, structureCount: number, externalRawCount: number): KnowledgeBaseMaintainCareItem[] {
@@ -115,8 +189,10 @@ function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseR
   if (result.status === "canceled") {
     return [{ tone: "info", text: "已取消。本轮不会继续改动知识库。" }];
   }
+  const outcomeItems = buildOutcomeCareItems(result);
   if (mode === "lint") {
     return [
+      ...outcomeItems,
       { tone: "info", text: "先看真正影响后续整理的问题。" },
       { tone: "success", text: "本轮只做体检，没有改动知识库正文。" }
     ];
@@ -126,6 +202,7 @@ function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseR
     const reviewCount = calibration?.review.length ?? 0;
     const changedCount = calibration?.changed.length ?? 0;
     return [
+      ...outcomeItems,
       reviewCount || changedCount
         ? { tone: "warning", text: `需要关注 ${reviewCount + changedCount} 个 raw 状态。` }
         : { tone: "success", text: "raw 状态已校准，无需手动补标。" },
@@ -135,6 +212,7 @@ function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseR
   if (mode === "outputs") {
     const count = result.processedSources.length;
     return [
+      ...outcomeItems,
       count
         ? { tone: "success", text: `outputs 已归档 ${count} 项。` }
         : { tone: "info", text: "没有可直接归档的 outputs。" },
@@ -144,52 +222,117 @@ function buildCareItems(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseR
   if (mode === "inbox") {
     const count = result.processedSources.length;
     return [
+      ...outcomeItems,
       count
         ? { tone: "success", text: `inbox 已分流 ${count} 项。` }
         : { tone: "info", text: "没有可直接分流的 inbox 条目。" },
       { tone: "info", text: "去向不确定的条目不会被强行入库。" }
     ];
   }
-  const items: KnowledgeBaseMaintainCareItem[] = [];
-  if (result.processedSources.length) items.push({ tone: "success", text: `本轮消化 ${result.processedSources.length} 篇。` });
-  else items.push({ tone: "success", text: "不需要补救。没有需要你手动处理的文件。" });
+  const items: KnowledgeBaseMaintainCareItem[] = [...outcomeItems];
+  if (result.processedSources.length) {
+    items.push({ tone: "success", text: `本轮消化 ${result.processedSources.length} 篇。` });
+  } else if (result.completion !== "partial" && result.completion !== "noop") {
+    items.push({ tone: "success", text: "不需要补救。没有需要你手动处理的文件。" });
+  }
   if (structureCount) items.push({ tone: "info", text: `结构整理 ${structureCount} 项。` });
   if (externalRawCount) items.push({ tone: "warning", text: `发现新增 raw ${externalRawCount} 个。` });
   return items;
 }
 
+function buildOutcomeCareItems(result: KnowledgeBaseRunResult): KnowledgeBaseMaintainCareItem[] {
+  const items: KnowledgeBaseMaintainCareItem[] = [];
+  if (result.completion === "partial") {
+    const pending = result.pendingSources?.length ?? 0;
+    items.push({
+      tone: "warning",
+      text: pending
+        ? `本轮部分完成，${pending} 个来源已安全留待下轮。`
+        : "本轮部分完成，未提交的来源已安全留待下轮。"
+    });
+  } else if (result.completion === "recovered") {
+    const attempts = result.attempts?.length ?? 0;
+    items.push({
+      tone: "success",
+      text: attempts > 1 ? `本轮经过自动恢复后完成，共尝试 ${attempts} 个 Agent。` : "本轮经过自动恢复后完成。"
+    });
+  } else if (result.completion === "noop") {
+    items.push({ tone: "info", text: "本轮没有待消化来源，未调用 Agent；Harness 已完成状态核对。" });
+  }
+  for (const warning of (result.warnings ?? []).slice(0, 3)) {
+    items.push({ tone: "warning", text: warning.message });
+  }
+  return items;
+}
+
 function buildReportSections(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseRunResult, structureCount: number, externalRawCount: number): KnowledgeBaseMaintainReportSection[] {
-  if (mode === "lint") return buildLintSections(result);
-  if (mode === "calibrate") return buildCalibrationSections(result);
-  if (mode === "outputs") return buildOutputsSections(result);
-  if (mode === "inbox") return buildInboxSections(result);
-  return [
-    {
-      id: "digested",
-      title: "本轮消化",
-      count: result.processedSources.length,
-      emptyText: "没有新的 Raw 需要消化。",
-      items: result.processedSources.map((source) => sourceToReportItem(source, result.digestEvidencePaths?.[source.relativePath]))
-    },
-    {
-      id: "external-raw",
-      title: "新增 raw",
-      count: externalRawCount,
-      emptyText: "没有发现额外新增的 Raw 文件。",
-      items: (result.externalRawAdditions ?? []).map((item) => ({
-        title: item,
-        description: "维护过程中发现的新 Raw；已保留在 raw/，留到下一次处理。",
-        tone: "info" as const
+  const sections = mode === "lint"
+    ? buildLintSections(result)
+    : mode === "calibrate"
+      ? buildCalibrationSections(result)
+      : mode === "outputs"
+        ? buildOutputsSections(result)
+        : mode === "inbox"
+          ? buildInboxSections(result)
+          : [
+            {
+              id: "digested",
+              title: "本轮消化",
+              count: result.processedSources.length,
+              emptyText: "没有新的 Raw 需要消化。",
+              items: result.processedSources.map((source) => sourceToReportItem(source, result.digestEvidencePaths?.[source.relativePath]))
+            },
+            {
+              id: "external-raw",
+              title: "新增 raw",
+              count: externalRawCount,
+              emptyText: "没有发现额外新增的 Raw 文件。",
+              items: (result.externalRawAdditions ?? []).map((item) => ({
+                title: item,
+                description: "维护过程中发现的新 Raw；已保留在 raw/，留到下一次处理。",
+                tone: "info" as const
+              }))
+            },
+            {
+              id: "structure",
+              title: "结构整理",
+              count: structureCount,
+              emptyText: "没有需要展示的结构整理。",
+              items: structureToReportItems(result.structure)
+            }
+          ];
+  return [...sections, ...buildOutcomeSections(result)];
+}
+
+function buildOutcomeSections(result: KnowledgeBaseRunResult): KnowledgeBaseMaintainReportSection[] {
+  const sections: KnowledgeBaseMaintainReportSection[] = [];
+  if (result.pendingSources?.length) {
+    sections.push({
+      id: "pending-sources",
+      title: "留待下轮",
+      count: result.pendingSources.length,
+      emptyText: "没有留待下轮的来源。",
+      items: result.pendingSources.map((source) => ({
+        title: source,
+        description: "本轮未达到提交条件，已保持原状并留待下轮。",
+        tone: "warning" as const
       }))
-    },
-    {
-      id: "structure",
-      title: "结构整理",
-      count: structureCount,
-      emptyText: "没有需要展示的结构整理。",
-      items: structureToReportItems(result.structure)
-    }
-  ];
+    });
+  }
+  if (result.warnings?.length) {
+    sections.push({
+      id: "warnings",
+      title: "运行提醒",
+      count: result.warnings.length,
+      emptyText: "没有运行提醒。",
+      items: result.warnings.map((warning) => ({
+        title: warning.id,
+        description: warning.message,
+        tone: "warning" as const
+      }))
+    });
+  }
+  return sections;
 }
 
 function buildLintSections(result: KnowledgeBaseRunResult): KnowledgeBaseMaintainReportSection[] {
@@ -377,10 +520,13 @@ function structureOperationCount(structure?: StructureNormalizationResult): numb
   return structure.moves.length + structure.updatedLinks.reduce((sum, item) => sum + item.replacements, 0) + structure.skipped.length;
 }
 
-function reportTitle(mode: KnowledgeBaseCommandUiMode, status: KnowledgeBaseRunResult["status"]): string {
+function reportTitle(mode: KnowledgeBaseCommandUiMode, result: KnowledgeBaseRunResult): string {
   const label = commandUiConfig(mode).noun;
-  if (status === "failed") return `知识库${label}失败`;
-  if (status === "canceled") return `知识库${label}已取消`;
+  if (result.status === "failed") return `知识库${label}失败`;
+  if (result.status === "canceled") return `知识库${label}已取消`;
+  if (result.completion === "partial") return `知识库${label}部分完成`;
+  if (result.completion === "recovered") return `知识库${label}已恢复完成`;
+  if (result.completion === "noop") return `知识库${label}完成（无新来源）`;
   if (mode === "calibrate") return "raw 状态已校准";
   if (mode === "lint") return "体检完成";
   if (mode === "outputs") return "outputs 已归档";

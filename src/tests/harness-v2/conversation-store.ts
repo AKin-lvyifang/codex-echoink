@@ -199,6 +199,8 @@ async function assertConversationStoreParticipatesInDurableCommit(): Promise<voi
     readFile("src/ui/codex-view/session-controller.ts", "utf8")
   ]);
   assert.match(settingsSource, /flushConversationStore\(options\.strictConversationStore !== false\)/);
+  assert.match(settingsSource, /recoveredLintReportSummary\(settings\.lastReportPath\)/);
+  assert.doesNotMatch(settingsSource, /上次 Codex 返回失败状态/);
   assert.match(settingsSource, /persistSettingsSessions\(this\.plugin\.settings\)/);
   assert.match(settingsSource, /saveData\(settingsForDataSave\(this\.plugin\.settings\)\)/);
   assert.match(settingsSource, /delete session\.threadId/);

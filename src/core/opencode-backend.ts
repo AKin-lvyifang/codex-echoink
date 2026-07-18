@@ -572,16 +572,58 @@ export function openCodePermissionRules(
     ];
   }
   if (mode === "workspace-write") {
-    const externalWritableRoots = writableRoots
+    const resolvedVaultPath = vaultPath.trim() ? path.resolve(vaultPath) : "";
+    const resolvedWritableRoots = Array.from(new Set(writableRoots
       .map((root) => root.trim())
       .filter(Boolean)
-      .filter((root) => !vaultPath || !isPathInside(root, vaultPath));
+      .map((root) => path.resolve(root))));
+    const scopedWorkspaceWrite = Boolean(
+      resolvedVaultPath
+      && resolvedWritableRoots.length
+      && !resolvedWritableRoots.some((root) => path.resolve(root) === resolvedVaultPath)
+    );
+    const internalWritableRoots = resolvedWritableRoots
+      .filter((root) => resolvedVaultPath && isPathInside(root, resolvedVaultPath));
+    const externalWritableRoots = resolvedWritableRoots
+      .filter((root) => !resolvedVaultPath || !isPathInside(root, resolvedVaultPath));
+    if (scopedWorkspaceWrite) {
+      const scopedEditRules = [
+        ...internalWritableRoots.flatMap((root) => {
+          const relative = toOpenCodePath(path.relative(resolvedVaultPath, root));
+          return openCodePathRules("edit", relative, "allow");
+        }),
+        ...externalWritableRoots.flatMap((root) =>
+          openCodePathRules("edit", toOpenCodePath(root), "allow")
+        )
+      ];
+      return [
+        // Maintenance Shadow runs fail closed. OpenCode evaluates matching rules
+        // from top to bottom and the last match wins, so exact edit roots can
+        // safely override this catch-all without exposing native tools, MCP,
+        // shell, skills, or subagents.
+        { permission: "*", pattern: "*", action: "deny" },
+        ...["read", "glob", "grep", "list", "todowrite"].map((permission) => ({
+          permission,
+          pattern: "*",
+          action: "allow" as const
+        })),
+        ...scopedEditRules,
+        // The tracker is plugin-owned transaction state. Even though it lives
+        // below outputs/, the Agent must never update it directly.
+        ...openCodePathRules("edit", "outputs/.ingest-tracker.md", "deny"),
+        { permission: "external_directory", pattern: "*", action: "deny" },
+        ...externalWritableRoots.flatMap((root) =>
+          openCodePathRules("external_directory", toOpenCodePath(root), "allow")
+        ),
+        { permission: "question", pattern: "*", action: "deny" }
+      ];
+    }
     return [
       { permission: "*", pattern: "*", action: "allow" },
       { permission: "external_directory", pattern: "*", action: "deny" },
       ...externalWritableRoots.flatMap((root) => [
-        { permission: "external_directory", pattern: path.resolve(root), action: "allow" as const },
-        { permission: "external_directory", pattern: `${path.resolve(root)}${path.sep}**`, action: "allow" as const }
+        { permission: "external_directory", pattern: toOpenCodePath(root), action: "allow" as const },
+        { permission: "external_directory", pattern: `${toOpenCodePath(root)}/**`, action: "allow" as const }
       ]),
       { permission: "question", pattern: "*", action: "deny" }
     ];
@@ -594,6 +636,23 @@ export function openCodePermissionRules(
       action: "allow" as const
     }))
   ];
+}
+
+function openCodePathRules(
+  permission: string,
+  normalizedPath: string,
+  action: "allow" | "deny"
+): Array<{ permission: string; pattern: string; action: "allow" | "deny" }> {
+  const clean = normalizedPath.replace(/\/+$/, "");
+  if (!clean) return [];
+  return [
+    { permission, pattern: clean, action },
+    { permission, pattern: `${clean}/**`, action }
+  ];
+}
+
+function toOpenCodePath(value: string): string {
+  return value.split(path.sep).join("/");
 }
 
 function isPathInside(candidate: string, parent: string): boolean {
