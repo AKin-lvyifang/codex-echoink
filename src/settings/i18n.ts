@@ -10,6 +10,7 @@ import type {
   SettingsTab,
 } from "./settings";
 import type { PermissionMode, ServiceTierChoice, UiMode } from "../types/app-server";
+import type { KnowledgeBaseRunCompletion } from "../knowledge-base/types";
 
 const ZH_CN = {
   languageName: "中文",
@@ -419,6 +420,17 @@ const ZH_CN = {
     safety: "知识库管理边界：提炼不等于摘要；/check 只做提炼审计，/maintain 执行四步提炼，/calibrate raw 只校准状态。raw/ 来源内容只读，不自动移动或重命名；只有 Wiki / Projects 有结构化知识和来源证据后，EchoInk 后处理才写托管元属性。OpenCode/Hermes 模式需要先外部安装对应后端。",
     statusHeading: "运行状态",
     recentStatus: (status: string, time: string) => `最近状态：${status}${time ? ` · ${time}` : ""}`,
+    recentCompletion: (completion: string, attempts: number, pending: number) => [
+      `结果：${completion}`,
+      attempts > 1 ? `${attempts} 次 Agent 尝试` : "",
+      pending ? `${pending} 项留待下轮` : ""
+    ].filter(Boolean).join(" · "),
+    completionLabels: {
+      full: "完整完成",
+      partial: "部分完成",
+      recovered: "恢复后完成",
+      noop: "已检查（无新来源）"
+    } satisfies Record<KnowledgeBaseRunCompletion, string>,
     initialization: (status: string, path: string) => `初始化：${status}${path ? ` · ${path}` : ""}`,
     guide: (path: string, _custom: boolean) => `操作指南：${path}（每轮强制注入）`,
     recentReport: (path: string) => `最近报告：${path}`,
@@ -441,13 +453,13 @@ const ZH_CN = {
     ],
     enabled: "启用知识库管理",
     enabledDesc: "总开关：只决定是否允许每日自动维护和启动补跑；真正每天跑，还需要打开下面的“每日自动维护”。右侧知识库频道仍可手动使用。",
-    backend: "知识库后端",
-    backendDesc: "默认跟随 Agent 后端；也可以单独固定为 Codex、OpenCode 或 Hermes。",
+    backend: "知识库问答后端（仅 /ask）",
+    backendDesc: "/ask 默认跟随当前 Agent，也可以单独固定。/maintain 始终优先使用启动时选中的 Agent；只有安全失败且没有有效成果时，才串行切换下一个已就绪 Agent。",
     followGlobal: (backend: string) => `跟随全局（${backend}）`,
     customRules: "使用自定义指南文件",
     customRulesDesc: (defaultFile: string, _agentsFile: string) => `默认使用 ${defaultFile}；也可以从当前 Vault 选择其他 Markdown 文件。`,
     dailyMaintenance: "每日自动维护",
-    dailyMaintenanceDesc: "打开后，到达每日运行时间会执行 /maintain；仅在 Obsidian 打开时运行。完成后会在知识库频道写入简短报告。",
+    dailyMaintenanceDesc: "打开后，到达每日运行时间会执行 /maintain；启动时选中的 Agent 优先，只有安全失败且没有有效成果时才串行切换下一个已就绪 Agent。仅在 Obsidian 打开时运行，完成后会在知识库频道写入简短报告。",
     scheduleTime: "每日运行时间",
     catchUp: "启动补跑",
     catchUpDesc: "当天错过维护时间时，下次打开 Obsidian 自动补跑。",
@@ -1118,6 +1130,17 @@ const EN: SettingsCopy = {
     safety: "Knowledge boundary: digest is not summary. /check is digest audit only, /maintain runs the four-step digest, and /calibrate raw only calibrates status. raw/ sources stay read-only; EchoInk writes managed Raw metadata only after Wiki / Projects has structured knowledge and source evidence. OpenCode/Hermes modes require their local backends.",
     statusHeading: "Run status",
     recentStatus: (status, time) => `Latest: ${status}${time ? ` · ${time}` : ""}`,
+    recentCompletion: (completion, attempts, pending) => [
+      `Result: ${completion}`,
+      attempts > 1 ? `${attempts} Agent attempts` : "",
+      pending ? `${pending} deferred` : ""
+    ].filter(Boolean).join(" · "),
+    completionLabels: {
+      full: "Complete",
+      partial: "Partially complete",
+      recovered: "Recovered",
+      noop: "Checked (no new sources)"
+    },
     initialization: (status, path) => `Initialization: ${status}${path ? ` · ${path}` : ""}`,
     guide: (path, _custom) => `Guide: ${path} (injected every run)`,
     recentReport: (path) => `Latest report: ${path}`,
@@ -1140,13 +1163,13 @@ const EN: SettingsCopy = {
     ],
     enabled: "Enable Knowledge",
     enabledDesc: "Master gate for automatic maintenance and startup catch-up. Daily runs still require Automatic maintenance below. The Knowledge channel remains available for manual work.",
-    backend: "Knowledge backend",
-    backendDesc: "Follow the Agent backend, or pin Knowledge to Codex, OpenCode, or Hermes.",
+    backend: "Knowledge Q&A backend (/ask only)",
+    backendDesc: "/ask follows the current Agent by default, or can be pinned. /maintain always starts with the Agent selected when the run begins and moves serially to the next ready Agent only after a safe zero-result failure.",
     followGlobal: (backend) => `Follow global (${backend})`,
     customRules: "Use custom guide file",
     customRulesDesc: (defaultFile, _agentsFile) => `Defaults to ${defaultFile}. You can choose another Markdown file from this vault.`,
     dailyMaintenance: "Automatic maintenance",
-    dailyMaintenanceDesc: "Runs /maintain at the daily time while Obsidian is open, then posts a short report in the Knowledge channel.",
+    dailyMaintenanceDesc: "Runs /maintain at the daily time while Obsidian is open. It starts with the Agent selected when the run begins and moves serially to the next ready Agent only after a safe zero-result failure, then posts a short report in the Knowledge channel.",
     scheduleTime: "Daily run time",
     catchUp: "Startup catch-up",
     catchUpDesc: "If today's run was missed, run it when Obsidian opens.",

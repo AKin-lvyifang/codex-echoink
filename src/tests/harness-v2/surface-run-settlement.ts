@@ -29,6 +29,7 @@ export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertChatStopUsesActualBackend();
   await assertChatStopPropagatesCancelFailureAndAllowsRetry();
   await assertKnowledgeStopDelegatesToManager();
+  await assertKnowledgeStopDoesNotPauseAfterCommitLock();
   await assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure();
   await assertKnowledgeCleanupFailureDoesNotFailCompletedTurn();
   await assertKnowledgeUnloadWaitsForActiveRunSettlement();
@@ -261,7 +262,10 @@ async function assertKnowledgeStopDelegatesToManager(): Promise<void> {
     running: true,
     plugin: {
       getKnowledgeBaseManager: () => ({
-        cancelMaintenance: async () => { calls.push("cancel-knowledge"); }
+        cancelMaintenance: async () => {
+          calls.push("cancel-knowledge");
+          return { accepted: true, message: "已取消知识库任务" };
+        }
       }),
       cancelHarnessRun: async () => { calls.push("cancel-outer-run"); },
       settleHarnessRunTerminal: async () => { calls.push("settle-outer-run"); },
@@ -280,9 +284,54 @@ async function assertKnowledgeStopDelegatesToManager(): Promise<void> {
 
   await stopTurn(view);
 
-  assert.deepEqual(calls, ["pause:session-knowledge-stop", "cancel-knowledge"]);
+  assert.deepEqual(calls, ["cancel-knowledge", "pause:session-knowledge-stop"]);
   assert.equal(view.running, true);
   assert.equal(view.activeRunId, "kb-run-knowledge-stop");
+}
+
+async function assertKnowledgeStopDoesNotPauseAfterCommitLock(): Promise<void> {
+  const calls: string[] = [];
+  const session: StoredSession = {
+    id: "session-knowledge-commit-locked",
+    title: "Knowledge commit locked",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const view: any = {
+    activeRunId: "kb-run-commit-locked",
+    activeTurnId: "turn-commit-locked",
+    activeRunKind: "knowledge-base",
+    running: true,
+    plugin: {
+      getKnowledgeBaseManager: () => ({
+        cancelMaintenance: async () => {
+          calls.push("cancel-rejected");
+          return {
+            accepted: false,
+            message: "知识库维护已进入安全提交，不能取消。"
+          };
+        }
+      })
+    },
+    isEditorActionRunActive: () => false,
+    activeRunSession: () => session,
+    pauseQueueForSession: (sessionId: string) => {
+      calls.push(`pause:${sessionId}`);
+    }
+  };
+
+  await stopTurn(view);
+
+  assert.deepEqual(
+    calls,
+    ["cancel-rejected"],
+    "commit-locked cancellation must not pause the knowledge queue"
+  );
+  assert.equal(view.running, true);
+  assert.equal(view.activeRunId, "kb-run-commit-locked");
 }
 
 async function assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure(): Promise<void> {
@@ -469,6 +518,7 @@ async function assertKnowledgeUnloadWaitsForActiveRunSettlement(): Promise<void>
   } as any, { isCancelRequested: () => false });
   (service as any).runtimeController = {
     hasActiveRun: true,
+    preflight: async () => undefined,
     run: async () => await new Promise<{ text: string }>((resolve) => { resolveRun = resolve; }),
     cancel: async () => {
       setTimeout(() => resolveRun?.({ text: "cancelled and settled" }), 15);
@@ -478,12 +528,23 @@ async function assertKnowledgeUnloadWaitsForActiveRunSettlement(): Promise<void>
   };
 
   const runPromise = service.runTask({
-    backend: "codex-cli",
+    backend: "opencode",
     prompt: "wait for unload",
     sources: [],
     permission: "read-only",
     codexWriteScope: "knowledge-lint",
-    managedKind: "lint"
+    managedKind: "lint",
+    workflowRunId: "workflow-unload-settlement",
+    attemptId: "workflow-unload-settlement:attempt:1:opencode",
+    attemptOrdinal: 1,
+    vaultPathOverride: "/shadow-vault",
+    writableRootsOverride: [],
+    exactWriteFence: {
+      attemptToken: "workflow-unload-settlement:attempt:1:opencode",
+      leaseToken: "workflow-unload-settlement-lease",
+      deniedLivePaths: ["/vault"],
+      deniedControlPaths: ["/control"]
+    }
   });
   await Promise.resolve();
   let unloadCompleted = false;

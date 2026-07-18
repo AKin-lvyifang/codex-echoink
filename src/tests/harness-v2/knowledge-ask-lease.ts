@@ -278,6 +278,10 @@ function createKnowledgeAskHarness(settings: CodexForObsidianSettings, vaultPath
   };
 
   manager = new KnowledgeBaseManager(plugin as any);
+  // These tests exercise /ask lease semantics, not startup WAL recovery. The
+  // real plugin completes recovery before user commands become available, so
+  // mirror that ready-state contract in this focused fixture.
+  (manager as any).maintenanceRecoveryState = "ready";
   return { manager, requestSessionIds, events, startedThreads, resumedThreads };
 }
 

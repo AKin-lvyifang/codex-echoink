@@ -3,6 +3,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { normalizePath } from "obsidian";
 import { swallowError } from "../core/error-handling";
+import type { MaintenanceWorkflowManagedUpsertDraft } from "../harness/maintenance/workflow-wal";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { transactionSnapshotExistingSourceEvidencePaths, transactionSnapshotRepairableExistingSourceEvidencePaths } from "./digest-evidence";
 import { discoverKnowledgeBaseSources } from "./discovery";
@@ -10,7 +11,10 @@ import { writeKnowledgeBaseReportFile } from "./report";
 import {
   applyRawDigestFrontmatter,
   applyRawDigestStatusFrontmatter,
+  buildRawDigestRegistryContent,
+  emptyRawDigestRegistry,
   isRawMarkdownPath,
+  normalizeRawDigestRegistry,
   rawDigestFingerprint,
   rawDigestRecordFromMarkdown,
   rawDigestRecordIsTrusted,
@@ -20,8 +24,15 @@ import {
   RAW_DIGEST_STATUS_PENDING_REINGEST,
   writeRawDigestRegistry,
   type RawDigestConfidence,
+  type RawDigestRegistry,
   type RawDigestRegistryEntry
 } from "./raw-digest";
+import {
+  asMaintenanceWorkflowManagedUpsertDraft,
+  maintenanceContentUpsertPlan,
+  normalizeMaintenanceContentRelativePath,
+  readMaintenanceContentFileBaseline
+} from "./maintenance-content-plan";
 import {
   classifyRawSnapshotChanges,
   contentFingerprint,
@@ -61,6 +72,12 @@ export interface RawDigestCalibrationOptions {
   checkCanceled?: () => void;
   writeTracker(processed: Record<string, KnowledgeBaseProcessedSource>, updatedAt: number): Promise<void>;
   commit(commit: RawDigestCalibrationCommit): Promise<void>;
+}
+
+export interface RawDigestMetadataPlan {
+  updatedSources: KnowledgeBaseSource[];
+  registry: RawDigestRegistry;
+  managedWrites: MaintenanceWorkflowManagedUpsertDraft[];
 }
 
 export async function runRawDigestCalibration(options: RawDigestCalibrationOptions): Promise<KnowledgeBaseRunResult> {
@@ -260,60 +277,168 @@ export async function writeRawDigestMetadataForSources(
   options: {
     reportPath: string;
     startedAt: number;
+    runId?: string;
     evidencePaths: Record<string, string[]>;
     confidence: RawDigestConfidence;
     checkCanceled?: () => void;
   }
 ): Promise<KnowledgeBaseSource[]> {
-  if (!sources.length) return sources;
-  const registry = await readRawDigestRegistry(vaultPath);
-  const updated: KnowledgeBaseSource[] = [];
+  const plan = await planRawDigestMetadataForSources(vaultPath, sources, options);
+  if (!plan.managedWrites.length) return plan.updatedSources;
+  for (const write of plan.managedWrites) {
+    options.checkCanceled?.();
+    const absolutePath = path.join(vaultPath, write.relativePath);
+    if (write.kind === "raw-metadata") {
+      const current = await fsp.readFile(absolutePath);
+      if (!write.expectedContent || !current.equals(write.expectedContent)) {
+        throw new Error(`raw 已在托管元属性落盘前发生变化：${write.relativePath}`);
+      }
+      if (!current.equals(write.desiredContent)) {
+        await fsp.writeFile(absolutePath, write.desiredContent);
+      }
+      continue;
+    }
+    await writeRawDigestRegistry(vaultPath, plan.registry);
+  }
+  const refreshed: KnowledgeBaseSource[] = [];
+  for (const source of plan.updatedSources) {
+    const stat = await assertSafeRawDigestTarget(
+      path.join(vaultPath, source.relativePath),
+      source.relativePath
+    );
+    refreshed.push({ ...source, size: stat.size, mtime: stat.mtimeMs });
+  }
+  return refreshed;
+}
+
+/**
+ * Produces the complete Raw metadata + registry commit intent without writing
+ * the live Vault. The two outputs must be submitted together by the workflow
+ * WAL so a crash cannot expose frontmatter without its registry record (or the
+ * reverse).
+ */
+export async function planRawDigestMetadataForSources(
+  vaultPath: string,
+  sources: KnowledgeBaseSource[],
+  options: {
+    reportPath: string;
+    startedAt: number;
+    runId?: string;
+    evidencePaths: Record<string, string[]>;
+    confidence: RawDigestConfidence;
+    checkCanceled?: () => void;
+  }
+): Promise<RawDigestMetadataPlan> {
+  const registryBaseline = await readMaintenanceContentFileBaseline(
+    vaultPath,
+    RAW_DIGEST_REGISTRY_PATH
+  );
+  const registry = rawDigestRegistryFromContent(registryBaseline.content);
+  if (!sources.length) {
+    return {
+      updatedSources: sources,
+      registry,
+      managedWrites: []
+    };
+  }
+  const updatedSources: KnowledgeBaseSource[] = [];
+  const managedWrites: MaintenanceWorkflowManagedUpsertDraft[] = [];
+  const seen = new Set<string>();
   for (const source of sources) {
     options.checkCanceled?.();
-    const absolutePath = path.join(vaultPath, source.relativePath);
-    const content = await fsp.readFile(absolutePath);
-    const fingerprint = rawDigestFingerprint(source.relativePath, content);
+    const relativePath = normalizeMaintenanceContentRelativePath(
+      normalizePath(source.relativePath)
+    );
+    if (!relativePath.startsWith("raw/") || seen.has(relativePath)) {
+      if (seen.has(relativePath)) continue;
+      throw new Error(`raw 提炼状态拒绝登记非 Raw 路径：${source.relativePath}`);
+    }
+    seen.add(relativePath);
+    const baseline = await readMaintenanceContentFileBaseline(
+      vaultPath,
+      relativePath,
+      { requireExisting: true }
+    );
+    const content = baseline.content;
+    if (!content) {
+      throw new Error(`raw 提炼状态目标不存在：${relativePath}`);
+    }
+    const fingerprint = rawDigestFingerprint(relativePath, content);
     if (fingerprint !== source.fingerprint) {
-      throw new Error(`raw 已在维护后处理前发生变化，停止登记提炼状态：${source.relativePath}`);
+      throw new Error(`raw 已在维护后处理前发生变化，停止登记提炼状态：${relativePath}`);
     }
-    const evidencePaths = (options.evidencePaths[source.relativePath] ?? []).map(normalizePath).filter(Boolean);
-    const stat = await assertSafeRawDigestTarget(absolutePath, source.relativePath);
-    const entryForFrontmatter = rawDigestRegistryEntryForSource({ ...source, size: stat.size, mtime: stat.mtimeMs, fingerprint }, {
-      reportPath: options.reportPath,
-      startedAt: options.startedAt,
-      evidencePaths,
-      confidence: options.confidence
-    });
-    if (isRawMarkdownPath(source.relativePath)) {
-      const nextContent = applyRawDigestFrontmatter(content, entryForFrontmatter);
-      const nextFingerprint = rawDigestFingerprint(source.relativePath, nextContent);
-      if (nextFingerprint !== fingerprint) {
-        throw new Error(`raw 提炼状态写入后指纹不稳定：${source.relativePath}`);
-      }
-      if (!nextContent.equals(content)) {
-        options.checkCanceled?.();
-        await fsp.writeFile(absolutePath, nextContent);
-      }
-    }
-    const refreshedStat = await assertSafeRawDigestTarget(absolutePath, source.relativePath);
-    const refreshed: KnowledgeBaseSource = {
+    const evidencePaths = normalizeEvidencePaths(options.evidencePaths[source.relativePath]
+      ?? options.evidencePaths[relativePath]
+      ?? []);
+    const sourceAtBaseline: KnowledgeBaseSource = {
       ...source,
-      size: refreshedStat.size,
-      mtime: refreshedStat.mtimeMs,
+      relativePath,
+      size: content.byteLength,
+      mtime: baseline.mtimeMs,
       fingerprint
     };
-    registry.entries[source.relativePath] = rawDigestRegistryEntryForSource(refreshed, {
+    const entryForFrontmatter = rawDigestRegistryEntryForSource(sourceAtBaseline, {
       reportPath: options.reportPath,
       startedAt: options.startedAt,
+      runId: options.runId,
       evidencePaths,
       confidence: options.confidence
     });
-    updated.push(refreshed);
+    let desiredContent = content;
+    if (isRawMarkdownPath(relativePath)) {
+      const nextContent = applyRawDigestFrontmatter(content, entryForFrontmatter);
+      const nextFingerprint = rawDigestFingerprint(relativePath, nextContent);
+      if (nextFingerprint !== fingerprint) {
+        throw new Error(`raw 提炼状态写入后指纹不稳定：${relativePath}`);
+      }
+      desiredContent = nextContent;
+      if (!nextContent.equals(content)) {
+        managedWrites.push(asMaintenanceWorkflowManagedUpsertDraft(
+          "raw-metadata",
+          maintenanceContentUpsertPlan(baseline, nextContent, {
+            includeExpectedContent: true
+          })
+        ));
+      }
+    }
+    const plannedSource: KnowledgeBaseSource = {
+      ...sourceAtBaseline,
+      size: desiredContent.byteLength,
+      mtime: desiredContent.equals(content)
+        ? baseline.mtimeMs
+        : options.startedAt,
+      fingerprint
+    };
+    registry.entries[relativePath] = rawDigestRegistryEntryForSource(plannedSource, {
+      reportPath: options.reportPath,
+      startedAt: options.startedAt,
+      runId: options.runId,
+      evidencePaths,
+      confidence: options.confidence
+    });
+    updatedSources.push(plannedSource);
   }
   options.checkCanceled?.();
   registry.updatedAt = new Date(options.startedAt).toISOString();
-  await writeRawDigestRegistry(vaultPath, registry);
-  return updated;
+  managedWrites.push(asMaintenanceWorkflowManagedUpsertDraft(
+    "raw-registry",
+    maintenanceContentUpsertPlan(
+      registryBaseline,
+      buildRawDigestRegistryContent(registry)
+    )
+  ));
+  return { updatedSources, registry, managedWrites };
+}
+
+function rawDigestRegistryFromContent(content: Buffer | null): RawDigestRegistry {
+  if (!content?.length || !content.toString("utf8").trim()) {
+    return emptyRawDigestRegistry();
+  }
+  try {
+    return normalizeRawDigestRegistry(JSON.parse(content.toString("utf8")));
+  } catch {
+    return emptyRawDigestRegistry();
+  }
 }
 
 export function fingerprintKnowledgeRawContentSnapshot(snapshot: RawContentSnapshot): RawSnapshot {
@@ -455,7 +580,13 @@ async function assertSafeRawDigestTarget(absolutePath: string, relativePath: str
 
 function rawDigestRegistryEntryForSource(
   source: Pick<KnowledgeBaseSource, "relativePath" | "fingerprint" | "size" | "mtime">,
-  options: { reportPath: string; startedAt: number; evidencePaths: string[]; confidence: RawDigestConfidence }
+  options: {
+    reportPath: string;
+    startedAt: number;
+    runId?: string;
+    evidencePaths: string[];
+    confidence: RawDigestConfidence;
+  }
 ): RawDigestRegistryEntry {
   return {
     rawPath: source.relativePath,
@@ -463,7 +594,7 @@ function rawDigestRegistryEntryForSource(
     size: source.size,
     mtime: source.mtime,
     digestedAt: options.startedAt,
-    runId: String(options.startedAt),
+    runId: options.runId ?? String(options.startedAt),
     reportPath: options.reportPath,
     evidencePaths: options.evidencePaths,
     confidence: options.confidence

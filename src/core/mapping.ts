@@ -33,7 +33,10 @@ export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string, writ
     };
   }
 
-  const writableRoots = [...(writableRootsOverride?.length ? writableRootsOverride : [vaultPath]), os.tmpdir(), process.env.TMPDIR].filter((item): item is string => {
+  const hasExactWritableRoots = Boolean(writableRootsOverride?.length);
+  const writableRoots = [
+    ...(hasExactWritableRoots ? writableRootsOverride! : [vaultPath, os.tmpdir(), process.env.TMPDIR])
+  ].filter((item): item is string => {
     return typeof item === "string" && item.trim().length > 0;
   });
 
@@ -42,8 +45,12 @@ export function buildSandboxPolicy(mode: PermissionMode, vaultPath: string, writ
     writableRoots: Array.from(new Set(writableRoots)),
     readOnlyAccess: { type: "fullAccess" },
     networkAccess: false,
-    excludeTmpdirEnvVar: false,
-    excludeSlashTmp: false
+    // Explicit roots are an isolation contract (used by maintenance Shadow
+    // attempts), not additions to the ordinary workspace policy. Codex must
+    // not silently regain all of TMPDIR or /tmp because the Shadow control
+    // plane, sealed blobs, and apply journals can live beside the Agent Vault.
+    excludeTmpdirEnvVar: hasExactWritableRoots,
+    excludeSlashTmp: hasExactWritableRoots
   };
 }
 

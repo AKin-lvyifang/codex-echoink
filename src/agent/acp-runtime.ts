@@ -5,6 +5,7 @@ import type { AgentRichStreamRuntime } from "./runtime";
 import { normalizeRichStreamEvents } from "./rich-stream";
 import { swallowError } from "../core/error-handling";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcProcessLike } from "../core/json-rpc-stdio-transport";
+import { exactWriteFenceUnavailable } from "./write-fence";
 
 export interface AcpRuntimeCommand {
   command: string | (() => string);
@@ -130,6 +131,12 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
 
   async runTaskStream(input: AgentTaskInput, emit: AgentEventSink): Promise<AgentTaskResult> {
     throwIfAborted(input.abortSignal);
+    if (input.requireExactWriteFence) {
+      throw exactWriteFenceUnavailable(
+        this.kind,
+        "ACP transport 当前不会把 writableRoots 下发为可证明的精确写隔离策略。"
+      );
+    }
     const emitQueued = (event: AgentEvent): Promise<void> => {
       this.eventQueue = this.eventQueue.then(() => Promise.resolve(emit(event)));
       return this.eventQueue;

@@ -15,7 +15,7 @@ export class OpenCodeBackend {
     await hooks().onAbort?.(sessionId, this);
   }
   getConnectionInfo(): { connected: boolean; serverUrl: string; command: string; version: string; errors: string[] } {
-    return { connected: false, serverUrl: "", command: "", version: "", errors: [] };
+    return hooks().connectionInfo ?? { connected: true, serverUrl: "", command: "", version: "", errors: [] };
   }
   async listModels(): Promise<any[]> {
     await hooks().onListModels?.(this);
@@ -112,16 +112,48 @@ export function openCodePermissionRules(
     ];
   }
   if (mode === "workspace-write") {
-    const externalWritableRoots = writableRoots
+    const resolvedVaultPath = vaultPath.trim() ? path.resolve(vaultPath) : "";
+    const resolvedWritableRoots = Array.from(new Set(writableRoots
       .map((root) => root.trim())
       .filter(Boolean)
-      .filter((root) => !vaultPath || !isPathInside(root, vaultPath));
+      .map((root) => path.resolve(root))));
+    const scopedWorkspaceWrite = Boolean(
+      resolvedVaultPath
+      && resolvedWritableRoots.length
+      && !resolvedWritableRoots.some((root) => path.resolve(root) === resolvedVaultPath)
+    );
+    const internalWritableRoots = resolvedWritableRoots
+      .filter((root) => resolvedVaultPath && isPathInside(root, resolvedVaultPath));
+    const externalWritableRoots = resolvedWritableRoots
+      .filter((root) => !resolvedVaultPath || !isPathInside(root, resolvedVaultPath));
+    if (scopedWorkspaceWrite) {
+      return [
+        { permission: "*", pattern: "*", action: "deny" as const },
+        ...["read", "glob", "grep", "list", "todowrite"].map((permission) => ({
+          permission,
+          pattern: "*",
+          action: "allow" as const
+        })),
+        ...internalWritableRoots.flatMap((root) =>
+          openCodePathRules("edit", toOpenCodePath(path.relative(resolvedVaultPath, root)), "allow")
+        ),
+        ...externalWritableRoots.flatMap((root) =>
+          openCodePathRules("edit", toOpenCodePath(root), "allow")
+        ),
+        ...openCodePathRules("edit", "outputs/.ingest-tracker.md", "deny"),
+        { permission: "external_directory", pattern: "*", action: "deny" as const },
+        ...externalWritableRoots.flatMap((root) =>
+          openCodePathRules("external_directory", toOpenCodePath(root), "allow")
+        ),
+        { permission: "question", pattern: "*", action: "deny" as const }
+      ];
+    }
     return [
       { permission: "*", pattern: "*", action: "allow" as const },
       { permission: "external_directory", pattern: "*", action: "deny" as const },
       ...externalWritableRoots.flatMap((root) => [
-        { permission: "external_directory", pattern: path.resolve(root), action: "allow" as const },
-        { permission: "external_directory", pattern: `${path.resolve(root)}${path.sep}**`, action: "allow" as const }
+        { permission: "external_directory", pattern: toOpenCodePath(root), action: "allow" as const },
+        { permission: "external_directory", pattern: `${toOpenCodePath(root)}/**`, action: "allow" as const }
       ]),
       { permission: "question", pattern: "*", action: "deny" as const }
     ];
@@ -134,6 +166,19 @@ export function openCodePermissionRules(
       action: "allow" as const
     }))
   ];
+}
+
+function openCodePathRules(permission: string, normalizedPath: string, action: "allow" | "deny") {
+  const clean = normalizedPath.replace(/\/+$/, "");
+  if (!clean) return [];
+  return [
+    { permission, pattern: clean, action },
+    { permission, pattern: `${clean}/**`, action }
+  ];
+}
+
+function toOpenCodePath(value: string): string {
+  return value.split(path.sep).join("/");
 }
 
 function isPathInside(candidate: string, parent: string): boolean {

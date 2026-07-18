@@ -104,6 +104,30 @@ export interface AgentBackend {
   fileStatus?(): Promise<AgentFileStatus[]>;
 }
 
+export interface AgentExactWriteFenceContext {
+  /** Attempt identity issued by the maintenance orchestrator. */
+  attemptToken: string;
+  /** Same-lease identity used to reject receipts from another native run. */
+  leaseToken: string;
+  /** Live Vault paths that the configured transport must keep read-only. */
+  deniedLivePaths: string[];
+  /** Shadow control-plane paths that the configured transport must not write. */
+  deniedControlPaths: string[];
+}
+
+export interface AgentExactWriteFenceReceipt {
+  readonly version: 1;
+  readonly backend: AgentBackendKind;
+  readonly attemptToken: string;
+  readonly leaseToken: string;
+  readonly enforcedWritableRoots: readonly string[];
+  readonly deniedLivePaths: readonly string[];
+  readonly deniedControlPaths: readonly string[];
+  readonly transport: string;
+  readonly configAckDigest: string;
+  readonly configuredAt: string;
+}
+
 export interface AgentTaskInput {
   prompt: string;
   system?: string;
@@ -111,6 +135,18 @@ export interface AgentTaskInput {
   sources?: AgentPromptPart[];
   permission?: PermissionMode;
   writableRoots?: string[];
+  /**
+   * Requires the backend transport to prove that writes are limited to the
+   * exact writableRoots before submitting the prompt. A runtime that cannot
+   * preserve that fence must fail closed instead of using a broader fallback.
+   */
+  requireExactWriteFence?: boolean;
+  exactWriteFence?: AgentExactWriteFenceContext;
+  /**
+   * Runs after the native transport acknowledges its scoped configuration and
+   * before the prompt is submitted. EchoInk code generates this receipt.
+   */
+  onExactWriteFenceConfigured?: (receipt: AgentExactWriteFenceReceipt) => void | Promise<void>;
   model?: {
     providerId: string;
     modelId: string;

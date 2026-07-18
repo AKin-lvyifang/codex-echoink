@@ -1,9 +1,52 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { swallowError } from "../core/error-handling";
+import type { AgentBackendKind } from "../agent/types";
+import type {
+  MaintenanceWorkflowFileCas,
+  MaintenanceWorkflowManagedUpsertDraft
+} from "../harness/maintenance/workflow-wal";
+import type { DigestEvidencePendingSource } from "./digest-evidence";
+import { normalizeMaintenanceContentMode } from "./maintenance-content-plan";
 import { isRawIntegrityErrorMessage } from "./raw-integrity";
-import type { KnowledgeBaseRunMode, KnowledgeBaseSource } from "./types";
+import type {
+  KnowledgeBaseRunCompletion,
+  KnowledgeBaseRunMode,
+  KnowledgeBaseRunWarning,
+  KnowledgeBaseSource
+} from "./types";
 import { formatDateForFile } from "./utils";
+
+const MAINTENANCE_FINAL_BLOCK_START = "<!-- echoink-maintenance-final:v1:start -->";
+const MAINTENANCE_FINAL_BLOCK_END = "<!-- echoink-maintenance-final:v1:end -->";
+
+export interface KnowledgeBaseFallbackReportInput {
+  mode: KnowledgeBaseRunMode;
+  output: string;
+  sources: Pick<KnowledgeBaseSource, "relativePath">[];
+  startedAt: number;
+  previousMtimeMs?: number | null;
+}
+
+export interface KnowledgeBaseFailureReportInput {
+  mode: KnowledgeBaseRunMode;
+  error: string;
+  sources: Pick<KnowledgeBaseSource, "relativePath">[];
+  startedAt: number;
+  rollbackRestored: boolean;
+  rollbackError?: string;
+  externalRawAdditions?: string[];
+}
+
+export interface KnowledgeBaseMaintenanceFinalBlockInput {
+  completion: KnowledgeBaseRunCompletion;
+  workflowRunId: string;
+  attemptId?: string;
+  backend?: AgentBackendKind;
+  verifiedSources: Pick<KnowledgeBaseSource, "relativePath">[];
+  pendingSources: DigestEvidencePendingSource[];
+  warnings?: KnowledgeBaseRunWarning[];
+}
 
 export async function readKnowledgeBaseReportExcerpt(vaultPath: string, reportPath: string, maxChars = 1000): Promise<string | null> {
   const text = await readKnowledgeBaseReportText(vaultPath, reportPath);
@@ -48,7 +91,7 @@ export function isLintOnlyKnowledgeBaseReport(text: string): boolean {
 
 export function recoveredLintReportSummary(reportPath: string): string {
   const suffix = reportPath.trim() ? `报告：${reportPath.trim()}` : "报告已生成。";
-  return `体检报告已生成。Codex 返回失败状态，但 lint-only 报告文件存在，已恢复为成功。${suffix}`;
+  return `体检报告已生成。Agent 返回失败状态，但 lint-only 报告文件存在，已恢复为成功。${suffix}`;
 }
 
 export function shouldRecoverKnowledgeBaseLintFailure(errorMessage: string, reportText: string | null): boolean {
@@ -59,25 +102,50 @@ export function shouldRecoverKnowledgeBaseLintFailure(errorMessage: string, repo
 export async function ensureKnowledgeBaseFallbackReport(
   vaultPath: string,
   reportPath: string,
-  input: { mode: KnowledgeBaseRunMode; output: string; sources: Pick<KnowledgeBaseSource, "relativePath">[]; startedAt: number; previousMtimeMs?: number | null }
+  input: KnowledgeBaseFallbackReportInput
 ): Promise<void> {
   const absolute = requireKnowledgeBaseReportPath(vaultPath, reportPath);
   await fsp.mkdir(path.dirname(absolute), { recursive: true });
   const existing = await fsp.lstat(absolute).catch(() => null);
-  const existingFresh = isFreshReportMtime(existing?.isFile() ? existing.mtimeMs : null, input.startedAt, input.previousMtimeMs);
+  const existingText = existing?.isFile()
+    ? await fsp.readFile(absolute, "utf8").catch(() => "")
+    : "";
+  const next = buildKnowledgeBaseFallbackReportContent(
+    existingText,
+    existing?.isFile() ? existing.mtimeMs : null,
+    input
+  );
+  if (next === null || next === existingText) return;
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, next);
+}
+
+/**
+ * Returns null when a fresh Agent report must be kept as-is. Otherwise returns
+ * the exact bytes the Host should commit as the fallback/lint-normalized
+ * report. This function performs no I/O and is safe to call before WAL prepare.
+ */
+export function buildKnowledgeBaseFallbackReportContent(
+  existingText: string,
+  existingMtimeMs: number | null,
+  input: KnowledgeBaseFallbackReportInput
+): string | null {
+  const existingFresh = isFreshReportMtime(
+    existingMtimeMs,
+    input.startedAt,
+    input.previousMtimeMs
+  );
   let existingFreshNonLint = false;
   if (existingFresh) {
-    if (input.mode !== "lint") return;
-    const existingText = await readKnowledgeBaseReportExcerpt(vaultPath, reportPath, 4000);
-    if (existingText && isLintOnlyKnowledgeBaseReport(existingText)) {
-      await ensureLintOnlyReportModeMetadata(vaultPath, reportPath);
-      return;
+    if (input.mode !== "lint") return null;
+    const excerpt = existingText.trim().slice(0, 4000).trim();
+    if (excerpt && isLintOnlyKnowledgeBaseReport(excerpt)) {
+      return buildLintOnlyReportModeMetadataContent(existingText);
     }
     existingFreshNonLint = true;
   }
   const reportStatus = existingFreshNonLint
     ? "- 同名报告存在但不是 lint-only 体检报告，已由插件生成 fallback，避免复用错误报告。"
-    : existing?.isFile()
+    : existingMtimeMs !== null
       ? "- 同名报告存在但早于本轮任务开始时间，已由插件生成 fallback，避免复用旧报告。"
       : "- Agent 未写出报告；该报告只是过程记录，不代表 Raw 已提炼。";
   const lines = [
@@ -102,22 +170,24 @@ export async function ensureKnowledgeBaseFallbackReport(
     "- 只有 Wiki / Projects 已有结构化知识和来源证据，并通过插件验证后，Raw 才能标记为已提炼。",
     ""
   ];
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
+  return lines.join("\n");
 }
 
 export async function writeKnowledgeBaseFailureReport(
   vaultPath: string,
   reportPath: string,
-  input: {
-    mode: KnowledgeBaseRunMode;
-    error: string;
-    sources: Pick<KnowledgeBaseSource, "relativePath">[];
-    startedAt: number;
-    rollbackRestored: boolean;
-    rollbackError?: string;
-    externalRawAdditions?: string[];
-  }
+  input: KnowledgeBaseFailureReportInput
 ): Promise<void> {
+  await writeKnowledgeBaseReportFile(
+    vaultPath,
+    reportPath,
+    buildKnowledgeBaseFailureReportContent(input)
+  );
+}
+
+export function buildKnowledgeBaseFailureReportContent(
+  input: KnowledgeBaseFailureReportInput
+): string {
   const lines = [
     "---",
     `created: ${new Date(input.startedAt).toISOString()}`,
@@ -148,12 +218,119 @@ export async function writeKnowledgeBaseFailureReport(
     "- 只有 Wiki / Projects 已有结构化知识和来源证据，并通过插件验证后，Raw 才会标记为已提炼。",
     ""
   ];
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, lines.join("\n"));
+  return lines.join("\n");
 }
 
-async function ensureLintOnlyReportModeMetadata(vaultPath: string, reportPath: string): Promise<void> {
-  const text = await readKnowledgeBaseReportText(vaultPath, reportPath);
-  if (!text.trim()) return;
+/**
+ * Replaces the Harness-owned terminal section atomically. Agent prose is kept,
+ * but this block is the deterministic truth used by people and UI when the
+ * Agent's own report overstates a partial result.
+ */
+export async function writeKnowledgeBaseMaintenanceFinalBlock(
+  vaultPath: string,
+  reportPath: string,
+  input: KnowledgeBaseMaintenanceFinalBlockInput
+): Promise<void> {
+  const existing = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  const updated = appendKnowledgeBaseMaintenanceFinalBlockContent(existing, input);
+  const block = buildKnowledgeBaseMaintenanceFinalBlock(input);
+  await writeKnowledgeBaseReportFile(vaultPath, reportPath, updated);
+  const persisted = await readKnowledgeBaseReportText(vaultPath, reportPath);
+  if (!persisted.includes(block)) {
+    throw new Error("知识库维护终态写入后复验失败");
+  }
+}
+
+export function appendKnowledgeBaseMaintenanceFinalBlockContent(
+  existingText: string,
+  input: KnowledgeBaseMaintenanceFinalBlockInput
+): string {
+  if (!existingText.trim()) {
+    throw new Error("知识库维护终态无法写入：本轮报告不存在");
+  }
+  const block = buildKnowledgeBaseMaintenanceFinalBlock(input);
+  return `${withoutKnowledgeBaseMaintenanceFinalBlock(existingText).trimEnd()}\n\n${block}\n`;
+}
+
+export function planKnowledgeBaseMaintenanceReportWrite(input: {
+  reportPath: string;
+  expected: MaintenanceWorkflowFileCas;
+  baselineContent: Buffer;
+  desiredMode: number;
+  finalBlock: KnowledgeBaseMaintenanceFinalBlockInput;
+}): MaintenanceWorkflowManagedUpsertDraft {
+  return {
+    kind: "report",
+    operation: "upsert",
+    relativePath: input.reportPath,
+    expected: input.expected.kind === "missing"
+      ? { kind: "missing" }
+      : { ...input.expected },
+    desiredContent: Buffer.from(
+      appendKnowledgeBaseMaintenanceFinalBlockContent(
+        input.baselineContent.toString("utf8"),
+        input.finalBlock
+      ),
+      "utf8"
+    ),
+    desiredMode: normalizeMaintenanceContentMode(input.desiredMode)
+  };
+}
+
+export function buildKnowledgeBaseMaintenanceFinalBlock(
+  input: KnowledgeBaseMaintenanceFinalBlockInput
+): string {
+  const lines = [
+    MAINTENANCE_FINAL_BLOCK_START,
+    "## EchoInk 验证终态",
+    "",
+    `- 结果：${input.completion}`,
+    `- workflow：${inlineCode(input.workflowRunId)}`,
+    ...(input.attemptId ? [`- attempt：${inlineCode(input.attemptId)}`] : []),
+    ...(input.backend ? [`- Agent：${input.backend}`] : []),
+    "",
+    `### 已验证来源（${input.verifiedSources.length}）`,
+    ...(input.verifiedSources.length
+      ? input.verifiedSources.map((source) => `- ${inlineCode(source.relativePath)}`)
+      : ["- 无"]),
+    "",
+    `### 待处理来源（${input.pendingSources.length}）`,
+    ...(input.pendingSources.length
+      ? input.pendingSources.map((item) =>
+        `- ${inlineCode(item.source.relativePath)}：${singleLine(item.reason.message)}`)
+      : ["- 无"]),
+    ...(input.warnings?.length ? [
+      "",
+      `### 提醒（${input.warnings.length}）`,
+      ...input.warnings.map((warning) => `- ${singleLine(warning.message)}`)
+    ] : []),
+    "",
+    "> 本区块由 EchoInk Harness 在逐来源证据校验后写入；与 Agent 正文冲突时，以本区块为准。",
+    MAINTENANCE_FINAL_BLOCK_END
+  ];
+  return lines.join("\n");
+}
+
+function withoutKnowledgeBaseMaintenanceFinalBlock(text: string): string {
+  const start = text.indexOf(MAINTENANCE_FINAL_BLOCK_START);
+  if (start < 0) return text;
+  const end = text.indexOf(MAINTENANCE_FINAL_BLOCK_END, start);
+  if (end < 0) {
+    throw new Error("知识库维护报告含损坏的 EchoInk 终态区块");
+  }
+  return `${text.slice(0, start)}${text.slice(end + MAINTENANCE_FINAL_BLOCK_END.length)}`;
+}
+
+function inlineCode(value: string): string {
+  return `\`${singleLine(value).replace(/`/g, "\\`")}\``;
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+export function buildLintOnlyReportModeMetadataContent(text: string): string {
+  if (!text.trim()) return text;
   const normalized = text.replace(/\r\n/g, "\n");
   if (normalized.startsWith("---\n")) {
     const end = normalized.indexOf("\n---", 4);
@@ -181,20 +358,19 @@ async function ensureLintOnlyReportModeMetadata(vaultPath: string, reportPath: s
         changed = true;
       }
       if (changed) {
-        const updated = `---\n${updatedLines.join("\n")}${normalized.slice(end)}`;
-        await writeKnowledgeBaseReportFile(vaultPath, reportPath, updated);
+        return `---\n${updatedLines.join("\n")}${normalized.slice(end)}`;
       }
-      return;
+      return text;
     }
   }
-  if (/(^|\n)mode:\s*lint-only(\n|$)/i.test(normalized)) return;
-  await writeKnowledgeBaseReportFile(vaultPath, reportPath, [
+  if (/(^|\n)mode:\s*lint-only(\n|$)/i.test(normalized)) return text;
+  return [
     "---",
     "mode: lint-only",
     "---",
     "",
     normalized
-  ].join("\n"));
+  ].join("\n");
 }
 
 export async function writeKnowledgeBaseReportFile(vaultPath: string, reportPath: string, content: string): Promise<void> {

@@ -545,6 +545,7 @@ export class RunOrchestrator {
         runId: request.runId,
         sessionId: request.sessionId,
         workflow: request.workflow,
+        workspace: request.workspace,
         nativeSessionId: binding?.nativeSessionId,
         input: request.input,
         permissions: request.permissions,

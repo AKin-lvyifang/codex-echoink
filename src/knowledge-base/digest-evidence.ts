@@ -15,7 +15,7 @@ export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } 
 
 const DIGEST_EVIDENCE_DIFF_LINE_LIMIT = 5000;
 
-export async function verifyDigestEvidence(input: {
+export interface DigestEvidenceVerificationInput {
   vaultPath: string;
   reportPath: string;
   sources: KnowledgeBaseSource[];
@@ -23,50 +23,280 @@ export async function verifyDigestEvidence(input: {
   previousReportMtime?: number | null;
   transactionBefore: KnowledgeTransactionSnapshot | null;
   processedSourcesBeforeRun: Record<string, KnowledgeBaseProcessedSource>;
-}): Promise<Record<string, string[]>> {
-  await assertFreshMaintenanceReportCoversSources(input.vaultPath, input.reportPath, input.sources, input.startedAt, {
-    previousMtimeMs: input.previousReportMtime
-  });
-  return assertKnowledgeStructureDigestsSources(input.vaultPath, input.transactionBefore, input.sources, {
-    processedSourcesBeforeRun: input.processedSourcesBeforeRun
-  });
 }
 
-async function assertFreshMaintenanceReportCoversSources(
+export type DigestEvidencePendingReasonCode =
+  | "maintenance-report-missing"
+  | "maintenance-report-source-missing"
+  | "transaction-snapshot-missing"
+  | "structure-evidence-missing"
+  | "shared-target-dependency";
+
+export interface DigestEvidencePendingReason {
+  code: DigestEvidencePendingReasonCode;
+  message: string;
+  relatedSources?: string[];
+  targetPaths?: string[];
+}
+
+export interface DigestEvidencePendingSource {
+  source: KnowledgeBaseSource;
+  reason: DigestEvidencePendingReason;
+}
+
+export type DigestEvidenceGlobalIssueCode =
+  | "maintenance-report-missing"
+  | "transaction-snapshot-missing";
+
+export interface DigestEvidenceGlobalIssue {
+  code: DigestEvidenceGlobalIssueCode;
+  message: string;
+}
+
+export interface DigestEvidenceVerificationResult {
+  verifiedSources: KnowledgeBaseSource[];
+  /**
+   * Only contains sources that are safe to commit. Evidence discovered for a
+   * deferred dependency group is deliberately withheld from this map.
+   */
+  evidencePaths: Record<string, string[]>;
+  pendingSources: DigestEvidencePendingSource[];
+  globalIssue?: DigestEvidenceGlobalIssue;
+}
+
+interface MaintenanceReportCoverage {
+  available: boolean;
+  coveredSources: Set<string>;
+}
+
+interface KnowledgeStructureDigestEvidence {
+  available: boolean;
+  evidencePaths: Record<string, string[]>;
+  changedTargetPaths: Map<string, Set<string>>;
+}
+
+/**
+ * Evaluates digest evidence per source. Unlike the legacy verifier this API
+ * returns recoverable source-level failures, while keeping sources that share
+ * a changed target file in one atomic dependency group.
+ */
+export async function evaluateDigestEvidence(input: DigestEvidenceVerificationInput): Promise<DigestEvidenceVerificationResult> {
+  if (!input.sources.length) {
+    return {
+      verifiedSources: [],
+      evidencePaths: {},
+      pendingSources: []
+    };
+  }
+
+  const reportCoverage = await inspectFreshMaintenanceReportCoverage(
+    input.vaultPath,
+    input.reportPath,
+    input.sources,
+    input.startedAt,
+    { previousMtimeMs: input.previousReportMtime }
+  );
+  if (!reportCoverage.available || reportCoverage.coveredSources.size === 0) {
+    const code: DigestEvidencePendingReasonCode = reportCoverage.available
+      ? "maintenance-report-source-missing"
+      : "maintenance-report-missing";
+    return {
+      verifiedSources: [],
+      evidencePaths: {},
+      pendingSources: input.sources.map((source) => ({
+        source,
+        reason: {
+          code,
+          message: reportCoverage.available
+            ? `知识库维护报告缺少本轮来源证据：${source.relativePath}`
+            : "知识库维护未写出本轮来源证据。"
+        }
+      })),
+      ...(!reportCoverage.available ? {
+        globalIssue: {
+          code: "maintenance-report-missing" as const,
+          message: "知识库维护未写出本轮来源证据，无法执行逐来源提交。"
+        }
+      } : {})
+    };
+  }
+  if (!input.transactionBefore) {
+    return {
+      verifiedSources: [],
+      evidencePaths: {},
+      pendingSources: input.sources.map((source) => {
+        if (!reportCoverage.coveredSources.has(source.relativePath)) {
+          return {
+            source,
+            reason: {
+              code: "maintenance-report-source-missing" as const,
+              message: `知识库维护报告缺少本轮来源证据：${source.relativePath}`
+            }
+          };
+        }
+        return {
+          source,
+          reason: {
+            code: "transaction-snapshot-missing" as const,
+            message: "知识库维护缺少结构层事务快照，无法验证消化证据。"
+          }
+        };
+      }),
+      globalIssue: {
+        code: "transaction-snapshot-missing",
+        message: "知识库维护缺少结构层事务快照，无法执行安全的逐来源提交。"
+      }
+    };
+  }
+  const structureEvidence = await collectKnowledgeStructureDigestEvidence(
+    input.vaultPath,
+    input.transactionBefore,
+    input.sources,
+    { processedSourcesBeforeRun: input.processedSourcesBeforeRun }
+  );
+  const pendingReasons = new Map<string, DigestEvidencePendingReason>();
+  for (const source of input.sources) {
+    if (!reportCoverage.available) {
+      pendingReasons.set(source.relativePath, {
+        code: "maintenance-report-missing",
+        message: "知识库维护未写出本轮来源证据。"
+      });
+      continue;
+    }
+    if (!reportCoverage.coveredSources.has(source.relativePath)) {
+      pendingReasons.set(source.relativePath, {
+        code: "maintenance-report-source-missing",
+        message: `知识库维护报告缺少本轮来源证据：${source.relativePath}`,
+        targetPaths: sortedSetValues(structureEvidence.changedTargetPaths.get(source.relativePath))
+      });
+      continue;
+    }
+    if (!structureEvidence.available) {
+      pendingReasons.set(source.relativePath, {
+        code: "transaction-snapshot-missing",
+        message: "知识库维护缺少结构层事务快照，无法验证消化证据。"
+      });
+      continue;
+    }
+    if (!(structureEvidence.evidencePaths[source.relativePath]?.length)) {
+      pendingReasons.set(source.relativePath, {
+        code: "structure-evidence-missing",
+        message: `知识库维护未写出结构层消化证据：${source.relativePath}`,
+        targetPaths: sortedSetValues(structureEvidence.changedTargetPaths.get(source.relativePath))
+      });
+    }
+  }
+
+  deferSharedTargetDependencyGroups(
+    input.sources,
+    structureEvidence.evidencePaths,
+    structureEvidence.changedTargetPaths,
+    pendingReasons
+  );
+
+  const verifiedSources = input.sources.filter((source) => !pendingReasons.has(source.relativePath));
+  const evidencePaths = Object.fromEntries(verifiedSources.map((source) => [
+    source.relativePath,
+    structureEvidence.evidencePaths[source.relativePath] ?? []
+  ]));
+  const pendingSources = input.sources
+    .filter((source) => pendingReasons.has(source.relativePath))
+    .map((source) => ({
+      source,
+      reason: pendingReasons.get(source.relativePath)!
+    }));
+  return {
+    verifiedSources,
+    evidencePaths,
+    pendingSources
+  };
+}
+
+/**
+ * Compatibility wrapper for existing all-or-nothing callers.
+ */
+export async function verifyDigestEvidence(input: DigestEvidenceVerificationInput): Promise<Record<string, string[]>> {
+  if (!input.sources.length) return {};
+  const reportCoverage = await inspectFreshMaintenanceReportCoverage(
+    input.vaultPath,
+    input.reportPath,
+    input.sources,
+    input.startedAt,
+    { previousMtimeMs: input.previousReportMtime }
+  );
+  if (!reportCoverage.available) {
+    throw new Error("知识库维护未写出本轮来源证据，已停止提交 tracker。");
+  }
+  const missingReportSources = input.sources
+    .filter((source) => !reportCoverage.coveredSources.has(source.relativePath))
+    .map((source) => source.relativePath);
+  if (missingReportSources.length) {
+    throw new Error(`知识库维护报告缺少本轮来源证据，已停止提交 tracker：${missingReportSources.slice(0, 5).join("，")}`);
+  }
+  const structureEvidence = await collectKnowledgeStructureDigestEvidence(
+    input.vaultPath,
+    input.transactionBefore,
+    input.sources,
+    { processedSourcesBeforeRun: input.processedSourcesBeforeRun }
+  );
+  if (!structureEvidence.available) {
+    throw new Error("知识库维护未写出结构层消化证据，已停止提交 tracker。");
+  }
+  const missingStructureSources = input.sources
+    .filter((source) => !(structureEvidence.evidencePaths[source.relativePath]?.length))
+    .map((source) => source.relativePath);
+  if (missingStructureSources.length) {
+    throw new Error(`知识库维护未写出结构层消化证据，已停止提交 tracker：${missingStructureSources.slice(0, 5).join("，")}`);
+  }
+  return structureEvidence.evidencePaths;
+}
+
+async function inspectFreshMaintenanceReportCoverage(
   vaultPath: string,
   reportPath: string,
   sources: KnowledgeBaseSource[],
   startedAt: number,
   options: { previousMtimeMs?: number | null } = {}
-): Promise<void> {
-  if (!sources.length) return;
+): Promise<MaintenanceReportCoverage> {
+  if (!sources.length) return { available: true, coveredSources: new Set() };
   const report = await readFreshKnowledgeBaseReportExcerpt(vaultPath, reportPath, startedAt, {
     previousMtimeMs: options.previousMtimeMs,
     maxChars: 200_000
   });
-  if (!report) {
-    throw new Error("知识库维护未写出本轮来源证据，已停止提交 tracker。");
-  }
-  const missing = sources.filter((source) => !maintenanceReportMentionsSource(report, source.relativePath));
-  if (missing.length) {
-    throw new Error(`知识库维护报告缺少本轮来源证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
-  }
+  if (!report) return { available: false, coveredSources: new Set() };
+  return {
+    available: true,
+    coveredSources: new Set(sources
+      .filter((source) => maintenanceReportMentionsSource(report, source.relativePath))
+      .map((source) => source.relativePath))
+  };
 }
 
-async function assertKnowledgeStructureDigestsSources(
+async function collectKnowledgeStructureDigestEvidence(
   vaultPath: string,
   before: KnowledgeTransactionSnapshot | null,
   sources: KnowledgeBaseSource[],
   options: { processedSourcesBeforeRun?: Record<string, KnowledgeBaseProcessedSource> } = {}
-): Promise<Record<string, string[]>> {
-  if (!sources.length) return {};
+): Promise<KnowledgeStructureDigestEvidence> {
+  if (!sources.length) {
+    return {
+      available: true,
+      evidencePaths: {},
+      changedTargetPaths: new Map()
+    };
+  }
   if (!before) {
-    throw new Error("知识库维护未写出结构层消化证据，已停止提交 tracker。");
+    return {
+      available: false,
+      evidencePaths: {},
+      changedTargetPaths: new Map()
+    };
   }
   const current = await snapshotDigestEvidenceTransaction(vaultPath, before.roots);
   try {
     const covered = new Set<string>();
     const evidencePaths = new Map<string, Set<string>>();
+    const changedTargetPaths = new Map<string, Set<string>>();
     const addEvidence = (source: KnowledgeBaseSource, paths: string[]) => {
       if (!paths.length) return;
       covered.add(source.relativePath);
@@ -74,31 +304,141 @@ async function assertKnowledgeStructureDigestsSources(
       for (const item of paths) bucket.add(item);
       evidencePaths.set(source.relativePath, bucket);
     };
+    const addChangedTarget = (source: KnowledgeBaseSource, targetPath: string) => {
+      const bucket = changedTargetPaths.get(source.relativePath) ?? new Set<string>();
+      bucket.add(targetPath);
+      changedTargetPaths.set(source.relativePath, bucket);
+    };
     for (const source of sources) {
       const previous = options.processedSourcesBeforeRun?.[source.relativePath];
       if (legacyProcessedSourceMatchesCurrent(previous, source)) {
-        addEvidence(source, await transactionSnapshotExistingSourceEvidencePaths(before, source));
+        const beforePaths = await transactionSnapshotExistingSourceEvidencePaths(before, source);
+        const currentPaths = await transactionSnapshotExistingSourceEvidencePathsAmong(current, source, beforePaths);
+        addEvidence(source, intersectEvidencePaths(beforePaths, currentPaths));
+        for (const removedPath of subtractEvidencePaths(beforePaths, currentPaths)) {
+          if (transactionFileContentChanged(before.entries.get(removedPath), current.entries.get(removedPath))) {
+            addChangedTarget(source, removedPath);
+          }
+        }
       }
       if (!covered.has(source.relativePath) && processedSourceCanUseRepairableExistingEvidence(previous)) {
-        addEvidence(source, await transactionSnapshotRepairableExistingSourceEvidencePaths(before, source));
+        const beforePaths = await transactionSnapshotRepairableExistingSourceEvidencePaths(before, source);
+        const currentPaths = await transactionSnapshotRepairableExistingSourceEvidencePathsAmong(current, source, beforePaths);
+        addEvidence(source, intersectEvidencePaths(beforePaths, currentPaths));
+        for (const removedPath of subtractEvidencePaths(beforePaths, currentPaths)) {
+          if (transactionFileContentChanged(before.entries.get(removedPath), current.entries.get(removedPath))) {
+            addChangedTarget(source, removedPath);
+          }
+        }
       }
     }
-    for (const [relativePath, currentEntry] of current.entries) {
+    const transactionPaths = new Set([...before.entries.keys(), ...current.entries.keys()]);
+    for (const relativePath of transactionPaths) {
       if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-      if (!transactionFileContentChanged(before.entries.get(relativePath), currentEntry)) continue;
       const beforeEntry = before.entries.get(relativePath);
+      const currentEntry = current.entries.get(relativePath);
+      if (!transactionFileContentChanged(beforeEntry, currentEntry)) continue;
       for (const source of sources) {
-        if (await transactionFileIntroducesSourceEvidence(beforeEntry, currentEntry, source)) addEvidence(source, [relativePath]);
+        const assessment = await assessTransactionFileSourceChange(beforeEntry, currentEntry, source);
+        if (assessment.participates) addChangedTarget(source, relativePath);
+        if (assessment.introducesEvidence) addEvidence(source, [relativePath]);
       }
     }
-    const missing = sources.filter((source) => !covered.has(source.relativePath));
-    if (missing.length) {
-      throw new Error(`知识库维护未写出结构层消化证据，已停止提交 tracker：${missing.slice(0, 5).map((source) => source.relativePath).join("，")}`);
-    }
-    return Object.fromEntries(Array.from(evidencePaths.entries()).map(([key, value]) => [key, Array.from(value).sort()]));
+    return {
+      available: true,
+      evidencePaths: Object.fromEntries(Array.from(evidencePaths.entries()).map(([key, value]) => [key, sortedSetValues(value)])),
+      changedTargetPaths
+    };
   } finally {
     await disposeKnowledgeTransactionSnapshot(current);
   }
+}
+
+function intersectEvidencePaths(beforePaths: string[], currentPaths: string[]): string[] {
+  const current = new Set(currentPaths);
+  return beforePaths.filter((item) => current.has(item));
+}
+
+function subtractEvidencePaths(beforePaths: string[], currentPaths: string[]): string[] {
+  const current = new Set(currentPaths);
+  return beforePaths.filter((item) => !current.has(item));
+}
+
+function deferSharedTargetDependencyGroups(
+  sources: KnowledgeBaseSource[],
+  evidencePaths: Record<string, string[]>,
+  changedTargetPaths: Map<string, Set<string>>,
+  pendingReasons: Map<string, DigestEvidencePendingReason>
+): void {
+  const sourcesByPath = new Map(sources.map((source) => [source.relativePath, source]));
+  const changedTargets = new Set<string>();
+  for (const targets of changedTargetPaths.values()) {
+    for (const targetPath of targets) changedTargets.add(targetPath);
+  }
+  const dependencyTargetsBySource = new Map<string, Set<string>>();
+  for (const source of sources) {
+    const targets = new Set(changedTargetPaths.get(source.relativePath) ?? []);
+    // A verified source can rely on evidence that already existed before this
+    // run. If that same file now contains a pending source's changed block, the
+    // file is still one atomic commit unit even though the verified source's
+    // own block did not change. Include only verified evidence owners here:
+    // an unchanged historical reference that is independently pending must not
+    // block an otherwise safe current change.
+    if (!pendingReasons.has(source.relativePath)) {
+      for (const targetPath of evidencePaths[source.relativePath] ?? []) {
+        if (changedTargets.has(targetPath)) targets.add(targetPath);
+      }
+    }
+    if (targets.size) dependencyTargetsBySource.set(source.relativePath, targets);
+  }
+  const sourcesByTarget = new Map<string, Set<string>>();
+  for (const [sourcePath, targets] of dependencyTargetsBySource) {
+    if (!sourcesByPath.has(sourcePath)) continue;
+    for (const targetPath of targets) {
+      const bucket = sourcesByTarget.get(targetPath) ?? new Set<string>();
+      bucket.add(sourcePath);
+      sourcesByTarget.set(targetPath, bucket);
+    }
+  }
+
+  const visited = new Set<string>();
+  for (const source of sources) {
+    if (visited.has(source.relativePath)) continue;
+    const componentSources = new Set<string>();
+    const componentTargets = new Set<string>();
+    const queue = [source.relativePath];
+    while (queue.length) {
+      const sourcePath = queue.shift()!;
+      if (componentSources.has(sourcePath)) continue;
+      componentSources.add(sourcePath);
+      visited.add(sourcePath);
+      for (const targetPath of dependencyTargetsBySource.get(sourcePath) ?? []) {
+        componentTargets.add(targetPath);
+        for (const relatedSource of sourcesByTarget.get(targetPath) ?? []) {
+          if (!componentSources.has(relatedSource)) queue.push(relatedSource);
+        }
+      }
+    }
+    if (componentSources.size < 2) continue;
+    const blockingSources = Array.from(componentSources)
+      .filter((sourcePath) => pendingReasons.has(sourcePath))
+      .sort();
+    if (!blockingSources.length) continue;
+    const targetPaths = sortedSetValues(componentTargets);
+    for (const sourcePath of componentSources) {
+      if (pendingReasons.has(sourcePath)) continue;
+      pendingReasons.set(sourcePath, {
+        code: "shared-target-dependency",
+        message: `来源与未验证来源共用本轮知识目标文件，依赖组已整体延期：${sourcePath}`,
+        relatedSources: blockingSources,
+        targetPaths
+      });
+    }
+  }
+}
+
+function sortedSetValues(values: Set<string> | undefined): string[] {
+  return values ? Array.from(values).sort() : [];
 }
 
 export function isKnowledgeStructureDigestEvidencePath(relativePath: string): boolean {
@@ -117,9 +457,10 @@ function isKnowledgeIndexEvidencePath(relativePath: string): boolean {
 
 function transactionFileContentChanged(
   before: KnowledgeTransactionSnapshotEntry | undefined,
-  current: KnowledgeTransactionSnapshotEntry
+  current: KnowledgeTransactionSnapshotEntry | undefined
 ): boolean {
-  if (current.kind !== "file") return false;
+  if (!current) return before?.kind === "file";
+  if (current.kind !== "file") return before?.kind === "file";
   if (!before) return true;
   if (before.kind !== "file") return true;
   if (typeof before.size === "number" && typeof current.size === "number" && before.size !== current.size) return true;
@@ -127,25 +468,44 @@ function transactionFileContentChanged(
   return Math.round(before.mtimeMs) !== Math.round(current.mtimeMs);
 }
 
+interface TransactionFileSourceChangeAssessment {
+  introducesEvidence: boolean;
+  participates: boolean;
+}
+
 export async function transactionFileIntroducesSourceEvidence(
   before: KnowledgeTransactionSnapshotEntry | undefined,
   current: KnowledgeTransactionSnapshotEntry,
   source: KnowledgeBaseSource
 ): Promise<boolean> {
-  if (current.kind !== "file") return false;
+  return (await assessTransactionFileSourceChange(before, current, source)).introducesEvidence;
+}
+
+async function assessTransactionFileSourceChange(
+  before: KnowledgeTransactionSnapshotEntry | undefined,
+  current: KnowledgeTransactionSnapshotEntry | undefined,
+  source: KnowledgeBaseSource
+): Promise<TransactionFileSourceChangeAssessment> {
   const currentContent = await readKnowledgeTransactionEntryContent(current);
-  if (!currentContent) return false;
-  const currentText = currentContent.toString("utf8");
-  if (!maintenanceReportMentionsSource(currentText, source.relativePath)) return false;
-  const currentLines = normalizedEvidenceLines(currentText);
   const beforeContent = await readKnowledgeTransactionEntryContent(before);
+  const currentText = currentContent?.toString("utf8") ?? "";
+  const beforeText = beforeContent?.toString("utf8") ?? "";
+  const currentLines = normalizedEvidenceLines(currentText);
   const beforeLines = beforeContent
-    ? normalizedEvidenceLines(beforeContent.toString("utf8"))
+    ? normalizedEvidenceLines(beforeText)
     : [];
   const introducedLines = introducedEvidenceLineFlags(beforeLines, currentLines);
-  return sourceEvidenceBlocks(currentLines, introducedLines, source.relativePath)
+  const introducesEvidence = Boolean(currentContent)
+    && maintenanceReportMentionsSource(currentText, source.relativePath)
+    && (sourceEvidenceBlocks(currentLines, introducedLines, source.relativePath)
     .some((block) => (block.hasSource || (block.hasExistingTargetSource && !block.hasOldDigestBeforeNewDigest)) && block.hasDigest)
-    || transactionFileIntroducesPageLevelSourceEvidence(currentLines, introducedLines, source.relativePath, beforeLines.length === 0);
+    || transactionFileIntroducesPageLevelSourceEvidence(currentLines, introducedLines, source.relativePath, beforeLines.length === 0));
+  const beforeContexts = sourceEvidenceChangeContexts(beforeLines, source.relativePath);
+  const currentContexts = sourceEvidenceChangeContexts(currentLines, source.relativePath);
+  return {
+    introducesEvidence,
+    participates: introducesEvidence || !stringArraysEqual(beforeContexts, currentContexts)
+  };
 }
 
 function legacyProcessedSourceMatchesCurrent(previous: KnowledgeBaseProcessedSource | undefined, source: KnowledgeBaseSource): boolean {
@@ -161,32 +521,67 @@ export async function transactionSnapshotExistingSourceEvidencePaths(snapshot: K
   const paths: string[] = [];
   for (const [relativePath, entry] of snapshot.entries) {
     if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    const content = await readKnowledgeTransactionEntryContent(entry);
-    if (!content) continue;
-    const lines = normalizedEvidenceLines(content.toString("utf8"));
-    if (fileHasSourceMentionAndDigest(lines, source.relativePath)) paths.push(relativePath);
+    if (await transactionEntryHasExistingSourceEvidence(entry, source)) paths.push(relativePath);
   }
   return paths;
+}
+
+async function transactionSnapshotExistingSourceEvidencePathsAmong(
+  snapshot: KnowledgeTransactionSnapshot,
+  source: KnowledgeBaseSource,
+  candidatePaths: string[]
+): Promise<string[]> {
+  const paths: string[] = [];
+  for (const relativePath of candidatePaths) {
+    const entry = snapshot.entries.get(relativePath);
+    if (entry && await transactionEntryHasExistingSourceEvidence(entry, source)) paths.push(relativePath);
+  }
+  return paths;
+}
+
+async function transactionEntryHasExistingSourceEvidence(
+  entry: KnowledgeTransactionSnapshotEntry,
+  source: KnowledgeBaseSource
+): Promise<boolean> {
+  const content = await readKnowledgeTransactionEntryContent(entry);
+  if (!content) return false;
+  return fileHasSourceMentionAndDigest(normalizedEvidenceLines(content.toString("utf8")), source.relativePath);
 }
 
 export async function transactionSnapshotRepairableExistingSourceEvidencePaths(snapshot: KnowledgeTransactionSnapshot, source: KnowledgeBaseSource): Promise<string[]> {
   const paths: string[] = [];
   for (const [relativePath, entry] of snapshot.entries) {
     if (!isKnowledgeStructureDigestEvidencePath(relativePath)) continue;
-    if (entry.kind !== "file") continue;
-    if (!transactionEntryIsNotOlderThanSource(entry, source)) continue;
-    const content = await readKnowledgeTransactionEntryContent(entry);
-    if (!content) continue;
-    const lines = normalizedEvidenceLines(content.toString("utf8"));
-    if (
-      fileHasSinglePageLevelSourceEvidence(lines, source.relativePath)
-      || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)
-      || fileHasInlineSourceDigestEvidence(lines, source.relativePath)
-    ) {
-      paths.push(relativePath);
-    }
+    if (await transactionEntryHasRepairableExistingSourceEvidence(entry, source)) paths.push(relativePath);
   }
   return paths;
+}
+
+async function transactionSnapshotRepairableExistingSourceEvidencePathsAmong(
+  snapshot: KnowledgeTransactionSnapshot,
+  source: KnowledgeBaseSource,
+  candidatePaths: string[]
+): Promise<string[]> {
+  const paths: string[] = [];
+  for (const relativePath of candidatePaths) {
+    const entry = snapshot.entries.get(relativePath);
+    if (entry && await transactionEntryHasRepairableExistingSourceEvidence(entry, source)) paths.push(relativePath);
+  }
+  return paths;
+}
+
+async function transactionEntryHasRepairableExistingSourceEvidence(
+  entry: KnowledgeTransactionSnapshotEntry,
+  source: KnowledgeBaseSource
+): Promise<boolean> {
+  if (entry.kind !== "file") return false;
+  if (!transactionEntryIsNotOlderThanSource(entry, source)) return false;
+  const content = await readKnowledgeTransactionEntryContent(entry);
+  if (!content) return false;
+  const lines = normalizedEvidenceLines(content.toString("utf8"));
+  return fileHasSinglePageLevelSourceEvidence(lines, source.relativePath)
+    || fileHasDatedAggregateSourceEvidence(lines, source.relativePath)
+    || fileHasInlineSourceDigestEvidence(lines, source.relativePath);
 }
 
 function transactionEntryIsNotOlderThanSource(entry: KnowledgeTransactionSnapshotEntry, source: KnowledgeBaseSource): boolean {
@@ -374,6 +769,49 @@ function normalizedEvidenceLines(text: string): string[] {
   return stripNonBodyEvidenceLines(text.replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => line.trim()));
+}
+
+function sourceEvidenceChangeContexts(lines: string[], relativePath: string): string[] {
+  const sourceIndexes = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => lineMentionsTargetRawSource(line, relativePath))
+    .map(({ index }) => index);
+  if (!sourceIndexes.length) return [];
+
+  const pageHeaderEnd = lines.findIndex((line) => /^##\s+/.test(line));
+  const headerEnd = pageHeaderEnd === -1 ? lines.length : pageHeaderEnd;
+  const pageLevelRawMentions = lines.slice(0, headerEnd).filter((line) => mentionsRawSource(line)).length;
+  if (
+    pageLevelRawMentions === 1
+    && sourceIndexes.some((index) => isSinglePageLevelSourceLine(lines, index))
+  ) {
+    return [`page:${lines.join("\n")}`];
+  }
+
+  const contexts: string[] = [];
+  for (const sourceIndex of sourceIndexes) {
+    const block = [lines[sourceIndex]];
+    for (let index = sourceIndex + 1; index < lines.length; index++) {
+      const line = lines[index];
+      if (isSourceEvidenceBlockBoundary(line) || mentionsRawSource(line)) break;
+      block.push(line);
+    }
+    contexts.push(`block:${block.join("\n")}`);
+  }
+
+  const sourceDate = extractKnowledgeSourceDate(relativePath);
+  if (sourceDate) {
+    const datedContext = lines
+      .filter((line, index) => evidenceTextCoversDate(line, sourceDate)
+        || evidenceTextCoversDate(nearestEvidenceHeading(lines, index), sourceDate))
+      .join("\n");
+    if (datedContext) contexts.push(`date:${datedContext}`);
+  }
+  return Array.from(new Set(contexts)).sort();
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 function stripNonBodyEvidenceLines(lines: string[]): string[] {

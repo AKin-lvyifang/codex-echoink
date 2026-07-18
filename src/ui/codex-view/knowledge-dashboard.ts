@@ -15,6 +15,10 @@ export interface KnowledgeDashboardRenderState {
   expanded: boolean;
   loading: boolean;
   error: string;
+  recovery: {
+    state: "pending" | "ready" | "blocked";
+    message: string;
+  };
 }
 
 export interface KnowledgeDashboardActions {
@@ -70,13 +74,17 @@ export function renderKnowledgeDashboardView(
   if (!state.visible) return;
 
   const snapshot = state.snapshot;
+  const recoveryPending = state.recovery.state === "pending";
+  const recoveryBlocked = state.recovery.state === "blocked";
   const healthStatus = snapshot?.health.status ?? "unknown";
-  const hasWarning = Boolean(state.error || healthStatus === "risk" || healthStatus === "bad" || snapshot?.warnings.length);
+  const hasWarning = Boolean(state.error || recoveryBlocked || healthStatus === "risk" || healthStatus === "bad" || snapshot?.warnings.length);
   container.toggleClass("has-warning", hasWarning);
   container.toggleClass("health-healthy", healthStatus === "healthy");
   container.toggleClass("health-risk", healthStatus === "risk");
   container.toggleClass("health-bad", healthStatus === "bad");
   container.toggleClass("is-loading", state.loading);
+  container.toggleClass("is-recovery-pending", recoveryPending);
+  container.toggleClass("is-recovery-blocked", recoveryBlocked);
 
   const header = container.createDiv({ cls: "codex-kb-dashboard-header" });
   const title = header.createDiv({ cls: "codex-kb-dashboard-title" });
@@ -105,6 +113,17 @@ export function renderKnowledgeDashboardView(
   setIcon(toggle, state.expanded ? "chevron-up" : "chevron-down");
   toggle.onclick = actions.onToggleExpanded;
 
+  if (recoveryPending || recoveryBlocked) {
+    const recovery = container.createDiv({
+      cls: `codex-kb-dashboard-recovery codex-kb-dashboard-recovery-${state.recovery.state}`
+    });
+    const recoveryIcon = recovery.createSpan({ cls: "codex-kb-dashboard-recovery-icon" });
+    setIcon(recoveryIcon, recoveryBlocked ? "triangle-alert" : "rotate-cw");
+    recovery.createSpan({
+      cls: "codex-kb-dashboard-recovery-text",
+      text: state.recovery.message
+    });
+  }
   if (state.error) {
     container.createDiv({ cls: "codex-kb-dashboard-error", text: state.error });
   }
@@ -227,7 +246,16 @@ function renderKnowledgeDashboardHealth(container: HTMLElement, snapshot: Knowle
   addKnowledgeDashboardFact(facts, "最近体检", snapshot.checkFreshness.lastCheckAt ? formatAbsoluteTime(snapshot.checkFreshness.lastCheckAt) : "无记录");
   addKnowledgeDashboardFact(facts, "新鲜度", snapshot.checkFreshness.daysSinceCheck >= 0 ? `${snapshot.checkFreshness.daysSinceCheck} 天前确认` : "无记录");
   addKnowledgeDashboardFact(facts, "连续体检", snapshot.health.streakDays ? `${snapshot.health.streakDays} 天` : "0 天");
-  addKnowledgeDashboardFact(facts, "最近任务", knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at));
+  addKnowledgeDashboardFact(
+    facts,
+    "最近任务",
+    knowledgeRunStatusLabel(
+      snapshot.lastRun.status,
+      snapshot.lastRun.at,
+      snapshot.lastRun.completion,
+      snapshot.lastRun.pendingSourceCount
+    )
+  );
   addKnowledgeDashboardFact(facts, "Tracker", snapshot.tracker.exists ? `${snapshot.tracker.trackedCount} 条` : "缺失");
 
   const healthReasons = snapshot.health.status === "healthy" ? [] : snapshot.health.reasons;
@@ -614,7 +642,7 @@ function addKnowledgeDashboardTable(container: HTMLElement, title: string, colum
   }
 }
 
-function knowledgeRunStatusLabel(status: string, at: number): string {
+function knowledgeRunStatusLabel(status: string, at: number, completion = "", pendingSourceCount = 0): string {
   const labels: Record<string, string> = {
     idle: "未运行",
     running: "运行中",
@@ -622,7 +650,15 @@ function knowledgeRunStatusLabel(status: string, at: number): string {
     failed: "失败",
     canceled: "已取消"
   };
-  const label = labels[status] ?? status;
+  const completionLabels: Record<string, string> = {
+    partial: pendingSourceCount ? `部分完成（${pendingSourceCount} 项待处理）` : "部分完成",
+    recovered: "恢复后完成",
+    noop: "已检查（无新来源）",
+    full: "成功"
+  };
+  const label = status === "success" && completion
+    ? completionLabels[completion] ?? labels[status]
+    : labels[status] ?? status;
   return at ? `${label} · ${formatRelativeTime(at)}` : label;
 }
 

@@ -9,23 +9,21 @@ import type { HarnessRunWithAdapterInput } from "./harness/kernel/harness-kernel
 import type { AppendRunEventInput, SettleRunTerminalInput } from "./harness/kernel/run-orchestrator";
 import type { NativeCleanupResult, SettleNativeExecutionInput } from "./harness/native/native-execution-manager";
 import type { NativeSessionLeaseCleanupExecutionResult } from "./harness/kernel/native-session-lease-manager";
+import type { MaintenanceWorkflowSettingsHost } from "./harness/maintenance/workflow-wal";
 import { closeMcpBrokerConnectionPool } from "./resources/mcp-broker";
 import type { CallEchoInkMcpToolInput } from "./resources/mcp-broker-service";
 import type { EchoInkResource } from "./resources/types";
 import type { EditorActionController } from "./editor-actions/controller";
 import type { KnowledgeBaseManager } from "./knowledge-base/manager";
-import type {
-  KnowledgeBaseHistoryIndex,
-  KnowledgeBaseHistoryRemovalResult,
-  KnowledgeBaseStorageStats
-} from "./knowledge-base/history-store";
+import type { KnowledgeBaseHistoryIndex, KnowledgeBaseHistoryRemovalResult, KnowledgeBaseStorageStats } from "./knowledge-base/history-store";
+import { maintenanceWorkflowStorageRootForVault } from "./knowledge-base/maintenance-workflow";
 import type { ReviewManager } from "./review/manager";
-import type { AgentBackendMode, ChatMessage, CodexForObsidianSettings, ResourceManagementTab, StoredSession } from "./settings/settings";
+import type { AgentBackendMode, ChatMessage, CodexForObsidianSettings, KnowledgeBaseSettings, ResourceManagementTab, StoredSession } from "./settings/settings";
 import type { CodexNotification, CodexSkill, CodexStatusSnapshot, UserInput } from "./types/app-server";
 import type { CodexView } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
 import { EchoInkConnectionService } from "./plugin/connection-service";
-import { EchoInkSettingsStore, type SettingsSaveOptions } from "./plugin/settings-store";
+import { EchoInkSettingsStore, type InterruptedRunRecoveryOptions, type SettingsSaveOptions } from "./plugin/settings-store";
 import { EchoInkViewService } from "./plugin/view-service";
 import { EchoInkHarnessService } from "./plugin/harness-service";
 import type { MemoryStoreStatus, CodexMemoryImportResult, CodexMemoryMigrationPreview, InitializeEchoInkMemoryResult } from "./harness/memory/file-memory";
@@ -114,7 +112,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async dismissEchoInkMemoryTransaction(id: string, reason: string): Promise<boolean> { return await this.getHarnessService().dismissMemoryTransaction(id, reason); }
   async retryEchoInkMemoryTransaction(id: string): Promise<MemorySyncResult> { return await this.getHarnessService().retryMemoryTransaction(id); }
   async deleteEchoInkMemory(id: string, reason: string): Promise<boolean> { return await this.getHarnessService().deleteMemory(id, reason); }
-  async recoverInterruptedHarnessRuns(sessionId?: string): Promise<number> { return await this.getSettingsStore().recoverInterruptedHarnessRuns(sessionId); }
+  async recoverInterruptedHarnessRuns(sessionId?: string, options?: InterruptedRunRecoveryOptions): Promise<number> { return await this.getSettingsStore().recoverInterruptedHarnessRuns(sessionId, options); }
   getNativeExecutionRefContext(backendId?: AgentBackendKind) { return this.getHarnessService().getNativeExecutionRefContext(backendId); }
   async recordNativeExecution(record: NativeExecutionRecord): Promise<void> { return await this.getHarnessService().recordNativeExecution(record); }
   async settleNativeExecution(input: SettleNativeExecutionInput): Promise<NativeExecutionRecord | null> { return await this.getHarnessService().settleNativeExecution(input); }
@@ -148,6 +146,8 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async loadSettings(): Promise<void> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
+  getKnowledgeBaseWorkflowSettingsHost(): MaintenanceWorkflowSettingsHost<KnowledgeBaseSettings> { return this.getSettingsStore(); }
+  getKnowledgeBaseWorkflowStorageRoot(vaultPath = this.getVaultPath()): string { return maintenanceWorkflowStorageRootForVault(vaultPath); }
   async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> { return await this.getSettingsStore().commitKnowledgeRunDurably(); }
   async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }

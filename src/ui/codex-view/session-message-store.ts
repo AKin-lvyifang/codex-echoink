@@ -383,6 +383,12 @@ function sameAgentRun(left: ChatMessage, right: ChatMessage): boolean {
 }
 
 function settledThinkingMessage(status: string): { status: string; text: string } {
+  if (status === "recovery-pending" || /安全恢复中|恢复中|等待恢复|正在恢复/.test(status)) {
+    return { status: "recovery-pending", text: "安全恢复中" };
+  }
+  if (status === "recovery-blocked" || /恢复受阻|恢复被阻断/.test(status)) {
+    return { status: "recovery-blocked", text: "安全恢复受阻" };
+  }
   if (/完成|成功/.test(status)) return { status: "completed", text: "处理完成" };
   if (/中断|取消/.test(status)) return { status: "interrupted", text: "处理已中断" };
   return { status: "failed", text: "处理失败" };

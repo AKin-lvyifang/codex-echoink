@@ -9,6 +9,7 @@ import type { AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
 import { AcpAgentRuntime } from "./acp-runtime";
 import { createAgentEventRuntimeWithFallback } from "./event-task";
 import { createOpenCodeRichRuntime } from "./opencode-rich-runtime";
+import { assertExactWriteFenceRequest, exactWriteFenceUnavailable } from "./write-fence";
 
 export interface AgentRuntimeFactoryInput {
   backend: AgentBackendKind;
@@ -57,6 +58,7 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
   const backend = new OpenCodeBackend({ ...input.settings.opencode, vaultPath: input.vaultPath });
   const prepareTask = async (task: AgentTaskInput) => {
     throwIfTaskAborted(task.abortSignal);
+    assertExactWriteFenceRequest("opencode", task, input.vaultPath);
     const selectedAgent = task.agent || input.settings.opencode.agent;
     if (task.requireDirectAgent && selectedAgent) {
       requireDirectOpenCodeAgent(selectedAgent, await backend.listAgents());
@@ -168,7 +170,10 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
       await backend.abort(runId);
     }
   };
-  const openCodeRichRuntime = createOpenCodeRichRuntime(backend, { manageBackendConnection: false });
+  const openCodeRichRuntime = createOpenCodeRichRuntime(backend, {
+    manageBackendConnection: false,
+    vaultPath: input.vaultPath
+  });
   const richRuntime: AgentRichStreamRuntime = {
     kind: "opencode",
     connect: () => openCodeRichRuntime.connect(),
@@ -199,7 +204,9 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
     },
     abort: (runId) => openCodeRichRuntime.abort(runId)
   };
-  return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime);
+  return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime, {
+    exactWriteFenceSupport: "rich-only"
+  });
 }
 
 function createHermesTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRuntime {
@@ -223,6 +230,12 @@ function createHermesTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunt
       return await backend.listAgents();
     },
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
+      if (task.requireExactWriteFence) {
+        throw exactWriteFenceUnavailable(
+          "hermes",
+          "Hermes CLI/ACP 当前不能证明 writableRoots 的精确写隔离。"
+        );
+      }
       const models = await backend.listModels();
       const selectedModel = task.model ?? selectAgentModel(models, input.settings.agents.hermes.providerId, input.settings.agents.hermes.modelId);
       if (selectedModel) {
@@ -251,7 +264,10 @@ function createHermesTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunt
       env: input.settings.agents.hermes.apiKey.trim() ? { HERMES_API_KEY: input.settings.agents.hermes.apiKey.trim() } : undefined
     }
   });
-  return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime);
+  return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime, {
+    exactWriteFenceSupport: "unsupported",
+    exactWriteFenceUnavailableReason: "Hermes CLI/ACP 当前不能证明 writableRoots 的精确写隔离。"
+  });
 }
 
 function withResourcePrefix(prompt: string, resources: AgentTaskInput["resources"]): string {

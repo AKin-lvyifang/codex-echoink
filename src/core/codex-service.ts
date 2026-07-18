@@ -108,6 +108,12 @@ export interface TurnOptions {
   requestTimeoutMs?: number;
   writableRoots?: string[];
   workspaceResources?: WorkspaceResourceToggles;
+  /**
+   * Hard per-thread resource fence used by isolated Harness workflows.
+   * Unlike an empty selection map, this explicitly clears inherited Codex
+   * MCP servers and plugins from the thread configuration.
+   */
+  externalResources?: "disabled";
 }
 
 const NOTIFICATION_METHODS = [
@@ -463,7 +469,10 @@ export class CodexService implements AgentBackend {
   private async buildThreadConfig(options: TurnOptions): Promise<Record<string, unknown> | null> {
     const workspaceResources = options.workspaceResources;
     const config: Record<string, unknown> = {};
-    if (!options.mcpEnabled) {
+    if (options.externalResources === "disabled") {
+      config.mcp_servers = {};
+      config.plugins = {};
+    } else if (!options.mcpEnabled) {
       config.mcp_servers = {};
     } else if (hasResourceOverrides(workspaceResources?.mcpServers)) {
       const runtimeConfig = await this.readRuntimeConfig();
@@ -477,7 +486,10 @@ export class CodexService implements AgentBackend {
       }
     }
 
-    if (hasResourceOverrides(workspaceResources?.plugins)) {
+    if (
+      options.externalResources !== "disabled"
+      && hasResourceOverrides(workspaceResources?.plugins)
+    ) {
       const runtimeConfig = await this.readRuntimeConfig();
       const basePlugins = runtimeConfig?.plugins && typeof runtimeConfig.plugins === "object" ? runtimeConfig.plugins : {};
       config.plugins = Object.fromEntries(

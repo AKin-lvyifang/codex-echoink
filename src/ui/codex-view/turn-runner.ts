@@ -26,7 +26,7 @@ import { newId } from "../../settings/settings";
 import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapping";
 import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
-import { parseKnowledgeBaseCommand } from "../../knowledge-base/commands";
+import { knowledgeBaseHelpText, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
 import { persistAndSettleChatRun } from "./turn-lifecycle";
 import {
@@ -56,8 +56,11 @@ export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
     return;
   }
   if (action === "cancel-knowledge-task") {
-    view.pauseQueueForSession(session.id);
-    await view.plugin.getKnowledgeBaseManager()?.cancelMaintenance();
+    const cancellation =
+      await view.plugin.getKnowledgeBaseManager()?.cancelMaintenance();
+    if (cancellation?.accepted) {
+      view.pauseQueueForSession(session.id);
+    }
     return;
   }
   const item = await view.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: true });
@@ -74,7 +77,14 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
   view.renderQueue();
   view.renderToolbar();
   new Notice("已加入队列");
-  if (!view.running && !view.plugin.getKnowledgeBaseManager()?.isRunning && !view.turnQueue.isSessionQueuePaused(item.sessionId)) {
+  const knowledgeManager = view.plugin.getKnowledgeBaseManager();
+  if (
+    !view.running
+    && !knowledgeManager?.isRunning
+    && knowledgeManager?.maintenanceRecoveryStatus.state !== "pending"
+    && knowledgeManager?.maintenanceRecoveryStatus.state !== "blocked"
+    && !view.turnQueue.isSessionQueuePaused(item.sessionId)
+  ) {
     void view.startNextQueuedTurn(item.sessionId);
   }
 }
@@ -127,10 +137,13 @@ export function shouldDismissThinkingForHarnessEvent(event: HarnessEvent): boole
 }
 
 export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId: string): Promise<void> {
+  const knowledgeManager = view.plugin.getKnowledgeBaseManager();
+  const maintenanceRecoveryBlocked = knowledgeManager?.maintenanceRecoveryStatus.state === "pending"
+    || knowledgeManager?.maintenanceRecoveryStatus.state === "blocked";
   if (!canStartQueuedTurn({
     queueStartInProgress: view.queueStartInProgress,
     viewRunning: view.running,
-    knowledgeTaskRunning: Boolean(view.plugin.getKnowledgeBaseManager()?.isRunning)
+    knowledgeTaskRunning: Boolean(knowledgeManager?.isRunning || maintenanceRecoveryBlocked)
   })) return;
   const item = view.turnQueue.dequeueNext(sessionId);
   if (!item) {
@@ -163,15 +176,30 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       new Notice("本地命令不能排队；当前任务结束后再操作");
       return null;
     }
-    if (knowledgeCommand.intent === "clear") {
-      await view.clearKnowledgeBasePage(session);
-      return null;
-    }
     if (knowledgeCommand.intent === "history") {
       view.clearComposerDraft();
       await view.openKnowledgeBaseHistory(session);
       return null;
     }
+    if (knowledgeCommand.intent === "help") {
+      await appendLocalKnowledgeBaseHelp(view, session, text || "/help");
+      return null;
+    }
+  }
+  const recovery = knowledgeSession
+    ? view.plugin.getKnowledgeBaseManager()?.maintenanceRecoveryStatus
+    : undefined;
+  if (knowledgeSession && knowledgeCommand && recovery && recovery.state !== "ready") {
+    new Notice(recovery.message);
+    return null;
+  }
+  if (knowledgeSession && knowledgeCommand?.intent === "clear") {
+    if (!options.allowLocalKnowledgeCommands) {
+      new Notice("本地命令不能排队；当前任务结束后再操作");
+      return null;
+    }
+    await view.clearKnowledgeBasePage(session);
+    return null;
   }
   const kind = knowledgeSession && knowledgeCommand && knowledgeCommand.intent !== "chat" ? "knowledge-base" : "chat";
   if (kind === "chat" && !knowledgeSession) {
@@ -701,12 +729,20 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
   }
   if (!item.text && !item.attachments.length) return "failed";
   const runId = newId("kb-run");
-  const backend = resolveKnowledgeBackend(view);
-  const provenance = messageProvenanceForTurn(view, backend, item.turnOptions.model);
+  const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
+  const command = parseKnowledgeBaseCommand(item.text, turnAttachments.length);
+  const runMode = knowledgeBaseRunModeForCommandIntent(command.intent);
+  // Maintenance snapshots the selected Agent when it actually starts. A
+  // queued item may have been created under another backend, so its model and
+  // provider-specific options must not be paired with the new selected Agent.
+  const executionTurnOptions = runMode
+    ? (typeof view.currentTurnOptions === "function" ? view.currentTurnOptions(session) : item.turnOptions)
+    : item.turnOptions;
+  const backend = resolveKnowledgeBackendForCommand(view, command.intent);
+  const provenance = messageProvenanceForTurn(view, backend, executionTurnOptions.model);
   view.activeRunId = runId;
   view.activeRunKind = "knowledge-base";
   view.activeRunSessionId = session.id;
-  const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
   const userMessage: ChatMessage = {
     id: newId("msg"),
     role: "user",
@@ -718,8 +754,6 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     createdAt: Date.now()
   };
   await view.plugin.externalizeMessageText(userMessage, userMessage.text);
-  const command = parseKnowledgeBaseCommand(item.text, turnAttachments.length);
-  const runMode = knowledgeBaseRunModeForCommandIntent(command.intent);
   const assistantMessage: ChatMessage = {
     id: newId("msg"),
     role: "assistant",
@@ -744,8 +778,26 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
   let turnError: unknown = null;
   try {
     await view.plugin.saveSettings(true);
-    const result = await manager.handleUserMessage(item.text, turnAttachments, knowledgeBaseTurnOverrides(item.turnOptions, session));
+    const result = await manager.handleUserMessage(
+      item.text,
+      turnAttachments,
+      knowledgeBaseTurnOverrides(executionTurnOptions, session, runId)
+    );
     succeeded = result.status === "success";
+    const workflowRunId = result.workflowRunId?.trim() ?? "";
+    const hasExplicitMaintenanceWinner = Object.prototype.hasOwnProperty.call(
+      result,
+      "maintenanceWinnerBackend"
+    );
+    if (!hasExplicitMaintenanceWinner && result.maintenanceBackend) {
+      const actualProvenance = messageProvenanceForTurn(
+        view,
+        result.maintenanceBackend,
+        result.maintenanceBackend === backend ? executionTurnOptions.model : undefined
+      );
+      replaceMessageProvenance(userMessage, actualProvenance);
+      replaceMessageProvenance(assistantMessage, actualProvenance);
+    }
     if (result.harnessResult) {
       if (result.harnessResult.backendBinding) updateSessionBackendBinding(session, result.harnessResult.backendBinding);
       applyHarnessRunProvenance(userMessage, result.harnessResult);
@@ -755,14 +807,52 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
         assistantMessage.nativeCleanupStatus = "pending";
       }
     }
-    assistantMessage.status = knowledgeBaseMessageStatusFromResult(result.status);
+    if (hasExplicitMaintenanceWinner) {
+      const winner = result.maintenanceWinnerBackend;
+      const actualProvenance = winner
+        ? {
+          ...messageProvenanceForTurn(
+            view,
+            winner,
+            winner === backend ? executionTurnOptions.model : undefined
+          ),
+          ...(result.harnessResult?.effectiveModel
+            ? {
+              modelId: harnessProviderModelId(
+                result.harnessResult.effectiveModel.providerId,
+                result.harnessResult.effectiveModel.modelId
+              )
+            }
+            : {})
+        }
+        : null;
+      replaceMaintenanceRunProvenance(
+        session,
+        [runId, workflowRunId],
+        [userMessage, assistantMessage],
+        actualProvenance
+      );
+    }
+    if (workflowRunId) {
+      userMessage.runId = workflowRunId;
+      assistantMessage.runId = workflowRunId;
+    }
+    assistantMessage.status = result.maintenanceRecoveryState
+      ? `recovery-${result.maintenanceRecoveryState}`
+      : knowledgeBaseMessageStatusFromResult(result.status);
     assistantMessage.text = result.message;
     assistantMessage.citations = result.citations;
     if (result.ui) assistantMessage.knowledgeBaseUi = result.ui;
     else delete assistantMessage.knowledgeBaseUi;
     if (result.status === "failed") {
-      view.finishThinkingMessage(session, "失败");
-      view.finishRunningProcessMessages(session, "error");
+      const recoveryProjectionStatus = result.maintenanceRecoveryState
+        ? `recovery-${result.maintenanceRecoveryState}`
+        : "";
+      view.finishThinkingMessage(session, recoveryProjectionStatus || "失败");
+      view.finishRunningProcessMessages(
+        session,
+        recoveryProjectionStatus || "error"
+      );
       view.finishPlanMessage(session);
     } else if (result.status === "canceled") {
       view.finishThinkingMessage(session, "已取消");
@@ -773,7 +863,11 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     if (result.followUpCommand) {
       if (session.id === view.plugin.settings.activeSessionId) view.fillKnowledgeBaseCommand(result.followUpCommand);
     }
-    if (result.status === "failed") new Notice(`知识库管理失败：${result.message}`);
+    if (result.status === "failed") {
+      new Notice(result.maintenanceRecoveryState
+        ? result.message
+        : `知识库管理失败：${result.message}`);
+    }
     if (result.status === "canceled") new Notice("知识库管理已取消");
   } catch (error) {
     turnError = error;
@@ -789,7 +883,12 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
       await persistAndSettleKnowledgeRun(view, assistantMessage, manager);
     } catch (error) {
       turnError = turnError ?? error;
-      assistantMessage.status = "failed";
+      if (
+        assistantMessage.status !== "recovery-pending"
+        && assistantMessage.status !== "recovery-blocked"
+      ) {
+        assistantMessage.status = "failed";
+      }
       assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
       await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
       await view.plugin.saveSettings(true).catch(() => undefined);
@@ -884,17 +983,53 @@ function knowledgeBaseMessageStatusFromResult(status: "success" | "failed" | "ca
 }
 
 function isLocalKnowledgeBaseCommand(intent: string): boolean {
-  return intent === "clear" || intent === "history";
+  return intent === "clear" || intent === "history" || intent === "help";
 }
 
-function knowledgeBaseTurnOverrides(turnOptions: QueuedTurnItem["turnOptions"], session?: StoredSession) {
+async function appendLocalKnowledgeBaseHelp(
+  view: CodexViewTurnContext,
+  session: StoredSession,
+  inputText: string
+): Promise<void> {
+  const runId = newId("kb-local");
+  const createdAt = Date.now();
+  view.clearComposerDraft();
+  view.addMessageToSession(session, {
+    role: "user",
+    text: inputText,
+    runId,
+    createdAt
+  });
+  view.addMessageToSession(session, {
+    role: "assistant",
+    title: "知识库帮助",
+    itemType: "knowledgeBase",
+    status: "completed",
+    text: knowledgeBaseHelpText(),
+    runId,
+    createdAt: createdAt + 1
+  });
+  session.title = "知识库管理";
+  session.updatedAt = createdAt + 1;
+  view.renderTabs();
+  view.renderMessages({ forceBottom: true });
+  view.renderToolbar();
+  await view.plugin.saveSettings(true);
+}
+
+function knowledgeBaseTurnOverrides(
+  turnOptions: QueuedTurnItem["turnOptions"],
+  session: StoredSession | undefined,
+  workflowRunId: string
+) {
   return {
     model: turnOptions.model,
     reasoning: turnOptions.reasoning,
     serviceTier: turnOptions.serviceTier,
     mcpEnabled: turnOptions.mcpEnabled,
     workspaceResources: turnOptions.workspaceResources,
-    harnessSession: session
+    harnessSession: session,
+    workflowRunId
   };
 }
 
@@ -912,6 +1047,17 @@ function resolveKnowledgeBackend(view: CodexViewTurnContext): AgentBackendKind {
   return configured === "default" ? settings.agentBackend ?? "codex-cli" : configured;
 }
 
+function resolveKnowledgeBackendForCommand(view: CodexViewTurnContext, intent: KnowledgeBaseCommandIntent): AgentBackendKind {
+  if (intent === "maintain"
+    || intent === "lint"
+    || intent === "reingest"
+    || intent === "process-outputs"
+    || intent === "process-inbox") {
+    return view.plugin?.settings?.agentBackend ?? "codex-cli";
+  }
+  return resolveKnowledgeBackend(view);
+}
+
 function messageProvenanceForTurn(view: CodexViewTurnContext, backend: AgentBackendKind, turnModel?: string): Pick<ChatMessage, "backendId" | "modelId" | "profileId"> {
   const modelId = messageModelIdForBackend(view, backend, turnModel);
   const profileId = messageProfileIdForBackend(view, backend);
@@ -926,6 +1072,41 @@ function applyMessageProvenance(message: ChatMessage, provenance: Pick<ChatMessa
   message.backendId = provenance.backendId;
   if (provenance.modelId) message.modelId = provenance.modelId;
   if (provenance.profileId) message.profileId = provenance.profileId;
+}
+
+function replaceMessageProvenance(message: ChatMessage, provenance: Pick<ChatMessage, "backendId" | "modelId" | "profileId">): void {
+  if (provenance.backendId) message.backendId = provenance.backendId;
+  else delete message.backendId;
+  if (provenance.modelId) message.modelId = provenance.modelId;
+  else delete message.modelId;
+  if (provenance.profileId) message.profileId = provenance.profileId;
+  else delete message.profileId;
+}
+
+function replaceMaintenanceRunProvenance(
+  session: StoredSession,
+  runIds: string[],
+  carrierMessages: ChatMessage[],
+  provenance: Pick<ChatMessage, "backendId" | "modelId" | "profileId"> | null
+): void {
+  const matchingRunIds = new Set(runIds.map((runId) => runId.trim()).filter(Boolean));
+  const carriers = new Set(carrierMessages);
+  for (const message of session.messages) {
+    if (
+      !carriers.has(message)
+      && (!message.runId || !matchingRunIds.has(message.runId))
+    ) {
+      continue;
+    }
+    if (provenance) replaceMessageProvenance(message, provenance);
+    else clearMessageProvenance(message);
+  }
+}
+
+function clearMessageProvenance(message: ChatMessage): void {
+  delete message.backendId;
+  delete message.modelId;
+  delete message.profileId;
 }
 
 function applyHarnessRunProvenance(message: ChatMessage, output: HarnessRunResult): void {

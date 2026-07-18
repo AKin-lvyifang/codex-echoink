@@ -1,4 +1,9 @@
 import type { CodexNotification } from "../../../types/app-server";
+import {
+  codexNativeExecutionId,
+  issueKnowledgeAgentNativeTerminationReceipt,
+  type KnowledgeAgentNativeTerminationReceipt
+} from "../../../knowledge-base/native-termination";
 import { normalizeHarnessRunUsage, type HarnessEvent, type HarnessEventSink, type HarnessEventType } from "../../contracts/event";
 import type { AgentRunResult } from "../adapter";
 
@@ -18,6 +23,7 @@ export interface CodexRichRunDriverOptions {
   turnId?: string;
   interruptTurn?: (threadId: string, turnId: string) => Promise<void>;
   inactivityTimeoutMs?: number;
+  interruptBarrierTimeoutMs?: number;
   artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   onSettled?: (result: AgentRunResult) => void | Promise<void>;
   finalAnswerGraceMs?: number;
@@ -44,6 +50,7 @@ export class CodexRichRunDriver {
   private readonly onSettled?: (result: AgentRunResult) => void | Promise<void>;
   private readonly artifactRecovery?: (input: CodexRichArtifactRecoveryInput) => Promise<string | null>;
   private readonly inactivityTimeoutMs?: number;
+  private readonly interruptBarrierTimeoutMs: number;
   private readonly finalAnswerGraceMs: number;
   private readonly interruptTurn?: (threadId: string, turnId: string) => Promise<void>;
 
@@ -67,6 +74,10 @@ export class CodexRichRunDriver {
     this.onSettled = options.onSettled;
     this.artifactRecovery = options.artifactRecovery;
     this.inactivityTimeoutMs = options.inactivityTimeoutMs;
+    this.interruptBarrierTimeoutMs = Math.max(
+      1,
+      options.interruptBarrierTimeoutMs ?? DEFAULT_INTERRUPT_BARRIER_TIMEOUT_MS
+    );
     this.finalAnswerGraceMs = Math.max(1, options.finalAnswerGraceMs ?? 1_500);
     this.interruptTurn = options.interruptTurn;
     this.resultPromise = new Promise<AgentRunResult>((resolve) => {
@@ -124,19 +135,14 @@ export class CodexRichRunDriver {
   async cancel(): Promise<void> {
     this.cancelRequested = true;
     if (this.terminalResolved) return;
-    if (!this.threadId || !this.turnId || !this.interruptTurn) {
+    const interrupting = this.startActiveTurnInterrupt();
+    if (!interrupting) {
       const error = "Codex interrupt is unavailable for the active run";
       await this.settle({ status: "failed", error }, { type: "run.failed", source: "kernel", error });
       throw new Error(error);
     }
-    if (!this.interrupting) {
-      this.interrupting = this.interruptTurn(this.threadId, this.turnId)
-        .finally(() => {
-          this.interrupting = undefined;
-        });
-    }
     try {
-      await this.interrupting;
+      await interrupting;
     } catch (cause) {
       const message = `Codex interrupt failed: ${cause instanceof Error ? cause.message : String(cause)}`;
       await this.settle({ status: "failed", error: message }, { type: "run.failed", source: "kernel", error: message });
@@ -530,11 +536,14 @@ export class CodexRichRunDriver {
   private async handleInactivityTimeout(): Promise<void> {
     if (this.terminalResolved) return;
     this.clearInactivityTimer();
+    const nativeTerminationReceipt = await this.waitForBoundedInactivityInterrupt();
+    const terminalData = nativeTerminationReceipt ? { nativeTerminationReceipt } : undefined;
     if (!this.artifactRecovery) {
-      await this.settle({ status: "failed", error: "Codex inactivity timeout" }, {
+      await this.settle({ status: "failed", error: "Codex inactivity timeout", terminalData }, {
         type: "run.failed",
         source: "kernel",
-        error: "Codex inactivity timeout"
+        error: "Codex inactivity timeout",
+        data: terminalData
       });
       return;
     }
@@ -546,27 +555,80 @@ export class CodexRichRunDriver {
         assistantText: this.finalAssistantText()
       });
       if (typeof text !== "string" || !text.trim()) {
-        await this.settle({ status: "failed", error: "Codex inactivity timeout" }, {
+        await this.settle({ status: "failed", error: "Codex inactivity timeout", terminalData }, {
           type: "run.failed",
           source: "kernel",
-          error: "Codex inactivity timeout"
+          error: "Codex inactivity timeout",
+          data: terminalData
         });
         return;
       }
-      if (this.threadId && this.turnId && this.interruptTurn) {
-        await this.interruptTurn(this.threadId, this.turnId);
-      }
-      await this.settle({ status: "completed", outputText: text }, {
+      await this.settle({ status: "completed", outputText: text, terminalData }, {
         type: "run.completed",
         source: "kernel",
-        text
+        text,
+        data: terminalData
       });
     } catch (error) {
-      await this.settle({ status: "failed", error: error instanceof Error ? error.message : String(error) }, {
+      await this.settle({
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+        terminalData
+      }, {
         type: "run.failed",
         source: "kernel",
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        data: terminalData
       });
+    }
+  }
+
+  private startActiveTurnInterrupt(): Promise<void> | null {
+    const threadId = this.threadId;
+    const turnId = this.turnId;
+    const interruptTurn = this.interruptTurn;
+    if (!threadId || !turnId || !interruptTurn) return null;
+    if (!this.interrupting) {
+      const interrupting = Promise.resolve().then(async () => {
+        await interruptTurn(threadId, turnId);
+      });
+      this.interrupting = interrupting;
+      void interrupting.then(
+        () => {
+          if (this.interrupting === interrupting) this.interrupting = undefined;
+        },
+        () => {
+          if (this.interrupting === interrupting) this.interrupting = undefined;
+        }
+      );
+    }
+    return this.interrupting;
+  }
+
+  private async waitForBoundedInactivityInterrupt(): Promise<KnowledgeAgentNativeTerminationReceipt | undefined> {
+    const interrupting = this.startActiveTurnInterrupt();
+    if (!interrupting) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        interrupting.then(
+          () => "confirmed" as const,
+          () => "failed" as const
+        ),
+        new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), this.interruptBarrierTimeoutMs);
+        })
+      ]);
+      if (outcome !== "confirmed" || !this.threadId || !this.turnId) return undefined;
+      return issueKnowledgeAgentNativeTerminationReceipt({
+        backend: "codex-cli",
+        harnessRunId: this.runId,
+        nativeExecutionId: codexNativeExecutionId(this.threadId, this.turnId),
+        kind: "interrupt-ack",
+        confirmedAt: this.now()
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -627,6 +689,8 @@ export class CodexRichRunDriver {
     this.finalAnswerTimer = null;
   }
 }
+
+const DEFAULT_INTERRUPT_BARRIER_TIMEOUT_MS = 2_000;
 
 const FINAL_ANSWER_FOLLOW_UP_METHODS = new Set([
   "item/started",

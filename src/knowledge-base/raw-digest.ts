@@ -91,9 +91,6 @@ export function rawDigestRecordIsTrusted(record: RawDigestFrontmatterRecord | nu
 }
 
 export function applyRawDigestFrontmatter(content: Buffer, entry: RawDigestRegistryEntry): Buffer {
-  const text = content.toString("utf8");
-  const parsed = splitFrontmatter(text);
-  const unmanaged = removeManagedFrontmatterFields(parsed.frontmatter).trimEnd();
   const managed = [
     `${RAW_DIGEST_FIELDS.processed}: true`,
     `${RAW_DIGEST_FIELDS.status}: ${RAW_DIGEST_STATUS_DIGESTED}`,
@@ -103,8 +100,7 @@ export function applyRawDigestFrontmatter(content: Buffer, entry: RawDigestRegis
     `${RAW_DIGEST_FIELDS.evidencePaths}:`,
     ...entry.evidencePaths.map((item) => `  - ${item}`)
   ];
-  const frontmatter = [...(unmanaged ? [unmanaged] : []), ...managed].join("\n");
-  return Buffer.from(["---", frontmatter, "---"].join("\n") + "\n" + parsed.body, "utf8");
+  return replaceManagedRawFrontmatter(content, managed);
 }
 
 export function applyRawDigestStatusFrontmatter(
@@ -117,9 +113,6 @@ export function applyRawDigestStatusFrontmatter(
     digestedAt?: number;
   }
 ): Buffer {
-  const text = content.toString("utf8");
-  const parsed = splitFrontmatter(text);
-  const unmanaged = removeManagedFrontmatterFields(parsed.frontmatter).trimEnd();
   const managed = [
     `${RAW_DIGEST_FIELDS.processed}: false`,
     `${RAW_DIGEST_FIELDS.status}: ${input.status}`,
@@ -129,8 +122,38 @@ export function applyRawDigestStatusFrontmatter(
     `${RAW_DIGEST_FIELDS.evidencePaths}:`,
     ...(input.evidencePaths ?? []).map((item) => `  - ${item}`)
   ];
-  const frontmatter = [...(unmanaged ? [unmanaged] : []), ...managed].join("\n");
-  return Buffer.from(["---", frontmatter, "---"].join("\n") + "\n" + parsed.body, "utf8");
+  return replaceManagedRawFrontmatter(content, managed);
+}
+
+export function rawDigestPreservesUserFrontmatterBytes(
+  baseline: Buffer,
+  desired: Buffer
+): boolean {
+  const before = splitRawMarkdownBytes(baseline);
+  const after = splitRawMarkdownBytes(desired);
+  const afterUnmanaged = removeManagedRawFrontmatterBytes(after.frontmatter);
+  if (!before.hasFrontmatter) {
+    return !after.hasFrontmatter || afterUnmanaged.length === 0;
+  }
+  if (!after.hasFrontmatter) return false;
+  return before.opening.equals(after.opening)
+    && before.closing.equals(after.closing)
+    && removeManagedRawFrontmatterBytes(before.frontmatter)
+      .equals(afterUnmanaged);
+}
+
+export function rawDigestUserFrontmatterProjectionBytes(
+  content: Buffer
+): Buffer {
+  const sections = splitRawMarkdownBytes(content);
+  if (!sections.hasFrontmatter) return Buffer.alloc(0);
+  const unmanaged = removeManagedRawFrontmatterBytes(sections.frontmatter);
+  if (!unmanaged.length) return Buffer.alloc(0);
+  return Buffer.concat([
+    sections.opening,
+    unmanaged,
+    sections.closing
+  ]);
 }
 
 export async function readRawDigestRegistry(vaultPath: string): Promise<RawDigestRegistry> {
@@ -148,12 +171,16 @@ export async function readRawDigestRegistry(vaultPath: string): Promise<RawDiges
 
 export async function writeRawDigestRegistry(vaultPath: string, registry: RawDigestRegistry): Promise<void> {
   const absolute = path.join(vaultPath, RAW_DIGEST_REGISTRY_PATH);
+  await writeFileAtomic(absolute, buildRawDigestRegistryContent(registry));
+}
+
+export function buildRawDigestRegistryContent(registry: RawDigestRegistry): Buffer {
   const next: RawDigestRegistry = {
     schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
     updatedAt: registry.updatedAt || new Date().toISOString(),
     entries: Object.fromEntries(Object.entries(registry.entries).sort(([left], [right]) => left.localeCompare(right)))
   };
-  await writeFileAtomic(absolute, `${JSON.stringify(next, null, 2)}\n`);
+  return Buffer.from(`${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
 export function normalizeRawDigestRegistry(value: any): RawDigestRegistry {
@@ -208,23 +235,119 @@ function splitFrontmatter(text: string): ParsedFrontmatter {
   return { hasFrontmatter: false, frontmatter: "", body: text };
 }
 
-function removeManagedFrontmatterFields(frontmatter: string): string {
-  const lines = frontmatter.split("\n");
-  const kept: string[] = [];
+function replaceManagedRawFrontmatter(content: Buffer, managedLines: string[]): Buffer {
+  const sections = splitRawMarkdownBytes(content);
+  const newline = sections.newline;
+  const managed = Buffer.from(`${managedLines.join(newline)}${newline}`, "utf8");
+  if (!sections.hasFrontmatter) {
+    return Buffer.concat([
+      Buffer.from(`---${newline}`, "utf8"),
+      managed,
+      Buffer.from(`---${newline}`, "utf8"),
+      content
+    ]);
+  }
+  const unmanaged = removeManagedRawFrontmatterBytes(sections.frontmatter);
+  const separator = unmanaged.length > 0 && !endsWithNewline(unmanaged)
+    ? Buffer.from(newline, "utf8")
+    : Buffer.alloc(0);
+  return Buffer.concat([
+    sections.opening,
+    unmanaged,
+    separator,
+    managed,
+    sections.closing,
+    sections.body
+  ]);
+}
+
+function splitRawMarkdownBytes(content: Buffer): {
+  hasFrontmatter: boolean;
+  opening: Buffer;
+  frontmatter: Buffer;
+  closing: Buffer;
+  body: Buffer;
+  newline: "\n" | "\r\n";
+} {
+  const opening = readRawMarkdownLine(content, 0);
+  if (!opening || opening.text !== "---") {
+    return {
+      hasFrontmatter: false,
+      opening: Buffer.alloc(0),
+      frontmatter: Buffer.alloc(0),
+      closing: Buffer.alloc(0),
+      body: Buffer.from(content),
+      newline: "\n"
+    };
+  }
+  let cursor = opening.end;
+  while (cursor <= content.length) {
+    const line = readRawMarkdownLine(content, cursor);
+    if (!line) break;
+    if (line.text === "---" || line.text === "...") {
+      return {
+        hasFrontmatter: true,
+        opening: Buffer.from(content.subarray(0, opening.end)),
+        frontmatter: Buffer.from(content.subarray(opening.end, line.start)),
+        closing: Buffer.from(content.subarray(line.start, line.end)),
+        body: Buffer.from(content.subarray(line.end)),
+        newline: opening.newline || line.newline || "\n"
+      };
+    }
+    if (line.end <= cursor) break;
+    cursor = line.end;
+  }
+  throw new Error("Raw Markdown frontmatter 未闭合，拒绝写入 EchoInk 托管字段");
+}
+
+function removeManagedRawFrontmatterBytes(frontmatter: Buffer): Buffer {
+  const kept: Buffer[] = [];
+  let cursor = 0;
   let skipping = false;
-  for (const line of lines) {
-    const key = frontmatterKey(line);
+  while (cursor < frontmatter.length) {
+    const line = readRawMarkdownLine(frontmatter, cursor);
+    if (!line) break;
+    const key = frontmatterKey(line.text);
     if (key) {
       skipping = RAW_DIGEST_MANAGED_KEYS.has(key);
-      if (skipping) continue;
-      kept.push(line);
-      continue;
+      if (!skipping) kept.push(Buffer.from(frontmatter.subarray(line.start, line.end)));
+    } else if (skipping && /^\s+/.test(line.text)) {
+      // Continuation lines belong to the managed YAML field.
+    } else {
+      skipping = false;
+      kept.push(Buffer.from(frontmatter.subarray(line.start, line.end)));
     }
-    if (skipping && /^\s+/.test(line)) continue;
-    skipping = false;
-    kept.push(line);
+    if (line.end <= cursor) break;
+    cursor = line.end;
   }
-  return kept.join("\n");
+  return Buffer.concat(kept);
+}
+
+function readRawMarkdownLine(
+  content: Buffer,
+  start: number
+): {
+  start: number;
+  end: number;
+  text: string;
+  newline: "" | "\n" | "\r\n";
+} | null {
+  if (start < 0 || start > content.length) return null;
+  if (start === content.length) return null;
+  const newlineIndex = content.indexOf(0x0a, start);
+  const contentEnd = newlineIndex < 0 ? content.length : newlineIndex;
+  const hasCarriageReturn = contentEnd > start && content[contentEnd - 1] === 0x0d;
+  const lineEnd = hasCarriageReturn ? contentEnd - 1 : contentEnd;
+  return {
+    start,
+    end: newlineIndex < 0 ? content.length : newlineIndex + 1,
+    text: content.subarray(start, lineEnd).toString("utf8"),
+    newline: newlineIndex < 0 ? "" : hasCarriageReturn ? "\r\n" : "\n"
+  };
+}
+
+function endsWithNewline(content: Buffer): boolean {
+  return content.length > 0 && content[content.length - 1] === 0x0a;
 }
 
 function readFrontmatterValues(frontmatter: string): Map<string, string> {
@@ -250,7 +373,10 @@ function readFrontmatterValues(frontmatter: string): Map<string, string> {
 }
 
 function frontmatterKey(line: string): string | null {
-  const match = line.match(/^([^:#\n][^:\n]*):(?:\s|$)/);
+  // EchoInk only owns column-zero frontmatter keys. An indented key such as
+  // `user:\n  已处理: false` belongs to the user's nested YAML and must remain
+  // byte-for-byte untouched.
+  const match = line.match(/^([^\s:#\n][^:\n]*):(?:\s|$)/);
   return match?.[1]?.trim() || null;
 }
 

@@ -11,7 +11,15 @@ import { normalizeMcpConnectionRecords } from "../resources/mcp-connections";
 import type { EchoInkResourceSettings } from "../resources/types";
 import { AGENTS_RULES_FILE, DEFAULT_KNOWLEDGE_BASE_RULES_FILE, LEGACY_CLAUDE_RULES_FILE } from "../knowledge-base/constants";
 import { isSyntheticHermesDefaultModel } from "../core/hermes-models";
-import type { KnowledgeBaseCitationSummary } from "../knowledge-base/types";
+import type {
+  KnowledgeBaseCitationSummary,
+  KnowledgeBaseRunCommitState,
+  KnowledgeBaseRunCompletion,
+  KnowledgeBaseRunTerminalPhase,
+  KnowledgeBaseRunWarning,
+  KnowledgeRunAttemptPhase,
+  KnowledgeRunAttemptRecord
+} from "../knowledge-base/types";
 import type { KnowledgeBaseMessageUiPayload } from "../knowledge-base/maintain-report-card";
 import {
   DEFAULT_EDITOR_ACTION_MODEL,
@@ -128,6 +136,7 @@ export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" |
 export type KnowledgeBaseInitStatus = "not-started" | "preview-ready" | "initialized" | "failed";
 export type KnowledgeBaseCaptureTarget = "inbox" | "raw-articles" | "raw-attachments" | "journal";
 export type KnowledgeBaseHealthCheckStatus = "success" | "failed";
+export type KnowledgeBaseMaintenanceTerminalStatus = KnowledgeBaseHealthCheckStatus | "canceled";
 export type KnowledgeBaseMaintenanceMode = "maintain" | "lint" | "reingest" | "outputs" | "inbox" | "unknown";
 export type KnowledgeBaseManagedThreadKind = KnowledgeBaseMaintenanceMode | "ask" | "journal" | "review";
 export type KnowledgeBaseManagedThreadArchiveState = "running" | "pending-archive" | "archived" | "archive-failed";
@@ -241,9 +250,29 @@ export interface KnowledgeBaseHealthHistoryEntry {
   at: number;
 }
 
-export interface KnowledgeBaseMaintenanceHistoryEntry extends KnowledgeBaseHealthHistoryEntry {
+export interface KnowledgeBaseMaintenanceHistoryEntry {
+  date: string;
+  status: KnowledgeBaseMaintenanceTerminalStatus;
+  at: number;
+  runId?: string;
   mode: KnowledgeBaseMaintenanceMode;
   reportPath: string;
+  completion?: KnowledgeBaseRunCompletion;
+  /** Frozen selector value at workflow start. */
+  selectedBackend?: AgentBackendKind;
+  /** Null is meaningful for deterministic no-op and other zero-winner runs. */
+  winnerBackend?: AgentBackendKind | null;
+  attempts?: KnowledgeRunAttemptRecord[];
+  pendingSources?: string[];
+  /** Null is the canonical success value on durable maintenance history. */
+  failureCode?: string | null;
+  terminalPhase?: KnowledgeBaseRunTerminalPhase;
+  /** Durable commit boundary captured for canonical maintain/reingest history. */
+  commitState?: KnowledgeBaseRunCommitState;
+  /** @deprecated Read-only compatibility for pre-resilience history. */
+  phase?: string;
+  errorCode?: string;
+  warnings?: KnowledgeBaseRunWarning[];
 }
 
 export interface KnowledgeBaseManagedThread {
@@ -271,9 +300,15 @@ export interface KnowledgeBaseSettings {
   lastRunStatus: KnowledgeBaseRunStatus;
   lastScheduledRunAt: number;
   lastScheduledRunStatus: KnowledgeBaseRunStatus;
+  lastScheduledRunId: string;
   lastReportPath: string;
   lastError: string;
   lastSummary: string;
+  lastCompletion: KnowledgeBaseRunCompletion | "";
+  lastAttempts: KnowledgeRunAttemptRecord[];
+  lastPendingSources: string[];
+  lastFailureCode: string;
+  lastWarnings: KnowledgeBaseRunWarning[];
   historyRetentionDays: number;
   legacyManagedThreads?: Record<string, KnowledgeBaseManagedThread>;
   initialization: KnowledgeBaseInitializationSettings;
@@ -683,9 +718,15 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastRunStatus: "idle",
     lastScheduledRunAt: 0,
     lastScheduledRunStatus: "idle",
+    lastScheduledRunId: "",
     lastReportPath: "",
     lastError: "",
     lastSummary: "",
+    lastCompletion: "",
+    lastAttempts: [],
+    lastPendingSources: [],
+    lastFailureCode: "",
+    lastWarnings: [],
     historyRetentionDays: 30,
     initialization: {
       status: "not-started",
@@ -1520,9 +1561,15 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     lastRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastRunStatus),
     lastScheduledRunAt: normalizeNonNegativeNumber(value?.lastScheduledRunAt),
     lastScheduledRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastScheduledRunStatus),
+    lastScheduledRunId: normalizeLimitedText(value?.lastScheduledRunId, 512),
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
+    lastCompletion: normalizeKnowledgeBaseRunCompletion(value?.lastCompletion),
+    lastAttempts: normalizeKnowledgeBaseRunAttempts(value?.lastAttempts),
+    lastPendingSources: normalizeKnowledgeBasePendingSources(value?.lastPendingSources),
+    lastFailureCode: normalizeLimitedText(value?.lastFailureCode, 160),
+    lastWarnings: normalizeKnowledgeBaseRunWarnings(value?.lastWarnings),
     historyRetentionDays: normalizeKnowledgeBaseHistoryRetentionDays(value?.historyRetentionDays, fallback.historyRetentionDays),
     ...legacyManagedThreadsFrom(value?.legacyManagedThreads ?? value?.managedThreads),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
@@ -1894,33 +1941,325 @@ function normalizeKnowledgeBaseHealthHistory(value: unknown): KnowledgeBaseHealt
     .slice(-90);
 }
 
-function normalizeKnowledgeBaseMaintenanceHistory(value: unknown, legacyHealthHistory?: unknown): KnowledgeBaseMaintenanceHistoryEntry[] {
-  const byDate = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
-  const add = (item: unknown, legacyMode: KnowledgeBaseMaintenanceMode) => {
-    const record = settingsRecord(item) ?? {};
-    const date = normalizeOptionalText(record.date);
-    const status = normalizeKnowledgeBaseHealthCheckStatus(record.status);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) return;
-    const at = normalizeNonNegativeNumber(record.at);
-    const current = byDate.get(date);
-    if (current && current.at > at) return;
-    byDate.set(date, {
-      date,
-      status,
-      at,
-      mode: normalizeKnowledgeBaseMaintenanceMode(record.mode) ?? legacyMode,
-      reportPath: normalizeOptionalText(record.reportPath)
-    });
+const KNOWLEDGE_BASE_RESULT_MAX_ATTEMPTS = 3;
+const KNOWLEDGE_BASE_RESULT_MAX_PENDING_SOURCES = 50;
+const KNOWLEDGE_BASE_RESULT_MAX_WARNINGS = 10;
+const KNOWLEDGE_BASE_RESULT_MAX_MESSAGE_CHARS = 500;
+const KNOWLEDGE_BASE_MAINTENANCE_HISTORY_MAX = 500;
+const KNOWLEDGE_BASE_WORKFLOW_ID_MAX_CHARS = 512;
+const KNOWLEDGE_BASE_ATTEMPT_ID_MAX_CHARS = 512;
+const KNOWLEDGE_BASE_NATIVE_ID_MAX_CHARS = 2048;
+
+export function canonicalizeKnowledgeBaseMaintenanceHistoryEntry(
+  value: unknown,
+  legacyMode: KnowledgeBaseMaintenanceMode = "unknown"
+): KnowledgeBaseMaintenanceHistoryEntry | null {
+  const record = settingsRecord(value) ?? {};
+  const date = normalizeOptionalText(record.date);
+  const status = normalizeKnowledgeBaseMaintenanceTerminalStatus(record.status);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !status) return null;
+  const at = normalizeNonNegativeNumber(record.at);
+  const runId = normalizeLimitedText(
+    record.runId,
+    KNOWLEDGE_BASE_WORKFLOW_ID_MAX_CHARS
+  );
+  const mode = normalizeKnowledgeBaseMaintenanceMode(record.mode) ?? legacyMode;
+  const reportPath = normalizeOptionalText(record.reportPath);
+  const completion = normalizeKnowledgeBaseRunCompletion(record.completion);
+  const attempts = normalizeKnowledgeBaseRunAttempts(record.attempts);
+  const pendingSources = normalizeKnowledgeBasePendingSources(record.pendingSources);
+  const selectedBackend = normalizeKnowledgeBaseAttemptBackend(record.selectedBackend);
+  const hasWinnerBackend = Object.prototype.hasOwnProperty.call(record, "winnerBackend");
+  const winnerBackend = record.winnerBackend === null
+    ? null
+    : normalizeKnowledgeBaseAttemptBackend(record.winnerBackend);
+  const hasFailureCode = Object.prototype.hasOwnProperty.call(record, "failureCode");
+  const failureCode = record.failureCode === null
+    ? null
+    : normalizeLimitedText(record.failureCode, 160);
+  const terminalPhase = normalizeKnowledgeBaseRunTerminalPhase(record.terminalPhase);
+  const commitState = normalizeKnowledgeBaseRunCommitState(record.commitState);
+  const phase = normalizeLimitedText(record.phase, 160);
+  const errorCode = normalizeLimitedText(record.errorCode, 160);
+  const warnings = normalizeKnowledgeBaseRunWarnings(record.warnings);
+  const hasCanonicalDurableMetadata = Boolean(
+    runId
+    && (mode === "maintain" || mode === "reingest")
+    && selectedBackend
+    && hasWinnerBackend
+    && terminalPhase
+    && commitState
+    && Object.prototype.hasOwnProperty.call(record, "attempts")
+    && hasFailureCode
+  );
+  return {
+    date,
+    status,
+    at,
+    ...(runId ? { runId } : {}),
+    mode,
+    reportPath,
+    ...(completion ? { completion } : {}),
+    ...(selectedBackend ? { selectedBackend } : {}),
+    ...(hasWinnerBackend && (winnerBackend || record.winnerBackend === null)
+      ? { winnerBackend }
+      : {}),
+    ...(attempts.length || hasCanonicalDurableMetadata ? { attempts } : {}),
+    ...(pendingSources.length || hasCanonicalDurableMetadata
+      ? { pendingSources }
+      : {}),
+    ...(hasFailureCode && (failureCode || failureCode === null)
+      ? { failureCode }
+      : {}),
+    ...(terminalPhase ? { terminalPhase } : {}),
+    ...(commitState ? { commitState } : {}),
+    ...(phase ? { phase } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(warnings.length || hasCanonicalDurableMetadata ? { warnings } : {})
   };
-  if (Array.isArray(legacyHealthHistory)) {
-    for (const item of legacyHealthHistory) add(item, "lint");
-  }
+}
+
+function normalizeKnowledgeBaseMaintenanceHistory(value: unknown, legacyHealthHistory?: unknown): KnowledgeBaseMaintenanceHistoryEntry[] {
+  const byRun = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
+  const add = (item: unknown, legacyMode: KnowledgeBaseMaintenanceMode): void => {
+    const normalized =
+      canonicalizeKnowledgeBaseMaintenanceHistoryEntry(item, legacyMode);
+    if (!normalized) return;
+    const key = normalized.runId || [
+      normalized.date,
+      normalized.at,
+      normalized.mode,
+      normalized.status,
+      normalized.reportPath
+    ].join("\u0000");
+    byRun.set(key, normalized);
+  };
   if (Array.isArray(value)) {
     for (const item of value) add(item, "unknown");
   }
-  return Array.from(byDate.values())
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .slice(-180);
+  if (Array.isArray(legacyHealthHistory)) {
+    const representedDates = new Set(Array.from(byRun.values()).map((entry) => entry.date));
+    for (const item of legacyHealthHistory) {
+      const record = settingsRecord(item) ?? {};
+      const date = normalizeOptionalText(record.date);
+      if (!representedDates.has(date)) add(item, "lint");
+    }
+  }
+  return Array.from(byRun.values())
+    .sort((left, right) =>
+      left.at - right.at
+      || left.date.localeCompare(right.date)
+      || (left.runId ?? "").localeCompare(right.runId ?? ""))
+    .slice(-KNOWLEDGE_BASE_MAINTENANCE_HISTORY_MAX);
+}
+
+function normalizeKnowledgeBaseMaintenanceTerminalStatus(value: unknown): KnowledgeBaseMaintenanceTerminalStatus | "" {
+  return value === "success" || value === "failed" || value === "canceled" ? value : "";
+}
+
+function normalizeKnowledgeBaseRunCompletion(value: unknown): KnowledgeBaseRunCompletion | "" {
+  return value === "full" || value === "partial" || value === "recovered" || value === "noop" ? value : "";
+}
+
+function normalizeKnowledgeBaseRunAttempts(value: unknown): KnowledgeRunAttemptRecord[] {
+  if (!Array.isArray(value)) return [];
+  const normalized = value
+    .map(normalizeKnowledgeBaseRunAttempt)
+    .filter((item): item is KnowledgeRunAttemptRecord => Boolean(item))
+    .sort((left, right) => left.ordinal - right.ordinal);
+  const seenIds = new Set<string>();
+  const seenOrdinals = new Set<number>();
+  const result: KnowledgeRunAttemptRecord[] = [];
+  for (const attempt of normalized) {
+    if (seenIds.has(attempt.attemptId) || seenOrdinals.has(attempt.ordinal)) continue;
+    seenIds.add(attempt.attemptId);
+    seenOrdinals.add(attempt.ordinal);
+    result.push(attempt);
+    if (result.length >= KNOWLEDGE_BASE_RESULT_MAX_ATTEMPTS) break;
+  }
+  return result;
+}
+
+function normalizeKnowledgeBaseRunAttempt(value: unknown): KnowledgeRunAttemptRecord | null {
+  const record = settingsRecord(value);
+  if (!record) return null;
+  const attemptId = normalizeLimitedText(
+    record.attemptId,
+    KNOWLEDGE_BASE_ATTEMPT_ID_MAX_CHARS
+  );
+  const backend = normalizeKnowledgeBaseAttemptBackend(record.backend);
+  if (!attemptId || !backend) return null;
+
+  const nativeRecord = settingsRecord(record.native);
+  const nativeId = normalizeLimitedText(
+    nativeRecord?.id,
+    KNOWLEDGE_BASE_NATIVE_ID_MAX_CHARS
+  );
+  const nativeKind = normalizeKnowledgeBaseAttemptNativeKind(nativeRecord?.kind);
+  const persistence = normalizeKnowledgeBaseAttemptPersistence(nativeRecord?.persistence);
+
+  const submittedRecord = settingsRecord(record.submitted);
+  const harnessRunId = normalizeLimitedText(
+    submittedRecord?.harnessRunId,
+    KNOWLEDGE_BASE_NATIVE_ID_MAX_CHARS
+  );
+
+  const terminalRecord = settingsRecord(record.terminal);
+  const terminalStatus = normalizeKnowledgeBaseAttemptTerminalStatus(terminalRecord?.status);
+
+  const failureRecord = settingsRecord(record.failure);
+  const failureCode = normalizeLimitedText(failureRecord?.code, 160);
+  const failurePhase = normalizeKnowledgeBaseAttemptPhase(failureRecord?.phase);
+
+  const terminationRecord = settingsRecord(record.termination);
+  const stagingRecord = settingsRecord(record.staging);
+  const stagingPath = normalizeLimitedText(stagingRecord?.path, 1000);
+
+  return {
+    attemptId,
+    ordinal: normalizePositiveInteger(record.ordinal, 0, 0, 1000),
+    backend,
+    ...(nativeId ? {
+      native: {
+        id: nativeId,
+        ...(nativeKind ? { kind: nativeKind } : {}),
+        ...(persistence ? { persistence } : {})
+      }
+    } : {}),
+    ...(submittedRecord && harnessRunId ? {
+      submitted: {
+        at: normalizeNonNegativeNumber(submittedRecord.at),
+        harnessRunId
+      }
+    } : {}),
+    ...(terminalRecord && terminalStatus ? {
+      terminal: {
+        status: terminalStatus,
+        at: normalizeNonNegativeNumber(terminalRecord.at),
+        ...limitedOptionalMessage(terminalRecord.message)
+      }
+    } : {}),
+    ...(failureRecord && failureCode ? {
+      failure: {
+        code: failureCode,
+        at: normalizeNonNegativeNumber(failureRecord.at),
+        message: normalizeLimitedText(failureRecord.message, KNOWLEDGE_BASE_RESULT_MAX_MESSAGE_CHARS),
+        phase: failurePhase,
+        retryable: failureRecord.retryable === true,
+        failoverEligible: failureRecord.failoverEligible === true
+      }
+    } : {}),
+    ...(terminationRecord ? {
+      termination: {
+        ...optionalNonNegativeNumber("requestedAt", terminationRecord.requestedAt),
+        ...optionalNonNegativeNumber("confirmedAt", terminationRecord.confirmedAt),
+        ...optionalNonNegativeNumber("failedAt", terminationRecord.failedAt),
+        ...limitedOptionalMessage(terminationRecord.message)
+      }
+    } : {}),
+    ...(stagingRecord && stagingPath ? {
+      staging: {
+        path: stagingPath,
+        preparedAt: normalizeNonNegativeNumber(stagingRecord.preparedAt),
+        ...optionalNonNegativeNumber("promotedAt", stagingRecord.promotedAt),
+        ...optionalNonNegativeNumber("discardedAt", stagingRecord.discardedAt),
+        ...optionalNonNegativeNumber("failedAt", stagingRecord.failedAt),
+        ...limitedOptionalMessage(stagingRecord.message)
+      }
+    } : {})
+  };
+}
+
+function normalizeKnowledgeBaseAttemptBackend(value: unknown): AgentBackendKind | null {
+  return value === "codex-cli" || value === "opencode" || value === "hermes" ? value : null;
+}
+
+function normalizeKnowledgeBaseAttemptNativeKind(value: unknown): "thread" | "session" | "run" | "process" | null {
+  return value === "thread" || value === "session" || value === "run" || value === "process" ? value : null;
+}
+
+function normalizeKnowledgeBaseAttemptPersistence(value: unknown): "none" | "process-local" | "provider-persistent" | "unknown" | undefined {
+  return value === "none" || value === "process-local" || value === "provider-persistent" || value === "unknown" ? value : undefined;
+}
+
+function normalizeKnowledgeBaseAttemptTerminalStatus(value: unknown): NonNullable<KnowledgeRunAttemptRecord["terminal"]>["status"] | null {
+  return value === "completed" || value === "failed" || value === "canceled" ? value : null;
+}
+
+function normalizeKnowledgeBaseAttemptPhase(value: unknown): KnowledgeRunAttemptPhase {
+  return value === "preflight"
+    || value === "execution"
+    || value === "verification"
+    || value === "commit"
+    || value === "cleanup"
+    ? value
+    : "preflight";
+}
+
+function normalizeKnowledgeBaseRunTerminalPhase(
+  value: unknown
+): KnowledgeBaseRunTerminalPhase | null {
+  return value === "preflight"
+    || value === "execution"
+    || value === "verification"
+    || value === "commit"
+    || value === "cleanup"
+    || value === "finalized"
+    || value === "recovery-blocked"
+    ? value
+    : null;
+}
+
+function normalizeKnowledgeBaseRunCommitState(
+  value: unknown
+): KnowledgeBaseRunCommitState | null {
+  return value === "pre-wal"
+    || value === "wal-persisted"
+    || value === "committed"
+    ? value
+    : null;
+}
+
+function limitedOptionalMessage(value: unknown): { message?: string } {
+  const message = normalizeLimitedText(value, KNOWLEDGE_BASE_RESULT_MAX_MESSAGE_CHARS);
+  return message ? { message } : {};
+}
+
+function optionalNonNegativeNumber<Key extends string>(key: Key, value: unknown): Partial<Record<Key, number>> {
+  if (value === undefined || value === null || value === "") return {};
+  return { [key]: normalizeNonNegativeNumber(value) } as Partial<Record<Key, number>>;
+}
+
+function normalizeKnowledgeBasePendingSources(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const source = normalizeLimitedText(item, 1000).replace(/\\/g, "/");
+    if (!source || seen.has(source)) continue;
+    seen.add(source);
+    result.push(source);
+    if (result.length >= KNOWLEDGE_BASE_RESULT_MAX_PENDING_SOURCES) break;
+  }
+  return result;
+}
+
+function normalizeKnowledgeBaseRunWarnings(value: unknown): KnowledgeBaseRunWarning[] {
+  if (!Array.isArray(value)) return [];
+  const result: KnowledgeBaseRunWarning[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const record = settingsRecord(value[index]);
+    const message = normalizeLimitedText(record?.message ?? value[index], KNOWLEDGE_BASE_RESULT_MAX_MESSAGE_CHARS);
+    if (!message) continue;
+    const id = normalizeLimitedText(record?.id, 160) || `warning-${index + 1}`;
+    result.push({ id, message });
+    if (result.length >= KNOWLEDGE_BASE_RESULT_MAX_WARNINGS) break;
+  }
+  return result;
+}
+
+function normalizeLimitedText(value: unknown, maxChars: number): string {
+  return normalizeOptionalText(value).slice(0, maxChars);
 }
 
 function normalizeKnowledgeBaseHealthCheckStatus(value: unknown): KnowledgeBaseHealthCheckStatus | null {
@@ -1984,15 +2323,49 @@ export function recordKnowledgeBaseHealthCheck(settings: KnowledgeBaseSettings, 
 
 export function recordKnowledgeBaseMaintenanceRun(
   settings: KnowledgeBaseSettings,
-  input: { status: KnowledgeBaseHealthCheckStatus; mode: KnowledgeBaseMaintenanceMode; at?: number; reportPath?: string }
+  input: {
+    status: KnowledgeBaseMaintenanceTerminalStatus;
+    mode: KnowledgeBaseMaintenanceMode;
+    at?: number;
+    runId?: string;
+    reportPath?: string;
+    completion?: KnowledgeBaseRunCompletion;
+    selectedBackend?: AgentBackendKind;
+    winnerBackend?: AgentBackendKind | null;
+    attempts?: KnowledgeRunAttemptRecord[];
+    pendingSources?: string[];
+    failureCode?: string | null;
+    terminalPhase?: KnowledgeBaseRunTerminalPhase;
+    commitState?: KnowledgeBaseRunCommitState;
+    /** @deprecated Use terminalPhase for new maintenance records. */
+    phase?: string;
+    errorCode?: string;
+    warnings?: KnowledgeBaseRunWarning[];
+  }
 ): void {
   const at = input.at ?? Date.now();
   const date = formatLocalDateKey(at);
+  const entry = canonicalizeKnowledgeBaseMaintenanceHistoryEntry({
+    ...input,
+    date,
+    at,
+    reportPath: input.reportPath ?? ""
+  });
+  if (!entry) {
+    throw new Error("知识库维护历史终态无法规范化");
+  }
+  settings.lastCompletion = entry.completion ?? "";
+  settings.lastAttempts = entry.attempts ?? [];
+  settings.lastPendingSources = entry.pendingSources ?? [];
+  settings.lastFailureCode = entry.failureCode ?? "";
+  settings.lastWarnings = entry.warnings ?? [];
   settings.maintenanceHistory = normalizeKnowledgeBaseMaintenanceHistory([
-    ...(settings.maintenanceHistory ?? []).filter((entry) => entry.date !== date),
-    { date, status: input.status, at, mode: input.mode, reportPath: input.reportPath ?? "" }
+    ...(settings.maintenanceHistory ?? []),
+    entry
   ], settings.healthHistory);
-  if (input.mode === "lint") recordKnowledgeBaseHealthCheck(settings, input.status, at);
+  if (input.mode === "lint" && input.status !== "canceled") {
+    recordKnowledgeBaseHealthCheck(settings, input.status, at);
+  }
 }
 
 function formatLocalDateKey(value: number): string {

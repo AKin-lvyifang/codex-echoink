@@ -23,6 +23,10 @@ export interface CodexKnowledgeDashboardHost {
 export function renderKnowledgeDashboard(host: CodexKnowledgeDashboardHost): void {
   if (!host.knowledgeDashboardEl) return;
   const session = host.ensureSession();
+  const recovery = host.plugin.getKnowledgeBaseManager()?.maintenanceRecoveryStatus ?? {
+    state: "ready" as const,
+    message: ""
+  };
   renderKnowledgeDashboardView(
     host.knowledgeDashboardEl,
     {
@@ -30,7 +34,8 @@ export function renderKnowledgeDashboard(host: CodexKnowledgeDashboardHost): voi
       snapshot: host.knowledgeDashboardSnapshot,
       expanded: host.knowledgeDashboardExpanded,
       loading: host.knowledgeDashboardLoading,
-      error: host.knowledgeDashboardError
+      error: host.knowledgeDashboardError,
+      recovery
     },
     {
       onRefresh: () => void host.refreshKnowledgeDashboard(true),

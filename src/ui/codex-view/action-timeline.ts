@@ -12,7 +12,16 @@ export type ActionGroupKind =
   | "verify"
   | "system";
 
-export type ActionStatus = "running" | "completed" | "failed" | "blocked" | "canceled" | "unconfirmed" | "interrupted";
+export type ActionStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "canceled"
+  | "unconfirmed"
+  | "interrupted"
+  | "recovery-pending"
+  | "recovery-blocked";
 
 export interface ActionItemViewModel {
   id: string;
@@ -193,6 +202,8 @@ function canAppendToGroup(group: ActionGroupViewModel, item: ActionItemViewModel
 function sameStatusFamily(a: ActionStatus, b: ActionStatus): boolean {
   if (a === "failed" || b === "failed") return a === b;
   if (a === "blocked" || b === "blocked") return a === b;
+  if (a === "recovery-pending" || b === "recovery-pending") return a === b;
+  if (a === "recovery-blocked" || b === "recovery-blocked") return a === b;
   if (a === "canceled" || b === "canceled") return a === b;
   if (a === "unconfirmed" || b === "unconfirmed") return a === b;
   if (a === "interrupted" || b === "interrupted") return a === b;
@@ -201,6 +212,8 @@ function sameStatusFamily(a: ActionStatus, b: ActionStatus): boolean {
 
 function statusForItems(items: ActionItemViewModel[]): ActionStatus {
   if (items.some((item) => item.status === "running")) return "running";
+  if (items.some((item) => item.status === "recovery-blocked")) return "recovery-blocked";
+  if (items.some((item) => item.status === "recovery-pending")) return "recovery-pending";
   if (items.some((item) => item.status === "failed")) return "failed";
   if (items.some((item) => item.status === "blocked")) return "blocked";
   if (items.some((item) => item.status === "interrupted")) return "interrupted";
@@ -211,6 +224,8 @@ function statusForItems(items: ActionItemViewModel[]): ActionStatus {
 
 function normalizeStatus(status: string | undefined): ActionStatus {
   if (status === "running" || status === "in_progress" || status === "inProgress") return "running";
+  if (status === "recovery-pending") return "recovery-pending";
+  if (status === "recovery-blocked") return "recovery-blocked";
   if (status === "error" || status === "failed") return "failed";
   if (status === "blocked" || status === "approval") return "blocked";
   if (status === "interrupted") return "interrupted";
@@ -220,7 +235,8 @@ function normalizeStatus(status: string | undefined): ActionStatus {
 }
 
 function applyDefaultExpanded(groups: ActionGroupViewModel[]): void {
-  const target = groups.find((group) => group.status === "failed") ?? groups.find((group) => group.status === "running" || group.status === "blocked");
+  const target = groups.find((group) => group.status === "failed" || group.status === "recovery-blocked")
+    ?? groups.find((group) => group.status === "running" || group.status === "blocked" || group.status === "recovery-pending");
   for (const group of groups) group.defaultExpanded = group === target;
 }
 
@@ -233,6 +249,8 @@ function actionTimelineStateId(items: ActionItemViewModel[]): string {
 
 function actionSummaryTitle(count: number, status: ActionStatus = "completed"): string {
   if (status === "running") return `正在处理 ${count} 个动作`;
+  if (status === "recovery-pending") return `${count} 个动作等待恢复`;
+  if (status === "recovery-blocked") return `${count} 个动作恢复受阻`;
   if (status === "failed") return `${count} 个动作失败`;
   if (status === "blocked") return `${count} 个动作等待确认`;
   if (status === "unconfirmed") return `${count} 个动作状态未回传`;
@@ -241,13 +259,22 @@ function actionSummaryTitle(count: number, status: ActionStatus = "completed"): 
 }
 
 function activeLabelForItems(items: ActionItemViewModel[], status: ActionStatus): string {
-  const active = items.slice().reverse().find((item) => item.status === "running" || item.status === "blocked" || item.status === "unconfirmed" || item.status === "interrupted") ?? items[items.length - 1];
+  const active = items.slice().reverse().find((item) =>
+    item.status === "running"
+    || item.status === "blocked"
+    || item.status === "unconfirmed"
+    || item.status === "interrupted"
+    || item.status === "recovery-pending"
+    || item.status === "recovery-blocked"
+  ) ?? items[items.length - 1];
   if (!active) return "";
   if (status === "failed") {
     const failed = items.slice().reverse().find((item) => item.status === "failed") ?? active;
     return liveLabelForItem(failed, "failed");
   }
   if (status === "running" || status === "blocked") return liveLabelForItem(active, status);
+  if (status === "recovery-pending") return "等待恢复上次维护过程";
+  if (status === "recovery-blocked") return "上次维护恢复受阻";
   if (status === "unconfirmed") return "工具状态未回传";
   if (status === "interrupted" || status === "canceled") return "过程已中断";
   return actionSummaryTitle(items.length, status);

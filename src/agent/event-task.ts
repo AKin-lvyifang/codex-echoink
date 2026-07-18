@@ -2,6 +2,18 @@ import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentEventTaskRuntime, AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
 import type { AgentTaskInput, AgentTaskResult } from "./types";
 import { swallowError } from "../core/error-handling";
+import {
+  ExactWriteFenceUnavailableError,
+  exactWriteFenceEventData,
+  exactWriteFenceUnavailable
+} from "./write-fence";
+
+export type AgentExactWriteFenceSupport = "all-runtimes" | "rich-only" | "unsupported";
+
+export interface AgentEventRuntimeFallbackOptions {
+  exactWriteFenceSupport?: AgentExactWriteFenceSupport;
+  exactWriteFenceUnavailableReason?: string;
+}
 
 export async function runTaskWithLifecycleEvents(
   runtime: AgentTaskRuntime,
@@ -59,9 +71,13 @@ export async function runTaskWithLifecycleEvents(
 
 export function createAgentEventRuntimeWithFallback(
   fallbackRuntime: AgentTaskRuntime,
-  richRuntime?: AgentRichStreamRuntime
+  richRuntime?: AgentRichStreamRuntime,
+  options: AgentEventRuntimeFallbackOptions = {}
 ): AgentEventTaskRuntime {
   let selectedRuntime: "fallback" | "rich" = "fallback";
+  const exactWriteFenceSupport = options.exactWriteFenceSupport ?? "all-runtimes";
+  const exactWriteFenceUnavailableReason = options.exactWriteFenceUnavailableReason
+    ?? "当前 backend transport 不支持精确写隔离。";
   return {
     kind: fallbackRuntime.kind,
     connect: () => fallbackRuntime.connect(),
@@ -76,11 +92,37 @@ export function createAgentEventRuntimeWithFallback(
     hasNativeSession: fallbackRuntime.hasNativeSession ? (sessionId) => fallbackRuntime.hasNativeSession!(sessionId) : undefined,
     deleteNativeSession: fallbackRuntime.deleteNativeSession ? (sessionId) => fallbackRuntime.deleteNativeSession!(sessionId) : undefined,
     runTask: (input) => {
+      throwIfTaskAborted(input.abortSignal);
+      if (input.requireExactWriteFence && exactWriteFenceSupport !== "all-runtimes") {
+        throw exactWriteFenceUnavailable(
+          fallbackRuntime.kind,
+          exactWriteFenceSupport === "rich-only"
+            ? "普通任务路径不具备精确写隔离，必须使用 rich 事件运行时。"
+            : exactWriteFenceUnavailableReason
+        );
+      }
       selectedRuntime = "fallback";
       return fallbackRuntime.runTask(input);
     },
     async runTaskEvents(input, emit) {
+      throwIfTaskAborted(input.abortSignal);
+      if (input.requireExactWriteFence && exactWriteFenceSupport === "unsupported") {
+        const error = exactWriteFenceUnavailable(
+          fallbackRuntime.kind,
+          exactWriteFenceUnavailableReason
+        );
+        await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, error);
+        throw error;
+      }
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {
+        if (input.requireExactWriteFence && exactWriteFenceSupport === "rich-only") {
+          const error = exactWriteFenceUnavailable(
+            fallbackRuntime.kind,
+            "任务超时预算不足以启动 rich transport，且禁止降级到普通 CLI。"
+          );
+          await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, error);
+          throw error;
+        }
         selectedRuntime = "fallback";
         return await runConnectedTaskWithLifecycleEvents(fallbackRuntime, input, emit);
       }
@@ -99,6 +141,16 @@ export function createAgentEventRuntimeWithFallback(
           // runtime could execute writes twice. Recovery must stay on the same
           // native session instead of launching a second task.
           if (input.abortSignal?.aborted || promptSubmitted || richOutputStarted) throw error;
+          if (input.requireExactWriteFence && exactWriteFenceSupport === "rich-only") {
+            if (error instanceof ExactWriteFenceUnavailableError) throw error;
+            const fenceError = exactWriteFenceUnavailable(
+              fallbackRuntime.kind,
+              `rich transport 在提交 prompt 前失败，禁止降级到未证明精确隔离的普通 CLI：${errorMessage(error)}`,
+              error
+            );
+            await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, fenceError);
+            throw fenceError;
+          }
           const message = error instanceof Error ? error.message : String(error);
           await emit({
             type: "fallback_started",
@@ -109,6 +161,14 @@ export function createAgentEventRuntimeWithFallback(
           });
           await richRuntime.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} rich runtime fallback disconnect`));
         }
+      }
+      if (input.requireExactWriteFence && exactWriteFenceSupport === "rich-only") {
+        const error = exactWriteFenceUnavailable(
+          fallbackRuntime.kind,
+          "rich transport 不可用，禁止降级到未证明精确隔离的普通 CLI。"
+        );
+        await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, error);
+        throw error;
       }
       selectedRuntime = "fallback";
       return await runTaskWithLifecycleEvents(fallbackRuntime, input, emit);
@@ -121,6 +181,28 @@ export function createAgentEventRuntimeWithFallback(
       await fallbackRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} fallback abort cleanup`));
     }
   };
+}
+
+async function emitExactWriteFenceFailure(
+  emit: AgentEventSink,
+  backend: AgentTaskRuntime["kind"],
+  error: ExactWriteFenceUnavailableError
+): Promise<void> {
+  await emit({
+    type: "failed",
+    backend,
+    createdAt: Date.now(),
+    error: error.message,
+    data: exactWriteFenceEventData(error)
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfTaskAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Agent 任务已取消。");
 }
 
 async function runConnectedTaskWithLifecycleEvents(

@@ -88,7 +88,9 @@ import {
   validateApiProvider,
   resourceEnabled,
   type AgentBackendMode,
-  type ChatMessage
+  type ChatMessage,
+  type CodexForObsidianSettings,
+  type KnowledgeBaseSettings
 } from "../settings/settings";
 import {
   promptEnhancerBackendCapabilities,
@@ -106,6 +108,7 @@ import { createAgentEventRuntimeWithFallback, runTaskWithLifecycleEvents } from 
 import { normalizeRichStreamEvents } from "../agent/rich-stream";
 import { AcpAgentRuntime } from "../agent/acp-runtime";
 import { createAgentTaskRuntime } from "../agent/factory";
+import { createExactWriteFenceReceipt } from "../agent/write-fence";
 import { buildEchoInkToolBridgePrompt, parseEchoInkToolCall, runAgentTaskWithToolBridge, truncateEchoInkToolResult } from "../agent/tool-bridge";
 import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime } from "../agent/runtime";
 import { buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
@@ -279,6 +282,20 @@ import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-st
 import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
 import { runHarnessV2KnowledgePolicyProfileTests } from "./harness-v2/knowledge-policy-profile";
 import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger";
+import { runHarnessV2MaintenancePartialEvidenceTests } from "./harness-v2/maintenance-partial-evidence";
+import { runHarnessV2MaintenanceResourceProfileTests } from "./harness-v2/maintenance-resource-profile";
+import { runHarnessV2MaintenanceResultStateTests } from "./harness-v2/maintenance-result-state";
+import { runHarnessV2MaintenanceRoutingTests } from "./harness-v2/maintenance-routing";
+import { runHarnessV2MaintenanceSchedulerTests } from "./harness-v2/maintenance-scheduler";
+import { runMaintenanceManagerRecoveryTests } from "./harness-v2/maintenance-manager-recovery";
+import { runMaintenanceProjectionTests } from "./harness-v2/maintenance-projections";
+import { runMaintenanceSettingsStoreTests } from "./harness-v2/maintenance-settings-store";
+import { runHarnessV2MaintenanceShadowTests } from "./harness-v2/maintenance-shadow";
+import { runMaintenanceWorkflowCoordinatorTests } from "./harness-v2/maintenance-workflow-coordinator";
+import { runHarnessV2MaintenanceWorkflowWalTests } from "./harness-v2/maintenance-workflow-wal";
+import { runMaintenanceAcceptanceTests } from "./harness-v2/maintenance-acceptance";
+import { runHarnessV2MaintenanceActiveRunJournalTests } from "./harness-v2/maintenance-active-run-journal";
+import { runMaintenanceContentPlannerRegressionTests } from "./maintenance-content-planners-regression";
 import { runHarnessV2NativeExecutionTests } from "./harness-v2/native-execution";
 import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-lease";
 import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
@@ -289,6 +306,7 @@ import { runEditorActionControllerTests } from "./harness-v2/editor-action-contr
 import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
 import { runOpenCodeRichRuntimeRegressionTests } from "./opencode-rich-runtime-regression";
+import { runHermesProposalRuntimeRegressionTests } from "./hermes-proposal-runtime-regression";
 import { runToolBridgeRichEventRegressionTests } from "./tool-bridge-rich-event-regression";
 import { runAnswerCopyRegressionTests } from "./answer-copy-regression";
 import "./hermes-rich-stream-regression";
@@ -297,6 +315,13 @@ import { buildHomeCards, buildHomeFolderFilterItems, buildHomeRawBatchPreview, c
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, KNOWLEDGE_BASE_TEMPLATE_VERSION } from "../knowledge-base/initializer";
 import { buildKnowledgeBaseJournalPrompt, collectEchoInkJournalEvidenceFromSessions, ensureJournalTargetFolders, resolveJournalDailyTarget, stripJournalPrefix } from "../knowledge-base/journal";
 import { KnowledgeBaseManager } from "../knowledge-base/manager";
+import { recoverPendingMaintenanceWorkflows } from "../knowledge-base/maintenance-workflow";
+import {
+  listMaintenanceWorkflowWals,
+  MaintenanceWorkflowWalError,
+  type MaintenanceWorkflowSettingsHost,
+  type MaintenanceWorkflowSettingsTransaction
+} from "../harness/maintenance/workflow-wal";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
 import { buildCodexKnowledgeInput, buildOpenCodeKnowledgeParts, requiredModalities, selectOpenCodeModel } from "../knowledge-base/agent-runner";
@@ -2512,7 +2537,11 @@ assert.deepEqual(splitVaultNoteLinkSegments("不是笔记：src/ui/render-messag
 
 assert.equal(buildSandboxPolicy("read-only", "/vault").type, "readOnly");
 assert.equal(buildSandboxPolicy("danger-full-access", "/vault").type, "dangerFullAccess");
-assert.deepEqual(buildSandboxPolicy("workspace-write", "/vault", ["/vault/wiki", "/vault/outputs"]).writableRoots?.slice(0, 2), ["/vault/wiki", "/vault/outputs"]);
+const exactWorkspace = buildSandboxPolicy("workspace-write", "/vault", ["/vault/wiki", "/vault/outputs"]);
+assert.deepEqual(exactWorkspace.writableRoots, ["/vault/wiki", "/vault/outputs"]);
+assert.equal(exactWorkspace.writableRoots?.includes(tmpdir()), false, "exact roots must not reopen the Shadow control plane through TMPDIR");
+assert.equal(exactWorkspace.excludeTmpdirEnvVar, true);
+assert.equal(exactWorkspace.excludeSlashTmp, true);
 const kbTurnOptions = buildCodexKnowledgeTurnOptions({
   settings: DEFAULT_SETTINGS,
   availableModels: [{ model: "gpt-test" }],
@@ -2531,6 +2560,28 @@ const kbLintTurnOptions = buildCodexKnowledgeTurnOptions({
   writeScope: "knowledge-lint"
 });
 assert.deepEqual(kbLintTurnOptions.writableRoots, [path.join("/vault", "outputs")]);
+const kbIsolatedTurnOptions = buildCodexKnowledgeTurnOptions({
+  settings: { ...DEFAULT_SETTINGS, mcpEnabled: true },
+  availableModels: [{ model: "gpt-test" }],
+  vaultPath: "/shadow-vault",
+  permission: "workspace-write",
+  overrides: {
+    mcpEnabled: true,
+    workspaceResources: {
+      plugins: { "external-plugin": true },
+      mcpServers: { "external-mcp": true },
+      skills: { "external-skill": true }
+    }
+  },
+  disableExternalResources: true
+});
+assert.equal(kbIsolatedTurnOptions.mcpEnabled, false);
+assert.equal(kbIsolatedTurnOptions.externalResources, "disabled");
+assert.deepEqual(kbIsolatedTurnOptions.workspaceResources, {
+  plugins: {},
+  mcpServers: {},
+  skills: {}
+});
 const codexThreadRequests: Array<{ method: string; params: any }> = [];
 const codexService = new CodexService({
   cliPath: "",
@@ -2562,6 +2613,22 @@ const codexThreadResumeParams = codexThreadRequests.find((request) => request.me
 assert.equal(codexThreadResumeParams?.sandboxPolicy?.type, "workspaceWrite");
 assert.ok(!codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw")));
 assert.ok(codexThreadResumeParams?.sandboxPolicy?.writableRoots?.includes(path.join("/vault", "raw", "index.md")));
+await codexService.startThread(kbIsolatedTurnOptions);
+const isolatedThreadStartParams = codexThreadRequests
+  .filter((request) => request.method === "thread/start")
+  .at(-1)?.params;
+assert.deepEqual(isolatedThreadStartParams?.config, {
+  mcp_servers: {},
+  plugins: {}
+});
+await codexService.resumeThread("thread-kb", kbIsolatedTurnOptions);
+const isolatedThreadResumeParams = codexThreadRequests
+  .filter((request) => request.method === "thread/resume")
+  .at(-1)?.params;
+assert.deepEqual(isolatedThreadResumeParams?.config, {
+  mcp_servers: {},
+  plugins: {}
+});
 const promptEnhancerTurnOptions = { ...kbTurnOptions, developerInstructions: "WorkBuddy Meta-Prompt", ephemeral: true };
 await codexService.startThread(promptEnhancerTurnOptions);
 const codexPromptEnhancerStartParams = codexThreadRequests.filter((request) => request.method === "thread/start").at(-1)?.params;
@@ -3015,6 +3082,7 @@ assert.equal(fallbackResult.text, "PONG");
 assert.equal(fallbackEvents.some((event) => event.type === "fallback_started" && event.error === "ACP startup failed"), true);
 assert.equal(fallbackEvents.at(-1)?.type, "completed");
 let abortedFallbackCalls = 0;
+let abortedRichCalls = 0;
 const abortedRichController = new AbortController();
 abortedRichController.abort();
 const abortedFallbackEvents: AgentEvent[] = [];
@@ -3027,6 +3095,7 @@ const abortedFallbackRuntime = createAgentEventRuntimeWithFallback({
 }, {
   ...richStartupFailureRuntime,
   async runTaskStream() {
+    abortedRichCalls += 1;
     throw new Error("ACP transport closed after cancellation");
   }
 });
@@ -3036,9 +3105,10 @@ await assert.rejects(
     timeoutMs: 120_000,
     abortSignal: abortedRichController.signal
   }, (event) => abortedFallbackEvents.push(event)),
-  /ACP transport closed after cancellation/
+  /Agent 任务已取消/
 );
 assert.equal(abortedFallbackCalls, 0);
+assert.equal(abortedRichCalls, 0, "an already-cancelled task must settle before any transport starts");
 assert.equal(abortedFallbackEvents.some((event) => event.type === "fallback_started"), false);
 let streamedFallbackCalls = 0;
 const streamedFallbackEvents: AgentEvent[] = [];
@@ -3385,7 +3455,7 @@ assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, lastScheduledRunAt: scheduledKnowledgeBaseDate(9, 0, 10).getTime(), lastScheduledRunStatus: "running" },
   scheduledKnowledgeBaseDate(9, 1),
   scheduledKnowledgeBaseDate(8, 0).getTime()
-), false);
+), true);
 assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
   { ...scheduledKnowledgeBaseBase, scheduleTime: "09:20" },
   scheduledKnowledgeBaseDate(9, 0),
@@ -3411,6 +3481,22 @@ assert.equal(normalizeSettingsData({
 }).settings.knowledgeBase.enabled, false);
 const schedulerLifecycleEvents: string[] = [];
 const schedulerLifecycleIntervals: number[] = [];
+const schedulerLifecyclePersistedStates: Array<{
+  workflowRunId: string;
+  scheduledStartedAt: number;
+  status: KnowledgeBaseSettings["lastScheduledRunStatus"];
+  historyRunIds: string[];
+}> = [];
+const persistSchedulerLifecycleState = () => {
+  schedulerLifecyclePersistedStates.push({
+    workflowRunId: schedulerLifecycleSettings.lastScheduledRunId,
+    scheduledStartedAt: schedulerLifecycleSettings.lastScheduledRunAt,
+    status: schedulerLifecycleSettings.lastScheduledRunStatus,
+    historyRunIds: schedulerLifecycleSettings.maintenanceHistory
+      .map((entry) => entry.runId ?? "")
+      .filter(Boolean)
+  });
+};
 let schedulerLifecycleIntervalDelay = 0;
 let schedulerLifecycleIntervalCallback: (() => void) | null = null;
 const previousWindowForKnowledgeBaseSchedulerTest = (globalThis as any).window;
@@ -3430,13 +3516,65 @@ try {
     registerInterval: (intervalId) => {
       schedulerLifecycleIntervals.push(intervalId);
     },
-    runMaintenance: async () => {
-      schedulerLifecycleEvents.push("runMaintenance");
+    waitUntilMaintenanceReady: async () => undefined,
+    persistSettings: async () => {
+      assert.match(schedulerLifecycleSettings.lastScheduledRunId, /^knowledge-maintain-scheduled-\d+$/);
+      assert.equal(schedulerLifecycleSettings.lastScheduledRunStatus, "running");
+      assert.ok(schedulerLifecycleSettings.lastScheduledRunAt > 0);
+      persistSchedulerLifecycleState();
+      schedulerLifecycleEvents.push("persist:running");
+    },
+    runMaintenance: async (invocation) => {
+      const attempt = {
+        attemptId: `${invocation.workflowRunId}:attempt:1:codex-cli`,
+        ordinal: 1,
+        backend: "codex-cli" as const,
+        terminal: {
+          status: "completed" as const,
+          at: invocation.scheduledStartedAt
+        }
+      };
+      assert.deepEqual(schedulerLifecyclePersistedStates.at(-1), {
+        workflowRunId: invocation.workflowRunId,
+        scheduledStartedAt: invocation.scheduledStartedAt,
+        status: "running",
+        historyRunIds: []
+      });
+      assert.equal(schedulerLifecycleSettings.lastScheduledRunId, invocation.workflowRunId);
+      assert.equal(schedulerLifecycleSettings.lastScheduledRunAt, invocation.scheduledStartedAt);
+      assert.equal(schedulerLifecycleSettings.lastScheduledRunStatus, "running");
+      schedulerLifecycleSettings.lastScheduledRunAt = invocation.scheduledStartedAt;
+      schedulerLifecycleSettings.lastScheduledRunStatus = "success";
+      schedulerLifecycleSettings.lastScheduledRunId = invocation.workflowRunId;
+      recordKnowledgeBaseMaintenanceRun(schedulerLifecycleSettings, {
+        status: "success",
+        mode: "maintain",
+        at: invocation.scheduledStartedAt,
+        runId: invocation.workflowRunId,
+        reportPath: "outputs/maintenance/scheduled.md",
+        selectedBackend: "codex-cli",
+        winnerBackend: "codex-cli",
+        attempts: [attempt],
+        completion: "full",
+        failureCode: null,
+        terminalPhase: "finalized",
+        commitState: "committed"
+      });
+      persistSchedulerLifecycleState();
+      schedulerLifecycleEvents.push("runMaintenance", "wal:success");
       return {
         status: "success",
         reportPath: "outputs/maintenance/scheduled.md",
         summary: "scheduled ok",
-        processedSources: []
+        processedSources: [],
+        workflowRunId: invocation.workflowRunId,
+        selectedBackend: "codex-cli",
+        winnerBackend: "codex-cli",
+        attempts: [attempt],
+        completion: "full",
+        terminalPhase: "finalized",
+        commitState: "committed",
+        failureCode: null
       };
     },
     appendScheduledMaintenanceMessage: async (result) => {
@@ -3450,12 +3588,31 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(schedulerLifecycleIntervals, [902]);
   assert.equal(schedulerLifecycleIntervalDelay, 60 * 1000);
-  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+  assert.deepEqual(schedulerLifecycleEvents, [
+    "persist:running",
+    "runMaintenance",
+    "wal:success",
+    "append:success",
+    "refresh"
+  ]);
+  assert.equal(schedulerLifecyclePersistedStates.length, 2);
+  assert.deepEqual(schedulerLifecyclePersistedStates[1], {
+    workflowRunId: schedulerLifecycleSettings.lastScheduledRunId,
+    scheduledStartedAt: schedulerLifecycleSettings.lastScheduledRunAt,
+    status: "success",
+    historyRunIds: [schedulerLifecycleSettings.lastScheduledRunId]
+  });
   assert.equal(schedulerLifecycleSettings.lastScheduledRunStatus, "success");
   assert.ok(schedulerLifecycleSettings.lastScheduledRunAt > 0);
   schedulerLifecycleIntervalCallback?.();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(schedulerLifecycleEvents, ["runMaintenance", "append:success", "refresh"]);
+  assert.deepEqual(schedulerLifecycleEvents, [
+    "persist:running",
+    "runMaintenance",
+    "wal:success",
+    "append:success",
+    "refresh"
+  ]);
 } finally {
   (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
 }
@@ -3479,6 +3636,10 @@ try {
     getSettings: () => schedulerDisabledSettings,
     isRunning: () => false,
     registerInterval: () => undefined,
+    waitUntilMaintenanceReady: async () => undefined,
+    persistSettings: async () => {
+      schedulerDisabledEvents.push("persist");
+    },
     runMaintenance: async () => {
       schedulerDisabledEvents.push("runMaintenance");
       return { status: "success", reportPath: "", summary: "", processedSources: [] };
@@ -3496,6 +3657,16 @@ try {
 } finally {
   (globalThis as any).window = previousWindowForKnowledgeBaseSchedulerTest;
 }
+const staleKnowledgeRecoveryRoot = await mkdtemp(
+  path.join(tmpdir(), "codex-kb-stale-recovery-")
+);
+const staleKnowledgeVault = path.join(staleKnowledgeRecoveryRoot, "vault");
+const staleKnowledgeWorkflowStorageRoot = path.join(
+  staleKnowledgeRecoveryRoot,
+  "workflow-storage"
+);
+await mkdir(staleKnowledgeVault, { recursive: true });
+await mkdir(staleKnowledgeWorkflowStorageRoot, { recursive: true });
 const staleKnowledgeBaseRunSettings = normalizeSettingsData({
   settingsVersion: DEFAULT_SETTINGS.settingsVersion,
   knowledgeBase: {
@@ -3506,7 +3677,7 @@ const staleKnowledgeBaseRunSettings = normalizeSettingsData({
         threadId: "thread-stale-startup",
         runId: "run-stale-startup",
         kind: "maintain",
-        vaultPath: "/tmp/vault",
+        vaultPath: staleKnowledgeVault,
         archiveState: "running",
         createdAt: scheduledKnowledgeBaseDate(8, 59).getTime(),
         settledAt: 0,
@@ -3517,9 +3688,15 @@ const staleKnowledgeBaseRunSettings = normalizeSettingsData({
     }
   }
 }).settings;
+const staleKnowledgeBaseWorkflowSettingsHost =
+  createMaintenanceWorkflowSettingsHostForTest(staleKnowledgeBaseRunSettings);
 const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
   settings: staleKnowledgeBaseRunSettings,
-  getVaultPath: () => "/tmp/vault",
+  getVaultPath: () => staleKnowledgeVault,
+  getKnowledgeBaseWorkflowStorageRoot: () =>
+    staleKnowledgeWorkflowStorageRoot,
+  getKnowledgeBaseWorkflowSettingsHost: () =>
+    staleKnowledgeBaseWorkflowSettingsHost,
   saveSettings: async () => undefined,
   failPendingNativeExecutionsForRecovery: async (input: { reason: string; surface?: string }) => {
     staleKnowledgeRecoveryCalls.push(input);
@@ -3536,13 +3713,21 @@ const staleKnowledgeBaseRunManager = new KnowledgeBaseManager({
   app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
 } as any);
 const staleKnowledgeRecoveryCalls: Array<{ reason: string; surface?: string }> = [];
-staleKnowledgeBaseRunManager.register();
-await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastRunStatus, "failed");
-assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastScheduledRunStatus, "failed");
-assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.legacyManagedThreads?.["thread-stale-startup"]?.archiveState, "running");
-assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /插件重新加载/);
-assert.deepEqual(staleKnowledgeRecoveryCalls.map((input) => input.surface), ["knowledge"]);
+try {
+  staleKnowledgeBaseRunManager.register();
+  assert.equal(staleKnowledgeBaseRunManager.isRunning, false);
+  assert.equal(staleKnowledgeBaseRunManager.maintenanceRecoveryStatus.state, "pending");
+  await (staleKnowledgeBaseRunManager as any).waitUntilMaintenanceReady();
+  assert.equal(staleKnowledgeBaseRunManager.maintenanceRecoveryStatus.state, "ready");
+  assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastRunStatus, "failed");
+  assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.lastScheduledRunStatus, "failed");
+  assert.equal(staleKnowledgeBaseRunSettings.knowledgeBase.legacyManagedThreads?.["thread-stale-startup"]?.archiveState, "running");
+  assert.match(staleKnowledgeBaseRunSettings.knowledgeBase.lastError, /插件重新加载/);
+  assert.deepEqual(staleKnowledgeRecoveryCalls.map((input) => input.surface), ["knowledge"]);
+  assert.equal(staleKnowledgeBaseRunManager.isRunning, false);
+} finally {
+  await rm(staleKnowledgeRecoveryRoot, { recursive: true, force: true });
+}
 const dashboardCacheVault = await mkdtemp(path.join(tmpdir(), "codex-kb-dashboard-cache-"));
 try {
   await mkdir(path.join(dashboardCacheVault, "raw", "articles"), { recursive: true });
@@ -4390,7 +4575,12 @@ throwingQueueViewQueue.enqueue(queuedTurn("throw-b", "throw-session", "remaining
 const throwingQueueView: any = {
   queueStartInProgress: false,
   running: false,
-  plugin: { getKnowledgeBaseManager: () => ({ isRunning: false }) },
+  plugin: {
+    getKnowledgeBaseManager: () => ({
+      isRunning: false,
+      maintenanceRecoveryStatus: { state: "ready", message: "" }
+    })
+  },
   turnQueue: throwingQueueViewQueue,
   renderQueue: () => undefined,
   renderToolbar: () => undefined,
@@ -10812,6 +11002,11 @@ try {
   assert.ok(kbPrompt.includes(`${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}: 存在，已由 EchoInk 强制加载`));
   assert.ok(kbPrompt.includes("raw/attachments/image.png"));
   assert.ok(kbPrompt.includes("raw/index.md"));
+  assert.ok(kbPrompt.includes("raw/index.md 与 outputs/.ingest-tracker.md 是 EchoInk Harness 托管文件"));
+  assert.ok(kbPrompt.includes("Agent 可以读取，但不得创建、修改、删除、移动或重命名"));
+  assert.ok(kbPrompt.includes("不要直接更新 outputs/.ingest-tracker.md"));
+  assert.ok(!kbPrompt.includes("raw/index.md 可更新索引"));
+  assert.ok(!kbPrompt.includes("不存在，可创建或补齐"));
   assert.ok(kbPrompt.includes("只适用于本次知识库管理任务"));
   assert.ok(kbPrompt.includes("raw/ 源文件内容边界"));
   assert.ok(kbPrompt.includes("只有 EchoInk 插件后处理阶段可以写入 raw Markdown 的托管元属性"));
@@ -11057,6 +11252,54 @@ try {
   }, scheduledReportText);
   assert.ok(scheduledConcurrentRawMessage.includes("运行中新出现 1 个 raw，已保留，留到下次 /maintain。"));
 
+  const durableScheduledSuccessResultForTest = (
+    settings: KnowledgeBaseSettings,
+    workflowRunId: string,
+    scheduledStartedAt: number
+  ): KnowledgeBaseRunResult => {
+    const attempt = {
+      attemptId: `${workflowRunId}:attempt:1:codex-cli`,
+      ordinal: 1,
+      backend: "codex-cli" as const,
+      terminal: {
+        status: "completed" as const,
+        at: scheduledStartedAt
+      }
+    };
+    const result: KnowledgeBaseRunResult = {
+      status: "success",
+      reportPath: "",
+      summary: "scheduled ok",
+      processedSources: [],
+      workflowRunId,
+      selectedBackend: "codex-cli",
+      winnerBackend: "codex-cli",
+      attempts: [attempt],
+      completion: "full",
+      terminalPhase: "finalized",
+      commitState: "committed",
+      failureCode: null
+    };
+    recordKnowledgeBaseMaintenanceRun(settings, {
+      status: result.status,
+      mode: "maintain",
+      at: scheduledStartedAt,
+      runId: result.workflowRunId,
+      reportPath: result.reportPath,
+      completion: result.completion,
+      selectedBackend: result.selectedBackend,
+      winnerBackend: result.winnerBackend,
+      attempts: result.attempts,
+      failureCode: result.failureCode,
+      terminalPhase: result.terminalPhase,
+      commitState: result.commitState
+    });
+    return result;
+  };
+
+  const scheduledWorkflowStorageBase = await mkdtemp(
+    path.join(tmpdir(), "codex-kb-scheduled-storage-")
+  );
   const scheduledAppendFailureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-scheduled-append-failure-"));
   try {
     const scheduledAppendSettings = normalizeSettingsData({
@@ -11079,15 +11322,22 @@ try {
     }).settings;
     scheduledAppendSettings.knowledgeBase.sessionId = "kb-scheduled-existing";
     let scheduledAppendSaveCalls = 0;
+    const scheduledAppendWorkflowSettingsHost =
+      createMaintenanceWorkflowSettingsHostForTest(scheduledAppendSettings);
     const scheduledAppendRawRef = "raw/scheduled-orphan.txt";
     const scheduledAppendRawPath = path.join(pluginDataDir(scheduledAppendFailureVault), scheduledAppendRawRef);
     const scheduledAppendManager = new KnowledgeBaseManager({
       settings: scheduledAppendSettings,
       getVaultPath: () => scheduledAppendFailureVault,
+      getKnowledgeBaseWorkflowStorageRoot: () =>
+        path.join(scheduledWorkflowStorageBase, "append-failure"),
       saveSettings: async () => {
         scheduledAppendSaveCalls += 1;
-        if (scheduledAppendSaveCalls === 1) throw new Error("scheduled message save failed");
+        if (scheduledAppendSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      getKnowledgeBaseWorkflowSettingsHost: () =>
+        scheduledAppendWorkflowSettingsHost,
+      failPendingNativeExecutionsForRecovery: async () => 0,
       getPluginDataDirName: () => "codex-echoink",
       externalizeMessageText: async (message: ChatMessage) => {
         message.rawRef = scheduledAppendRawRef;
@@ -11108,16 +11358,27 @@ try {
       registerInterval: () => undefined,
       app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
     } as any);
-    (scheduledAppendManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
-      scheduledAppendSettings.knowledgeBase.lastRunAt = Date.now();
+    (scheduledAppendManager as any).runMaintenance = async (
+      _mode: unknown,
+      _userRequest: unknown,
+      overrides?: { workflowRunId?: string; scheduledStartedAt?: number }
+    ): Promise<KnowledgeBaseRunResult> => {
+      assert.ok(overrides?.workflowRunId);
+      assert.ok(overrides.scheduledStartedAt);
+      scheduledAppendSettings.knowledgeBase.lastRunAt = overrides.scheduledStartedAt;
       scheduledAppendSettings.knowledgeBase.lastRunStatus = "success";
       scheduledAppendSettings.knowledgeBase.lastError = "";
-      return {
-        status: "success",
-        reportPath: "",
-        summary: "scheduled ok",
-        processedSources: []
-      };
+      scheduledAppendSettings.knowledgeBase.lastScheduledRunAt =
+        overrides.scheduledStartedAt;
+      scheduledAppendSettings.knowledgeBase.lastScheduledRunStatus = "success";
+      scheduledAppendSettings.knowledgeBase.lastScheduledRunId =
+        overrides.workflowRunId;
+      await (scheduledAppendManager as any).plugin.saveSettings(true);
+      return durableScheduledSuccessResultForTest(
+        scheduledAppendSettings.knowledgeBase,
+        overrides.workflowRunId,
+        overrides.scheduledStartedAt
+      );
     };
     await (scheduledAppendManager as any).runScheduledIfDue(true);
     assert.equal(scheduledAppendSettings.knowledgeBase.lastRunStatus, "success");
@@ -11126,7 +11387,7 @@ try {
     assert.match(scheduledAppendSettings.knowledgeBase.lastError, /自动维护消息保存失败：scheduled message save failed/);
     assert.equal(scheduledAppendSettings.sessions.length, 1);
     assert.equal(scheduledAppendSettings.sessions[0].messages.length, 0);
-    assert.equal(scheduledAppendSaveCalls, 2);
+    assert.equal(scheduledAppendSaveCalls, 4);
     assert.equal(await fileExists(scheduledAppendRawPath), false);
   } finally {
     await rm(scheduledAppendFailureVault, { recursive: true, force: true });
@@ -11154,12 +11415,19 @@ try {
     }).settings;
     scheduledRefreshSettings.knowledgeBase.sessionId = "kb-scheduled-refresh";
     let scheduledRefreshSaveCalls = 0;
+    const scheduledRefreshWorkflowSettingsHost =
+      createMaintenanceWorkflowSettingsHostForTest(scheduledRefreshSettings);
     const scheduledRefreshManager = new KnowledgeBaseManager({
       settings: scheduledRefreshSettings,
       getVaultPath: () => scheduledAppendRefreshFailureVault,
+      getKnowledgeBaseWorkflowStorageRoot: () =>
+        path.join(scheduledWorkflowStorageBase, "refresh-failure"),
       saveSettings: async () => {
         scheduledRefreshSaveCalls += 1;
       },
+      getKnowledgeBaseWorkflowSettingsHost: () =>
+        scheduledRefreshWorkflowSettingsHost,
+      failPendingNativeExecutionsForRecovery: async () => 0,
       externalizeMessageText: async () => undefined,
       getCodexView: () => ({
         refreshAfterBackgroundKnowledgeMessage: () => {
@@ -11175,16 +11443,27 @@ try {
       registerInterval: () => undefined,
       app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
     } as any);
-    (scheduledRefreshManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
-      scheduledRefreshSettings.knowledgeBase.lastRunAt = Date.now();
+    (scheduledRefreshManager as any).runMaintenance = async (
+      _mode: unknown,
+      _userRequest: unknown,
+      overrides?: { workflowRunId?: string; scheduledStartedAt?: number }
+    ): Promise<KnowledgeBaseRunResult> => {
+      assert.ok(overrides?.workflowRunId);
+      assert.ok(overrides.scheduledStartedAt);
+      scheduledRefreshSettings.knowledgeBase.lastRunAt = overrides.scheduledStartedAt;
       scheduledRefreshSettings.knowledgeBase.lastRunStatus = "success";
       scheduledRefreshSettings.knowledgeBase.lastError = "";
-      return {
-        status: "success",
-        reportPath: "",
-        summary: "scheduled ok",
-        processedSources: []
-      };
+      scheduledRefreshSettings.knowledgeBase.lastScheduledRunAt =
+        overrides.scheduledStartedAt;
+      scheduledRefreshSettings.knowledgeBase.lastScheduledRunStatus = "success";
+      scheduledRefreshSettings.knowledgeBase.lastScheduledRunId =
+        overrides.workflowRunId;
+      await (scheduledRefreshManager as any).plugin.saveSettings(true);
+      return durableScheduledSuccessResultForTest(
+        scheduledRefreshSettings.knowledgeBase,
+        overrides.workflowRunId,
+        overrides.scheduledStartedAt
+      );
     };
     const warnBeforeScheduledRefreshFailureTest = console.warn;
     const scheduledRefreshWarnings: unknown[][] = [];
@@ -11203,7 +11482,7 @@ try {
     assert.equal(scheduledRefreshSettings.sessions.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages.length, 1);
     assert.equal(scheduledRefreshSettings.sessions[0].messages[0].status, "completed");
-    assert.equal(scheduledRefreshSaveCalls, 1);
+    assert.equal(scheduledRefreshSaveCalls, 3);
     assert.equal(scheduledRefreshWarnings.length, 1);
     assert.equal(scheduledRefreshWarnings[0][0], "每日维护消息刷新失败");
   } finally {
@@ -11232,13 +11511,20 @@ try {
     }).settings;
     scheduledConcurrentSettings.knowledgeBase.sessionId = "kb-scheduled-concurrent";
     let scheduledConcurrentSaveCalls = 0;
+    const scheduledConcurrentWorkflowSettingsHost =
+      createMaintenanceWorkflowSettingsHostForTest(scheduledConcurrentSettings);
     const scheduledConcurrentManager = new KnowledgeBaseManager({
       settings: scheduledConcurrentSettings,
       getVaultPath: () => scheduledAppendConcurrentSessionVault,
+      getKnowledgeBaseWorkflowStorageRoot: () =>
+        path.join(scheduledWorkflowStorageBase, "concurrent-session"),
       saveSettings: async () => {
         scheduledConcurrentSaveCalls += 1;
-        if (scheduledConcurrentSaveCalls === 1) throw new Error("scheduled message save failed");
+        if (scheduledConcurrentSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      getKnowledgeBaseWorkflowSettingsHost: () =>
+        scheduledConcurrentWorkflowSettingsHost,
+      failPendingNativeExecutionsForRecovery: async () => 0,
       externalizeMessageText: async () => {
         scheduledConcurrentSettings.sessions.push({
           id: "manual-session-created-during-scheduled-message",
@@ -11264,23 +11550,34 @@ try {
       registerInterval: () => undefined,
       app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
     } as any);
-    (scheduledConcurrentManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
-      scheduledConcurrentSettings.knowledgeBase.lastRunAt = Date.now();
+    (scheduledConcurrentManager as any).runMaintenance = async (
+      _mode: unknown,
+      _userRequest: unknown,
+      overrides?: { workflowRunId?: string; scheduledStartedAt?: number }
+    ): Promise<KnowledgeBaseRunResult> => {
+      assert.ok(overrides?.workflowRunId);
+      assert.ok(overrides.scheduledStartedAt);
+      scheduledConcurrentSettings.knowledgeBase.lastRunAt = overrides.scheduledStartedAt;
       scheduledConcurrentSettings.knowledgeBase.lastRunStatus = "success";
       scheduledConcurrentSettings.knowledgeBase.lastError = "";
-      return {
-        status: "success",
-        reportPath: "",
-        summary: "scheduled ok",
-        processedSources: []
-      };
+      scheduledConcurrentSettings.knowledgeBase.lastScheduledRunAt =
+        overrides.scheduledStartedAt;
+      scheduledConcurrentSettings.knowledgeBase.lastScheduledRunStatus = "success";
+      scheduledConcurrentSettings.knowledgeBase.lastScheduledRunId =
+        overrides.workflowRunId;
+      await (scheduledConcurrentManager as any).plugin.saveSettings(true);
+      return durableScheduledSuccessResultForTest(
+        scheduledConcurrentSettings.knowledgeBase,
+        overrides.workflowRunId,
+        overrides.scheduledStartedAt
+      );
     };
     await (scheduledConcurrentManager as any).runScheduledIfDue(true);
     assert.equal(scheduledConcurrentSettings.knowledgeBase.lastRunStatus, "success");
     assert.match(scheduledConcurrentSettings.knowledgeBase.lastError, /自动维护消息保存失败：scheduled message save failed/);
     assert.equal(scheduledConcurrentSettings.sessions.some((session) => session.id === "manual-session-created-during-scheduled-message"), true);
     assert.equal(scheduledConcurrentSettings.sessions.find((session) => session.id === "kb-scheduled-concurrent")?.messages.length, 0);
-    assert.equal(scheduledConcurrentSaveCalls, 2);
+    assert.equal(scheduledConcurrentSaveCalls, 4);
   } finally {
     await rm(scheduledAppendConcurrentSessionVault, { recursive: true, force: true });
   }
@@ -11307,14 +11604,21 @@ try {
     }).settings;
     scheduledSameSessionSettings.knowledgeBase.sessionId = "kb-scheduled-same-session";
     let scheduledSameSessionSaveCalls = 0;
+    const scheduledSameSessionWorkflowSettingsHost =
+      createMaintenanceWorkflowSettingsHostForTest(scheduledSameSessionSettings);
     const manualMessageCreatedAt = Date.now() + 60_000;
     const scheduledSameSessionManager = new KnowledgeBaseManager({
       settings: scheduledSameSessionSettings,
       getVaultPath: () => scheduledAppendConcurrentSameSessionVault,
+      getKnowledgeBaseWorkflowStorageRoot: () =>
+        path.join(scheduledWorkflowStorageBase, "same-session"),
       saveSettings: async () => {
         scheduledSameSessionSaveCalls += 1;
-        if (scheduledSameSessionSaveCalls === 1) throw new Error("scheduled message save failed");
+        if (scheduledSameSessionSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      getKnowledgeBaseWorkflowSettingsHost: () =>
+        scheduledSameSessionWorkflowSettingsHost,
+      failPendingNativeExecutionsForRecovery: async () => 0,
       externalizeMessageText: async () => {
         const session = scheduledSameSessionSettings.sessions.find((item) => item.id === "kb-scheduled-same-session");
         assert.ok(session);
@@ -11335,26 +11639,38 @@ try {
       registerInterval: () => undefined,
       app: { workspace: { onLayoutReady: () => undefined, getActiveFile: () => null } }
     } as any);
-    (scheduledSameSessionManager as any).runMaintenance = async (): Promise<KnowledgeBaseRunResult> => {
-      scheduledSameSessionSettings.knowledgeBase.lastRunAt = Date.now();
+    (scheduledSameSessionManager as any).runMaintenance = async (
+      _mode: unknown,
+      _userRequest: unknown,
+      overrides?: { workflowRunId?: string; scheduledStartedAt?: number }
+    ): Promise<KnowledgeBaseRunResult> => {
+      assert.ok(overrides?.workflowRunId);
+      assert.ok(overrides.scheduledStartedAt);
+      scheduledSameSessionSettings.knowledgeBase.lastRunAt = overrides.scheduledStartedAt;
       scheduledSameSessionSettings.knowledgeBase.lastRunStatus = "success";
       scheduledSameSessionSettings.knowledgeBase.lastError = "";
-      return {
-        status: "success",
-        reportPath: "",
-        summary: "scheduled ok",
-        processedSources: []
-      };
+      scheduledSameSessionSettings.knowledgeBase.lastScheduledRunAt =
+        overrides.scheduledStartedAt;
+      scheduledSameSessionSettings.knowledgeBase.lastScheduledRunStatus = "success";
+      scheduledSameSessionSettings.knowledgeBase.lastScheduledRunId =
+        overrides.workflowRunId;
+      await (scheduledSameSessionManager as any).plugin.saveSettings(true);
+      return durableScheduledSuccessResultForTest(
+        scheduledSameSessionSettings.knowledgeBase,
+        overrides.workflowRunId,
+        overrides.scheduledStartedAt
+      );
     };
     await (scheduledSameSessionManager as any).runScheduledIfDue(true);
     const session = scheduledSameSessionSettings.sessions.find((item) => item.id === "kb-scheduled-same-session");
     assert.ok(session);
     assert.deepEqual(session.messages.map((message) => message.id), ["manual-message-same-session"]);
     assert.equal(session.updatedAt, manualMessageCreatedAt);
-    assert.equal(scheduledSameSessionSaveCalls, 2);
+    assert.equal(scheduledSameSessionSaveCalls, 4);
   } finally {
     await rm(scheduledAppendConcurrentSameSessionVault, { recursive: true, force: true });
   }
+  await rm(scheduledWorkflowStorageBase, { recursive: true, force: true });
 
   const historySettings = normalizeSettingsData({
     sessions: [{
@@ -11426,6 +11742,9 @@ try {
   await rm(kbVault, { recursive: true, force: true });
 }
 
+const maintenanceWorkflowTestStorageBase = await mkdtemp(
+  path.join(tmpdir(), "codex-kb-maintenance-storage-")
+);
 const maintenanceStartSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-start-save-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStartSaveFailureVault, { failSaveCall: 1 });
@@ -11448,7 +11767,8 @@ try {
 const maintenanceVaultPathFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-vault-path-failure-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceVaultPathFailureVault, {
-    throwOnGetVaultPath: true
+    throwOnGetVaultPath: true,
+    maintenanceRecoveryState: "pending"
   });
   let thrown: unknown = null;
   let result: Awaited<ReturnType<KnowledgeBaseManager["runMaintenance"]>> | null = null;
@@ -11460,9 +11780,11 @@ try {
   assert.equal(thrown, null);
   assert.equal(result?.status, "failed");
   assert.match(result?.error ?? "", /vault path unavailable/);
+  assert.equal(result?.failureCode, "maintenance-recovery-blocked");
   assert.equal(manager.isRunning, false);
-  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
-  assert.match(settings.knowledgeBase.lastError, /vault path unavailable/);
+  assert.equal(manager.maintenanceRecoveryStatus.state, "blocked");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "idle");
+  assert.equal(settings.knowledgeBase.lastError, "");
 } finally {
   await rm(maintenanceVaultPathFailureVault, { recursive: true, force: true });
 }
@@ -11470,8 +11792,8 @@ try {
 const maintenanceFailureStatusSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-failure-save-failure-");
 try {
   const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceFailureStatusSaveFailureVault, {
-    failSaveCall: 2,
-    beforeAgentReturn: async () => {
+    failSaveCall: 1,
+    beforeAgentReturn: async (taskVaultPath) => {
       throw new Error("Agent failed before report");
     }
   });
@@ -11485,10 +11807,12 @@ try {
   assert.equal(thrown, null);
   assert.equal(result?.status, "failed");
   assert.match(result?.error ?? "", /Agent failed before report/);
-  assert.match(result?.error ?? "", /状态保存失败：saveSettings failed at call 2/);
+  assert.match(result?.error ?? "", /状态保存失败：saveSettings failed at call 1/);
+  assert.equal(Boolean(result?.workflowRunId), true);
+  assert.equal(result?.commitState, "pre-wal");
   assert.equal(manager.isRunning, false);
-  assert.equal(settings.knowledgeBase.lastError.includes("状态保存失败：saveSettings failed at call 2"), true);
-  assert.equal(saveCalls(), 3);
+  assert.equal(settings.knowledgeBase.lastError.includes("状态保存失败：saveSettings failed at call 1"), true);
+  assert.equal(saveCalls(), 2);
 } finally {
   await rm(maintenanceFailureStatusSaveFailureVault, { recursive: true, force: true });
 }
@@ -11496,6 +11820,7 @@ try {
 const maintenanceCancelSaveFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-cancel-save-failure-");
 try {
   const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceCancelSaveFailureVault, { failSaveCall: 1 });
+  (manager as any).maintenanceRecoveryState = "ready";
   (manager as any).running = true;
   let thrown: unknown = null;
   try {
@@ -11523,7 +11848,7 @@ try {
   assert.deepEqual(codexTaskCalls, []);
   assert.equal(manager.isRunning, false);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
 } finally {
   await rm(maintenanceCancelDuringInitialSaveVault, { recursive: true, force: true });
 }
@@ -11533,12 +11858,21 @@ try {
   await mkdir(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings"), { recursive: true });
   await writeFile(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings", "clip.md"), "# Clip\n", "utf8");
   await writeFile(path.join(maintenanceFinalSaveFailureVault, "inbox", "skills-local-audit.md"), "# Skills\n", "utf8");
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceFinalSaveFailureVault, {
-    failSaveCall: 2,
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceFinalSaveFailureVault, "raw", "index.md"), "# Raw\n\n- [[raw/articles/new]]\n", "utf8");
-      await writeFile(path.join(maintenanceFinalSaveFailureVault, "wiki", "agent-temp.md"), "# Temp\n\n来源：[[raw/articles/new]]\n\n核心要点：本轮新增正文已经进入临时知识页。\n", "utf8");
-      const reportPath = path.join(maintenanceFinalSaveFailureVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+  const {
+    manager,
+    settings,
+    saveCalls,
+    workflowSettingsPersistCalls,
+    maintenanceWorkflowSettingsHost
+  } = makeKnowledgeBaseManagerForTest(maintenanceFinalSaveFailureVault, {
+    failWorkflowSettingsPersistCall: 1,
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(
+        path.join(taskVaultPath, "wiki", "agent-temp.md"),
+        "# Temp\n\n本轮来源：[[raw/articles/new]]\n核心要点：本轮新增正文已经进入临时知识页。\n",
+        "utf8"
+      );
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -11555,19 +11889,58 @@ try {
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试最终保存失败");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /saveSettings failed at call 2/);
+  assert.equal(result.commitState, "wal-persisted");
+  assert.match(result.error ?? "", /workflow settings persist failed at call 1/);
   assert.equal(manager.isRunning, false);
   assert.equal(result.processedSources.length, 0);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
-  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".ingest-tracker.md")), false);
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "Clippings", "clip.md")), true);
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "skills-local-audit.md")), true);
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "research", "skills-local-audit.md")), false);
-  assert.equal(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "index.md"), "utf8"), "# Raw\n");
-  assert.equal(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "articles", "new.md"), "utf8"), "# New\n\n正文");
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".raw-digest-registry.json")), false);
-  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "wiki", "agent-temp.md")), false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "idle");
+  assert.equal(workflowSettingsPersistCalls(), 1);
+  assert.equal(saveCalls(), 0);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".ingest-tracker.md")), true);
+  const inboxEntriesAfterManagedCommit =
+    await readdir(path.join(maintenanceFinalSaveFailureVault, "inbox"));
+  const clippingsDirectoryAfterManagedCommit =
+    inboxEntriesAfterManagedCommit.includes("Clippings")
+      ? "Clippings"
+      : "clippings";
+  assert.ok(inboxEntriesAfterManagedCommit.includes(clippingsDirectoryAfterManagedCommit));
+  assert.equal(
+    await fileExists(path.join(
+      maintenanceFinalSaveFailureVault,
+      "inbox",
+      clippingsDirectoryAfterManagedCommit,
+      "clip.md"
+    )),
+    true
+  );
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "skills-local-audit.md")), false);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "inbox", "research", "skills-local-audit.md")), true);
+  assert.match(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "index.md"), "utf8"), /raw\/articles\/new/);
+  assert.match(await readFile(path.join(maintenanceFinalSaveFailureVault, "raw", "articles", "new.md"), "utf8"), /# New\n\n正文$/);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "outputs", ".raw-digest-registry.json")), true);
+  assert.equal(await fileExists(path.join(maintenanceFinalSaveFailureVault, "wiki", "agent-temp.md")), true);
+
+  const recovery = await recoverPendingMaintenanceWorkflows({
+    storageRootPath: (manager as any).plugin.getKnowledgeBaseWorkflowStorageRoot(),
+    liveVaultPath: maintenanceFinalSaveFailureVault,
+    settingsHost: maintenanceWorkflowSettingsHost
+  });
+  assert.deepEqual(recovery, {
+    recovered: 1,
+    blocked: 0,
+    invalid: 0,
+    issues: []
+  });
+  assert.equal(workflowSettingsPersistCalls(), 2);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  assert.equal(
+    settings.knowledgeBase.maintenanceHistory.filter(
+      (entry) => entry.runId === result.workflowRunId
+    ).length,
+    1
+  );
 } finally {
   await rm(maintenanceFinalSaveFailureVault, { recursive: true, force: true });
 }
@@ -11575,9 +11948,9 @@ try {
 const maintenanceDirectoryReplacedRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-dir-replaced-");
 try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceDirectoryReplacedRollbackVault, {
-    beforeAgentReturn: async () => {
-      await rm(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki"), { recursive: true, force: true });
-      await writeFile(path.join(maintenanceDirectoryReplacedRollbackVault, "wiki"), "# Bad replacement\n", "utf8");
+    beforeAgentReturn: async (taskVaultPath) => {
+      await rm(path.join(taskVaultPath, "wiki"), { recursive: true, force: true });
+      await writeFile(path.join(taskVaultPath, "wiki"), "# Bad replacement\n", "utf8");
       throw new Error("Agent replaced managed directory");
     }
   });
@@ -11594,14 +11967,14 @@ try {
   const externalWikiTarget = path.join(maintenanceRootSymlinkAfterAgentVault, "outside-wiki-target");
   await mkdir(externalWikiTarget, { recursive: true });
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRootSymlinkAfterAgentVault, {
-    beforeAgentReturn: async () => {
-      await rm(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"), { recursive: true, force: true });
-      await symlink(externalWikiTarget, path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"));
+    beforeAgentReturn: async (taskVaultPath) => {
+      await rm(path.join(taskVaultPath, "wiki"), { recursive: true, force: true });
+      await symlink(externalWikiTarget, path.join(taskVaultPath, "wiki"));
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 替换写入根为 symlink");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
+  assert.match(result.error ?? "", /Shadow 来源不能包含 symlink：wiki/);
   assert.equal((await lstat(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki"))).isDirectory(), true);
   assert.equal(await readFile(path.join(maintenanceRootSymlinkAfterAgentVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
   assert.deepEqual(await readdir(externalWikiTarget), []);
@@ -11612,13 +11985,13 @@ try {
 const maintenanceSpecialFileAfterAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-special-after-agent-");
 try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceSpecialFileAfterAgentVault, {
-    beforeAgentReturn: async () => {
-      await execFile("mkfifo", [path.join(maintenanceSpecialFileAfterAgentVault, "wiki", "agent.pipe")]);
+    beforeAgentReturn: async (taskVaultPath) => {
+      await execFile("mkfifo", [path.join(taskVaultPath, "wiki", "agent.pipe")]);
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增特殊文件");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /知识库写入区不能包含特殊文件/);
+  assert.match(result.error ?? "", /Shadow 来源不能包含特殊文件：wiki\/agent\.pipe/);
   assert.equal(await fileExists(path.join(maintenanceSpecialFileAfterAgentVault, "wiki", "agent.pipe")), false);
 } finally {
   await rm(maintenanceSpecialFileAfterAgentVault, { recursive: true, force: true });
@@ -11630,14 +12003,15 @@ try {
   const hardlinkPath = path.join(maintenanceHardlinkAfterAgentVault, "wiki", "ai-intelligence", "references", "agent-hardlink.md");
   await writeFile(externalWikiTarget, "# External wiki hardlink\n\n不应进入知识库写入区", "utf8");
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHardlinkAfterAgentVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.dirname(hardlinkPath), { recursive: true });
-      await link(externalWikiTarget, hardlinkPath);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const taskHardlinkPath = path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "agent-hardlink.md");
+      await mkdir(path.dirname(taskHardlinkPath), { recursive: true });
+      await link(externalWikiTarget, taskHardlinkPath);
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增 hardlink 不继续");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /知识库写入区不能包含 hardlink/);
+  assert.match(result.error ?? "", /Shadow 来源不能包含 hardlink：wiki\/ai-intelligence\/references\/agent-hardlink\.md/);
   assert.equal(await readFile(externalWikiTarget, "utf8"), "# External wiki hardlink\n\n不应进入知识库写入区");
   assert.equal(await fileExists(hardlinkPath), false);
 } finally {
@@ -11664,9 +12038,11 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager } = makeKnowledgeBaseManagerForTest(maintenancePreexistingConflictDuplicateVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.dirname(evidencePath), { recursive: true });
-      await writeFile(evidencePath, [
+    beforeAgentReturn: async (taskVaultPath) => {
+      const taskEvidencePath = path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "existing-page.md");
+      const taskReportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${todayKey}.md`);
+      await mkdir(path.dirname(taskEvidencePath), { recursive: true });
+      await writeFile(taskEvidencePath, [
         "# Existing Page",
         "",
         "历史来源：[[raw/articles/new]]",
@@ -11677,8 +12053,8 @@ try {
         "核心要点：本轮新增正文已经消化进既有页面。",
         "",
       ].join("\n"), "utf8");
-      await mkdir(path.dirname(reportPath), { recursive: true });
-      await writeFile(reportPath, [
+      await mkdir(path.dirname(taskReportPath), { recursive: true });
+      await writeFile(taskReportPath, [
         "---",
         "source: codex-echoink",
         "---",
@@ -11713,13 +12089,17 @@ try {
   await mkdir(path.dirname(basePath), { recursive: true });
   await writeFile(basePath, "# Agent conflict\n\n原始正文", "utf8");
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceConflictDuplicateAfterAgentVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(duplicatePath, "# Agent conflict\n\n冲突副本正文", "utf8");
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(
+        path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "agent-conflict 2.md"),
+        "# Agent conflict\n\n冲突副本正文",
+        "utf8"
+      );
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试 Agent 新增冲突副本不继续");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /知识库写入区不能包含冲突副本/);
+  assert.match(result.error ?? "", /Shadow 来源不能包含冲突副本：wiki\/ai-intelligence\/references\/agent-conflict 2\.md/);
   assert.equal(await readFile(basePath, "utf8"), "# Agent conflict\n\n原始正文");
   assert.equal(await fileExists(duplicatePath), false);
 } finally {
@@ -11731,7 +12111,7 @@ try {
   const untouchedWikiPath = path.join(maintenanceFailurePreservesUntouchedFilesVault, "wiki", "index.md");
   const untouchedWikiBefore = await stat(untouchedWikiPath);
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceFailurePreservesUntouchedFilesVault, {
-    beforeAgentReturn: async () => {
+    beforeAgentReturn: async (taskVaultPath) => {
       throw new Error("Agent failed without touching files");
     }
   });
@@ -11745,53 +12125,112 @@ try {
   await rm(maintenanceFailurePreservesUntouchedFilesVault, { recursive: true, force: true });
 }
 
-const maintenanceRawViolationRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-violation-rollback-");
+const maintenanceRawWriteFenceRecoveryVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-write-fence-recovery-");
 try {
-  const rawPath = path.join(maintenanceRawViolationRollbackVault, "raw", "articles", "new.md");
+  const rawPath = path.join(maintenanceRawWriteFenceRecoveryVault, "raw", "articles", "new.md");
+  const trackerPath = path.join(maintenanceRawWriteFenceRecoveryVault, "outputs", ".ingest-tracker.md");
+  await mkdir(path.dirname(trackerPath), { recursive: true });
+  await writeFile(trackerPath, "# Existing tracker\n", "utf8");
   const rawTextBefore = await readFile(rawPath, "utf8");
   const rawStatBefore = await stat(rawPath);
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceRawViolationRollbackVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(rawPath, "# New\n\nAgent 不该改 raw 正文", "utf8");
-      await writeFile(path.join(maintenanceRawViolationRollbackVault, "wiki", "agent-temp.md"), "# Temp\n", "utf8");
-      const reportPath = path.join(maintenanceRawViolationRollbackVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+  let rawWriteDenied = false;
+  let trackerWriteDenied = false;
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceRawWriteFenceRecoveryVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      try {
+        await writeFile(path.join(taskVaultPath, "raw", "articles", "new.md"), "# New\n\nAgent 不该改 raw 正文", "utf8");
+      } catch (error) {
+        assert.ok(["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? ""));
+        rawWriteDenied = true;
+      }
+      try {
+        await writeFile(
+          path.join(taskVaultPath, "outputs", ".ingest-tracker.md"),
+          "ILLEGAL AGENT TRACKER\n",
+          "utf8"
+        );
+      } catch (error) {
+        assert.ok(["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? ""));
+        trackerWriteDenied = true;
+      }
+      await writeFile(path.join(taskVaultPath, "wiki", "agent-temp.md"), [
+        "# Temp",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：Raw 拒写后仍完成合法结构化维护。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
-      await writeFile(reportPath, "# Bad Report\n", "utf8");
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
     }
   });
-  const result = await manager.runMaintenance("maintain", "/maintain 测试 raw 违规全量回滚");
-  assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
-  assert.match(result.error ?? "", /文件内容被改写/);
-  assert.equal(await readFile(rawPath, "utf8"), rawTextBefore);
-  assert.ok(Math.abs((await stat(rawPath)).mtimeMs - rawStatBefore.mtimeMs) <= 5);
-  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "wiki", "agent-temp.md")), false);
-  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, result.reportPath)), true);
-  assert.match(await readFile(path.join(maintenanceRawViolationRollbackVault, result.reportPath), "utf8"), /试图改写 raw\/ 原始资料文件/);
-  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
-  assert.equal(await fileExists(path.join(maintenanceRawViolationRollbackVault, "outputs", ".ingest-tracker.md")), false);
+  const result = await manager.runMaintenance("maintain", "/maintain 测试 Raw 围栏拒写后继续合法维护");
+  assert.equal(result.status, "success", result.error);
+  assert.equal(rawWriteDenied, true);
+  assert.equal(trackerWriteDenied, true);
+  const rawTextAfter = await readFile(rawPath, "utf8");
+  assert.match(rawTextAfter, /# New\n\n正文$/);
+  assert.doesNotMatch(rawTextAfter, /Agent 不该改 raw 正文/);
+  assert.notEqual(rawTextAfter, rawTextBefore, "Host 应在成功提交后写入托管提炼属性");
+  assert.ok((await stat(rawPath)).mtimeMs >= rawStatBefore.mtimeMs);
+  assert.equal(await fileExists(path.join(maintenanceRawWriteFenceRecoveryVault, "wiki", "agent-temp.md")), true);
+  assert.equal(await fileExists(path.join(maintenanceRawWriteFenceRecoveryVault, result.reportPath)), true);
+  assert.ok(settings.knowledgeBase.processedSources["raw/articles/new.md"]);
+  assert.equal(await fileExists(path.join(maintenanceRawWriteFenceRecoveryVault, "outputs", ".ingest-tracker.md")), true);
+  assert.doesNotMatch(await readFile(trackerPath, "utf8"), /ILLEGAL AGENT TRACKER/);
 } finally {
-  await rm(maintenanceRawViolationRollbackVault, { recursive: true, force: true });
+  await rm(maintenanceRawWriteFenceRecoveryVault, { recursive: true, force: true });
 }
 
-const maintenanceRawViolationPreservesConcurrentAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-preserve-concurrent-add-");
+const maintenanceRawBypassPreservesConcurrentAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-raw-bypass-preserve-concurrent-add-");
 try {
-  const rawPath = path.join(maintenanceRawViolationPreservesConcurrentAddVault, "raw", "articles", "new.md");
-  const concurrentRaw = path.join(maintenanceRawViolationPreservesConcurrentAddVault, "raw", "articles", "external-concurrent.md");
+  const rawPath = path.join(maintenanceRawBypassPreservesConcurrentAddVault, "raw", "articles", "new.md");
+  const concurrentRaw = path.join(maintenanceRawBypassPreservesConcurrentAddVault, "raw", "articles", "external-concurrent.md");
   const rawTextBefore = await readFile(rawPath, "utf8");
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawViolationPreservesConcurrentAddVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(rawPath, "# New\n\nAgent 不该改 raw 正文", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawBypassPreservesConcurrentAddVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const taskRawPath = path.join(taskVaultPath, "raw", "articles", "new.md");
+      await chmod(taskRawPath, 0o644);
+      await writeFile(taskRawPath, "# New\n\nAgent 绕过只读后篡改 raw 正文", "utf8");
+      await writeFile(path.join(taskVaultPath, "wiki", "agent-temp.md"), [
+        "# Temp",
+        "",
+        "本轮来源：[[raw/articles/new]]",
+        "核心要点：即使同时产出合法页面，Raw 篡改仍必须阻断整轮。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+      // 这是外部自动化对 live Vault 的并发写，不属于 Agent attempt。
       await writeFile(concurrentRaw, "# External\n\n外部自动化同时新增 raw", "utf8");
     }
   });
-  const result = await manager.runMaintenance("maintain", "/maintain 测试恢复既有 raw 但不删除并发新增 raw");
+  const result = await manager.runMaintenance("maintain", "/maintain 测试绕过围栏篡改 Raw 必须硬失败");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
+  assert.match(result.error ?? "", /Agent 修改了 Raw：raw\/articles\/new\.md/);
   assert.equal(await readFile(rawPath, "utf8"), rawTextBefore);
   assert.equal(await readFile(concurrentRaw, "utf8"), "# External\n\n外部自动化同时新增 raw");
+  assert.equal(await fileExists(path.join(maintenanceRawBypassPreservesConcurrentAddVault, "wiki", "agent-temp.md")), false);
 } finally {
-  await rm(maintenanceRawViolationPreservesConcurrentAddVault, { recursive: true, force: true });
+  await rm(maintenanceRawBypassPreservesConcurrentAddVault, { recursive: true, force: true });
 }
 
 const maintenanceUnsafeRawAddVault = await createMaintenanceVaultForTest("codex-kb-maintain-unsafe-raw-add-");
@@ -11800,14 +12239,14 @@ try {
   const rawSymlink = path.join(maintenanceUnsafeRawAddVault, "raw", "articles", "unsafe-link.md");
   await writeFile(externalTarget, "# Outside\n", "utf8");
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceUnsafeRawAddVault, {
-    beforeAgentReturn: async () => {
-      await symlink(externalTarget, rawSymlink);
+    beforeAgentReturn: async (taskVaultPath) => {
+      await chmod(path.join(taskVaultPath, "raw", "articles"), 0o755);
+      await symlink(externalTarget, path.join(taskVaultPath, "raw", "articles", "unsafe-link.md"));
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试 unsafe raw 新增仍失败");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
-  assert.match(result.error ?? "", /unsafe-link\.md 文件新增或被移动到 raw\//);
+  assert.match(result.error ?? "", /Shadow 来源不能包含 symlink：raw\/articles\/unsafe-link\.md/);
   assert.equal(await fileExists(rawSymlink), false);
   assert.equal(await readFile(externalTarget, "utf8"), "# Outside\n");
 } finally {
@@ -11821,15 +12260,14 @@ try {
   const rawModeBefore = (await stat(rawDir)).mode & 0o777;
   const rawFileBefore = await stat(rawFile);
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceRawUnreadableOnErrorVault, {
-    beforeAgentReturn: async () => {
-      await chmod(rawDir, 0o000);
+    beforeAgentReturn: async (taskVaultPath) => {
+      await chmod(path.join(taskVaultPath, "raw"), 0o000);
       throw new Error("Agent failed after raw chmod");
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试失败时 raw 不可读也要恢复");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /试图改写 raw\/ 原始资料文件/);
-  assert.match(result.error ?? "", /文件权限被改写/);
+  assert.match(result.error ?? "", /Agent 修改了 Raw：raw/);
   assert.equal((await stat(rawDir)).mode & 0o777, rawModeBefore);
   assert.equal((await stat(rawFile)).ino, rawFileBefore.ino);
 } finally {
@@ -11837,20 +12275,95 @@ try {
   await rm(maintenanceRawUnreadableOnErrorVault, { recursive: true, force: true });
 }
 
+const maintenanceCancelBeforeCommitGateVault = await createMaintenanceVaultForTest("codex-kb-maintain-cancel-before-commit-gate-");
+try {
+  const {
+    manager,
+    settings,
+    workflowStorageRoot,
+    waitForCommitGateCancellation
+  } = makeKnowledgeBaseManagerForTest(maintenanceCancelBeforeCommitGateVault, {
+    cancelViaManagerBeforeCommitGate: true,
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "cancel-wins.md"), [
+        "# Cancel Wins",
+        "",
+        "来源：[[raw/articles/new]]",
+        "核心要点：这份 Shadow 成果不得越过先到的取消请求。",
+        ""
+      ].join("\n"), "utf8");
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, [
+        "---",
+        "source: codex-echoink",
+        "---",
+        "",
+        "# 知识库维护报告",
+        "",
+        "## 本轮来源",
+        "- [[raw/articles/new]]",
+        ""
+      ].join("\n"), "utf8");
+    }
+  });
+  const result = await manager.runMaintenance("maintain", "/maintain 测试取消先于提交门");
+  const cancellation = await waitForCommitGateCancellation() as {
+    accepted: boolean;
+    message: string;
+  };
+  assert.equal(cancellation.accepted, true);
+  assert.equal(cancellation.message, "已取消知识库任务");
+  assert.equal(result.status, "canceled", result.error);
+  assert.equal(result.commitState, "pre-wal");
+  assert.equal(result.terminalPhase, "verification");
+  assert.equal(manager.isRunning, false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
+  assert.deepEqual(settings.knowledgeBase.processedSources, {});
+  assert.equal(
+    (await listMaintenanceWorkflowWals(workflowStorageRoot)).length,
+    0,
+    "cancel-wins must not create a workflow WAL"
+  );
+  assert.equal(
+    await fileExists(path.join(maintenanceCancelBeforeCommitGateVault, "wiki", "ai-intelligence", "references", "cancel-wins.md")),
+    false,
+    "cancel-wins must not apply Shadow Wiki writes"
+  );
+  assert.equal(
+    await fileExists(path.join(maintenanceCancelBeforeCommitGateVault, "outputs", ".ingest-tracker.md")),
+    false,
+    "cancel-wins must not apply managed tracker writes"
+  );
+  assert.doesNotMatch(
+    await readFile(path.join(maintenanceCancelBeforeCommitGateVault, "raw", "articles", "new.md"), "utf8"),
+    /^已处理:/m,
+    "cancel-wins must not apply managed Raw metadata"
+  );
+} finally {
+  await rm(maintenanceCancelBeforeCommitGateVault, { recursive: true, force: true });
+}
+
 const maintenanceLateCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-late-cancel-");
 try {
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLateCancelVault, {
-    cancelBeforeSaveCall: 2,
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceLateCancelVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceLateCancelVault, "wiki", "ai-intelligence", "references", "late-cancel.md"), [
+  const {
+    manager,
+    settings,
+    waitForCommitGateCancellation
+  } = makeKnowledgeBaseManagerForTest(maintenanceLateCancelVault, {
+    cancelViaCommandAfterCommitGate: true,
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "late-cancel.md"), [
         "# Late Cancel",
         "",
         "来源：[[raw/articles/new]]",
         "核心要点：本轮新增正文已经进入取消窗口测试页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceLateCancelVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -11866,15 +12379,29 @@ try {
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain 测试最终保存窗口取消");
-  assert.equal(result.status, "canceled");
-  assert.equal(result.processedSources.length, 0);
-  assert.match(result.error ?? "", /用户取消/);
+  const cancelResult = await waitForCommitGateCancellation() as {
+    status: string;
+    message: string;
+  };
+  assert.equal(cancelResult.status, "success");
+  assert.equal(cancelResult.message, "知识库维护已进入安全提交，不能取消。");
+  assert.equal(result.status, "success", result.error);
+  assert.equal(result.commitState, "committed");
+  assert.equal(result.processedSources.length, 1);
   assert.equal(manager.isRunning, false);
-  assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.match(settings.knowledgeBase.lastError, /用户取消/);
-  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
-  assert.equal(await fileExists(path.join(maintenanceLateCancelVault, "outputs", ".ingest-tracker.md")), false);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.lastError, "");
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), ["raw/articles/new.md"]);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "success");
+  assert.equal(await fileExists(path.join(maintenanceLateCancelVault, "outputs", ".ingest-tracker.md")), true);
+  assert.deepEqual(
+    await manager.cancelMaintenance(),
+    {
+      accepted: false,
+      message: "当前没有知识库任务"
+    },
+    "finishRun must release the commit gate"
+  );
 } finally {
   await rm(maintenanceLateCancelVault, { recursive: true, force: true });
 }
@@ -11932,7 +12459,7 @@ try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeLintScopeVault, { agentBackend: "opencode", openCodeTaskCalls });
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode 权限边界");
   assert.equal(result.status, "success");
-  assert.deepEqual(openCodeTaskCalls, [{ permission: "read-only" }]);
+  assert.deepEqual(openCodeTaskCalls, [{ permission: "workspace-write" }]);
 } finally {
   await rm(maintenanceOpenCodeLintScopeVault, { recursive: true, force: true });
 }
@@ -11943,9 +12470,39 @@ try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceHermesLintScopeVault, { agentBackend: "hermes", hermesTaskCalls });
   const result = await manager.runMaintenance("lint", "/check 测试 Hermes 权限边界");
   assert.equal(result.status, "success");
-  assert.deepEqual(hermesTaskCalls, [{ permission: "read-only" }]);
+  assert.deepEqual(hermesTaskCalls, [{ permission: "workspace-write" }]);
 } finally {
   await rm(maintenanceHermesLintScopeVault, { recursive: true, force: true });
+}
+
+const maintenanceIgnoresPinnedAskBackendVault = await createMaintenanceVaultForTest("codex-kb-maintain-selected-agent-");
+try {
+  const openCodeTaskCalls: Array<{ permission: string }> = [];
+  const hermesTaskCalls: Array<{ permission: string }> = [];
+  let settingsForSwitch: any = null;
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceIgnoresPinnedAskBackendVault, {
+    agentBackend: "opencode",
+    knowledgeBackend: "hermes",
+    openCodeTaskCalls,
+    hermesTaskCalls,
+    beforeAgentReturn: async (taskVaultPath) => {
+      settingsForSwitch.agentBackend = "hermes";
+    }
+  });
+  settingsForSwitch = settings;
+  const result = await manager.runMaintenance("lint", "/check 维护只使用启动时选中的 Agent");
+  assert.equal(result.status, "success");
+  assert.deepEqual(openCodeTaskCalls, [{ permission: "workspace-write" }]);
+  assert.deepEqual(hermesTaskCalls, []);
+  assert.equal(settings.agentBackend, "hermes", "运行中切换 Agent 只应影响下一轮");
+  assert.equal(settings.knowledgeBase.backend, "hermes", "/ask 的独立固定后端设置必须保留");
+  assert.deepEqual(
+    settings.knowledgeBase.maintenanceHistory.at(-1)?.attempts?.map((attempt: any) => attempt.backend),
+    ["opencode"],
+    "维护历史必须记录启动时锁定的实际 attempt"
+  );
+} finally {
+  await rm(maintenanceIgnoresPinnedAskBackendVault, { recursive: true, force: true });
 }
 
 const askPinnedHermesBackendVault = await createMaintenanceVaultForTest("codex-kb-ask-pinned-hermes-");
@@ -12013,11 +12570,11 @@ try {
   });
   managerForHook = manager;
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 前取消");
-  assert.equal(result.status, "canceled");
+  assert.equal(result.status, "canceled", result.error);
   assert.equal(result.processedSources.length, 0);
   assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 0);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeCancelBeforePromptVault, { recursive: true, force: true });
@@ -12026,11 +12583,16 @@ try {
 const maintenanceOpenCodeCancelDuringPromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-during-prompt-");
 try {
   let managerForHook: KnowledgeBaseManager | null = null;
+  let cancelHookEntered = false;
+  let cancelHookCompleted = false;
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
+    onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
     onSendPrompt: async () => {
+      cancelHookEntered = true;
       await managerForHook?.cancelMaintenance();
+      cancelHookCompleted = true;
     },
     sendPromptError: new Error("OpenCode aborted")
   };
@@ -12040,13 +12602,15 @@ try {
   });
   managerForHook = manager;
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 中取消");
-  assert.equal(result.status, "canceled");
+  assert.equal(cancelHookEntered, true);
+  assert.equal(cancelHookCompleted, true);
+  assert.equal(result.status, "canceled", result.error);
   assert.equal(result.processedSources.length, 0);
   assert.equal((globalThis as any).__opencodeBackendTestHooks.sendPromptCalls ?? 0, 1);
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal(settings.opencode.lastError, "");
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeCancelDuringPromptVault, { recursive: true, force: true });
@@ -12057,23 +12621,42 @@ try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
+    onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
     onSendPrompt: async () => await new Promise(() => undefined)
   };
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeStalledPromptTimeoutVault, {
     agentBackend: "opencode",
-    useRealOpenCodeTask: true
+    useRealOpenCodeTask: true,
+    maintenanceReadyBackends: ["codex-cli"]
   });
   const result = await Promise.race([
-    manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死超时", { opencodeTaskTimeoutMs: 10 } as any),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+    manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死超时", { opencodeTaskTimeoutMs: 1_000 } as any),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 1_500))
   ]);
   assert.notEqual(result, "hung");
-  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
-  assert.match((result as KnowledgeBaseRunResult).error ?? "", /OpenCode.*长时间没有返回/);
+  assert.equal(
+    (result as KnowledgeBaseRunResult).status,
+    "success",
+    JSON.stringify(result, null, 2)
+  );
+  assert.equal((result as KnowledgeBaseRunResult).completion, "recovered");
+  const timeoutReportText = await readFile(
+    path.join(maintenanceOpenCodeStalledPromptTimeoutVault, (result as KnowledgeBaseRunResult).reportPath),
+    "utf8"
+  );
+  assert.deepEqual(
+    (result as KnowledgeBaseRunResult).attempts?.map((attempt) => attempt.backend),
+    ["opencode", "codex-cli"],
+    JSON.stringify({
+      attempts: (result as KnowledgeBaseRunResult).attempts,
+      timeoutReportText
+    }, null, 2)
+  );
+  assert.match((result as KnowledgeBaseRunResult).attempts?.[0]?.failure?.message ?? "", /OpenCode.*长时间没有返回/);
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal((manager as any).agentTaskService.hasActiveTask, false);
-  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
-  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "success");
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeStalledPromptTimeoutVault, { recursive: true, force: true });
@@ -12082,11 +12665,18 @@ try {
 const maintenanceOpenCodeStalledPromptCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-stalled-prompt-cancel-");
 try {
   let managerForHook: KnowledgeBaseManager | null = null;
+  let markPromptStarted!: () => void;
+  let markCancelCompleted!: () => void;
+  const promptStarted = new Promise<void>((resolve) => { markPromptStarted = resolve; });
+  const cancelCompleted = new Promise<void>((resolve) => { markCancelCompleted = resolve; });
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
     abortCalls: [],
+    onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
     onSendPrompt: async () => {
+      markPromptStarted();
       await managerForHook?.cancelMaintenance();
+      markCancelCompleted();
       await new Promise(() => undefined);
     }
   };
@@ -12095,46 +12685,66 @@ try {
     useRealOpenCodeTask: true
   });
   managerForHook = manager;
+  const maintenanceRun = manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死时取消");
+  const promptStart = await Promise.race([
+    promptStarted.then(() => "started" as const),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_500))
+  ]);
+  assert.equal(promptStart, "started", "OpenCode prompt must reach the stalled transport before testing cancel settlement");
   const result = await Promise.race([
-    manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死时取消"),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
+    Promise.all([maintenanceRun, cancelCompleted]).then(([settled]) => settled),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000))
   ]);
   assert.notEqual(result, "hung");
   assert.equal((result as KnowledgeBaseRunResult).status, "canceled");
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal(settings.opencode.lastError, "");
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeStalledPromptCancelVault, { recursive: true, force: true });
 }
 
-const maintenanceHermesStalledPromptTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-hermes-stalled-timeout-");
+const maintenanceHermesLintUnsupportedFailoverVault = await createMaintenanceVaultForTest("codex-kb-maintain-hermes-lint-failover-");
 try {
   (globalThis as any).__hermesBackendTestHooks = {
     models: [{ id: "test/hermes", providerId: "test", modelId: "hermes", displayName: "Test Hermes", inputModalities: ["text"] }],
-    abortCalls: [],
-    onRunTask: async () => await new Promise(() => undefined)
+    abortCalls: []
   };
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceHermesStalledPromptTimeoutVault, {
+  const codexTaskCalls: Array<{ permission: string; writeScope: string }> = [];
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceHermesLintUnsupportedFailoverVault, {
     agentBackend: "hermes",
-    useRealHermesTask: true
+    useRealHermesTask: true,
+    maintenanceReadyBackends: ["codex-cli"],
+    codexTaskCalls
   });
-  const result = await Promise.race([
-    manager.runMaintenance("lint", "/check 测试 Hermes prompt 卡死超时", { hermesTaskTimeoutMs: 10 } as any),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 80))
-  ]);
-  assert.notEqual(result, "hung");
-  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
-  assert.match((result as KnowledgeBaseRunResult).error ?? "", /Hermes.*长时间没有返回/);
-  assert.deepEqual((globalThis as any).__hermesBackendTestHooks.abortCalls, ["test-hermes-run"]);
+  const result = await manager.runMaintenance(
+    "lint",
+    "/check 测试 Hermes proposal 不支持零来源 lint 时安全切换"
+  );
+  assert.equal(result.status, "success");
+  assert.equal(result.completion, "recovered");
+  assert.deepEqual(
+    result.attempts?.map((attempt) => attempt.backend),
+    ["hermes", "codex-cli"]
+  );
+  assert.equal(result.attempts?.[0]?.failure?.phase, "preflight");
+  assert.equal(result.attempts?.[0]?.failure?.code, "BACKEND_UNAVAILABLE");
+  assert.equal(result.attempts?.[0]?.submitted, undefined);
+  assert.match(
+    result.attempts?.[0]?.failure?.message ?? "",
+    /Hermes Agent backend unavailable：proposal v1 需要至少一个 raw 文本来源/
+  );
+  assert.equal((globalThis as any).__hermesBackendTestHooks.runTaskCalls ?? 0, 0);
+  assert.deepEqual((globalThis as any).__hermesBackendTestHooks.abortCalls, []);
+  assert.deepEqual(codexTaskCalls, [{ permission: "workspace-write", writeScope: "knowledge-lint" }]);
   assert.equal((manager as any).agentTaskService.hasActiveTask, false);
-  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
-  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "success");
 } finally {
   delete (globalThis as any).__hermesBackendTestHooks;
-  await rm(maintenanceHermesStalledPromptTimeoutVault, { recursive: true, force: true });
+  await rm(maintenanceHermesLintUnsupportedFailoverVault, { recursive: true, force: true });
 }
 
 
@@ -12162,9 +12772,10 @@ try {
   await mkdir(path.dirname(maintainReportPath), { recursive: true });
   await writeFile(maintainReportPath, maintainReportText, "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintDoesNotOverwriteDailyMaintainReportVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.dirname(checkReportPath), { recursive: true });
-      await writeFile(checkReportPath, "---\nmode: lint-only\n---\n# 体检报告\n\n只执行 Lint 体检。", "utf8");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const taskCheckReportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint", today);
+      await mkdir(path.dirname(taskCheckReportPath), { recursive: true });
+      await writeFile(taskCheckReportPath, "---\nmode: lint-only\n---\n# 体检报告\n\n只执行 Lint 体检。", "utf8");
     }
   });
   const result = await manager.runMaintenance("lint", "/check 测试不覆盖同日维护报告");
@@ -12289,8 +12900,8 @@ try {
 const maintenanceLintWrongReportVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-wrong-report-");
 try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintWrongReportVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintWrongReportVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "# 维护报告\n\n执行 Ingest + Structure Normalize + Lint。", "utf8");
     }
@@ -12300,7 +12911,10 @@ try {
   const reportText = await readFile(path.join(maintenanceLintWrongReportVault, result.reportPath), "utf8");
   assert.ok(reportText.includes("mode: lint-only"));
   assert.ok(reportText.includes("fallback: true"));
-  assert.ok(reportText.includes("不是 lint-only 体检报告"));
+  assert.ok(
+    reportText.includes("不是 lint-only 体检报告"),
+    `错误 lint 报告 fallback 未标注替换原因：\n${reportText}`
+  );
   assert.ok(!reportText.includes("执行 Ingest + Structure Normalize + Lint"));
 } finally {
   await rm(maintenanceLintWrongReportVault, { recursive: true, force: true });
@@ -12309,8 +12923,8 @@ try {
 const maintenanceLintSemanticReportMetadataVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-semantic-metadata-");
 try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSemanticReportMetadataVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSemanticReportMetadataVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12341,16 +12955,22 @@ try {
   await mkdir(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes"), { recursive: true });
   await writeFile(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"), "# Existing\n", "utf8");
   const existingOutputBefore = await stat(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"));
+  const capturedTaskInputs: any[] = [];
+  let extraOutputDeniedByFence = false;
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSuccessDropsExtraOutputsVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSuccessDropsExtraOutputsVault, "lint");
+    capturedTaskInputs,
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
-      await writeFile(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "extra.md"), "# Extra\n", "utf8");
+      const writableRoots = capturedTaskInputs.at(-1)?.writableRootsOverride ?? [];
+      assert.deepEqual(writableRoots, [path.join(taskVaultPath, "outputs", "maintenance")]);
+      extraOutputDeniedByFence = true;
     }
   });
   const result = await manager.runMaintenance("lint", "/check 测试成功只保留报告");
   assert.equal(result.status, "success");
+  assert.equal(extraOutputDeniedByFence, true);
   assert.equal(await fileExists(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md")), true);
   assert.equal(await fileExists(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "extra.md")), false);
   const existingOutputAfter = await stat(path.join(maintenanceLintSuccessDropsExtraOutputsVault, "outputs", "notes", "existing.md"));
@@ -12364,8 +12984,8 @@ try {
 const maintenanceLintRecoveredReportVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-report-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
       throw new Error("Codex turn reported failed after report");
@@ -12385,8 +13005,8 @@ const maintenanceLintRecoveredReportSaveFailureVault = await createMaintenanceVa
 try {
   const { manager, settings, saveCalls } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportSaveFailureVault, {
     failSaveCall: 2,
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportSaveFailureVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
       throw new Error("Codex turn reported failed after report");
@@ -12394,45 +13014,49 @@ try {
   });
   const result = await manager.runMaintenance("lint", "/check 测试恢复成功但保存失败");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /状态保存失败：saveSettings failed at call 2/);
+  assert.match(result.error ?? "", /saveSettings failed at call 2/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
   await assertNoReportFileForResult(maintenanceLintRecoveredReportSaveFailureVault, result);
   assert.equal(saveCalls(), 3);
 } finally {
   await rm(maintenanceLintRecoveredReportSaveFailureVault, { recursive: true, force: true });
 }
 
-const maintenanceLintRecoveredReportCommitFailureVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-commit-failure-");
+const maintenanceLintRecoveredReportShadowReadonlyVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-shadow-readonly-");
+let maintenanceLintRecoveredShadowReportDirectory = "";
 try {
-  let reportDirectory = "";
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportCommitFailureVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportCommitFailureVault, "lint");
-      reportDirectory = path.dirname(reportPath);
-      await mkdir(reportDirectory, { recursive: true });
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportShadowReadonlyVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
+      maintenanceLintRecoveredShadowReportDirectory = path.dirname(reportPath);
+      await mkdir(maintenanceLintRecoveredShadowReportDirectory, { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
-      await chmod(reportDirectory, 0o555);
+      await chmod(maintenanceLintRecoveredShadowReportDirectory, 0o555);
       throw new Error("Codex turn reported failed after report");
     }
   });
-  const result = await manager.runMaintenance("lint", "/check 测试恢复报告提交失败仍然收口");
-  assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /Codex turn reported failed after report/);
-  assert.match(result.error ?? "", /体检报告恢复失败/);
-  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
-  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "failed");
+  const result = await manager.runMaintenance("lint", "/check 测试只读 Shadow 报告目录不阻止安全提交");
+  assert.equal(result.status, "success");
+  assert.equal(settings.knowledgeBase.lastRunStatus, "success");
+  assert.equal(settings.knowledgeBase.lastError, "");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "success");
+  assert.ok((await readFile(
+    path.join(maintenanceLintRecoveredReportShadowReadonlyVault, result.reportPath),
+    "utf8"
+  )).includes("mode: lint-only"));
 } finally {
-  await chmod(path.join(maintenanceLintRecoveredReportCommitFailureVault, "outputs", "maintenance"), 0o755).catch(() => undefined);
-  await rm(maintenanceLintRecoveredReportCommitFailureVault, { recursive: true, force: true });
+  await chmod(maintenanceLintRecoveredShadowReportDirectory, 0o755).catch(() => undefined);
+  await chmod(path.join(maintenanceLintRecoveredReportShadowReadonlyVault, "outputs", "maintenance"), 0o755).catch(() => undefined);
+  await rm(maintenanceLintRecoveredReportShadowReadonlyVault, { recursive: true, force: true });
 }
 
 const maintenanceLintRecoveredReportCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-cancel-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportCancelVault, {
     cancelBeforeSaveCall: 2,
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportCancelVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
       throw new Error("Codex turn reported failed after report");
@@ -12442,7 +13066,7 @@ try {
   assert.equal(result.status, "canceled");
   assert.match(result.error ?? "", /用户取消/);
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
-  assert.deepEqual(settings.knowledgeBase.maintenanceHistory, []);
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
   await assertNoReportFileForResult(maintenanceLintRecoveredReportCancelVault, result);
 } finally {
   await rm(maintenanceLintRecoveredReportCancelVault, { recursive: true, force: true });
@@ -12504,16 +13128,16 @@ try {
   const externalOutputTarget = path.join(maintenanceLintSymlinkAfterAgentVault, "outside-output-target");
   await mkdir(externalOutputTarget, { recursive: true });
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintSymlinkAfterAgentVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintSymlinkAfterAgentVault, "lint");
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
-      await symlink(externalOutputTarget, path.join(maintenanceLintSymlinkAfterAgentVault, "outputs", "agent-link"));
+      await symlink(externalOutputTarget, path.join(taskVaultPath, "outputs", "agent-link"));
     }
   });
   const result = await manager.runMaintenance("lint", "/check 测试 Agent 新增 symlink 不误恢复");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /知识库写入区不能包含 symlink/);
+  assert.match(result.error ?? "", /Shadow 来源不能包含 symlink：outputs\/agent-link/);
   await assertNoReportFileForResult(maintenanceLintSymlinkAfterAgentVault, result);
   assert.equal(await fileExists(path.join(maintenanceLintSymlinkAfterAgentVault, "outputs", "agent-link")), false);
   assert.deepEqual(await readdir(externalOutputTarget), []);
@@ -12525,7 +13149,8 @@ const maintenanceLintConcurrentRawVault = await createMaintenanceVaultForTest("c
 try {
   const concurrentRaw = path.join(maintenanceLintConcurrentRawVault, "raw", "articles", "external.md");
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintConcurrentRawVault, {
-    beforeAgentReturn: async () => {
+    beforeAgentReturn: async (taskVaultPath) => {
+      // 这是外部自动化对 live Vault 的并发写，不属于 Agent attempt。
       await writeFile(concurrentRaw, "# External\n\n外部自动化新增 raw", "utf8");
     }
   });
@@ -12539,73 +13164,79 @@ try {
   await rm(maintenanceLintConcurrentRawVault, { recursive: true, force: true });
 }
 
-const maintenanceLintRecoveredReportDropsExtraOutputsVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-recovered-drop-extra-");
+const maintenanceLintTransportBypassVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-transport-bypass-");
 try {
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintRecoveredReportDropsExtraOutputsVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintRecoveredReportDropsExtraOutputsVault, "lint");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintTransportBypassVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "---\nmode: lint-only\n---\n# 体检报告\n\nAgent 已写出报告。", "utf8");
-      await mkdir(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp"), { recursive: true });
-      await writeFile(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp", "extra.md"), "# Extra\n", "utf8");
+      await mkdir(path.join(taskVaultPath, "outputs", "tmp"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "outputs", "tmp", "extra.md"), "# Extra\n", "utf8");
       throw new Error("Codex turn reported failed after report");
     }
   });
-  const result = await manager.runMaintenance("lint", "/check 测试失败恢复只保留报告");
+  const result = await manager.runMaintenance("lint", "/check 测试绕过精确围栏后必须停止");
+  assert.equal(result.status, "failed");
+  assert.ok(result.error);
+  await assertNoReportFileForResult(maintenanceLintTransportBypassVault, result);
+  assert.equal(await fileExists(path.join(maintenanceLintTransportBypassVault, "outputs", "tmp", "extra.md")), false);
+} finally {
+  await rm(maintenanceLintTransportBypassVault, { recursive: true, force: true });
+}
+
+const maintenanceLintInvalidAgentReportFallbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-invalid-report-fallback-");
+try {
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintInvalidAgentReportFallbackVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, "# 维护报告\n\n不是 lint-only。", "utf8");
+      throw new Error("Codex turn failed without lint-only report");
+    }
+  });
+  const result = await manager.runMaintenance("lint", "/check 测试无效 Agent 报告改由 Harness 兜底");
   assert.equal(result.status, "success");
-  assert.ok((await readFile(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, result.reportPath), "utf8")).includes("mode: lint-only"));
-  assert.equal(await fileExists(path.join(maintenanceLintRecoveredReportDropsExtraOutputsVault, "outputs", "tmp", "extra.md")), false);
+  assert.equal(result.completion, "recovered");
+  const report = await readFile(path.join(maintenanceLintInvalidAgentReportFallbackVault, result.reportPath), "utf8");
+  assert.ok(report.includes("mode: lint-only"));
+  assert.ok(report.includes("fallback: true"));
+  assert.ok(!report.includes("# 维护报告\n\n不是 lint-only。"));
 } finally {
-  await rm(maintenanceLintRecoveredReportDropsExtraOutputsVault, { recursive: true, force: true });
+  await rm(maintenanceLintInvalidAgentReportFallbackVault, { recursive: true, force: true });
 }
 
-const maintenanceLintFailedReportRollbackVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-failed-report-rollback-");
+const maintenanceLintFallbackPreservesNonOutputVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-fallback-preserve-non-output-");
 try {
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintFailedReportRollbackVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintFailedReportRollbackVault, "lint");
+  await mkdir(path.join(maintenanceLintFallbackPreservesNonOutputVault, "inbox"), { recursive: true });
+  await mkdir(path.join(maintenanceLintFallbackPreservesNonOutputVault, "projects", "demo"), { recursive: true });
+  await writeFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "inbox", "idea.md"), "# Idea\n", "utf8");
+  await writeFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "projects", "demo", "brief.md"), "# Brief\n", "utf8");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintFallbackPreservesNonOutputVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = knowledgeReportAbsolutePathForTest(taskVaultPath, "lint");
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, "# 维护报告\n\n不是 lint-only。", "utf8");
       throw new Error("Codex turn failed without lint-only report");
     }
   });
-  const result = await manager.runMaintenance("lint", "/check 测试失败报告回滚");
-  assert.equal(result.status, "failed");
-  await assertNoReportFileForResult(maintenanceLintFailedReportRollbackVault, result);
+  const result = await manager.runMaintenance("lint", "/check 测试 Harness 兜底只提交体检报告");
+  assert.equal(result.status, "success");
+  assert.equal(result.completion, "recovered");
+  assert.ok((await readFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, result.reportPath), "utf8")).includes("fallback: true"));
+  assert.equal(await readFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "raw", "index.md"), "utf8"), "# Raw\n");
+  assert.equal(await readFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
+  assert.equal(await readFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "inbox", "idea.md"), "utf8"), "# Idea\n");
+  assert.equal(await readFile(path.join(maintenanceLintFallbackPreservesNonOutputVault, "projects", "demo", "brief.md"), "utf8"), "# Brief\n");
 } finally {
-  await rm(maintenanceLintFailedReportRollbackVault, { recursive: true, force: true });
-}
-
-const maintenanceLintFailurePreservesNonOutputVault = await createMaintenanceVaultForTest("codex-kb-maintain-lint-preserve-non-output-");
-try {
-  await mkdir(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox"), { recursive: true });
-  await mkdir(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo"), { recursive: true });
-  await writeFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox", "idea.md"), "# Idea\n", "utf8");
-  await writeFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo", "brief.md"), "# Brief\n", "utf8");
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceLintFailurePreservesNonOutputVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = knowledgeReportAbsolutePathForTest(maintenanceLintFailurePreservesNonOutputVault, "lint");
-      await mkdir(path.dirname(reportPath), { recursive: true });
-      await writeFile(reportPath, "# 维护报告\n\n不是 lint-only。", "utf8");
-      throw new Error("Codex turn failed without lint-only report");
-    }
-  });
-  const result = await manager.runMaintenance("lint", "/check 测试失败只回滚 outputs");
-  assert.equal(result.status, "failed");
-  await assertNoReportFileForResult(maintenanceLintFailurePreservesNonOutputVault, result);
-  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "raw", "index.md"), "utf8"), "# Raw\n");
-  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "wiki", "index.md"), "utf8"), "# Wiki\n");
-  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "inbox", "idea.md"), "utf8"), "# Idea\n");
-  assert.equal(await readFile(path.join(maintenanceLintFailurePreservesNonOutputVault, "projects", "demo", "brief.md"), "utf8"), "# Brief\n");
-} finally {
-  await rm(maintenanceLintFailurePreservesNonOutputVault, { recursive: true, force: true });
+  await rm(maintenanceLintFallbackPreservesNonOutputVault, { recursive: true, force: true });
 }
 
 const maintenanceFailureRemovesDsStoreVault = await createMaintenanceVaultForTest("codex-kb-maintain-ds-store-rollback-");
 try {
   const { manager } = makeKnowledgeBaseManagerForTest(maintenanceFailureRemovesDsStoreVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceFailureRemovesDsStoreVault, "wiki", ".DS_Store"), "agent metadata", "utf8");
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", ".DS_Store"), "agent metadata", "utf8");
       throw new Error("Agent failed after metadata write");
     }
   });
@@ -12616,25 +13247,25 @@ try {
   await rm(maintenanceFailureRemovesDsStoreVault, { recursive: true, force: true });
 }
 
-const maintenanceTrackerSymlinkCreatedByAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-symlink-");
+const maintenanceTrackerSymlinkFenceBypassVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-symlink-fence-bypass-");
 try {
-  const trackerSecretPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outside-tracker-secret.md");
+  const trackerSecretPath = path.join(maintenanceTrackerSymlinkFenceBypassVault, "outside-tracker-secret.md");
   await writeFile(trackerSecretPath, "# Secret Tracker Target\n\nSECRET-TRACKER-CONTENT", "utf8");
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerSymlinkCreatedByAgentVault, {
-    beforeAgentReturn: async () => {
-      const trackerPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerSymlinkFenceBypassVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const trackerPath = path.join(taskVaultPath, "outputs", ".ingest-tracker.md");
       await mkdir(path.dirname(trackerPath), { recursive: true });
       await rm(trackerPath, { force: true });
       await symlink(trackerSecretPath, trackerPath);
-      await mkdir(path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references", "tracker-symlink.md"), [
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "tracker-symlink.md"), [
         "# Tracker Symlink",
         "",
         "来源：[[raw/articles/new]]",
         "核心要点：本轮新增正文已经进入 tracker symlink 测试页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12649,36 +13280,34 @@ try {
       ].join("\n"), "utf8");
     }
   });
-  const result = await manager.runMaintenance("maintain", "/maintain tracker symlink 不读外部目标");
-  assert.equal(result.status, "success");
-  const trackerPath = path.join(maintenanceTrackerSymlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
-  assert.equal((await lstat(trackerPath)).isSymbolicLink(), false);
-  const trackerText = await readFile(trackerPath, "utf8");
-  assert.ok(!trackerText.includes("SECRET-TRACKER-CONTENT"));
+  const result = await manager.runMaintenance("maintain", "/maintain tracker symlink 绕过围栏必须停止");
+  assert.equal(result.status, "failed");
+  const trackerPath = path.join(maintenanceTrackerSymlinkFenceBypassVault, "outputs", ".ingest-tracker.md");
+  assert.equal(await fileExists(trackerPath), false);
   assert.equal(await readFile(trackerSecretPath, "utf8"), "# Secret Tracker Target\n\nSECRET-TRACKER-CONTENT");
 } finally {
-  await rm(maintenanceTrackerSymlinkCreatedByAgentVault, { recursive: true, force: true });
+  await rm(maintenanceTrackerSymlinkFenceBypassVault, { recursive: true, force: true });
 }
 
-const maintenanceTrackerHardlinkCreatedByAgentVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-hardlink-");
+const maintenanceTrackerHardlinkFenceBypassVault = await createMaintenanceVaultForTest("codex-kb-maintain-tracker-hardlink-fence-bypass-");
 try {
-  const trackerSecretPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outside-tracker-hardlink.md");
+  const trackerSecretPath = path.join(maintenanceTrackerHardlinkFenceBypassVault, "outside-tracker-hardlink.md");
   await writeFile(trackerSecretPath, "# Secret Tracker Hardlink\n\nSECRET-HARDLINK-TRACKER-CONTENT", "utf8");
-  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerHardlinkCreatedByAgentVault, {
-    beforeAgentReturn: async () => {
-      const trackerPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
+  const { manager } = makeKnowledgeBaseManagerForTest(maintenanceTrackerHardlinkFenceBypassVault, {
+    beforeAgentReturn: async (taskVaultPath) => {
+      const trackerPath = path.join(taskVaultPath, "outputs", ".ingest-tracker.md");
       await mkdir(path.dirname(trackerPath), { recursive: true });
       await rm(trackerPath, { force: true });
       await link(trackerSecretPath, trackerPath);
-      await mkdir(path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "wiki", "ai-intelligence", "references", "tracker-hardlink.md"), [
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "tracker-hardlink.md"), [
         "# Tracker Hardlink",
         "",
         "来源：[[raw/articles/new]]",
         "核心要点：本轮新增正文已经进入 tracker hardlink 测试页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12693,15 +13322,13 @@ try {
       ].join("\n"), "utf8");
     }
   });
-  const result = await manager.runMaintenance("maintain", "/maintain tracker hardlink 不读外部目标");
-  assert.equal(result.status, "success");
-  const trackerPath = path.join(maintenanceTrackerHardlinkCreatedByAgentVault, "outputs", ".ingest-tracker.md");
-  assert.equal((await lstat(trackerPath)).nlink, 1);
-  const trackerText = await readFile(trackerPath, "utf8");
-  assert.ok(!trackerText.includes("SECRET-HARDLINK-TRACKER-CONTENT"));
+  const result = await manager.runMaintenance("maintain", "/maintain tracker hardlink 绕过围栏必须停止");
+  assert.equal(result.status, "failed");
+  const trackerPath = path.join(maintenanceTrackerHardlinkFenceBypassVault, "outputs", ".ingest-tracker.md");
+  assert.equal(await fileExists(trackerPath), false);
   assert.equal(await readFile(trackerSecretPath, "utf8"), "# Secret Tracker Hardlink\n\nSECRET-HARDLINK-TRACKER-CONTENT");
 } finally {
-  await rm(maintenanceTrackerHardlinkCreatedByAgentVault, { recursive: true, force: true });
+  await rm(maintenanceTrackerHardlinkFenceBypassVault, { recursive: true, force: true });
 }
 
 const maintenanceNoEvidenceVault = await createMaintenanceVaultForTest("codex-kb-maintain-no-evidence-");
@@ -12723,8 +13350,8 @@ try {
 const maintenanceReportOnlyVault = await createMaintenanceVaultForTest("codex-kb-maintain-report-only-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceReportOnlyVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceReportOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12744,13 +13371,15 @@ try {
   assert.match(result.error ?? "", /未写出结构层消化证据/);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
   assert.equal(await fileExists(path.join(maintenanceReportOnlyVault, "outputs", ".ingest-tracker.md")), false);
-  assert.equal(result.reportPath, settings.knowledgeBase.lastReportPath);
-  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.reportPath, result.reportPath);
-  const failureReportPath = path.join(maintenanceReportOnlyVault, result.reportPath);
-  assert.equal(await fileExists(failureReportPath), true);
-  const failureReport = await readFile(failureReportPath, "utf8");
-  assert.match(failureReport, /维护失败/);
-  assert.match(failureReport, /未写出结构层消化证据/);
+  assert.equal(result.commitState, "pre-wal");
+  assert.equal(result.reportPath, "");
+  assert.equal(settings.knowledgeBase.lastReportPath, "");
+  assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.reportPath, "");
+  assert.equal(
+    await fileExists(path.join(maintenanceReportOnlyVault, "outputs", "maintenance")),
+    false,
+    "an uncommitted Shadow report must not leak into the live vault or become a ghost report link"
+  );
   const rediscovered = await discoverKnowledgeBaseSources(maintenanceReportOnlyVault, settings.knowledgeBase.processedSources);
   assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
 } finally {
@@ -12766,22 +13395,14 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceIndexOnlyVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceIndexOnlyVault, "raw", "index.md"), [
-        "# Raw",
-        "",
-        "- [[raw/articles/new]]",
-        "",
-        "Agent updated raw index only",
-        ""
-      ].join("\n"), "utf8");
-      await writeFile(path.join(maintenanceIndexOnlyVault, "wiki", "index.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "index.md"), [
         "# Wiki",
         "",
         "- [[raw/articles/new]]",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceIndexOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12796,7 +13417,7 @@ try {
       ].join("\n"), "utf8");
     }
   });
-  const result = await manager.runMaintenance("maintain", "/maintain Agent 只改索引不能提交 tracker");
+  const result = await manager.runMaintenance("maintain", "/maintain Agent 只改 Wiki 索引不能提交 tracker");
   assert.equal(result.status, "failed");
   assert.match(result.error ?? "", /未写出结构层消化证据/);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
@@ -12819,8 +13440,8 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStaleLinkOnlyVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceStaleLinkOnlyVault, "wiki", "ai-intelligence", "references", "stale-link.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "stale-link.md"), [
         "# Stale Link",
         "",
         "历史来源：[[raw/articles/new]]",
@@ -12830,7 +13451,7 @@ try {
         "Agent 只补了一条无关备注。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceStaleLinkOnlyVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12868,8 +13489,8 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingPageNewEvidenceVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceExistingPageNewEvidenceVault, "wiki", "ai-intelligence", "references", "existing-page.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "existing-page.md"), [
         "# Existing Page",
         "",
         "历史来源：[[raw/articles/new]]",
@@ -12880,7 +13501,7 @@ try {
         "核心要点：本轮新增正文已经消化进既有页面。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceExistingPageNewEvidenceVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12908,9 +13529,9 @@ try {
 const maintenanceStandardWikiPageDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-standard-wiki-page-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceStandardWikiPageDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceStandardWikiPageDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceStandardWikiPageDigestVault, "wiki", "ai-intelligence", "references", "standard-page.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "standard-page.md"), [
         "---",
         "created: 2026-06-03",
         "updated: 2026-06-03T15:42",
@@ -12925,7 +13546,7 @@ try {
         "这份资料已经按标准 Wiki 页面格式消化进正文，来源行和正文之间允许有标题分隔。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceStandardWikiPageDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -12965,8 +13586,8 @@ try {
   ].join("\n"), "utf8");
   const rawStat = await stat(path.join(maintenanceLegacyDigestBackfillVault, "raw", "articles", "new.md"));
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyDigestBackfillVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceLegacyDigestBackfillVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13017,8 +13638,8 @@ try {
   const pageTime = new Date(Date.now() - 10_000);
   await utimes(pagePath, pageTime, pageTime);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingDigestRepairVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceExistingDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13059,8 +13680,8 @@ try {
   const pageTime = new Date(Date.now() - 10_000);
   await utimes(pagePath, pageTime, pageTime);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingInlineListDigestRepairVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceExistingInlineListDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13105,8 +13726,8 @@ try {
   const pageTime = new Date(Date.now() - 10_000);
   await utimes(pagePath, pageTime, pageTime);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingInlineTableDigestRepairVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceExistingInlineTableDigestRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13147,8 +13768,8 @@ try {
   const pageTime = new Date(Date.now() - 10_000);
   await utimes(pagePath, pageTime, pageTime);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingCarrierOnlyTableVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceExistingCarrierOnlyTableVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13192,8 +13813,8 @@ try {
   await utimes(pagePath, pageTime, pageTime);
   await utimes(rawPath, rawTime, rawTime);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceExistingDigestOlderThanRawVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceExistingDigestOlderThanRawVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13238,8 +13859,8 @@ try {
   await utimes(pagePath, pageTime, pageTime);
   const rawStat = await stat(rawPath);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyMetadataDriftRepairVault, {
-    beforeAgentReturn: async () => {
-      const reportPath = path.join(maintenanceLegacyMetadataDriftRepairVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+    beforeAgentReturn: async (taskVaultPath) => {
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13292,15 +13913,15 @@ try {
   await utimes(legacyDigestMtimeDriftRaw, legacyRawTime, legacyRawTime);
   const driftedRawStat = await stat(legacyDigestMtimeDriftRaw);
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLegacyDigestMtimeDriftVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceLegacyDigestMtimeDriftVault, "wiki", "ai-intelligence", "references", "partial.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "partial.md"), [
         "# Partial",
         "",
         "本轮来源：[[raw/articles/new]]",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceLegacyDigestMtimeDriftVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13350,8 +13971,8 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceDatedAggregateDigestVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceDatedAggregateDigestVault, "wiki", "knowledge-workflow", "references", "reddit-aggregate.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "knowledge-workflow", "references", "reddit-aggregate.md"), [
         "# Reddit Aggregate",
         "",
         "> 来源：",
@@ -13372,7 +13993,7 @@ try {
         "今天的新信号也已经按日期独立消化进聚合页正文。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceDatedAggregateDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13407,8 +14028,8 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceDuplicateDigestLineVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceDuplicateDigestLineVault, "wiki", "ai-intelligence", "references", "duplicate-digest.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "duplicate-digest.md"), [
         "# Duplicate Digest",
         "",
         "核心要点：这句模板摘要已经在旧段落出现。",
@@ -13417,7 +14038,7 @@ try {
         "核心要点：这句模板摘要已经在旧段落出现。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceDuplicateDigestLineVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13453,8 +14074,8 @@ try {
     ""
   ].join("\n"), "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceInsertedDuplicateSourceBlockVault, {
-    beforeAgentReturn: async () => {
-      await writeFile(path.join(maintenanceInsertedDuplicateSourceBlockVault, "wiki", "ai-intelligence", "references", "inserted-duplicate-source.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "inserted-duplicate-source.md"), [
         "# Inserted Duplicate Source",
         "",
         "来源：[[raw/articles/new]]",
@@ -13464,7 +14085,7 @@ try {
         "旧正文。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceInsertedDuplicateSourceBlockVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13492,15 +14113,15 @@ try {
 const maintenanceSourceLinkStubVault = await createMaintenanceVaultForTest("codex-kb-maintain-source-link-stub-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourceLinkStubVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceSourceLinkStubVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceSourceLinkStubVault, "wiki", "ai-intelligence", "references", "source-link-stub.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "source-link-stub.md"), [
         "# Source Link Stub",
         "",
         "来源：[[raw/articles/new]]",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceSourceLinkStubVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13529,15 +14150,15 @@ try {
 const maintenanceMarkdownSourceLabelStubVault = await createMaintenanceVaultForTest("codex-kb-maintain-markdown-link-label-stub-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceMarkdownSourceLabelStubVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceMarkdownSourceLabelStubVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceMarkdownSourceLabelStubVault, "wiki", "ai-intelligence", "references", "markdown-link-label-stub.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "markdown-link-label-stub.md"), [
         "# Markdown Link Label Stub",
         "",
         "来源：[这是一篇特别长特别长但仍只是标题的资料](raw/articles/new.md)",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceMarkdownSourceLabelStubVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13566,9 +14187,9 @@ try {
 const maintenanceFrontmatterOnlyDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-frontmatter-only-digest-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceFrontmatterOnlyDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceFrontmatterOnlyDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceFrontmatterOnlyDigestVault, "wiki", "ai-intelligence", "references", "frontmatter-only-digest.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "frontmatter-only-digest.md"), [
         "---",
         "source: raw/articles/new.md",
         "summary: 核心要点：这段只在 frontmatter 元数据里，不能证明正文已经消化。",
@@ -13576,7 +14197,7 @@ try {
         "# Frontmatter Only Digest",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceFrontmatterOnlyDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13605,9 +14226,9 @@ try {
 const maintenanceCodeBlockOnlyDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-code-block-only-digest-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceCodeBlockOnlyDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceCodeBlockOnlyDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceCodeBlockOnlyDigestVault, "wiki", "ai-intelligence", "references", "code-block-only-digest.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "code-block-only-digest.md"), [
         "# Code Block Only Digest",
         "",
         "```markdown",
@@ -13616,7 +14237,7 @@ try {
         "```",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceCodeBlockOnlyDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13645,9 +14266,9 @@ try {
 const maintenanceSeparatedDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-separated-digest-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSeparatedDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceSeparatedDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceSeparatedDigestVault, "wiki", "ai-intelligence", "references", "separated-digest.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "separated-digest.md"), [
         "# Separated Digest",
         "",
         "本轮来源：[[raw/articles/new]]",
@@ -13656,7 +14277,7 @@ try {
         "核心要点：这行只是另一个段落的正文，不能证明来源已经被消化。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceSeparatedDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13685,16 +14306,16 @@ try {
 const maintenanceSourceExtraExtensionVault = await createMaintenanceVaultForTest("codex-kb-maintain-source-extra-extension-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourceExtraExtensionVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceSourceExtraExtensionVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceSourceExtraExtensionVault, "wiki", "ai-intelligence", "references", "extra-extension.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "extra-extension.md"), [
         "# Extra Extension",
         "",
         "本轮来源：[[raw/articles/new.md.bak]]",
         "核心要点：这里只提到了另一个更长文件名，不能证明 new.md 已经被消化。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceSourceExtraExtensionVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13725,16 +14346,16 @@ try {
   await rm(path.join(maintenanceEncodedSourceLinkVault, "raw", "articles", "new.md"), { force: true });
   await writeFile(path.join(maintenanceEncodedSourceLinkVault, "raw", "articles", "AI 笔记.md"), "# AI 笔记\n\n带空格和中文文件名。", "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceEncodedSourceLinkVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceEncodedSourceLinkVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceEncodedSourceLinkVault, "wiki", "ai-intelligence", "references", "encoded-source.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "encoded-source.md"), [
         "# Encoded Source",
         "",
         "来源：[AI 笔记](raw/articles/AI%20%E7%AC%94%E8%AE%B0.md)",
         "核心要点：URL 编码来源链接已经消化进知识页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceEncodedSourceLinkVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13764,16 +14385,16 @@ try {
   await rm(path.join(maintenanceLowercaseEncodedSourceLinkVault, "raw", "articles", "new.md"), { force: true });
   await writeFile(path.join(maintenanceLowercaseEncodedSourceLinkVault, "raw", "articles", "AI 笔记.md"), "# AI 笔记\n\n带空格和中文文件名。", "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceLowercaseEncodedSourceLinkVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceLowercaseEncodedSourceLinkVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceLowercaseEncodedSourceLinkVault, "wiki", "ai-intelligence", "references", "lowercase-encoded-source.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "lowercase-encoded-source.md"), [
         "# Lowercase Encoded Source",
         "",
         "来源：[AI 笔记](raw/articles/AI%20%e7%ac%94%e8%ae%b0.md)",
         "核心要点：小写 URL 编码来源链接已经消化进知识页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceLowercaseEncodedSourceLinkVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13801,15 +14422,15 @@ try {
 const maintenanceBareSourceDigestVault = await createMaintenanceVaultForTest("codex-kb-maintain-bare-source-digest-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBareSourceDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceBareSourceDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceBareSourceDigestVault, "wiki", "ai-intelligence", "references", "bare-source-digest.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "bare-source-digest.md"), [
         "# Bare Source Digest",
         "",
         "- raw/articles/new.md：核心要点：裸路径来源行自身已经包含本轮消化正文。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceBareSourceDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13837,15 +14458,15 @@ try {
 const maintenanceBareSourceAfterColonVault = await createMaintenanceVaultForTest("codex-kb-maintain-bare-source-after-colon-");
 try {
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBareSourceAfterColonVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceBareSourceAfterColonVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceBareSourceAfterColonVault, "wiki", "ai-intelligence", "references", "bare-source-after-colon.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "bare-source-after-colon.md"), [
         "# Bare Source After Colon",
         "",
         "来源：raw/articles/new.md：核心要点：中文冒号后的裸路径来源行已经包含本轮消化正文。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceBareSourceAfterColonVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13872,18 +14493,18 @@ try {
 
 const maintenanceAbsoluteSourcePathVault = await createMaintenanceVaultForTest("codex-kb-maintain-absolute-source-path-");
 try {
-  const absoluteRawPath = path.join(maintenanceAbsoluteSourcePathVault, "raw", "articles", "new.md");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceAbsoluteSourcePathVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceAbsoluteSourcePathVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceAbsoluteSourcePathVault, "wiki", "ai-intelligence", "references", "absolute-source-path.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      const taskAbsoluteRawPath = path.join(taskVaultPath, "raw", "articles", "new.md");
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "absolute-source-path.md"), [
         "# Absolute Source Path",
         "",
-        `来源：${absoluteRawPath}`,
+        `来源：${taskAbsoluteRawPath}`,
         "核心要点：绝对路径来源行已经消化进知识页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceAbsoluteSourcePathVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13893,7 +14514,7 @@ try {
         "# 知识库维护报告",
         "",
         "## 本轮来源",
-        `- ${absoluteRawPath}`,
+        `- ${taskAbsoluteRawPath}`,
         ""
       ].join("\n"), "utf8");
     }
@@ -13912,9 +14533,9 @@ const maintenancePartialBatchDigestVault = await createMaintenanceVaultForTest("
 try {
   await writeFile(path.join(maintenancePartialBatchDigestVault, "raw", "articles", "second.md"), "# Second\n\n第二份正文", "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenancePartialBatchDigestVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenancePartialBatchDigestVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenancePartialBatchDigestVault, "wiki", "ai-intelligence", "references", "partial-batch.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "partial-batch.md"), [
         "# Partial Batch",
         "",
         "本轮来源：[[raw/articles/new]]",
@@ -13923,7 +14544,7 @@ try {
         "本轮来源：[[raw/articles/second]]",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenancePartialBatchDigestVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13941,7 +14562,7 @@ try {
   });
   const result = await manager.runMaintenance("maintain", "/maintain Agent 只消化批次部分 raw 不能提交 tracker");
   assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /未写出结构层消化证据/);
+  assert.match(result.error ?? "", /依赖组已整体延期/);
   assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
   assert.equal(await fileExists(path.join(maintenancePartialBatchDigestVault, "outputs", ".ingest-tracker.md")), false);
   const rediscovered = await discoverKnowledgeBaseSources(maintenancePartialBatchDigestVault, settings.knowledgeBase.processedSources);
@@ -13955,16 +14576,16 @@ const maintenanceSourcePrefixVault = await createMaintenanceVaultForTest("codex-
 try {
   await writeFile(path.join(maintenanceSourcePrefixVault, "raw", "articles", "newer.md"), "# Newer\n\n更长文件名正文", "utf8");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSourcePrefixVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceSourcePrefixVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceSourcePrefixVault, "wiki", "ai-intelligence", "references", "newer-only.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "newer-only.md"), [
         "# Newer Only",
         "",
         "本轮来源：[[raw/articles/newer]]",
         "核心要点：只消化了更长文件名资料。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceSourcePrefixVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -13980,13 +14601,15 @@ try {
     }
   });
   const result = await manager.runMaintenance("maintain", "/maintain raw 路径前缀不能冒充来源");
-  assert.equal(result.status, "failed");
-  assert.match(result.error ?? "", /raw\/articles\/new\.md/);
-  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), []);
-  assert.equal(await fileExists(path.join(maintenanceSourcePrefixVault, "outputs", ".ingest-tracker.md")), false);
+  assert.equal(result.status, "success");
+  assert.equal(result.completion, "partial");
+  assert.deepEqual(result.processedSources.map((source) => source.relativePath), ["raw/articles/newer.md"]);
+  assert.deepEqual(result.pendingSources, ["raw/articles/new.md"]);
+  assert.deepEqual(Object.keys(settings.knowledgeBase.processedSources), ["raw/articles/newer.md"]);
+  assert.equal(await fileExists(path.join(maintenanceSourcePrefixVault, "outputs", ".ingest-tracker.md")), true);
   const rediscovered = await discoverKnowledgeBaseSources(maintenanceSourcePrefixVault, settings.knowledgeBase.processedSources);
   assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/new.md"), true);
-  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/newer.md"), true);
+  assert.equal(rediscovered.changedSources.some((source) => source.relativePath === "raw/articles/newer.md"), false);
 } finally {
   await rm(maintenanceSourcePrefixVault, { recursive: true, force: true });
 }
@@ -13995,16 +14618,16 @@ const maintenanceSuccessVault = await createMaintenanceVaultForTest("codex-kb-ma
 try {
   const rawBeforeMaintain = await readFile(path.join(maintenanceSuccessVault, "raw", "articles", "new.md"));
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceSuccessVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceSuccessVault, "wiki", "ai-intelligence", "references", "maintain-success.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "maintain-success.md"), [
         "# Maintain Success",
         "",
         "来源：[[raw/articles/new]]",
         "核心要点：本轮新增正文已经消化进成功路径知识页。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceSuccessVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -14050,17 +14673,18 @@ const maintenanceConcurrentRawAddVault = await createMaintenanceVaultForTest("co
 try {
   const concurrentRaw = path.join(maintenanceConcurrentRawAddVault, "raw", "articles", "GitHub项目收集", "2026-06-03 GitHub 热门项目简报.md");
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceConcurrentRawAddVault, {
-    beforeAgentReturn: async () => {
+    beforeAgentReturn: async (taskVaultPath) => {
+      // 这是外部自动化对 live Vault 的并发写，不属于 Agent attempt。
       await mkdir(path.dirname(concurrentRaw), { recursive: true });
       await writeFile(concurrentRaw, "# 2026-06-03 GitHub 热门项目简报\n\n外部自动化新增。", "utf8");
-      await mkdir(path.join(maintenanceConcurrentRawAddVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceConcurrentRawAddVault, "wiki", "ai-intelligence", "references", "maintain-concurrent.md"), [
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "maintain-concurrent.md"), [
         "# Maintain Concurrent",
         "",
         "- [[raw/articles/new]]：核心要点：本轮原始资料已经提炼，运行中新出现的 GitHub raw 留到下次维护。",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceConcurrentRawAddVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -14296,15 +14920,15 @@ try {
     await writeFile(path.join(maintenanceBatchLimitVault, "raw", "articles", `batch-${String(index).padStart(2, "0")}.md`), `# Batch ${index}\n\n正文 ${index}`, "utf8");
   }
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceBatchLimitVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceBatchLimitVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceBatchLimitVault, "wiki", "ai-intelligence", "references", "maintain-batch.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "maintain-batch.md"), [
         "# Maintain Batch",
         "",
         ...Array.from({ length: 20 }, (_, index) => `- [[raw/articles/batch-${String(index + 1).padStart(2, "0")}]]：核心要点：第 ${index + 1} 份资料已经提炼进批量维护页。`),
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceBatchLimitVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -14354,30 +14978,22 @@ try {
     })
   ));
   const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceReplicaVault, {
-    beforeAgentReturn: async () => {
-      await mkdir(path.join(maintenanceReplicaVault, "wiki", "ai-intelligence", "references"), { recursive: true });
-      await writeFile(path.join(maintenanceReplicaVault, "raw", "index.md"), [
-        "# Raw",
-        "",
-        "- [[raw/articles/stable]]",
-        "- [[raw/articles/legacy]]",
-        "- [[raw/articles/new]]",
-        ""
-      ].join("\n"), "utf8");
-      await writeFile(path.join(maintenanceReplicaVault, "wiki", "ai-intelligence", "references", "maintain-replica.md"), [
+    beforeAgentReturn: async (taskVaultPath) => {
+      await mkdir(path.join(taskVaultPath, "wiki", "ai-intelligence", "references"), { recursive: true });
+      await writeFile(path.join(taskVaultPath, "wiki", "ai-intelligence", "references", "maintain-replica.md"), [
         "# Maintain Replica",
         "",
         "来源：[[raw/articles/legacy]]、[[raw/articles/new]]",
         "核心要点：legacy 与 new 两份资料已经合并进副本验收页。",
         ""
       ].join("\n"), "utf8");
-      await writeFile(path.join(maintenanceReplicaVault, "wiki", "index.md"), [
+      await writeFile(path.join(taskVaultPath, "wiki", "index.md"), [
         "# Wiki",
         "",
         "- [[wiki/ai-intelligence/references/maintain-replica]]",
         ""
       ].join("\n"), "utf8");
-      const reportPath = path.join(maintenanceReplicaVault, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
+      const reportPath = path.join(taskVaultPath, "outputs", "maintenance", `kb-maintenance-${formatDateKeyForTest(new Date())}.md`);
       await mkdir(path.dirname(reportPath), { recursive: true });
       await writeFile(reportPath, [
         "---",
@@ -14451,6 +15067,8 @@ try {
 } finally {
   await rm(maintenanceReplicaVault, { recursive: true, force: true });
 }
+await makeMaintenanceTestStorageOwnerWritable(maintenanceWorkflowTestStorageBase);
+await rm(maintenanceWorkflowTestStorageBase, { recursive: true, force: true });
 
 const structureVault = await mkdtemp(path.join(tmpdir(), "codex-kb-structure-"));
 try {
@@ -15548,6 +16166,15 @@ function testKnowledgeBaseSource(relativePath: string, changed: boolean) {
   };
 }
 
+function openCodeReadyStreamForMaintenanceTest(signal: AbortSignal): AsyncIterable<unknown> {
+  return (async function* () {
+    yield { type: "server.connected", properties: {} };
+    while (!signal.aborted) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+  })();
+}
+
 async function createMaintenanceVaultForTest(prefix: string): Promise<string> {
   const vaultPath = await mkdtemp(path.join(tmpdir(), prefix));
   await mkdir(path.join(vaultPath, "raw", "articles"), { recursive: true });
@@ -15560,6 +16187,70 @@ async function createMaintenanceVaultForTest(prefix: string): Promise<string> {
   return vaultPath;
 }
 
+function createMaintenanceWorkflowSettingsHostForTest(
+  settings: CodexForObsidianSettings,
+  options: {
+    beforePersistCas?: (call: number) => void | Promise<void>;
+  } = {}
+): MaintenanceWorkflowSettingsHost<KnowledgeBaseSettings> {
+  let queue: Promise<void> = Promise.resolve();
+  let persistCasCalls = 0;
+  return {
+    withExclusiveTransaction<R>(
+      action: (
+        transaction: MaintenanceWorkflowSettingsTransaction<KnowledgeBaseSettings>
+      ) => Promise<R>
+    ): Promise<R> {
+      const run = queue.then(async () => {
+        let baseline = structuredClone(settings.knowledgeBase);
+        let baselineGeneration = maintenanceWorkflowSettingsGenerationForTest(baseline);
+        return await action({
+          readWithGeneration: async () => ({
+            settings: structuredClone(baseline),
+            generation: baselineGeneration
+          }),
+          persistCas: async (expectedGeneration, target) => {
+            persistCasCalls += 1;
+            await options.beforePersistCas?.(persistCasCalls);
+            const liveGeneration = maintenanceWorkflowSettingsGenerationForTest(
+              settings.knowledgeBase
+            );
+            if (
+              expectedGeneration !== baselineGeneration
+              || expectedGeneration !== liveGeneration
+            ) {
+              throw new MaintenanceWorkflowWalError(
+                "settings_cas_conflict",
+                "test knowledge-base settings changed during transaction"
+              );
+            }
+            settings.knowledgeBase = structuredClone(target);
+            baseline = structuredClone(settings.knowledgeBase);
+            baselineGeneration = maintenanceWorkflowSettingsGenerationForTest(baseline);
+            return {
+              settings: structuredClone(baseline),
+              generation: baselineGeneration
+            };
+          }
+        });
+      });
+      queue = run.then(
+        () => undefined,
+        () => undefined
+      );
+      return run;
+    }
+  };
+}
+
+function maintenanceWorkflowSettingsGenerationForTest(
+  settings: KnowledgeBaseSettings
+): string {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(settings))
+    .digest("hex")}`;
+}
+
 function makeKnowledgeBaseManagerForTest(
   vaultPath: string,
   options: {
@@ -15568,15 +16259,20 @@ function makeKnowledgeBaseManagerForTest(
     cancelViaManagerBeforeSaveCall?: number;
     agentBackend?: AgentBackendMode;
     knowledgeBackend?: "default" | AgentBackendMode;
-    beforeAgentReturn?: () => Promise<void>;
+    beforeAgentReturn?: (taskVaultPath: string) => Promise<void>;
     codexTaskCalls?: Array<{ permission: string; writeScope: string }>;
     openCodeTaskCalls?: Array<{ permission: string }>;
     hermesTaskCalls?: Array<{ permission: string }>;
     useRealOpenCodeTask?: boolean;
     useRealHermesTask?: boolean;
+    maintenanceReadyBackends?: AgentBackendMode[];
     capturedTaskInputs?: any[];
     throwOnDashboardRefresh?: boolean;
     throwOnGetVaultPath?: boolean;
+    failWorkflowSettingsPersistCall?: number;
+    cancelViaManagerBeforeCommitGate?: boolean;
+    cancelViaCommandAfterCommitGate?: boolean;
+    maintenanceRecoveryState?: "pending" | "ready" | "blocked";
   } = {}
 ) {
   const settings = normalizeSettingsData({
@@ -15589,17 +16285,29 @@ function makeKnowledgeBaseManagerForTest(
     }
   }).settings;
   let saveCalls = 0;
+  let workflowSettingsPersistCalls = 0;
   let manager: KnowledgeBaseManager | null = null;
+  let commitGateCancellation: Promise<unknown> | null = null;
   const harnessKernel = new EchoInkHarnessKernel({
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider()
   });
+  const maintenanceWorkflowSettingsHost =
+    createMaintenanceWorkflowSettingsHostForTest(settings, {
+      beforePersistCas: async (call) => {
+        workflowSettingsPersistCalls = call;
+        if (options.failWorkflowSettingsPersistCall === call) {
+          throw new Error(`workflow settings persist failed at call ${call}`);
+        }
+      }
+    });
   const plugin = {
     settings,
     getVaultPath: () => {
       if (options.throwOnGetVaultPath) throw new Error("vault path unavailable");
       return vaultPath;
     },
+    getKnowledgeBaseWorkflowStorageRoot: () => workflowStorageRoot,
     saveSettings: async () => {
       saveCalls += 1;
       if (options.cancelViaManagerBeforeSaveCall === saveCalls && manager) {
@@ -15612,6 +16320,9 @@ function makeKnowledgeBaseManagerForTest(
         throw new Error(`saveSettings failed at call ${saveCalls}`);
       }
     },
+    getKnowledgeBaseWorkflowSettingsHost: () =>
+      maintenanceWorkflowSettingsHost,
+    failPendingNativeExecutionsForRecovery: async () => 0,
     getCodexView: () => ({
       refreshKnowledgeBaseDashboard: () => {
         if (options.throwOnDashboardRefresh) throw new Error("dashboard refresh failed");
@@ -15636,7 +16347,40 @@ function makeKnowledgeBaseManagerForTest(
       }
     }
   };
+  const workflowStorageRoot = path.join(
+    maintenanceWorkflowTestStorageBase,
+    createHash("sha256").update(path.resolve(vaultPath)).digest("hex").slice(0, 24)
+  );
   manager = new KnowledgeBaseManager(plugin as any);
+  (manager as any).maintenanceRecoveryState = options.maintenanceRecoveryState ?? "ready";
+  if (
+    options.cancelViaManagerBeforeCommitGate
+    || options.cancelViaCommandAfterCommitGate
+  ) {
+    const enterCommitPhase =
+      (manager as any).tryEnterMaintenanceCommitPhase.bind(manager);
+    let injected = false;
+    (manager as any).tryEnterMaintenanceCommitPhase = () => {
+      if (options.cancelViaManagerBeforeCommitGate && !injected) {
+        injected = true;
+        commitGateCancellation = manager!.cancelMaintenance();
+      }
+      const entered = enterCommitPhase();
+      if (
+        entered
+        && options.cancelViaCommandAfterCommitGate
+        && !injected
+      ) {
+        injected = true;
+        commitGateCancellation = manager!.handleUserMessage("/cancel");
+      }
+      return entered;
+    };
+  }
+  if (options.maintenanceReadyBackends) {
+    (manager as any).agentTaskService.isMaintenanceBackendReady = async (backend: AgentBackendMode) =>
+      options.maintenanceReadyBackends!.includes(backend);
+  }
   const realRunTask = (manager as any).agentTaskService.runTask.bind((manager as any).agentTaskService);
   (manager as any).agentTaskService.runTask = async (input: any) => {
     options.capturedTaskInputs?.push(input);
@@ -15645,7 +16389,22 @@ function makeKnowledgeBaseManagerForTest(
     if (input.backend === "codex-cli") options.codexTaskCalls?.push({ permission: input.permission, writeScope: input.codexWriteScope });
     if (input.backend === "opencode") options.openCodeTaskCalls?.push({ permission: input.permission });
     if (input.backend === "hermes") options.hermesTaskCalls?.push({ permission: input.permission });
-    await options.beforeAgentReturn?.();
+    if (input.exactWriteFence && input.onExactWriteFenceConfigured) {
+      const receipt = createExactWriteFenceReceipt({
+        backend: input.backend,
+        task: {
+          prompt: input.prompt,
+          permission: input.permission,
+          writableRoots: input.writableRootsOverride,
+          requireExactWriteFence: true,
+          exactWriteFence: input.exactWriteFence
+        },
+        transport: "test-shadow-runtime",
+        transportAck: { accepted: true, vaultPath: input.vaultPathOverride }
+      });
+      await input.onExactWriteFenceConfigured(receipt);
+    }
+    await options.beforeAgentReturn?.(input.vaultPathOverride ?? vaultPath);
     return { text: "Agent 输出：维护完成。" };
   };
   if (options.useRealHermesTask) {
@@ -15677,7 +16436,21 @@ function makeKnowledgeBaseManagerForTest(
       };
     };
   }
-  return { manager, settings, saveCalls: () => saveCalls };
+  return {
+    manager,
+    settings,
+    saveCalls: () => saveCalls,
+    workflowSettingsPersistCalls: () => workflowSettingsPersistCalls,
+    maintenanceWorkflowSettingsHost,
+    workflowStorageRoot,
+    waitForCommitGateCancellation: async () => {
+      assert.ok(
+        commitGateCancellation,
+        "commit gate cancellation hook must be invoked"
+      );
+      return await commitGateCancellation;
+    }
+  };
 }
 
 async function collectTypeScriptSourceFiles(root: string): Promise<string[]> {
@@ -15704,6 +16477,19 @@ async function fileExists(filePath: string): Promise<boolean> {
   return stat(filePath).then(() => true, () => false);
 }
 
+async function makeMaintenanceTestStorageOwnerWritable(absolutePath: string): Promise<void> {
+  const entry = await lstat(absolutePath).catch(() => null);
+  if (!entry || entry.isSymbolicLink()) return;
+  if (entry.isDirectory()) {
+    await chmod(absolutePath, 0o700).catch(() => undefined);
+    for (const child of await readdir(absolutePath).catch(() => [])) {
+      await makeMaintenanceTestStorageOwnerWritable(path.join(absolutePath, child));
+    }
+    return;
+  }
+  if (entry.isFile()) await chmod(absolutePath, 0o600).catch(() => undefined);
+}
+
 async function assertNoReportFileForResult(vaultPath: string, result: Pick<KnowledgeBaseRunResult, "reportPath">): Promise<void> {
   if (!result.reportPath) return;
   assert.equal(await fileExists(path.join(vaultPath, result.reportPath)), false);
@@ -15718,6 +16504,20 @@ await runHarnessV2ConversationStoreTests();
 await runHarnessV2SessionContextTests();
 await runHarnessV2KnowledgePolicyProfileTests();
 await runHarnessV2KnowledgeLedgerTests();
+await runHarnessV2MaintenancePartialEvidenceTests();
+runHarnessV2MaintenanceResourceProfileTests();
+runHarnessV2MaintenanceResultStateTests();
+await runHarnessV2MaintenanceRoutingTests();
+await runHarnessV2MaintenanceSchedulerTests();
+await runMaintenanceManagerRecoveryTests();
+await runMaintenanceProjectionTests();
+await runMaintenanceSettingsStoreTests();
+await runHarnessV2MaintenanceShadowTests();
+await runMaintenanceWorkflowCoordinatorTests();
+await runHarnessV2MaintenanceWorkflowWalTests();
+await runHarnessV2MaintenanceActiveRunJournalTests();
+await runMaintenanceAcceptanceTests();
+await runMaintenanceContentPlannerRegressionTests();
 await runHarnessV2NativeExecutionTests();
 await runHarnessV2KnowledgeAskLeaseTests();
 await runHarnessV2KnowledgeTurnTests();
@@ -15728,6 +16528,7 @@ await runEditorActionControllerTests();
 await runPromptEnhancerHarnessTests();
 await runHarnessV3ChatUiTests();
 await runOpenCodeRichRuntimeRegressionTests();
+await runHermesProposalRuntimeRegressionTests();
 await runToolBridgeRichEventRegressionTests();
 await runAnswerCopyRegressionTests();
 

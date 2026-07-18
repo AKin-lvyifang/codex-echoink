@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { Readable } from "node:stream";
 import type { AgentEvent } from "../agent/events";
 import { createAgentEventRuntimeWithFallback } from "../agent/event-task";
+import { createAgentTaskRuntime } from "../agent/factory";
+import { createExactWriteFenceReceipt, isTrustedExactWriteFenceReceipt } from "../agent/write-fence";
 import {
   OpenCodeEventProjector,
   OpenCodeRichRuntime,
@@ -13,13 +15,13 @@ import {
   type OpenCodeRichRuntimeBackend
 } from "../agent/opencode-rich-runtime";
 import type { AgentTaskRuntime } from "../agent/runtime";
-import type { AgentPromptOptions, AgentSessionOptions, AgentTaskResult } from "../agent/types";
+import type { AgentExactWriteFenceReceipt, AgentPromptOptions, AgentSessionOptions, AgentTaskInput, AgentTaskResult } from "../agent/types";
 import { openCodePermissionRules, type OpenCodeCliTaskOptions } from "../core/opencode-backend";
 import { nodeFetch } from "../core/opencode-fetch";
 import { runOpenCodeCommand } from "../core/opencode-process";
 import { buildOpenCodeRunArgs } from "../core/opencode-run";
 import type { HarnessEvent, HarnessEventType } from "../harness/contracts/event";
-import type { ChatMessage } from "../settings/settings";
+import { DEFAULT_SETTINGS, type ChatMessage } from "../settings/settings";
 import {
   HarnessEventProjector,
   applyHarnessProjectionBatch
@@ -43,6 +45,7 @@ export async function runOpenCodeRichRuntimeRegressionTests(): Promise<void> {
   testCliProjectorSupportsOpenCode143ToolUse();
   testProjectorSettlesPendingToolsHonestly();
   testPermissionPoliciesAreDeterministic();
+  testTypedWriteFenceReceiptIsCodeGeneratedAndDeterministic();
   await testCliFallbackIsOnlyUsedBeforeSubmission();
   await testResumedSessionRefreshesPermissionPolicy();
   await testPrePromptIdleDoesNotSettleNewTurn();
@@ -69,6 +72,8 @@ export async function runOpenCodeRichRuntimeRegressionTests(): Promise<void> {
   await testLatestCompletedEmptyAnswerOverridesEarlierToolText();
   await testSubmittedSdkFailureNeverStartsLifecycleFallback();
   await testPreSpawnCliFailureAllowsLifecycleFallback();
+  await testExactWriteFenceDisablesCliFallbacks();
+  await testHermesExactWriteFenceFailsBeforePromptSubmission();
   await testSubmittedCliFailureRecoversSameSessionWithoutLifecycleFallback();
   await testSubmittedCliFailureNeverStartsLifecycleFallback();
   await testOpenCodeCommandSubmissionBoundary();
@@ -437,6 +442,40 @@ function testPermissionPoliciesAreDeterministic(): void {
   assert.equal(scopedWorkspaceWrite.some((rule) => rule.permission === "external_directory" && rule.pattern === "/external-notes/**" && rule.action === "allow"), true);
   assert.equal(scopedWorkspaceWrite.some((rule) => rule.permission === "external_directory" && rule.pattern.startsWith("/vault/") && rule.action === "allow"), false);
 
+  const maintenanceShadowWrite = openCodePermissionRules(
+    "workspace-write",
+    ["/shadow/wiki", "/shadow/projects", "/shadow/outputs", "/shadow/inbox"],
+    "/shadow"
+  );
+  assert.deepEqual(
+    maintenanceShadowWrite[0],
+    { permission: "*", pattern: "*", action: "deny" },
+    "scoped Shadow permissions must fail closed instead of inheriting workspace-wide writes"
+  );
+  assert.equal(maintenanceShadowWrite.some((rule) =>
+    rule.permission === "edit" && rule.pattern === "wiki/**" && rule.action === "allow"
+  ), true);
+  assert.equal(maintenanceShadowWrite.some((rule) =>
+    rule.permission === "edit" && rule.pattern === "outputs/**" && rule.action === "allow"
+  ), true);
+  const trackerAllowIndex = maintenanceShadowWrite.findIndex((rule) =>
+    rule.permission === "edit" && rule.pattern === "outputs/**" && rule.action === "allow"
+  );
+  const trackerDenyIndex = maintenanceShadowWrite.findIndex((rule) =>
+    rule.permission === "edit" && rule.pattern === "outputs/.ingest-tracker.md" && rule.action === "deny"
+  );
+  assert.equal(trackerDenyIndex > trackerAllowIndex, true, "the last matching tracker rule must deny Agent writes");
+  assert.equal(maintenanceShadowWrite.some((rule) =>
+    rule.permission === "edit" && rule.pattern.startsWith("raw") && rule.action === "allow"
+  ), false);
+  for (const permission of ["bash", "task", "skill"]) {
+    assert.equal(
+      maintenanceShadowWrite.some((rule) => rule.permission === permission && rule.action === "allow"),
+      false,
+      `scoped Shadow permissions must not expose ${permission}`
+    );
+  }
+
   const dangerFullAccess = openCodePermissionRules("danger-full-access");
   assert.deepEqual(dangerFullAccess[0], { permission: "*", pattern: "*", action: "allow" });
   assert.equal(dangerFullAccess.some((rule) => rule.permission === "question" && rule.action === "deny"), true);
@@ -479,6 +518,60 @@ function testProjectorSettlesPendingToolsHonestly(): void {
   const interruptedFinish = interrupted.finish("interrupted");
   assert.equal(interruptedFinish.events.at(-1)?.status, "interrupted");
   assert.equal(interruptedFinish.events.at(-1)?.data?.semanticKind, "search");
+}
+
+function testTypedWriteFenceReceiptIsCodeGeneratedAndDeterministic(): void {
+  const task: AgentTaskInput = {
+    prompt: "maintenance",
+    permission: "workspace-write",
+    writableRoots: ["/shadow/wiki", "/shadow/outputs"],
+    requireExactWriteFence: true,
+    exactWriteFence: {
+      attemptToken: "attempt-token",
+      leaseToken: "lease-token",
+      deniedLivePaths: ["/live-vault"],
+      deniedControlPaths: ["/shadow-control"]
+    }
+  };
+  const receiptInput = {
+    backend: "codex-cli" as const,
+    task,
+    transport: "codex-app-server-sandbox",
+    transportAck: {
+      sandbox: "workspace-write",
+      threadId: "thread-1",
+      writableRoots: ["/shadow/wiki", "/shadow/outputs"]
+    },
+    configuredAt: "2026-07-18T00:00:00.000Z"
+  };
+  const first = createExactWriteFenceReceipt(receiptInput);
+  const second = createExactWriteFenceReceipt({
+    ...receiptInput,
+    transportAck: {
+      writableRoots: ["/shadow/wiki", "/shadow/outputs"],
+      threadId: "thread-1",
+      sandbox: "workspace-write"
+    }
+  });
+  const changed = createExactWriteFenceReceipt({
+    ...receiptInput,
+    transportAck: { ...receiptInput.transportAck, threadId: "thread-2" }
+  });
+
+  assert.equal(first.backend, "codex-cli");
+  assert.equal(first.attemptToken, "attempt-token");
+  assert.equal(first.leaseToken, "lease-token");
+  assert.deepEqual(first.enforcedWritableRoots, ["/shadow/outputs", "/shadow/wiki"]);
+  assert.match(first.configAckDigest, /^[a-f0-9]{64}$/);
+  assert.equal(second.configAckDigest, first.configAckDigest, "key order must not change the config ack digest");
+  assert.notEqual(changed.configAckDigest, first.configAckDigest, "a different transport ack must produce a different digest");
+  assert.equal(isTrustedExactWriteFenceReceipt(first), true);
+  assert.equal(
+    isTrustedExactWriteFenceReceipt(structuredClone(first)),
+    false,
+    "a JSON-compatible clone must not inherit trusted issuer identity"
+  );
+  assert.equal(isTrustedExactWriteFenceReceipt({ ...first }), false, "a spread copy must not inherit trusted issuer identity");
 }
 
 async function testCliFallbackIsOnlyUsedBeforeSubmission(): Promise<void> {
@@ -1280,6 +1373,118 @@ async function testPreSpawnCliFailureAllowsLifecycleFallback(): Promise<void> {
   assert.equal(backend.cliCalls, 1);
   assert.equal(lifecycleCalls, 1, "a CLI failure before spawn must remain eligible for lifecycle fallback");
   assert.equal(events.some((event) => event.type === "prompt_sent" && event.data?.promptSubmitted === true), false);
+}
+
+async function testExactWriteFenceDisablesCliFallbacks(): Promise<void> {
+  const backend = new FakeOpenCodeRichBackend();
+  backend.subscribe = async function* () {
+    throw new Error("SSE unavailable");
+  };
+  let lifecycleCalls = 0;
+  const runtime = createAgentEventRuntimeWithFallback(
+    lifecycleFallback(() => { lifecycleCalls += 1; }),
+    new OpenCodeRichRuntime({
+      backend,
+      sseReadyTimeoutMs: 20,
+      recoveryPollMs: 1,
+      vaultPath: "/vault"
+    }),
+    { exactWriteFenceSupport: "rich-only" }
+  );
+  const events: AgentEvent[] = [];
+  const receipts: AgentExactWriteFenceReceipt[] = [];
+
+  await assert.rejects(
+    runtime.runTaskEvents({
+      prompt: "maintain safely",
+      permission: "workspace-write",
+      writableRoots: ["/vault/wiki", "/vault/outputs"],
+      requireExactWriteFence: true,
+      exactWriteFence: {
+        attemptToken: "attempt-opencode-fence",
+        leaseToken: "lease-opencode-fence",
+        deniedLivePaths: ["/live-vault"],
+        deniedControlPaths: ["/shadow-control"]
+      },
+      onExactWriteFenceConfigured: (receipt) => {
+        assert.equal(backend.promptAsyncCalls, 0, "the receipt callback must run before prompt submission");
+        receipts.push(receipt);
+      },
+      timeoutMs: 1_000
+    }, (event) => events.push(event)),
+    /EXACT_WRITE_FENCE_UNAVAILABLE/
+  );
+
+  assert.equal(backend.promptAsyncCalls, 0, "an unavailable exact-fence rich transport must fail before prompt submission");
+  assert.equal(backend.cliCalls, 0, "exact-fence tasks must never use OpenCode CLI fallback");
+  assert.equal(lifecycleCalls, 0, "exact-fence tasks must never use the outer lifecycle fallback");
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0]?.backend, "opencode");
+  assert.equal(receipts[0]?.attemptToken, "attempt-opencode-fence");
+  assert.equal(receipts[0]?.leaseToken, "lease-opencode-fence");
+  assert.deepEqual(receipts[0]?.enforcedWritableRoots, ["/vault/outputs", "/vault/wiki"]);
+  assert.deepEqual(receipts[0]?.deniedLivePaths, ["/live-vault"]);
+  assert.deepEqual(receipts[0]?.deniedControlPaths, ["/shadow-control"]);
+  assert.match(receipts[0]?.configAckDigest ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(events.some((event) => event.type === "fallback_started"), false);
+  assert.equal(events.some((event) => event.type === "prompt_sent"), false);
+  assert.equal(
+    events.some((event) => event.type === "failed"
+      && event.data?.failureCode === "EXACT_WRITE_FENCE_UNAVAILABLE"
+      && event.data?.promptSubmitted === false),
+    true
+  );
+
+  const cancelled = new AbortController();
+  cancelled.abort();
+  events.length = 0;
+  await assert.rejects(
+    (runtime as typeof runtime & {
+      runTaskEvents(input: Parameters<typeof runtime.runTask>[0], emit: (event: AgentEvent) => void): Promise<AgentTaskResult>;
+    }).runTaskEvents({
+      prompt: "already canceled",
+      permission: "workspace-write",
+      writableRoots: ["/vault/wiki"],
+      requireExactWriteFence: true,
+      abortSignal: cancelled.signal
+    }, (event) => events.push(event)),
+    /取消/
+  );
+  assert.equal(
+    events.some((event) => event.data?.failureCode === "EXACT_WRITE_FENCE_UNAVAILABLE"),
+    false,
+    "cancellation must not be reclassified as a switchable exact-fence capability failure"
+  );
+}
+
+async function testHermesExactWriteFenceFailsBeforePromptSubmission(): Promise<void> {
+  const runtime = createAgentTaskRuntime({
+    backend: "hermes",
+    settings: structuredClone(DEFAULT_SETTINGS),
+    vaultPath: "/vault"
+  });
+  const events: AgentEvent[] = [];
+
+  await assert.rejects(
+    (runtime as typeof runtime & {
+      runTaskEvents(input: Parameters<typeof runtime.runTask>[0], emit: (event: AgentEvent) => void): Promise<AgentTaskResult>;
+    }).runTaskEvents({
+      prompt: "maintain safely",
+      permission: "workspace-write",
+      writableRoots: ["/vault/wiki"],
+      requireExactWriteFence: true
+    }, (event) => events.push(event)),
+    /EXACT_WRITE_FENCE_UNAVAILABLE.*Hermes CLI\/ACP/
+  );
+
+  assert.equal(events.some((event) => event.type === "prompt_sent"), false);
+  assert.equal(events.some((event) => event.type === "fallback_started"), false);
+  assert.equal(
+    events.some((event) => event.type === "failed"
+      && event.data?.failureCode === "EXACT_WRITE_FENCE_UNAVAILABLE"
+      && event.data?.promptSubmitted === false),
+    true
+  );
 }
 
 async function testSubmittedCliFailureRecoversSameSessionWithoutLifecycleFallback(): Promise<void> {

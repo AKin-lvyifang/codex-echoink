@@ -10,6 +10,7 @@ import { FakeFourthAgentAdapter } from "../../harness/agents/adapters/fake-fourt
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
 import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
 import { createAgentEventRuntimeWithFallback } from "../../agent/event-task";
+import { isTrustedExactWriteFenceReceipt } from "../../agent/write-fence";
 import { AcpAgentRuntime, type AcpSubprocessLike } from "../../agent/acp-runtime";
 import { RunOrchestrator } from "../../harness/kernel/run-orchestrator";
 import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
@@ -62,8 +63,12 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichAdapterKeepsTerminalThatArrivesBeforeStartTurnResolves();
   await assertCodexRichAdapterSettlesFailedAfterInterruptFailure();
   await assertCodexRichAdapterRecoversArtifactsAfterInactivity();
+  await assertCodexRichAdapterRecoversArtifactsAfterInactivityInterruptFailure();
+  await assertCodexRichAdapterInterruptsAfterInactivityWithoutArtifactRecovery();
   await assertCodexRichAdapterFailsWhenArtifactRecoveryFails();
   await assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty();
+  await assertCodexRichRunDriverWaitsForInactivityInterruptBeforeRecovery();
+  await assertCodexRichRunDriverBoundsInactivityInterruptBeforeRecovery();
   await assertCodexRichAdapterUnregistersCompletedRunFromNotificationHub();
   await assertCodexRichAdapterReleasesTerminalRunStatesAfterAwaitResult();
   await assertCodexRichAdapterDisposeCancelsAllActiveRuns();
@@ -76,6 +81,8 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertCodexRichAdapterPreservesBlankAndSubstringHistory();
   await assertCodexRichAdapterOnlyInjectsIncrementalDeltaIntoStartTurn();
   await assertAdapterFactoryPassesCodexToolBridgeIntoCodexRichAdapter();
+  await assertCodexRichAdapterSignsTrustedWriteFenceBeforeStartTurn();
+  await assertCodexRichAdapterUsesHarnessWorkspaceForExactWriteFence();
   await assertCodexRichAdapterRunsEchoInkBrokerLoopAcrossTurns();
   await assertCodexRichAdapterDisposeCancelsHangingBrokerCall();
   await assertCodexRichAdapterCancelCancelsHangingBrokerCall();
@@ -649,7 +656,14 @@ async function assertTaskRuntimeAdapterPreservesLegacyTaskDefaults(): Promise<vo
       },
       toolBridge: null,
       timeoutMs: 1234,
-      tools: { read: true, write: false }
+      tools: { read: true, write: false },
+      requireExactWriteFence: true,
+      exactWriteFence: {
+        attemptToken: "attempt-adapter-default",
+        leaseToken: "lease-adapter-default",
+        deniedLivePaths: ["/live"],
+        deniedControlPaths: ["/control"]
+      }
     }
   });
 
@@ -673,6 +687,8 @@ async function assertTaskRuntimeAdapterPreservesLegacyTaskDefaults(): Promise<vo
   assert.equal(calls[0].resources?.promptPrefix, "legacy resource prefix");
   assert.equal(calls[0].timeoutMs, 1234);
   assert.equal(calls[0].tools?.write, false);
+  assert.equal(calls[0].requireExactWriteFence, true);
+  assert.equal(calls[0].exactWriteFence?.leaseToken, "lease-adapter-default");
 }
 
 async function assertTaskRuntimeAdapterCancelsBeforeNativeRunId(): Promise<void> {
@@ -2432,12 +2448,16 @@ async function assertCodexRichAdapterSettlesFailedAfterInterruptFailure(): Promi
 async function assertCodexRichAdapterRecoversArtifactsAfterInactivity(): Promise<void> {
   const notificationHub = new CodexRichNotificationHub();
   const interrupts: string[] = [];
+  const lifecycle: string[] = [];
   const adapter = new CodexRichAgentAdapter({
     displayName: "Codex",
     version: "test",
     notificationHub,
     inactivityTimeoutMs: 5,
-    artifactRecovery: async () => "Recovered artifact answer",
+    artifactRecovery: async () => {
+      lifecycle.push("recover");
+      return "Recovered artifact answer";
+    },
     getNativeThreadId: () => undefined,
     setNativeThreadId: () => undefined,
     buildInput: () => [{ type: "text", text: "recover", text_elements: [] }],
@@ -2445,6 +2465,7 @@ async function assertCodexRichAdapterRecoversArtifactsAfterInactivity(): Promise
     resumeThread: async () => undefined,
     startTurn: async () => "recover-turn",
     interruptTurn: async (threadId, turnId) => {
+      lifecycle.push("interrupt");
       interrupts.push(`${threadId}:${turnId}`);
     }
   });
@@ -2456,9 +2477,42 @@ async function assertCodexRichAdapterRecoversArtifactsAfterInactivity(): Promise
   assert.equal(awaited.status, "completed");
   assert.equal(awaited.outputText, "Recovered artifact answer");
   assert.deepEqual(interrupts, ["recover-thread:recover-turn"]);
+  assert.deepEqual(lifecycle, ["interrupt", "recover"]);
 }
 
-async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<void> {
+async function assertCodexRichAdapterRecoversArtifactsAfterInactivityInterruptFailure(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const lifecycle: string[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    inactivityTimeoutMs: 5,
+    artifactRecovery: async () => {
+      lifecycle.push("recover");
+      return "Recovered after interrupt failure";
+    },
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "recover after interrupt failure", text_elements: [] }],
+    startThread: async () => ({ threadId: "interrupt-fail-thread", title: "Interrupt failure" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "interrupt-fail-turn",
+    interruptTurn: async () => {
+      lifecycle.push("interrupt");
+      throw new Error("interrupt failed before recovery");
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-interrupt-fail-recover"), () => undefined);
+  const result = await adapter.awaitResult("run-codex-interrupt-fail-recover");
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Recovered after interrupt failure");
+  assert.deepEqual(lifecycle, ["interrupt", "recover"]);
+}
+
+async function assertCodexRichAdapterInterruptsAfterInactivityWithoutArtifactRecovery(): Promise<void> {
   const notificationHub = new CodexRichNotificationHub();
   const interrupts: string[] = [];
   const adapter = new CodexRichAgentAdapter({
@@ -2466,7 +2520,36 @@ async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<v
     version: "test",
     notificationHub,
     inactivityTimeoutMs: 5,
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "timeout without recovery", text_elements: [] }],
+    startThread: async () => ({ threadId: "no-recovery-thread", title: "No recovery" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => "no-recovery-turn",
+    interruptTurn: async (threadId, turnId) => {
+      interrupts.push(`${threadId}:${turnId}`);
+    }
+  });
+
+  await adapter.run(agentRunRequest("run-codex-no-recovery"), () => undefined);
+  const result = await adapter.awaitResult("run-codex-no-recovery");
+
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /Codex inactivity timeout/);
+  assert.deepEqual(interrupts, ["no-recovery-thread:no-recovery-turn"]);
+}
+
+async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<void> {
+  const notificationHub = new CodexRichNotificationHub();
+  const interrupts: string[] = [];
+  const lifecycle: string[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    notificationHub,
+    inactivityTimeoutMs: 5,
     artifactRecovery: async () => {
+      lifecycle.push("recover");
       throw new Error("artifact recovery failed");
     },
     getNativeThreadId: () => undefined,
@@ -2476,6 +2559,7 @@ async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<v
     resumeThread: async () => undefined,
     startTurn: async () => "recover-fail-turn",
     interruptTurn: async (threadId, turnId) => {
+      lifecycle.push("interrupt");
       interrupts.push(`${threadId}:${turnId}`);
     }
   });
@@ -2485,19 +2569,24 @@ async function assertCodexRichAdapterFailsWhenArtifactRecoveryFails(): Promise<v
 
   assert.equal(awaited.status, "failed");
   assert.match(awaited.error ?? "", /artifact recovery failed/);
-  assert.deepEqual(interrupts, []);
+  assert.deepEqual(interrupts, ["recover-fail-thread:recover-fail-turn"]);
+  assert.deepEqual(lifecycle, ["interrupt", "recover"]);
 }
 
 async function assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty(): Promise<void> {
   for (const [suffix, recovered] of [["null", null], ["blank", "   "]] as const) {
     const notificationHub = new CodexRichNotificationHub();
     const interrupts: string[] = [];
+    const lifecycle: string[] = [];
     const adapter = new CodexRichAgentAdapter({
       displayName: "Codex",
       version: "test",
       notificationHub,
       inactivityTimeoutMs: 5,
-      artifactRecovery: async () => recovered,
+      artifactRecovery: async () => {
+        lifecycle.push("recover");
+        return recovered;
+      },
       getNativeThreadId: () => undefined,
       setNativeThreadId: () => undefined,
       buildInput: () => [{ type: "text", text: "empty recovery", text_elements: [] }],
@@ -2505,6 +2594,7 @@ async function assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty(): Promise
       resumeThread: async () => undefined,
       startTurn: async () => `empty-recovery-${suffix}-turn`,
       interruptTurn: async (threadId, turnId) => {
+        lifecycle.push("interrupt");
         interrupts.push(`${threadId}:${turnId}`);
       }
     });
@@ -2514,8 +2604,76 @@ async function assertCodexRichAdapterFailsWhenArtifactRecoveryIsEmpty(): Promise
 
     assert.equal(result.status, "failed");
     assert.match(result.error ?? "", /Codex inactivity timeout/);
-    assert.deepEqual(interrupts, []);
+    assert.deepEqual(interrupts, [`empty-recovery-${suffix}-thread:empty-recovery-${suffix}-turn`]);
+    assert.deepEqual(lifecycle, ["interrupt", "recover"]);
   }
+}
+
+async function assertCodexRichRunDriverBoundsInactivityInterruptBeforeRecovery(): Promise<void> {
+  const lifecycle: string[] = [];
+  const driver = new CodexRichRunDriver({
+    runId: "run-codex-bounded-inactivity-interrupt",
+    backendId: "codex-cli",
+    threadId: "bounded-interrupt-thread",
+    inactivityTimeoutMs: 5,
+    interruptBarrierTimeoutMs: 5,
+    artifactRecovery: async () => {
+      lifecycle.push("recover");
+      return "Recovered after bounded interrupt";
+    },
+    interruptTurn: async () => {
+      lifecycle.push("interrupt");
+      await new Promise<void>(() => undefined);
+    },
+    emit: async () => undefined
+  });
+  driver.setTurnId("bounded-interrupt-turn");
+
+  const result = await settleWithin(driver.awaitResult(), 100);
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Recovered after bounded interrupt");
+  assert.deepEqual(lifecycle, ["interrupt", "recover"]);
+}
+
+async function assertCodexRichRunDriverWaitsForInactivityInterruptBeforeRecovery(): Promise<void> {
+  const lifecycle: string[] = [];
+  let signalInterruptStarted!: () => void;
+  const interruptStarted = new Promise<void>((resolve) => {
+    signalInterruptStarted = resolve;
+  });
+  let releaseInterrupt!: () => void;
+  const interruptReleased = new Promise<void>((resolve) => {
+    releaseInterrupt = resolve;
+  });
+  const driver = new CodexRichRunDriver({
+    runId: "run-codex-inactivity-interrupt-barrier",
+    backendId: "codex-cli",
+    threadId: "interrupt-barrier-thread",
+    inactivityTimeoutMs: 5,
+    interruptBarrierTimeoutMs: 100,
+    artifactRecovery: async () => {
+      lifecycle.push("recover");
+      return "Recovered after interrupt barrier";
+    },
+    interruptTurn: async () => {
+      lifecycle.push("interrupt");
+      signalInterruptStarted();
+      await interruptReleased;
+    },
+    emit: async () => undefined
+  });
+  driver.setTurnId("interrupt-barrier-turn");
+
+  await interruptStarted;
+  assert.deepEqual(lifecycle, ["interrupt"]);
+  assert.equal(await promiseStillPending(driver.awaitResult()), true);
+  releaseInterrupt();
+  const result = await settleWithin(driver.awaitResult(), 100);
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.outputText, "Recovered after interrupt barrier");
+  assert.deepEqual(lifecycle, ["interrupt", "recover"]);
 }
 
 async function assertCodexRichAdapterUnregistersCompletedRunFromNotificationHub(): Promise<void> {
@@ -2971,6 +3129,124 @@ async function assertAdapterFactoryPassesCodexToolBridgeIntoCodexRichAdapter(): 
   });
 
   assert.equal(capturedToolBridge, toolBridge);
+}
+
+async function assertCodexRichAdapterSignsTrustedWriteFenceBeforeStartTurn(): Promise<void> {
+  const receipts: any[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    turnOptions: {
+      cwd: "/shadow",
+      model: "gpt-test",
+      reasoning: "medium",
+      serviceTier: "standard",
+      permission: "workspace-write",
+      mode: "agent",
+      mcpEnabled: false,
+      writableRoots: ["/shadow/wiki", "/shadow/outputs"]
+    },
+    requireExactWriteFence: true,
+    exactWriteFence: {
+      attemptToken: "attempt-codex-receipt",
+      leaseToken: "lease-codex-receipt",
+      deniedLivePaths: ["/live-vault"],
+      deniedControlPaths: ["/shadow-control"]
+    },
+    onExactWriteFenceConfigured: (receipt) => {
+      assert.equal(isTrustedExactWriteFenceReceipt(receipt), true);
+      receipts.push(receipt);
+    },
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "maintain", text_elements: [] }],
+    startThread: async () => ({ threadId: "codex-fence-thread", title: "Fence" }),
+    resumeThread: async () => undefined,
+    startTurn: async () => {
+      assert.equal(receipts.length, 1, "trusted receipt must be delivered before prompt submission");
+      throw new Error("stop after pre-submit receipt");
+    }
+  });
+
+  await assert.rejects(
+    adapter.run(agentRunRequest("run-codex-fence-receipt", {
+      workflow: "knowledge.maintain",
+      permissions: {
+        mode: "workspace-write",
+        writableRoots: ["/shadow/wiki", "/shadow/outputs"],
+        requireApproval: true
+      }
+    }), () => undefined),
+    /stop after pre-submit receipt/
+  );
+  assert.equal(receipts[0]?.backend, "codex-cli");
+  assert.match(receipts[0]?.configAckDigest ?? "", /^[a-f0-9]{64}$/);
+}
+
+async function assertCodexRichAdapterUsesHarnessWorkspaceForExactWriteFence(): Promise<void> {
+  const shadowVault = "/shadow/maintenance-attempt/vault";
+  const writableRoots = [
+    `${shadowVault}/wiki`,
+    `${shadowVault}/outputs/maintenance`
+  ];
+  const seenThreadOptions: Array<{ cwd?: string; writableRoots?: string[] }> = [];
+  const receipts: any[] = [];
+  const adapter = new CodexRichAgentAdapter({
+    displayName: "Codex",
+    version: "test",
+    turnOptions: {
+      model: "gpt-test",
+      reasoning: "medium",
+      serviceTier: "standard",
+      permission: "workspace-write",
+      mode: "agent",
+      mcpEnabled: false,
+      writableRoots
+    },
+    requireExactWriteFence: true,
+    exactWriteFence: {
+      attemptToken: "attempt-codex-workspace-fallback",
+      leaseToken: "lease-codex-workspace-fallback",
+      deniedLivePaths: ["/live-vault"],
+      deniedControlPaths: ["/shadow/maintenance-attempt"]
+    },
+    onExactWriteFenceConfigured: (receipt) => receipts.push(receipt),
+    getNativeThreadId: () => undefined,
+    setNativeThreadId: () => undefined,
+    buildInput: () => [{ type: "text", text: "maintain", text_elements: [] }],
+    startThread: async (options) => {
+      seenThreadOptions.push(options ?? {});
+      return { threadId: "codex-workspace-thread", title: "Workspace fallback" };
+    },
+    resumeThread: async () => undefined,
+    startTurn: async (_threadId, _input, options) => {
+      seenThreadOptions.push(options ?? {});
+      throw new Error("stop after workspace-scoped pre-submit receipt");
+    }
+  });
+
+  await assert.rejects(
+    adapter.run({
+      ...agentRunRequest("run-codex-workspace-fallback"),
+      workflow: "knowledge.maintain",
+      workspace: { vaultPath: shadowVault, cwd: shadowVault },
+      permissions: {
+        mode: "workspace-write",
+        writableRoots,
+        requireApproval: true
+      }
+    }, () => undefined),
+    /stop after workspace-scoped pre-submit receipt/
+  );
+
+  assert.equal(seenThreadOptions.length, 2);
+  assert.equal(seenThreadOptions[0]?.cwd, shadowVault);
+  assert.equal(seenThreadOptions[1]?.cwd, shadowVault);
+  assert.deepEqual(seenThreadOptions[0]?.writableRoots, writableRoots);
+  assert.deepEqual(
+    [...(receipts[0]?.enforcedWritableRoots ?? [])].sort(),
+    [...writableRoots].sort()
+  );
 }
 
 async function assertCodexRichAdapterRunsEchoInkBrokerLoopAcrossTurns(): Promise<void> {
@@ -3774,6 +4050,13 @@ function agentRunRequest(
   options?: {
     inputText?: string;
     context?: ReturnType<typeof compileContextBundle>;
+    workflow?: "chat.generic" | "knowledge.maintain";
+    workspace?: { vaultPath: string; cwd: string };
+    permissions?: {
+      mode: "read-only" | "workspace-write" | "danger-full-access";
+      writableRoots: string[];
+      requireApproval: boolean;
+    };
   }
 ) {
   const inputText = options?.inputText ?? "continue";
@@ -3788,8 +4071,11 @@ function agentRunRequest(
   return {
     runId,
     sessionId: "session-1",
+    ...(options?.workflow ? { workflow: options.workflow } : {}),
+    ...(options?.workspace ? { workspace: options.workspace } : {}),
     input: { text: inputText, attachments: [] },
-    permissions: { mode: "workspace-write" as const, writableRoots: ["/vault"], requireApproval: true },
+    permissions: options?.permissions
+      ?? { mode: "workspace-write" as const, writableRoots: ["/vault"], requireApproval: true },
     resources: { selected: [], resolvedAt: 0, warnings: [] },
     context,
     outputContract: { kind: "plain-text" as const }

@@ -561,6 +561,19 @@ body.theme-light .codex-container {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-box-shadow) 14%, transparent);
 }
 
+.codex-kb-run-card-recovery-pending {
+  border-color: color-mix(in srgb, var(--color-orange) 38%, var(--background-modifier-border));
+}
+
+.codex-kb-run-card-recovery-blocked {
+  border-color: color-mix(in srgb, var(--color-red) 42%, var(--background-modifier-border));
+}
+
+.codex-kb-run-card-recovery-blocked .codex-kb-run-mark {
+  color: var(--text-error);
+  background: color-mix(in srgb, var(--color-red) 9%, transparent);
+}
+
 .codex-kb-run-head {
   display: flex;
   align-items: center;
@@ -5531,6 +5544,39 @@ body.theme-light .codex-code-wrapper pre {
   color: var(--text-error);
 }
 
+.codex-kb-dashboard-recovery {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--color-orange) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.codex-kb-dashboard-recovery-blocked {
+  color: var(--text-error);
+  background: color-mix(in srgb, var(--color-red) 8%, transparent);
+}
+
+.codex-kb-dashboard-recovery-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.codex-kb-dashboard-recovery-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.codex-kb-dashboard-recovery-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .codex-kb-dashboard-actions {
   display: inline-flex;
   align-items: center;
@@ -7190,6 +7236,14 @@ body.theme-light .codex-container {
 
 .codex-kb-channel-chip.is-running {
   color: var(--interactive-accent);
+}
+
+.codex-kb-channel-chip.is-recovery-pending {
+  color: var(--color-orange);
+}
+
+.codex-kb-channel-chip.is-recovery-blocked {
+  color: var(--text-error);
 }
 
 .codex-composer-parameter-menu,
