@@ -229,7 +229,7 @@ import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryAc
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { shouldShowComposerPlanIndicator } from "../ui/codex-view/composer";
 import { positionAnchoredMenu, positionSubmenu } from "../ui/codex-view/floating-menu-position";
-import { CodexMessageListRenderer, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
+import { CodexMessageListRenderer, knowledgeBaseMaintainExecutionItems, knowledgeBaseRunEventCopy, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
 import { CodexNotificationRouter } from "../ui/codex-view/notification-router";
 import { selectAgentBackend } from "../ui/codex-view/header-controller";
@@ -4793,7 +4793,8 @@ assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi?.kind, "maint
 activeKnowledgeRunView.plugin.getKnowledgeBaseManager = () => ({ isRunning: false });
 activeKnowledgeRunView.settleStaleMessages(activeKnowledgeRunSession);
 assert.equal(activeKnowledgeRunSession.messages[0].status, "failed");
-assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi, undefined);
+assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi?.kind, "maintain-report");
+assert.equal(activeKnowledgeRunSession.messages[0].knowledgeBaseUi?.status, "failed");
 const knowledgeFinalizeSession = {
   id: "kb-finalize-session",
   title: KNOWLEDGE_BASE_SESSION_TITLE,
@@ -4852,6 +4853,12 @@ try {
 assert.match(knowledgeFinalizeError instanceof Error ? knowledgeFinalizeError.message : String(knowledgeFinalizeError), /final save failed/);
 assert.equal(knowledgeFinalizeView.running, false);
 assert.equal(knowledgeFinalizeSession.messages.at(-1)?.status, "failed");
+assert.equal(knowledgeFinalizeSession.messages.at(-1)?.knowledgeBaseUi?.kind, "maintain-report");
+assert.equal(knowledgeFinalizeSession.messages.at(-1)?.knowledgeBaseUi?.status, "failed");
+assert.match(
+  knowledgeFinalizeSession.messages.at(-1)?.knowledgeBaseUi?.careItems[0]?.text ?? "",
+  /final save failed/
+);
 assert.equal(knowledgeFinalizeRenderMessagesCalls > 0, true);
 assert.equal(knowledgeFinalizeToolbarCalls > 1, true);
 assert.equal(knowledgeFinalizeApplyStatusCalls > 0, true);
@@ -6731,6 +6738,32 @@ const eventDrivenRunProgress = knowledgeBaseRunProgressStateFromEvents("running"
 ], maintainRunPayload.phases.length);
 assert.equal(eventDrivenRunProgress?.filledCells, 27);
 assert.equal(eventDrivenRunProgress?.activeIndex, 1);
+assert.equal(knowledgeBaseRunEventCopy({
+  ...maintainRunPayload,
+  events: [
+    ...(maintainRunPayload.events ?? []),
+    {
+      type: "workflow.phase.started",
+      phaseId: "digest",
+      status: "running",
+      message: "交给 Agent 处理 2 个来源",
+      createdAt: 2
+    },
+    {
+      type: "workflow.completed",
+      status: "success",
+      message: "不应在阶段卡片裸露的 Agent 原始摘要",
+      createdAt: 3
+    }
+  ]
+}), "交给 Agent 处理 2 个来源");
+const skippedPhaseRunProgress = knowledgeBaseRunProgressStateFromEvents("running", [
+  { type: "workflow.phase.started", phaseId: "prepare", status: "running", createdAt: 1 },
+  { type: "workflow.phase.completed", phaseId: "prepare", status: "success", createdAt: 2 },
+  { type: "workflow.phase.started", phaseId: "report", status: "running", createdAt: 3 }
+], maintainRunPayload.phases.length);
+assert.equal(skippedPhaseRunProgress?.filledCells, 54);
+assert.equal(skippedPhaseRunProgress?.activeIndex, 3);
 const interruptedRunProgress = knowledgeBaseRunProgressState("interrupted", 1000, 1000 + 60_000, maintainRunPayload.phases.length);
 assert.equal(interruptedRunProgress.totalCells, 72);
 assert.equal(interruptedRunProgress.filledCells, 0);
@@ -6755,8 +6788,27 @@ for (const [mode, labels, icon] of commandRunPayloads) {
 
 const maintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maintain", {
   status: "success",
+  completion: "full",
   reportPath: "outputs/maintenance/kb-maintenance-2026-07-10.md",
   summary: "Agent 输出：维护完成。\n结构整理：移动 1 项，更新引用 2 处，跳过 0 项。",
+  winnerBackend: "codex-cli",
+  attempts: [{
+    attemptId: "attempt-card",
+    ordinal: 1,
+    backend: "codex-cli",
+    terminal: { status: "completed", at: 3 }
+  }],
+  performance: {
+    startedAt: 1,
+    completedAt: 2301,
+    totalMs: 2300,
+    agentCalled: true,
+    index: { reused: 8, refreshed: 2, targets: 2 },
+    phases: [
+      { id: "prepare", title: "准备", startedAt: 1, completedAt: 301, durationMs: 300, status: "success" },
+      { id: "digest", title: "执行", startedAt: 301, completedAt: 2301, durationMs: 2000, status: "success" }
+    ]
+  },
   processedSources: [
     testKnowledgeBaseSource("raw/articles/a.md", true),
     testKnowledgeBaseSource("raw/articles/b.md", true)
@@ -6778,6 +6830,14 @@ const maintainReportPayload = buildKnowledgeBaseMaintainReportPayload("maintain"
 assert.equal(maintainReportPayload.kind, "maintain-report");
 assert.equal(maintainReportPayload.title, "知识库维护完成");
 assert.equal(maintainReportPayload.reportPath, "outputs/maintenance/kb-maintenance-2026-07-10.md");
+assert.deepEqual(knowledgeBaseMaintainExecutionItems(maintainReportPayload), [
+  "完整完成",
+  "Codex",
+  "1 次尝试",
+  "用时 2.3 秒",
+  "索引复用 8，刷新 2",
+  "2/2 阶段"
+]);
 assert.ok(maintainReportPayload.careItems.some((item) => item.text === "本轮消化 2 篇。"));
 assert.ok(maintainReportPayload.careItems.some((item) => item.text === "结构整理 3 项。"));
 assert.equal(maintainReportPayload.sections.find((section) => section.id === "digested")?.count, 2);
@@ -10812,7 +10872,8 @@ const staleKnowledgeBaseRunMessages = [
 ] as any;
 assert.equal(settleStaleRunningMessages(staleKnowledgeBaseRunMessages), 1);
 assert.equal(staleKnowledgeBaseRunMessages[0].status, "failed");
-assert.equal(staleKnowledgeBaseRunMessages[0].knowledgeBaseUi, undefined);
+assert.equal(staleKnowledgeBaseRunMessages[0].knowledgeBaseUi?.kind, "maintain-report");
+assert.equal(staleKnowledgeBaseRunMessages[0].knowledgeBaseUi?.status, "failed");
 assert.match(staleKnowledgeBaseRunMessages[0].text, /知识库维护失败：任务中断，未收到完成报告。/);
 
 const kbVault = await mkdtemp(path.join(tmpdir(), "codex-kb-"));

@@ -820,6 +820,14 @@ async function assertPendingRecoveryAllowsHelpButBlocksAgentCommands(): Promise<
     assert.deepEqual(fixture.runnerCalls, []);
     assert.equal(captureCalls, 0);
 
+    const maintenance = await fixture.manager.handleUserMessage("/maintain", [], {
+      workflowRunId: "kb-maintenance-during-recovery"
+    });
+    assert.equal(maintenance.status, "failed");
+    assert.equal(maintenance.maintenanceRecoveryState, "pending");
+    assert.equal(maintenance.ui?.kind, "maintain-run");
+    assert.equal(maintenance.ui?.mode, "maintain");
+
     fixture.releaseNativeRecovery();
     await (fixture.manager as unknown as {
       waitUntilMaintenanceReady(): Promise<void>;

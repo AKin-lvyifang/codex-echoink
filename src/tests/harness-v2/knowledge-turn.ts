@@ -3,6 +3,7 @@ import { createQueuedTurnFromComposer, startKnowledgeBaseTurn } from "../../ui/c
 import type { HarnessRunResult } from "../../harness/contracts/run";
 import type { TurnOptions } from "../../core/codex-service";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult } from "../../knowledge-base/command-router";
+import { buildKnowledgeBaseMaintainReportPayload } from "../../knowledge-base/maintain-report-card";
 import type { ChatMessage, StoredSession } from "../../settings/settings";
 import type { QueuedTurnItem } from "../../ui/turn-queue";
 
@@ -12,6 +13,8 @@ export async function runHarnessV2KnowledgeTurnTests(): Promise<void> {
   await assertMaintenanceRouterExposesLastActualAttemptBackend();
   await assertMaintenanceUsesSelectedThenActualAttemptBackend();
   await assertMaintenanceRecoveryUsesRecoveryProjectionStates();
+  await assertMaintenanceWorkflowEventsReachCompactCards();
+  await assertMaintenanceUnexpectedFailureKeepsReportCard();
   await assertMaintenanceWithoutWinnerClearsRunProvenance();
   await assertQueuedMaintenanceRefreshesBackendSpecificTurnOptionsAtStart();
   await assertRecoveryAllowsOnlyReadOnlyLocalCommands();
@@ -207,6 +210,11 @@ async function assertMaintenanceRecoveryUsesRecoveryProjectionStates(): Promise<
 
     const assistant = session.messages.find((message) => message.itemType === "knowledgeBase");
     assert.equal(assistant?.status, `recovery-${recoveryState}`);
+    assert.equal(
+      assistant?.knowledgeBaseUi?.kind,
+      "maintain-run",
+      "maintenance recovery must keep the compact run card instead of falling back to raw text"
+    );
     assert.deepEqual(thinkingSettlements, [`recovery-${recoveryState}`]);
     assert.deepEqual(processSettlements, [`recovery-${recoveryState}`]);
     if (recoveryState === "pending") {
@@ -216,6 +224,87 @@ async function assertMaintenanceRecoveryUsesRecoveryProjectionStates(): Promise<
         "a WAL-persisted workflow awaiting recovery must not project a red business failure"
       );
     }
+  }
+}
+
+async function assertMaintenanceWorkflowEventsReachCompactCards(): Promise<void> {
+  const session = baseSession();
+  const liveEventCounts: number[] = [];
+  const result: KnowledgeBaseChatResult = {
+    status: "success",
+    message: "不应作为主视图展示的原始维护摘要",
+    ui: buildKnowledgeBaseMaintainReportPayload("maintain", {
+      status: "success",
+      completion: "noop",
+      reportPath: "outputs/maintenance/kb-maintenance-card.md",
+      summary: "无需维护",
+      processedSources: []
+    })
+  };
+  const view = fakeKnowledgeView(session, result, [], {
+    onHandleUserMessage: (_text, _attachments, options) => {
+      const onWorkflowEvent = (options as {
+        onWorkflowEvent?: (event: {
+          type: "workflow.phase.started";
+          phaseId: "prepare";
+          status: "running";
+          message: string;
+          createdAt: number;
+        }) => void;
+      }).onWorkflowEvent;
+      onWorkflowEvent?.({
+        type: "workflow.phase.started",
+        phaseId: "prepare",
+        status: "running",
+        message: "读取增量清单",
+        createdAt: 2
+      });
+    },
+    onRender: () => {
+      const assistant = session.messages.find((message) => message.itemType === "knowledgeBase");
+      if (assistant?.knowledgeBaseUi?.kind === "maintain-run") {
+        liveEventCounts.push(assistant.knowledgeBaseUi.events?.length ?? 0);
+      }
+    }
+  });
+  const item: QueuedTurnItem = {
+    ...queuedKnowledgeAsk(),
+    id: "turn-kb-maintain-events",
+    text: "/maintain"
+  };
+
+  await startKnowledgeBaseTurn(view, session, item, "composer");
+
+  assert.ok(liveEventCounts.some((count) => count >= 2), "workflow events must update the live compact card");
+  const assistant = session.messages.find((message) => message.itemType === "knowledgeBase");
+  assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-report");
+  assert.equal(assistant?.text, "不应作为主视图展示的原始维护摘要");
+}
+
+async function assertMaintenanceUnexpectedFailureKeepsReportCard(): Promise<void> {
+  const session = baseSession();
+  const view = fakeKnowledgeView(session, {
+    status: "success",
+    message: "unused"
+  }, [], {
+    handleError: new Error("unexpected maintenance failure")
+  });
+  const item: QueuedTurnItem = {
+    ...queuedKnowledgeAsk(),
+    id: "turn-kb-maintain-unexpected-failure",
+    text: "/maintain"
+  };
+
+  await assert.rejects(
+    startKnowledgeBaseTurn(view, session, item, "composer"),
+    /unexpected maintenance failure/
+  );
+
+  const assistant = session.messages.find((message) => message.itemType === "knowledgeBase");
+  assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-report");
+  if (assistant?.knowledgeBaseUi?.kind === "maintain-report") {
+    assert.equal(assistant.knowledgeBaseUi.status, "failed");
+    assert.match(assistant.knowledgeBaseUi.careItems[0]?.text ?? "", /unexpected maintenance failure/);
   }
 }
 
@@ -476,6 +565,7 @@ function fakeKnowledgeView(
     onHandleUserMessage?: (text: string, attachments: unknown[], options: unknown) => void;
     onFinishThinking?: (status: string) => void;
     onFinishProcesses?: (status: string) => void;
+    handleError?: Error;
   } = {}
 ) {
   const chatResult: KnowledgeBaseChatResult = "runId" in result
@@ -488,6 +578,7 @@ function fakeKnowledgeView(
   const manager = {
     handleUserMessage: async (text: string, attachments: unknown[], turnOptions: unknown) => {
       options.onHandleUserMessage?.(text, attachments, turnOptions);
+      if (options.handleError) throw options.handleError;
       return chatResult;
     },
     getLastNativeLifecycleSummary: () => undefined

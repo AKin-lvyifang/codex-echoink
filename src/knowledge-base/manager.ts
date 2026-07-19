@@ -31,7 +31,11 @@ import {
   type KnowledgeBaseChatResult,
   type KnowledgeBaseTurnOptionOverrides
 } from "./command-router";
-import { buildKnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
+import {
+  buildKnowledgeBaseMaintainReportPayload,
+  buildKnowledgeBaseRunPayload,
+  knowledgeBaseRunModeForCommandIntent
+} from "./maintain-report-card";
 import {
   buildPromptWithPreparedResources,
   type KnowledgeAgentTaskOutput
@@ -343,10 +347,12 @@ export class KnowledgeBaseManager {
       // inbox write. /help is the only pure local result handled here.
       && command.intent !== "help"
     ) {
+      const mode = knowledgeBaseRunModeForCommandIntent(command.intent);
       return {
         status: "failed",
         message: this.maintenanceRecoveryStatus.message,
         maintenanceRecoveryState: this.maintenanceRecoveryState,
+        ...(mode ? { ui: buildKnowledgeBaseRunPayload(mode) } : {}),
         ...(turnOptionOverrides?.workflowRunId?.trim()
           ? { workflowRunId: turnOptionOverrides.workflowRunId.trim() }
           : {})
