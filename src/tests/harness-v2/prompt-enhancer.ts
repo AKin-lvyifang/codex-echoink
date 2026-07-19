@@ -345,9 +345,28 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   const editorActionRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/editor-action-runner.ts"), "utf8");
   const promptEnhancerRunnerSource = await readFile(path.join(process.cwd(), "src/ui/codex-view/prompt-enhancer-runner.ts"), "utf8");
   const taskAdapterSource = await readFile(path.join(process.cwd(), "src/harness/agents/adapters/task-runtime-adapter.ts"), "utf8");
+  const utilityLifecycleSource = await readFile(path.join(process.cwd(), "src/harness/native/ephemeral-utility-lifecycle.ts"), "utf8");
   const eventRuntimeSource = await readFile(path.join(process.cwd(), "src/agent/event-task.ts"), "utf8");
   assert.match(serviceSource, /const NO_TOOLS = \{ read: false, write: false, edit: false, bash: false \}/);
   assert.match(serviceSource, /workflow:\s*"prompt\.enhance"/);
+  assert.match(
+    serviceSource,
+    /nativeRefContext:\s*plugin\.getNativeExecutionRefContext\("codex-cli"\)/
+  );
+  assert.match(
+    serviceSource,
+    /nativeRefContext:\s*plugin\.getNativeExecutionRefContext\(input\.backend\)/
+  );
+  assert.doesNotMatch(
+    serviceSource,
+    /nativeRefContext:\s*\{[\s\S]{0,240}providerEndpoint:\s*providerMode[\s\S]{0,120}activeApiProvider\?\.baseUrl/,
+    "Prompt Enhancer must not persist a raw custom API baseUrl in Native records"
+  );
+  assert.doesNotMatch(
+    serviceSource,
+    /nativeRefContext:\s*\{[\s\S]{0,180}vaultId:\s*workspace\.cwd/,
+    "Prompt Enhancer Native ownership must remain the real plugin Vault so cleanup can prove the same identity"
+  );
   assert.match(serviceSource, /developerInstructions:\s*ENHANCE_META_PROMPT/);
   assert.match(serviceSource, /ephemeral:\s*true/);
   assert.match(serviceSource, /reasoning:\s*settings\.reasoning/);
@@ -355,13 +374,29 @@ async function assertPromptEnhancerServiceUsesIsolatedWorkflow(): Promise<void> 
   assert.doesNotMatch(serviceSource, /reasoning:\s*"low"/);
   assert.doesNotMatch(serviceSource, /input\.serviceTier/);
   assert.match(serviceSource, /sessionId:\s*`\$\{ENHANCE_PROMPT_AGENT_NAME\}:\$\{runId\}`/);
-  assert.match(serviceSource, /withTimeout\(plugin\.runHarnessWithAdapter/);
-  assert.match(serviceSource, /adapter\?\.cancel\(runId\)/);
+  assert.match(serviceSource, /runEphemeralUtility\(/);
+  assert.match(serviceSource, /validatePromptEnhancerCandidateOutput/);
+  assert.match(serviceSource, /signal:\s*input\.signal/);
+  assert.match(serviceSource, /timeoutMs:\s*(?:settings|enhancer)\.timeoutMs/);
+  assert.match(serviceSource, /abortSignal:\s*input\.signal/);
+  assert.match(serviceSource, /throwIfPromptEnhancerAborted\(input\.signal\)/);
+  assert.match(
+    serviceSource,
+    /onHarnessStarted:\s*\(\)\s*=>\s*input\.onRunCreated\?\.\(runId\)/
+  );
+  assert.doesNotMatch(serviceSource, /function withTimeout/);
   assert.doesNotMatch(serviceSource, /buildPromptEnhancerPrompt/);
-  assert.match(serviceSource, /outputContract:\s*\{\s*kind:\s*"plain-text"\s*\}/);
+  assert.match(serviceSource, /outputContract:\s*\{\s*kind:\s*"plain-text"(?:\s+as\s+const)?\s*\}/);
   assert.match(taskAdapterSource, /request\.workflow === "prompt\.enhance"/);
+  assert.match(utilityLifecycleSource, /terminalAuthority:\s*"surface"/);
+  assert.match(utilityLifecycleSource, /recordNativeExecution\(record\)/);
+  assert.match(utilityLifecycleSource, /settleNativeExecution/);
+  assert.match(utilityLifecycleSource, /cleanupNativeExecutionRecord/);
   assert.doesNotMatch(eventRuntimeSource, /if\s*\(input\.system\)[\s\S]{0,160}runConnectedTaskWithLifecycleEvents/);
   assert.match(promptEnhancerRunnerSource, /view\.promptEnhancerRunning = true/);
+  assert.match(promptEnhancerRunnerSource, /view\.captureViewLifecycle\(\)/);
+  assert.match(promptEnhancerRunnerSource, /signal:\s*lifecycle\.signal/);
+  assert.match(promptEnhancerRunnerSource, /isCurrentViewLifecycle/);
   assert.doesNotMatch(promptEnhancerRunnerSource, /selectedServiceTier/);
   assert.doesNotMatch(promptEnhancerRunnerSource, /view\.running = true|view\.activeRunId\s*=/);
   assert.doesNotMatch(editorActionRunnerSource, /export async function enhanceChatInput|request\.action\.id === "enhance"/);

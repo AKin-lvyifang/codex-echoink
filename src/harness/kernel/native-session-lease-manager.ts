@@ -6,7 +6,19 @@ import type { StoredSession } from "../../settings/settings";
 export interface NativeSessionLeaseDecision {
   mode: ContextCompileMode;
   reusable: boolean;
-  reason: "workflow" | "no-binding" | "no-lease" | "expired" | "max-turns" | "context-capacity" | "revision-mismatch" | "incremental" | "catch-up";
+  reason:
+    | "workflow"
+    | "no-binding"
+    | "context-identity-missing"
+    | "context-identity-mismatch"
+    | "vault-profile-mismatch"
+    | "no-lease"
+    | "expired"
+    | "max-turns"
+    | "context-capacity"
+    | "revision-mismatch"
+    | "incremental"
+    | "catch-up";
   cursor?: ContextSyncCursor;
 }
 
@@ -36,15 +48,34 @@ export interface NativeSessionLeaseCleanupPlanInput {
 }
 
 export interface NativeSessionLeaseCleanupExecutionResult extends NativeSessionLeaseCleanupPlanItem {
-  outcome: NativeExecutionDispositionResult["outcome"] | "local-commit-failed";
+  outcome: NativeExecutionDispositionResult["outcome"] | "local-commit-failed" | "retirement-scheduled";
   message?: string;
+}
+
+export interface NativeSessionLeaseRetirementInput {
+  session: StoredSession;
+  binding: BackendSessionBinding;
+  lease: NativeSessionLease;
+  reason: NativeSessionLeaseCleanupPlanItem["reason"];
 }
 
 export interface NativeSessionLeaseCleanupExecutionInput {
   sessions: StoredSession[];
   now: number;
-  commit(): Promise<void>;
-  dispose(lease: NativeSessionLease, reason: NativeSessionLeaseCleanupPlanItem["reason"]): Promise<NativeExecutionDispositionResult>;
+  retire?(input: NativeSessionLeaseRetirementInput): Promise<void>;
+  /**
+   * @deprecated Direct lease cleanup is unsafe. Kept temporarily so older
+   * callers typecheck while they migrate to `retire`; never invoked.
+   */
+  commit?(): Promise<void>;
+  /**
+   * @deprecated Provider disposition must be driven by the durable Native
+   * retirement index, never directly from the lease manager; never invoked.
+   */
+  dispose?(
+    lease: NativeSessionLease,
+    reason: NativeSessionLeaseCleanupPlanItem["reason"]
+  ): Promise<NativeExecutionDispositionResult>;
 }
 
 export const DEFAULT_NATIVE_SESSION_LEASE_LIMITS: NativeSessionLeaseLimits = {
@@ -60,7 +91,12 @@ export interface NativeSessionLeaseDecisionInput {
   request: Pick<HarnessRunRequest, "surface" | "workflow">;
   binding?: BackendSessionBinding | null;
   lease?: NativeSessionLease | null;
+  expectedWorkspaceFingerprint?: string;
+  expectedSessionGeneration?: number;
+  expectedContextId?: string;
+  expectedVaultProfileFingerprint: string;
   sessionRevision: number;
+  currentContextMessageIds: readonly string[];
   latestMessageId?: string;
   requiresCatchUp?: boolean;
   now: number;
@@ -68,9 +104,38 @@ export interface NativeSessionLeaseDecisionInput {
 
 export class NativeSessionLeaseManager {
   readonly limits: NativeSessionLeaseLimits;
+  private readonly leaseByRun = new Map<string, string>();
+  private readonly runsByLease = new Map<string, Set<string>>();
 
   constructor(options: NativeSessionLeaseManagerOptions = {}) {
     this.limits = { ...DEFAULT_NATIVE_SESSION_LEASE_LIMITS, ...options.limits };
+  }
+
+  reserveLeaseForRun(runId: string, leaseId: string): void {
+    const normalizedRunId = runId.trim();
+    const normalizedLeaseId = leaseId.trim();
+    if (!normalizedRunId || !normalizedLeaseId) return;
+    const previousLeaseId = this.leaseByRun.get(normalizedRunId);
+    if (previousLeaseId === normalizedLeaseId) return;
+    if (previousLeaseId) this.releaseLeaseForRun(normalizedRunId);
+    this.leaseByRun.set(normalizedRunId, normalizedLeaseId);
+    const runs = this.runsByLease.get(normalizedLeaseId) ?? new Set<string>();
+    runs.add(normalizedRunId);
+    this.runsByLease.set(normalizedLeaseId, runs);
+  }
+
+  releaseLeaseForRun(runId: string): void {
+    const normalizedRunId = runId.trim();
+    const leaseId = this.leaseByRun.get(normalizedRunId);
+    if (!leaseId) return;
+    this.leaseByRun.delete(normalizedRunId);
+    const runs = this.runsByLease.get(leaseId);
+    runs?.delete(normalizedRunId);
+    if (!runs?.size) this.runsByLease.delete(leaseId);
+  }
+
+  isLeaseReserved(leaseId: string): boolean {
+    return Boolean(this.runsByLease.get(leaseId.trim())?.size);
   }
 
   decide(input: NativeSessionLeaseDecisionInput): NativeSessionLeaseDecision {
@@ -80,6 +145,59 @@ export class NativeSessionLeaseManager {
     const binding = input.binding ?? null;
     if (!binding) {
       return { mode: "bootstrap", reusable: false, reason: "no-binding" };
+    }
+    const cursor = binding.contextCursor;
+    if (
+      !binding.workspaceFingerprint
+      || !input.expectedWorkspaceFingerprint
+      || !cursor
+      || !isPositiveSafeInteger(cursor.sessionGeneration)
+      || !isPositiveSafeInteger(input.expectedSessionGeneration)
+      || !cursor.contextId?.trim()
+      || !input.expectedContextId?.trim()
+      || !cursor.workspaceFingerprint?.trim()
+      || !Array.isArray(input.currentContextMessageIds)
+    ) {
+      return {
+        mode: "bootstrap",
+        reusable: false,
+        reason: "context-identity-missing"
+      };
+    }
+    if (
+      binding.workspaceFingerprint !== input.expectedWorkspaceFingerprint
+      || cursor.workspaceFingerprint !== input.expectedWorkspaceFingerprint
+      || cursor.sessionGeneration !== input.expectedSessionGeneration
+      || cursor.contextId !== input.expectedContextId
+    ) {
+      return {
+        mode: "bootstrap",
+        reusable: false,
+        reason: "context-identity-mismatch"
+      };
+    }
+    if (
+      (binding.vaultProfileFingerprint?.trim() ?? "")
+      !== input.expectedVaultProfileFingerprint.trim()
+    ) {
+      return {
+        mode: "bootstrap",
+        reusable: false,
+        reason: "vault-profile-mismatch"
+      };
+    }
+    const cursorAnchor = cursor.syncedThroughMessageId?.trim();
+    if (
+      cursorAnchor
+      && input.currentContextMessageIds.filter((messageId) =>
+        messageId === cursorAnchor
+      ).length !== 1
+    ) {
+      return {
+        mode: "bootstrap",
+        reusable: false,
+        reason: "context-identity-mismatch"
+      };
     }
     if (binding.syncedSessionRevision !== input.sessionRevision) {
       return { mode: "bootstrap", reusable: false, reason: "revision-mismatch" };
@@ -105,10 +223,11 @@ export class NativeSessionLeaseManager {
 
   planCleanup(input: NativeSessionLeaseCleanupPlanInput): NativeSessionLeaseCleanupPlanItem[] {
     const planned = new Map<string, NativeSessionLeaseCleanupPlanItem>();
-    for (const lease of input.leases.filter((item) => item.status === "cleanup-pending")) {
+    const availableLeases = input.leases.filter((lease) => !this.isLeaseReserved(lease.leaseId));
+    for (const lease of availableLeases.filter((item) => item.status === "cleanup-pending")) {
       addPlan(planned, lease, "recovery");
     }
-    const active = input.leases.filter((lease) => lease.status === "active");
+    const active = availableLeases.filter((lease) => lease.status === "active");
     for (const lease of active) {
       const reason = invalidLeaseReason(lease, input.now);
       if (reason) addPlan(planned, lease, reason);
@@ -136,31 +255,43 @@ export class NativeSessionLeaseManager {
       const target = findLeaseBinding(input.sessions, item);
       const lease = leases.find((candidate) => candidate.leaseId === item.leaseId);
       if (!target || !lease) continue;
-      const previousStatus = target.binding.leaseStatus ?? "active";
-      target.binding.leaseStatus = "cleanup-pending";
+      if (this.isLeaseReserved(item.leaseId)) continue;
+      if (!input.retire) {
+        results.push({
+          ...item,
+          outcome: "local-commit-failed",
+          message: "Durable Native binding retirement callback is required"
+        });
+        continue;
+      }
       try {
-        await input.commit();
+        await input.retire({
+          session: target.session,
+          binding: target.binding,
+          lease,
+          reason: item.reason
+        });
       } catch (error) {
-        target.binding.leaseStatus = previousStatus;
         results.push({ ...item, outcome: "local-commit-failed", message: errorMessage(error) });
         continue;
       }
-
-      let disposition: NativeExecutionDispositionResult;
-      try {
-        disposition = await input.dispose(lease, item.reason);
-      } catch (error) {
-        disposition = { outcome: "failed", message: errorMessage(error) };
-      }
-      target.binding.leaseStatus = cleanupLeaseStatus(disposition.outcome);
-      target.binding.leaseExpiresAt = Math.min(target.binding.leaseExpiresAt ?? input.now, input.now);
-      try {
-        await input.commit();
-      } catch (error) {
-        results.push({ ...item, outcome: "failed", message: `Native cleanup completed but local state commit failed: ${errorMessage(error)}` });
+      if (target.session.backendBindings?.[target.binding.backendId]) {
+        results.push({
+          ...item,
+          outcome: "local-commit-failed",
+          message: "Durable Native binding retirement did not remove the retired binding"
+        });
         continue;
       }
-      results.push({ ...item, outcome: disposition.outcome, message: disposition.message });
+      if (target.binding.backendId === "codex-cli" && target.session.threadId) {
+        results.push({
+          ...item,
+          outcome: "local-commit-failed",
+          message: "Durable Native binding retirement did not clear the legacy Codex thread binding"
+        });
+        continue;
+      }
+      results.push({ ...item, outcome: "retirement-scheduled" });
     }
     return results;
   }
@@ -243,6 +374,10 @@ function leasesByLru(leases: NativeSessionLease[]): NativeSessionLease[] {
   return leases.slice().sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.leaseId.localeCompare(b.leaseId));
 }
 
+function isPositiveSafeInteger(value: number | undefined): value is number {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0;
+}
+
 function findLeaseBinding(
   sessions: StoredSession[],
   item: NativeSessionLeaseCleanupPlanItem
@@ -251,12 +386,6 @@ function findLeaseBinding(
   const binding = session?.backendBindings?.[item.backendId];
   if (!session || !binding || binding.leaseId !== item.leaseId) return null;
   return { session, binding };
-}
-
-function cleanupLeaseStatus(outcome: NativeExecutionDispositionResult["outcome"]): NativeSessionLease["status"] {
-  if (outcome === "disposed" || outcome === "already-disposed") return "disposed";
-  if (outcome === "failed") return "failed";
-  return "expired";
 }
 
 function errorMessage(error: unknown): string {

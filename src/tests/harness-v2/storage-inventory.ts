@@ -8,12 +8,14 @@ import {
   readlink,
   readdir,
   realpath,
+  rm,
   symlink,
   utimes,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { createConversationPayloadKeyV2 } from "../../harness/conversation/conversation-store";
 import {
   scanStorageInventory,
   type ReadOnlyDirEntry,
@@ -57,12 +59,19 @@ export async function runHarnessV2StorageInventoryTests(): Promise<void> {
   await assertConversationIndexDirectoryAndCountDrift();
   await assertConversationAndHistoryRejectNonObjectIndexEntries();
   await assertConversationMetadataDirectoryDriftBlocksMigration();
+  await assertUnsafeAndCollidingConversationIdsBlockMigration();
   await assertMalformedConversationDataDegradesWithoutLeakingContent();
+  await assertCommittedConversationPayloadAuthorityAndMetadataOnlyBoundaries();
+  await assertV2ConversationPayloadContentAddressing();
+  await assertCommittedConversationPayloadPointersFailClosed();
   await assertHistoryIndexAndDuplicateMessageDrift();
   await assertRawReferenceGraphNeverReadsRawBodies();
   await assertRunLedgerIntegrityFindings();
   await assertRunEventWithoutRunIdBlocksMigration();
   await assertNativeReplayDriftAndQuarantineCandidate();
+  await assertNativeAuditProjectionNeverBecomesAuthority();
+  await assertNativeSchemaAndLifecycleCompatibility();
+  await assertNativeRetirementUsesConversationCommitAuthority();
   await assertProviderUnknownIsNotMissingOrOrphaned();
   await assertIncompleteLinkedInspectionRemainsUnknown();
   await assertProviderKindMismatchRemainsAmbiguous();
@@ -176,6 +185,38 @@ async function assertConversationMetadataDirectoryDriftBlocksMigration(): Promis
   assert.equal(sourceStatus(report, "conversations"), "partial");
 }
 
+async function assertUnsafeAndCollidingConversationIdsBlockMigration(): Promise<void> {
+  const fixture = await createFixture("echoink-storage-inventory-unsafe-conversation-id-");
+  const unsafeA = "a/b";
+  const unsafeB = "a?b";
+  await writeDataJson(fixture, [unsafeA, unsafeB]);
+  await writeConversation(fixture, "a-b", [
+    message("unsafe-id-message", "user")
+  ]);
+  const metadataPath = path.join(
+    fixture.conversationsPath,
+    "sessions",
+    "a-b",
+    "metadata.json"
+  );
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
+  metadata.id = unsafeA;
+  await writeJson(metadataPath, metadata);
+  await writeConversationIndex(fixture, [
+    conversationSummary(unsafeA, 1),
+    conversationSummary(unsafeB, 1)
+  ]);
+
+  const report = await scanAndBuild(fixture);
+
+  assertBlockingFinding(report, "conversation-session-id-unsafe");
+  assertBlockingFinding(report, "conversation-session-id-collision");
+  assertBlockingFinding(report, "conversation-metadata-directory-drift");
+  assert.equal(sourceStatus(report, "conversations"), "partial");
+  assert.equal(JSON.stringify(report).includes(unsafeA), false);
+  assert.equal(JSON.stringify(report).includes(unsafeB), false);
+}
+
 async function assertMalformedConversationDataDegradesWithoutLeakingContent(): Promise<void> {
   const fixture = await createFixture("echoink-storage-inventory-corrupt-conversation-");
   await writeDataJson(fixture, ["conversation-a"]);
@@ -193,6 +234,363 @@ async function assertMalformedConversationDataDegradesWithoutLeakingContent(): P
   assertFinding(report, "corrupt-jsonl");
   assert.equal(sourceStatus(report, "conversations"), "partial");
   assert.doesNotMatch(serialized, new RegExp(SECRET));
+}
+
+async function assertCommittedConversationPayloadAuthorityAndMetadataOnlyBoundaries(): Promise<void> {
+  const fixture = await createFixture("echoink-storage-inventory-context-payload-");
+  const sessionId = "conversation-payload";
+  const activeCommitId = "commit-active";
+  const previousCommitId = "commit-previous";
+  const orphanCommitId = "commit-orphaned";
+  const activePayloadKey = conversationPayloadKey(activeCommitId);
+  const previousPayloadKey = conversationPayloadKey(previousCommitId);
+  const orphanPayloadKey = conversationPayloadKey(orphanCommitId);
+  await writeDataJson(fixture, [sessionId]);
+  await writeCommittedConversation(fixture, {
+    sessionId,
+    commitId: activeCommitId,
+    payloadKey: activePayloadKey,
+    previousPayloadKey,
+    messages: [{
+      ...message("active-message", "assistant"),
+      rawRef: "raw/active-missing.txt"
+    }],
+    contextId: "context-active",
+    generation: 3
+  });
+  await writeConversationIndex(fixture, [conversationSummary(sessionId, 1)]);
+
+  const sessionPath = path.join(fixture.conversationsPath, "sessions", sessionId);
+  await writeJsonl(path.join(sessionPath, "messages.jsonl"), [{
+    ...message("legacy-message", "assistant"),
+    rawRef: "raw/legacy-must-not-be-read.txt",
+    text: "LEGACY_PAYLOAD_SENTINEL"
+  }]);
+  await writeJsonl(path.join(sessionPath, "snapshots.jsonl"), [{
+    sessionId,
+    version: "legacy-snapshot",
+    rollingSummary: "LEGACY_SNAPSHOT_SENTINEL",
+    sourceMessageCount: 1,
+    createdAt: 1,
+    updatedAt: 2
+  }]);
+  await writeJsonl(
+    path.join(sessionPath, "context-payloads", previousPayloadKey, "messages.jsonl"),
+    [{ ...message("previous-message", "assistant"), text: "PREVIOUS_PAYLOAD_SENTINEL" }]
+  );
+  await writeJsonl(
+    path.join(sessionPath, "context-payloads", previousPayloadKey, "snapshots.jsonl"),
+    [{ sessionId, version: "previous-snapshot", rollingSummary: "PREVIOUS_SNAPSHOT_SENTINEL" }]
+  );
+  await writeJsonl(
+    path.join(sessionPath, "context-payloads", orphanPayloadKey, "messages.jsonl"),
+    [{ ...message("orphan-message", "assistant"), text: "ORPHAN_PAYLOAD_SENTINEL" }]
+  );
+  await writeJsonl(
+    path.join(sessionPath, "context-payloads", orphanPayloadKey, "snapshots.jsonl"),
+    [{ sessionId, version: "orphan-snapshot", rollingSummary: "ORPHAN_SNAPSHOT_SENTINEL" }]
+  );
+
+  const forbiddenReads = new Set([
+    path.join(sessionPath, "messages.jsonl"),
+    path.join(sessionPath, "snapshots.jsonl"),
+    path.join(sessionPath, "context-payloads", previousPayloadKey, "messages.jsonl"),
+    path.join(sessionPath, "context-payloads", previousPayloadKey, "snapshots.jsonl"),
+    path.join(sessionPath, "context-payloads", orphanPayloadKey, "messages.jsonl"),
+    path.join(sessionPath, "context-payloads", orphanPayloadKey, "snapshots.jsonl")
+  ]);
+  const reads: string[] = [];
+  const report = await scanAndBuild(fixture, {
+    fs: readOnlyFs({
+      onReadFile: (filePath) => {
+        reads.push(filePath);
+        if (forbiddenReads.has(filePath)) {
+          throw new Error(`non-authoritative payload body read: ${filePath}`);
+        }
+      }
+    }),
+    nativeScope: "none"
+  });
+
+  assertFinding(report, "conversation-payload-unreferenced");
+  assertFinding(report, "raw-reference-missing");
+  assert.equal(
+    report.findings.filter((finding) => finding.code === "raw-reference-missing").length,
+    1,
+    "only the active payload may contribute Raw references"
+  );
+  assert.equal(
+    reads.includes(path.join(
+      sessionPath,
+      "context-payloads",
+      activePayloadKey,
+      "messages.jsonl"
+    )),
+    true
+  );
+  assert.equal(
+    reads.includes(path.join(
+      sessionPath,
+      "context-payloads",
+      activePayloadKey,
+      "snapshots.jsonl"
+    )),
+    true
+  );
+  assert.equal([...forbiddenReads].some((filePath) => reads.includes(filePath)), false);
+  const serialized = serializeStorageInventoryReport(report);
+  for (const sentinel of [
+    "LEGACY_PAYLOAD_SENTINEL",
+    "LEGACY_SNAPSHOT_SENTINEL",
+    "PREVIOUS_PAYLOAD_SENTINEL",
+    "PREVIOUS_SNAPSHOT_SENTINEL",
+    "ORPHAN_PAYLOAD_SENTINEL",
+    "ORPHAN_SNAPSHOT_SENTINEL"
+  ]) {
+    assert.equal(serialized.includes(sentinel), false);
+  }
+  assert.equal(report.migrationPreview.automaticActionAllowed, false);
+  assert.equal(report.safetyReceipt.actionsApplied, 0);
+}
+
+async function assertV2ConversationPayloadContentAddressing(): Promise<void> {
+  const fixture = await createFixture("echoink-storage-inventory-payload-v2-");
+  const sessionId = "conversation-payload-v2";
+  const commitId = "commit-payload-v2";
+  const previousCommitId = "commit-payload-v2-previous";
+  const contextId = "context-payload-v2";
+  const generation = 3;
+  const messages = [message("payload-v2-message", "assistant")];
+  const snapshots = [committedConversationSnapshot({
+    sessionId,
+    contextId,
+    generation,
+    messageCount: messages.length
+  })];
+  const payloadKey = createConversationPayloadKeyV2(
+    commitId,
+    messages,
+    snapshots
+  );
+  const previousPayloadKey = createConversationPayloadKeyV2(
+    previousCommitId,
+    [],
+    []
+  );
+  await writeDataJson(fixture, [sessionId]);
+  await writeCommittedConversation(fixture, {
+    sessionId,
+    commitId,
+    payloadVersion: 2,
+    payloadKey,
+    previousPayloadKey,
+    previousPayloadCommitId: previousCommitId,
+    messages,
+    contextId,
+    generation
+  });
+  await writeConversationIndex(fixture, [conversationSummary(sessionId, 1)]);
+  const sessionPath = path.join(fixture.conversationsPath, "sessions", sessionId);
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      previousPayloadKey,
+      "messages.jsonl"
+    ),
+    []
+  );
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      previousPayloadKey,
+      "snapshots.jsonl"
+    ),
+    []
+  );
+
+  const valid = await scanAndBuild(fixture, { nativeScope: "none" });
+  assert.equal(
+    valid.findings.some((finding) =>
+      finding.code === "conversation-payload-pointer-invalid"),
+    false,
+    "a valid V2 content-addressed payload must not be judged by the legacy commit-only key"
+  );
+  const metadataPath = path.join(sessionPath, "metadata.json");
+  await rewriteWithStableStats(metadataPath, (source) => {
+    const metadata = JSON.parse(source) as Record<string, unknown>;
+    metadata.previousPayloadCommitId = "commit-payload-v2-replaced";
+    return `${JSON.stringify(metadata, null, 2)}\n`;
+  });
+  const changedPreviousAuthority = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  assert.equal(
+    changedPreviousAuthority.findings.some((finding) =>
+      finding.code === "conversation-payload-pointer-invalid"),
+    false
+  );
+  assert.notEqual(
+    changedPreviousAuthority.snapshotFingerprint,
+    valid.snapshotFingerprint,
+    "same-stat previous payload authority changes must affect the inventory fingerprint"
+  );
+
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      payloadKey,
+      "messages.jsonl"
+    ),
+    [{ ...messages[0], text: "tampered after the marker" }]
+  );
+  const tampered = await scanAndBuild(fixture, { nativeScope: "none" });
+  assertBlockingFinding(tampered, "conversation-payload-pointer-invalid");
+
+  const pairingFixture = await createFixture(
+    "echoink-storage-inventory-payload-v2-pairing-"
+  );
+  const pairingSessionId = "conversation-payload-v2-pairing";
+  const pairingCommitId = "commit-payload-v2-pairing";
+  const pairingMessages: Array<Record<string, unknown>> = [];
+  const pairingSnapshots = [committedConversationSnapshot({
+    sessionId: pairingSessionId,
+    generation: 1,
+    messageCount: 0
+  })];
+  const pairingPayloadKey = createConversationPayloadKeyV2(
+    pairingCommitId,
+    pairingMessages,
+    pairingSnapshots
+  );
+  await writeDataJson(pairingFixture, [pairingSessionId]);
+  await writeCommittedConversation(pairingFixture, {
+    sessionId: pairingSessionId,
+    commitId: pairingCommitId,
+    payloadVersion: 2,
+    payloadKey: pairingPayloadKey,
+    previousPayloadKey: createConversationPayloadKeyV2(
+      "commit-unpaired-previous",
+      [],
+      []
+    ),
+    messages: pairingMessages
+  });
+  await writeConversationIndex(pairingFixture, [
+    conversationSummary(pairingSessionId, 0)
+  ]);
+  const pairingReads: string[] = [];
+  const invalidPairing = await scanAndBuild(pairingFixture, {
+    fs: readOnlyFs({
+      onReadFile: (filePath) => {
+        pairingReads.push(filePath);
+        if (filePath.includes(`${path.sep}context-payloads${path.sep}`)) {
+          throw new Error("an unpaired V2 previous pointer must fail before body reads");
+        }
+      }
+    }),
+    nativeScope: "none"
+  });
+  assertBlockingFinding(invalidPairing, "conversation-payload-pointer-invalid");
+  assert.equal(
+    pairingReads.some((filePath) =>
+      filePath.includes(`${path.sep}context-payloads${path.sep}`)),
+    false
+  );
+}
+
+async function assertCommittedConversationPayloadPointersFailClosed(): Promise<void> {
+  const missingFixture = await createFixture("echoink-storage-inventory-active-missing-");
+  const missingSessionId = "conversation-active-missing";
+  const missingCommitId = "commit-active-missing";
+  await writeDataJson(missingFixture, [missingSessionId]);
+  await writeCommittedConversation(missingFixture, {
+    sessionId: missingSessionId,
+    commitId: missingCommitId,
+    payloadKey: conversationPayloadKey(missingCommitId),
+    messages: [],
+    omitPayloadFiles: true
+  });
+  await writeConversationIndex(missingFixture, [
+    conversationSummary(missingSessionId, 0)
+  ]);
+  const missing = await scanAndBuild(missingFixture, { nativeScope: "none" });
+  assertBlockingFinding(missing, "conversation-active-payload-missing");
+
+  const invalidFixture = await createFixture("echoink-storage-inventory-pointer-invalid-");
+  const invalidSessionId = "conversation-pointer-invalid";
+  await writeDataJson(invalidFixture, [invalidSessionId]);
+  await writeCommittedConversation(invalidFixture, {
+    sessionId: invalidSessionId,
+    commitId: "commit-pointer-a",
+    payloadKey: conversationPayloadKey("commit-pointer-b"),
+    messages: [message("must-not-be-authoritative", "assistant")]
+  });
+  await writeConversationIndex(invalidFixture, [
+    conversationSummary(invalidSessionId, 1)
+  ]);
+  const invalidSessionPath = path.join(
+    invalidFixture.conversationsPath,
+    "sessions",
+    invalidSessionId
+  );
+  const invalidReads: string[] = [];
+  const invalid = await scanAndBuild(invalidFixture, {
+    fs: readOnlyFs({
+      onReadFile: (filePath) => {
+        invalidReads.push(filePath);
+        if (filePath.includes(`${path.sep}context-payloads${path.sep}`)) {
+          throw new Error("invalid pointer must fail before payload body read");
+        }
+      }
+    }),
+    nativeScope: "none"
+  });
+  assertBlockingFinding(invalid, "conversation-payload-pointer-invalid");
+  assert.equal(
+    invalidReads.some((filePath) =>
+      isWithin(filePath, path.join(invalidSessionPath, "context-payloads"))),
+    false
+  );
+
+  const symlinkFixture = await createFixture("echoink-storage-inventory-active-symlink-");
+  const symlinkSessionId = "conversation-active-symlink";
+  const symlinkCommitId = "commit-active-symlink";
+  const symlinkPayloadKey = conversationPayloadKey(symlinkCommitId);
+  await writeDataJson(symlinkFixture, [symlinkSessionId]);
+  await writeCommittedConversation(symlinkFixture, {
+    sessionId: symlinkSessionId,
+    commitId: symlinkCommitId,
+    payloadKey: symlinkPayloadKey,
+    messages: [],
+    omitPayloadFiles: true
+  });
+  await writeConversationIndex(symlinkFixture, [
+    conversationSummary(symlinkSessionId, 0)
+  ]);
+  const outsidePayload = path.join(symlinkFixture.vaultPath, "outside-active-payload");
+  await mkdir(outsidePayload, { recursive: true });
+  await writeJsonl(path.join(outsidePayload, "messages.jsonl"), [
+    message("outside-message", "assistant")
+  ]);
+  await writeJsonl(path.join(outsidePayload, "snapshots.jsonl"), []);
+  await symlink(
+    outsidePayload,
+    path.join(
+      symlinkFixture.conversationsPath,
+      "sessions",
+      symlinkSessionId,
+      "context-payloads",
+      symlinkPayloadKey
+    )
+  );
+  const symlinkReport = await scanAndBuild(symlinkFixture, {
+    nativeScope: "none"
+  });
+  assertBlockingFinding(symlinkReport, "symlink-blocked");
+  assertBlockingFinding(symlinkReport, "conversation-active-payload-missing");
 }
 
 async function assertHistoryIndexAndDuplicateMessageDrift(): Promise<void> {
@@ -354,19 +752,396 @@ async function assertNativeReplayDriftAndQuarantineCandidate(): Promise<void> {
 
   const report = await scanAndBuild(fixture);
 
-  assertFindingCount(report, "native-index-event-drift", 3);
+  assertFindingCount(report, "native-audit-projection-drift", 3);
   assert.equal(
     report.findings.some((finding) =>
-      finding.code === "native-index-event-drift"
+      finding.code === "native-audit-projection-drift"
       && finding.category === "ambiguous"),
     true,
-    "same-ID structural disagreement between native index and event replay must block migration"
+    "same-ID structural disagreement must remain visible as non-authoritative audit drift"
+  );
+  assert.equal(
+    report.findings.some((finding) =>
+      finding.code === "native-audit-projection-drift"
+      && finding.blocksMigration),
+    false,
+    "audit projection drift must not overturn a valid authority index"
   );
   assertFinding(report, "native-index-duplicate-id");
   assertFinding(report, "quarantined-candidate");
+  assert.ok(
+    (report.sources.find(({ sourceId }) => sourceId === "native-store")
+      ?.corruptCount ?? 0) > 0
+  );
+  assert.equal(report.migrationPreview.status, "blocked");
   assert.equal(JSON.stringify(report).includes("native-indexed"), false);
   assert.ok(report.migrationPreview.candidateRecordCount > 0);
   assert.doesNotMatch(serializeStorageInventoryReport(report), new RegExp(SECRET));
+}
+
+async function assertNativeAuditProjectionNeverBecomesAuthority(): Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-native-audit-only-"
+  );
+  const record = nativeRecord(
+    "native-audit-authority",
+    "codex-cli",
+    "thread-audit-authority"
+  );
+  await writeNativeIndex(fixture, [record], 2);
+  await writeFile(
+    path.join(fixture.nativePath, "native-executions.jsonl"),
+    `${JSON.stringify({ type: "upsert", record, createdAt: 1 })}\n`
+      + `{"type":"upsert","record":"${SECRET}"\n`,
+    "utf8"
+  );
+
+  const corruptAudit = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  const corruptAuditSource = corruptAudit.sources.find(
+    ({ sourceId }) => sourceId === "native-store"
+  );
+  assert.equal(corruptAuditSource?.recordCount, 1);
+  assert.equal(
+    corruptAuditSource?.corruptCount,
+    0,
+    "invalid audit rows must not mark the authoritative index corrupt"
+  );
+  assert.equal(
+    corruptAudit.findings.some((finding) =>
+      finding.code === "native-audit-projection-drift"
+      && finding.blocksMigration),
+    false
+  );
+  assert.doesNotMatch(
+    serializeStorageInventoryReport(corruptAudit),
+    new RegExp(SECRET)
+  );
+
+  const eventsPath = path.join(
+    fixture.nativePath,
+    "native-executions.jsonl"
+  );
+  await rm(eventsPath);
+  const missingAudit = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  const missingAuditSource = missingAudit.sources.find(
+    ({ sourceId }) => sourceId === "native-store"
+  );
+  assert.equal(missingAuditSource?.recordCount, 1);
+  assert.equal(missingAuditSource?.corruptCount, 0);
+  assert.equal(
+    missingAudit.findings.some((finding) =>
+      finding.code === "native-audit-projection-drift"
+      && finding.blocksMigration),
+    false,
+    "missing audit history must not overturn a valid authority index"
+  );
+}
+
+async function assertNativeSchemaAndLifecycleCompatibility(): Promise<void> {
+  const currentFixture = await createFixture("echoink-storage-inventory-native-v2-");
+  const retirement = {
+    targetConversationId: "conversation-retirement",
+    targetGeneration: 2,
+    targetCommitId: "commit-retirement",
+    targetContextId: "context-retirement",
+    targetWorkspaceFingerprint: `sha256:${"a".repeat(64)}`,
+    reason: "workspace-switch"
+  };
+  const records = [
+    nativeRecord("native-awaiting", "codex-cli", "thread-awaiting", {
+      localCommit: "pending",
+      cleanup: "awaiting-local-commit",
+      retirement
+    }),
+    nativeRecord("native-pending-exhausted", "codex-cli", "thread-pending", {
+      cleanup: "pending",
+      attempts: 6
+    }),
+    nativeRecord("native-disposing", "opencode", "session-disposing", {
+      cleanup: "disposing",
+      cleanupStartedAt: 11
+    }),
+    nativeRecord("native-failed-exhausted", "hermes", "run-failed", {
+      native: {
+        ...nativeRecord("transport-source", "hermes", "run-failed").native,
+        transport: "acp-stdio"
+      },
+      cleanup: "failed",
+      attempts: 7
+    }),
+    nativeRecord("native-aborted", "opencode", "session-aborted", {
+      localCommit: "failed",
+      cleanup: "aborted",
+      retirement: { ...retirement, targetCommitId: "commit-aborted" }
+    }),
+    nativeRecord("native-quarantined", "hermes", "run-quarantined", {
+      cleanup: "quarantined",
+      quarantinedAt: 12,
+      retirement: { ...retirement, targetCommitId: "commit-quarantined" }
+    })
+  ];
+  await writeNativeIndex(currentFixture, records, 2);
+  await writeNativeEvents(currentFixture, records.map((record, index) => ({
+    type: "upsert",
+    record,
+    createdAt: index + 1
+  })));
+
+  const current = await scanAndBuild(currentFixture, { nativeScope: "none" });
+  const currentSource = current.sources.find(({ sourceId }) => sourceId === "native-store");
+  assert.equal(currentSource?.schemaVersion, "2");
+  assert.equal(currentSource?.corruptCount, 0);
+  assert.equal(currentSource?.futureSchemaCount, 0);
+  assert.equal(currentSource?.recordCount, records.length);
+  assert.equal(
+    current.findings.some((finding) =>
+      finding.code === "native-audit-projection-drift"),
+    false,
+    "a safe transport must survive authoritative index/audit projection comparison"
+  );
+  assert.equal(
+    current.findings.filter((finding) => finding.code === "cleanup-pending").length,
+    4,
+    "awaiting, pending, disposing and failed records are cleanup/recovery backlog"
+  );
+  assert.equal(
+    current.findings.filter((finding) => finding.code === "quarantined-candidate").length,
+    2,
+    "pending and failed retry-limit records are candidates, not actual quarantine"
+  );
+  const quarantined = current.findings.filter(
+    (finding) => finding.code === "cleanup-quarantined"
+  );
+  assert.equal(quarantined.length, 1);
+  assert.equal(quarantined[0]?.category, "quarantined");
+  assert.equal(quarantined[0]?.blocksMigration, false);
+
+  const legacyFixture = await createFixture("echoink-storage-inventory-native-v1-");
+  const legacyRecord = nativeRecord(
+    "native-v1-record",
+    "codex-cli",
+    "thread-v1-record"
+  );
+  await writeNativeIndex(legacyFixture, [legacyRecord], 1);
+  await writeNativeEvents(legacyFixture, [{
+    type: "upsert",
+    record: legacyRecord,
+    createdAt: 1
+  }]);
+  const legacy = await scanAndBuild(legacyFixture, { nativeScope: "none" });
+  const legacySource = legacy.sources.find(({ sourceId }) => sourceId === "native-store");
+  assertBlockingFinding(legacy, "native-schema-migration-required");
+  assert.equal(legacySource?.schemaVersion, "1");
+  assert.equal(legacySource?.corruptCount, 0);
+  assert.equal(legacySource?.futureSchemaCount, 0);
+  assert.equal(legacySource?.recordCount, 1);
+
+  const partialSourceFixture = await createFixture(
+    "echoink-storage-inventory-native-partial-source-"
+  );
+  const partialSourceRecord = nativeRecord(
+    "native-partial-source",
+    "codex-cli",
+    "thread-partial-source",
+    {
+      localCommit: "pending",
+      cleanup: "awaiting-local-commit",
+      retirement: {
+        ...retirement,
+        sourceGeneration: 1
+      }
+    }
+  );
+  await writeNativeIndex(partialSourceFixture, [partialSourceRecord], 2);
+  await writeNativeEvents(partialSourceFixture, [{
+    type: "upsert",
+    record: partialSourceRecord,
+    createdAt: 1
+  }]);
+  const partialSource = await scanAndBuild(partialSourceFixture, {
+    nativeScope: "none"
+  });
+  assertBlockingFinding(partialSource, "native-record-invalid");
+  const partialSourceStatus = partialSource.sources.find(
+    ({ sourceId }) => sourceId === "native-store"
+  );
+  assert.equal(partialSourceStatus?.recordCount, 0);
+  assert.ok((partialSourceStatus?.corruptCount ?? 0) > 0);
+
+  const unsafeTransportFixture = await createFixture(
+    "echoink-storage-inventory-native-unsafe-transport-"
+  );
+  const unsafeTransportRecords = [
+    nativeRecord("native-sensitive-transport", "hermes", "session-sensitive", {
+      native: {
+        ...nativeRecord("sensitive-source", "hermes", "session-sensitive").native,
+        transport: "acp-stdio?token=TOP_SECRET"
+      }
+    }),
+    nativeRecord("native-overlong-transport", "hermes", "session-overlong", {
+      native: {
+        ...nativeRecord("overlong-source", "hermes", "session-overlong").native,
+        transport: `a-${"x".repeat(128)}`
+      }
+    })
+  ];
+  await writeNativeIndex(unsafeTransportFixture, unsafeTransportRecords, 2);
+  await writeNativeEvents(
+    unsafeTransportFixture,
+    unsafeTransportRecords.map((record, index) => ({
+      type: "upsert",
+      record,
+      createdAt: index + 1
+    }))
+  );
+  const unsafeTransportReport = await scanAndBuild(
+    unsafeTransportFixture,
+    { nativeScope: "none" }
+  );
+  const unsafeTransportSource = unsafeTransportReport.sources.find(
+    ({ sourceId }) => sourceId === "native-store"
+  );
+  assert.equal(unsafeTransportSource?.recordCount, 0);
+  assert.equal(unsafeTransportSource?.corruptCount, 2);
+  assertBlockingFinding(unsafeTransportReport, "native-record-invalid");
+  assert.doesNotMatch(
+    serializeStorageInventoryReport(unsafeTransportReport),
+    /TOP_SECRET/
+  );
+
+  const futureFixture = await createFixture("echoink-storage-inventory-native-v3-");
+  await writeNativeIndex(futureFixture, [], 3);
+  const future = await scanAndBuild(futureFixture, { nativeScope: "none" });
+  const futureSource = future.sources.find(({ sourceId }) => sourceId === "native-store");
+  assertBlockingFinding(future, "future-schema");
+  assert.equal(futureSource?.schemaVersion, "3");
+  assert.equal(futureSource?.futureSchemaCount, 1);
+}
+
+async function assertNativeRetirementUsesConversationCommitAuthority(): Promise<void> {
+  const fixture = await createFixture("echoink-storage-inventory-native-retirement-");
+  const sessionId = "conversation-retirement";
+  const commitId = "commit-retirement";
+  await writeDataJson(fixture, [sessionId]);
+  await writeCommittedConversation(fixture, {
+    sessionId,
+    commitId,
+    payloadKey: conversationPayloadKey(commitId),
+    messages: [],
+    contextId: "context-retirement",
+    generation: 2,
+    workspaceFingerprint: `sha256:${"b".repeat(64)}`
+  });
+  await writeConversationIndex(fixture, [conversationSummary(sessionId, 0)]);
+  const record = nativeRecord(
+    "native-retirement-record",
+    "opencode",
+    "session-retirement-record",
+    {
+      runId: "synthetic-retirement-run-without-ledger",
+      sessionId,
+      localCommit: "pending",
+      cleanup: "awaiting-local-commit",
+      retirement: {
+        targetConversationId: sessionId,
+        sourceGeneration: 1,
+        sourceCommitId: "commit-source-aa",
+        sourceContextId: "context-source-aa",
+        sourceWorkspaceFingerprint: `sha256:${"a".repeat(64)}`,
+        targetGeneration: 2,
+        targetCommitId: commitId,
+        targetContextId: "context-retirement",
+        targetWorkspaceFingerprint: `sha256:${"b".repeat(64)}`,
+        reason: "reason-a"
+      }
+    }
+  );
+  await writeNativeIndex(fixture, [record], 2);
+  await writeNativeEvents(fixture, [{ type: "upsert", record, createdAt: 1 }]);
+
+  const before = await scanAndBuild(fixture, { nativeScope: "none" });
+  assert.equal(
+    before.findings.some((finding) => finding.code === "native-run-missing"),
+    false,
+    "synthetic retirement records must not require an ordinary Harness Run"
+  );
+  assert.equal(
+    before.relations.some((relation) =>
+      relation.kind === "native-retirement-commit"
+      && relation.status === "linked"),
+    true
+  );
+
+  const indexPath = path.join(
+    fixture.nativePath,
+    "native-executions-index.json"
+  );
+  const eventsPath = path.join(
+    fixture.nativePath,
+    "native-executions.jsonl"
+  );
+  const changed = structuredClone(record);
+  changed.retirement!.reason = "reason-b";
+  await rewritePairWithStableStats([
+    {
+      filePath: indexPath,
+      write: () => writeNativeIndex(fixture, [changed], 2)
+    },
+    {
+      filePath: eventsPath,
+      write: () => writeNativeEvents(fixture, [
+        { type: "upsert", record: changed, createdAt: 1 }
+      ])
+    }
+  ]);
+  const after = await scanAndBuild(fixture, { nativeScope: "none" });
+  assert.notEqual(
+    after.snapshotFingerprint,
+    before.snapshotFingerprint,
+    "retirement-only metadata changes must affect the inventory fingerprint"
+  );
+
+  const sourceChanged = structuredClone(changed);
+  sourceChanged.retirement!.sourceCommitId = "commit-source-bb";
+  await rewritePairWithStableStats([
+    {
+      filePath: indexPath,
+      write: () => writeNativeIndex(fixture, [sourceChanged], 2)
+    },
+    {
+      filePath: eventsPath,
+      write: () => writeNativeEvents(fixture, [
+        { type: "upsert", record: sourceChanged, createdAt: 1 }
+      ])
+    }
+  ]);
+  const sourceAfter = await scanAndBuild(fixture, { nativeScope: "none" });
+  assert.notEqual(
+    sourceAfter.snapshotFingerprint,
+    after.snapshotFingerprint,
+    "source authority identity changes must affect the inventory fingerprint"
+  );
+
+  const mismatched = structuredClone(sourceChanged);
+  mismatched.retirement!.targetGeneration = 3;
+  await writeNativeIndex(fixture, [mismatched], 2);
+  await writeNativeEvents(fixture, [{
+    type: "upsert",
+    record: mismatched,
+    createdAt: 1
+  }]);
+  const mismatch = await scanAndBuild(fixture, { nativeScope: "none" });
+  assertBlockingFinding(mismatch, "native-retirement-commit-mismatch");
+  assert.equal(
+    mismatch.relations.some((relation) =>
+      relation.kind === "native-retirement-commit"
+      && relation.status === "ambiguous"),
+    true
+  );
 }
 
 async function assertProviderUnknownIsNotMissingOrOrphaned(): Promise<void> {
@@ -1272,7 +2047,17 @@ async function assertStructuralMetadataChangesFingerprintWithStableStats(): Prom
   const indexed = nativeRecord(
     "native-fingerprint",
     "codex-cli",
-    "thread-fingerprint"
+    "thread-fingerprint",
+    {
+      native: {
+        ...nativeRecord(
+          "native-fingerprint-source",
+          "codex-cli",
+          "thread-fingerprint"
+        ).native,
+        transport: "acp-stdio"
+      }
+    }
   );
   await writeNativeIndex(fixture, [indexed]);
   await writeNativeEvents(fixture, [
@@ -1294,7 +2079,7 @@ async function assertStructuralMetadataChangesFingerprintWithStableStats(): Prom
       {
         filePath: indexPath,
         write: () => writeJson(indexPath, {
-          version: 1,
+          version: 2,
           updatedAt: 10,
           records: [changed]
         })
@@ -1312,6 +2097,224 @@ async function assertStructuralMetadataChangesFingerprintWithStableStats(): Prom
     nativeAfter.snapshotFingerprint,
     nativeBefore.snapshotFingerprint,
     "same-stat Native policy changes must affect the fingerprint"
+  );
+
+  const transportChanged = structuredClone(changed);
+  transportChanged.native.transport = "acp-httpx";
+  await rewritePairWithStableStats(
+    [
+      {
+        filePath: indexPath,
+        write: () => writeJson(indexPath, {
+          version: 2,
+          updatedAt: 10,
+          records: [transportChanged]
+        })
+      },
+      {
+        filePath: eventsPath,
+        write: () => writeJsonl(eventsPath, [
+          { type: "upsert", record: transportChanged, createdAt: 1 }
+        ])
+      }
+    ]
+  );
+  const nativeTransportAfter = await scanAndBuild(
+    fixture,
+    { nativeScope: "none" }
+  );
+  assert.notEqual(
+    nativeTransportAfter.snapshotFingerprint,
+    nativeAfter.snapshotFingerprint,
+    "same-stat Native transport changes must affect the fingerprint"
+  );
+
+  await assertConversationPayloadPointerFingerprintWithStableStats();
+  await assertContextIdentityFingerprintWithStableStats();
+}
+
+async function assertConversationPayloadPointerFingerprintWithStableStats(): Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-payload-pointer-fingerprint-"
+  );
+  const sessionId = "conversation-pointer-fingerprint";
+  const activeCommitId = "commit-pointer-aa";
+  const previousCommitId = "commit-pointer-bb";
+  const activePayloadKey = conversationPayloadKey(activeCommitId);
+  const previousPayloadKey = conversationPayloadKey(previousCommitId);
+  const payloadMessages = [message("pointer-message", "assistant")];
+  const payloadSnapshots = [{
+    sessionId,
+    contextId: "context-pointer",
+    generation: 2,
+    version: "snapshot:pointer",
+    rollingSummary: SECRET,
+    sourceMessageCount: 1,
+    createdAt: 1,
+    updatedAt: 2
+  }];
+  await writeDataJson(fixture, [sessionId]);
+  await writeCommittedConversation(fixture, {
+    sessionId,
+    commitId: activeCommitId,
+    payloadKey: activePayloadKey,
+    previousPayloadKey,
+    messages: payloadMessages,
+    contextId: "context-pointer",
+    generation: 2
+  });
+  await writeConversationIndex(fixture, [conversationSummary(sessionId, 1)]);
+  const sessionPath = path.join(
+    fixture.conversationsPath,
+    "sessions",
+    sessionId
+  );
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      previousPayloadKey,
+      "messages.jsonl"
+    ),
+    payloadMessages
+  );
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      previousPayloadKey,
+      "snapshots.jsonl"
+    ),
+    payloadSnapshots
+  );
+  const before = await scanAndBuild(fixture, { nativeScope: "none" });
+  const metadataPath = path.join(sessionPath, "metadata.json");
+  await rewriteWithStableStats(metadataPath, (source) => {
+    const metadata = JSON.parse(source) as Record<string, unknown>;
+    metadata.commitId = previousCommitId;
+    metadata.payloadKey = previousPayloadKey;
+    metadata.previousPayloadKey = activePayloadKey;
+    return `${JSON.stringify(metadata, null, 2)}\n`;
+  });
+  const after = await scanAndBuild(fixture, { nativeScope: "none" });
+
+  assert.notEqual(
+    after.snapshotFingerprint,
+    before.snapshotFingerprint,
+    "same-stat active/previous pointer swaps must affect the fingerprint"
+  );
+}
+
+async function assertContextIdentityFingerprintWithStableStats(): Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-context-identity-fingerprint-"
+  );
+  const sessionId = "conversation-context-fingerprint";
+  await writeDataJson(fixture, [sessionId]);
+  await writeConversation(fixture, sessionId, [
+    message("context-message", "user")
+  ]);
+  await writeConversationIndex(fixture, [conversationSummary(sessionId, 1)]);
+  const sessionPath = path.join(
+    fixture.conversationsPath,
+    "sessions",
+    sessionId
+  );
+  const metadataPath = path.join(sessionPath, "metadata.json");
+  const snapshotsPath = path.join(sessionPath, "snapshots.jsonl");
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  metadata.generation = 1;
+  metadata.contextId = "context-a";
+  metadata.contextStartsAfterMessageId = "boundary-a";
+  metadata.commitId = "commit-a";
+  metadata.workspaceFingerprint = "workspace-a";
+  metadata.contextSnapshot = {
+    ...(metadata.contextSnapshot as Record<string, unknown>),
+    contextId: "snapshot-a",
+    generation: 1
+  };
+  metadata.backendBindings = {
+    codex: {
+      backendId: "codex-cli",
+      syncedSessionRevision: 1,
+      workspaceFingerprint: "binding-workspace-a",
+      contextCursor: {
+        syncedSessionRevision: 1,
+        sessionGeneration: 1,
+        contextId: "cursor-a",
+        snapshotVersion: "snapshot-a"
+      },
+      lastUsedAt: 2
+    }
+  };
+  await writeJson(metadataPath, metadata);
+  await writeJsonl(snapshotsPath, [{
+    sessionId,
+    contextId: "snapshot-a",
+    generation: 1,
+    version: `snapshot:${sessionId}`,
+    rollingSummary: SECRET,
+    sourceMessageCount: 1,
+    createdAt: 1,
+    updatedAt: 2
+  }]);
+
+  const before = await scanAndBuild(fixture, { nativeScope: "none" });
+  await rewriteWithStableStats(metadataPath, (source) => {
+    const next = JSON.parse(source) as Record<string, unknown>;
+    next.contextId = "context-b";
+    next.contextStartsAfterMessageId = "boundary-b";
+    next.commitId = "commit-b";
+    next.workspaceFingerprint = "workspace-b";
+    return `${JSON.stringify(next, null, 2)}\n`;
+  });
+  const contextChanged = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  assert.notEqual(
+    contextChanged.snapshotFingerprint,
+    before.snapshotFingerprint,
+    "same-stat Conversation context identity changes must affect the fingerprint"
+  );
+
+  await rewriteWithStableStats(metadataPath, (source) => {
+    const next = JSON.parse(source) as Record<string, unknown>;
+    const bindings = next.backendBindings as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const binding = bindings.codex;
+    binding.workspaceFingerprint = "binding-workspace-b";
+    const cursor = binding.contextCursor as Record<string, unknown>;
+    cursor.sessionGeneration = 2;
+    cursor.contextId = "cursor-b";
+    return `${JSON.stringify(next, null, 2)}\n`;
+  });
+  const bindingChanged = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  assert.notEqual(
+    bindingChanged.snapshotFingerprint,
+    contextChanged.snapshotFingerprint,
+    "same-stat binding workspace/cursor changes must affect the fingerprint"
+  );
+
+  await rewriteWithStableStats(snapshotsPath, (source) => {
+    const snapshot = JSON.parse(source.trim()) as Record<string, unknown>;
+    snapshot.contextId = "snapshot-b";
+    snapshot.generation = 2;
+    return `${JSON.stringify(snapshot)}\n`;
+  });
+  const snapshotChanged = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  assert.notEqual(
+    snapshotChanged.snapshotFingerprint,
+    bindingChanged.snapshotFingerprint,
+    "same-stat snapshot context/generation changes must affect the fingerprint"
   );
 }
 
@@ -1653,6 +2656,102 @@ async function writeConversation(
   }]);
 }
 
+async function writeCommittedConversation(
+  fixture: Fixture,
+  input: {
+    sessionId: string;
+    commitId: string;
+    payloadKey: string;
+    payloadVersion?: 2;
+    previousPayloadKey?: string;
+    previousPayloadCommitId?: string;
+    messages: Array<Record<string, unknown>>;
+    contextId?: string;
+    generation?: number;
+    workspaceFingerprint?: string;
+    omitPayloadFiles?: boolean;
+  }
+): Promise<void> {
+  const sessionPath = path.join(
+    fixture.conversationsPath,
+    "sessions",
+    input.sessionId
+  );
+  await mkdir(path.join(sessionPath, "context-payloads"), { recursive: true });
+  const generation = input.generation ?? 1;
+  const snapshot = committedConversationSnapshot({
+    sessionId: input.sessionId,
+    contextId: input.contextId,
+    generation,
+    messageCount: input.messages.length
+  });
+  await writeJson(path.join(sessionPath, "metadata.json"), {
+    id: input.sessionId,
+    title: `title:${input.sessionId}`,
+    kind: "chat",
+    cwd: fixture.vaultPath,
+    revision: generation,
+    generation,
+    ...(input.contextId ? { contextId: input.contextId } : {}),
+    commitId: input.commitId,
+    ...(input.workspaceFingerprint
+      ? { workspaceFingerprint: input.workspaceFingerprint }
+      : {}),
+    ...(input.payloadVersion ? { payloadVersion: input.payloadVersion } : {}),
+    payloadKey: input.payloadKey,
+    ...(input.previousPayloadKey
+      ? { previousPayloadKey: input.previousPayloadKey }
+      : {}),
+    ...(input.previousPayloadCommitId
+      ? { previousPayloadCommitId: input.previousPayloadCommitId }
+      : {}),
+    contextSnapshot: snapshot,
+    createdAt: 1,
+    updatedAt: 2
+  });
+  if (input.omitPayloadFiles) return;
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      input.payloadKey,
+      "messages.jsonl"
+    ),
+    input.messages
+  );
+  await writeJsonl(
+    path.join(
+      sessionPath,
+      "context-payloads",
+      input.payloadKey,
+      "snapshots.jsonl"
+    ),
+    [snapshot]
+  );
+}
+
+function committedConversationSnapshot(input: {
+  sessionId: string;
+  contextId?: string;
+  generation: number;
+  messageCount: number;
+}): Record<string, unknown> {
+  return {
+    sessionId: input.sessionId,
+    ...(input.contextId ? { contextId: input.contextId } : {}),
+    generation: input.generation,
+    version: `snapshot:${input.sessionId}`,
+    rollingSummary: SECRET,
+    sourceMessageCount: input.messageCount,
+    createdAt: 1,
+    updatedAt: 2
+  };
+}
+
+function conversationPayloadKey(commitId: string): string {
+  return `payload-${createHash("sha256").update(commitId).digest("hex")}`;
+}
+
 async function writeConversationIndex(
   fixture: Fixture,
   sessions: unknown[]
@@ -1696,10 +2795,11 @@ async function writeRun(
 
 async function writeNativeIndex(
   fixture: Fixture,
-  records: Array<Record<string, unknown>>
+  records: unknown[],
+  version = 2
 ): Promise<void> {
   await writeJson(path.join(fixture.nativePath, "native-executions-index.json"), {
-    version: 1,
+    version,
     updatedAt: 10,
     records
   });

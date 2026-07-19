@@ -77,3 +77,48 @@
 - 最终代码状态通过 `npm run typecheck`、`npm run test`、`npm run build`、
   `npm run lint` 和 `git diff --check`；`npm run check:public` 在新增文件暂存后
   覆盖 356 个 tracked files 并通过。
+
+## 2026-07-19：Phase 1 Context 与 Native 生命周期自动化收口
+
+- 新增统一 Context rotation，覆盖 Knowledge `/clear`、Workspace switch、
+  History restore、Reset Agent cache 和 lease rollover。每次 rotation 都生成
+  workspace fingerprint、target generation 与 commit identity，并先登记旧 binding
+  retirement，再提交 Conversation。
+- Conversation commit 失败会回滚 revision、context 和 binding，且不会 cleanup。
+  在 Conversation 已提交、retirement 尚未晋级时中断，启动恢复按精确 generation
+  与 commit identity 晋级、abort 或 quarantine；证据不唯一时 fail closed。
+- Native cleanup 增加六次自动尝试上限、quarantine、公平队列和 single-flight。
+  启动恢复统一处理 `awaiting-local-commit`、pending cleanup 与旧 lease retirement，
+  新任务不会被历史失败 backlog 饿死。
+- 移除 Editor prewarm。Codex、OpenCode、Hermes 都在 Prompt 或进程启动前登记
+  Native ID；登记失败会阻止 Prompt，并只执行一次 best-effort 回收。
+- Editor 产品入口成为候选校验后的终态权威。Kernel 使用
+  `terminalAuthority="surface"`，无效候选只提交一个 `failed`；terminal receipt
+  必须匹配 run ID、事件类型、backend 和 payload。terminal 提交失败时保留
+  `localCommit=false`，不得把 Native 记录清理掉，也不得再写第二个终态。
+- Structured Knowledge 的三后端入口同样执行 Native 先登记、本地结果先提交、
+  Native 后结算。cleanup 基础设施失败只形成可恢复状态，不反转已提交的业务结果。
+- Settings 普通保存与 workflow CAS 共用 canonical persistence helper。固定顺序为：
+  完整 Conversation pass 1、History 投影与压缩、压缩后 Conversation pass 2、
+  最后 `data.json`。History 中出现的记录始终已有 durable Conversation source；
+  多会话部分失败时立即同步已耐久前缀，不覆盖并发 live 修改。
+- Prompt Enhancer、Memory Curator 和 Settings backend probe 已统一接入
+  ephemeral Utility lifecycle；Prompt 前完成 Native 登记，产品结果或正式 Memory
+  transaction 耐久后才允许 settlement 与 cleanup。
+- Provider endpoint identity 统一 canonicalize：安全 origin 和内部 transport
+  sentinel 可直接保留，带凭据、scope、query、fragment 或未知 opaque 内容只保存
+  幂等 `endpoint-sha256`。登记端与 cleanup adapter 使用同一 identity。
+- Hermes ACP descriptor 由 runtime 原样传入 Native Store，Editor 与 generic
+  Knowledge 保存真实 `session / provider-persistent / acp-stdio`；成功路径缺少
+  callback 时 fail closed，旧记录缺少 `transport` 仍兼容。
+- Hermes production factory 的测试 fixture 改用 `/bin/sh` 同步启动收据，消除
+  500ms ACP 初始化预算下二次 Node 冷启动造成的假 `ENOENT`，同时继续证明 ACP
+  只尝试一次且不会降级执行 CLI Prompt。
+- 当前完整 diff 已通过 13 组末轮 Phase 1 focused suites、`npm run test`、
+  `npm run typecheck`、`npm run build`、`npm run lint`、`npm run check:release`
+  和 `git diff --check`。Lint baseline 相对当前分支已提交基线从 985 向下收紧为
+  961，无新增 finding；
+  明确暂存预期文件后，`npm run check:public` 通过；`.codex-memory` 和
+  `node_modules` 共享软链接未进入暂存区。当前 checkpoint 未部署。
+- 本阶段没有修改真实 Conversation、Run、Raw、Native backlog 或 Vault 数据，
+  也没有执行 retention、迁移或真实 Native cleanup。

@@ -1,3 +1,8 @@
+const testGlobal = globalThis as unknown as { window?: Window };
+if (!testGlobal.window) {
+  testGlobal.window = globalThis as unknown as Window;
+}
+
 export class Notice {
   constructor(public readonly message: string, public readonly timeout?: number) {}
 }

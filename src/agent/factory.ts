@@ -4,7 +4,17 @@ import { requireDirectOpenCodeAgent } from "../core/opencode-agent-selection";
 import { ensureOpenCodeModelSupportsFiles, requiredModalityForMime, selectOpenCodeModelForTask } from "../core/opencode-models";
 import { resolveHermesCommand } from "../core/hermes-models";
 import type { CodexForObsidianSettings } from "../settings/settings";
-import type { AgentBackend, AgentBackendKind, AgentConnectionStatus, AgentInputModality, AgentModelInfo, AgentPromptPart, AgentTaskInput, AgentTaskResult } from "./types";
+import {
+  NativeSessionStaleError,
+  type AgentBackend,
+  type AgentBackendKind,
+  type AgentConnectionStatus,
+  type AgentInputModality,
+  type AgentModelInfo,
+  type AgentPromptPart,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "./types";
 import type { AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
 import { AcpAgentRuntime } from "./acp-runtime";
 import { createAgentEventRuntimeWithFallback } from "./event-task";
@@ -24,6 +34,13 @@ export function createAgentTaskRuntime(input: AgentRuntimeFactoryInput): AgentTa
   if (input.backend === "codex-cli") return createCodexTaskRuntime(input);
   if (input.backend === "opencode") return createOpenCodeTaskRuntime(input);
   return createHermesTaskRuntime(input);
+}
+
+export function hermesAcpLaunchArgs(profile: string): string[] {
+  const selectedProfile = profile.trim();
+  return selectedProfile
+    ? ["--profile", selectedProfile, "acp"]
+    : ["acp"];
 }
 
 function createCodexTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRuntime {
@@ -117,7 +134,13 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
       const prepared = await prepareTask(task);
       const { selectedAgent, selectedModel, sources, parts } = prepared;
-      if (task.system) {
+      if (task.requireNativeSessionResume && task.nativeSessionId?.trim()) {
+        throw new NativeSessionStaleError(
+          `OpenCode Native session requires Harness retirement before CLI fallback: ${task.nativeSessionId.trim()}`,
+          task.nativeSessionId.trim()
+        );
+      }
+      if (task.system || task.requireNativeRegistrationBeforePrompt) {
         const session = await backend.startSession({
           title: "EchoInk Prompt Enhancer",
           ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
@@ -125,7 +148,7 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
           permission: task.permission ?? "read-only",
           writableRoots: task.writableRoots
         });
-        task.onRunId?.(session.sessionId);
+        await task.onRunId?.(session.sessionId);
         try {
           const text = await backend.sendPrompt({
             sessionId: session.sessionId,
@@ -141,7 +164,9 @@ function createOpenCodeTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRu
             ...(selectedModel ? { effectiveModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {})
           };
         } finally {
-          await backend.deleteSession(session.sessionId).catch(() => undefined);
+          if (!task.requireNativeRegistrationBeforePrompt) {
+            await backend.deleteSession(session.sessionId).catch(() => undefined);
+          }
         }
       }
       if (task.nativeSessionId && await backend.hasSession(task.nativeSessionId)) {
@@ -259,14 +284,19 @@ function createHermesTaskRuntime(input: AgentRuntimeFactoryInput): AgentTaskRunt
     backend: "hermes",
     command: {
       command: () => resolveHermesCommand(input.settings.agents.hermes.cliPath),
-      args: () => ["acp"],
+      args: () => hermesAcpLaunchArgs(
+        input.settings.agents.hermes.profile
+      ),
       cwd: input.vaultPath,
       env: input.settings.agents.hermes.apiKey.trim() ? { HERMES_API_KEY: input.settings.agents.hermes.apiKey.trim() } : undefined
     }
   });
   return createAgentEventRuntimeWithFallback(fallbackRuntime, richRuntime, {
     exactWriteFenceSupport: "unsupported",
-    exactWriteFenceUnavailableReason: "Hermes CLI/ACP 当前不能证明 writableRoots 的精确写隔离。"
+    exactWriteFenceUnavailableReason: "Hermes CLI/ACP 当前不能证明 writableRoots 的精确写隔离。",
+    nativeRegistrationBeforePromptSupport: "rich-only",
+    nativeRegistrationBeforePromptUnavailableReason:
+      "Hermes CLI 无法在 Prompt 前提供 backend-owned Native execution ID。"
   });
 }
 

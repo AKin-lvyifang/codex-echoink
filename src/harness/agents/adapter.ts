@@ -65,11 +65,50 @@ export interface AgentRunRequest {
    */
   workspace?: HarnessRunRequest["workspace"];
   nativeSessionId?: string;
+  nativeThreadId?: string;
+  /**
+   * True when the Harness owns the Conversation-to-Native binding for this
+   * run. Managed adapters must use only the explicit native IDs above and
+   * must not read or mutate a process-global "current" native session.
+   */
+  nativeBindingManagedByHarness?: boolean;
+  /**
+   * Durable registration barrier. Adapters call and await it immediately
+   * after a Native ID is known and before any prompt is submitted.
+   */
+  registerNativeExecution?: (native: NativeExecutionRef) => Promise<void>;
   input: HarnessUserInput;
   permissions: HarnessPermissionPolicy;
   resources: ResourceSelectionSnapshot;
   context: ContextBundle;
   outputContract: OutputContract;
+}
+
+export const AGENT_NATIVE_SESSION_STALE_ERROR_CODE = "AGENT_NATIVE_SESSION_STALE";
+
+export class AgentNativeSessionStaleError extends Error {
+  readonly code = AGENT_NATIVE_SESSION_STALE_ERROR_CODE;
+
+  constructor(
+    message: string,
+    readonly nativeExecutionId: string,
+    cause?: unknown
+  ) {
+    super(message);
+    this.name = "AgentNativeSessionStaleError";
+    if (cause !== undefined) Object.assign(this, { cause });
+  }
+}
+
+export function isAgentNativeSessionStaleError(
+  error: unknown
+): error is AgentNativeSessionStaleError {
+  return error instanceof AgentNativeSessionStaleError
+    || (
+      typeof error === "object"
+      && error !== null
+      && (error as { code?: unknown }).code === AGENT_NATIVE_SESSION_STALE_ERROR_CODE
+    );
 }
 
 export interface AgentRunResult {

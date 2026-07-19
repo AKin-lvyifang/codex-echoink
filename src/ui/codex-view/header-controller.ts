@@ -43,7 +43,6 @@ export interface CodexHeaderHost {
   refreshArticleUnderstandingFromPanel(): Promise<void>;
   openPluginSettings(): void;
   applyStatus(): void;
-  prewarmActiveThread(): void;
   clearEditorActionStatusTimers(): void;
 }
 
@@ -111,7 +110,6 @@ export async function selectAgentBackend(host: CodexHeaderHost, backend: AgentBa
     new Notice(`Agent 切换失败：${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
-  if (backend === "codex-cli") host.prewarmActiveThread();
   return true;
 }
 

@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import type { AgentBackendKind, AgentPromptPart, AgentTaskInput, AgentTaskResult } from "./types";
+import { isNativeRunRegistrationError, type AgentBackendKind, type AgentPromptPart, type AgentTaskInput, type AgentTaskResult } from "./types";
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentRichStreamRuntime } from "./runtime";
 import { normalizeRichStreamEvents } from "./rich-stream";
@@ -33,6 +33,7 @@ const ACP_METHOD_CANDIDATES = {
   cancel: ["session/cancel", "cancel"],
   initialize: ["initialize"],
   newSession: ["session/new", "newSession"],
+  setModel: ["session/set_model"],
   prompt: ["session/prompt", "prompt"]
 } as const;
 
@@ -150,6 +151,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
     let usage: Record<string, unknown> | undefined;
     let promptSubmitted = false;
     let sessionId = "";
+    const selectedModel = selectedAcpModel(input.model);
     const abortActiveTransport = (): void => {
       const transport = this.transport;
       if (transport && sessionId) transport.notify(ACP_METHOD_CANDIDATES.cancel[0], { sessionId });
@@ -190,9 +192,25 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
       sessionId = stringValue(sessionRecord?.sessionId ?? sessionRecord?.id);
       if (!sessionId) throw new Error("ACP backend did not return a sessionId.");
       this.activeRunId = sessionId;
-      input.onRunId?.(sessionId);
+      await input.onRunId?.(sessionId, {
+        kind: "session",
+        persistence: "provider-persistent",
+        transport: "acp-stdio"
+      });
       await emitNow({ type: "run_started", runId: sessionId });
       throwIfAborted(input.abortSignal);
+      if (selectedModel) {
+        const acknowledgement = await this.requestWithFallback("setModel", {
+          sessionId,
+          modelId: acpModelSelectionId(selectedModel)
+        }, input.timeoutMs);
+        if (acknowledgement === null || acknowledgement === undefined) {
+          throw new Error(
+            `${this.kind} ACP did not acknowledge the selected model ${selectedModel.providerId}/${selectedModel.modelId}`
+          );
+        }
+        throwIfAborted(input.abortSignal);
+      }
       this.deferProviderEvents = true;
       const promptRequest = this.requestWithFallback("prompt", {
         sessionId,
@@ -232,9 +250,15 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
         text: outputText,
         data: terminalData
       });
-      return { text: outputText, runId: sessionId, usage, terminalData };
-    } catch (error) {
-      const cancelled = Boolean(input.abortSignal?.aborted);
+      return {
+        text: outputText,
+        runId: sessionId,
+        usage,
+        terminalData,
+        ...(selectedModel ? { effectiveModel: selectedModel } : {})
+      };
+    } catch (error: unknown) {
+      const cancelled = Boolean(input.abortSignal?.aborted) && !isNativeRunRegistrationError(error);
       const normalizedError = cancelled ? createCancelledError() : error;
       const message = normalizedError instanceof Error ? normalizedError.message : String(normalizedError);
       await this.eventQueue.catch(swallowError(`${this.options.backend} ACP event queue cleanup`));
@@ -609,6 +633,26 @@ class AcpJsonRpcError extends Error {
   }
 }
 
+function selectedAcpModel(
+  model: AgentTaskInput["model"]
+): NonNullable<AgentTaskInput["model"]> | undefined {
+  if (!model) return undefined;
+  const providerId = model.providerId.trim();
+  const modelId = model.modelId.trim();
+  if (!providerId || !modelId) {
+    throw new Error(
+      "ACP selected model requires both providerId and modelId"
+    );
+  }
+  return { providerId, modelId };
+}
+
+function acpModelSelectionId(
+  model: NonNullable<AgentTaskInput["model"]>
+): string {
+  return `${model.providerId}:${model.modelId}`;
+}
+
 function buildAcpPromptBlocks(input: AgentTaskInput): Array<Record<string, unknown>> {
   const blocks: Array<Record<string, unknown>> = [{
     type: "text",
@@ -721,7 +765,7 @@ function contentAvailability(present: boolean, value: unknown): "provided" | "em
   if (!present || value === null || value === undefined) return "unavailable";
   if (value === "") return "empty";
   if (Array.isArray(value) && value.length === 0) return "empty";
-  if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) return "empty";
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return "empty";
   return "provided";
 }
 

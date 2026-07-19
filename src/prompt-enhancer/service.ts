@@ -1,8 +1,8 @@
 import { CodexService, type TurnOptions } from "../core/codex-service";
 import { createHarnessAgentAdapter } from "../harness/agents/adapter-factory";
-import type { AgentAdapter, AgentRunResult } from "../harness/agents/adapter";
+import type { AgentAdapter } from "../harness/agents/adapter";
 import { CodexRichNotificationHub } from "../harness/agents/adapters/codex-rich-notification-hub";
-import type { HarnessRunResult } from "../harness/contracts/run";
+import { runEphemeralUtility } from "../harness/native/ephemeral-utility-lifecycle";
 import type CodexForObsidianPlugin from "../main";
 import {
   DEFAULT_CODEX_UTILITY_MODEL,
@@ -28,6 +28,7 @@ const NO_TOOLS = { read: false, write: false, edit: false, bash: false };
 export interface RunPromptEnhancerInput {
   plugin: CodexForObsidianPlugin;
   prompt: string;
+  signal?: AbortSignal;
   onRunCreated?: (runId: string) => void;
   onTurnStarted?: (turnId: string) => void;
 }
@@ -46,17 +47,12 @@ export function promptEnhancerBackendCapabilities(backend: AgentBackendKind): Pr
 }
 
 export async function runPromptEnhancer(input: RunPromptEnhancerInput): Promise<string> {
-  const enhancer = input.plugin.settings.promptEnhancer;
+  throwIfPromptEnhancerAborted(input.signal);
   const backend = resolvePromptEnhancerBackend(input.plugin.settings);
   const runId = newId("prompt-enhancer-run");
-  input.onRunCreated?.(runId);
-  const result = backend === "codex-cli"
+  return backend === "codex-cli"
     ? await runCodexPromptEnhancer(input, runId)
     : await runTaskPromptEnhancer({ ...input, backend }, runId);
-  const cleaned = cleanPromptEnhancerOutput(result);
-  if (!cleaned.trim()) throw new Error("增强结果为空");
-  if (cleaned.length > Math.max(4000, enhancer.maxInputChars * 2)) throw new Error("增强结果过长，请缩短输入后重试");
-  return cleaned;
 }
 
 export function resolvePromptEnhancerBackend(settings: CodexForObsidianSettings): AgentBackendKind {
@@ -97,6 +93,7 @@ export function resolvePromptEnhancerCodexProvider(settings: CodexForObsidianSet
 async function runCodexPromptEnhancer(input: RunPromptEnhancerInput, runId: string): Promise<string> {
   const plugin = input.plugin;
   const settings = plugin.settings.promptEnhancer;
+  throwIfPromptEnhancerAborted(input.signal);
   const workspace = await createPromptEnhancerRuntimeWorkspace("codex-cli");
   const hub = new CodexRichNotificationHub();
   const { providerMode, activeApiProvider } = resolvePromptEnhancerCodexProvider(plugin.settings);
@@ -114,7 +111,9 @@ async function runCodexPromptEnhancer(input: RunPromptEnhancerInput, runId: stri
   });
   let adapter: AgentAdapter | null = null;
   try {
+    throwIfPromptEnhancerAborted(input.signal);
     const status = await service.connect();
+    throwIfPromptEnhancerAborted(input.signal);
     if (!status.connected) throw new Error(status.errors[0] || "Codex 未连接");
     const turnOptions: TurnOptions = {
       cwd: workspace.cwd,
@@ -144,51 +143,64 @@ async function runCodexPromptEnhancer(input: RunPromptEnhancerInput, runId: stri
         resumeThread: async (threadId, options) => await service.resumeThread(threadId, options ?? turnOptions),
         startTurn: async (threadId, turnInput, options) => {
           const turnId = await service.startTurn(threadId, turnInput, options ?? turnOptions);
-          input.onTurnStarted?.(turnId);
+          if (!input.signal?.aborted) input.onTurnStarted?.(turnId);
           return turnId;
         },
         interruptTurn: async (threadId, turnId) => await service.interruptTurn(threadId, turnId),
-        nativeRefContext: {
-          deviceKey: "prompt-enhancer",
-          vaultId: workspace.cwd,
-          providerEndpoint: providerMode === "custom-api" ? activeApiProvider?.baseUrl : "codex-login"
-        }
+        archiveThread: async (threadId) => await service.archiveThread(threadId),
+        nativeRefContext: plugin.getNativeExecutionRefContext("codex-cli")
       }
     });
-    const harnessResult = await plugin.runHarnessWithAdapter({
+    const request = {
+      runId,
+      sessionId: `${ENHANCE_PROMPT_AGENT_NAME}:${runId}`,
+      surface: "chat" as const,
+      workflow: "prompt.enhance" as const,
+      backendId: "codex-cli",
+      workspace: {
+        vaultPath: workspace.cwd,
+        cwd: workspace.cwd
+      },
+      input: {
+        text: input.prompt,
+        attachments: []
+      },
+      permissions: {
+        mode: "read-only" as const,
+        writableRoots: [],
+        requireApproval: true
+      },
+      resourceSelection: NO_RESOURCES,
+      memoryPolicy: {
+        enabled: false,
+        maxItems: 0
+      },
+      outputContract: {
+        kind: "plain-text" as const
+      }
+    };
+    return await runEphemeralUtility({
+      host: plugin,
       adapter,
-      request: {
-        runId,
-        sessionId: `${ENHANCE_PROMPT_AGENT_NAME}:${runId}`,
-        surface: "chat",
-        workflow: "prompt.enhance",
-        backendId: "codex-cli",
-        workspace: {
-          vaultPath: workspace.cwd,
-          cwd: workspace.cwd
-        },
-        input: {
-          text: input.prompt,
-          attachments: []
-        },
-        permissions: {
-          mode: "read-only",
-          writableRoots: [],
-          requireApproval: true
-        },
-        resourceSelection: NO_RESOURCES,
-        memoryPolicy: {
-          enabled: false,
-          maxItems: 0
-        },
-        outputContract: {
-          kind: "plain-text"
+      request,
+      signal: input.signal,
+      timeoutMs: settings.timeoutMs,
+      timeoutMessage: "增强提示词响应超时",
+      onHarnessStarted: () => input.onRunCreated?.(runId),
+      awaitResult: async () => {
+        if (!adapter?.awaitResult) {
+          throw new Error("当前 Agent 不支持异步结果收口");
         }
-      }
+        return await adapter.awaitResult(runId);
+      },
+      validateOutput: (text) => validatePromptEnhancerCandidateOutput(
+        text,
+        settings.maxInputChars
+      ),
+      isCancellation: isPromptEnhancerCancellation,
+      logLabel: "Prompt Enhancer"
     });
-    return await resolveHarnessText(adapter, runId, harnessResult, settings.timeoutMs, "增强提示词响应超时");
   } finally {
-    await adapter?.dispose().catch(() => undefined);
     await service.disconnect().catch(() => undefined);
     await workspace.cleanup().catch(() => undefined);
   }
@@ -198,20 +210,19 @@ async function runTaskPromptEnhancer(input: RunPromptEnhancerInput & { backend: 
   const plugin = input.plugin;
   const enhancer = plugin.settings.promptEnhancer;
   const taskSettings = promptEnhancerTaskSettings(plugin.settings, input.backend);
+  throwIfPromptEnhancerAborted(input.signal);
   const workspace = await createPromptEnhancerRuntimeWorkspace(input.backend);
   const backendAgent = enhancer.agent.trim() || (input.backend === "opencode" ? ENHANCE_PROMPT_AGENT_NAME : "");
   const model = resolvePromptEnhancerModel(plugin.settings, input.backend);
   const providerId = resolvePromptEnhancerProviderId(plugin.settings, input.backend);
   let adapter: AgentAdapter | null = null;
   try {
+    throwIfPromptEnhancerAborted(input.signal);
     adapter = createHarnessAgentAdapter({
       backendId: input.backend,
       settings: taskSettings,
       vaultPath: workspace.cwd,
-      nativeRefContext: {
-        ...plugin.getNativeExecutionRefContext(input.backend),
-        vaultId: workspace.cwd
-      },
+      nativeRefContext: plugin.getNativeExecutionRefContext(input.backend),
       task: {
         system: ENHANCE_META_PROMPT,
         timeoutMs: enhancer.timeoutMs,
@@ -219,84 +230,85 @@ async function runTaskPromptEnhancer(input: RunPromptEnhancerInput & { backend: 
         ...(providerId && model ? { model: { providerId, modelId: model } } : {}),
         ...(backendAgent ? { agent: backendAgent } : {}),
         ...(enhancer.agent.trim() ? { profile: enhancer.agent.trim() } : {}),
-        requireDirectAgent: input.backend === "opencode"
+        requireDirectAgent: input.backend === "opencode",
+        abortSignal: input.signal
       }
     });
-    const harnessResult = await withTimeout(plugin.runHarnessWithAdapter({
-      adapter,
-      request: {
-        runId,
-        sessionId: `${ENHANCE_PROMPT_AGENT_NAME}:${runId}`,
-        surface: "chat",
-        workflow: "prompt.enhance",
-        backendId: input.backend,
-        workspace: {
-          vaultPath: workspace.cwd,
-          cwd: workspace.cwd
-        },
-        input: {
-          text: input.prompt,
-          attachments: []
-        },
-        permissions: {
-          mode: "read-only",
-          writableRoots: [],
-          requireApproval: true
-        },
-        resourceSelection: NO_RESOURCES,
-        memoryPolicy: {
-          enabled: false,
-          maxItems: 0
-        },
-        outputContract: {
-          kind: "plain-text"
-        }
+    throwIfPromptEnhancerAborted(input.signal);
+    const request = {
+      runId,
+      sessionId: `${ENHANCE_PROMPT_AGENT_NAME}:${runId}`,
+      surface: "chat" as const,
+      workflow: "prompt.enhance" as const,
+      backendId: input.backend,
+      workspace: {
+        vaultPath: workspace.cwd,
+        cwd: workspace.cwd
+      },
+      input: {
+        text: input.prompt,
+        attachments: []
+      },
+      permissions: {
+        mode: "read-only" as const,
+        writableRoots: [],
+        requireApproval: true
+      },
+      resourceSelection: NO_RESOURCES,
+      memoryPolicy: {
+        enabled: false,
+        maxItems: 0
+      },
+      outputContract: {
+        kind: "plain-text" as const
       }
-    }), enhancer.timeoutMs, "增强提示词响应超时", async () => await adapter?.cancel(runId));
-    return await resolveHarnessText(adapter, runId, harnessResult, enhancer.timeoutMs, "增强提示词响应超时");
+    };
+    return await runEphemeralUtility({
+      host: plugin,
+      adapter,
+      request,
+      signal: input.signal,
+      timeoutMs: enhancer.timeoutMs,
+      timeoutMessage: "增强提示词响应超时",
+      onHarnessStarted: () => input.onRunCreated?.(runId),
+      awaitResult: async () => {
+        if (!adapter?.awaitResult) {
+          throw new Error("当前 Agent 不支持异步结果收口");
+        }
+        return await adapter.awaitResult(runId);
+      },
+      validateOutput: (text) => validatePromptEnhancerCandidateOutput(
+        text,
+        enhancer.maxInputChars
+      ),
+      isCancellation: isPromptEnhancerCancellation,
+      logLabel: "Prompt Enhancer"
+    });
   } finally {
-    await adapter?.dispose().catch(() => undefined);
     await workspace.cleanup().catch(() => undefined);
   }
 }
 
-async function resolveHarnessText(adapter: AgentAdapter, runId: string, result: HarnessRunResult, timeoutMs: number, timeoutMessage: string): Promise<string> {
-  if (result.status === "completed") return result.outputText ?? "";
-  if (result.status === "running") {
-    if (typeof adapter.awaitResult !== "function") throw new Error("当前 Agent 不支持异步结果收口");
-    const awaited = await withTimeout(
-      adapter.awaitResult(runId),
-      timeoutMs,
-      timeoutMessage,
-      async () => await adapter.cancel(runId)
-    );
-    return agentResultText(awaited);
+export function validatePromptEnhancerCandidateOutput(
+  value: string,
+  maxInputChars: number
+): { value: string; terminalText: string } {
+  const cleaned = cleanPromptEnhancerOutput(value);
+  if (!cleaned.trim()) throw new Error("增强结果为空");
+  if (cleaned.length > Math.max(4000, maxInputChars * 2)) {
+    throw new Error("增强结果过长，请缩短输入后重试");
   }
-  throw new Error(result.error || "增强提示词任务失败");
+  return { value: cleaned, terminalText: cleaned };
 }
 
-function agentResultText(result: AgentRunResult): string {
-  if (result.status === "completed") return result.outputText ?? "";
-  throw new Error(result.error || (result.status === "cancelled" ? "增强提示词已中断" : "增强提示词任务失败"));
+function isPromptEnhancerCancellation(error: unknown): boolean {
+  return /已中断|已取消|cancelled|canceled/i.test(
+    error instanceof Error ? error.message : String(error)
+  );
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, onTimeout?: () => Promise<void>): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    const timer = globalThis.setTimeout(() => {
-      void onTimeout?.().catch(() => undefined);
-      reject(new Error(message));
-    }, Math.max(1000, timeoutMs));
-    promise.then(
-      (value) => {
-        globalThis.clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        globalThis.clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
+function throwIfPromptEnhancerAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("增强提示词已中断");
 }
 
 function promptEnhancerTaskSettings(settings: CodexForObsidianSettings, backend: Exclude<AgentBackendKind, "codex-cli">): CodexForObsidianSettings {

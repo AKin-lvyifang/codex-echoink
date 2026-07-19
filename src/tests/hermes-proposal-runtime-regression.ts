@@ -46,6 +46,13 @@ import {
   KnowledgeBaseAgentTaskService
 } from "../knowledge-base/agent-task-service";
 import { isTrustedKnowledgeAgentNativeTerminationReceipt } from "../knowledge-base/native-termination";
+import { HermesProposalHostAgentAdapter } from "../harness/agents/adapters/hermes-proposal-host-adapter";
+import type { HarnessEvent } from "../harness/contracts/event";
+import type { NativeExecutionRecord } from "../harness/contracts/native-execution";
+import type { HarnessRunWithAdapterInput } from "../harness/kernel/harness-kernel";
+import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
+import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
+import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 
 const FULL_LOCAL_COMMIT = "1c473bc6a6a0f62e4c264fa0c59ce58606100301";
@@ -114,9 +121,260 @@ export async function runHermesProposalRuntimeRegressionTests(): Promise<void> {
   await testMaterializerNewPageExistingPageAndCasRace();
   await testMaterializerRejectsSymlinkHardlinkSpecialAndParentEscape();
   await testTimeoutCancelAndNeverSettlingRunner();
+  await testHermesProposalHostReceiptAndCancellationMatrix();
   await testServiceRunsTrustedProposalTransportAndMaterializesShadow();
+  await testServiceRequiresDurableRegistrationBeforeHermesProposalSubmission();
   await testServiceCancelDuringCapabilityProbe();
   await testServiceTimeoutRejectsLateProposalBeforeMaterialization();
+}
+
+async function testHermesProposalHostReceiptAndCancellationMatrix(): Promise<void> {
+  const failurePhases = [
+    {
+      name: "before-prompt",
+      promptSubmissions: 0,
+      disposition: "not-started" as const
+    },
+    {
+      name: "after-process-start",
+      promptSubmissions: 1,
+      disposition: "exited" as const
+    }
+  ];
+
+  for (const testCase of failurePhases) {
+    const runId = `hermes-host-failure-${testCase.name}`;
+    const lifecycleOrder: string[] = [];
+    const harness = hermesHarnessFixture({
+      onLedgerCommitted: (event) => {
+        if (isHarnessTerminalEvent(event)) {
+          lifecycleOrder.push(`terminal:${event.type}`);
+        }
+      }
+    });
+    let promptSubmissions = 0;
+    let registeredNativeId = "";
+    const adapter = new HermesProposalHostAgentAdapter({
+      attemptId: `${runId}-attempt`,
+      modelId: "model",
+      nativeRefContext: {
+        deviceKey: "test-device",
+        vaultId: "/vault"
+      },
+      persistProcessDisposition: async ({ native, receipt }) => {
+        assert.equal(native.id, registeredNativeId);
+        assert.equal(receipt.executionId, native.id);
+        lifecycleOrder.push(`receipt:${receipt.state}`);
+      },
+      isCancellation: (_error, signal) => signal.aborted,
+      execute: async ({ recordProcessDisposition }) => {
+        promptSubmissions += testCase.promptSubmissions;
+        await recordProcessDisposition(testCase.disposition);
+        throw new Error(`Hermes host ${testCase.name} failure`);
+      }
+    });
+
+    try {
+      const result = await harness.runHarnessWithAdapter({
+        adapter,
+        request: hermesProposalHostHarnessRequest(runId),
+        registerNativeExecution: async ({ native }) => {
+          registeredNativeId = native.id;
+          return { recordId: `native-record:${native.id}` };
+        }
+      });
+      const events = await harness.ledger.readRun(runId);
+
+      assert.equal(result.status, "failed");
+      assert.match(result.error ?? "", new RegExp(`${testCase.name} failure`));
+      assert.equal(promptSubmissions, testCase.promptSubmissions);
+      assert.deepEqual(
+        terminalEventTypes(events),
+        ["run.failed"],
+        `${testCase.name} must publish one failed terminal`
+      );
+      assert.deepEqual(
+        lifecycleOrder,
+        [`receipt:${testCase.disposition}`, "terminal:run.failed"],
+        `${testCase.name} disposition must commit before run.failed`
+      );
+    } finally {
+      await adapter.dispose();
+    }
+  }
+
+  {
+    const runId = "hermes-host-not-started-cannot-complete";
+    const lifecycleOrder: string[] = [];
+    const harness = hermesHarnessFixture({
+      onLedgerCommitted: (event) => {
+        if (isHarnessTerminalEvent(event)) {
+          lifecycleOrder.push(`terminal:${event.type}`);
+        }
+      }
+    });
+    const invalidCompletionAbortController = new AbortController();
+    const adapter = new HermesProposalHostAgentAdapter({
+      attemptId: `${runId}-attempt`,
+      modelId: "model",
+      externalAbortSignal: invalidCompletionAbortController.signal,
+      nativeRefContext: {
+        deviceKey: "test-device",
+        vaultId: "/vault"
+      },
+      persistProcessDisposition: async ({ receipt }) => {
+        lifecycleOrder.push(`receipt:${receipt.state}`);
+      },
+      isCancellation: (_error, signal) => signal.aborted,
+      execute: async ({ recordProcessDisposition }) => {
+        await recordProcessDisposition("not-started");
+        invalidCompletionAbortController.abort(
+          "abort-raced-with-invalid-success"
+        );
+        return { text: "must not become a successful Harness result" };
+      }
+    });
+
+    try {
+      const result = await harness.runHarnessWithAdapter({
+        adapter,
+        request: hermesProposalHostHarnessRequest(runId),
+        registerNativeExecution: async ({ native }) => ({
+          recordId: `native-record:${native.id}`
+        })
+      });
+      const events = await harness.ledger.readRun(runId);
+
+      assert.equal(
+        result.status,
+        "failed",
+        "a not-started process disposition cannot authorize run.completed"
+      );
+      assert.match(
+        result.error ?? "",
+        /cannot complete.*not-started disposition/i
+      );
+      assert.deepEqual(terminalEventTypes(events), ["run.failed"]);
+      assert.deepEqual(
+        lifecycleOrder,
+        ["receipt:not-started", "terminal:run.failed"],
+        "the durable not-started receipt must precede the unique failed terminal"
+      );
+    } finally {
+      await adapter.dispose();
+    }
+  }
+
+  for (const cancellationSource of [
+    "external-abort",
+    "adapter-cancel",
+    "adapter-dispose"
+  ] as const) {
+    for (const persistenceFails of [false, true]) {
+      const runId = [
+        "hermes-host-confirmed-exit",
+        cancellationSource,
+        persistenceFails ? "receipt-fails" : "receipt-commits"
+      ].join("-");
+      const lifecycleOrder: string[] = [];
+      const externalAbortController = new AbortController();
+      const harness = hermesHarnessFixture({
+        onLedgerCommitted: (event) => {
+          if (isHarnessTerminalEvent(event)) {
+            lifecycleOrder.push(`terminal:${event.type}`);
+          }
+        }
+      });
+      let receiptWriteAttempts = 0;
+      let promptSubmissions = 0;
+      let markExecutionStarted!: () => void;
+      const executionStarted = new Promise<void>((resolve) => {
+        markExecutionStarted = resolve;
+      });
+      const adapter = new HermesProposalHostAgentAdapter({
+        attemptId: `${runId}-attempt`,
+        modelId: "model",
+        externalAbortSignal: externalAbortController.signal,
+        nativeRefContext: {
+          deviceKey: "test-device",
+          vaultId: "/vault"
+        },
+        persistProcessDisposition: async ({ native, receipt }) => {
+          receiptWriteAttempts += 1;
+          assert.equal(receipt.executionId, native.id);
+          lifecycleOrder.push(`receipt-attempt:${receipt.state}`);
+          if (persistenceFails) {
+            throw new Error(`${cancellationSource} durable receipt rejected`);
+          }
+          lifecycleOrder.push(`receipt:${receipt.state}`);
+        },
+        isCancellation: (_error, signal) => signal.aborted,
+        execute: async ({ abortSignal, recordProcessDisposition }) => {
+          promptSubmissions += 1;
+          markExecutionStarted();
+          await waitForAbortSignal(abortSignal);
+          await recordProcessDisposition("exited");
+          throw new Error(`${cancellationSource} cancelled after confirmed exit`);
+        }
+      });
+
+      try {
+        const run = harness.runHarnessWithAdapter({
+          adapter,
+          request: hermesProposalHostHarnessRequest(runId),
+          registerNativeExecution: async ({ native }) => ({
+            recordId: `native-record:${native.id}`
+          })
+        });
+        await executionStarted;
+        if (cancellationSource === "external-abort") {
+          externalAbortController.abort("external-abort-test");
+        } else if (cancellationSource === "adapter-cancel") {
+          await adapter.cancel(runId);
+        } else {
+          await adapter.dispose();
+        }
+        const result = await run;
+        const events = await harness.ledger.readRun(runId);
+        const expectedTerminal = persistenceFails
+          ? "run.failed" as const
+          : "run.cancelled" as const;
+
+        assert.equal(promptSubmissions, 1);
+        assert.equal(receiptWriteAttempts, 1);
+        assert.equal(
+          result.status,
+          persistenceFails ? "failed" : "cancelled",
+          `${cancellationSource} must preserve receipt persistence authority`
+        );
+        assert.deepEqual(
+          terminalEventTypes(events),
+          [expectedTerminal],
+          `${cancellationSource} must publish exactly one terminal`
+        );
+        assert.deepEqual(
+          lifecycleOrder,
+          persistenceFails
+            ? ["receipt-attempt:exited", "terminal:run.failed"]
+            : [
+              "receipt-attempt:exited",
+              "receipt:exited",
+              "terminal:run.cancelled"
+            ],
+          `${cancellationSource} receipt outcome must settle before the terminal`
+        );
+        if (persistenceFails) {
+          assert.match(
+            result.error ?? "",
+            /host process disposition could not be durably recorded/i,
+            `${cancellationSource} receipt failure must not degrade to cancellation`
+          );
+        }
+      } finally {
+        await adapter.dispose();
+      }
+    }
+  }
 }
 
 async function testContractRejectsUnsafePathsAndAllowsNewPages(): Promise<void> {
@@ -1368,10 +1626,16 @@ async function testServiceRunsTrustedProposalTransportAndMaterializesShadow(): P
       }
     });
     const identityDependencies = fakeIdentityDependencies();
+    const harness = hermesHarnessFixture();
     const service = new KnowledgeBaseAgentTaskService({
       settings,
       getVaultPath: () => liveVaultPath,
-      getNativeExecutionRefContext: () => ({})
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => undefined,
+      ...harness
     } as any, {
       isCancelRequested: () => false
     }, {
@@ -1438,6 +1702,17 @@ async function testServiceRunsTrustedProposalTransportAndMaterializesShadow(): P
     assert.equal(output.backend, "hermes");
     assert.equal(output.attemptId, attemptId);
     assert.match(output.harnessRunId ?? "", /^knowledge-hermes-/);
+    const events = await harness.ledger.readRun(output.harnessRunId!);
+    assert.equal(events[0]?.type, "run.created");
+    assert.equal(events[1]?.type, "run.started");
+    assert.deepEqual(
+      events.filter((event) =>
+        event.type === "run.completed"
+        || event.type === "run.failed"
+        || event.type === "run.cancelled"
+      ).map((event) => event.type),
+      ["run.completed"]
+    );
     assert.equal(
       await readFile(path.join(shadowVaultPath, pagePath), "utf8"),
       "# Service Topic\n\n- 这是需要提炼的事实。来源：[[raw/source.md]]\n"
@@ -1449,6 +1724,331 @@ async function testServiceRunsTrustedProposalTransportAndMaterializesShadow(): P
     await assert.rejects(
       () => lstat(path.join(liveVaultPath, pagePath)),
       (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT"
+    );
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+}
+
+async function testServiceRequiresDurableRegistrationBeforeHermesProposalSubmission(): Promise<void> {
+  const rootPath = await createRoot("service-native-registration");
+  try {
+    const liveVaultPath = path.join(rootPath, "live");
+    const controlRootPath = path.join(rootPath, "control");
+    const shadowVaultPath = path.join(rootPath, "shadow");
+    const sourcePath = path.join(shadowVaultPath, "raw", "source.md");
+    const sourceContent = "durable registration source";
+    const sourceSha256 = fingerprint(sourceContent);
+    const exactRoots = [
+      path.join(shadowVaultPath, "wiki"),
+      path.join(shadowVaultPath, "projects"),
+      path.join(shadowVaultPath, "outputs", "maintenance"),
+      path.join(shadowVaultPath, "inbox")
+    ];
+    await Promise.all([
+      mkdir(liveVaultPath, { recursive: true }),
+      mkdir(controlRootPath, { recursive: true }),
+      mkdir(path.dirname(sourcePath), { recursive: true }),
+      ...exactRoots.map((root) => mkdir(root, { recursive: true })),
+      mkdir(path.join(rootPath, "isolation-deferred"), { recursive: true }),
+      mkdir(path.join(rootPath, "isolation-rejected"), { recursive: true }),
+      mkdir(path.join(rootPath, "isolation-receipt-failure"), { recursive: true })
+    ]);
+    await writeFile(sourcePath, sourceContent, "utf8");
+
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.agents.hermes.providerId = "openrouter";
+    settings.agents.hermes.modelId = "model";
+    const identityDependencies = fakeIdentityDependencies();
+    const taskInput = (
+      workflowRunId: string,
+      attemptId: string,
+      leaseToken: string
+    ): Parameters<KnowledgeBaseAgentTaskService["runTask"]>[0] => ({
+      backend: "hermes",
+      prompt: "maintain",
+      sources: [{
+        relativePath: SOURCE_PATH,
+        absolutePath: sourcePath,
+        size: Buffer.byteLength(sourceContent),
+        mtime: Date.now(),
+        fingerprint: "unused",
+        mime: "text/markdown",
+        modality: "text",
+        changed: true
+      }],
+      permission: "workspace-write",
+      codexWriteScope: "knowledge-base",
+      managedKind: "maintain",
+      workflowRunId,
+      attemptId,
+      attemptOrdinal: 1,
+      vaultPathOverride: shadowVaultPath,
+      writableRootsOverride: exactRoots,
+      exactWriteFence: {
+        attemptToken: attemptId,
+        leaseToken,
+        deniedLivePaths: [liveVaultPath],
+        deniedControlPaths: [controlRootPath]
+      }
+    });
+
+    const deferredAttemptId = "service-native-registration-deferred-attempt-1-hermes";
+    let deferredChatCalls = 0;
+    let deferredRegistrationCalls = 0;
+    const deferredRecords: NativeExecutionRecord[] = [];
+    const deferredLifecycleOrder: string[] = [];
+    const deferredHarness = hermesHarnessFixture({
+      onLedgerCommitted: (event) => {
+        if (
+          event.type === "run.completed"
+          || event.type === "run.failed"
+          || event.type === "run.cancelled"
+        ) {
+          deferredLifecycleOrder.push(`terminal:${event.type}`);
+        }
+      }
+    });
+    let releaseRegistration!: () => void;
+    const registrationGate = new Promise<void>((resolve) => {
+      releaseRegistration = resolve;
+    });
+    let markRegistrationEntered!: () => void;
+    const registrationEntered = new Promise<void>((resolve) => {
+      markRegistrationEntered = resolve;
+    });
+    const deferredService = new KnowledgeBaseAgentTaskService({
+      settings,
+      getVaultPath: () => liveVaultPath,
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async (record: NativeExecutionRecord) => {
+        deferredRegistrationCalls += 1;
+        deferredRecords.push(record);
+        markRegistrationEntered();
+        await registrationGate;
+        if (record.observedDisposition) {
+          deferredLifecycleOrder.push(
+            `receipt:${record.observedDisposition.state}`
+          );
+        }
+      },
+      ...deferredHarness
+    } as any, {
+      isCancelRequested: () => false
+    }, {
+      hermesProposalCommand: FAKE_DISCOVERY_COMMAND,
+      hermesProposalProcessRunner: fakeHermesRunner({
+        chatStdout: proposalJson(deferredAttemptId, [{
+          op: "upsert",
+          path: "wiki/deferred-registration.md",
+          content: "registered",
+          sources: [{ path: SOURCE_PATH, sha256: sourceSha256 }],
+          baseSha256: null
+        }]),
+        onCall: (_command, args) => {
+          if (args[0] === "chat") deferredChatCalls += 1;
+        }
+      }),
+      hermesProposalProjectResolver: identityDependencies.projectResolver,
+      hermesProposalLaunchInspector: identityDependencies.launchInspector,
+      hermesProposalIsolationRootPath: path.join(rootPath, "isolation-deferred"),
+      hermesProposalCredentialEnvironment: {
+        OPENROUTER_API_KEY: "secret"
+      },
+      hermesProposalCredentialFiles: []
+    });
+    const deferredRun = deferredService.runTask(taskInput(
+      "service-native-registration-deferred",
+      deferredAttemptId,
+      "service-native-registration-deferred-lease"
+    ));
+    await registrationEntered;
+    assert.equal(deferredRegistrationCalls, 1);
+    assert.equal(
+      deferredChatCalls,
+      0,
+      "Hermes proposal prompt must wait for durable Native registration"
+    );
+    assert.equal(deferredRecords.length, 1);
+    assert.equal(deferredRecords[0]?.native.backendId, "echoink-host");
+    assert.equal(deferredRecords[0]?.native.kind, "process");
+    assert.equal(
+      deferredRecords[0]?.native.identityAuthority,
+      "echoink-host"
+    );
+    assert.equal(
+      deferredRecords[0]?.native.hostExecution?.targetBackendId,
+      "hermes"
+    );
+    assert.equal(deferredRecords[0]?.policy.mode, "ephemeral-run");
+    releaseRegistration();
+    const deferredOutput = await deferredRun;
+    assert.equal(
+      deferredChatCalls,
+      1,
+      "Hermes proposal runner must start exactly once after durable registration resolves"
+    );
+    assert.equal(deferredRegistrationCalls, 2);
+    assert.equal(
+      deferredRecords[1]?.observedDisposition?.state,
+      "exited"
+    );
+    const hostExecutionId = deferredRecords[0]!.native.id;
+    assert.match(hostExecutionId, /^echoink-host-process:/);
+    assert.equal(hostExecutionId.includes(deferredOutput.harnessRunId!), false);
+    assert.equal(hostExecutionId.includes(deferredAttemptId), false);
+    assert.equal(
+      hostExecutionId.includes("service-native-registration-deferred-lease"),
+      false
+    );
+    assert.equal(typeof deferredOutput.submittedAt, "number");
+    assert.deepEqual(
+      deferredLifecycleOrder,
+      ["receipt:exited", "terminal:run.completed"],
+      "durable host disposition must commit before the Harness terminal"
+    );
+
+    const rejectedAttemptId = "service-native-registration-rejected-attempt-1-hermes";
+    let rejectedChatCalls = 0;
+    let rejectedRegistrationCalls = 0;
+    const rejectedService = new KnowledgeBaseAgentTaskService({
+      settings,
+      getVaultPath: () => liveVaultPath,
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => {
+        rejectedRegistrationCalls += 1;
+        throw new Error("durable Native Store rejected registration");
+      },
+      ...hermesHarnessFixture()
+    } as any, {
+      isCancelRequested: () => false
+    }, {
+      hermesProposalCommand: FAKE_DISCOVERY_COMMAND,
+      hermesProposalProcessRunner: fakeHermesRunner({
+        chatStdout: proposalJson(rejectedAttemptId, []),
+        onCall: (_command, args) => {
+          if (args[0] === "chat") rejectedChatCalls += 1;
+        }
+      }),
+      hermesProposalProjectResolver: identityDependencies.projectResolver,
+      hermesProposalLaunchInspector: identityDependencies.launchInspector,
+      hermesProposalIsolationRootPath: path.join(rootPath, "isolation-rejected"),
+      hermesProposalCredentialEnvironment: {
+        OPENROUTER_API_KEY: "secret"
+      },
+      hermesProposalCredentialFiles: []
+    });
+    await assert.rejects(
+      () => rejectedService.runTask(taskInput(
+        "service-native-registration-rejected",
+        rejectedAttemptId,
+        "service-native-registration-rejected-lease"
+      )),
+      (error: unknown) =>
+        error instanceof KnowledgeAgentAttemptError
+        && error.phase === "preflight"
+        && error.submittedAt === undefined
+        && error.code === "NATIVE_EXECUTION_REGISTRATION_FAILED"
+    );
+    assert.equal(rejectedRegistrationCalls, 1);
+    assert.equal(
+      rejectedChatCalls,
+      0,
+      "Hermes proposal prompt must not start after durable Native registration rejects"
+    );
+
+    const receiptFailureAttemptId =
+      "service-native-receipt-failure-attempt-1-hermes";
+    const receiptFailureHarness = hermesHarnessFixture();
+    let receiptWriteAttempts = 0;
+    let receiptFailureService!: KnowledgeBaseAgentTaskService;
+    let receiptFailureCancel: Promise<void> | null = null;
+    receiptFailureService = new KnowledgeBaseAgentTaskService({
+      settings,
+      getVaultPath: () => liveVaultPath,
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async (record: NativeExecutionRecord) => {
+        if (!record.observedDisposition) return;
+        receiptWriteAttempts += 1;
+        if (receiptWriteAttempts === 1) {
+          receiptFailureCancel = receiptFailureService.cancelActiveTasks();
+        }
+        throw new Error(
+          `durable host disposition write failed:${receiptWriteAttempts}`
+        );
+      },
+      ...receiptFailureHarness
+    } as any, {
+      isCancelRequested: () => false
+    }, {
+      hermesProposalCommand: FAKE_DISCOVERY_COMMAND,
+      hermesProposalProcessRunner: fakeHermesRunner({
+        chatStdout: proposalJson(receiptFailureAttemptId, [])
+      }),
+      hermesProposalProjectResolver: identityDependencies.projectResolver,
+      hermesProposalLaunchInspector: identityDependencies.launchInspector,
+      hermesProposalIsolationRootPath: path.join(
+        rootPath,
+        "isolation-receipt-failure"
+      ),
+      hermesProposalCredentialEnvironment: {
+        OPENROUTER_API_KEY: "secret"
+      },
+      hermesProposalCredentialFiles: []
+    });
+    let receiptFailure: KnowledgeAgentAttemptError | null = null;
+    await assert.rejects(
+      () => receiptFailureService.runTask(taskInput(
+        "service-native-receipt-failure",
+        receiptFailureAttemptId,
+        "service-native-receipt-failure-lease"
+      )),
+      (error: unknown) => {
+        if (
+          !(error instanceof KnowledgeAgentAttemptError)
+          || error.phase !== "execution"
+          || typeof error.submittedAt !== "number"
+        ) {
+          return false;
+        }
+        receiptFailure = error;
+        return true;
+      }
+    );
+    assert.ok(
+      receiptFailureCancel,
+      "Abort must be requested before the second durable receipt write"
+    );
+    await receiptFailureCancel;
+    assert.equal(
+      receiptWriteAttempts,
+      2,
+      "the failure path must exercise the second durable receipt write"
+    );
+    assert.match(
+      receiptFailure!.message,
+      /host process disposition could not be durably recorded/i
+    );
+    const receiptFailureEvents = await receiptFailureHarness.ledger.readRun(
+      receiptFailure!.harnessRunId
+    );
+    assert.deepEqual(
+      receiptFailureEvents.filter((event) =>
+        event.type === "run.completed"
+        || event.type === "run.failed"
+        || event.type === "run.cancelled"
+      ).map((event) => event.type),
+      ["run.failed"],
+      "Abort must not downgrade a durable receipt failure to run.cancelled"
     );
   } finally {
     await rm(rootPath, { recursive: true, force: true });
@@ -1501,7 +2101,12 @@ async function testServiceCancelDuringCapabilityProbe(): Promise<void> {
       const preparationService = new KnowledgeBaseAgentTaskService({
         settings,
         getVaultPath: () => liveVaultPath,
-        getNativeExecutionRefContext: () => ({})
+        getNativeExecutionRefContext: () => ({
+          deviceKey: "test-device",
+          vaultId: liveVaultPath
+        }),
+        recordNativeExecution: async () => undefined,
+        ...hermesHarnessFixture()
       } as any, {
         isCancelRequested: () => false
       }, {
@@ -1601,7 +2206,12 @@ async function testServiceCancelDuringCapabilityProbe(): Promise<void> {
     const service = new KnowledgeBaseAgentTaskService({
       settings,
       getVaultPath: () => liveVaultPath,
-      getNativeExecutionRefContext: () => ({}),
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => undefined,
+      ...hermesHarnessFixture(),
       settleHarnessRunTerminal: async () => {
         terminalSettlements += 1;
       }
@@ -1682,7 +2292,12 @@ async function testServiceCancelDuringCapabilityProbe(): Promise<void> {
     const authorityService = new KnowledgeBaseAgentTaskService({
       settings,
       getVaultPath: () => liveVaultPath,
-      getNativeExecutionRefContext: () => ({})
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => undefined,
+      ...hermesHarnessFixture()
     } as any, {
       isCancelRequested: () => cancelRequested
     }, {
@@ -1791,7 +2406,12 @@ async function testServiceTimeoutRejectsLateProposalBeforeMaterialization(): Pro
     const service = new KnowledgeBaseAgentTaskService({
       settings,
       getVaultPath: () => liveVaultPath,
-      getNativeExecutionRefContext: () => ({})
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => undefined,
+      ...hermesHarnessFixture()
     } as any, {
       isCancelRequested: () => false
     }, {
@@ -1870,7 +2490,10 @@ async function testServiceTimeoutRejectsLateProposalBeforeMaterialization(): Pro
         assert.equal(error.nativeTerminationReceipt.backend, "hermes");
         assert.equal(error.nativeTerminationReceipt.harnessRunId, error.harnessRunId);
         assert.equal(error.nativeTerminationReceipt.nativeExecutionId, error.nativeExecutionId);
-        assert.match(error.nativeExecutionId, /^hermes-proposal:knowledge-hermes-/);
+        assert.match(error.nativeExecutionId, /^echoink-host-process:/);
+        assert.equal(error.nativeExecutionId.includes(error.harnessRunId), false);
+        assert.equal(error.nativeExecutionId.includes(attemptId), false);
+        assert.equal(error.nativeExecutionId.includes("service-timeout-lease"), false);
         assert.equal(error.nativeTerminationReceipt.kind, "abort-ack");
         assert.equal(
           error.nativeTerminationReceipt.confirmedAt,
@@ -1894,7 +2517,12 @@ async function testServiceTimeoutRejectsLateProposalBeforeMaterialization(): Pro
     const neverService = new KnowledgeBaseAgentTaskService({
       settings,
       getVaultPath: () => liveVaultPath,
-      getNativeExecutionRefContext: () => ({})
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "test-device",
+        vaultId: liveVaultPath
+      }),
+      recordNativeExecution: async () => undefined,
+      ...hermesHarnessFixture()
     } as any, {
       isCancelRequested: () => false
     }, {
@@ -2065,6 +2693,100 @@ function writableRoots(shadowVaultPath: string): string[] {
     path.join(shadowVaultPath, "outputs", "maintenance"),
     path.join(shadowVaultPath, "inbox")
   ];
+}
+
+function hermesProposalHostHarnessRequest(
+  runId: string
+): HarnessRunWithAdapterInput["request"] {
+  return {
+    runId,
+    sessionId: `${runId}-session`,
+    surface: "knowledge",
+    workflow: "knowledge.maintain",
+    backendId: "hermes",
+    workspace: {
+      vaultPath: "/vault",
+      cwd: "/vault"
+    },
+    input: {
+      text: "maintain",
+      attachments: []
+    },
+    permissions: {
+      mode: "workspace-write",
+      writableRoots: ["/vault"],
+      requireApproval: true
+    },
+    resourceSelection: {
+      selected: [],
+      resolvedAt: 0,
+      warnings: []
+    },
+    memoryPolicy: {
+      enabled: false,
+      maxItems: 0
+    },
+    outputContract: {
+      kind: "knowledge-ledger"
+    }
+  };
+}
+
+function isHarnessTerminalEvent(event: HarnessEvent): boolean {
+  return event.type === "run.completed"
+    || event.type === "run.failed"
+    || event.type === "run.cancelled";
+}
+
+function terminalEventTypes(events: readonly HarnessEvent[]): HarnessEvent["type"][] {
+  return events
+    .filter(isHarnessTerminalEvent)
+    .map((event) => event.type);
+}
+
+async function waitForAbortSignal(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+function hermesHarnessFixture(options: {
+  onLedgerCommitted?: (event: HarnessEvent) => void | Promise<void>;
+} = {}): {
+  ledger: InMemoryRunLedger;
+  runHarnessWithAdapter(
+    input: HarnessRunWithAdapterInput
+  ): ReturnType<EchoInkHarnessKernel["runWithAdapter"]>;
+  settleHarnessRunTerminal:
+    EchoInkHarnessKernel["settleRunTerminal"];
+  appendHarnessRunEvent:
+    EchoInkHarnessKernel["appendRunEvent"];
+  cancelHarnessRun:
+    EchoInkHarnessKernel["cancelRun"];
+} {
+  const ledger = new InMemoryRunLedger();
+  const kernel = new EchoInkHarnessKernel({
+    ledger: {
+      append: async (event) => {
+        await ledger.append(event);
+        await options.onLedgerCommitted?.(event);
+      },
+      readRun: async (runId) => await ledger.readRun(runId)
+    },
+    memoryProvider: new NoopMemoryProvider()
+  });
+  return {
+    ledger,
+    runHarnessWithAdapter: async (input) =>
+      await kernel.runWithAdapter(input),
+    settleHarnessRunTerminal: async (input, sink) =>
+      await kernel.settleRunTerminal(input, sink),
+    appendHarnessRunEvent: async (input, sink) =>
+      await kernel.appendRunEvent(input, sink),
+    cancelHarnessRun: async (runId) =>
+      await kernel.cancelRun(runId)
+  };
 }
 
 async function createRoot(label: string): Promise<string> {

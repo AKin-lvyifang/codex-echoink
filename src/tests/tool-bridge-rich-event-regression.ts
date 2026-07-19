@@ -7,6 +7,7 @@ import { TaskRuntimeAgentAdapter } from "../harness/agents/adapters/task-runtime
 import type { HarnessEvent } from "../harness/contracts/event";
 import type { HarnessRunRequest } from "../harness/contracts/run";
 import { RunOrchestrator } from "../harness/kernel/run-orchestrator";
+import { workspaceFingerprint } from "../harness/kernel/session-service";
 import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import type { ChatMessage } from "../settings/settings";
@@ -279,6 +280,13 @@ function createHarness(
       id: sessionId,
       title: "Tool bridge regression",
       cwd: "/vault",
+      revision: 1,
+      generation: 1,
+      contextId: `context-${sessionId}`,
+      workspaceFingerprint: workspaceFingerprint({
+        vaultPath: "/vault",
+        cwd: "/vault"
+      }),
       messages: [],
       createdAt: 1,
       updatedAt: 1

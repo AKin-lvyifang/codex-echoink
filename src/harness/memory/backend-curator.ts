@@ -1,9 +1,8 @@
 import { CodexService, type TurnOptions } from "../../core/codex-service";
 import type CodexForObsidianPlugin from "../../main";
 import { createHarnessAgentAdapter } from "../agents/adapter-factory";
-import type { AgentAdapter, AgentRunResult } from "../agents/adapter";
+import type { AgentAdapter } from "../agents/adapter";
 import { CodexRichNotificationHub } from "../agents/adapters/codex-rich-notification-hub";
-import type { HarnessRunResult } from "../contracts/run";
 import type { AgentBackendKind } from "../../agent/types";
 import {
   DEFAULT_CODEX_UTILITY_MODEL,
@@ -16,7 +15,13 @@ import {
   type CodexForObsidianSettings
 } from "../../settings/settings";
 import { createPromptEnhancerRuntimeWorkspace } from "../../prompt-enhancer/runtime-workspace";
-import type { MemoryCurator, MemoryCuratorRequest } from "./v2-engine";
+import { runEphemeralUtility } from "../native/ephemeral-utility-lifecycle";
+import {
+  deferredMemoryCuratorInvocation,
+  validateMemoryCuratorResult,
+  type MemoryCurator,
+  type MemoryCuratorRequest
+} from "./v2-engine";
 
 const NO_RESOURCES = { selected: [], resolvedAt: 0, warnings: [] };
 const NO_TOOLS = { read: false, write: false, edit: false, bash: false };
@@ -58,8 +63,8 @@ export class BackendNeutralMemoryCurator implements MemoryCurator {
     const backend = resolveMemoryCuratorBackend(this.plugin.settings);
     const prompt = buildMemoryCuratorPrompt(request);
     return backend === "codex-cli"
-      ? await runCodexCurator(this.plugin, request.transactionId, prompt)
-      : await runTaskCurator(this.plugin, backend, request.transactionId, prompt);
+      ? await runCodexCurator(this.plugin, request, prompt)
+      : await runTaskCurator(this.plugin, backend, request, prompt);
   }
 }
 
@@ -91,7 +96,11 @@ function buildMemoryCuratorPrompt(request: MemoryCuratorRequest): string {
   ].join("\n");
 }
 
-async function runCodexCurator(plugin: CodexForObsidianPlugin, transactionId: string, prompt: string): Promise<string> {
+async function runCodexCurator(
+  plugin: CodexForObsidianPlugin,
+  sourceRequest: MemoryCuratorRequest,
+  prompt: string
+): Promise<unknown> {
   const workspace = await createPromptEnhancerRuntimeWorkspace("codex-cli");
   const hub = new CodexRichNotificationHub();
   const activeApiProvider = plugin.settings.providerMode === "custom-api" ? getActiveApiProvider(plugin.settings) : null;
@@ -107,7 +116,7 @@ async function runCodexCurator(plugin: CodexForObsidianPlugin, transactionId: st
     onServerRequest: async () => ({ decision: "decline" })
   });
   let adapter: AgentAdapter | null = null;
-  const runId = newId(`memory-curator-${transactionId}`);
+  const runId = newId(`memory-curator-${sourceRequest.transactionId}`);
   const turnOptions: TurnOptions = {
     cwd: workspace.cwd,
     model: plugin.settings.memory.curatorModel.trim() || DEFAULT_CODEX_UTILITY_MODEL,
@@ -139,13 +148,46 @@ async function runCodexCurator(plugin: CodexForObsidianPlugin, transactionId: st
         resumeThread: async (threadId, options) => await service.resumeThread(threadId, options ?? turnOptions),
         startTurn: async (threadId, input, options) => await service.startTurn(threadId, input, options ?? turnOptions),
         interruptTurn: async (threadId, turnId) => await service.interruptTurn(threadId, turnId),
-        nativeRefContext: { deviceKey: "memory-curator", vaultId: workspace.cwd, providerEndpoint: activeApiProvider?.baseUrl ?? "codex-login" }
+        archiveThread: async (threadId) => await service.archiveThread(threadId),
+        nativeRefContext: plugin.getNativeExecutionRefContext("codex-cli")
       }
     });
-    const result = await runCuratorHarness(plugin, adapter, runId, workspace.cwd, "codex-cli", prompt);
-    return await resolveCuratorText(plugin, adapter, runId, result);
+    const request = memoryCuratorHarnessRequest(
+      runId,
+      workspace.cwd,
+      "codex-cli",
+      prompt
+    );
+    const result = await runEphemeralUtility({
+      host: plugin,
+      adapter,
+      request,
+      settlement: {
+        mode: "deferred",
+        authority: {
+          kind: "memory-transaction",
+          transactionId: sourceRequest.transactionId
+        }
+      },
+      timeoutMs: CURATOR_TIMEOUT_MS,
+      timeoutMessage: "EchoInk Memory Curator timed out",
+      awaitResult: async () => {
+        if (!adapter?.awaitResult) {
+          throw new Error("Memory Curator does not support asynchronous settlement");
+        }
+        return await adapter.awaitResult(runId);
+      },
+      validateOutput: (text) => validatedMemoryCuratorOutput(
+        sourceRequest,
+        text
+      ),
+      logLabel: "Memory Curator"
+    });
+    return deferredMemoryCuratorInvocation(
+      result.value,
+      (authority) => result.finalize(authority)
+    );
   } finally {
-    await adapter?.dispose().catch(() => undefined);
     await service.disconnect().catch(() => undefined);
     await workspace.cleanup().catch(() => undefined);
   }
@@ -154,19 +196,19 @@ async function runCodexCurator(plugin: CodexForObsidianPlugin, transactionId: st
 async function runTaskCurator(
   plugin: CodexForObsidianPlugin,
   backend: Exclude<AgentBackendKind, "codex-cli">,
-  transactionId: string,
+  sourceRequest: MemoryCuratorRequest,
   prompt: string
-): Promise<string> {
+): Promise<unknown> {
   const workspace = await createPromptEnhancerRuntimeWorkspace(backend);
   const settings = createMemoryCuratorTaskSettings(plugin.settings, backend);
-  const runId = newId(`memory-curator-${transactionId}`);
+  const runId = newId(`memory-curator-${sourceRequest.transactionId}`);
   let adapter: AgentAdapter | null = null;
   try {
     adapter = createHarnessAgentAdapter({
       backendId: backend,
       settings,
       vaultPath: workspace.cwd,
-      nativeRefContext: { ...plugin.getNativeExecutionRefContext(backend), vaultId: workspace.cwd },
+      nativeRefContext: plugin.getNativeExecutionRefContext(backend),
       task: {
         system: MEMORY_CURATOR_SYSTEM_PROMPT,
         timeoutMs: CURATOR_TIMEOUT_MS,
@@ -178,56 +220,94 @@ async function runTaskCurator(
         requireDirectAgent: backend === "opencode"
       }
     });
-    const result = await withTimeout(
-      runCuratorHarness(plugin, adapter, runId, workspace.cwd, backend, prompt),
-      CURATOR_TIMEOUT_MS,
-      async () => await adapter?.cancel(runId)
+    const request = memoryCuratorHarnessRequest(
+      runId,
+      workspace.cwd,
+      backend,
+      prompt
     );
-    return await resolveCuratorText(plugin, adapter, runId, result);
+    const result = await runEphemeralUtility({
+      host: plugin,
+      adapter,
+      request,
+      settlement: {
+        mode: "deferred",
+        authority: {
+          kind: "memory-transaction",
+          transactionId: sourceRequest.transactionId
+        }
+      },
+      timeoutMs: CURATOR_TIMEOUT_MS,
+      timeoutMessage: "EchoInk Memory Curator timed out",
+      awaitResult: async () => {
+        if (!adapter?.awaitResult) {
+          throw new Error("Memory Curator does not support asynchronous settlement");
+        }
+        return await adapter.awaitResult(runId);
+      },
+      validateOutput: (text) => validatedMemoryCuratorOutput(
+        sourceRequest,
+        text
+      ),
+      logLabel: "Memory Curator"
+    });
+    return deferredMemoryCuratorInvocation(
+      result.value,
+      (authority) => result.finalize(authority)
+    );
   } finally {
-    await adapter?.dispose().catch(() => undefined);
     await workspace.cleanup().catch(() => undefined);
   }
 }
 
-async function runCuratorHarness(
-  plugin: CodexForObsidianPlugin,
-  adapter: AgentAdapter,
+function memoryCuratorHarnessRequest(
   runId: string,
   workspacePath: string,
   backendId: AgentBackendKind,
   prompt: string
-): Promise<HarnessRunResult> {
-  return await plugin.runHarnessWithAdapter({
-    adapter,
-    request: {
-      runId,
-      sessionId: `memory-curator:${runId}`,
-      surface: "review",
-      workflow: "memory.curate",
-      backendId,
-      workspace: { vaultPath: workspacePath, cwd: workspacePath },
-      input: { text: prompt, attachments: [] },
-      permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
-      resourceSelection: NO_RESOURCES,
-      memoryPolicy: { enabled: false, maxItems: 0 },
-      outputContract: { kind: "plain-text" }
-    }
-  });
+): {
+  runId: string;
+  sessionId: string;
+  surface: "review";
+  workflow: "memory.curate";
+  backendId: AgentBackendKind;
+  workspace: { vaultPath: string; cwd: string };
+  input: { text: string; attachments: [] };
+  permissions: {
+    mode: "read-only";
+    writableRoots: [];
+    requireApproval: true;
+  };
+  resourceSelection: typeof NO_RESOURCES;
+  memoryPolicy: { enabled: false; maxItems: 0 };
+  outputContract: { kind: "plain-text" };
+} {
+  return {
+    runId,
+    sessionId: `memory-curator:${runId}`,
+    surface: "review",
+    workflow: "memory.curate",
+    backendId,
+    workspace: { vaultPath: workspacePath, cwd: workspacePath },
+    input: { text: prompt, attachments: [] },
+    permissions: {
+      mode: "read-only",
+      writableRoots: [],
+      requireApproval: true
+    },
+    resourceSelection: NO_RESOURCES,
+    memoryPolicy: { enabled: false, maxItems: 0 },
+    outputContract: { kind: "plain-text" }
+  };
 }
 
-async function resolveCuratorText(plugin: CodexForObsidianPlugin, adapter: AgentAdapter, runId: string, result: HarnessRunResult): Promise<string> {
-  if (result.status === "completed") return result.outputText ?? "";
-  if (result.status !== "running" || !adapter.awaitResult) throw new Error(result.error || "Memory Curator did not complete");
-  const awaited = await withTimeout(adapter.awaitResult(runId), CURATOR_TIMEOUT_MS, async () => await adapter.cancel(runId));
-  const text = agentResultText(awaited);
-  await plugin.settleHarnessRunTerminal({ runId, status: "completed", backendId: adapter.manifest.id, text }).catch(() => undefined);
-  return text;
-}
-
-function agentResultText(result: AgentRunResult): string {
-  if (result.status === "completed") return result.outputText ?? "";
-  throw new Error(result.error || "Memory Curator failed");
+function validatedMemoryCuratorOutput(
+  sourceRequest: MemoryCuratorRequest,
+  text: string
+): { value: unknown; terminalText: string } {
+  const validated = validateMemoryCuratorResult(sourceRequest, text).result;
+  const terminalText = JSON.stringify(validated);
+  return { value: validated, terminalText };
 }
 
 export function createMemoryCuratorTaskSettings(
@@ -248,17 +328,4 @@ export function createMemoryCuratorTaskSettings(
     cloned.agents.hermes.serverUrl = "";
   }
   return cloned;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Promise<void>): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    const timer = globalThis.setTimeout(() => {
-      void onTimeout().catch(() => undefined);
-      reject(new Error("EchoInk Memory Curator timed out"));
-    }, timeoutMs);
-    promise.then(
-      (value) => { globalThis.clearTimeout(timer); resolve(value); },
-      (error) => { globalThis.clearTimeout(timer); reject(error); }
-    );
-  });
 }

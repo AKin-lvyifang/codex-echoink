@@ -1,12 +1,24 @@
 import type { AgentEvent, AgentEventSink as LegacyAgentEventSink } from "../../../agent/events";
 import type { AgentEventTaskRuntime, AgentTaskRuntime, AgentToolBridgeRuntime, PreparedAgentResources } from "../../../agent/runtime";
 import { runAgentTaskWithToolBridge } from "../../../agent/tool-bridge";
-import type { AgentTaskInput, AgentTaskResult } from "../../../agent/types";
+import {
+  NativeRunRegistrationError,
+  type AgentNativeExecutionDescriptor,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "../../../agent/types";
 import { swallowError } from "../../../core/error-handling";
 import type { EchoInkResource } from "../../../resources/types";
 import { noCapabilities, type AgentCapabilities } from "../../contracts/capability";
 import { normalizeHarnessRunUsage, type HarnessEvent, type HarnessEventSink, type HarnessEventType } from "../../contracts/event";
-import type { NativeExecutionDispositionRequest, NativeExecutionDispositionResult, NativeExecutionKind, NativeExecutionPersistence, NativeExecutionRef } from "../../contracts/native-execution";
+import {
+  isSafeNativeExecutionTransport,
+  type NativeExecutionDispositionRequest,
+  type NativeExecutionDispositionResult,
+  type NativeExecutionKind,
+  type NativeExecutionPersistence,
+  type NativeExecutionRef
+} from "../../contracts/native-execution";
 import type { AgentAdapter, AgentConnectContext, AgentConnectionStatus, AgentManifest, AgentRunRequest, AgentRunResult, NativeResourceSnapshot } from "../adapter";
 
 export interface TaskRuntimeAgentAdapterOptions {
@@ -30,7 +42,11 @@ export interface TaskRuntimeAgentAdapterOptions {
     exactWriteFence?: AgentTaskInput["exactWriteFence"];
     onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
     abortSignal?: AbortSignal;
-    onRunId?: (runId: string) => void;
+    requireNativeRegistrationBeforePrompt?: boolean;
+    onRunId?: (
+      runId: string,
+      native: NativeExecutionRef
+    ) => void | Promise<void>;
   };
   listNativeResources?: () => Promise<NativeResourceSnapshot> | NativeResourceSnapshot;
 }
@@ -122,6 +138,12 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
 
   async run(request: AgentRunRequest, emit: HarnessEventSink): Promise<AgentRunResult> {
     let nativeRunId = "";
+    let registeredNativeExecution: NativeExecutionRef | undefined;
+    const nativeRegistrationPromises: Promise<void>[] = [];
+    const nativeRegistrationRequired = Boolean(
+      request.registerNativeExecution
+      || this.options.legacyTaskDefaults?.requireNativeRegistrationBeforePrompt
+    );
     const runController = new AbortController();
     const removeLegacyAbort = forwardAbort(this.options.legacyTaskDefaults?.abortSignal, runController);
     this.activeRunControllers.set(request.runId, runController);
@@ -149,24 +171,75 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       exactWriteFence: this.options.legacyTaskDefaults?.exactWriteFence,
       onExactWriteFenceConfigured: this.options.legacyTaskDefaults?.onExactWriteFenceConfigured,
       abortSignal: runController.signal,
-      onRunId: (runId) => {
+      requireNativeRegistrationBeforePrompt: nativeRegistrationRequired,
+      requireNativeSessionResume: Boolean(
+        request.nativeBindingManagedByHarness
+        && request.nativeSessionId?.trim()
+      ),
+      onRunId: (runId, runtimeIdentity) => {
         nativeRunId = runId;
         this.activeNativeRunIds.set(request.runId, runId);
-        this.options.legacyTaskDefaults?.onRunId?.(runId);
-        if (runController.signal.aborted) {
-          void this.options.runtime.abort(runId).catch(swallowError(`${this.manifest.id} late native run abort`));
-        }
+        const registration = (async () => {
+          try {
+            const native = nativeExecutionRefForRuntime(
+              this.manifest.id,
+              runId,
+              this.options.nativeRefContext,
+              runtimeIdentity
+            );
+            await request.registerNativeExecution?.(native);
+            await this.options.legacyTaskDefaults?.onRunId?.(runId, native);
+            registeredNativeExecution = native;
+          } catch (error) {
+            await this.cleanupRegistrationFailure(
+              runId,
+              request.nativeSessionId === runId
+            );
+            throw error instanceof NativeRunRegistrationError
+              ? error
+              : new NativeRunRegistrationError(
+                `${this.manifest.displayName} Native execution registration failed: ${error instanceof Error ? error.message : String(error)}`,
+                error
+              );
+          }
+          if (runController.signal.aborted) {
+            await this.options.runtime.abort(runId).catch(swallowError(`${this.manifest.id} late native run abort`));
+          }
+        })();
+        nativeRegistrationPromises.push(registration);
+        return registration;
       }
     };
 
     const runtime = this.options.runtime as AgentTaskRuntime & Partial<AgentEventTaskRuntime>;
     try {
-      const result = await runAgentTaskWithToolBridge(runtime, taskInput, legacyEventSink(emit, this.manifest));
+      let result: AgentTaskResult;
+      try {
+        result = await runAgentTaskWithToolBridge(runtime, taskInput, legacyEventSink(emit, this.manifest));
+      } catch (runtimeError) {
+        await Promise.all(nativeRegistrationPromises);
+        throw runtimeError;
+      }
+      await Promise.all(nativeRegistrationPromises);
 
       if (!runtime.runTaskEvents) {
         await emit(incompleteHarnessEvent("agent.message.completed", this.manifest.id, result.text));
       }
-      return mapTaskResult(this.manifest.id, result, nativeRunId, this.options.nativeRefContext);
+      if (
+        nativeRegistrationRequired
+        && !registeredNativeExecution
+      ) {
+        throw new NativeRunRegistrationError(
+          `${this.manifest.displayName} runtime returned a successful result without crossing the pre-prompt registration barrier`
+        );
+      }
+      return mapTaskResult(
+        this.manifest.id,
+        result,
+        nativeRunId,
+        this.options.nativeRefContext,
+        registeredNativeExecution
+      );
     } finally {
       removeLegacyAbort();
       this.activeRunControllers.delete(request.runId);
@@ -178,6 +251,18 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
     this.activeRunControllers.get(runId)?.abort();
     const nativeRunId = this.activeNativeRunIds.get(runId);
     if (nativeRunId) await this.options.runtime.abort(nativeRunId);
+  }
+
+  private async cleanupRegistrationFailure(
+    nativeRunId: string,
+    resumedExisting: boolean
+  ): Promise<void> {
+    if (resumedExisting) return;
+    if (this.manifest.id === "opencode" && this.options.runtime.deleteNativeSession) {
+      await this.options.runtime.deleteNativeSession(nativeRunId).catch(() => false);
+      return;
+    }
+    await this.options.runtime.abort(nativeRunId).catch(() => undefined);
   }
 }
 
@@ -347,14 +432,16 @@ function mapTaskResult(
   backendId: string,
   result: AgentTaskResult,
   nativeRunId: string,
-  nativeRefContext?: Pick<NativeExecutionRef, "deviceKey" | "vaultId" | "providerEndpoint">
+  nativeRefContext?: Pick<NativeExecutionRef, "deviceKey" | "vaultId" | "providerEndpoint">,
+  registeredNativeExecution?: NativeExecutionRef
 ): AgentRunResult {
   const nativeId = result.runId ?? (nativeRunId || undefined);
   return {
     status: "completed",
     outputText: result.text,
     terminalData: result.terminalData,
-    nativeExecution: nativeId ? nativeExecutionRefForRuntime(backendId, nativeId, nativeRefContext) : undefined,
+    nativeExecution: registeredNativeExecution
+      ?? (nativeId ? nativeExecutionRefForRuntime(backendId, nativeId, nativeRefContext) : undefined),
     nativeSessionId: nativeId,
     effectiveModel: result.effectiveModel,
     usage: result.usage
@@ -396,13 +483,30 @@ function nativeResourceSourceForBackend(backendId: string): EchoInkResource["sou
 function nativeExecutionRefForRuntime(
   backendId: string,
   nativeId: string,
-  context?: Pick<NativeExecutionRef, "deviceKey" | "vaultId" | "providerEndpoint">
+  context?: Pick<
+    NativeExecutionRef,
+    "deviceKey" | "vaultId" | "providerEndpoint"
+  >,
+  runtimeIdentity?: AgentNativeExecutionDescriptor
 ): NativeExecutionRef {
+  if (
+    runtimeIdentity?.transport !== undefined
+    && !isSafeNativeExecutionTransport(runtimeIdentity.transport)
+  ) {
+    throw new NativeRunRegistrationError(
+      `${backendId} runtime returned an unsafe Native execution transport`
+    );
+  }
   return {
     backendId,
     id: nativeId,
-    kind: nativeExecutionKindForRuntime(backendId),
-    persistence: nativeExecutionPersistenceForRuntime(backendId),
+    kind: runtimeIdentity?.kind ?? nativeExecutionKindForRuntime(backendId),
+    persistence:
+      runtimeIdentity?.persistence
+      ?? nativeExecutionPersistenceForRuntime(backendId),
+    ...(runtimeIdentity?.transport
+      ? { transport: runtimeIdentity.transport }
+      : {}),
     providerEndpoint: context?.providerEndpoint,
     deviceKey: context?.deviceKey ?? "unknown",
     vaultId: context?.vaultId ?? "unknown",

@@ -2,16 +2,34 @@ import type { ChatMessage, StoredSession } from "../../settings/settings";
 import type { ContextManifest, ContextSection } from "../contracts/context";
 import type { HarnessEvent, HarnessEventSink, HarnessEventSource, HarnessEventType } from "../contracts/event";
 import type { BackendSessionBinding, HarnessRunRequest, HarnessRunResult } from "../contracts/run";
-import type { AgentAdapter, AgentRunResult } from "../agents/adapter";
+import {
+  isAgentNativeSessionStaleError,
+  type AgentAdapter,
+  type AgentRunResult
+} from "../agents/adapter";
 import type { NativeExecutionKind, NativeExecutionRef, NativeSessionLease } from "../contracts/native-execution";
-import type { RunLedger } from "../ledger/run-ledger";
+import {
+  resolveRunLedgerAppendReadbackReceipt,
+  type RunLedger
+} from "../ledger/run-ledger";
 import type { MemoryBundle, MemoryProvider } from "../memory/provider";
 import { resolveResourceContext } from "../resources/resource-resolver";
 import { compileContextBundle } from "./context-compiler";
-import { NativeSessionLeaseManager, type NativeSessionLeaseLimits } from "./native-session-lease-manager";
-import { sessionBackendBinding } from "./session-service";
+import {
+  NativeSessionLeaseManager,
+  type NativeSessionLeaseDecision,
+  type NativeSessionLeaseLimits
+} from "./native-session-lease-manager";
+import {
+  messagesInCurrentSessionContext,
+  sessionBackendBinding,
+  sessionGeneration,
+  vaultProfileFingerprint,
+  workspaceFingerprint
+} from "./session-service";
 
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
+export type RunTerminalAuthority = "kernel" | "surface";
 
 export interface SettleRunTerminalInput {
   runId: string;
@@ -21,6 +39,10 @@ export interface SettleRunTerminalInput {
   error?: string;
   data?: Record<string, unknown>;
 }
+
+export type BeforeSurfaceTerminalCommit = (
+  winner: HarnessEvent
+) => Promise<void>;
 
 export interface AppendRunEventInput {
   runId: string;
@@ -49,8 +71,67 @@ export interface RunOrchestratorOptions {
 }
 
 export interface RunOrchestratorRunOptions {
+  /**
+   * Adapter captured by the caller for this exact run. Dynamic callers must
+   * pass it directly instead of publishing it through the backend registry,
+   * because another same-backend run may register a different adapter while
+   * this run is awaiting its ledger preflight.
+   */
+  adapter?: AgentAdapter;
   sessionProvider?: (sessionId: string) => Promise<StoredSession | null> | StoredSession | null;
+  beforeBindingReplacement?: BeforeBindingReplacement;
+  registerNativeExecution?: RegisterNativeExecution;
+  /**
+   * Persistent Chat owns its product terminal at the surface because the
+   * Conversation must be durable before the Run Ledger terminal is appended.
+   * Other workflows keep the historical kernel-owned behavior.
+   */
+  terminalAuthority?: RunTerminalAuthority;
 }
+
+export interface RegisterNativeExecutionInput {
+  request: HarnessRunRequest;
+  native: NativeExecutionRef;
+}
+
+export interface NativeExecutionRegistrationReceipt {
+  recordId: string;
+}
+
+export type RegisterNativeExecution = (
+  input: RegisterNativeExecutionInput
+) => Promise<NativeExecutionRegistrationReceipt>;
+
+export type NativeBindingReplacementReason =
+  | "context-identity-missing"
+  | "context-identity-mismatch"
+  | "vault-profile-mismatch"
+  | "revision-mismatch"
+  | "no-lease"
+  | "expired"
+  | "max-turns"
+  | "context-capacity"
+  | "resume-failed"
+  | "resume-reset"
+  | "resume-unsupported";
+
+export interface NativeBindingContextIdentity {
+  workspaceFingerprint: string;
+  sessionGeneration: number;
+  contextId?: string;
+}
+
+export interface BeforeBindingReplacementInput {
+  request: HarnessRunRequest;
+  session: StoredSession;
+  binding: BackendSessionBinding;
+  reason: NativeBindingReplacementReason;
+  expectedIdentity: NativeBindingContextIdentity;
+}
+
+export type BeforeBindingReplacement = (
+  input: BeforeBindingReplacementInput
+) => Promise<void>;
 
 interface RunLane {
   commitTail: Promise<void>;
@@ -58,8 +139,10 @@ interface RunLane {
   pendingCommits: number;
   pendingDeliveries: number;
   loaded: boolean;
+  events: HarnessEvent[];
   nextSequence: number;
   terminal: HarnessEvent | null;
+  poisoned: Error | null;
 }
 
 type RunDeliveryResult =
@@ -99,18 +182,62 @@ export class RunOrchestrator {
   }
 
   async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<HarnessEvent> {
-    return await this.appendTerminalEvent(input, { sink });
+    const terminal = await this.appendTerminalEvent(input, { sink });
+    if (isTerminalRunEventType(terminal.type)) {
+      this.releaseRun(input.runId);
+    }
+    return terminal;
+  }
+
+  async commitSurfaceRunTerminal(
+    input: SettleRunTerminalInput,
+    beforeTerminalCommit: BeforeSurfaceTerminalCommit,
+    sink?: HarnessEventSink
+  ): Promise<HarnessEvent> {
+    return await this.enqueueRunCommit(input.runId, async (lane) => {
+      await this.ensureRunLaneLoaded(input.runId, lane);
+      const existing = lane.terminal;
+      const winner = existing ?? createRunEvent({
+        runId: input.runId,
+        source: "kernel",
+        type: terminalEventType(input.status),
+        backendId: input.backendId,
+        text: input.text,
+        error: input.error,
+        data: input.data
+      }, lane.nextSequence, this.now);
+      await beforeTerminalCommit(winner);
+      if (existing) return existing;
+
+      await this.appendLedgerEventWithReceipt(input.runId, lane, winner);
+      this.scheduleRunDelivery(input.runId, lane, winner, sink);
+      lane.terminal = winner;
+      this.releaseRun(input.runId);
+      this.scheduleMemoryRunEvent(winner);
+      return winner;
+    });
   }
 
   async run(request: HarnessRunRequest, sink: HarnessEventSink = () => undefined, runOptions: RunOrchestratorRunOptions = {}): Promise<HarnessRunResult> {
     const existingStart = this.runStarts.get(request.runId);
     if (existingStart) return await existingStart;
 
-    const start = this.executeRun(request, sink, runOptions);
+    // Capture before executeRun reaches its first await. The registry is only a
+    // default for statically configured orchestrators; per-run adapters are
+    // immutable run input.
+    const adapter = runOptions.adapter ?? this.adapters.get(request.backendId);
+    const start = this.executeRun(request, adapter, sink, runOptions);
     this.runStarts.set(request.runId, start);
     try {
       const result = await start;
-      if (result.status !== "running" && this.runStarts.get(request.runId) === start) {
+      const surfaceTerminalPending = runOptions.terminalAuthority === "surface"
+        && result.status !== "running"
+        && !await this.readTerminalResult(request.runId);
+      if (
+        result.status !== "running"
+        && !surfaceTerminalPending
+        && this.runStarts.get(request.runId) === start
+      ) {
         this.runStarts.delete(request.runId);
       }
       return result;
@@ -120,9 +247,24 @@ export class RunOrchestrator {
     }
   }
 
-  private async executeRun(request: HarnessRunRequest, sink: HarnessEventSink, runOptions: RunOrchestratorRunOptions): Promise<HarnessRunResult> {
+  private async executeRun(
+    request: HarnessRunRequest,
+    adapter: AgentAdapter | undefined,
+    sink: HarnessEventSink,
+    runOptions: RunOrchestratorRunOptions
+  ): Promise<HarnessRunResult> {
     const existingTerminal = await this.readTerminalResult(request.runId);
     if (existingTerminal) return existingTerminal;
+    const surfaceOwnsTerminal = runOptions.terminalAuthority === "surface";
+    const nativeExecutionRecordIds = new Set<string>();
+    const withNativeExecutionRecords = (
+      result: HarnessRunResult
+    ): HarnessRunResult => nativeExecutionRecordIds.size
+      ? {
+        ...result,
+        nativeExecutionRecordIds: Array.from(nativeExecutionRecordIds)
+      }
+      : result;
 
     const emit = async (event: Partial<HarnessEvent> & { type: HarnessEventType; source: HarnessEventSource }): Promise<HarnessEvent> => {
       return await this.appendRunEvent({
@@ -140,16 +282,25 @@ export class RunOrchestrator {
         createdAt: event.createdAt
       }, sink);
     };
-    const emitTerminal = async (terminal: Omit<SettleRunTerminalInput, "runId">): Promise<HarnessEvent> => {
-      return await this.appendTerminalEvent({ runId: request.runId, ...terminal }, { sink });
+    const settleExecutionTerminal = async (
+      terminal: Omit<SettleRunTerminalInput, "runId">
+    ): Promise<HarnessRunResult> => {
+      if (surfaceOwnsTerminal) {
+        return await this.readTerminalResult(request.runId)
+          ?? resultFromTerminalInput(request.runId, terminal);
+      }
+      return resultFromTerminalEvent(
+        await this.appendTerminalEvent(
+          { runId: request.runId, ...terminal },
+          { sink }
+        )
+      );
     };
 
-    const adapter = this.adapters.get(request.backendId);
-    if (!adapter) {
+    if (!adapter || adapter.manifest.id !== request.backendId) {
       await emit({ type: "run.created", source: "kernel" });
       const message = `Unknown agent adapter: ${request.backendId}`;
-      await emitTerminal({ status: "failed", error: message });
-      return { runId: request.runId, status: "failed", error: message };
+      return await settleExecutionTerminal({ status: "failed", error: message });
     }
     this.runOwners.set(request.runId, adapter);
     let keepOwner = false;
@@ -158,8 +309,11 @@ export class RunOrchestrator {
       if (terminal) return terminal;
       if (this.cancelRequestedRuns.has(request.runId)) {
         const error = "Run cancelled";
-        const cancelled = await emitTerminal({ status: "cancelled", backendId: adapter.manifest.id, error });
-        return resultFromTerminalEvent(cancelled);
+        return await settleExecutionTerminal({
+          status: "cancelled",
+          backendId: adapter.manifest.id,
+          error
+        });
       }
       if (this.runOwners.has(request.runId)) return null;
       return await this.readTerminalResult(request.runId);
@@ -216,66 +370,169 @@ export class RunOrchestrator {
       const session = await this.resolveSession(request, runOptions.sessionProvider);
       const cancelledAfterSession = await settleRequestedCancellation();
       if (cancelledAfterSession) return cancelledAfterSession;
-      let binding = sessionBackendBinding(session, request.backendId);
+      const persistentConversation = isPersistentConversationRun(request);
+      const requestWorkspaceFingerprint = workspaceFingerprint(request.workspace);
+      const durableWorkspaceFingerprint = session.workspaceFingerprint?.trim() ?? "";
+      const expectedVaultProfileFingerprint = vaultProfileFingerprint(
+        request.vaultProfileSections
+      );
+      if (
+        persistentConversation
+        && (
+          !durableWorkspaceFingerprint
+          || durableWorkspaceFingerprint !== requestWorkspaceFingerprint
+        )
+      ) {
+        throw new Error(
+          "Conversation recovery required: persistent run workspace does not match the durable Conversation identity"
+        );
+      }
+      const storedBinding = sessionBackendBinding(session, request.backendId);
+      let binding = storedBinding;
+      const currentMessages = messagesInCurrentSessionContext(session);
+      const expectedIdentity: NativeBindingContextIdentity = {
+        workspaceFingerprint: durableWorkspaceFingerprint || requestWorkspaceFingerprint,
+        sessionGeneration: sessionGeneration(session),
+        ...(session.contextId?.trim() ? { contextId: session.contextId.trim() } : {})
+      };
       const decisionNow = this.now();
-      let leaseDecision = this.leaseManager.decide({
+      const decideBinding = (
+        candidate: BackendSessionBinding | null
+      ): NativeSessionLeaseDecision => this.leaseManager.decide({
         request,
-        binding,
-        lease: leaseFromBinding(binding, request, decisionNow),
+        binding: candidate,
+        lease: leaseFromBinding(candidate, request, decisionNow),
+        expectedWorkspaceFingerprint: expectedIdentity.workspaceFingerprint,
+        expectedSessionGeneration: expectedIdentity.sessionGeneration,
+        expectedContextId: expectedIdentity.contextId,
+        expectedVaultProfileFingerprint,
         sessionRevision: session.revision ?? 1,
-        latestMessageId: lastMessageId(session.messages),
-        requiresCatchUp: hasMessagesFromOtherBackendAfterCursor(session.messages, binding, request.backendId),
+        currentContextMessageIds: currentMessages.map((message) => message.id),
+        latestMessageId: lastMessageId(currentMessages),
+        requiresCatchUp: hasMessagesFromOtherBackendAfterCursor(
+          currentMessages,
+          candidate,
+          request.backendId
+        ),
         now: decisionNow
       });
+      let leaseDecision = decideBinding(binding);
       const initialLeaseDecision = leaseDecision;
-      const preparation = await adapter.prepareNativeSession?.({
-        runId: request.runId,
-        sessionId: request.sessionId,
-        binding,
-        action: !binding ? "none" : leaseDecision.reusable ? "resume" : "reset",
-        reason: leaseDecision.reason
-      });
-      const cancelledAfterPreparation = await settleRequestedCancellation();
-      if (cancelledAfterPreparation) return cancelledAfterPreparation;
-      if (preparation?.status === "failed") {
-        await emit({
-          type: "agent.native_lease.recovery_failed",
-          source: "agent",
-          backendId: adapter.manifest.id,
-          error: preparation.error,
-          data: {
-            reason: initialLeaseDecision.reason,
-            leaseId: binding?.leaseId,
-            nativeExecutionId: preparation.nativeExecutionId
+      const originalLegacyThreadId = session.threadId;
+      if (binding?.leaseId && leaseDecision.reusable) {
+        this.leaseManager.reserveLeaseForRun(request.runId, binding.leaseId);
+      }
+
+      if (leaseDecision.reason === "workflow") {
+        binding = null;
+        await adapter.prepareNativeSession?.({
+          runId: request.runId,
+          sessionId: request.sessionId,
+          binding: null,
+          action: "none",
+          reason: leaseDecision.reason
+        });
+      } else if (binding && !leaseDecision.reusable) {
+        const retiredBinding = binding;
+        await this.retireBindingBeforeReplacement({
+          request,
+          session,
+          binding: retiredBinding,
+          reason: decisionReplacementReason(leaseDecision),
+          expectedIdentity,
+          hook: runOptions.beforeBindingReplacement
+        });
+        binding = null;
+        assertCompleteBindingContextIdentity(expectedIdentity);
+        const preparation = await adapter.prepareNativeSession?.({
+          runId: request.runId,
+          sessionId: request.sessionId,
+          binding: retiredBinding,
+          action: "reset",
+          reason: leaseDecision.reason
+        });
+        if (preparation?.status === "failed") {
+          throw new Error(
+            preparation.error
+              ? `Native session reset failed: ${preparation.error}`
+              : "Native session reset failed"
+          );
+        }
+        leaseDecision = decideBinding(null);
+      } else if (
+        binding
+        && leaseDecision.reusable
+        && adapter.manifest.capabilities.sessions.resume !== "native"
+      ) {
+        await this.retireBindingBeforeReplacement({
+          request,
+          session,
+          binding,
+          reason: "resume-unsupported",
+          expectedIdentity,
+          hook: runOptions.beforeBindingReplacement
+        });
+        binding = null;
+        leaseDecision = decideBinding(null);
+      } else if (
+        binding
+        && leaseDecision.reusable
+        && adapter.prepareNativeSession
+      ) {
+        const preparation = await adapter.prepareNativeSession({
+          runId: request.runId,
+          sessionId: request.sessionId,
+          binding,
+          action: "resume",
+          reason: leaseDecision.reason
+        });
+        if (preparation.status !== "resumed") {
+          restoreBindingForRetirement(
+            session,
+            binding,
+            originalLegacyThreadId
+          );
+          const replacementReason: NativeBindingReplacementReason = preparation.status === "failed"
+            ? "resume-failed"
+            : preparation.status === "reset"
+              ? "resume-reset"
+              : "resume-unsupported";
+          if (preparation.status === "failed") {
+            await emit({
+              type: "agent.native_lease.recovery_failed",
+              source: "agent",
+              backendId: adapter.manifest.id,
+              error: preparation.error,
+              data: {
+                reason: initialLeaseDecision.reason,
+                leaseId: binding.leaseId,
+                nativeExecutionId: preparation.nativeExecutionId
+              }
+            });
           }
-        });
-        binding = null;
-        leaseDecision = this.leaseManager.decide({
-          request,
+          await this.retireBindingBeforeReplacement({
+            request,
+            session,
+            binding,
+            reason: replacementReason,
+            expectedIdentity,
+            hook: runOptions.beforeBindingReplacement
+          });
+          binding = null;
+          leaseDecision = decideBinding(null);
+        }
+      } else {
+        assertCompleteBindingContextIdentity(expectedIdentity);
+        await adapter.prepareNativeSession?.({
+          runId: request.runId,
+          sessionId: request.sessionId,
           binding: null,
-          sessionRevision: session.revision ?? 1,
-          latestMessageId: lastMessageId(session.messages),
-          now: decisionNow
-        });
-      } else if (preparation?.status === "reset") {
-        binding = null;
-        leaseDecision = this.leaseManager.decide({
-          request,
-          binding: null,
-          sessionRevision: session.revision ?? 1,
-          latestMessageId: lastMessageId(session.messages),
-          now: decisionNow
-        });
-      } else if (leaseDecision.reusable && adapter.manifest.capabilities.sessions.resume !== "native") {
-        binding = null;
-        leaseDecision = this.leaseManager.decide({
-          request,
-          binding: null,
-          sessionRevision: session.revision ?? 1,
-          latestMessageId: lastMessageId(session.messages),
-          now: decisionNow
+          action: "none",
+          reason: leaseDecision.reason
         });
       }
+      const cancelledAfterPreparation = await settleRequestedCancellation();
+      if (cancelledAfterPreparation) return cancelledAfterPreparation;
       if (leaseDecision.reusable) {
         await emit({
           type: "agent.native_lease.reused",
@@ -294,24 +551,10 @@ export class RunOrchestrator {
           backendId: adapter.manifest.id,
           data: {
             reason: initialLeaseDecision.reason,
-            leaseId: sessionBackendBinding(session, request.backendId)?.leaseId
+            leaseId: storedBinding?.leaseId
           }
         });
       }
-      const context = compileContextBundle({
-        runId: request.runId,
-        session,
-        backendId: request.backendId,
-        workflow: request.workflow,
-        userInput: request.input,
-        memory,
-        corePolicySections: this.options.corePolicySections ?? [],
-        vaultProfileSections: request.vaultProfileSections,
-        mode: leaseDecision.mode,
-        cursor: leaseDecision.cursor,
-        sessionRevision: session.revision ?? 1,
-        now: this.now()
-      });
       const resourceContext = await resolveResourceContext({
         workspace: request.workspace,
         backendId: request.backendId,
@@ -320,48 +563,137 @@ export class RunOrchestrator {
       });
       const cancelledAfterResources = await settleRequestedCancellation();
       if (cancelledAfterResources) return cancelledAfterResources;
-      context.echoInkSkills = resourceContext.echoInkSkills;
-      context.nativeResourceHints = resourceContext.nativeResourceHints;
-      if (context.memoryContext.length) {
+      const compileAndReportContext = async () => {
+        const compiled = compileContextBundle({
+          runId: request.runId,
+          session,
+          backendId: request.backendId,
+          workflow: request.workflow,
+          userInput: request.input,
+          memory,
+          corePolicySections: this.options.corePolicySections ?? [],
+          vaultProfileSections: request.vaultProfileSections,
+          mode: leaseDecision.mode,
+          cursor: leaseDecision.cursor,
+          sessionRevision: session.revision ?? 1,
+          now: this.now()
+        });
+        assertContextManifestIdentity(
+          compiled.manifest,
+          expectedIdentity,
+          expectedVaultProfileFingerprint,
+          persistentConversation
+        );
+        compiled.echoInkSkills = resourceContext.echoInkSkills;
+        compiled.nativeResourceHints = resourceContext.nativeResourceHints;
+        if (compiled.memoryContext.length) {
+          await emit({
+            type: "session.context.bootstrap.compiled",
+            source: "kernel",
+            backendId: adapter.manifest.id,
+            data: {
+              mode: compiled.manifest?.mode,
+              sessionRevision: compiled.manifest?.sessionRevision,
+              sections: compiled.manifest?.sections ?? [],
+              memorySectionCount: compiled.memoryContext.length
+            }
+          });
+        }
+        return compiled;
+      };
+      let context = await compileAndReportContext();
+
+      let start = await this.startAdapterRun(
+        request,
+        adapter,
+        context,
+        binding,
+        emit,
+        runOptions.registerNativeExecution,
+        nativeExecutionRecordIds,
+        surfaceOwnsTerminal
+      );
+      if (start.terminal) return withNativeExecutionRecords(start.terminal);
+      let result: AgentRunResult;
+      try {
+        result = await start.result!;
+      } catch (error) {
+        if (
+          !isAgentNativeSessionStaleError(error)
+          || !persistentConversation
+          || !binding
+        ) {
+          throw error;
+        }
+        const staleBinding = binding;
         await emit({
-          type: "session.context.bootstrap.compiled",
-          source: "kernel",
+          type: "agent.native_lease.recovery_failed",
+          source: "agent",
           backendId: adapter.manifest.id,
+          error: error.message,
           data: {
-            mode: context.manifest?.mode,
-            sessionRevision: context.manifest?.sessionRevision,
-            sections: context.manifest?.sections ?? [],
-            memorySectionCount: context.memoryContext.length
+            reason: "start-turn-missing",
+            leaseId: staleBinding.leaseId,
+            nativeExecutionId: error.nativeExecutionId
           }
         });
+        await this.retireBindingBeforeReplacement({
+          request,
+          session,
+          binding: staleBinding,
+          reason: "resume-failed",
+          expectedIdentity,
+          hook: runOptions.beforeBindingReplacement
+        });
+        binding = null;
+        leaseDecision = decideBinding(null);
+        assertCompleteBindingContextIdentity(expectedIdentity);
+        context = await compileAndReportContext();
+        start = await this.startAdapterRun(
+          request,
+          adapter,
+          context,
+          null,
+          emit,
+          runOptions.registerNativeExecution,
+          nativeExecutionRecordIds,
+          surfaceOwnsTerminal
+        );
+        if (start.terminal) return withNativeExecutionRecords(start.terminal);
+        result = await start.result!;
       }
-
-      const start = await this.startAdapterRun(request, adapter, context, binding, emit);
-      if (start.terminal) return start.terminal;
-      const result = await start.result!;
       if (this.cancelRequestedRuns.has(request.runId)) {
         const cancelledAfterRun = await settleRequestedCancellation();
         await start.releaseTerminalEvents();
-        if (cancelledAfterRun) return cancelledAfterRun;
+        if (cancelledAfterRun) {
+          return withNativeExecutionRecords(cancelledAfterRun);
+        }
       }
 
       if (result.status === "running") {
         if (result.nativeExecution) await emitNativeExecutionCreated(emit, adapter.manifest.id, result.nativeExecution);
-        const backendBinding = buildBackendBinding(adapter, request, result, context.manifest, binding, this.now(), this.leaseManager.limits, leaseDecision.reusable);
-        await emitNativeLeaseCreatedIfNeeded(emit, adapter.manifest.id, backendBinding, leaseDecision.mode, leaseDecision.reusable);
+        const backendBinding = leaseDecision.mode === "workflow"
+          ? undefined
+          : buildBackendBinding(adapter, request, result, context.manifest, expectedIdentity, expectedVaultProfileFingerprint, binding, this.now(), this.leaseManager.limits, leaseDecision.reusable);
+        if (backendBinding) {
+          if (backendBinding.leaseId) {
+            this.leaseManager.reserveLeaseForRun(request.runId, backendBinding.leaseId);
+          }
+          await emitNativeLeaseCreatedIfNeeded(emit, adapter.manifest.id, backendBinding, leaseDecision.mode, leaseDecision.reusable);
+        }
         await start.releaseTerminalEvents();
         const settledAfterLease = await this.readTerminalResult(request.runId);
         if (settledAfterLease) {
-          return {
+          return withNativeExecutionRecords({
             ...settledAfterLease,
             nativeExecution: result.nativeExecution,
             backendBinding,
             contextManifest: context.manifest,
             effectiveModel: result.effectiveModel
-          };
+          });
         }
         keepOwner = true;
-        return {
+        return withNativeExecutionRecords({
           runId: request.runId,
           status: "running",
           outputText: result.outputText,
@@ -369,22 +701,31 @@ export class RunOrchestrator {
           backendBinding,
           contextManifest: context.manifest,
           effectiveModel: result.effectiveModel
-        };
+        });
       }
 
       if (result.status === "completed") {
         if (result.nativeExecution) await emitNativeExecutionCreated(emit, adapter.manifest.id, result.nativeExecution);
-        const backendBinding = buildBackendBinding(adapter, request, result, context.manifest, binding, this.now(), this.leaseManager.limits, leaseDecision.reusable);
-        await emitNativeLeaseCreatedIfNeeded(emit, adapter.manifest.id, backendBinding, leaseDecision.mode, leaseDecision.reusable);
+        const backendBinding = leaseDecision.mode === "workflow"
+          ? undefined
+          : buildBackendBinding(adapter, request, result, context.manifest, expectedIdentity, expectedVaultProfileFingerprint, binding, this.now(), this.leaseManager.limits, leaseDecision.reusable);
+        if (backendBinding) {
+          if (backendBinding.leaseId) {
+            this.leaseManager.reserveLeaseForRun(request.runId, backendBinding.leaseId);
+          }
+          await emitNativeLeaseCreatedIfNeeded(emit, adapter.manifest.id, backendBinding, leaseDecision.mode, leaseDecision.reusable);
+        }
         await start.releaseTerminalEvents();
-        const terminal = await emitTerminal({
+        const terminal = await settleExecutionTerminal({
           status: "completed",
           backendId: adapter.manifest.id,
           text: result.outputText,
           data: result.terminalData
         });
-        if (terminal.type !== "run.completed") return resultFromTerminalEvent(terminal);
-        return {
+        if (terminal.status !== "completed") {
+          return withNativeExecutionRecords(terminal);
+        }
+        return withNativeExecutionRecords({
           runId: request.runId,
           status: "completed",
           outputText: result.outputText,
@@ -392,31 +733,38 @@ export class RunOrchestrator {
           backendBinding,
           contextManifest: context.manifest,
           effectiveModel: result.effectiveModel
-        };
+        });
       }
 
       if (result.status === "cancelled") {
         await start.releaseTerminalEvents();
-        const terminal = await emitTerminal({ status: "cancelled", backendId: adapter.manifest.id, error: result.error });
-        return resultFromTerminalEvent(terminal);
+        return withNativeExecutionRecords(await settleExecutionTerminal({
+          status: "cancelled",
+          backendId: adapter.manifest.id,
+          error: result.error
+        }));
       }
 
       await start.releaseTerminalEvents();
-      const terminal = await emitTerminal({ status: "failed", backendId: adapter.manifest.id, error: result.error });
-      return resultFromTerminalEvent(terminal);
+      return withNativeExecutionRecords(await settleExecutionTerminal({
+        status: "failed",
+        backendId: adapter.manifest.id,
+        error: result.error
+      }));
     } catch (error) {
       const existingTerminal = await this.readTerminalResult(request.runId);
-      if (existingTerminal) return existingTerminal;
+      if (existingTerminal) return withNativeExecutionRecords(existingTerminal);
       const cancelled = this.cancelRequestedRuns.has(request.runId);
       const message = error instanceof Error ? error.message : String(error);
-      const terminal = await emitTerminal({
+      return withNativeExecutionRecords(await settleExecutionTerminal({
         status: cancelled ? "cancelled" : "failed",
         backendId: adapter.manifest.id,
         error: message
-      });
-      return resultFromTerminalEvent(terminal);
+      }));
     } finally {
-      if (!keepOwner) this.releaseRun(request.runId);
+      if (!keepOwner) {
+        this.releaseRun(request.runId, { preserveStart: surfaceOwnsTerminal });
+      }
     }
   }
 
@@ -424,6 +772,41 @@ export class RunOrchestrator {
     this.cancelRequestedRuns.add(runId);
     const owner = this.runOwners.get(runId);
     if (typeof owner?.cancel === "function") await owner.cancel(runId);
+  }
+
+  private async retireBindingBeforeReplacement(input: {
+    request: HarnessRunRequest;
+    session: StoredSession;
+    binding: BackendSessionBinding;
+    reason: NativeBindingReplacementReason;
+    expectedIdentity: NativeBindingContextIdentity;
+    hook?: BeforeBindingReplacement;
+  }): Promise<void> {
+    if (!input.hook) {
+      throw new Error(
+        `Refusing to replace Native binding without durable retirement: ${input.reason}`
+      );
+    }
+    await input.hook({
+      request: input.request,
+      session: input.session,
+      binding: input.binding,
+      reason: input.reason,
+      expectedIdentity: input.expectedIdentity
+    });
+    if (sessionBackendBinding(input.session, input.binding.backendId)) {
+      throw new Error(
+        `Durable Native binding retirement did not remove ${input.binding.backendId} binding`
+      );
+    }
+    if (
+      input.binding.backendId === "codex-cli"
+      && input.session.threadId?.trim()
+    ) {
+      throw new Error(
+        "Durable Native binding retirement did not clear the legacy Codex thread binding"
+      );
+    }
   }
 
   private async resolveSession(
@@ -469,8 +852,7 @@ export class RunOrchestrator {
       await this.ensureRunLaneLoaded(input.runId, lane);
       if (lane.terminal && !isPostTerminalLifecycleEventType(input.type)) return lane.terminal;
       const event = createRunEvent(input, lane.nextSequence, this.now);
-      await this.options.ledger.append(event);
-      lane.nextSequence = event.sequence + 1;
+      await this.appendLedgerEventWithReceipt(input.runId, lane, event);
       this.scheduleRunDelivery(input.runId, lane, event, sink);
       if (isTerminalRunEventType(event.type)) {
         lane.terminal = event;
@@ -515,12 +897,18 @@ export class RunOrchestrator {
     adapter: AgentAdapter,
     context: ReturnType<typeof compileContextBundle>,
     binding: BackendSessionBinding | null,
-    emit: (event: Partial<HarnessEvent> & { type: HarnessEventType; source: HarnessEventSource }) => Promise<HarnessEvent>
+    emit: (event: Partial<HarnessEvent> & { type: HarnessEventType; source: HarnessEventSource }) => Promise<HarnessEvent>,
+    registerNativeExecution?: RegisterNativeExecution,
+    nativeExecutionRecordIds?: Set<string>,
+    surfaceOwnsTerminal = false
   ): Promise<AdapterRunStart> {
     const bufferedTerminalEvents: Array<Partial<HarnessEvent> & { type: HarnessEventType; source: HarnessEventSource }> = [];
     let terminalEventsReleased = false;
     const emitAdapterEvent = async (event: Partial<HarnessEvent> & { type: HarnessEventType; source: HarnessEventSource }): Promise<void> => {
       const normalized = { ...event, source: event.source || "agent", backendId: event.backendId || adapter.manifest.id };
+      if (surfaceOwnsTerminal && isTerminalRunEventType(normalized.type)) {
+        return;
+      }
       if (!terminalEventsReleased && isTerminalRunEventType(normalized.type)) {
         bufferedTerminalEvents.push(normalized);
         return;
@@ -547,6 +935,23 @@ export class RunOrchestrator {
         workflow: request.workflow,
         workspace: request.workspace,
         nativeSessionId: binding?.nativeSessionId,
+        nativeThreadId: binding?.nativeThreadId
+          || (
+            binding?.nativeExecutionRef?.kind === "thread"
+              ? binding.nativeExecutionRef.id
+              : undefined
+          ),
+        nativeBindingManagedByHarness: true,
+        registerNativeExecution: registerNativeExecution
+          ? async (native) => {
+            const receipt = await registerNativeExecution({ request, native });
+            const recordId = receipt.recordId?.trim();
+            if (!recordId) {
+              throw new Error("Native execution registration did not return a record ID");
+            }
+            nativeExecutionRecordIds?.add(recordId);
+          }
+          : undefined,
         input: request.input,
         permissions: request.permissions,
         resources: request.resourceSelection,
@@ -573,15 +978,89 @@ export class RunOrchestrator {
   }
 
   private async ensureRunLaneLoaded(runId: string, lane: RunLane): Promise<void> {
+    if (lane.poisoned) throw lane.poisoned;
     if (lane.loaded) return;
     const existing = await this.options.ledger.readRun(runId);
+    this.hydrateRunLane(lane, existing);
+  }
+
+  private async appendLedgerEventWithReceipt(
+    runId: string,
+    lane: RunLane,
+    candidate: HarnessEvent
+  ): Promise<void> {
+    const previousEvents = [...lane.events];
+    try {
+      await this.options.ledger.append(candidate);
+    } catch (appendError) {
+      this.invalidateRunLane(lane);
+      let observedEvents: HarnessEvent[];
+      try {
+        observedEvents = await this.options.ledger.readRun(runId);
+      } catch (readbackError) {
+        throw this.poisonRunLane(
+          lane,
+          runLedgerReadbackFailure(
+            candidate,
+            appendError,
+            readbackError
+          )
+        );
+      }
+
+      let receipt: ReturnType<typeof resolveRunLedgerAppendReadbackReceipt>;
+      try {
+        receipt = resolveRunLedgerAppendReadbackReceipt({
+          previousEvents,
+          candidate,
+          observedEvents
+        });
+      } catch (readbackConflict) {
+        throw this.poisonRunLane(
+          lane,
+          runLedgerReadbackConflict(
+            candidate,
+            appendError,
+            readbackConflict
+          )
+        );
+      }
+      if (receipt.status === "absent") {
+        throw appendError;
+      }
+      this.hydrateRunLane(lane, receipt.events);
+      return;
+    }
+
+    lane.events.push(candidate);
+    lane.nextSequence = candidate.sequence + 1;
+  }
+
+  private hydrateRunLane(
+    lane: RunLane,
+    events: readonly HarnessEvent[]
+  ): void {
+    lane.events = [...events];
     lane.loaded = true;
-    lane.nextSequence = nextSequence(existing);
-    lane.terminal = existing.reduce<HarnessEvent | null>((latest, event) => {
+    lane.nextSequence = nextSequence(events);
+    lane.terminal = events.reduce<HarnessEvent | null>((latest, event) => {
       if (!isTerminalRunEventType(event.type)) return latest;
       if (!latest || event.sequence >= latest.sequence) return event;
       return latest;
     }, null);
+  }
+
+  private invalidateRunLane(lane: RunLane): void {
+    lane.loaded = false;
+    lane.events = [];
+    lane.nextSequence = 1;
+    lane.terminal = null;
+  }
+
+  private poisonRunLane(lane: RunLane, error: Error): Error {
+    this.invalidateRunLane(lane);
+    lane.poisoned = error;
+    return error;
   }
 
   private scheduleRunDelivery(runId: string, lane: RunLane, event: HarnessEvent, sink?: HarnessEventSink): void {
@@ -609,8 +1088,10 @@ export class RunOrchestrator {
         pendingCommits: 0,
         pendingDeliveries: 0,
         loaded: false,
+        events: [],
         nextSequence: 1,
-        terminal: null
+        terminal: null,
+        poisoned: null
       };
       this.runLanes.set(runId, lane);
     }
@@ -622,10 +1103,14 @@ export class RunOrchestrator {
     if (this.runLanes.get(runId) === lane) this.runLanes.delete(runId);
   }
 
-  private releaseRun(runId: string): void {
+  private releaseRun(
+    runId: string,
+    options: { preserveStart?: boolean } = {}
+  ): void {
+    this.leaseManager.releaseLeaseForRun(runId);
     this.runOwners.delete(runId);
     this.cancelRequestedRuns.delete(runId);
-    this.runStarts.delete(runId);
+    if (!options.preserveStart) this.runStarts.delete(runId);
   }
 }
 
@@ -670,11 +1155,19 @@ function buildBackendBinding(
   request: HarnessRunRequest,
   result: AgentRunResult,
   manifest: ContextManifest | undefined,
+  expectedIdentity: NativeBindingContextIdentity,
+  expectedVaultProfileFingerprint: string,
   previousBinding: BackendSessionBinding | null,
   lastUsedAt: number,
   leaseLimits: NativeSessionLeaseLimits,
   reusePreviousLease: boolean
 ): BackendSessionBinding {
+  assertContextManifestIdentity(
+    manifest,
+    expectedIdentity,
+    expectedVaultProfileFingerprint,
+    isPersistentConversationRun(request)
+  );
   const nativeSessionId = result.nativeSessionId || (result.nativeExecution?.kind === "session" ? result.nativeExecution.id : undefined);
   const nativeThreadId = result.nativeThreadId || (result.nativeExecution?.kind === "thread" ? result.nativeExecution.id : undefined);
   const leaseId = leaseIdForResult(request, adapter.manifest.id, result, previousBinding, reusePreviousLease, lastUsedAt);
@@ -709,14 +1202,69 @@ function buildBackendBinding(
     syncedThroughMessageId: manifest?.compiledThroughMessageId,
     syncedSessionRevision: manifest?.sessionRevision ?? 1,
     snapshotVersion: manifest?.snapshotVersion,
+    workspaceFingerprint: expectedIdentity.workspaceFingerprint,
+    ...(manifest.vaultProfileFingerprint
+      ? { vaultProfileFingerprint: manifest.vaultProfileFingerprint }
+      : {}),
     contextCursor: {
       syncedThroughMessageId: manifest?.compiledThroughMessageId,
       syncedSessionRevision: manifest?.sessionRevision ?? 1,
+      sessionGeneration: manifest.sessionGeneration,
+      ...(manifest.contextId ? { contextId: manifest.contextId } : {}),
+      workspaceFingerprint: expectedIdentity.workspaceFingerprint,
       snapshotVersion: manifest?.snapshotVersion
     },
     lastUsedAt,
     capabilitySnapshot: adapter.manifest.capabilities
   };
+}
+
+function assertContextManifestIdentity(
+  manifest: ContextManifest | undefined,
+  expectedIdentity: NativeBindingContextIdentity,
+  expectedVaultProfileFingerprint: string,
+  requireWorkspaceFingerprint = false
+): asserts manifest is ContextManifest {
+  if (
+    !manifest
+    || manifest.sessionGeneration !== expectedIdentity.sessionGeneration
+    || (manifest.contextId?.trim() || undefined) !== expectedIdentity.contextId
+    || (
+      (manifest.vaultProfileFingerprint?.trim() ?? "")
+      !== expectedVaultProfileFingerprint
+    )
+    || (
+      requireWorkspaceFingerprint
+        ? manifest.workspaceFingerprint !== expectedIdentity.workspaceFingerprint
+        : (
+          manifest.workspaceFingerprint !== undefined
+          && manifest.workspaceFingerprint !== expectedIdentity.workspaceFingerprint
+        )
+    )
+  ) {
+    throw new Error("Compiled context manifest does not match the current Conversation identity");
+  }
+}
+
+function assertCompleteBindingContextIdentity(
+  identity: NativeBindingContextIdentity
+): asserts identity is NativeBindingContextIdentity & { contextId: string } {
+  if (
+    !identity.workspaceFingerprint.trim()
+    || !Number.isSafeInteger(identity.sessionGeneration)
+    || identity.sessionGeneration <= 0
+    || !identity.contextId?.trim()
+  ) {
+    throw new Error(
+      "Conversation identity must be durably initialized before creating a Native binding"
+    );
+  }
+}
+
+function isPersistentConversationRun(
+  request: Pick<HarnessRunRequest, "workflow">
+): boolean {
+  return request.workflow === "chat.generic" || request.workflow === "knowledge.ask";
 }
 
 function leaseFromBinding(binding: BackendSessionBinding | null, request: HarnessRunRequest, now: number): NativeSessionLease | null {
@@ -793,6 +1341,40 @@ function leaseIdForResult(
   return `lease-${request.sessionId}:${backendId}:${nativeId}:${createdAt}`;
 }
 
+function decisionReplacementReason(
+  decision: NativeSessionLeaseDecision
+): NativeBindingReplacementReason {
+  switch (decision.reason) {
+    case "context-identity-missing":
+    case "context-identity-mismatch":
+    case "vault-profile-mismatch":
+    case "revision-mismatch":
+    case "no-lease":
+    case "expired":
+    case "max-turns":
+    case "context-capacity":
+      return decision.reason;
+    default:
+      throw new Error(
+        `Lease decision ${decision.reason} does not replace a Native binding`
+      );
+  }
+}
+
+function restoreBindingForRetirement(
+  session: StoredSession,
+  binding: BackendSessionBinding,
+  legacyThreadId: string | undefined
+): void {
+  session.backendBindings = {
+    ...(session.backendBindings ?? {}),
+    [binding.backendId]: binding
+  };
+  if (binding.backendId !== "codex-cli") return;
+  if (legacyThreadId?.trim()) session.threadId = legacyThreadId;
+  else delete session.threadId;
+}
+
 function leaseInvalidated(reason: string): boolean {
   return reason === "expired" || reason === "max-turns" || reason === "context-capacity";
 }
@@ -809,12 +1391,14 @@ function isPostTerminalLifecycleEventType(type: HarnessEventType): boolean {
   return type === "run.local_commit.started"
     || type === "run.local_commit.completed"
     || type === "run.local_commit.failed"
+    || type === "run.surface_terminal.ignored"
     || type === "agent.native_cleanup.scheduled"
     || type === "agent.native_cleanup.started"
     || type === "agent.native_cleanup.completed"
     || type === "agent.native_cleanup.unsupported"
     || type === "agent.native_cleanup.failed"
-    || type === "agent.native_cleanup.retained";
+    || type === "agent.native_cleanup.retained"
+    || type === "agent.native_cleanup.quarantined";
 }
 
 function resultFromTerminalEvent(event: HarnessEvent): HarnessRunResult {
@@ -825,6 +1409,24 @@ function resultFromTerminalEvent(event: HarnessEvent): HarnessRunResult {
     return { runId: event.runId, status: "cancelled", error: event.error };
   }
   return { runId: event.runId, status: "failed", error: event.error };
+}
+
+function resultFromTerminalInput(
+  runId: string,
+  input: Omit<SettleRunTerminalInput, "runId">
+): HarnessRunResult {
+  if (input.status === "completed") {
+    return {
+      runId,
+      status: "completed",
+      ...(input.text !== undefined ? { outputText: input.text } : {})
+    };
+  }
+  return {
+    runId,
+    status: input.status,
+    ...(input.error !== undefined ? { error: input.error } : {})
+  };
 }
 
 function createRunEvent(input: AppendRunEventInput, sequence: number, now: () => number): HarnessEvent {
@@ -846,8 +1448,30 @@ function createRunEvent(input: AppendRunEventInput, sequence: number, now: () =>
   };
 }
 
-function nextSequence(events: HarnessEvent[]): number {
+function nextSequence(events: readonly HarnessEvent[]): number {
   return events.reduce((max, event) => Math.max(max, event.sequence), 0) + 1;
+}
+
+function runLedgerReadbackFailure(
+  candidate: HarnessEvent,
+  appendError: unknown,
+  readbackError: unknown
+): Error {
+  return new AggregateError(
+    [appendError, readbackError],
+    `Run Ledger append outcome is unavailable for ${candidate.eventId}; commit lane is poisoned and recovery is required`
+  );
+}
+
+function runLedgerReadbackConflict(
+  candidate: HarnessEvent,
+  appendError: unknown,
+  readbackConflict: unknown
+): Error {
+  return new AggregateError(
+    [appendError, readbackConflict],
+    `Run Ledger append readback conflicts for ${candidate.eventId}; commit lane is poisoned and recovery is required`
+  );
 }
 
 function terminalEventType(status: RunTerminalStatus): "run.completed" | "run.failed" | "run.cancelled" {

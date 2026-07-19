@@ -122,12 +122,57 @@ async function assertKnowledgeDoesNotForkSessionContextCore(): Promise<void> {
 
   for (const relativePath of [
     "src/harness/kernel/context-compiler.ts",
-    "src/harness/kernel/session-service.ts",
-    "src/harness/conversation/conversation-store.ts"
+    "src/harness/kernel/session-service.ts"
   ]) {
     const source = await readFile(path.join(process.cwd(), relativePath), "utf8");
     assert.doesNotMatch(source, /knowledge-base|KnowledgeBase|\/maintain|Raw Digest|LLM-WIKI/);
   }
+
+  const conversationStore = await readSource(
+    "src/harness/conversation/conversation-store.ts"
+  );
+  assertConversationStoreDoesNotForkKnowledgeContext(conversationStore);
+  assert.throws(
+    () => assertConversationStoreDoesNotForkKnowledgeContext(`
+      function chooseContext(session: StoredSession) {
+        return session.kind === "knowledge-base" ? buildKnowledgeContext() : buildContext();
+      }
+    `),
+    "the architecture guard must reject a Knowledge-specific Context branch"
+  );
+}
+
+function assertConversationStoreDoesNotForkKnowledgeContext(source: string): void {
+  assert.doesNotMatch(
+    source,
+    /from\s+["'][^"']*\/knowledge-base(?:\/[^"']*)?["']/,
+    "Conversation Store must not depend on the Knowledge controller layer"
+  );
+  assert.doesNotMatch(
+    source,
+    /\b(?:KnowledgeContextBridge|KnowledgeBaseManager|KnowledgeBaseHistoryStore|buildKnowledgeContextBridgeForThread|appendKnowledgeContextBridge|buildKnowledgeBasePrompt|handleKnowledgeBaseUserMessage|ensureKnowledgeBaseSession|isKnowledgeBaseSession)\b/,
+    "Conversation Store must not own Knowledge-specific Context behavior"
+  );
+  assert.doesNotMatch(
+    source,
+    /\b(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind\s*(?:===|!==)\s*["']knowledge-base["']/,
+    "Conversation Store must not branch Context behavior by Knowledge session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /["']knowledge-base["']\s*(?:===|!==)\s*\b(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind/,
+    "Conversation Store must not reverse-branch Context behavior by Knowledge session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /\bswitch\s*\(\s*(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind\s*\)/,
+    "Conversation Store must not switch Context behavior by session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /\/maintain|Raw Digest|LLM-WIKI/,
+    "Conversation Store must not embed Knowledge workflow or prompt rules"
+  );
 }
 
 async function assertKnowledgeControllersUseAgentBoundary(): Promise<void> {

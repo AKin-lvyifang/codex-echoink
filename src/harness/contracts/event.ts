@@ -83,6 +83,7 @@ export type HarnessEventType =
   | "run.local_commit.started"
   | "run.local_commit.completed"
   | "run.local_commit.failed"
+  | "run.surface_terminal.ignored"
   | "session.context.snapshot.updated"
   | "session.context.bootstrap.compiled"
   | "agent.connecting"
@@ -98,6 +99,7 @@ export type HarnessEventType =
   | "agent.native_cleanup.unsupported"
   | "agent.native_cleanup.failed"
   | "agent.native_cleanup.retained"
+  | "agent.native_cleanup.quarantined"
   | "agent.message.delta"
   | "agent.message.completed"
   | "agent.reasoning.started"
@@ -208,5 +210,5 @@ function usageNumber(
 function compactUsage(usage: HarnessRunUsage): HarnessRunUsage {
   return Object.fromEntries(
     Object.entries(usage).filter((entry): entry is [string, number] => entry[1] !== undefined)
-  ) as HarnessRunUsage;
+  );
 }

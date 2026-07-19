@@ -8,7 +8,6 @@ import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory"
 import {
   harnessBackendAdapterVersion,
   harnessBackendDisplayName,
-  harnessBackendUsesNativeThreadPrewarm,
   harnessInitialMessageModelId,
   harnessMessageProfileId,
   harnessProviderModelId,
@@ -29,7 +28,13 @@ import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent } from "../../knowledge-base/commands";
 import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
 import type { KnowledgeBaseTurnOptionOverrides } from "../../knowledge-base/command-router";
-import { persistAndSettleChatRun } from "./turn-lifecycle";
+import {
+  chatSurfaceTerminalClaim,
+  claimChatSurfaceTerminal,
+  persistAndSettleChatRun,
+  prepareChatSurfaceTerminal,
+  recordIgnoredLateChatTerminal
+} from "./turn-lifecycle";
 import {
   HarnessEventProjector,
   applyHarnessProjectionBatch,
@@ -247,6 +252,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   view.activeRunId = runId;
   view.activeRunKind = "chat";
   view.activeRunSessionId = session.id;
+  view.activeRunNativeExecutionRecordIds = [];
+  prepareChatSurfaceTerminal(runId);
   const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
   const userMessage: ChatMessage = {
     id: newId("msg"),
@@ -275,6 +282,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     answerMessage: assistantMessage
   });
   let keepRunOpen = false;
+  let nativeExecutionRecordIds: string[] = [];
+  let terminalCommitGateFailed = false;
   session.messages.push(userMessage, assistantMessage);
   try {
     await prepareChatBackendConnection(view, backend);
@@ -290,13 +299,6 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.applyStatus();
     view.ensureThinkingMessage(session, "初始化", "正在初始化 EchoInk 运行...");
     view.armTurnWatchdog();
-    if (harnessBackendUsesNativeThreadPrewarm(backend)
-      && !codexNativeThreadIdForSession(session)
-      && view.threadPrewarmPromise
-      && view.threadPrewarmSessionId === session.id) {
-      const warmed = await view.threadPrewarmPromise.catch(() => false);
-      if (!warmed && !codexNativeThreadIdForSession(session)) throw new Error("新会话连接超时，请重试");
-    }
     await view.plugin.saveSettings(true);
     const { adapter, resources } = await createChatAgentAdapter(view, session, item, turnAttachments, backend);
     const output = await view.plugin.runHarnessWithAdapter({
@@ -313,6 +315,52 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         view.renderToolbar();
       }
     });
+    nativeExecutionRecordIds = output.nativeExecutionRecordIds ?? [];
+    view.activeRunNativeExecutionRecordIds = [...nativeExecutionRecordIds];
+    const outputTerminalStatus = harnessResultChatTerminalStatus(output);
+    if (outputTerminalStatus) {
+      const terminalClaim = claimChatSurfaceTerminal(
+        runId,
+        "sync",
+        outputTerminalStatus
+      );
+      if (!terminalClaim.acquired) {
+        await recordIgnoredLateChatTerminal(view.plugin, {
+          runId,
+          backendId: backend,
+          lateStatus: outputTerminalStatus,
+          winner: terminalClaim.winner
+        });
+        return queuedTurnOutcomeForTerminalStatus(terminalClaim.winner.status);
+      }
+    } else {
+      const existingTerminal = chatSurfaceTerminalClaim(runId);
+      if (existingTerminal) {
+        keepRunOpen = typeof adapter.awaitResult === "function";
+        if (keepRunOpen) {
+          void settleRunningChatTurn({
+            view,
+            adapter,
+            session,
+            runId,
+            backend,
+            assistantMessage,
+            projector
+          }).catch((error) => {
+            void recoverRunningChatSettlementFailure({
+              view,
+              session,
+              runId,
+              backend,
+              assistantMessage,
+              projector,
+              error
+            });
+          });
+        }
+        return queuedTurnOutcomeForTerminalStatus(existingTerminal.status);
+      }
+    }
     if (output.backendBinding) updateSessionBackendBinding(session, output.backendBinding);
     applyHarnessRunProvenance(userMessage, output);
     applyHarnessRunProvenance(assistantMessage, output);
@@ -361,11 +409,43 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.finishThinkingMessage(session, cancelled ? "中断" : completed ? "完成" : "失败");
     view.finishRunningProcessMessages(session, completed ? "completed" : "interrupted");
     view.finishPlanMessage(session);
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     cancelInlineAgentProcessPersistence(view);
-    await view.plugin.saveSettings(true);
+    try {
+      await persistAndSettleChatRun(view.plugin, {
+        runId,
+        status: completed ? "completed" : cancelled ? "cancelled" : "failed",
+        backendId: backend,
+        ...(completed
+          ? { text: assistantMessage.text }
+          : { error: assistantMessage.text })
+      });
+    } catch (error) {
+      terminalCommitGateFailed = true;
+      throw error;
+    }
     return completed ? "completed" : cancelled ? "cancelled" : "failed";
   } catch (error) {
+    if (terminalCommitGateFailed) {
+      const winner = chatSurfaceTerminalClaim(runId);
+      view.pauseQueueForSession(session.id);
+      cancelInlineAgentProcessPersistence(view);
+      new Notice("回复已生成，但本地生命周期记录尚未完全提交；已保留恢复证据。");
+      return queuedTurnOutcomeForTerminalStatus(
+        winner?.status ?? "failed"
+      );
+    }
+    if (!terminalCommitGateFailed) {
+      const terminalClaim = claimChatSurfaceTerminal(runId, "error", "failed");
+      if (!terminalClaim.acquired) {
+        await recordIgnoredLateChatTerminal(view.plugin, {
+          runId,
+          backendId: backend,
+          lateStatus: "failed",
+          winner: terminalClaim.winner
+        });
+        return queuedTurnOutcomeForTerminalStatus(terminalClaim.winner.status);
+      }
+    }
     const message = error instanceof Error ? error.message : String(error);
     applyProjectedChatSettlement(view, session, assistantMessage, projector, {
       status: "failed",
@@ -378,16 +458,18 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.finishThinkingMessage(session, "失败");
     view.finishRunningProcessMessages(session, "interrupted");
     view.finishPlanMessage(session);
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
     cancelInlineAgentProcessPersistence(view);
     new Notice(`${agentChatTitle(backend)} 发送失败：${message}`);
-    await view.plugin.saveSettings(true).catch(() => undefined);
-    await view.plugin.settleHarnessRunTerminal({
-      runId,
-      status: "failed",
-      backendId: backend,
-      error: error instanceof Error ? error.message : String(error)
-    }).catch(() => undefined);
+    try {
+      await persistAndSettleChatRun(view.plugin, {
+        runId,
+        status: "failed",
+        backendId: backend,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } catch {
+      // Startup recovery retains pending Native records when persistence fails.
+    }
     return "failed";
   } finally {
     if (!keepRunOpen) {
@@ -412,7 +494,24 @@ async function recoverRunningChatSettlementFailure(input: {
   projector: HarnessEventProjector;
   error: unknown;
 }): Promise<void> {
-  const { view, session, runId, backend, assistantMessage, projector } = input;
+  const {
+    view,
+    session,
+    runId,
+    backend,
+    assistantMessage,
+    projector
+  } = input;
+  const terminalClaim = claimChatSurfaceTerminal(runId, "adapter", "failed");
+  if (!terminalClaim.acquired) {
+    await recordIgnoredLateChatTerminal(view.plugin, {
+      runId,
+      backendId: backend,
+      lateStatus: "failed",
+      winner: terminalClaim.winner
+    });
+    return;
+  }
   const completed = assistantMessage.status === "completed";
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   if (!completed) {
@@ -424,13 +523,16 @@ async function recoverRunningChatSettlementFailure(input: {
     assistantMessage.title = "回复失败";
     assistantMessage.completedAt = Date.now();
     view.finishThinkingMessage?.(session, "失败");
-    await view.plugin.externalizeMessageText?.(assistantMessage, assistantMessage.text).catch(() => undefined);
-    await persistAndSettleChatRun(view.plugin, {
-      runId,
-      status: "failed",
-      backendId: backend,
-      error: assistantMessage.text
-    }).catch(() => undefined);
+    try {
+      await persistAndSettleChatRun(view.plugin, {
+        runId,
+        status: "failed",
+        backendId: backend,
+        error: assistantMessage.text
+      });
+    } catch {
+      // Pending Native records remain recoverable when persistence fails.
+    }
   }
   cancelInlineAgentProcessPersistence(view);
   session.updatedAt = Date.now();
@@ -454,7 +556,14 @@ async function settleRunningChatTurn(input: {
   assistantMessage: ChatMessage;
   projector: HarnessEventProjector;
 }): Promise<void> {
-  const { view, adapter, session, runId, backend, projector } = input;
+  const {
+    view,
+    adapter,
+    session,
+    runId,
+    backend,
+    projector
+  } = input;
   let result: AgentRunResult;
   try {
     result = await adapter.awaitResult?.(runId) ?? { status: "failed", error: "Agent 不支持异步结果收口" };
@@ -467,9 +576,23 @@ async function settleRunningChatTurn(input: {
 
   const assistantMessage = input.assistantMessage;
 
-  const externallyCleared = view.activeRunId !== runId;
   const completed = result.status === "completed";
   const cancelled = result.status === "cancelled";
+  const lateStatus = completed ? "completed" : cancelled ? "cancelled" : "failed";
+  const terminalClaim = claimChatSurfaceTerminal(
+    runId,
+    "adapter",
+    lateStatus
+  );
+  if (!terminalClaim.acquired) {
+    await recordIgnoredLateChatTerminal(view.plugin, {
+      runId,
+      backendId: backend,
+      lateStatus,
+      winner: terminalClaim.winner
+    });
+    return;
+  }
   applyProjectedChatSettlement(view, session, assistantMessage, projector, {
     status: completed ? "completed" : cancelled ? "cancelled" : "failed",
     text: result.outputText,
@@ -488,30 +611,49 @@ async function settleRunningChatTurn(input: {
   view.finishThinkingMessage?.(session, cancelled ? "中断" : completed ? "完成" : "失败");
   view.finishRunningProcessMessages?.(session, completed ? "completed" : "interrupted");
   view.finishPlanMessage?.(session);
-  await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
   cancelInlineAgentProcessPersistence(view);
   session.updatedAt = Date.now();
   view.running = false;
   view.activeTurnId = "";
   view.clearTurnWatchdog?.();
-  if (!externallyCleared) view.clearActiveRun?.();
+  view.clearActiveRun?.();
   view.renderMessages?.(messageRenderOptionsForRunUpdate(view));
   view.renderMessagesIfActive?.(session);
   view.renderToolbar?.();
   view.applyStatus?.();
 
-  if (!externallyCleared || !cancelled) {
-    const terminalStatus: "cancelled" | "failed" = cancelled ? "cancelled" : "failed";
-    const terminalInput = completed
-      ? { runId, status: "completed" as const, backendId: backend, text: assistantMessage.text }
-      : { runId, status: terminalStatus, backendId: backend, error: assistantMessage.text };
-    await persistAndSettleChatRun(view.plugin, terminalInput).catch(() => undefined);
+  const terminalStatus: "cancelled" | "failed" = cancelled ? "cancelled" : "failed";
+  const terminalInput = completed
+    ? { runId, status: "completed" as const, backendId: backend, text: assistantMessage.text }
+    : { runId, status: terminalStatus, backendId: backend, error: assistantMessage.text };
+  try {
+    await persistAndSettleChatRun(view.plugin, terminalInput);
+  } catch {
+    // Startup recovery keeps the Native records retained when local commit
+    // cannot be proven.
   }
   if (typeof view.afterTurnSettled === "function") {
-    setTimeout(() => {
+    queueMicrotask(() => {
       void view.afterTurnSettled(session.id, completed);
-    }, 0);
+    });
   }
+}
+
+function harnessResultChatTerminalStatus(
+  result: HarnessRunResult
+): "completed" | "failed" | "cancelled" | null {
+  if (result.status === "completed") return "completed";
+  if (result.status === "cancelled") return "cancelled";
+  if (result.status === "failed") return "failed";
+  return null;
+}
+
+function queuedTurnOutcomeForTerminalStatus(
+  status: "completed" | "failed" | "cancelled"
+): QueuedTurnOutcome {
+  if (status === "completed") return "completed";
+  if (status === "cancelled") return "cancelled";
+  return "failed";
 }
 
 async function createChatAgentAdapter(
@@ -1147,9 +1289,13 @@ function applyKnowledgeNativeLifecycleSummary(
 
 function dominantNativeCleanupStatus(statuses: NonNullable<ChatMessage["nativeCleanupStatus"]>[]): ChatMessage["nativeCleanupStatus"] | undefined {
   const priority: NonNullable<ChatMessage["nativeCleanupStatus"]>[] = [
+    "quarantined",
     "failed",
     "retained-for-recovery",
+    "disposing",
+    "awaiting-local-commit",
     "pending",
+    "aborted",
     "unsupported",
     "retained",
     "disposed",

@@ -1,6 +1,13 @@
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentEventTaskRuntime, AgentRichStreamRuntime, AgentTaskRuntime } from "./runtime";
-import type { AgentTaskInput, AgentTaskResult } from "./types";
+import {
+  NativeRunRegistrationError,
+  NativeSessionStaleError,
+  isNativeRunRegistrationError,
+  isNativeSessionStaleError,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "./types";
 import { swallowError } from "../core/error-handling";
 import {
   ExactWriteFenceUnavailableError,
@@ -9,10 +16,13 @@ import {
 } from "./write-fence";
 
 export type AgentExactWriteFenceSupport = "all-runtimes" | "rich-only" | "unsupported";
+export type AgentNativeRegistrationSupport = "all-runtimes" | "rich-only" | "unsupported";
 
 export interface AgentEventRuntimeFallbackOptions {
   exactWriteFenceSupport?: AgentExactWriteFenceSupport;
   exactWriteFenceUnavailableReason?: string;
+  nativeRegistrationBeforePromptSupport?: AgentNativeRegistrationSupport;
+  nativeRegistrationBeforePromptUnavailableReason?: string;
 }
 
 export async function runTaskWithLifecycleEvents(
@@ -46,9 +56,9 @@ export async function runTaskWithLifecycleEvents(
     await emitNow({ type: "connected" });
     const resultPromise = runtime.runTask({
       ...input,
-      onRunId: (id) => {
+      onRunId: async (id, native) => {
         emitRunStarted(id);
-        input.onRunId?.(id);
+        await input.onRunId?.(id, native);
       }
     });
     await emitNow({ type: "prompt_sent" });
@@ -78,6 +88,9 @@ export function createAgentEventRuntimeWithFallback(
   const exactWriteFenceSupport = options.exactWriteFenceSupport ?? "all-runtimes";
   const exactWriteFenceUnavailableReason = options.exactWriteFenceUnavailableReason
     ?? "当前 backend transport 不支持精确写隔离。";
+  const nativeRegistrationSupport = options.nativeRegistrationBeforePromptSupport ?? "all-runtimes";
+  const nativeRegistrationUnavailableReason = options.nativeRegistrationBeforePromptUnavailableReason
+    ?? "fallback transport 无法在 Prompt 前提供 backend-owned Native execution ID。";
   return {
     kind: fallbackRuntime.kind,
     connect: () => fallbackRuntime.connect(),
@@ -101,11 +114,30 @@ export function createAgentEventRuntimeWithFallback(
             : exactWriteFenceUnavailableReason
         );
       }
+      failNativeRegistrationBeforeFallback(
+        input,
+        fallbackRuntime.kind,
+        nativeRegistrationSupport,
+        nativeRegistrationUnavailableReason,
+        "普通任务路径只能使用 fallback transport"
+      );
       selectedRuntime = "fallback";
       return fallbackRuntime.runTask(input);
     },
     async runTaskEvents(input, emit) {
       throwIfTaskAborted(input.abortSignal);
+      if (
+        input.requireNativeRegistrationBeforePrompt
+        && nativeRegistrationSupport === "unsupported"
+      ) {
+        failNativeRegistrationBeforeFallback(
+          input,
+          fallbackRuntime.kind,
+          nativeRegistrationSupport,
+          nativeRegistrationUnavailableReason,
+          "当前没有 transport 能满足 Native identity barrier"
+        );
+      }
       if (input.requireExactWriteFence && exactWriteFenceSupport === "unsupported") {
         const error = exactWriteFenceUnavailable(
           fallbackRuntime.kind,
@@ -115,6 +147,17 @@ export function createAgentEventRuntimeWithFallback(
         throw error;
       }
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {
+        failManagedResumeBeforeFallback(
+          input,
+          "任务超时预算不足以安全恢复显式 Native session"
+        );
+        failNativeRegistrationBeforeFallback(
+          input,
+          fallbackRuntime.kind,
+          nativeRegistrationSupport,
+          nativeRegistrationUnavailableReason,
+          "任务超时预算不足以启动 rich transport"
+        );
         if (input.requireExactWriteFence && exactWriteFenceSupport === "rich-only") {
           const error = exactWriteFenceUnavailable(
             fallbackRuntime.kind,
@@ -140,7 +183,15 @@ export function createAgentEventRuntimeWithFallback(
           // Once a provider may have accepted the prompt, starting the fallback
           // runtime could execute writes twice. Recovery must stay on the same
           // native session instead of launching a second task.
-          if (input.abortSignal?.aborted || promptSubmitted || richOutputStarted) throw error;
+          if (
+            input.abortSignal?.aborted
+            || promptSubmitted
+            || richOutputStarted
+            || isNativeRunRegistrationError(error)
+            || isNativeSessionStaleError(error)
+          ) {
+            throw error;
+          }
           if (input.requireExactWriteFence && exactWriteFenceSupport === "rich-only") {
             if (error instanceof ExactWriteFenceUnavailableError) throw error;
             const fenceError = exactWriteFenceUnavailable(
@@ -151,6 +202,27 @@ export function createAgentEventRuntimeWithFallback(
             await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, fenceError);
             throw fenceError;
           }
+          failManagedResumeBeforeFallback(
+            input,
+            `rich transport 在提交 prompt 前失败：${errorMessage(error)}`,
+            error
+          );
+          if (
+            input.requireNativeRegistrationBeforePrompt
+            && nativeRegistrationSupport !== "all-runtimes"
+          ) {
+            await richRuntime.disconnect?.().catch(
+              swallowError(`${fallbackRuntime.kind} rich runtime registration-barrier cleanup`)
+            );
+          }
+          failNativeRegistrationBeforeFallback(
+            input,
+            fallbackRuntime.kind,
+            nativeRegistrationSupport,
+            nativeRegistrationUnavailableReason,
+            `rich transport 在提交 Prompt 前失败：${errorMessage(error)}`,
+            error
+          );
           const message = error instanceof Error ? error.message : String(error);
           await emit({
             type: "fallback_started",
@@ -170,17 +242,65 @@ export function createAgentEventRuntimeWithFallback(
         await emitExactWriteFenceFailure(emit, fallbackRuntime.kind, error);
         throw error;
       }
+      failManagedResumeBeforeFallback(
+        input,
+        "rich transport 不可用，无法安全恢复显式 Native session"
+      );
+      failNativeRegistrationBeforeFallback(
+        input,
+        fallbackRuntime.kind,
+        nativeRegistrationSupport,
+        nativeRegistrationUnavailableReason,
+        "rich transport 不可用"
+      );
       selectedRuntime = "fallback";
       return await runTaskWithLifecycleEvents(fallbackRuntime, input, emit);
     },
     async abort(runId: string) {
+      // Fulfilment is an acknowledgement boundary for guarded callers. Do not
+      // turn a provider rejection into success here; cleanup-only call sites
+      // must choose and document their own best-effort catch.
       if (selectedRuntime === "rich" && richRuntime) {
-        await richRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} rich abort cleanup`));
+        await richRuntime.abort(runId);
         return;
       }
-      await fallbackRuntime.abort(runId).catch(swallowError(`${fallbackRuntime.kind} fallback abort cleanup`));
+      await fallbackRuntime.abort(runId);
     }
   };
+}
+
+function failNativeRegistrationBeforeFallback(
+  input: AgentTaskInput,
+  backend: AgentTaskRuntime["kind"],
+  support: AgentNativeRegistrationSupport,
+  unavailableReason: string,
+  reason: string,
+  cause?: unknown
+): void {
+  if (
+    !input.requireNativeRegistrationBeforePrompt
+    || support === "all-runtimes"
+  ) {
+    return;
+  }
+  throw new NativeRunRegistrationError(
+    `${backend} 任务要求在 Prompt 前耐久登记 backend-owned Native execution ID；${reason}，禁止降级。${unavailableReason}`,
+    cause
+  );
+}
+
+function failManagedResumeBeforeFallback(
+  input: AgentTaskInput,
+  reason: string,
+  cause?: unknown
+): void {
+  const nativeSessionId = input.nativeSessionId?.trim() ?? "";
+  if (!input.requireNativeSessionResume || !nativeSessionId) return;
+  throw new NativeSessionStaleError(
+    `OpenCode Native session requires Harness retirement before fallback: ${nativeSessionId}; ${reason}`,
+    nativeSessionId,
+    cause
+  );
 }
 
 async function emitExactWriteFenceFailure(
@@ -232,9 +352,9 @@ async function runConnectedTaskWithLifecycleEvents(
   try {
     const resultPromise = runtime.runTask({
       ...input,
-      onRunId: (id) => {
+      onRunId: async (id, native) => {
         emitRunStarted(id);
-        input.onRunId?.(id);
+        await input.onRunId?.(id, native);
       }
     });
     await emitNow({ type: "prompt_sent" });

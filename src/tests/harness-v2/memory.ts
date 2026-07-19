@@ -34,7 +34,9 @@ import {
   MAX_CURATOR_ACTIVE_MEMORY_RECORDS,
   MAX_CURATOR_ACTIVE_MEMORY_SNAPSHOT_CHARS,
   prepareMemoryTransaction,
+  recoverAndResolveMemoryTransactionAuthority,
   recoverMemoryTransactions,
+  resolveMemoryTransactionAuthority,
   syncPendingMemory,
   validateMemoryCuratorResult,
   type MemoryCuratorRequest,
@@ -43,6 +45,9 @@ import {
 } from "../../harness/memory/v2-engine";
 import { createMemoryCuratorTaskSettings } from "../../harness/memory/backend-curator";
 import { DEFAULT_SETTINGS } from "../../settings/settings";
+import {
+  runMemoryNativeTransactionAuthorityTests
+} from "./memory-native-transaction-authority";
 
 export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertHermesCuratorUsesHardIsolatedCliSettings();
@@ -54,6 +59,8 @@ export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertCorruptPendingJournalFailsClosedWithoutByteLoss();
   await assertCuratorActiveMemorySnapshotIsBoundedWithoutWeakeningFormalConsistency();
   await assertMemoryV2TransactionCommitAndProjection();
+  await assertMemoryTransactionAuthorityRequiresFormalDurability();
+  await runMemoryNativeTransactionAuthorityTests();
   await assertMemoryV2KeepsPendingOnCoverageCuratorAndUnresolvedFailures();
   await assertMemoryV2QueuesConfirmationAndRecoversAtomicInterruption();
   await assertMemoryV2BlocksCuratorConflictWithoutConfirmation();
@@ -90,6 +97,29 @@ async function assertHermesCuratorUsesHardIsolatedCliSettings(): Promise<void> {
   assert.equal(derived.agents.hermes.providerId, "provider-a");
   assert.equal(derived.agents.hermes.modelId, "curator-model");
   assert.equal(settings.agents.hermes.serverUrl, "http://127.0.0.1:8642/v1", "deriving Curator settings must not mutate user settings");
+
+  const source = await readFile(
+    path.join(process.cwd(), "src/harness/memory/backend-curator.ts"),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /nativeRefContext:\s*plugin\.getNativeExecutionRefContext\("codex-cli"\)/
+  );
+  assert.match(
+    source,
+    /nativeRefContext:\s*plugin\.getNativeExecutionRefContext\(backend\)/
+  );
+  assert.doesNotMatch(
+    source,
+    /nativeRefContext:\s*\{[\s\S]{0,240}providerEndpoint:\s*activeApiProvider\?\.baseUrl/,
+    "Memory Curator must not persist a raw custom API baseUrl in Native records"
+  );
+  assert.doesNotMatch(
+    source,
+    /nativeRefContext:\s*\{[\s\S]{0,180}vaultId:\s*workspace\.cwd/,
+    "Memory Curator Native ownership must remain the real plugin Vault so cleanup can prove the same identity"
+  );
 }
 
 async function assertLocalUsageArchiveCatalogIsInjectedAcrossBackends(): Promise<void> {
@@ -1066,6 +1096,151 @@ async function assertMemoryV2TransactionCommitAndProjection(): Promise<void> {
   assert.equal((await readPendingMemoryEvents(vaultPath)).length, 0);
 }
 
+async function assertMemoryTransactionAuthorityRequiresFormalDurability(): Promise<void> {
+  const commitVault = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-authority-commit-")
+  );
+  await appendTestPendingEvent(
+    commitVault,
+    "event-memory-authority-commit",
+    "请记住 MEMORY-AUTHORITY-COMMIT"
+  );
+  const prepared = await prepareMemoryTransaction(commitVault);
+  assert.ok(prepared);
+  assert.equal(
+    await resolveMemoryTransactionAuthority(
+      commitVault,
+      prepared.transactionId
+    ),
+    null,
+    "a prepared transaction must not authorize Native cleanup"
+  );
+  const applied = await applyMemoryCuratorResult(
+    commitVault,
+    prepared.transactionId,
+    curatorWrite(
+      prepared.transactionId,
+      prepared.events[0].eventId,
+      "memory-authority-commit",
+      "MEMORY-AUTHORITY-COMMIT"
+    )
+  );
+  assert.equal(applied.outcome, "write");
+  assert.equal(
+    await resolveMemoryTransactionAuthority(
+      commitVault,
+      prepared.transactionId
+    ),
+    null,
+    "staged Memory files are not formal transaction authority"
+  );
+  const interrupted = await commitMemoryTransaction(
+    commitVault,
+    prepared.transactionId,
+    { failAfterIndexWrite: true }
+  );
+  assert.equal(interrupted.outcome, "failed");
+  assert.equal(
+    await resolveMemoryTransactionAuthority(
+      commitVault,
+      prepared.transactionId
+    ),
+    null,
+    "an interrupted committing transaction remains ambiguous until recovery"
+  );
+  const recovered = await recoverAndResolveMemoryTransactionAuthority(
+    commitVault,
+    prepared.transactionId
+  );
+  assert.deepEqual(recovered, {
+    kind: "memory-transaction",
+    transactionId: prepared.transactionId,
+    state: "committed",
+    durable: true,
+    revision: 1,
+    outcome: "write"
+  });
+  assert.equal(
+    (await readPendingMemoryEvents(commitVault)).length,
+    0,
+    "rolled-forward authority must include durable pending-event removal"
+  );
+
+  const pendingVault = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-authority-pending-")
+  );
+  await appendTestPendingEvent(
+    pendingVault,
+    "event-memory-authority-pending",
+    "冲突内容需要保留 pending"
+  );
+  const pendingSource = await prepareMemoryTransaction(pendingVault);
+  assert.ok(pendingSource);
+  const pendingResult = await applyMemoryCuratorResult(
+    pendingVault,
+    pendingSource.transactionId,
+    {
+      schemaVersion: 2,
+      outcome: "pending",
+      summary: "requires resolution",
+      candidates: [{
+        candidateId: "memory-authority-pending",
+        disposition: "unresolved",
+        sourceEventIds: [pendingSource.events[0].eventId],
+        reason: "conflicting durable evidence"
+      }]
+    }
+  );
+  assert.equal(pendingResult.outcome, "pending");
+  assert.deepEqual(
+    await resolveMemoryTransactionAuthority(
+      pendingVault,
+      pendingSource.transactionId
+    ),
+    {
+      kind: "memory-transaction",
+      transactionId: pendingSource.transactionId,
+      state: "durable-pending",
+      durable: true,
+      revision: 0,
+      outcome: "pending",
+      error: "Unresolved candidates: memory-authority-pending"
+    }
+  );
+
+  const failedVault = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-authority-failed-")
+  );
+  await appendTestPendingEvent(
+    failedVault,
+    "event-memory-authority-failed",
+    "invalid result remains recoverable"
+  );
+  const failedSource = await prepareMemoryTransaction(failedVault);
+  assert.ok(failedSource);
+  const failedResult = await applyMemoryCuratorResult(
+    failedVault,
+    failedSource.transactionId,
+    {
+      schemaVersion: 1,
+      outcome: "no-op",
+      summary: "invalid schema",
+      candidates: []
+    }
+  );
+  assert.equal(failedResult.outcome, "failed");
+  const failedAuthority = await resolveMemoryTransactionAuthority(
+    failedVault,
+    failedSource.transactionId
+  );
+  assert.equal(failedAuthority?.state, "durable-failed");
+  assert.equal(failedAuthority?.outcome, "failed");
+  assert.match(
+    failedAuthority?.error ?? "",
+    /schemaVersion must be 2/
+  );
+}
+
 async function assertMemoryV2KeepsPendingOnCoverageCuratorAndUnresolvedFailures(): Promise<void> {
   const invalidVault = await mkdtemp(path.join(tmpdir(), "echoink-memory-v2-invalid-"));
   await appendTestPendingEvent(invalidVault, "event-invalid", "请记住 INVALID");
@@ -1349,6 +1524,7 @@ async function assertMemoryWorkflowPoliciesAndTriggerGate(): Promise<void> {
   assert.deepEqual(memoryWorkflowPolicy("knowledge.reingest"), { read: false, capture: "workflow-result", sync: "local-commit" });
   assert.deepEqual(memoryWorkflowPolicy("knowledge.check"), { read: false, capture: "none", sync: "never" });
   assert.deepEqual(memoryWorkflowPolicy("prompt.enhance"), { read: false, capture: "none", sync: "never" });
+  assert.deepEqual(memoryWorkflowPolicy("backend.probe"), { read: false, capture: "none", sync: "never" });
   assert.deepEqual(memoryWorkflowPolicy("editor.rewrite"), { read: false, capture: "none", sync: "never" });
   assert.deepEqual(memoryRequestPolicy("knowledge.ask"), { enabled: true, maxItems: 8 });
   assert.deepEqual(memoryRequestPolicy("knowledge.maintain"), { enabled: true, maxItems: 0 }, "structured writes must start the Memory lifecycle without reading recalled facts");

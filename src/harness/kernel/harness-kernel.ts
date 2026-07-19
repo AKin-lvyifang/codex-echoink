@@ -5,7 +5,16 @@ import type { RunLedger } from "../ledger/run-ledger";
 import type { MemoryProvider } from "../memory/provider";
 import type { ContextSection } from "../contracts/context";
 import type { StoredSession } from "../../settings/settings";
-import { RunOrchestrator, type AppendRunEventInput, type SettleRunTerminalInput } from "./run-orchestrator";
+import type { NativeSessionLeaseManager } from "./native-session-lease-manager";
+import {
+  RunOrchestrator,
+  type AppendRunEventInput,
+  type BeforeSurfaceTerminalCommit,
+  type BeforeBindingReplacement,
+  type RegisterNativeExecution,
+  type RunTerminalAuthority,
+  type SettleRunTerminalInput
+} from "./run-orchestrator";
 
 export interface EchoInkHarnessKernelOptions {
   ledger: RunLedger;
@@ -14,6 +23,7 @@ export interface EchoInkHarnessKernelOptions {
   maxResourceBytes?: number;
   now?: () => number;
   sessionProvider?: (sessionId: string) => Promise<StoredSession | null> | StoredSession | null;
+  nativeSessionLeaseManager?: NativeSessionLeaseManager;
 }
 
 export interface HarnessRunWithAdapterInput {
@@ -21,6 +31,9 @@ export interface HarnessRunWithAdapterInput {
   request: HarnessRunRequest;
   sink?: HarnessEventSink;
   sessionProvider?: (sessionId: string) => Promise<StoredSession | null> | StoredSession | null;
+  beforeBindingReplacement?: BeforeBindingReplacement;
+  registerNativeExecution?: RegisterNativeExecution;
+  terminalAuthority?: RunTerminalAuthority;
 }
 
 export class EchoInkHarnessKernel {
@@ -34,17 +47,35 @@ export class EchoInkHarnessKernel {
       corePolicySections: this.options.corePolicySections,
       maxResourceBytes: this.options.maxResourceBytes,
       now: this.options.now,
-      sessionProvider: this.options.sessionProvider
+      sessionProvider: this.options.sessionProvider,
+      nativeSessionLeaseManager: this.options.nativeSessionLeaseManager
     });
   }
 
   async runWithAdapter(input: HarnessRunWithAdapterInput): Promise<HarnessRunResult> {
-    this.orchestrator.registerAdapter(input.adapter);
-    return await this.orchestrator.run(input.request, input.sink, { sessionProvider: input.sessionProvider });
+    return await this.orchestrator.run(input.request, input.sink, {
+      adapter: input.adapter,
+      sessionProvider: input.sessionProvider,
+      beforeBindingReplacement: input.beforeBindingReplacement,
+      registerNativeExecution: input.registerNativeExecution,
+      terminalAuthority: input.terminalAuthority
+    });
   }
 
   async settleRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<HarnessEvent> {
     return await this.orchestrator.settleRunTerminal(input, sink);
+  }
+
+  async commitSurfaceRunTerminal(
+    input: SettleRunTerminalInput,
+    beforeTerminalCommit: BeforeSurfaceTerminalCommit,
+    sink?: HarnessEventSink
+  ): Promise<HarnessEvent> {
+    return await this.orchestrator.commitSurfaceRunTerminal(
+      input,
+      beforeTerminalCommit,
+      sink
+    );
   }
 
   async appendRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink): Promise<HarnessEvent> {

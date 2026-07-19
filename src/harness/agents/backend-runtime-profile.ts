@@ -14,7 +14,6 @@ import type { NativeExecutionKind, NativeExecutionPersistence } from "../contrac
 export interface HarnessBackendRuntimeProfile {
   displayName: string;
   adapterVersion: string;
-  nativeThreadPrewarm: boolean;
   deferMessageModelUntilRunResult: boolean;
   knowledgeLintRequiresWorkspaceWrite: boolean;
 }
@@ -23,21 +22,18 @@ const RUNTIME_PROFILES: Record<AgentBackendKind, HarnessBackendRuntimeProfile> =
   "codex-cli": {
     displayName: agentBackendDisplayName("codex-cli"),
     adapterVersion: "rich-runtime",
-    nativeThreadPrewarm: true,
     deferMessageModelUntilRunResult: false,
     knowledgeLintRequiresWorkspaceWrite: true
   },
   opencode: {
     displayName: agentBackendDisplayName("opencode"),
     adapterVersion: "legacy-runtime",
-    nativeThreadPrewarm: false,
     deferMessageModelUntilRunResult: true,
     knowledgeLintRequiresWorkspaceWrite: false
   },
   hermes: {
     displayName: agentBackendDisplayName("hermes"),
     adapterVersion: "legacy-runtime",
-    nativeThreadPrewarm: false,
     deferMessageModelUntilRunResult: false,
     knowledgeLintRequiresWorkspaceWrite: false
   }
@@ -53,10 +49,6 @@ export function harnessBackendDisplayName(backend: AgentBackendKind): string {
 
 export function harnessBackendAdapterVersion(backend: AgentBackendKind): string {
   return harnessBackendRuntimeProfile(backend).adapterVersion;
-}
-
-export function harnessBackendUsesNativeThreadPrewarm(backend: AgentBackendKind): boolean {
-  return harnessBackendRuntimeProfile(backend).nativeThreadPrewarm;
 }
 
 export function harnessMessageModelId(settings: CodexForObsidianSettings | null | undefined, backend: AgentBackendKind, turnModel?: string): string {

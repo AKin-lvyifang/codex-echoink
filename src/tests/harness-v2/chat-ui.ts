@@ -11,7 +11,11 @@ import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAge
 import { actionVerb, agentFooterItems, messageProvenanceMetaItems, messageTitleTime, shouldRenderMessageTitle, terminalAnswerFooterMessageIds } from "../../ui/codex-view/message-list";
 import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
 import { messageRenderOptionsForRunUpdate, selectFirstNonBlankText, shouldDismissThinkingForHarnessEvent, startChatTurn } from "../../ui/codex-view/turn-runner";
-import { deleteSessions, renderTabsView } from "../../ui/codex-view/session-controller";
+import {
+  deleteSessions,
+  renderTabsView,
+  SESSION_DELETION_DISABLED_NOTICE
+} from "../../ui/codex-view/session-controller";
 import { buildCodexSessionNavigatorModel, formatSessionUpdatedAt } from "../../ui/codex-view/tabs";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
@@ -77,7 +81,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
   testSessionNavigatorModel();
-  await testBatchSessionDeletion();
+  await testBatchSessionDeletionFailsClosedUntilJournal();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true }), { forceBottom: false, preserveScroll: true });
@@ -459,12 +463,17 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   let releaseSave!: () => void;
   const saveBlocked = new Promise<void>((resolve) => { releaseSave = resolve; });
   let placeholderUpdates = 0;
+  let nativeThreadStarts = 0;
   const tabBarEl = new FakeSessionNavigatorElement("div");
   const host: any = {
     plugin: {
       settings,
       getVaultPath: () => "/tmp/echoink-chat-ui",
-      saveSettings: async () => await saveBlocked
+      saveSettings: async () => await saveBlocked,
+      startCodexHarnessThread: async () => {
+        nativeThreadStarts += 1;
+        return { threadId: "unexpected-thread" };
+      }
     },
     turnQueue: { clearSessionQueue: () => undefined },
     tabBarEl,
@@ -480,7 +489,6 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
     renderKnowledgeDashboard: () => undefined,
     refreshKnowledgeDashboard: async () => undefined,
     updateInputPlaceholder: () => { placeholderUpdates += 1; },
-    prewarmActiveThread: () => undefined,
     closeComposerMenus: () => undefined,
     isKnowledgeBaseSession: (session: StoredSession) => session.id === knowledge.id
   };
@@ -503,6 +511,7 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   assert.equal(placeholderUpdates, 1, "chat placeholder must update before asynchronous settings persistence finishes");
   releaseSave();
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(nativeThreadStarts, 0, "activating a tab without a user Turn must not create a Codex thread");
 }
 
 function testSessionNavigatorModel(): void {
@@ -554,7 +563,7 @@ function testSessionNavigatorModel(): void {
   assert.equal(formatSessionUpdatedAt(1_000_000 - 8 * 60_000, 1_000_000), "8 分钟前");
 }
 
-async function testBatchSessionDeletion(): Promise<void> {
+async function testBatchSessionDeletionFailsClosedUntilJournal(): Promise<void> {
   const knowledge: StoredSession = {
     id: "knowledge-delete",
     title: "知识库管理",
@@ -592,15 +601,19 @@ async function testBatchSessionDeletion(): Promise<void> {
   settings.knowledgeBase.sessionId = knowledge.id;
   settings.sessions = [knowledge, chatA, chatB, running];
   settings.activeSessionId = chatB.id;
-  const committed: string[] = [];
+  const mutationCalls: string[] = [];
   const clearedQueues: string[] = [];
   let resetCalls = 0;
+  let renderCalls = 0;
+  const sessionsBefore = structuredClone(settings.sessions);
   const host: any = {
     plugin: {
       settings,
-      saveSettings: async () => undefined,
+      saveSettings: async () => {
+        mutationCalls.push("save-settings");
+      },
       commitEchoInkSessionDeletion: async (session: StoredSession) => {
-        committed.push(session.id);
+        mutationCalls.push(`commit-deletion:${session.id}`);
         return [];
       }
     },
@@ -608,13 +621,12 @@ async function testBatchSessionDeletion(): Promise<void> {
     running: true,
     activeRunSessionId: running.id,
     resetVirtualWindow: () => { resetCalls += 1; },
-    renderTabs: () => undefined,
-    renderMessages: () => undefined,
-    renderToolbar: () => undefined,
-    renderKnowledgeDashboard: () => undefined,
-    refreshKnowledgeDashboard: async () => undefined,
-    updateInputPlaceholder: () => undefined,
-    prewarmActiveThread: () => undefined,
+    renderTabs: () => { renderCalls += 1; },
+    renderMessages: () => { renderCalls += 1; },
+    renderToolbar: () => { renderCalls += 1; },
+    renderKnowledgeDashboard: () => { renderCalls += 1; },
+    refreshKnowledgeDashboard: async () => { renderCalls += 1; },
+    updateInputPlaceholder: () => { renderCalls += 1; },
     createSession: () => {
       throw new Error("知识库常驻时不应补建空会话");
     },
@@ -623,11 +635,14 @@ async function testBatchSessionDeletion(): Promise<void> {
 
   await deleteSessions(host, [chatA.id, chatB.id, running.id, knowledge.id]);
 
-  assert.deepEqual(committed, [chatA.id, chatB.id]);
-  assert.deepEqual(clearedQueues, [chatA.id, chatB.id]);
-  assert.deepEqual(settings.sessions.map((session) => session.id), [knowledge.id, running.id]);
-  assert.equal(settings.activeSessionId, running.id);
-  assert.equal(resetCalls, 1);
+  assert.deepEqual(mutationCalls, []);
+  assert.deepEqual(clearedQueues, []);
+  assert.deepEqual(settings.sessions, sessionsBefore);
+  assert.equal(settings.activeSessionId, chatB.id);
+  assert.equal(resetCalls, 0);
+  assert.equal(renderCalls, 0);
+  assert.match(SESSION_DELETION_DISABLED_NOTICE, /安全删除正在迁移/);
+  assert.match(SESSION_DELETION_DISABLED_NOTICE, /当前不会删除会话、历史或关联 Agent 缓存/);
 }
 
 class FakeSessionNavigatorElement {
@@ -750,7 +765,7 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
     callEchoInkMcpTool: async () => ({ content: [] }),
     externalizeMessageText: async () => undefined,
     saveSettings: async () => undefined,
-    settleHarnessRunTerminal: async () => undefined,
+    commitChatSurfaceTerminal: async () => undefined,
     runHarnessWithAdapter: async (input: { request: Record<string, unknown>; sink: (event: HarnessEvent) => void | Promise<void> }) => {
       harnessRuns += 1;
       capturedRequest = input.request;
@@ -796,8 +811,6 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
     set activeRunSessionId(value: string) { activeRunSessionId = value; },
     activeTurnId: "",
     turnStartedAt: 0,
-    threadPrewarmPromise: null,
-    threadPrewarmSessionId: "",
     messagesBottomFollowPaused: false,
     clearComposerDraft: () => undefined,
     renderTabs: () => undefined,
@@ -882,7 +895,7 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
       callEchoInkMcpTool: async () => ({ content: [] }),
       externalizeMessageText: async () => undefined,
       saveSettings: async () => undefined,
-      settleHarnessRunTerminal: async () => undefined,
+      commitChatSurfaceTerminal: async () => undefined,
       runHarnessWithAdapter: async (input: { request: Record<string, unknown>; sink: (event: HarnessEvent) => void | Promise<void> }) => {
         const runId = String(input.request.runId);
         await input.sink(harnessEvent(runId, 1, "run.cancelled", { error: "Run cancelled" }));
@@ -896,8 +909,6 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
     activeRunSessionId: "",
     activeTurnId: "",
     turnStartedAt: 0,
-    threadPrewarmPromise: null,
-    threadPrewarmSessionId: "",
     messagesBottomFollowPaused: false,
     clearComposerDraft: () => undefined,
     renderTabs: () => undefined,

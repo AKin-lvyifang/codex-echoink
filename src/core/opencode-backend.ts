@@ -56,7 +56,7 @@ export interface OpenCodeCliTaskOptions {
   agent?: string;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
-  onRunId?: (runId: string) => void;
+  onRunId?: (runId: string) => void | Promise<void>;
   onPromptSubmitted?: () => void;
   onEvent?: (event: unknown) => void;
   thinking?: boolean;
@@ -408,6 +408,7 @@ export class OpenCodeBackend implements AgentBackend {
     let lineBuffer = "";
     let emittedRunId = false;
     let eventCallbackError: unknown;
+    let runIdCallbackQueue = Promise.resolve();
     let promptSubmitted = false;
     const markPromptSubmitted = (): void => {
       if (promptSubmitted) return;
@@ -422,7 +423,11 @@ export class OpenCodeBackend implements AgentBackend {
       const runId = openCodeRunSessionIdFromLine(line);
       if (runId && !emittedRunId) {
         emittedRunId = true;
-        options.onRunId?.(runId);
+        runIdCallbackQueue = runIdCallbackQueue
+          .then(() => options.onRunId?.(runId))
+          .catch((error) => {
+            eventCallbackError = error;
+          });
       }
       const event = parseOpenCodeRunJsonLine(line);
       if (!event || !options.onEvent) return;
@@ -454,10 +459,21 @@ export class OpenCodeBackend implements AgentBackend {
       }
     });
     if (lineBuffer.trim()) consumeLine(lineBuffer);
-    if (eventCallbackError) throw eventCallbackError;
     const parsed = parseOpenCodeRunJsonLines(output);
     const sessionId = parsed.sessionId || options.nativeSessionId;
-    if (sessionId && !emittedRunId) options.onRunId?.(sessionId);
+    if (sessionId && !emittedRunId) {
+      runIdCallbackQueue = runIdCallbackQueue
+        .then(() => options.onRunId?.(sessionId))
+        .catch((error) => {
+          eventCallbackError = error;
+        });
+    }
+    await runIdCallbackQueue;
+    if (eventCallbackError) {
+      throw eventCallbackError instanceof Error
+        ? eventCallbackError
+        : new Error(formatOpenCodeError(eventCallbackError));
+    }
     const recoveredText = !parsed.hasAuthoritativeFinal && !parsed.text && sessionId && knownAssistantIds
       ? await this.recoverLatestAssistantText(sessionId, knownAssistantIds)
       : "";

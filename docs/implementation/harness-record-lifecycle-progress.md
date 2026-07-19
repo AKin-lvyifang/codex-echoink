@@ -4,16 +4,22 @@
 
 ## 当前结论
 
-正式方案、ADR 和 Phase 0 只读盘点器已经完成。真实 Vault dry-run 成功生成
-metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失联引用和旧 Run
-结算缺口，因此当前不允许进入迁移或清理。全过程没有执行真实历史删除、Native
-批量 cleanup、retention 清理或 Vault 迁移。
+正式方案、ADR、Phase 0 只读盘点和 Phase 1 自动化实现已经完成。Phase 1 已把
+Context rotation、Conversation commit、Native retirement/cleanup、Editor 产品终态、
+临时 Utility 以及 Settings/History source authority 收口到统一合同；当前 checkpoint
+已通过定向测试与全量工程门禁，但没有部署到真实 Obsidian。
+
+真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
+引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
+Native 批量 cleanup、retention 清理或 Vault 迁移。Phase 2 必须继续建立数据治理、
+迁移预览和恢复合同，不能把 Phase 1 的绿灯解释为允许清理真实数据。
 
 本任务分支：
 
 - 分支：`codex/harness-record-lifecycle`
 - Worktree：`/private/tmp/codex-harness-record-lifecycle`
-- 基线：`main@a91f1b8`
+- 创建基线：`main@a91f1b8`
+- 当前主线：`main@d4d4ec4`；最终集成前仍需同步并复验
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -30,9 +36,9 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
 | Phase | 状态 | 当前证据 | 下一门禁 |
 | --- | --- | --- | --- |
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
-| Phase 0：inventory / dry-run | 已完成 | fixture、全量门禁、真实 Vault 双次 dry-run 与稳定 fingerprint | 提交 Phase 0 checkpoint |
-| Phase 1：Context / Native lifecycle | 下一阶段 | `/clear`、workspace、rollover、Editor、cleanup 根因已定位 | 实现 context boundary 与 retirement recovery |
-| Phase 2：数据治理 | 未开始 | Conversation V2、Run retention、Raw 引用图、mutation journal 已设计 | Phase 1 核心不变量通过 |
+| Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
+| Phase 1：Context / Native lifecycle | 已完成（当前 checkpoint） | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
+| Phase 2：数据治理 | 未开始 | Conversation V2、Run retention、Raw 引用图、mutation journal 已设计 | 冻结基础 schema 与 crash contract |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -45,6 +51,12 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
 - `/clear` 的产品语义是“开启新上下文”，不是删除历史。
 - Run payload 默认 30 天，Run summary 默认 90 天；恢复证据不参与普通 retention。
 - Native cleanup 最多自动尝试 6 次，之后 quarantine；队列必须保障新任务公平性。
+- Provider endpoint 的 Native identity 只保留安全 origin、内部 sentinel 或
+  `endpoint-sha256`；不得把凭据、scope、query、fragment 或未知 opaque token
+  写入 Native Store。
+- Hermes ACP 返回的 session 必须按真实
+  `session / provider-persistent / acp-stdio` descriptor 登记；成功路径缺少登记
+  callback 时 fail closed，不能退回模糊 `run / unknown`。
 - Phase 0 的 `snapshotFingerprint` 只覆盖目录项与 record metadata 等结构信息，
   不读取或散列 Raw 正文字节。
 - Conversation 清空或删除必须逐类处理 formal active、pending/unresolved 与
@@ -53,7 +65,7 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
   `awaiting-local-commit` 和 pending 记录，cleanup 失败不反转业务成功。
 - Agent-native Memory 不属于精确 session cleanup 的范围。
 
-## 当前阻断项
+## 迁移阻断项
 
 - 真实报告有 129 个 blocking findings：1 个 Raw 引用缺少正文、64 个 Run
   缺少 terminal、64 个由 Native `localCommit=committed` 反查出的 Run
@@ -64,8 +76,8 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
   的孤儿。
 - OpenCode 的 1 个 linked record 和 Hermes 的 2 个 linked records 只能部分核验。
   查无记录保持 ambiguous；Hermes `run` 与本机 `session` 类型不一致时也不得判 missing。
-- 当前 V2 Hook 不按 Git common-dir 自动识别临时 worktree；本任务必须保持线程
-  cwd 为主仓库，只从主根触发 V2。
+- 当前 V2 Hook 不按 Git common-dir 自动识别临时 worktree；本任务线程继续绑定
+  主仓库，只从主根触发 V2。
 - 旧 `.codex-memory/spec/knowledge-base-thread-lifecycle.md` 的“普通 Chat 原生
   thread 必须永久保留 resume”已被 ADR 0005 替代，但迁移保留的旧文件还需由
   V2 记忆整理流程标记 superseded。
@@ -76,6 +88,13 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
 
 - History `days` 中的非 object 元素尚未单独报 corrupt；Run Ledger 仍兼容缺少
   `eventId` 的旧事件。这两项必须在迁移 schema 冻结前决定兼容或阻断策略。
+- Settings/History 已覆盖逐写点失败和 fresh restart，但尚未用真实进程 kill 做
+  每个原子写点的崩溃注入。
+- Editor 产品入口已覆盖默认生产表达式和真实 Kernel，但组合测试通过窄 adapter
+  builder seam 注入 runtime；默认 runtime factory 与真实 Native Manager 的各自
+  合同由独立套件覆盖，尚无一个端到端进程级组合夹具。
+- Editor terminal receipt 已按 run ID、事件类型、backend 和 payload fail closed；
+  当前回归覆盖提交抛错，尚未逐项注入四类错误 receipt。
 - `--format both` 采用 Markdown 先落盘、JSON 最后作为 commit marker 的逐文件
   原子协议；后续可升级为 generation 目录加原子 manifest，消除中途失败时的新旧
   双文件组合。
@@ -84,21 +103,28 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
 
 ## 下一检查点
 
-1. 提交 Phase 0 checkpoint，确认 public guard 覆盖全部新增文件。
-2. Phase 1 增加 context boundary、workspace fingerprint 和 binding retirement record。
-3. 修复 `/clear` 旧 binding 复用、Editor Native 提前登记和 stale lease 回收。
-4. 为 Native cleanup 增加 single-flight、有限重试、quarantine 和公平队列。
+1. 进入 Phase 2，先冻结 Conversation V2、Workflow/Attempt summary、mutation
+   journal 与 retention 的 schema 和 crash contract。
+2. 完成 History 引用投影、Raw owner graph/GC、四类用户操作 coordinator 和
+   side-by-side migration/reverse exporter。
+3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
+   历史删除、retention、Raw GC 或批量 Native cleanup。
 
 ## 当前验证
 
-最终代码状态已通过：
+当前完整 Phase 1 diff 已通过：
 
-- `npm run typecheck`
 - `npm run test`，输出 `All tests passed`
+- 13 组末轮 Phase 1 focused suites，全部绑定同一源码指纹
+- `npm run typecheck`
 - `npm run build`
-- `npm run lint`，结果与仓库 baseline 一致，无新增 finding
-- `npm run check:public`，暂存后覆盖 356 个 tracked files
+- `npm run lint`，961 个 finding 与当前 baseline 完全一致，无新增 finding；
+  baseline 相对当前分支已提交基线由 985 向下收紧
+- `npm run check:release`
+- `npm run check:public`，明确暂存后通过
 - `git diff --check`
+
+`.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，没有进入暂存区。
 
 真实 Vault 双次 dry-run 得到相同结果：
 
@@ -108,5 +134,4 @@ metadata-only 报告，但报告状态为 `blocked`：现有数据仍有 Raw 失
 - `actionsApplied=0`、`deletionsApplied=0`、`rawBodiesRead=false`
 - 第二次运行的 `generatedAt` 不同，但 report ID 和 fingerprint 不变
 
-public guard 已在明确暂存全部 Phase 0 文件后复验；`.codex-memory` 和
-`node_modules` 两个共享软链接未进入暂存区。
+Phase 0 与当前 Phase 1 的 public guard 都已在各自明确暂存状态下复验。

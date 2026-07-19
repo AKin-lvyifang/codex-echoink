@@ -1,12 +1,10 @@
 {
   "schemaVersion": 2,
   "source": "eslint-plugin-obsidianmd recommended",
-  "total": 985,
-  "errors": 721,
-  "warnings": 264,
+  "total": 961,
+  "errors": 704,
+  "warnings": 257,
   "ruleCounts": {
-    "src/agent/acp-runtime.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 1,
-    "src/agent/acp-runtime.ts::@typescript-eslint/no-unsafe-assignment::error": 1,
     "src/agent/opencode-rich-runtime.ts::@typescript-eslint/no-explicit-any::warning": 2,
     "src/agent/opencode-rich-runtime.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 4,
     "src/agent/opencode-rich-runtime.ts::@typescript-eslint/no-unsafe-assignment::error": 4,
@@ -26,9 +24,9 @@
     "src/core/electron.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 1,
     "src/core/electron.ts::obsidianmd/no-global-this::warning": 2,
     "src/core/hermes-backend.ts::@typescript-eslint/no-explicit-any::warning": 7,
-    "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-assignment::error": 8,
+    "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-assignment::error": 6,
     "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-call::error": 2,
-    "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-member-access::error": 16,
+    "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-member-access::error": 12,
     "src/core/hermes-backend.ts::@typescript-eslint/no-unsafe-return::error": 1,
     "src/core/hermes-backend.ts::obsidianmd/no-global-this::warning": 1,
     "src/core/hermes-backend.ts::obsidianmd/prefer-window-timers::warning": 2,
@@ -64,7 +62,6 @@
     "src/core/opencode-backend.ts::@typescript-eslint/no-unsafe-assignment::error": 5,
     "src/core/opencode-backend.ts::@typescript-eslint/no-unsafe-member-access::error": 15,
     "src/core/opencode-backend.ts::@typescript-eslint/no-unsafe-return::error": 1,
-    "src/core/opencode-backend.ts::@typescript-eslint/only-throw-error::error": 1,
     "src/core/opencode-backend.ts::obsidianmd/prefer-window-timers::warning": 3,
     "src/core/opencode-errors.ts::@typescript-eslint/no-explicit-any::warning": 5,
     "src/core/opencode-errors.ts::@typescript-eslint/no-unsafe-assignment::error": 1,
@@ -104,8 +101,6 @@
     "src/editor-actions/state.ts::@typescript-eslint/no-unsafe-assignment::error": 2,
     "src/editor-actions/state.ts::@typescript-eslint/no-unsafe-member-access::error": 9,
     "src/editor-actions/types.ts::@typescript-eslint/no-redundant-type-constituents::error": 1,
-    "src/harness/agents/adapters/codex-rich-adapter.ts::@typescript-eslint/no-unsafe-assignment::error": 1,
-    "src/harness/agents/adapters/codex-rich-adapter.ts::@typescript-eslint/unbound-method::error": 1,
     "src/harness/agents/adapters/codex-rich-driver.ts::@typescript-eslint/no-explicit-any::warning": 12,
     "src/harness/agents/adapters/codex-rich-driver.ts::@typescript-eslint/no-unsafe-assignment::error": 4,
     "src/harness/agents/adapters/codex-rich-driver.ts::@typescript-eslint/no-unsafe-call::error": 3,
@@ -114,7 +109,6 @@
     "src/harness/agents/adapters/codex-rich-driver.ts::obsidianmd/prefer-window-timers::warning": 7,
     "src/harness/agents/adapters/codex-rich-notification-hub.ts::@typescript-eslint/no-explicit-any::warning": 2,
     "src/harness/agents/adapters/codex-rich-notification-hub.ts::@typescript-eslint/no-unsafe-member-access::error": 9,
-    "src/harness/contracts/event.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 1,
     "src/harness/maintenance/active-run-journal.ts::@typescript-eslint/no-base-to-string::error": 2,
     "src/harness/maintenance/active-run-journal.ts::no-control-regex::error": 1,
     "src/harness/maintenance/hermes-proposal-contract.ts::@typescript-eslint/no-explicit-any::warning": 1,
@@ -140,12 +134,9 @@
     "src/harness/maintenance/workflow-wal.ts::@typescript-eslint/restrict-template-expressions::error": 1,
     "src/harness/maintenance/workflow-wal.ts::no-useless-catch::error": 1,
     "src/harness/maintenance/workflow-wal.ts::obsidianmd/prefer-window-timers::warning": 1,
-    "src/harness/memory/backend-curator.ts::@typescript-eslint/prefer-promise-reject-errors::error": 1,
-    "src/harness/memory/backend-curator.ts::obsidianmd/no-global-this::warning": 3,
     "src/harness/memory/file-memory.ts::no-useless-escape::error": 1,
     "src/harness/memory/v2-engine.ts::no-control-regex::error": 1,
     "src/harness/memory/v2-store.ts::no-control-regex::error": 1,
-    "src/harness/memory/workflow-policy.ts::@typescript-eslint/no-redundant-type-constituents::error": 2,
     "src/harness/resources/skill-loader.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 1,
     "src/harness/resources/vault-store.ts::@typescript-eslint/no-base-to-string::error": 1,
     "src/home/home-view.ts::@typescript-eslint/no-redundant-type-constituents::error": 1,
@@ -196,7 +187,6 @@
     "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-assignment::error": 6,
     "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-call::error": 3,
     "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-member-access::error": 19,
-    "src/knowledge-base/scheduled-maintenance.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 1,
     "src/knowledge-base/scheduled-maintenance.ts::@typescript-eslint/no-unsafe-return::error": 1,
     "src/knowledge-base/scheduler.ts::@typescript-eslint/no-unused-vars::warning": 1,
     "src/knowledge-base/web-capture.ts::no-useless-escape::error": 1,
@@ -210,8 +200,6 @@
     "src/plugin/settings-store.ts::obsidianmd/prefer-window-timers::warning": 2,
     "src/plugin/view-service.ts::@typescript-eslint/no-explicit-any::warning": 1,
     "src/plugin/view-service.ts::obsidianmd/ui/sentence-case::warning": 1,
-    "src/prompt-enhancer/service.ts::@typescript-eslint/prefer-promise-reject-errors::error": 1,
-    "src/prompt-enhancer/service.ts::obsidianmd/no-global-this::warning": 3,
     "src/resources/mcp-broker.ts::@typescript-eslint/no-explicit-any::warning": 8,
     "src/resources/mcp-broker.ts::@typescript-eslint/no-misused-promises::error": 1,
     "src/resources/mcp-broker.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 3,
@@ -271,7 +259,7 @@
     "src/ui/codex-view/session-message-store.ts::@typescript-eslint/no-unsafe-argument::error": 2,
     "src/ui/codex-view/turn-runner.ts::@typescript-eslint/no-unsafe-assignment::error": 1,
     "src/ui/codex-view/turn-runner.ts::@typescript-eslint/only-throw-error::error": 2,
-    "src/ui/codex-view/turn-runner.ts::obsidianmd/prefer-window-timers::warning": 3,
+    "src/ui/codex-view/turn-runner.ts::obsidianmd/prefer-window-timers::warning": 2,
     "src/ui/codex-view/view-shell.ts::@typescript-eslint/no-unnecessary-type-assertion::error": 3,
     "src/ui/modals.ts::@typescript-eslint/no-explicit-any::warning": 2,
     "src/ui/modals.ts::@typescript-eslint/no-unsafe-argument::error": 4,
@@ -287,26 +275,6 @@
     "src/workflows/knowledge/profile/profile-parser.ts::@typescript-eslint/no-unsafe-member-access::error": 15
   },
   "findings": [
-    {
-      "fingerprint": "4c41b644e867ee9efecaea451a4df3ae1fe320c6cb55cb14e6c6f7c2e4154ef9",
-      "path": "src/agent/acp-runtime.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": "error",
-      "messageId": "contextuallyUnnecessary",
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "evidence": "if (Array.isArray(value) && value.length === 0) return \"empty\"; if (value && typeof value === \"object\" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) return \"empty\"; return \"provided\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7e0641f58a7cfb9a6e767c3d0245a5ac1e45fadbf4f3082aafb0d63b4e18a203",
-      "path": "src/agent/acp-runtime.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "const cancelled = Boolean(input.abortSignal?.aborted); const normalizedError = cancelled ? createCancelledError() : error; const message = normalizedError instanceof Error ? normalizedError.message : String(normalizedError);",
-      "count": 1
-    },
     {
       "fingerprint": "fea95ea74c8784fc537452455608718ac58fe8277a1f75320b64a9eef7c1f9ca",
       "path": "src/agent/opencode-rich-runtime.ts",
@@ -718,26 +686,6 @@
       "count": 1
     },
     {
-      "fingerprint": "10a3863f2c62a11172a6362efa808833b3050d4b075bd595ab0f6a7006ac1259",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "input.onRunId?.(runId); const result = await this.pollRun(runId, input.timeoutMs ?? 20 * 60 * 1000, input.abortSignal); return {",
-      "count": 1
-    },
-    {
-      "fingerprint": "79e8ca2d80be2510c6de3f5450285dabd53a77f73f0c9c3b72e1102b688236c2",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "runId, usage: result?.usage };",
-      "count": 1
-    },
-    {
       "fingerprint": "a1ef322135c3ad850809c57780d4ab4685a4fbc547909ac56a2f0f34159f4c01",
       "path": "src/core/hermes-backend.ts",
       "rule": "@typescript-eslint/no-unsafe-assignment",
@@ -868,36 +816,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6bfeaa18668678bbaff8c816ffc50b69dab65751cc88fc630932e3d9985093a4",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .result on an `any` value.",
-      "evidence": "return { text: String(result?.output ?? result?.final_response ?? result?.result ?? \"\"), runId,",
-      "count": 1
-    },
-    {
-      "fingerprint": "915f9e0905ee555d7f84e14628aa386a7d6dbbf8389d7ca747bd6dbd998a2bdd",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .output on an `any` value.",
-      "evidence": "return { text: String(result?.output ?? result?.final_response ?? result?.result ?? \"\"), runId,",
-      "count": 1
-    },
-    {
-      "fingerprint": "aa699fb219d1c39e6122864372751f9b004b097efb7a4fb1e2aa248ead6b284d",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .final_response on an `any` value.",
-      "evidence": "return { text: String(result?.output ?? result?.final_response ?? result?.result ?? \"\"), runId,",
-      "count": 1
-    },
-    {
       "fingerprint": "94ab3aa5fd6d511dbbc81e2ac733d73ddc3156c4f7da2d64c5f31ceda870376c",
       "path": "src/core/hermes-backend.ts",
       "rule": "@typescript-eslint/no-unsafe-member-access",
@@ -905,16 +823,6 @@
       "messageId": "unsafeMemberExpression",
       "message": "Unsafe member access .id on an `any` value.",
       "evidence": "return models.map((model: any) => { const id = String(model?.id ?? \"\"); return {",
-      "count": 1
-    },
-    {
-      "fingerprint": "e2e28ecbd01d335eaf52b203ee505e2bc0f0134a155d56d01d500e8b81eb9ea8",
-      "path": "src/core/hermes-backend.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .usage on an `any` value.",
-      "evidence": "runId, usage: result?.usage };",
       "count": 1
     },
     {
@@ -1945,16 +1853,6 @@
       "messageId": "unsafeReturn",
       "message": "Unsafe return of a value of type `any`.",
       "evidence": ".filter((part) => part?.type === \"text\" && typeof part.text === \"string\") .map((part) => part.text) .join(\"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "53480c854317d65a523cb6e6cac3812a10b08819997a96dfa9d916c157282b15",
-      "path": "src/core/opencode-backend.ts",
-      "rule": "@typescript-eslint/only-throw-error",
-      "severity": "error",
-      "messageId": "object",
-      "message": "Expected an error object to be thrown.",
-      "evidence": "if (lineBuffer.trim()) consumeLine(lineBuffer); if (eventCallbackError) throw eventCallbackError; const parsed = parseOpenCodeRunJsonLines(output);",
       "count": 1
     },
     {
@@ -3498,26 +3396,6 @@
       "count": 1
     },
     {
-      "fingerprint": "cb25d33813c880326df0e769302b4d6f8da88d46b410b738e51d75fdda213334",
-      "path": "src/harness/agents/adapters/codex-rich-adapter.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "(value) => ({ status: \"completed\", value } as const), (error) => ({ status: \"failed\", error } as const) );",
-      "count": 1
-    },
-    {
-      "fingerprint": "327ab6dc66dd535aed703e7ec10d9ebe4f1aa4fe5b05e6bf185da58a1573ad63",
-      "path": "src/harness/agents/adapters/codex-rich-adapter.ts",
-      "rule": "@typescript-eslint/unbound-method",
-      "severity": "error",
-      "messageId": "unboundWithoutThisAnnotation",
-      "message": "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. \nIf a function does not access `this`, it can be annotated with `this: void`.",
-      "evidence": "}, interruptTurn: this.options.interruptTurn, inactivityTimeoutMs: this.options.inactivityTimeoutMs,",
-      "count": 1
-    },
-    {
       "fingerprint": "a90c6574b5a9f8f476035fa3400d1cff7ece6c7ef19aae2ca98ac9245be72b38",
       "path": "src/harness/agents/adapters/codex-rich-driver.ts",
       "rule": "@typescript-eslint/no-explicit-any",
@@ -4918,16 +4796,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6adaaaae3af59eb04d78e4518e3053e2e936804e48a658651694b5d15f0bb63e",
-      "path": "src/harness/contracts/event.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": "error",
-      "messageId": "contextuallyUnnecessary",
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "evidence": "function compactUsage(usage: HarnessRunUsage): HarnessRunUsage { return Object.fromEntries( Object.entries(usage).filter((entry): entry is [string, number] => entry[1] !== undefined) ) as HarnessRunUsage; }",
-      "count": 1
-    },
-    {
       "fingerprint": "1956e0788abec270cb1c608113181ba66f0cf7a6636118794cf062c9280bfabf",
       "path": "src/harness/maintenance/active-run-journal.ts",
       "rule": "@typescript-eslint/no-base-to-string",
@@ -5328,46 +5196,6 @@
       "count": 1
     },
     {
-      "fingerprint": "e7f4f8075acc7f2abdccdfadbd59f2bf3b0b0c4ea72f6b29bed6b9fe49f7ff02",
-      "path": "src/harness/memory/backend-curator.ts",
-      "rule": "@typescript-eslint/prefer-promise-reject-errors",
-      "severity": "error",
-      "messageId": "rejectAnError",
-      "message": "Expected the Promise rejection reason to be an Error.",
-      "evidence": "(value) => { globalThis.clearTimeout(timer); resolve(value); }, (error) => { globalThis.clearTimeout(timer); reject(error); } );",
-      "count": 1
-    },
-    {
-      "fingerprint": "fe4625ce5dc4797c1bfc8eb2888b63dc47271cc087250f4b1dc110e4aa7b3000",
-      "path": "src/harness/memory/backend-curator.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "(value) => { globalThis.clearTimeout(timer); resolve(value); }, (error) => { globalThis.clearTimeout(timer); reject(error); } );",
-      "count": 1
-    },
-    {
-      "fingerprint": "36488e723ef490847bdd5d06a4885ede1ca5fe0a266b237696b147ba7d50df2b",
-      "path": "src/harness/memory/backend-curator.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "promise.then( (value) => { globalThis.clearTimeout(timer); resolve(value); }, (error) => { globalThis.clearTimeout(timer); reject(error); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "35846da2f14a8b82cd5bc950e91bfe2128d82b69e01763e0bc9846e8f55b319f",
-      "path": "src/harness/memory/backend-curator.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "return await new Promise<T>((resolve, reject) => { const timer = globalThis.setTimeout(() => { void onTimeout().catch(() => undefined);",
-      "count": 1
-    },
-    {
       "fingerprint": "a1d1a6d9bc05f93e98b6ce781d60e273ba49e138c83b316acdaa0e2060680de5",
       "path": "src/harness/memory/file-memory.ts",
       "rule": "no-useless-escape",
@@ -5395,26 +5223,6 @@
       "messageId": "unexpected",
       "message": "Unexpected control character(s) in regular expression: \\x00, \\x08, \\x0b, \\x0c, \\x0e, \\x1f.",
       "evidence": "const PENDING_MEMORY_EVENT_TYPES = new Set<PendingMemoryEventType>([\"user-input\", \"tool-effect\", \"file-effect\", \"final-result\", \"workflow-result\"]); const UNSAFE_MEMORY_CONTROL_CHARACTER = /[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]/;",
-      "count": 1
-    },
-    {
-      "fingerprint": "36ebee81599979ac8a2a236f7aa9e9e7c6ad7764a83651e6c8ea4a38c4271b76",
-      "path": "src/harness/memory/workflow-policy.ts",
-      "rule": "@typescript-eslint/no-redundant-type-constituents",
-      "severity": "error",
-      "messageId": "literalOverridden",
-      "message": "\"chat.generic\" | \"prompt.enhance\" | \"knowledge.ask\" | \"knowledge.check\" | \"knowledge.maintain\" | \"knowledge.reingest\" | \"knowledge.calibrate\" | \"knowledge.outputs\" | \"knowledge.inbox\" | \"knowledge.journal\" | \"editor.rewrite\" | \"editor.expand\" | \"editor.continue\" | \"editor.translate\" | \"review.weekly\" | \"memory.curate\" is overridden by string in this union type.",
-      "evidence": "export function memoryRequestPolicy(workflow: HarnessWorkflow | string, maxReadItems = 8): MemoryPolicy { const policy = memoryWorkflowPolicy(workflow);",
-      "count": 1
-    },
-    {
-      "fingerprint": "76eb4ed74dfa41b9ab266f61aa27c413ca6b4558a8e00d310aa214d7cfc72b57",
-      "path": "src/harness/memory/workflow-policy.ts",
-      "rule": "@typescript-eslint/no-redundant-type-constituents",
-      "severity": "error",
-      "messageId": "literalOverridden",
-      "message": "\"chat.generic\" | \"prompt.enhance\" | \"knowledge.ask\" | \"knowledge.check\" | \"knowledge.maintain\" | \"knowledge.reingest\" | \"knowledge.calibrate\" | \"knowledge.outputs\" | \"knowledge.inbox\" | \"knowledge.journal\" | \"editor.rewrite\" | \"editor.expand\" | \"editor.continue\" | \"editor.translate\" | \"review.weekly\" | \"memory.curate\" is overridden by string in this union type.",
-      "evidence": "export function memoryWorkflowPolicy(workflow: HarnessWorkflow | string): MemoryWorkflowPolicy { return POLICIES[workflow as HarnessWorkflow] ?? DISABLED_POLICY;",
       "count": 1
     },
     {
@@ -6648,16 +6456,6 @@
       "count": 1
     },
     {
-      "fingerprint": "4d2286b4e97e7529b8f9926bb5340c117528ca47c5a178eb896d7b7fb103df3e",
-      "path": "src/knowledge-base/scheduled-maintenance.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": "error",
-      "messageId": "unnecessaryAssertion",
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "evidence": "const scheduledStillExists = Boolean(options.scheduledSessionId && settings.sessions.some((session) => session.id === options.scheduledSessionId)); settings.knowledgeBase.sessionId = scheduledStillExists ? options.scheduledSessionId! : options.sessionIdBefore; }",
-      "count": 1
-    },
-    {
       "fingerprint": "42ada3b98fb136b64c732a3ac1d2735f8c03f5024a84d38e4b14a42ed22b104a",
       "path": "src/knowledge-base/scheduled-maintenance.ts",
       "rule": "@typescript-eslint/no-unsafe-return",
@@ -6865,46 +6663,6 @@
       "messageId": "useSentenceCase",
       "message": "Use sentence case for UI text. Expected: '只能打开 echoink 生成的复盘 HTML'",
       "evidence": "if (!isReviewHtmlPath(normalized, this.plugin.settings.review.outputDir)) { new Notice(\"只能打开 EchoInk 生成的复盘 HTML\"); return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "4e305ff4690492e44a098bf56d0540aae774740cb08ee74276f1ff49e0033809",
-      "path": "src/prompt-enhancer/service.ts",
-      "rule": "@typescript-eslint/prefer-promise-reject-errors",
-      "severity": "error",
-      "messageId": "rejectAnError",
-      "message": "Expected the Promise rejection reason to be an Error.",
-      "evidence": "globalThis.clearTimeout(timer); reject(error); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "3dd782a43c2102a43d58273e32db6213634fa6cb56ce0c969d4b27d38b49aeb7",
-      "path": "src/prompt-enhancer/service.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "(error) => { globalThis.clearTimeout(timer); reject(error);",
-      "count": 1
-    },
-    {
-      "fingerprint": "02d3ddf7485993a75741d7c9f0a381195133db3c2b2a1cf34580a44e11f115e1",
-      "path": "src/prompt-enhancer/service.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "(value) => { globalThis.clearTimeout(timer); resolve(value);",
-      "count": 1
-    },
-    {
-      "fingerprint": "dd851cd837fcd1eeee61bc2201f0529fbb507658657e99aee1e2ae34aeb980b1",
-      "path": "src/prompt-enhancer/service.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": "warning",
-      "messageId": "avoidGlobal",
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "evidence": "return await new Promise<T>((resolve, reject) => { const timer = globalThis.setTimeout(() => { void onTimeout?.().catch(() => undefined);",
       "count": 1
     },
     {
@@ -8665,16 +8423,6 @@
       "messageId": "preferWindowTimer",
       "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
       "evidence": "if (inlineAgentProcessSaveTimers.has(view) || typeof view.plugin?.saveSettings !== \"function\") return; const timer = setTimeout(() => { inlineAgentProcessSaveTimers.delete(view);",
-      "count": 1
-    },
-    {
-      "fingerprint": "9b3dc7d85f5bae5c81fdf5d7a2a690d376a934a9c22703377fd960beb6a9b662",
-      "path": "src/ui/codex-view/turn-runner.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": "warning",
-      "messageId": "preferWindowTimer",
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "evidence": "if (typeof view.afterTurnSettled === \"function\") { setTimeout(() => { void view.afterTurnSettled(session.id, completed);",
       "count": 1
     },
     {

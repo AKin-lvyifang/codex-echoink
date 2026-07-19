@@ -1,5 +1,6 @@
 import * as assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runtime-adapter";
@@ -10,25 +11,49 @@ import { FakeFourthAgentAdapter } from "../../harness/agents/adapters/fake-fourt
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
 import { createEchoInkMcpToolBridgeRuntime } from "../../agent/tool-bridge";
 import { createAgentEventRuntimeWithFallback } from "../../agent/event-task";
+import { hermesAcpLaunchArgs } from "../../agent/factory";
 import { isTrustedExactWriteFenceReceipt } from "../../agent/write-fence";
 import { AcpAgentRuntime, type AcpSubprocessLike } from "../../agent/acp-runtime";
-import { RunOrchestrator } from "../../harness/kernel/run-orchestrator";
+import { HermesBackend } from "../../core/hermes-backend";
+import {
+  RunOrchestrator,
+  type BeforeBindingReplacementInput
+} from "../../harness/kernel/run-orchestrator";
 import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
-import { DEFAULT_SETTINGS, type ChatMessage } from "../../settings/settings";
+import {
+  DEFAULT_SETTINGS,
+  type ChatMessage
+} from "../../settings/settings";
 import type { AgentTaskRuntime } from "../../agent/runtime";
-import type { AgentTaskInput, AgentTaskResult } from "../../agent/types";
+import type {
+  AgentNativeExecutionDescriptor,
+  AgentTaskInput,
+  AgentTaskResult
+} from "../../agent/types";
 import type { AgentConnectionStatus } from "../../agent/types";
 import type { AgentRunResult } from "../../harness/agents/adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
+import type { NativeExecutionRef } from "../../harness/contracts/native-execution";
 import { compileContextBundle } from "../../harness/kernel/context-compiler";
+import { workspaceFingerprint } from "../../harness/kernel/session-service";
 import { harnessInitialMessageModelId, harnessMessageModelId } from "../../harness/agents/backend-runtime-profile";
 import { HarnessEventProjector } from "../../ui/codex-view/harness-event-projector";
 import { runCodexBrokerOrchestratorRegressionTests } from "../codex-broker-orchestrator-regression";
 
 export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertTaskRuntimeAdapterRunsThroughHarnessContract();
+  await assertTaskRuntimeAdaptersAwaitDurableRegistration();
+  await assertLegacyRegistrationBarrierRejectsMissingRuntimeCallback();
+  await assertUnsafeNativeTransportFailsClosedBeforeRegistration();
+  await assertTaskRuntimeRegistrationFailureCleansUpExactlyOnce();
+  await assertHermesAvailableTransportsEnforceRegistrationBarrier();
+  await assertHermesProductionFactoryFailsClosedBeforeCliFallback();
+  await assertHermesAcpAppliesSelectedProfileAndModelBeforePrompt();
   await assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents();
+  await assertOpenCodeShortBudgetSdkPathAwaitsRegistration();
+  await assertOpenCodeManagedResumeCannotFallbackBelowHarness();
+  await assertOpenCodeProductionRegistrationFailureCleansPrecisely();
   await assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext();
   await assertTaskRuntimeAdapterMapsFallbackEvents();
   await assertLifecycleFallbackKeepsOneStableAnswerMessage();
@@ -99,6 +124,7 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
 }
 
 async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Promise<void> {
+  const order: string[] = [];
   const hooks: any = {
     models: [{
       id: "opencode/big-pickle",
@@ -109,6 +135,12 @@ async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Prom
     }],
     session: { sessionId: "factory-rich-session", title: "Factory rich" },
     sessionMessages: []
+  };
+  hooks.onStartSession = () => {
+    order.push("native:factory-rich-session");
+  };
+  hooks.onSendPromptAsync = () => {
+    order.push("prompt");
   };
   hooks.onSubscribeEvents = () => (async function* () {
     yield { type: "server.connected", properties: {} };
@@ -172,6 +204,10 @@ async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Prom
     backendId: "opencode",
     settings,
     vaultPath: "/vault",
+    nativeRefContext: {
+      deviceKey: "device",
+      vaultId: "/vault"
+    },
     task: { timeoutMs: 2_000 }
   });
   const events: HarnessEvent[] = [];
@@ -180,6 +216,9 @@ async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Prom
       runId: "factory-rich-run",
       sessionId: "factory-rich-chat",
       workflow: "chat.generic",
+      registerNativeExecution: async (native) => {
+        order.push(`register:${native.id}`);
+      },
       input: { text: "inspect", attachments: [] },
       permissions: { mode: "read-only", writableRoots: [], requireApproval: true },
       resources: { selected: [], resolvedAt: 0, warnings: [] },
@@ -195,6 +234,11 @@ async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Prom
     }, (event) => events.push(event));
 
     assert.equal(result.outputText, "FACTORY_DONE");
+    assert.deepEqual(order, [
+      "native:factory-rich-session",
+      "register:factory-rich-session",
+      "prompt"
+    ]);
     assert.equal(hooks.sendPromptAsyncCalls, 1);
     assert.equal(hooks.runCliTaskCalls ?? 0, 0);
     assert.equal(events.some((event) => event.type === "agent.reasoning.summary.delta" && event.text === "先检查文件"), true);
@@ -206,6 +250,842 @@ async function assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents(): Prom
   } finally {
     await adapter.dispose();
     delete (globalThis as any).__opencodeBackendTestHooks;
+  }
+}
+
+async function assertOpenCodeShortBudgetSdkPathAwaitsRegistration(): Promise<void> {
+  const hooks: any = {
+    models: [],
+    session: {
+      sessionId: "factory-sdk-session",
+      title: "Factory SDK"
+    },
+    sendPromptResult: "SDK_DONE"
+  };
+  const order: string[] = [];
+  hooks.onStartSession = () => {
+    order.push("native:factory-sdk-session");
+  };
+  hooks.onSendPrompt = () => {
+    order.push("prompt");
+  };
+  (globalThis as any).__opencodeBackendTestHooks = hooks;
+  let releaseRegistration!: () => void;
+  const registrationGate = new Promise<void>((resolve) => {
+    releaseRegistration = resolve;
+  });
+  let markRegistrationStarted!: () => void;
+  const registrationStarted = new Promise<void>((resolve) => {
+    markRegistrationStarted = resolve;
+  });
+  const adapter = createHarnessAgentAdapter({
+    backendId: "opencode",
+    settings: structuredClone(DEFAULT_SETTINGS),
+    vaultPath: "/vault",
+    nativeRefContext: {
+      deviceKey: "device",
+      vaultId: "/vault"
+    },
+    task: { timeoutMs: 500 }
+  });
+  try {
+    const run = adapter.run({
+      ...agentRunRequest("factory-sdk-registration"),
+      registerNativeExecution: async (native) => {
+        order.push(`register:start:${native.id}`);
+        markRegistrationStarted();
+        await registrationGate;
+        order.push(`register:end:${native.id}`);
+      }
+    }, () => undefined);
+
+    await registrationStarted;
+    assert.equal(hooks.sendPromptCalls ?? 0, 0);
+    releaseRegistration();
+    const result = await run;
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.outputText, "SDK_DONE");
+    assert.equal(hooks.runCliTaskCalls ?? 0, 0);
+    assert.deepEqual(order, [
+      "native:factory-sdk-session",
+      "register:start:factory-sdk-session",
+      "register:end:factory-sdk-session",
+      "prompt"
+    ]);
+  } finally {
+    await adapter.dispose();
+    delete (globalThis as any).__opencodeBackendTestHooks;
+  }
+}
+
+async function assertOpenCodeManagedResumeCannotFallbackBelowHarness(): Promise<void> {
+  for (const testCase of [
+    {
+      name: "short-budget",
+      timeoutMs: 500,
+      hasSessionResult: true,
+      permissionFailure: false
+    },
+    {
+      name: "missing-after-prepare",
+      timeoutMs: 2_000,
+      hasSessionResult: false,
+      permissionFailure: false
+    },
+    {
+      name: "rich-pre-submit-fallback",
+      timeoutMs: 2_000,
+      hasSessionResult: true,
+      permissionFailure: true
+    }
+  ]) {
+    const nativeId = `managed-${testCase.name}`;
+    const registrations: string[] = [];
+    const hooks: any = {
+      models: [],
+      hasSessionResult: testCase.hasSessionResult,
+      session: {
+        sessionId: `replacement-${testCase.name}`,
+        title: "must not silently replace"
+      },
+      startSessionOptions: [],
+      hasSessionCalls: [],
+      updateSessionPermissionCalls: [],
+      onUpdateSessionPermissions: testCase.permissionFailure
+        ? async () => {
+          throw new Error("permission transport unavailable");
+        }
+        : undefined
+    };
+    (globalThis as any).__opencodeBackendTestHooks = hooks;
+    const adapter = createHarnessAgentAdapter({
+      backendId: "opencode",
+      settings: structuredClone(DEFAULT_SETTINGS),
+      vaultPath: "/vault",
+      nativeRefContext: {
+        deviceKey: "device",
+        vaultId: "/vault"
+      },
+      task: { timeoutMs: testCase.timeoutMs }
+    });
+    try {
+      const error = await adapter.run({
+        ...agentRunRequest(`managed-resume-${testCase.name}`),
+        nativeSessionId: nativeId,
+        nativeBindingManagedByHarness: true,
+        registerNativeExecution: async (native) => {
+          registrations.push(native.id);
+        }
+      }, () => undefined).then(
+        () => null,
+        (caught: unknown) => caught
+      );
+
+      assert.equal(
+        (error as { code?: unknown } | null)?.code,
+        "AGENT_NATIVE_SESSION_STALE"
+      );
+      assert.equal(hooks.sendPromptCalls ?? 0, 0);
+      assert.equal(hooks.runCliTaskCalls ?? 0, 0);
+      assert.deepEqual(hooks.startSessionOptions, []);
+      assert.deepEqual(
+        registrations,
+        testCase.permissionFailure ? [nativeId] : []
+      );
+    } finally {
+      await adapter.dispose();
+      delete (globalThis as any).__opencodeBackendTestHooks;
+    }
+  }
+}
+
+async function assertOpenCodeProductionRegistrationFailureCleansPrecisely(): Promise<void> {
+  for (const resumed of [false, true]) {
+    const nativeId = resumed
+      ? "factory-registration-resumed"
+      : "factory-registration-new";
+    const hooks: any = {
+      models: [],
+      session: {
+        sessionId: nativeId,
+        title: "Factory registration failure"
+      },
+      hasSessionResult: resumed,
+      deleteSessionCalls: []
+    };
+    (globalThis as any).__opencodeBackendTestHooks = hooks;
+    const adapter = createHarnessAgentAdapter({
+      backendId: "opencode",
+      settings: structuredClone(DEFAULT_SETTINGS),
+      vaultPath: "/vault",
+      nativeRefContext: {
+        deviceKey: "device",
+        vaultId: "/vault"
+      },
+      task: { timeoutMs: 2_000 }
+    });
+    try {
+      await assert.rejects(
+        adapter.run({
+          ...agentRunRequest(`factory-registration-failure-${resumed}`),
+          ...(resumed ? { nativeSessionId: nativeId } : {}),
+          registerNativeExecution: async () => {
+            throw new Error("native store unavailable");
+          }
+        }, () => undefined),
+        /registration failed.*native store unavailable/i
+      );
+
+      assert.equal(hooks.sendPromptCalls ?? 0, 0);
+      assert.equal(hooks.subscribeEventsCalls ?? 0, 0);
+      assert.equal(hooks.runCliTaskCalls ?? 0, 0);
+      assert.deepEqual(
+        hooks.deleteSessionCalls,
+        resumed ? [] : [nativeId]
+      );
+    } finally {
+      await adapter.dispose();
+      delete (globalThis as any).__opencodeBackendTestHooks;
+    }
+  }
+}
+
+async function assertTaskRuntimeAdaptersAwaitDurableRegistration(): Promise<void> {
+  for (const backendId of ["opencode", "hermes"] as const) {
+    const order: string[] = [];
+    let releaseRegistration!: () => void;
+    const registrationGate = new Promise<void>((resolve) => {
+      releaseRegistration = resolve;
+    });
+    let markRegistrationStarted!: () => void;
+    const registrationStarted = new Promise<void>((resolve) => {
+      markRegistrationStarted = resolve;
+    });
+    const nativeId = `${backendId}-barrier-native`;
+    const runtime: AgentTaskRuntime = {
+      kind: backendId,
+      async connect() {
+        return { connected: true, label: backendId, errors: [] };
+      },
+      async listModels() {
+        return [];
+      },
+      async runTask(input) {
+        order.push(`native:${nativeId}`);
+        await input.onRunId?.(nativeId);
+        order.push("prompt");
+        return { text: "done", runId: nativeId };
+      },
+      async abort() {}
+    };
+    const adapter = new TaskRuntimeAgentAdapter({
+      backendId,
+      displayName: backendId,
+      version: "test",
+      runtime,
+      nativeRefContext: {
+        deviceKey: "device",
+        vaultId: "/vault"
+      },
+      capabilities: "legacy"
+    });
+    const run = adapter.run({
+      ...agentRunRequest(`run-${backendId}-registration-barrier`),
+      registerNativeExecution: async (native) => {
+        order.push(`register:start:${native.id}`);
+        markRegistrationStarted();
+        await registrationGate;
+        order.push(`register:end:${native.id}`);
+      }
+    }, () => undefined);
+
+    await registrationStarted;
+    assert.equal(
+      order.includes("prompt"),
+      false,
+      `${backendId} must not submit before durable registration settles`
+    );
+    releaseRegistration();
+    const result = await run;
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.nativeExecution?.id, nativeId);
+    assert.deepEqual(order, [
+      `native:${nativeId}`,
+      `register:start:${nativeId}`,
+      `register:end:${nativeId}`,
+      "prompt"
+    ]);
+  }
+}
+
+async function assertLegacyRegistrationBarrierRejectsMissingRuntimeCallback(): Promise<void> {
+  for (const returnedRunId of [
+    "hermes-runtime-skipped-registration-callback",
+    undefined
+  ]) {
+    let legacyRegistrationCalls = 0;
+    const adapter = new TaskRuntimeAgentAdapter({
+      backendId: "hermes",
+      displayName: "Hermes",
+      version: "test",
+      runtime: {
+        kind: "hermes",
+        async connect() {
+          return { connected: true, label: "Hermes", errors: [] };
+        },
+        async listModels() {
+          return [];
+        },
+        async runTask() {
+          return {
+            text: "unsafe result",
+            ...(returnedRunId ? { runId: returnedRunId } : {})
+          };
+        },
+        async abort() {
+          return undefined;
+        }
+      },
+      capabilities: "legacy",
+      legacyTaskDefaults: {
+        requireNativeRegistrationBeforePrompt: true,
+        onRunId: async () => {
+          legacyRegistrationCalls += 1;
+        }
+      }
+    });
+
+    await assert.rejects(
+      adapter.run(agentRunRequest(
+        `run-legacy-registration-postcondition-${returnedRunId ?? "missing-id"}`
+      ), () => undefined),
+      (error: unknown) =>
+        (error as { code?: unknown })?.code === "NATIVE_EXECUTION_REGISTRATION_FAILED"
+        && /successful result without crossing the pre-prompt registration barrier/.test(
+          error instanceof Error ? error.message : String(error)
+        )
+    );
+    assert.equal(
+      legacyRegistrationCalls,
+      0,
+      "a successful result must not be mistaken for a crossed legacy registration barrier"
+    );
+    await adapter.dispose();
+  }
+}
+
+async function assertUnsafeNativeTransportFailsClosedBeforeRegistration(): Promise<void> {
+  for (const unsafeTransport of [
+    "acp-stdio?token=TOP_SECRET",
+    `a-${"x".repeat(128)}`
+  ]) {
+    let promptCalls = 0;
+    let registrationCalls = 0;
+    let abortCalls = 0;
+    const nativeId = "hermes-unsafe-transport-session";
+    const adapter = new TaskRuntimeAgentAdapter({
+      backendId: "hermes",
+      displayName: "Hermes",
+      version: "test",
+      runtime: {
+        kind: "hermes",
+        async connect() {
+          return { connected: true, label: "Hermes", errors: [] };
+        },
+        async listModels() {
+          return [];
+        },
+        async runTask(input) {
+          await input.onRunId?.(nativeId, {
+            kind: "session",
+            persistence: "provider-persistent",
+            transport: unsafeTransport
+          });
+          promptCalls += 1;
+          return { text: "unsafe result", runId: nativeId };
+        },
+        async abort(runId) {
+          assert.equal(runId, nativeId);
+          abortCalls += 1;
+        }
+      },
+      capabilities: "legacy"
+    });
+
+    await assert.rejects(
+      adapter.run({
+        ...agentRunRequest(`run-unsafe-transport-${unsafeTransport.length}`),
+        registerNativeExecution: async () => {
+          registrationCalls += 1;
+        }
+      }, () => undefined),
+      /unsafe Native execution transport/
+    );
+    assert.equal(promptCalls, 0);
+    assert.equal(registrationCalls, 0);
+    assert.equal(abortCalls, 1);
+    await adapter.dispose();
+  }
+}
+
+async function assertTaskRuntimeRegistrationFailureCleansUpExactlyOnce(): Promise<void> {
+  const cases = [
+    {
+      backendId: "opencode" as const,
+      nativeId: "opencode-new-registration-failed",
+      resumed: false,
+      expectedDeletes: ["opencode-new-registration-failed"],
+      expectedAborts: [] as string[]
+    },
+    {
+      backendId: "opencode" as const,
+      nativeId: "opencode-resumed-registration-failed",
+      resumed: true,
+      expectedDeletes: [] as string[],
+      expectedAborts: [] as string[]
+    },
+    {
+      backendId: "hermes" as const,
+      nativeId: "hermes-registration-failed",
+      resumed: false,
+      expectedDeletes: [] as string[],
+      expectedAborts: ["hermes-registration-failed"]
+    }
+  ];
+  for (const testCase of cases) {
+    const deleted: string[] = [];
+    const aborted: string[] = [];
+    let promptSubmitted = false;
+    const runtime: AgentTaskRuntime = {
+      kind: testCase.backendId,
+      async connect() {
+        return {
+          connected: true,
+          label: testCase.backendId,
+          errors: []
+        };
+      },
+      async listModels() {
+        return [];
+      },
+      async runTask(input) {
+        await input.onRunId?.(testCase.nativeId);
+        promptSubmitted = true;
+        return { text: "must not run", runId: testCase.nativeId };
+      },
+      async abort(runId) {
+        aborted.push(runId);
+      },
+      async deleteNativeSession(sessionId) {
+        deleted.push(sessionId);
+        return true;
+      }
+    };
+    const adapter = new TaskRuntimeAgentAdapter({
+      backendId: testCase.backendId,
+      displayName: testCase.backendId,
+      version: "test",
+      runtime,
+      nativeRefContext: {
+        deviceKey: "device",
+        vaultId: "/vault"
+      },
+      capabilities: "legacy"
+    });
+
+    await assert.rejects(
+      adapter.run({
+        ...agentRunRequest(`run-${testCase.nativeId}`),
+        ...(testCase.resumed
+          ? { nativeSessionId: testCase.nativeId }
+          : {}),
+        registerNativeExecution: async () => {
+          throw new Error("native store unavailable");
+        }
+      }, () => undefined),
+      /registration failed.*native store unavailable/i
+    );
+
+    assert.equal(promptSubmitted, false);
+    assert.deepEqual(deleted, testCase.expectedDeletes);
+    assert.deepEqual(aborted, testCase.expectedAborts);
+  }
+}
+
+async function assertHermesAvailableTransportsEnforceRegistrationBarrier(): Promise<void> {
+  let cliPromptCalls = 0;
+  const registeredNativeIds: string[] = [];
+  const cli = new HermesBackend({
+    ...DEFAULT_SETTINGS.agents.hermes,
+    serverUrl: "",
+    vaultPath: "/vault",
+    commandExists: () => true,
+    processRunner: async () => {
+      cliPromptCalls += 1;
+      return { stdout: "done", stderr: "" };
+    }
+  });
+  await assert.rejects(
+    cli.runTask({
+      prompt: "ping",
+      requireNativeRegistrationBeforePrompt: true,
+      onRunId: async (runId) => {
+        registeredNativeIds.push(runId);
+      }
+    }),
+    (error: unknown) =>
+      (error as { code?: unknown })?.code === "NATIVE_EXECUTION_REGISTRATION_FAILED"
+      && /backend-owned Native execution ID/.test(
+        error instanceof Error ? error.message : String(error)
+      )
+  );
+  assert.equal(cliPromptCalls, 0);
+  assert.deepEqual(
+    registeredNativeIds,
+    [],
+    "Hermes CLI must not register a locally synthesized ID as backend-owned identity"
+  );
+
+  const legacyCliResult = await cli.runTask({ prompt: "legacy ping" });
+  assert.equal(legacyCliResult.text, "done");
+  assert.equal(
+    cliPromptCalls,
+    1,
+    "non-barrier legacy CLI tasks remain compatible"
+  );
+
+  let httpCalls = 0;
+  const http = new HermesBackend({
+    ...DEFAULT_SETTINGS.agents.hermes,
+    serverUrl: "http://127.0.0.1:9999",
+    vaultPath: "/vault",
+    fetch: async () => {
+      httpCalls += 1;
+      throw new Error("HTTP must not be called");
+    }
+  });
+  await assert.rejects(
+    http.runTask({
+      prompt: "ping",
+      requireNativeRegistrationBeforePrompt: true,
+      onRunId: async () => undefined
+    }),
+    /无法满足 Native 提前登记边界/
+  );
+  assert.equal(httpCalls, 0);
+}
+
+export async function assertHermesProductionFactoryFailsClosedBeforeCliFallback(): Promise<void> {
+  if (process.platform === "win32") return;
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "echoink-hermes-identity-barrier-"));
+  const commandPath = path.join(fixtureRoot, "hermes");
+  const invocationLogPath = path.join(fixtureRoot, "invocations.jsonl");
+  await writeFile(invocationLogPath, "", "utf8");
+  await writeFile(commandPath, [
+    "#!/bin/sh",
+    `invocation_log_path=${JSON.stringify(invocationLogPath)}`,
+    "if [ \"$1\" = \"--version\" ]; then",
+    "  printf '%s\\n' '[\"--version\"]' >> \"$invocation_log_path\"",
+    "  printf '%s\\n' 'Hermes Agent 0.1.0'",
+    "  exit 0",
+    "fi",
+    "if [ \"$1\" = \"acp\" ]; then",
+    "  printf '%s\\n' '[\"acp\"]' >> \"$invocation_log_path\"",
+    "  printf '%s\\n' 'fixture ACP startup failed' >&2",
+    "  exit 1",
+    "fi",
+    "printf '%s\\n' '[\"unsafe-cli\"]' >> \"$invocation_log_path\"",
+    "printf '%s\\n' 'unsafe CLI fallback executed'"
+  ].join("\n"), "utf8");
+  await chmod(commandPath, 0o700);
+
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agents.hermes.cliPath = commandPath;
+  settings.agents.hermes.serverUrl = "";
+  const previousDisableAcp = process.env.ECHOINK_DISABLE_ACP;
+  delete process.env.ECHOINK_DISABLE_ACP;
+  const nativeRegistrations: string[] = [];
+  const events: HarnessEvent[] = [];
+  const adapter = createHarnessAgentAdapter({
+    backendId: "hermes",
+    settings,
+    vaultPath: fixtureRoot,
+    nativeRefContext: {
+      deviceKey: "device",
+      vaultId: fixtureRoot
+    },
+    // The production ACP startup window is capped at 1.5 seconds. A 2-second
+    // task budget would reduce it to 500ms. Keep the real cap and use a shell
+    // receipt so this test does not measure a nested Node process cold start.
+    task: { timeoutMs: 8_000 }
+  });
+
+  try {
+    const error = await adapter.run({
+      ...agentRunRequest("hermes-production-identity-barrier", {
+        workspace: { vaultPath: fixtureRoot, cwd: fixtureRoot },
+        permissions: {
+          mode: "read-only",
+          writableRoots: [],
+          requireApproval: true
+        }
+      }),
+      registerNativeExecution: async (native) => {
+        nativeRegistrations.push(native.id);
+      }
+    }, (event) => events.push(event)).then(
+      () => null,
+      (caught: unknown) => caught
+    );
+
+    assert.equal(
+      (error as { code?: unknown } | null)?.code,
+      "NATIVE_EXECUTION_REGISTRATION_FAILED"
+    );
+    assert.match(
+      error instanceof Error ? error.message : String(error),
+      /backend-owned Native execution ID.*禁止降级/
+    );
+    assert.deepEqual(
+      nativeRegistrations,
+      [],
+      "default Hermes factory must not put a synthesized CLI ID into the Native Store"
+    );
+    const invocations = (await readFile(invocationLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    assert.equal(
+      invocations.filter((args) => args[0] === "acp").length,
+      1,
+      "default Hermes factory must attempt ACP once"
+    );
+    assert.equal(
+      invocations.filter((args) => args[0] !== "acp" && args[0] !== "--version").length,
+      0,
+      "ACP startup failure must not launch a CLI Prompt or synthetic cleanup target"
+    );
+    assert.equal(
+      events.some((event) => event.type === "adapter.fallback.started"),
+      false,
+      "a transport that cannot preserve the identity barrier is not a valid fallback"
+    );
+  } finally {
+    if (previousDisableAcp === undefined) {
+      delete process.env.ECHOINK_DISABLE_ACP;
+    } else {
+      process.env.ECHOINK_DISABLE_ACP = previousDisableAcp;
+    }
+    await adapter.dispose();
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+export async function assertHermesAcpAppliesSelectedProfileAndModelBeforePrompt(): Promise<void> {
+  const selectedModel = {
+    providerId: "openrouter",
+    modelId: "anthropic/claude-sonnet-4"
+  };
+  const selectedProfile = "echoink-probe";
+  const harness = createAcpCancellationHarness();
+  let launchedArgs: string[] = [];
+  const runtime = new AcpAgentRuntime({
+    backend: "hermes",
+    command: {
+      command: "hermes",
+      args: () => hermesAcpLaunchArgs(selectedProfile),
+      cwd: "/vault"
+    },
+    processFactory: (_command, args) => {
+      launchedArgs = [...args];
+      return harness.process;
+    },
+    requestTimeoutMs: 1_000
+  });
+  const registrationOrder: string[] = [];
+  let registeredNativeDescriptor:
+    | AgentNativeExecutionDescriptor
+    | undefined;
+  const run = runtime.runTaskStream({
+    prompt: "只回复 PONG",
+    model: selectedModel,
+    onRunId: async (_runId, native) => {
+      registeredNativeDescriptor = native;
+      registrationOrder.push("native:registered");
+    }
+  }, (event) => {
+    if (event.type === "prompt_sent") registrationOrder.push("prompt:sent");
+  });
+  try {
+    const newSession = await settleWithin(harness.next("session/new"), 250);
+    harness.respond(newSession, { sessionId: "hermes-configured-probe" });
+    const setModel = await settleWithin(
+      harness.next("session/set_model"),
+      250
+    );
+    assert.deepEqual(
+      registrationOrder,
+      ["native:registered"],
+      "the real ACP session must be durably registered before set_model can fail"
+    );
+    assert.equal(
+      harness.count("session/prompt"),
+      0,
+      "Hermes must configure the selected model before prompt submission"
+    );
+    assert.deepEqual(setModel.params, {
+      sessionId: "hermes-configured-probe",
+      modelId: "openrouter:anthropic/claude-sonnet-4"
+    });
+    harness.respond(setModel, {});
+    const prompt = await settleWithin(harness.next("session/prompt"), 250);
+    harness.respond(prompt, { stopReason: "end_turn" });
+    const result = await run;
+
+    assert.deepEqual(
+      launchedArgs,
+      ["--profile", selectedProfile, "acp"],
+      "the selected Hermes profile must be part of the real ACP process launch"
+    );
+    assert.deepEqual(result.effectiveModel, selectedModel);
+    assert.deepEqual(registeredNativeDescriptor, {
+      kind: "session",
+      persistence: "provider-persistent",
+      transport: "acp-stdio"
+    });
+    assert.deepEqual(registrationOrder, [
+      "native:registered",
+      "prompt:sent"
+    ]);
+  } finally {
+    await runtime.disconnect();
+  }
+
+  const mappedNativeRefs: NativeExecutionRef[] = [];
+  const mappedAdapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime: {
+      kind: "hermes",
+      async connect() {
+        return { connected: true, label: "Hermes", errors: [] };
+      },
+      async listModels() {
+        return [];
+      },
+      async runTask(task) {
+        await task.onRunId?.("hermes-acp-probe-session", {
+          kind: "session",
+          persistence: "provider-persistent",
+          transport: "acp-stdio"
+        });
+        return {
+          text: "PONG",
+          runId: "hermes-acp-probe-session",
+          effectiveModel: selectedModel
+        };
+      },
+      async abort() {
+        return undefined;
+      }
+    },
+    nativeRefContext: {
+      deviceKey: "device",
+      vaultId: "/vault",
+      providerEndpoint:
+        "hermes-acp+stdio://local/echoink-probe"
+    },
+    capabilities: "legacy",
+    legacyTaskDefaults: {
+      model: selectedModel,
+      requireNativeRegistrationBeforePrompt: true
+    }
+  });
+  const mappedResult = await mappedAdapter.run({
+    ...agentRunRequest("run-hermes-acp-probe-native-kind", {
+      inputText: "只回复 PONG"
+    }),
+    workflow: "backend.probe",
+    registerNativeExecution: async (native) => {
+      mappedNativeRefs.push(native);
+    }
+  }, () => undefined);
+  assert.equal(mappedResult.status, "completed");
+  assert.equal(mappedNativeRefs.length, 1);
+  assert.equal(
+    mappedNativeRefs[0].kind,
+    "session",
+    "Hermes ACP probe Native identity must not be guessed as a run"
+  );
+  assert.equal(
+    mappedNativeRefs[0].persistence,
+    "provider-persistent"
+  );
+  assert.equal(mappedNativeRefs[0].transport, "acp-stdio");
+  assert.equal(
+    mappedNativeRefs[0].providerEndpoint,
+    "hermes-acp+stdio://local/echoink-probe"
+  );
+  assert.deepEqual(mappedResult.nativeExecution, mappedNativeRefs[0]);
+  await mappedAdapter.dispose();
+
+  const rejectedAckHarness = createAcpCancellationHarness();
+  const rejectedAckRuntime = new AcpAgentRuntime({
+    backend: "hermes",
+    command: {
+      command: "hermes",
+      args: hermesAcpLaunchArgs(selectedProfile),
+      cwd: "/vault"
+    },
+    processFactory: () => rejectedAckHarness.process,
+    requestTimeoutMs: 1_000
+  });
+  const rejectedNativeRegistrations: string[] = [];
+  const rejected = rejectedAckRuntime.runTaskStream({
+    prompt: "must not submit",
+    model: selectedModel,
+    onRunId: async (runId) => {
+      rejectedNativeRegistrations.push(runId);
+    }
+  }, () => undefined);
+  try {
+    const newSession = await settleWithin(
+      rejectedAckHarness.next("session/new"),
+      250
+    );
+    rejectedAckHarness.respond(newSession, {
+      sessionId: "hermes-rejected-model-probe"
+    });
+    const setModel = await settleWithin(
+      rejectedAckHarness.next("session/set_model"),
+      250
+    );
+    assert.deepEqual(
+      rejectedNativeRegistrations,
+      ["hermes-rejected-model-probe"],
+      "set_model rejection must leave an exact Native identity for settlement"
+    );
+    rejectedAckHarness.respond(setModel, null);
+    await assert.rejects(
+      rejected,
+      /did not acknowledge the selected model/
+    );
+    assert.equal(
+      rejectedAckHarness.count("session/prompt"),
+      0,
+      "a missing set_model acknowledgement must fail closed before Prompt"
+    );
+    assert.deepEqual(
+      rejectedNativeRegistrations,
+      ["hermes-rejected-model-probe"],
+      "the rejected ACP session must remain addressable by one durable identity"
+    );
+  } finally {
+    await rejectedAckRuntime.disconnect();
   }
 }
 
@@ -541,6 +1421,7 @@ async function assertTaskRuntimeAdapterMapsFallbackEvents(): Promise<void> {
       id: "session-terminal-data",
       title: "Terminal data",
       cwd: "/vault",
+      ...testConversationIdentity("context-session-terminal-data", 1),
       messages: [],
       createdAt: 1,
       updatedAt: 1
@@ -3670,7 +4551,7 @@ async function assertOrchestratorRebuildsContextWhenNativeSessionResumeFails(): 
       id: "session-resume-recovery",
       title: "Resume recovery",
       cwd: "/vault",
-      revision: 2,
+      ...testConversationIdentity("context-session-resume-recovery", 2),
       backendBindings: {
         "codex-cli": {
           backendId: "codex-cli",
@@ -3684,7 +4565,14 @@ async function assertOrchestratorRebuildsContextWhenNativeSessionResumeFails(): 
           leaseMaxTurns: 20,
           syncedThroughMessageId: "m2",
           syncedSessionRevision: 2,
-          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 2 },
+          workspaceFingerprint: testWorkspaceFingerprint(),
+          contextCursor: {
+            syncedThroughMessageId: "m2",
+            syncedSessionRevision: 2,
+            sessionGeneration: 2,
+            contextId: "context-session-resume-recovery",
+            workspaceFingerprint: testWorkspaceFingerprint()
+          },
           lastUsedAt: 90
         }
       },
@@ -3709,7 +4597,9 @@ async function assertOrchestratorRebuildsContextWhenNativeSessionResumeFails(): 
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
     memoryPolicy: { enabled: false, maxItems: 0 },
     outputContract: { kind: "plain-text" }
-  }, (event) => events.push(event));
+  }, (event) => events.push(event), {
+    beforeBindingReplacement: retireTestBinding
+  });
 
   assert.equal(result.status, "running");
   assert.equal(result.contextManifest?.mode, "bootstrap");
@@ -3748,7 +4638,7 @@ async function assertEmulatedResumeBackendRebuildsContextForEachRun(): Promise<v
       id: "session-hermes-emulated",
       title: "Hermes emulated resume",
       cwd: "/vault",
-      revision: 1,
+      ...testConversationIdentity("context-session-hermes-emulated", 1),
       backendBindings: {
         hermes: {
           backendId: "hermes",
@@ -3763,7 +4653,14 @@ async function assertEmulatedResumeBackendRebuildsContextForEachRun(): Promise<v
           leaseMaxTurns: 20,
           syncedThroughMessageId: "m2",
           syncedSessionRevision: 1,
-          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          workspaceFingerprint: testWorkspaceFingerprint(),
+          contextCursor: {
+            syncedThroughMessageId: "m2",
+            syncedSessionRevision: 1,
+            sessionGeneration: 1,
+            contextId: "context-session-hermes-emulated",
+            workspaceFingerprint: testWorkspaceFingerprint()
+          },
           lastUsedAt: 190
         }
       },
@@ -3788,6 +4685,8 @@ async function assertEmulatedResumeBackendRebuildsContextForEachRun(): Promise<v
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
     memoryPolicy: { enabled: false, maxItems: 0 },
     outputContract: { kind: "plain-text" }
+  }, undefined, {
+    beforeBindingReplacement: retireTestBinding
   });
 
   assert.equal(result.contextManifest?.mode, "bootstrap");
@@ -3829,7 +4728,7 @@ async function assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns(): Promise<
       id: "session-opencode-native",
       title: "OpenCode native resume",
       cwd: "/vault",
-      revision: 1,
+      ...testConversationIdentity("context-session-opencode-native", 1),
       backendBindings: {
         opencode: {
           backendId: "opencode",
@@ -3844,7 +4743,14 @@ async function assertOpenCodeNativeSessionIsReusedAcrossHarnessTurns(): Promise<
           leaseMaxTurns: 20,
           syncedThroughMessageId: "m2",
           syncedSessionRevision: 1,
-          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          workspaceFingerprint: testWorkspaceFingerprint(),
+          contextCursor: {
+            syncedThroughMessageId: "m2",
+            syncedSessionRevision: 1,
+            sessionGeneration: 1,
+            contextId: "context-session-opencode-native",
+            workspaceFingerprint: testWorkspaceFingerprint()
+          },
           lastUsedAt: 290
         }
       },
@@ -3920,7 +4826,7 @@ async function assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext(): P
       id: "session-opencode-missing",
       title: "OpenCode missing session",
       cwd: "/vault",
-      revision: 1,
+      ...testConversationIdentity("context-session-opencode-missing", 1),
       backendBindings: {
         opencode: {
           backendId: "opencode",
@@ -3935,7 +4841,14 @@ async function assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext(): P
           leaseMaxTurns: 20,
           syncedThroughMessageId: "m2",
           syncedSessionRevision: 1,
-          contextCursor: { syncedThroughMessageId: "m2", syncedSessionRevision: 1 },
+          workspaceFingerprint: testWorkspaceFingerprint(),
+          contextCursor: {
+            syncedThroughMessageId: "m2",
+            syncedSessionRevision: 1,
+            sessionGeneration: 1,
+            contextId: "context-session-opencode-missing",
+            workspaceFingerprint: testWorkspaceFingerprint()
+          },
           lastUsedAt: 390
         }
       },
@@ -3960,7 +4873,9 @@ async function assertOpenCodeMissingNativeSessionRebuildsFromEchoInkContext(): P
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
     memoryPolicy: { enabled: false, maxItems: 0 },
     outputContract: { kind: "plain-text" }
-  }, (event) => events.push(event));
+  }, (event) => events.push(event), {
+    beforeBindingReplacement: retireTestBinding
+  });
 
   assert.equal(result.contextManifest?.mode, "bootstrap");
   assert.equal(taskNativeSessionId, "");
@@ -3977,7 +4892,16 @@ async function assertFakeFourthAgentOnlyNeedsAdapterAndManifest(): Promise<void>
   const orchestrator = new RunOrchestrator({
     adapters: [adapter],
     ledger: new InMemoryRunLedger(),
-    memoryProvider: new NoopMemoryProvider()
+    memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: () => ({
+      id: "session-fourth",
+      title: "Fourth adapter",
+      cwd: "/vault",
+      ...testConversationIdentity("context-session-fourth", 1),
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
   });
   const result = await orchestrator.run({
     runId: "run-fourth",
@@ -4036,7 +4960,7 @@ function fakeRuntime(input: {
     async runTask(task: AgentTaskInput): Promise<AgentTaskResult> {
       const override = input.onRunTask?.(task);
       const result = isAgentTaskResult(override) ? override : input.result;
-      task.onRunId?.(result.runId ?? "runtime-run");
+      await task.onRunId?.(result.runId ?? "runtime-run");
       return result;
     },
     async abort(): Promise<void> {
@@ -4291,6 +5215,30 @@ function createAcpCancellationHarness(): {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function testWorkspaceFingerprint(): string {
+  return workspaceFingerprint({ vaultPath: "/vault", cwd: "/vault" });
+}
+
+function testConversationIdentity(contextId: string, generation: number) {
+  return {
+    revision: generation,
+    generation,
+    contextId,
+    workspaceFingerprint: testWorkspaceFingerprint()
+  };
+}
+
+async function retireTestBinding(
+  input: BeforeBindingReplacementInput
+): Promise<void> {
+  if (input.session.backendBindings) {
+    delete input.session.backendBindings[input.binding.backendId];
+  }
+  if (input.binding.backendId === "codex-cli") {
+    delete input.session.threadId;
+  }
 }
 
 async function settleWithin<T>(promise: Promise<T>, timeoutMs = 50): Promise<T> {

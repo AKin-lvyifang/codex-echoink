@@ -1,7 +1,11 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
-import { pluginDataDir, rawStorageDir, resolveRawRef } from "../core/raw-message-store";
+import {
+  emptyArrayOnMissingPathOrWarn,
+  isMissingPathError
+} from "../core/error-handling";
+import { pluginDataDir, rawStorageDir } from "../core/raw-message-store";
+import { validateChatMessage } from "../harness/conversation/conversation-store";
 import { isKnowledgeBaseSession, type ChatMessage, type CodexForObsidianSettings, type StoredSession } from "../settings/settings";
 
 export const KNOWLEDGE_BASE_HISTORY_VERSION = 1;
@@ -189,7 +193,15 @@ export async function persistKnowledgeBaseHistoryMessages(
   const touchedDays: KnowledgeBaseHistoryDaySummary[] = [];
   for (const [date, dayMessages] of grouped.entries()) {
     const file = knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.id, date);
-    const existing = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.id, date).catch(emptyArrayOnMissingPathOrWarn(`read existing knowledge history day ${date}`));
+    const existing = await readKnowledgeBaseHistoryDay(
+      vaultPath,
+      pluginDir,
+      session.id,
+      date
+    ).catch((error): ChatMessage[] => {
+      if (isMissingPathError(error)) return [];
+      throw error;
+    });
     const merged = mergeHistoryMessages(existing, dayMessages);
     await writeJsonlAtomic(file, merged);
     touchedDays.push(summarizeHistoryDay(date, merged));
@@ -218,10 +230,18 @@ export async function readKnowledgeBaseHistoryDay(vaultPath: string, pluginDir: 
   const text = await readFile(file, "utf8");
   return text
     .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as ChatMessage)
-    .filter((message) => message && typeof message.id === "string" && typeof message.createdAt === "number");
+    .map((line, index) => ({ line: line.trim(), row: index + 1 }))
+    .filter(({ line }) => Boolean(line))
+    .map(({ line, row }) => {
+      try {
+        return validateChatMessage(JSON.parse(line));
+      } catch (error) {
+        throw new Error(
+          `Knowledge History recovery required: invalid ChatMessage row ${row}`,
+          { cause: error }
+        );
+      }
+    });
 }
 
 export async function rebuildKnowledgeBaseHistoryIndex(vaultPath: string, pluginDir: string): Promise<KnowledgeBaseHistoryIndex> {
@@ -331,9 +351,10 @@ export async function removeKnowledgeBaseHistory(vaultPath: string, pluginDir: s
     for (const day of session.days) {
       const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`remove knowledge history day ${day.date}`));
       removedMessageCount += messages.length || day.messageCount;
-      await removeHistoryRawRefs(vaultPath, pluginDir, messages);
     }
   }
+  // History is a projection and never owns shared Raw sidecars. Raw reclamation
+  // requires the cross-Store reference graph and its separate GC transaction.
   await rm(knowledgeBaseHistoryRoot(vaultPath, pluginDir), { recursive: true, force: true });
   return {
     removedDayCount: index.sessions.reduce((sum, session) => sum + session.dayCount, 0),
@@ -358,7 +379,8 @@ export async function removeKnowledgeBaseHistoryDays(
       if (!targets.has(day.date)) continue;
       const messages = await readKnowledgeBaseHistoryDay(vaultPath, pluginDir, session.sessionId, day.date).catch(emptyArrayOnMissingPathOrWarn(`remove selected knowledge history day ${day.date}`));
       removedMessageCount += messages.length || day.messageCount;
-      await removeHistoryRawRefs(vaultPath, pluginDir, messages);
+      // Removing one projection cannot prove that Conversation, Run, Memory,
+      // or Artifact owners released the same rawRef.
       await rm(knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.sessionId, day.date), { force: true });
       removedDayCount += 1;
     }
@@ -580,15 +602,6 @@ function numberOrZero(value: unknown): number {
 
 function isHistoryDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-async function removeHistoryRawRefs(vaultPath: string, pluginDir: string, messages: ChatMessage[]): Promise<void> {
-  const refs = [...new Set(messages.map((message) => message.rawRef).filter((ref): ref is string => Boolean(ref)))];
-  for (const rawRef of refs) {
-    await rm(resolveRawRef(vaultPath, rawRef, pluginDir), { force: true }).catch((error) => {
-      if (!isNotFoundError(error)) throw error;
-    });
-  }
 }
 
 function isNotFoundError(error: unknown): boolean {

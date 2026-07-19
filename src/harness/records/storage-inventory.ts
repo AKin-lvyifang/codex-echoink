@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   lstat as nodeLstat,
   readFile as nodeReadFile,
@@ -6,7 +7,17 @@ import {
 } from "node:fs/promises";
 import * as path from "node:path";
 import { pluginDataDir } from "../../core/raw-message-store";
-import type { NativeExecutionRecord } from "../contracts/native-execution";
+import { createConversationPayloadKeyV2 } from "../conversation/conversation-store";
+import {
+  isSafeConversationSessionId,
+  legacyConversationPathPart
+} from "../conversation/storage-contract";
+import {
+  isSafeNativeExecutionTransport,
+  nativeRetirementSourceIdentityState,
+  type NativeExecutionRecord
+} from "../contracts/native-execution";
+import { NATIVE_EXECUTION_STORE_SCHEMA_VERSION } from "../native/native-execution-store";
 import {
   createStorageInventoryOpaqueRef,
   validateStorageInventoryReportInput,
@@ -30,7 +41,7 @@ import {
 const CURRENT_SETTINGS_SCHEMA = 39;
 const CURRENT_CONVERSATION_SCHEMA = 1;
 const CURRENT_HISTORY_SCHEMA = 1;
-const CURRENT_NATIVE_SCHEMA = 1;
+const CURRENT_NATIVE_SCHEMA = NATIVE_EXECUTION_STORE_SCHEMA_VERSION;
 const LOCAL_SOURCE_IDS: readonly StorageInventoryLocalSourceId[] = [
   "data-json",
   "conversations",
@@ -92,6 +103,11 @@ interface SessionFact {
   rawReferences: RawReference[];
   createdAt: number;
   updatedAt: number;
+  generation?: number;
+  contextId?: string;
+  contextStartsAfterMessageId?: string;
+  commitId?: string;
+  workspaceFingerprint?: string;
 }
 
 interface RawReference {
@@ -141,6 +157,20 @@ interface SourceScan<T> {
 interface ReadTextResult {
   text: string;
   stats: ReadOnlyStats;
+}
+
+interface ConversationPayloadPointers {
+  valid: boolean;
+  payloadVersion?: 2;
+  activePayloadKey?: string;
+  activePayloadCommitId?: string;
+  previousPayloadKey?: string;
+  previousPayloadCommitId?: string;
+}
+
+interface ConversationPayloadScan {
+  messageRows: unknown[];
+  snapshotRows: unknown[];
 }
 
 const NODE_READ_ONLY_FS: ReadOnlyFs = {
@@ -311,6 +341,7 @@ async function scanDataJson(context: ScanContext): Promise<SourceScan<DataFacts>
   }
   const globalMessageOwners = new Map<string, string[]>();
   const dataSessionIds = new Set<string>();
+  const legacyIdOwners = new Map<string, Set<string>>();
   for (const [index, value] of sessions.entries()) {
     const session = objectRecord(value);
     if (!session || typeof session.id !== "string" || !session.id) {
@@ -318,6 +349,13 @@ async function scanDataJson(context: ScanContext): Promise<SourceScan<DataFacts>
       continue;
     }
     const sessionId = session.id;
+    observeConversationLegacyId(legacyIdOwners, sessionId);
+    if (!isSafeConversationSessionId(sessionId)) {
+      accumulator.addCorrupt(
+        "conversation-session-id-unsafe",
+        `data-session:${sessionId}`
+      );
+    }
     if (dataSessionIds.has(sessionId)) {
       accumulator.addCorrupt("data-session-duplicate-id", sessionId);
       continue;
@@ -350,7 +388,23 @@ async function scanDataJson(context: ScanContext): Promise<SourceScan<DataFacts>
       messageCount: messageFacts.length,
       rawReferences,
       createdAt: timestampOrZero(session.createdAt),
-      updatedAt: timestampOrZero(session.updatedAt)
+      updatedAt: timestampOrZero(session.updatedAt),
+      generation: conversationGeneration(session),
+      ...(nonEmptyStringOrNull(session.contextId)
+        ? { contextId: nonEmptyStringOrNull(session.contextId)! }
+        : {}),
+      ...(nonEmptyStringOrNull(session.contextStartsAfterMessageId)
+        ? {
+          contextStartsAfterMessageId:
+            nonEmptyStringOrNull(session.contextStartsAfterMessageId)!
+        }
+        : {}),
+      ...(nonEmptyStringOrNull(session.commitId)
+        ? { commitId: nonEmptyStringOrNull(session.commitId)! }
+        : {}),
+      ...(nonEmptyStringOrNull(session.workspaceFingerprint)
+        ? { workspaceFingerprint: nonEmptyStringOrNull(session.workspaceFingerprint)! }
+        : {})
     });
     accumulator.addTimestamp(session.createdAt);
     accumulator.addTimestamp(session.updatedAt);
@@ -380,6 +434,19 @@ async function scanDataJson(context: ScanContext): Promise<SourceScan<DataFacts>
       blocksMigration: false
     });
   }
+  for (const [legacyPathPart, owners] of legacyIdOwners) {
+    if (owners.size < 2) continue;
+    accumulator.addFinding({
+      code: "conversation-session-id-collision",
+      category: "ambiguous",
+      severity: "blocking",
+      recordRaw: legacyPathPart,
+      relatedRaw: [...owners].sort(),
+      count: owners.size,
+      blocksMigration: true
+    });
+    accumulator.markPartial("conversation-session-id-collision");
+  }
   accumulator.recordCount = facts.sessions.size;
   accumulator.incrementMetric("session-count", facts.sessions.size);
   return { accumulator, facts };
@@ -394,6 +461,7 @@ async function scanConversations(
     messageOwners: new Map(),
     rawReferences: []
   };
+  const legacyIdOwners = new Map<string, Set<string>>();
   const root = path.join(context.pluginRoot, "conversations");
   const rootEntries = await listDirectory(context, accumulator, root, false);
   if (!rootEntries) {
@@ -462,12 +530,16 @@ async function scanConversations(
   const sessionDirs = await listDirectory(context, accumulator, sessionsRoot, false) ?? [];
   const actualByDirectory = new Map<string, SessionFact>();
   for (const directoryName of sessionDirs.sort()) {
+    if (!isSafeConversationSessionId(directoryName)) {
+      accumulator.addCorrupt(
+        "conversation-session-id-unsafe",
+        `directory:${directoryName}`
+      );
+    }
     const sessionDir = path.join(sessionsRoot, directoryName);
     const stats = await safeLstat(context, accumulator, sessionDir, false);
     if (!stats || !stats.isDirectory()) continue;
     const metadataPath = path.join(sessionDir, "metadata.json");
-    const messagesPath = path.join(sessionDir, "messages.jsonl");
-    const snapshotsPath = path.join(sessionDir, "snapshots.jsonl");
     const metadataRead = await readTextFile(context, accumulator, metadataPath, false);
     const metadata = metadataRead
       ? parseJsonObject(metadataRead.text, accumulator, "conversation-metadata-corrupt", metadataPath)
@@ -485,10 +557,17 @@ async function scanConversations(
     const sessionId = typeof metadata?.id === "string" && metadata.id
       ? metadata.id
       : directoryName;
+    observeConversationLegacyId(legacyIdOwners, sessionId);
+    if (!isSafeConversationSessionId(sessionId)) {
+      accumulator.addCorrupt(
+        "conversation-session-id-unsafe",
+        `metadata:${sessionId}`
+      );
+    }
     if (
       typeof metadata?.id === "string"
       && metadata.id
-      && sanitizeConversationPathPart(metadata.id) !== directoryName
+      && metadata.id !== directoryName
     ) {
       accumulator.addCorrupt(
         "conversation-metadata-directory-drift",
@@ -501,22 +580,19 @@ async function scanConversations(
         sessionMetadataProjection(metadata)
       );
     }
-    const messageRows = await readJsonlFile(
+    const payloadPointers = validateConversationPayloadPointers(
+      metadata,
+      accumulator,
+      metadataPath
+    );
+    const payload = await scanConversationPayloads(
       context,
       accumulator,
-      messagesPath,
-      "conversation-messages-corrupt",
-      false
+      sessionDir,
+      sessionId,
+      payloadPointers
     );
-    // Snapshots are parsed for structural integrity only. No body enters facts.
-    const snapshotRows = await readJsonlFile(
-      context,
-      accumulator,
-      snapshotsPath,
-      "conversation-snapshots-corrupt",
-      true
-    );
-    snapshotRows.forEach((snapshot, index) => {
+    payload.snapshotRows.forEach((snapshot, index) => {
       accumulator.observeRecordMetadata("conversation-snapshot", {
         sessionId,
         index,
@@ -524,7 +600,7 @@ async function scanConversations(
       });
     });
     const messageFacts = collectMessageFacts(
-      messageRows,
+      payload.messageRows,
       accumulator,
       "conversations",
       `session:${sessionId}`
@@ -542,7 +618,23 @@ async function scanConversations(
       messageCount: messageFacts.length,
       rawReferences,
       createdAt: timestampOrZero(metadata?.createdAt),
-      updatedAt: timestampOrZero(metadata?.updatedAt)
+      updatedAt: timestampOrZero(metadata?.updatedAt),
+      generation: conversationGeneration(metadata),
+      ...(nonEmptyStringOrNull(metadata?.contextId)
+        ? { contextId: nonEmptyStringOrNull(metadata?.contextId)! }
+        : {}),
+      ...(nonEmptyStringOrNull(metadata?.contextStartsAfterMessageId)
+        ? {
+          contextStartsAfterMessageId:
+            nonEmptyStringOrNull(metadata?.contextStartsAfterMessageId)!
+        }
+        : {}),
+      ...(nonEmptyStringOrNull(metadata?.commitId)
+        ? { commitId: nonEmptyStringOrNull(metadata?.commitId)! }
+        : {}),
+      ...(nonEmptyStringOrNull(metadata?.workspaceFingerprint)
+        ? { workspaceFingerprint: nonEmptyStringOrNull(metadata?.workspaceFingerprint)! }
+        : {})
     };
     actualByDirectory.set(directoryName, fact);
     if (facts.sessions.has(sessionId)) {
@@ -569,6 +661,14 @@ async function scanConversations(
       accumulator.addCorrupt("conversation-index-entry-invalid", "index-entry");
       continue;
     }
+    observeConversationLegacyId(legacyIdOwners, summary.sessionId);
+    if (!isSafeConversationSessionId(summary.sessionId)) {
+      accumulator.addCorrupt(
+        "conversation-session-id-unsafe",
+        `index:${summary.sessionId}`
+      );
+      continue;
+    }
     accumulator.observeRecordMetadata("conversation-index-entry", {
       sessionId: summary.sessionId,
       kind: stringOrNull(summary.kind),
@@ -580,7 +680,7 @@ async function scanConversations(
       continue;
     }
     indexedSessionIds.add(summary.sessionId);
-    const directoryName = sanitizeConversationPathPart(summary.sessionId);
+    const directoryName = summary.sessionId;
     const actual = actualByDirectory.get(directoryName)
       ?? facts.sessions.get(summary.sessionId);
     const indexRef = opaque("conversation-index-entry", summary.sessionId);
@@ -639,10 +739,369 @@ async function scanConversations(
       blocksMigration: false
     });
   }
+  for (const [legacyPathPart, owners] of legacyIdOwners) {
+    if (owners.size < 2) continue;
+    accumulator.addFinding({
+      code: "conversation-session-id-collision",
+      category: "ambiguous",
+      severity: "blocking",
+      recordRaw: legacyPathPart,
+      relatedRaw: [...owners].sort(),
+      count: owners.size,
+      blocksMigration: true
+    });
+    accumulator.markPartial("conversation-session-id-collision");
+  }
   accumulator.recordCount = facts.sessions.size;
   accumulator.incrementMetric("session-count", facts.sessions.size);
   accumulator.relations.push(...[]);
   return { accumulator, facts };
+}
+
+function validateConversationPayloadPointers(
+  metadata: Record<string, unknown> | null,
+  accumulator: SourceAccumulator,
+  metadataPath: string
+): ConversationPayloadPointers {
+  if (!metadata) return { valid: true };
+  const payloadVersionValue = metadata.payloadVersion;
+  const activeValue = metadata.payloadKey;
+  const previousValue = metadata.previousPayloadKey;
+  const previousCommitValue = metadata.previousPayloadCommitId;
+  if (
+    payloadVersionValue === undefined
+    && activeValue === undefined
+    && previousValue === undefined
+    && previousCommitValue === undefined
+  ) {
+    return { valid: true };
+  }
+  const activePayloadKey = typeof activeValue === "string" ? activeValue : "";
+  const previousPayloadKey = typeof previousValue === "string" ? previousValue : "";
+  const commitId = nonEmptyStringOrNull(metadata.commitId);
+  const previousPayloadCommitId = nonEmptyStringOrNull(previousCommitValue);
+  const structurallyValid = (
+    (payloadVersionValue === undefined || payloadVersionValue === 2)
+    && (activeValue === undefined || typeof activeValue === "string")
+    && (previousValue === undefined || typeof previousValue === "string")
+    && (
+      previousCommitValue === undefined
+      || (
+        typeof previousCommitValue === "string"
+        && Boolean(previousPayloadCommitId)
+      )
+    )
+    && isConversationPayloadKey(activePayloadKey)
+    && (!previousPayloadKey || isConversationPayloadKey(previousPayloadKey))
+    && previousPayloadKey !== activePayloadKey
+    && Boolean(commitId)
+  );
+  const valid = structurallyValid && (
+    payloadVersionValue === 2
+      ? Boolean(previousPayloadKey) === Boolean(previousPayloadCommitId)
+      : (
+        previousCommitValue === undefined
+        && conversationPayloadKey(commitId!) === activePayloadKey
+      )
+  );
+  if (!valid) {
+    accumulator.addCorrupt(
+      "conversation-payload-pointer-invalid",
+      metadataPath
+    );
+    return { valid: false };
+  }
+  return {
+    valid: true,
+    ...(payloadVersionValue === 2 ? { payloadVersion: 2 as const } : {}),
+    activePayloadKey,
+    activePayloadCommitId: commitId!,
+    ...(previousPayloadKey ? { previousPayloadKey } : {}),
+    ...(previousPayloadCommitId ? { previousPayloadCommitId } : {})
+  };
+}
+
+async function scanConversationPayloads(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  sessionDir: string,
+  sessionId: string,
+  pointers: ConversationPayloadPointers
+): Promise<ConversationPayloadScan> {
+  const legacyMessagesPath = path.join(sessionDir, "messages.jsonl");
+  const legacySnapshotsPath = path.join(sessionDir, "snapshots.jsonl");
+  const payloadDirectories = await scanConversationPayloadMetadata(
+    context,
+    accumulator,
+    sessionDir,
+    pointers.activePayloadKey,
+    pointers.previousPayloadKey
+  );
+
+  if (!pointers.valid) {
+    await Promise.all([
+      observeMetadataOnlyFile(
+        context,
+        accumulator,
+        legacyMessagesPath
+      ),
+      observeMetadataOnlyFile(
+        context,
+        accumulator,
+        legacySnapshotsPath
+      )
+    ]);
+    return { messageRows: [], snapshotRows: [] };
+  }
+
+  if (!pointers.activePayloadKey) {
+    return {
+      messageRows: await readJsonlFile(
+        context,
+        accumulator,
+        legacyMessagesPath,
+        "conversation-messages-corrupt",
+        false
+      ),
+      snapshotRows: await readJsonlFile(
+        context,
+        accumulator,
+        legacySnapshotsPath,
+        "conversation-snapshots-corrupt",
+        true
+      )
+    };
+  }
+
+  await Promise.all([
+    observeMetadataOnlyFile(
+      context,
+      accumulator,
+      legacyMessagesPath
+    ),
+    observeMetadataOnlyFile(
+      context,
+      accumulator,
+      legacySnapshotsPath
+    )
+  ]);
+  if (!payloadDirectories.has(pointers.activePayloadKey)) {
+    addConversationActivePayloadMissing(
+      accumulator,
+      `${sessionId}:${pointers.activePayloadKey}`
+    );
+    return { messageRows: [], snapshotRows: [] };
+  }
+  if (
+    pointers.previousPayloadKey
+    && !payloadDirectories.has(pointers.previousPayloadKey)
+  ) {
+    accumulator.missingCount += 1;
+    accumulator.addFinding({
+      code: "conversation-previous-payload-missing",
+      category: "missing",
+      severity: "warning",
+      recordRaw: `${sessionId}:${pointers.previousPayloadKey}`,
+      blocksMigration: false
+    });
+  }
+
+  const activeRoot = path.join(
+    sessionDir,
+    "context-payloads",
+    pointers.activePayloadKey
+  );
+  const [messageRows, snapshotRows] = await Promise.all([
+    readRequiredConversationJsonl(
+      context,
+      accumulator,
+      path.join(activeRoot, "messages.jsonl"),
+      "conversation-messages-corrupt",
+      `${sessionId}:${pointers.activePayloadKey}:messages`
+    ),
+    readRequiredConversationJsonl(
+      context,
+      accumulator,
+      path.join(activeRoot, "snapshots.jsonl"),
+      "conversation-snapshots-corrupt",
+      `${sessionId}:${pointers.activePayloadKey}:snapshots`
+    )
+  ]);
+  if (
+    pointers.payloadVersion === 2
+    && (
+      !pointers.activePayloadCommitId
+      || createConversationPayloadKeyV2(
+        pointers.activePayloadCommitId,
+        messageRows,
+        snapshotRows
+      ) !== pointers.activePayloadKey
+    )
+  ) {
+    accumulator.addCorrupt(
+      "conversation-payload-pointer-invalid",
+      `${sessionId}:${pointers.activePayloadKey}`
+    );
+  }
+  return { messageRows, snapshotRows };
+}
+
+async function scanConversationPayloadMetadata(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  sessionDir: string,
+  activePayloadKey?: string,
+  previousPayloadKey?: string
+): Promise<Set<string>> {
+  const payloadRoot = path.join(sessionDir, "context-payloads");
+  const entries = await listDirectory(
+    context,
+    accumulator,
+    payloadRoot,
+    true
+  ) ?? [];
+  const validDirectories = new Set<string>();
+  const referenced = new Set(
+    [activePayloadKey, previousPayloadKey].filter(
+      (value): value is string => Boolean(value)
+    )
+  );
+  for (const name of entries.sort()) {
+    const target = path.join(payloadRoot, name);
+    const stats = await safeLstat(context, accumulator, target, false);
+    if (!stats) continue;
+    if (!stats.isDirectory() || !isConversationPayloadKey(name)) {
+      accumulator.addFinding({
+        code: "conversation-payload-unreferenced",
+        category: "unlinked",
+        severity: "warning",
+        recordRaw: target,
+        blocksMigration: false
+      });
+      if (stats.isFile()) accumulator.addFile(target, stats);
+      continue;
+    }
+    validDirectories.add(name);
+    accumulator.incrementMetric("metadata-entry-count");
+    if (!referenced.has(name)) {
+      accumulator.addFinding({
+        code: "conversation-payload-unreferenced",
+        category: "unlinked",
+        severity: "warning",
+        recordRaw: target,
+        blocksMigration: false
+      });
+    }
+    const children = await listDirectory(
+      context,
+      accumulator,
+      target,
+      true
+    ) ?? [];
+    for (const child of children.sort()) {
+      const childPath = path.join(target, child);
+      const childStats = await safeLstat(
+        context,
+        accumulator,
+        childPath,
+        false
+      );
+      if (!childStats?.isFile()) continue;
+      const activeBody = name === activePayloadKey
+        && (child === "messages.jsonl" || child === "snapshots.jsonl");
+      if (!activeBody) accumulator.addFile(childPath, childStats);
+      accumulator.incrementMetric("metadata-entry-count");
+    }
+  }
+  return validDirectories;
+}
+
+async function observeMetadataOnlyFile(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  filePath: string
+): Promise<void> {
+  const stats = await safeLstat(context, accumulator, filePath, true);
+  if (stats?.isFile()) {
+    accumulator.addFile(filePath, stats);
+    accumulator.incrementMetric("metadata-entry-count");
+  }
+}
+
+async function readRequiredConversationJsonl(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  filePath: string,
+  corruptCode: string,
+  missingRecordRaw: string
+): Promise<unknown[]> {
+  const stats = await safeLstat(context, accumulator, filePath, false);
+  if (!stats) {
+    addConversationActivePayloadMissing(accumulator, missingRecordRaw);
+    return [];
+  }
+  if (!stats.isFile()) {
+    accumulator.addCorrupt("expected-file", filePath);
+    addConversationActivePayloadMissing(accumulator, missingRecordRaw);
+    return [];
+  }
+  accumulator.addFile(filePath, stats);
+  let text: string;
+  try {
+    text = await context.fs.readFile(filePath, "utf8");
+  } catch {
+    accumulator.addCorrupt("file-read-failed", filePath);
+    return [];
+  }
+  const rows: unknown[] = [];
+  let corruptLines = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      rows.push(JSON.parse(trimmed) as unknown);
+    } catch {
+      corruptLines += 1;
+    }
+  }
+  if (corruptLines) {
+    accumulator.corruptCount += corruptLines;
+    accumulator.markPartial(corruptCode);
+    accumulator.addFinding({
+      code: "corrupt-jsonl",
+      category: "corrupt",
+      severity: "blocking",
+      recordRaw: filePath,
+      count: corruptLines,
+      blocksMigration: true
+    });
+  }
+  return rows;
+}
+
+function addConversationActivePayloadMissing(
+  accumulator: SourceAccumulator,
+  recordRaw: string
+): void {
+  accumulator.missingCount += 1;
+  accumulator.markPartial("conversation-active-payload-missing");
+  accumulator.addFinding({
+    code: "conversation-active-payload-missing",
+    category: "missing",
+    severity: "blocking",
+    recordRaw,
+    blocksMigration: true
+  });
+}
+
+function isConversationPayloadKey(value: string): boolean {
+  return /^payload-[a-f0-9]{64}$/.test(value);
+}
+
+function conversationPayloadKey(commitId: string): string {
+  return `payload-${createHash("sha256")
+    .update(commitId)
+    .digest("hex")}`;
 }
 
 async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFacts>> {
@@ -1059,6 +1518,13 @@ async function scanNativeStore(context: ScanContext): Promise<SourceScan<NativeF
   if (!indexRead) {
     accumulator.missingCount += 1;
     accumulator.markPartial("native-index-missing");
+    accumulator.addFinding({
+      code: "native-index-missing",
+      category: "missing",
+      severity: "blocking",
+      recordRaw: "native-index",
+      blocksMigration: true
+    });
   }
   if (index) {
     const version = finiteInteger(index.version);
@@ -1067,7 +1533,9 @@ async function scanNativeStore(context: ScanContext): Promise<SourceScan<NativeF
       version,
       updatedAt: finiteTimestamp(index.updatedAt)
     });
-    if (version !== null && version > CURRENT_NATIVE_SCHEMA) {
+    if (version === null || version < 1) {
+      accumulator.addCorrupt("native-index-corrupt", "native-index-version");
+    } else if (version > CURRENT_NATIVE_SCHEMA) {
       accumulator.futureSchemaCount += 1;
       accumulator.markPartial("future-schema");
       accumulator.addFinding({
@@ -1077,99 +1545,236 @@ async function scanNativeStore(context: ScanContext): Promise<SourceScan<NativeF
         recordRaw: "native-index",
         blocksMigration: true
       });
-    }
-    const records = Array.isArray(index.records) ? index.records : [];
-    const indexedRecordIds = new Set<string>();
-    for (const [indexPosition, value] of records.entries()) {
-      if (!isNativeExecutionRecord(value)) {
-        accumulator.addCorrupt("native-record-invalid", `record:${indexPosition}`);
-        continue;
-      }
-      if (indexedRecordIds.has(value.id)) {
-        accumulator.addCorrupt("native-index-duplicate-id", value.id);
-        continue;
-      }
-      indexedRecordIds.add(value.id);
-      accumulator.observeRecordMetadata(
-        "native-index-record",
-        JSON.parse(nativeRecordMetadataKey(value)) as unknown
-      );
-      facts.records.push(value);
-      accumulator.addTimestamp(value.createdAt);
-      accumulator.addTimestamp(value.settledAt);
-      accumulator.addTimestamp(value.committedAt);
-      accumulator.addTimestamp(value.disposedAt);
-      if (value.cleanup === "pending" || value.cleanup === "failed") {
+    } else {
+      if (version < CURRENT_NATIVE_SCHEMA) {
+        accumulator.markPartial("native-schema-migration-required");
         accumulator.addFinding({
-          code: "cleanup-pending",
-          category: "cleanup-pending",
-          severity: "warning",
-          recordRaw: value.id,
-          metadata: [
-            { name: "attempt-count", value: nonNegativeInteger(value.attempts) }
-          ],
-          blocksMigration: false
+          code: "native-schema-migration-required",
+          category: "ambiguous",
+          severity: "blocking",
+          recordRaw: "native-index",
+          blocksMigration: true
         });
-        accumulator.incrementMetric("cleanup-backlog-count");
       }
-      if (value.cleanup === "failed" && value.attempts >= 6) {
-        accumulator.addFinding({
-          code: "quarantined-candidate",
-          category: "quarantined-candidate",
-          severity: "warning",
-          recordRaw: value.id,
-          metadata: [
-            { name: "attempt-count", value: nonNegativeInteger(value.attempts) }
-          ],
-          blocksMigration: false
-        });
+      if (!Array.isArray(index.records)) {
+        accumulator.addCorrupt("native-index-corrupt", "native-index-records");
+      } else {
+        const indexedRecordIds = new Set<string>();
+        for (const [indexPosition, value] of index.records.entries()) {
+          if (!isNativeExecutionRecord(value)) {
+            accumulator.addCorrupt(
+              "native-record-invalid",
+              `record:${indexPosition}`
+            );
+            continue;
+          }
+          if (indexedRecordIds.has(value.id)) {
+            accumulator.addCorrupt("native-index-duplicate-id", value.id);
+            continue;
+          }
+          indexedRecordIds.add(value.id);
+          accumulator.observeRecordMetadata(
+            "native-index-record",
+            JSON.parse(nativeRecordMetadataKey(value)) as unknown
+          );
+          facts.records.push(value);
+          accumulator.addTimestamp(value.createdAt);
+          accumulator.addTimestamp(value.settledAt);
+          accumulator.addTimestamp(value.committedAt);
+          accumulator.addTimestamp(value.disposedAt);
+          accumulator.addTimestamp(value.cleanupStartedAt);
+          accumulator.addTimestamp(value.quarantinedAt);
+          if (
+            value.cleanup === "awaiting-local-commit"
+            || value.cleanup === "pending"
+            || value.cleanup === "disposing"
+            || value.cleanup === "failed"
+          ) {
+            accumulator.addFinding({
+              code: "cleanup-pending",
+              category: "cleanup-pending",
+              severity: "warning",
+              recordRaw: value.id,
+              metadata: [
+                {
+                  name: "attempt-count",
+                  value: nonNegativeInteger(value.attempts)
+                }
+              ],
+              blocksMigration: false
+            });
+            accumulator.incrementMetric("cleanup-backlog-count");
+          }
+          if (
+            (value.cleanup === "pending" || value.cleanup === "failed")
+            && value.attempts >= 6
+          ) {
+            accumulator.addFinding({
+              code: "quarantined-candidate",
+              category: "quarantined-candidate",
+              severity: "warning",
+              recordRaw: value.id,
+              metadata: [
+                {
+                  name: "attempt-count",
+                  value: nonNegativeInteger(value.attempts)
+                }
+              ],
+              blocksMigration: false
+            });
+          }
+          if (value.cleanup === "quarantined") {
+            accumulator.addFinding({
+              code: "cleanup-quarantined",
+              category: "quarantined",
+              severity: "warning",
+              recordRaw: value.id,
+              metadata: [
+                {
+                  name: "attempt-count",
+                  value: nonNegativeInteger(value.attempts)
+                }
+              ],
+              blocksMigration: false
+            });
+          }
+        }
       }
     }
   }
 
-  const eventRows = await readJsonlFile(
+  const replayed = await scanNativeAuditProjection(
     context,
     accumulator,
     eventsPath,
-    "native-events-corrupt",
-    true
+    facts.records.length > 0
   );
-  eventRows.forEach((value) => {
-    const event = objectRecord(value);
-    if (!event) return;
-    if (event.type === "upsert" && isNativeExecutionRecord(event.record)) {
-      accumulator.observeRecordMetadata("native-event", {
-        type: "upsert",
-        createdAt: finiteTimestamp(event.createdAt),
-        record: JSON.parse(nativeRecordMetadataKey(event.record)) as unknown
-      });
-    } else {
-      accumulator.observeRecordMetadata("native-event", {
-        type: stringOrNull(event.type),
-        id: stringOrNull(event.id),
-        createdAt: finiteTimestamp(event.createdAt)
-      });
-    }
-  });
-  const replayed = replayNativeEvents(eventRows, accumulator);
   const indexed = new Map(facts.records.map((record) => [record.id, record]));
-  const unionIds = new Set([...indexed.keys(), ...replayed.keys()]);
-  for (const id of unionIds) {
-    const left = indexed.get(id);
+  for (const [id, left] of indexed) {
     const right = replayed.get(id);
-    if (!left || !right || nativeRecordMetadataKey(left) !== nativeRecordMetadataKey(right)) {
+    if (!right || nativeRecordMetadataKey(left) !== nativeRecordMetadataKey(right)) {
       accumulator.addFinding({
-        code: "native-index-event-drift",
-        category: left && right ? "ambiguous" : "missing",
-        severity: "blocking",
+        code: "native-audit-projection-drift",
+        category: right ? "ambiguous" : "missing",
+        severity: "warning",
         recordRaw: id,
-        blocksMigration: true
+        blocksMigration: false
       });
     }
   }
   accumulator.recordCount = facts.records.length;
   accumulator.incrementMetric("native-record-count", facts.records.length);
   return { accumulator, facts };
+}
+
+async function scanNativeAuditProjection(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  eventsPath: string,
+  warnIfMissing: boolean
+): Promise<Map<string, NativeExecutionRecord>> {
+  const replayed = new Map<string, NativeExecutionRecord>();
+  const stats = await safeLstat(context, accumulator, eventsPath, true);
+  if (!stats) {
+    if (warnIfMissing) {
+      accumulator.addFinding({
+        code: "native-audit-projection-drift",
+        category: "missing",
+        severity: "warning",
+        recordRaw: "native-audit",
+        blocksMigration: false
+      });
+    }
+    return replayed;
+  }
+  if (!stats.isFile()) {
+    accumulator.addFinding({
+      code: "native-audit-projection-drift",
+      category: "ambiguous",
+      severity: "warning",
+      recordRaw: "native-audit",
+      blocksMigration: false
+    });
+    return replayed;
+  }
+  accumulator.addFile(eventsPath, stats);
+  let text: string;
+  try {
+    text = await context.fs.readFile(eventsPath, "utf8");
+  } catch {
+    accumulator.addFinding({
+      code: "native-audit-projection-drift",
+      category: "ambiguous",
+      severity: "warning",
+      recordRaw: "native-audit-read",
+      blocksMigration: false
+    });
+    return replayed;
+  }
+
+  let invalidCount = 0;
+  let eventIndex = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed) as unknown;
+    } catch {
+      invalidCount += 1;
+      accumulator.observeRecordMetadata("native-audit-event", {
+        index: eventIndex,
+        valid: false
+      });
+      eventIndex += 1;
+      continue;
+    }
+    const event = objectRecord(value);
+    if (
+      event?.type === "upsert"
+      && isNativeExecutionRecord(event.record)
+    ) {
+      replayed.set(event.record.id, event.record);
+      accumulator.observeRecordMetadata("native-audit-event", {
+        index: eventIndex,
+        type: "upsert",
+        createdAt: finiteTimestamp(event.createdAt),
+        record: JSON.parse(nativeRecordMetadataKey(event.record)) as unknown
+      });
+    } else if (
+      event?.type === "remove"
+      && isNonEmptyString(event.id)
+    ) {
+      replayed.delete(event.id);
+      accumulator.observeRecordMetadata("native-audit-event", {
+        index: eventIndex,
+        type: "remove",
+        id: event.id,
+        createdAt: finiteTimestamp(event.createdAt)
+      });
+    } else {
+      invalidCount += 1;
+      accumulator.observeRecordMetadata("native-audit-event", {
+        index: eventIndex,
+        type: stringOrNull(event?.type),
+        createdAt: finiteTimestamp(event?.createdAt),
+        valid: false
+      });
+    }
+    eventIndex += 1;
+  }
+  if (invalidCount) {
+    accumulator.addFinding({
+      code: "native-audit-projection-drift",
+      category: "ambiguous",
+      severity: "warning",
+      recordRaw: "native-audit-invalid",
+      count: invalidCount,
+      blocksMigration: false
+    });
+  }
+  accumulator.incrementMetric("event-count", eventIndex);
+  return replayed;
 }
 
 async function scanRawMetadata(
@@ -1406,6 +2011,85 @@ function correlateNativeRecords(
 ): void {
   for (const record of native.records) {
     const nativeRef = opaque("native-record", record.id);
+    if (record.retirement) {
+      const retirement = record.retirement;
+      const conversation = conversations.sessions.get(
+        retirement.targetConversationId
+      );
+      const conversationExists = Boolean(conversation);
+      const exactCommit = Boolean(
+        conversation
+        && record.sessionId === retirement.targetConversationId
+        && conversation.generation === retirement.targetGeneration
+        && conversation.commitId === retirement.targetCommitId
+        && (
+          retirement.targetContextId === undefined
+          || conversation.contextId === retirement.targetContextId
+        )
+        && (
+          retirement.targetWorkspaceFingerprint === undefined
+          || conversation.workspaceFingerprint
+            === retirement.targetWorkspaceFingerprint
+        )
+      );
+      relations.push({
+        kind: "native-conversation-ownership",
+        from: {
+          sourceId: "native-store",
+          entityType: "native-execution",
+          ref: nativeRef
+        },
+        to: {
+          sourceId: "conversations",
+          entityType: "session",
+          ref: opaque(
+            "conversation-session",
+            retirement.targetConversationId
+          )
+        },
+        status: conversationExists ? "linked" : "missing"
+      });
+      relations.push({
+        kind: "native-retirement-commit",
+        from: {
+          sourceId: "native-store",
+          entityType: "native-execution",
+          ref: nativeRef
+        },
+        to: {
+          sourceId: "conversations",
+          entityType: "commit",
+          ref: opaque(
+            "conversation-commit",
+            [
+              retirement.targetConversationId,
+              retirement.targetGeneration,
+              retirement.targetCommitId
+            ].join(":")
+          )
+        },
+        status: exactCommit
+          ? "linked"
+          : conversationExists
+            ? "ambiguous"
+            : "missing"
+      });
+      if (!exactCommit) {
+        findings.push(makeFinding({
+          sourceId: "native-store",
+          code: "native-retirement-commit-mismatch",
+          category: conversationExists ? "ambiguous" : "missing",
+          severity: "blocking",
+          recordRaw: record.id,
+          relatedRaw: [
+            retirement.targetConversationId,
+            retirement.targetCommitId
+          ],
+          blocksMigration: true
+        }));
+      }
+      continue;
+    }
     relations.push({
       kind: "native-run-ownership",
       from: { sourceId: "native-store", entityType: "native-execution", ref: nativeRef },
@@ -1737,32 +2421,6 @@ function collectMessageFacts(
   return facts;
 }
 
-function replayNativeEvents(
-  rows: readonly unknown[],
-  accumulator: SourceAccumulator
-): Map<string, NativeExecutionRecord> {
-  const records = new Map<string, NativeExecutionRecord>();
-  for (const [index, value] of rows.entries()) {
-    const event = objectRecord(value);
-    if (!event || (event.type !== "upsert" && event.type !== "remove")) {
-      accumulator.addCorrupt("native-event-invalid", `event:${index}`);
-      continue;
-    }
-    if (event.type === "upsert") {
-      if (!isNativeExecutionRecord(event.record)) {
-        accumulator.addCorrupt("native-event-record-invalid", `event:${index}`);
-        continue;
-      }
-      records.set(event.record.id, event.record);
-    } else if (typeof event.id === "string" && event.id) {
-      records.delete(event.id);
-    } else {
-      accumulator.addCorrupt("native-event-id-invalid", `event:${index}`);
-    }
-  }
-  return records;
-}
-
 function nativeRecordMetadataKey(record: NativeExecutionRecord): string {
   return JSON.stringify({
     id: record.id,
@@ -1775,6 +2433,7 @@ function nativeRecordMetadataKey(record: NativeExecutionRecord): string {
       id: record.native.id,
       kind: record.native.kind,
       persistence: record.native.persistence,
+      transport: record.native.transport ?? null,
       providerEndpoint: record.native.providerEndpoint ?? null,
       deviceKey: record.native.deviceKey,
       vaultId: record.native.vaultId,
@@ -1798,6 +2457,28 @@ function nativeRecordMetadataKey(record: NativeExecutionRecord): string {
     settledAt: record.settledAt,
     committedAt: record.committedAt,
     disposedAt: record.disposedAt,
+    cleanupStartedAt: record.cleanupStartedAt ?? null,
+    quarantinedAt: record.quarantinedAt ?? null,
+    retirement: record.retirement
+      ? {
+        targetConversationId: record.retirement.targetConversationId,
+        ...(nativeRetirementSourceIdentityState(record.retirement) === "complete"
+          ? {
+            sourceGeneration: record.retirement.sourceGeneration,
+            sourceCommitId: record.retirement.sourceCommitId,
+            sourceContextId: record.retirement.sourceContextId,
+            sourceWorkspaceFingerprint:
+              record.retirement.sourceWorkspaceFingerprint
+          }
+          : {}),
+        targetGeneration: record.retirement.targetGeneration,
+        targetCommitId: record.retirement.targetCommitId,
+        targetContextId: record.retirement.targetContextId ?? null,
+        targetWorkspaceFingerprint:
+          record.retirement.targetWorkspaceFingerprint ?? null,
+        reason: record.retirement.reason
+      }
+      : null,
     emitEvents: record.emitEvents ?? null,
     dispositionReason: record.dispositionReason ?? null
   });
@@ -1812,7 +2493,7 @@ function isNativeExecutionRecord(value: unknown): value is NativeExecutionRecord
     && isNonEmptyString(record.id)
     && isNonEmptyString(record.runId)
     && isNonEmptyString(record.sessionId)
-    && isOneOf(record.surface, ["knowledge", "editor", "review", "chat"])
+    && isOneOf(record.surface, ["knowledge", "editor", "review", "chat", "system"])
     && isNonEmptyString(record.workflow)
     && native
     && isNonEmptyString(native.id)
@@ -1824,6 +2505,10 @@ function isNativeExecutionRecord(value: unknown): value is NativeExecutionRecord
       "provider-persistent",
       "unknown"
     ])
+    && (
+      native.transport === undefined
+      || isSafeNativeExecutionTransport(native.transport)
+    )
     && (native.providerEndpoint === undefined || typeof native.providerEndpoint === "string")
     && isNonEmptyString(native.deviceKey)
     && isNonEmptyString(native.vaultId)
@@ -1845,12 +2530,16 @@ function isNativeExecutionRecord(value: unknown): value is NativeExecutionRecord
     && isOneOf(record.localCommit, ["pending", "committed", "failed"])
     && isOneOf(record.cleanup, [
       "not-needed",
+      "awaiting-local-commit",
       "pending",
+      "disposing",
       "disposed",
       "unsupported",
       "failed",
       "retained-for-recovery",
-      "retained"
+      "retained",
+      "aborted",
+      "quarantined"
     ])
     && (record.requestedDisposition === undefined
       || isOneOf(record.requestedDisposition, [
@@ -1873,6 +2562,15 @@ function isNativeExecutionRecord(value: unknown): value is NativeExecutionRecord
     && isSafeTimestamp(record.settledAt)
     && isSafeTimestamp(record.committedAt)
     && isSafeTimestamp(record.disposedAt)
+    && (
+      record.cleanupStartedAt === undefined
+      || isSafeTimestamp(record.cleanupStartedAt)
+    )
+    && (
+      record.quarantinedAt === undefined
+      || isSafeTimestamp(record.quarantinedAt)
+    )
+    && isNativeRetirement(record.retirement)
     && (record.emitEvents === undefined || typeof record.emitEvents === "boolean")
     && (record.dispositionReason === undefined
       || isOneOf(record.dispositionReason, [
@@ -1882,6 +2580,31 @@ function isNativeExecutionRecord(value: unknown): value is NativeExecutionRecord
         "recovery",
         "manual"
       ]))
+  );
+}
+
+function isNativeRetirement(
+  value: unknown
+): boolean {
+  if (value === undefined) return true;
+  const retirement = objectRecord(value);
+  return Boolean(
+    retirement
+    && isNonEmptyString(retirement.targetConversationId)
+    && nativeRetirementSourceIdentityState(retirement) !== "invalid"
+    && typeof retirement.targetGeneration === "number"
+    && Number.isSafeInteger(retirement.targetGeneration)
+    && retirement.targetGeneration > 0
+    && isNonEmptyString(retirement.targetCommitId)
+    && (
+      retirement.targetContextId === undefined
+      || isNonEmptyString(retirement.targetContextId)
+    )
+    && (
+      retirement.targetWorkspaceFingerprint === undefined
+      || isNonEmptyString(retirement.targetWorkspaceFingerprint)
+    )
+    && isNonEmptyString(retirement.reason)
   );
 }
 
@@ -2141,6 +2864,7 @@ function buildMigrationPreview(
       .filter((finding) =>
         finding.category === "unlinked"
         || finding.category === "ambiguous"
+        || finding.category === "quarantined"
         || finding.category === "quarantined-candidate")
       .reduce((sum, finding) => sum + finding.count, 0),
     wouldCreateRecordCount: 0,
@@ -2256,9 +2980,14 @@ function normalizeRawRef(value: string): string | null {
   return normalized;
 }
 
-function sanitizeConversationPathPart(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120)
-    || "session";
+function observeConversationLegacyId(
+  ownersByPathPart: Map<string, Set<string>>,
+  sessionId: string
+): void {
+  const pathPart = legacyConversationPathPart(sessionId);
+  const owners = ownersByPathPart.get(pathPart) ?? new Set<string>();
+  owners.add(sessionId);
+  ownersByPathPart.set(pathPart, owners);
 }
 
 function sanitizeHistoryPathPart(value: string): string {
@@ -2317,6 +3046,23 @@ function finiteInteger(value: unknown): number | null {
     : null;
 }
 
+function conversationGeneration(
+  session: Record<string, unknown> | null
+): number {
+  if (!session) return 1;
+  return Math.max(
+    finiteInteger(session.generation) ?? 0,
+    finiteInteger(session.revision) ?? 0,
+    1
+  );
+}
+
+function nonEmptyStringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
 function finiteTimestamp(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? safeTimestamp(value)
@@ -2360,6 +3106,17 @@ function sessionMetadataProjection(
     kind: stringOrNull(session.kind),
     threadId: stringOrNull(session.threadId),
     revision: finiteInteger(session.revision),
+    generation: finiteInteger(session.generation),
+    contextId: stringOrNull(session.contextId),
+    contextStartsAfterMessageId: stringOrNull(
+      session.contextStartsAfterMessageId
+    ),
+    commitId: stringOrNull(session.commitId),
+    workspaceFingerprint: stringOrNull(session.workspaceFingerprint),
+    payloadVersion: finiteInteger(session.payloadVersion),
+    payloadKey: stringOrNull(session.payloadKey),
+    previousPayloadKey: stringOrNull(session.previousPayloadKey),
+    previousPayloadCommitId: stringOrNull(session.previousPayloadCommitId),
     cwd: stringOrNull(session.cwd),
     messagesHiddenBefore: finiteTimestamp(session.messagesHiddenBefore),
     historyActiveDate: stringOrNull(session.historyActiveDate),
@@ -2398,6 +3155,7 @@ function backendBindingMetadataProjection(value: unknown): unknown {
         id: stringOrNull(native.id),
         kind: stringOrNull(native.kind),
         persistence: stringOrNull(native.persistence),
+        transport: stringOrNull(native.transport),
         providerEndpoint: stringOrNull(native.providerEndpoint),
         deviceKey: stringOrNull(native.deviceKey),
         vaultId: stringOrNull(native.vaultId),
@@ -2423,9 +3181,13 @@ function backendBindingMetadataProjection(value: unknown): unknown {
       ? {
         syncedThroughMessageId: stringOrNull(cursor.syncedThroughMessageId),
         syncedSessionRevision: finiteInteger(cursor.syncedSessionRevision),
+        sessionGeneration: finiteInteger(cursor.sessionGeneration),
+        contextId: stringOrNull(cursor.contextId),
+        workspaceFingerprint: stringOrNull(cursor.workspaceFingerprint),
         snapshotVersion: stringOrNull(cursor.snapshotVersion)
       }
       : null,
+    workspaceFingerprint: stringOrNull(binding.workspaceFingerprint),
     vaultProfileFingerprint: stringOrNull(binding.vaultProfileFingerprint),
     lastUsedAt: finiteTimestamp(binding.lastUsedAt)
   };
@@ -2436,6 +3198,8 @@ function snapshotMetadataProjection(value: unknown): unknown {
   if (!snapshot) return null;
   return {
     sessionId: stringOrNull(snapshot.sessionId),
+    contextId: stringOrNull(snapshot.contextId),
+    generation: finiteInteger(snapshot.generation),
     version: stringOrNull(snapshot.version),
     summarizedFromMessageId: stringOrNull(snapshot.summarizedFromMessageId),
     summarizedThroughMessageId: stringOrNull(

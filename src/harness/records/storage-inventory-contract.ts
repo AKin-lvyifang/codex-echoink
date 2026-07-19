@@ -59,6 +59,7 @@ export type StorageInventoryFindingCategory =
   | "corrupt"
   | "future-schema"
   | "cleanup-pending"
+  | "quarantined"
   | "quarantined-candidate";
 
 export type StorageInventoryFindingSeverity = "info" | "warning" | "blocking";
@@ -252,6 +253,7 @@ const FINDING_CATEGORIES = new Set<StorageInventoryFindingCategory>([
   "corrupt",
   "future-schema",
   "cleanup-pending",
+  "quarantined",
   "quarantined-candidate"
 ]);
 const FINDING_SEVERITIES = new Set<StorageInventoryFindingSeverity>([
@@ -272,6 +274,8 @@ const CAPABILITY_STATES = new Set<StorageInventoryCapabilityState>([
 ]);
 export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "cleanup-pending",
+  "cleanup-quarantined",
+  "conversation-active-payload-missing",
   "conversation-directory-unindexed",
   "conversation-index-corrupt",
   "conversation-index-count-drift",
@@ -284,7 +288,12 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "conversation-metadata-corrupt",
   "conversation-metadata-directory-drift",
   "conversation-metadata-missing",
+  "conversation-payload-pointer-invalid",
+  "conversation-payload-unreferenced",
+  "conversation-previous-payload-missing",
   "conversation-session-duplicate-id",
+  "conversation-session-id-collision",
+  "conversation-session-id-unsafe",
   "conversation-session-unselected",
   "conversation-snapshots-corrupt",
   "conversation-store-unavailable",
@@ -322,6 +331,7 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "local-scan-blocked",
   "message-metadata-invalid",
   "metadata-read-failed",
+  "native-audit-projection-drift",
   "native-conversation-missing",
   "native-event-id-invalid",
   "native-event-invalid",
@@ -333,7 +343,9 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "native-index-missing",
   "native-linked-missing",
   "native-record-invalid",
+  "native-retirement-commit-mismatch",
   "native-run-missing",
+  "native-schema-migration-required",
   "native-scope-none",
   "native-store-unavailable",
   "native-unlinked-candidate",
@@ -375,11 +387,13 @@ export const STORAGE_INVENTORY_RELATION_KINDS = Object.freeze([
   "history-message-projection",
   "native-conversation-ownership",
   "native-provider-existence",
+  "native-retirement-commit",
   "native-run-ownership",
   "provider-ownership",
   "raw-reference"
 ] as const);
 export const STORAGE_INVENTORY_ENTITY_TYPES = Object.freeze([
+  "commit",
   "index-entry",
   "message",
   "native-execution",
@@ -924,6 +938,7 @@ function validateMigrationPreview(
     .filter((finding) =>
       finding.category === "unlinked"
       || finding.category === "ambiguous"
+      || finding.category === "quarantined"
       || finding.category === "quarantined-candidate")
     .reduce((sum, finding) => sum + (finding.count as number), 0);
   const expectedRetainedRecordCount = sources

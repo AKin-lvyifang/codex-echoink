@@ -1472,10 +1472,40 @@ export function messageProvenanceMetaItems(message: ChatMessage): string[] {
     ].filter(Boolean);
     items.push(leaseParts.join(" · "));
   }
-  if (message.nativeLocalCommitStatus) items.push(`Local commit ${message.nativeLocalCommitStatus}`);
-  if (message.nativeCleanupStatus) items.push(`Native cleanup ${message.nativeCleanupStatus}`);
+  if (message.nativeLocalCommitStatus) {
+    items.push(NATIVE_LOCAL_COMMIT_LABELS[message.nativeLocalCommitStatus]);
+  }
+  if (message.nativeCleanupStatus) {
+    items.push(NATIVE_CLEANUP_LABELS[message.nativeCleanupStatus]);
+  }
   return items;
 }
+
+const NATIVE_LOCAL_COMMIT_LABELS: Record<
+  NonNullable<ChatMessage["nativeLocalCommitStatus"]>,
+  string
+> = {
+  pending: "本地记录等待提交",
+  committed: "本地记录已保存",
+  failed: "本地记录保存失败"
+};
+
+const NATIVE_CLEANUP_LABELS: Record<
+  NonNullable<ChatMessage["nativeCleanupStatus"]>,
+  string
+> = {
+  quarantined: "原生记录已隔离",
+  failed: "原生记录清理失败",
+  "retained-for-recovery": "原生记录已保留，等待恢复",
+  disposing: "原生记录清理中",
+  "awaiting-local-commit": "原生记录等待本地提交",
+  pending: "原生记录等待清理",
+  aborted: "原生记录清理已中止",
+  unsupported: "原生记录不支持自动清理",
+  retained: "原生记录已保留",
+  disposed: "原生记录已清理",
+  "not-needed": "原生记录无需清理"
+};
 
 const ACTIVE_ANSWER_FOOTER_STATUSES = new Set(["running", "in_progress", "inProgress", "approval", "blocked"]);
 const FAILED_ANSWER_STATUSES = new Set(["failed", "error", "canceled", "cancelled", "interrupted"]);
