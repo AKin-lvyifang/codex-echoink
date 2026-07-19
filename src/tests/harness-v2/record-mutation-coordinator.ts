@@ -555,6 +555,12 @@ function destructiveIntent(
     conversationId,
     expectedConversationGeneration: 3,
     expectedConversationCommitId: "conversation-commit-3",
+    expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+    targetConversation: {
+      status: "deleted",
+      tombstoneId: `tombstone-${conversationId}`,
+      digest: `sha256:${"2".repeat(64)}`
+    },
     participants: [{
       id: "conversation",
       recordKind: "conversation",

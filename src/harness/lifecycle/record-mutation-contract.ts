@@ -4,7 +4,7 @@ import {
   type RecordRootBindingRef
 } from "../storage/record-root-registry";
 
-export const RECORD_MUTATION_SCHEMA_VERSION = 1;
+export const RECORD_MUTATION_SCHEMA_VERSION = 2;
 export const RECORD_MUTATION_MAX_RECORD_BYTES = 1024 * 1024;
 export const RECORD_MUTATION_MAX_REVISIONS = 256;
 export const RECORD_MUTATION_MAX_PARTICIPANTS = 32;
@@ -50,10 +50,25 @@ export interface RecordMutationIntent {
   conversationId: string;
   expectedConversationGeneration: number;
   expectedConversationCommitId: string | null;
+  expectedConversationContentRevision: string;
+  targetConversation: RecordMutationConversationTarget;
   participants: RecordMutationParticipant[];
   rootBindings: RecordRootBindingRef[];
   trashPolicy: "not-required" | "required";
 }
+
+export type RecordMutationConversationTarget =
+  | {
+      status: "present";
+      generation: number;
+      commitId: string;
+      contentRevision: string;
+    }
+  | {
+      status: "deleted";
+      tombstoneId: string;
+      digest: string;
+    };
 
 export type RecordMutationStepAction =
   | "prepared"
@@ -298,6 +313,8 @@ export function parseRecordMutationIntent(
     "conversationId",
     "expectedConversationGeneration",
     "expectedConversationCommitId",
+    "expectedConversationContentRevision",
+    "targetConversation",
     "participants",
     "rootBindings",
     "trashPolicy"
@@ -315,6 +332,24 @@ export function parseRecordMutationIntent(
       record.expectedConversationCommitId,
       "expectedConversationCommitId"
     );
+  if (
+    expectedConversationGeneration > 0
+    && expectedConversationCommitId === null
+  ) {
+    throw invalidValue(
+      "非初始 Conversation 必须冻结 expectedConversationCommitId"
+    );
+  }
+  const expectedConversationContentRevision = requireDigest(
+    record.expectedConversationContentRevision,
+    "expectedConversationContentRevision"
+  );
+  const targetConversation = parseRecordMutationConversationTarget(
+    record.targetConversation,
+    operation,
+    expectedConversationGeneration,
+    expectedConversationCommitId
+  );
   if (
     !Array.isArray(record.participants)
     || record.participants.length < 1
@@ -361,10 +396,91 @@ export function parseRecordMutationIntent(
     conversationId,
     expectedConversationGeneration,
     expectedConversationCommitId,
+    expectedConversationContentRevision,
+    targetConversation,
     participants,
     rootBindings,
     trashPolicy: record.trashPolicy
   };
+}
+
+export function parseRecordMutationConversationTarget(
+  value: unknown,
+  operation: RecordMutationOperation,
+  expectedGeneration: number,
+  expectedCommitId: string | null
+): RecordMutationConversationTarget {
+  const record = requirePlainRecord(value, "targetConversation");
+  if (record.status === "present") {
+    assertExactKeys(record, [
+      "status",
+      "generation",
+      "commitId",
+      "contentRevision"
+    ], "targetConversation");
+    if (operation === "delete-conversation") {
+      throw invalidValue(
+        "delete-conversation 的 targetConversation 必须是 deleted"
+      );
+    }
+    const generation = requireSafeInteger(
+      record.generation,
+      "targetConversation.generation",
+      0
+    );
+    const commitId = requireSafeId(
+      record.commitId,
+      "targetConversation.commitId"
+    );
+    const contentRevision = requireDigest(
+      record.contentRevision,
+      "targetConversation.contentRevision"
+    );
+    if (expectedCommitId !== null && commitId === expectedCommitId) {
+      throw invalidValue("targetConversation 不能复用 expected commitId");
+    }
+    const expectedTargetGeneration = operation === "reset-agent-cache"
+      ? expectedGeneration
+      : expectedGeneration + 1;
+    if (
+      !Number.isSafeInteger(expectedTargetGeneration)
+      || generation !== expectedTargetGeneration
+    ) {
+      throw invalidValue(
+        `${operation} 的 targetConversation generation 非法`
+      );
+    }
+    return {
+      status: "present",
+      generation,
+      commitId,
+      contentRevision
+    };
+  }
+  if (record.status === "deleted") {
+    assertExactKeys(record, [
+      "status",
+      "tombstoneId",
+      "digest"
+    ], "targetConversation");
+    if (operation !== "delete-conversation") {
+      throw invalidValue(
+        `${operation} 的 targetConversation 不允许是 deleted`
+      );
+    }
+    return {
+      status: "deleted",
+      tombstoneId: requireSafeId(
+        record.tombstoneId,
+        "targetConversation.tombstoneId"
+      ),
+      digest: requireDigest(
+        record.digest,
+        "targetConversation.digest"
+      )
+    };
+  }
+  throw invalidValue("targetConversation.status 非法");
 }
 
 export function parseRecordMutationRootBindings(

@@ -19,9 +19,11 @@ import {
   stageRecordMutationJournal
 } from "../../harness/lifecycle/record-mutation-journal";
 import {
+  classifyRecordMutationLocalCommit,
   decideRecordMutationRecovery,
   parseRecordMutationRecoveryEvidence,
-  recoverFixtureRecordMutation
+  recoverFixtureRecordMutation,
+  type RecordMutationConversationObservation
 } from "../../harness/lifecycle/record-mutation-recovery";
 import {
   finalizeRecordMutationTrash,
@@ -38,11 +40,48 @@ import {
 
 export async function runHarnessV2RecordMutationCrashRecoveryTests(): Promise<void> {
   await assertCrashReadbackShowsOnlyOldOrNewRevision();
+  assertConversationObservationClassifiesAgainstFrozenIntent();
   await assertRecoveryDecisionFailsClosedOnContradictoryEvidence();
   await assertRecoveryRejectsReceiptRootBindingOutsideIntent();
   await assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence();
   await assertFixtureRecoveryCanRollForwardOrCompensate();
   await assertRestoreFailureLeavesOnlyCompensationPrepared();
+}
+
+function assertConversationObservationClassifiesAgainstFrozenIntent(): void {
+  const candidate = intent(
+    "conversation-observation-classification",
+    "delete-conversation"
+  );
+  assert.equal(
+    classifyRecordMutationLocalCommit(candidate, beforeConversation(candidate)),
+    "before-target"
+  );
+  assert.equal(
+    classifyRecordMutationLocalCommit(candidate, targetConversation(candidate)),
+    "exact-target"
+  );
+  assert.equal(
+    classifyRecordMutationLocalCommit(candidate, {
+      status: "deleted",
+      tombstoneId: "tombstone-wrong-target",
+      digest: `sha256:${"9".repeat(64)}`
+    }),
+    "contradictory"
+  );
+  assert.equal(
+    classifyRecordMutationLocalCommit(candidate, { status: "missing" }),
+    "unknown",
+    "physical absence without the frozen tombstone is not deletion proof"
+  );
+  assert.equal(
+    classifyRecordMutationLocalCommit(candidate, {
+      ...beforeConversation(candidate),
+      contentRevision: `sha256:${"9".repeat(64)}`
+    }),
+    "contradictory",
+    "generation/commit alone cannot hide concurrent content drift"
+  );
 }
 
 async function assertRecoveryRejectsReceiptRootBindingOutsideIntent(): Promise<void> {
@@ -82,12 +121,12 @@ async function assertRecoveryRejectsReceiptRootBindingOutsideIntent(): Promise<v
         () => recoverFixtureRecordMutation({
           journal: staged,
           evidence: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             kind: "record-mutation-recovery-evidence",
             mutationId: staged.record.mutationId,
             intentDigest: staged.record.intentDigest,
             rootBindings: staged.record.intent.rootBindings,
-            localCommit: "before-target",
+            conversation: beforeConversation(staged.record.intent),
             trash: "recoverable"
           },
           compensation: {
@@ -183,12 +222,15 @@ async function assertRecoveryDecisionFailsClosedOnContradictoryEvidence(): Promi
       updatedAt: 1_721_260_800_010
     });
     const evidence = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "record-mutation-recovery-evidence" as const,
       mutationId: staged.record.mutationId,
       intentDigest: staged.record.intentDigest,
       rootBindings: staged.record.intent.rootBindings,
-      localCommit: "contradictory" as const,
+      conversation: {
+        ...beforeConversation(staged.record.intent),
+        contentRevision: `sha256:${"9".repeat(64)}`
+      },
       trash: "recoverable" as const
     };
     assert.deepEqual(
@@ -210,7 +252,7 @@ async function assertRecoveryDecisionFailsClosedOnContradictoryEvidence(): Promi
       () => parseRecordMutationRecoveryEvidence({ ...evidence, unknown: true })
     );
     assert.throws(
-      () => parseRecordMutationRecoveryEvidence({ ...evidence, schemaVersion: 2 })
+      () => parseRecordMutationRecoveryEvidence({ ...evidence, schemaVersion: 3 })
     );
   });
 }
@@ -234,12 +276,12 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
     );
     assert.deepEqual(
       decideRecordMutationRecovery(destructiveStaged.record, {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "record-mutation-recovery-evidence",
         mutationId: destructiveStaged.record.mutationId,
         intentDigest: destructiveStaged.record.intentDigest,
         rootBindings: destructiveStaged.record.intent.rootBindings,
-        localCommit: "before-target",
+        conversation: beforeConversation(destructiveStaged.record.intent),
         trash: "not-required"
       }),
       { action: "blocked", reason: "trash-policy-mismatch" }
@@ -268,12 +310,12 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
     });
     assert.deepEqual(
       decideRecordMutationRecovery(committed.record, {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "record-mutation-recovery-evidence",
         mutationId: committed.record.mutationId,
         intentDigest: committed.record.intentDigest,
         rootBindings: committed.record.intent.rootBindings,
-        localCommit: "before-target",
+        conversation: beforeConversation(committed.record.intent),
         trash: "not-required"
       }),
       { action: "blocked", reason: "terminal-evidence-conflict" }
@@ -308,12 +350,12 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
     });
     assert.deepEqual(
       decideRecordMutationRecovery(aborted.record, {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "record-mutation-recovery-evidence",
         mutationId: aborted.record.mutationId,
         intentDigest: aborted.record.intentDigest,
         rootBindings: aborted.record.intent.rootBindings,
-        localCommit: "exact-target",
+        conversation: targetConversation(aborted.record.intent),
         trash: "not-required"
       }),
       { action: "blocked", reason: "terminal-evidence-conflict" }
@@ -338,12 +380,12 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
     const recovered = await recoverFixtureRecordMutation({
       journal: staged,
       evidence: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "record-mutation-recovery-evidence",
         mutationId: staged.record.mutationId,
         intentDigest: staged.record.intentDigest,
         rootBindings: staged.record.intent.rootBindings,
-        localCommit: "exact-target",
+        conversation: targetConversation(staged.record.intent),
         trash: "not-required"
       },
       now: 1_721_260_800_020,
@@ -403,12 +445,12 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
       const recovered = await recoverFixtureRecordMutation({
         journal: staged,
         evidence: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           kind: "record-mutation-recovery-evidence",
           mutationId: staged.record.mutationId,
           intentDigest: staged.record.intentDigest,
           rootBindings: staged.record.intent.rootBindings,
-          localCommit: "before-target",
+          conversation: beforeConversation(staged.record.intent),
           trash: "recoverable"
         },
         compensation: {
@@ -485,12 +527,12 @@ async function assertRestoreFailureLeavesOnlyCompensationPrepared(): Promise<voi
         updatedAt: 1_721_260_800_011
       });
       const evidence = {
-        schemaVersion: 1 as const,
+        schemaVersion: 2 as const,
         kind: "record-mutation-recovery-evidence" as const,
         mutationId: sourceRetired.record.mutationId,
         intentDigest: sourceRetired.record.intentDigest,
         rootBindings: sourceRetired.record.intent.rootBindings,
-        localCommit: "before-target" as const,
+        conversation: beforeConversation(sourceRetired.record.intent),
         trash: "recoverable" as const
       };
 
@@ -575,6 +617,19 @@ function intent(
     conversationId,
     expectedConversationGeneration: 3,
     expectedConversationCommitId: "conversation-commit-3",
+    expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+    targetConversation: operation === "delete-conversation"
+      ? {
+          status: "deleted",
+          tombstoneId: `tombstone-${conversationId}`,
+          digest: `sha256:${"2".repeat(64)}`
+        }
+      : {
+          status: "present",
+          generation: operation === "reset-agent-cache" ? 3 : 4,
+          commitId: `target-commit-${conversationId}`,
+          contentRevision: `sha256:${"2".repeat(64)}`
+        },
     participants: [{
       id: "conversation",
       recordKind: "conversation",
@@ -583,6 +638,34 @@ function intent(
     rootBindings: destructive ? fixtureRecordMutationRootBindings() : [],
     trashPolicy: destructive ? "required" : "not-required"
   };
+}
+
+function beforeConversation(
+  candidate: RecordMutationIntent
+): RecordMutationConversationObservation {
+  return {
+    status: "present",
+    generation: candidate.expectedConversationGeneration,
+    commitId: candidate.expectedConversationCommitId,
+    contentRevision: candidate.expectedConversationContentRevision
+  };
+}
+
+function targetConversation(
+  candidate: RecordMutationIntent
+): RecordMutationConversationObservation {
+  return candidate.targetConversation.status === "present"
+    ? {
+        status: "present",
+        generation: candidate.targetConversation.generation,
+        commitId: candidate.targetConversation.commitId,
+        contentRevision: candidate.targetConversation.contentRevision
+      }
+    : {
+        status: "deleted",
+        tombstoneId: candidate.targetConversation.tombstoneId,
+        digest: candidate.targetConversation.digest
+      };
 }
 
 function step(

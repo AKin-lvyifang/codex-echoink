@@ -69,6 +69,23 @@ Restore follows the same authority and Root checks, requires a prior
 `compensation-prepared`, and publishes `trash-restored` only after no-clobber
 restore succeeds.
 
+Recovery never accepts `exact-target` as a caller assertion. Each mutation
+intent freezes the pre-mutation Conversation generation, commit identity, and
+content revision together with either the target Conversation identity or a
+durable deletion tombstone. The production recovery runner classifies current
+Store readback against those frozen values. Missing evidence is `unknown`;
+same generation and commit with different content is contradictory. A
+participant-specific forward or compensation step remains blocked until its
+own durable transaction adapter can prove the effect.
+
+The runner requires production wiring to provide the same in-process
+Conversation mutation authority used by live product writes, then holds it
+through terminal publication. It repeats the Conversation readback before
+effects and again before the terminal write. If any generation, commit,
+content revision, or tombstone field changes, recovery remains non-terminal
+with `conversation-evidence-changed`; an already retired Trash source stays
+recoverable through the Journal instead of being committed from stale proof.
+
 The first entry and its chain directory publish as one durable directory
 transition; same-version cooperative writers never observe an empty live
 claim. Because Node does not expose directory `renameat2(RENAME_NOREPLACE)` or

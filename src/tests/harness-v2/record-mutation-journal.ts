@@ -37,6 +37,7 @@ import {
 export async function runHarnessV2RecordMutationJournalTests(): Promise<void> {
   await assertStrictJournalRoundTripAndMonotonicTransitions();
   await assertDestructiveIntentRequiresFrozenRootBindings();
+  await assertIntentFreezesBeforeAndTargetConversationProof();
   await assertCommitAndAbortRaceHasOneOutcomeWinner();
   await assertTerminalRequiresCompleteParticipantEvidence();
   await assertPublishedCreateRemainsSuccessfulAfterConcurrentAdvance();
@@ -44,6 +45,91 @@ export async function runHarnessV2RecordMutationJournalTests(): Promise<void> {
   await assertStaleCasCannotOverwriteWinner();
   await assertFullChainReadbackRejectsCorruptionAndUnknownEntries();
   await assertFutureSchemaAndSymlinksFailClosed();
+}
+
+async function assertIntentFreezesBeforeAndTargetConversationProof(): Promise<void> {
+  const create = (candidate: RecordMutationIntent): void => {
+    createPlannedRecordMutationRevision({
+      mutationId: "mutation-conversation-proof-contract",
+      intent: candidate,
+      createdAt: 1_721_260_800_000
+    });
+  };
+  const startNewContext = intent(
+    "conversation-proof-start",
+    "start-new-context"
+  );
+  create(startNewContext);
+  assert.throws(
+    () => create({
+      ...startNewContext,
+      expectedConversationContentRevision: "invalid"
+    }),
+    RecordMutationContractError
+  );
+  assert.throws(
+    () => create({
+      ...startNewContext,
+      targetConversation: {
+        status: "present",
+        generation: startNewContext.expectedConversationGeneration,
+        commitId: "conversation-target-same-generation",
+        contentRevision: `sha256:${"2".repeat(64)}`
+      }
+    }),
+    RecordMutationContractError,
+    "start-new-context must advance the Conversation generation"
+  );
+  assert.throws(
+    () => create({
+      ...startNewContext,
+      targetConversation: {
+        status: "present",
+        generation: startNewContext.expectedConversationGeneration + 1,
+        commitId: startNewContext.expectedConversationCommitId!,
+        contentRevision: `sha256:${"2".repeat(64)}`
+      }
+    }),
+    RecordMutationContractError,
+    "a target Conversation commit cannot reuse the expected commit"
+  );
+
+  const resetAgentCache = intent(
+    "conversation-proof-reset",
+    "reset-agent-cache"
+  );
+  create(resetAgentCache);
+  assert.throws(
+    () => create({
+      ...resetAgentCache,
+      targetConversation: {
+        ...resetAgentCache.targetConversation,
+        status: "present",
+        generation: resetAgentCache.expectedConversationGeneration + 1
+      }
+    } as RecordMutationIntent),
+    RecordMutationContractError,
+    "reset-agent-cache must preserve the current generation"
+  );
+
+  const deleted = intent(
+    "conversation-proof-delete",
+    "delete-conversation"
+  );
+  create(deleted);
+  assert.throws(
+    () => create({
+      ...deleted,
+      targetConversation: {
+        status: "present",
+        generation: deleted.expectedConversationGeneration + 1,
+        commitId: "conversation-delete-cannot-remain-present",
+        contentRevision: `sha256:${"3".repeat(64)}`
+      }
+    }),
+    RecordMutationContractError,
+    "delete-conversation requires a durable deletion tombstone target"
+  );
 }
 
 async function assertDestructiveIntentRequiresFrozenRootBindings(): Promise<void> {
@@ -481,7 +567,7 @@ async function assertFutureSchemaAndSymlinksFailClosed(): Promise<void> {
       createdAt: 1_721_260_800_000
     });
     const value = JSON.parse(await readFile(planned.recordPath, "utf8")) as Record<string, unknown>;
-    value.schemaVersion = 2;
+    value.schemaVersion = 3;
     await writeFile(planned.recordPath, `${JSON.stringify(value)}\n`, "utf8");
     await assert.rejects(
       () => loadRecordMutationJournal(planned.handle),
@@ -537,6 +623,19 @@ function intent(
     conversationId,
     expectedConversationGeneration: 7,
     expectedConversationCommitId: "conversation-commit-7",
+    expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+    targetConversation: operation === "delete-conversation"
+      ? {
+          status: "deleted",
+          tombstoneId: `tombstone-${conversationId}`,
+          digest: `sha256:${"2".repeat(64)}`
+        }
+      : {
+          status: "present",
+          generation: operation === "reset-agent-cache" ? 7 : 8,
+          commitId: `target-commit-${conversationId}`,
+          contentRevision: `sha256:${"2".repeat(64)}`
+        },
     participants: [
       {
         id: "conversation",

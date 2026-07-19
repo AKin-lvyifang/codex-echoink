@@ -238,3 +238,41 @@
 - 本批仍未接入四类产品删除操作、生产 recovery runner、legacy reader/writer 或
   真实 Vault。没有执行 migration、retention、Raw GC、历史删除或 Native 批量
   cleanup。
+
+## 2026-07-20：RecordMutation Schema V2 与 Production Recovery Runner
+
+- 审计 production recovery 接线前发现，原 intent 只冻结 expected generation 与
+  commit ID，没有冻结 content revision 和目标状态；旧 Recovery Evidence 的
+  `localCommit="exact-target"` 无法由 Journal 自身证明。由于 RecordMutation 仍是
+  side-by-side、尚未激活生产 reader/writer，本批在生产接线前把 schema 升为 V2。
+- V2 Intent 增加 `expectedConversationContentRevision` 与
+  `targetConversation`。非删除操作冻结目标 generation、commit ID 与 content
+  revision；删除操作必须冻结 durable tombstone ID 与 digest。开启新上下文和
+  清空记录必须 generation +1，重置 Agent 缓存必须保持 generation，目标 commit
+  不得复用 expected commit。
+- Recovery Evidence V2 不再保存调用方给出的分类字符串，而是保存实际
+  Conversation observation。Classifier 逐项比较 target 和 before proof：
+  tombstone 缺失只能是 unknown；generation/commit 相同但 content revision 不同
+  视为 contradictory。
+- 新增 `record-mutation-recovery-runner.ts`。它从 Conversation inspector 和
+  coordinator 的 Trash inspection 生成 evidence；destructive roll-forward 与
+  restore 都重新经过全局 authority、Registry/物理 Root 再验证和 durable receipt。
+  Root 重建或 Trash 不完整时只返回 blocked，不补写 source-retired 或 terminal。
+- Runner API 强制整轮通过 `withConversationMutation`；生产接线必须传入产品写入
+  使用的同一 Conversation mutation authority。Runner 在 effect 前和 Journal
+  终态发布前重复读回 Conversation。读回发生变化时返回
+  `conversation-evidence-changed`；即使 source 已退休，也只保留可恢复的 staged
+  Journal，不会用过期证据提交终态。
+- Runner 已覆盖非破坏操作的 exact-target roll-forward 与 before-target abort，
+  destructive 操作的退休补账、restore、终态提交、Conversation authority
+  串行化、终态前 drift 阻断，以及 contradictory/unknown readback。架构门禁禁止
+  产品代码直接调用纯 decision 函数；fixture-only recovery 保留测试旁路。
+- `mark-source-deleted` participant 的 Memory/Artifact 正式事务 adapter 尚未实现。
+  Runner 遇到缺少 forward proof 或需要 compensation 的 participant 时返回
+  `participant-adapter-required`，不会伪造 `participant-staged/restored`。
+- 当前 worktree 已通过相关 focused suites、`npm run test`、typecheck、build、
+  完整 lint、目标 ESLint、`git diff --check`、release contract 与 public guard。
+  完整 lint 保持 961 个 baseline finding，无新增 finding；public guard 检查 398 个
+  tracked files。暂存区仅包含本批 15 个预期文件。
+- 本批没有接入产品删除入口或真实 Vault，也没有执行 migration、retention、
+  Raw GC、历史删除或 Native 批量 cleanup。

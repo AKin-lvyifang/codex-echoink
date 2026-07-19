@@ -9,8 +9,10 @@ import {
   type LoadedRecordMutationJournal
 } from "./record-mutation-journal";
 import {
+  parseRecordMutationIntent,
   parseRecordMutationRootBindings,
   parseRecordMutationRevision,
+  type RecordMutationIntent,
   type RecordMutationRevision
 } from "./record-mutation-contract";
 import {
@@ -23,7 +25,7 @@ import {
   type RecordMutationTrashReceipt
 } from "./record-mutation-trash";
 
-const RECOVERY_EVIDENCE_SCHEMA_VERSION = 1;
+const RECOVERY_EVIDENCE_SCHEMA_VERSION = 2;
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
@@ -33,11 +35,7 @@ export interface RecordMutationRecoveryEvidence {
   mutationId: string;
   intentDigest: string;
   rootBindings: RecordRootBindingRef[];
-  localCommit:
-    | "exact-target"
-    | "before-target"
-    | "contradictory"
-    | "unknown";
+  conversation: RecordMutationConversationObservation;
   trash:
     | "not-required"
     | "recoverable"
@@ -45,6 +43,27 @@ export interface RecordMutationRecoveryEvidence {
     | "corrupt"
     | "unknown";
 }
+
+export type RecordMutationConversationObservation =
+  | {
+      status: "present";
+      generation: number;
+      commitId: string | null;
+      contentRevision: string;
+    }
+  | {
+      status: "deleted";
+      tombstoneId: string;
+      digest: string;
+    }
+  | { status: "missing" }
+  | { status: "unknown" };
+
+export type RecordMutationLocalCommitClassification =
+  | "exact-target"
+  | "before-target"
+  | "contradictory"
+  | "unknown";
 
 export type RecordMutationRecoveryDecision =
   | {
@@ -96,7 +115,7 @@ export function parseRecordMutationRecoveryEvidence(
     "mutationId",
     "intentDigest",
     "rootBindings",
-    "localCommit",
+    "conversation",
     "trash"
   ]);
   if (record.schemaVersion !== RECOVERY_EVIDENCE_SCHEMA_VERSION) {
@@ -126,14 +145,9 @@ export function parseRecordMutationRecoveryEvidence(
   } catch {
     throw evidenceCorrupt("recovery evidence rootBindings 非法");
   }
-  if (
-    record.localCommit !== "exact-target"
-    && record.localCommit !== "before-target"
-    && record.localCommit !== "contradictory"
-    && record.localCommit !== "unknown"
-  ) {
-    throw evidenceCorrupt("recovery evidence localCommit 非法");
-  }
+  const conversation = parseRecordMutationConversationObservation(
+    record.conversation
+  );
   if (
     record.trash !== "not-required"
     && record.trash !== "recoverable"
@@ -149,9 +163,106 @@ export function parseRecordMutationRecoveryEvidence(
     mutationId: record.mutationId,
     intentDigest: record.intentDigest,
     rootBindings,
-    localCommit: record.localCommit,
+    conversation,
     trash: record.trash
   };
+}
+
+export function parseRecordMutationConversationObservation(
+  value: unknown
+): RecordMutationConversationObservation {
+  const record = requirePlainRecord(value);
+  if (record.status === "present") {
+    assertExactKeys(record, [
+      "status",
+      "generation",
+      "commitId",
+      "contentRevision"
+    ]);
+    if (
+      !Number.isSafeInteger(record.generation)
+      || Number(record.generation) < 0
+      || (
+        record.commitId !== null
+        && (
+          typeof record.commitId !== "string"
+          || !SAFE_ID_PATTERN.test(record.commitId)
+          || record.commitId !== record.commitId.normalize("NFC")
+        )
+      )
+      || typeof record.contentRevision !== "string"
+      || !SHA256_PATTERN.test(record.contentRevision)
+    ) {
+      throw evidenceCorrupt("Conversation present observation 非法");
+    }
+    return {
+      status: "present",
+      generation: Number(record.generation),
+      commitId: record.commitId,
+      contentRevision: record.contentRevision
+    };
+  }
+  if (record.status === "deleted") {
+    assertExactKeys(record, ["status", "tombstoneId", "digest"]);
+    if (
+      typeof record.tombstoneId !== "string"
+      || !SAFE_ID_PATTERN.test(record.tombstoneId)
+      || record.tombstoneId !== record.tombstoneId.normalize("NFC")
+      || typeof record.digest !== "string"
+      || !SHA256_PATTERN.test(record.digest)
+    ) {
+      throw evidenceCorrupt("Conversation deleted observation 非法");
+    }
+    return {
+      status: "deleted",
+      tombstoneId: record.tombstoneId,
+      digest: record.digest
+    };
+  }
+  if (record.status === "missing" || record.status === "unknown") {
+    assertExactKeys(record, ["status"]);
+    return { status: record.status };
+  }
+  throw evidenceCorrupt("Conversation observation status 非法");
+}
+
+export function classifyRecordMutationLocalCommit(
+  intentInput: RecordMutationIntent,
+  observationInput: RecordMutationConversationObservation
+): RecordMutationLocalCommitClassification {
+  const intent = parseRecordMutationIntent(intentInput);
+  const observation = parseRecordMutationConversationObservation(
+    observationInput
+  );
+  if (observation.status === "missing" || observation.status === "unknown") {
+    return "unknown";
+  }
+  if (intent.targetConversation.status === "present") {
+    if (
+      observation.status === "present"
+      && observation.generation === intent.targetConversation.generation
+      && observation.commitId === intent.targetConversation.commitId
+      && observation.contentRevision === intent.targetConversation.contentRevision
+    ) {
+      return "exact-target";
+    }
+  } else if (
+    observation.status === "deleted"
+    && observation.tombstoneId === intent.targetConversation.tombstoneId
+    && observation.digest === intent.targetConversation.digest
+  ) {
+    return "exact-target";
+  }
+  if (
+    observation.status === "present"
+    && observation.generation === intent.expectedConversationGeneration
+    && observation.commitId === intent.expectedConversationCommitId
+    && observation.contentRevision
+      === intent.expectedConversationContentRevision
+  ) {
+    return "before-target";
+  }
+  return "contradictory";
 }
 
 /**
@@ -164,6 +275,10 @@ export function decideRecordMutationRecovery(
 ): RecordMutationRecoveryDecision {
   const record = parseRecordMutationRevision(recordInput);
   const evidence = parseRecordMutationRecoveryEvidence(evidenceInput);
+  const localCommit = classifyRecordMutationLocalCommit(
+    record.intent,
+    evidence.conversation
+  );
   if (
     record.mutationId !== evidence.mutationId
     || record.intentDigest !== evidence.intentDigest
@@ -188,36 +303,36 @@ export function decideRecordMutationRecovery(
   ) {
     return { action: "blocked", reason: "trash-evidence-unavailable" };
   }
-  if (evidence.localCommit === "contradictory") {
+  if (localCommit === "contradictory") {
     return { action: "blocked", reason: "contradictory-local-commit" };
   }
-  if (evidence.localCommit === "unknown") {
+  if (localCommit === "unknown") {
     return { action: "blocked", reason: "unknown-local-commit" };
   }
   if (record.state === "committed") {
-    return evidence.localCommit === "exact-target"
+    return localCommit === "exact-target"
       ? { action: "none", reason: "already-committed" }
       : { action: "blocked", reason: "terminal-evidence-conflict" };
   }
   if (record.state === "aborted") {
-    return evidence.localCommit === "before-target"
+    return localCommit === "before-target"
       ? { action: "none", reason: "already-aborted" }
       : { action: "blocked", reason: "terminal-evidence-conflict" };
   }
   if (record.state === "planned") {
     return { action: "blocked", reason: "planned-without-stage" };
   }
-  if (record.state === "compensating" && evidence.localCommit === "exact-target") {
+  if (record.state === "compensating" && localCommit === "exact-target") {
     return {
       action: "blocked",
       reason: "compensation-conflicts-with-local-commit"
     };
   }
-  if (record.state === "staged" && evidence.localCommit === "exact-target") {
+  if (record.state === "staged" && localCommit === "exact-target") {
     return { action: "roll-forward", reason: "exact-local-commit" };
   }
   if (
-    evidence.localCommit === "before-target"
+    localCommit === "before-target"
     && (
       (record.intent.trashPolicy === "required" && evidence.trash === "recoverable")
       || (

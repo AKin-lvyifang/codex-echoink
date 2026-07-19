@@ -316,6 +316,7 @@ import { runHarnessV2RecordMutationJournalTests } from "./harness-v2/record-muta
 import { runHarnessV2RecordMutationTrashTests } from "./harness-v2/record-mutation-trash";
 import { runHarnessV2RecordMutationCrashRecoveryTests } from "./harness-v2/record-mutation-crash-recovery";
 import { runHarnessV2RecordMutationCoordinatorTests } from "./harness-v2/record-mutation-coordinator";
+import { runHarnessV2RecordMutationRecoveryRunnerTests } from "./harness-v2/record-mutation-recovery-runner";
 import { runHarnessV2RecordRootRegistryTests } from "./harness-v2/record-root-registry";
 import { runHarnessV2HistoryProjectionRetentionTests } from "./harness-v2/history-projection-retention";
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
@@ -17379,6 +17380,7 @@ await runHarnessV2RecordMutationJournalTests();
 await runHarnessV2RecordMutationTrashTests();
 await runHarnessV2RecordMutationCrashRecoveryTests();
 await runHarnessV2RecordMutationCoordinatorTests();
+await runHarnessV2RecordMutationRecoveryRunnerTests();
 await runHarnessV2RecordRootRegistryTests();
 await runHarnessV2HistoryProjectionRetentionTests();
 await runEditorActionControllerTests();

@@ -461,6 +461,13 @@ function makeHandle(
       conversationId: "handle-validation",
       expectedConversationGeneration: 0,
       expectedConversationCommitId: null,
+      expectedConversationContentRevision: `sha256:${"0".repeat(64)}`,
+      targetConversation: {
+        status: "present",
+        generation: 1,
+        commitId: "handle-validation-target",
+        contentRevision: `sha256:${"1".repeat(64)}`
+      },
       participants: [{
         id: "conversation",
         recordKind: "conversation",

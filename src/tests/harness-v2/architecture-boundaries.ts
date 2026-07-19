@@ -15,6 +15,7 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertCodexViewRemovesLegacyRawRenderers();
   await assertChatSurfaceRemovesInlineAssistantBranch();
   await assertDestructiveTrashEffectsStayBehindCoordinator();
+  await assertProductionRecordMutationRecoveryUsesRunner();
 }
 
 async function assertSingleHarnessCoreDefinitions(): Promise<void> {
@@ -83,6 +84,36 @@ async function assertDestructiveTrashEffectsStayBehindCoordinator(): Promise<voi
     fixtureRecovery,
     /assertTemporaryFixturePath/,
     "the sole restore bypass must remain confined to temporary fixtures"
+  );
+}
+
+async function assertProductionRecordMutationRecoveryUsesRunner(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const decisionCallers: string[] = [];
+  for (const file of sources) {
+    if (file.relativePath === "src/harness/lifecycle/record-mutation-recovery.ts") {
+      const source = await readFile(file.absolutePath, "utf8");
+      const callCount = source.match(/\bdecideRecordMutationRecovery\s*\(/g)?.length ?? 0;
+      assert.equal(
+        callCount,
+        2,
+        "recovery module may contain only the pure definition and fixture-only caller"
+      );
+      decisionCallers.push(file.relativePath);
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\bdecideRecordMutationRecovery\s*\(/.test(source)) {
+      decisionCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    decisionCallers,
+    [
+      "src/harness/lifecycle/record-mutation-recovery-runner.ts",
+      "src/harness/lifecycle/record-mutation-recovery.ts"
+    ],
+    "production recovery decisions must be built by the evidence-inspecting runner"
   );
 }
 

@@ -27,6 +27,7 @@ import type {
 } from "./record-mutation-contract";
 import {
   finalizeRecordMutationTrash,
+  judgeRecordMutationTrashRestore,
   parseRecordMutationTrashReceipt,
   restoreRecordMutationTrash,
   stageRecordMutationTrash,
@@ -118,6 +119,70 @@ extends RecordMutationCoordinatorBaseInput {
 export interface CoordinatedRecordMutationTrashRestore {
   journal: LoadedRecordMutationJournal;
   judgment: RecordMutationTrashRestoreJudgment;
+}
+
+export interface InspectRecordMutationTrashRecoveryInput
+extends RecordMutationCoordinatorBaseInput {
+  receipt: RecordMutationTrashReceipt;
+}
+
+export interface InspectedRecordMutationTrashRecovery {
+  journal: LoadedRecordMutationJournal;
+  judgment: RecordMutationTrashRestoreJudgment;
+}
+
+/**
+ * Read-only recovery probe under the same global authority used by effects.
+ * It proves that the durable receipt belongs to the Journal, both frozen roots
+ * still resolve to their registered physical directories, and Trash content
+ * remains exact.
+ */
+export async function inspectRecordMutationTrashRecovery(
+  input: InspectRecordMutationTrashRecoveryInput
+): Promise<InspectedRecordMutationTrashRecovery> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "inspect"
+      );
+      const receipt = parseRecordMutationTrashReceipt(input.receipt);
+      assertReceiptAuthorizedByIntent(current, input.participantId, receipt);
+      const trashStaged = findParticipantStep(
+        current,
+        input.participantId,
+        "forward",
+        "trash-staged"
+      );
+      if (!trashStaged) {
+        throw new RecordMutationCoordinatorError(
+          "authorization_missing",
+          "Trash recovery inspection 缺少 durable trash-staged 授权"
+        );
+      }
+      requireEvidenceDigest(
+        trashStaged.evidenceDigest,
+        receipt.digest,
+        "trash-staged"
+      );
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-root-bindings-verified");
+      return {
+        journal: current,
+        judgment: await judgeRecordMutationTrashRestore({
+          receipt,
+          sourceRootPath: input.sourceRootPath,
+          sourceRootBinding: input.sourceRootBinding,
+          trashRootPath: input.trashRootPath,
+          trashRootBinding: input.trashRootBinding
+        })
+      };
+    }
+  );
 }
 
 /**
@@ -306,7 +371,7 @@ export async function coordinateRecordMutationTrashRestore(
 async function loadAndValidateJournal(
   input: RecordMutationCoordinatorBaseInput,
   storageRootPath: string,
-  direction: "forward" | "compensating"
+  direction: "forward" | "compensating" | "inspect"
 ): Promise<LoadedRecordMutationJournal> {
   const journalStorageRootPath = await resolveDurablePlainRoot(
     input.journal.handle.storageRootPath,

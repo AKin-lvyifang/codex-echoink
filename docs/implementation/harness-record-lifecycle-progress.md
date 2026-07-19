@@ -29,6 +29,18 @@ Trash、写入 Journal `trash-staged`、重新读取 Registry 与物理目录，
 `trash-restored`。目录重建、source/trash root 重叠、损坏 lock、授权缺失和 receipt
 不一致都会 fail closed；死亡进程留下的 stale lock 可隔离后恢复。
 
+第五批把 RecordMutation schema 升为 V2，并新增 production recovery runner。
+Intent 现在同时冻结变更前的 Conversation generation、commit ID、content revision，
+以及目标 Conversation 或删除 tombstone；Recovery Evidence 保存实际 readback，
+再由纯函数判定 `exact-target / before-target / contradictory / unknown`，不再接受
+调用方直接声称 `exact-target`。Runner 对 destructive participant 先在全局
+authority 下检查 durable receipt、Registry、物理 Root 与 Trash content，再经
+coordinator roll-forward 或 restore。Memory/Artifact 的 `mark-source-deleted`
+adapter 尚未实现，遇到相关未收口 participant 会明确 blocked。
+Recovery API 要求整轮通过 `withConversationMutation`，生产接线必须使用产品写入的
+同一 authority。Runner 在 effect 前、Journal 终态发布前重复读回 Conversation；
+证据发生变化时保留可恢复的 staged Journal，不以旧 observation 收口。
+
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
 Native 批量 cleanup、retention 清理或 Vault 迁移。Phase 2 必须继续建立数据治理、
@@ -49,7 +61,7 @@ authority 也按 fail closed 处理。
 - Phase 2 基础 checkpoint：`b2db2f5`
 - Root Registry checkpoint：`e510349`
 - 跨层 Root Binding Ref checkpoint：`ab1a061`
-- 当前批次：全局 RecordMutation coordinator 与物理 Root 再验证
+- 当前批次：RecordMutation schema V2 与 production recovery runner
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -68,7 +80,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061` 与全局 coordinator 测试证据 | 将四类用户操作接入安全入口并继续 reader/writer 治理 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493` 与 production recovery runner 测试证据 | 补齐 Memory/Artifact participant adapter 并接入四类用户操作 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -119,12 +131,15 @@ authority 也按 fail closed 处理。
 - Conversation V2、Run Record 与 RecordMutation 当前均为 side-by-side 基础设施；
   legacy reader/writer 尚未切换，不能把合同测试写成生产数据已迁移。
 - destructive intent、prepared/finalization Trash receipt 与 recovery evidence
-  已冻结完整 Root Binding Ref；全局 lock/coordinator 已建立安全的低层执行入口，
-  但四类用户操作和生产 recovery runner 尚未接入。
+  已冻结完整 Root Binding Ref；全局 lock/coordinator 与 production recovery
+  runner 已建立安全执行入口，但四类用户操作尚未接入。
 - `finalizeRecordMutationTrash()` 仍是低层原语。架构门禁现已把生产 source
   retirement 调用限制在 `record-mutation-coordinator.ts`；唯一直接 restore 旁路
   仍为 `fixtureOnly`，并强制位于系统临时目录。调用方接线完成前，产品删除 guard
   继续关闭。
+- Production runner 当前能安全处理 `retain` 与 Trash `stage/discard` participant；
+  已发生 `participant-staged` 的 Memory/Artifact 补偿仍缺少正式事务 adapter，
+  会返回 `participant-adapter-required`，不能进入伪终态。
 - Node 没有暴露 `openat/unlinkat/renameat2 no-replace`；当前安全声明只覆盖
   canonical、插件自有 root 和使用同版本协议的协作 writer，不能宣称抵御旧版
   writer 混跑，或同权限外部进程制造的最后一个 syscall 竞态。
@@ -148,8 +163,8 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 将四类用户操作接入全局 coordinator，并实现生产 recovery runner，确保产品
-   入口不能绕过 Journal 授权和物理 Root 再验证。
+1. 为 Memory/Artifact `mark-source-deleted` participant 实现正式事务 adapter，
+   再把四类用户操作接入 production runner/coordinator。
 2. 接入生产 side-by-side reader/writer、History 引用投影、Raw owner graph/GC
    preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
@@ -216,6 +231,24 @@ Phase 2 基础 checkpoint `b2db2f5` 已通过：
 最终明确暂存 8 个预期文件后，`npm run check:release` 与
 `npm run check:public` 也已通过；public guard 检查 396 个 tracked files。暂存区
 不含 `.codex-memory`、`node_modules` 或其他无关文件。
+
+RecordMutation schema V2 与 production recovery runner 批次当前已通过：
+
+- Intent before/target proof 与 Conversation observation classifier focused suite
+- Production runner focused suite：非破坏操作 roll-forward/compensate、删除
+  roll-forward/restore、Conversation authority 串行、终态前 drift blocked、
+  contradictory readback、Root 重建 blocked
+- Architecture focused suite：产品 recovery decision 必须经过 production runner
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck`
+- `npm run build`
+- `npm run lint`，961 个 finding 与 baseline 完全一致
+- 目标生产文件 ESLint，0 finding
+- `git diff --check`
+- `npm run check:release`
+- `npm run check:public`，检查 398 个 tracked files
+
+这一批尚未提交；暂存区已核对为 15 个预期文件，不含共享软链接或无关内容。
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。
