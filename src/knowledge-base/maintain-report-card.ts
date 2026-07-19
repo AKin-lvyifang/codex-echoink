@@ -2,6 +2,7 @@ import type { AgentBackendKind } from "../agent/types";
 import type {
   KnowledgeBaseCommandUiMode,
   KnowledgeBaseRunCompletion,
+  KnowledgeBaseRunPerformance,
   KnowledgeBaseRunResult,
   KnowledgeBaseRunWarning,
   KnowledgeBaseSource,
@@ -45,6 +46,7 @@ export interface KnowledgeBaseMaintainReportPayload {
   attempts?: KnowledgeRunAttemptRecord[];
   pendingSourceCount?: number;
   warnings?: KnowledgeBaseRunWarning[];
+  performance?: KnowledgeBaseRunPerformance;
   title: string;
   reportPath: string;
   careItems: KnowledgeBaseMaintainCareItem[];
@@ -162,10 +164,34 @@ export function buildKnowledgeBaseMaintainReportPayload(mode: KnowledgeBaseComma
     ...(hasAttempts ? { attemptCount: attempts.length, attempts } : {}),
     ...(result.pendingSources?.length ? { pendingSourceCount: result.pendingSources.length } : {}),
     ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+    ...(result.performance ? { performance: result.performance } : {}),
     title: reportTitle(mode, result),
     reportPath: result.reportPath,
     careItems: buildCareItems(mode, result, structureCount, externalRawCount),
     sections: buildReportSections(mode, result, structureCount, externalRawCount)
+  };
+}
+
+export function buildKnowledgeBaseFallbackReportPayload(
+  mode: KnowledgeBaseCommandUiMode,
+  status: KnowledgeBaseRunResult["status"],
+  message: string,
+  reportPath = ""
+): KnowledgeBaseMaintainReportPayload {
+  const compactMessage = message.trim().replace(/\s+/g, " ").slice(0, 280);
+  const payload = buildKnowledgeBaseMaintainReportPayload(mode, {
+    status,
+    reportPath,
+    summary: "",
+    processedSources: [],
+    ...(status === "success" || !compactMessage ? {} : { error: compactMessage })
+  });
+  return {
+    ...payload,
+    careItems: status === "success"
+      ? [{ tone: "info", text: "任务已完成，但未收到结构化执行明细。" }]
+      : payload.careItems,
+    sections: []
   };
 }
 

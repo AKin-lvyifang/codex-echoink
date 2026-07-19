@@ -611,7 +611,13 @@ body.theme-light .codex-container {
 }
 
 .codex-kb-run-subtitle {
-  display: none;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .codex-kb-run-track {
@@ -838,6 +844,30 @@ body.theme-light .codex-container {
   color: var(--text-normal);
   border-color: color-mix(in srgb, var(--interactive-accent) 30%, var(--background-modifier-border));
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-primary));
+}
+
+.codex-kb-maintain-execution {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.codex-kb-maintain-execution-item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codex-kb-maintain-execution-item + .codex-kb-maintain-execution-item::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--text-faint);
 }
 
 .codex-kb-maintain-care {

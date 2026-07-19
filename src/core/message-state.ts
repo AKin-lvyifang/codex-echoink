@@ -1,4 +1,6 @@
 import type { ChatMessage } from "../settings/settings";
+import { buildKnowledgeBaseFallbackReportPayload } from "../knowledge-base/maintain-report-card";
+import type { KnowledgeBaseCommandUiMode } from "../knowledge-base/types";
 
 export interface PendingRunTerminalRecovery {
   runId: string;
@@ -67,9 +69,15 @@ export function settleStaleRunningMessages(
     }
 
     if (isKnowledgeBaseRunMessage(message)) {
+      const mode = knowledgeBaseUiMode(message.knowledgeBaseUi?.mode);
+      const text = staleKnowledgeBaseRunText(mode);
       message.status = "failed";
-      message.text = staleKnowledgeBaseRunText(message.knowledgeBaseUi?.mode);
-      delete message.knowledgeBaseUi;
+      message.text = text;
+      message.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
+        mode,
+        "failed",
+        text
+      );
       settled += 1;
       continue;
     }
@@ -163,4 +171,17 @@ function knowledgeBaseModeLabel(mode: unknown): string {
     default:
       return "维护";
   }
+}
+
+function knowledgeBaseUiMode(mode: unknown): KnowledgeBaseCommandUiMode {
+  if (
+    mode === "lint"
+    || mode === "reingest"
+    || mode === "calibrate"
+    || mode === "outputs"
+    || mode === "inbox"
+  ) {
+    return mode;
+  }
+  return "maintain";
 }

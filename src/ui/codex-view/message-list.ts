@@ -125,9 +125,19 @@ export function knowledgeBaseRunProgressStateFromEvents(status: string | undefin
   const lastPhaseEvent = events.slice().reverse().find((event) => event.phaseId && (event.type === "workflow.phase.started" || event.type === "workflow.phase.progress" || event.type === "workflow.phase.failed"));
   const activePhase = lastPhaseEvent?.phaseId;
   const activeIndex = status === "running" && activePhase ? phaseOrder.indexOf(activePhase) : -1;
+  const furthestCompletedSegment = events
+    .filter((event) => event.type === "workflow.phase.completed" && event.phaseId)
+    .reduce((furthest, event) => {
+      const index = phaseOrder.indexOf(event.phaseId as KnowledgeWorkflowPhaseId);
+      return index < 0 ? furthest : Math.max(furthest, index + 1);
+    }, 0);
   const completedSegments = Math.min(
     Math.max(0, phaseCount - 1),
-    phaseOrder.slice(0, Math.max(0, phaseCount - 1)).filter((phase) => completed.has(phase)).length
+    Math.max(
+      furthestCompletedSegment,
+      activeIndex >= 0 ? activeIndex : 0,
+      phaseOrder.slice(0, Math.max(0, phaseCount - 1)).filter((phase) => completed.has(phase)).length
+    )
   );
   const progressEvent = activePhase
     ? events.slice().reverse().find((event) => event.phaseId === activePhase && event.type === "workflow.phase.progress" && typeof event.current === "number" && typeof event.total === "number" && event.total > 0)
@@ -708,6 +718,8 @@ export class CodexMessageListRenderer {
     setIcon(mark, payload.icon);
     const text = head.createDiv({ cls: "codex-kb-run-copy" });
     text.createDiv({ cls: "codex-kb-run-title", text: knowledgeBaseRunDisplayTitle(payload, message.status) });
+    const liveCopy = knowledgeBaseRunEventCopy(payload);
+    if (liveCopy) text.createDiv({ cls: "codex-kb-run-subtitle", text: liveCopy });
     const track = card.createDiv({ cls: "codex-kb-run-track" });
     const cellsPerSegment = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT;
     const eventProgress = knowledgeBaseRunProgressStateFromEvents(message.status, payload.events ?? [], payload.phases.length);
@@ -752,6 +764,13 @@ export class CodexMessageListRenderer {
         void this.openKnowledgeBaseReport(payload.reportPath);
       };
     }
+    const executionItems = knowledgeBaseMaintainExecutionItems(payload);
+    if (executionItems.length) {
+      const execution = card.createDiv({ cls: "codex-kb-maintain-execution" });
+      for (const item of executionItems) {
+        execution.createSpan({ cls: "codex-kb-maintain-execution-item", text: item });
+      }
+    }
     const care = card.createDiv({ cls: "codex-kb-maintain-care" });
     care.createDiv({ cls: "codex-kb-maintain-section-title", text: "我应该关心" });
     const careList = care.createDiv({ cls: "codex-kb-maintain-care-list" });
@@ -761,24 +780,26 @@ export class CodexMessageListRenderer {
       setIcon(bullet, item.tone === "warning" ? "triangle-alert" : item.tone === "info" ? "info" : "check");
       row.createSpan({ cls: "codex-kb-maintain-care-text", text: item.text });
     }
-    const sections = card.createDiv({ cls: "codex-kb-maintain-sections" });
-    const firstOpenSection = payload.sections.find((section) => section.count > 0)?.id;
-    for (const section of payload.sections) {
-      const details = sections.createEl("details", { cls: "codex-kb-maintain-section" });
-      details.open = section.id === firstOpenSection;
-      details.ontoggle = () => this.requireEnv().onScheduleMeasure();
-      const summary = details.createEl("summary", { cls: "codex-kb-maintain-section-summary" });
-      summary.createSpan({ cls: "codex-kb-maintain-section-name", text: section.title });
-      summary.createSpan({ cls: "codex-kb-maintain-section-count", text: String(section.count) });
-      const body = details.createDiv({ cls: "codex-kb-maintain-section-body" });
-      if (!section.items.length) {
-        body.createDiv({ cls: "codex-kb-maintain-empty", text: section.emptyText });
-        continue;
-      }
-      for (const item of section.items) {
-        const row = body.createDiv({ cls: `codex-kb-maintain-detail codex-kb-maintain-detail-${item.tone ?? "info"}` });
-        row.createDiv({ cls: "codex-kb-maintain-detail-title", text: item.title });
-        row.createDiv({ cls: "codex-kb-maintain-detail-desc", text: item.description });
+    if (payload.sections.length) {
+      const sections = card.createDiv({ cls: "codex-kb-maintain-sections" });
+      const firstOpenSection = payload.sections.find((section) => section.count > 0)?.id;
+      for (const section of payload.sections) {
+        const details = sections.createEl("details", { cls: "codex-kb-maintain-section" });
+        details.open = section.id === firstOpenSection;
+        details.ontoggle = () => this.requireEnv().onScheduleMeasure();
+        const summary = details.createEl("summary", { cls: "codex-kb-maintain-section-summary" });
+        summary.createSpan({ cls: "codex-kb-maintain-section-name", text: section.title });
+        summary.createSpan({ cls: "codex-kb-maintain-section-count", text: String(section.count) });
+        const body = details.createDiv({ cls: "codex-kb-maintain-section-body" });
+        if (!section.items.length) {
+          body.createDiv({ cls: "codex-kb-maintain-empty", text: section.emptyText });
+          continue;
+        }
+        for (const item of section.items) {
+          const row = body.createDiv({ cls: `codex-kb-maintain-detail codex-kb-maintain-detail-${item.tone ?? "info"}` });
+          row.createDiv({ cls: "codex-kb-maintain-detail-title", text: item.title });
+          row.createDiv({ cls: "codex-kb-maintain-detail-desc", text: item.description });
+        }
       }
     }
   }
@@ -1798,6 +1819,57 @@ function knowledgeBaseRunDisplayTitle(payload: KnowledgeBaseRunPayload, status?:
   if (status === "failed") return "知识库任务失败";
   if (status === "completed") return "知识库任务已完成";
   return payload.title;
+}
+
+export function knowledgeBaseRunEventCopy(payload: KnowledgeBaseRunPayload): string {
+  const event = [...(payload.events ?? [])].reverse().find((candidate) =>
+    candidate.type === "workflow.phase.started"
+    || candidate.type === "workflow.phase.progress"
+    || candidate.type === "workflow.phase.failed"
+  );
+  if (!event) return payload.subtitle;
+  if (event.message?.trim()) return event.message.trim();
+  if (event.phaseId) {
+    const phase = payload.phases.find((candidate) => candidate.id === event.phaseId);
+    if (phase) return `${phase.label}阶段`;
+  }
+  return payload.subtitle;
+}
+
+export function knowledgeBaseMaintainExecutionItems(
+  payload: KnowledgeBaseMaintainReportPayload
+): string[] {
+  const items: string[] = [];
+  if (payload.completion === "noop") items.push("无新来源");
+  else if (payload.completion === "partial") items.push("部分完成");
+  else if (payload.completion === "recovered") items.push("自动恢复完成");
+  else if (payload.completion === "full") items.push("完整完成");
+
+  const backend = payload.winnerBackend ?? payload.backend;
+  if (backend) items.push(backendDisplayName(backend));
+  if (payload.attemptCount) items.push(`${payload.attemptCount} 次尝试`);
+  if (payload.performance) {
+    items.push(formatKnowledgeBaseRunDuration(payload.performance.totalMs));
+    if (!payload.performance.agentCalled) items.push("未调用 Agent");
+    if (payload.performance.index) {
+      items.push(`索引复用 ${payload.performance.index.reused}，刷新 ${payload.performance.index.refreshed}`);
+    }
+    const completedPhases = payload.performance.phases.filter((phase) => phase.status === "success").length;
+    if (payload.performance.phases.length) {
+      items.push(`${completedPhases}/${payload.performance.phases.length} 阶段`);
+    }
+  }
+  return items;
+}
+
+function formatKnowledgeBaseRunDuration(durationMs: number): string {
+  const safeMs = Math.max(0, durationMs);
+  if (safeMs < 1000) return `用时 ${Math.round(safeMs)}ms`;
+  const totalSeconds = Math.round(safeMs / 100) / 10;
+  if (totalSeconds < 60) return `用时 ${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return seconds ? `用时 ${minutes} 分 ${seconds} 秒` : `用时 ${minutes} 分`;
 }
 
 function formatBytes(byteCount: number): string {

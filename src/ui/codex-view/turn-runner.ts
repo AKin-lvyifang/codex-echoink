@@ -27,7 +27,11 @@ import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapp
 import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent } from "../../knowledge-base/commands";
-import { buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../../knowledge-base/maintain-report-card";
+import {
+  buildKnowledgeBaseFallbackReportPayload,
+  buildKnowledgeBaseRunPayload,
+  knowledgeBaseRunModeForCommandIntent
+} from "../../knowledge-base/maintain-report-card";
 import type { KnowledgeBaseTurnOptionOverrides } from "../../knowledge-base/command-router";
 import { persistAndSettleChatRun } from "./turn-lifecycle";
 import {
@@ -848,8 +852,17 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
       : knowledgeBaseMessageStatusFromResult(result.status);
     assistantMessage.text = result.message;
     assistantMessage.citations = result.citations;
-    if (result.ui) assistantMessage.knowledgeBaseUi = result.ui;
-    else delete assistantMessage.knowledgeBaseUi;
+    if (result.ui) {
+      assistantMessage.knowledgeBaseUi = result.ui;
+    } else if (runMode && !result.maintenanceRecoveryState) {
+      assistantMessage.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
+        runMode,
+        result.status,
+        result.message
+      );
+    } else if (!runMode) {
+      delete assistantMessage.knowledgeBaseUi;
+    }
     if (result.status === "failed") {
       const recoveryProjectionStatus = result.maintenanceRecoveryState
         ? `recovery-${result.maintenanceRecoveryState}`
@@ -878,7 +891,15 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
   } catch (error) {
     turnError = error;
     assistantMessage.status = "failed";
-    delete assistantMessage.knowledgeBaseUi;
+    if (runMode) {
+      assistantMessage.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
+        runMode,
+        "failed",
+        error instanceof Error ? error.message : String(error)
+      );
+    } else {
+      delete assistantMessage.knowledgeBaseUi;
+    }
     assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
   } finally {
     view.running = false;
@@ -894,6 +915,17 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
         && assistantMessage.status !== "recovery-blocked"
       ) {
         assistantMessage.status = "failed";
+        if (runMode) {
+          const reportPath = assistantMessage.knowledgeBaseUi?.kind === "maintain-report"
+            ? assistantMessage.knowledgeBaseUi.reportPath
+            : "";
+          assistantMessage.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
+            runMode,
+            "failed",
+            error instanceof Error ? error.message : String(error),
+            reportPath
+          );
+        }
       }
       assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
       await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
