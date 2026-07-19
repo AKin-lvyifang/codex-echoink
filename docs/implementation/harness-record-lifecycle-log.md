@@ -151,10 +151,39 @@
   `npm run check:public` 和 `git diff --check`。Lint 的 961 个 finding 与 baseline
   完全一致；public guard 在明确暂存后检查 390 个 tracked files。门禁中发现的
   unknown lifecycle error 字符串化问题已修复，不再生成 `[object Object]`。
-  本批次仍待最终 cached diff 审计和 Git 提交。
+  本批次随后已提交为 `b2db2f5`。
 - 本批次没有接管 legacy reader/writer，也没有连接生产删除。Root Registry、
   root binding digest、全局 mutation coordinator/lock，以及 Trash finalize 的
   durable Journal 自授权仍是下一阻断项。Node 最后一个 syscall 的外部竞争窗口
   继续按已声明的协作 writer 威胁边界处理。
 - 没有修改真实 Vault，也没有执行 migration、retention、Raw GC、历史删除或
   Native 批量 cleanup。
+
+## 2026-07-20：Root Registry 与首次 chain 原子发布
+
+- 新增 Root Registry 基础实现。每个 binding 保存 opaque registry ID、逻辑
+  `rootId`、authority、canonical root/boundary path digest、目录 dev/inode、
+  revision 和 digest，不把本机绝对路径写进 record。
+- `plugin-owned` root 必须严格位于 registry storage root 内；
+  `vault-managed` root 必须严格位于声明的 Vault owner boundary 内。同一
+  `rootId` 重复登记相同目录时幂等，换成其他目录时冲突。
+- 验证阶段先要求同 revision/digest 的 binding 仍存在于 Root Registry 真源，
+  再重新 canonicalize 并核对 owner boundary、path digest 和目录 identity。
+  Registry authority 丢失、目录被重建、换绑、symlink、移出 boundary、
+  future schema 或 unknown entry 均 fail closed。
+- binding revision chain 逐条保持 authority、root/boundary digest 和目录 identity
+  不变，伪造后续 revision 不能换绑 immutable root。
+- append-only CAS 先在 staging 目录耐久写入首条 entry，再把完整目录原子发布为
+  chain；同版本 writer 不再看到“空 claim 已存在、首条 entry 尚未发布”的中间态。
+  `after-chain-claim` 现在表示完整 chain 已原子发布并同步，故障后可直接 durable
+  readback；旧版本留下的空 claim 仍能在新写入前清理。
+- 提交前 staged tree 已通过新 focused suite、RecordMutation Journal/Trash
+  focused、`npm run test`、typecheck、build、目标生产文件 ESLint、完整 lint、
+  release/public guard 与 `git diff --check`。Lint 的 961 个 finding 与 baseline
+  一致；public guard 明确暂存后检查 393 个 tracked files。
+- 由于 Node 未提供 directory `renameat2(RENAME_NOREPLACE)`，上述并发承诺限于使用
+  同版本协议的 cooperative writers；旧版 writer 混跑与同权限外部进程制造的最后
+  一个 syscall 竞态仍在威胁边界之外。
+- Root Binding 尚未进入 destructive intent、Trash receipt 或 recovery evidence；
+  全局 mutation coordinator/lock 也尚未实现。因此这一步仍不允许生产删除，
+  真实 Vault 保持完全未修改。

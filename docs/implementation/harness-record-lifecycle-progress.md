@@ -5,10 +5,16 @@
 ## 当前结论
 
 正式方案、ADR、Phase 0 只读盘点和 Phase 1 自动化实现已经完成。Phase 2 第一批
-基础设施已形成未提交实现：Conversation V2、Workflow/Attempt Run Record、
+基础设施已提交为 `b2db2f5`：Conversation V2、Workflow/Attempt Run Record、
 Conversation mutation lane、RecordMutation Journal/Trash/Recovery，以及终态提交失败
 后的显式 UI 恢复门禁。它们已经通过当前全量测试和 typecheck，但仍是
 side-by-side 基础设施，尚未接管生产 reader/writer，也没有连接任何真实删除路径。
+
+第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
+registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
+同绑定可幂等加载，不同物理目录不能复用同一 ID。首次 chain 以包含首条 entry 的
+完整 staging 目录原子发布，不再向同版本 writer 暴露空 claim；旧版本遗留的空
+claim 仍可恢复。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -27,14 +33,15 @@ authority 也按 fail closed 处理。
 - Worktree：`/private/tmp/codex-harness-record-lifecycle`
 - 创建基线：`main@a91f1b8`
 - 已同步主线：`main@d4d4ec4`
-- 当前 checkpoint：`6eb81df`；其后是未提交的 Phase 2 改动
+- Phase 2 基础 checkpoint：`b2db2f5`
+- 当前批次：Root Registry 与首次 chain 原子发布
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
 - `schema_version=2`
 - `layout_mode=compat-v1`
 - `project_id=dd0b8209-1272-4f70-a402-630de403e5d1`
-- `auto_sync=true`，当前无未完成 transaction，Hook 最近一次整理为 `no-op`
+- `auto_sync=true`；V2 Hook 持续整理，最近核对时无未完成 transaction
 - 旧 `.codex-memory` Markdown 保留，没有被迁移器覆盖或删除
 
 这套本机 V2 只记录开发进度，与 EchoInk 插件内置 Memory V2 分开验收。
@@ -45,8 +52,8 @@ authority 也按 fail closed 处理。
 | --- | --- | --- | --- |
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
-| Phase 1：Context / Native lifecycle | 已完成（当前 checkpoint） | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | Conversation V2、Run Record、mutation journal/trash/recovery、mutation lane 与 UI recovery 基础实现 | 完成 checkpoint 门禁；关闭 Root Registry、全局 coordinator 与生产接线缺口 |
+| Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5` 基础 checkpoint；Root Registry 与首次 chain 原子发布 | 把 Root Binding 冻结进 destructive intent/Trash；实现全局 coordinator/lock |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -96,14 +103,15 @@ authority 也按 fail closed 处理。
 
 - Conversation V2、Run Record 与 RecordMutation 当前均为 side-by-side 基础设施；
   legacy reader/writer 尚未切换，不能把合同测试写成生产数据已迁移。
-- Root Registry、root binding digest 和全局 mutation lock/coordinator 尚未实现。
-  Trash receipt 目前只绑定逻辑 root ID，不足以单独证明物理 root 没有换绑。
+- Root Registry 与 root binding digest 已建立基础实现，但 destructive intent、
+  Trash receipt 和 recovery evidence 尚未消费 binding ref；全局 mutation
+  lock/coordinator 也尚未实现。当前 Trash receipt 仍只绑定逻辑 root ID。
 - `finalizeRecordMutationTrash()` 仍是低层原语，不会自行读取 durable Journal
   验证 `trash-staged` 授权；在 coordinator 把授权证明接入前，生产删除 guard
   必须保持关闭。当前仓库只有 fixture 调用它。
 - Node 没有暴露 `openat/unlinkat/renameat2 no-replace`；当前安全声明只覆盖
-  canonical、插件自有 root 和协作 writer，不能宣称抵御同权限外部进程最后一个
-  syscall 竞态。
+  canonical、插件自有 root 和使用同版本协议的协作 writer，不能宣称抵御旧版
+  writer 混跑，或同权限外部进程制造的最后一个 syscall 竞态。
 
 ## 已知非阻断债务
 
@@ -124,9 +132,10 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 完成当前 Phase 2 基础批次的最终 cached diff 审计，提交独立 checkpoint。
-2. 实现 Root Registry、root binding digest 与全局 mutation coordinator/lock，
-   让 Trash finalize 只能在 durable Journal 授权后发生。
+1. 把 Root Binding 引用冻结进 destructive intent、Trash receipt 与 recovery
+   evidence，并增加 physical root 换绑的崩溃/恢复反例。
+2. 实现全局 mutation coordinator/lock，让 Trash finalize 只能在 durable
+   Journal 授权和 Root Binding 再验证后发生。
 3. 接入生产 side-by-side reader/writer、History 引用投影、Raw owner graph/GC
    preview、四类用户操作 coordinator、migration validator 与 V2 → V1 exporter。
 4. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
@@ -134,7 +143,7 @@ authority 也按 fail closed 处理。
 
 ## 当前验证
 
-当前未提交 Phase 2 统一源码已通过：
+Phase 2 基础 checkpoint `b2db2f5` 已通过：
 
 - `npm run test`，输出 `All tests passed`
 - `npm run typecheck`
@@ -150,8 +159,20 @@ authority 也按 fail closed 处理。
 本轮新增的重启恢复门禁已同时通过 `surface-run-settlement` focused suite 和
 全量测试。Watchdog 持久化失败日志是故障注入的预期输出。
 
-完整 checkpoint 门禁已经绑定当前 staged tree 通过。提交前只剩最终
-`git diff --cached` 范围与内容审计。
+上述 checkpoint 已提交。其后的 Root Registry 批次目前已通过：
+
+- Root Registry focused suite
+- RecordMutation Journal 与 Trash focused suites
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck`
+- `npm run build`
+- `npm run lint`，961 个 finding 与 baseline 完全一致
+- `npm run check:release`
+- `npm run check:public`，明确暂存后检查 393 个 tracked files 并通过
+- 目标生产文件 ESLint
+- `git diff --check`
+
+这一批的验证证据绑定提交前 staged tree；后续修改必须重新运行相应门禁。
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。
@@ -164,4 +185,4 @@ authority 也按 fail closed 处理。
 - `actionsApplied=0`、`deletionsApplied=0`、`rawBodiesRead=false`
 - 第二次运行的 `generatedAt` 不同，但 report ID 和 fingerprint 不变
 
-Phase 0 与当前 Phase 1 的 public guard 都已在各自明确暂存状态下复验。
+Phase 0、Phase 1 与 `b2db2f5` 的 public guard 都已在各自明确暂存状态下复验。

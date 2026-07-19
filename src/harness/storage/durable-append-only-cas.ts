@@ -36,6 +36,7 @@ export class DurableAppendOnlyCasError extends Error {
 
 export type DurableAppendOnlyFaultPoint =
   | "after-staging-sync"
+  | "after-chain-claim"
   | "after-publish";
 
 export interface DurableFileIdentity {
@@ -131,14 +132,11 @@ export async function publishDurableAppendOnlyChain(
     "append-only staging root"
   );
   const chainRootPath = durableAppendOnlyChainPath(layout, chainToken);
-  const existing = await durableLstatOrNull(chainRootPath);
-  if (existing) {
-    assertDurableDirectoryStat(existing, "append-only chain");
-    throw new DurableAppendOnlyCasError(
-      "already_exists",
-      `append-only chain 已存在：${chainToken}`
-    );
-  }
+  await removeEmptyChainClaimOrThrow(
+    layout.namespaceRootPath,
+    chainRootPath,
+    chainToken
+  );
 
   const stagedRootPath = path.join(
     layout.stagingRootPath,
@@ -164,61 +162,30 @@ export async function publishDurableAppendOnlyChain(
       namespaceIdentity,
       "append-only namespace"
     );
-    try {
-      await fsp.mkdir(chainRootPath, { mode: 0o700 });
-    } catch (error) {
-      if (isAlreadyExists(error)) {
-        throw new DurableAppendOnlyCasError(
-          "already_exists",
-          `append-only chain 已由并发 writer 创建：${chainToken}`
-        );
-      }
-      throw error;
-    }
-    await assertDirectoryIdentity(
-      layout.namespaceRootPath,
-      namespaceIdentity,
-      "append-only namespace"
-    );
-    await syncDurableDirectory(layout.namespaceRootPath);
-    const chainIdentity = await requireSafeDirectory(
-      chainRootPath,
-      "append-only chain claim"
-    );
-    const entryPath = path.join(chainRootPath, firstEntryName);
-    await linkDurableFileNoClobber(
-      stagedEntryPath,
-      entryPath,
-      stagedEntry
-    );
-    await assertDirectoryIdentity(
-      chainRootPath,
-      chainIdentity,
-      "append-only chain"
-    );
-    await assertDirectoryIdentity(
-      layout.namespaceRootPath,
-      namespaceIdentity,
-      "append-only namespace"
-    );
-    await options.faultInjector?.("after-publish");
-    await unlinkDurableFileIfIdentityMatches(
-      stagedEntryPath,
-      stagedEntry,
-      [2]
-    );
-    await assertDirectoryIdentity(
+    await publishDurablePreparedChainDirectory(
       stagedRootPath,
-      stagedRootIdentity,
-      "append-only staged create"
+      chainRootPath,
+      chainToken
     );
-    await fsp.rmdir(stagedRootPath);
+    await assertDirectoryIdentity(
+      layout.namespaceRootPath,
+      namespaceIdentity,
+      "append-only namespace"
+    );
     await assertDirectoryIdentity(
       layout.stagingRootPath,
       stagingRootIdentity,
       "append-only staging root"
     );
     await syncDurableDirectory(layout.stagingRootPath);
+    await syncDurableDirectory(layout.namespaceRootPath);
+    await assertDirectoryIdentity(
+      chainRootPath,
+      stagedRootIdentity,
+      "append-only atomic chain claim"
+    );
+    await options.faultInjector?.("after-chain-claim");
+    const entryPath = path.join(chainRootPath, firstEntryName);
     const published = await fsp.lstat(entryPath);
     assertDurableRegularFileStat(published, "append-only first entry");
     if (!sameDurableIdentity(published, stagedEntry)) {
@@ -227,6 +194,14 @@ export async function publishDurableAppendOnlyChain(
         "append-only first entry publish 后 identity 不匹配"
       );
     }
+    await assertDirectoryIdentity(
+      layout.namespaceRootPath,
+      namespaceIdentity,
+      "append-only namespace"
+    );
+    await syncDurableDirectory(chainRootPath);
+    await syncDurableDirectory(layout.namespaceRootPath);
+    await options.faultInjector?.("after-publish");
     return {
       chainRootPath,
       entryPath
@@ -751,6 +726,62 @@ async function createExclusiveDirectory(
   await assertDirectoryIdentity(parentPath, parentIdentity, "mkdir parent");
   await syncDurableDirectory(parentPath);
   return await requireSafeDirectory(absolutePath, "new staging directory");
+}
+
+async function removeEmptyChainClaimOrThrow(
+  namespaceRootPath: string,
+  chainRootPath: string,
+  chainToken: string
+): Promise<void> {
+  const existing = await durableLstatOrNull(chainRootPath);
+  if (!existing) return;
+  assertDurableDirectoryStat(existing, "append-only chain");
+  const entries = await fsp.readdir(chainRootPath);
+  if (entries.length) {
+    throw new DurableAppendOnlyCasError(
+      "already_exists",
+      `append-only chain 已存在：${chainToken}`
+    );
+  }
+  try {
+    await fsp.rmdir(chainRootPath);
+    await syncDurableDirectory(namespaceRootPath);
+  } catch (error) {
+    if (isNotFound(error)) return;
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOTEMPTY") {
+      throw new DurableAppendOnlyCasError(
+        "already_exists",
+        `append-only chain 正由并发 writer 创建：${chainToken}`
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Same-version writers only publish a chain that already contains its first
+ * entry, so a concurrent target is non-empty and rename fails. POSIX may
+ * replace an empty target left by a legacy writer; mixed-version live writers
+ * remain outside the cooperative-writer threat boundary.
+ */
+async function publishDurablePreparedChainDirectory(
+  sourcePath: string,
+  targetPath: string,
+  chainToken: string
+): Promise<void> {
+  try {
+    await fsp.rename(sourcePath, targetPath);
+  } catch (error) {
+    const target = await durableLstatOrNull(targetPath);
+    if (target) {
+      assertDurableDirectoryStat(target, "append-only concurrent chain");
+      throw new DurableAppendOnlyCasError(
+        "already_exists",
+        `append-only chain 已由并发 writer 创建：${chainToken}`
+      );
+    }
+    throw error;
+  }
 }
 
 async function requireSafeDirectory(

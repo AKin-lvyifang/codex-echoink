@@ -50,6 +50,21 @@ reaches `disposed`, `unsupported`, `retained`, or `quarantined`. A deletion
 receipt reports both states and never rewrites a committed local result as
 failed because later cleanup is pending or quarantined.
 
+Destructive local mutations use a Root Registry. A logical root ID is not path
+authority by itself: the mutation intent, trash receipt, and recovery evidence
+freeze the same registry ID, canonical path digest, owner-boundary digest,
+directory identity, revision, and binding digest. Recreated, rebound, symlinked,
+or out-of-bound roots fail closed. Source retirement starts only while one
+global mutation authority is held, the durable Journal has authorized that
+participant, and every frozen Root Binding still verifies.
+
+The first entry and its chain directory publish as one durable directory
+transition; same-version cooperative writers never observe an empty live
+claim. Because Node does not expose directory `renameat2(RENAME_NOREPLACE)` or
+fd-relative mutation primitives, this contract does not claim protection
+against a concurrently running legacy writer or a same-permission external
+process replacing an ancestor in the final syscall window.
+
 Conversation rotation creates each Native retirement record as
 `awaiting-local-commit` with a target Conversation generation and commit
 identity. Startup recovery reconciles both `awaiting-local-commit` and pending
