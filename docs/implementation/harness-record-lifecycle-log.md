@@ -307,3 +307,4 @@
 - 这仍是 side-by-side Phase 2 基础设施。四类产品操作、legacy reader/writer、
   retention、Raw GC preview、migration validator 和 V2→V1 exporter 尚未接线；
   产品删除 guard 保持关闭，真实 Vault 未修改。
+- 本批随后提交为 `c90ebeb`。

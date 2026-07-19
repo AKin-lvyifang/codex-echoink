@@ -62,7 +62,8 @@ authority 也按 fail closed 处理。
 - Root Registry checkpoint：`e510349`
 - 跨层 Root Binding Ref checkpoint：`ab1a061`
 - 当前已提交批次：RecordMutation schema V2 与 production recovery runner
-- 当前未提交批次：Memory/Artifact `mark-source-deleted` participant adapter
+- Memory/Artifact participant checkpoint：`c90ebeb`
+- 下一批次：非破坏性产品操作的 live Journal、启动恢复与 Native promotion authority
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -81,7 +82,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f` 与 Memory/Artifact participant adapter 测试证据 | 提交 adapter 批次并接入四类用户操作 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb` | 接入四类用户操作 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -274,7 +275,8 @@ Memory/Artifact source-deletion participant adapter 批次当前已通过：
 - 明确暂存 17 个预期文件后，`npm run check:release` 与
   `npm run check:public` 通过；public guard 检查 402 个 tracked files
 
-本批次尚未提交；暂存区不含 `.codex-memory` 与 `node_modules` 两个共享软链接。
+本批次已提交为 `c90ebeb`；提交树不含 `.codex-memory` 与 `node_modules` 两个
+共享软链接。
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。
