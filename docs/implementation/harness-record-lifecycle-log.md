@@ -398,3 +398,32 @@
   files。Watchdog terminal commit error 仍是故障注入测试的预期日志。
 - 本批没有打开 clear/delete 产品 guard，没有枚举真实 Run/Raw/Memory/Artifact，
   没有触发真实 Vault migration、retention、Raw GC、历史删除或 Native cleanup。
+
+## 2026-07-20：Conversation 级严格只读记录盘点
+
+- Run Record Store 新增全量 subject scan。盘点从正式 head/manifest/generation
+  反查 Workflow、Attempt 与 payload identity，校验完整 chain 和 payload bytes；
+  missing/unexpected Attempt、payload 状态矛盾、未知目录、staging 残留、损坏记录
+  或扫描期间 head 漂移都会 fail closed。
+- Run payload inventory 只提取显式 `rawRef` metadata，不返回 event body；结果同时
+  保存全 Store Raw owner，使 Raw exclusivity 不依赖目标 Conversation 的局部视图。
+- Workflow Artifact Lifecycle 新增 existing-store 全链扫描。缺 Root 返回空且不
+  初始化；存在 Root 时要求 namespace、staging 和全部 chain 合法，并以双次稳定
+  snapshot 防止选择期间漂移。
+- EchoInk Memory V2 新增正式 existing-store snapshot。该路径不会创建目录、
+  迁移 index 或修复 Markdown projection；严格读取 manifest/index/pending journal
+  与 transaction source，manifest/index revision 不一致、损坏 transaction 或读中
+  变化都会阻断。pending event、未收口和 durable-pending transaction 会进入统一
+  Conversation blocker。
+- 新增 `conversation-record-inventory.ts`，合并 Run、Memory、Artifact 与 Raw：
+  shared Raw 固定 retain，只有 exclusive Raw 生成 discard；Memory confirmation
+  与 Artifact 没有显式 retain 决定时保持 blocked；结果不包含消息正文、Run event
+  body、Memory statement 或绝对路径。
+- 新增回归覆盖确定性双读、跨 Conversation shared Raw、missing Raw、pending
+  Memory、Artifact 显式选择、Run 漏挂以及 Store 未初始化/不修复行为。
+- 当前 `npm run test`、typecheck、build、完整 lint、目标 production ESLint、
+  release/public guard 与 `git diff --check` 已通过；完整 lint 保持 961 个
+  baseline finding、无新增，public guard 检查 410 个 tracked files。
+- 本批仍未实现 Workflow Run source-deletion adapter、execution participant
+  构造、live clear/delete runner 或 Native retirement；产品 guard 继续关闭，
+  没有读取 Raw 正文，也没有修改真实 Vault。

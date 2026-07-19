@@ -69,9 +69,22 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
   source path 以及 Memory/Artifact subject identity，不保存绝对路径。启动恢复
   能从 plan 重建 Root、Trash receipt 与正式 adapter；缺失、损坏、晚建、Root/
   subject 错绑全部在 effect 前阻断。
-- Conversation/Run/Raw/Memory/Artifact 的完整产品枚举和选择策略、live
-  clear/delete runner 以及 Native retirement 仍未接入，因此不能把当前 checkpoint
-  写成用户删除已经安全可用。
+- 当前 worktree 已新增 Conversation 级严格只读 inventory：
+  - Run Store 会扫描全部正式 subject，验证 Workflow→Attempt→payload 所有权、
+    head/manifest/generation 和 payload bytes，并提取显式 Raw owner；漏挂、
+    未知 entry、损坏 chain 或扫描期间漂移都会阻断。
+  - Memory existing-store snapshot 不初始化 Store、不迁移旧 index、不修复
+    projection，且会把 pending journal 与未收口 transaction 一并纳入 blocker。
+  - Artifact inventory 严格扫描全部 append-only chain；缺 Store 返回空，不会
+    创建 namespace，未知 chain/staging/lineage 损坏 fail closed。
+  - Raw owner graph 合并全部 Conversation message 与全部 Run payload owner，
+    只按目录项和 stat 建快照，不读取或散列正文；shared Raw 固定 retain，
+    exclusive Raw 才能进入 discard 选择。
+  - pending confirmation 与正式 Artifact 必须有显式 retain 选择，不能被
+    Conversation 删除静默处置。
+- Workflow Run source-deletion adapter、确定性 execution participant 构造、
+  live clear/delete runner 以及 Native retirement 仍未接入，因此不能把当前
+  checkpoint 写成用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -97,10 +110,11 @@ authority 也按 fail closed 处理。
 - Memory/Artifact participant checkpoint：`c90ebeb`
 - 非破坏性 Live Journal checkpoint：`1bd72af`
 - 破坏性 Conversation reader/writer checkpoint：`67719de`
-- 当前开发批次：participant execution plan、production root catalog、
-  prepare-only Trash 与破坏性启动恢复
-- 下一批次：Run/Raw/Memory/Artifact 完整枚举、live clear/delete runner 与
-  Native retirement
+- Participant execution plan / production root checkpoint：`d683b10`
+- 当前开发批次：Run/Raw/Memory/Artifact 严格只读 inventory 与统一 blocker
+  selection
+- 下一批次：Workflow Run source-deletion adapter、确定性 participant plan、
+  live clear/delete runner 与 Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
 

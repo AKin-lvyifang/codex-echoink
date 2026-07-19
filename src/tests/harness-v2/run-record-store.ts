@@ -49,6 +49,211 @@ export async function runHarnessV2RunRecordStoreTests(): Promise<void> {
   await assertPayloadCorruptionIsDistinctFromMissing();
   await assertPayloadSafeReadRejectsSymlink();
   await assertAtomicGenerationCrashWindows();
+  await assertConversationInventoryIsDeterministicAndComplete();
+  await assertConversationInventoryBlocksIncompleteOwnership();
+  await assertConversationInventoryRejectsUnknownStoreEntries();
+}
+
+async function assertConversationInventoryIsDeterministicAndComplete():
+Promise<void> {
+  await withFixture("conversation-inventory", async (storageRootPath) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const leftWorkflow = workflowSummary(
+      0,
+      "workflow-inventory-left",
+      "conversation-left",
+      "attempt-inventory-left",
+      "artifact-inventory-left"
+    );
+    const leftAttempt = attemptSummary(
+      0,
+      leftWorkflow.workflowRunId,
+      leftWorkflow.attemptRefs[0].attemptId,
+      "harness-inventory-left"
+    );
+    const leftEvents = payloadEvents(
+      leftAttempt.workflowRunId,
+      leftAttempt.attemptId,
+      leftAttempt.harnessRunId
+    ).map((event, index) => index === 1
+      ? {
+          ...event,
+          data: {
+            rawRef: "raw/run-inventory-left.txt"
+          }
+        }
+      : event);
+    const leftPayload = buildAttemptPayloadManifest({
+      workflowRunId: leftAttempt.workflowRunId,
+      attemptId: leftAttempt.attemptId,
+      harnessRunId: leftAttempt.harnessRunId,
+      createdAt: BASE_TIME,
+      revision: 0
+    }, leftEvents);
+    await store.writeWorkflowRunSummary(leftWorkflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.writeAttemptRunSummary(leftAttempt, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.sealAttemptPayload(leftPayload, leftEvents, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+
+    const rightWorkflow = workflowSummary(
+      0,
+      "workflow-inventory-right",
+      "conversation-right",
+      "attempt-inventory-right",
+      "artifact-inventory-right"
+    );
+    const rightAttempt = attemptSummary(
+      0,
+      rightWorkflow.workflowRunId,
+      rightWorkflow.attemptRefs[0].attemptId,
+      "harness-inventory-right"
+    );
+    const rightEvents = payloadEvents(
+      rightAttempt.workflowRunId,
+      rightAttempt.attemptId,
+      rightAttempt.harnessRunId
+    );
+    await store.writeWorkflowRunSummary(rightWorkflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.writeAttemptRunSummary(rightAttempt, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.sealAttemptPayload(buildAttemptPayloadManifest({
+      workflowRunId: rightAttempt.workflowRunId,
+      attemptId: rightAttempt.attemptId,
+      harnessRunId: rightAttempt.harnessRunId,
+      createdAt: BASE_TIME,
+      revision: 0
+    }, rightEvents), rightEvents, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+
+    const first = await store.inventoryConversationRunRecords(
+      "conversation-left"
+    );
+    const second = await store.inventoryConversationRunRecords(
+      "conversation-left"
+    );
+    assert.deepEqual(second, first);
+    assert.match(first.snapshotDigest, /^sha256:[a-f0-9]{64}$/);
+    assert.deepEqual(first.blockers, []);
+    assert.deepEqual(first.storeRawOwners, [{
+      rawRef: "raw/run-inventory-left.txt",
+      workflowRunId: leftWorkflow.workflowRunId,
+      attemptId: leftAttempt.attemptId,
+      conversationId: "conversation-left"
+    }]);
+    assert.equal(first.workflowRuns.length, 1);
+    assert.equal(
+      first.workflowRuns[0].summary.workflowRunId,
+      leftWorkflow.workflowRunId
+    );
+    assert.equal(first.workflowRuns[0].attempts.length, 1);
+    assert.equal(
+      first.workflowRuns[0].attempts[0].summary?.attemptId,
+      leftAttempt.attemptId
+    );
+    assert.deepEqual(first.workflowRuns[0].attempts[0].payload, {
+      state: "present",
+      manifest: leftPayload,
+      rawRefs: ["raw/run-inventory-left.txt"]
+    });
+  });
+}
+
+async function assertConversationInventoryBlocksIncompleteOwnership():
+Promise<void> {
+  await withFixture("conversation-inventory-blockers", async (
+    storageRootPath
+  ) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const workflow = workflowSummary(
+      0,
+      "workflow-inventory-blocked",
+      "conversation-blocked",
+      "attempt-missing",
+      "artifact-blocked"
+    );
+    await store.writeWorkflowRunSummary(workflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    const orphan = attemptSummary(
+      0,
+      workflow.workflowRunId,
+      "attempt-unreferenced",
+      "harness-unreferenced"
+    );
+    await store.writeAttemptRunSummary(orphan, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.markAttemptPayloadNotCaptured({
+      workflowRunId: orphan.workflowRunId,
+      attemptId: orphan.attemptId,
+      harnessRunId: orphan.harnessRunId,
+      reasonCode: "capture-disabled",
+      recordedAt: BASE_TIME + 700,
+      revision: 0
+    }, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+
+    const inventory = await store.inventoryConversationRunRecords(
+      "conversation-blocked"
+    );
+    assert.deepEqual(
+      inventory.blockers.map((blocker) => blocker.code),
+      [
+        "missing-attempt-summary",
+        "unexpected-attempt-payload",
+        "unexpected-attempt-summary"
+      ]
+    );
+  });
+}
+
+async function assertConversationInventoryRejectsUnknownStoreEntries():
+Promise<void> {
+  await withFixture("conversation-inventory-unknown", async (
+    storageRootPath
+  ) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const workflow = workflowSummary(
+      0,
+      "workflow-inventory-unknown",
+      "conversation-unknown",
+      "attempt-unknown",
+      "artifact-unknown"
+    );
+    await store.writeWorkflowRunSummary(workflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await writeFile(
+      path.join(store.rootPath, "workflow-summaries", "unexpected.txt"),
+      "not a subject directory",
+      "utf8"
+    );
+    await assert.rejects(
+      store.inventoryConversationRunRecords("conversation-unknown"),
+      (error) => error instanceof Error
+        && /Unexpected Run record subject entry/.test(error.message)
+    );
+  });
 }
 
 function assertStrictV1ContractsAndCanonicalDigests(): void {
@@ -1204,7 +1409,10 @@ async function assertAtomicGenerationCrashWindows(): Promise<void> {
 
 function workflowSummary(
   revision: number,
-  workflowRunId = "workflow-a"
+  workflowRunId = "workflow-a",
+  conversationId = "conversation-a",
+  attemptId = "attempt-a",
+  artifactId = "artifact-a"
 ): WorkflowRunSummaryV1 {
   return finalizeWorkflowRunSummary({
     schemaVersion: 1,
@@ -1213,7 +1421,7 @@ function workflowSummary(
     surface: "knowledge",
     workflow: "knowledge.maintain",
     conversationRef: {
-      conversationId: "conversation-a",
+      conversationId,
       contextId: "context-a",
       turnId: "turn-a"
     },
@@ -1225,8 +1433,8 @@ function workflowSummary(
       inputTokens: 21,
       outputTokens: 13
     },
-    attemptRefs: [{ attemptId: "attempt-a", ordinal: 1 }],
-    artifactRefs: [{ artifactId: "artifact-a", kind: "markdown-report" }],
+    attemptRefs: [{ attemptId, ordinal: 1 }],
+    artifactRefs: [{ artifactId, kind: "markdown-report" }],
     errorCode: "none",
     localMutation: {
       state: "committed",

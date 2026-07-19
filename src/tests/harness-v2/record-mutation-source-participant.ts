@@ -14,6 +14,7 @@ import * as path from "node:path";
 import {
   createArtifactSourceDeletionAdapter,
   createWorkflowArtifactLifecycleRecord,
+  inventoryWorkflowArtifactsByConversation,
   initializeWorkflowArtifactLifecycleStore,
   loadWorkflowArtifactLifecycleRecord
 } from "../../harness/artifacts/artifact-lifecycle-store";
@@ -74,6 +75,73 @@ Promise<void> {
   await assertMissingMemoryLineageBlocks();
   await assertMemoryAndArtifactSubjectIdentityDriftBlocks();
   await assertArtifactRegistrationRestoreAndCorruptionGuards();
+  await assertArtifactConversationInventoryIsStrictAndReadOnly();
+}
+
+async function assertArtifactConversationInventoryIsStrictAndReadOnly():
+Promise<void> {
+  const rootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-artifact-inventory-")
+  );
+  const missingRootPath = path.join(rootPath, "missing");
+  const storeRootPath = path.join(rootPath, "store");
+  try {
+    const empty = await inventoryWorkflowArtifactsByConversation(
+      missingRootPath,
+      "conversation-left"
+    );
+    assert.deepEqual(empty.artifacts, []);
+    assert.equal(
+      await exists(missingRootPath),
+      false,
+      "read-only Artifact inventory must not initialize a missing Store"
+    );
+
+    const left = await createWorkflowArtifactLifecycleRecord({
+      rootPath: storeRootPath,
+      artifactId: "artifact-inventory-left",
+      artifactKind: "markdown-report",
+      sourceConversationIds: ["conversation-left"],
+      createdAt: 10_000
+    });
+    await createWorkflowArtifactLifecycleRecord({
+      rootPath: storeRootPath,
+      artifactId: "artifact-inventory-right",
+      artifactKind: "ui-card",
+      sourceConversationIds: ["conversation-right"],
+      createdAt: 10_001
+    });
+    const first = await inventoryWorkflowArtifactsByConversation(
+      storeRootPath,
+      "conversation-left"
+    );
+    const second = await inventoryWorkflowArtifactsByConversation(
+      storeRootPath,
+      "conversation-left"
+    );
+    assert.deepEqual(second, first);
+    assert.match(first.snapshotDigest, /^sha256:[a-f0-9]{64}$/);
+    assert.deepEqual(first.artifacts, [left.record]);
+
+    await writeFile(
+      path.join(
+        storeRootPath,
+        "workflow-artifact-lifecycle",
+        "unknown-entry"
+      ),
+      "{}\n",
+      "utf8"
+    );
+    await assert.rejects(
+      inventoryWorkflowArtifactsByConversation(
+        storeRootPath,
+        "conversation-left"
+      ),
+      /未知项/
+    );
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
 }
 
 async function assertExactTargetRollsForwardMemoryAndArtifact(): Promise<void> {

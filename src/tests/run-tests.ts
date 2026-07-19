@@ -312,6 +312,7 @@ import { runHarnessV2SurfaceRunSettlementTests } from "./harness-v2/surface-run-
 import { runHarnessV2ArchitectureBoundaryTests } from "./harness-v2/architecture-boundaries";
 import { runHarnessV2StorageInventoryTests } from "./harness-v2/storage-inventory";
 import { runHarnessV2RunRecordStoreTests } from "./harness-v2/run-record-store";
+import { runHarnessV2ConversationRecordInventoryTests } from "./harness-v2/conversation-record-inventory";
 import { runHarnessV2RecordMutationJournalTests } from "./harness-v2/record-mutation-journal";
 import { runHarnessV2RecordMutationExecutionPlanTests } from "./harness-v2/record-mutation-execution-plan";
 import { runHarnessV2RecordMutationExecutionRuntimeTests } from "./harness-v2/record-mutation-execution-runtime";
@@ -17380,6 +17381,7 @@ await runHarnessV2SurfaceRunSettlementTests();
 await runHarnessV2ArchitectureBoundaryTests();
 await runHarnessV2StorageInventoryTests();
 await runHarnessV2RunRecordStoreTests();
+await runHarnessV2ConversationRecordInventoryTests();
 await runHarnessV2RecordMutationJournalTests();
 await runHarnessV2RecordMutationExecutionPlanTests();
 await runHarnessV2RecordMutationExecutionRuntimeTests();

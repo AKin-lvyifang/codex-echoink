@@ -127,6 +127,63 @@ export interface MarkAttemptPayloadNotCapturedInput {
   revision: number;
 }
 
+export type ConversationRunRecordInventoryBlockerCode =
+  | "attempt-ordinal-mismatch"
+  | "attempt-payload-harness-mismatch"
+  | "missing-attempt-payload"
+  | "missing-attempt-summary"
+  | "payload-state-mismatch"
+  | "unexpected-attempt-payload"
+  | "unexpected-attempt-summary";
+
+export interface ConversationRunRecordInventoryBlocker {
+  code: ConversationRunRecordInventoryBlockerCode;
+  workflowRunId: string;
+  attemptId: string;
+  recordDigest?: string;
+}
+
+export type ConversationAttemptPayloadInventory =
+  | {
+      state: "present";
+      manifest: AttemptPayloadManifestV1;
+      rawRefs: string[];
+    }
+  | {
+      state: "expired";
+      tombstone: RunRetentionTombstoneV1;
+    }
+  | {
+      state: "not-captured";
+      reasonCode: RunRecordReasonCode;
+    }
+  | { state: "missing" };
+
+export interface ConversationAttemptRunInventory {
+  attemptId: string;
+  ordinal: number;
+  summary: AttemptRunSummaryV1 | null;
+  payload: ConversationAttemptPayloadInventory;
+}
+
+export interface ConversationWorkflowRunInventory {
+  summary: WorkflowRunSummaryV1;
+  attempts: ConversationAttemptRunInventory[];
+}
+
+export interface ConversationRunRecordInventory {
+  conversationId: string;
+  workflowRuns: ConversationWorkflowRunInventory[];
+  storeRawOwners: Array<{
+    rawRef: string;
+    workflowRunId: string;
+    attemptId: string;
+    conversationId?: string;
+  }>;
+  blockers: ConversationRunRecordInventoryBlocker[];
+  snapshotDigest: string;
+}
+
 type RunRecordStoreRecordKind =
   | "workflow-summary"
   | "attempt-summary"
@@ -182,6 +239,18 @@ interface SubjectLayout {
   generationsPath: string;
   manifestsPath: string;
   headPath: string;
+}
+
+interface RunRecordStoreInventorySnapshot {
+  workflowRunIds: string[];
+  attemptLocators: AttemptRunRecordLocator[];
+  payloadLocators: AttemptRunRecordLocator[];
+  activeHeads: Array<{
+    recordKind: RunRecordStoreRecordKind;
+    subjectToken: string;
+    manifestDigest: string;
+  }>;
+  digest: string;
 }
 
 type LatestManifestResult =
@@ -576,6 +645,492 @@ export class FileRunRecordStore {
       "manifest-corrupt",
       new Error("Attempt payload manifest points at record content")
     );
+  }
+
+  /**
+   * Strict, read-only owner inventory used before a destructive Conversation
+   * mutation. It scans every Run Record subject so a corrupt or unowned record
+   * cannot be mistaken for an unrelated record that is safe to ignore.
+   */
+  async inventoryConversationRunRecords(
+    conversationIdInput: string
+  ): Promise<ConversationRunRecordInventory> {
+    const conversationId = requireInventoryIdentity(
+      conversationIdInput,
+      "conversationId"
+    );
+    const before = await this.scanInventorySnapshot();
+    const workflows = new Map<string, WorkflowRunSummaryV1>();
+    const attempts = new Map<string, AttemptRunSummaryV1>();
+    const payloads = new Map<string, ConversationAttemptPayloadInventory>();
+
+    for (const workflowRunId of before.workflowRunIds) {
+      const read = await this.readWorkflowRunSummary(workflowRunId);
+      if (read.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(read.code, read.error);
+      }
+      if (read.state !== "present") {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          `Workflow Run ${workflowRunId} disappeared during inventory`
+        );
+      }
+      workflows.set(workflowRunId, read.record);
+    }
+    for (const locator of before.attemptLocators) {
+      const read = await this.readAttemptRunSummary(locator);
+      if (read.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(read.code, read.error);
+      }
+      if (read.state !== "present") {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          `Attempt Run ${locator.workflowRunId}/${locator.attemptId} disappeared during inventory`
+        );
+      }
+      attempts.set(attemptInventoryKey(locator), read.record);
+    }
+    for (const locator of before.payloadLocators) {
+      const read = await this.readAttemptPayload(locator);
+      if (read.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(read.code, read.error);
+      }
+      payloads.set(
+        attemptInventoryKey(locator),
+        summarizeAttemptPayloadInventory(read)
+      );
+    }
+
+    assertRunInventoryOwnershipComplete(
+      workflows,
+      attempts,
+      payloads,
+      before
+    );
+    const blockers: ConversationRunRecordInventoryBlocker[] = [];
+    const workflowRuns = [...workflows.values()]
+      .filter((summary) =>
+        summary.conversationRef?.conversationId === conversationId
+      )
+      .sort((left, right) =>
+        left.workflowRunId.localeCompare(right.workflowRunId)
+      )
+      .map((summary): ConversationWorkflowRunInventory => {
+        const expectedAttemptIds = new Set(
+          summary.attemptRefs.map((reference) => reference.attemptId)
+        );
+        const workflowAttempts = [...attempts.values()]
+          .filter((attempt) =>
+            attempt.workflowRunId === summary.workflowRunId
+          )
+          .sort(compareAttemptSummaries);
+        const workflowPayloads = [...before.payloadLocators]
+          .filter((locator) =>
+            locator.workflowRunId === summary.workflowRunId
+          );
+        for (const attempt of workflowAttempts) {
+          if (!expectedAttemptIds.has(attempt.attemptId)) {
+            blockers.push({
+              code: "unexpected-attempt-summary",
+              workflowRunId: summary.workflowRunId,
+              attemptId: attempt.attemptId,
+              recordDigest: attempt.digest
+            });
+          }
+        }
+        for (const locator of workflowPayloads) {
+          if (!expectedAttemptIds.has(locator.attemptId)) {
+            blockers.push({
+              code: "unexpected-attempt-payload",
+              workflowRunId: summary.workflowRunId,
+              attemptId: locator.attemptId,
+              recordDigest: payloadInventoryDigest(
+                payloads.get(attemptInventoryKey(locator))
+              )
+            });
+          }
+        }
+        const inventoryAttempts = summary.attemptRefs.map((reference) => {
+          const locator = {
+            workflowRunId: summary.workflowRunId,
+            attemptId: reference.attemptId
+          };
+          const key = attemptInventoryKey(locator);
+          const attempt = attempts.get(key) ?? null;
+          const payload = payloads.get(key) ?? { state: "missing" as const };
+          if (!attempt) {
+            blockers.push({
+              code: "missing-attempt-summary",
+              workflowRunId: summary.workflowRunId,
+              attemptId: reference.attemptId
+            });
+          } else {
+            if (attempt.ordinal !== reference.ordinal) {
+              blockers.push({
+                code: "attempt-ordinal-mismatch",
+                workflowRunId: summary.workflowRunId,
+                attemptId: reference.attemptId,
+                recordDigest: attempt.digest
+              });
+            }
+            const payloadIdentity = payloadHarnessRunId(payload);
+            if (
+              payloadIdentity !== null
+              && payloadIdentity !== attempt.harnessRunId
+            ) {
+              blockers.push({
+                code: "attempt-payload-harness-mismatch",
+                workflowRunId: summary.workflowRunId,
+                attemptId: reference.attemptId,
+                recordDigest: payloadInventoryDigest(payload)
+              });
+            }
+            const payloadStateMatches = attempt.payload.expected
+              ? payload.state === "present" || payload.state === "expired"
+              : payload.state === "not-captured";
+            if (!payloadStateMatches) {
+              blockers.push({
+                code: payload.state === "missing"
+                  ? "missing-attempt-payload"
+                  : "payload-state-mismatch",
+                workflowRunId: summary.workflowRunId,
+                attemptId: reference.attemptId,
+                recordDigest: payloadInventoryDigest(payload)
+              });
+            }
+          }
+          return {
+            attemptId: reference.attemptId,
+            ordinal: reference.ordinal,
+            summary: attempt,
+            payload
+          };
+        });
+        return {
+          summary,
+          attempts: inventoryAttempts
+        };
+      });
+
+    blockers.sort(compareInventoryBlockers);
+    const storeRawOwners = [...payloads.entries()]
+      .flatMap(([key, payload]) => {
+        if (payload.state !== "present" || !payload.rawRefs.length) return [];
+        const locator = parseAttemptInventoryKey(key);
+        const workflow = workflows.get(locator.workflowRunId);
+        return payload.rawRefs.map((rawRef) => ({
+          rawRef,
+          workflowRunId: locator.workflowRunId,
+          attemptId: locator.attemptId,
+          ...(workflow?.conversationRef?.conversationId
+            ? {
+                conversationId:
+                  workflow.conversationRef.conversationId
+              }
+            : {})
+        }));
+      })
+      .sort((left, right) => (
+        left.rawRef.localeCompare(right.rawRef)
+        || left.workflowRunId.localeCompare(right.workflowRunId)
+        || left.attemptId.localeCompare(right.attemptId)
+      ));
+    const after = await this.scanInventorySnapshot();
+    if (after.digest !== before.digest) {
+      throw new RunRecordStoreConflictError(
+        "Run Record Store changed during Conversation inventory"
+      );
+    }
+    const snapshotDigest = canonicalRunRecordDigest({
+      conversationId,
+      storeDigest: before.digest,
+      workflowRuns,
+      storeRawOwners,
+      blockers
+    });
+    return {
+      conversationId,
+      workflowRuns,
+      storeRawOwners,
+      blockers,
+      snapshotDigest
+    };
+  }
+
+  private async scanInventorySnapshot():
+  Promise<RunRecordStoreInventorySnapshot> {
+    const rootStat = await lstatOrNull(this.rootPath);
+    if (!rootStat) {
+      return runRecordStoreInventorySnapshot([], [], [], []);
+    }
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        "Run Record Store root is not a plain directory"
+      );
+    }
+    const expectedCollections = [
+      ".staging",
+      "attempt-payloads",
+      "attempt-summaries",
+      "workflow-summaries"
+    ];
+    const rootEntries = await readdir(this.rootPath, {
+      withFileTypes: true
+    });
+    const actualNames = rootEntries
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+    if (
+      actualNames.length !== expectedCollections.length
+      || actualNames.some(
+        (name, index) => name !== expectedCollections[index]
+      )
+      || rootEntries.some(
+        (entry) => !entry.isDirectory() || entry.isSymbolicLink()
+      )
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        "Run Record Store root layout contains an unknown or unsafe entry"
+      );
+    }
+    const stagingEntries = await readdir(path.join(
+      this.rootPath,
+      ".staging"
+    ));
+    if (stagingEntries.length) {
+      throw new RunRecordStoreCorruptError(
+        "manifest-corrupt",
+        "Run Record Store staging directory requires recovery"
+      );
+    }
+
+    const workflowSubjects = await this.scanCollectionSubjects(
+      "workflow-summary"
+    );
+    const attemptSubjects = await this.scanCollectionSubjects(
+      "attempt-summary"
+    );
+    const payloadSubjects = await this.scanCollectionSubjects(
+      "attempt-payload"
+    );
+    const workflowRunIds = workflowSubjects.map((subject) => {
+      if (typeof subject.identity !== "string") {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          "Workflow Run inventory identity is invalid"
+        );
+      }
+      return subject.identity;
+    });
+    const attemptLocators = attemptSubjects.map((subject) => {
+      if (typeof subject.identity === "string") {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          "Attempt Run inventory identity is invalid"
+        );
+      }
+      return subject.identity;
+    });
+    const payloadLocators = payloadSubjects.map((subject) => {
+      if (typeof subject.identity === "string") {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          "Attempt payload inventory identity is invalid"
+        );
+      }
+      return subject.identity;
+    });
+    return runRecordStoreInventorySnapshot(
+      workflowRunIds,
+      attemptLocators,
+      payloadLocators,
+      [
+        ...workflowSubjects,
+        ...attemptSubjects,
+        ...payloadSubjects
+      ].map((subject) => ({
+        recordKind: subject.recordKind,
+        subjectToken: subject.subjectToken,
+        manifestDigest: subject.manifestDigest
+      }))
+    );
+  }
+
+  private async scanCollectionSubjects(
+    recordKind: RunRecordStoreRecordKind
+  ): Promise<Array<{
+    recordKind: RunRecordStoreRecordKind;
+    subjectToken: string;
+    manifestDigest: string;
+    identity: string | AttemptRunRecordLocator;
+  }>> {
+    const collectionPath = path.join(
+      this.rootPath,
+      collectionDirectory(recordKind)
+    );
+    const entries = await readdir(collectionPath, {
+      withFileTypes: true
+    });
+    const subjects: Array<{
+      recordKind: RunRecordStoreRecordKind;
+      subjectToken: string;
+      manifestDigest: string;
+      identity: string | AttemptRunRecordLocator;
+    }> = [];
+    for (const entry of entries.sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )) {
+      if (
+        !entry.isDirectory()
+        || entry.isSymbolicLink()
+        || !/^[a-z0-9._-]+-[a-f0-9]{64}$/.test(entry.name)
+      ) {
+        throw new RunRecordStoreCorruptError(
+          "unsafe-path",
+          `Unexpected Run record subject entry ${entry.name}`
+        );
+      }
+      subjects.push(await this.readInventorySubjectIdentity(
+        recordKind,
+        entry.name
+      ));
+    }
+    return subjects;
+  }
+
+  private async readInventorySubjectIdentity(
+    recordKind: RunRecordStoreRecordKind,
+    subjectToken: string
+  ): Promise<{
+    recordKind: RunRecordStoreRecordKind;
+    subjectToken: string;
+    manifestDigest: string;
+    identity: string | AttemptRunRecordLocator;
+  }> {
+    const subjectRootPath = path.join(
+      this.rootPath,
+      collectionDirectory(recordKind),
+      subjectToken
+    );
+    const head = validateRunRecordHead(
+      await readJsonFile(path.join(subjectRootPath, "head.json"))
+    );
+    if (
+      head.recordKind !== recordKind
+      || head.subjectToken !== subjectToken
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "manifest-corrupt",
+        "Run record inventory head identity does not match its path"
+      );
+    }
+    const manifest = validateGenerationManifest(
+      await readJsonFile(path.join(
+        subjectRootPath,
+        "manifests",
+        manifestFileName(head.revision)
+      ))
+    );
+    if (
+      manifest.recordKind !== recordKind
+      || manifest.subjectToken !== subjectToken
+      || manifest.revision !== head.revision
+      || manifest.digest !== head.manifestDigest
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "manifest-corrupt",
+        "Run record inventory manifest does not match its head"
+      );
+    }
+    const generationPath = path.join(
+      subjectRootPath,
+      "generations",
+      manifest.generation
+    );
+    let identity: string | AttemptRunRecordLocator;
+    if (recordKind === "workflow-summary") {
+      if (manifest.contentKind !== "record") {
+        throw new RunRecordStoreCorruptError(
+          "manifest-corrupt",
+          "Workflow Run inventory manifest points at non-record content"
+        );
+      }
+      const summary = validateWorkflowRunSummary(
+        await readJsonFile(path.join(generationPath, "record.json"))
+      );
+      assertInventoryGenerationIdentity(summary, manifest);
+      identity = summary.workflowRunId;
+    } else if (recordKind === "attempt-summary") {
+      if (manifest.contentKind !== "record") {
+        throw new RunRecordStoreCorruptError(
+          "manifest-corrupt",
+          "Attempt Run inventory manifest points at non-record content"
+        );
+      }
+      const summary = validateAttemptRunSummary(
+        await readJsonFile(path.join(generationPath, "record.json"))
+      );
+      assertInventoryGenerationIdentity(summary, manifest);
+      identity = {
+        workflowRunId: summary.workflowRunId,
+        attemptId: summary.attemptId
+      };
+    } else if (manifest.contentKind === "payload") {
+      const payload = validateAttemptPayloadManifest(
+        await readJsonFile(path.join(generationPath, "manifest.json"))
+      );
+      assertInventoryGenerationIdentity(payload, manifest);
+      identity = {
+        workflowRunId: payload.workflowRunId,
+        attemptId: payload.attemptId
+      };
+    } else if (manifest.contentKind === "not-captured") {
+      const payload = validateNotCapturedRecord(
+        await readJsonFile(path.join(generationPath, "record.json"))
+      );
+      assertInventoryGenerationIdentity(payload, manifest);
+      identity = {
+        workflowRunId: payload.workflowRunId,
+        attemptId: payload.attemptId
+      };
+    } else if (manifest.contentKind === "expired") {
+      const payload = validateRetentionTombstone(
+        await readJsonFile(path.join(generationPath, "record.json"))
+      );
+      if (payload.scope !== "attempt-payload" || !payload.attemptId) {
+        throw new RunRecordStoreCorruptError(
+          "tombstone-corrupt",
+          "Run record inventory payload tombstone identity is invalid"
+        );
+      }
+      assertInventoryGenerationIdentity(payload, manifest);
+      identity = {
+        workflowRunId: payload.workflowRunId,
+        attemptId: payload.attemptId
+      };
+    } else {
+      throw new RunRecordStoreCorruptError(
+        "manifest-corrupt",
+        "Run record inventory content kind is invalid"
+      );
+    }
+    const expectedSubjectToken = typeof identity === "string"
+      ? safeRunRecordToken(identity)
+      : attemptRunRecordSubjectToken(identity);
+    if (expectedSubjectToken !== subjectToken) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        "Run record inventory subject identity does not match its path"
+      );
+    }
+    return {
+      recordKind,
+      subjectToken,
+      manifestDigest: manifest.digest,
+      identity
+    };
   }
 
   private async readSummary<T>(
@@ -990,14 +1545,9 @@ export class FileRunRecordStore {
     recordKind: RunRecordStoreRecordKind,
     subjectId: string
   ): SubjectLayout {
-    const collection = recordKind === "workflow-summary"
-      ? "workflow-summaries"
-      : recordKind === "attempt-summary"
-        ? "attempt-summaries"
-        : "attempt-payloads";
     const subjectRootPath = path.join(
       this.rootPath,
-      collection,
+      collectionDirectory(recordKind),
       safeRunRecordToken(subjectId)
     );
     return {
@@ -1027,6 +1577,240 @@ export class FileRunRecordStore {
       await ensurePlainDirectory(path.join(this.rootPath, child));
     }
     await syncDirectory(this.rootPath);
+  }
+}
+
+function runRecordStoreInventorySnapshot(
+  workflowRunIdsInput: readonly string[],
+  attemptLocatorsInput: readonly AttemptRunRecordLocator[],
+  payloadLocatorsInput: readonly AttemptRunRecordLocator[],
+  activeHeadsInput: readonly {
+    recordKind: RunRecordStoreRecordKind;
+    subjectToken: string;
+    manifestDigest: string;
+  }[]
+): RunRecordStoreInventorySnapshot {
+  const workflowRunIds = [...workflowRunIdsInput].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  const attemptLocators = [...attemptLocatorsInput].sort(compareLocators);
+  const payloadLocators = [...payloadLocatorsInput].sort(compareLocators);
+  const activeHeads = [...activeHeadsInput].sort((left, right) => (
+    left.recordKind.localeCompare(right.recordKind)
+    || left.subjectToken.localeCompare(right.subjectToken)
+  ));
+  const draft = {
+    workflowRunIds,
+    attemptLocators,
+    payloadLocators,
+    activeHeads
+  };
+  return {
+    ...draft,
+    digest: canonicalRunRecordDigest(draft)
+  };
+}
+
+function summarizeAttemptPayloadInventory(
+  read: Exclude<AttemptPayloadReadResult, { state: "corrupt" }>
+): ConversationAttemptPayloadInventory {
+  if (read.state === "present") {
+    return {
+      state: "present",
+      manifest: read.manifest,
+      rawRefs: collectRunPayloadRawRefs(read.events)
+    };
+  }
+  if (read.state === "expired") {
+    return {
+      state: "expired",
+      tombstone: read.tombstone
+    };
+  }
+  if (read.state === "not-captured") {
+    return {
+      state: "not-captured",
+      reasonCode: read.reasonCode
+    };
+  }
+  return { state: "missing" };
+}
+
+function collectRunPayloadRawRefs(
+  events: readonly AttemptHarnessEventV1[]
+): string[] {
+  const refs = new Set<string>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 32) {
+      throw new RunRecordStoreCorruptError(
+        "payload-event-invalid",
+        "Attempt payload rawRef nesting exceeds the inventory limit"
+      );
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(
+      value as Record<string, unknown>
+    )) {
+      if (key === "rawRef") {
+        if (typeof item !== "string") {
+          throw new RunRecordStoreCorruptError(
+            "payload-event-invalid",
+            "Attempt payload rawRef is not a string"
+          );
+        }
+        refs.add(normalizeRunPayloadRawRef(item));
+        continue;
+      }
+      visit(item, depth + 1);
+    }
+  };
+  for (const event of events) visit(event, 0);
+  return [...refs].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeRunPayloadRawRef(value: string): string {
+  if (
+    value !== value.trim()
+    || value.includes("\\")
+    || value.includes("..")
+    || !/^raw\/[a-zA-Z0-9_.-]{1,160}\.txt$/.test(value)
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "payload-event-invalid",
+      "Attempt payload rawRef is unsafe"
+    );
+  }
+  return value;
+}
+
+function assertRunInventoryOwnershipComplete(
+  workflows: ReadonlyMap<string, WorkflowRunSummaryV1>,
+  attempts: ReadonlyMap<string, AttemptRunSummaryV1>,
+  payloads: ReadonlyMap<string, ConversationAttemptPayloadInventory>,
+  snapshot: RunRecordStoreInventorySnapshot
+): void {
+  for (const locator of snapshot.attemptLocators) {
+    if (!workflows.has(locator.workflowRunId)) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        `Attempt Run ${locator.workflowRunId}/${locator.attemptId} has no Workflow Run owner`
+      );
+    }
+  }
+  for (const locator of snapshot.payloadLocators) {
+    const key = attemptInventoryKey(locator);
+    if (!attempts.has(key) || !payloads.has(key)) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        `Attempt payload ${locator.workflowRunId}/${locator.attemptId} has no Attempt Run owner`
+      );
+    }
+  }
+}
+
+function payloadHarnessRunId(
+  payload: ConversationAttemptPayloadInventory
+): string | null {
+  if (payload.state === "present") return payload.manifest.harnessRunId;
+  if (payload.state === "expired") {
+    return payload.tombstone.harnessRunId ?? null;
+  }
+  return null;
+}
+
+function payloadInventoryDigest(
+  payload: ConversationAttemptPayloadInventory | undefined
+): string | undefined {
+  if (!payload || payload.state === "missing") return undefined;
+  if (payload.state === "present") return payload.manifest.digest;
+  if (payload.state === "expired") return payload.tombstone.digest;
+  return canonicalRunRecordDigest(payload);
+}
+
+function compareAttemptSummaries(
+  left: AttemptRunSummaryV1,
+  right: AttemptRunSummaryV1
+): number {
+  return left.ordinal - right.ordinal
+    || left.attemptId.localeCompare(right.attemptId);
+}
+
+function compareInventoryBlockers(
+  left: ConversationRunRecordInventoryBlocker,
+  right: ConversationRunRecordInventoryBlocker
+): number {
+  return left.code.localeCompare(right.code)
+    || left.workflowRunId.localeCompare(right.workflowRunId)
+    || left.attemptId.localeCompare(right.attemptId);
+}
+
+function compareLocators(
+  left: AttemptRunRecordLocator,
+  right: AttemptRunRecordLocator
+): number {
+  return left.workflowRunId.localeCompare(right.workflowRunId)
+    || left.attemptId.localeCompare(right.attemptId);
+}
+
+function attemptInventoryKey(locator: AttemptRunRecordLocator): string {
+  return JSON.stringify([locator.workflowRunId, locator.attemptId]);
+}
+
+function parseAttemptInventoryKey(value: string): AttemptRunRecordLocator {
+  const parsed = JSON.parse(value) as unknown;
+  if (
+    !Array.isArray(parsed)
+    || parsed.length !== 2
+    || !validSafeText(parsed[0], 512)
+    || !validSafeText(parsed[1], 512)
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "record-corrupt",
+      "Run record inventory key is invalid"
+    );
+  }
+  return {
+    workflowRunId: parsed[0],
+    attemptId: parsed[1]
+  };
+}
+
+function collectionDirectory(
+  recordKind: RunRecordStoreRecordKind
+): string {
+  return recordKind === "workflow-summary"
+    ? "workflow-summaries"
+    : recordKind === "attempt-summary"
+      ? "attempt-summaries"
+      : "attempt-payloads";
+}
+
+function requireInventoryIdentity(value: string, label: string): string {
+  if (!validSafeText(value, 512)) {
+    throw new RunRecordStoreCorruptError(
+      "record-corrupt",
+      `Run record inventory ${label} is invalid`
+    );
+  }
+  return value;
+}
+
+function assertInventoryGenerationIdentity(
+  record: { revision: number; digest: string },
+  manifest: RunRecordGenerationManifest
+): void {
+  if (
+    record.revision !== manifest.revision
+    || record.digest !== manifest.contentDigest
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "record-corrupt",
+      "Run record inventory generation identity is inconsistent"
+    );
   }
 }
 

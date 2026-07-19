@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir } from "node:fs/promises";
+import { lstat, mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import {
   DurableAppendOnlyCasError,
@@ -68,6 +68,12 @@ export interface LoadedWorkflowArtifactLifecycleRecord {
   chainToken: string;
   chain: WorkflowArtifactLifecycleRecordV1[];
   record: WorkflowArtifactLifecycleRecordV1;
+}
+
+export interface WorkflowArtifactConversationInventory {
+  conversationId: string;
+  artifacts: WorkflowArtifactLifecycleRecordV1[];
+  snapshotDigest: string;
 }
 
 export interface ArtifactSourceDeletionAdapterInput {
@@ -167,6 +173,46 @@ export async function loadWorkflowArtifactLifecycleRecord(
   const artifactId = requireSafeId(artifactIdInput, "artifactId");
   const layout = await requireLayout(rootPath, false);
   return layout ? await loadFromLayout(layout, artifactId) : null;
+}
+
+/**
+ * Strict read-only scan for destructive Conversation planning. A missing Store
+ * is an empty inventory and is never initialized. Any unknown entry, partial
+ * staging state or corrupt chain blocks the entire scan because it may conceal
+ * an Artifact owned by the target Conversation.
+ */
+export async function inventoryWorkflowArtifactsByConversation(
+  rootPathInput: string,
+  conversationIdInput: string
+): Promise<WorkflowArtifactConversationInventory> {
+  const rootPath = path.resolve(rootPathInput);
+  const conversationId = requireSafeId(
+    conversationIdInput,
+    "conversationId"
+  );
+  const before = await scanWorkflowArtifactLifecycleRecords(rootPath);
+  const after = await scanWorkflowArtifactLifecycleRecords(rootPath);
+  if (after.snapshotDigest !== before.snapshotDigest) {
+    throw new Error(
+      "Workflow Artifact Lifecycle changed during Conversation inventory"
+    );
+  }
+  return {
+    conversationId,
+    artifacts: before.records
+      .filter((record) =>
+        record.sourceConversationIds.includes(conversationId)
+      )
+      .map(cloneArtifactLifecycleRecord),
+    snapshotDigest: recordMutationDigest({
+      conversationId,
+      storeSnapshotDigest: before.snapshotDigest,
+      artifacts: before.records
+        .filter((record) =>
+          record.sourceConversationIds.includes(conversationId)
+        )
+    })
+  };
 }
 
 export function createArtifactSourceDeletionAdapter(
@@ -674,6 +720,17 @@ async function loadFromLayout(
   artifactId: string
 ): Promise<LoadedWorkflowArtifactLifecycleRecord | null> {
   const chainToken = artifactChainToken(artifactId);
+  const loaded = await loadFromChainToken(layout, chainToken);
+  if (loaded && loaded.record.artifactId !== artifactId) {
+    throw new Error("Workflow Artifact Lifecycle artifactId 不匹配");
+  }
+  return loaded;
+}
+
+async function loadFromChainToken(
+  layout: DurableAppendOnlyLayout,
+  chainToken: string
+): Promise<LoadedWorkflowArtifactLifecycleRecord | null> {
   const chainRootPath = durableAppendOnlyChainPath(layout, chainToken);
   const entries = await readdir(chainRootPath, { withFileTypes: true }).catch(
     (error) => {
@@ -697,6 +754,7 @@ async function loadFromLayout(
     throw new Error("Workflow Artifact Lifecycle chain 长度非法");
   }
   const chain: WorkflowArtifactLifecycleRecordV1[] = [];
+  let artifactId: string | null = null;
   for (let index = 0; index < ordered.length; index += 1) {
     const entry = ordered[index];
     if (entry.revision !== index || entry.name !== entryName(index)) {
@@ -710,8 +768,15 @@ async function loadFromLayout(
     const record = parseWorkflowArtifactLifecycleRecord(
       JSON.parse(read.content.toString("utf8")) as unknown
     );
-    if (record.artifactId !== artifactId) {
-      throw new Error("Workflow Artifact Lifecycle artifactId 不匹配");
+    if (artifactId === null) {
+      artifactId = record.artifactId;
+      if (artifactChainToken(artifactId) !== chainToken) {
+        throw new Error(
+          "Workflow Artifact Lifecycle chain token 与 artifactId 不匹配"
+        );
+      }
+    } else if (record.artifactId !== artifactId) {
+      throw new Error("Workflow Artifact Lifecycle artifactId 已变化");
     }
     if (index > 0) {
       const previous = chain[index - 1];
@@ -733,6 +798,119 @@ async function loadFromLayout(
     chain,
     record: chain[chain.length - 1]
   };
+}
+
+async function scanWorkflowArtifactLifecycleRecords(
+  rootPath: string
+): Promise<{
+  records: WorkflowArtifactLifecycleRecordV1[];
+  snapshotDigest: string;
+}> {
+  const rootStat = await lstatOrNull(rootPath);
+  if (!rootStat) {
+    return {
+      records: [],
+      snapshotDigest: recordMutationDigest({ records: [] })
+    };
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("Workflow Artifact Lifecycle root 不是普通目录");
+  }
+  const canonicalRoot = await resolveDurablePlainRoot(
+    rootPath,
+    "Workflow Artifact Lifecycle root"
+  );
+  const rootEntries = await readdir(canonicalRoot, {
+    withFileTypes: true
+  });
+  if (!rootEntries.length) {
+    return {
+      records: [],
+      snapshotDigest: recordMutationDigest({ records: [] })
+    };
+  }
+  if (
+    rootEntries.length !== 1
+    || rootEntries[0].name !== ARTIFACT_LIFECYCLE_NAMESPACE
+    || !rootEntries[0].isDirectory()
+    || rootEntries[0].isSymbolicLink()
+  ) {
+    throw new Error(
+      "Workflow Artifact Lifecycle root 含未知项"
+    );
+  }
+  const layout = await requireLayout(canonicalRoot, false);
+  if (!layout) {
+    throw new Error("Workflow Artifact Lifecycle namespace 缺失");
+  }
+  const namespaceEntries = await readdir(layout.namespaceRootPath, {
+    withFileTypes: true
+  });
+  const stagingEntry = namespaceEntries.find(
+    (entry) => entry.name === ".staging"
+  );
+  if (
+    !stagingEntry
+    || !stagingEntry.isDirectory()
+    || stagingEntry.isSymbolicLink()
+  ) {
+    throw new Error(
+      "Workflow Artifact Lifecycle staging 目录缺失或不安全"
+    );
+  }
+  if ((await readdir(layout.stagingRootPath)).length) {
+    throw new Error(
+      "Workflow Artifact Lifecycle staging 含未收口数据"
+    );
+  }
+  const chainEntries = namespaceEntries
+    .filter((entry) => entry.name !== ".staging")
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const records: WorkflowArtifactLifecycleRecordV1[] = [];
+  for (const entry of chainEntries) {
+    if (
+      !entry.isDirectory()
+      || entry.isSymbolicLink()
+      || !/^artifact-[a-f0-9]{24}$/.test(entry.name)
+    ) {
+      throw new Error(
+        `Workflow Artifact Lifecycle namespace 含未知项：${entry.name}`
+      );
+    }
+    const loaded = await loadFromChainToken(layout, entry.name);
+    if (!loaded) {
+      throw new Error(
+        `Workflow Artifact Lifecycle chain 缺失：${entry.name}`
+      );
+    }
+    records.push(cloneArtifactLifecycleRecord(loaded.record));
+  }
+  records.sort((left, right) =>
+    left.artifactId.localeCompare(right.artifactId)
+  );
+  return {
+    records,
+    snapshotDigest: recordMutationDigest({ records })
+  };
+}
+
+function cloneArtifactLifecycleRecord(
+  record: WorkflowArtifactLifecycleRecordV1
+): WorkflowArtifactLifecycleRecordV1 {
+  return {
+    ...record,
+    sourceConversationIds: [...record.sourceConversationIds],
+    sourceDeletions: record.sourceDeletions.map((marker) => ({ ...marker }))
+  };
+}
+
+async function lstatOrNull(targetPath: string) {
+  try {
+    return await lstat(targetPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 function artifactSourceDeletionReceipt(

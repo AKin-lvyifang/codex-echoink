@@ -217,6 +217,12 @@ The `/maintain` selected-first routing, Shadow Vault, write fence, artifact reco
 - Run Ledger separates retained summary metadata from bounded detailed payload.
 - Native lifecycle code gains finite retry, quarantine, fairness, terminal compaction, and explicit cleanup receipts.
 - Raw sidecars are reclaimed from a reference graph, never by deleting one caller's reference blindly.
+- Destructive selection uses a metadata-only, twice-stable Conversation
+  inventory. Existing Memory and Artifact readers must not initialize,
+  migrate, or repair their Stores during planning; pending Memory work,
+  incomplete Run ownership, unknown entries, and snapshot drift fail closed.
+  Raw exclusivity is proved against all Conversation and Run-payload owners,
+  not inferred from the target Conversation alone.
 - Storage migration always starts with a metadata-only dry-run and stable
   structural snapshot fingerprint. The fingerprint is derived from normalized
   directory entries, paths, file type, size, mtime, Store schema versions,

@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { appendFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -22,6 +22,7 @@ import {
   initializeEchoInkMemoryV2,
   MAX_MEMORY_EVENT_DATA_CHARS,
   MAX_MEMORY_EVENT_TEXT_CHARS,
+  readExistingEchoInkMemoryV2Snapshot,
   readMemoryIndexV2,
   readMemoryManifestV2,
   readMemoryRunState,
@@ -54,6 +55,7 @@ export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertLocalUsageArchiveCatalogIsInjectedAcrossBackends();
   await assertMemoryWorkflowPoliciesAndTriggerGate();
   await assertMemoryV2InitializesManifestIndexAndBoundedJournal();
+  await assertExistingMemorySnapshotIsStrictAndNeverRepairs();
   await assertFormalFilesFailClosedWithoutDataLoss();
   await assertPendingJournalMutationsAreConcurrentSafe();
   await assertCorruptPendingJournalFailsClosedWithoutByteLoss();
@@ -83,6 +85,83 @@ export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertMemorySectionsWrapUntrustedData();
   await assertMemoryCandidateExtractionRejectsFragmentsAndPlaceholders();
   await assertMemoryMvpCandidateReviewLifecycleAndPortability();
+}
+
+async function assertExistingMemorySnapshotIsStrictAndNeverRepairs():
+Promise<void> {
+  const fixtureRoot = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-existing-snapshot-")
+  );
+  const missingVaultPath = path.join(fixtureRoot, "missing-vault");
+  const vaultPath = path.join(fixtureRoot, "vault");
+  try {
+    const missing = await readExistingEchoInkMemoryV2Snapshot(
+      missingVaultPath
+    );
+    assert.deepEqual(missing, { state: "missing" });
+    assert.equal(
+      await stat(echoInkMemoryV2Layout(missingVaultPath).root)
+        .then(() => true, () => false),
+      false,
+      "existing-store snapshot must not initialize a missing Memory root"
+    );
+
+    await mkdir(vaultPath, { recursive: true });
+    const layout = await initializeEchoInkMemoryV2(vaultPath);
+    await appendPendingMemoryEvent(vaultPath, {
+      eventId: "event-existing-snapshot",
+      runId: "run-existing-snapshot",
+      sessionId: "conversation-existing-snapshot",
+      workflow: "chat",
+      backendId: "codex-cli",
+      eventType: "user-input",
+      createdAt: 5_000,
+      payload: { text: "durable pending source" }
+    });
+    const prepared = await prepareMemoryTransaction(vaultPath);
+    assert.ok(prepared);
+    await unlink(layout.current);
+    const snapshot = await readExistingEchoInkMemoryV2Snapshot(vaultPath);
+    assert.equal(snapshot.state, "present");
+    if (snapshot.state !== "present") return;
+    assert.match(snapshot.snapshotDigest, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(snapshot.index.revision, 0);
+    assert.deepEqual(
+      snapshot.pendingEvents.map((event) => event.sessionId),
+      ["conversation-existing-snapshot"]
+    );
+    assert.deepEqual(
+      snapshot.transactions.map((transaction) => ({
+        transactionId: transaction.transactionId,
+        state: transaction.state,
+        sourceConversationIds: transaction.sourceConversationIds
+      })),
+      [{
+        transactionId: prepared.transactionId,
+        state: "prepared",
+        sourceConversationIds: ["conversation-existing-snapshot"]
+      }]
+    );
+    assert.equal(
+      await stat(layout.current).then(() => true, () => false),
+      false,
+      "read-only snapshot must not repair a missing projection"
+    );
+
+    const corruptBytes = "{\"schemaVersion\":3}\n";
+    await writeFile(layout.manifest, corruptBytes, "utf8");
+    await assert.rejects(
+      readExistingEchoInkMemoryV2Snapshot(vaultPath),
+      /future schema/
+    );
+    assert.equal(
+      await readFile(layout.manifest, "utf8"),
+      corruptBytes,
+      "failed read-only snapshot must not rewrite formal Memory bytes"
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 async function assertMemoryConversationLineageMergesDeterministically():
