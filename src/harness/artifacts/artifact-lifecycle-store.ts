@@ -76,6 +76,7 @@ export interface ArtifactSourceDeletionAdapterInput {
   boundaryRootPath: string;
   rootBinding: RecordRootBindingRef;
   participantId: string;
+  artifactKind?: WorkflowArtifactKind;
   faultInjector?: (
     point: DurableAppendOnlyFaultPoint,
     phase: "source-deleted" | "source-restored"
@@ -212,7 +213,8 @@ export function createArtifactSourceDeletionAdapter(
         rootPath,
         artifactId: identity.participantId,
         mutationId: identity.mutationId,
-        conversationId: identity.conversationId
+        conversationId: identity.conversationId,
+        artifactKind: input.artifactKind
       });
     },
     stage: async (effect) => {
@@ -222,6 +224,7 @@ export function createArtifactSourceDeletionAdapter(
         artifactId: effect.participantId,
         mutationId: effect.mutationId,
         conversationId: effect.conversationId,
+        artifactKind: input.artifactKind,
         occurredAt: effect.occurredAt,
         faultInjector: input.faultInjector
           ? async (point) => await input.faultInjector?.(
@@ -238,6 +241,7 @@ export function createArtifactSourceDeletionAdapter(
         artifactId: effect.participantId,
         mutationId: effect.mutationId,
         conversationId: effect.conversationId,
+        artifactKind: input.artifactKind,
         forwardReceipt: effect.forwardReceipt,
         occurredAt: effect.occurredAt,
         faultInjector: input.faultInjector
@@ -256,6 +260,7 @@ async function inspectArtifactSourceDeletion(input: {
   artifactId: string;
   mutationId: string;
   conversationId: string;
+  artifactKind?: WorkflowArtifactKind;
 }): Promise<RecordMutationSourceParticipantObservation> {
   const loaded = await loadWorkflowArtifactLifecycleRecord(
     input.rootPath,
@@ -264,6 +269,7 @@ async function inspectArtifactSourceDeletion(input: {
   if (!loaded) {
     throw new Error(`Workflow Artifact ${input.artifactId} lifecycle 缺失`);
   }
+  assertArtifactKind(loaded, input.artifactKind);
   if (!loaded.record.sourceConversationIds.includes(input.conversationId)) {
     throw new Error(
       `Workflow Artifact ${input.artifactId} Conversation lineage 不完整`
@@ -308,6 +314,7 @@ async function stageArtifactSourceDeletion(input: {
   artifactId: string;
   mutationId: string;
   conversationId: string;
+  artifactKind?: WorkflowArtifactKind;
   occurredAt: number;
   faultInjector?: (point: DurableAppendOnlyFaultPoint) => void | Promise<void>;
 }): Promise<RecordMutationSourceParticipantReceipt> {
@@ -318,7 +325,11 @@ async function stageArtifactSourceDeletion(input: {
       `Workflow Artifact ${input.artifactId} source deletion 已恢复`
     );
   }
-  const loaded = await requireArtifact(input.rootPath, input.artifactId);
+  const loaded = await requireArtifact(
+    input.rootPath,
+    input.artifactId,
+    input.artifactKind
+  );
   const marker: ArtifactSourceDeletionV1 = {
     mutationId: input.mutationId,
     conversationId: input.conversationId,
@@ -346,6 +357,7 @@ async function restoreArtifactSourceDeletion(input: {
   artifactId: string;
   mutationId: string;
   conversationId: string;
+  artifactKind?: WorkflowArtifactKind;
   forwardReceipt: RecordMutationSourceParticipantReceipt;
   occurredAt: number;
   faultInjector?: (point: DurableAppendOnlyFaultPoint) => void | Promise<void>;
@@ -362,7 +374,11 @@ async function restoreArtifactSourceDeletion(input: {
     );
   }
   if (existing.status === "source-restored") return existing.restoreReceipt;
-  const loaded = await requireArtifact(input.rootPath, input.artifactId);
+  const loaded = await requireArtifact(
+    input.rootPath,
+    input.artifactId,
+    input.artifactKind
+  );
   const markers = loaded.record.sourceDeletions.map((marker) => ({ ...marker }));
   const marker = markers.find(
     (candidate) => candidate.mutationId === input.mutationId
@@ -419,13 +435,29 @@ async function appendArtifactRecord(
 
 async function requireArtifact(
   rootPath: string,
-  artifactId: string
+  artifactId: string,
+  artifactKind?: WorkflowArtifactKind
 ): Promise<LoadedWorkflowArtifactLifecycleRecord> {
   const loaded = await loadWorkflowArtifactLifecycleRecord(rootPath, artifactId);
   if (!loaded) {
     throw new Error(`Workflow Artifact ${artifactId} lifecycle 缺失`);
   }
+  assertArtifactKind(loaded, artifactKind);
   return loaded;
+}
+
+function assertArtifactKind(
+  loaded: LoadedWorkflowArtifactLifecycleRecord,
+  artifactKind: WorkflowArtifactKind | undefined
+): void {
+  if (
+    artifactKind !== undefined
+    && loaded.chain[0]?.artifactKind !== artifactKind
+  ) {
+    throw new Error(
+      `Workflow Artifact ${loaded.record.artifactId} kind conflicts`
+    );
+  }
 }
 
 function createInitialRecord(input: {

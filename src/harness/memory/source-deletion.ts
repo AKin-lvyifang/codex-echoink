@@ -37,6 +37,7 @@ export interface MemorySourceDeletionAdapterInput {
   boundaryRootPath: string;
   rootBinding: RecordRootBindingRef;
   participantId: string;
+  subjectState?: "formal" | "confirmation";
   failAfterIndexWrite?: (
     phase: "source-deleted" | "source-restored"
   ) => boolean;
@@ -87,7 +88,8 @@ export function createMemorySourceDeletionAdapter(
         vaultPath: input.vaultPath,
         participantId: identity.participantId,
         mutationId: identity.mutationId,
-        conversationId: identity.conversationId
+        conversationId: identity.conversationId,
+        subjectState: input.subjectState
       });
     },
     stage: async (effect) => {
@@ -97,6 +99,7 @@ export function createMemorySourceDeletionAdapter(
         participantId: effect.participantId,
         mutationId: effect.mutationId,
         conversationId: effect.conversationId,
+        subjectState: input.subjectState,
         occurredAt: effect.occurredAt,
         failAfterIndexWrite:
           input.failAfterIndexWrite?.("source-deleted") === true
@@ -109,6 +112,7 @@ export function createMemorySourceDeletionAdapter(
         participantId: effect.participantId,
         mutationId: effect.mutationId,
         conversationId: effect.conversationId,
+        subjectState: input.subjectState,
         forwardReceipt: effect.forwardReceipt,
         occurredAt: effect.occurredAt,
         failAfterIndexWrite:
@@ -152,6 +156,7 @@ async function inspectMemorySourceDeletion(input: {
   participantId: string;
   mutationId: string;
   conversationId: string;
+  subjectState?: "formal" | "confirmation";
 }): Promise<RecordMutationSourceParticipantObservation> {
   const manifest = await readMemoryManifestV2(input.vaultPath);
   const index = await readMemoryIndexV2<MemoryRecordV2>(input.vaultPath);
@@ -160,7 +165,11 @@ async function inspectMemorySourceDeletion(input: {
       `Memory source deletion revision mismatch: ${manifest.revision}/${index.revision}`
     );
   }
-  const subject = locateMemorySubject(index, input.participantId);
+  const subject = locateMemorySubject(
+    index,
+    input.participantId,
+    input.subjectState
+  );
   assertMemoryLineage(subject.record, input.conversationId);
   const markers = subject.record.sourceDeletions ?? [];
   const matches = markers.filter(
@@ -202,6 +211,7 @@ async function stageMemorySourceDeletion(input: {
   participantId: string;
   mutationId: string;
   conversationId: string;
+  subjectState?: "formal" | "confirmation";
   occurredAt: number;
   failAfterIndexWrite: boolean;
 }): Promise<RecordMutationSourceParticipantReceipt> {
@@ -215,7 +225,11 @@ async function stageMemorySourceDeletion(input: {
   const index = cloneMemoryIndex(
     await readMemoryIndexV2<MemoryRecordV2>(input.vaultPath)
   );
-  const subject = locateMemorySubject(index, input.participantId);
+  const subject = locateMemorySubject(
+    index,
+    input.participantId,
+    input.subjectState
+  );
   assertMemoryLineage(subject.record, input.conversationId);
   const transactionId = `memory-source-delete-${randomUUID()}`;
   const marker: MemorySourceDeletionV2 = {
@@ -254,6 +268,7 @@ async function restoreMemorySourceDeletion(input: {
   participantId: string;
   mutationId: string;
   conversationId: string;
+  subjectState?: "formal" | "confirmation";
   forwardReceipt: RecordMutationSourceParticipantReceipt;
   occurredAt: number;
   failAfterIndexWrite: boolean;
@@ -273,7 +288,11 @@ async function restoreMemorySourceDeletion(input: {
   const index = cloneMemoryIndex(
     await readMemoryIndexV2<MemoryRecordV2>(input.vaultPath)
   );
-  const subject = locateMemorySubject(index, input.participantId);
+  const subject = locateMemorySubject(
+    index,
+    input.participantId,
+    input.subjectState
+  );
   const marker = requireMemoryMarker(
     subject.record,
     input.mutationId,
@@ -305,7 +324,8 @@ async function restoreMemorySourceDeletion(input: {
 
 function locateMemorySubject(
   index: MemoryIndexV2<MemoryRecordV2>,
-  participantId: string
+  participantId: string,
+  expectedState?: "formal" | "confirmation"
 ): MutableMemorySubject {
   const memoryMatches = index.memories
     .map((record, indexPosition) => ({ record, indexPosition }))
@@ -321,6 +341,11 @@ function locateMemorySubject(
   }
   const memory = memoryMatches[0];
   if (memory) {
+    if (expectedState === "confirmation") {
+      throw new Error(
+        `Memory source participant ${participantId} expected confirmation state`
+      );
+    }
     return {
       record: memory.record,
       touch: (at) => {
@@ -331,6 +356,11 @@ function locateMemorySubject(
   const confirmation = confirmationMatches[0];
   if (!confirmation) {
     throw new Error(`Memory source participant ${participantId} is missing`);
+  }
+  if (expectedState === "formal") {
+    throw new Error(
+      `Memory source participant ${participantId} expected formal state`
+    );
   }
   return {
     record: confirmation.confirmation.candidate,

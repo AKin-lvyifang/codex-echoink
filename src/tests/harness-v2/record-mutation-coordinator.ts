@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  coordinateRecordMutationTrashPrepare,
   coordinateRecordMutationTrashRestore,
   coordinateRecordMutationTrashRetirement,
   RECORD_MUTATION_GLOBAL_LOCK_FILE,
@@ -35,6 +36,7 @@ import {
 } from "../../harness/storage/record-root-registry";
 
 export async function runHarnessV2RecordMutationCoordinatorTests(): Promise<void> {
+  await assertPrepareIsDurableAndNonDestructive();
   await assertCoordinatorAuthorizesBeforeRetirement();
   await assertGlobalAuthoritySerializesMutations();
   await assertCorruptAuthorityFailsClosed();
@@ -44,6 +46,64 @@ export async function runHarnessV2RecordMutationCoordinatorTests(): Promise<void
   await assertCrashAfterRetirementReplaysJournal();
   await assertCrashAfterRestoreReplaysJournal();
   await assertRecreatedRootBlocksRestore();
+}
+
+async function assertPrepareIsDurableAndNonDestructive(): Promise<void> {
+  await withFixture("prepare-only", async (fixture) => {
+    const sourcePath = path.join(fixture.sourceRootPath, "conversation.json");
+    await writeFile(sourcePath, "before\n");
+    const planned = await plannedMutation(fixture, "prepare-only");
+    const prepared = await coordinateRecordMutationTrashPrepare({
+      journal: planned,
+      participantId: "conversation",
+      sourceRelativePath: "conversation.json",
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+
+    assert.deepEqual(
+      forwardActions(prepared.journal, "conversation"),
+      ["trash-staged"]
+    );
+    assert.equal(await readFile(sourcePath, "utf8"), "before\n");
+    assert.equal(
+      await readFile(
+        path.join(
+          fixture.trashRootPath,
+          prepared.preparedReceipt.locator.trashRelativePath
+        ),
+        "utf8"
+      ),
+      "before\n"
+    );
+
+    const replayed = await coordinateRecordMutationTrashPrepare({
+      journal: prepared.journal,
+      participantId: "conversation",
+      sourceRelativePath: "conversation.json",
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+    assert.equal(
+      replayed.preparedReceipt.digest,
+      prepared.preparedReceipt.digest
+    );
+    assert.equal(replayed.journal.record.digest, prepared.journal.record.digest);
+    assert.equal(await readFile(sourcePath, "utf8"), "before\n");
+
+    const retired = await coordinateRecordMutationTrashRetirement({
+      journal: replayed.journal,
+      participantId: "conversation",
+      sourceRelativePath: "conversation.json",
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+    assert.deepEqual(
+      forwardActions(retired.journal, "conversation"),
+      ["trash-staged", "source-retired"]
+    );
+    assert.equal(await exists(sourcePath), false);
+  });
 }
 
 async function assertCoordinatorAuthorizesBeforeRetirement(): Promise<void> {

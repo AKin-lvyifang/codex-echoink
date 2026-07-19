@@ -63,9 +63,15 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
 - 启动 reconciliation 会以 tombstone 排除已删除 Conversation，并修复 tombstone
   已提交但 index projection 尚未更新的崩溃窗口；`data.json` 的旧 shell 同步移除，
   不会把已删除 Conversation 复活。
-- 这一批还没有建立可跨重启重建的完整 participant execution plan，也没有接入
-  Root Registry/Trash、Run/Raw、Memory/Artifact 选择和 Native retirement，因此
-  不能把 reader/writer checkpoint 写成安全删除已可用。
+- 当前 worktree 已建立不可变 participant execution plan、prepare-only Trash
+  coordinator、正式 production root catalog 与破坏性启动恢复。plan 在第一个
+  Journal stage 前发布，绑定 intent digest、完整 participant、逻辑 Root、相对
+  source path 以及 Memory/Artifact subject identity，不保存绝对路径。启动恢复
+  能从 plan 重建 Root、Trash receipt 与正式 adapter；缺失、损坏、晚建、Root/
+  subject 错绑全部在 effect 前阻断。
+- Conversation/Run/Raw/Memory/Artifact 的完整产品枚举和选择策略、live
+  clear/delete runner 以及 Native retirement 仍未接入，因此不能把当前 checkpoint
+  写成用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -89,8 +95,12 @@ authority 也按 fail closed 处理。
 - 跨层 Root Binding Ref checkpoint：`ab1a061`
 - 当前已提交批次：RecordMutation schema V2 与 production recovery runner
 - Memory/Artifact participant checkpoint：`c90ebeb`
-- 当前开发批次：非破坏性产品操作的 live Journal、启动恢复与 Native promotion authority
-- 下一批次：破坏性清空/删除的正式 reader/writer 与 participant 集合
+- 非破坏性 Live Journal checkpoint：`1bd72af`
+- 破坏性 Conversation reader/writer checkpoint：`67719de`
+- 当前开发批次：participant execution plan、production root catalog、
+  prepare-only Trash 与破坏性启动恢复
+- 下一批次：Run/Raw/Memory/Artifact 完整枚举、live clear/delete runner 与
+  Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -109,7 +119,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`；破坏性 Conversation reader/writer 开发中 | 完整 participant plan 与清空/删除生产接线 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`；当前 worktree 已完成 execution plan/Root catalog/启动恢复，尚待提交 | 完整 Run/Raw/Memory/Artifact 枚举与 live 清空/删除接线 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -170,8 +180,14 @@ authority 也按 fail closed 处理。
   继续关闭。
 - Production runner 已能通过正式 adapter 处理 Memory/Artifact
   `mark-source-deleted` 的 forward、compensation、崩溃重放与 terminal proof；
-  adapter 缺失或不完整时仍返回 `participant-adapter-required`。两类破坏性产品
-  操作尚未构造并传入真实 participant 集合，因此产品删除 guard 继续关闭。
+  adapter 缺失或不完整时仍返回 `participant-adapter-required`。启动恢复已能从
+  immutable execution plan 和 production root catalog 重建这些 adapter，但两类
+  破坏性产品操作尚未完成 Run/Raw/Memory/Artifact 的真实枚举与选择，因此产品
+  删除 guard 继续关闭。
+- execution plan 必须在第一个 Journal stage 前耐久发布；它只冻结逻辑 Root ID、
+  相对路径和 subject identity，不保存绝对路径。Root/adapter 错绑会在 prepare
+  前失败。prepare-only coordinator 只写 durable Trash 与 `trash-staged`，不会
+  退休 source；启动恢复可幂等重建 receipt 后再由 Runner 决定 forward/compensate。
 - Memory adapter 通过正式 index transaction 保存 Conversation lineage 与
   source-deleted/restored transaction proof；Artifact adapter 通过独立 append-only
   lifecycle chain 保存同类证明。两者都是 side-by-side 基础设施，尚未代表 legacy
@@ -199,9 +215,9 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 收口破坏性 Conversation reader/writer checkpoint，建立可跨重启重建的
-   participant execution plan，再接入 production runner/coordinator、Root
-   Registry/Trash 与完整 participant 集合。
+1. 提交 participant execution plan、production root catalog、prepare-only Trash
+   与破坏性启动恢复 checkpoint；随后实现 Run/Raw/Memory/Artifact 的完整枚举和
+   policy selection，并接入 live clear/delete runner 与 Native retirement。
 2. 接入 History 引用投影、Raw owner graph/GC
    preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
@@ -332,6 +348,28 @@ Memory/Artifact source-deletion participant adapter 批次当前已通过：
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。
+
+Participant execution plan 与破坏性启动恢复批次当前已通过：
+
+- execution plan 原子发布、重启加载、晚建阻断、Root 精确覆盖、非法相对路径、
+  digest/subject 错绑与绝对路径不落盘
+- execution runtime 跨重启 materialize、Root/adapter 错绑 effect 前阻断、
+  prepare receipt 幂等重放且 source 保持原位
+- production root catalog：Conversation/Run/Raw/Memory/Artifact/Trash 稳定 ID，
+  Memory Root 缺失时不初始化空 Store
+- Settings startup 真实目录崩溃夹具：deletion tombstone 已提交而 Trash 未
+  prepare 时，重启可补齐 prepare、退休旧 session 并提交 Journal
+- Memory formal/confirmation state 与 Artifact kind 漂移反例
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck`
+- `npm run build`
+- `npm run lint`，961 个 finding 与 baseline 完全一致，无新增 finding
+- 新增 production 文件目标 ESLint，0 finding
+- `git diff --check`
+- `npm run check:release`
+- 明确暂存 18 个预期文件后，`npm run check:public` 检查 408 个 tracked files
+
+本批次尚待提交；暂存区不含 `.codex-memory` 与 `node_modules` 两个共享软链接。
 
 真实 Vault 双次 dry-run 得到相同结果：
 

@@ -86,6 +86,23 @@ content revision, or tombstone field changes, recovery remains non-terminal
 with `conversation-evidence-changed`; an already retired Trash source stays
 recoverable through the Journal instead of being committed from stale proof.
 
+Every destructive Journal has a separate immutable execution plan, published
+before the first Journal stage. The plan binds the mutation and intent digest
+to the complete ordered participant set. Trash participants freeze source and
+Trash root IDs plus a normalized source-relative path; Memory and Artifact
+participants freeze their formal subject ID together with Memory state or
+Artifact kind. The plan stores no physical absolute paths. At runtime, current
+physical paths and Root Binding refs must be rebuilt from the production root
+catalog and match the frozen intent exactly. A missing, corrupt, late-created,
+wrong-root, or wrong-subject plan blocks before Trash prepare or Store effects.
+
+Trash prepare is a production coordinator operation distinct from retirement.
+It establishes the durable independently restorable copy and publishes
+`trash-staged`, but leaves the source intact. Live product flows complete this
+step before the Conversation target commit. Startup may replay it
+idempotently from the immutable execution plan; only subsequent exact-target
+recovery may retire the source.
+
 `mark-source-deleted` is not a Journal-only acknowledgement. The runner
 requires one Memory or Workflow Artifact adapter for every such participant,
 in the same complete order frozen by the intent. Each adapter acquires its

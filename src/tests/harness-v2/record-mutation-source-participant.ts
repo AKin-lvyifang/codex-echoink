@@ -72,6 +72,7 @@ Promise<void> {
   await assertRecreatedParticipantRootBlocksWithoutEffects();
   await assertMissingFormalMemoryStoreBlocksWithoutReinitialization();
   await assertMissingMemoryLineageBlocks();
+  await assertMemoryAndArtifactSubjectIdentityDriftBlocks();
   await assertArtifactRegistrationRestoreAndCorruptionGuards();
 }
 
@@ -462,6 +463,54 @@ Promise<void> {
         ),
         /字段集合非法/
       );
+    }
+  );
+}
+
+async function assertMemoryAndArtifactSubjectIdentityDriftBlocks():
+Promise<void> {
+  await withFixture(
+    "source-participant-subject-drift",
+    {},
+    async (fixture) => {
+      assert.ok(fixture.memoryRootBinding);
+      const wrongMemoryState = createMemorySourceDeletionAdapter({
+        vaultPath: fixture.vaultPath,
+        storageRootPath: fixture.storageRootPath,
+        boundaryRootPath: fixture.storageRootPath,
+        rootBinding: fixture.memoryRootBinding,
+        participantId: fixture.memoryId,
+        subjectState: "confirmation"
+      });
+      await assert.rejects(
+        coordinateRecordMutationSourceParticipantForward({
+          journal: fixture.preparedJournal,
+          adapter: wrongMemoryState,
+          now: fixture.now
+        }),
+        /expected confirmation state/
+      );
+
+      assert.ok(fixture.artifactRootBinding);
+      const wrongArtifactKind = createArtifactSourceDeletionAdapter({
+        storageRootPath: fixture.storageRootPath,
+        rootPath: fixture.artifactRootPath,
+        boundaryRootPath: fixture.storageRootPath,
+        rootBinding: fixture.artifactRootBinding,
+        participantId: fixture.artifactId,
+        artifactKind: "ui-card"
+      });
+      await assert.rejects(
+        coordinateRecordMutationSourceParticipantForward({
+          journal: fixture.preparedJournal,
+          adapter: wrongArtifactKind,
+          now: fixture.now
+        }),
+        /kind conflicts/
+      );
+      assert.deepEqual(forwardActions(fixture.preparedJournal), [
+        "trash-staged"
+      ]);
     }
   );
 }

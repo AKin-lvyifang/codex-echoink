@@ -363,3 +363,38 @@
 - 当前仍未实现跨重启 participant execution plan、Root Registry/Trash production
   接线、Run/Raw 处置、Memory/Artifact 选择或 Native retirement；删除产品 guard
   保持关闭，真实 Vault 未修改。
+
+## 2026-07-20：Participant Execution Plan 与破坏性启动恢复
+
+- 新增不可变 `RecordMutationExecutionPlan`。plan 必须在第一个 Journal stage 前
+  原子发布，绑定 mutation ID、operation、Conversation、intent digest 和完整有序
+  participant；已有 plan 可在重启后幂等加载，Journal 已 stage 后禁止凭空补建。
+- Trash participant 冻结 source/trash root ID 与规范化相对路径；Memory/Artifact
+  participant 冻结 subject ID，并分别冻结 formal/confirmation 状态或 artifact
+  kind。plan 不保存绝对路径，Root 使用集合必须与 intent 的 Root Binding 精确
+  相等；未知 Root、漏用 Root、subject 错绑、非法路径、digest 损坏或未知 entry
+  全部 fail closed。
+- 新增 execution runtime。它用正式 Root Registry 重建当前物理 Root，要求 runtime
+  roots 与 frozen refs 完整同序且物理目录互不相同、不嵌套；adapter factory 必须
+  返回同 participant、record kind、storage/root/boundary 与 binding，任何错绑都
+  在 Trash copy 前失败。
+- coordinator 新增 prepare-only 正式入口：取得全局 authority、验证 Root、建立
+  durable Trash copy、写 `trash-staged` 后释放 authority，source 始终保持原位。
+  后续 retirement 会幂等复用相同 receipt，并在 destructive effect 前再次验证
+  Root。
+- production root catalog 为 Conversation、Run、Raw、Memory、Artifact 和独立
+  Trash 定义稳定逻辑 ID 与真实目录。插件自有 Root 可按选择初始化；vault-managed
+  Memory Root 必须已经存在，删除恢复不会初始化一套空 Memory Store。
+- Settings startup recovery 不再对全部 destructive Journal 直接报
+  “participants required”。它会加载 immutable plan、重建 production roots、
+  prepare/replay Trash 与 Memory/Artifact adapter，再交给 production runner。
+  真实目录测试已覆盖“deletion tombstone 已提交、Trash 尚未 prepare”的崩溃窗口：
+  重启能补齐 Trash、退休旧 Conversation session、提交 Journal，重复启动保持幂等。
+- Memory adapter 现在可冻结 formal/confirmation subject state，Artifact adapter
+  可冻结 artifact kind；状态或 kind 漂移会在正式 Store effect 前阻断。
+- 当前全量 `npm run test`、typecheck、build、完整 lint、release/public guard、
+  新增 production 文件目标 ESLint 与 `git diff --check` 已通过。完整 lint 保持
+  961 个 baseline finding、无新增；public guard 明确暂存后检查 408 个 tracked
+  files。Watchdog terminal commit error 仍是故障注入测试的预期日志。
+- 本批没有打开 clear/delete 产品 guard，没有枚举真实 Run/Raw/Memory/Artifact，
+  没有触发真实 Vault migration、retention、Raw GC、历史删除或 Native cleanup。

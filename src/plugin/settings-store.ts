@@ -39,8 +39,23 @@ import {
 } from "../harness/lifecycle/record-mutation-journal";
 import {
   runRecordMutationRecovery,
-  runRecordMutationRecoveryUnderAuthority
+  runRecordMutationRecoveryUnderAuthority,
+  type RecordMutationRecoveryTrashParticipant
 } from "../harness/lifecycle/record-mutation-recovery-runner";
+import type {
+  RecordMutationSourceParticipantAdapter
+} from "../harness/lifecycle/record-mutation-source-participant";
+import {
+  loadRecordMutationExecutionPlan
+} from "../harness/lifecycle/record-mutation-execution-plan";
+import {
+  materializeRecordMutationExecution
+} from "../harness/lifecycle/record-mutation-execution-runtime";
+import {
+  createEchoInkRecordMutationSourceAdapterFactory,
+  prepareEchoInkRecordMutationRuntimeRoots,
+  type EchoInkRecordMutationRootId
+} from "../harness/lifecycle/record-mutation-production";
 import type {
   RecordMutationIntent,
   RecordMutationRevision
@@ -385,13 +400,44 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       ) {
         continue;
       }
-      if (journal.record.intent.trashPolicy !== "not-required") {
-        throw new Error(
-          `Destructive RecordMutation Journal requires guarded recovery participants: ${journal.record.mutationId}`
-        );
-      }
       let recoverableJournal = journal;
-      if (recoverableJournal.record.state === "planned") {
+      let trashParticipants: RecordMutationRecoveryTrashParticipant[] = [];
+      let sourceDeletedParticipants:
+        RecordMutationSourceParticipantAdapter[] = [];
+      if (journal.record.intent.trashPolicy === "required") {
+        const executionPlan = await loadRecordMutationExecutionPlan({
+          storageRootPath: this.recordMutationStorageRootPath(),
+          mutationId: journal.record.mutationId,
+          journal
+        });
+        if (!executionPlan) {
+          throw new Error(
+            `Destructive RecordMutation execution plan is missing: ${journal.record.mutationId}`
+          );
+        }
+        const preparedRoots =
+          await prepareEchoInkRecordMutationRuntimeRoots({
+            vaultPath: this.plugin.getVaultPath(),
+            pluginDir: this.plugin.getPluginDataDirName(),
+            rootIds: journal.record.intent.rootBindings.map(
+              (binding) => binding.rootId as EchoInkRecordMutationRootId
+            ),
+            createdAt: journal.record.createdAt
+          });
+        const materialized = await materializeRecordMutationExecution({
+          plan: executionPlan,
+          journal,
+          roots: preparedRoots.roots,
+          createSourceAdapter:
+            createEchoInkRecordMutationSourceAdapterFactory({
+              vaultPath: this.plugin.getVaultPath()
+            })
+        });
+        recoverableJournal = materialized.journal;
+        trashParticipants = materialized.trashParticipants;
+        sourceDeletedParticipants =
+          materialized.sourceDeletedParticipants;
+      } else if (recoverableJournal.record.state === "planned") {
         const participant = recoverableJournal.record.intent.participants.find(
           (candidate) =>
             candidate.recordKind === "conversation"
@@ -427,8 +473,8 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
           await this.withConversationMutation(conversationId, action),
         inspectConversation: async (intent) =>
           await this.inspectRecordMutationConversation(intent),
-        trashParticipants: [],
-        sourceDeletedParticipants: []
+        trashParticipants,
+        sourceDeletedParticipants
       });
       if (result.status === "blocked") {
         throw new Error(

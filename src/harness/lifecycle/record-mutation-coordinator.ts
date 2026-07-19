@@ -105,6 +105,16 @@ extends RecordMutationCoordinatorBaseInput {
   sourceRelativePath: string;
 }
 
+export interface CoordinateRecordMutationTrashPrepareInput
+extends RecordMutationCoordinatorBaseInput {
+  sourceRelativePath: string;
+}
+
+export interface CoordinatedRecordMutationTrashPrepare {
+  journal: LoadedRecordMutationJournal;
+  preparedReceipt: RecordMutationTrashReceipt;
+}
+
 export interface CoordinatedRecordMutationTrashRetirement {
   journal: LoadedRecordMutationJournal;
   preparedReceipt: RecordMutationTrashReceipt;
@@ -186,6 +196,34 @@ export async function inspectRecordMutationTrashRecovery(
 }
 
 /**
+ * Establishes the durable, independently restorable Trash copy and publishes
+ * its Journal authorization without retiring the source. Live destructive
+ * product flows use this before the Conversation target commit so a failed
+ * local commit can still abort without any source-side destructive effect.
+ */
+export async function coordinateRecordMutationTrashPrepare(
+  input: CoordinateRecordMutationTrashPrepareInput
+): Promise<CoordinatedRecordMutationTrashPrepare> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "forward"
+      );
+      return await prepareTrashUnderAuthority(
+        input,
+        current,
+        storageRootPath
+      );
+    }
+  );
+}
+
+/**
  * The only production-grade path from a durable trash prepare to source
  * retirement. The low-level Trash functions remain separately testable
  * primitives, but callers that mutate a real record root must use this
@@ -205,50 +243,13 @@ export async function coordinateRecordMutationTrashRetirement(
         storageRootPath,
         "forward"
       );
-      await verifyCoordinatorRoots(input, storageRootPath);
-      await input.faultInjector?.("after-roots-preflight");
-
-      const preparedReceipt = await stageRecordMutationTrash({
-        mutationId: current.record.mutationId,
-        sourceRootPath: input.sourceRootPath,
-        sourceRootBinding: input.sourceRootBinding,
-        sourceRelativePath: input.sourceRelativePath,
-        trashRootPath: input.trashRootPath,
-        trashRootBinding: input.trashRootBinding,
-        transfer: "move",
-        stagedAt: clockTimestamp(input.now)
-      });
-      assertReceiptAuthorizedByIntent(current, input.participantId, preparedReceipt);
-      await input.faultInjector?.("after-trash-prepared");
-
-      const trashStaged = findParticipantStep(
+      const prepared = await prepareTrashUnderAuthority(
+        input,
         current,
-        input.participantId,
-        "forward",
-        "trash-staged"
+        storageRootPath
       );
-      if (trashStaged) {
-        requireEvidenceDigest(
-          trashStaged.evidenceDigest,
-          preparedReceipt.digest,
-          "trash-staged"
-        );
-      } else {
-        requireForwardAppendable(current);
-        current = await stageRecordMutationJournal(current.handle, {
-          expectedRevision: current.record.revision,
-          expectedDigest: current.record.digest,
-          step: {
-            direction: "forward",
-            ordinal: nextDirectionOrdinal(current, "forward"),
-            participantId: input.participantId,
-            action: "trash-staged",
-            evidenceDigest: preparedReceipt.digest
-          },
-          updatedAt: nextJournalTimestamp(current, input.now)
-        });
-      }
-      await input.faultInjector?.("after-trash-authorized");
+      current = prepared.journal;
+      const preparedReceipt = prepared.preparedReceipt;
 
       // The prepare is non-destructive. The second verification is the actual
       // authorization boundary immediately before source retirement.
@@ -295,6 +296,63 @@ export async function coordinateRecordMutationTrashRetirement(
       return { journal: current, preparedReceipt, finalizationReceipt };
     }
   );
+}
+
+async function prepareTrashUnderAuthority(
+  input: CoordinateRecordMutationTrashPrepareInput,
+  journal: LoadedRecordMutationJournal,
+  storageRootPath: string
+): Promise<CoordinatedRecordMutationTrashPrepare> {
+  let current = journal;
+  await verifyCoordinatorRoots(input, storageRootPath);
+  await input.faultInjector?.("after-roots-preflight");
+
+  const preparedReceipt = await stageRecordMutationTrash({
+    mutationId: current.record.mutationId,
+    sourceRootPath: input.sourceRootPath,
+    sourceRootBinding: input.sourceRootBinding,
+    sourceRelativePath: input.sourceRelativePath,
+    trashRootPath: input.trashRootPath,
+    trashRootBinding: input.trashRootBinding,
+    transfer: "move",
+    stagedAt: clockTimestamp(input.now)
+  });
+  assertReceiptAuthorizedByIntent(
+    current,
+    input.participantId,
+    preparedReceipt
+  );
+  await input.faultInjector?.("after-trash-prepared");
+
+  const trashStaged = findParticipantStep(
+    current,
+    input.participantId,
+    "forward",
+    "trash-staged"
+  );
+  if (trashStaged) {
+    requireEvidenceDigest(
+      trashStaged.evidenceDigest,
+      preparedReceipt.digest,
+      "trash-staged"
+    );
+  } else {
+    requireForwardAppendable(current);
+    current = await stageRecordMutationJournal(current.handle, {
+      expectedRevision: current.record.revision,
+      expectedDigest: current.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: nextDirectionOrdinal(current, "forward"),
+        participantId: input.participantId,
+        action: "trash-staged",
+        evidenceDigest: preparedReceipt.digest
+      },
+      updatedAt: nextJournalTimestamp(current, input.now)
+    });
+  }
+  await input.faultInjector?.("after-trash-authorized");
+  return { journal: current, preparedReceipt };
 }
 
 /**
