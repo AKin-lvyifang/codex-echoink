@@ -3,6 +3,9 @@ import {
   type RotateSessionContextOptions,
   type SessionContextRotationResult
 } from "../harness/conversation/context-rotation";
+import type {
+  ConversationMutationAuthority
+} from "../harness/conversation/conversation-mutation-lane";
 import { workspaceFingerprint } from "../harness/kernel/session-service";
 import type { StoredSession } from "../settings/settings";
 import type { EchoInkHarnessService } from "./harness-service";
@@ -73,13 +76,28 @@ export async function rotateEchoInkSessionContext(
   session: StoredSession,
   options: EchoInkSessionContextRotationOptions
 ): Promise<EchoInkSessionContextRotationResult> {
-  const rotate = async () => {
+  const rotate = async (authority: ConversationMutationAuthority) => {
     const { precondition, ...rotationOptions } = options;
     precondition?.();
     assertUnambiguousLegacyCodexThread(session);
+    const journalRequired = options.reason === "start-new-context"
+      || options.reason === "agent-cache-reset";
     return await rotateSessionContext(session, {
       ...rotationOptions,
       hooks: {
+        ...(journalRequired
+          ? {
+            recordMutation: {
+              stage: async (input) =>
+                await settingsStore.stageSessionContextRecordMutation(input),
+              settle: async (receipt) =>
+                await settingsStore.settleSessionContextRecordMutation(
+                  receipt,
+                  authority
+                )
+            }
+          }
+          : {}),
         register: async (retirements) => {
           await harnessService.registerNativeExecutionRetirements(retirements);
         },
@@ -96,7 +114,11 @@ export async function rotateEchoInkSessionContext(
           );
         },
         promote: async (retirements) => {
-          await harnessService.promoteNativeExecutionRetirements(retirements);
+          await harnessService.promoteNativeExecutionRetirements(
+            retirements,
+            async (mutationId) =>
+              await settingsStore.readRecordMutationAuthority(mutationId)
+          );
         },
         abort: async (retirements, error) => {
           await harnessService.abortNativeExecutionRetirements(retirements, error.message);

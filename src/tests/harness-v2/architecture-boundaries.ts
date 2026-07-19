@@ -17,6 +17,48 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertDestructiveTrashEffectsStayBehindCoordinator();
   await assertProductionRecordMutationRecoveryUsesRunner();
   await assertSourceDeletionParticipantsStayBehindRecoveryRunner();
+  await assertLiveContextMutationJournalKeepsAuthorityChain();
+}
+
+async function assertLiveContextMutationJournalKeepsAuthorityChain():
+Promise<void> {
+  const [lifecycle, settingsStore, harnessService] = await Promise.all([
+    readSource("src/plugin/session-context-lifecycle.ts"),
+    readSource("src/plugin/settings-store.ts"),
+    readSource("src/plugin/harness-service.ts")
+  ]);
+  assert.match(
+    lifecycle,
+    /recordMutation:[\s\S]*stageSessionContextRecordMutation[\s\S]*settleSessionContextRecordMutation/
+  );
+  assert.match(
+    lifecycle,
+    /withConversationMutation\([\s\S]*session\.id,[\s\S]*rotate/
+  );
+  assert.match(
+    lifecycle,
+    /promoteNativeExecutionRetirements\([\s\S]*readRecordMutationAuthority/
+  );
+  assert.match(
+    settingsStore,
+    /assertConversationMutationAuthority\([\s\S]*runRecordMutationRecoveryUnderAuthority/
+  );
+  assert.match(
+    harnessService,
+    /Native retirement RecordMutation Journal is not committed/
+  );
+
+  const callers: string[] = [];
+  for (const file of await productionTypeScriptSources()) {
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\brunRecordMutationRecoveryUnderAuthority\s*\(/.test(source)) {
+      callers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(callers, [
+    "src/harness/lifecycle/record-mutation-recovery-runner.ts",
+    "src/plugin/settings-store.ts"
+  ]);
 }
 
 async function assertSingleHarnessCoreDefinitions(): Promise<void> {

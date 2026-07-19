@@ -16,6 +16,7 @@ export type SessionContextRotationReason =
 
 export interface SessionContextRetirement {
   retirementId: string;
+  recordMutationId?: string;
   reason: SessionContextRotationReason;
   targetConversationId: string;
   sourceGeneration?: number;
@@ -40,7 +41,33 @@ export interface SessionContextCommitInput {
   targetContextId?: string;
 }
 
+export interface SessionContextRecordMutationStageInput
+extends SessionContextCommitInput {
+  reason: SessionContextRotationReason;
+  retirements: readonly SessionContextRetirement[];
+}
+
+export interface SessionContextRecordMutationReceipt {
+  mutationId: string;
+}
+
 export interface SessionContextRotationHooks {
+  recordMutation?: {
+    /**
+     * Creates and stages the durable RecordMutation Journal before the first
+     * Native registration or Conversation Store effect.
+     */
+    stage(
+      input: SessionContextRecordMutationStageInput
+    ): Promise<SessionContextRecordMutationReceipt>;
+    /**
+     * Re-reads Conversation authority and publishes the Journal terminal while
+     * the caller still holds the same ConversationMutationAuthority.
+     */
+    settle(
+      receipt: SessionContextRecordMutationReceipt
+    ): Promise<"committed" | "aborted">;
+  };
   /**
    * Must be atomic or idempotent by retirementId. A later abort call may
    * include IDs that were never inserted when registration failed partway.
@@ -87,6 +114,8 @@ export interface SessionContextRotationResult {
   contextId?: string;
   commitId: string;
   retirements: SessionContextRetirement[];
+  recordMutationId?: string;
+  recordMutationState?: "committed" | "awaiting-recovery";
   retirementPromotion: "not-required" | "promoted" | "awaiting-recovery";
   promotionError?: string;
 }
@@ -140,7 +169,7 @@ export async function rotateSessionContext(
   const retirementId = options.retirementId
     ?? ((binding: BackendSessionBinding, index: number) =>
       `binding-retirement-${targetCommitId}-${binding.backendId}-${index + 1}`);
-  const retirements = Array.from(bindings.entries())
+  let retirements = Array.from(bindings.entries())
     .filter(([backendId]) => requestedBackends.has(backendId))
     .map(([, binding], index): SessionContextRetirement => ({
       retirementId: retirementId(binding, index),
@@ -159,9 +188,75 @@ export async function rotateSessionContext(
       binding: cloneBinding(binding)
     }));
 
+  options.mutate?.(candidate);
+  validatePostMutationContract(candidate, before, options);
+  removeRetiredBindings(candidate, requestedBackends);
+  if (advanceContext) {
+    delete candidate.backendBindings;
+    delete candidate.threadId;
+  }
+  if (options.workspace === null) {
+    candidate.cwd = "";
+    delete candidate.workspaceFingerprint;
+  } else if (options.workspace) {
+    candidate.cwd = path.resolve(options.workspace.cwd.trim() || options.workspace.vaultPath);
+    candidate.workspaceFingerprint = targetWorkspaceFingerprint;
+  }
+  if (advanceContext) {
+    candidate.revision = targetGeneration;
+    candidate.generation = targetGeneration;
+  } else {
+    candidate.revision = before.revision;
+    candidate.generation = before.generation;
+  }
+  candidate.commitId = targetCommitId;
+  if (advanceContext) {
+    candidate.contextId = targetContextId;
+    setContextBoundary(candidate, options, oldLastMessageId);
+    delete candidate.contextSnapshot;
+    delete candidate.rollingSummary;
+  }
+  candidate.updatedAt = Math.max(candidate.updatedAt ?? 0, options.now?.() ?? Date.now());
+
+  const committedCandidate = cloneSession(candidate);
+  const liveCandidate = cloneSession(candidate);
+  const commitInput: SessionContextCommitInput = {
+    session: committedCandidate,
+    expectedGeneration,
+    ...(expectedCommitId ? { expectedCommitId } : {}),
+    expectedContentRevision,
+    targetGeneration,
+    targetCommitId,
+    ...(targetContextId ? { targetContextId } : {})
+  };
+
+  let recordMutationReceipt: SessionContextRecordMutationReceipt | null = null;
+  let recordMutationState: "committed" | "aborted" | "awaiting-recovery" | null =
+    null;
   let localCommitCompleted = false;
-  let committedResult!: SessionContextRotationResult;
+  let commitError: Error | null = null;
   try {
+    if (options.hooks.recordMutation) {
+      recordMutationReceipt = await options.hooks.recordMutation.stage({
+        ...commitInput,
+        reason: options.reason,
+        retirements
+      });
+      const mutationId = requiredRecordMutationId(
+        recordMutationReceipt.mutationId
+      );
+      recordMutationReceipt = { mutationId };
+      retirements = retirements.map((retirement) => ({
+        ...retirement,
+        recordMutationId: mutationId
+      }));
+      assertLiveRotationBaseUnchanged(
+        session,
+        before,
+        expectedGeneration,
+        expectedContentRevision
+      );
+    }
     if (retirements.length) {
       await options.hooks.register(retirements);
       assertLiveRotationBaseUnchanged(
@@ -172,63 +267,61 @@ export async function rotateSessionContext(
       );
     }
 
-    options.mutate?.(candidate);
-    validatePostMutationContract(candidate, before, options);
-    removeRetiredBindings(candidate, requestedBackends);
-    if (advanceContext) {
-      delete candidate.backendBindings;
-      delete candidate.threadId;
-    }
-    if (options.workspace === null) {
-      candidate.cwd = "";
-      delete candidate.workspaceFingerprint;
-    } else if (options.workspace) {
-      candidate.cwd = path.resolve(options.workspace.cwd.trim() || options.workspace.vaultPath);
-      candidate.workspaceFingerprint = targetWorkspaceFingerprint;
-    }
-    if (advanceContext) {
-      candidate.revision = targetGeneration;
-      candidate.generation = targetGeneration;
-    } else {
-      candidate.revision = before.revision;
-      candidate.generation = before.generation;
-    }
-    candidate.commitId = targetCommitId;
-    if (advanceContext) {
-      candidate.contextId = targetContextId;
-      setContextBoundary(candidate, options, oldLastMessageId);
-      delete candidate.contextSnapshot;
-      delete candidate.rollingSummary;
-    }
-    candidate.updatedAt = Math.max(candidate.updatedAt ?? 0, options.now?.() ?? Date.now());
-
-    const committedCandidate = cloneSession(candidate);
-    const liveCandidate = cloneSession(candidate);
-    await options.hooks.commit({
-      session: committedCandidate,
-      expectedGeneration,
-      ...(expectedCommitId ? { expectedCommitId } : {}),
-      expectedContentRevision,
-      targetGeneration,
-      targetCommitId,
-      ...(targetContextId ? { targetContextId } : {})
-    });
+    await options.hooks.commit(commitInput);
     localCommitCompleted = true;
-    restorePreparedSession(session, liveCandidate);
-    committedResult = rotationResult(
-      liveCandidate,
-      targetCommitId,
-      retirements,
-      "not-required"
-    );
   } catch (error) {
-    const normalized = asError(error);
-    if (!localCommitCompleted && retirements.length) {
+    commitError = asError(error);
+  }
+
+  if (recordMutationReceipt && options.hooks.recordMutation) {
+    const commitPromiseResolved = localCommitCompleted;
+    try {
+      recordMutationState = await options.hooks.recordMutation.settle(
+        recordMutationReceipt
+      );
+    } catch {
+      recordMutationState = "awaiting-recovery";
+    }
+    if (recordMutationState === "committed") {
+      localCommitCompleted = true;
+    } else if (commitPromiseResolved && recordMutationState === "aborted") {
+      recordMutationState = "awaiting-recovery";
+    }
+  }
+
+  if (!localCommitCompleted) {
+    const normalized = commitError
+      ?? new Error("Conversation context commit did not complete");
+    if (
+      retirements.length
+      && (
+        !recordMutationReceipt
+        || recordMutationState === "aborted"
+      )
+    ) {
       await options.hooks.abort(retirements, normalized).catch(() => undefined);
     }
     throw normalized;
   }
 
+  restorePreparedSession(session, liveCandidate);
+  const committedResult = rotationResult(
+    liveCandidate,
+    targetCommitId,
+    retirements,
+    "not-required",
+    recordMutationReceipt,
+    recordMutationState
+  );
+
+  if (recordMutationState === "awaiting-recovery") {
+    return {
+      ...committedResult,
+      retirementPromotion: "awaiting-recovery",
+      promotionError:
+        "RecordMutation Journal terminal is awaiting recovery"
+    };
+  }
   if (!retirements.length) {
     return committedResult;
   }
@@ -393,6 +486,34 @@ function validatePostMutationContract(
       `${options.reason} cannot mutate context or workspace identity`
     );
   }
+  assertRetainedRecordMutationCandidate(session, before, options.reason);
+}
+
+function assertRetainedRecordMutationCandidate(
+  session: StoredSession,
+  before: StoredSession,
+  reason: SessionContextRotationReason
+): void {
+  if (reason !== "start-new-context" && reason !== "agent-cache-reset") {
+    return;
+  }
+  const candidate = cloneSession(session);
+  const baseline = cloneSession(before);
+  candidate.updatedAt = 0;
+  baseline.updatedAt = 0;
+  delete candidate.tokenUsage;
+  delete baseline.tokenUsage;
+  if (reason === "start-new-context") {
+    delete candidate.threadId;
+    delete baseline.threadId;
+    delete candidate.messagesHiddenBefore;
+    delete baseline.messagesHiddenBefore;
+  }
+  if (JSON.stringify(candidate) !== JSON.stringify(baseline)) {
+    throw new Error(
+      `${reason} must retain durable Conversation records`
+    );
+  }
 }
 
 function assertLiveRotationBaseUnchanged(
@@ -419,6 +540,16 @@ function normalizedOptional(value: string | undefined): string {
 function requiredIdentity(value: string, label: "commitId" | "contextId"): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`Context rotation ${label} factory returned an empty value`);
+  return normalized;
+}
+
+function requiredRecordMutationId(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(
+      "Context rotation RecordMutation stage returned an empty mutationId"
+    );
+  }
   return normalized;
 }
 
@@ -473,7 +604,13 @@ function rotationResult(
   session: StoredSession,
   commitId: string,
   retirements: SessionContextRetirement[],
-  retirementPromotion: SessionContextRotationResult["retirementPromotion"]
+  retirementPromotion: SessionContextRotationResult["retirementPromotion"],
+  recordMutationReceipt: SessionContextRecordMutationReceipt | null,
+  recordMutationState:
+    | "committed"
+    | "aborted"
+    | "awaiting-recovery"
+    | null
 ): SessionContextRotationResult {
   return {
     committed: true,
@@ -482,6 +619,14 @@ function rotationResult(
     ...(session.contextId ? { contextId: session.contextId } : {}),
     commitId,
     retirements,
+    ...(recordMutationReceipt
+      ? { recordMutationId: recordMutationReceipt.mutationId }
+      : {}),
+    ...(recordMutationState === "committed"
+      ? { recordMutationState: "committed" as const }
+      : recordMutationState === "awaiting-recovery"
+        ? { recordMutationState: "awaiting-recovery" as const }
+        : {}),
     retirementPromotion
   };
 }

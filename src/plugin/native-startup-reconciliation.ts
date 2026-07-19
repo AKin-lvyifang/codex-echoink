@@ -3,6 +3,10 @@ import type {
   ConversationAuthorityProof
 } from "../harness/conversation/conversation-store";
 import {
+  parseRecordMutationRevision,
+  RecordMutationRevision
+} from "../harness/lifecycle/record-mutation-contract";
+import {
   nativeCleanupAuthorityEvidenceMissingReason,
   nativeRetirementSourceIdentityState,
   type NativeBindingRetirement,
@@ -26,6 +30,7 @@ export interface NativeRetirementStartupResult {
 }
 
 export interface NativeStartupReconciliationResult {
+  recoveredPendingRecordMutationCount: number;
   recoveredPendingChatCount: number;
   recoveredPendingHermesProposalCount: number;
   awaitingCount: number;
@@ -37,6 +42,7 @@ export interface NativeStartupReconciliationResult {
 }
 
 export interface NativeStartupReconciliationHost {
+  recoverPendingRecordMutations?(): Promise<number>;
   recoverPendingChatLocalCommits?(): Promise<number>;
   recoverPendingEditorLocalCommits?(): Promise<void>;
   recoverPendingEphemeralUtilityLocalCommits?(): Promise<void>;
@@ -45,6 +51,9 @@ export interface NativeStartupReconciliationHost {
   proveConversationAuthority(
     probe: ConversationAuthorityProbe
   ): Promise<ConversationAuthorityProof>;
+  readRecordMutationAuthority?(
+    mutationId: string
+  ): Promise<RecordMutationRevision>;
   promoteRetirement(record: NativeExecutionRecord): Promise<void>;
   abortRetirement(record: NativeExecutionRecord, reason: string): Promise<void>;
   quarantineRetirement(record: NativeExecutionRecord, reason: string): Promise<void>;
@@ -66,6 +75,11 @@ export async function reconcileNativeExecutionsAtStartup(
   host: NativeStartupReconciliationHost,
   options: NativeStartupReconciliationOptions = {}
 ): Promise<NativeStartupReconciliationResult> {
+  // A nonterminal RecordMutation Journal owns the cross-Store business
+  // decision. Resolve or block it before any Native retirement can be
+  // promoted into executable provider cleanup.
+  const recoveredPendingRecordMutationCount =
+    await host.recoverPendingRecordMutations?.() ?? 0;
   // A provider disposition must never race ahead of an unproven Chat surface
   // commit. This recovery step is deliberately first and fail-closed: Store
   // errors reject the whole startup pass before retirement promotion or
@@ -109,6 +123,41 @@ export async function reconcileNativeExecutionsAtStartup(
       await host.quarantineRetirement(record, reason);
       throw new Error(reason);
     }
+    let recordMutationState: "legacy" | "committed" | "aborted" = "legacy";
+    if (retirement.recordMutationId) {
+      if (!host.readRecordMutationAuthority) {
+        const reason = (
+          `Native retirement RecordMutation authority reader is unavailable: ${record.id}`
+        );
+        await host.quarantineRetirement(record, reason);
+        throw new Error(reason);
+      }
+      try {
+        const mutation = await host.readRecordMutationAuthority(
+          retirement.recordMutationId
+        );
+        assertNativeRetirementRecordMutationAuthority(
+          record.id,
+          retirement,
+          mutation
+        );
+        if (
+          mutation.state !== "committed"
+          && mutation.state !== "aborted"
+        ) {
+          throw new Error(
+            `RecordMutation Journal is nonterminal: ${mutation.state}`
+          );
+        }
+        recordMutationState = mutation.state;
+      } catch (error) {
+        const reason = (
+          `Native retirement RecordMutation authority failed: ${errorMessage(error)}`
+        );
+        await host.quarantineRetirement(record, reason);
+        throw new Error(reason);
+      }
+    }
 
     let proof: ConversationAuthorityProof;
     try {
@@ -132,7 +181,11 @@ export async function reconcileNativeExecutionsAtStartup(
       throw new Error(reason);
     }
 
-    if (proof.relation === "exact" && proof.targetPayload === "active") {
+    if (
+      recordMutationState !== "aborted"
+      && proof.relation === "exact"
+      && proof.targetPayload === "active"
+    ) {
       await host.promoteRetirement(record);
       retirements.push({ recordId: record.id, action: "promoted", proof });
       continue;
@@ -141,6 +194,8 @@ export async function reconcileNativeExecutionsAtStartup(
       && proof.targetPayload === "absent"
       && conversationProofMatchesRetirementSource(proof, retirement);
     if (
+      recordMutationState !== "committed"
+      &&
       (
         (
           proof.relation === "before"
@@ -175,6 +230,7 @@ export async function reconcileNativeExecutionsAtStartup(
 
   const cleanup = await host.cleanupDue(startupCleanupLimit(options.cleanupLimit));
   return {
+    recoveredPendingRecordMutationCount,
     recoveredPendingChatCount,
     recoveredPendingHermesProposalCount,
     awaitingCount: awaiting.length,
@@ -184,6 +240,38 @@ export async function reconcileNativeExecutionsAtStartup(
     retirements,
     cleanup
   };
+}
+
+export function assertNativeRetirementRecordMutationAuthority(
+  recordId: string,
+  retirement: NativeBindingRetirement,
+  mutationInput: RecordMutationRevision
+): void {
+  const mutation = parseRecordMutationRevision(mutationInput);
+  const expectedOperation = retirement.reason === "start-new-context"
+    ? "start-new-context"
+    : retirement.reason === "agent-cache-reset"
+      ? "reset-agent-cache"
+      : null;
+  const target = mutation.intent.targetConversation;
+  if (
+    !expectedOperation
+    || mutation.mutationId !== retirement.recordMutationId
+    || mutation.intent.operation !== expectedOperation
+    || mutation.intent.trashPolicy !== "not-required"
+    || mutation.intent.conversationId !== retirement.targetConversationId
+    || mutation.intent.expectedConversationGeneration
+      !== retirement.sourceGeneration
+    || mutation.intent.expectedConversationCommitId
+      !== retirement.sourceCommitId
+    || target.status !== "present"
+    || target.generation !== retirement.targetGeneration
+    || target.commitId !== retirement.targetCommitId
+  ) {
+    throw new Error(
+      `RecordMutation Journal does not bind the Native retirement: ${recordId}`
+    );
+  }
 }
 
 function conversationProofMatchesRetirementSource(

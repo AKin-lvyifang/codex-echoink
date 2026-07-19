@@ -191,6 +191,7 @@ export type NativeCleanupStatus =
  * Conversation Store proves this exact generation and commit identity.
  */
 export interface NativeBindingRetirement {
+  recordMutationId?: string;
   targetConversationId: string;
   sourceGeneration?: number;
   sourceCommitId?: string | null;

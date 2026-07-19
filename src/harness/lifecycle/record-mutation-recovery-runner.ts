@@ -37,6 +37,10 @@ import {
   verifyRecordMutationSourceParticipantForward,
   type RecordMutationSourceParticipantAdapter
 } from "./record-mutation-source-participant";
+import {
+  assertConversationMutationAuthority,
+  type ConversationMutationAuthority
+} from "../conversation/conversation-mutation-lane";
 
 export interface RecordMutationRecoveryTrashParticipant
 extends RecordMutationCoordinatorRoots {
@@ -48,7 +52,7 @@ export interface RunRecordMutationRecoveryInput {
   journal: LoadedRecordMutationJournal;
   withConversationMutation: <T>(
     conversationId: string,
-    action: () => Promise<T>
+    action: (authority: ConversationMutationAuthority) => Promise<T>
   ) => Promise<T>;
   inspectConversation: (
     intent: RecordMutationIntent
@@ -115,13 +119,19 @@ export async function runRecordMutationRecovery(
   const intent = parseRecordMutationIntent(input.journal.record.intent);
   return await input.withConversationMutation(
     intent.conversationId,
-    async () => await runRecordMutationRecoveryUnderAuthority(input)
+    async (authority) => await runRecordMutationRecoveryUnderAuthority(
+      input,
+      authority
+    )
   );
 }
 
-async function runRecordMutationRecoveryUnderAuthority(
-  input: RunRecordMutationRecoveryInput
+export async function runRecordMutationRecoveryUnderAuthority(
+  input: RunRecordMutationRecoveryInput,
+  authority: ConversationMutationAuthority
 ): Promise<RecordMutationRecoveryRunnerResult> {
+  const intent = parseRecordMutationIntent(input.journal.record.intent);
+  assertConversationMutationAuthority(authority, intent.conversationId);
   let current = await loadRecordMutationJournal(input.journal.handle);
   if (current.record.mutationId !== input.journal.record.mutationId) {
     throw new RecordMutationRecoveryRunnerError(

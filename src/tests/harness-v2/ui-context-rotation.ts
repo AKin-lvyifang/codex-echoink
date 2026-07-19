@@ -15,7 +15,10 @@ import {
   type EchoInkSessionContextRotationOptions
 } from "../../plugin/session-context-lifecycle";
 import type { SessionContextRetirement } from "../../harness/conversation/context-rotation";
-import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
+import {
+  ConversationMutationLane,
+  type ConversationMutationAuthority
+} from "../../harness/conversation/conversation-mutation-lane";
 import {
   ensureKnowledgeBaseSession,
   normalizeSettingsData,
@@ -40,6 +43,7 @@ export async function runHarnessV2UiContextRotationTests(): Promise<void> {
   await assertFacadeQueuesLiveMutationsDuringCommit();
   await assertFacadePreconditionRunsInsideConversationLane();
   await assertFacadeCommitFailureKeepsLiveStateAndSkipsCleanup();
+  await assertFacadeJournalSettlementFailureBlocksPromotion();
   await assertFacadePromotionFailureKeepsCommittedStateForRecovery();
   await assertResetSessionNativeCacheProductContract();
   await assertLegacyCodexThreadConflictFailsBeforeMutation();
@@ -175,13 +179,20 @@ async function assertFacadeOrdersCommitPromotionAndAsyncCleanup(): Promise<void>
   ]);
 
   assert.equal(result.retirementPromotion, "promoted");
+  assert.equal(result.recordMutationState, "committed");
+  assert.equal(result.recordMutationId, "context-mutation-ui-fixture");
+  assert.ok(result.retirements.every((retirement) =>
+    retirement.recordMutationId === result.recordMutationId
+  ));
   assert.equal(sessionGeneration(session), 2);
   assert.equal(session.contextId, "context-old");
   assert.equal(session.backendBindings, undefined);
   assert.equal(session.threadId, undefined);
-  assert.deepEqual(fixture.calls.slice(0, 4), [
+  assert.deepEqual(fixture.calls.slice(0, 6), [
+    "journal-stage",
     "register",
     "commit",
+    "journal-settle",
     "promote",
     "cleanup"
   ]);
@@ -199,19 +210,50 @@ async function assertFacadeCommitFailureKeepsLiveStateAndSkipsCleanup(): Promise
       reason: "agent-cache-reset",
       advanceContext: false,
       mutate: (candidate) => {
-        candidate.messages = [];
+        delete candidate.tokenUsage;
       }
     }),
     /conversation CAS failed/
   );
 
   assert.deepEqual(session, before);
-  assert.deepEqual(fixture.calls, ["register", "commit", "abort"]);
+  assert.deepEqual(fixture.calls, [
+    "journal-stage",
+    "register",
+    "commit",
+    "journal-settle",
+    "abort"
+  ]);
   assert.equal(fixture.cleanupCalls(), 0);
   await fixture.settingsStore.withConversationMutation(session.id, async () => {
     session.title = "lane released after failure";
   });
   assert.equal(session.title, "lane released after failure");
+}
+
+async function assertFacadeJournalSettlementFailureBlocksPromotion(): Promise<void> {
+  const fixture = lifecycleFixture({
+    journalSettleError: new Error("journal terminal unavailable")
+  });
+  const session = rotationSession();
+  const previousCommitId = session.commitId;
+  const result = await fixture.rotate(session, {
+    reason: "agent-cache-reset",
+    advanceContext: false
+  });
+
+  assert.equal(result.recordMutationState, "awaiting-recovery");
+  assert.equal(result.retirementPromotion, "awaiting-recovery");
+  assert.match(result.promotionError ?? "", /Journal terminal is awaiting recovery/);
+  assert.notEqual(session.commitId, previousCommitId);
+  assert.equal(session.backendBindings, undefined);
+  assert.deepEqual(fixture.calls, [
+    "journal-stage",
+    "register",
+    "commit",
+    "journal-settle"
+  ]);
+  assert.equal(fixture.cleanupCalls(), 0);
 }
 
 async function assertFacadePromotionFailureKeepsCommittedStateForRecovery(): Promise<void> {
@@ -228,7 +270,13 @@ async function assertFacadePromotionFailureKeepsCommittedStateForRecovery(): Pro
   assert.notEqual(session.commitId, previousCommitId);
   assert.equal(session.backendBindings, undefined);
   assert.equal(session.threadId, undefined);
-  assert.deepEqual(fixture.calls, ["register", "commit", "promote"]);
+  assert.deepEqual(fixture.calls, [
+    "journal-stage",
+    "register",
+    "commit",
+    "journal-settle",
+    "promote"
+  ]);
   assert.equal(fixture.cleanupCalls(), 0);
 }
 
@@ -336,8 +384,10 @@ async function assertResetSessionNativeCacheProductContract(): Promise<void> {
   assert.equal(session.backendBindings, undefined);
   assert.equal(session.threadId, undefined);
   assert.deepEqual(fixture.calls, [
+    "journal-stage",
     "register",
     "commit",
+    "journal-settle",
     "promote",
     "cleanup",
     "cleanup"
@@ -594,7 +644,13 @@ async function assertUiCommitFailuresKeepComposerMessagesAndWorkspaceUnchanged()
   const resetBefore = clone(resetSession);
   await resetSessionNativeCache(resetHost as never, resetSession);
   assert.deepEqual(resetSession, resetBefore);
-  assert.deepEqual(resetFixture.calls, ["register", "commit", "abort"]);
+  assert.deepEqual(resetFixture.calls, [
+    "journal-stage",
+    "register",
+    "commit",
+    "journal-settle",
+    "abort"
+  ]);
   assert.equal(resetFixture.cleanupCalls(), 0);
   assert.equal(resetFixture.cleanupCompletionCalls(), 0);
 }
@@ -1235,6 +1291,7 @@ function lifecycleFixture(options: {
   commitError?: Error;
   commitGate?: Promise<void>;
   promotionError?: Error;
+  journalSettleError?: Error;
   cleanupGate?: Promise<void>;
   onRegister?: (retirements: readonly SessionContextRetirement[]) => void;
   onCommit?: (session: StoredSession) => void;
@@ -1243,6 +1300,7 @@ function lifecycleFixture(options: {
   const mutationLane = new ConversationMutationLane();
   let cleanupCalls = 0;
   let cleanupCompletionCalls = 0;
+  let conversationCommitted = false;
   const harnessService = {
     async registerNativeExecutionRetirements(
       retirements: readonly SessionContextRetirement[]
@@ -1268,15 +1326,25 @@ function lifecycleFixture(options: {
   const settingsStore = {
     async withConversationMutation<T>(
       conversationId: string,
-      action: () => Promise<T>
+      action: (authority: ConversationMutationAuthority) => Promise<T>
     ): Promise<T> {
       return await mutationLane.withConversationMutation(conversationId, action);
+    },
+    async stageSessionContextRecordMutation() {
+      calls.push("journal-stage");
+      return { mutationId: "context-mutation-ui-fixture" };
+    },
+    async settleSessionContextRecordMutation() {
+      calls.push("journal-settle");
+      if (options.journalSettleError) throw options.journalSettleError;
+      return conversationCommitted ? "committed" as const : "aborted" as const;
     },
     async commitConversationSessionContext(session: StoredSession) {
       calls.push("commit");
       options.onCommit?.(session);
       await options.commitGate;
       if (options.commitError) throw options.commitError;
+      conversationCommitted = true;
       return {
         conversationId: session.id,
         generation: sessionGeneration(session),

@@ -213,24 +213,36 @@ rotateSessionContext(session, reason, mutation)
 
 固定顺序：
 
-1. 为全部旧 backend binding 创建唯一 retirement record，记录
-   `targetConversationId`、`targetGeneration` 与 `targetCommitId`，初态为
-   `awaiting-local-commit`。
-2. 修改 revision、context 边界、workspace、消息投影和 active binding。
-3. 把同一个 `targetGeneration/targetCommitId` 严格提交到 Conversation Store。
-4. 提交成功后把 retirement record 标为 `pending/due`。
-5. 异步 cleanup；失败只进入 retry/quarantine。
-6. Conversation 提交失败时回滚内存状态，旧原生会话不动。
+1. 对 `start-new-context` / `agent-cache-reset` 先创建并 stage
+   `RecordMutationJournal`，冻结 before/target Conversation proof。
+2. 为全部旧 backend binding 创建唯一 retirement record，记录
+   `recordMutationId`、`targetConversationId`、`targetGeneration` 与
+   `targetCommitId`，初态为 `awaiting-local-commit`。
+3. 修改 revision、context 边界、workspace、消息投影和 active binding；两类
+   非破坏操作不得改写 durable Conversation 记录。
+4. 把同一个 `targetGeneration/targetCommitId` 严格提交到 Conversation Store。
+5. 在仍持有同一 Conversation authority 时读回 Store，幂等提交或中止 Journal。
+6. 只有 Journal committed 且 target exact 时，才把 retirement record 标为
+   `pending/due`。
+7. 异步 cleanup；失败只进入 retry/quarantine。
+8. Conversation 提交失败时回滚内存状态；Journal 无法收口时保留
+   `awaiting-local-commit` 供启动恢复，旧原生会话不执行 cleanup。
 
-启动恢复必须同时扫描 `awaiting-local-commit` 与 `pending/due`。对每条
+启动恢复必须先扫描非终态 Journal，再扫描 `awaiting-local-commit` 与
+`pending/due`。对每条
 `awaiting-local-commit` 记录，以持久化 Conversation 的 generation 和 commit
 identity 对账：
 
-- 目标 generation 与 commit identity 已耐久提交时，幂等提升为 `pending/due`。
+- Journal committed，且目标 generation 与 commit identity 已耐久提交时，幂等
+  提升为 `pending/due`。
+- Journal aborted，且 Conversation 仍是精确 source/before target 时，标记
+  `aborted`。
 - Conversation 仍处于目标之前，且目标 commit identity 不存在时，标记
-  `aborted`，保留旧 Native，不执行 cleanup。
+  `aborted`，保留旧 Native，不执行 cleanup（只适用于 legacy retirement 或已
+  aborted Journal）。
 - Conversation 已进入更高 generation、commit identity 缺失、schema 未知或证据
-  互相矛盾时，进入 quarantine 并阻断 cleanup，不能靠猜测提升或回滚。
+  互相矛盾，或 Journal 非终态/损坏/错绑时，进入 quarantine 并阻断 cleanup，
+  不能靠猜测提升或回滚。
 
 状态职责分开：
 

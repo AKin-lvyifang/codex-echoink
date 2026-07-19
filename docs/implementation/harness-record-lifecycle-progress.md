@@ -36,10 +36,20 @@ Intent 现在同时冻结变更前的 Conversation generation、commit ID、cont
 调用方直接声称 `exact-target`。Runner 对 destructive participant 先在全局
 authority 下检查 durable receipt、Registry、物理 Root 与 Trash content，再经
 coordinator roll-forward 或 restore。Memory/Artifact 的 `mark-source-deleted`
-adapter 尚未实现，遇到相关未收口 participant 会明确 blocked。
+adapter 已通过正式 Store transaction 与 append-only lifecycle chain 实现；缺失、
+错序或无法证明 lineage 的 adapter 会明确 blocked。
 Recovery API 要求整轮通过 `withConversationMutation`，生产接线必须使用产品写入的
 同一 authority。Runner 在 effect 前、Journal 终态发布前重复读回 Conversation；
 证据发生变化时保留可恢复的 staged Journal，不以旧 observation 收口。
+
+第六批已经把两类非破坏性产品操作接入 live Journal：
+`start-new-context` 与 `agent-cache-reset` 都必须先 stage Journal，之后才允许登记
+Native retirement 或提交 Conversation。Conversation 提交后，runner 在同一枚
+不可伪造、回调结束即失效的 Conversation authority 下读回并提交/中止 Journal；
+只有 committed Journal 与 exact Conversation target 同时可证明时，Native
+retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理 Native；Journal
+非终态、损坏、错绑或 reader 缺失会关闭全局 cleanup gate。两类操作同时禁止借
+`mutate` 改写 durable Conversation 记录。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -63,7 +73,8 @@ authority 也按 fail closed 处理。
 - 跨层 Root Binding Ref checkpoint：`ab1a061`
 - 当前已提交批次：RecordMutation schema V2 与 production recovery runner
 - Memory/Artifact participant checkpoint：`c90ebeb`
-- 下一批次：非破坏性产品操作的 live Journal、启动恢复与 Native promotion authority
+- 当前开发批次：非破坏性产品操作的 live Journal、启动恢复与 Native promotion authority
+- 下一批次：破坏性清空/删除的正式 reader/writer 与 participant 集合
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -82,7 +93,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb` | 接入四类用户操作 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`；两类非破坏操作 live Journal 开发中 | 接入破坏性清空/删除 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -130,19 +141,21 @@ authority 也按 fail closed 处理。
 
 ## Phase 2 生产接线阻断项
 
-- Conversation V2、Run Record 与 RecordMutation 当前均为 side-by-side 基础设施；
-  legacy reader/writer 尚未切换，不能把合同测试写成生产数据已迁移。
+- Conversation V2、Run Record 与 destructive RecordMutation 仍主要是
+  side-by-side 基础设施；legacy reader/writer 尚未切换，不能把两类非破坏操作的
+  live Journal 接线写成生产数据已迁移。
 - destructive intent、prepared/finalization Trash receipt 与 recovery evidence
   已冻结完整 Root Binding Ref；全局 lock/coordinator 与 production recovery
-  runner 已建立安全执行入口，但四类用户操作尚未接入。
+  runner 已建立安全执行入口；`start-new-context` 与 `agent-cache-reset` 已接入，
+  `clear-conversation-records` 与 `delete-conversation` 仍未接入。
 - `finalizeRecordMutationTrash()` 仍是低层原语。架构门禁现已把生产 source
   retirement 调用限制在 `record-mutation-coordinator.ts`；唯一直接 restore 旁路
   仍为 `fixtureOnly`，并强制位于系统临时目录。调用方接线完成前，产品删除 guard
   继续关闭。
 - Production runner 已能通过正式 adapter 处理 Memory/Artifact
   `mark-source-deleted` 的 forward、compensation、崩溃重放与 terminal proof；
-  adapter 缺失或不完整时仍返回 `participant-adapter-required`。四类产品操作尚未
-  构造并传入真实 participant 集合，因此产品删除 guard 继续关闭。
+  adapter 缺失或不完整时仍返回 `participant-adapter-required`。两类破坏性产品
+  操作尚未构造并传入真实 participant 集合，因此产品删除 guard 继续关闭。
 - Memory adapter 通过正式 index transaction 保存 Conversation lineage 与
   source-deleted/restored transaction proof；Artifact adapter 通过独立 append-only
   lifecycle chain 保存同类证明。两者都是 side-by-side 基础设施，尚未代表 legacy
@@ -170,9 +183,9 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 提交 Memory/Artifact `mark-source-deleted` participant adapter 批次，再把
-   四类用户操作接入 production runner/coordinator。
-2. 接入生产 side-by-side reader/writer、History 引用投影、Raw owner graph/GC
+1. 收口两类非破坏操作 live Journal checkpoint，再把清空/删除接入正式
+   reader/writer、production runner/coordinator 与完整 participant 集合。
+2. 接入 History 引用投影、Raw owner graph/GC
    preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
    历史删除、retention、Raw GC 或批量 Native cleanup。
@@ -277,6 +290,28 @@ Memory/Artifact source-deletion participant adapter 批次当前已通过：
 
 本批次已提交为 `c90ebeb`；提交树不含 `.codex-memory` 与 `node_modules` 两个
 共享软链接。
+
+非破坏性 live Journal 与 Native promotion authority 批次当前已通过：
+
+- Conversation authority forged/cross-conversation/expired 反例
+- Context Rotation 与 UI lifecycle focused suites：Journal stage → Native
+  register → Conversation commit → Journal settle → promotion/cleanup
+- on-disk crash recovery：stage 后未 commit 自动 abort；Conversation commit 后
+  未写 Journal terminal 自动 roll-forward；重复启动恢复为 no-op
+- Native startup focused suite：committed/exact 才 promotion，aborted/before
+  才 abort，非终态或错绑 Journal 在 cleanup 前关闭门禁
+- Live promotion focused suite：缺 reader、非 committed 或错绑 Journal 在整个
+  batch 的第一个 Native transition 前失败
+- Architecture focused suite：under-authority runner 只有 runner façade 与
+  Settings Store 生产调用点
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck`
+- `npm run build`
+- `npm run lint`，961 个 finding 与 baseline 完全一致，无新增 finding
+- 本批直接改动且无历史 baseline finding 的 8 个生产文件目标 ESLint，0 finding
+- `git diff --check`
+- `npm run check:release`
+- `npm run check:public`，检查 402 个 tracked files
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。

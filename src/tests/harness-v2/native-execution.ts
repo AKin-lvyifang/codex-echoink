@@ -7,6 +7,11 @@ import { TaskRuntimeAgentAdapter } from "../../harness/agents/adapters/task-runt
 import type { SessionContextRetirement } from "../../harness/conversation/context-rotation";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { LocalRunCommitResult, NativeExecutionDispositionRequest, NativeExecutionRecord } from "../../harness/contracts/native-execution";
+import {
+  createPlannedRecordMutationRevision,
+  transitionRecordMutationRevision,
+  type RecordMutationRevision
+} from "../../harness/lifecycle/record-mutation-contract";
 import { EchoInkHarnessKernel } from "../../harness/kernel/harness-kernel";
 import { sessionNativeExecutionRefs } from "../../harness/kernel/session-service";
 import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
@@ -58,6 +63,7 @@ export async function runHarnessV2NativeExecutionTests(): Promise<void> {
   await assertRetirementBatchCollisionCannotMutateExistingIdentity();
   await assertRecordCreatedCannotOverwriteOrReviveExistingRegistration();
   await assertNativeTransportValidationAndLegacyReplay();
+  await assertHarnessServiceJournalPromotionGate();
   await assertHarnessServiceExposesTypedNativeLifecycleFacade();
   await assertNativeExecutionStoreRequiresExplicitV1MigrationBeforeMutation();
   await assertNativeExecutionStoreRequiresRecoveryWhenIndexIsMissingWithAuditHistory();
@@ -2449,6 +2455,69 @@ async function assertRetirementTransitionsAreExplicitAndIdempotent(): Promise<vo
   assert.deepEqual((await store.listDueCleanup()).map((record) => record.id), ["retirement-promote"]);
 }
 
+async function assertHarnessServiceJournalPromotionGate(): Promise<void> {
+  const promoted: string[] = [];
+  const service = new EchoInkHarnessService({
+    settings: {
+      opencode: { serverUrl: "", hostname: "127.0.0.1", port: 4096 },
+      agents: { hermes: { serverUrl: "" } }
+    },
+    getVaultPath: () => "/vault",
+    getPluginDataDirName: () => "codex-echoink"
+  } as never);
+  (service as any).getNativeExecutionManager = () => ({
+    async promoteRetirement(recordId: string) {
+      promoted.push(recordId);
+      return {};
+    }
+  });
+  (service as any).getNativeExecutionRefContext = () => ({
+    deviceKey: "device-journal-gate",
+    vaultId: "/vault"
+  });
+  const retirement: SessionContextRetirement = {
+    retirementId: "journal-gated-retirement",
+    recordMutationId: "mutation-journal-gated-retirement",
+    reason: "start-new-context",
+    targetConversationId: "conversation-journal-gate",
+    sourceGeneration: 2,
+    sourceCommitId: "commit-journal-source",
+    sourceContextId: "context-journal-source",
+    sourceWorkspaceFingerprint: "sha256:journal-workspace",
+    targetGeneration: 3,
+    targetCommitId: "commit-journal-target",
+    targetContextId: "context-journal-target",
+    targetWorkspaceFingerprint: "sha256:journal-workspace",
+    backendId: "codex-cli",
+    binding: {
+      backendId: "codex-cli",
+      nativeThreadId: "thread-journal-gate",
+      nativeExecutionKind: "thread",
+      syncedSessionRevision: 2,
+      lastUsedAt: 1
+    }
+  };
+
+  await assert.rejects(
+    service.promoteNativeExecutionRetirements([retirement]),
+    /authority reader is unavailable/
+  );
+  await assert.rejects(
+    service.promoteNativeExecutionRetirements(
+      [retirement],
+      async () => journalRevisionForRetirement(retirement, false)
+    ),
+    /Journal is not committed/
+  );
+  assert.deepEqual(promoted, []);
+
+  await service.promoteNativeExecutionRetirements(
+    [retirement],
+    async () => journalRevisionForRetirement(retirement, true)
+  );
+  assert.deepEqual(promoted, [retirement.retirementId]);
+}
+
 async function assertHarnessServiceExposesTypedNativeLifecycleFacade(): Promise<void> {
   const calls: string[] = [];
   const registered: NativeExecutionRecord[] = [];
@@ -2558,6 +2627,7 @@ async function assertHarnessServiceExposesTypedNativeLifecycleFacade(): Promise<
       { cleanupLimit: 0 }
     ),
     {
+      recoveredPendingRecordMutationCount: 0,
       recoveredPendingChatCount: 0,
       recoveredPendingHermesProposalCount: 0,
       awaitingCount: 0,
@@ -3660,6 +3730,60 @@ async function assertPendingRecoveryCannotOverwriteConcurrentSuccessfulSettlemen
   assert.equal(record?.localCommit, "committed");
   assert.equal(record?.cleanup, "not-needed");
   assert.equal(record?.lastError, "");
+}
+
+function journalRevisionForRetirement(
+  retirement: SessionContextRetirement,
+  committed: boolean
+): RecordMutationRevision {
+  const planned = createPlannedRecordMutationRevision({
+    mutationId: retirement.recordMutationId!,
+    intent: {
+      operation: "start-new-context",
+      conversationId: retirement.targetConversationId,
+      expectedConversationGeneration: retirement.sourceGeneration!,
+      expectedConversationCommitId: retirement.sourceCommitId!,
+      expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+      targetConversation: {
+        status: "present",
+        generation: retirement.targetGeneration,
+        commitId: retirement.targetCommitId,
+        contentRevision: `sha256:${"2".repeat(64)}`
+      },
+      participants: [{
+        id: "conversation",
+        recordKind: "conversation",
+        action: "retain"
+      }],
+      rootBindings: [],
+      trashPolicy: "not-required"
+    },
+    createdAt: 1
+  });
+  const staged = transitionRecordMutationRevision(planned, {
+    state: "staged",
+    step: {
+      direction: "forward",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "prepared",
+      evidenceDigest: planned.intentDigest
+    },
+    terminal: null,
+    updatedAt: 2
+  });
+  return committed
+    ? transitionRecordMutationRevision(staged, {
+      state: "committed",
+      step: null,
+      terminal: {
+        at: 3,
+        code: "committed",
+        message: "journal promotion test"
+      },
+      updatedAt: 3
+    })
+    : staged;
 }
 
 function baseRecord(overrides: Partial<NativeExecutionRecord> = {}): NativeExecutionRecord {

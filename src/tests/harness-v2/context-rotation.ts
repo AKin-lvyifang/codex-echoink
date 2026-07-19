@@ -17,7 +17,11 @@ import {
   workspaceFingerprint
 } from "../../harness/kernel/session-service";
 import type { NativeExecutionRecord } from "../../harness/contracts/native-execution";
-import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
+import {
+  assertConversationMutationAuthority,
+  ConversationMutationLane,
+  type ConversationMutationAuthority
+} from "../../harness/conversation/conversation-mutation-lane";
 import { reconcileNativeExecutionsAtStartup } from "../../plugin/native-startup-reconciliation";
 import type { StoredSession } from "../../settings/settings";
 
@@ -25,6 +29,7 @@ export async function runHarnessV2ContextRotationTests(): Promise<void> {
   await assertConversationMutationLanePreservesQueuedLiveMutations();
   await assertConversationMutationLaneReleasesAfterFailure();
   await assertConversationMutationLaneScopesConcurrencyByConversation();
+  await assertConversationMutationAuthorityIsScopedAndUnforgeable();
   await assertLegacyContextBootstrapCreatesDurableIdentity();
   await assertContextGenerationOverflowFailsClosed();
   await assertRotationRegistersOldBindingsBeforeCommit();
@@ -36,6 +41,7 @@ export async function runHarnessV2ContextRotationTests(): Promise<void> {
   await assertRotationContractsRejectAmbiguousIdentity();
   await assertConflictingCodexIdentitiesBlockBeforeRegistration();
   await assertNonAdvancingRotationCannotMutateEpoch();
+  await assertJournalledRotationCannotRewriteDurableRecords();
   await assertRotationCannotMutateImmutableConversationIdentity();
   await assertWorkspaceClearAdvancesAndInvalidatesAllBindings();
   await assertHistoryRestoreExcludesRestoredMessagesFromModelContext();
@@ -210,6 +216,45 @@ async function assertConversationMutationLaneScopesConcurrencyByConversation(): 
   releaseTrimmed();
   await Promise.all([trimmedFirst, trimmedSecond]);
   assert.deepEqual(trimmedCalls, ["trimmed:first", "trimmed:second"]);
+}
+
+async function assertConversationMutationAuthorityIsScopedAndUnforgeable(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  let captured: ConversationMutationAuthority | null = null;
+  await lane.withConversationMutation(
+    " conversation-authority ",
+    async (authority) => {
+      captured = authority;
+      assert.doesNotThrow(() => {
+        assertConversationMutationAuthority(
+          authority,
+          "conversation-authority"
+        );
+      });
+      assert.throws(
+        () => assertConversationMutationAuthority(
+          authority,
+          "different-conversation"
+        ),
+        /different conversation/
+      );
+      assert.throws(
+        () => assertConversationMutationAuthority(
+          {} as ConversationMutationAuthority,
+          "conversation-authority"
+        ),
+        /invalid or forged/
+      );
+    }
+  );
+  assert.ok(captured);
+  assert.throws(
+    () => assertConversationMutationAuthority(
+      captured as ConversationMutationAuthority,
+      "conversation-authority"
+    ),
+    /expired/
+  );
 }
 
 async function assertLegacyContextBootstrapCreatesDurableIdentity(): Promise<void> {
@@ -978,8 +1023,52 @@ async function assertNonAdvancingRotationCannotMutateEpoch(): Promise<void> {
     }),
     /agent-cache-reset cannot mutate context or workspace identity/
   );
-  assert.deepEqual(calls, ["register", "abort"]);
+  assert.deepEqual(
+    calls,
+    [],
+    "invalid candidate must fail before Native registration"
+  );
   assert.deepEqual(session, before, "invalid provisional mutations must never reach live state");
+}
+
+async function assertJournalledRotationCannotRewriteDurableRecords(): Promise<void> {
+  for (const reason of ["start-new-context", "agent-cache-reset"] as const) {
+    const session = rotationSession();
+    const before = structuredClone(session);
+    const calls: string[] = [];
+    await assert.rejects(
+      rotateSessionContext(session, {
+        reason,
+        advanceContext: reason === "start-new-context",
+        identityFactory: fixedRotationIdentity(
+          `commit-retain-${reason}`,
+          reason === "start-new-context"
+            ? `context-retain-${reason}`
+            : undefined
+        ),
+        ...(reason === "start-new-context"
+          ? {
+            workspace: {
+              vaultPath: "/vault",
+              cwd: "/vault/workspace-a"
+            }
+          }
+          : {}),
+        mutate(candidate) {
+          candidate.messages = [];
+        },
+        hooks: {
+          async register() { calls.push("register"); },
+          async commit() { calls.push("commit"); },
+          async promote() { calls.push("promote"); },
+          async abort() { calls.push("abort"); }
+        }
+      }),
+      /must retain durable Conversation records/
+    );
+    assert.deepEqual(calls, []);
+    assert.deepEqual(session, before);
+  }
 }
 
 async function assertRotationCannotMutateImmutableConversationIdentity(): Promise<void> {
@@ -1014,7 +1103,11 @@ async function assertRotationCannotMutateImmutableConversationIdentity(): Promis
       }),
       /cannot mutate immutable Conversation identity/
     );
-    assert.deepEqual(calls, ["register", "abort"]);
+    assert.deepEqual(
+      calls,
+      [],
+      "invalid immutable identity must fail before Native registration"
+    );
     assert.deepEqual(session, before);
   }
 }
@@ -1087,7 +1180,11 @@ async function assertHistoryRestoreExcludesRestoredMessagesFromModelContext(): P
     }),
     /history-restore boundary must match the last restored message/
   );
-  assert.deepEqual(invalidCalls, ["register", "abort"]);
+  assert.deepEqual(
+    invalidCalls,
+    [],
+    "invalid restored boundary must fail before Native registration"
+  );
   assert.deepEqual(invalid, invalidBefore);
 
   const session = rotationSession();

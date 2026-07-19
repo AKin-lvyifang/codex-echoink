@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { Notice } from "obsidian";
@@ -10,6 +10,7 @@ import {
 } from "../core/message-state";
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
 import {
+  createConversationContentRevision,
   FileConversationStore,
   type CommitConversationContextOptions,
   type ConversationAuthorityProbe,
@@ -18,7 +19,31 @@ import {
   type ConversationMessageAuthorityProbe,
   type ConversationMessageAuthorityProof
 } from "../harness/conversation/conversation-store";
-import { ConversationMutationLane } from "../harness/conversation/conversation-mutation-lane";
+import {
+  assertConversationMutationAuthority,
+  ConversationMutationLane,
+  type ConversationMutationAuthority
+} from "../harness/conversation/conversation-mutation-lane";
+import type {
+  SessionContextRecordMutationReceipt,
+  SessionContextRecordMutationStageInput
+} from "../harness/conversation/context-rotation";
+import type {
+  RecordMutationConversationObservation
+} from "../harness/lifecycle/record-mutation-recovery";
+import {
+  createRecordMutationJournal,
+  listRecordMutationJournals,
+  loadRecordMutationJournal,
+  stageRecordMutationJournal
+} from "../harness/lifecycle/record-mutation-journal";
+import {
+  runRecordMutationRecovery,
+  runRecordMutationRecoveryUnderAuthority
+} from "../harness/lifecycle/record-mutation-recovery-runner";
+import type {
+  RecordMutationRevision
+} from "../harness/lifecycle/record-mutation-contract";
 import { sessionGeneration, workspaceFingerprint } from "../harness/kernel/session-service";
 import {
   clearLegacyChatWorkspaceDefaults,
@@ -248,12 +273,180 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
 
   async withConversationMutation<R>(
     conversationId: string,
-    action: () => Promise<R>
+    action: (authority: ConversationMutationAuthority) => Promise<R>
   ): Promise<R> {
     return await this.conversationMutationLane.withConversationMutation(
       conversationId,
       action
     );
+  }
+
+  async stageSessionContextRecordMutation(
+    input: SessionContextRecordMutationStageInput
+  ): Promise<SessionContextRecordMutationReceipt> {
+    const operation = input.reason === "start-new-context"
+      ? "start-new-context" as const
+      : input.reason === "agent-cache-reset"
+        ? "reset-agent-cache" as const
+        : null;
+    if (!operation) {
+      throw new Error(
+        `Context rotation reason does not use a live RecordMutation Journal: ${input.reason}`
+      );
+    }
+    const createdAt = Date.now();
+    const planned = await createRecordMutationJournal({
+      storageRootPath: this.recordMutationStorageRootPath(),
+      mutationId: `context-mutation-${randomUUID()}`,
+      intent: {
+        operation,
+        conversationId: input.session.id,
+        expectedConversationGeneration: input.expectedGeneration,
+        expectedConversationCommitId: input.expectedCommitId ?? null,
+        expectedConversationContentRevision: input.expectedContentRevision,
+        targetConversation: {
+          status: "present",
+          generation: input.targetGeneration,
+          commitId: input.targetCommitId,
+          contentRevision: createConversationContentRevision(input.session)
+        },
+        participants: [
+          { id: "artifact", recordKind: "artifact", action: "retain" },
+          { id: "conversation", recordKind: "conversation", action: "retain" },
+          { id: "memory", recordKind: "memory", action: "retain" },
+          { id: "raw", recordKind: "raw", action: "retain" },
+          { id: "workflow-run", recordKind: "workflow-run", action: "retain" }
+        ],
+        rootBindings: [],
+        trashPolicy: "not-required"
+      },
+      createdAt
+    });
+    const staged = await stageRecordMutationJournal(planned.handle, {
+      expectedRevision: planned.record.revision,
+      expectedDigest: planned.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: 1,
+        participantId: "conversation",
+        action: "prepared",
+        evidenceDigest: planned.record.intentDigest
+      },
+      updatedAt: createdAt + 1
+    });
+    return { mutationId: staged.record.mutationId };
+  }
+
+  async settleSessionContextRecordMutation(
+    receipt: SessionContextRecordMutationReceipt,
+    authority: ConversationMutationAuthority
+  ): Promise<"committed" | "aborted"> {
+    const journal = await loadRecordMutationJournal({
+      storageRootPath: this.recordMutationStorageRootPath(),
+      mutationId: receipt.mutationId
+    });
+    assertConversationMutationAuthority(
+      authority,
+      journal.record.intent.conversationId
+    );
+    const result = await runRecordMutationRecoveryUnderAuthority({
+      journal,
+      withConversationMutation: async (conversationId, action) =>
+        await this.withConversationMutation(conversationId, action),
+      inspectConversation: async (intent) =>
+        await this.inspectRecordMutationConversation(intent.conversationId),
+      trashParticipants: [],
+      sourceDeletedParticipants: []
+    }, authority);
+    if (result.status === "blocked") {
+      throw new Error(
+        `RecordMutation Journal ${receipt.mutationId} is blocked: ${result.blocker}`
+      );
+    }
+    const state = result.journal.record.state;
+    if (state !== "committed" && state !== "aborted") {
+      throw new Error(
+        `RecordMutation Journal ${receipt.mutationId} has no terminal state`
+      );
+    }
+    return state;
+  }
+
+  async reconcileSessionContextRecordMutationsAtStartup(): Promise<number> {
+    const journals = await listRecordMutationJournals(
+      this.recordMutationStorageRootPath()
+    );
+    let recovered = 0;
+    for (const journal of journals) {
+      if (
+        journal.record.state === "committed"
+        || journal.record.state === "aborted"
+      ) {
+        continue;
+      }
+      if (journal.record.intent.trashPolicy !== "not-required") {
+        throw new Error(
+          `Destructive RecordMutation Journal requires guarded recovery participants: ${journal.record.mutationId}`
+        );
+      }
+      let recoverableJournal = journal;
+      if (recoverableJournal.record.state === "planned") {
+        const participant = recoverableJournal.record.intent.participants.find(
+          (candidate) =>
+            candidate.recordKind === "conversation"
+            && candidate.action === "retain"
+        );
+        if (!participant) {
+          throw new Error(
+            `Planned RecordMutation Journal has no retained Conversation participant: ${journal.record.mutationId}`
+          );
+        }
+        recoverableJournal = await stageRecordMutationJournal(
+          recoverableJournal.handle,
+          {
+            expectedRevision: recoverableJournal.record.revision,
+            expectedDigest: recoverableJournal.record.digest,
+            step: {
+              direction: "forward",
+              ordinal: 1,
+              participantId: participant.id,
+              action: "prepared",
+              evidenceDigest: recoverableJournal.record.intentDigest
+            },
+            updatedAt: Math.max(
+              Date.now(),
+              recoverableJournal.record.updatedAt + 1
+            )
+          }
+        );
+      }
+      const result = await runRecordMutationRecovery({
+        journal: recoverableJournal,
+        withConversationMutation: async (conversationId, action) =>
+          await this.withConversationMutation(conversationId, action),
+        inspectConversation: async (intent) =>
+          await this.inspectRecordMutationConversation(intent.conversationId),
+        trashParticipants: [],
+        sourceDeletedParticipants: []
+      });
+      if (result.status === "blocked") {
+        throw new Error(
+          `RecordMutation startup recovery blocked for ${recoverableJournal.record.mutationId}: ${result.blocker}`
+        );
+      }
+      recovered += 1;
+    }
+    return recovered;
+  }
+
+  async readRecordMutationAuthority(
+    mutationId: string
+  ): Promise<RecordMutationRevision> {
+    const journal = await loadRecordMutationJournal({
+      storageRootPath: this.recordMutationStorageRootPath(),
+      mutationId
+    });
+    return structuredClone(journal.record);
   }
 
   poisonSettingsPersistenceForRecovery(message: string): void {
@@ -883,6 +1076,26 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       });
     entry.pending = pending;
     return pending;
+  }
+
+  private recordMutationStorageRootPath(): string {
+    return pluginDataDir(
+      this.plugin.getVaultPath(),
+      this.plugin.getPluginDataDirName()
+    );
+  }
+
+  private async inspectRecordMutationConversation(
+    conversationId: string
+  ): Promise<RecordMutationConversationObservation> {
+    const stored = await this.getConversationStore().readSession(conversationId);
+    if (!stored) return { status: "missing" };
+    return {
+      status: "present",
+      generation: sessionGeneration(stored),
+      commitId: stored.commitId?.trim() || null,
+      contentRevision: createConversationContentRevision(stored)
+    };
   }
 
   private getConversationStore(): FileConversationStore {

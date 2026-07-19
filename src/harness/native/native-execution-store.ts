@@ -635,6 +635,10 @@ function isValidRetirement(value: NativeExecutionRecord["retirement"] | undefine
   if (value === undefined) return true;
   return Boolean(
     value
+    && (
+      value.recordMutationId === undefined
+      || isNonEmptyString(value.recordMutationId)
+    )
     && typeof value.targetConversationId === "string"
     && value.targetConversationId.trim()
     && nativeRetirementSourceIdentityState(value) !== "invalid"

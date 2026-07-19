@@ -17,7 +17,10 @@ import {
   FileConversationStore
 } from "../../harness/conversation/conversation-store";
 import { compileContextBundle } from "../../harness/kernel/context-compiler";
-import { workspaceFingerprint } from "../../harness/kernel/session-service";
+import {
+  sessionGeneration,
+  workspaceFingerprint
+} from "../../harness/kernel/session-service";
 import {
   EchoInkHarnessService,
   SESSION_DELETION_JOURNAL_REQUIRED_ERROR
@@ -49,9 +52,128 @@ export async function runHarnessV2ConversationStoreTests(): Promise<void> {
   await assertSettingsStoreMigratesAndRestoresConversationHistory();
   await assertSettingsStoreRecoversDurableConversationMissingDataShell();
   await assertClearSurvivesRestartAndExcludesOldContext();
+  await assertContextRotationRecordMutationRecoversCrashWindows();
   await assertSettingsStoreBlocksUnmigratedLegacyConversation();
   await assertConversationStoreParticipatesInDurableCommit();
   await assertSessionDeletionServiceFailsClosedBeforeMutation();
+}
+
+async function assertContextRotationRecordMutationRecoversCrashWindows(): Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-context-record-mutation-")
+  );
+  const sessionId = "context-record-mutation";
+  const initialSession: StoredSession = {
+    id: sessionId,
+    title: "Context RecordMutation",
+    cwd: vaultPath,
+    revision: 1,
+    generation: 1,
+    contextId: "context-record-mutation-1",
+    commitId: "commit-record-mutation-1",
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath,
+      cwd: vaultPath
+    }),
+    messages: [{
+      id: "message-record-mutation",
+      role: "user",
+      text: "durable history",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 2
+  };
+  let persisted: unknown = {
+    settingsVersion: 29,
+    sessions: [initialSession]
+  };
+  try {
+    const seedStore = new FileConversationStore({
+      rootPath: path.join(
+        pluginDataDir(vaultPath, "codex-echoink"),
+        "conversations"
+      )
+    });
+    await createPristineSettingsSessions(seedStore, [initialSession]);
+    await seedStore.persistSettingsSessions({ sessions: [initialSession] });
+    const plugin = fakeSettingsPlugin(
+      vaultPath,
+      () => persisted,
+      (next) => { persisted = next; }
+    );
+    const store = new EchoInkSettingsStore(plugin as never);
+    await store.loadSettings();
+    const live = plugin.settings.sessions.find(
+      (candidate) => candidate.id === sessionId
+    );
+    assert.ok(live);
+
+    const beforeTarget = structuredClone(live);
+    beforeTarget.commitId = "commit-record-mutation-before-target";
+    beforeTarget.updatedAt += 1;
+    const beforeReceipt = await store.withConversationMutation(
+      live.id,
+      async () => await store.stageSessionContextRecordMutation({
+        reason: "agent-cache-reset",
+        session: beforeTarget,
+        expectedGeneration: sessionGeneration(live),
+        expectedCommitId: live.commitId,
+        expectedContentRevision: createConversationContentRevision(live),
+        targetGeneration: sessionGeneration(beforeTarget),
+        targetCommitId: beforeTarget.commitId
+      })
+    );
+    assert.equal(
+      await store.reconcileSessionContextRecordMutationsAtStartup(),
+      1
+    );
+    assert.equal(
+      (await store.readRecordMutationAuthority(beforeReceipt.mutationId)).state,
+      "aborted",
+      "crash after Journal stage but before Conversation commit must abort"
+    );
+
+    const exactTarget = structuredClone(live);
+    exactTarget.commitId = "commit-record-mutation-exact-target";
+    exactTarget.updatedAt += 2;
+    const exactReceipt = await store.withConversationMutation(
+      live.id,
+      async () => {
+        const receipt = await store.stageSessionContextRecordMutation({
+          reason: "agent-cache-reset",
+          session: exactTarget,
+          expectedGeneration: sessionGeneration(live),
+          expectedCommitId: live.commitId,
+          expectedContentRevision: createConversationContentRevision(live),
+          targetGeneration: sessionGeneration(exactTarget),
+          targetCommitId: exactTarget.commitId
+        });
+        await store.commitConversationSessionContext(exactTarget, {
+          expectedGeneration: sessionGeneration(live),
+          expectedCommitId: live.commitId,
+          expectedContentRevision: createConversationContentRevision(live)
+        });
+        return receipt;
+      }
+    );
+    assert.equal(
+      await store.reconcileSessionContextRecordMutationsAtStartup(),
+      1
+    );
+    assert.equal(
+      (await store.readRecordMutationAuthority(exactReceipt.mutationId)).state,
+      "committed",
+      "crash after Conversation commit but before Journal terminal must roll forward"
+    );
+    assert.equal(
+      await store.reconcileSessionContextRecordMutationsAtStartup(),
+      0,
+      "terminal Journal recovery must be idempotent"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 async function assertConversationStoreRejectsUnsafeSessionPaths(): Promise<void> {

@@ -45,6 +45,9 @@ import type {
   ConversationAuthorityProbe,
   ConversationAuthorityProof
 } from "../harness/conversation/conversation-store";
+import type {
+  RecordMutationRevision
+} from "../harness/lifecycle/record-mutation-contract";
 import { EchoInkHarnessKernel, type HarnessRunWithAdapterInput } from "../harness/kernel/harness-kernel";
 import {
   NativeSessionLeaseManager,
@@ -94,6 +97,7 @@ import {
 } from "../settings/settings";
 import type { CodexNotification, UserInput } from "../types/app-server";
 import {
+  assertNativeRetirementRecordMutationAuthority,
   reconcileNativeExecutionsAtStartup,
   type NativeStartupReconciliationOptions,
   type NativeStartupReconciliationResult
@@ -172,6 +176,13 @@ export interface CommitChatSurfaceTerminalOptions {
   persistConversation?: (
     winner: SettleRunTerminalInput
   ) => Promise<void>;
+}
+
+export interface RecordMutationStartupAuthority {
+  recoverPendingRecordMutations(): Promise<number>;
+  readRecordMutationAuthority(
+    mutationId: string
+  ): Promise<RecordMutationRevision>;
 }
 
 export class EchoInkHarnessService {
@@ -452,7 +463,8 @@ export class EchoInkHarnessService {
     proveConversationAuthority: (
       probe: ConversationAuthorityProbe
     ) => Promise<ConversationAuthorityProof>,
-    options: NativeStartupReconciliationOptions = {}
+    options: NativeStartupReconciliationOptions = {},
+    recordMutationAuthority?: RecordMutationStartupAuthority
   ): Promise<NativeStartupReconciliationResult> {
     if (this.nativeStartupReconciliationFlight) {
       return this.nativeStartupReconciliationFlight;
@@ -461,6 +473,16 @@ export class EchoInkHarnessService {
     this.nativeCleanupAuthorityFailure = null;
     const manager = this.getNativeExecutionManager();
     const reconciliation = reconcileNativeExecutionsAtStartup({
+      ...(recordMutationAuthority
+        ? {
+          recoverPendingRecordMutations: async () =>
+            await recordMutationAuthority.recoverPendingRecordMutations(),
+          readRecordMutationAuthority: async (mutationId: string) =>
+            await recordMutationAuthority.readRecordMutationAuthority(
+              mutationId
+            )
+        }
+        : {}),
       recoverPendingChatLocalCommits: async () =>
         await this.recoverPendingChatNativeSettlementIntents(),
       recoverPendingEditorLocalCommits: async () =>
@@ -534,10 +556,33 @@ export class EchoInkHarnessService {
   }
 
   async promoteNativeExecutionRetirements(
-    retirements: readonly SessionContextRetirement[]
+    retirements: readonly SessionContextRetirement[],
+    readRecordMutationAuthority?: (
+      mutationId: string
+    ) => Promise<RecordMutationRevision>
   ): Promise<void> {
     const manager = this.getNativeExecutionManager();
     const records = this.nativeExecutionRetirementRecords(retirements);
+    for (const record of records) {
+      const mutationId = record.retirement?.recordMutationId;
+      if (!mutationId) continue;
+      if (!readRecordMutationAuthority) {
+        throw new Error(
+          `Native retirement RecordMutation authority reader is unavailable: ${record.id}`
+        );
+      }
+      const mutation = await readRecordMutationAuthority(mutationId);
+      assertNativeRetirementRecordMutationAuthority(
+        record.id,
+        record.retirement!,
+        mutation
+      );
+      if (mutation.state !== "committed") {
+        throw new Error(
+          `Native retirement RecordMutation Journal is not committed: ${record.id}/${mutation.state}`
+        );
+      }
+    }
     for (const expected of records) {
       const promoted = await manager.promoteRetirement(expected.id, expected);
       if (!promoted) throw new Error(`Native binding retirement not found: ${expected.id}`);
@@ -1273,6 +1318,9 @@ export class EchoInkHarnessService {
       committedAt: 0,
       disposedAt: 0,
       retirement: {
+        ...(retirement.recordMutationId
+          ? { recordMutationId: retirement.recordMutationId }
+          : {}),
         targetConversationId: retirement.targetConversationId,
         ...(Object.prototype.hasOwnProperty.call(
           retirement,

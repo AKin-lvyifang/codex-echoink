@@ -10,6 +10,11 @@ import type {
 } from "../../harness/conversation/conversation-store";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { NativeExecutionRecord } from "../../harness/contracts/native-execution";
+import {
+  createPlannedRecordMutationRevision,
+  transitionRecordMutationRevision,
+  type RecordMutationRevision
+} from "../../harness/lifecycle/record-mutation-contract";
 import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
 import { appendPendingMemoryEvent } from "../../harness/memory/v2-store";
 import {
@@ -35,6 +40,7 @@ import {
 } from "../../plugin/native-startup-reconciliation";
 
 export async function runHarnessV2NativeStartupReconciliationTests(): Promise<void> {
+  await assertRecordMutationAuthorityGatesNativePromotion();
   await assertAuthorityProofClassificationPrecedesBoundedCleanup();
   await assertIncompleteAuthorityIsQuarantinedWithoutPromoteOrAbort();
   await assertPartialSourceIdentityFailsClosedWhileLegacyRemainsReadable();
@@ -75,6 +81,90 @@ export async function runHarnessV2NativeStartupReconciliationTests(): Promise<vo
   await assertPendingChatRecoveryLeavesRetirementsForAuthorityGate();
   await assertConcurrentCommittedChatSettlementWinsStartupRecovery();
   await assertProductionStartupWiringUsesConversationAuthority();
+}
+
+async function assertRecordMutationAuthorityGatesNativePromotion(): Promise<void> {
+  const committedRecord = journaledRetirementRecord(
+    "journal-committed",
+    "mutation-journal-committed"
+  );
+  const committedCalls: string[] = [];
+  const committed = await reconcileNativeExecutionsAtStartup(
+    reconciliationHost({
+      records: [committedRecord],
+      calls: committedCalls,
+      recoverMutations: async () => 1,
+      readMutation: async () => contextMutationRevision(
+        committedRecord,
+        "committed"
+      )
+    })
+  );
+  assert.equal(committed.recoveredPendingRecordMutationCount, 1);
+  assert.deepEqual(committedCalls, [
+    "recover-mutations",
+    "list",
+    "mutation:mutation-journal-committed",
+    "prove:target-commit-journal-committed",
+    "promote:journal-committed",
+    `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
+  ]);
+
+  const stagedRecord = journaledRetirementRecord(
+    "journal-staged",
+    "mutation-journal-staged"
+  );
+  const stagedCalls: string[] = [];
+  await assert.rejects(
+    reconcileNativeExecutionsAtStartup(reconciliationHost({
+      records: [stagedRecord],
+      calls: stagedCalls,
+      recoverMutations: async () => 0,
+      readMutation: async () => contextMutationRevision(
+        stagedRecord,
+        "staged"
+      )
+    })),
+    /RecordMutation Journal is nonterminal/
+  );
+  assert.deepEqual(stagedCalls, [
+    "recover-mutations",
+    "list",
+    "mutation:mutation-journal-staged",
+    "quarantine:journal-staged"
+  ]);
+
+  const abortedRecord = journaledRetirementRecord(
+    "journal-aborted",
+    "mutation-journal-aborted"
+  );
+  const abortedCalls: string[] = [];
+  const aborted = await reconcileNativeExecutionsAtStartup(
+    reconciliationHost({
+      records: [abortedRecord],
+      calls: abortedCalls,
+      recoverMutations: async () => 1,
+      readMutation: async () => contextMutationRevision(
+        abortedRecord,
+        "aborted"
+      ),
+      prove: async () => authorityProof(
+        "before",
+        "absent",
+        abortedRecord.retirement!.sourceGeneration!,
+        abortedRecord.retirement!.sourceCommitId!
+      )
+    })
+  );
+  assert.equal(aborted.abortedCount, 1);
+  assert.deepEqual(abortedCalls, [
+    "recover-mutations",
+    "list",
+    "mutation:mutation-journal-aborted",
+    "prove:target-commit-journal-aborted",
+    "abort:journal-aborted",
+    `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
+  ]);
 }
 
 async function assertAuthorityProofClassificationPrecedesBoundedCleanup(): Promise<void> {
@@ -2774,6 +2864,8 @@ async function assertProductionStartupWiringUsesConversationAuthority(): Promise
 function reconciliationHost(input: {
   records: NativeExecutionRecord[];
   calls?: string[];
+  recoverMutations?: () => Promise<number>;
+  readMutation?: (mutationId: string) => Promise<RecordMutationRevision>;
   prove?: (probe: ConversationAuthorityProbe) => Promise<ConversationAuthorityProof>;
   promote?: (record: NativeExecutionRecord) => Promise<void>;
   abort?: (record: NativeExecutionRecord, reason: string) => Promise<void>;
@@ -2782,6 +2874,22 @@ function reconciliationHost(input: {
 }): NativeStartupReconciliationHost {
   const calls = input.calls ?? [];
   return {
+    ...(input.recoverMutations
+      ? {
+        async recoverPendingRecordMutations() {
+          calls.push("recover-mutations");
+          return await input.recoverMutations!();
+        }
+      }
+      : {}),
+    ...(input.readMutation
+      ? {
+        async readRecordMutationAuthority(mutationId: string) {
+          calls.push(`mutation:${mutationId}`);
+          return await input.readMutation!(mutationId);
+        }
+      }
+      : {}),
     async listAwaitingRetirements() {
       calls.push("list");
       return input.records;
@@ -2945,6 +3053,105 @@ function nativeManager(
       }
     })],
     now: () => 100
+  });
+}
+
+function journaledRetirementRecord(
+  id: string,
+  mutationId: string
+): NativeExecutionRecord {
+  const targetGeneration = 3;
+  const record = retirementRecord(
+    id,
+    targetGeneration,
+    `target-commit-${id}`
+  );
+  record.retirement = {
+    ...record.retirement!,
+    recordMutationId: mutationId,
+    sourceGeneration: 2,
+    sourceCommitId: `source-commit-${id}`,
+    sourceContextId: `context-${targetGeneration - 1}`,
+    sourceWorkspaceFingerprint: "sha256:0123456789abcdef"
+  };
+  return record;
+}
+
+function contextMutationRevision(
+  record: NativeExecutionRecord,
+  state: "staged" | "committed" | "aborted"
+): RecordMutationRevision {
+  const retirement = record.retirement!;
+  const planned = createPlannedRecordMutationRevision({
+    mutationId: retirement.recordMutationId!,
+    intent: {
+      operation: "start-new-context",
+      conversationId: retirement.targetConversationId,
+      expectedConversationGeneration: retirement.sourceGeneration!,
+      expectedConversationCommitId: retirement.sourceCommitId!,
+      expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+      targetConversation: {
+        status: "present",
+        generation: retirement.targetGeneration,
+        commitId: retirement.targetCommitId,
+        contentRevision: `sha256:${"2".repeat(64)}`
+      },
+      participants: [{
+        id: "conversation",
+        recordKind: "conversation",
+        action: "retain"
+      }],
+      rootBindings: [],
+      trashPolicy: "not-required"
+    },
+    createdAt: 1
+  });
+  const staged = transitionRecordMutationRevision(planned, {
+    state: "staged",
+    step: {
+      direction: "forward",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "prepared",
+      evidenceDigest: planned.intentDigest
+    },
+    terminal: null,
+    updatedAt: 2
+  });
+  if (state === "staged") return staged;
+  if (state === "committed") {
+    return transitionRecordMutationRevision(staged, {
+      state: "committed",
+      step: null,
+      terminal: {
+        at: 3,
+        code: "committed",
+        message: "test committed"
+      },
+      updatedAt: 3
+    });
+  }
+  const compensating = transitionRecordMutationRevision(staged, {
+    state: "compensating",
+    step: {
+      direction: "compensating",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "compensation-prepared",
+      evidenceDigest: staged.digest
+    },
+    terminal: null,
+    updatedAt: 3
+  });
+  return transitionRecordMutationRevision(compensating, {
+    state: "aborted",
+    step: null,
+    terminal: {
+      at: 4,
+      code: "compensated",
+      message: "test aborted"
+    },
+    updatedAt: 4
   });
 }
 

@@ -11,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  ConversationMutationLane
+  ConversationMutationLane,
+  type ConversationMutationAuthority
 } from "../../harness/conversation/conversation-mutation-lane";
 import {
   coordinateRecordMutationTrashRetirement
@@ -387,7 +388,7 @@ interface RecoveryFixture {
   trashRootBinding: RecordRootBindingRef;
   withConversationMutation: <T>(
     conversationId: string,
-    action: () => Promise<T>
+    action: (authority: ConversationMutationAuthority) => Promise<T>
   ) => Promise<T>;
   now: () => number;
 }
@@ -435,7 +436,7 @@ async function withFixture(
       trashRootBinding: recordRootBindingRef(trash.binding),
       withConversationMutation: async <T>(
         conversationId: string,
-        mutation: () => Promise<T>
+        mutation: (authority: ConversationMutationAuthority) => Promise<T>
       ): Promise<T> => await conversationLane.withConversationMutation(
         conversationId,
         mutation

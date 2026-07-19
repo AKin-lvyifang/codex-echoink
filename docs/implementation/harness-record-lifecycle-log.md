@@ -308,3 +308,30 @@
   retention、Raw GC preview、migration validator 和 V2→V1 exporter 尚未接线；
   产品删除 guard 保持关闭，真实 Vault 未修改。
 - 本批随后提交为 `c90ebeb`。
+
+## 2026-07-20：非破坏性 Live Journal 与 Native Promotion Authority
+
+- `ConversationMutationLane` 现在向回调签发运行时不可伪造的 opaque authority。
+  authority 绑定单个 Conversation，回调结束立即失效；伪造、跨 Conversation
+  使用或过期复用都会失败。Production recovery runner 增加“已持 authority”
+  入口，Context Rotation 可在同一 lane 内收口 Journal，不会重复加锁死锁。
+- `start-new-context` 与 `agent-cache-reset` 的产品顺序改为：构造并校验候选、
+  创建并 stage RecordMutation Journal、登记 Native retirement、提交
+  Conversation、在同一 authority 下读回并收口 Journal、最后 promotion。
+  Journal stage 或终态失败时不会触发 provider cleanup。
+- 每条新 Native binding retirement 保存 `recordMutationId`，Native Store
+  validator、retirement identity comparison、live promotion 与启动恢复都把它
+  纳入 authority。Live promotion 会先完整验证整个批次的 Journal 绑定和 committed
+  终态；缺 reader、非终态或错绑 Journal 在第一个 Native transition 前失败。
+- 启动顺序先恢复非终态 RecordMutation Journal，再恢复各 Surface local commit，
+  最后处理 Native retirement。Journal committed 只允许 exact target promotion；
+  Journal aborted 只允许 exact source/before-target abort；非终态、损坏、未知或
+  错绑证据会 quarantine 当前 retirement 并关闭全局 cleanup gate。
+- 两类非破坏操作的 candidate 现在只允许约定的缓存/可见性变化；消息或其他
+  durable Conversation 记录改写会在 Journal 和 Native effect 前失败。
+- 新增崩溃与反例覆盖：Journal stage 后但 Conversation commit 前、Conversation
+  commit 后但 Journal terminal 前、Journal terminal 后但 Native promotion 前、
+  forged/expired authority、Journal 非终态、Journal aborted、live promotion 缺少
+  committed authority，以及重启恢复幂等。
+- 本批仍没有打开清空/删除产品 guard，没有切换 legacy reader/writer，也没有对
+  真实 Vault 执行 migration、retention、Raw GC、历史删除或 Native 批量 cleanup。

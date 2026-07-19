@@ -1304,6 +1304,7 @@ function sameRetirementIdentity(left: NativeExecutionRecord, right: NativeExecut
     && left.id === right.id
     && left.sessionId === right.sessionId
     && sameNativeExecutionRefIdentity(left.native, right.native)
+    && leftRetirement.recordMutationId === rightRetirement.recordMutationId
     && leftRetirement.targetConversationId === rightRetirement.targetConversationId
     && leftRetirement.sourceGeneration === rightRetirement.sourceGeneration
     && leftRetirement.sourceCommitId === rightRetirement.sourceCommitId
