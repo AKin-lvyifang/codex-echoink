@@ -34,6 +34,9 @@ export interface ConversationStoreOptions {
   afterPristineDirectoryCommitBeforeIndex?: (
     sessionId: string
   ) => void | Promise<void>;
+  afterDeletionTombstoneBeforeIndex?: (
+    sessionId: string
+  ) => void | Promise<void>;
 }
 
 export interface ConversationSessionSummary {
@@ -86,12 +89,43 @@ export interface ConversationStoreStartupReconciliationResult {
   sessions: StoredSession[];
   repairedIndex: boolean;
   recoveredIndexSessionIds: string[];
+  deletedSessionIds: string[];
 }
 
 export interface CommitConversationContextOptions {
   expectedGeneration: number;
   expectedCommitId?: string;
   expectedContentRevision: string;
+}
+
+export interface ConversationRecordMutationSource {
+  sourceRelativePath: string;
+}
+
+export interface PlanConversationRecordMutationSourcesInput {
+  operation: "clear-conversation-records" | "delete-conversation";
+  conversationId: string;
+  expectedGeneration: number;
+  expectedCommitId: string;
+  expectedContentRevision: string;
+}
+
+export interface CommitConversationRecordClearOptions
+extends CommitConversationContextOptions {
+  sourceRelativePaths: readonly string[];
+}
+
+export interface ConversationDeletionTombstoneV1 {
+  schemaVersion: 1;
+  kind: "conversation-deletion-tombstone";
+  conversationId: string;
+  mutationId: string;
+  tombstoneId: string;
+  sourceGeneration: number;
+  sourceCommitId: string;
+  sourceContentRevision: string;
+  deletedAt: number;
+  digest: string;
 }
 
 export interface ConversationContextCommitReceipt {
@@ -233,53 +267,170 @@ export class FileConversationStore {
         );
       }
 
-      const targetGeneration = sessionGeneration(session);
-      const targetCommitId = session.commitId?.trim();
-      if (!targetCommitId) {
-        throw new ConversationContextConflictError("Context commit requires a commitId");
-      }
-      if (
-        targetGeneration < currentGeneration
-        || targetGeneration > currentGeneration + 1
-      ) {
-        throw new ConversationContextConflictError(
-          `Context generation must stay at ${currentGeneration} or advance to ${currentGeneration + 1}`
-        );
-      }
-      if (targetGeneration === currentGeneration) {
-        const preservesContextIdentity = normalizedOptionalString(session.contextId)
-          === normalizedOptionalString(current.contextId)
-          && normalizedOptionalString(session.contextStartsAfterMessageId)
-            === normalizedOptionalString(current.contextStartsAfterMessageId)
-          && normalizedOptionalString(session.workspaceFingerprint)
-            === normalizedOptionalString(current.workspaceFingerprint)
-          && session.cwd === current.cwd;
-        if (!preservesContextIdentity) {
-          throw new ConversationContextConflictError(
-            "Same-generation context commit cannot change context or workspace identity"
-          );
-        }
-      } else if (
-        !normalizedOptionalString(session.contextId)
-        || normalizedOptionalString(session.contextId)
-          === normalizedOptionalString(current.contextId)
-      ) {
-        throw new ConversationContextConflictError(
-          "Advanced context generation requires a new contextId"
-        );
-      }
-      if (targetCommitId === currentCommitId) {
-        throw new ConversationContextConflictError("Context commitId must be unique");
-      }
-      if (metadataReferencesCommitId(currentMetadata, targetCommitId)) {
-        throw new ConversationContextConflictError(
-          "Context commitId reuses an active or previous payload generation"
-        );
-      }
+      assertContextCommitCandidate(session, current, currentMetadata);
 
       await this.upsertSessionUnlocked(session, { strictIndex: true });
       return contextCommitReceipt(session);
     });
+  }
+
+  async planConversationRecordMutationSources(
+    input: PlanConversationRecordMutationSourcesInput
+  ): Promise<ConversationRecordMutationSource[]> {
+    this.sessionDir(input.conversationId);
+    return await this.withSessionCommit(input.conversationId, async () => {
+      const metadata = await this.readSessionMetadata(input.conversationId);
+      const current = await this.readSession(input.conversationId);
+      if (!metadata || !current) {
+        throw new ConversationContextConflictError(
+          `Conversation ${input.conversationId} is missing`
+        );
+      }
+      assertExpectedConversation(
+        current,
+        input.expectedGeneration,
+        input.expectedCommitId,
+        input.expectedContentRevision
+      );
+      const sourceRelativePaths = input.operation === "delete-conversation"
+        ? [conversationSessionRelativePath(input.conversationId)]
+        : await this.discoverConversationPayloadSourceRelativePaths(
+          input.conversationId,
+          metadata
+        );
+      await this.assertRecordMutationSources(sourceRelativePaths);
+      return sourceRelativePaths.map((sourceRelativePath) => ({
+        sourceRelativePath
+      }));
+    });
+  }
+
+  async commitConversationRecordClear(
+    session: StoredSession,
+    options: CommitConversationRecordClearOptions
+  ): Promise<ConversationContextCommitReceipt> {
+    this.sessionDir(session.id);
+    return await this.withSessionCommit(session.id, async () => {
+      const metadata = await this.readSessionMetadata(session.id);
+      const current = await this.readSession(session.id);
+      if (!metadata || !current) {
+        throw new ConversationContextConflictError(
+          `Conversation ${session.id} is missing`
+        );
+      }
+      assertExpectedConversation(
+        current,
+        options.expectedGeneration,
+        options.expectedCommitId,
+        options.expectedContentRevision
+      );
+      const currentSources = await this.discoverConversationPayloadSourceRelativePaths(
+        session.id,
+        metadata
+      );
+      const plannedSources = normalizeRecordMutationSourceRelativePaths(
+        options.sourceRelativePaths
+      );
+      if (!isDeepStrictEqual(currentSources, plannedSources)) {
+        throw new ConversationContextConflictError(
+          `Conversation ${session.id} source plan changed before record clear`
+        );
+      }
+      await this.assertRecordMutationSources(currentSources);
+      assertConversationRecordClearCandidate(session, current, metadata);
+      await this.upsertSessionUnlocked(session, {
+        strictIndex: true,
+        recordMutationPayloadReplacement: true
+      });
+      return contextCommitReceipt(session);
+    });
+  }
+
+  async commitConversationDeletionTombstone(
+    tombstoneInput: ConversationDeletionTombstoneV1,
+    options: CommitConversationContextOptions
+  ): Promise<ConversationDeletionTombstoneV1> {
+    const tombstone = parseConversationDeletionTombstone(tombstoneInput);
+    this.sessionDir(tombstone.conversationId);
+    if (
+      tombstone.sourceGeneration !== options.expectedGeneration
+      || tombstone.sourceCommitId
+        !== normalizedOptionalString(options.expectedCommitId)
+      || tombstone.sourceContentRevision !== options.expectedContentRevision
+    ) {
+      throw new ConversationContextConflictError(
+        `Conversation ${tombstone.conversationId} tombstone source authority changed`
+      );
+    }
+    return await this.withSessionCommit(
+      tombstone.conversationId,
+      async () => await this.withIndexCommit(async () => {
+        const existing = await this.readConversationDeletionTombstone(
+          tombstone.conversationId
+        );
+        if (existing) {
+          if (existing.digest !== tombstone.digest) {
+            throw new ConversationContextConflictError(
+              `Conversation ${tombstone.conversationId} deletion tombstone conflicts`
+            );
+          }
+          await this.removeConversationFromIndexProjection(
+            tombstone.conversationId
+          );
+          return existing;
+        }
+        const current = await this.readSession(tombstone.conversationId);
+        if (!current) {
+          throw new ConversationContextConflictError(
+            `Conversation ${tombstone.conversationId} is missing`
+          );
+        }
+        assertExpectedConversation(
+          current,
+          options.expectedGeneration,
+          options.expectedCommitId,
+          options.expectedContentRevision
+        );
+        await this.writeJsonFile(
+          this.deletionTombstonePath(tombstone.conversationId),
+          tombstone
+        );
+        const readback = await this.readConversationDeletionTombstone(
+          tombstone.conversationId
+        );
+        if (!readback || readback.digest !== tombstone.digest) {
+          throw new ConversationContextConflictError(
+            `Conversation ${tombstone.conversationId} deletion tombstone readback failed`
+          );
+        }
+        await this.options.afterDeletionTombstoneBeforeIndex?.(
+          tombstone.conversationId
+        );
+        await this.removeConversationFromIndexProjection(
+          tombstone.conversationId
+        );
+        return readback;
+      })
+    );
+  }
+
+  async readConversationDeletionTombstone(
+    conversationId: string
+  ): Promise<ConversationDeletionTombstoneV1 | null> {
+    const text = await this.readTextFile(
+      this.deletionTombstonePath(conversationId),
+      { allowMissing: true }
+    );
+    if (!text?.trim()) return null;
+    try {
+      return parseConversationDeletionTombstone(
+        JSON.parse(text) as unknown
+      );
+    } catch (error) {
+      throw new ConversationContextConflictError(
+        `Conversation ${conversationId} deletion tombstone is corrupt: ${errorMessage(error)}`
+      );
+    }
   }
 
   async proveSessionContextAuthority(
@@ -387,7 +538,11 @@ export class FileConversationStore {
 
   private async upsertSessionUnlocked(
     session: StoredSession,
-    options: { strictIndex?: boolean; createPristine?: boolean } = {}
+    options: {
+      strictIndex?: boolean;
+      createPristine?: boolean;
+      recordMutationPayloadReplacement?: boolean;
+    } = {}
   ): Promise<void> {
     await this.withIndexCommit(async () => {
       await this.upsertSessionWithIndexLock(session, options);
@@ -397,6 +552,11 @@ export class FileConversationStore {
   private async createPristineSessionWithIndexLock(
     session: StoredSession
   ): Promise<void> {
+    if (await this.readConversationDeletionTombstone(session.id)) {
+      throw new ConversationContextConflictError(
+        `Conversation ${session.id} has a durable deletion tombstone`
+      );
+    }
     const candidate = JSON.parse(JSON.stringify(session)) as StoredSession;
     const candidateMessages = candidate.messages.map(validateChatMessage);
     const candidateSnapshots: SessionContextSnapshot[] = [];
@@ -507,8 +667,17 @@ export class FileConversationStore {
 
   private async upsertSessionWithIndexLock(
     session: StoredSession,
-    options: { strictIndex?: boolean; createPristine?: boolean }
+    options: {
+      strictIndex?: boolean;
+      createPristine?: boolean;
+      recordMutationPayloadReplacement?: boolean;
+    }
   ): Promise<void> {
+    if (await this.readConversationDeletionTombstone(session.id)) {
+      throw new ConversationContextConflictError(
+        `Conversation ${session.id} has a durable deletion tombstone`
+      );
+    }
     const previousMetadata = await this.readSessionMetadata(session.id);
     const sessionDirectoryExists = await this.sessionDirectoryExists(session.id);
     if (options.createPristine && (previousMetadata || sessionDirectoryExists)) {
@@ -574,10 +743,9 @@ export class FileConversationStore {
         validatedSnapshots
       )
       : undefined;
-    const previousPayloadPointer = resolvePreviousPayload(
-      payloadKey,
-      previousMetadata
-    );
+    const previousPayloadPointer = options.recordMutationPayloadReplacement
+      ? {}
+      : resolvePreviousPayload(payloadKey, previousMetadata);
     const metadata = metadataFromSession(
       session,
       payloadKey,
@@ -626,20 +794,25 @@ export class FileConversationStore {
       // The authoritative marker is already durable. Diagnostic observers can
       // never turn this committed state into an apparent failure.
     }
-    try {
-      await this.gcContextPayloads(
-        session.id,
-        payloadKey,
-        previousPayloadPointer.previousPayloadKey
-      );
-    } catch {
-      // Context payload retention is non-authoritative. A failed cleanup must
-      // not reverse the committed marker and will be retried by the next save.
+    if (!options.recordMutationPayloadReplacement) {
+      try {
+        await this.gcContextPayloads(
+          session.id,
+          payloadKey,
+          previousPayloadPointer.previousPayloadKey
+        );
+      } catch {
+        // Context payload retention is non-authoritative. A failed cleanup must
+        // not reverse the committed marker and will be retried by the next save.
+      }
     }
   }
 
   async readSession(sessionId: string): Promise<StoredSession | null> {
     this.sessionDir(sessionId);
+    if (await this.readConversationDeletionTombstone(sessionId)) {
+      return null;
+    }
     const metadata = await this.readSessionMetadata(sessionId);
     const index = await this.readIndexForMutation(sessionId, metadata === null);
     if (!metadata) {
@@ -712,12 +885,22 @@ export class FileConversationStore {
       const currentIndex = hasDurableIndex
         ? parseConversationIndexStrict(indexText)
         : emptyConversationIndex();
-      const committedSessions = await this.readCommittedSessionsFromDirectories();
+      const deletionTombstones =
+        await this.readConversationDeletionTombstones();
+      const deletedSessionIds = [...deletionTombstones.keys()].sort(
+        compareText
+      );
+      const committedSessions = await this.readCommittedSessionsFromDirectories(
+        new Set(deletedSessionIds)
+      );
       const committedById = new Map(
         committedSessions.map((session) => [session.id, session])
       );
       const missingCommitted = currentIndex.sessions.find(
-        (summary) => !committedById.has(summary.sessionId)
+        (summary) => (
+          !committedById.has(summary.sessionId)
+          && !deletionTombstones.has(summary.sessionId)
+        )
       );
       if (missingCommitted) {
         throw new ConversationContextConflictError(
@@ -752,7 +935,8 @@ export class FileConversationStore {
           (summary) => committedById.get(summary.sessionId)!
         ),
         repairedIndex,
-        recoveredIndexSessionIds
+        recoveredIndexSessionIds,
+        deletedSessionIds
       };
     });
   }
@@ -918,7 +1102,9 @@ export class FileConversationStore {
     return validateConversationSessionMetadata(parsed, sessionId);
   }
 
-  private async readCommittedSessionsFromDirectories(): Promise<StoredSession[]> {
+  private async readCommittedSessionsFromDirectories(
+    deletedSessionIds: ReadonlySet<string> = new Set()
+  ): Promise<StoredSession[]> {
     const sessionsRoot = path.join(this.options.rootPath, "sessions");
     const ready = await this.assertDirectoryBoundary(sessionsRoot, {
       allowMissing: true
@@ -935,6 +1121,7 @@ export class FileConversationStore {
         );
       }
       const sessionId = safeSessionPathPart(entry.name);
+      if (deletedSessionIds.has(sessionId)) continue;
       await this.assertDirectoryBoundary(this.sessionDir(sessionId));
       const metadata = await this.readSessionMetadata(sessionId);
       if (!metadata) {
@@ -976,8 +1163,162 @@ export class FileConversationStore {
     }
   }
 
+  private async discoverConversationPayloadSourceRelativePaths(
+    sessionId: string,
+    metadata: ConversationSessionMetadata
+  ): Promise<string[]> {
+    const sessionPath = conversationSessionRelativePath(sessionId);
+    const sources: string[] = [];
+    const payloadRoot = path.join(
+      this.sessionDir(sessionId),
+      "context-payloads"
+    );
+    const payloadRootReady = await this.assertDirectoryBoundary(payloadRoot, {
+      allowMissing: true
+    });
+    if (payloadRootReady) {
+      const entries = await readdir(payloadRoot, { withFileTypes: true });
+      for (const entry of entries.sort((left, right) =>
+        left.name.localeCompare(right.name)
+      )) {
+        if (
+          !entry.isDirectory()
+          || entry.isSymbolicLink()
+          || !isPayloadKey(entry.name)
+        ) {
+          throw new ConversationContextConflictError(
+            `Conversation ${sessionId} has an unsafe payload entry: ${entry.name}`
+          );
+        }
+        sources.push(`${sessionPath}/context-payloads/${entry.name}`);
+      }
+    }
+    for (const legacyName of ["messages.jsonl", "snapshots.jsonl"]) {
+      const target = path.join(this.sessionDir(sessionId), legacyName);
+      if (await this.assertFileBoundary(target, { allowMissing: true })) {
+        sources.push(`${sessionPath}/${legacyName}`);
+      }
+    }
+    const activePayloadKey = normalizePayloadKey(metadata.payloadKey);
+    if (
+      activePayloadKey
+      && !sources.includes(
+        `${sessionPath}/context-payloads/${activePayloadKey}`
+      )
+    ) {
+      throw new ConversationContextConflictError(
+        `Conversation ${sessionId} active payload is missing from its source plan`
+      );
+    }
+    return normalizeRecordMutationSourceRelativePaths(sources);
+  }
+
+  private async assertRecordMutationSources(
+    sourceRelativePaths: readonly string[]
+  ): Promise<void> {
+    const normalized = normalizeRecordMutationSourceRelativePaths(
+      sourceRelativePaths
+    );
+    if (!normalized.length) {
+      throw new ConversationContextConflictError(
+        "Conversation record mutation has no durable source payload"
+      );
+    }
+    const root = path.resolve(this.options.rootPath);
+    for (const relativePath of normalized) {
+      const target = path.resolve(
+        root,
+        ...relativePath.split("/")
+      );
+      if (!isPathWithin(root, target) || target === root) {
+        throw new ConversationContextConflictError(
+          `Conversation record mutation source escapes its root: ${relativePath}`
+        );
+      }
+      const stats = await lstat(target);
+      if (stats.isSymbolicLink()) {
+        throw new ConversationContextConflictError(
+          `Conversation record mutation source is a symlink: ${relativePath}`
+        );
+      }
+      if (stats.isDirectory()) {
+        await this.assertDirectoryBoundary(target);
+      } else if (stats.isFile()) {
+        await this.assertFileBoundary(target);
+      } else {
+        throw new ConversationContextConflictError(
+          `Conversation record mutation source is not a regular entry: ${relativePath}`
+        );
+      }
+    }
+  }
+
+  private async removeConversationFromIndexProjection(
+    conversationId: string
+  ): Promise<void> {
+    const index = await this.readIndex();
+    const sessions = index.sessions.filter(
+      (summary) => summary.sessionId !== conversationId
+    );
+    if (sessions.length === index.sessions.length) return;
+    await this.writeJsonFile(this.indexPath(), {
+      version: 1,
+      updatedAt: this.now(),
+      sessions
+    } satisfies ConversationStoreIndex);
+  }
+
+  private async readConversationDeletionTombstones(): Promise<
+    Map<string, ConversationDeletionTombstoneV1>
+  > {
+    const root = this.deletionTombstonesRoot();
+    const ready = await this.assertDirectoryBoundary(root, {
+      allowMissing: true
+    });
+    if (!ready) return new Map();
+    const entries = await readdir(root, { withFileTypes: true });
+    const tombstones = new Map<string, ConversationDeletionTombstoneV1>();
+    for (const entry of entries.sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )) {
+      if (
+        !entry.isFile()
+        || entry.isSymbolicLink()
+        || !entry.name.endsWith(".json")
+      ) {
+        throw new ConversationContextConflictError(
+          `Conversation deletion tombstone entry is unsafe: ${entry.name}`
+        );
+      }
+      const conversationId = safeSessionPathPart(
+        entry.name.slice(0, -".json".length)
+      );
+      const tombstone = await this.readConversationDeletionTombstone(
+        conversationId
+      );
+      if (!tombstone || tombstone.conversationId !== conversationId) {
+        throw new ConversationContextConflictError(
+          `Conversation deletion tombstone identity mismatch: ${entry.name}`
+        );
+      }
+      tombstones.set(conversationId, tombstone);
+    }
+    return tombstones;
+  }
+
   private indexPath(): string {
     return path.join(this.options.rootPath, "index.json");
+  }
+
+  private deletionTombstonesRoot(): string {
+    return path.join(this.options.rootPath, "deletions");
+  }
+
+  private deletionTombstonePath(conversationId: string): string {
+    return path.join(
+      this.deletionTombstonesRoot(),
+      `${safeSessionPathPart(conversationId)}.json`
+    );
   }
 
   private async assertDirectoryBoundary(
@@ -1403,6 +1744,281 @@ function assertOrdinaryUpsertContextIdentity(
       "Conversation context identity changed outside a CAS context commit"
     );
   }
+}
+
+function assertExpectedConversation(
+  current: StoredSession,
+  expectedGeneration: number,
+  expectedCommitId: string | undefined,
+  expectedContentRevision: string
+): void {
+  if (
+    sessionGeneration(current) !== expectedGeneration
+    || normalizedOptionalString(current.commitId)
+      !== normalizedOptionalString(expectedCommitId)
+    || createConversationContentRevision(current) !== expectedContentRevision
+  ) {
+    throw new ConversationContextConflictError(
+      `Conversation ${current.id} changed before record mutation`
+    );
+  }
+}
+
+function assertContextCommitCandidate(
+  session: StoredSession,
+  current: StoredSession,
+  currentMetadata: ConversationSessionMetadata
+): void {
+  const currentGeneration = sessionGeneration(current);
+  const currentCommitId = normalizedOptionalString(current.commitId);
+  const targetGeneration = sessionGeneration(session);
+  const targetCommitId = normalizedOptionalString(session.commitId);
+  if (!targetCommitId) {
+    throw new ConversationContextConflictError(
+      "Context commit requires a commitId"
+    );
+  }
+  if (
+    targetGeneration < currentGeneration
+    || targetGeneration > currentGeneration + 1
+  ) {
+    throw new ConversationContextConflictError(
+      `Context generation must stay at ${currentGeneration} or advance to ${currentGeneration + 1}`
+    );
+  }
+  if (targetGeneration === currentGeneration) {
+    const preservesContextIdentity = normalizedOptionalString(session.contextId)
+      === normalizedOptionalString(current.contextId)
+      && normalizedOptionalString(session.contextStartsAfterMessageId)
+        === normalizedOptionalString(current.contextStartsAfterMessageId)
+      && normalizedOptionalString(session.workspaceFingerprint)
+        === normalizedOptionalString(current.workspaceFingerprint)
+      && session.cwd === current.cwd;
+    if (!preservesContextIdentity) {
+      throw new ConversationContextConflictError(
+        "Same-generation context commit cannot change context or workspace identity"
+      );
+    }
+  } else if (
+    !normalizedOptionalString(session.contextId)
+    || normalizedOptionalString(session.contextId)
+      === normalizedOptionalString(current.contextId)
+  ) {
+    throw new ConversationContextConflictError(
+      "Advanced context generation requires a new contextId"
+    );
+  }
+  if (targetCommitId === currentCommitId) {
+    throw new ConversationContextConflictError(
+      "Context commitId must be unique"
+    );
+  }
+  if (metadataReferencesCommitId(currentMetadata, targetCommitId)) {
+    throw new ConversationContextConflictError(
+      "Context commitId reuses an active or previous payload generation"
+    );
+  }
+}
+
+function assertConversationRecordClearCandidate(
+  session: StoredSession,
+  current: StoredSession,
+  currentMetadata: ConversationSessionMetadata
+): void {
+  assertContextCommitCandidate(session, current, currentMetadata);
+  if (
+    sessionGeneration(session) !== sessionGeneration(current) + 1
+    || session.id !== current.id
+    || session.title !== current.title
+    || session.kind !== current.kind
+    || session.cwd !== current.cwd
+    || normalizedOptionalString(session.workspaceFingerprint)
+      !== normalizedOptionalString(current.workspaceFingerprint)
+    || session.createdAt !== current.createdAt
+    || session.messages.length !== 0
+    || session.backendBindings !== undefined
+    || session.threadId !== undefined
+    || session.contextSnapshot !== undefined
+    || session.rollingSummary !== undefined
+    || session.messagesHiddenBefore !== undefined
+    || session.historyActiveDate !== undefined
+    || session.tokenUsage !== undefined
+  ) {
+    throw new ConversationContextConflictError(
+      `Conversation ${session.id} record-clear target violates the durable shell contract`
+    );
+  }
+}
+
+function conversationSessionRelativePath(conversationId: string): string {
+  return `sessions/${safeSessionPathPart(conversationId)}`;
+}
+
+function normalizeRecordMutationSourceRelativePaths(
+  sourceRelativePaths: readonly string[]
+): string[] {
+  if (!Array.isArray(sourceRelativePaths)) {
+    throw new ConversationContextConflictError(
+      "Conversation record mutation source plan is not an array"
+    );
+  }
+  const normalized = sourceRelativePaths.map((value) => {
+    if (
+      typeof value !== "string"
+      || !value
+      || value !== value.trim()
+      || value.includes("\\")
+      || path.posix.isAbsolute(value)
+      || value.split("/").some((segment) => (
+        !segment || segment === "." || segment === ".."
+      ))
+    ) {
+      throw new ConversationContextConflictError(
+        `Conversation record mutation source path is invalid: ${String(value)}`
+      );
+    }
+    return value;
+  }).sort(compareText);
+  if (new Set(normalized).size !== normalized.length) {
+    throw new ConversationContextConflictError(
+      "Conversation record mutation source plan contains duplicates"
+    );
+  }
+  return normalized;
+}
+
+export function createConversationDeletionTombstone(input: {
+  conversationId: string;
+  mutationId: string;
+  tombstoneId: string;
+  sourceGeneration: number;
+  sourceCommitId: string;
+  sourceContentRevision: string;
+  deletedAt: number;
+}): ConversationDeletionTombstoneV1 {
+  const draft = {
+    schemaVersion: 1 as const,
+    kind: "conversation-deletion-tombstone" as const,
+    conversationId: safeSessionPathPart(input.conversationId),
+    mutationId: requiredLifecycleId(input.mutationId, "mutationId"),
+    tombstoneId: requiredLifecycleId(input.tombstoneId, "tombstoneId"),
+    sourceGeneration: requiredSafeInteger(
+      input.sourceGeneration,
+      "sourceGeneration"
+    ),
+    sourceCommitId: requiredLifecycleId(
+      input.sourceCommitId,
+      "sourceCommitId"
+    ),
+    sourceContentRevision: requiredSha256(
+      input.sourceContentRevision,
+      "sourceContentRevision"
+    ),
+    deletedAt: requiredSafeInteger(input.deletedAt, "deletedAt")
+  };
+  return parseConversationDeletionTombstone({
+    ...draft,
+    digest: `sha256:${sha256StableJson(draft)}`
+  });
+}
+
+export function parseConversationDeletionTombstone(
+  value: unknown
+): ConversationDeletionTombstoneV1 {
+  if (!isRecord(value)) {
+    throw new Error("Conversation deletion tombstone is not an object");
+  }
+  const keys = Object.keys(value).sort(compareText);
+  const expectedKeys = [
+    "conversationId",
+    "deletedAt",
+    "digest",
+    "kind",
+    "mutationId",
+    "schemaVersion",
+    "sourceCommitId",
+    "sourceContentRevision",
+    "sourceGeneration",
+    "tombstoneId"
+  ].sort(compareText);
+  if (!isDeepStrictEqual(keys, expectedKeys)) {
+    throw new Error("Conversation deletion tombstone fields are invalid");
+  }
+  if (
+    value.schemaVersion !== 1
+    || value.kind !== "conversation-deletion-tombstone"
+  ) {
+    throw new Error("Conversation deletion tombstone schema is unsupported");
+  }
+  const draft = {
+    schemaVersion: 1 as const,
+    kind: "conversation-deletion-tombstone" as const,
+    conversationId: safeSessionPathPart(
+      requiredLifecycleId(value.conversationId, "conversationId")
+    ),
+    mutationId: requiredLifecycleId(value.mutationId, "mutationId"),
+    tombstoneId: requiredLifecycleId(value.tombstoneId, "tombstoneId"),
+    sourceGeneration: requiredSafeInteger(
+      value.sourceGeneration,
+      "sourceGeneration"
+    ),
+    sourceCommitId: requiredLifecycleId(
+      value.sourceCommitId,
+      "sourceCommitId"
+    ),
+    sourceContentRevision: requiredSha256(
+      value.sourceContentRevision,
+      "sourceContentRevision"
+    ),
+    deletedAt: requiredSafeInteger(value.deletedAt, "deletedAt")
+  };
+  const digest = requiredSha256(value.digest, "digest");
+  if (digest !== `sha256:${sha256StableJson(draft)}`) {
+    throw new Error("Conversation deletion tombstone digest mismatch");
+  }
+  return { ...draft, digest };
+}
+
+function requiredLifecycleId(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || !value.trim()
+    || value !== value.trim()
+    || value.length > 320
+    || containsUnsafeControlCharacter(value)
+  ) {
+    throw new Error(`Conversation deletion tombstone ${label} is invalid`);
+  }
+  return value;
+}
+
+function containsUnsafeControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function requiredSha256(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || !/^sha256:[a-f0-9]{64}$/.test(value)
+  ) {
+    throw new Error(`Conversation deletion tombstone ${label} is invalid`);
+  }
+  return value;
+}
+
+function requiredSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`Conversation deletion tombstone ${label} is invalid`);
+  }
+  return value as number;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function createLegacyPayloadKey(commitId: string): string {

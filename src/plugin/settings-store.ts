@@ -42,6 +42,7 @@ import {
   runRecordMutationRecoveryUnderAuthority
 } from "../harness/lifecycle/record-mutation-recovery-runner";
 import type {
+  RecordMutationIntent,
   RecordMutationRevision
 } from "../harness/lifecycle/record-mutation-contract";
 import { sessionGeneration, workspaceFingerprint } from "../harness/kernel/session-service";
@@ -354,7 +355,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       withConversationMutation: async (conversationId, action) =>
         await this.withConversationMutation(conversationId, action),
       inspectConversation: async (intent) =>
-        await this.inspectRecordMutationConversation(intent.conversationId),
+        await this.inspectRecordMutationConversation(intent),
       trashParticipants: [],
       sourceDeletedParticipants: []
     }, authority);
@@ -425,7 +426,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
         withConversationMutation: async (conversationId, action) =>
           await this.withConversationMutation(conversationId, action),
         inspectConversation: async (intent) =>
-          await this.inspectRecordMutationConversation(intent.conversationId),
+          await this.inspectRecordMutationConversation(intent),
         trashParticipants: [],
         sourceDeletedParticipants: []
       });
@@ -1013,7 +1014,10 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     const storedById = new Map(
       reconciliation.sessions.map((session) => [session.id, session])
     );
+    const deletedIds = new Set(reconciliation.deletedSessionIds);
     const liveIds = new Set<string>();
+    const retainedLiveSessions: StoredSession[] = [];
+    let recoveredShells = 0;
     for (const session of this.plugin.settings.sessions) {
       if (liveIds.has(session.id)) {
         throw new Error(
@@ -1021,6 +1025,10 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
         );
       }
       liveIds.add(session.id);
+      if (deletedIds.has(session.id)) {
+        recoveredShells += 1;
+        continue;
+      }
       const stored = storedById.get(session.id);
       if (!stored) {
         throw new Error(
@@ -1028,9 +1036,10 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
         );
       }
       applyStoredConversation(session, stored);
+      retainedLiveSessions.push(session);
     }
+    this.plugin.settings.sessions = retainedLiveSessions;
 
-    let recoveredShells = 0;
     for (const stored of reconciliation.sessions) {
       if (liveIds.has(stored.id)) continue;
       const shell = cloneStoredSession(stored);
@@ -1086,9 +1095,20 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   private async inspectRecordMutationConversation(
-    conversationId: string
+    intent: RecordMutationIntent
   ): Promise<RecordMutationConversationObservation> {
-    const stored = await this.getConversationStore().readSession(conversationId);
+    const tombstone = await this.getConversationStore()
+      .readConversationDeletionTombstone(intent.conversationId);
+    if (tombstone) {
+      return {
+        status: "deleted",
+        tombstoneId: tombstone.tombstoneId,
+        digest: tombstone.digest
+      };
+    }
+    const stored = await this.getConversationStore().readSession(
+      intent.conversationId
+    );
     if (!stored) return { status: "missing" };
     return {
       status: "present",

@@ -51,6 +51,22 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
 非终态、损坏、错绑或 reader 缺失会关闭全局 cleanup gate。两类操作同时禁止借
 `mutate` 改写 durable Conversation 记录。
 
+破坏性操作的 Conversation 正式 reader/writer 第一批已经实现，但产品 guard 仍然
+关闭：
+
+- `clear-conversation-records` 先冻结全部旧 payload source（包括 active、
+  previous 与恢复 orphan），再提交新的空 payload/context；旧 payload 不走普通
+  GC，也不写入 `previousPayloadKey`，必须留给后续 Journal/Trash participant 收口。
+- `delete-conversation` 以独立 deletion tombstone 作为删除 target 的 durable
+  commit marker。tombstone 提交后，Conversation reader 不再返回旧会话，但旧
+  session 目录继续保留，等待 Journal 在完整参与者证明后退休。
+- 启动 reconciliation 会以 tombstone 排除已删除 Conversation，并修复 tombstone
+  已提交但 index projection 尚未更新的崩溃窗口；`data.json` 的旧 shell 同步移除，
+  不会把已删除 Conversation 复活。
+- 这一批还没有建立可跨重启重建的完整 participant execution plan，也没有接入
+  Root Registry/Trash、Run/Raw、Memory/Artifact 选择和 Native retirement，因此
+  不能把 reader/writer checkpoint 写成安全删除已可用。
+
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
 Native 批量 cleanup、retention 清理或 Vault 迁移。Phase 2 必须继续建立数据治理、
@@ -93,7 +109,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`；两类非破坏操作 live Journal 开发中 | 接入破坏性清空/删除 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`；破坏性 Conversation reader/writer 开发中 | 完整 participant plan 与清空/删除生产接线 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -183,8 +199,9 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 收口两类非破坏操作 live Journal checkpoint，再把清空/删除接入正式
-   reader/writer、production runner/coordinator 与完整 participant 集合。
+1. 收口破坏性 Conversation reader/writer checkpoint，建立可跨重启重建的
+   participant execution plan，再接入 production runner/coordinator、Root
+   Registry/Trash 与完整 participant 集合。
 2. 接入 History 引用投影、Raw owner graph/GC
    preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行

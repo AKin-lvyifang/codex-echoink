@@ -335,3 +335,31 @@
   committed authority，以及重启恢复幂等。
 - 本批仍没有打开清空/删除产品 guard，没有切换 legacy reader/writer，也没有对
   真实 Vault 执行 migration、retention、Raw GC、历史删除或 Native 批量 cleanup。
+- 本批提交为 `1bd72af`。
+
+## 2026-07-20：破坏性 Conversation Reader/Writer 第一批
+
+- Conversation Store 新增破坏性 source planner。清空记录前会冻结全部旧
+  context payload 目录与 legacy payload 文件，不只依赖 active/previous 指针；
+  非法条目、symlink、丢失 active payload、重复或变化的 source plan 都会在目标
+  commit 前失败。
+- `clear-conversation-records` writer 只接受新的空 Conversation context：消息、
+  snapshot、rolling summary、可见性标记、token usage 与 Native binding 必须清空，
+  shell/workspace identity 保持不变，generation 前进一代。目标 metadata 不保留
+  `previousPayloadKey`，旧 payload 也不执行普通 GC，留给 RecordMutation Trash。
+- `delete-conversation` writer 新增严格 digest 的 deletion tombstone。tombstone
+  是删除 target 的 durable commit marker；旧 Conversation session 目录仍在，
+  只有后续完整 Journal participant 才能退休。tombstone 与 source authority
+  不匹配、字段未知、digest 错误或同 Conversation 冲突会 fail closed。
+- 启动 reconciliation 读取 tombstone 后不再恢复已删除 Conversation，并能修复
+  “tombstone 已提交、index projection 尚未更新”的崩溃窗口；Settings hydration
+  同步丢弃旧 data shell。
+- 新增真实文件夹测试覆盖：清空 target 提交后全部旧 payload 仍在且 source plan
+  漂移阻断；删除 tombstone 在 index 更新前故障后仍保持删除 authority、旧 source
+  可恢复、重启索引可修复。
+- 本批 `npm run test`、typecheck、build、Conversation Store 目标 ESLint、
+  `git diff --check`、完整 lint、release contract 与 public guard 通过；完整 lint
+  仍为 961 个 baseline finding、无新增。
+- 当前仍未实现跨重启 participant execution plan、Root Registry/Trash production
+  接线、Run/Raw 处置、Memory/Artifact 选择或 Native retirement；删除产品 guard
+  保持关闭，真实 Vault 未修改。

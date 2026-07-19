@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { pluginDataDir } from "../../core/raw-message-store";
 import {
+  createConversationDeletionTombstone,
   createConversationContentRevision,
   FileConversationStore
 } from "../../harness/conversation/conversation-store";
@@ -49,6 +50,8 @@ export async function runHarnessV2ConversationStoreTests(): Promise<void> {
   await assertConversationNativeTransportRoundTripAndValidation();
   await assertConversationStoreCanTrimMigratedSettingsMessages();
   await assertConversationStoreDeletesSessionAndIndexEntry();
+  await assertConversationRecordClearRetainsSourcesForJournalRetirement();
+  await assertConversationDeletionTombstoneSurvivesIndexCrash();
   await assertSettingsStoreMigratesAndRestoresConversationHistory();
   await assertSettingsStoreRecoversDurableConversationMissingDataShell();
   await assertClearSurvivesRestartAndExcludesOldContext();
@@ -1338,6 +1341,194 @@ async function assertConversationStoreDeletesSessionAndIndexEntry(): Promise<voi
   assert.equal(await store.readSession("chat-delete"), null);
   assert.deepEqual((await store.readIndex()).sessions, []);
   assert.equal(await store.deleteSession("chat-delete"), false);
+}
+
+async function assertConversationRecordClearRetainsSourcesForJournalRetirement():
+Promise<void> {
+  const rootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-conversations-record-clear-")
+  );
+  try {
+    const store = new FileConversationStore({ rootPath, now: () => 20 });
+    const source: StoredSession = {
+      id: "chat-record-clear",
+      title: "清空记录",
+      cwd: "/vault",
+      ...workspaceBoundIdentity("chat-record-clear"),
+      messages: [{
+        id: "clear-message",
+        role: "user",
+        text: "remove durable payload",
+        createdAt: 1
+      }],
+      rollingSummary: {
+        text: "old summary",
+        throughMessageId: "clear-message",
+        messageCount: 1,
+        updatedAt: 2
+      },
+      createdAt: 1,
+      updatedAt: 2
+    };
+    await createPristineSettingsSessions(store, [source]);
+    await store.persistSettingsSessions({ sessions: [source] });
+    const current = await store.readSession(source.id);
+    assert.ok(current);
+    const expectedContentRevision = createConversationContentRevision(current);
+    const planned = await store.planConversationRecordMutationSources({
+      operation: "clear-conversation-records",
+      conversationId: current.id,
+      expectedGeneration: sessionGeneration(current),
+      expectedCommitId: current.commitId!,
+      expectedContentRevision
+    });
+    assert.ok(planned.length >= 1);
+    assert.ok(planned.every((entry) => (
+      /^sessions\/chat-record-clear\/context-payloads\/payload-[a-f0-9]{64}$/
+        .test(entry.sourceRelativePath)
+    )));
+
+    const target = structuredClone(current);
+    target.messages = [];
+    target.revision = sessionGeneration(current) + 1;
+    target.generation = sessionGeneration(current) + 1;
+    target.contextId = "context-chat-record-clear-target";
+    target.commitId = "commit-chat-record-clear-target";
+    target.updatedAt = 3;
+    delete target.backendBindings;
+    delete target.threadId;
+    delete target.contextSnapshot;
+    delete target.rollingSummary;
+    delete target.messagesHiddenBefore;
+    delete target.tokenUsage;
+
+    await store.commitConversationRecordClear(target, {
+      expectedGeneration: sessionGeneration(current),
+      expectedCommitId: current.commitId!,
+      expectedContentRevision,
+      sourceRelativePaths: planned.map((entry) => entry.sourceRelativePath)
+    });
+
+    const committed = await store.readSession(source.id);
+    assert.ok(committed);
+    assert.equal(sessionGeneration(committed), sessionGeneration(current) + 1);
+    assert.deepEqual(committed.messages, []);
+    assert.equal(committed.contextSnapshot, undefined);
+    assert.equal(committed.rollingSummary, undefined);
+    const metadata = JSON.parse(await readFile(
+      path.join(rootPath, "sessions", source.id, "metadata.json"),
+      "utf8"
+    )) as Record<string, unknown>;
+    assert.equal(metadata.previousPayloadKey, undefined);
+    for (const sourceEntry of planned) {
+      await readdir(path.join(
+        rootPath,
+        ...sourceEntry.sourceRelativePath.split("/")
+      ));
+    }
+
+    const conflicting = structuredClone(committed);
+    conflicting.generation = sessionGeneration(committed) + 1;
+    conflicting.revision = sessionGeneration(committed) + 1;
+    conflicting.contextId = "context-chat-record-clear-conflict";
+    conflicting.commitId = "commit-chat-record-clear-conflict";
+    await assert.rejects(
+      store.commitConversationRecordClear(conflicting, {
+        expectedGeneration: sessionGeneration(committed),
+        expectedCommitId: committed.commitId!,
+        expectedContentRevision:
+          createConversationContentRevision(committed),
+        sourceRelativePaths: ["sessions/chat-record-clear/messages.jsonl"]
+      }),
+      /source plan changed/
+    );
+    assert.equal(
+      (await store.readSession(source.id))?.commitId,
+      committed.commitId
+    );
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+}
+
+async function assertConversationDeletionTombstoneSurvivesIndexCrash():
+Promise<void> {
+  const rootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-conversations-delete-tombstone-")
+  );
+  try {
+    const source: StoredSession = {
+      id: "chat-delete-tombstone",
+      title: "删除 tombstone",
+      cwd: "/vault",
+      ...workspaceBoundIdentity("chat-delete-tombstone"),
+      messages: [{
+        id: "delete-tombstone-message",
+        role: "user",
+        text: "delete me recoverably",
+        createdAt: 1
+      }],
+      createdAt: 1,
+      updatedAt: 2
+    };
+    let failIndexProjection = true;
+    const store = new FileConversationStore({
+      rootPath,
+      now: () => 20,
+      afterDeletionTombstoneBeforeIndex: async () => {
+        if (!failIndexProjection) return;
+        failIndexProjection = false;
+        throw new Error("simulated deletion index crash");
+      }
+    });
+    await createPristineSettingsSessions(store, [source]);
+    await store.persistSettingsSessions({ sessions: [source] });
+    const current = await store.readSession(source.id);
+    assert.ok(current);
+    const tombstone = createConversationDeletionTombstone({
+      conversationId: current.id,
+      mutationId: "mutation-delete-tombstone",
+      tombstoneId: "tombstone-delete-tombstone",
+      sourceGeneration: sessionGeneration(current),
+      sourceCommitId: current.commitId!,
+      sourceContentRevision: createConversationContentRevision(current),
+      deletedAt: 30
+    });
+
+    await assert.rejects(
+      store.commitConversationDeletionTombstone(tombstone, {
+        expectedGeneration: sessionGeneration(current),
+        expectedCommitId: current.commitId!,
+        expectedContentRevision:
+          createConversationContentRevision(current)
+      }),
+      /simulated deletion index crash/
+    );
+    assert.equal(
+      (await store.readConversationDeletionTombstone(current.id))?.digest,
+      tombstone.digest
+    );
+    assert.equal(await store.readSession(current.id), null);
+    await readdir(path.join(rootPath, "sessions", current.id));
+
+    const recoveredStore = new FileConversationStore({
+      rootPath,
+      now: () => 40
+    });
+    const reconciliation =
+      await recoveredStore.reconcileCommittedSessionsAtStartup();
+    assert.deepEqual(reconciliation.sessions, []);
+    assert.deepEqual(reconciliation.deletedSessionIds, [current.id]);
+    assert.deepEqual((await recoveredStore.readIndex()).sessions, []);
+
+    await recoveredStore.commitConversationDeletionTombstone(tombstone, {
+      expectedGeneration: sessionGeneration(current),
+      expectedCommitId: current.commitId!,
+      expectedContentRevision: createConversationContentRevision(current)
+    });
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
 }
 
 async function assertConversationStorePersistsChatAndKnowledgeSessions(): Promise<void> {
