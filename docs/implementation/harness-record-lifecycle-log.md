@@ -210,3 +210,31 @@
 - 本批仍未实现全局 mutation coordinator；low-level Trash effect 尚不回读
   Registry 验证 ref 与当前物理 root，生产删除 guard 必须继续关闭。没有连接
   生产删除或真实 Vault。
+
+## 2026-07-20：全局 RecordMutation Coordinator
+
+- 新增 `record-mutation-coordinator.ts`。每个 storage root 使用一个 durable
+  全局 authority，不同 Conversation 的记录 mutation 不能并行执行 source
+  retirement 或 restore。Lock 记录 pid、mutation ID 与随机 token；损坏 lock
+  fail closed，死亡进程遗留的 lock 先隔离再恢复。
+- 前向路径固定为：取得 authority、预检 Root Binding、durable Trash prepare、
+  Journal `trash-staged`、回读 Registry 与物理目录、low-level finalize、Journal
+  `source-retired`。`source-retired.evidenceDigest` 绑定 finalization receipt，
+  不只复用 prepared receipt。
+- 补偿路径要求 immutable Journal chain 同时存在 `trash-staged`、
+  `source-retired` 和 `compensation-prepared`。之后才重新验证 source/trash
+  Root Binding、执行 no-clobber restore，并写入 `trash-restored`。
+- source 与 trash 目录都必须已登记且物理独立。相同目录、父子嵌套、目录重建、
+  symlink、boundary 变化或 Registry 换绑都会在破坏性 effect 前阻断。
+- 新增两个关键崩溃窗口的重放：source 已退休但 Journal 尚未记账，以及 source
+  已恢复但 Journal 尚未记账。重入时根据 durable receipt 与物理 readback 补齐
+  Journal step，不重复破坏性 effect。
+- 新增架构门禁：生产 `finalizeRecordMutationTrash()` 调用只能来自 coordinator；
+  唯一直接 restore 旁路仍是 fixture-only recovery，并必须通过系统临时目录门禁。
+- 当前 worktree 已通过 coordinator/architecture focused suites、`npm run test`、
+  typecheck、build、完整 lint、目标 ESLint 与 `git diff --check`。完整 lint 仍为
+  961 个已提交 baseline finding，没有新增 finding。最终明确暂存 8 个预期文件后，
+  release/public guard 均通过；public guard 检查 396 个 tracked files。
+- 本批仍未接入四类产品删除操作、生产 recovery runner、legacy reader/writer 或
+  真实 Vault。没有执行 migration、retention、Raw GC、历史删除或 Native 批量
+  cleanup。

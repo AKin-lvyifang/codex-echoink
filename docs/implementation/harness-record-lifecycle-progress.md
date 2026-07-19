@@ -19,9 +19,15 @@ claim 仍可恢复。
 第三批已把完整 Root Binding 引用冻结进 destructive intent、prepared/finalization
 Trash receipt 与 recovery evidence。引用不仅包含逻辑 `rootId`，还包含
 registry、authority、root/boundary digest、目录 dev/inode、revision 和 binding
-digest；跨层 ref 缺失、乱序或不一致都 fail closed。Ref 与当前 Registry/物理
-目录的重新验证尚未接入低层 Trash effect，必须由下一批 coordinator 在 finalize
-前执行。
+digest；跨层 ref 缺失、乱序或不一致都 fail closed。这一批已提交为 `ab1a061`。
+
+第四批已实现 side-by-side RecordMutation coordinator。前向删除固定为：取得
+storage root 下唯一的 durable 全局 authority、预检两份 Root Binding、建立可恢复
+Trash、写入 Journal `trash-staged`、重新读取 Registry 与物理目录，再退休 source
+并写入 `source-retired`。补偿必须先有 durable `compensation-prepared`，然后在
+同一 authority 下重新验证 Root Binding、执行 no-clobber restore，最后写入
+`trash-restored`。目录重建、source/trash root 重叠、损坏 lock、授权缺失和 receipt
+不一致都会 fail closed；死亡进程留下的 stale lock 可隔离后恢复。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -41,7 +47,9 @@ authority 也按 fail closed 处理。
 - 创建基线：`main@a91f1b8`
 - 已同步主线：`main@d4d4ec4`
 - Phase 2 基础 checkpoint：`b2db2f5`
-- 当前批次：Root Registry 与首次 chain 原子发布
+- Root Registry checkpoint：`e510349`
+- 跨层 Root Binding Ref checkpoint：`ab1a061`
+- 当前批次：全局 RecordMutation coordinator 与物理 Root 再验证
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -60,7 +68,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5` 基础 checkpoint、Root Registry、首次 chain 原子发布与跨层 Root Binding Ref | 实现全局 coordinator/lock 与受控生产入口 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061` 与全局 coordinator 测试证据 | 将四类用户操作接入安全入口并继续 reader/writer 治理 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -111,11 +119,12 @@ authority 也按 fail closed 处理。
 - Conversation V2、Run Record 与 RecordMutation 当前均为 side-by-side 基础设施；
   legacy reader/writer 尚未切换，不能把合同测试写成生产数据已迁移。
 - destructive intent、prepared/finalization Trash receipt 与 recovery evidence
-  已冻结完整 Root Binding Ref；全局 mutation lock/coordinator 仍未实现，现有
-  fixture-only 恢复也尚未升级为生产 recovery runner。
-- `finalizeRecordMutationTrash()` 仍是低层原语，不会自行读取 durable Journal
-  验证 `trash-staged` 授权；在 coordinator 把授权证明接入前，生产删除 guard
-  必须保持关闭。当前仓库只有 fixture 调用它。
+  已冻结完整 Root Binding Ref；全局 lock/coordinator 已建立安全的低层执行入口，
+  但四类用户操作和生产 recovery runner 尚未接入。
+- `finalizeRecordMutationTrash()` 仍是低层原语。架构门禁现已把生产 source
+  retirement 调用限制在 `record-mutation-coordinator.ts`；唯一直接 restore 旁路
+  仍为 `fixtureOnly`，并强制位于系统临时目录。调用方接线完成前，产品删除 guard
+  继续关闭。
 - Node 没有暴露 `openat/unlinkat/renameat2 no-replace`；当前安全声明只覆盖
   canonical、插件自有 root 和使用同版本协议的协作 writer，不能宣称抵御旧版
   writer 混跑，或同权限外部进程制造的最后一个 syscall 竞态。
@@ -139,10 +148,10 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 实现全局 mutation coordinator/lock，让 Trash finalize 只能在 durable
-   Journal 授权和 Root Binding 再验证后发生。
+1. 将四类用户操作接入全局 coordinator，并实现生产 recovery runner，确保产品
+   入口不能绕过 Journal 授权和物理 Root 再验证。
 2. 接入生产 side-by-side reader/writer、History 引用投影、Raw owner graph/GC
-   preview、四类用户操作 coordinator、migration validator 与 V2 → V1 exporter。
+   preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
    历史删除、retention、Raw GC 或批量 Native cleanup。
 
@@ -190,6 +199,23 @@ Phase 2 基础 checkpoint `b2db2f5` 已通过：
 - `npm run check:public`，明确暂存后检查 394 个 tracked files 并通过
 - 目标生产文件 ESLint
 - `git diff --check`
+
+全局 RecordMutation coordinator 批次当前已通过：
+
+- Coordinator focused suite：前向授权顺序、全局串行、stale/corrupt lock、
+  root 重叠、目录重建、finalize/restore 崩溃重放
+- Architecture focused suite：生产 finalize 只能调用 coordinator；直接 restore
+  旁路仍限制为临时目录 fixture
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck`
+- `npm run build`
+- `npm run lint`，961 个 finding 与 baseline 完全一致，无新增 finding
+- 目标生产文件 ESLint，0 finding
+- `git diff --check`
+
+最终明确暂存 8 个预期文件后，`npm run check:release` 与
+`npm run check:public` 也已通过；public guard 检查 396 个 tracked files。暂存区
+不含 `.codex-memory`、`node_modules` 或其他无关文件。
 
 `.codex-memory` 和 `node_modules` 两个共享软链接保持 untracked，后续明确暂存时
 必须继续排除。

@@ -58,6 +58,17 @@ or out-of-bound roots fail closed. Source retirement starts only while one
 global mutation authority is held, the durable Journal has authorized that
 participant, and every frozen Root Binding still verifies.
 
+The authority is one durable lock per registry storage root, not one lock per
+Conversation. A corrupt lock fails closed; a lock whose owning process is no
+longer alive may be quarantined and recovered. Source and Trash roots must be
+physically independent rather than equal or nested. The coordinator prepares
+recoverable Trash and publishes `trash-staged` before retirement, re-verifies
+both roots immediately before the destructive effect, and publishes
+`source-retired` only after the effect and finalization receipt are durable.
+Restore follows the same authority and Root checks, requires a prior
+`compensation-prepared`, and publishes `trash-restored` only after no-clobber
+restore succeeds.
+
 The first entry and its chain directory publish as one durable directory
 transition; same-version cooperative writers never observe an empty live
 claim. Because Node does not expose directory `renameat2(RENAME_NOREPLACE)` or

@@ -14,6 +14,7 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertEditorSurfaceRemovesLegacyRawWaiters();
   await assertCodexViewRemovesLegacyRawRenderers();
   await assertChatSurfaceRemovesInlineAssistantBranch();
+  await assertDestructiveTrashEffectsStayBehindCoordinator();
 }
 
 async function assertSingleHarnessCoreDefinitions(): Promise<void> {
@@ -39,6 +40,50 @@ async function assertChatSurfaceRemovesInlineAssistantBranch(): Promise<void> {
     readSource("src/harness/agents/backend-runtime-profile.ts")
   ]);
   assert.doesNotMatch(sources.join("\n"), /chatUsesInlineAssistant|harnessBackendUsesInlineAssistant|inlineAssistant/);
+}
+
+async function assertDestructiveTrashEffectsStayBehindCoordinator(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const finalizeCallers: string[] = [];
+  const restoreCallers: string[] = [];
+  for (const file of sources) {
+    if (file.relativePath === "src/harness/lifecycle/record-mutation-trash.ts") {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\bfinalizeRecordMutationTrash\s*\(/.test(source)) {
+      finalizeCallers.push(file.relativePath);
+    }
+    if (/\brestoreRecordMutationTrash\s*\(/.test(source)) {
+      restoreCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    finalizeCallers,
+    ["src/harness/lifecycle/record-mutation-coordinator.ts"],
+    "production source retirement must stay behind RecordMutation coordinator"
+  );
+  assert.deepEqual(
+    restoreCallers,
+    [
+      "src/harness/lifecycle/record-mutation-coordinator.ts",
+      "src/harness/lifecycle/record-mutation-recovery.ts"
+    ],
+    "production restore must stay behind coordinator; only temp-fixture recovery may bypass"
+  );
+  const fixtureRecovery = await readSource(
+    "src/harness/lifecycle/record-mutation-recovery.ts"
+  );
+  assert.match(
+    fixtureRecovery,
+    /fixtureOnly:\s*true/,
+    "the sole restore bypass must remain fixture-only"
+  );
+  assert.match(
+    fixtureRecovery,
+    /assertTemporaryFixturePath/,
+    "the sole restore bypass must remain confined to temporary fixtures"
+  );
 }
 
 export async function runHarnessV2CodexViewRawParserBoundaryTests(): Promise<void> {
