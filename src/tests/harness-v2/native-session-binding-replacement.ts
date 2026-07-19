@@ -181,6 +181,12 @@ async function assertWorkspaceSwitchNeverResumesPreviousNativeBinding(): Promise
     }
   };
   const settingsStore = {
+    async withConversationMutation<T>(
+      _conversationId: string,
+      action: () => Promise<T>
+    ): Promise<T> {
+      return await action();
+    },
     async commitConversationSessionContext(
       candidate: StoredSession,
       options: CommitConversationContextOptions

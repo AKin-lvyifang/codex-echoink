@@ -18,6 +18,7 @@ import {
   type ConversationMessageAuthorityProbe,
   type ConversationMessageAuthorityProof
 } from "../harness/conversation/conversation-store";
+import { ConversationMutationLane } from "../harness/conversation/conversation-mutation-lane";
 import { sessionGeneration, workspaceFingerprint } from "../harness/kernel/session-service";
 import {
   clearLegacyChatWorkspaceDefaults,
@@ -85,6 +86,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   private conversationStoreRootPath = "";
   private interruptedRunRecoveryQueue: Promise<number> = Promise.resolve(0);
   private settingsCasRecoveryError: MaintenanceWorkflowWalError | null = null;
+  private readonly conversationMutationLane = new ConversationMutationLane();
   private readonly runtimePristineConversationCreates = new Map<
     string,
     RuntimePristineConversationCreate
@@ -242,6 +244,16 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       () => undefined
     );
     return await run;
+  }
+
+  async withConversationMutation<R>(
+    conversationId: string,
+    action: () => Promise<R>
+  ): Promise<R> {
+    return await this.conversationMutationLane.withConversationMutation(
+      conversationId,
+      action
+    );
   }
 
   poisonSettingsPersistenceForRecovery(message: string): void {

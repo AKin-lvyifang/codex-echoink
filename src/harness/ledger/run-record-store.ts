@@ -1,0 +1,1857 @@
+import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  rm,
+  unlink
+} from "node:fs/promises";
+import * as path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import {
+  RUN_RECORD_REASON_CODES,
+  RUN_RECORD_MAX_PAYLOAD_BYTES,
+  canonicalRunRecordDigest,
+  runRecordSubjectDigest,
+  safeRunRecordToken,
+  serializeAttemptPayloadEvents,
+  validateAttemptHarnessEvent,
+  validateAttemptPayloadManifest,
+  validateAttemptRunSummary,
+  validateRetentionTombstone,
+  validateWorkflowRunSummary,
+  type AttemptHarnessEventV1,
+  type AttemptPayloadManifestV1,
+  type AttemptRunSummaryV1,
+  type RunRecordReasonCode,
+  type RunRetentionTombstoneV1,
+  type WorkflowRunSummaryV1
+} from "../contracts/run-record";
+
+export const RUN_RECORD_STORE_DIRECTORY = "harness-run-records-v1";
+
+export type RunRecordStoreFaultPoint =
+  | "after-generation-sync"
+  | "after-manifest-link"
+  | "after-manifest-publish";
+
+export type RunRecordStoreFaultInjector = (
+  point: RunRecordStoreFaultPoint
+) => void | Promise<void>;
+
+export interface RunRecordStoreCas {
+  expectedRevision: number | null;
+  expectedDigest: string | null;
+}
+
+export interface AttemptRunRecordLocator {
+  workflowRunId: string;
+  attemptId: string;
+}
+
+export type RunRecordStoreReadResult<T> =
+  | { state: "present"; record: T }
+  | { state: "missing" }
+  | { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string };
+
+export type AttemptPayloadReadResult =
+  | {
+      state: "present";
+      manifest: AttemptPayloadManifestV1;
+      events: AttemptHarnessEventV1[];
+    }
+  | {
+      state: "expired";
+      tombstone: RunRetentionTombstoneV1;
+    }
+  | {
+      state: "not-captured";
+      reasonCode: RunRecordReasonCode;
+    }
+  | { state: "missing" }
+  | { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string };
+
+export type RunRecordStoreCorruptCode =
+  | "unsafe-path"
+  | "manifest-corrupt"
+  | "generation-missing"
+  | "record-corrupt"
+  | "payload-manifest-corrupt"
+  | "payload-jsonl-corrupt"
+  | "payload-digest-mismatch"
+  | "payload-event-invalid"
+  | "tombstone-corrupt"
+  | "not-captured-corrupt";
+
+export class RunRecordStoreConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunRecordStoreConflictError";
+  }
+}
+
+export class RunRecordStoreCorruptError extends Error {
+  constructor(
+    public readonly code: RunRecordStoreCorruptCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "RunRecordStoreCorruptError";
+  }
+}
+
+export class RunRecordStoreSimulatedCrash extends Error {
+  constructor(message = "simulated run record store crash") {
+    super(message);
+    this.name = "RunRecordStoreSimulatedCrash";
+  }
+}
+
+export interface FileRunRecordStoreOptions {
+  storageRootPath: string;
+}
+
+export interface MarkAttemptPayloadNotCapturedInput {
+  workflowRunId: string;
+  attemptId: string;
+  harnessRunId: string;
+  reasonCode:
+    | "failed-before-payload"
+    | "capture-disabled"
+    | "no-attempt-required";
+  recordedAt: number;
+  revision: number;
+}
+
+type RunRecordStoreRecordKind =
+  | "workflow-summary"
+  | "attempt-summary"
+  | "attempt-payload";
+
+type RunRecordStoreContentKind =
+  | "record"
+  | "payload"
+  | "not-captured"
+  | "expired";
+
+interface RunRecordGenerationManifest {
+  schemaVersion: 1;
+  recordType: "run-record-generation-manifest";
+  recordKind: RunRecordStoreRecordKind;
+  subjectToken: string;
+  revision: number;
+  generation: string;
+  contentKind: RunRecordStoreContentKind;
+  contentDigest: string;
+  previousContentDigest: string | null;
+  committedAt: number;
+  digest: string;
+}
+
+interface RunRecordHeadV1 {
+  schemaVersion: 1;
+  recordType: "run-record-head";
+  recordKind: RunRecordStoreRecordKind;
+  subjectToken: string;
+  revision: number;
+  manifestDigest: string;
+}
+
+interface AttemptPayloadNotCapturedRecord {
+  schemaVersion: 1;
+  recordType: "attempt-payload-not-captured";
+  workflowRunId: string;
+  attemptId: string;
+  harnessRunId: string;
+  subjectDigest: string;
+  reasonCode:
+    | "failed-before-payload"
+    | "capture-disabled"
+    | "no-attempt-required";
+  recordedAt: number;
+  revision: number;
+  digest: string;
+}
+
+interface SubjectLayout {
+  subjectRootPath: string;
+  generationsPath: string;
+  manifestsPath: string;
+  headPath: string;
+}
+
+type LatestManifestResult =
+  | {
+      state: "missing";
+      layout: SubjectLayout;
+      orphan?: RunRecordGenerationManifest;
+    }
+  | {
+      state: "present";
+      layout: SubjectLayout;
+      manifest: RunRecordGenerationManifest;
+      chain: RunRecordGenerationManifest[];
+      orphan?: RunRecordGenerationManifest;
+    }
+  | {
+      state: "corrupt";
+      layout: SubjectLayout;
+      code: RunRecordStoreCorruptCode;
+      error: string;
+    };
+
+interface PublishGenerationInput {
+  recordKind: RunRecordStoreRecordKind;
+  subjectId: string;
+  revision: number;
+  contentKind: RunRecordStoreContentKind;
+  contentDigest: string;
+  cas: RunRecordStoreCas;
+  files: readonly {
+    relativePath: string;
+    content: string;
+  }[];
+  faultInjector?: RunRecordStoreFaultInjector;
+  allowedPreviousContentKinds: readonly (RunRecordStoreContentKind | null)[];
+}
+
+const MANIFEST_FILE_PATTERN = /^(\d{12})\.json$/;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const CAPTURE_REASON_CODES = new Set<RunRecordReasonCode>([
+  "failed-before-payload",
+  "capture-disabled",
+  "no-attempt-required"
+]);
+
+/**
+ * Attempts are only unique inside a Workflow Run. Keep the compound identity
+ * in the storage locator so two workflows may safely reuse the same attemptId.
+ */
+export function attemptRunRecordSubjectToken(
+  locator: AttemptRunRecordLocator
+): string {
+  return safeRunRecordToken(attemptRecordSubjectId(locator));
+}
+
+/**
+ * Side-by-side V1 Run Record Store.
+ *
+ * It never reads or mutates the legacy `harness-runs` directory. Every update
+ * publishes an immutable generation, then a no-clobber append-only manifest.
+ * Retention tombstones are logical metadata only: this slice never deletes a
+ * payload generation.
+ */
+export class FileRunRecordStore {
+  readonly rootPath: string;
+
+  constructor(options: FileRunRecordStoreOptions) {
+    this.rootPath = path.join(
+      path.resolve(options.storageRootPath),
+      RUN_RECORD_STORE_DIRECTORY
+    );
+  }
+
+  async writeWorkflowRunSummary(
+    summary: WorkflowRunSummaryV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateWorkflowRunSummary(summary);
+    const current = await this.readWorkflowRunSummary(record.workflowRunId);
+    assertReadableCurrent(current);
+    if (current.state === "present") {
+      assertWorkflowSummaryTransition(current.record, record);
+    }
+    await this.publishGeneration({
+      recordKind: "workflow-summary",
+      subjectId: record.workflowRunId,
+      revision: record.revision,
+      contentKind: "record",
+      contentDigest: record.digest,
+      cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(record)
+      }],
+      faultInjector,
+      allowedPreviousContentKinds: [null, "record"]
+    });
+  }
+
+  async readWorkflowRunSummary(
+    workflowRunId: string
+  ): Promise<RunRecordStoreReadResult<WorkflowRunSummaryV1>> {
+    return await this.readSummary(
+      "workflow-summary",
+      workflowRunId,
+      validateWorkflowRunSummary,
+      (record) => record.workflowRunId === workflowRunId
+    );
+  }
+
+  async writeAttemptRunSummary(
+    summary: AttemptRunSummaryV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateAttemptRunSummary(summary);
+    const current = await this.readAttemptRunSummary(record);
+    assertReadableCurrent(current);
+    if (current.state === "present") {
+      assertAttemptSummaryTransition(current.record, record);
+    }
+    await this.publishGeneration({
+      recordKind: "attempt-summary",
+      subjectId: attemptRecordSubjectId(record),
+      revision: record.revision,
+      contentKind: "record",
+      contentDigest: record.digest,
+      cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(record)
+      }],
+      faultInjector,
+      allowedPreviousContentKinds: [null, "record"]
+    });
+  }
+
+  async readAttemptRunSummary(
+    locator: AttemptRunRecordLocator
+  ): Promise<RunRecordStoreReadResult<AttemptRunSummaryV1>> {
+    return await this.readSummary(
+      "attempt-summary",
+      attemptRecordSubjectId(locator),
+      validateAttemptRunSummary,
+      (record) =>
+        record.workflowRunId === locator.workflowRunId
+        && record.attemptId === locator.attemptId
+    );
+  }
+
+  async sealAttemptPayload(
+    manifest: AttemptPayloadManifestV1,
+    events: readonly AttemptHarnessEventV1[],
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateAttemptPayloadManifest(manifest);
+    const eventBytes = serializeAttemptPayloadEvents(
+      events,
+      {
+        workflowRunId: record.workflowRunId,
+        attemptId: record.attemptId,
+        harnessRunId: record.harnessRunId
+      }
+    );
+    if (
+      Buffer.byteLength(eventBytes) !== record.byteCount
+      || sha256(eventBytes) !== record.payloadSha256
+      || events.length !== record.eventCount
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "payload-digest-mismatch",
+        "Attempt payload bytes do not match the sealed manifest"
+      );
+    }
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId: attemptRecordSubjectId(record),
+      revision: record.revision,
+      contentKind: "payload",
+      contentDigest: record.digest,
+      cas,
+      files: [
+        {
+          relativePath: "manifest.json",
+          content: jsonLine(record)
+        },
+        {
+          relativePath: "events.jsonl",
+          content: eventBytes
+        }
+      ],
+      faultInjector,
+      allowedPreviousContentKinds: [null]
+    });
+  }
+
+  async markAttemptPayloadNotCaptured(
+    input: MarkAttemptPayloadNotCapturedInput,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateNotCapturedRecord(withDigest({
+      schemaVersion: 1,
+      recordType: "attempt-payload-not-captured",
+      workflowRunId: input.workflowRunId,
+      attemptId: input.attemptId,
+      harnessRunId: input.harnessRunId,
+      subjectDigest: runRecordSubjectDigest(
+        "attempt-payload",
+        input.workflowRunId,
+        input.attemptId,
+        input.harnessRunId
+      ),
+      reasonCode: input.reasonCode,
+      recordedAt: input.recordedAt,
+      revision: input.revision
+    }));
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId: attemptRecordSubjectId(record),
+      revision: record.revision,
+      contentKind: "not-captured",
+      contentDigest: record.digest,
+      cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(record)
+      }],
+      faultInjector,
+      allowedPreviousContentKinds: [null]
+    });
+  }
+
+  /**
+   * Publishes an authoritative expired marker only over a verified, sealed
+   * payload generation. The old immutable payload bytes remain untouched.
+   */
+  async publishAttemptPayloadTombstone(
+    tombstone: RunRetentionTombstoneV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateRetentionTombstone(tombstone);
+    if (
+      record.scope !== "attempt-payload"
+      || !record.attemptId
+      || !record.harnessRunId
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload tombstone has the wrong scope or identity"
+      );
+    }
+    const locator: AttemptRunRecordLocator = {
+      workflowRunId: record.workflowRunId,
+      attemptId: record.attemptId
+    };
+    const current = await this.readAttemptPayload(locator);
+    if (current.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        "Cannot publish expired tombstone for a missing payload"
+      );
+    }
+    if (current.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(current.code, current.error);
+    }
+    if (current.state !== "present") {
+      throw new RunRecordStoreConflictError(
+        `Cannot publish expired tombstone over ${current.state}`
+      );
+    }
+    const manifest = current.manifest;
+    if (
+      record.workflowRunId !== manifest.workflowRunId
+      || record.attemptId !== manifest.attemptId
+      || record.harnessRunId !== manifest.harnessRunId
+      || record.subjectDigest !== manifest.subjectDigest
+      || record.prior.digest !== manifest.digest
+      || record.prior.eventCount !== manifest.eventCount
+      || record.prior.byteCount !== manifest.byteCount
+      || record.prior.terminalAt !== manifest.terminalAt
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Tombstone does not exactly describe the active sealed payload"
+      );
+    }
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId: attemptRecordSubjectId(locator),
+      revision: record.revision,
+      contentKind: "expired",
+      contentDigest: record.digest,
+      cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(record)
+      }],
+      faultInjector,
+      allowedPreviousContentKinds: ["payload"]
+    });
+  }
+
+  async readAttemptPayload(
+    locator: AttemptRunRecordLocator
+  ): Promise<AttemptPayloadReadResult> {
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      attemptRecordSubjectId(locator)
+    );
+    if (latest.state === "missing") return { state: "missing" };
+    if (latest.state === "corrupt") {
+      return {
+        state: "corrupt",
+        code: latest.code,
+        error: latest.error
+      };
+    }
+    const generationPath = path.join(
+      latest.layout.generationsPath,
+      latest.manifest.generation
+    );
+    if (latest.manifest.contentKind === "payload") {
+      return await this.readPresentPayload(
+        locator,
+        generationPath,
+        latest.manifest
+      );
+    }
+    if (latest.manifest.contentKind === "not-captured") {
+      try {
+        const record = validateNotCapturedRecord(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        if (
+          record.workflowRunId !== locator.workflowRunId
+          || record.attemptId !== locator.attemptId
+          || record.revision !== latest.manifest.revision
+          || record.digest !== latest.manifest.contentDigest
+        ) {
+          throw new Error("not-captured generation identity mismatch");
+        }
+        return {
+          state: "not-captured",
+          reasonCode: record.reasonCode
+        };
+      } catch (error) {
+        return corruptResult("not-captured-corrupt", error);
+      }
+    }
+    if (latest.manifest.contentKind === "expired") {
+      try {
+        const tombstone = validateRetentionTombstone(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        if (
+          tombstone.scope !== "attempt-payload"
+          || tombstone.workflowRunId !== locator.workflowRunId
+          || tombstone.attemptId !== locator.attemptId
+          || tombstone.revision !== latest.manifest.revision
+          || tombstone.digest !== latest.manifest.contentDigest
+        ) {
+          throw new Error("expired generation identity mismatch");
+        }
+        const priorPointer = latest.chain.at(-2);
+        if (
+          !priorPointer
+          || priorPointer.contentKind !== "payload"
+          || priorPointer.contentDigest !== tombstone.prior.digest
+        ) {
+          throw new Error("expired generation lacks its sealed prior manifest");
+        }
+        const prior = await this.readPresentPayload(
+          locator,
+          path.join(latest.layout.generationsPath, priorPointer.generation),
+          priorPointer
+        );
+        if (
+          prior.state !== "present"
+          || prior.manifest.eventCount !== tombstone.prior.eventCount
+          || prior.manifest.byteCount !== tombstone.prior.byteCount
+          || prior.manifest.terminalAt !== tombstone.prior.terminalAt
+        ) {
+          throw new Error("expired generation cannot prove its sealed prior payload");
+        }
+        return { state: "expired", tombstone };
+      } catch (error) {
+        return corruptResult("tombstone-corrupt", error);
+      }
+    }
+    return corruptResult(
+      "manifest-corrupt",
+      new Error("Attempt payload manifest points at record content")
+    );
+  }
+
+  private async readSummary<T>(
+    recordKind: "workflow-summary" | "attempt-summary",
+    subjectId: string,
+    validate: (value: unknown) => T,
+    identityMatches: (record: T) => boolean
+  ): Promise<RunRecordStoreReadResult<T>> {
+    const latest = await this.readLatestManifest(recordKind, subjectId);
+    if (latest.state === "missing") return { state: "missing" };
+    if (latest.state === "corrupt") {
+      return {
+        state: "corrupt",
+        code: latest.code,
+        error: latest.error
+      };
+    }
+    if (latest.manifest.contentKind !== "record") {
+      return corruptResult(
+        "manifest-corrupt",
+        new Error("Summary manifest points at non-record content")
+      );
+    }
+    try {
+      const record = validate(await readJsonFile(path.join(
+        latest.layout.generationsPath,
+        latest.manifest.generation,
+        "record.json"
+      )));
+      const revision = (record as { revision?: unknown }).revision;
+      const digest = (record as { digest?: unknown }).digest;
+      if (
+        !identityMatches(record)
+        || revision !== latest.manifest.revision
+        || digest !== latest.manifest.contentDigest
+      ) {
+        throw new Error("summary generation identity mismatch");
+      }
+      return { state: "present", record };
+    } catch (error) {
+      return corruptResult("record-corrupt", error);
+    }
+  }
+
+  private async readPresentPayload(
+    locator: AttemptRunRecordLocator,
+    generationPath: string,
+    pointer: RunRecordGenerationManifest
+  ): Promise<AttemptPayloadReadResult> {
+    let manifest: AttemptPayloadManifestV1;
+    try {
+      manifest = validateAttemptPayloadManifest(
+        await readJsonFile(path.join(generationPath, "manifest.json"))
+      );
+      if (
+        manifest.workflowRunId !== locator.workflowRunId
+        || manifest.attemptId !== locator.attemptId
+        || manifest.revision !== pointer.revision
+        || manifest.digest !== pointer.contentDigest
+      ) {
+        throw new Error("payload generation identity mismatch");
+      }
+    } catch (error) {
+      return corruptResult("payload-manifest-corrupt", error);
+    }
+
+    let raw: string;
+    try {
+      raw = await readUtf8FileSafely(
+        path.join(generationPath, "events.jsonl"),
+        RUN_RECORD_MAX_PAYLOAD_BYTES
+      );
+    } catch (error) {
+      return corruptResult("generation-missing", error);
+    }
+    let parsedEvents: unknown[];
+    try {
+      parsedEvents = raw
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as unknown);
+    } catch (error) {
+      return corruptResult("payload-jsonl-corrupt", error);
+    }
+    let canonical: string;
+    let events: AttemptHarnessEventV1[];
+    try {
+      events = parsedEvents.map((event) => validateAttemptHarnessEvent(event));
+      canonical = serializeAttemptPayloadEvents(events, {
+        workflowRunId: manifest.workflowRunId,
+        attemptId: manifest.attemptId,
+        harnessRunId: manifest.harnessRunId
+      });
+    } catch (error) {
+      return corruptResult("payload-event-invalid", error);
+    }
+    if (
+      canonical !== raw
+      || Buffer.byteLength(raw) !== manifest.byteCount
+      || sha256(raw) !== manifest.payloadSha256
+      || events.length !== manifest.eventCount
+    ) {
+      return corruptResult(
+        "payload-digest-mismatch",
+        new Error("payload bytes do not match sealed manifest")
+      );
+    }
+    return { state: "present", manifest, events };
+  }
+
+  private async publishGeneration(
+    input: PublishGenerationInput
+  ): Promise<void> {
+    await this.ensureRoot();
+    const current = await this.readLatestManifest(
+      input.recordKind,
+      input.subjectId
+    );
+    if (current.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(current.code, current.error);
+    }
+    const previousContentKind = current.state === "present"
+      ? current.manifest.contentKind
+      : null;
+    if (!input.allowedPreviousContentKinds.includes(previousContentKind)) {
+      throw new RunRecordStoreConflictError(
+        `Run record ${input.recordKind} cannot transition from ${String(previousContentKind)} to ${input.contentKind}`
+      );
+    }
+    assertCas(current, input.cas, input.revision);
+    const layout = current.layout;
+    await ensurePlainDirectory(layout.subjectRootPath);
+    await ensurePlainDirectory(layout.generationsPath);
+    await ensurePlainDirectory(layout.manifestsPath);
+    const stagingRootPath = path.join(this.rootPath, ".staging");
+    await ensurePlainDirectory(stagingRootPath);
+    if (current.orphan) {
+      await assertRecoveryOrphanMatches(current, input);
+      await writeRunRecordHeadAtomically(
+        stagingRootPath,
+        layout,
+        current.orphan
+      );
+      await input.faultInjector?.("after-manifest-publish");
+      return;
+    }
+
+    const generation = [
+      String(input.revision).padStart(12, "0"),
+      input.contentDigest.slice("sha256:".length, "sha256:".length + 16),
+      randomUUID()
+    ].join("-");
+    const stagedGenerationPath = path.join(
+      stagingRootPath,
+      `.generation-${generation}`
+    );
+    const finalGenerationPath = path.join(layout.generationsPath, generation);
+    const stagedManifestPath = path.join(
+      stagingRootPath,
+      `.manifest-${safeRunRecordToken(input.subjectId)}-${input.revision}-${randomUUID()}.tmp`
+    );
+    let generationPublished = false;
+    let manifestPublished = false;
+    try {
+      await mkdir(stagedGenerationPath, { mode: 0o700 });
+      for (const file of input.files) {
+        if (
+          !/^[a-z0-9][a-z0-9._-]*$/i.test(file.relativePath)
+          || file.relativePath.includes("..")
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "unsafe-path",
+            `Unsafe generation filename: ${file.relativePath}`
+          );
+        }
+        await writeNewFileDurably(
+          path.join(stagedGenerationPath, file.relativePath),
+          file.content
+        );
+      }
+      await syncDirectory(stagedGenerationPath);
+      await syncDirectory(stagingRootPath);
+      await rename(stagedGenerationPath, finalGenerationPath);
+      generationPublished = true;
+      await syncDirectory(layout.generationsPath);
+      await input.faultInjector?.("after-generation-sync");
+
+      const pointer = validateGenerationManifest(withDigest({
+        schemaVersion: 1,
+        recordType: "run-record-generation-manifest",
+        recordKind: input.recordKind,
+        subjectToken: safeRunRecordToken(input.subjectId),
+        revision: input.revision,
+        generation,
+        contentKind: input.contentKind,
+        contentDigest: input.contentDigest,
+        previousContentDigest: current.state === "present"
+          ? current.manifest.contentDigest
+          : null,
+        committedAt: Date.now()
+      }));
+      await writeNewFileDurably(stagedManifestPath, jsonLine(pointer));
+      await syncDirectory(stagingRootPath);
+      const manifestPath = path.join(
+        layout.manifestsPath,
+        manifestFileName(input.revision)
+      );
+      try {
+        await link(stagedManifestPath, manifestPath);
+      } catch (error) {
+        if (isAlreadyExists(error)) {
+          throw new RunRecordStoreConflictError(
+            `Run record revision ${input.revision} already has a manifest winner`
+          );
+        }
+        throw error;
+      }
+      manifestPublished = true;
+      await syncDirectory(layout.manifestsPath);
+      await input.faultInjector?.("after-manifest-link");
+      await writeRunRecordHeadAtomically(
+        stagingRootPath,
+        layout,
+        pointer
+      );
+      await input.faultInjector?.("after-manifest-publish");
+      await unlink(stagedManifestPath);
+      await syncDirectory(stagingRootPath);
+    } catch (error) {
+      if (error instanceof RunRecordStoreSimulatedCrash) throw error;
+      await rm(stagedGenerationPath, { recursive: true, force: true })
+        .catch(() => undefined);
+      await unlink(stagedManifestPath).catch(() => undefined);
+      if (!manifestPublished && generationPublished) {
+        // An unpublished immutable generation is a safe orphan. It is retained
+        // for a future inventory/recovery pass instead of being deleted here.
+      }
+      throw error;
+    }
+  }
+
+  private async readLatestManifest(
+    recordKind: RunRecordStoreRecordKind,
+    subjectId: string
+  ): Promise<LatestManifestResult> {
+    const layout = this.subjectLayout(recordKind, subjectId);
+    try {
+      const subjectStat = await lstatOrNull(layout.subjectRootPath);
+      if (!subjectStat) return { state: "missing", layout };
+      if (!subjectStat.isDirectory() || subjectStat.isSymbolicLink()) {
+        return corruptLatest(
+          layout,
+          "unsafe-path",
+          "Run record subject root is not a plain directory"
+        );
+      }
+      const manifestStat = await lstatOrNull(layout.manifestsPath);
+      if (!manifestStat) {
+        if (await lstatOrNull(layout.headPath)) {
+          return corruptLatest(
+            layout,
+            "manifest-corrupt",
+            "Run record head exists without manifests directory"
+          );
+        }
+        return { state: "missing", layout };
+      }
+      if (!manifestStat.isDirectory() || manifestStat.isSymbolicLink()) {
+        return corruptLatest(
+          layout,
+          "unsafe-path",
+          "Run record manifests path is not a plain directory"
+        );
+      }
+      const entries = await readdir(layout.manifestsPath, {
+        withFileTypes: true
+      });
+      if (!entries.length) {
+        if (await lstatOrNull(layout.headPath)) {
+          return corruptLatest(
+            layout,
+            "manifest-corrupt",
+            "Run record head exists without a manifest chain"
+          );
+        }
+        return { state: "missing", layout };
+      }
+      const ordered = entries.map((entry) => {
+        const match = MANIFEST_FILE_PATTERN.exec(entry.name);
+        if (
+          !match
+          || !entry.isFile()
+          || entry.isSymbolicLink()
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "manifest-corrupt",
+            `Unexpected manifest entry ${entry.name}`
+          );
+        }
+        return {
+          name: entry.name,
+          revision: Number(match[1])
+        };
+      }).sort((left, right) => left.revision - right.revision);
+
+      let previous: RunRecordGenerationManifest | null = null;
+      const chain: RunRecordGenerationManifest[] = [];
+      for (let index = 0; index < ordered.length; index += 1) {
+        const entry = ordered[index];
+        if (
+          entry.revision !== index
+          || entry.name !== manifestFileName(index)
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "manifest-corrupt",
+            "Run record manifests are not a contiguous revision chain"
+          );
+        }
+        const manifest = validateGenerationManifest(
+          await readJsonFile(path.join(layout.manifestsPath, entry.name))
+        );
+        if (
+          manifest.recordKind !== recordKind
+          || manifest.subjectToken !== safeRunRecordToken(subjectId)
+          || manifest.revision !== entry.revision
+          || manifest.previousContentDigest
+            !== (previous?.contentDigest ?? null)
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "manifest-corrupt",
+            "Run record manifest chain identity does not match its path"
+          );
+        }
+        previous = manifest;
+        chain.push(manifest);
+      }
+      if (!previous) return { state: "missing", layout };
+      const generationsStat = await lstatOrNull(layout.generationsPath);
+      if (
+        !generationsStat
+        || !generationsStat.isDirectory()
+        || generationsStat.isSymbolicLink()
+      ) {
+        return corruptLatest(
+          layout,
+          generationsStat ? "unsafe-path" : "generation-missing",
+          "Run record generations path is missing or unsafe"
+        );
+      }
+      const headStat = await lstatOrNull(layout.headPath);
+      if (!headStat) {
+        if (chain.length !== 1) {
+          throw new RunRecordStoreCorruptError(
+            "manifest-corrupt",
+            "Run record manifest chain has no commit head"
+          );
+        }
+        await assertSafeGenerationDirectory(
+          layout,
+          chain[0],
+          "Recovery orphan"
+        );
+        return { state: "missing", layout, orphan: chain[0] };
+      }
+      const head = validateRunRecordHead(
+        await readJsonFile(layout.headPath)
+      );
+      const committed = chain[head.revision];
+      if (
+        !committed
+        || head.recordKind !== recordKind
+        || head.subjectToken !== safeRunRecordToken(subjectId)
+        || head.manifestDigest !== committed.digest
+        || chain.length > head.revision + 2
+      ) {
+        throw new RunRecordStoreCorruptError(
+          "manifest-corrupt",
+          "Run record head does not match the append-only manifest chain"
+        );
+      }
+      const orphan = chain[head.revision + 1];
+      await assertSafeGenerationDirectory(layout, committed, "Active");
+      if (orphan) {
+        await assertSafeGenerationDirectory(layout, orphan, "Recovery orphan");
+      }
+      return {
+        state: "present",
+        layout,
+        manifest: committed,
+        chain: chain.slice(0, head.revision + 1),
+        ...(orphan ? { orphan } : {})
+      };
+    } catch (error) {
+      if (error instanceof RunRecordStoreCorruptError) {
+        return {
+          state: "corrupt",
+          layout,
+          code: error.code,
+          error: error.message
+        };
+      }
+      return {
+        state: "corrupt",
+        layout,
+        code: "manifest-corrupt",
+        error: errorMessage(error)
+      };
+    }
+  }
+
+  private subjectLayout(
+    recordKind: RunRecordStoreRecordKind,
+    subjectId: string
+  ): SubjectLayout {
+    const collection = recordKind === "workflow-summary"
+      ? "workflow-summaries"
+      : recordKind === "attempt-summary"
+        ? "attempt-summaries"
+        : "attempt-payloads";
+    const subjectRootPath = path.join(
+      this.rootPath,
+      collection,
+      safeRunRecordToken(subjectId)
+    );
+    return {
+      subjectRootPath,
+      generationsPath: path.join(subjectRootPath, "generations"),
+      manifestsPath: path.join(subjectRootPath, "manifests"),
+      headPath: path.join(subjectRootPath, "head.json")
+    };
+  }
+
+  private async ensureRoot(): Promise<void> {
+    const storageRootPath = path.dirname(this.rootPath);
+    const storageStat = await lstat(storageRootPath);
+    if (!storageStat.isDirectory() || storageStat.isSymbolicLink()) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        "Run record storage root is not a plain directory"
+      );
+    }
+    await ensurePlainDirectory(this.rootPath);
+    for (const child of [
+      "workflow-summaries",
+      "attempt-summaries",
+      "attempt-payloads",
+      ".staging"
+    ]) {
+      await ensurePlainDirectory(path.join(this.rootPath, child));
+    }
+    await syncDirectory(this.rootPath);
+  }
+}
+
+async function assertSafeGenerationDirectory(
+  layout: SubjectLayout,
+  manifest: RunRecordGenerationManifest,
+  label: string
+): Promise<void> {
+  const generationStat = await lstatOrNull(path.join(
+    layout.generationsPath,
+    manifest.generation
+  ));
+  if (
+    !generationStat
+    || !generationStat.isDirectory()
+    || generationStat.isSymbolicLink()
+  ) {
+    throw new RunRecordStoreCorruptError(
+      generationStat ? "unsafe-path" : "generation-missing",
+      `${label} Run record generation is missing or unsafe`
+    );
+  }
+}
+
+async function assertRecoveryOrphanMatches(
+  current: Exclude<LatestManifestResult, { state: "corrupt" }>,
+  input: PublishGenerationInput
+): Promise<void> {
+  const orphan = current.orphan;
+  if (!orphan) {
+    throw new RunRecordStoreCorruptError(
+      "manifest-corrupt",
+      "Run record recovery orphan is missing"
+    );
+  }
+  const previousContentDigest = current.state === "present"
+    ? current.manifest.contentDigest
+    : null;
+  if (
+    orphan.recordKind !== input.recordKind
+    || orphan.subjectToken !== safeRunRecordToken(input.subjectId)
+    || orphan.revision !== input.revision
+    || orphan.contentKind !== input.contentKind
+    || orphan.contentDigest !== input.contentDigest
+    || orphan.previousContentDigest !== previousContentDigest
+  ) {
+    throw new RunRecordStoreConflictError(
+      `Run record revision ${input.revision} has a different recovery orphan`
+    );
+  }
+  const generationPath = path.join(
+    current.layout.generationsPath,
+    orphan.generation
+  );
+  const entries = await readdir(generationPath, { withFileTypes: true });
+  const expectedNames = input.files
+    .map((file) => file.relativePath)
+    .sort((left, right) => left.localeCompare(right));
+  const actualNames = entries
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  if (
+    !isDeepStrictEqual(actualNames, expectedNames)
+    || entries.some((entry) => !entry.isFile() || entry.isSymbolicLink())
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "generation-missing",
+      "Run record recovery orphan generation files do not match its candidate"
+    );
+  }
+  for (const file of input.files) {
+    const existing = await readUtf8FileSafely(
+      path.join(generationPath, file.relativePath),
+      RUN_RECORD_MAX_PAYLOAD_BYTES
+    );
+    if (existing !== file.content) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        "Run record recovery orphan generation content is corrupt"
+      );
+    }
+  }
+}
+
+function assertCas(
+  current: Exclude<LatestManifestResult, { state: "corrupt" }>,
+  cas: RunRecordStoreCas,
+  candidateRevision: number
+): void {
+  if (
+    !cas
+    || !(
+      cas.expectedRevision === null
+      || (
+        Number.isSafeInteger(cas.expectedRevision)
+        && cas.expectedRevision >= 0
+      )
+    )
+    || !(
+      cas.expectedDigest === null
+      || (
+        typeof cas.expectedDigest === "string"
+        && SHA256_PATTERN.test(cas.expectedDigest)
+      )
+    )
+  ) {
+    throw new RunRecordStoreConflictError("Invalid Run record CAS input");
+  }
+  if (current.state === "missing") {
+    if (
+      cas.expectedRevision !== null
+      || cas.expectedDigest !== null
+      || candidateRevision !== 0
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Run record CAS expected an existing revision, but no manifest exists"
+      );
+    }
+    return;
+  }
+  if (
+    cas.expectedRevision !== current.manifest.revision
+    || cas.expectedDigest !== current.manifest.contentDigest
+    || candidateRevision !== current.manifest.revision + 1
+  ) {
+    throw new RunRecordStoreConflictError(
+      "Run record CAS revision or digest does not match the active manifest"
+    );
+  }
+}
+
+function assertReadableCurrent<T>(current: RunRecordStoreReadResult<T>): void {
+  if (current.state === "corrupt") {
+    throw new RunRecordStoreCorruptError(current.code, current.error);
+  }
+}
+
+function assertWorkflowSummaryTransition(
+  current: WorkflowRunSummaryV1,
+  candidate: WorkflowRunSummaryV1
+): void {
+  if (
+    current.workflowRunId !== candidate.workflowRunId
+    || current.surface !== candidate.surface
+    || current.workflow !== candidate.workflow
+    || current.startedAt !== candidate.startedAt
+    || !isDeepStrictEqual(current.conversationRef, candidate.conversationRef)
+  ) {
+    throw new RunRecordStoreConflictError(
+      "Workflow Run summary immutable identity changed"
+    );
+  }
+  if (!workflowStatusCanTransition(current.status, candidate.status)) {
+    throw new RunRecordStoreConflictError(
+      "Workflow Run summary status transition is not monotonic"
+    );
+  }
+  if (current.status !== "running") {
+    assertFieldsEqual(current, candidate, [
+      "terminalAt",
+      "usage",
+      "errorCode"
+    ], "Workflow Run terminal business fields");
+  }
+  assertAppendOnlyArray(
+    current.attemptRefs,
+    candidate.attemptRefs,
+    "Workflow Run attemptRefs"
+  );
+  assertAppendOnlyArray(
+    current.artifactRefs,
+    candidate.artifactRefs,
+    "Workflow Run artifactRefs"
+  );
+  assertLocalMutationTransition(
+    current.localMutation,
+    candidate.localMutation,
+    "Workflow Run localMutation"
+  );
+}
+
+function assertAttemptSummaryTransition(
+  current: AttemptRunSummaryV1,
+  candidate: AttemptRunSummaryV1
+): void {
+  if (
+    current.workflowRunId !== candidate.workflowRunId
+    || current.attemptId !== candidate.attemptId
+    || current.ordinal !== candidate.ordinal
+    || current.harnessRunId !== candidate.harnessRunId
+    || current.backendId !== candidate.backendId
+    || current.startedAt !== candidate.startedAt
+  ) {
+    throw new RunRecordStoreConflictError(
+      "Attempt Run summary immutable identity changed"
+    );
+  }
+  if (!attemptStatusCanTransition(current.status, candidate.status)) {
+    throw new RunRecordStoreConflictError(
+      "Attempt Run summary status transition is not monotonic"
+    );
+  }
+  if (current.status !== "created" && current.status !== "running") {
+    assertFieldsEqual(current, candidate, [
+      "terminalAt",
+      "usage",
+      "errorCode",
+      "reasonCode"
+    ], "Attempt Run terminal business fields");
+  }
+  assertAppendOnlyArray(
+    current.nativeExecutionRecordIds,
+    candidate.nativeExecutionRecordIds,
+    "Attempt Run nativeExecutionRecordIds"
+  );
+  assertLocalMutationTransition(
+    current.localCommit,
+    candidate.localCommit,
+    "Attempt Run localCommit",
+    "authorityKind"
+  );
+  assertCleanupTransition(current.cleanup, candidate.cleanup);
+  if (current.payload.expected !== candidate.payload.expected) {
+    throw new RunRecordStoreConflictError(
+      "Attempt Run payload expected flag cannot change"
+    );
+  }
+  assertOptionalAppendOnly(
+    current.payload.manifestRef,
+    candidate.payload.manifestRef,
+    "Attempt Run payload manifestRef"
+  );
+  assertOptionalAppendOnly(
+    current.payload.expiresAt,
+    candidate.payload.expiresAt,
+    "Attempt Run payload expiresAt"
+  );
+}
+
+function workflowStatusCanTransition(
+  current: WorkflowRunSummaryV1["status"],
+  candidate: WorkflowRunSummaryV1["status"]
+): boolean {
+  if (current === "running") return true;
+  if (current === "recovery-required") {
+    return candidate === "recovery-required"
+      || candidate === "completed"
+      || candidate === "failed"
+      || candidate === "cancelled"
+      || candidate === "partial";
+  }
+  return candidate === current;
+}
+
+function attemptStatusCanTransition(
+  current: AttemptRunSummaryV1["status"],
+  candidate: AttemptRunSummaryV1["status"]
+): boolean {
+  if (current === "created") return true;
+  if (current === "running") return candidate !== "created";
+  if (current === "recovery-required") {
+    return candidate === "recovery-required"
+      || candidate === "completed"
+      || candidate === "failed"
+      || candidate === "cancelled";
+  }
+  return candidate === current;
+}
+
+function localMutationStateCanTransition(
+  current: WorkflowRunSummaryV1["localMutation"]["state"],
+  candidate: WorkflowRunSummaryV1["localMutation"]["state"]
+): boolean {
+  if (current === "pending") {
+    return candidate === "pending"
+      || candidate === "committed"
+      || candidate === "aborted"
+      || candidate === "recovery-required";
+  }
+  if (current === "recovery-required") {
+    return candidate === "recovery-required"
+      || candidate === "committed"
+      || candidate === "aborted";
+  }
+  return candidate === current;
+}
+
+function assertLocalMutationTransition(
+  current: WorkflowRunSummaryV1["localMutation"]
+    | AttemptRunSummaryV1["localCommit"],
+  candidate: WorkflowRunSummaryV1["localMutation"]
+    | AttemptRunSummaryV1["localCommit"],
+  label: string,
+  identityKey: "transactionId" | "authorityKind" = "transactionId"
+): void {
+  if (!localMutationStateCanTransition(current.state, candidate.state)) {
+    throw new RunRecordStoreConflictError(
+      `${label} state transition is not monotonic`
+    );
+  }
+  assertOptionalAppendOnly(
+    identityKey === "transactionId"
+      ? (current as WorkflowRunSummaryV1["localMutation"]).transactionId
+      : (current as AttemptRunSummaryV1["localCommit"]).authorityKind,
+    identityKey === "transactionId"
+      ? (candidate as WorkflowRunSummaryV1["localMutation"]).transactionId
+      : (candidate as AttemptRunSummaryV1["localCommit"]).authorityKind,
+    `${label} ${identityKey}`
+  );
+  assertOptionalAppendOnly(
+    current.committedAt,
+    candidate.committedAt,
+    `${label} committedAt`
+  );
+}
+
+function cleanupStatusCanTransition(
+  current: AttemptRunSummaryV1["cleanup"]["status"],
+  candidate: AttemptRunSummaryV1["cleanup"]["status"]
+): boolean {
+  if (current === candidate) return true;
+  if (current === "awaiting-local-commit") {
+    return candidate === "pending"
+      || candidate === "retained-for-recovery"
+      || candidate === "retained"
+      || candidate === "aborted"
+      || candidate === "quarantined";
+  }
+  if (current === "pending") {
+    return candidate === "disposing"
+      || candidate === "disposed"
+      || candidate === "unsupported"
+      || candidate === "failed"
+      || candidate === "retained"
+      || candidate === "aborted"
+      || candidate === "quarantined";
+  }
+  if (current === "disposing") {
+    return candidate === "disposed"
+      || candidate === "unsupported"
+      || candidate === "failed"
+      || candidate === "retained"
+      || candidate === "aborted"
+      || candidate === "quarantined";
+  }
+  if (current === "failed") {
+    return candidate === "pending"
+      || candidate === "disposing"
+      || candidate === "disposed"
+      || candidate === "unsupported"
+      || candidate === "retained"
+      || candidate === "aborted"
+      || candidate === "quarantined";
+  }
+  if (current === "retained-for-recovery") {
+    return candidate === "pending"
+      || candidate === "retained"
+      || candidate === "aborted"
+      || candidate === "quarantined";
+  }
+  return false;
+}
+
+function assertCleanupTransition(
+  current: AttemptRunSummaryV1["cleanup"],
+  candidate: AttemptRunSummaryV1["cleanup"]
+): void {
+  if (!cleanupStatusCanTransition(current.status, candidate.status)) {
+    throw new RunRecordStoreConflictError(
+      "Attempt Run cleanup status transition is not monotonic"
+    );
+  }
+  if (candidate.attempts < current.attempts) {
+    throw new RunRecordStoreConflictError(
+      "Attempt Run cleanup attempts cannot decrease"
+    );
+  }
+  assertOptionalMonotonicTimestamp(
+    current.nextAttemptAt,
+    candidate.nextAttemptAt,
+    "Attempt Run cleanup nextAttemptAt"
+  );
+  assertOptionalAppendOnly(
+    current.settledAt,
+    candidate.settledAt,
+    "Attempt Run cleanup settledAt"
+  );
+  assertOptionalAppendOnly(
+    current.quarantinedAt,
+    candidate.quarantinedAt,
+    "Attempt Run cleanup quarantinedAt"
+  );
+  assertOptionalAppendOnly(
+    current.reasonCode,
+    candidate.reasonCode,
+    "Attempt Run cleanup reasonCode"
+  );
+}
+
+function assertAppendOnlyArray<T>(
+  current: readonly T[],
+  candidate: readonly T[],
+  label: string
+): void {
+  if (
+    candidate.length < current.length
+    || current.some((item, index) =>
+      !isDeepStrictEqual(item, candidate[index])
+    )
+  ) {
+    throw new RunRecordStoreConflictError(
+      `${label} can only preserve its prefix and append`
+    );
+  }
+}
+
+function assertOptionalAppendOnly(
+  current: unknown,
+  candidate: unknown,
+  label: string
+): void {
+  if (
+    current !== undefined
+    && (candidate === undefined || !isDeepStrictEqual(current, candidate))
+  ) {
+    throw new RunRecordStoreConflictError(
+      `${label} cannot be removed or replaced`
+    );
+  }
+}
+
+function assertOptionalMonotonicTimestamp(
+  current: number | undefined,
+  candidate: number | undefined,
+  label: string
+): void {
+  if (
+    current !== undefined
+    && (candidate === undefined || candidate < current)
+  ) {
+    throw new RunRecordStoreConflictError(
+      `${label} cannot be removed or move backwards`
+    );
+  }
+}
+
+function assertFieldsEqual<T extends object>(
+  current: T,
+  candidate: T,
+  fields: readonly (keyof T)[],
+  label: string
+): void {
+  if (fields.some((field) =>
+    !isDeepStrictEqual(current[field], candidate[field])
+  )) {
+    throw new RunRecordStoreConflictError(`${label} cannot be replaced`);
+  }
+}
+
+async function writeRunRecordHeadAtomically(
+  stagingRootPath: string,
+  layout: SubjectLayout,
+  manifest: RunRecordGenerationManifest
+): Promise<void> {
+  const head: RunRecordHeadV1 = {
+    schemaVersion: 1,
+    recordType: "run-record-head",
+    recordKind: manifest.recordKind,
+    subjectToken: manifest.subjectToken,
+    revision: manifest.revision,
+    manifestDigest: manifest.digest
+  };
+  const stagedPath = path.join(
+    stagingRootPath,
+    `.head-${manifest.subjectToken}-${randomUUID()}.tmp`
+  );
+  await writeNewFileDurably(stagedPath, jsonLine(head));
+  try {
+    await syncDirectory(stagingRootPath);
+    await rename(stagedPath, layout.headPath);
+    await syncDirectory(layout.subjectRootPath);
+  } catch (error) {
+    await unlink(stagedPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function validateRunRecordHead(value: unknown): RunRecordHeadV1 {
+  const record = exactObject(value, [
+    "schemaVersion",
+    "recordType",
+    "recordKind",
+    "subjectToken",
+    "revision",
+    "manifestDigest"
+  ]);
+  if (
+    record.schemaVersion !== 1
+    || record.recordType !== "run-record-head"
+    || ![
+      "workflow-summary",
+      "attempt-summary",
+      "attempt-payload"
+    ].includes(record.recordKind as string)
+    || typeof record.subjectToken !== "string"
+    || !/^[a-z0-9._-]+-[a-f0-9]{64}$/.test(record.subjectToken)
+    || !Number.isSafeInteger(record.revision)
+    || (record.revision as number) < 0
+    || typeof record.manifestDigest !== "string"
+    || !SHA256_PATTERN.test(record.manifestDigest)
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "manifest-corrupt",
+      "Run record head is invalid"
+    );
+  }
+  return record as unknown as RunRecordHeadV1;
+}
+
+function attemptRecordSubjectId(locator: AttemptRunRecordLocator): string {
+  return runRecordSubjectDigest(
+    "attempt-summary",
+    locator.workflowRunId,
+    locator.attemptId
+  );
+}
+
+function validateGenerationManifest(
+  value: unknown
+): RunRecordGenerationManifest {
+  const record = exactObject(value, [
+    "schemaVersion",
+    "recordType",
+    "recordKind",
+    "subjectToken",
+    "revision",
+    "generation",
+    "contentKind",
+    "contentDigest",
+    "previousContentDigest",
+    "committedAt",
+    "digest"
+  ]);
+  if (
+    record.schemaVersion !== 1
+    || record.recordType !== "run-record-generation-manifest"
+    || ![
+      "workflow-summary",
+      "attempt-summary",
+      "attempt-payload"
+    ].includes(record.recordKind as string)
+    || typeof record.subjectToken !== "string"
+    || !/^[a-z0-9._-]+-[a-f0-9]{64}$/.test(record.subjectToken)
+    || !Number.isSafeInteger(record.revision)
+    || (record.revision as number) < 0
+    || typeof record.generation !== "string"
+    || !/^\d{12}-[a-f0-9]{16}-[a-f0-9-]{36}$/.test(record.generation)
+    || ![
+      "record",
+      "payload",
+      "not-captured",
+      "expired"
+    ].includes(record.contentKind as string)
+    || typeof record.contentDigest !== "string"
+    || !SHA256_PATTERN.test(record.contentDigest)
+    || !(
+      record.previousContentDigest === null
+      || (
+        typeof record.previousContentDigest === "string"
+        && SHA256_PATTERN.test(record.previousContentDigest)
+      )
+    )
+    || !Number.isSafeInteger(record.committedAt)
+    || (record.committedAt as number) < 0
+    || typeof record.digest !== "string"
+    || !SHA256_PATTERN.test(record.digest)
+    || record.digest !== canonicalRunRecordDigest(record)
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "manifest-corrupt",
+      "Run record generation manifest is invalid"
+    );
+  }
+  return record as unknown as RunRecordGenerationManifest;
+}
+
+function validateNotCapturedRecord(
+  value: unknown
+): AttemptPayloadNotCapturedRecord {
+  const record = exactObject(value, [
+    "schemaVersion",
+    "recordType",
+    "workflowRunId",
+    "attemptId",
+    "harnessRunId",
+    "subjectDigest",
+    "reasonCode",
+    "recordedAt",
+    "revision",
+    "digest"
+  ]);
+  if (
+    record.schemaVersion !== 1
+    || record.recordType !== "attempt-payload-not-captured"
+    || !validSafeText(record.workflowRunId, 512)
+    || !validSafeText(record.attemptId, 512)
+    || !validSafeText(record.harnessRunId, 512)
+    || typeof record.reasonCode !== "string"
+    || !RUN_RECORD_REASON_CODES.includes(record.reasonCode as RunRecordReasonCode)
+    || !CAPTURE_REASON_CODES.has(record.reasonCode as RunRecordReasonCode)
+    || !Number.isSafeInteger(record.recordedAt)
+    || (record.recordedAt as number) < 0
+    || !Number.isSafeInteger(record.revision)
+    || (record.revision as number) < 0
+    || record.subjectDigest !== runRecordSubjectDigest(
+      "attempt-payload",
+      record.workflowRunId,
+      record.attemptId,
+      record.harnessRunId
+    )
+    || typeof record.digest !== "string"
+    || !SHA256_PATTERN.test(record.digest)
+    || record.digest !== canonicalRunRecordDigest(record)
+  ) {
+    throw new RunRecordStoreCorruptError(
+      "not-captured-corrupt",
+      "Attempt payload not-captured record is invalid"
+    );
+  }
+  return record as unknown as AttemptPayloadNotCapturedRecord;
+}
+
+function exactObject(
+  value: unknown,
+  keys: readonly string[]
+): Record<string, unknown> {
+  if (
+    !value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    throw new Error("Expected JSON object");
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(keys);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) throw new Error(`Unexpected field ${key}`);
+  }
+  return record;
+}
+
+function validSafeText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= maxLength
+    && value === value.trim()
+    && !containsControlCharacter(value);
+}
+
+function withDigest<T extends object>(input: T): T & { digest: string } {
+  return {
+    ...input,
+    digest: canonicalRunRecordDigest(input)
+  };
+}
+
+async function readJsonFile(filePath: string): Promise<unknown> {
+  return JSON.parse(await readUtf8FileSafely(filePath, 64 * 1024 * 1024)) as unknown;
+}
+
+async function readUtf8FileSafely(
+  filePath: string,
+  maxBytes: number
+): Promise<string> {
+  const handle = await open(
+    filePath,
+    fsConstants.O_RDONLY | noFollowFlag()
+  );
+  try {
+    const before = await handle.stat();
+    assertSafeRegularFile(before, filePath, [1, 2]);
+    if (before.size > maxBytes) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        `Run record file exceeds safe byte limit: ${filePath}`
+      );
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (!sameFileVersion(before, after) || bytes.byteLength !== before.size) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        `Run record file changed during read: ${filePath}`
+      );
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+async function writeNewFileDurably(
+  filePath: string,
+  content: string
+): Promise<void> {
+  const handle = await open(
+    filePath,
+    fsConstants.O_WRONLY
+      | fsConstants.O_CREAT
+      | fsConstants.O_EXCL
+      | noFollowFlag(),
+    0o600
+  );
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function ensurePlainDirectory(directoryPath: string): Promise<void> {
+  await mkdir(directoryPath, { recursive: true, mode: 0o700 });
+  const stat = await lstat(directoryPath);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new RunRecordStoreCorruptError(
+      "unsafe-path",
+      `Expected plain directory: ${directoryPath}`
+    );
+  }
+}
+
+async function syncDirectory(directoryPath: string): Promise<void> {
+  const handle = await open(
+    directoryPath,
+    fsConstants.O_RDONLY | noFollowFlag()
+  );
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function assertSafeRegularFile(
+  stat: Stats,
+  label: string,
+  allowedLinkCounts: readonly number[]
+): void {
+  if (!stat.isFile() || !allowedLinkCounts.includes(Number(stat.nlink))) {
+    throw new RunRecordStoreCorruptError(
+      "unsafe-path",
+      `Run record file is not a safe regular file: ${label}`
+    );
+  }
+}
+
+function sameFileVersion(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+function noFollowFlag(): number {
+  return (
+    (fsConstants as unknown as Record<string, number>).O_NOFOLLOW
+    ?? 0
+  );
+}
+
+async function lstatOrNull(filePath: string) {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function manifestFileName(revision: number): string {
+  return `${String(revision).padStart(12, "0")}.json`;
+}
+
+function jsonLine(value: unknown): string {
+  return `${JSON.stringify(value)}\n`;
+}
+
+function sha256(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "EEXIST";
+}
+
+function corruptLatest(
+  layout: SubjectLayout,
+  code: RunRecordStoreCorruptCode,
+  error: string
+): LatestManifestResult {
+  return { state: "corrupt", layout, code, error };
+}
+
+function corruptResult(
+  code: RunRecordStoreCorruptCode,
+  error: unknown
+): { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string } {
+  return {
+    state: "corrupt",
+    code,
+    error: errorMessage(error)
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

@@ -15,6 +15,7 @@ import {
   type EchoInkSessionContextRotationOptions
 } from "../../plugin/session-context-lifecycle";
 import type { SessionContextRetirement } from "../../harness/conversation/context-rotation";
+import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
 import {
   ensureKnowledgeBaseSession,
   normalizeSettingsData,
@@ -36,12 +37,15 @@ import {
 
 export async function runHarnessV2UiContextRotationTests(): Promise<void> {
   await assertFacadeOrdersCommitPromotionAndAsyncCleanup();
+  await assertFacadeQueuesLiveMutationsDuringCommit();
+  await assertFacadePreconditionRunsInsideConversationLane();
   await assertFacadeCommitFailureKeepsLiveStateAndSkipsCleanup();
   await assertFacadePromotionFailureKeepsCommittedStateForRecovery();
   await assertResetSessionNativeCacheProductContract();
   await assertLegacyCodexThreadConflictFailsBeforeMutation();
   await assertLegacyPersistentContextBootstrapGate();
   await assertHistoryRestoreCreatesAVisibleOnlyBoundary();
+  await assertHistoryRestoreRejectsActiveRunsBeforeAndAfterRead();
   await assertUiCommitFailuresKeepComposerMessagesAndWorkspaceUnchanged();
   await assertClearPostCommitSaveFailureCannotReverseSuccess();
   await assertSettingsStoreRuntimePristineCreateRegistry();
@@ -51,6 +55,102 @@ export async function runHarnessV2UiContextRotationTests(): Promise<void> {
   assertNewSessionsUseDurablePristineShells();
   assertNativeCleanupStatusesNormalizeAndRenderTruthfully();
   await assertProductEntrypointsUseTheTypedRotationFacade();
+}
+
+async function assertFacadeQueuesLiveMutationsDuringCommit(): Promise<void> {
+  let releaseCommit = () => undefined;
+  const commitGate = new Promise<void>((resolve) => {
+    releaseCommit = resolve;
+  });
+  let commitStarted = () => undefined;
+  const commitStartedGate = new Promise<void>((resolve) => {
+    commitStarted = resolve;
+  });
+  const fixture = lifecycleFixture({
+    commitGate,
+    onCommit: () => commitStarted()
+  });
+  const session = rotationSession();
+  const rotation = fixture.rotate(session, {
+    reason: "start-new-context",
+    workspace: {
+      vaultPath: "/vault",
+      cwd: "/vault/workspace-a"
+    }
+  });
+  await commitStartedGate;
+
+  const append = fixture.settingsStore.withConversationMutation(
+    session.id,
+    async () => {
+      session.messages.push({
+        id: "queued-ui-user",
+        role: "user",
+        text: "等待 rotation 的新消息",
+        createdAt: 3
+      });
+    }
+  );
+  const rename = fixture.settingsStore.withConversationMutation(
+    session.id,
+    async () => {
+      session.title = "等待 rotation 的新标题";
+    }
+  );
+  await Promise.resolve();
+  assert.equal(session.title, "UI rotation");
+  assert.deepEqual(
+    session.messages.map((message) => message.id),
+    ["old-user", "old-answer"]
+  );
+
+  releaseCommit();
+  await Promise.all([rotation, append, rename]);
+  assert.equal(session.title, "等待 rotation 的新标题");
+  assert.deepEqual(
+    session.messages.map((message) => message.id),
+    ["old-user", "old-answer", "queued-ui-user"]
+  );
+}
+
+async function assertFacadePreconditionRunsInsideConversationLane(): Promise<void> {
+  const fixture = lifecycleFixture();
+  const session = rotationSession();
+  const before = clone(session);
+  let running = false;
+  let releaseRunStart = () => undefined;
+  const runStartGate = new Promise<void>((resolve) => {
+    releaseRunStart = resolve;
+  });
+  let runLaneAcquired = () => undefined;
+  const runLaneAcquiredGate = new Promise<void>((resolve) => {
+    runLaneAcquired = resolve;
+  });
+  const runStart = fixture.settingsStore.withConversationMutation(
+    session.id,
+    async () => {
+      runLaneAcquired();
+      await runStartGate;
+      running = true;
+    }
+  );
+  await runLaneAcquiredGate;
+  assert.equal(running, false, "the outer UI check can still pass at this point");
+
+  const rotation = fixture.rotate(session, {
+    reason: "history-restore",
+    precondition: () => {
+      if (running) throw new Error("run started before rotation acquired its lane");
+    },
+    mutate: (candidate) => {
+      candidate.messages = [];
+    }
+  });
+  releaseRunStart();
+  await runStart;
+  await assert.rejects(rotation, /run started before rotation acquired its lane/);
+  assert.deepEqual(session, before);
+  assert.deepEqual(fixture.calls, []);
 }
 
 async function assertFacadeOrdersCommitPromotionAndAsyncCleanup(): Promise<void> {
@@ -108,6 +208,10 @@ async function assertFacadeCommitFailureKeepsLiveStateAndSkipsCleanup(): Promise
   assert.deepEqual(session, before);
   assert.deepEqual(fixture.calls, ["register", "commit", "abort"]);
   assert.equal(fixture.cleanupCalls(), 0);
+  await fixture.settingsStore.withConversationMutation(session.id, async () => {
+    session.title = "lane released after failure";
+  });
+  assert.equal(session.title, "lane released after failure");
 }
 
 async function assertFacadePromotionFailureKeepsCommittedStateForRecovery(): Promise<void> {
@@ -387,6 +491,64 @@ async function assertHistoryRestoreCreatesAVisibleOnlyBoundary(): Promise<void> 
   );
   assert.equal(host.renderMessagesCalls(), 1);
   assert.equal(host.resetVirtualWindowCalls(), 1);
+}
+
+async function assertHistoryRestoreRejectsActiveRunsBeforeAndAfterRead(): Promise<void> {
+  const restoredMessages: ChatMessage[] = [
+    { id: "history-user", role: "user", text: "历史问题", createdAt: 10 }
+  ];
+
+  let activeReadCalls = 0;
+  const activeFixture = lifecycleFixture();
+  const activeSession = rotationSession({ kind: "knowledge-base" });
+  const activeHost = knowledgeHost(activeSession, activeFixture, restoredMessages, {
+    onRead: () => {
+      activeReadCalls += 1;
+    }
+  });
+  activeHost.running = true;
+  await restoreKnowledgeBaseHistoryDate(
+    activeHost as never,
+    activeSession,
+    "2026-07-18"
+  );
+  assert.equal(activeReadCalls, 0);
+  assert.deepEqual(activeFixture.calls, []);
+
+  let managerReadCalls = 0;
+  const managerFixture = lifecycleFixture();
+  const managerSession = rotationSession({ kind: "knowledge-base" });
+  const managerHost = knowledgeHost(managerSession, managerFixture, restoredMessages, {
+    managerRunning: true,
+    onRead: () => {
+      managerReadCalls += 1;
+    }
+  });
+  await restoreKnowledgeBaseHistoryDate(
+    managerHost as never,
+    managerSession,
+    "2026-07-18"
+  );
+  assert.equal(managerReadCalls, 0);
+  assert.deepEqual(managerFixture.calls, []);
+
+  let duringReadCalls = 0;
+  const duringFixture = lifecycleFixture();
+  const duringSession = rotationSession({ kind: "knowledge-base" });
+  let duringHost: ReturnType<typeof knowledgeHost>;
+  duringHost = knowledgeHost(duringSession, duringFixture, restoredMessages, {
+    onRead: () => {
+      duringReadCalls += 1;
+      duringHost.running = true;
+    }
+  });
+  await restoreKnowledgeBaseHistoryDate(
+    duringHost as never,
+    duringSession,
+    "2026-07-18"
+  );
+  assert.equal(duringReadCalls, 1);
+  assert.deepEqual(duringFixture.calls, []);
 }
 
 async function assertUiCommitFailuresKeepComposerMessagesAndWorkspaceUnchanged(): Promise<void> {
@@ -939,6 +1101,14 @@ async function assertProductEntrypointsUseTheTypedRotationFacade(): Promise<void
     mainSource,
     /rotateEchoInkSessionContext\(session:[\s\S]*rotateEchoInkSessionContext\(this\.getHarnessService\(\), this\.getSettingsStore\(\), session, options\)/
   );
+  assert.match(
+    mainSource,
+    /withEchoInkConversationMutation<R>\(conversationId:[\s\S]*getSettingsStore\(\)\.withConversationMutation\(conversationId, action\)/
+  );
+  assert.match(
+    lifecycleSource,
+    /precondition\?\.\(\)[\s\S]*rotateSessionContext\(session[\s\S]*settingsStore\.withConversationMutation\([\s\S]*session\.id,[\s\S]*rotate/
+  );
   assert.ok(
     lifecycleSource.indexOf("registerNativeExecutionRetirements")
       < lifecycleSource.indexOf("commitConversationSessionContext")
@@ -956,7 +1126,32 @@ async function assertProductEntrypointsUseTheTypedRotationFacade(): Promise<void
     /await harnessService\.cleanupNativeExecutionRecord/
   );
   assert.match(sessionSource, /reason: "agent-cache-reset"[\s\S]*advanceContext: false/);
+  assert.match(
+    sessionSource,
+    /renameSession\([\s\S]*withEchoInkConversationMutation\(session\.id,[\s\S]*session\.title = name[\s\S]*saveSettings\(true\)/
+  );
+  const resetSource = sessionSource.slice(
+    sessionSource.indexOf("export async function resetSessionNativeCache"),
+    sessionSource.indexOf("export async function renameSession")
+  );
+  assert.match(resetSource, /precondition:[\s\S]*host\.activeRunSessionId === session\.id/);
   assert.match(sessionSource, /reason: "start-new-context"/);
+  const clearKnowledgeSource = sessionSource.slice(
+    sessionSource.indexOf("export async function clearKnowledgeBasePage"),
+    sessionSource.indexOf("export async function openKnowledgeBaseHistory")
+  );
+  assert.match(
+    clearKnowledgeSource,
+    /precondition:[\s\S]*host\.running[\s\S]*getKnowledgeBaseManager\(\)\?\.isRunning/
+  );
+  const restoreHistorySource = sessionSource.slice(
+    sessionSource.indexOf("export async function restoreKnowledgeBaseHistoryDate"),
+    sessionSource.indexOf("export function contextRotationCleanupNoticeSuffix")
+  );
+  assert.match(
+    restoreHistorySource,
+    /readKnowledgeBaseHistoryDay[\s\S]*if \(host\.running \|\| host\.plugin\.getKnowledgeBaseManager\(\)\?\.isRunning\)[\s\S]*reason: "history-restore"[\s\S]*precondition:/
+  );
   assert.match(
     sessionSource,
     /restoredThroughMessageId = messages\.at\(-1\)\?\.id[\s\S]*reason: "history-restore"[\s\S]*contextStartsAfterMessageId: restoredThroughMessageId/
@@ -965,6 +1160,52 @@ async function assertProductEntrypointsUseTheTypedRotationFacade(): Promise<void
   assert.doesNotMatch(sessionSource, /advanceSessionRevision\(session\)/);
   assert.match(workspaceSource, /reason: "workspace-switch"[\s\S]*workspace:[\s\S]*cwd: workspacePath/);
   assert.match(workspaceSource, /reason: "workspace-clear"[\s\S]*workspace: null/);
+  const chooserSource = workspaceSource.slice(
+    workspaceSource.indexOf("export async function chooseChatWorkspace"),
+    workspaceSource.indexOf("export async function clearChatWorkspace")
+  );
+  const pickerIndex = chooserSource.indexOf("await pickWorkspaceDirectory");
+  assert.ok(pickerIndex >= 0);
+  assert.ok(
+    chooserSource.indexOf("if (host.running)", pickerIndex) > pickerIndex,
+    "workspace running state must be rechecked after the picker returns"
+  );
+  assert.match(
+    workspaceSource,
+    /reason: "workspace-switch"[\s\S]*precondition: \(\) => \{[\s\S]*host\.running/
+  );
+  assert.match(
+    workspaceSource,
+    /reason: "workspace-clear"[\s\S]*precondition: \(\) => \{[\s\S]*host\.running/
+  );
+  const chatTurnSource = turnSource.slice(
+    turnSource.indexOf("export async function startChatTurn"),
+    turnSource.indexOf("export async function startKnowledgeBaseTurn")
+  );
+  assert.match(
+    chatTurnSource,
+    /withConversationMutation\(view, session\.id,[\s\S]*session\.messages\.push\(userMessage, assistantMessage\)[\s\S]*view\.running = true[\s\S]*saveSettings\(true\)[\s\S]*prepareChatBackendConnection/
+  );
+  const knowledgeTurnSource = turnSource.slice(
+    turnSource.indexOf("export async function startKnowledgeBaseTurn"),
+    turnSource.indexOf("export async function runKnowledgeBaseShortcut")
+  );
+  assert.match(
+    knowledgeTurnSource,
+    /withConversationMutation\(view, session\.id,[\s\S]*session\.messages\.push\(userMessage, assistantMessage\)[\s\S]*view\.running = true[\s\S]*saveSettings\(true\)[\s\S]*manager\.handleUserMessage/
+  );
+  const shortcutSource = turnSource.slice(
+    turnSource.indexOf("export async function runKnowledgeBaseShortcut"),
+    turnSource.indexOf("function appendSettlementFailure")
+  );
+  assert.match(
+    shortcutSource,
+    /withConversationMutation\(view, active\.id,[\s\S]*active\.messages\.push\(userMessage, assistantMessage\)[\s\S]*view\.running = true[\s\S]*saveSettings\(true\)/
+  );
+  assert.match(
+    turnSource,
+    /function withConversationMutation<T>[\s\S]*view\.plugin\.withEchoInkConversationMutation\([\s\S]*conversationId,[\s\S]*action/
+  );
   const cleanupPriority = [
     "\"quarantined\"",
     "\"failed\"",
@@ -992,12 +1233,14 @@ async function assertProductEntrypointsUseTheTypedRotationFacade(): Promise<void
 
 function lifecycleFixture(options: {
   commitError?: Error;
+  commitGate?: Promise<void>;
   promotionError?: Error;
   cleanupGate?: Promise<void>;
   onRegister?: (retirements: readonly SessionContextRetirement[]) => void;
   onCommit?: (session: StoredSession) => void;
 } = {}) {
   const calls: string[] = [];
+  const mutationLane = new ConversationMutationLane();
   let cleanupCalls = 0;
   let cleanupCompletionCalls = 0;
   const harnessService = {
@@ -1023,9 +1266,16 @@ function lifecycleFixture(options: {
     }
   };
   const settingsStore = {
+    async withConversationMutation<T>(
+      conversationId: string,
+      action: () => Promise<T>
+    ): Promise<T> {
+      return await mutationLane.withConversationMutation(conversationId, action);
+    },
     async commitConversationSessionContext(session: StoredSession) {
       calls.push("commit");
       options.onCommit?.(session);
+      await options.commitGate;
       if (options.commitError) throw options.commitError;
       return {
         conversationId: session.id,
@@ -1113,7 +1363,11 @@ function knowledgeHost(
   session: StoredSession,
   fixture: ReturnType<typeof lifecycleFixture>,
   restoredMessages: ChatMessage[],
-  options: { saveError?: Error } = {}
+  options: {
+    managerRunning?: boolean;
+    onRead?: () => void;
+    saveError?: Error;
+  } = {}
 ) {
   let renderMessagesCalls = 0;
   let resetVirtualWindowCalls = 0;
@@ -1123,13 +1377,18 @@ function knowledgeHost(
     plugin: {
       settings: { sessions: [session] },
       getVaultPath: () => "/vault",
-      getKnowledgeBaseManager: () => null,
+      getKnowledgeBaseManager: () => options.managerRunning
+        ? { isRunning: true }
+        : null,
       rotateEchoInkSessionContext: fixture.rotate,
       saveSettings: async () => {
         saveSettingsCalls += 1;
         if (options.saveError) throw options.saveError;
       },
-      readKnowledgeBaseHistoryDay: async () => clone(restoredMessages)
+      readKnowledgeBaseHistoryDay: async () => {
+        options.onRead?.();
+        return clone(restoredMessages);
+      }
     },
     running: false,
     activeRunSessionId: "",

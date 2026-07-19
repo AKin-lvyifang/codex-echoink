@@ -228,6 +228,10 @@ import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { shouldShowComposerPlanIndicator } from "../ui/codex-view/composer";
+import {
+  pauseQueueForSession as pauseComposerQueueForSession,
+  requireQueueRecoveryForSession as requireComposerQueueRecoveryForSession
+} from "../ui/codex-view/composer-controller";
 import { positionAnchoredMenu, positionSubmenu } from "../ui/codex-view/floating-menu-position";
 import { CodexMessageListRenderer, knowledgeBaseMaintainExecutionItems, knowledgeBaseRunEventCopy, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
@@ -280,6 +284,7 @@ import { runHarnessV2ContractTests } from "./harness-v2/contracts";
 import { runHarnessV2AdapterTests } from "./harness-v2/adapters";
 import { runHarnessV2ResourceTests } from "./harness-v2/resources";
 import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-store";
+import { runHarnessV2ConversationStoreV2Tests } from "./harness-v2/conversation-store-v2";
 import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
 import { runHarnessV2KnowledgePolicyProfileTests } from "./harness-v2/knowledge-policy-profile";
 import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger";
@@ -306,6 +311,10 @@ import { runHarnessV2AsyncRunSettlementTests } from "./harness-v2/async-run-sett
 import { runHarnessV2SurfaceRunSettlementTests } from "./harness-v2/surface-run-settlement";
 import { runHarnessV2ArchitectureBoundaryTests } from "./harness-v2/architecture-boundaries";
 import { runHarnessV2StorageInventoryTests } from "./harness-v2/storage-inventory";
+import { runHarnessV2RunRecordStoreTests } from "./harness-v2/run-record-store";
+import { runHarnessV2RecordMutationJournalTests } from "./harness-v2/record-mutation-journal";
+import { runHarnessV2RecordMutationTrashTests } from "./harness-v2/record-mutation-trash";
+import { runHarnessV2RecordMutationCrashRecoveryTests } from "./harness-v2/record-mutation-crash-recovery";
 import { runHarnessV2HistoryProjectionRetentionTests } from "./harness-v2/history-projection-retention";
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
 import { runHarnessV2EditorNativeLifecycleTests } from "./harness-v2/editor-native-lifecycle";
@@ -4691,6 +4700,53 @@ assert.equal(settlementQueue.isSessionQueuePaused("s2"), true);
 assert.equal(settlementQueue.dequeueNext("s2"), null);
 settlementQueue.resumeSessionQueue("s2");
 assert.equal(settlementQueue.dequeueNext("s2")?.id, "settle-b");
+const commitFailureQueue = new RuntimeTurnQueue();
+let commitFailureQueueRenderCount = 0;
+pauseComposerQueueForSession({
+  turnQueue: commitFailureQueue,
+  renderQueue: () => {
+    commitFailureQueueRenderCount += 1;
+  },
+  renderToolbar: () => {
+    commitFailureQueueRenderCount += 1;
+  }
+} as any, "commit-failure-session");
+assert.equal(
+  commitFailureQueue.isSessionQueuePaused("commit-failure-session"),
+  false,
+  "ordinary pause must not create an empty queue state"
+);
+assert.equal(commitFailureQueueRenderCount, 0);
+requireComposerQueueRecoveryForSession({
+  turnQueue: commitFailureQueue,
+  renderQueue: () => {
+    commitFailureQueueRenderCount += 1;
+  },
+  renderToolbar: () => {
+    commitFailureQueueRenderCount += 1;
+  }
+} as any, "commit-failure-session");
+assert.equal(commitFailureQueue.isSessionRecoveryRequired("commit-failure-session"), true);
+commitFailureQueue.enqueue(queuedTurn(
+  "commit-failure-next",
+  "commit-failure-session",
+  "must remain blocked"
+));
+assert.equal(
+  commitFailureQueue.dequeueNext("commit-failure-session"),
+  null,
+  "future queued turns must remain blocked until recovery explicitly resumes the queue"
+);
+commitFailureQueue.resumeSessionQueue("commit-failure-session");
+assert.equal(
+  commitFailureQueue.dequeueNext("commit-failure-session"),
+  null,
+  "ordinary Resume must not clear a recovery-required gate"
+);
+assert.equal(commitFailureQueueRenderCount, 2);
+commitFailureQueue.clearSessionRecoveryRequired("commit-failure-session");
+assert.equal(commitFailureQueue.isSessionRecoveryRequired("commit-failure-session"), false);
+assert.equal(commitFailureQueue.dequeueNext("commit-failure-session")?.id, "commit-failure-next");
 const throwingQueueViewQueue = new RuntimeTurnQueue();
 throwingQueueViewQueue.enqueue(queuedTurn("throw-a", "throw-session", "failing queued turn"));
 throwingQueueViewQueue.enqueue(queuedTurn("throw-b", "throw-session", "remaining queued turn"));
@@ -4721,7 +4777,10 @@ try {
 assert.equal(throwingQueueViewError, null);
 assert.equal(throwingQueueView.queueStartInProgress, false);
 assert.equal(throwingQueueViewQueue.isSessionQueuePaused("throw-session"), true);
+assert.equal(throwingQueueViewQueue.isSessionRecoveryRequired("throw-session"), false);
 assert.deepEqual(throwingQueueViewQueue.itemsForSession("throw-session").map((item) => item.id), ["throw-b"]);
+throwingQueueViewQueue.resumeSessionQueue("throw-session");
+assert.equal(throwingQueueViewQueue.dequeueNext("throw-session")?.id, "throw-b");
 const notificationSessions = [
   { id: "router-a", title: "A", cwd: "/vault", threadId: "thread-a", messages: [], createdAt: 1, updatedAt: 1 },
   { id: "router-b", title: "B", cwd: "/vault", threadId: "thread-b", messages: [], createdAt: 1, updatedAt: 1 }
@@ -4812,9 +4871,14 @@ let knowledgeFinalizeSaveCalls = 0;
 let knowledgeFinalizeRenderMessagesCalls = 0;
 let knowledgeFinalizeToolbarCalls = 0;
 let knowledgeFinalizeApplyStatusCalls = 0;
+const runConversationMutationImmediately = async <T>(
+  _conversationId: string,
+  action: () => Promise<T>
+): Promise<T> => await action();
 const knowledgeFinalizeView: any = {
   plugin: {
     settings: { activeSessionId: knowledgeFinalizeSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => ({ status: "success", message: "体检完成" })
 	    }),
@@ -4882,6 +4946,7 @@ const knowledgeMaintainReportView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeMaintainReportSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({
         status: "success",
@@ -4928,6 +4993,7 @@ const knowledgeInitialSaveFailureView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeInitialSaveFailureSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => {
 	        knowledgeInitialHandleCalls += 1;
@@ -4971,6 +5037,7 @@ const knowledgeCanceledView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeCanceledSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => ({ status: "canceled", message: "知识库体检已取消。\n原因：用户取消" })
 	    }),
@@ -5005,6 +5072,7 @@ const knowledgeHarnessView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeHarnessSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({
         status: "success",
@@ -17277,6 +17345,7 @@ await runHarnessV2ContractTests();
 await runHarnessV2AdapterTests();
 await runHarnessV2ResourceTests();
 await runHarnessV2ConversationStoreTests();
+await runHarnessV2ConversationStoreV2Tests();
 await runHarnessV2SessionContextTests();
 await runHarnessV2KnowledgePolicyProfileTests();
 await runHarnessV2KnowledgeLedgerTests();
@@ -17303,6 +17372,10 @@ await runHarnessV2AsyncRunSettlementTests();
 await runHarnessV2SurfaceRunSettlementTests();
 await runHarnessV2ArchitectureBoundaryTests();
 await runHarnessV2StorageInventoryTests();
+await runHarnessV2RunRecordStoreTests();
+await runHarnessV2RecordMutationJournalTests();
+await runHarnessV2RecordMutationTrashTests();
+await runHarnessV2RecordMutationCrashRecoveryTests();
 await runHarnessV2HistoryProjectionRetentionTests();
 await runEditorActionControllerTests();
 await runHarnessV2EditorNativeLifecycleTests();

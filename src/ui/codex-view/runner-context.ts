@@ -62,8 +62,10 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   composerStateForSession(session: StoredSession): ComposerPrimaryActionState;
   enqueueComposerDraft(): Promise<void>;
   resumeQueuedTurns(sessionId: string): Promise<void>;
+  recoverSessionLifecycle(sessionId: string): Promise<void>;
   stopTurn(): Promise<void>;
   pauseQueueForSession(sessionId: string): void;
+  requireQueueRecoveryForSession(sessionId: string): void;
   createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null>;
   startQueuedTurnItem(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
   startQueuedTurnItemSafely(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;

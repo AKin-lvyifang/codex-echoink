@@ -1,6 +1,11 @@
 import * as assert from "node:assert/strict";
-import { createQueuedTurnFromComposer, startKnowledgeBaseTurn } from "../../ui/codex-view/turn-runner";
+import {
+  createQueuedTurnFromComposer,
+  runKnowledgeBaseShortcut,
+  startKnowledgeBaseTurn
+} from "../../ui/codex-view/turn-runner";
 import type { HarnessRunResult } from "../../harness/contracts/run";
+import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
 import type { TurnOptions } from "../../core/codex-service";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult } from "../../knowledge-base/command-router";
 import { buildKnowledgeBaseMaintainReportPayload } from "../../knowledge-base/maintain-report-card";
@@ -18,6 +23,7 @@ export async function runHarnessV2KnowledgeTurnTests(): Promise<void> {
   await assertMaintenanceWithoutWinnerClearsRunProvenance();
   await assertQueuedMaintenanceRefreshesBackendSpecificTurnOptionsAtStart();
   await assertRecoveryAllowsOnlyReadOnlyLocalCommands();
+  await assertKnowledgeShortcutKeepsMutationLaneUntilSettlement();
 }
 
 async function assertKnowledgeAskStoresHarnessBackendBinding(): Promise<void> {
@@ -76,6 +82,76 @@ async function assertKnowledgeAskStoresHarnessBackendBinding(): Promise<void> {
     savedSnapshots.some((snapshot) => snapshot.backendBindings?.["codex-cli"]?.leaseId === "lease-kb-codex"),
     "knowledge turn should persist backend binding before later /ask turns"
   );
+}
+
+async function assertKnowledgeShortcutKeepsMutationLaneUntilSettlement(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const commitEntered = deferred<void>();
+  const releaseCommit = deferred<void>();
+  const session: StoredSession = {
+    id: "kb-shortcut-settlement-lane",
+    title: "Knowledge",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const view: any = {
+    plugin: {
+      withEchoInkConversationMutation: async <T>(
+        conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await lane.withConversationMutation(conversationId, action),
+      activateKnowledgeBaseChannel: async () => undefined,
+      getKnowledgeBaseManager: () => null,
+      externalizeMessageText: async () => {
+        commitEntered.resolve();
+        await releaseCommit.promise;
+      },
+      settlePendingKnowledgeBaseNativeExecutions: async () => undefined,
+      saveSettings: async () => undefined
+    },
+    running: false,
+    ensureSession: () => session,
+    isKnowledgeBaseSession: () => true,
+    renderTabs: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined
+  };
+
+  const shortcut = runKnowledgeBaseShortcut(
+    view,
+    "刷新索引",
+    async () => "刷新完成"
+  );
+  await commitEntered.promise;
+  assert.equal(
+    view.running,
+    true,
+    "Knowledge shortcut must stay running until terminal persistence settles"
+  );
+
+  let laterMutationEntered = false;
+  const laterMutation = lane.withConversationMutation(session.id, async () => {
+    laterMutationEntered = true;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    laterMutationEntered,
+    false,
+    "later Conversation mutations must wait behind Knowledge shortcut settlement"
+  );
+
+  releaseCommit.resolve();
+  await shortcut;
+  await laterMutation;
+  assert.equal(laterMutationEntered, true);
+  assert.equal(view.running, false);
+  assert.equal(session.messages.at(-1)?.status, "completed");
+  assert.equal(session.messages.at(-1)?.text, "刷新完成");
 }
 
 async function assertKnowledgeAskKeepsConfiguredBackendProvenance(): Promise<void> {
@@ -591,6 +667,10 @@ function fakeKnowledgeView(
         knowledgeBase: { backend: options.knowledgeBackend ?? "codex-cli" }
       },
       getKnowledgeBaseManager: () => manager,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       externalizeMessageText: async (message: ChatMessage, text: string) => {
         message.text = text;
       },
@@ -641,4 +721,15 @@ function queuedKnowledgeAsk(): QueuedTurnItem {
     createdAt: 1,
     turnOptions: {}
   };
+}
+
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
 }

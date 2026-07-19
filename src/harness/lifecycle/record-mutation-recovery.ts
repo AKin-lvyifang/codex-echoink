@@ -1,0 +1,434 @@
+import * as fsp from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+import {
+  beginRecordMutationCompensation,
+  commitRecordMutationJournal,
+  finalizeRecordMutationAbort,
+  loadRecordMutationJournal,
+  type LoadedRecordMutationJournal
+} from "./record-mutation-journal";
+import {
+  parseRecordMutationRevision,
+  type RecordMutationRevision
+} from "./record-mutation-contract";
+import {
+  parseRecordMutationTrashReceipt,
+  restoreRecordMutationTrash,
+  type RecordMutationTrashReceipt
+} from "./record-mutation-trash";
+
+const RECOVERY_EVIDENCE_SCHEMA_VERSION = 1;
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+export interface RecordMutationRecoveryEvidence {
+  schemaVersion: typeof RECOVERY_EVIDENCE_SCHEMA_VERSION;
+  kind: "record-mutation-recovery-evidence";
+  mutationId: string;
+  intentDigest: string;
+  localCommit:
+    | "exact-target"
+    | "before-target"
+    | "contradictory"
+    | "unknown";
+  trash:
+    | "not-required"
+    | "recoverable"
+    | "missing"
+    | "corrupt"
+    | "unknown";
+}
+
+export type RecordMutationRecoveryDecision =
+  | {
+      action: "none";
+      reason: "already-committed" | "already-aborted";
+    }
+  | {
+      action: "roll-forward";
+      reason: "exact-local-commit";
+    }
+  | {
+      action: "compensate";
+      reason: "local-commit-absent";
+    }
+  | {
+      action: "blocked";
+      reason:
+        | "identity-mismatch"
+        | "trash-policy-mismatch"
+        | "planned-without-stage"
+        | "contradictory-local-commit"
+        | "unknown-local-commit"
+        | "terminal-evidence-conflict"
+        | "trash-evidence-unavailable"
+        | "compensation-conflicts-with-local-commit";
+    };
+
+export class RecordMutationRecoveryError extends Error {
+  constructor(
+    public readonly code:
+      | "evidence_corrupt"
+      | "fixture_only"
+      | "recovery_blocked",
+    message: string
+  ) {
+    super(message);
+    this.name = "RecordMutationRecoveryError";
+  }
+}
+
+export function parseRecordMutationRecoveryEvidence(
+  value: unknown
+): RecordMutationRecoveryEvidence {
+  const record = requirePlainRecord(value);
+  assertExactKeys(record, [
+    "schemaVersion",
+    "kind",
+    "mutationId",
+    "intentDigest",
+    "localCommit",
+    "trash"
+  ]);
+  if (record.schemaVersion !== RECOVERY_EVIDENCE_SCHEMA_VERSION) {
+    throw evidenceCorrupt(
+      `recovery evidence schema 不受支持：${String(record.schemaVersion)}`
+    );
+  }
+  if (record.kind !== "record-mutation-recovery-evidence") {
+    throw evidenceCorrupt("recovery evidence kind 非法");
+  }
+  if (
+    typeof record.mutationId !== "string"
+    || !SAFE_ID_PATTERN.test(record.mutationId)
+    || record.mutationId !== record.mutationId.normalize("NFC")
+  ) {
+    throw evidenceCorrupt("recovery evidence mutationId 非法");
+  }
+  if (
+    typeof record.intentDigest !== "string"
+    || !SHA256_PATTERN.test(record.intentDigest)
+  ) {
+    throw evidenceCorrupt("recovery evidence intentDigest 非法");
+  }
+  if (
+    record.localCommit !== "exact-target"
+    && record.localCommit !== "before-target"
+    && record.localCommit !== "contradictory"
+    && record.localCommit !== "unknown"
+  ) {
+    throw evidenceCorrupt("recovery evidence localCommit 非法");
+  }
+  if (
+    record.trash !== "not-required"
+    && record.trash !== "recoverable"
+    && record.trash !== "missing"
+    && record.trash !== "corrupt"
+    && record.trash !== "unknown"
+  ) {
+    throw evidenceCorrupt("recovery evidence trash 非法");
+  }
+  return {
+    schemaVersion: RECOVERY_EVIDENCE_SCHEMA_VERSION,
+    kind: "record-mutation-recovery-evidence",
+    mutationId: record.mutationId,
+    intentDigest: record.intentDigest,
+    localCommit: record.localCommit,
+    trash: record.trash
+  };
+}
+
+/**
+ * Pure recovery decision. It does not inspect or mutate Conversation, Memory,
+ * Run, Artifact, Raw, or Native stores.
+ */
+export function decideRecordMutationRecovery(
+  recordInput: RecordMutationRevision,
+  evidenceInput: RecordMutationRecoveryEvidence
+): RecordMutationRecoveryDecision {
+  const record = parseRecordMutationRevision(recordInput);
+  const evidence = parseRecordMutationRecoveryEvidence(evidenceInput);
+  if (
+    record.mutationId !== evidence.mutationId
+    || record.intentDigest !== evidence.intentDigest
+  ) {
+    return { action: "blocked", reason: "identity-mismatch" };
+  }
+  if (
+    (record.intent.trashPolicy === "required" && evidence.trash === "not-required")
+    || (
+      record.intent.trashPolicy === "not-required"
+      && evidence.trash !== "not-required"
+    )
+  ) {
+    return { action: "blocked", reason: "trash-policy-mismatch" };
+  }
+  if (
+    record.intent.trashPolicy === "required"
+    && evidence.trash !== "recoverable"
+  ) {
+    return { action: "blocked", reason: "trash-evidence-unavailable" };
+  }
+  if (evidence.localCommit === "contradictory") {
+    return { action: "blocked", reason: "contradictory-local-commit" };
+  }
+  if (evidence.localCommit === "unknown") {
+    return { action: "blocked", reason: "unknown-local-commit" };
+  }
+  if (record.state === "committed") {
+    return evidence.localCommit === "exact-target"
+      ? { action: "none", reason: "already-committed" }
+      : { action: "blocked", reason: "terminal-evidence-conflict" };
+  }
+  if (record.state === "aborted") {
+    return evidence.localCommit === "before-target"
+      ? { action: "none", reason: "already-aborted" }
+      : { action: "blocked", reason: "terminal-evidence-conflict" };
+  }
+  if (record.state === "planned") {
+    return { action: "blocked", reason: "planned-without-stage" };
+  }
+  if (record.state === "compensating" && evidence.localCommit === "exact-target") {
+    return {
+      action: "blocked",
+      reason: "compensation-conflicts-with-local-commit"
+    };
+  }
+  if (record.state === "staged" && evidence.localCommit === "exact-target") {
+    return { action: "roll-forward", reason: "exact-local-commit" };
+  }
+  if (
+    evidence.localCommit === "before-target"
+    && (
+      (record.intent.trashPolicy === "required" && evidence.trash === "recoverable")
+      || (
+        record.intent.trashPolicy === "not-required"
+        && evidence.trash === "not-required"
+      )
+    )
+  ) {
+    return { action: "compensate", reason: "local-commit-absent" };
+  }
+  return { action: "blocked", reason: "trash-evidence-unavailable" };
+}
+
+/**
+ * Deliberately restricted to temp fixtures. Production participant recovery is
+ * not wired in this slice.
+ */
+export async function recoverFixtureRecordMutation(input: {
+  journal: LoadedRecordMutationJournal;
+  evidence: RecordMutationRecoveryEvidence;
+  compensation?: {
+    participantId: string;
+    receipt: RecordMutationTrashReceipt;
+    sourceRootPath: string;
+    sourceRootId: string;
+    trashRootPath: string;
+    trashRootId: string;
+  };
+  now: number;
+  fixtureOnly: true;
+}): Promise<{
+  decision: RecordMutationRecoveryDecision;
+  journal: LoadedRecordMutationJournal;
+}> {
+  if (input.fixtureOnly !== true) {
+    throw new RecordMutationRecoveryError(
+      "fixture_only",
+      "record mutation recovery runner 只允许 fixture"
+    );
+  }
+  await assertTemporaryFixturePath(input.journal.handle.storageRootPath);
+  if (input.compensation) {
+    await assertTemporaryFixturePath(input.compensation.sourceRootPath);
+    await assertTemporaryFixturePath(input.compensation.trashRootPath);
+  }
+  const current = await loadRecordMutationJournal(input.journal.handle);
+  const evidence = parseRecordMutationRecoveryEvidence(input.evidence);
+  const decision = decideRecordMutationRecovery(current.record, evidence);
+  if (decision.action === "none" || decision.action === "blocked") {
+    return { decision, journal: current };
+  }
+  const firstTimestamp = Math.max(input.now, current.record.updatedAt + 1);
+  if (decision.action === "roll-forward") {
+    const committed = await commitRecordMutationJournal(current.handle, {
+      expectedRevision: current.record.revision,
+      expectedDigest: current.record.digest,
+      committedAt: firstTimestamp,
+      message: "fixture recovery verified exact local commit"
+    });
+    return { decision, journal: committed };
+  }
+
+  const validatedCompensation = input.compensation
+    ? {
+        ...input.compensation,
+        receipt: parseRecordMutationTrashReceipt(input.compensation.receipt)
+      }
+    : null;
+  if (
+    validatedCompensation
+    && validatedCompensation.receipt.mutationId !== current.record.mutationId
+  ) {
+    throw new RecordMutationRecoveryError(
+      "recovery_blocked",
+      "fixture compensation receipt mutationId 不匹配"
+    );
+  }
+  const participantId = validatedCompensation?.participantId
+    ?? current.record.step?.participantId
+    ?? current.record.intent.participants[0]?.id;
+  if (!participantId) {
+    throw new RecordMutationRecoveryError(
+      "recovery_blocked",
+      "fixture compensation 缺少 participant"
+    );
+  }
+  if (
+    !current.record.intent.participants.some(
+      (participant) => participant.id === participantId
+    )
+  ) {
+    throw new RecordMutationRecoveryError(
+      "recovery_blocked",
+      "fixture compensation participant 不在 intent 中"
+    );
+  }
+
+  const forwardActions = new Set(current.chain.flatMap((revision) => (
+    revision.step?.direction === "forward"
+      && revision.step.participantId === participantId
+      ? [revision.step.action]
+      : []
+  )));
+  let compensating = current;
+  let timestamp = firstTimestamp;
+  const existingCompensationActions = new Set(current.chain.flatMap((revision) => (
+    revision.step?.direction === "compensating"
+      && revision.step.participantId === participantId
+      ? [revision.step.action]
+      : []
+  )));
+  if (!existingCompensationActions.has("compensation-prepared")) {
+    compensating = await beginRecordMutationCompensation(current.handle, {
+      expectedRevision: current.record.revision,
+      expectedDigest: current.record.digest,
+      step: {
+        direction: "compensating",
+        ordinal: nextCompensationOrdinal(current),
+        participantId,
+        action: "compensation-prepared",
+        evidenceDigest: validatedCompensation?.receipt.digest ?? current.record.digest
+      },
+      updatedAt: timestamp
+    });
+    timestamp = compensating.record.updatedAt + 1;
+  }
+
+  if (
+    forwardActions.has("source-retired")
+    && !existingCompensationActions.has("trash-restored")
+  ) {
+    if (!validatedCompensation) {
+      throw new RecordMutationRecoveryError(
+        "recovery_blocked",
+        "retired source 缺少 fixture compensation receipt"
+      );
+    }
+    const receipt = validatedCompensation.receipt;
+    await restoreRecordMutationTrash({
+      receipt,
+      sourceRootPath: validatedCompensation.sourceRootPath,
+      sourceRootId: validatedCompensation.sourceRootId,
+      trashRootPath: validatedCompensation.trashRootPath,
+      trashRootId: validatedCompensation.trashRootId
+    });
+    compensating = await beginRecordMutationCompensation(compensating.handle, {
+      expectedRevision: compensating.record.revision,
+      expectedDigest: compensating.record.digest,
+      step: {
+        direction: "compensating",
+        ordinal: nextCompensationOrdinal(compensating),
+        participantId,
+        action: "trash-restored",
+        evidenceDigest: receipt.digest
+      },
+      updatedAt: timestamp
+    });
+    timestamp = compensating.record.updatedAt + 1;
+  } else if (!validatedCompensation && evidence.trash !== "not-required") {
+    throw new RecordMutationRecoveryError(
+      "recovery_blocked",
+      "recoverable trash 缺少 fixture compensation receipt"
+    );
+  }
+
+  const abortedAt = Math.max(timestamp, compensating.record.updatedAt + 1);
+  const aborted = await finalizeRecordMutationAbort(compensating.handle, {
+    expectedRevision: compensating.record.revision,
+    expectedDigest: compensating.record.digest,
+    abortedAt,
+    code: "compensated",
+    message: "fixture recovery restored staged records"
+  });
+  return { decision, journal: aborted };
+}
+
+function nextCompensationOrdinal(
+  journal: LoadedRecordMutationJournal
+): number {
+  const ordinals = journal.chain.flatMap((revision) => (
+    revision.step?.direction === "compensating"
+      ? [revision.step.ordinal]
+      : []
+  ));
+  return (ordinals.length ? Math.max(...ordinals) : 0) + 1;
+}
+
+async function assertTemporaryFixturePath(absolutePath: string): Promise<void> {
+  const fixturePath = path.resolve(await fsp.realpath(absolutePath));
+  const temporaryRoot = path.resolve(await fsp.realpath(tmpdir()));
+  const relative = path.relative(temporaryRoot, fixturePath);
+  if (
+    relative === ""
+    || relative === ".."
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+  ) {
+    throw new RecordMutationRecoveryError(
+      "fixture_only",
+      `fixture recovery path 不在系统临时目录内：${absolutePath}`
+    );
+  }
+}
+
+function requirePlainRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw evidenceCorrupt("recovery evidence 不是对象");
+  }
+  const prototype = Reflect.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw evidenceCorrupt("recovery evidence 不是 plain object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[]
+): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  if (
+    actual.length !== expected.length
+    || actual.some((key, index) => key !== expected[index])
+  ) {
+    throw evidenceCorrupt("recovery evidence 字段集合非法");
+  }
+}
+
+function evidenceCorrupt(message: string): RecordMutationRecoveryError {
+  return new RecordMutationRecoveryError("evidence_corrupt", message);
+}

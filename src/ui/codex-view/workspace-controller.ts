@@ -48,6 +48,10 @@ export async function chooseChatWorkspace(host: CodexWorkspaceHost, session: Sto
     ? await textInputModal(host.app, "选择工作区", "文件夹路径", session.cwd)
     : pickedPath;
   if (!selectedPath) return false;
+  if (host.running) {
+    new Notice("当前会话运行中，结束后再切换工作区");
+    return false;
+  }
   const workspacePath = normalizeWorkspacePath(selectedPath);
   if (!workspaceDirectoryExists(workspacePath)) {
     new Notice("请选择一个存在的文件夹作为工作区");
@@ -86,6 +90,11 @@ export async function clearChatWorkspace(host: CodexWorkspaceHost, session: Stor
     await host.plugin.ensureEchoInkConversationSessionCreated(session);
     const rotation = await host.plugin.rotateEchoInkSessionContext(session, {
       reason: "workspace-clear",
+      precondition: () => {
+        if (host.running) {
+          throw new Error("当前会话运行中，结束后再清除工作区");
+        }
+      },
       workspace: null,
       mutate: (candidate) => {
         delete candidate.tokenUsage;
@@ -110,6 +119,11 @@ export async function commitChatWorkspaceSelection(
   await host.plugin.ensureEchoInkConversationSessionCreated(session);
   const rotation = await host.plugin.rotateEchoInkSessionContext(session, {
     reason: "workspace-switch",
+    precondition: () => {
+      if (host.running) {
+        throw new Error("当前会话运行中，结束后再切换工作区");
+      }
+    },
     workspace: {
       vaultPath: host.plugin.getVaultPath(),
       cwd: workspacePath

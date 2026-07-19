@@ -17,6 +17,7 @@ import {
   SESSION_DELETION_DISABLED_NOTICE
 } from "../../ui/codex-view/session-controller";
 import { buildCodexSessionNavigatorModel, formatSessionUpdatedAt } from "../../ui/codex-view/tabs";
+import { renderTurnQueue } from "../../ui/codex-view/composer";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
   const runningMessages = createAgentTurn("running");
@@ -81,6 +82,7 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
   testSessionNavigatorModel();
+  testLifecycleRecoveryBanner();
   await testBatchSessionDeletionFailsClosedUntilJournal();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
@@ -563,6 +565,42 @@ function testSessionNavigatorModel(): void {
   assert.equal(formatSessionUpdatedAt(1_000_000 - 8 * 60_000, 1_000_000), "8 分钟前");
 }
 
+function testLifecycleRecoveryBanner(): void {
+  const container = new FakeSessionNavigatorElement("div");
+  let recoverCalls = 0;
+  renderTurnQueue(
+    container as unknown as HTMLElement,
+    {
+      items: [],
+      paused: true,
+      canResume: false,
+      recoveryRequired: true,
+      canRecover: true,
+      draggedItemId: ""
+    },
+    {
+      onResume: () => undefined,
+      onRecover: () => { recoverCalls += 1; },
+      onDragStart: () => undefined,
+      onDragEnd: () => undefined,
+      onReorder: () => undefined,
+      onRemove: () => undefined
+    }
+  );
+
+  assert.match(container.className, /\bis-visible\b/);
+  assert.match(container.className, /\bis-recovery-required\b/);
+  assert.ok(container.find((element) =>
+    /本地记录待恢复/.test(element.textContent)
+  ));
+  const recover = container.find((element) =>
+    element.getAttribute("aria-label") === "重试恢复本地生命周期记录"
+  );
+  assert.ok(recover?.onclick);
+  recover.onclick({} as MouseEvent);
+  assert.equal(recoverCalls, 1);
+}
+
 async function testBatchSessionDeletionFailsClosedUntilJournal(): Promise<void> {
   const knowledge: StoredSession = {
     id: "knowledge-delete",
@@ -756,6 +794,10 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   let capturedRequest: Record<string, unknown> | null = null;
   const plugin = {
     settings,
+    withEchoInkConversationMutation: async <T>(
+      _conversationId: string,
+      action: () => Promise<T>
+    ): Promise<T> => await action(),
     ensureHarnessBackendConnected: async (backend: string) => {
       connectedBackend = backend;
     },
@@ -888,6 +930,10 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
   const view: any = {
     plugin: {
       settings,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       ensureHarnessBackendConnected: async () => undefined,
       getVaultPath: () => "/tmp/echoink-chat-ui",
       getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: "test-vault" }),

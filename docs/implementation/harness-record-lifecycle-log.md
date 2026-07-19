@@ -122,3 +122,39 @@
   `node_modules` 共享软链接未进入暂存区。当前 checkpoint 未部署。
 - 本阶段没有修改真实 Conversation、Run、Raw、Native backlog 或 Vault 数据，
   也没有执行 retention、迁移或真实 Native cleanup。
+
+## 2026-07-20：Phase 2 本地记录基础设施与显式恢复门禁
+
+- 新增 side-by-side Conversation V2：不可变 payload、append-only metadata chain
+  与原子 head。head 是可见 commit marker；metadata 已发布但 head 尚未推进时，
+  相同 candidate 可以幂等恢复，不同 candidate 明确冲突。正常 commit 不允许删除
+  或改写既有 message 前缀。
+- 新增 Workflow/Attempt Run Record Store。summary 与短期 payload 分层保存；
+  payload 明确区分 `present`、`expired`、`not-captured`、`missing` 和 `corrupt`。
+  状态、local commit、cleanup、引用和时间戳保持单调，tombstone 后不得复活。
+- 新增 Conversation mutation lane，同一 Conversation 串行、不同 Conversation
+  可并行；已覆盖 Chat、Knowledge、Stop、Watchdog、context rotation、workspace
+  switch 和终态持久化等入口。
+- 新增 RecordMutation Journal、Trash 与 fixture-only Recovery。Journal 使用
+  append-only digest chain、participant 完备门禁和 CAS；Trash 的 prepare 阶段
+  只建立 durable 可恢复副本，finalize 才把 source 移入受控 retirement evidence。
+  文件、目录树、空目录、部分恢复和幂等重试已有夹具；symlink、hardlink、socket
+  与特殊文件 fail closed。
+- 终态 Conversation/Run/Native 持久化失败会进入独立 `recoveryRequired` 门禁。
+  Send、Resume、自动启动和 dequeue 都不能绕过；显式恢复只有在持久化终态标记
+  全部清除后才重新开放。
+- 独立复核发现 View 重启后不会从持久化终态标记重建门禁。现已在首次渲染前扫描
+  `runTerminalRecoveryPending/echoInkRunTerminalRecovery` 并恢复门禁；即使
+  authority 缺损也保持 fail closed，并增加回归测试。
+- 最终 staged tree 已通过 `npm run test`、`npm run typecheck`、`npm run build`、
+  相关 focused suites、`npm run lint`、`npm run check:release`、
+  `npm run check:public` 和 `git diff --check`。Lint 的 961 个 finding 与 baseline
+  完全一致；public guard 在明确暂存后检查 390 个 tracked files。门禁中发现的
+  unknown lifecycle error 字符串化问题已修复，不再生成 `[object Object]`。
+  本批次仍待最终 cached diff 审计和 Git 提交。
+- 本批次没有接管 legacy reader/writer，也没有连接生产删除。Root Registry、
+  root binding digest、全局 mutation coordinator/lock，以及 Trash finalize 的
+  durable Journal 自授权仍是下一阻断项。Node 最后一个 syscall 的外部竞争窗口
+  继续按已声明的协作 writer 威胁边界处理。
+- 没有修改真实 Vault，也没有执行 migration、retention、Raw GC、历史删除或
+  Native 批量 cleanup。

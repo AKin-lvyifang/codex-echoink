@@ -8,6 +8,7 @@ import type {
   AppendRunEventInput,
   SettleRunTerminalInput
 } from "../../harness/kernel/run-orchestrator";
+import { applyChatRunTerminalWinner } from "../../core/message-state";
 
 export type ChatSurfaceTerminalOwner =
   | "adapter"
@@ -51,6 +52,7 @@ export interface CodexTurnLifecycleHost {
   applyStatus(): void;
   activeRunSession(): StoredSession;
   pauseQueueForSession(sessionId: string): void;
+  requireQueueRecoveryForSession(sessionId: string): void;
   finishThinkingMessage(session: StoredSession, status: string): void;
   finishRunningProcessMessages(session: StoredSession, status: string): void;
   addMessageToSession(session: StoredSession, message: SessionMessageInput): void;
@@ -93,24 +95,45 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
     releaseChatSurfaceTerminal(runId, "stop");
     throw error;
   }
-  host.pauseQueueForSession(session.id);
-  host.running = false;
-  host.activeTurnId = "";
-  host.editorActionActiveTimeoutMs = 0;
-  host.clearTurnWatchdog();
-  host.finishThinkingMessage(session, "中断");
-  host.finishRunningProcessMessages(session, "interrupted");
-  host.addMessageToSession(session, {
-    role: "system",
-    title: "已中断",
-    itemType: "error",
-    status: "canceled",
-    runId,
-    text: "本轮对话已中断。"
+  await host.plugin.withEchoInkConversationMutation(session.id, async () => {
+    host.pauseQueueForSession(session.id);
+    let commitError: unknown = null;
+    const terminal: SettleRunTerminalInput = {
+      runId,
+      status: "cancelled",
+      backendId,
+      error: "用户中断"
+    };
+    try {
+      host.activeTurnId = "";
+      host.editorActionActiveTimeoutMs = 0;
+      host.clearTurnWatchdog();
+      host.finishThinkingMessage(session, "中断");
+      host.finishRunningProcessMessages(session, "interrupted");
+      host.addMessageToSession(session, {
+        role: "system",
+        title: "已中断",
+        itemType: "error",
+        status: "canceled",
+        runId,
+        text: "本轮对话已中断。"
+      });
+      await persistAndSettleChatRun(host.plugin, terminal);
+    } catch (error) {
+      commitError = error;
+      host.requireQueueRecoveryForSession(session.id);
+      ensureChatSurfaceTerminalRecoveryEvidence(session, terminal);
+    } finally {
+      host.running = false;
+      host.clearActiveRun();
+      host.applyStatus();
+    }
+    if (commitError) {
+      throw normalizeLifecycleError(commitError);
+    }
   });
-  host.clearActiveRun();
-  await persistAndSettleChatRun(host.plugin, { runId, status: "cancelled", backendId, error: "用户中断" });
-  host.applyStatus();
+  await host.afterTurnSettled(session.id, false)
+    .catch(swallowError("settle stopped Chat queue"));
 }
 
 export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_TURN_WATCHDOG_MS, timeoutText?: string): void {
@@ -125,8 +148,8 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
     ) {
       return;
     }
-    host.running = false;
     if (host.isEditorActionRunActive()) {
+      host.running = false;
       if (host.activeRunId) void host.plugin.cancelHarnessRun(host.activeRunId).catch(swallowError("interrupt timed out editor action Harness run"));
       host.setEditorActionStatus({ status: "failed", message: "响应超时", error: "写作操作响应超时" });
       host.activeTurnId = "";
@@ -135,38 +158,104 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
       host.applyStatus();
       return;
     }
-    host.activeTurnId = "";
     const session = host.activeRunSession();
     const runId = host.activeRunId;
     if (!runId) return;
     const shouldPauseQueue = host.activeRunKind === "chat";
     const backendId = backendIdForRun(session, runId);
     if (runId) void host.plugin.cancelHarnessRun(runId).catch(swallowError("cancel timed out Harness run"));
-    host.finishThinkingMessage(session, "失败");
-    host.finishRunningProcessMessages(session, "error");
     const error = timeoutText ?? turnWatchdogTimeoutText(timeoutMs);
-    host.addMessageToSession(session, {
-      role: "system",
-      title: "响应超时",
-      itemType: "error",
-      status: "failed",
-      runId,
-      text: error
-    });
-    if (shouldPauseQueue && runId) {
-      void persistAndSettleChatRun(host.plugin, { runId, status: "failed", backendId, error })
-        .catch(swallowError("persist timed out Chat run"));
-    } else {
+    if (!shouldPauseQueue) {
+      host.running = false;
+      host.activeTurnId = "";
+      host.finishThinkingMessage(session, "失败");
+      host.finishRunningProcessMessages(session, "error");
+      host.addMessageToSession(session, {
+        role: "system",
+        title: "响应超时",
+        itemType: "error",
+        status: "failed",
+        runId,
+        text: error
+      });
       void host.plugin.saveSettings(true);
+      host.clearActiveRun();
+      host.applyStatus();
+      return;
     }
-    host.clearActiveRun();
-    host.applyStatus();
-    if (shouldPauseQueue) void host.afterTurnSettled(session.id, false);
+    void host.plugin.withEchoInkConversationMutation(session.id, async () => {
+      host.pauseQueueForSession(session.id);
+      let commitError: unknown = null;
+      const terminal: SettleRunTerminalInput = {
+        runId,
+        status: "failed",
+        backendId,
+        error
+      };
+      try {
+        host.activeTurnId = "";
+        host.finishThinkingMessage(session, "失败");
+        host.finishRunningProcessMessages(session, "error");
+        host.addMessageToSession(session, {
+          role: "system",
+          title: "响应超时",
+          itemType: "error",
+          status: "failed",
+          runId,
+          text: error
+        });
+        await persistAndSettleChatRun(host.plugin, terminal);
+      } catch (persistError) {
+        commitError = persistError;
+        host.requireQueueRecoveryForSession(session.id);
+        ensureChatSurfaceTerminalRecoveryEvidence(session, terminal);
+      } finally {
+        host.running = false;
+        host.clearActiveRun();
+        host.applyStatus();
+      }
+      if (commitError) {
+        throw normalizeLifecycleError(commitError);
+      }
+    }).then(
+      () => {
+        void host.afterTurnSettled(session.id, false)
+          .catch(swallowError("settle timed out Chat queue"));
+      },
+      swallowError("persist timed out Chat run")
+    );
   }, timeoutMs);
 }
 
 export async function persistAndSettleChatRun(plugin: CodexForObsidianPlugin, input: SettleRunTerminalInput): Promise<void> {
   await plugin.commitChatSurfaceTerminal(input);
+}
+
+function normalizeLifecycleError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  if (typeof value === "string") return new Error(value);
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized) return new Error(serialized);
+  } catch {
+    // Fall through to a stable type label.
+  }
+  return new Error(`Unknown lifecycle error (${typeof value})`);
+}
+
+/**
+ * Keeps a complete in-process retry candidate when the durable terminal
+ * transaction fails before its Conversation marker can be committed.
+ *
+ * The recovery-required queue gate must never be cleared merely because the
+ * process is still alive. This marker lets the explicit recovery action replay
+ * the same terminal through the normal Conversation/Run/Native authority path.
+ */
+export function ensureChatSurfaceTerminalRecoveryEvidence(
+  session: StoredSession,
+  terminal: SettleRunTerminalInput
+): void {
+  applyChatRunTerminalWinner(session.messages, terminal);
 }
 
 export function prepareChatSurfaceTerminal(runId: string): void {

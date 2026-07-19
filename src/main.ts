@@ -151,6 +151,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> { return await this.getSettingsStore().commitKnowledgeRunDurably(); }
   async readEchoInkConversationSession(sessionId: string): Promise<StoredSession | null> { return await this.getSettingsStore().readConversationSession(sessionId); }
   async proveEchoInkConversationMessageAuthority(probe: ConversationMessageAuthorityProbe): Promise<ConversationMessageAuthorityProof> { return await this.getSettingsStore().proveConversationMessageAuthority(probe); }
+  async withEchoInkConversationMutation<R>(conversationId: string, action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withConversationMutation(conversationId, action); }
   async withEchoInkSettingsPersistenceAuthorityGate<R>(action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withSettingsPersistenceAuthorityGate(action); }
   poisonEchoInkSettingsPersistenceForRecovery(message: string): void { this.getSettingsStore().poisonSettingsPersistenceForRecovery(message); }
   async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }

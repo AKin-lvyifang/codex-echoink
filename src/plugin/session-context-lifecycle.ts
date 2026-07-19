@@ -11,7 +11,13 @@ import type { EchoInkSettingsStore } from "./settings-store";
 export type EchoInkSessionContextRotationOptions = Omit<
   RotateSessionContextOptions,
   "hooks" | "identityFactory"
->;
+> & {
+  /**
+   * Rechecks UI/runtime state after this Conversation lane is acquired and
+   * before the live snapshot is taken.
+   */
+  precondition?: () => void;
+};
 
 export type EchoInkSessionContextRotationResult = SessionContextRotationResult;
 
@@ -67,33 +73,41 @@ export async function rotateEchoInkSessionContext(
   session: StoredSession,
   options: EchoInkSessionContextRotationOptions
 ): Promise<EchoInkSessionContextRotationResult> {
-  assertUnambiguousLegacyCodexThread(session);
-  const rotation = await rotateSessionContext(session, {
-    ...options,
-    hooks: {
-      register: async (retirements) => {
-        await harnessService.registerNativeExecutionRetirements(retirements);
-      },
-      commit: async (input) => {
-        await settingsStore.commitConversationSessionContext(
-          input.session,
-          {
-            expectedGeneration: input.expectedGeneration,
-            expectedContentRevision: input.expectedContentRevision,
-            ...(input.expectedCommitId
-              ? { expectedCommitId: input.expectedCommitId }
-              : {})
-          }
-        );
-      },
-      promote: async (retirements) => {
-        await harnessService.promoteNativeExecutionRetirements(retirements);
-      },
-      abort: async (retirements, error) => {
-        await harnessService.abortNativeExecutionRetirements(retirements, error.message);
+  const rotate = async () => {
+    const { precondition, ...rotationOptions } = options;
+    precondition?.();
+    assertUnambiguousLegacyCodexThread(session);
+    return await rotateSessionContext(session, {
+      ...rotationOptions,
+      hooks: {
+        register: async (retirements) => {
+          await harnessService.registerNativeExecutionRetirements(retirements);
+        },
+        commit: async (input) => {
+          await settingsStore.commitConversationSessionContext(
+            input.session,
+            {
+              expectedGeneration: input.expectedGeneration,
+              expectedContentRevision: input.expectedContentRevision,
+              ...(input.expectedCommitId
+                ? { expectedCommitId: input.expectedCommitId }
+                : {})
+            }
+          );
+        },
+        promote: async (retirements) => {
+          await harnessService.promoteNativeExecutionRetirements(retirements);
+        },
+        abort: async (retirements, error) => {
+          await harnessService.abortNativeExecutionRetirements(retirements, error.message);
+        }
       }
-    }
-  });
+    });
+  };
+  const rotation = await settingsStore.withConversationMutation(
+    session.id,
+    rotate
+  );
   if (rotation.retirementPromotion === "promoted") {
     for (const retirement of rotation.retirements) {
       void harnessService.cleanupNativeExecutionRecord(retirement.retirementId)

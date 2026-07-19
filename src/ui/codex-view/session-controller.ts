@@ -102,6 +102,11 @@ export async function resetSessionNativeCache(host: CodexSessionHost, session: S
     const rotation = await host.plugin.rotateEchoInkSessionContext(session, {
       reason: "agent-cache-reset",
       advanceContext: false,
+      precondition: () => {
+        if (host.running && host.activeRunSessionId === session.id) {
+          throw new Error("当前会话正在运行，结束后再重置 agent 缓存");
+        }
+      },
       mutate: (candidate) => {
         delete candidate.tokenUsage;
       }
@@ -115,10 +120,12 @@ export async function resetSessionNativeCache(host: CodexSessionHost, session: S
 export async function renameSession(host: CodexSessionHost, session: StoredSession): Promise<void> {
   const name = await textInputModal(host.app, "重命名会话", "名称", session.title);
   if (!name) return;
-  session.title = name;
+  await host.plugin.withEchoInkConversationMutation(session.id, async () => {
+    session.title = name;
+    await host.plugin.saveSettings(true);
+  });
   const threadId = sessionBackendBinding(session, "codex-cli")?.nativeThreadId ?? session.threadId;
   if (threadId) await host.plugin.setCodexHarnessThreadName(threadId, name).catch(swallowError("rename Codex chat thread"));
-  await host.plugin.saveSettings();
   host.renderTabs();
 }
 
@@ -159,6 +166,11 @@ export async function clearKnowledgeBasePage(host: CodexSessionHost, session: St
   try {
     rotation = await host.plugin.rotateEchoInkSessionContext(session, {
       reason: "start-new-context",
+      precondition: () => {
+        if (host.running || host.plugin.getKnowledgeBaseManager()?.isRunning) {
+          throw new Error("知识库任务运行中，结束后再清空页面");
+        }
+      },
       workspace: {
         vaultPath: host.plugin.getVaultPath(),
         cwd: session.cwd || host.plugin.getVaultPath()
@@ -209,9 +221,17 @@ export async function openKnowledgeBaseHistory(host: CodexSessionHost, session: 
 }
 
 export async function restoreKnowledgeBaseHistoryDate(host: CodexSessionHost, session: StoredSession, date: string): Promise<void> {
+  if (host.running || host.plugin.getKnowledgeBaseManager()?.isRunning) {
+    new Notice("知识库任务运行中，结束后再恢复历史");
+    return;
+  }
   const messages = await host.plugin.readKnowledgeBaseHistoryDay(session.id, date);
   if (!messages.length) {
     new Notice("这一天没有可恢复的历史");
+    return;
+  }
+  if (host.running || host.plugin.getKnowledgeBaseManager()?.isRunning) {
+    new Notice("知识库任务运行中，结束后再恢复历史");
     return;
   }
   const restoredThroughMessageId = messages.at(-1)?.id;
@@ -219,6 +239,11 @@ export async function restoreKnowledgeBaseHistoryDate(host: CodexSessionHost, se
   try {
     rotation = await host.plugin.rotateEchoInkSessionContext(session, {
       reason: "history-restore",
+      precondition: () => {
+        if (host.running || host.plugin.getKnowledgeBaseManager()?.isRunning) {
+          throw new Error("知识库任务运行中，结束后再恢复历史");
+        }
+      },
       contextStartsAfterMessageId: restoredThroughMessageId,
       mutate: (candidate) => {
         candidate.messages = messages;

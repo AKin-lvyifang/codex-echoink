@@ -17,10 +17,14 @@ import {
   workspaceFingerprint
 } from "../../harness/kernel/session-service";
 import type { NativeExecutionRecord } from "../../harness/contracts/native-execution";
+import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
 import { reconcileNativeExecutionsAtStartup } from "../../plugin/native-startup-reconciliation";
 import type { StoredSession } from "../../settings/settings";
 
 export async function runHarnessV2ContextRotationTests(): Promise<void> {
+  await assertConversationMutationLanePreservesQueuedLiveMutations();
+  await assertConversationMutationLaneReleasesAfterFailure();
+  await assertConversationMutationLaneScopesConcurrencyByConversation();
   await assertLegacyContextBootstrapCreatesDurableIdentity();
   await assertContextGenerationOverflowFailsClosed();
   await assertRotationRegistersOldBindingsBeforeCommit();
@@ -52,6 +56,160 @@ export async function runHarnessV2ContextRotationTests(): Promise<void> {
   await assertQueuedStaleSaveCannotOverwriteCommittedRotation();
   await assertContextPayloadRetention();
   await assertContextPayloadGcRetriesAfterCommit();
+}
+
+async function assertConversationMutationLanePreservesQueuedLiveMutations(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const session = rotationSession();
+  let releaseCommit = () => undefined;
+  const commitGate = new Promise<void>((resolve) => {
+    releaseCommit = resolve;
+  });
+  let commitStarted = () => undefined;
+  const commitStartedGate = new Promise<void>((resolve) => {
+    commitStarted = resolve;
+  });
+  const calls: string[] = [];
+  const rotation = lane.withConversationMutation(session.id, async () => {
+    await rotateSessionContext(session, {
+      reason: "start-new-context",
+      identityFactory: fixedRotationIdentity("commit-lane", "context-lane"),
+      workspace: {
+        vaultPath: "/vault",
+        cwd: "/vault/workspace-a"
+      },
+      hooks: {
+        async register() {
+          calls.push("register");
+        },
+        async commit() {
+          calls.push("commit");
+          commitStarted();
+          await commitGate;
+        },
+        async promote() {
+          calls.push("promote");
+        },
+        async abort() {
+          assert.fail("successful rotation must not abort");
+        }
+      }
+    });
+  });
+  await commitStartedGate;
+
+  const append = lane.withConversationMutation(session.id, async () => {
+    calls.push("append");
+    session.messages.push({
+      id: "queued-user",
+      role: "user",
+      text: "排队期间追加的消息",
+      createdAt: 3
+    });
+  });
+  const rename = lane.withConversationMutation(session.id, async () => {
+    calls.push("rename");
+    session.title = "排队后的新标题";
+  });
+  await Promise.resolve();
+  assert.deepEqual(calls, ["register", "commit"]);
+
+  releaseCommit();
+  await Promise.all([rotation, append, rename]);
+  assert.deepEqual(calls, ["register", "commit", "promote", "append", "rename"]);
+  assert.equal(session.title, "排队后的新标题");
+  assert.deepEqual(
+    session.messages.map((message) => message.id),
+    ["m1", "m2", "queued-user"]
+  );
+}
+
+async function assertConversationMutationLaneReleasesAfterFailure(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const calls: string[] = [];
+  await assert.rejects(
+    lane.withConversationMutation(" \t", async () => {
+      calls.push("invalid");
+    }),
+    /non-empty conversationId/
+  );
+  await assert.rejects(
+    lane.withConversationMutation("failed-conversation", async () => {
+      calls.push("failed");
+      throw new Error("mutation failed");
+    }),
+    /mutation failed/
+  );
+  await lane.withConversationMutation("failed-conversation", async () => {
+    calls.push("recovered");
+  });
+  assert.deepEqual(calls, ["failed", "recovered"]);
+}
+
+async function assertConversationMutationLaneScopesConcurrencyByConversation(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  let releaseFirst = () => undefined;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let firstStarted = () => undefined;
+  const firstStartedGate = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  const calls: string[] = [];
+  const first = lane.withConversationMutation("conversation-a", async () => {
+    calls.push("a:first:start");
+    firstStarted();
+    await firstGate;
+    calls.push("a:first:end");
+  });
+  await firstStartedGate;
+  const second = lane.withConversationMutation("conversation-a", async () => {
+    calls.push("a:second");
+  });
+  const parallel = lane.withConversationMutation("conversation-b", async () => {
+    calls.push("b:parallel");
+  });
+  await parallel;
+  assert.deepEqual(calls, ["a:first:start", "b:parallel"]);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(calls, [
+    "a:first:start",
+    "b:parallel",
+    "a:first:end",
+    "a:second"
+  ]);
+
+  let releaseTrimmed = () => undefined;
+  const trimmedGate = new Promise<void>((resolve) => {
+    releaseTrimmed = resolve;
+  });
+  let trimmedStarted = () => undefined;
+  const trimmedStartedGate = new Promise<void>((resolve) => {
+    trimmedStarted = resolve;
+  });
+  const trimmedCalls: string[] = [];
+  const trimmedFirst = lane.withConversationMutation(
+    " conversation-c ",
+    async () => {
+      trimmedCalls.push("trimmed:first");
+      trimmedStarted();
+      await trimmedGate;
+    }
+  );
+  await trimmedStartedGate;
+  const trimmedSecond = lane.withConversationMutation(
+    "conversation-c",
+    async () => {
+      trimmedCalls.push("trimmed:second");
+    }
+  );
+  await Promise.resolve();
+  assert.deepEqual(trimmedCalls, ["trimmed:first"]);
+  releaseTrimmed();
+  await Promise.all([trimmedFirst, trimmedSecond]);
+  assert.deepEqual(trimmedCalls, ["trimmed:first", "trimmed:second"]);
 }
 
 async function assertLegacyContextBootstrapCreatesDurableIdentity(): Promise<void> {
