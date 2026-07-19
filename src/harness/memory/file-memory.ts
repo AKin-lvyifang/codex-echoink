@@ -370,12 +370,20 @@ export class FileMemoryProvider implements MemoryProvider {
         }
         const existingIndex = index.memories.findIndex((item) => item.id === id);
         const existing = existingIndex >= 0 ? index.memories[existingIndex] : null;
+        const sourceConversationIds = [...new Set([
+          ...(existing?.sourceConversationIds ?? []),
+          ...(candidate.sourceConversationIds ?? [])
+        ])].sort(compareText);
         const item: StoredFileMemoryItem = {
           id,
           kind: candidate.kind,
           scope: candidate.scope?.trim() || "vault",
           statement,
           sourceRunId: candidate.sourceRunId,
+          ...(sourceConversationIds.length ? { sourceConversationIds } : {}),
+          ...(existing?.sourceDeletions
+            ? { sourceDeletions: existing.sourceDeletions.map((marker) => ({ ...marker })) }
+            : {}),
           confidence: candidate.confidence,
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
@@ -879,6 +887,7 @@ function extractMemoryCandidates(request: MemoryProposalRequest): MemoryCandidat
         statement,
         evidenceRefs: [`run:${request.runId}`, `session:${request.sessionId}`],
         sourceRunId: request.runId,
+        sourceConversationIds: [request.sessionId],
         confidence: pattern.kind === "current-state" ? 0.8 : 0.9,
         requiresConfirmation: requiresConfirmationForKind(pattern.kind)
       });
@@ -1067,8 +1076,21 @@ function normalizeStoredItem(item: StoredFileMemoryItem): StoredFileMemoryItem {
     ...item,
     scope: item.scope || "vault",
     evidenceRefs: Array.isArray(item.evidenceRefs) ? item.evidenceRefs : [],
-    createdAt: typeof item.createdAt === "number" ? item.createdAt : item.updatedAt
+    createdAt: typeof item.createdAt === "number" ? item.createdAt : item.updatedAt,
+    ...(item.sourceConversationIds
+      ? {
+          sourceConversationIds: [...new Set(item.sourceConversationIds)]
+            .sort(compareText)
+        }
+      : {}),
+    ...(item.sourceDeletions
+      ? { sourceDeletions: item.sourceDeletions.map((marker) => ({ ...marker })) }
+      : {})
   };
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function auditId(type: string, memoryId: string, at: number): string {

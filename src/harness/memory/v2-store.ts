@@ -54,6 +54,15 @@ export interface MemoryProjectionRecordV2 {
   statement: string;
   evidenceRefs: string[];
   sourceRunId: string;
+  sourceConversationIds?: string[];
+  sourceDeletions?: Array<{
+    mutationId: string;
+    conversationId: string;
+    deletedAt: number;
+    forwardTransactionId: string;
+    restoredAt?: number;
+    restoreTransactionId?: string;
+  }>;
   confidence: number;
   expiresAt?: number;
   supersededAt?: number;
@@ -357,6 +366,16 @@ function renderMemoryProjection(title: string, memories: MemoryProjectionRecordV
   const lines = [`# ${title}`, "", "<!-- Generated from index.json. Do not edit directly. -->", ""];
   for (const item of [...memories].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
     lines.push(`## ${item.id}`, "", item.statement, "", `- Kind: ${item.kind}`, `- Scope: ${item.scope}`, `- Source run: ${item.sourceRunId}`, `- Confidence: ${item.confidence}`);
+    if (item.sourceConversationIds?.length) {
+      lines.push(`- Source conversations: ${item.sourceConversationIds.join(", ")}`);
+    }
+    for (const marker of item.sourceDeletions ?? []) {
+      lines.push(
+        marker.restoredAt === undefined
+          ? `- Source deleted: ${marker.conversationId} (${marker.mutationId})`
+          : `- Source restored: ${marker.conversationId} (${marker.mutationId})`
+      );
+    }
     if (item.evidenceRefs.length) lines.push(`- Evidence: ${item.evidenceRefs.join(", ")}`);
     if (item.supersededAt !== undefined) lines.push(`- Superseded: ${item.supersededReason || "yes"}`);
     if (item.deletedAt !== undefined) lines.push(`- Deleted: ${item.deletedReason || "yes"}`);
@@ -581,6 +600,44 @@ function isValidStoredMemoryRecord(value: unknown, requireTimes: boolean): value
   if (!isRecord(value)) return false;
   if (!isSafeStoredText(value.id, 240, false) || !MEMORY_RECORD_KINDS.has(value.kind as string) || value.scope !== "vault") return false;
   if (!isSafeStoredText(value.statement, 4_000, true) || !isSafeStoredStringArray(value.evidenceRefs, 32, 320) || !isSafeStoredText(value.sourceRunId, 320, false)) return false;
+  if (
+    value.sourceConversationIds !== undefined
+    && !isSafeStoredStringArray(value.sourceConversationIds, 32, 320)
+  ) return false;
+  const sourceConversationIds = value.sourceConversationIds;
+  if (
+    sourceConversationIds !== undefined
+    && (
+      new Set(sourceConversationIds).size !== sourceConversationIds.length
+      || sourceConversationIds.some(
+        (id, index) => id !== [...sourceConversationIds].sort(compareText)[index]
+      )
+    )
+  ) return false;
+  const sourceDeletions = value.sourceDeletions as Array<Record<string, unknown>> | undefined;
+  if (
+    sourceDeletions !== undefined
+    && (
+      !Array.isArray(sourceDeletions)
+      || sourceDeletions.length > 64
+      || !sourceDeletions.every(isValidMemorySourceDeletion)
+      || new Set(sourceDeletions.map((marker) => marker.mutationId)).size
+        !== sourceDeletions.length
+      || sourceDeletions.some(
+        (marker, index) => marker.mutationId
+          !== [...sourceDeletions].sort(
+            (left, right) => compareText(
+              String(left.mutationId),
+              String(right.mutationId)
+            )
+          )[index].mutationId
+      )
+      || !sourceConversationIds
+      || sourceDeletions.some(
+        (marker) => !sourceConversationIds.includes(String(marker.conversationId))
+      )
+    )
+  ) return false;
   if (!(typeof value.confidence === "number" && Number.isFinite(value.confidence) && value.confidence >= 0 && value.confidence <= 1)) return false;
   if (requireTimes && (!isStoredTimestamp(value.createdAt) || !isStoredTimestamp(value.updatedAt))) return false;
   if (!requireTimes && (value.createdAt !== undefined || value.updatedAt !== undefined)) return false;
@@ -591,6 +648,37 @@ function isValidStoredMemoryRecord(value: unknown, requireTimes: boolean): value
     if (value[field] !== undefined && !isSafeStoredText(value[field], 1_000, true)) return false;
   }
   return true;
+}
+
+function isValidMemorySourceDeletion(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  const expected = value.restoredAt === undefined
+    ? ["conversationId", "deletedAt", "forwardTransactionId", "mutationId"]
+    : [
+        "conversationId",
+        "deletedAt",
+        "forwardTransactionId",
+        "mutationId",
+        "restoreTransactionId",
+        "restoredAt"
+      ];
+  if (
+    keys.length !== expected.length
+    || keys.some((key, index) => key !== [...expected].sort()[index])
+  ) return false;
+  return isSafeStoredText(value.mutationId, 320, false)
+    && isSafeStoredText(value.conversationId, 320, false)
+    && isStoredMutationTimestamp(value.deletedAt)
+    && isSafeStoredText(value.forwardTransactionId, 320, false)
+    && (
+      value.restoredAt === undefined
+      || (
+        isStoredMutationTimestamp(value.restoredAt)
+        && Number(value.restoredAt) >= Number(value.deletedAt)
+        && isSafeStoredText(value.restoreTransactionId, 320, false)
+      )
+    );
 }
 
 function validateStoredMemoryConfirmation(value: unknown): asserts value is Record<string, unknown> {
@@ -621,6 +709,14 @@ function isSafeStoredText(value: unknown, maxChars: number, allowNewline: boolea
 
 function isStoredTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isStoredMutationTimestamp(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

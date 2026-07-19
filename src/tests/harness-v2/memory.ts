@@ -79,9 +79,77 @@ export async function runHarnessV2MemoryTests(): Promise<void> {
   await assertEchoInkMemoryInitializerCreatesLayout();
   await assertCodexMemoryMigrationPreviewIsReadOnly();
   await assertFileMemoryProviderCommitsRetrievesAndSupersedesItems();
+  await assertMemoryConversationLineageMergesDeterministically();
   await assertMemorySectionsWrapUntrustedData();
   await assertMemoryCandidateExtractionRejectsFragmentsAndPlaceholders();
   await assertMemoryMvpCandidateReviewLifecycleAndPortability();
+}
+
+async function assertMemoryConversationLineageMergesDeterministically():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-lineage-merge-")
+  );
+  const provider = new FileMemoryProvider({ vaultPath });
+  const first = await provider.commit([{
+    id: "memory-lineage-merge",
+    kind: "decision",
+    scope: "vault",
+    statement: "alpha is enabled",
+    evidenceRefs: ["run:first"],
+    sourceRunId: "run-first",
+    sourceConversationIds: ["conversation-z", "conversation-a"],
+    confidence: 0.9,
+    confirmed: true
+  }]);
+  assert.deepEqual(first.committed, ["memory-lineage-merge"]);
+  const second = await provider.commit([{
+    id: "memory-lineage-merge",
+    kind: "decision",
+    scope: "vault",
+    statement: "beta is enabled",
+    evidenceRefs: ["run:second"],
+    sourceRunId: "run-second",
+    sourceConversationIds: ["conversation-b", "conversation-a"],
+    confidence: 0.9,
+    confirmed: true
+  }]);
+  assert.deepEqual(second.committed, ["memory-lineage-merge"]);
+  const merged = (
+    await readMemoryIndexV2<MemoryRecordV2>(vaultPath)
+  ).memories.find((item) => item.id === "memory-lineage-merge");
+  assert.deepEqual(merged?.sourceConversationIds, [
+    "conversation-a",
+    "conversation-b",
+    "conversation-z"
+  ]);
+
+  const corruptVaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-memory-lineage-unsorted-")
+  );
+  await initializeEchoInkMemoryV2(corruptVaultPath);
+  const layout = echoInkMemoryV2Layout(corruptVaultPath);
+  await writeFile(layout.index, `${JSON.stringify({
+    schemaVersion: 2,
+    revision: 0,
+    memories: [{
+      id: "memory-lineage-unsorted",
+      kind: "decision",
+      scope: "vault",
+      statement: "Unsorted lineage must fail closed",
+      evidenceRefs: ["run:unsorted"],
+      sourceRunId: "run-unsorted",
+      sourceConversationIds: ["conversation-z", "conversation-a"],
+      confidence: 0.9,
+      createdAt: 1,
+      updatedAt: 1
+    }],
+    confirmations: []
+  })}\n`, "utf8");
+  await assert.rejects(
+    readMemoryIndexV2<MemoryRecordV2>(corruptVaultPath),
+    /invalid memory record/
+  );
 }
 
 async function assertHermesCuratorUsesHardIsolatedCliSettings(): Promise<void> {

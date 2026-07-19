@@ -7,7 +7,6 @@ import {
 import {
   parseRecordMutationIntent,
   type RecordMutationIntent,
-  type RecordMutationParticipant,
   type RecordMutationStepAction
 } from "./record-mutation-contract";
 import {
@@ -29,6 +28,15 @@ import {
   type RecordMutationTrashReceipt,
   type RecordMutationTrashRestoreJudgment
 } from "./record-mutation-trash";
+import {
+  coordinateRecordMutationSourceParticipantForward,
+  coordinateRecordMutationSourceParticipantRestore,
+  reconcileRecordMutationSourceParticipantForward,
+  validateRecordMutationSourceParticipants,
+  verifyRecordMutationSourceParticipantAborted,
+  verifyRecordMutationSourceParticipantForward,
+  type RecordMutationSourceParticipantAdapter
+} from "./record-mutation-source-participant";
 
 export interface RecordMutationRecoveryTrashParticipant
 extends RecordMutationCoordinatorRoots {
@@ -46,6 +54,8 @@ export interface RunRecordMutationRecoveryInput {
     intent: RecordMutationIntent
   ) => Promise<RecordMutationConversationObservation>;
   trashParticipants: readonly RecordMutationRecoveryTrashParticipant[];
+  sourceDeletedParticipants:
+    readonly RecordMutationSourceParticipantAdapter[];
   now?: () => number;
 }
 
@@ -161,10 +171,10 @@ async function runRecordMutationRecoveryUnderAuthority(
   if (decision.action === "blocked") {
     return blocked(current, evidence, decision, decision.reason);
   }
-  if (decision.action === "none") {
-    return { status: "noop", decision, evidence, journal: current };
-  }
-  if (!inspection.recoverable && current.record.intent.trashPolicy === "required") {
+  if (
+    !inspection.recoverable
+    && current.record.intent.trashPolicy === "required"
+  ) {
     return blocked(
       current,
       evidence,
@@ -172,21 +182,13 @@ async function runRecordMutationRecoveryUnderAuthority(
       "trash-evidence-unavailable"
     );
   }
-  return decision.action === "roll-forward"
-    ? await rollForward(input, current, evidence, decision, trashParticipants)
-    : await compensate(input, current, evidence, decision, trashParticipants);
-}
-
-async function rollForward(
-  input: RunRecordMutationRecoveryInput,
-  journal: LoadedRecordMutationJournal,
-  evidence: RecordMutationRecoveryEvidence,
-  decision: Extract<RecordMutationRecoveryDecision, { action: "roll-forward" }>,
-  trashParticipants: readonly RecordMutationRecoveryTrashParticipant[]
-): Promise<RecordMutationRecoveryRunnerResult> {
-  let current = journal;
-  const unsupported = participantNeedingForwardAdapter(current);
-  if (unsupported) {
+  let sourceDeletedParticipants: RecordMutationSourceParticipantAdapter[];
+  try {
+    sourceDeletedParticipants = validateRecordMutationSourceParticipants(
+      current,
+      input.sourceDeletedParticipants
+    );
+  } catch {
     return blocked(
       current,
       evidence,
@@ -194,6 +196,58 @@ async function rollForward(
       "participant-adapter-required"
     );
   }
+  if (decision.action === "none") {
+    try {
+      for (const adapter of sourceDeletedParticipants) {
+        current = current.record.state === "committed"
+          ? await verifyRecordMutationSourceParticipantForward({
+            journal: current,
+            adapter
+          })
+          : await verifyRecordMutationSourceParticipantAborted({
+            journal: current,
+            adapter
+          });
+      }
+    } catch {
+      return blocked(
+        current,
+        evidence,
+        decision,
+        "effect-verification-failed"
+      );
+    }
+    return { status: "noop", decision, evidence, journal: current };
+  }
+  return decision.action === "roll-forward"
+    ? await rollForward(
+      input,
+      current,
+      evidence,
+      decision,
+      trashParticipants,
+      sourceDeletedParticipants
+    )
+    : await compensate(
+      input,
+      current,
+      evidence,
+      decision,
+      trashParticipants,
+      sourceDeletedParticipants
+    );
+}
+
+async function rollForward(
+  input: RunRecordMutationRecoveryInput,
+  journal: LoadedRecordMutationJournal,
+  evidence: RecordMutationRecoveryEvidence,
+  decision: Extract<RecordMutationRecoveryDecision, { action: "roll-forward" }>,
+  trashParticipants: readonly RecordMutationRecoveryTrashParticipant[],
+  sourceDeletedParticipants:
+    readonly RecordMutationSourceParticipantAdapter[]
+): Promise<RecordMutationRecoveryRunnerResult> {
+  let current = journal;
   const changedBeforeEffects = await blockIfConversationEvidenceChanged(
     input,
     current,
@@ -201,6 +255,13 @@ async function rollForward(
   );
   if (changedBeforeEffects) return changedBeforeEffects;
   try {
+    for (const adapter of sourceDeletedParticipants) {
+      current = await coordinateRecordMutationSourceParticipantForward({
+        journal: current,
+        adapter,
+        now: input.now
+      });
+    }
     for (const participant of trashParticipants) {
       const retired = await coordinateRecordMutationTrashRetirement({
         journal: current,
@@ -210,6 +271,12 @@ async function rollForward(
         now: input.now
       });
       current = retired.journal;
+    }
+    for (const adapter of sourceDeletedParticipants) {
+      current = await verifyRecordMutationSourceParticipantForward({
+        journal: current,
+        adapter
+      });
     }
     const changedBeforeCommit = await blockIfConversationEvidenceChanged(
       input,
@@ -245,17 +312,11 @@ async function compensate(
   journal: LoadedRecordMutationJournal,
   evidence: RecordMutationRecoveryEvidence,
   decision: Extract<RecordMutationRecoveryDecision, { action: "compensate" }>,
-  trashParticipants: readonly RecordMutationRecoveryTrashParticipant[]
+  trashParticipants: readonly RecordMutationRecoveryTrashParticipant[],
+  sourceDeletedParticipants:
+    readonly RecordMutationSourceParticipantAdapter[]
 ): Promise<RecordMutationRecoveryRunnerResult> {
   let current = journal;
-  if (participantNeedingCompensationAdapter(current)) {
-    return blocked(
-      current,
-      evidence,
-      decision,
-      "participant-adapter-required"
-    );
-  }
   const changedBeforeEffects = await blockIfConversationEvidenceChanged(
     input,
     current,
@@ -263,6 +324,13 @@ async function compensate(
   );
   if (changedBeforeEffects) return changedBeforeEffects;
   try {
+    for (const adapter of sourceDeletedParticipants) {
+      current = await reconcileRecordMutationSourceParticipantForward({
+        journal: current,
+        adapter,
+        now: input.now
+      });
+    }
     // First close any "retired effect durable, source-retired Journal missing"
     // crash window. This must finish before the Journal enters compensating.
     for (const participant of trashParticipants) {
@@ -337,6 +405,27 @@ async function compensate(
           now: input.now
         })
       ).journal;
+    }
+
+    for (const adapter of sourceDeletedParticipants) {
+      const forwardEvidence = participantEvidenceDigest(
+        current,
+        adapter.participantId,
+        "forward",
+        "participant-staged"
+      );
+      if (!forwardEvidence) continue;
+      current = await ensureCompensationPrepared(
+        current,
+        adapter.participantId,
+        forwardEvidence,
+        input.now
+      );
+      current = await coordinateRecordMutationSourceParticipantRestore({
+        journal: current,
+        adapter,
+        now: input.now
+      });
     }
 
     if (!hasAnyCompensatingStep(current)) {
@@ -536,54 +625,24 @@ function recoveryEvidence(
   };
 }
 
-function participantNeedingForwardAdapter(
-  journal: LoadedRecordMutationJournal
-): RecordMutationParticipant | null {
-  return journal.record.intent.participants.find((participant) => (
-    participant.action === "mark-source-deleted"
-    && !hasParticipantStep(
-      journal,
-      participant.id,
-      "forward",
-      "participant-staged"
-    )
-  )) ?? null;
-}
-
-function participantNeedingCompensationAdapter(
-  journal: LoadedRecordMutationJournal
-): RecordMutationParticipant | null {
-  return journal.record.intent.participants.find((participant) => (
-    participant.action === "mark-source-deleted"
-    && hasParticipantStep(
-      journal,
-      participant.id,
-      "forward",
-      "participant-staged"
-    )
-    && !hasParticipantStep(
-      journal,
-      participant.id,
-      "compensating",
-      "participant-restored"
-    )
-  )) ?? null;
-}
-
 async function ensureCompensationPrepared(
   journal: LoadedRecordMutationJournal,
   participantId: string,
   evidenceDigest: string,
   now: (() => number) | undefined
 ): Promise<LoadedRecordMutationJournal> {
-  if (
-    hasParticipantStep(
-      journal,
-      participantId,
-      "compensating",
-      "compensation-prepared"
-    )
-  ) {
+  const existing = participantEvidenceDigest(
+    journal,
+    participantId,
+    "compensating",
+    "compensation-prepared"
+  );
+  if (existing) {
+    if (existing !== evidenceDigest) {
+      throw new Error(
+        `RecordMutation participant ${participantId} compensation evidence changed`
+      );
+    }
     return journal;
   }
   return await beginRecordMutationCompensation(journal.handle, {
@@ -598,6 +657,19 @@ async function ensureCompensationPrepared(
     },
     updatedAt: nextTimestamp(journal, now)
   });
+}
+
+function participantEvidenceDigest(
+  journal: LoadedRecordMutationJournal,
+  participantId: string,
+  direction: "forward" | "compensating",
+  action: RecordMutationStepAction
+): string | null {
+  return journal.chain.find((revision) => (
+    revision.step?.participantId === participantId
+    && revision.step.direction === direction
+    && revision.step.action === action
+  ))?.step?.evidenceDigest ?? null;
 }
 
 function hasParticipantStep(

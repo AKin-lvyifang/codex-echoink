@@ -63,6 +63,8 @@ export interface MemoryRecordV2 {
   statement: string;
   evidenceRefs: string[];
   sourceRunId: string;
+  sourceConversationIds?: string[];
+  sourceDeletions?: MemorySourceDeletionV2[];
   confidence: number;
   createdAt: number;
   updatedAt: number;
@@ -72,6 +74,15 @@ export interface MemoryRecordV2 {
   deletedReason?: string;
   expiredAt?: number;
   expiresAt?: number;
+}
+
+export interface MemorySourceDeletionV2 {
+  mutationId: string;
+  conversationId: string;
+  deletedAt: number;
+  forwardTransactionId: string;
+  restoredAt?: number;
+  restoreTransactionId?: string;
 }
 
 export interface MemoryConfirmationV2 {
@@ -401,7 +412,12 @@ export async function commitFormalMemoryIndexSnapshot(
   vaultPath: string,
   index: MemoryIndexV2<MemoryRecordV2>,
   now: number,
-  options: { operation: string; lockHeld: true; failAfterIndexWrite?: boolean }
+  options: {
+    operation: string;
+    lockHeld: true;
+    failAfterIndexWrite?: boolean;
+    transactionId?: string;
+  }
 ): Promise<boolean> {
   if (options.lockHeld !== true) throw new Error("Formal memory commit requires the vault mutation lane");
   await recoverMemoryTransactionsUnlocked(vaultPath);
@@ -417,7 +433,11 @@ export async function commitFormalMemoryIndexSnapshot(
   const changed = JSON.stringify({ memories: previous.memories, confirmations: previous.confirmations }) !== JSON.stringify({ memories: index.memories, confirmations: index.confirmations });
   if (!changed) return false;
 
-  const transactionId = `memory-formal-${randomUUID()}`;
+  const transactionId = options.transactionId?.trim()
+    || `memory-formal-${randomUUID()}`;
+  if (!SAFE_MEMORY_REF.test(transactionId)) {
+    throw new Error("Formal memory transactionId is invalid");
+  }
   const targetRevision = previous.revision + 1;
   index.revision = targetRevision;
   index.commitId = transactionId;
@@ -610,6 +630,19 @@ async function readyPendingMemoryEventIds(vaultPath: string): Promise<string[]> 
 
 export async function recoverMemoryTransactions(vaultPath: string): Promise<Array<{ transactionId: string; action: "rolled-forward" | "rolled-back" | "retained" | "superseded" }>> {
   return await withMemoryFormalMutation(vaultPath, async () => await recoverMemoryTransactionsUnlocked(vaultPath));
+}
+
+export async function recoverMemoryTransactionsUnderAuthority(
+  vaultPath: string,
+  options: { lockHeld: true }
+): Promise<Array<{
+  transactionId: string;
+  action: "rolled-forward" | "rolled-back" | "retained" | "superseded";
+}>> {
+  if (options.lockHeld !== true) {
+    throw new Error("Memory transaction recovery requires formal authority");
+  }
+  return await recoverMemoryTransactionsUnlocked(vaultPath);
 }
 
 /**
@@ -944,7 +977,16 @@ function buildStagedIndex(
     schemaVersion: 2,
     revision: index.revision,
     ...(index.commitId ? { commitId: index.commitId } : {}),
-    memories: index.memories.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+    memories: index.memories.map((item) => ({
+      ...item,
+      evidenceRefs: [...item.evidenceRefs],
+      ...(item.sourceConversationIds
+        ? { sourceConversationIds: [...item.sourceConversationIds] }
+        : {}),
+      ...(item.sourceDeletions
+        ? { sourceDeletions: item.sourceDeletions.map((marker) => ({ ...marker })) }
+        : {})
+    })),
     confirmations: [...index.confirmations]
   };
   const confirmations = next.confirmations as MemoryConfirmationV2[];
@@ -985,6 +1027,11 @@ function buildStagedIndex(
 
 function candidateRecord(candidate: MemoryCuratorCandidate, events: Map<string, PendingMemoryEvent>, now: number): MemoryRecordV2 {
   const firstEvent = candidate.sourceEventIds.map((id) => events.get(id)).find(Boolean);
+  const sourceConversationIds = [...new Set(
+    candidate.sourceEventIds
+      .map((id) => events.get(id)?.sessionId)
+      .filter((id): id is string => Boolean(id))
+  )].sort(compareStableIds);
   return {
     id: candidate.candidateId,
     kind: candidate.kind!,
@@ -992,6 +1039,7 @@ function candidateRecord(candidate: MemoryCuratorCandidate, events: Map<string, 
     statement: candidate.statement!.trim(),
     evidenceRefs: [...candidate.evidenceRefs!],
     sourceRunId: candidate.sourceRunId?.trim() || firstEvent?.runId || "unknown",
+    ...(sourceConversationIds.length ? { sourceConversationIds } : {}),
     confidence: candidate.confidence!,
     createdAt: now,
     updatedAt: now

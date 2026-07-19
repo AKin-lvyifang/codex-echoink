@@ -16,6 +16,7 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertChatSurfaceRemovesInlineAssistantBranch();
   await assertDestructiveTrashEffectsStayBehindCoordinator();
   await assertProductionRecordMutationRecoveryUsesRunner();
+  await assertSourceDeletionParticipantsStayBehindRecoveryRunner();
 }
 
 async function assertSingleHarnessCoreDefinitions(): Promise<void> {
@@ -114,6 +115,28 @@ async function assertProductionRecordMutationRecoveryUsesRunner(): Promise<void>
       "src/harness/lifecycle/record-mutation-recovery.ts"
     ],
     "production recovery decisions must be built by the evidence-inspecting runner"
+  );
+}
+
+async function assertSourceDeletionParticipantsStayBehindRecoveryRunner():
+Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const callers: string[] = [];
+  const guardedCall = /\b(?:coordinateRecordMutationSourceParticipantForward|coordinateRecordMutationSourceParticipantRestore|reconcileRecordMutationSourceParticipantForward|verifyRecordMutationSourceParticipantForward|verifyRecordMutationSourceParticipantAborted)\s*\(/;
+  for (const file of sources) {
+    if (
+      file.relativePath
+        === "src/harness/lifecycle/record-mutation-source-participant.ts"
+    ) {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (guardedCall.test(source)) callers.push(file.relativePath);
+  }
+  assert.deepEqual(
+    callers,
+    ["src/harness/lifecycle/record-mutation-recovery-runner.ts"],
+    "Memory/Artifact source deletion effects must stay behind the production recovery runner"
   );
 }
 

@@ -86,6 +86,36 @@ content revision, or tombstone field changes, recovery remains non-terminal
 with `conversation-evidence-changed`; an already retired Trash source stays
 recoverable through the Journal instead of being committed from stale proof.
 
+`mark-source-deleted` is not a Journal-only acknowledgement. The runner
+requires one Memory or Workflow Artifact adapter for every such participant,
+in the same complete order frozen by the intent. Each adapter acquires its
+Store mutation lane without touching storage, verifies its frozen Root Binding,
+recovers the existing Store, verifies the Root Binding again, and only then
+inspects or changes the participant. Store recovery must not initialize a
+missing formal Store.
+
+Formal Memory records retain a deterministic set of source Conversation IDs.
+Their append-only source-deletion history stores the mutation ID, Conversation
+ID, forward Memory transaction, and any later restoring Memory transaction.
+The marker is committed through the formal Memory index transaction, not only
+through a deletion receipt. Existing lineage is unioned with new lineage;
+legacy records whose target lineage cannot be proved block the mutation.
+
+Published Workflow Artifacts use a separate append-only lifecycle chain. Its
+initial revision freezes artifact identity, kind, and source Conversation IDs.
+Later revisions append source-deleted or source-restored markers without
+rewriting that identity. Missing registration, conflicting registration,
+non-contiguous or corrupt revision chains, and incomplete lineage fail closed.
+
+Roll-forward marks Memory and Artifact sources before retiring Trash, then
+re-reads every participant before committing the Journal. Compensation first
+reconciles any Store effect whose Journal step was lost, restores retired Trash,
+and finally appends restoring Memory and Artifact transactions. The Store
+effect, readback, and `participant-staged` or `participant-restored` Journal
+step remain inside the same participant mutation lane. Re-entering a committed
+or aborted Journal revalidates the participant Store receipts instead of
+returning an unchecked no-op.
+
 The first entry and its chain directory publish as one durable directory
 transition; same-version cooperative writers never observe an empty live
 claim. Because Node does not expose directory `renameat2(RENAME_NOREPLACE)` or

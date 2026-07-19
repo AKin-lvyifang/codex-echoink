@@ -276,3 +276,34 @@
   tracked files。暂存区仅包含本批 15 个预期文件。
 - 本批没有接入产品删除入口或真实 Vault，也没有执行 migration、retention、
   Raw GC、历史删除或 Native 批量 cleanup。
+
+## 2026-07-20：Memory/Artifact Source-deletion Participant Adapter
+
+- 新增通用 `record-mutation-source-participant.ts`。Runner 要求 adapter 与 intent
+  的 `mark-source-deleted` participant 完整同序；receipt 绑定 mutation、
+  Conversation、participant、record kind、phase、effect ID/digest 与时间。
+- Adapter 只先取得 Store mutation lane；随后验证 frozen Root Binding、恢复既有
+  Store、再次验证 Root，才允许 inspect/effect。Root 重建或正式 Store 缺失时
+  effect 前阻断，Memory 不会在替换或空目录里先初始化新 Store。
+- Memory formal index 增加稳定排序、只增不减的 `sourceConversationIds` 和
+  `sourceDeletions`。Forward 与 restore 均走正式 Memory transaction；restore
+  保留原 marker 并追加 restoring transaction proof。旧记录缺目标 lineage 时
+  fail closed。
+- 新增 Workflow Artifact append-only lifecycle Store。首 revision 冻结
+  artifact ID、kind 和 Conversation lineage；后续 revision 追加 source deletion
+  或 restoration。注册冲突、缺 registration、chain 不连续/损坏与 lineage 不完整
+  都会阻断。
+- Roll-forward 先标 Memory/Artifact，再退休 Trash；compensation 先补齐已落盘但
+  Journal 丢步的 forward proof，再恢复 Trash，最后恢复 Memory/Artifact。
+  Store effect、readback 与 Journal `participant-staged/restored` 位于同一 lane。
+  committed/aborted 的 noop recovery 也会重读并验证 Store receipt。
+- 新增 focused suite 覆盖双 participant 前向、补偿、Memory index crash replay、
+  缺 adapter、Root 重建、正式 Store 缺失、lineage 缺失、Artifact 注册冲突、
+  restore 幂等和 chain 损坏；Memory 回归同时覆盖 lineage 合并和稳定排序。
+- 当前已通过 participant focused suite、完整 test、typecheck、build、完整 lint、
+  目标 production ESLint 与 `git diff --check`。完整 lint 仍为 961 个 baseline
+  finding，没有新增 finding。明确暂存 17 个预期文件后，release/public guard
+  通过；public guard 检查 402 个 tracked files。
+- 这仍是 side-by-side Phase 2 基础设施。四类产品操作、legacy reader/writer、
+  retention、Raw GC preview、migration validator 和 V2→V1 exporter 尚未接线；
+  产品删除 guard 保持关闭，真实 Vault 未修改。

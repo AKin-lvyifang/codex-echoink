@@ -67,6 +67,7 @@ async function assertNonDestructiveRecoveryRollsForwardExactTarget(): Promise<vo
         staged.record.intent.targetConversation
       ),
       trashParticipants: [],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(result.status, "completed");
@@ -92,6 +93,7 @@ async function assertNonDestructiveRecoveryCompensatesBeforeTarget(): Promise<vo
       withConversationMutation: fixture.withConversationMutation,
       inspectConversation: async () => beforeObservation(staged.record.intent),
       trashParticipants: [],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(result.status, "completed");
@@ -132,6 +134,7 @@ async function assertConversationAuthoritySerializesRecovery(): Promise<void> {
         return observationFor(staged.record.intent.targetConversation);
       },
       trashParticipants: [],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     await inspectorEntered;
@@ -183,6 +186,7 @@ async function assertConversationDriftBeforeTerminalBlocksRecovery(): Promise<vo
           : beforeObservation(prepared.journal.record.intent);
       },
       trashParticipants: [trashParticipant(fixture, prepared.receipt)],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(blockedResult.status, "blocked");
@@ -208,6 +212,7 @@ async function assertConversationDriftBeforeTerminalBlocksRecovery(): Promise<vo
         blockedResult.journal.record.intent
       ),
       trashParticipants: [trashParticipant(fixture, prepared.receipt)],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(recovered.status, "completed");
@@ -236,6 +241,7 @@ async function assertContradictoryConversationBlocksWithoutMutation(): Promise<v
         contentRevision: `sha256:${"9".repeat(64)}`
       }),
       trashParticipants: [],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(result.status, "blocked");
@@ -265,6 +271,7 @@ async function assertDestructiveRecoveryRollsForwardThroughCoordinator(): Promis
         prepared.journal.record.intent.targetConversation
       ),
       trashParticipants: [trashParticipant(fixture, prepared.receipt)],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
 
@@ -306,6 +313,7 @@ async function assertDestructiveRecoveryRestoresThroughCoordinator(): Promise<vo
       trashParticipants: [
         trashParticipant(fixture, retired.preparedReceipt)
       ],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
 
@@ -351,6 +359,7 @@ async function assertRecreatedRootBlocksProductionRecovery(): Promise<void> {
         prepared.journal.record.intent.targetConversation
       ),
       trashParticipants: [trashParticipant(fixture, prepared.receipt)],
+      sourceDeletedParticipants: [],
       now: fixture.now
     });
     assert.equal(result.status, "blocked");
