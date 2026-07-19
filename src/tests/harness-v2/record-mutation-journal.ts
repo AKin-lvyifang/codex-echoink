@@ -23,13 +23,20 @@ import {
   type RecordMutationJournalErrorCode
 } from "../../harness/lifecycle/record-mutation-journal";
 import {
+  createPlannedRecordMutationRevision,
+  RecordMutationContractError,
   transitionRecordMutationRevision,
   type RecordMutationIntent,
   type RecordMutationStep
 } from "../../harness/lifecycle/record-mutation-contract";
+import {
+  fixtureRecordMutationRootBindings,
+  fixtureRecordRootBindingRef
+} from "./record-root-fixtures";
 
 export async function runHarnessV2RecordMutationJournalTests(): Promise<void> {
   await assertStrictJournalRoundTripAndMonotonicTransitions();
+  await assertDestructiveIntentRequiresFrozenRootBindings();
   await assertCommitAndAbortRaceHasOneOutcomeWinner();
   await assertTerminalRequiresCompleteParticipantEvidence();
   await assertPublishedCreateRemainsSuccessfulAfterConcurrentAdvance();
@@ -37,6 +44,51 @@ export async function runHarnessV2RecordMutationJournalTests(): Promise<void> {
   await assertStaleCasCannotOverwriteWinner();
   await assertFullChainReadbackRejectsCorruptionAndUnknownEntries();
   await assertFutureSchemaAndSymlinksFailClosed();
+}
+
+async function assertDestructiveIntentRequiresFrozenRootBindings(): Promise<void> {
+  const validIntent = intent(
+    "conversation-root-binding-contract",
+    "delete-conversation"
+  );
+  const create = (candidate: RecordMutationIntent): void => {
+    createPlannedRecordMutationRevision({
+      mutationId: "mutation-root-binding-contract",
+      intent: candidate,
+      createdAt: 1_721_260_800_000
+    });
+  };
+  assert.throws(
+    () => create({ ...validIntent, rootBindings: [] }),
+    RecordMutationContractError
+  );
+  assert.throws(
+    () => create({
+      ...validIntent,
+      rootBindings: [...validIntent.rootBindings].reverse()
+    }),
+    RecordMutationContractError
+  );
+  assert.throws(
+    () => create({
+      ...validIntent,
+      rootBindings: [
+        fixtureRecordRootBindingRef("conversation-store", "first"),
+        fixtureRecordRootBindingRef("conversation-store", "second")
+      ]
+    }),
+    RecordMutationContractError
+  );
+  assert.throws(
+    () => create({
+      ...validIntent,
+      rootBindings: [{
+        ...validIntent.rootBindings[0],
+        unknown: true
+      } as never, validIntent.rootBindings[1]]
+    }),
+    RecordMutationContractError
+  );
 }
 
 async function assertPublishedCreateRemainsSuccessfulAfterConcurrentAdvance(): Promise<void> {
@@ -497,6 +549,7 @@ function intent(
         action: destructive ? "mark-source-deleted" : "retain"
       }
     ],
+    rootBindings: destructive ? fixtureRecordMutationRootBindings() : [],
     trashPolicy: destructive ? "required" : "not-required"
   };
 }

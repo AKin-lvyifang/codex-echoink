@@ -13,6 +13,11 @@ import {
   writeDurableNewFile
 } from "../storage/durable-append-only-cas";
 import {
+  parseRecordRootBindingRef,
+  sameRecordRootBindingRef,
+  type RecordRootBindingRef
+} from "../storage/record-root-registry";
+import {
   recordMutationDigest,
   stableRecordMutationStringify
 } from "./record-mutation-contract";
@@ -70,6 +75,8 @@ export interface RecordMutationTrashReceipt {
   kind: "record-mutation-trash-receipt";
   mutationId: string;
   locator: RecordMutationTrashLocator;
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootBinding: RecordRootBindingRef;
   transfer: "copy" | "move";
   sourceDisposition: "retained";
   content: RecordMutationTrashContentReceipt;
@@ -83,6 +90,8 @@ export interface RecordMutationTrashFinalizationReceipt {
   mutationId: string;
   preparedReceiptDigest: string;
   locator: RecordMutationTrashLocator;
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootBinding: RecordRootBindingRef;
   sourceDisposition: "retired";
   finalizedAt: number;
   digest: string;
@@ -90,9 +99,9 @@ export interface RecordMutationTrashFinalizationReceipt {
 
 export interface RecordMutationTrashRoots {
   sourceRootPath: string;
-  sourceRootId: string;
+  sourceRootBinding: RecordRootBindingRef;
   trashRootPath: string;
-  trashRootId: string;
+  trashRootBinding: RecordRootBindingRef;
 }
 
 export interface StageRecordMutationTrashInput extends RecordMutationTrashRoots {
@@ -135,16 +144,17 @@ async function stageRecordMutationTrashUnlocked(
       SAFE_MUTATION_ID,
       "mutationId"
     );
-    const sourceRootId = requireSafeToken(
-      input.sourceRootId,
-      SAFE_ROOT_ID,
-      "sourceRootId"
+    const sourceRootBinding = parseTrashRootBinding(
+      input.sourceRootBinding,
+      "sourceRootBinding"
     );
-    const trashRootId = requireSafeToken(
-      input.trashRootId,
-      SAFE_ROOT_ID,
-      "trashRootId"
+    const trashRootBinding = parseTrashRootBinding(
+      input.trashRootBinding,
+      "trashRootBinding"
     );
+    assertDistinctTrashRootBindings(sourceRootBinding, trashRootBinding);
+    const sourceRootId = sourceRootBinding.rootId;
+    const trashRootId = trashRootBinding.rootId;
     const sourceRelativePath = validateDurableRelativePath(
       input.sourceRelativePath
     );
@@ -180,6 +190,8 @@ async function stageRecordMutationTrashUnlocked(
       assertPreparedReceiptMatchesRequest(persisted, {
         mutationId,
         locator,
+        sourceRootBinding,
+        trashRootBinding,
         transfer: input.transfer
       });
       await assertPreparedTrashContentExact(
@@ -243,6 +255,8 @@ async function stageRecordMutationTrashUnlocked(
       kind: "record-mutation-trash-receipt",
       mutationId,
       locator,
+      sourceRootBinding,
+      trashRootBinding,
       transfer: input.transfer,
       sourceDisposition: "retained",
       content: expectedContent,
@@ -285,6 +299,8 @@ export function parseRecordMutationTrashReceipt(
       "kind",
       "mutationId",
       "locator",
+      "sourceRootBinding",
+      "trashRootBinding",
       "transfer",
       "sourceDisposition",
       "content",
@@ -305,6 +321,20 @@ export function parseRecordMutationTrashReceipt(
       "receipt.mutationId"
     );
     const locator = parseLocator(record.locator);
+    const sourceRootBinding = parseTrashRootBinding(
+      record.sourceRootBinding,
+      "receipt.sourceRootBinding"
+    );
+    const trashRootBinding = parseTrashRootBinding(
+      record.trashRootBinding,
+      "receipt.trashRootBinding"
+    );
+    assertDistinctTrashRootBindings(sourceRootBinding, trashRootBinding);
+    assertLocatorMatchesRootBindings(
+      locator,
+      sourceRootBinding,
+      trashRootBinding
+    );
     if (record.transfer !== "copy" && record.transfer !== "move") {
       throw receiptCorrupt("receipt.transfer 非法");
     }
@@ -340,6 +370,8 @@ export function parseRecordMutationTrashReceipt(
       kind: "record-mutation-trash-receipt",
       mutationId,
       locator,
+      sourceRootBinding,
+      trashRootBinding,
       transfer: record.transfer,
       sourceDisposition: record.sourceDisposition,
       content,
@@ -508,6 +540,8 @@ async function finalizeRecordMutationTrashUnlocked(
       mutationId: durableReceipt.mutationId,
       preparedReceiptDigest: durableReceipt.digest,
       locator: durableReceipt.locator,
+      sourceRootBinding: durableReceipt.sourceRootBinding,
+      trashRootBinding: durableReceipt.trashRootBinding,
       sourceDisposition: "retired",
       finalizedAt
     };
@@ -536,6 +570,8 @@ export function parseRecordMutationTrashFinalizationReceipt(
       "mutationId",
       "preparedReceiptDigest",
       "locator",
+      "sourceRootBinding",
+      "trashRootBinding",
       "sourceDisposition",
       "finalizedAt",
       "digest"
@@ -549,6 +585,21 @@ export function parseRecordMutationTrashFinalizationReceipt(
     if (record.sourceDisposition !== "retired") {
       throw receiptCorrupt("trash finalization sourceDisposition 非法");
     }
+    const locator = parseLocator(record.locator);
+    const sourceRootBinding = parseTrashRootBinding(
+      record.sourceRootBinding,
+      "finalization.sourceRootBinding"
+    );
+    const trashRootBinding = parseTrashRootBinding(
+      record.trashRootBinding,
+      "finalization.trashRootBinding"
+    );
+    assertDistinctTrashRootBindings(sourceRootBinding, trashRootBinding);
+    assertLocatorMatchesRootBindings(
+      locator,
+      sourceRootBinding,
+      trashRootBinding
+    );
     const parsed: RecordMutationTrashFinalizationReceipt = {
       schemaVersion: 1,
       kind: "record-mutation-trash-finalization",
@@ -561,7 +612,9 @@ export function parseRecordMutationTrashFinalizationReceipt(
         record.preparedReceiptDigest,
         "finalization.preparedReceiptDigest"
       ),
-      locator: parseLocator(record.locator),
+      locator,
+      sourceRootBinding,
+      trashRootBinding,
       sourceDisposition: "retired",
       finalizedAt: requireSafeInteger(
         record.finalizedAt,
@@ -1384,12 +1437,22 @@ function assertPreparedReceiptMatchesRequest(
   expected: {
     mutationId: string;
     locator: RecordMutationTrashLocator;
+    sourceRootBinding: RecordRootBindingRef;
+    trashRootBinding: RecordRootBindingRef;
     transfer: "copy" | "move";
   }
 ): void {
   if (
     receipt.mutationId !== expected.mutationId
     || receipt.transfer !== expected.transfer
+    || !sameRecordRootBindingRef(
+      receipt.sourceRootBinding,
+      expected.sourceRootBinding
+    )
+    || !sameRecordRootBindingRef(
+      receipt.trashRootBinding,
+      expected.trashRootBinding
+    )
     || stableRecordMutationStringify(receipt.locator)
       !== stableRecordMutationStringify(expected.locator)
   ) {
@@ -1441,6 +1504,14 @@ function assertFinalizationMatchesPrepared(
   if (
     finalization.mutationId !== prepared.mutationId
     || finalization.preparedReceiptDigest !== prepared.digest
+    || !sameRecordRootBindingRef(
+      finalization.sourceRootBinding,
+      prepared.sourceRootBinding
+    )
+    || !sameRecordRootBindingRef(
+      finalization.trashRootBinding,
+      prepared.trashRootBinding
+    )
     || stableRecordMutationStringify(finalization.locator)
       !== stableRecordMutationStringify(prepared.locator)
   ) {
@@ -1471,24 +1542,55 @@ function assertRootsMatch(
   receipt: RecordMutationTrashReceipt,
   input: RecordMutationTrashRoots
 ): void {
-  const sourceRootId = requireSafeToken(
-    input.sourceRootId,
-    SAFE_ROOT_ID,
-    "sourceRootId"
+  const sourceRootBinding = parseTrashRootBinding(
+    input.sourceRootBinding,
+    "sourceRootBinding"
   );
-  const trashRootId = requireSafeToken(
-    input.trashRootId,
-    SAFE_ROOT_ID,
-    "trashRootId"
+  const trashRootBinding = parseTrashRootBinding(
+    input.trashRootBinding,
+    "trashRootBinding"
   );
   if (
-    sourceRootId !== receipt.locator.sourceRootId
-    || trashRootId !== receipt.locator.trashRootId
+    !sameRecordRootBindingRef(sourceRootBinding, receipt.sourceRootBinding)
+    || !sameRecordRootBindingRef(trashRootBinding, receipt.trashRootBinding)
   ) {
     throw new RecordMutationTrashError(
       "root_mismatch",
       "trash receipt root identity 不匹配"
     );
+  }
+}
+
+function parseTrashRootBinding(
+  value: unknown,
+  label: string
+): RecordRootBindingRef {
+  try {
+    return parseRecordRootBindingRef(value);
+  } catch {
+    throw receiptCorrupt(`${label} 非法`);
+  }
+}
+
+function assertDistinctTrashRootBindings(
+  sourceRootBinding: RecordRootBindingRef,
+  trashRootBinding: RecordRootBindingRef
+): void {
+  if (sourceRootBinding.rootId === trashRootBinding.rootId) {
+    throw receiptCorrupt("source/trash Root Binding 必须使用不同 rootId");
+  }
+}
+
+function assertLocatorMatchesRootBindings(
+  locator: RecordMutationTrashLocator,
+  sourceRootBinding: RecordRootBindingRef,
+  trashRootBinding: RecordRootBindingRef
+): void {
+  if (
+    locator.sourceRootId !== sourceRootBinding.rootId
+    || locator.trashRootId !== trashRootBinding.rootId
+  ) {
+    throw receiptCorrupt("trash locator 与 Root Binding 不匹配");
   }
 }
 

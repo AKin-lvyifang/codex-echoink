@@ -20,10 +20,12 @@ import {
 import {
   createOrLoadRecordRootBinding,
   loadRecordRootBinding,
+  parseRecordRootBindingRef,
   parseRecordRootBinding,
   recordRootBindingRef,
   RecordRootRegistryError,
-  verifyRecordRootBinding
+  verifyRecordRootBinding,
+  verifyRecordRootBindingRef
 } from "../../harness/storage/record-root-registry";
 
 export async function runHarnessV2RecordRootRegistryTests(): Promise<void> {
@@ -70,9 +72,42 @@ async function assertPluginOwnedRootBindingIsIdempotentAndOpaque(): Promise<void
     assert.deepEqual(recordRootBindingRef(first.binding), {
       registryId: first.binding.registryId,
       rootId: first.binding.rootId,
+      authority: first.binding.authority,
+      boundaryPathDigest: first.binding.boundaryPathDigest,
+      rootPathDigest: first.binding.rootPathDigest,
+      rootIdentity: first.binding.rootIdentity,
       revision: 0,
       digest: first.binding.digest
     });
+    assert.throws(
+      () => parseRecordRootBindingRef({
+        ...recordRootBindingRef(first.binding),
+        unknown: true
+      }),
+      RecordRootRegistryError
+    );
+    assert.deepEqual(
+      await verifyRecordRootBindingRef(recordRootBindingRef(first.binding), {
+        storageRootPath,
+        rootPath: conversationRootPath,
+        boundaryRootPath: storageRootPath
+      }),
+      first
+    );
+    await assert.rejects(
+      () => verifyRecordRootBindingRef({
+        ...recordRootBindingRef(first.binding),
+        digest: `sha256:${"0".repeat(64)}`
+      }, {
+        storageRootPath,
+        rootPath: conversationRootPath,
+        boundaryRootPath: storageRootPath
+      }),
+      (error: unknown) => (
+        error instanceof RecordRootRegistryError
+        && error.code === "binding_mismatch"
+      )
+    );
     assert.equal(
       JSON.stringify(first.binding).includes(conversationRootPath),
       false,

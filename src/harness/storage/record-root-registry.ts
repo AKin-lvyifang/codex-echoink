@@ -55,6 +55,10 @@ export interface RecordRootBinding {
 export interface RecordRootBindingRef {
   registryId: string;
   rootId: string;
+  authority: RecordRootAuthority;
+  boundaryPathDigest: string;
+  rootPathDigest: string;
+  rootIdentity: RecordRootFileIdentity;
   revision: number;
   digest: string;
 }
@@ -281,16 +285,127 @@ export async function verifyRecordRootBinding(
   }
 }
 
+export async function verifyRecordRootBindingRef(
+  bindingRefInput: RecordRootBindingRef,
+  input: {
+    storageRootPath: string;
+    rootPath: string;
+    boundaryRootPath: string;
+  }
+): Promise<LoadedRecordRootBinding> {
+  const bindingRef = parseRecordRootBindingRef(bindingRefInput);
+  const loaded = await loadRecordRootBinding({
+    storageRootPath: input.storageRootPath,
+    rootId: bindingRef.rootId
+  });
+  if (
+    !loaded
+    || !sameRecordRootBindingRef(
+      bindingRef,
+      recordRootBindingRef(loaded.binding)
+    )
+  ) {
+    throw new RecordRootRegistryError(
+      "binding_mismatch",
+      `Record root ${bindingRef.rootId} 的 frozen binding ref 已变化`
+    );
+  }
+  await verifyRecordRootBinding(loaded.binding, input);
+  return loaded;
+}
+
 export function recordRootBindingRef(
   bindingInput: RecordRootBinding
 ): RecordRootBindingRef {
   const binding = parseRecordRootBinding(bindingInput);
-  return {
+  return parseRecordRootBindingRef({
     registryId: binding.registryId,
     rootId: binding.rootId,
+    authority: binding.authority,
+    boundaryPathDigest: binding.boundaryPathDigest,
+    rootPathDigest: binding.rootPathDigest,
+    rootIdentity: { ...binding.rootIdentity },
     revision: binding.revision,
     digest: binding.digest
+  });
+}
+
+export function parseRecordRootBindingRef(
+  value: unknown
+): RecordRootBindingRef {
+  const record = requirePlainRecord(value, "record root binding ref");
+  assertExactKeys(record, [
+    "registryId",
+    "rootId",
+    "authority",
+    "boundaryPathDigest",
+    "rootPathDigest",
+    "rootIdentity",
+    "revision",
+    "digest"
+  ], "record root binding ref");
+  if (
+    typeof record.registryId !== "string"
+    || !SAFE_REGISTRY_ID.test(record.registryId)
+  ) {
+    throw registryCorrupt("Record Root Binding Ref registryId 非法");
+  }
+  const rootId = requireRootId(record.rootId);
+  if (record.authority !== "plugin-owned" && record.authority !== "vault-managed") {
+    throw registryCorrupt("Record Root Binding Ref authority 非法");
+  }
+  const identity = requirePlainRecord(
+    record.rootIdentity,
+    "record root binding ref rootIdentity"
+  );
+  assertExactKeys(
+    identity,
+    ["dev", "ino"],
+    "record root binding ref rootIdentity"
+  );
+  return {
+    registryId: record.registryId,
+    rootId,
+    authority: record.authority,
+    boundaryPathDigest: requireDigest(
+      record.boundaryPathDigest,
+      "binding ref boundaryPathDigest"
+    ),
+    rootPathDigest: requireDigest(
+      record.rootPathDigest,
+      "binding ref rootPathDigest"
+    ),
+    rootIdentity: {
+      dev: requireSafeInteger(identity.dev, "binding ref rootIdentity.dev", 0),
+      ino: requireSafeInteger(identity.ino, "binding ref rootIdentity.ino", 1)
+    },
+    revision: requireSafeInteger(
+      record.revision,
+      "binding ref revision",
+      0,
+      MAX_BINDING_REVISIONS - 1
+    ),
+    digest: requireDigest(record.digest, "binding ref digest")
   };
+}
+
+export function sameRecordRootBindingRef(
+  leftInput: RecordRootBindingRef,
+  rightInput: RecordRootBindingRef
+): boolean {
+  const left = parseRecordRootBindingRef(leftInput);
+  const right = parseRecordRootBindingRef(rightInput);
+  return (
+    left.registryId === right.registryId
+    && left.rootId === right.rootId
+    && left.authority === right.authority
+    && left.boundaryPathDigest === right.boundaryPathDigest
+    && left.rootPathDigest === right.rootPathDigest
+    && left.rootIdentity.dev === right.rootIdentity.dev
+    && left.rootIdentity.ino === right.rootIdentity.ino
+    && left.revision === right.revision
+    && left.digest === right.digest
+  );
 }
 
 export function parseRecordRootBinding(value: unknown): RecordRootBinding {

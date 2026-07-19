@@ -9,9 +9,14 @@ import {
   type LoadedRecordMutationJournal
 } from "./record-mutation-journal";
 import {
+  parseRecordMutationRootBindings,
   parseRecordMutationRevision,
   type RecordMutationRevision
 } from "./record-mutation-contract";
+import {
+  sameRecordRootBindingRef,
+  type RecordRootBindingRef
+} from "../storage/record-root-registry";
 import {
   parseRecordMutationTrashReceipt,
   restoreRecordMutationTrash,
@@ -27,6 +32,7 @@ export interface RecordMutationRecoveryEvidence {
   kind: "record-mutation-recovery-evidence";
   mutationId: string;
   intentDigest: string;
+  rootBindings: RecordRootBindingRef[];
   localCommit:
     | "exact-target"
     | "before-target"
@@ -57,6 +63,7 @@ export type RecordMutationRecoveryDecision =
       action: "blocked";
       reason:
         | "identity-mismatch"
+        | "root-binding-mismatch"
         | "trash-policy-mismatch"
         | "planned-without-stage"
         | "contradictory-local-commit"
@@ -88,6 +95,7 @@ export function parseRecordMutationRecoveryEvidence(
     "kind",
     "mutationId",
     "intentDigest",
+    "rootBindings",
     "localCommit",
     "trash"
   ]);
@@ -112,6 +120,12 @@ export function parseRecordMutationRecoveryEvidence(
   ) {
     throw evidenceCorrupt("recovery evidence intentDigest 非法");
   }
+  let rootBindings: RecordRootBindingRef[];
+  try {
+    rootBindings = parseRecordMutationRootBindings(record.rootBindings);
+  } catch {
+    throw evidenceCorrupt("recovery evidence rootBindings 非法");
+  }
   if (
     record.localCommit !== "exact-target"
     && record.localCommit !== "before-target"
@@ -134,6 +148,7 @@ export function parseRecordMutationRecoveryEvidence(
     kind: "record-mutation-recovery-evidence",
     mutationId: record.mutationId,
     intentDigest: record.intentDigest,
+    rootBindings,
     localCommit: record.localCommit,
     trash: record.trash
   };
@@ -154,6 +169,9 @@ export function decideRecordMutationRecovery(
     || record.intentDigest !== evidence.intentDigest
   ) {
     return { action: "blocked", reason: "identity-mismatch" };
+  }
+  if (!sameRootBindingSet(record.intent.rootBindings, evidence.rootBindings)) {
+    return { action: "blocked", reason: "root-binding-mismatch" };
   }
   if (
     (record.intent.trashPolicy === "required" && evidence.trash === "not-required")
@@ -224,9 +242,9 @@ export async function recoverFixtureRecordMutation(input: {
     participantId: string;
     receipt: RecordMutationTrashReceipt;
     sourceRootPath: string;
-    sourceRootId: string;
+    sourceRootBinding: RecordRootBindingRef;
     trashRootPath: string;
-    trashRootId: string;
+    trashRootBinding: RecordRootBindingRef;
   };
   now: number;
   fixtureOnly: true;
@@ -275,6 +293,24 @@ export async function recoverFixtureRecordMutation(input: {
     throw new RecordMutationRecoveryError(
       "recovery_blocked",
       "fixture compensation receipt mutationId 不匹配"
+    );
+  }
+  if (
+    validatedCompensation
+    && (
+      !containsRootBinding(
+        current.record.intent.rootBindings,
+        validatedCompensation.receipt.sourceRootBinding
+      )
+      || !containsRootBinding(
+        current.record.intent.rootBindings,
+        validatedCompensation.receipt.trashRootBinding
+      )
+    )
+  ) {
+    throw new RecordMutationRecoveryError(
+      "recovery_blocked",
+      "fixture compensation receipt Root Binding 不在 intent 中"
     );
   }
   const participantId = validatedCompensation?.participantId
@@ -341,9 +377,9 @@ export async function recoverFixtureRecordMutation(input: {
     await restoreRecordMutationTrash({
       receipt,
       sourceRootPath: validatedCompensation.sourceRootPath,
-      sourceRootId: validatedCompensation.sourceRootId,
+      sourceRootBinding: validatedCompensation.sourceRootBinding,
       trashRootPath: validatedCompensation.trashRootPath,
-      trashRootId: validatedCompensation.trashRootId
+      trashRootBinding: validatedCompensation.trashRootBinding
     });
     compensating = await beginRecordMutationCompensation(compensating.handle, {
       expectedRevision: compensating.record.revision,
@@ -402,6 +438,26 @@ async function assertTemporaryFixturePath(absolutePath: string): Promise<void> {
       `fixture recovery path 不在系统临时目录内：${absolutePath}`
     );
   }
+}
+
+function sameRootBindingSet(
+  left: readonly RecordRootBindingRef[],
+  right: readonly RecordRootBindingRef[]
+): boolean {
+  return left.length === right.length
+    && left.every((binding, index) => (
+      right[index] !== undefined
+      && sameRecordRootBindingRef(binding, right[index])
+    ));
+}
+
+function containsRootBinding(
+  bindings: readonly RecordRootBindingRef[],
+  expected: RecordRootBindingRef
+): boolean {
+  return bindings.some((binding) => (
+    sameRecordRootBindingRef(binding, expected)
+  ));
 }
 
 function requirePlainRecord(value: unknown): Record<string, unknown> {

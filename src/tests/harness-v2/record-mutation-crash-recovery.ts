@@ -31,13 +31,87 @@ import type {
   RecordMutationIntent,
   RecordMutationStep
 } from "../../harness/lifecycle/record-mutation-contract";
+import {
+  fixtureRecordMutationRootBindings,
+  fixtureRecordRootBindingRef
+} from "./record-root-fixtures";
 
 export async function runHarnessV2RecordMutationCrashRecoveryTests(): Promise<void> {
   await assertCrashReadbackShowsOnlyOldOrNewRevision();
   await assertRecoveryDecisionFailsClosedOnContradictoryEvidence();
+  await assertRecoveryRejectsReceiptRootBindingOutsideIntent();
   await assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence();
   await assertFixtureRecoveryCanRollForwardOrCompensate();
   await assertRestoreFailureLeavesOnlyCompensationPrepared();
+}
+
+async function assertRecoveryRejectsReceiptRootBindingOutsideIntent(): Promise<void> {
+  await withFixture(
+    "receipt-root-binding-mismatch",
+    async ({ storageRootPath, sourceRootPath, trashRootPath }) => {
+      await writeFile(path.join(sourceRootPath, "conversation.json"), "before\n");
+      const receipt = await stageRecordMutationTrash({
+        mutationId: "mutation-receipt-root-binding-mismatch",
+        sourceRootPath,
+        sourceRootBinding: fixtureRecordRootBindingRef(
+          "conversation-store",
+          "receipt-rebound"
+        ),
+        sourceRelativePath: "conversation.json",
+        trashRootPath,
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
+        transfer: "move",
+        stagedAt: 1_721_260_800_005
+      });
+      const planned = await createRecordMutationJournal({
+        storageRootPath,
+        mutationId: "mutation-receipt-root-binding-mismatch",
+        intent: intent(
+          "conversation-receipt-root-binding-mismatch",
+          "delete-conversation"
+        ),
+        createdAt: 1_721_260_800_000
+      });
+      const staged = await stageRecordMutationJournal(planned.handle, {
+        expectedRevision: planned.record.revision,
+        expectedDigest: planned.record.digest,
+        step: step("forward", 1, "conversation", "prepared"),
+        updatedAt: 1_721_260_800_010
+      });
+      await assert.rejects(
+        () => recoverFixtureRecordMutation({
+          journal: staged,
+          evidence: {
+            schemaVersion: 1,
+            kind: "record-mutation-recovery-evidence",
+            mutationId: staged.record.mutationId,
+            intentDigest: staged.record.intentDigest,
+            rootBindings: staged.record.intent.rootBindings,
+            localCommit: "before-target",
+            trash: "recoverable"
+          },
+          compensation: {
+            participantId: "conversation",
+            receipt,
+            sourceRootPath,
+            sourceRootBinding: receipt.sourceRootBinding,
+            trashRootPath,
+            trashRootBinding: receipt.trashRootBinding
+          },
+          now: 1_721_260_800_020,
+          fixtureOnly: true
+        }),
+        (error: unknown) => (
+          error instanceof Error
+          && error.message.includes("Root Binding 不在 intent 中")
+        )
+      );
+      assert.equal(
+        (await loadRecordMutationJournal(staged.handle)).record.state,
+        "staged"
+      );
+    }
+  );
 }
 
 async function assertCrashReadbackShowsOnlyOldOrNewRevision(): Promise<void> {
@@ -113,12 +187,23 @@ async function assertRecoveryDecisionFailsClosedOnContradictoryEvidence(): Promi
       kind: "record-mutation-recovery-evidence" as const,
       mutationId: staged.record.mutationId,
       intentDigest: staged.record.intentDigest,
+      rootBindings: staged.record.intent.rootBindings,
       localCommit: "contradictory" as const,
       trash: "recoverable" as const
     };
     assert.deepEqual(
       decideRecordMutationRecovery(staged.record, evidence),
       { action: "blocked", reason: "contradictory-local-commit" }
+    );
+    assert.deepEqual(
+      decideRecordMutationRecovery(staged.record, {
+        ...evidence,
+        rootBindings: [
+          fixtureRecordRootBindingRef("conversation-store", "rebound"),
+          fixtureRecordRootBindingRef("record-trash")
+        ]
+      }),
+      { action: "blocked", reason: "root-binding-mismatch" }
     );
     assert.deepEqual(parseRecordMutationRecoveryEvidence(evidence), evidence);
     assert.throws(
@@ -153,6 +238,7 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
         kind: "record-mutation-recovery-evidence",
         mutationId: destructiveStaged.record.mutationId,
         intentDigest: destructiveStaged.record.intentDigest,
+        rootBindings: destructiveStaged.record.intent.rootBindings,
         localCommit: "before-target",
         trash: "not-required"
       }),
@@ -186,6 +272,7 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
         kind: "record-mutation-recovery-evidence",
         mutationId: committed.record.mutationId,
         intentDigest: committed.record.intentDigest,
+        rootBindings: committed.record.intent.rootBindings,
         localCommit: "before-target",
         trash: "not-required"
       }),
@@ -225,6 +312,7 @@ async function assertRecoveryCrossChecksTrashPolicyAndTerminalEvidence(): Promis
         kind: "record-mutation-recovery-evidence",
         mutationId: aborted.record.mutationId,
         intentDigest: aborted.record.intentDigest,
+        rootBindings: aborted.record.intent.rootBindings,
         localCommit: "exact-target",
         trash: "not-required"
       }),
@@ -254,6 +342,7 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
         kind: "record-mutation-recovery-evidence",
         mutationId: staged.record.mutationId,
         intentDigest: staged.record.intentDigest,
+        rootBindings: staged.record.intent.rootBindings,
         localCommit: "exact-target",
         trash: "not-required"
       },
@@ -271,19 +360,19 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
       const receipt = await stageRecordMutationTrash({
         mutationId: "mutation-compensate",
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         sourceRelativePath: "conversation.json",
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         transfer: "move",
         stagedAt: 1_721_260_800_005
       });
       await finalizeRecordMutationTrash({
         receipt,
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         finalizedAt: 1_721_260_800_006
       });
       const planned = await createRecordMutationJournal({
@@ -318,6 +407,7 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
           kind: "record-mutation-recovery-evidence",
           mutationId: staged.record.mutationId,
           intentDigest: staged.record.intentDigest,
+          rootBindings: staged.record.intent.rootBindings,
           localCommit: "before-target",
           trash: "recoverable"
         },
@@ -325,9 +415,9 @@ async function assertFixtureRecoveryCanRollForwardOrCompensate(): Promise<void> 
           participantId: "conversation",
           receipt,
           sourceRootPath,
-          sourceRootId: "conversation-store",
+          sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
           trashRootPath,
-          trashRootId: "record-trash"
+          trashRootBinding: fixtureRecordRootBindingRef("record-trash")
         },
         now: 1_721_260_800_020,
         fixtureOnly: true
@@ -355,19 +445,19 @@ async function assertRestoreFailureLeavesOnlyCompensationPrepared(): Promise<voi
       const receipt = await stageRecordMutationTrash({
         mutationId: "mutation-compensation-order",
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         sourceRelativePath: "conversation.json",
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         transfer: "move",
         stagedAt: 1_721_260_800_005
       });
       await finalizeRecordMutationTrash({
         receipt,
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         finalizedAt: 1_721_260_800_006
       });
       const planned = await createRecordMutationJournal({
@@ -399,6 +489,7 @@ async function assertRestoreFailureLeavesOnlyCompensationPrepared(): Promise<voi
         kind: "record-mutation-recovery-evidence" as const,
         mutationId: sourceRetired.record.mutationId,
         intentDigest: sourceRetired.record.intentDigest,
+        rootBindings: sourceRetired.record.intent.rootBindings,
         localCommit: "before-target" as const,
         trash: "recoverable" as const
       };
@@ -410,9 +501,9 @@ async function assertRestoreFailureLeavesOnlyCompensationPrepared(): Promise<voi
           participantId: "conversation",
           receipt,
           sourceRootPath,
-          sourceRootId: "wrong-source-root",
+          sourceRootBinding: fixtureRecordRootBindingRef("wrong-source-root"),
           trashRootPath,
-          trashRootId: "record-trash"
+          trashRootBinding: fixtureRecordRootBindingRef("record-trash")
         },
         now: 1_721_260_800_020,
         fixtureOnly: true
@@ -449,9 +540,9 @@ async function assertRestoreFailureLeavesOnlyCompensationPrepared(): Promise<voi
           participantId: "conversation",
           receipt,
           sourceRootPath,
-          sourceRootId: "conversation-store",
+          sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
           trashRootPath,
-          trashRootId: "record-trash"
+          trashRootBinding: fixtureRecordRootBindingRef("record-trash")
         },
         now: 1_721_260_800_040,
         fixtureOnly: true
@@ -489,6 +580,7 @@ function intent(
       recordKind: "conversation",
       action: destructive ? "stage" : "retain"
     }],
+    rootBindings: destructive ? fixtureRecordMutationRootBindings() : [],
     trashPolicy: destructive ? "required" : "not-required"
   };
 }

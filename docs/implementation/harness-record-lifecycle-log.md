@@ -184,6 +184,29 @@
 - 由于 Node 未提供 directory `renameat2(RENAME_NOREPLACE)`，上述并发承诺限于使用
   同版本协议的 cooperative writers；旧版 writer 混跑与同权限外部进程制造的最后
   一个 syscall 竞态仍在威胁边界之外。
-- Root Binding 尚未进入 destructive intent、Trash receipt 或 recovery evidence；
-  全局 mutation coordinator/lock 也尚未实现。因此这一步仍不允许生产删除，
+- 在该 checkpoint，Root Binding 尚未进入 destructive intent、Trash receipt 或
+  recovery evidence；全局 mutation coordinator/lock 也尚未实现。因此这一步仍不允许生产删除，
   真实 Vault 保持完全未修改。
+
+## 2026-07-20：跨层冻结 Root Binding Ref
+
+- `RecordRootBindingRef` 扩展为完整物理引用：registry ID、逻辑 `rootId`、
+  authority、root/boundary path digest、目录 dev/inode、revision 与 binding
+  digest。新增 ref 严格解析、完整相等比较与“回读 Registry + 物理再验证”入口。
+- destructive RecordMutation intent 必须携带按 `rootId` 排序且不重复的 Root
+  Binding Ref；非 destructive intent 必须为空。Intent digest 覆盖完整引用。
+- prepared Trash receipt、finalization receipt 与 low-level Trash roots 改为携带
+  source/trash Root Binding Ref；locator root ID 必须与引用一致，跨层 ref
+  不一致不能 replay、finalize 或 restore。
+- recovery evidence 冻结与 intent 相同的 Root Binding Ref 集合。Recovery decision
+  遇到换绑直接返回 `root-binding-mismatch`；fixture compensation receipt 的两份
+  引用必须属于 intent，检查发生在写入 compensation step 之前。
+- 新增 intent 缺失/乱序/重复 ref、receipt 换绑、recovery evidence 换绑、
+  receipt 不属于 intent 以及 Registry ref readback 的 fail-closed 反例。
+- 提交前 staged tree 已通过 RecordMutation/Root Registry focused suites、
+  `npm run test`、typecheck、build、完整 lint、release/public guard 与
+  `git diff --check`。Lint 的 961 个 finding 与 baseline 一致；public guard
+  明确暂存后检查 394 个 tracked files。
+- 本批仍未实现全局 mutation coordinator；low-level Trash effect 尚不回读
+  Registry 验证 ref 与当前物理 root，生产删除 guard 必须继续关闭。没有连接
+  生产删除或真实 Vault。

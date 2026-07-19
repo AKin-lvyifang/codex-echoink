@@ -466,6 +466,7 @@ function makeHandle(
         recordKind: "conversation",
         action: "retain"
       }],
+      rootBindings: [],
       trashPolicy: "not-required"
     },
     createdAt: 0

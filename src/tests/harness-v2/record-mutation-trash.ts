@@ -22,14 +22,82 @@ import {
   stageRecordMutationTrash,
   RecordMutationTrashError
 } from "../../harness/lifecycle/record-mutation-trash";
+import { fixtureRecordRootBindingRef } from "./record-root-fixtures";
 
 export async function runHarnessV2RecordMutationTrashTests(): Promise<void> {
   await assertCopyAndMoveUseRootRelativeReceipts();
+  await assertTrashReceiptsFreezeRootBindings();
   await assertFinalizeResumesAfterSourceRetirement();
   await assertRestoreRequiresExactContentAndKeepsTrashEvidence();
   await assertNestedDirectoryRoundTripsWithEmptyDirectories();
   await assertPathEscapeSymlinkAndFutureReceiptFailClosed();
   await assertNestedSymlinkAndSpecialEntryFailClosed();
+}
+
+async function assertTrashReceiptsFreezeRootBindings(): Promise<void> {
+  await withFixture(
+    "root-bindings",
+    async ({ sourceRootPath, trashRootPath }) => {
+      await writeFile(path.join(sourceRootPath, "payload.json"), "payload\n");
+      const sourceRootBinding = fixtureRecordRootBindingRef(
+        "conversation-store"
+      );
+      const trashRootBinding = fixtureRecordRootBindingRef("record-trash");
+      const receipt = await stageRecordMutationTrash({
+        mutationId: "mutation-root-bindings",
+        sourceRootPath,
+        sourceRootBinding,
+        sourceRelativePath: "payload.json",
+        trashRootPath,
+        trashRootBinding,
+        transfer: "move",
+        stagedAt: 1_721_260_800_000
+      });
+      assert.deepEqual(receipt.sourceRootBinding, sourceRootBinding);
+      assert.deepEqual(receipt.trashRootBinding, trashRootBinding);
+      assert.throws(
+        () => parseRecordMutationTrashReceipt({
+          ...receipt,
+          sourceRootBinding: fixtureRecordRootBindingRef("other-source")
+        }),
+        (error: unknown) => (
+          error instanceof RecordMutationTrashError
+          && error.code === "receipt_corrupt"
+        )
+      );
+      await assert.rejects(
+        () => finalizeRecordMutationTrash({
+          receipt,
+          sourceRootPath,
+          sourceRootBinding: fixtureRecordRootBindingRef(
+            "conversation-store",
+            "rebound"
+          ),
+          trashRootPath,
+          trashRootBinding,
+          finalizedAt: 1_721_260_800_010
+        }),
+        (error: unknown) => (
+          error instanceof RecordMutationTrashError
+          && error.code === "root_mismatch"
+        )
+      );
+      assert.equal(
+        await readFile(path.join(sourceRootPath, "payload.json"), "utf8"),
+        "payload\n"
+      );
+      const finalization = await finalizeRecordMutationTrash({
+        receipt,
+        sourceRootPath,
+        sourceRootBinding,
+        trashRootPath,
+        trashRootBinding,
+        finalizedAt: 1_721_260_800_020
+      });
+      assert.deepEqual(finalization.sourceRootBinding, sourceRootBinding);
+      assert.deepEqual(finalization.trashRootBinding, trashRootBinding);
+    }
+  );
 }
 
 async function assertFinalizeResumesAfterSourceRetirement(): Promise<void> {
@@ -40,9 +108,9 @@ async function assertFinalizeResumesAfterSourceRetirement(): Promise<void> {
       await writeFile(sourcePath, "durable payload\n");
       const roots = {
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash"
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash")
       };
       const receipt = await stageRecordMutationTrash({
         mutationId: "mutation-finalize-replay",
@@ -86,10 +154,10 @@ async function assertCopyAndMoveUseRootRelativeReceipts(): Promise<void> {
     const copied = await stageRecordMutationTrash({
       mutationId: "mutation-copy",
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       sourceRelativePath: "nested/copy.jsonl",
       trashRootPath,
-      trashRootId: "record-trash",
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
       transfer: "copy",
       stagedAt: 1_721_260_800_000
     });
@@ -116,10 +184,10 @@ async function assertCopyAndMoveUseRootRelativeReceipts(): Promise<void> {
     const moveInput = {
       mutationId: "mutation-move",
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       sourceRelativePath: "nested/move.jsonl",
       trashRootPath,
-      trashRootId: "record-trash",
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
       transfer: "move" as const,
       stagedAt: 1_721_260_800_010
     };
@@ -147,17 +215,17 @@ async function assertCopyAndMoveUseRootRelativeReceipts(): Promise<void> {
       finalizeRecordMutationTrash({
         receipt: moved,
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         finalizedAt: 1_721_260_800_020
       }),
       finalizeRecordMutationTrash({
         receipt: moved,
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         finalizedAt: 1_721_260_800_020
       })
     ]);
@@ -186,9 +254,9 @@ async function assertCopyAndMoveUseRootRelativeReceipts(): Promise<void> {
       await finalizeRecordMutationTrash({
         receipt: moved,
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         finalizedAt: 1_721_260_800_030
       }),
       finalized,
@@ -203,18 +271,18 @@ async function assertRestoreRequiresExactContentAndKeepsTrashEvidence(): Promise
     const receipt = await stageRecordMutationTrash({
       mutationId: "mutation-restore",
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       sourceRelativePath: "payload.json",
       trashRootPath,
-      trashRootId: "record-trash",
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
       transfer: "move",
       stagedAt: 1_721_260_800_000
     });
     const roots = {
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       trashRootPath,
-      trashRootId: "record-trash"
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash")
     };
     await finalizeRecordMutationTrash({
       receipt,
@@ -276,9 +344,9 @@ async function assertNestedDirectoryRoundTripsWithEmptyDirectories(): Promise<vo
     );
     const roots = {
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       trashRootPath,
-      trashRootId: "record-trash"
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash")
     };
     const receipt = await stageRecordMutationTrash({
       mutationId: "mutation-directory",
@@ -377,10 +445,10 @@ async function assertPathEscapeSymlinkAndFutureReceiptFailClosed(): Promise<void
       () => stageRecordMutationTrash({
         mutationId: "mutation-escape",
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         sourceRelativePath: "../outside.json",
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         transfer: "move",
         stagedAt: 1_721_260_800_000
       }),
@@ -397,10 +465,10 @@ async function assertPathEscapeSymlinkAndFutureReceiptFailClosed(): Promise<void
       () => stageRecordMutationTrash({
         mutationId: "mutation-link",
         sourceRootPath,
-        sourceRootId: "conversation-store",
+        sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
         sourceRelativePath: "linked.json",
         trashRootPath,
-        trashRootId: "record-trash",
+        trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
         transfer: "copy",
         stagedAt: 1_721_260_800_000
       }),
@@ -413,10 +481,10 @@ async function assertPathEscapeSymlinkAndFutureReceiptFailClosed(): Promise<void
     const receipt = await stageRecordMutationTrash({
       mutationId: "mutation-future",
       sourceRootPath,
-      sourceRootId: "conversation-store",
+      sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
       sourceRelativePath: "safe.json",
       trashRootPath,
-      trashRootId: "record-trash",
+      trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
       transfer: "copy",
       stagedAt: 1_721_260_800_000
     });
@@ -456,10 +524,10 @@ async function assertNestedSymlinkAndSpecialEntryFailClosed(): Promise<void> {
         () => stageRecordMutationTrash({
           mutationId: "mutation-nested-link",
           sourceRootPath,
-          sourceRootId: "conversation-store",
+          sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
           sourceRelativePath: "linked-tree",
           trashRootPath,
-          trashRootId: "record-trash",
+          trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
           transfer: "move",
           stagedAt: 1_721_260_800_000
         }),
@@ -479,10 +547,10 @@ async function assertNestedSymlinkAndSpecialEntryFailClosed(): Promise<void> {
           () => stageRecordMutationTrash({
             mutationId: "mutation-hard-link-entry",
             sourceRootPath,
-            sourceRootId: "conversation-store",
+            sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
             sourceRelativePath: "hard-link-tree",
             trashRootPath,
-            trashRootId: "record-trash",
+            trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
             transfer: "move",
             stagedAt: 1_721_260_800_005
           }),
@@ -507,10 +575,10 @@ async function assertNestedSymlinkAndSpecialEntryFailClosed(): Promise<void> {
             () => stageRecordMutationTrash({
               mutationId: "mutation-special-entry",
               sourceRootPath,
-              sourceRootId: "conversation-store",
+              sourceRootBinding: fixtureRecordRootBindingRef("conversation-store"),
               sourceRelativePath: "special-tree",
               trashRootPath,
-              trashRootId: "record-trash",
+              trashRootBinding: fixtureRecordRootBindingRef("record-trash"),
               transfer: "move",
               stagedAt: 1_721_260_800_010
             }),

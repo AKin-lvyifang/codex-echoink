@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  parseRecordRootBindingRef,
+  type RecordRootBindingRef
+} from "../storage/record-root-registry";
 
 export const RECORD_MUTATION_SCHEMA_VERSION = 1;
 export const RECORD_MUTATION_MAX_RECORD_BYTES = 1024 * 1024;
@@ -47,6 +51,7 @@ export interface RecordMutationIntent {
   expectedConversationGeneration: number;
   expectedConversationCommitId: string | null;
   participants: RecordMutationParticipant[];
+  rootBindings: RecordRootBindingRef[];
   trashPolicy: "not-required" | "required";
 }
 
@@ -294,6 +299,7 @@ export function parseRecordMutationIntent(
     "expectedConversationGeneration",
     "expectedConversationCommitId",
     "participants",
+    "rootBindings",
     "trashPolicy"
   ], "record mutation intent");
   const operation = parseOperation(record.operation);
@@ -327,6 +333,7 @@ export function parseRecordMutationIntent(
   if (participantIds.some((id, index) => id !== sortedIds[index])) {
     throw invalidValue("participants 必须按 id 排序以保持确定性");
   }
+  const rootBindings = parseRecordMutationRootBindings(record.rootBindings);
   if (record.trashPolicy !== "not-required" && record.trashPolicy !== "required") {
     throw invalidValue("trashPolicy 非法");
   }
@@ -342,14 +349,54 @@ export function parseRecordMutationIntent(
   ) {
     throw invalidValue("operation 与 participant action 不匹配");
   }
+  if (
+    destructive
+      ? rootBindings.length < 2
+      : rootBindings.length !== 0
+  ) {
+    throw invalidValue("operation 与 Root Binding 数量不匹配");
+  }
   return {
     operation,
     conversationId,
     expectedConversationGeneration,
     expectedConversationCommitId,
     participants,
+    rootBindings,
     trashPolicy: record.trashPolicy
   };
+}
+
+export function parseRecordMutationRootBindings(
+  value: unknown
+): RecordRootBindingRef[] {
+  if (
+    !Array.isArray(value)
+    || value.length > RECORD_MUTATION_MAX_PARTICIPANTS + 1
+  ) {
+    throw invalidValue("rootBindings 数量非法");
+  }
+  const rootBindings = value.map((binding, index) => {
+    try {
+      return parseRecordRootBindingRef(binding);
+    } catch (error) {
+      throw invalidValue(
+        `rootBindings[${index}] 非法：${errorMessage(error)}`
+      );
+    }
+  });
+  const rootIds = rootBindings.map((binding) => binding.rootId);
+  if (new Set(rootIds).size !== rootIds.length) {
+    throw invalidValue("rootBindings rootId 必须唯一");
+  }
+  const sortedRootIds = [...rootIds].sort(compareText);
+  if (rootIds.some((rootId, index) => rootId !== sortedRootIds[index])) {
+    throw invalidValue("rootBindings 必须按 rootId 排序");
+  }
+  return rootBindings.map((binding) => ({
+    ...binding,
+    rootIdentity: { ...binding.rootIdentity }
+  }));
 }
 
 export function parseRecordMutationStep(
@@ -916,6 +963,10 @@ function invalidValue(message: string): RecordMutationContractError {
 
 function invalidTransition(message: string): RecordMutationContractError {
   return new RecordMutationContractError("invalid_transition", message);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function cloneJson<T>(value: T): T {
