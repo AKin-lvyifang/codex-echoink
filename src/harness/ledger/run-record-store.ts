@@ -20,12 +20,14 @@ import {
   runRecordSubjectDigest,
   safeRunRecordToken,
   serializeAttemptPayloadEvents,
+  validateAttemptPayloadRetirementReceipt,
   validateAttemptHarnessEvent,
   validateAttemptPayloadManifest,
   validateAttemptRunSummary,
   validateRetentionTombstone,
   validateWorkflowRunSummary,
   type AttemptHarnessEventV1,
+  type AttemptPayloadRetirementReceiptV1,
   type AttemptPayloadManifestV1,
   type AttemptRunSummaryV1,
   type RunRecordReasonCode,
@@ -73,6 +75,7 @@ export type AttemptPayloadReadResult =
   | {
       state: "expired";
       tombstone: RunRetentionTombstoneV1;
+      retirementReceipt?: AttemptPayloadRetirementReceiptV1;
     }
   | {
       state: "not-captured";
@@ -80,6 +83,18 @@ export type AttemptPayloadReadResult =
     }
   | { state: "missing" }
   | { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string };
+
+type AttemptPayloadRetirementReadEvidence =
+  | {
+      state: "expired";
+      tombstone: RunRetentionTombstoneV1;
+      retirementReceipt: AttemptPayloadRetirementReceiptV1;
+    }
+  | {
+      state: "corrupt";
+      code: RunRecordStoreCorruptCode;
+      error: string;
+    };
 
 export interface AttemptPayloadUserDeletionProbe
 extends AttemptRunRecordLocator {
@@ -102,6 +117,20 @@ export type AttemptPayloadUserDeletionObservation =
       restoredAt: number;
     };
 
+export type AttemptPayloadRetirementCandidate =
+  | {
+      status: "eligible";
+      manifest: AttemptPayloadManifestV1;
+      priorGeneration: string;
+      priorGenerationManifestDigest: string;
+      sourceRelativePath: string;
+    }
+  | {
+      status: "retired";
+      tombstone: RunRetentionTombstoneV1;
+      retirementReceipt: AttemptPayloadRetirementReceiptV1;
+    };
+
 export type RunRecordStoreCorruptCode =
   | "unsafe-path"
   | "manifest-corrupt"
@@ -112,6 +141,7 @@ export type RunRecordStoreCorruptCode =
   | "payload-digest-mismatch"
   | "payload-event-invalid"
   | "tombstone-corrupt"
+  | "retirement-receipt-corrupt"
   | "not-captured-corrupt";
 
 export class RunRecordStoreConflictError extends Error {
@@ -230,7 +260,8 @@ type RunRecordStoreContentKind =
   | "record"
   | "payload"
   | "not-captured"
-  | "expired";
+  | "expired"
+  | "retired";
 
 interface RunRecordGenerationManifest {
   schemaVersion: 1;
@@ -353,8 +384,9 @@ export function attemptRunRecordSubjectToken(
  *
  * It never reads or mutates the legacy `harness-runs` directory. Every update
  * publishes an immutable generation, then a no-clobber append-only manifest.
- * Retention tombstones are logical metadata only: this slice never deletes a
- * payload generation.
+ * The Store never directly deletes a payload generation. The retention
+ * authority may retire a prior generation through recoverable Trash, then
+ * publish the exact retirement receipt as a new immutable generation.
  */
 export class FileRunRecordStore {
   readonly rootPath: string;
@@ -535,10 +567,14 @@ export class FileRunRecordStore {
       const payload = await this.readAttemptPayload(locator);
       const payloadSettled = summary.payload.expected
         ? payload.state === "expired"
+          && (
+            payload.tombstone.reasonCode === "user-deleted"
+            || payload.retirementReceipt !== undefined
+          )
         : payload.state === "not-captured";
       if (!payloadSettled) {
         throw new RunRecordStoreConflictError(
-          "Attempt summary retention requires its payload to be expired or not-captured"
+          "Attempt summary retention requires its payload to be physically retired or not-captured"
         );
       }
     }
@@ -710,6 +746,196 @@ export class FileRunRecordStore {
     });
   }
 
+  /**
+   * Freezes the exact immutable payload generation that a retention
+   * transaction may prepare in Trash. This probe is intentionally valid only
+   * while the payload is still present; crash recovery after the tombstone
+   * uses the transaction execution header instead of rediscovering identity.
+   */
+  async inspectAttemptPayloadRetirementCandidate(
+    locator: AttemptRunRecordLocator
+  ): Promise<AttemptPayloadRetirementCandidate> {
+    const subjectId = attemptRecordSubjectId(locator);
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      subjectId
+    );
+    if (latest.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload retirement candidate is missing"
+      );
+    }
+    if (latest.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(latest.code, latest.error);
+    }
+    if (latest.orphan) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload retirement candidate requires generation recovery"
+      );
+    }
+    if (latest.manifest.contentKind === "retired") {
+      const evidence = await this.readPayloadRetirementEvidence(
+        locator,
+        latest
+      );
+      if (evidence.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(
+          evidence.code,
+          evidence.error
+        );
+      }
+      return {
+        status: "retired",
+        tombstone: evidence.tombstone,
+        retirementReceipt: evidence.retirementReceipt
+      };
+    }
+    if (latest.manifest.contentKind !== "payload") {
+      throw new RunRecordStoreConflictError(
+        `Attempt payload cannot freeze retirement identity from ${latest.manifest.contentKind}`
+      );
+    }
+    const present = await this.readPresentPayload(
+      locator,
+      path.join(
+        latest.layout.generationsPath,
+        latest.manifest.generation
+      ),
+      latest.manifest
+    );
+    if (present.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(present.code, present.error);
+    }
+    if (present.state !== "present") {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload retirement candidate is not present"
+      );
+    }
+    return {
+      status: "eligible",
+      manifest: present.manifest,
+      priorGeneration: latest.manifest.generation,
+      priorGenerationManifestDigest: latest.manifest.digest,
+      sourceRelativePath: path.posix.join(
+        collectionDirectory("attempt-payload"),
+        safeRunRecordToken(subjectId),
+        "generations",
+        latest.manifest.generation
+      )
+    };
+  }
+
+  /**
+   * Publishes the authoritative proof that a policy-expired generation was
+   * physically retired. The prior generation must already be absent from the
+   * Run Store; the receipt binds the Trash prepare and finalization digests
+   * that authorized that absence.
+   */
+  async publishAttemptPayloadRetirementReceipt(
+    retirementReceipt: AttemptPayloadRetirementReceiptV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const receipt = validateAttemptPayloadRetirementReceipt(
+      retirementReceipt
+    );
+    const locator: AttemptRunRecordLocator = {
+      workflowRunId: receipt.workflowRunId,
+      attemptId: receipt.attemptId
+    };
+    const subjectId = attemptRecordSubjectId(locator);
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      subjectId
+    );
+    if (latest.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        "Cannot publish retirement receipt for a missing payload record"
+      );
+    }
+    if (latest.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(latest.code, latest.error);
+    }
+    if (latest.manifest.contentKind === "retired") {
+      const evidence = await this.readPayloadRetirementEvidence(
+        locator,
+        latest
+      );
+      if (evidence.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(
+          evidence.code,
+          evidence.error
+        );
+      }
+      if (evidence.retirementReceipt.digest === receipt.digest) return;
+      throw new RunRecordStoreConflictError(
+        "Attempt payload already has a different retirement receipt"
+      );
+    }
+    if (latest.manifest.contentKind !== "expired" || latest.orphan) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload retirement receipt requires a committed tombstone"
+      );
+    }
+    const tombstone = validateRetentionTombstone(
+      await readJsonFile(path.join(
+        latest.layout.generationsPath,
+        latest.manifest.generation,
+        "record.json"
+      ))
+    );
+    const priorPointer = latest.chain.at(-2);
+    if (
+      tombstone.scope !== "attempt-payload"
+      || tombstone.reasonCode !== "policy-expired"
+      || tombstone.workflowRunId !== receipt.workflowRunId
+      || tombstone.attemptId !== receipt.attemptId
+      || tombstone.harnessRunId !== receipt.harnessRunId
+      || tombstone.subjectDigest !== receipt.subjectDigest
+      || tombstone.digest !== receipt.tombstoneDigest
+      || tombstone.revision !== receipt.tombstoneRevision
+      || tombstone.retentionTransactionId
+        !== receipt.retentionTransactionId
+      || latest.manifest.contentDigest !== tombstone.digest
+      || !priorPointer
+      || priorPointer.contentKind !== "payload"
+      || priorPointer.generation !== receipt.priorGeneration
+      || priorPointer.digest
+        !== receipt.priorGenerationManifestDigest
+      || priorPointer.contentDigest !== receipt.priorPayloadDigest
+      || tombstone.prior.digest !== receipt.priorPayloadDigest
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Retirement receipt does not exactly bind the active payload tombstone"
+      );
+    }
+    if (
+      await lstatOrNull(path.join(
+        latest.layout.generationsPath,
+        priorPointer.generation
+      ))
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Retirement receipt cannot publish while prior payload bytes remain active"
+      );
+    }
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId,
+      revision: receipt.revision,
+      contentKind: "retired",
+      contentDigest: receipt.digest,
+      cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(receipt)
+      }],
+      faultInjector,
+      allowedPreviousContentKinds: ["expired"],
+      committedAt: receipt.retiredAt
+    });
+  }
+
   async readAttemptPayload(
     locator: AttemptRunRecordLocator
   ): Promise<AttemptPayloadReadResult> {
@@ -801,10 +1027,97 @@ export class FileRunRecordStore {
         return corruptResult("tombstone-corrupt", error);
       }
     }
+    if (latest.manifest.contentKind === "retired") {
+      return await this.readPayloadRetirementEvidence(locator, latest);
+    }
     return corruptResult(
       "manifest-corrupt",
       new Error("Attempt payload manifest points at record content")
     );
+  }
+
+  private async readPayloadRetirementEvidence(
+    locator: AttemptRunRecordLocator,
+    latest: Extract<LatestManifestResult, { state: "present" }>
+  ): Promise<AttemptPayloadRetirementReadEvidence> {
+    try {
+      const retirementReceipt = validateAttemptPayloadRetirementReceipt(
+        await readJsonFile(path.join(
+          latest.layout.generationsPath,
+          latest.manifest.generation,
+          "record.json"
+        ))
+      );
+      const tombstonePointer = latest.chain.at(-2);
+      const priorPointer = latest.chain.at(-3);
+      if (
+        latest.manifest.contentKind !== "retired"
+        || latest.manifest.contentDigest !== retirementReceipt.digest
+        || latest.manifest.revision !== retirementReceipt.revision
+        || retirementReceipt.workflowRunId !== locator.workflowRunId
+        || retirementReceipt.attemptId !== locator.attemptId
+        || !tombstonePointer
+        || tombstonePointer.contentKind !== "expired"
+        || tombstonePointer.contentDigest
+          !== latest.manifest.previousContentDigest
+        || tombstonePointer.contentDigest
+          !== retirementReceipt.tombstoneDigest
+        || tombstonePointer.revision
+          !== retirementReceipt.tombstoneRevision
+        || !priorPointer
+        || priorPointer.contentKind !== "payload"
+        || priorPointer.generation
+          !== retirementReceipt.priorGeneration
+        || priorPointer.digest
+          !== retirementReceipt.priorGenerationManifestDigest
+        || priorPointer.contentDigest
+          !== retirementReceipt.priorPayloadDigest
+      ) {
+        throw new Error("payload retirement receipt chain is inconsistent");
+      }
+      const tombstone = validateRetentionTombstone(
+        await readJsonFile(path.join(
+          latest.layout.generationsPath,
+          tombstonePointer.generation,
+          "record.json"
+        ))
+      );
+      if (
+        tombstone.scope !== "attempt-payload"
+        || tombstone.reasonCode !== "policy-expired"
+        || tombstone.workflowRunId !== retirementReceipt.workflowRunId
+        || tombstone.attemptId !== retirementReceipt.attemptId
+        || tombstone.harnessRunId !== retirementReceipt.harnessRunId
+        || tombstone.subjectDigest !== retirementReceipt.subjectDigest
+        || tombstone.digest !== retirementReceipt.tombstoneDigest
+        || tombstone.revision !== retirementReceipt.tombstoneRevision
+        || tombstone.prior.digest
+          !== retirementReceipt.priorPayloadDigest
+        || tombstone.retentionTransactionId
+          !== retirementReceipt.retentionTransactionId
+      ) {
+        throw new Error(
+          "payload retirement receipt does not bind its tombstone"
+        );
+      }
+      if (
+        await lstatOrNull(path.join(
+          latest.layout.generationsPath,
+          priorPointer.generation
+        ))
+      ) {
+        throw new Error(
+          "retired payload generation is still present in the Run Store"
+        );
+      }
+      return {
+        state: "expired",
+        tombstone,
+        retirementReceipt
+      };
+    } catch (error) {
+      return corruptResult("retirement-receipt-corrupt", error);
+    }
   }
 
   async inspectAttemptPayloadUserDeletion(
@@ -1736,6 +2049,15 @@ export class FileRunRecordStore {
       identity = {
         workflowRunId: payload.workflowRunId,
         attemptId: payload.attemptId
+      };
+    } else if (manifest.contentKind === "retired") {
+      const receipt = validateAttemptPayloadRetirementReceipt(
+        await readJsonFile(path.join(generationPath, "record.json"))
+      );
+      assertInventoryGenerationIdentity(receipt, manifest);
+      identity = {
+        workflowRunId: receipt.workflowRunId,
+        attemptId: receipt.attemptId
       };
     } else {
       throw new RunRecordStoreCorruptError(
@@ -3304,7 +3626,8 @@ function validateGenerationManifest(
       "record",
       "payload",
       "not-captured",
-      "expired"
+      "expired",
+      "retired"
     ].includes(record.contentKind as string)
     || typeof record.contentDigest !== "string"
     || !SHA256_PATTERN.test(record.contentDigest)

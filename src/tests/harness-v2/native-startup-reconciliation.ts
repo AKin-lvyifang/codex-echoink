@@ -43,6 +43,7 @@ import {
 } from "./record-root-fixtures";
 
 export async function runHarnessV2NativeStartupReconciliationTests(): Promise<void> {
+  await assertStartedRetentionRecoveryPrecedesNativePromotionAndCleanup();
   await assertRecordMutationAuthorityGatesNativePromotion();
   await assertDeletionTombstoneAuthorityGatesNativePromotion();
   await assertAuthorityProofClassificationPrecedesBoundedCleanup();
@@ -85,6 +86,25 @@ export async function runHarnessV2NativeStartupReconciliationTests(): Promise<vo
   await assertPendingChatRecoveryLeavesRetirementsForAuthorityGate();
   await assertConcurrentCommittedChatSettlementWinsStartupRecovery();
   await assertProductionStartupWiringUsesConversationAuthority();
+}
+
+async function assertStartedRetentionRecoveryPrecedesNativePromotionAndCleanup():
+Promise<void> {
+  const calls: string[] = [];
+  const result = await reconcileNativeExecutionsAtStartup(
+    reconciliationHost({
+      records: [],
+      calls,
+      recoverRetention: async () => 2,
+      cleanup: async () => []
+    })
+  );
+  assert.equal(result.recoveredStartedRunRetentionCount, 2);
+  assert.deepEqual(calls, [
+    "recover-retention",
+    "list",
+    `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
+  ]);
 }
 
 async function assertDeletionTombstoneAuthorityGatesNativePromotion():
@@ -2932,6 +2952,7 @@ function reconciliationHost(input: {
   records: NativeExecutionRecord[];
   calls?: string[];
   recoverMutations?: () => Promise<number>;
+  recoverRetention?: () => Promise<number>;
   readMutation?: (mutationId: string) => Promise<RecordMutationRevision>;
   prove?: (probe: ConversationAuthorityProbe) => Promise<ConversationAuthorityProof>;
   promote?: (record: NativeExecutionRecord) => Promise<void>;
@@ -2946,6 +2967,14 @@ function reconciliationHost(input: {
         async recoverPendingRecordMutations() {
           calls.push("recover-mutations");
           return await input.recoverMutations!();
+        }
+      }
+      : {}),
+    ...(input.recoverRetention
+      ? {
+        async recoverStartedRunRecordRetentions() {
+          calls.push("recover-retention");
+          return await input.recoverRetention!();
         }
       }
       : {}),

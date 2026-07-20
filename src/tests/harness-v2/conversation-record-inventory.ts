@@ -189,6 +189,7 @@ Promise<void> {
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact
     });
     await createWorkflowArtifactLifecycleRecord({
+      storageRootPath: pluginDataDir(vaultPath, PLUGIN_DIR),
       rootPath: artifactRootPath,
       artifactId: "artifact-choice",
       artifactKind: "markdown-report",

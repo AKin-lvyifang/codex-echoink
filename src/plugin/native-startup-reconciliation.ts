@@ -34,6 +34,7 @@ export interface NativeStartupReconciliationResult {
   recoveredPendingRecordMutationCount: number;
   recoveredPendingChatCount: number;
   recoveredPendingHermesProposalCount: number;
+  recoveredStartedRunRetentionCount?: number;
   awaitingCount: number;
   promotedCount: number;
   abortedCount: number;
@@ -48,6 +49,7 @@ export interface NativeStartupReconciliationHost {
   recoverPendingEditorLocalCommits?(): Promise<void>;
   recoverPendingEphemeralUtilityLocalCommits?(): Promise<void>;
   recoverPendingHermesProposalLocalCommits?(): Promise<number>;
+  recoverStartedRunRecordRetentions?(): Promise<number>;
   listAwaitingRetirements(): Promise<NativeExecutionRecord[]>;
   proveConversationAuthority(
     probe: ConversationAuthorityProbe
@@ -101,6 +103,13 @@ export async function reconcileNativeExecutionsAtStartup(
   // the global cleanup gate opens; neither proof is sufficient on its own.
   const recoveredPendingHermesProposalCount =
     await host.recoverPendingHermesProposalLocalCommits?.() ?? 0;
+  // Retention recovery is deliberately after every local-commit authority and
+  // before Native promotion/provider cleanup. It may only resume an already
+  // published retention plan; creating a new sweep is never a startup action.
+  const hasRunRetentionRecovery =
+    host.recoverStartedRunRecordRetentions !== undefined;
+  const recoveredStartedRunRetentionCount =
+    await host.recoverStartedRunRecordRetentions?.() ?? 0;
   // Despite the legacy host method name, this list contains every retirement
   // that can still reach provider cleanup: awaiting, pending, and failed.
   // Pending/failed records must be re-proven after restart rather than trusted
@@ -264,6 +273,9 @@ export async function reconcileNativeExecutionsAtStartup(
     recoveredPendingRecordMutationCount,
     recoveredPendingChatCount,
     recoveredPendingHermesProposalCount,
+    ...(hasRunRetentionRecovery
+      ? { recoveredStartedRunRetentionCount }
+      : {}),
     awaitingCount: awaiting.length,
     promotedCount: countActions(retirements, "promoted"),
     abortedCount: countActions(retirements, "aborted"),

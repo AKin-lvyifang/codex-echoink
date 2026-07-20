@@ -19,6 +19,9 @@ import {
 import {
   createRecordMutationJournal
 } from "../harness/lifecycle/record-mutation-journal";
+import {
+  withRecordMutationGlobalAuthority
+} from "../harness/lifecycle/record-mutation-coordinator";
 import type {
   RecordMutationRecoveryRunnerResult
 } from "../harness/lifecycle/record-mutation-recovery-runner";
@@ -38,6 +41,7 @@ import {
 import {
   createEchoInkRecordMutationSelectionVerifier
 } from "../harness/records/conversation-record-mutation-selection-verifier";
+import { pluginDataDir } from "../core/raw-message-store";
 import type { StoredSession } from "../settings/settings";
 import type { EchoInkHarnessService } from "./harness-service";
 import {
@@ -164,263 +168,273 @@ export async function commitEchoInkConversationRecordMutation(input: {
   return await settingsStore.withConversationMutation(
     session.id,
     async (authority) => {
-      assertAuthoritativeLiveSession(plugin, session);
-      const sourceSession = cloneSession(session);
-      const expectedGeneration = sessionGeneration(sourceSession);
-      const expectedCommitId = sourceSession.commitId?.trim();
-      const expectedContentRevision =
-        createConversationContentRevision(sourceSession);
-      if (!expectedCommitId) {
-        throw new ConversationRecordMutationLifecycleError(
-          "conversation_changed",
-          "Conversation destructive mutation requires a durable commit identity"
-        );
-      }
-      const durable = await settingsStore.readConversationSession(session.id);
-      if (
-        !durable
-        || createConversationContentRevision(durable)
-          !== expectedContentRevision
-      ) {
-        throw new ConversationRecordMutationLifecycleError(
-          "conversation_changed",
-          "Conversation changed before destructive inventory"
-        );
-      }
-
-      const conversationSources =
-        await settingsStore.planConversationRecordMutationSources({
-          operation,
-          conversationId: session.id,
-          expectedGeneration,
-          expectedCommitId,
-          expectedContentRevision
-        }, authority);
-      const inventoryInput = {
-        operation,
-        conversationId: session.id,
-        vaultPath: plugin.getVaultPath(),
-        pluginDir: plugin.getPluginDataDirName(),
-        decisions: {
-          retainMemoryIds: [...input.disposition.retainMemoryIds],
-          retainArtifactIds: [...input.disposition.retainArtifactIds]
-        }
-      } as const;
-      const firstInventory = await inventoryConversationRecords({
-        ...inventoryInput,
-        conversations: cloneSessions(plugin.settings.sessions)
-      });
-      const secondInventory = await inventoryConversationRecords({
-        ...inventoryInput,
-        conversations: cloneSessions(plugin.settings.sessions)
-      });
-      assertStableReadyInventory(firstInventory, secondInventory);
-
       const createdAt = input.now?.() ?? Date.now();
       const mutationId = `conversation-mutation-${randomUUID()}`;
-      const target = createConversationTarget({
-        operation,
-        sourceSession,
+      const storageRootPath = pluginDataDir(
+        plugin.getVaultPath(),
+        plugin.getPluginDataDirName()
+      );
+      return await withRecordMutationGlobalAuthority(
+        storageRootPath,
         mutationId,
-        now: createdAt
-      });
-      const requiredRootIds =
-        conversationRecordMutationRequiredRootIds(secondInventory);
-      const preparedRoots =
-        await prepareEchoInkRecordMutationRuntimeRoots({
-          vaultPath: plugin.getVaultPath(),
-          pluginDir: plugin.getPluginDataDirName(),
-          rootIds: requiredRootIds,
-          createdAt
-        });
-      const built = buildConversationRecordMutationPlan({
-        inventory: secondInventory,
-        conversationSources,
-        expectedConversationGeneration: expectedGeneration,
-        expectedConversationCommitId: expectedCommitId,
-        expectedConversationContentRevision: expectedContentRevision,
-        targetConversation: target.intentTarget,
-        rootBindings: preparedRoots.roots.map((root) => root.rootBinding)
-      });
-      const journal = await createRecordMutationJournal({
-        storageRootPath: preparedRoots.storageRootPath,
-        mutationId,
-        intent: built.intent,
-        createdAt
-      });
-      const executionPlan = await createRecordMutationExecutionPlan({
-        journal,
-        participants: built.executionParticipants,
-        createdAt: createdAt + 1
-      });
-      const materialized = await materializeRecordMutationExecution({
-        plan: executionPlan,
-        journal,
-        roots: preparedRoots.roots,
-        createSourceAdapter:
-          createEchoInkRecordMutationSourceAdapterFactory({
-            vaultPath: plugin.getVaultPath()
-          }),
-        verifyFrozenSelection:
-          createEchoInkRecordMutationSelectionVerifier({
-            vaultPath: plugin.getVaultPath(),
-            pluginDir: plugin.getPluginDataDirName(),
-            getConversations: () => plugin.settings.sessions
-          }),
-        now: input.now
-      });
-      const retirements = createNativeRetirements({
-        operation,
-        sourceSession,
-        target,
-        mutationId
-      });
+        async () => {
+          assertAuthoritativeLiveSession(plugin, session);
+          const sourceSession = cloneSession(session);
+          const expectedGeneration = sessionGeneration(sourceSession);
+          const expectedCommitId = sourceSession.commitId?.trim();
+          const expectedContentRevision =
+            createConversationContentRevision(sourceSession);
+          if (!expectedCommitId) {
+            throw new ConversationRecordMutationLifecycleError(
+              "conversation_changed",
+              "Conversation destructive mutation requires a durable commit identity"
+            );
+          }
+          const durable = await settingsStore.readConversationSession(session.id);
+          if (
+            !durable
+            || createConversationContentRevision(durable)
+              !== expectedContentRevision
+          ) {
+            throw new ConversationRecordMutationLifecycleError(
+              "conversation_changed",
+              "Conversation changed before destructive inventory"
+            );
+          }
 
-      let targetCommitError: Error | null = null;
-      try {
-        if (retirements.length) {
-          await harnessService.registerNativeExecutionRetirements(
-            retirements
-          );
-        }
-        if (operation === "delete-conversation") {
-          await settingsStore.commitConversationDeletionTombstone(
-            target.tombstone!,
-            {
+          const conversationSources =
+            await settingsStore.planConversationRecordMutationSources({
+              operation,
+              conversationId: session.id,
               expectedGeneration,
               expectedCommitId,
               expectedContentRevision
-            },
-            authority
-          );
-        } else {
-          await settingsStore.commitConversationRecordClear(
-            target.session!,
-            {
-              expectedGeneration,
-              expectedCommitId,
-              expectedContentRevision,
-              sourceRelativePaths: conversationSources.map(
-                (source) => source.sourceRelativePath
-              )
-            },
-            authority
-          );
-        }
-      } catch (error) {
-        targetCommitError = asError(error);
-      }
-
-      let recovery: RecordMutationRecoveryRunnerResult;
-      try {
-        recovery =
-          await settingsStore.settleConversationRecordMutationExecution(
-            materialized,
-            authority
-          );
-      } catch (error) {
-        return {
-          operation,
-          conversationId: session.id,
-          mutationId,
-          localState: "awaiting-recovery",
-          projection: "awaiting-recovery",
-          nativeRetirement: retirements.length
-            ? "awaiting-recovery"
-            : "not-required",
-          nativeRetirementIds: retirementIds(retirements),
-          error: errorMessage(error)
-        };
-      }
-      if (recovery.status === "blocked") {
-        return {
-          operation,
-          conversationId: session.id,
-          mutationId,
-          localState: "awaiting-recovery",
-          projection: "awaiting-recovery",
-          nativeRetirement: retirements.length
-            ? "awaiting-recovery"
-            : "not-required",
-          nativeRetirementIds: retirementIds(retirements),
-          error: recovery.blocker
-        };
-      }
-      if (recovery.journal.record.state === "aborted") {
-        await harnessService.abortNativeExecutionRetirements(
-          retirements,
-          targetCommitError?.message
-            ?? "Conversation RecordMutation was compensated"
-        );
-        return {
-          operation,
-          conversationId: session.id,
-          mutationId,
-          localState: "aborted",
-          projection: "updated",
-          nativeRetirement: retirements.length ? "aborted" : "not-required",
-          nativeRetirementIds: retirementIds(retirements),
-          error: targetCommitError?.message
-            ?? "Conversation RecordMutation was compensated"
-        };
-      }
-      if (recovery.journal.record.state !== "committed") {
-        return {
-          operation,
-          conversationId: session.id,
-          mutationId,
-          localState: "awaiting-recovery",
-          projection: "awaiting-recovery",
-          nativeRetirement: retirements.length
-            ? "awaiting-recovery"
-            : "not-required",
-          nativeRetirementIds: retirementIds(retirements),
-          error: targetCommitError?.message
-        };
-      }
-
-      let nativeRetirement: ConversationRecordMutationReceipt[
-        "nativeRetirement"
-      ] = retirements.length ? "promoted" : "not-required";
-      try {
-        await harnessService.promoteNativeExecutionRetirements(
-          retirements,
-          async (recordMutationId) =>
-            await settingsStore.readRecordMutationAuthority(
-              recordMutationId
-            )
-        );
-      } catch {
-        if (retirements.length) nativeRetirement = "awaiting-recovery";
-      }
-      const projection =
-        await settingsStore.projectCommittedConversationRecordMutation({
-          operation,
-          sourceContentRevision: expectedContentRevision,
-          sourceSession: session,
-          ...(target.session ? { targetSession: target.session } : {})
-        }, authority);
-      if (nativeRetirement === "promoted") {
-        for (const retirement of retirements) {
-          void harnessService.cleanupNativeExecutionRecord(
-            retirement.retirementId
-          ).catch((error) => {
-            console.error(
-              `EchoInk native retirement cleanup failed: ${retirement.retirementId}`,
-              error
-            );
+            }, authority);
+          const inventoryInput = {
+            operation,
+            conversationId: session.id,
+            vaultPath: plugin.getVaultPath(),
+            pluginDir: plugin.getPluginDataDirName(),
+            decisions: {
+              retainMemoryIds: [...input.disposition.retainMemoryIds],
+              retainArtifactIds: [...input.disposition.retainArtifactIds]
+            }
+          } as const;
+          const firstInventory = await inventoryConversationRecords({
+            ...inventoryInput,
+            conversations: cloneSessions(plugin.settings.sessions)
           });
+          const secondInventory = await inventoryConversationRecords({
+            ...inventoryInput,
+            conversations: cloneSessions(plugin.settings.sessions)
+          });
+          assertStableReadyInventory(firstInventory, secondInventory);
+
+          const target = createConversationTarget({
+            operation,
+            sourceSession,
+            mutationId,
+            now: createdAt
+          });
+          const requiredRootIds =
+            conversationRecordMutationRequiredRootIds(secondInventory);
+          const preparedRoots =
+            await prepareEchoInkRecordMutationRuntimeRoots({
+              vaultPath: plugin.getVaultPath(),
+              pluginDir: plugin.getPluginDataDirName(),
+              rootIds: requiredRootIds,
+              createdAt
+            });
+          const built = buildConversationRecordMutationPlan({
+            inventory: secondInventory,
+            conversationSources,
+            expectedConversationGeneration: expectedGeneration,
+            expectedConversationCommitId: expectedCommitId,
+            expectedConversationContentRevision: expectedContentRevision,
+            targetConversation: target.intentTarget,
+            rootBindings: preparedRoots.roots.map((root) => root.rootBinding)
+          });
+          const journal = await createRecordMutationJournal({
+            storageRootPath: preparedRoots.storageRootPath,
+            mutationId,
+            intent: built.intent,
+            createdAt
+          });
+          const executionPlan = await createRecordMutationExecutionPlan({
+            journal,
+            participants: built.executionParticipants,
+            createdAt: createdAt + 1
+          });
+          const materialized = await materializeRecordMutationExecution({
+            plan: executionPlan,
+            journal,
+            roots: preparedRoots.roots,
+            createSourceAdapter:
+              createEchoInkRecordMutationSourceAdapterFactory({
+                vaultPath: plugin.getVaultPath()
+              }),
+            verifyFrozenSelection:
+              createEchoInkRecordMutationSelectionVerifier({
+                vaultPath: plugin.getVaultPath(),
+                pluginDir: plugin.getPluginDataDirName(),
+                getConversations: () => plugin.settings.sessions
+              }),
+            now: input.now
+          });
+          const retirements = createNativeRetirements({
+            operation,
+            sourceSession,
+            target,
+            mutationId
+          });
+
+          let targetCommitError: Error | null = null;
+          try {
+            if (retirements.length) {
+              await harnessService.registerNativeExecutionRetirements(
+                retirements
+              );
+            }
+            if (operation === "delete-conversation") {
+              await settingsStore.commitConversationDeletionTombstone(
+                target.tombstone!,
+                {
+                  expectedGeneration,
+                  expectedCommitId,
+                  expectedContentRevision
+                },
+                authority
+              );
+            } else {
+              await settingsStore.commitConversationRecordClear(
+                target.session!,
+                {
+                  expectedGeneration,
+                  expectedCommitId,
+                  expectedContentRevision,
+                  sourceRelativePaths: conversationSources.map(
+                    (source) => source.sourceRelativePath
+                  )
+                },
+                authority
+              );
+            }
+          } catch (error) {
+            targetCommitError = asError(error);
+          }
+
+          let recovery: RecordMutationRecoveryRunnerResult;
+          try {
+            recovery =
+              await settingsStore.settleConversationRecordMutationExecution(
+                materialized,
+                authority
+              );
+          } catch (error) {
+            return {
+              operation,
+              conversationId: session.id,
+              mutationId,
+              localState: "awaiting-recovery",
+              projection: "awaiting-recovery",
+              nativeRetirement: retirements.length
+                ? "awaiting-recovery"
+                : "not-required",
+              nativeRetirementIds: retirementIds(retirements),
+              error: errorMessage(error)
+            };
+          }
+          if (recovery.status === "blocked") {
+            return {
+              operation,
+              conversationId: session.id,
+              mutationId,
+              localState: "awaiting-recovery",
+              projection: "awaiting-recovery",
+              nativeRetirement: retirements.length
+                ? "awaiting-recovery"
+                : "not-required",
+              nativeRetirementIds: retirementIds(retirements),
+              error: recovery.blocker
+            };
+          }
+          if (recovery.journal.record.state === "aborted") {
+            await harnessService.abortNativeExecutionRetirements(
+              retirements,
+              targetCommitError?.message
+                ?? "Conversation RecordMutation was compensated"
+            );
+            return {
+              operation,
+              conversationId: session.id,
+              mutationId,
+              localState: "aborted",
+              projection: "updated",
+              nativeRetirement: retirements.length ? "aborted" : "not-required",
+              nativeRetirementIds: retirementIds(retirements),
+              error: targetCommitError?.message
+                ?? "Conversation RecordMutation was compensated"
+            };
+          }
+          if (recovery.journal.record.state !== "committed") {
+            return {
+              operation,
+              conversationId: session.id,
+              mutationId,
+              localState: "awaiting-recovery",
+              projection: "awaiting-recovery",
+              nativeRetirement: retirements.length
+                ? "awaiting-recovery"
+                : "not-required",
+              nativeRetirementIds: retirementIds(retirements),
+              error: targetCommitError?.message
+            };
+          }
+
+          let nativeRetirement: ConversationRecordMutationReceipt[
+            "nativeRetirement"
+          ] = retirements.length ? "promoted" : "not-required";
+          try {
+            await harnessService.promoteNativeExecutionRetirements(
+              retirements,
+              async (recordMutationId) =>
+                await settingsStore.readRecordMutationAuthority(
+                  recordMutationId
+                )
+            );
+          } catch {
+            if (retirements.length) nativeRetirement = "awaiting-recovery";
+          }
+          const projection =
+            await settingsStore.projectCommittedConversationRecordMutation({
+              operation,
+              sourceContentRevision: expectedContentRevision,
+              sourceSession: session,
+              ...(target.session ? { targetSession: target.session } : {})
+            }, authority);
+          if (nativeRetirement === "promoted") {
+            for (const retirement of retirements) {
+              void harnessService.cleanupNativeExecutionRecord(
+                retirement.retirementId
+              ).catch((error) => {
+                console.error(
+                  `EchoInk native retirement cleanup failed: ${retirement.retirementId}`,
+                  error
+                );
+              });
+            }
+          }
+          return {
+            operation,
+            conversationId: session.id,
+            mutationId,
+            localState: "committed",
+            projection,
+            nativeRetirement,
+            nativeRetirementIds: retirementIds(retirements)
+          };
         }
-      }
-      return {
-        operation,
-        conversationId: session.id,
-        mutationId,
-        localState: "committed",
-        projection,
-        nativeRetirement,
-        nativeRetirementIds: retirementIds(retirements)
-      };
+      );
     }
   );
 }

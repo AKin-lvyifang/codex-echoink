@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants as fsConstants } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -58,6 +59,10 @@ const SAFE_BUNDLE_ID_PATTERN =
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const MAX_BUNDLE_RECEIPT_BYTES = 8 * 1024 * 1024;
 const coordinatorLaneTails = new Map<string, Promise<void>>();
+const coordinatorAuthorityContext = new AsyncLocalStorage<{
+  storageRootPath: string;
+  mutationId: string;
+}>();
 
 class CoordinatorLockPublicationPending extends Error {
   constructor() {
@@ -101,6 +106,25 @@ export interface RecordMutationCoordinatorRoots {
   trashRootPath: string;
   trashBoundaryRootPath: string;
   trashRootBinding: RecordRootBindingRef;
+}
+
+export interface RecordMutationTrashAuthorityBaseInput
+extends RecordMutationCoordinatorRoots {
+  mutationId: string;
+  now?: () => number;
+  faultInjector?: (
+    point: RecordMutationCoordinatorFaultPoint
+  ) => void | Promise<void>;
+}
+
+export interface RecordMutationTrashAuthorityPrepareInput
+extends RecordMutationTrashAuthorityBaseInput {
+  sourceRelativePath: string;
+}
+
+export interface RecordMutationTrashAuthorityFinalizeInput
+extends RecordMutationTrashAuthorityBaseInput {
+  receipt: RecordMutationTrashReceipt;
 }
 
 export interface RecordMutationCoordinatorBaseInput
@@ -228,6 +252,119 @@ extends RecordMutationCoordinatorBaseInput {
 export interface InspectedRecordMutationTrashRecovery {
   journal: LoadedRecordMutationJournal;
   judgment: RecordMutationTrashRestoreJudgment;
+}
+
+/**
+ * Acquires the one global record-mutation authority without imposing a
+ * Conversation RecordMutation Journal. Retention keeps its own immutable plan
+ * and progress Journal, then calls the journal-neutral Trash operations below
+ * while this authority and the Run Store mutation lane are both held.
+ */
+export async function withRecordMutationGlobalAuthority<T>(
+  storageRootPath: string,
+  mutationId: string,
+  action: () => Promise<T>
+): Promise<T> {
+  return await withGlobalMutationAuthority(
+    storageRootPath,
+    requireBundleId(mutationId, "mutationId"),
+    async () => await action()
+  );
+}
+
+/**
+ * Prepare-only Trash operation for authorities such as Run retention that
+ * already own a separate durable Journal. It verifies frozen Root Registry
+ * bindings before and after the durable copy and never retires the source.
+ */
+export async function coordinateRecordMutationTrashAuthorityPrepare(
+  input: RecordMutationTrashAuthorityPrepareInput
+): Promise<RecordMutationTrashReceipt> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    requireBundleId(input.mutationId, "mutationId"),
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-roots-preflight");
+      const receipt = await stageRecordMutationTrash({
+        mutationId: input.mutationId,
+        sourceRootPath: input.sourceRootPath,
+        sourceRootBinding: input.sourceRootBinding,
+        sourceRelativePath: input.sourceRelativePath,
+        trashRootPath: input.trashRootPath,
+        trashRootBinding: input.trashRootBinding,
+        transfer: "move",
+        stagedAt: clockTimestamp(input.now)
+      });
+      await input.faultInjector?.("after-trash-prepared");
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-trash-authorized");
+      return receipt;
+    }
+  );
+}
+
+/**
+ * Finalizes an already prepared Trash receipt under the same global authority.
+ * The caller's Journal remains the only owner of progress publication.
+ */
+export async function coordinateRecordMutationTrashAuthorityFinalize(
+  input: RecordMutationTrashAuthorityFinalizeInput
+): Promise<RecordMutationTrashFinalizationReceipt> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    requireBundleId(input.mutationId, "mutationId"),
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const receipt = parseRecordMutationTrashReceipt(input.receipt);
+      if (receipt.mutationId !== input.mutationId) {
+        throw new RecordMutationCoordinatorError(
+          "journal_mismatch",
+          "Trash finalization receipt 不属于当前 mutation authority"
+        );
+      }
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-root-bindings-verified");
+      const finalization = await finalizeRecordMutationTrash({
+        receipt,
+        sourceRootPath: input.sourceRootPath,
+        sourceRootBinding: input.sourceRootBinding,
+        trashRootPath: input.trashRootPath,
+        trashRootBinding: input.trashRootBinding,
+        finalizedAt: clockTimestamp(input.now)
+      });
+      await input.faultInjector?.("after-source-retired");
+      return finalization;
+    }
+  );
+}
+
+export async function inspectRecordMutationTrashAuthorityFinalization(
+  input: RecordMutationTrashAuthorityFinalizeInput
+): Promise<RecordMutationTrashFinalizationReceipt | null> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    requireBundleId(input.mutationId, "mutationId"),
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const receipt = parseRecordMutationTrashReceipt(input.receipt);
+      if (receipt.mutationId !== input.mutationId) {
+        throw new RecordMutationCoordinatorError(
+          "journal_mismatch",
+          "Trash inspection receipt 不属于当前 mutation authority"
+        );
+      }
+      await verifyCoordinatorRoots(input, storageRootPath);
+      return await inspectRecordMutationTrashFinalization({
+        receipt,
+        sourceRootPath: input.sourceRootPath,
+        sourceRootBinding: input.sourceRootBinding,
+        trashRootPath: input.trashRootPath,
+        trashRootBinding: input.trashRootBinding
+      });
+    }
+  );
 }
 
 /**
@@ -1771,6 +1908,10 @@ async function withGlobalMutationAuthority<T>(
     storageRootPathInput,
     "RecordMutation coordinator storage root"
   );
+  const active = coordinatorAuthorityContext.getStore();
+  if (active?.storageRootPath === storageRootPath) {
+    return await action(storageRootPath);
+  }
   return await withCoordinatorLane(storageRootPath, async () => {
     const lock = await acquireCoordinatorLock(
       path.join(storageRootPath, RECORD_MUTATION_GLOBAL_LOCK_FILE),
@@ -1783,7 +1924,10 @@ async function withGlobalMutationAuthority<T>(
       }
     );
     try {
-      return await action(storageRootPath);
+      return await coordinatorAuthorityContext.run(
+        { storageRootPath, mutationId },
+        async () => await action(storageRootPath)
+      );
     } finally {
       await releaseCoordinatorLock(lock);
     }

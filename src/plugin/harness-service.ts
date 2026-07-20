@@ -65,6 +65,19 @@ import type {
 } from "../harness/kernel/run-orchestrator";
 import { FileRunLedger } from "../harness/ledger/run-ledger";
 import {
+  recoverStartedRunRecordRetentionSweeps,
+  type RunRecordRetentionRetirementRoots
+} from "../harness/ledger/run-record-retention";
+import {
+  createRunRecordRetentionRecoveryEvidenceAuthority
+} from "../harness/ledger/run-record-retention-recovery-evidence";
+import {
+  ECHOINK_RECORD_MUTATION_ROOT_IDS,
+  echoInkRecordMutationRootPath,
+  prepareEchoInkRecordMutationRuntimeRoots,
+  type EchoInkRecordMutationRootId
+} from "../harness/lifecycle/record-mutation-production";
+import {
   buildCodexMemoryMigrationPreview,
   FileMemoryProvider,
   type CodexMemoryImportResult,
@@ -459,6 +472,30 @@ export class EchoInkHarnessService {
     return await this.getNativeExecutionManager().cleanupById(recordId);
   }
 
+  async recoverStartedRunRecordRetentions(): Promise<number> {
+    const vaultPath = this.plugin.getVaultPath();
+    const pluginDir = this.plugin.getPluginDataDirName();
+    const storageRootPath = pluginDataDir(vaultPath, pluginDir);
+    const recoveryEvidenceAuthority =
+      createRunRecordRetentionRecoveryEvidenceAuthority({
+        storageRootPath,
+        artifactRootPath: echoInkRecordMutationRootPath({
+          vaultPath,
+          pluginDir,
+          rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact
+        })
+      });
+    return await recoverStartedRunRecordRetentionSweeps({
+      storageRootPath,
+      recoveryEvidenceAuthority,
+      resolveRetirementRoots: async () =>
+        await this.prepareRunRecordRetentionRetirementRoots(
+          vaultPath,
+          pluginDir
+        )
+    });
+  }
+
   reconcileNativeExecutionStartup(
     proveConversationAuthority: (
       probe: ConversationAuthorityProbe
@@ -491,6 +528,8 @@ export class EchoInkHarnessService {
         await this.recoverPendingEphemeralUtilityNativeExecutions(),
       recoverPendingHermesProposalLocalCommits: async () =>
         await this.recoverPendingHermesProposalHostNativeExecutions(),
+      recoverStartedRunRecordRetentions: async () =>
+        await this.recoverStartedRunRecordRetentions(),
       listAwaitingRetirements: async () =>
         await manager.listAwaitingLocalCommitRetirements(),
       proveConversationAuthority,
@@ -1191,6 +1230,49 @@ export class EchoInkHarnessService {
     return new FileRunLedger({
       rootPath: path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "harness-runs")
     });
+  }
+
+  private async prepareRunRecordRetentionRetirementRoots(
+    vaultPath: string,
+    pluginDir: string
+  ): Promise<RunRecordRetentionRetirementRoots> {
+    const rootIds: EchoInkRecordMutationRootId[] = [
+      ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
+      ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+    ].sort((left, right) => left.localeCompare(right));
+    const prepared = await prepareEchoInkRecordMutationRuntimeRoots({
+      vaultPath,
+      pluginDir,
+      rootIds,
+      createdAt: Date.now()
+    });
+    const source = prepared.roots.find(
+      (root) => root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.run
+    );
+    const trash = prepared.roots.find(
+      (root) => root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+    );
+    if (!source || !trash) {
+      throw new Error(
+        "Run retention production Root Binding catalog is incomplete"
+      );
+    }
+    return {
+      sourceRootPath: echoInkRecordMutationRootPath({
+        vaultPath,
+        pluginDir,
+        rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.run
+      }),
+      sourceBoundaryRootPath: prepared.storageRootPath,
+      sourceRootBinding: source.rootBinding,
+      trashRootPath: echoInkRecordMutationRootPath({
+        vaultPath,
+        pluginDir,
+        rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+      }),
+      trashBoundaryRootPath: prepared.storageRootPath,
+      trashRootBinding: trash.rootBinding
+    };
   }
 
   private getFileMemoryProvider(): FileMemoryProvider {

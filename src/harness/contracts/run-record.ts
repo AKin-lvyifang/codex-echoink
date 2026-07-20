@@ -301,6 +301,34 @@ export interface RunRetentionTombstoneV1 {
   digest: string;
 }
 
+/**
+ * Durable proof that a policy-expired payload generation was retired through
+ * the recoverable Trash protocol. A tombstone alone is deliberately
+ * insufficient: readers only accept missing payload bytes when this receipt
+ * binds the exact tombstone, prior immutable generation, and both Trash
+ * receipts.
+ */
+export interface AttemptPayloadRetirementReceiptV1 {
+  schemaVersion: typeof RUN_RECORD_SCHEMA_VERSION;
+  recordType: "attempt-payload-retirement-receipt";
+  workflowRunId: string;
+  attemptId: string;
+  harnessRunId: string;
+  subjectDigest: string;
+  tombstoneDigest: string;
+  tombstoneRevision: number;
+  priorGeneration: string;
+  priorGenerationManifestDigest: string;
+  priorPayloadDigest: string;
+  payloadSha256: string;
+  preparedTrashReceiptDigest: string;
+  trashFinalizationDigest: string;
+  retentionTransactionId: string;
+  retiredAt: number;
+  revision: number;
+  digest: string;
+}
+
 export type RunRecordRetentionDecision =
   | "not-terminal"
   | "forever"
@@ -326,6 +354,8 @@ export interface RunRecordRetentionPreviewInput {
 type WorkflowRunSummaryInput = Omit<WorkflowRunSummaryV1, "digest">;
 type AttemptRunSummaryInput = Omit<AttemptRunSummaryV1, "digest">;
 type RetentionTombstoneInput = Omit<RunRetentionTombstoneV1, "digest">;
+type AttemptPayloadRetirementReceiptInput =
+  Omit<AttemptPayloadRetirementReceiptV1, "digest">;
 
 const ERROR_CODES = new Set<string>(RUN_RECORD_ERROR_CODES);
 const REASON_CODES = new Set<string>(RUN_RECORD_REASON_CODES);
@@ -468,6 +498,8 @@ const POST_TERMINAL_EVENT_TYPES = new Set<HarnessEventType>([
   "agent.native_cleanup.quarantined"
 ]);
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const RUN_RECORD_GENERATION_PATTERN =
+  /^\d{12}-[a-f0-9]{16}-[a-f0-9-]{36}$/;
 
 export function finalizeWorkflowRunSummary(
   input: WorkflowRunSummaryInput
@@ -546,6 +578,13 @@ export function finalizeRetentionTombstone(
 ): RunRetentionTombstoneV1 {
   const record = withCanonicalDigest(input);
   return validateRetentionTombstone(record);
+}
+
+export function finalizeAttemptPayloadRetirementReceipt(
+  input: AttemptPayloadRetirementReceiptInput
+): AttemptPayloadRetirementReceiptV1 {
+  const record = withCanonicalDigest(input);
+  return validateAttemptPayloadRetirementReceipt(record);
 }
 
 export function validateWorkflowRunSummary(
@@ -993,6 +1032,94 @@ export function validateRetentionTombstone(
   requireRevision(record.revision);
   validateRecordDigest(record);
   return record as unknown as RunRetentionTombstoneV1;
+}
+
+export function validateAttemptPayloadRetirementReceipt(
+  value: unknown
+): AttemptPayloadRetirementReceiptV1 {
+  const record = requireEnvelope(
+    value,
+    "attempt-payload-retirement-receipt",
+    [
+      "schemaVersion",
+      "recordType",
+      "workflowRunId",
+      "attemptId",
+      "harnessRunId",
+      "subjectDigest",
+      "tombstoneDigest",
+      "tombstoneRevision",
+      "priorGeneration",
+      "priorGenerationManifestDigest",
+      "priorPayloadDigest",
+      "payloadSha256",
+      "preparedTrashReceiptDigest",
+      "trashFinalizationDigest",
+      "retentionTransactionId",
+      "retiredAt",
+      "revision",
+      "digest"
+    ]
+  );
+  const workflowRunId = requireSafeText(
+    record.workflowRunId,
+    "workflowRunId",
+    512
+  );
+  const attemptId = requireSafeText(record.attemptId, "attemptId", 512);
+  const harnessRunId = requireSafeText(
+    record.harnessRunId,
+    "harnessRunId",
+    512
+  );
+  if (
+    record.subjectDigest !== runRecordSubjectDigest(
+      "attempt-payload",
+      workflowRunId,
+      attemptId,
+      harnessRunId
+    )
+  ) {
+    throw invalidValue(
+      "retirement receipt subjectDigest does not match payload identity"
+    );
+  }
+  requireSha256(record.tombstoneDigest, "tombstoneDigest");
+  const tombstoneRevision = requireRevision(record.tombstoneRevision);
+  if (
+    typeof record.priorGeneration !== "string"
+    || !RUN_RECORD_GENERATION_PATTERN.test(record.priorGeneration)
+  ) {
+    throw invalidValue("priorGeneration is invalid");
+  }
+  requireSha256(
+    record.priorGenerationManifestDigest,
+    "priorGenerationManifestDigest"
+  );
+  requireSha256(record.priorPayloadDigest, "priorPayloadDigest");
+  requireSha256(record.payloadSha256, "payloadSha256");
+  requireSha256(
+    record.preparedTrashReceiptDigest,
+    "preparedTrashReceiptDigest"
+  );
+  requireSha256(
+    record.trashFinalizationDigest,
+    "trashFinalizationDigest"
+  );
+  requireSafeText(
+    record.retentionTransactionId,
+    "retentionTransactionId",
+    512
+  );
+  requireTimestamp(record.retiredAt, "retiredAt");
+  const revision = requireRevision(record.revision);
+  if (revision !== tombstoneRevision + 1) {
+    throw invalidValue(
+      "retirement receipt revision must immediately follow its tombstone"
+    );
+  }
+  validateRecordDigest(record);
+  return record as unknown as AttemptPayloadRetirementReceiptV1;
 }
 
 export function previewRunRecordRetention(

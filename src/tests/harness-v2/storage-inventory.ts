@@ -20,6 +20,12 @@ import {
   createConversationPayloadKeyV2
 } from "../../harness/conversation/conversation-store";
 import {
+  canonicalRunRecordDigest
+} from "../../harness/contracts/run-record";
+import {
+  RUN_RECORD_RETENTION_TRANSACTION_DIRECTORY
+} from "../../harness/ledger/run-record-retention";
+import {
   commitRecordMutationJournal,
   createRecordMutationJournal,
   stageRecordMutationJournal
@@ -81,6 +87,7 @@ export async function runHarnessV2StorageInventoryTests(): Promise<void> {
   await assertRawReferenceGraphNeverReadsRawBodies();
   await assertRunLedgerIntegrityFindings();
   await assertRunEventWithoutRunIdBlocksMigration();
+  await assertRunRecordRetentionJournalInventory();
   await assertNativeReplayDriftAndQuarantineCandidate();
   await assertNativeAuditProjectionNeverBecomesAuthority();
   await assertNativeSchemaAndLifecycleCompatibility();
@@ -96,6 +103,79 @@ export async function runHarnessV2StorageInventoryTests(): Promise<void> {
   await assertScannerIsReadOnlyAndBlocksBoundarySymlinks();
   await assertReportOrderingAndFingerprintAreDeterministic();
   await assertStructuralMetadataChangesFingerprintWithStableStats();
+}
+
+async function assertRunRecordRetentionJournalInventory(): Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-run-retention-"
+  );
+  const transactionId = "inventory-retention";
+  const transactionRoot = path.join(
+    fixture.pluginDataPath,
+    RUN_RECORD_RETENTION_TRANSACTION_DIRECTORY
+  );
+  const chainToken = `retention-${createHash("sha256")
+    .update(transactionId, "utf8")
+    .digest("hex")
+    .slice(0, 24)}`;
+  await mkdir(path.join(transactionRoot, ".staging"), {
+    recursive: true
+  });
+  await mkdir(path.join(transactionRoot, chainToken), {
+    recursive: true
+  });
+  const sourceInventoryDigest = canonicalRunRecordDigest({
+    subjects: []
+  });
+  const planDraft = {
+    schemaVersion: 1,
+    recordType: "run-record-retention-plan" as const,
+    transactionId,
+    createdAt: FIXED_NOW - 1_000,
+    sourceSnapshotDigest: `sha256:${"a".repeat(64)}`,
+    sourceInventoryDigest,
+    subjects: [],
+    actions: [],
+    blockers: [],
+    automaticActionAllowed: false
+  };
+  const plan = {
+    ...planDraft,
+    digest: canonicalRunRecordDigest(planDraft)
+  };
+  const planPath = path.join(
+    transactionRoot,
+    chainToken,
+    "plan.json"
+  );
+  await writeFile(planPath, `${JSON.stringify(plan)}\n`, "utf8");
+
+  const report = await scanAndBuild(fixture);
+  const source = report.sources.find(
+    (candidate) => candidate.sourceId === "run-record-retention"
+  );
+  assert.equal(source?.status, "scanned");
+  assert.equal(source?.schemaVersion, "1");
+  assert.equal(source?.recordCount, 1);
+  assert.equal(
+    source?.metrics?.find(
+      (metric) => metric.name === "retention-transaction-count"
+    )?.value,
+    1
+  );
+  assert.equal(JSON.stringify(report).includes(transactionId), false);
+  assert.equal(JSON.stringify(report).includes(transactionRoot), false);
+
+  await writeFile(planPath, `${JSON.stringify({
+    ...plan,
+    digest: `sha256:${"b".repeat(64)}`
+  })}\n`, "utf8");
+  const corrupt = await scanAndBuild(fixture);
+  assertFinding(corrupt, "run-retention-chain-corrupt");
+  assert.equal(
+    sourceStatus(corrupt, "run-record-retention"),
+    "partial"
+  );
 }
 
 async function assertVisibleAndStoredConversationDivergence(): Promise<void> {
@@ -2869,6 +2949,7 @@ function readyInventoryInput(fixture: Fixture): StorageInventoryReportInput {
       source("conversations"),
       source("history"),
       source("harness-runs"),
+      source("run-record-retention"),
       source("record-mutations"),
       source("native-store"),
       source("raw")

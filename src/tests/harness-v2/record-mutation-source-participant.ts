@@ -98,6 +98,7 @@ Promise<void> {
     );
 
     const left = await createWorkflowArtifactLifecycleRecord({
+      storageRootPath: rootPath,
       rootPath: storeRootPath,
       artifactId: "artifact-inventory-left",
       artifactKind: "markdown-report",
@@ -105,6 +106,7 @@ Promise<void> {
       createdAt: 10_000
     });
     await createWorkflowArtifactLifecycleRecord({
+      storageRootPath: rootPath,
       rootPath: storeRootPath,
       artifactId: "artifact-inventory-right",
       artifactKind: "ui-card",
@@ -464,6 +466,7 @@ Promise<void> {
     async (fixture) => {
       await assert.rejects(
         createWorkflowArtifactLifecycleRecord({
+          storageRootPath: fixture.storageRootPath,
           rootPath: fixture.artifactRootPath,
           artifactId: fixture.artifactId,
           artifactKind: "ui-card",
@@ -670,6 +673,7 @@ async function withFixture(
     if (includeArtifact) {
       await initializeWorkflowArtifactLifecycleStore(artifactRootPath);
       await createWorkflowArtifactLifecycleRecord({
+        storageRootPath,
         rootPath: artifactRootPath,
         artifactId,
         artifactKind: "markdown-report",

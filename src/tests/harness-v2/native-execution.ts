@@ -2630,6 +2630,7 @@ async function assertHarnessServiceExposesTypedNativeLifecycleFacade(): Promise<
       recoveredPendingRecordMutationCount: 0,
       recoveredPendingChatCount: 0,
       recoveredPendingHermesProposalCount: 0,
+      recoveredStartedRunRetentionCount: 0,
       awaitingCount: 0,
       promotedCount: 0,
       abortedCount: 0,

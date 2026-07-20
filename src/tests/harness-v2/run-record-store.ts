@@ -15,6 +15,7 @@ import {
   RUN_RECORD_DAY_MS,
   RunRecordContractError,
   buildAttemptPayloadManifest,
+  finalizeAttemptPayloadRetirementReceipt,
   finalizeAttemptRunSummary,
   finalizeRetentionTombstone,
   finalizeWorkflowRunSummary,
@@ -48,6 +49,7 @@ export async function runHarnessV2RunRecordStoreTests(): Promise<void> {
   await assertSummaryTransitionsAreMonotonic();
   await assertAttemptIdsAreScopedToWorkflowRuns();
   await assertAttemptPayloadAvailabilityStates();
+  await assertPolicyExpiredPayloadRequiresRetirementReceipt();
   await assertMissingPayloadCannotBecomeExpired();
   await assertPayloadCorruptionIsDistinctFromMissing();
   await assertPayloadSafeReadRejectsSymlink();
@@ -98,6 +100,8 @@ Promise<void> {
       expectedRevision: null,
       expectedDigest: null
     });
+    const retirementCandidate =
+      await store.inspectAttemptPayloadRetirementCandidate(attempt);
 
     const attemptTombstone = summaryRetentionTombstone(
       "attempt-summary",
@@ -111,7 +115,7 @@ Promise<void> {
           expectedDigest: attempt.digest
         }
       ),
-      /requires its payload to be expired/
+      /requires its payload to be physically retired/
     );
     const workflowTombstone = summaryRetentionTombstone(
       "workflow-summary",
@@ -137,6 +141,49 @@ Promise<void> {
       expectedRevision: payload.revision,
       expectedDigest: payload.digest
     });
+    await assert.rejects(
+      store.publishAttemptRunSummaryTombstone(
+        attemptTombstone,
+        {
+          expectedRevision: attempt.revision,
+          expectedDigest: attempt.digest
+        }
+      ),
+      /requires its payload to be physically retired/
+    );
+    await rm(
+      path.join(store.rootPath, retirementCandidate.sourceRelativePath),
+      { recursive: true, force: true }
+    );
+    const payloadRetirementReceipt =
+      finalizeAttemptPayloadRetirementReceipt({
+        schemaVersion: 1,
+        recordType: "attempt-payload-retirement-receipt",
+        workflowRunId: payload.workflowRunId,
+        attemptId: payload.attemptId,
+        harnessRunId: payload.harnessRunId,
+        subjectDigest: payload.subjectDigest,
+        tombstoneDigest: payloadExpired.digest,
+        tombstoneRevision: payloadExpired.revision,
+        priorGeneration: retirementCandidate.priorGeneration,
+        priorGenerationManifestDigest:
+          retirementCandidate.priorGenerationManifestDigest,
+        priorPayloadDigest: payload.digest,
+        payloadSha256: payload.payloadSha256,
+        preparedTrashReceiptDigest: `sha256:${"a".repeat(64)}`,
+        trashFinalizationDigest: `sha256:${"b".repeat(64)}`,
+        retentionTransactionId:
+          payloadExpired.retentionTransactionId,
+        retiredAt: payloadExpired.committedAt + 1,
+        revision: payloadExpired.revision + 1
+      });
+    await store.publishAttemptPayloadRetirementReceipt(
+      payloadRetirementReceipt,
+      {
+        expectedRevision: payloadExpired.revision,
+        expectedDigest: payloadExpired.digest
+      }
+    );
     await store.publishAttemptRunSummaryTombstone(
       attemptTombstone,
       {
@@ -1451,6 +1498,102 @@ async function assertAttemptPayloadAvailabilityStates(): Promise<void> {
       attemptId: "attempt-present"
     });
     assert.equal(unprovableExpiry.state, "corrupt");
+  });
+}
+
+async function assertPolicyExpiredPayloadRequiresRetirementReceipt():
+Promise<void> {
+  await withFixture("payload-retirement-receipt", async (storageRootPath) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const locator = {
+      workflowRunId: "workflow-retired",
+      attemptId: "attempt-retired"
+    };
+    const events = payloadEvents(
+      locator.workflowRunId,
+      locator.attemptId,
+      "harness-retired"
+    );
+    const manifest = buildAttemptPayloadManifest({
+      ...locator,
+      harnessRunId: "harness-retired",
+      createdAt: BASE_TIME,
+      revision: 0
+    }, events);
+    await store.sealAttemptPayload(manifest, events, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    const candidate = await store.inspectAttemptPayloadRetirementCandidate(
+      locator
+    );
+    assert.equal(candidate.status, "eligible");
+    const tombstone = payloadTombstone(manifest);
+    await store.publishAttemptPayloadTombstone(tombstone, {
+      expectedRevision: manifest.revision,
+      expectedDigest: manifest.digest
+    });
+
+    await rm(
+      path.join(store.rootPath, candidate.sourceRelativePath),
+      { recursive: true, force: true }
+    );
+    const withoutReceipt = await store.readAttemptPayload(locator);
+    assert.equal(
+      withoutReceipt.state,
+      "corrupt",
+      "a tombstone alone must not legitimize a missing prior payload generation"
+    );
+
+    const receipt = finalizeAttemptPayloadRetirementReceipt({
+      schemaVersion: 1,
+      recordType: "attempt-payload-retirement-receipt",
+      workflowRunId: locator.workflowRunId,
+      attemptId: locator.attemptId,
+      harnessRunId: manifest.harnessRunId,
+      subjectDigest: manifest.subjectDigest,
+      tombstoneDigest: tombstone.digest,
+      tombstoneRevision: tombstone.revision,
+      priorGeneration: candidate.priorGeneration,
+      priorGenerationManifestDigest:
+        candidate.priorGenerationManifestDigest,
+      priorPayloadDigest: manifest.digest,
+      payloadSha256: manifest.payloadSha256,
+      preparedTrashReceiptDigest: `sha256:${"a".repeat(64)}`,
+      trashFinalizationDigest: `sha256:${"b".repeat(64)}`,
+      retentionTransactionId: tombstone.retentionTransactionId,
+      retiredAt: tombstone.committedAt + 1,
+      revision: tombstone.revision + 1
+    });
+    await store.publishAttemptPayloadRetirementReceipt(receipt, {
+      expectedRevision: tombstone.revision,
+      expectedDigest: tombstone.digest
+    });
+    assert.deepEqual(await store.readAttemptPayload(locator), {
+      state: "expired",
+      tombstone,
+      retirementReceipt: receipt
+    });
+
+    await store.publishAttemptPayloadRetirementReceipt(receipt, {
+      expectedRevision: tombstone.revision,
+      expectedDigest: tombstone.digest
+    });
+    const { digest: _receiptDigest, ...receiptInput } = receipt;
+    const invalidReceipt = finalizeAttemptPayloadRetirementReceipt({
+      ...receiptInput,
+      priorGenerationManifestDigest: `sha256:${"c".repeat(64)}`,
+    });
+    await assert.rejects(
+      () => store.publishAttemptPayloadRetirementReceipt(
+        invalidReceipt,
+        {
+          expectedRevision: tombstone.revision,
+          expectedDigest: tombstone.digest
+        }
+      ),
+      RunRecordStoreConflictError
+    );
   });
 }
 

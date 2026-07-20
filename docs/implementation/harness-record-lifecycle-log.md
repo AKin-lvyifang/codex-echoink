@@ -708,3 +708,43 @@
 - 代码 checkpoint 已提交为 `48264d6`。本批只完成逻辑 expiration 与 recovery
   Journal：immutable payload 字节尚未通过 Trash 物理退休，Journal root 尚未进入
   Storage Inventory 或生产启动恢复，也未接入自动 retention、部署或真实 Vault。
+
+## 2026-07-20：Run payload 可恢复物理退休与生产启动恢复
+
+- 新增 `AttemptPayloadRetirementReceiptV1`。receipt 精确绑定 policy tombstone、
+  prior payload generation/manifest、payload digest 与 SHA-256、Trash prepare/
+  finalization receipt、retention transaction 和相邻 Store revision。
+- Run Store 新增 `retired` content kind。policy tombstone 只证明逻辑过期；prior
+  generation 缺失但没有匹配 retirement receipt 时仍判 `corrupt`，不能伪装成
+  正常 `expired`。Attempt summary 必须等预期 payload 完成物理退休后才能过期。
+- Retention payload action 改为
+  `trash-prepared → tombstone-published → source-retired`。execution header 在
+  第一次 prepare 前冻结路径、Root Binding、generation 和 digest。prepare、
+  tombstone、source rename、receipt publication 与 progress publication 的崩溃
+  窗口均可幂等重放。
+- prepare 后或 tombstone 后新增 hold 都会阻断后续破坏性阶段。tombstone 后不
+  自动补偿 policy expiration；source 保留，transaction 维持非终态并等待安全
+  roll-forward。
+- 新增生产 recovery-evidence authority。它在全局 RecordMutation authority 与
+  Run Store mutation lane 内读取真实维护 WAL、未收口 RecordMutation、
+  Workflow Artifact lineage 和 Run inventory。WAL writer、Artifact lifecycle
+  writer 与破坏性 Conversation mutation 同样接入这把 authority，避免 snapshot
+  在不可逆 effect 前失效。
+- 新增 `recoverStartedRunRecordRetentionSweeps()` 并接入
+  `EchoInkHarnessService`。启动顺序位于全部 local commit recovery 之后、Native
+  retirement promotion/provider cleanup 之前。它只枚举已有 `plan.json`，不会
+  preview、生成 transactionId 或创建新 sweep；根缺失返回 0，所有 Journal 在第一个
+  retention effect 前完整验证。
+- Run/Trash Root Binding 由 production root catalog 按需重建。Root resolver 只有
+  在存在未完成 payload action 时调用；completed replay 不新增 generation、
+  receipt、Journal phase 或 Root 初始化。
+- Storage Inventory schema 升为 V2，新增 `run-record-retention` source，严格扫描
+  plan、execution header、step、Trash prepare/finalization evidence、phase chain、
+  pending/completed 数量和 staging/unsafe/corrupt finding。输出保持
+  metadata-only，不泄露 transaction ID、subject ID 或路径。
+- focused suites、`npm run test`（`All tests passed`，122.2 秒）、
+  `npm run typecheck`、`npm run build`、`npm run lint`、release/public guard 与
+  `git diff --check` 已通过。lint 保持 942 个 baseline finding，无新增；明确暂存
+  24 个预期文件，public guard 检查 422 个 tracked files。
+- 本批没有自动创建 retention sweep，没有部署或修改真实 Vault，也没有执行 Raw
+  quarantine、migration、历史批量删除或 Native 批量 cleanup。

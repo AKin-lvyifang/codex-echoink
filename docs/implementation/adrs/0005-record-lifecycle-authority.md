@@ -42,6 +42,16 @@ Codex threads, OpenCode sessions, Hermes sessions/runs, and future backend-nativ
 
 Detailed Harness events are diagnostic payload, not conversation history. They have an explicit retention policy and may be pruned while a bounded run summary and artifact lineage remain. Pruning a run payload must also update the Memory archive catalog so the product never claims that deleted detail is still searchable.
 
+A policy-expired tombstone is logical authority only. Missing payload bytes are
+valid only when a separate retirement receipt binds the exact tombstone, prior
+immutable generation and payload digest, frozen Root Bindings, recoverable
+Trash prepare/finalization receipts, and the retention transaction. Retention
+must keep one stable recovery-evidence authority across the entire callback;
+the authority reads real WAL, nonterminal RecordMutation, Artifact lineage, and
+Run Store evidence while freezing their production writers. Startup may resume
+only already-published retention plans and must do so after local-commit
+recovery but before Native retirement promotion or provider cleanup.
+
 Native cleanup starts only after the required EchoInk local commit is durable. Cleanup failure cannot reverse a successful business result. Failed cleanup uses bounded retries, then enters quarantine for manual review instead of retrying forever.
 
 Local record mutation and Native cleanup use orthogonal state machines. A local

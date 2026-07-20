@@ -26,6 +26,9 @@ import {
   type RecordMutationSourceParticipantObservation,
   type RecordMutationSourceParticipantReceipt
 } from "../lifecycle/record-mutation-source-participant";
+import {
+  withRecordMutationGlobalAuthority
+} from "../lifecycle/record-mutation-coordinator";
 import type { WorkflowArtifactKind } from "../contracts/run-record";
 
 const ARTIFACT_LIFECYCLE_SCHEMA_VERSION = 1 as const;
@@ -110,56 +113,75 @@ export async function initializeWorkflowArtifactLifecycleStore(
 }
 
 export async function createWorkflowArtifactLifecycleRecord(input: {
+  storageRootPath: string;
   rootPath: string;
   artifactId: string;
   artifactKind: WorkflowArtifactKind;
   sourceConversationIds: string[];
   createdAt: number;
 }): Promise<LoadedWorkflowArtifactLifecycleRecord> {
-  const rootPath = await initializeWorkflowArtifactLifecycleStore(input.rootPath);
-  return await withArtifactMutation(rootPath, input.artifactId, async () => {
-    const layout = await requireLayout(rootPath, true);
-    if (!layout) {
-      throw new Error("Workflow Artifact Lifecycle layout 创建失败");
-    }
-    const candidate = createInitialRecord(input);
-    const chainToken = artifactChainToken(candidate.artifactId);
-    const existing = await loadFromLayout(layout, candidate.artifactId);
-    if (existing) {
-      if (
-        existing.chain[0].artifactKind !== candidate.artifactKind
-        || stableRecordMutationStringify(
-          existing.chain[0].sourceConversationIds
-        ) !== stableRecordMutationStringify(candidate.sourceConversationIds)
-      ) {
-        throw new Error(
-          `Workflow Artifact ${candidate.artifactId} registration conflicts`
-        );
-      }
-      return existing;
-    }
-    try {
-      await publishDurableAppendOnlyChain(
-        layout,
-        chainToken,
-        entryName(0),
-        recordBytes(candidate),
-        { maxBytes: MAX_RECORD_BYTES }
+  const storageRootPath = path.resolve(input.storageRootPath);
+  await mkdir(storageRootPath, { recursive: true, mode: 0o700 });
+  const canonicalStorageRootPath = await resolveDurablePlainRoot(
+    storageRootPath,
+    "Workflow Artifact authority storage root"
+  );
+  return await withRecordMutationGlobalAuthority(
+    canonicalStorageRootPath,
+    artifactAuthorityId(input.artifactId),
+    async () => {
+      const rootPath = await initializeWorkflowArtifactLifecycleStore(
+        input.rootPath
       );
-    } catch (error) {
-      if (
-        !(error instanceof DurableAppendOnlyCasError)
-        || error.code !== "already_exists"
-      ) {
-        throw error;
-      }
+      return await withArtifactMutation(rootPath, input.artifactId, async () => {
+        const layout = await requireLayout(rootPath, true);
+        if (!layout) {
+          throw new Error("Workflow Artifact Lifecycle layout 创建失败");
+        }
+        const candidate = createInitialRecord(input);
+        const chainToken = artifactChainToken(candidate.artifactId);
+        const existing = await loadFromLayout(layout, candidate.artifactId);
+        if (existing) {
+          if (
+            existing.chain[0].artifactKind !== candidate.artifactKind
+            || stableRecordMutationStringify(
+              existing.chain[0].sourceConversationIds
+            ) !== stableRecordMutationStringify(
+              candidate.sourceConversationIds
+            )
+          ) {
+            throw new Error(
+              `Workflow Artifact ${candidate.artifactId} registration conflicts`
+            );
+          }
+          return existing;
+        }
+        try {
+          await publishDurableAppendOnlyChain(
+            layout,
+            chainToken,
+            entryName(0),
+            recordBytes(candidate),
+            { maxBytes: MAX_RECORD_BYTES }
+          );
+        } catch (error) {
+          if (
+            !(error instanceof DurableAppendOnlyCasError)
+            || error.code !== "already_exists"
+          ) {
+            throw error;
+          }
+        }
+        const readback = await loadFromLayout(layout, candidate.artifactId);
+        if (!readback || readback.chain[0].digest !== candidate.digest) {
+          throw new Error(
+            "Workflow Artifact Lifecycle create readback 不一致"
+          );
+        }
+        return readback;
+      });
     }
-    const readback = await loadFromLayout(layout, candidate.artifactId);
-    if (!readback || readback.chain[0].digest !== candidate.digest) {
-      throw new Error("Workflow Artifact Lifecycle create readback 不一致");
-    }
-    return readback;
-  });
+  );
 }
 
 export async function loadWorkflowArtifactLifecycleRecord(
@@ -236,19 +258,27 @@ export function createArtifactSourceDeletionAdapter(
     boundaryRootPath: input.boundaryRootPath,
     rootBinding,
     withMutation: async <T>(action: () => Promise<T>): Promise<T> => (
-      await withArtifactMutation(rootPath, input.participantId, async () => {
-        if (authorityHeld) {
-          throw new Error(
-            "Workflow Artifact source deletion authority cannot nest"
-          );
-        }
-        authorityHeld = true;
-        try {
-          return await action();
-        } finally {
-          authorityHeld = false;
-        }
-      })
+      await withRecordMutationGlobalAuthority(
+        input.storageRootPath,
+        artifactAuthorityId(input.participantId),
+        async () => await withArtifactMutation(
+          rootPath,
+          input.participantId,
+          async () => {
+            if (authorityHeld) {
+              throw new Error(
+                "Workflow Artifact source deletion authority cannot nest"
+              );
+            }
+            authorityHeld = true;
+            try {
+              return await action();
+            } finally {
+              authorityHeld = false;
+            }
+          }
+        )
+      )
     ),
     recover: async () => {
       requireAuthority();
@@ -1072,6 +1102,13 @@ function assertExactKeys(
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function artifactAuthorityId(artifactId: string): string {
+  return `artifact-lifecycle-${createHash("sha256")
+    .update(String(artifactId), "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 async function withArtifactMutation<T>(

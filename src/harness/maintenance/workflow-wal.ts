@@ -34,6 +34,9 @@ import {
   type MaintenanceShadowChange,
   type MaintenanceShadowHandle
 } from "./shadow-vault";
+import {
+  withRecordMutationGlobalAuthority
+} from "../lifecycle/record-mutation-coordinator";
 
 const WAL_VERSION = 1;
 const STATE_VERSION = 1;
@@ -494,6 +497,23 @@ export function maintenanceWorkflowWalRoot(storageRootPath: string): string {
 }
 
 export async function prepareMaintenanceWorkflowWal(
+  input: PrepareMaintenanceWorkflowWalInput
+): Promise<LoadedMaintenanceWorkflowWal> {
+  const storageRootPath = await ensurePlainDirectory(
+    input.storageRootPath,
+    "maintenance storage root"
+  );
+  return await withRecordMutationGlobalAuthority(
+    storageRootPath,
+    workflowWalAuthorityId(input.draft.workflowRunId),
+    async () => await prepareMaintenanceWorkflowWalUnderAuthority({
+      ...input,
+      storageRootPath
+    })
+  );
+}
+
+async function prepareMaintenanceWorkflowWalUnderAuthority(
   input: PrepareMaintenanceWorkflowWalInput
 ): Promise<LoadedMaintenanceWorkflowWal> {
   const storageRootPath = await ensurePlainDirectory(input.storageRootPath, "maintenance storage root");
@@ -3757,25 +3777,38 @@ async function withWalStateLock<T>(
   action: () => Promise<T>
 ): Promise<T> {
   normalizeWalLocation(handle);
-  const lockRootPath = path.join(handle.walRootPath, LOCK_DIRECTORY);
-  await ensurePlainDirectory(lockRootPath, "workflow WAL lock root", true);
-  await syncDirectory(handle.walRootPath);
-  const lock = await acquireWorkflowFileLock(
-    path.join(lockRootPath, `${handle.runToken}.lock`),
-    {
-      version: 1,
-      pid: process.pid,
-      token: randomUUID(),
-      workflowRunId: handle.workflowRunId,
-      createdAt: new Date().toISOString()
-    },
-    "workflow state lock"
+  return await withRecordMutationGlobalAuthority(
+    handle.storageRootPath,
+    workflowWalAuthorityId(handle.workflowRunId),
+    async () => {
+      const lockRootPath = path.join(handle.walRootPath, LOCK_DIRECTORY);
+      await ensurePlainDirectory(lockRootPath, "workflow WAL lock root", true);
+      await syncDirectory(handle.walRootPath);
+      const lock = await acquireWorkflowFileLock(
+        path.join(lockRootPath, `${handle.runToken}.lock`),
+        {
+          version: 1,
+          pid: process.pid,
+          token: randomUUID(),
+          workflowRunId: handle.workflowRunId,
+          createdAt: new Date().toISOString()
+        },
+        "workflow state lock"
+      );
+      try {
+        return await action();
+      } finally {
+        await releaseWorkflowFileLock(lock);
+      }
+    }
   );
-  try {
-    return await action();
-  } finally {
-    await releaseWorkflowFileLock(lock);
-  }
+}
+
+function workflowWalAuthorityId(workflowRunId: string): string {
+  return `workflow-wal-${createHash("sha256")
+    .update(String(workflowRunId), "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 async function withVaultCommitLock<T>(

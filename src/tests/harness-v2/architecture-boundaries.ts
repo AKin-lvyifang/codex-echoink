@@ -18,6 +18,50 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertProductionRecordMutationRecoveryUsesRunner();
   await assertSourceDeletionParticipantsStayBehindRecoveryRunner();
   await assertLiveContextMutationJournalKeepsAuthorityChain();
+  await assertRunRetentionUsesProductionRecoveryEvidenceAuthority();
+}
+
+async function assertRunRetentionUsesProductionRecoveryEvidenceAuthority():
+Promise<void> {
+  const [
+    evidence,
+    harnessService,
+    nativeStartup,
+    workflowWal,
+    artifactLifecycle,
+    destructiveLifecycle
+  ] = await Promise.all([
+    readSource(
+      "src/harness/ledger/run-record-retention-recovery-evidence.ts"
+    ),
+    readSource("src/plugin/harness-service.ts"),
+    readSource("src/plugin/native-startup-reconciliation.ts"),
+    readSource("src/harness/maintenance/workflow-wal.ts"),
+    readSource("src/harness/artifacts/artifact-lifecycle-store.ts"),
+    readSource("src/plugin/conversation-record-mutation-lifecycle.ts")
+  ]);
+  assert.match(
+    evidence,
+    /listMaintenanceWorkflowWals[\s\S]*listRecordMutationJournals[\s\S]*loadWorkflowArtifactLifecycleRecord/
+  );
+  assert.match(
+    evidence,
+    /withRecordMutationGlobalAuthority[\s\S]*store\.withMutation/
+  );
+  assert.match(
+    harnessService,
+    /recoverStartedRunRecordRetentions[\s\S]*createRunRecordRetentionRecoveryEvidenceAuthority[\s\S]*resolveRetirementRoots/
+  );
+  assert.match(
+    nativeStartup,
+    /recoverPendingHermesProposalLocalCommits[\s\S]*recoverStartedRunRecordRetentions[\s\S]*listAwaitingRetirements/
+  );
+  assert.match(workflowWal, /withRecordMutationGlobalAuthority/);
+  assert.match(artifactLifecycle, /withRecordMutationGlobalAuthority/);
+  assert.match(
+    destructiveLifecycle,
+    /withConversationMutation\([\s\S]*withRecordMutationGlobalAuthority/
+  );
 }
 
 async function assertLiveContextMutationJournalKeepsAuthorityChain():

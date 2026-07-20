@@ -32,6 +32,10 @@ import {
   RECORD_MUTATION_SCHEMA_VERSION,
   type RecordMutationRevision
 } from "../lifecycle/record-mutation-contract";
+import {
+  RUN_RECORD_RETENTION_TRANSACTION_DIRECTORY,
+  inspectRunRecordRetentionJournalSnapshot
+} from "../ledger/run-record-retention";
 import { NATIVE_EXECUTION_STORE_SCHEMA_VERSION } from "../native/native-execution-store";
 import {
   createStorageInventoryOpaqueRef,
@@ -64,6 +68,7 @@ const LOCAL_SOURCE_IDS: readonly StorageInventoryLocalSourceId[] = [
   "conversations",
   "history",
   "harness-runs",
+  "run-record-retention",
   "record-mutations",
   "native-store",
   "raw"
@@ -189,6 +194,10 @@ interface RunFacts {
   locallyCommittedRunIds: Set<string>;
 }
 
+interface RunRecordRetentionFacts {
+  transactionCount: number;
+}
+
 interface NativeFacts {
   records: NativeExecutionRecord[];
 }
@@ -280,12 +289,21 @@ export async function scanStorageInventory(
     );
   }
 
-  const [data, conversations, history, runs, recordMutations, native] =
+  const [
+    data,
+    conversations,
+    history,
+    runs,
+    runRecordRetention,
+    recordMutations,
+    native
+  ] =
     await Promise.all([
     scanDataJson(context),
     scanConversations(context),
     scanHistory(context),
     scanHarnessRuns(context),
+    scanRunRecordRetention(context),
     scanRecordMutations(context),
     scanNativeStore(context)
   ]);
@@ -295,6 +313,7 @@ export async function scanStorageInventory(
     ...conversations.accumulator.findings,
     ...history.accumulator.findings,
     ...runs.accumulator.findings,
+    ...runRecordRetention.accumulator.findings,
     ...recordMutations.accumulator.findings,
     ...native.accumulator.findings
   ];
@@ -337,6 +356,7 @@ export async function scanStorageInventory(
     conversations.accumulator.finalize(),
     history.accumulator.finalize(),
     runs.accumulator.finalize(),
+    runRecordRetention.accumulator.finalize(),
     recordMutations.accumulator.finalize(),
     native.accumulator.finalize(),
     raw.accumulator.finalize()
@@ -2718,6 +2738,163 @@ async function scanHarnessRuns(context: ScanContext): Promise<SourceScan<RunFact
   accumulator.incrementMetric("run-count", facts.runIds.size);
   accumulator.incrementMetric("terminal-run-count", facts.terminalRunIds.size);
   accumulator.incrementMetric("local-commit-run-count", facts.locallyCommittedRunIds.size);
+  return { accumulator, facts };
+}
+
+async function scanRunRecordRetention(
+  context: ScanContext
+): Promise<SourceScan<RunRecordRetentionFacts>> {
+  const accumulator = new SourceAccumulator(
+    "run-record-retention",
+    context.pluginRoot
+  );
+  const facts: RunRecordRetentionFacts = { transactionCount: 0 };
+  const root = path.join(
+    context.pluginRoot,
+    RUN_RECORD_RETENTION_TRANSACTION_DIRECTORY
+  );
+  const entries = await listDirectory(context, accumulator, root, true);
+  if (!entries) return { accumulator, facts };
+  accumulator.schemaVersion = "1";
+
+  if (!entries.includes(".staging")) {
+    accumulator.addCorrupt("run-retention-staging-missing", root);
+  } else {
+    const staged = await listDirectory(
+      context,
+      accumulator,
+      path.join(root, ".staging"),
+      false
+    );
+    if (staged?.length) {
+      accumulator.addFinding({
+        code: "run-retention-staging-present",
+        category: "ambiguous",
+        severity: "blocking",
+        recordRaw: path.join(root, ".staging"),
+        count: staged.length,
+        blocksMigration: true
+      });
+    }
+  }
+
+  for (const chainToken of entries
+    .filter((name) => name !== ".staging")
+    .sort()) {
+    if (!/^retention-[a-f0-9]{24}$/.test(chainToken)) {
+      accumulator.addCorrupt(
+        "run-retention-entry-unsafe",
+        chainToken
+      );
+      continue;
+    }
+    const chainRoot = path.join(root, chainToken);
+    const fileNames = await listDirectory(
+      context,
+      accumulator,
+      chainRoot,
+      false
+    );
+    if (!fileNames?.length) {
+      accumulator.addCorrupt(
+        "run-retention-chain-corrupt",
+        chainToken
+      );
+      continue;
+    }
+    const files: Array<{ name: string; value: unknown }> = [];
+    let readable = true;
+    for (const name of fileNames.sort()) {
+      const read = await readTextFile(
+        context,
+        accumulator,
+        path.join(chainRoot, name),
+        false
+      );
+      if (!read) {
+        readable = false;
+        break;
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(read.text) as unknown;
+      } catch {
+        readable = false;
+        break;
+      }
+      const raw = objectRecord(value);
+      const schemaVersion = finiteInteger(raw?.schemaVersion);
+      if (schemaVersion !== null && schemaVersion > 1) {
+        accumulator.futureSchemaCount += 1;
+        accumulator.markPartial("future-schema");
+        accumulator.addFinding({
+          code: "future-schema",
+          category: "future-schema",
+          severity: "blocking",
+          recordRaw: path.join(chainRoot, name),
+          blocksMigration: true
+        });
+      }
+      files.push({ name, value });
+    }
+    if (!readable) {
+      accumulator.addCorrupt(
+        "run-retention-chain-corrupt",
+        chainToken
+      );
+      continue;
+    }
+    try {
+      const inspection = inspectRunRecordRetentionJournalSnapshot({
+        chainToken,
+        files
+      });
+      facts.transactionCount += 1;
+      accumulator.observeRecordMetadata(
+        "run-record-retention",
+        inspection
+      );
+      accumulator.addTimestamp(inspection.createdAt);
+      accumulator.incrementMetric(
+        "action-count",
+        inspection.actionCount
+      );
+      accumulator.incrementMetric(
+        "retention-step-count",
+        inspection.stepCount
+      );
+      accumulator.incrementMetric(
+        "retention-completed-action-count",
+        inspection.completedActionCount
+      );
+      accumulator.incrementMetric(
+        "retention-pending-action-count",
+        inspection.pendingActionCount
+      );
+      accumulator.incrementMetric(
+        "retention-execution-header-count",
+        inspection.executionHeaderCount
+      );
+      accumulator.incrementMetric(
+        "retention-prepared-receipt-count",
+        inspection.preparedReceiptCount
+      );
+      accumulator.incrementMetric(
+        "retention-finalization-receipt-count",
+        inspection.finalizationReceiptCount
+      );
+    } catch {
+      accumulator.addCorrupt(
+        "run-retention-chain-corrupt",
+        chainToken
+      );
+    }
+  }
+  accumulator.recordCount = facts.transactionCount;
+  accumulator.incrementMetric(
+    "retention-transaction-count",
+    facts.transactionCount
+  );
   return { accumulator, facts };
 }
 

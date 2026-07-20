@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 
-export const STORAGE_INVENTORY_SCHEMA_VERSION = 1 as const;
+export const STORAGE_INVENTORY_SCHEMA_VERSION = 2 as const;
 
 export const STORAGE_INVENTORY_LOCAL_SOURCE_IDS = Object.freeze([
   "data-json",
   "conversations",
   "history",
   "harness-runs",
+  "run-record-retention",
   "record-mutations",
   "native-store",
   "raw"
@@ -412,6 +413,10 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "run-ledger-duplicate-id",
   "run-ledger-jsonl-corrupt",
   "run-ledger-unavailable",
+  "run-retention-chain-corrupt",
+  "run-retention-entry-unsafe",
+  "run-retention-staging-missing",
+  "run-retention-staging-present",
   "run-local-commit-missing",
   "run-sequence-drift",
   "run-terminal-ambiguous",
@@ -445,6 +450,7 @@ export const STORAGE_INVENTORY_ENTITY_TYPES = Object.freeze([
   "tombstone"
 ] as const);
 export const STORAGE_INVENTORY_METRIC_NAMES = Object.freeze([
+  "action-count",
   "backend-binding-count",
   "cleanup-backlog-count",
   "day-count",
@@ -458,6 +464,13 @@ export const STORAGE_INVENTORY_METRIC_NAMES = Object.freeze([
   "native-record-count",
   "raw-bodies-read",
   "raw-reference-count",
+  "retention-completed-action-count",
+  "retention-execution-header-count",
+  "retention-finalization-receipt-count",
+  "retention-pending-action-count",
+  "retention-prepared-receipt-count",
+  "retention-step-count",
+  "retention-transaction-count",
   "run-count",
   "session-count",
   "state-aborted",
