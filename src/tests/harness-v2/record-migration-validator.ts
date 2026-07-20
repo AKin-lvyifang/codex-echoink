@@ -68,6 +68,9 @@ function assertExactConversationProjectionProducesTrustedProof(): void {
   assert.ok(result.proof);
   assertRecordMigrationValidationProof(result.proof, {
     domain: "conversation",
+    projection: "conversation-portable-v1",
+    sourceStoreVersion: "v1",
+    targetStoreVersion: "v2",
     sourceFingerprint: source.fingerprint,
     targetFingerprint: target.fingerprint
   });
@@ -231,6 +234,9 @@ function assertUntrustedProofCannotAuthorizeCutover(): void {
   assert.throws(
     () => assertRecordMigrationValidationProof(forged, {
       domain: "conversation",
+      projection: "conversation-portable-v1",
+      sourceStoreVersion: "v1",
+      targetStoreVersion: "v2",
       sourceFingerprint: source.fingerprint,
       targetFingerprint: target.fingerprint
     }),

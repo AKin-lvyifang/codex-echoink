@@ -145,6 +145,9 @@ export function advanceConversationStoreManifestToValidated(
   }
   assertRecordMigrationValidationProof(input.proof, {
     domain: "conversation",
+    projection: "conversation-portable-v1",
+    sourceStoreVersion: "v1",
+    targetStoreVersion: "v2",
     sourceFingerprint: current.sourceFingerprint,
     targetFingerprint: input.proof.report.targetFingerprint
   });

@@ -21,6 +21,62 @@ import {
   isSafeConversationSessionId
 } from "./storage-contract";
 
+const V1_EXPORT_ROOT_DIRECTORY = "conversation-v1-exports";
+const V1_EXPORT_GENERATION_PATTERN = /^export-[a-f0-9]{64}$/;
+const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const V1_EXPORT_PLAN_FILE = "plan.json";
+const V1_EXPORT_PLAN_MAX_BYTES = 64 * 1024;
+const V1_EXPORT_PLAN_KEYS = new Set([
+  "schemaVersion",
+  "recordType",
+  "projection",
+  "generationId",
+  "sourceStoreVersion",
+  "targetStoreVersion",
+  "sourceManifestDigest",
+  "sourceFingerprint",
+  "digest"
+]);
+const PORTABLE_MIGRATION_SESSION_KEYS = new Set([
+  "id",
+  "title",
+  "kind",
+  "revision",
+  "generation",
+  "contextId",
+  "contextStartsAfterMessageId",
+  "commitId",
+  "workspaceFingerprint",
+  "contextSnapshot",
+  "cwd",
+  "messages",
+  "createdAt",
+  "updatedAt"
+]);
+const PORTABLE_MIGRATION_MESSAGE_KEYS = new Set([
+  "id",
+  "role",
+  "text",
+  "previewText",
+  "rawRef",
+  "rawSize",
+  "rawLines",
+  "rawTruncatedForPreview",
+  "turnId",
+  "itemType",
+  "title",
+  "status",
+  "details",
+  "diffSummary",
+  "citations",
+  "knowledgeBaseUi",
+  "attachments",
+  "files",
+  "images",
+  "createdAt",
+  "completedAt"
+]);
+
 export interface ConversationStoreOptions {
   rootPath: string;
   now?: () => number;
@@ -88,6 +144,16 @@ export interface ConversationStoreMigrationResult {
 export interface ConversationStoreMigrationSnapshot {
   sessions: StoredSession[];
   deletionTombstones: ConversationDeletionTombstoneV1[];
+}
+
+export type ConversationStoreMigrationImportStatus =
+  | "created"
+  | "reused"
+  | "conflict";
+
+export interface ConversationStoreMigrationImportPlanBinding {
+  generationId: string;
+  planDigest: string;
 }
 
 export interface ConversationStoreStartupReconciliationResult {
@@ -193,6 +259,10 @@ export class FileConversationStore {
     this.now = options.now ?? Date.now;
   }
 
+  get rootPath(): string {
+    return path.resolve(this.options.rootPath);
+  }
+
   async persistSettingsSessions(
     settings: { sessions: StoredSession[] },
     options: {
@@ -242,6 +312,128 @@ export class FileConversationStore {
       await this.withIndexCommit(async () =>
         await this.createPristineSessionWithIndexLock(session)
       )
+    );
+  }
+
+  /**
+   * Restore-only V1 compatibility writer. It is deliberately unavailable for
+   * the live legacy root and only accepts an exporter-managed generation.
+   * Missing records are created, exact records are reused, and conflicts are
+   * never overwritten.
+   */
+  async importMigrationSession(
+    sessionInput: StoredSession,
+    planBinding: ConversationStoreMigrationImportPlanBinding
+  ): Promise<ConversationStoreMigrationImportStatus> {
+    await assertConversationV1ExportTargetRoot(
+      this.rootPath,
+      planBinding
+    );
+    const candidate = validateConversationMigrationImportSession(sessionInput);
+    const seed = migrationImportSeed(candidate);
+    return await this.withSessionCommit(candidate.id, async () => {
+      if (await this.readConversationDeletionTombstone(candidate.id)) {
+        return "conflict";
+      }
+      const existing = await this.readMigrationImportSession(candidate.id);
+      const normalizedExisting = existing
+        ? cloneStoredSession(existing)
+        : null;
+      if (normalizedExisting && isDeepStrictEqual(
+        normalizedExisting,
+        candidate
+      )) {
+        await this.withIndexCommit(async () =>
+          await this.ensureMigrationImportIndex(
+            normalizedExisting,
+            candidate
+          ));
+        return "reused";
+      }
+      if (
+        normalizedExisting
+        && !isDeepStrictEqual(normalizedExisting, seed)
+      ) {
+        return "conflict";
+      }
+
+      await this.withIndexCommit(async () => {
+        if (normalizedExisting) {
+          await this.ensureMigrationImportIndex(
+            normalizedExisting,
+            candidate
+          );
+        } else {
+          await this.createPristineSessionWithIndexLock(seed);
+        }
+        if (!isDeepStrictEqual(seed, candidate)) {
+          await this.upsertSessionWithIndexLock(candidate, {
+            strictIndex: true,
+            preserveContextSnapshot: true
+          });
+        }
+      });
+
+      const readback = await this.readSession(candidate.id);
+      if (!readback || !isDeepStrictEqual(readback, candidate)) {
+        throw new ConversationContextConflictError(
+          "Conversation migration import readback does not match its candidate"
+        );
+      }
+      return "created";
+    });
+  }
+
+  /**
+   * Restore-only deletion import. A V2 tombstone is copied as immutable
+   * authority without manufacturing a fake active V1 Conversation first.
+   */
+  async importMigrationDeletionTombstone(
+    tombstoneInput: ConversationDeletionTombstoneV1,
+    planBinding: ConversationStoreMigrationImportPlanBinding
+  ): Promise<ConversationStoreMigrationImportStatus> {
+    await assertConversationV1ExportTargetRoot(
+      this.rootPath,
+      planBinding
+    );
+    const tombstone = parseConversationDeletionTombstone(tombstoneInput);
+    this.sessionDir(tombstone.conversationId);
+    return await this.withSessionCommit(
+      tombstone.conversationId,
+      async () => await this.withIndexCommit(async () => {
+        const existing = await this.readConversationDeletionTombstone(
+          tombstone.conversationId
+        );
+        if (existing) {
+          if (!isDeepStrictEqual(existing, tombstone)) return "conflict";
+          await this.removeConversationFromIndexProjection(
+            tombstone.conversationId
+          );
+          return "reused";
+        }
+        if (await this.readMigrationImportSession(tombstone.conversationId)) {
+          return "conflict";
+        }
+        await this.writeJsonFile(
+          this.deletionTombstonePath(tombstone.conversationId),
+          tombstone
+        );
+        const readback = await this.readConversationDeletionTombstone(
+          tombstone.conversationId
+        );
+        if (!readback || !isDeepStrictEqual(readback, tombstone)) {
+          throw new ConversationContextConflictError(
+            "Conversation migration tombstone readback does not match"
+          );
+        }
+        await this.options.afterDeletionTombstoneBeforeIndex?.(
+          tombstone.conversationId
+        );
+        await this.removeConversationFromIndexProjection(
+          tombstone.conversationId
+        );
+        return "created";
+      })
     );
   }
 
@@ -547,6 +739,7 @@ export class FileConversationStore {
       strictIndex?: boolean;
       createPristine?: boolean;
       recordMutationPayloadReplacement?: boolean;
+      preserveContextSnapshot?: boolean;
     } = {}
   ): Promise<void> {
     await this.withIndexCommit(async () => {
@@ -676,6 +869,7 @@ export class FileConversationStore {
       strictIndex?: boolean;
       createPristine?: boolean;
       recordMutationPayloadReplacement?: boolean;
+      preserveContextSnapshot?: boolean;
     }
   ): Promise<void> {
     if (await this.readConversationDeletionTombstone(session.id)) {
@@ -722,7 +916,9 @@ export class FileConversationStore {
     if (previousMetadata && !options.strictIndex) {
       assertOrdinaryUpsertContextIdentity(session, previousMetadata);
     }
-    refreshSessionContextSnapshot(session, this.now());
+    if (!options.preserveContextSnapshot) {
+      refreshSessionContextSnapshot(session, this.now());
+    }
     const candidateMessages = session.messages.map(validateChatMessage);
     const candidateSnapshots = session.contextSnapshot ? [session.contextSnapshot] : [];
     const validatedSnapshots = candidateSnapshots.map((snapshot) =>
@@ -925,6 +1121,77 @@ export class FileConversationStore {
           left.conversationId.localeCompare(right.conversationId)
       )
     };
+  }
+
+  private async readMigrationImportSession(
+    sessionId: string
+  ): Promise<StoredSession | null> {
+    const metadata = await this.readSessionMetadata(sessionId);
+    const directoryExists = await this.sessionDirectoryExists(sessionId);
+    if (!metadata) {
+      if (directoryExists) {
+        throw new ConversationContextConflictError(
+          `Conversation migration target has an uncommitted session directory: ${sessionId}`
+        );
+      }
+      return null;
+    }
+    const payload = await this.readCommittedPayload(sessionId, metadata);
+    return storedSessionFromCommittedPayload(metadata, payload);
+  }
+
+  private async ensureMigrationImportIndex(
+    existing: StoredSession,
+    pendingCandidate: StoredSession
+  ): Promise<void> {
+    const index = await this.readIndex();
+    const tombstones = await this.readConversationDeletionTombstones();
+    const committed = await this.readCommittedSessionsFromDirectories(
+      new Set(tombstones.keys())
+    );
+    const expectedById = new Map(
+      committed.map((session) => [
+        session.id,
+        conversationSessionSummary(session)
+      ])
+    );
+    const existingSummary = conversationSessionSummary(existing);
+    const pendingSummary = conversationSessionSummary(pendingCandidate);
+    const currentById = new Map(
+      index.sessions.map((summary) => [summary.sessionId, summary])
+    );
+    for (const summary of index.sessions) {
+      const expected = expectedById.get(summary.sessionId);
+      const currentImportMayBeAhead = (
+        summary.sessionId === existing.id
+        && isDeepStrictEqual(summary, pendingSummary)
+      );
+      if (
+        !expected
+        || (
+          !isDeepStrictEqual(summary, expected)
+          && !currentImportMayBeAhead
+        )
+      ) {
+        throw new ConversationContextConflictError(
+          "Conversation migration target index contains a conflicting projection"
+        );
+      }
+    }
+    for (const sessionId of expectedById.keys()) {
+      if (currentById.has(sessionId) || sessionId === existing.id) continue;
+      throw new ConversationContextConflictError(
+        "Conversation migration target index is missing an unrelated session"
+      );
+    }
+    if (currentById.has(existing.id)) return;
+    const sessions = [...index.sessions, existingSummary]
+      .sort(compareConversationSessionSummaries);
+    await this.writeJsonFile(this.indexPath(), {
+      version: 1,
+      updatedAt: Math.max(index.updatedAt, this.now()),
+      sessions
+    } satisfies ConversationStoreIndex);
   }
 
   private async readCommittedPayload(
@@ -1652,6 +1919,220 @@ function refreshSessionContextSnapshot(session: StoredSession, now: number): voi
     text: session.contextSnapshot.rollingSummary,
     updatedAt: now
   };
+}
+
+function validateConversationMigrationImportSession(
+  sessionInput: StoredSession
+): StoredSession {
+  const session = cloneStoredSession(sessionInput);
+  assertExactObjectKeys(
+    session,
+    PORTABLE_MIGRATION_SESSION_KEYS,
+    "portable V1 migration Session"
+  );
+  for (const message of session.messages) {
+    assertExactObjectKeys(
+      message,
+      PORTABLE_MIGRATION_MESSAGE_KEYS,
+      "portable V1 migration message"
+    );
+  }
+  if (
+    !isPositiveSafeInteger(session.revision)
+    || session.generation !== session.revision
+    || !hasCompleteConversationContextIdentity(session)
+  ) {
+    throw new ConversationContextConflictError(
+      "Portable V1 migration Session requires one complete positive Context identity"
+    );
+  }
+  const messages = session.messages.map(validateChatMessage);
+  const snapshots = session.contextSnapshot
+    ? [validateSessionContextSnapshot(session.contextSnapshot, session.id)]
+    : [];
+  const payloadKey = createConversationPayloadKeyV2(
+    session.commitId!,
+    messages,
+    snapshots
+  );
+  const metadata = metadataFromSession(session, payloadKey);
+  validateConversationSessionMetadata(metadata, session.id);
+  validateCommittedConversationPayload(metadata, messages, snapshots);
+  return session;
+}
+
+function migrationImportSeed(candidate: StoredSession): StoredSession {
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    ...(candidate.kind ? { kind: candidate.kind } : {}),
+    revision: 1,
+    generation: 1,
+    contextId: candidate.contextId,
+    commitId: candidate.commitId,
+    workspaceFingerprint: candidate.workspaceFingerprint,
+    cwd: candidate.cwd,
+    messages: [],
+    createdAt: candidate.createdAt,
+    updatedAt: candidate.updatedAt
+  };
+}
+
+async function assertConversationV1ExportTargetRoot(
+  rootPath: string,
+  binding: ConversationStoreMigrationImportPlanBinding
+): Promise<void> {
+  const resolved = path.resolve(rootPath);
+  const generationRoot = path.dirname(resolved);
+  const exportsRoot = path.dirname(generationRoot);
+  const generationId = path.basename(generationRoot);
+  if (
+    path.basename(resolved) !== "store"
+    || !V1_EXPORT_GENERATION_PATTERN.test(generationId)
+    || path.basename(exportsRoot) !== V1_EXPORT_ROOT_DIRECTORY
+    || binding.generationId !== generationId
+    || !SHA256_DIGEST_PATTERN.test(binding.planDigest)
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import requires an exporter-managed V1 generation root"
+    );
+  }
+  const [exportsStat, generationStat] = await Promise.all([
+    lstat(exportsRoot),
+    lstat(generationRoot)
+  ]);
+  if (
+    exportsStat.isSymbolicLink()
+    || !exportsStat.isDirectory()
+    || generationStat.isSymbolicLink()
+    || !generationStat.isDirectory()
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import generation ancestry is unsafe"
+    );
+  }
+  const canonicalExportsRoot = await realpath(exportsRoot);
+  const canonicalGenerationRoot = await realpath(generationRoot);
+  if (!isPathWithin(canonicalExportsRoot, canonicalGenerationRoot)) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import generation escapes its export root"
+    );
+  }
+  const planPath = path.join(generationRoot, V1_EXPORT_PLAN_FILE);
+  const before = await lstat(planPath);
+  if (
+    before.isSymbolicLink()
+    || !before.isFile()
+    || Number(before.nlink) !== 1
+    || before.size <= 0
+    || before.size > V1_EXPORT_PLAN_MAX_BYTES
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan is unsafe"
+    );
+  }
+  const canonicalPlanPath = await realpath(planPath);
+  if (!isPathWithin(canonicalGenerationRoot, canonicalPlanPath)) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan escapes its generation"
+    );
+  }
+  const bytes = await readFile(planPath);
+  const after = await lstat(planPath);
+  if (
+    before.dev !== after.dev
+    || before.ino !== after.ino
+    || Number(after.nlink) !== 1
+    || before.size !== after.size
+    || before.mtimeMs !== after.mtimeMs
+    || before.ctimeMs !== after.ctimeMs
+    || bytes.byteLength !== before.size
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan changed during read"
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan is invalid JSON"
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan must be an object"
+    );
+  }
+  assertExactRequiredObjectKeys(
+    parsed,
+    V1_EXPORT_PLAN_KEYS,
+    "Conversation migration import plan"
+  );
+  if (
+    parsed.schemaVersion !== 1
+    || parsed.recordType !== "conversation-store-v1-export-plan"
+    || parsed.projection !== "conversation-portable-v1"
+    || parsed.generationId !== generationId
+    || parsed.sourceStoreVersion !== "v2"
+    || parsed.targetStoreVersion !== "v1"
+    || typeof parsed.sourceManifestDigest !== "string"
+    || !SHA256_DIGEST_PATTERN.test(parsed.sourceManifestDigest)
+    || typeof parsed.sourceFingerprint !== "string"
+    || !SHA256_DIGEST_PATTERN.test(parsed.sourceFingerprint)
+    || typeof parsed.digest !== "string"
+    || !SHA256_DIGEST_PATTERN.test(parsed.digest)
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan schema is invalid"
+    );
+  }
+  const {
+    digest,
+    ...draft
+  } = parsed;
+  const expectedDigest = `sha256:${sha256StableJson(draft)}`;
+  if (
+    digest !== expectedDigest
+    || digest !== binding.planDigest
+  ) {
+    throw new ConversationContextConflictError(
+      "Conversation migration import plan binding is invalid"
+    );
+  }
+}
+
+function assertExactObjectKeys(
+  value: object,
+  allowed: ReadonlySet<string>,
+  label: string
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new ConversationContextConflictError(
+        `${label} contains unsupported field ${key}`
+      );
+    }
+  }
+}
+
+function assertExactRequiredObjectKeys(
+  value: Record<string, unknown>,
+  required: ReadonlySet<string>,
+  label: string
+): void {
+  if (
+    Object.keys(value).length !== required.size
+    || Object.keys(value).some((key) => !required.has(key))
+    || [...required].some(
+      (key) => !Object.prototype.hasOwnProperty.call(value, key)
+    )
+  ) {
+    throw new ConversationContextConflictError(
+      `${label} fields are invalid`
+    );
+  }
 }
 
 function assertPristineConversationCandidate(session: StoredSession): void {
@@ -3276,16 +3757,18 @@ function compareConversationSessionSummaries(
 }
 
 function parseConversationIndexStrict(text: string): ConversationStoreIndex {
-  let parsed: Partial<ConversationStoreIndex>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(text) as Partial<ConversationStoreIndex>;
+    parsed = JSON.parse(text) as unknown;
   } catch (error) {
     throw new ConversationContextConflictError(
       `Conversation index is not valid JSON: ${errorMessage(error)}`
     );
   }
   if (
-    parsed.version !== 1
+    !isRecord(parsed)
+    || !hasExactObjectKeys(parsed, ["version", "updatedAt", "sessions"])
+    || parsed.version !== 1
     || !isNonNegativeInteger(parsed.updatedAt)
     || !Array.isArray(parsed.sessions)
     || !parsed.sessions.every(isConversationSessionSummary)
@@ -3385,6 +3868,14 @@ function assertOptionalEnum(
 }
 
 function isConversationSessionSummary(value: unknown): value is ConversationSessionSummary {
+  if (
+    !isRecord(value)
+    || !hasExactObjectKeys(
+      value,
+      ["sessionId", "title", "messageCount", "updatedAt"],
+      ["kind"]
+    )
+  ) return false;
   const summary = value as Partial<ConversationSessionSummary>;
   return Boolean(
     summary
@@ -3398,4 +3889,15 @@ function isConversationSessionSummary(value: unknown): value is ConversationSess
       && isNonNegativeInteger(summary.messageCount)
       && isNonNegativeInteger(summary.updatedAt)
   );
+}
+
+function hasExactObjectKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = []
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return required.every((key) =>
+    Object.prototype.hasOwnProperty.call(value, key))
+    && Object.keys(value).every((key) => allowed.has(key));
 }

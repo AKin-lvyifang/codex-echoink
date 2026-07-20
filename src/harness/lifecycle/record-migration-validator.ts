@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 
-const MIGRATION_INVENTORY_SCHEMA_VERSION = 1 as const;
+const MIGRATION_INVENTORY_SCHEMA_VERSION = 2 as const;
 const MIGRATION_VALIDATION_SCHEMA_VERSION = 1 as const;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const MAX_SUBJECTS = 200_000;
 const MAX_OWNER_EDGES = 400_000;
 
 export type RecordMigrationDomain = "conversation" | "history";
+export type RecordMigrationProjection =
+  | "conversation-portable-v1"
+  | "history-reference-v2";
 
 export type RecordMigrationSubjectKind =
   | "conversation"
@@ -41,6 +44,7 @@ export interface RecordMigrationInventory {
   schemaVersion: typeof MIGRATION_INVENTORY_SCHEMA_VERSION;
   recordType: "record-migration-inventory";
   domain: RecordMigrationDomain;
+  projection: RecordMigrationProjection;
   storeVersion: "v1" | "v2";
   subjects: RecordMigrationSubject[];
   ownerEdges: RecordMigrationOwnerEdge[];
@@ -49,6 +53,7 @@ export interface RecordMigrationInventory {
 
 export interface RecordMigrationInventoryInput {
   domain: RecordMigrationDomain;
+  projection: RecordMigrationProjection;
   storeVersion: "v1" | "v2";
   subjects: readonly RecordMigrationSubject[];
   ownerEdges?: readonly RecordMigrationOwnerEdge[];
@@ -101,7 +106,11 @@ export interface RecordMigrationValidationReport {
   digest: string;
 }
 
-const trustedProofs = new WeakSet<object>();
+const trustedProofs = new WeakMap<object, {
+  projection: RecordMigrationProjection;
+  sourceStoreVersion: "v1" | "v2";
+  targetStoreVersion: "v1" | "v2";
+}>();
 
 /**
  * Process-local proof returned only after the validator has compared the full
@@ -144,6 +153,20 @@ export function finalizeRecordMigrationInventory(
 ): RecordMigrationInventory {
   if (input.domain !== "conversation" && input.domain !== "history") {
     throw new RecordMigrationValidationError("migration domain is invalid");
+  }
+  if (
+    (
+      input.domain === "conversation"
+      && input.projection !== "conversation-portable-v1"
+    )
+    || (
+      input.domain === "history"
+      && input.projection !== "history-reference-v2"
+    )
+  ) {
+    throw new RecordMigrationValidationError(
+      "migration projection is invalid for its domain"
+    );
   }
   if (input.storeVersion !== "v1" && input.storeVersion !== "v2") {
     throw new RecordMigrationValidationError(
@@ -199,6 +222,7 @@ export function finalizeRecordMigrationInventory(
     schemaVersion: MIGRATION_INVENTORY_SCHEMA_VERSION,
     recordType: "record-migration-inventory" as const,
     domain: input.domain,
+    projection: input.projection,
     storeVersion: input.storeVersion,
     subjects,
     ownerEdges
@@ -223,9 +247,14 @@ export function validateRecordMigration(
       "source and target migration domains do not match"
     );
   }
-  if (source.storeVersion !== "v1" || target.storeVersion !== "v2") {
+  if (source.projection !== target.projection) {
     throw new RecordMigrationValidationError(
-      "migration validation requires a V1 source and V2 target"
+      "source and target migration projections do not match"
+    );
+  }
+  if (source.storeVersion === target.storeVersion) {
+    throw new RecordMigrationValidationError(
+      "migration validation requires different source and target store versions"
     );
   }
 
@@ -305,7 +334,11 @@ export function validateRecordMigration(
     status: "ready";
   };
   const proof = Object.freeze({ report: readyReport });
-  trustedProofs.add(proof);
+  trustedProofs.set(proof, {
+    projection: source.projection,
+    sourceStoreVersion: source.storeVersion,
+    targetStoreVersion: target.storeVersion
+  });
   return { report, proof };
 }
 
@@ -313,11 +346,15 @@ export function assertRecordMigrationValidationProof(
   proof: RecordMigrationValidationProof,
   expectation: {
     domain: RecordMigrationDomain;
+    projection: RecordMigrationProjection;
+    sourceStoreVersion: "v1" | "v2";
+    targetStoreVersion: "v1" | "v2";
     sourceFingerprint: string;
     targetFingerprint: string;
   }
 ): void {
-  if (!trustedProofs.has(proof)) {
+  const direction = trustedProofs.get(proof);
+  if (!direction) {
     throw new RecordMigrationValidationError(
       "migration validation proof is not trusted in this process"
     );
@@ -327,6 +364,9 @@ export function assertRecordMigrationValidationProof(
   if (
     report.status !== "ready"
     || report.domain !== expectation.domain
+    || direction.projection !== expectation.projection
+    || direction.sourceStoreVersion !== expectation.sourceStoreVersion
+    || direction.targetStoreVersion !== expectation.targetStoreVersion
     || report.sourceFingerprint !== expectation.sourceFingerprint
     || report.targetFingerprint !== expectation.targetFingerprint
   ) {

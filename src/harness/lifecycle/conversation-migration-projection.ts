@@ -113,6 +113,24 @@ const LEGACY_MESSAGE_KEYS = new Set([
   "createdAt",
   "completedAt"
 ]);
+const LEGACY_SNAPSHOT_KEYS = new Set([
+  "sessionId",
+  "contextId",
+  "generation",
+  "version",
+  "goal",
+  "currentState",
+  "decisions",
+  "constraints",
+  "openLoops",
+  "keyReferences",
+  "rollingSummary",
+  "summarizedFromMessageId",
+  "summarizedThroughMessageId",
+  "sourceMessageCount",
+  "createdAt",
+  "updatedAt"
+]);
 
 export interface ConversationMigrationProjectionOptions {
   externalOwnerEdges?: readonly RecordMigrationOwnerEdge[];
@@ -130,6 +148,7 @@ export interface HistoryMigrationReferenceInput {
 export interface InspectConversationStoreMigrationInput {
   sourceStore: FileConversationStore;
   targetStore: FileConversationStoreV2;
+  sourceExternalOwnerEdges?: readonly RecordMigrationOwnerEdge[];
   targetExternalOwnerEdges?: readonly RecordMigrationOwnerEdge[];
   conflictQuarantineRootPath?: string;
 }
@@ -244,6 +263,7 @@ export async function inspectAndValidateConversationStoreMigration(
       source: conversationMigrationInventoryFromLegacySessions(
         sourceSnapshot.sessions,
         {
+          externalOwnerEdges: input.sourceExternalOwnerEdges,
           deletionTombstones: sourceSnapshot.deletionTombstones
         }
       ),
@@ -379,6 +399,26 @@ export function createConversationProductMessageRevision(
   );
 }
 
+export function createConversationProductRevision(
+  commitInput: ConversationCommitV2
+): string {
+  const commit = validateConversationCommitV2(commitInput);
+  const { metadata, payload } = commit;
+  return migrationContentDigest({
+    conversationId: metadata.conversationId,
+    title: metadata.title,
+    kind: metadata.kind,
+    currentContext: metadata.currentContext,
+    contextStartsAfterMessageId:
+      currentContextBoundaryMessageId(commit),
+    messages: payload.messages.map((message) =>
+      messageProductRecord(message)),
+    snapshot: payload.snapshot,
+    createdAt: metadata.createdAt,
+    updatedAt: metadata.updatedAt
+  });
+}
+
 export function conversationMigrationInventoryFromLegacySessions(
   sessions: readonly StoredSession[],
   options: ConversationMigrationProjectionOptions = {}
@@ -428,16 +468,15 @@ export function conversationMigrationInventoryFromV2Commits(
       "conversation",
       metadata.conversationId
     );
+    const conversationProductRevision =
+      createConversationProductRevision(commit);
     subjects.push({
       kind: "conversation",
       subjectRef: conversationRef,
       parentRef: null,
       ordinal: 0,
-      revision: metadata.digest,
-      contentDigest: migrationContentDigest({
-        metadata,
-        payloadDigest: metadata.payloadDigest
-      })
+      revision: conversationProductRevision,
+      contentDigest: conversationProductRevision
     });
     payload.messages.forEach((message, ordinal) => {
       const messageRef = opaqueMigrationRef(
@@ -494,6 +533,7 @@ export function conversationMigrationInventoryFromV2Commits(
   }
   return finalizeRecordMigrationInventory({
     domain: "conversation",
+    projection: "conversation-portable-v1",
     storeVersion,
     subjects,
     ownerEdges
@@ -555,6 +595,7 @@ export function historyMigrationInventoryFromReferences(
   }
   return finalizeRecordMigrationInventory({
     domain: "history",
+    projection: "history-reference-v2",
     storeVersion,
     subjects,
     ownerEdges: references.map((reference) => ({
@@ -639,6 +680,11 @@ function projectStoredSessionSnapshot(
 ): SnapshotV2 | null {
   const snapshot = session.contextSnapshot;
   if (!snapshot) return null;
+  assertExactLegacyKeys(
+    snapshot,
+    LEGACY_SNAPSHOT_KEYS,
+    "SessionContextSnapshot"
+  );
   return {
     schemaVersion: CONVERSATION_V2_SCHEMA_VERSION,
     recordType: "conversation-snapshot",
@@ -724,6 +770,17 @@ function messageProductRecord(message: MessageV2): unknown {
     createdAt: message.createdAt,
     completedAt: message.completedAt ?? null
   };
+}
+
+function currentContextBoundaryMessageId(
+  commit: ConversationCommitV2
+): string | null {
+  const firstCurrentIndex = commit.payload.messages.findIndex(
+    (message) => message.contextId === commit.metadata.currentContext.id
+  );
+  return firstCurrentIndex > 0
+    ? commit.payload.messages[firstCurrentIndex - 1].id
+    : null;
 }
 
 function legacyMessagePresentation(

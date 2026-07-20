@@ -318,6 +318,7 @@ import { runHarnessV2RunRecordRetentionTests } from "./harness-v2/run-record-ret
 import { runHarnessV2ConversationRecordInventoryTests } from "./harness-v2/conversation-record-inventory";
 import { runHarnessV2RawGcQuarantineTests } from "./harness-v2/raw-gc-quarantine";
 import { runHarnessV2RecordMigrationValidatorTests } from "./harness-v2/record-migration-validator";
+import { runHarnessV2ConversationV1ExporterTests } from "./harness-v2/conversation-v1-exporter";
 import { runHarnessV2ConversationRecordMutationPlanTests } from "./harness-v2/conversation-record-mutation-plan";
 import { runHarnessV2ConversationRecordMutationLifecycleTests } from "./harness-v2/conversation-record-mutation-lifecycle";
 import { runHarnessV2RunRecordSourceDeletionTests } from "./harness-v2/run-record-source-deletion";
@@ -17445,6 +17446,7 @@ await runHarnessV2RunRecordRetentionTests();
 await runHarnessV2ConversationRecordInventoryTests();
 await runHarnessV2RawGcQuarantineTests();
 await runHarnessV2RecordMigrationValidatorTests();
+await runHarnessV2ConversationV1ExporterTests();
 await runHarnessV2ConversationRecordMutationPlanTests();
 await runHarnessV2ConversationRecordMutationLifecycleTests();
 await runHarnessV2RunRecordSourceDeletionTests();

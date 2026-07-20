@@ -61,11 +61,13 @@ import {
 const BASE_TIME = 1_721_260_800_000;
 const SOURCE_INVENTORY = finalizeRecordMigrationInventory({
   domain: "conversation",
+  projection: "conversation-portable-v1",
   storeVersion: "v1",
   subjects: []
 });
 const TARGET_INVENTORY = finalizeRecordMigrationInventory({
   domain: "conversation",
+  projection: "conversation-portable-v1",
   storeVersion: "v2",
   subjects: []
 });

@@ -808,3 +808,34 @@
 - 本批未部署、未改真实 Vault、未执行真实 migration/retention/Raw GC/History
   删除或 Native cleanup。真实 Native/Run/settings owner proof 与 V2→V1 exporter
   仍是 Phase 2 后续门禁。
+
+## 2026-07-20：V2→V1 compatibility exporter 与 portable 回迁
+
+- 新增 `conversation-v1-exporter.ts`。Exporter 只从 manifest-selected active
+  canonical V2 Store 读取，两次 source scan 必须得到相同 fingerprint；generation
+  ID 同时绑定 active manifest digest、source fingerprint 和
+  `conversation-portable-v1` 投影。
+- 输出固定为
+  `conversation-v1-exports/export-<digest>/{plan.json,store,validation.json}`。
+  Export 与 reader activation 分离；原始 V1、active V2 和现有 reader route 不会
+  因导出成功而变化。
+- V1 restore writer 新增 plan-bound import。每次写入前严格验证同代 plan、普通
+  文件/目录、generation、source identity 与 digest；missing→created、
+  exact→reused、different→conflict。Conversation 与 tombstone 均不覆盖冲突项。
+- portable projection 保留产品 Conversation/Context/message/Snapshot/Raw/
+  Presentation，排除 Native、backend 和 Run diagnostics。V2 execution lineage
+  必须由外部 Run owner edge 证明，不能降级伪装成 V1 `runId`。
+- Migration inventory schema 升为 V2，proof 绑定 projection 与 V1↔V2 方向。
+  Conversation revision 改用跨版本稳定的产品摘要，V2→V1→V2 ledger 因而可直接
+  对账。
+- 测试覆盖完整 round-trip、幂等 replay、source drift、缺 Run owner、非 canonical
+  source、future index、同 ID 冲突与 opaque quarantine，以及 seed rename 和
+  commit marker 崩溃恢复。恢复阶段曾把缺失字段与 `undefined` 误判成冲突，现已在
+  readback 规范化后修复。
+- exporter 与四组相关 focused suites、`npm run test`（`All tests passed`，
+  128 秒）、typecheck、build、baseline lint、release/public guard 和
+  `git diff --check` 均通过。lint 保持 942 个 baseline finding；public guard
+  在明确暂存 12 个预期文件后检查 430 个 tracked files。
+- 本批未实现 reverse activation、精确 namespaced reader route 或真实
+  Native/Run/settings Store proof；未部署、未修改真实 Vault，也未执行 migration、
+  retention、Raw GC、History 删除或 Native cleanup。
