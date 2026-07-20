@@ -673,3 +673,38 @@
 - 代码 checkpoint 已提交为 `f1b4caf`。本批没有移动、隔离或删除任何 Raw，也没有
   修改真实 Vault。后续 destructive checkpoint 必须接入可恢复 Trash/Journal，
   并在至少 7 天后通过第二次完整稳定 owner scan 才能永久删除。
+
+## 2026-07-20：Run Record retention 与可恢复逻辑过期
+
+- 新增全 Store Run Record retention。默认合同为 Attempt payload 30 天、
+  Attempt/Workflow summary 90 天；Conversation、Workflow Artifact 与正式
+  Memory 继续由各自 authority 和保留期治理。
+- preview 在恢复证据 authority 内执行两次稳定的只读 inventory。底层会完整
+  读取、解析并校验 payload events；preview/plan 只输出 record metadata，不返回
+  事件正文。WAL、Artifact lineage、人工恢复等 hold 会从 payload/Attempt 传播
+  到整个 Attempt，再聚合到 Workflow，避免局部 summary 被普通策略过期。
+- executor 固定按 payload → Attempt summary → Workflow summary 发布逻辑
+  tombstone，并使用不可变 plan 与 append-only progress Journal。not-captured 和
+  已 expired 视为 settled；Attempt summary 只有 payload settled 后可过期，
+  Workflow summary 只有全部 Attempt summary settled 后可过期。
+- `FileRunRecordStore` 新增 root-keyed、可重入的 Store mutation lane。普通
+  generation publication 与 retention mutation 共用 authority；计划后新增或减少
+  subject、首个 effect 前 snapshot 改变、执行时 hold/eligibility 改变都会拒绝旧
+  plan。
+- tombstone 已发布但 progress step 尚未落盘时，执行器可从 Store readback 补齐
+  有序 Journal prefix。相同 payload tombstone 重放幂等；不同 tombstone、prior
+  digest 漂移、越序 effect 或 Journal 损坏继续 fail closed。
+- Archive Catalog、README、Memory V2 实现说明和中英文设置文案已同步 30/90 天
+  合同，并明确区分 `expired`、`missing` 与 `corrupt`，不再承诺所有历史明细永久
+  可查。
+- 审查发现并修复两项旧计划穿透：新增 Store subject 现在会阻断执行；preview 后
+  新增恢复 hold 会在第一个 tombstone 前阻断。部分 action 已完成时，剩余 action
+  通过稳定 tombstone digest 复核，不会因重编排 ordinal 误报漂移。
+- Run Record retention 与 Run Record Store focused suites、全量
+  `npm run test`（`All tests passed`，114.3 秒）、typecheck、build、完整
+  baseline lint、release/public guard 与 `git diff --check` 均通过。完整 lint
+  保持 942 条 baseline finding；明确暂存 11 个预期文件，public guard 检查
+  421 个 tracked files，共享软链接未暂存。
+- 代码 checkpoint 已提交为 `48264d6`。本批只完成逻辑 expiration 与 recovery
+  Journal：immutable payload 字节尚未通过 Trash 物理退休，Journal root 尚未进入
+  Storage Inventory 或生产启动恢复，也未接入自动 retention、部署或真实 Vault。
