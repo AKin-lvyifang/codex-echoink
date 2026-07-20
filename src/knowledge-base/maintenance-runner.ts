@@ -28,13 +28,17 @@ import {
   type MaintenanceShadowZeroResultAttestation
 } from "../harness/maintenance/shadow-vault";
 import type {
+  LoadedMaintenanceWorkflowWal,
   MaintenanceWorkflowIndexCommitRecord,
   MaintenanceWorkflowManagedWriteDraft,
   MaintenanceWorkflowScheduledProjection,
   MaintenanceWorkflowSourceRecord,
   MaintenanceWorkflowWalPhase
 } from "../harness/maintenance/workflow-wal";
-import { listMaintenanceWorkflowWals } from "../harness/maintenance/workflow-wal";
+import {
+  listMaintenanceWorkflowWals,
+  loadMaintenanceWorkflowWal
+} from "../harness/maintenance/workflow-wal";
 import {
   createActiveMaintenanceRunJournal,
   listActiveMaintenanceRunJournals,
@@ -1553,6 +1557,9 @@ export class KnowledgeBaseMaintenanceRunner {
     let discovery: KnowledgeBaseDiscovery | null = null;
     let sealedAttempt: MaintenanceRunExecutionResult | null = null;
     let activeRunJournal: LoadedActiveMaintenanceRunJournal | null = null;
+    const preparedWorkflowWalRef: {
+      current: LoadedMaintenanceWorkflowWal | null;
+    } = { current: null };
     let storageRootPath = "";
     const runAttempts: KnowledgeRunAttemptRecord[] = [];
     const externalRawAdditions = new Set<string>();
@@ -2094,7 +2101,10 @@ export class KnowledgeBaseMaintenanceRunner {
             allowPaths: routed.allowPaths
           },
         settingsHost:
-          this.plugin.getKnowledgeBaseWorkflowSettingsHost()
+          this.plugin.getKnowledgeBaseWorkflowSettingsHost(),
+        onWalPrepared: (prepared) => {
+          preparedWorkflowWalRef.current = prepared;
+        }
       });
       await removeTerminalActiveMaintenanceRunJournal(
         activeRunJournal,
@@ -2161,7 +2171,8 @@ export class KnowledgeBaseMaintenanceRunner {
       const walSnapshot = workflowRunId && storageRootPath
         ? await maintenanceWorkflowWalSnapshot(
           storageRootPath,
-          workflowRunId
+          workflowRunId,
+          preparedWorkflowWalRef.current?.handle
         )
         : null;
       const walPersisted = walSnapshot !== null;
@@ -2470,7 +2481,8 @@ function maintenanceWorkflowTextDigest(text: string): string {
 
 async function maintenanceWorkflowWalSnapshot(
   storageRootPath: string,
-  workflowRunId: string
+  workflowRunId: string,
+  preparedHandle?: LoadedMaintenanceWorkflowWal["handle"]
 ): Promise<{
   phase: MaintenanceWorkflowWalPhase;
   intent: Extract<
@@ -2478,6 +2490,20 @@ async function maintenanceWorkflowWalSnapshot(
     { status: "ready" | "blocked" }
   >["wal"]["intent"];
 } | null> {
+  if (preparedHandle) {
+    try {
+      const loaded = await loadMaintenanceWorkflowWal(preparedHandle);
+      if (loaded.intent.workflowRunId === workflowRunId) {
+        return {
+          phase: loaded.state.phase,
+          intent: loaded.intent
+        };
+      }
+    } catch {
+      // Fall through to the complete inventory so an independently recovered
+      // or relocated WAL can still be found without trusting stale memory.
+    }
+  }
   let entries: Awaited<
     ReturnType<typeof listMaintenanceWorkflowWals>
   >;
