@@ -184,7 +184,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `b4dd579`，以及本批 reverse activation；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan、validated migration、portable reverse export 与既有 transaction 启动恢复 | 真实 owner Store proof、真实 dry-run 与自动调度授权 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `3a1dccc`，以及本批真实 Store owner proof；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan、validated migration、portable reverse export、精确 reverse route 与既有 transaction 启动恢复 | 自动调度授权与正式集成门禁 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -316,12 +316,10 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 把 Native、Run 与 settings 外部 owner 对账接到真实 Store proof。
-2. 在真实数据副本上完成 migration validator 与 reverse route dry-run，
-   解释或保留所有 blocker；继续保持真实 Vault migration `blocked`。
-3. 决定自动 retention/Raw GC 调度是否具备独立授权；没有明确授权时继续只恢复
+1. 决定自动 retention/Raw GC 调度是否具备独立授权；没有明确授权时继续只恢复
    已发布 transaction。
-4. Phase 4 与用户单独确认前不执行
+2. 同步最新 `main` 后完成 Phase 2 集成门禁，再进入 Phase 3。
+3. Phase 4 与用户单独确认前不执行
    历史删除、retention、Raw GC 或批量 Native cleanup。
 
 ## 当前验证
@@ -951,4 +949,37 @@ validation 的 exporter coordinator 调用。
 future schema、未知 manifest entry、plan 篡改、active export root 缺失或 symlink、
 forward authority 丢失、同 revision CAS 单 winner 与 active 后禁止追加。本轮未部署、
 未修改真实 Vault，也未执行 migration、retention、Raw GC、History 删除或 Native
-cleanup；Phase 2 下一步进入 Native、Run、settings 真实 Store proof 与副本 dry-run。
+ cleanup；Phase 2 下一步进入 Native、Run、settings 真实 Store proof 与副本 dry-run。
+
+## 真实 Store owner proof 与副本 dry-run（本轮）
+
+迁移校验新增正式 coordinator。目标 owner edge 只能来自 `data.json`、
+Native Execution Store 和 Run Record Store 的严格只读回读；调用方自报的旧声明
+不再构成生产迁移或反向激活入口的证明。Native Store 新增双次稳定 migration
+snapshot，并拒绝缺失 Store、未知 root entry、future schema、损坏或扫描漂移。
+Settings projection 直接读取 `data.json` 原始 shell，不经过补默认值或丢未知字段的
+normalization。Run Store 继续复用既有严格全量 inventory。
+
+V1→V2 migration coordinator 在 Conversation 校验前后重新构建 owner proof；
+V2→V1 export、restore prepare 和 activation 新增 Store-backed 入口，每次从真实
+Store 重新生成 execution lineage owner edge。任一 Store 缺失、损坏或无法证明
+owner 时保持 `blocked`，且不会初始化缺失 Store。
+
+最小行为覆盖为：
+
+- settings、Native、Run 三个真实 Store 全部匹配时 owner proof 为 `ready`。
+- 三个 Store 缺失时为 `blocked`，且缺失路径保持不存在。
+- Store-backed V2→V1 exporter 在 owner Store 缺失时于创建 export 目录前停止。
+- 报告仅包含 opaque ref，不出现 Conversation ID、message ID、正文、native ID、
+  run ID 或物理路径。
+
+真实插件数据只复制到
+`/private/tmp/echoink-owner-proof-dry-run.mFHrih/plugin` 后执行只读 dry-run。
+运行前后目录项、文件类型、size、mtime 和 inode metadata 完全一致。结果保持
+`blocked`：正式 Run Store 缺失，517 条 legacy external owner edge 尚无真实目标
+Store proof；现有 legacy Conversation 另有一处 source/target projection 合同不一致，
+因此没有生成 trusted migration proof。真实 Vault 未被写入、迁移、retention、
+Raw GC、History 删除或 Native cleanup。
+
+本轮 focused migration validator、V1 exporter 和 typecheck 已通过。合并前只需再
+统一运行一次 build/lint 与仓库级门禁，不重复扩张测试矩阵。

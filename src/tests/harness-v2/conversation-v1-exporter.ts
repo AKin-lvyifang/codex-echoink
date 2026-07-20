@@ -44,10 +44,12 @@ import {
   activateConversationStoreV1RestoreRoute,
   conversationStoreV1ExportPlanBinding,
   conversationStoreV1ExportGenerationRoot,
+  conversationStoreV1ExportsRoot,
   createConversationStoreV1ExportPlan,
   createConversationStoreV1ExportGenerationId,
   inspectAndValidateConversationStoreV1Export,
   prepareConversationStoreV1Export,
+  prepareConversationStoreV1ExportWithOwnerStores,
   prepareConversationStoreV1RestoreRoute,
   projectConversationCommitV2ToStoredSessionV1
 } from "../../harness/lifecycle/conversation-v1-exporter";
@@ -61,6 +63,8 @@ import {
   opaqueMigrationRef,
   type RecordMigrationOwnerEdge
 } from "../../harness/lifecycle/record-migration-validator";
+import { FileRunRecordStore } from "../../harness/ledger/run-record-store";
+import { NativeExecutionStore } from "../../harness/native/native-execution-store";
 import type { StoredSession } from "../../settings/settings";
 
 const BASE_TIME = 1_721_260_800_000;
@@ -77,6 +81,28 @@ Promise<void> {
   await assertExporterConflictsNeverOverwriteAndStayOpaque();
   await assertRestoreWriterRecoversSeedAndMarkerCrashWindows();
   await assertExporterRequiresActiveV2AndStrictTargetIndex();
+  await assertStoreBackedExporterBlocksMissingOwnerStores();
+}
+
+async function assertStoreBackedExporterBlocksMissingOwnerStores():
+Promise<void> {
+  const fixture = await activeV2Fixture("store-backed-owner-proof");
+  const missingRoot = path.join(fixture.storageRootPath, "missing-owner-stores");
+  await assert.rejects(
+    () => prepareConversationStoreV1ExportWithOwnerStores({
+      storageRootPath: fixture.storageRootPath,
+      settingsDataPath: path.join(missingRoot, "data.json"),
+      nativeStore: new NativeExecutionStore({
+        rootPath: path.join(missingRoot, "native")
+      }),
+      runStore: new FileRunRecordStore({
+        storageRootPath: path.join(missingRoot, "run")
+      })
+    }),
+    /external owner Stores are not ready/
+  );
+  await assert.rejects(() =>
+    readdir(conversationStoreV1ExportsRoot(fixture.storageRootPath)));
 }
 
 async function assertRestoreActivationRoutesExactExportAndRecoversFence():

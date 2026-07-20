@@ -1,4 +1,14 @@
-import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import * as path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -27,6 +37,13 @@ export interface NativeExecutionStoreOptions {
   rootPath: string;
   now?: () => number;
   onAuditWarning?: (warning: string) => void;
+}
+
+export interface NativeExecutionStoreMigrationSnapshot {
+  present: boolean;
+  schemaVersion: 1 | typeof NATIVE_EXECUTION_STORE_SCHEMA_VERSION;
+  records: NativeExecutionRecord[];
+  fingerprint: string;
 }
 
 const mutationTailsByRoot = new Map<string, Promise<void>>();
@@ -127,6 +144,24 @@ export class NativeExecutionStore {
     await this.currentMutationTail();
     const index = await this.readIndexUnlocked();
     return [...index.records].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  }
+
+  /**
+   * Strict read-only snapshot used by migration validation. Unlike `list()`,
+   * this rejects unknown root entries and proves that two consecutive reads
+   * observed the same authority without creating a missing Store.
+   */
+  async inspectMigrationSnapshot():
+  Promise<NativeExecutionStoreMigrationSnapshot> {
+    await this.currentMutationTail();
+    const first = await this.readMigrationSnapshotOnce();
+    const second = await this.readMigrationSnapshotOnce();
+    if (first.fingerprint !== second.fingerprint) {
+      throw new Error(
+        "Native Execution Store changed during migration inventory"
+      );
+    }
+    return second;
   }
 
   listAuditWarnings(): string[] {
@@ -356,6 +391,41 @@ export class NativeExecutionStore {
       updatedAt: parsed.updatedAt,
       records: parsed.records
     };
+  }
+
+  private async readMigrationSnapshotOnce():
+  Promise<NativeExecutionStoreMigrationSnapshot> {
+    const rootStat = await lstatOrNull(this.options.rootPath);
+    if (!rootStat) {
+      return nativeMigrationSnapshot(
+        false,
+        NATIVE_EXECUTION_STORE_SCHEMA_VERSION,
+        []
+      );
+    }
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      throw new Error(
+        "Native Execution Store migration root is not a plain directory"
+      );
+    }
+    const rootDirectory = await readDirectoryState(this.options.rootPath);
+    const allowedEntries = new Set([
+      "native-executions-index.json",
+      "native-executions.jsonl"
+    ]);
+    const unknownEntry = rootDirectory.entries.find(
+      (entry) => !allowedEntries.has(entry)
+    );
+    if (unknownEntry) {
+      throw new NativeExecutionStoreRecoveryRequiredError(
+        "unknown entry exists in the migration authority root"
+      );
+    }
+    const index = await this.readIndexUnlocked();
+    const present = rootDirectory.entries.includes(
+      "native-executions-index.json"
+    );
+    return nativeMigrationSnapshot(present, index.version, index.records);
   }
 
   private async writeIndex(index: NativeExecutionIndex): Promise<void> {
@@ -697,4 +767,52 @@ async function readDirectoryState(
     }
     throw error;
   }
+}
+
+async function lstatOrNull(target: string) {
+  try {
+    return await lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function nativeMigrationSnapshot(
+  present: boolean,
+  schemaVersion: 1 | typeof NATIVE_EXECUTION_STORE_SCHEMA_VERSION,
+  recordsInput: readonly NativeExecutionRecord[]
+): NativeExecutionStoreMigrationSnapshot {
+  const records = recordsInput
+    .map((record) => structuredClone(record))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const stable = JSON.stringify({
+    present,
+    schemaVersion,
+    records: canonicalize(records)
+  });
+  return {
+    present,
+    schemaVersion,
+    records,
+    fingerprint: `sha256:${createHash("sha256")
+      .update(stable, "utf8")
+      .digest("hex")}`
+  };
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => canonicalize(entry));
+  if (
+    value
+    && typeof value === "object"
+    && Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalize(entry)])
+    );
+  }
+  return value;
 }

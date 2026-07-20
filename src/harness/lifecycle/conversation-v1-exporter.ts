@@ -31,6 +31,8 @@ import {
   conversationStoreV2Root,
   FileConversationStoreV2
 } from "../conversation/conversation-store-v2";
+import { FileRunRecordStore } from "../ledger/run-record-store";
+import { NativeExecutionStore } from "../native/native-execution-store";
 import {
   resolveConversationStoreSelection
 } from "../conversation/store-selection";
@@ -45,6 +47,9 @@ import {
   conversationMigrationInventoryFromLegacySessions,
   conversationMigrationInventoryFromV2Commits
 } from "./conversation-migration-projection";
+import {
+  inspectConversationV2MigrationOwnerProof
+} from "./conversation-migration-owner-proof";
 import {
   publishRecordMigrationConflictQuarantine,
   type RecordMigrationConflictQuarantineReceipt
@@ -135,6 +140,24 @@ export interface ActivateConversationStoreV1RestoreRouteInput {
   activatedAt: number;
   restoreManifestStore?: FileConversationStoreRestoreManifest;
 }
+
+interface ConversationMigrationOwnerStoresInput {
+  settingsDataPath: string;
+  nativeStore: NativeExecutionStore;
+  runStore: FileRunRecordStore;
+}
+
+export type PrepareConversationStoreV1ExportWithOwnerStoresInput =
+  Omit<PrepareConversationStoreV1ExportInput, "externalOwnerEdges">
+  & ConversationMigrationOwnerStoresInput;
+
+export type PrepareConversationStoreV1RestoreRouteWithOwnerStoresInput =
+  Omit<PrepareConversationStoreV1RestoreRouteInput, "externalOwnerEdges">
+  & ConversationMigrationOwnerStoresInput;
+
+export type ActivateConversationStoreV1RestoreRouteWithOwnerStoresInput =
+  Omit<ActivateConversationStoreV1RestoreRouteInput, "externalOwnerEdges">
+  & ConversationMigrationOwnerStoresInput;
 
 export {
   conversationStoreV1ExportGenerationRoot,
@@ -282,6 +305,23 @@ export async function prepareConversationStoreV1Export(
     conflictingDeletionTombstoneCount,
     conflictQuarantineReceipt
   };
+}
+
+export async function prepareConversationStoreV1ExportWithOwnerStores(
+  input: PrepareConversationStoreV1ExportWithOwnerStoresInput
+): Promise<PrepareConversationStoreV1ExportResult> {
+  const sourceStore = input.sourceStore ?? new FileConversationStoreV2({
+    storageRootPath: input.storageRootPath
+  });
+  const externalOwnerEdges = await v2OwnerEdgesFromStores(
+    sourceStore,
+    input
+  );
+  return await prepareConversationStoreV1Export({
+    storageRootPath: input.storageRootPath,
+    sourceStore,
+    externalOwnerEdges
+  });
 }
 
 export async function inspectAndValidateConversationStoreV1Export(
@@ -448,6 +488,28 @@ export async function prepareConversationStoreV1RestoreRoute(
   });
 }
 
+export async function prepareConversationStoreV1RestoreRouteWithOwnerStores(
+  input: PrepareConversationStoreV1RestoreRouteWithOwnerStoresInput
+): Promise<ConversationStoreRestoreManifest> {
+  const externalOwnerEdges = await v2OwnerEdgesFromStores(
+    new FileConversationStoreV2({
+      storageRootPath: input.storageRootPath
+    }),
+    input
+  );
+  return await prepareConversationStoreV1RestoreRoute({
+    storageRootPath: input.storageRootPath,
+    generationId: input.generationId,
+    expectedSourceFingerprint: input.expectedSourceFingerprint,
+    externalOwnerEdges,
+    copyingCommitId: input.copyingCommitId,
+    validatedCommitId: input.validatedCommitId,
+    createdAt: input.createdAt,
+    validatedAt: input.validatedAt,
+    restoreManifestStore: input.restoreManifestStore
+  });
+}
+
 export async function activateConversationStoreV1RestoreRoute(
   input: ActivateConversationStoreV1RestoreRouteInput
 ): Promise<ConversationStoreRestoreManifest> {
@@ -492,6 +554,24 @@ export async function activateConversationStoreV1RestoreRoute(
   return await store.compareAndSwap(active, {
     expectedRevision: current.revision,
     expectedCommitId: current.commitId
+  });
+}
+
+export async function activateConversationStoreV1RestoreRouteWithOwnerStores(
+  input: ActivateConversationStoreV1RestoreRouteWithOwnerStoresInput
+): Promise<ConversationStoreRestoreManifest> {
+  const externalOwnerEdges = await v2OwnerEdgesFromStores(
+    new FileConversationStoreV2({
+      storageRootPath: input.storageRootPath
+    }),
+    input
+  );
+  return await activateConversationStoreV1RestoreRoute({
+    storageRootPath: input.storageRootPath,
+    externalOwnerEdges,
+    activeCommitId: input.activeCommitId,
+    activatedAt: input.activatedAt,
+    restoreManifestStore: input.restoreManifestStore
   });
 }
 
@@ -698,6 +778,25 @@ function assertV2LineageHasExternalOwners(
       }
     }
   }
+}
+
+async function v2OwnerEdgesFromStores(
+  sourceStore: FileConversationStoreV2,
+  input: ConversationMigrationOwnerStoresInput
+): Promise<RecordMigrationOwnerEdge[]> {
+  const source = await sourceStore.inspectMigrationSnapshot();
+  const proof = await inspectConversationV2MigrationOwnerProof({
+    sourceCommits: source.commits,
+    settingsDataPath: input.settingsDataPath,
+    nativeStore: input.nativeStore,
+    runStore: input.runStore
+  });
+  if (proof.status !== "ready") {
+    throw new Error(
+      "Conversation V1 export blocked: external owner Stores are not ready"
+    );
+  }
+  return proof.targetExternalOwnerEdges;
 }
 
 export function createConversationStoreV1ExportGenerationId(

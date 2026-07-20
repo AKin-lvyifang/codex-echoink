@@ -14,9 +14,20 @@ import {
   createConversationDeletionTombstone,
   FileConversationStore
 } from "../../harness/conversation/conversation-store";
+import type { NativeExecutionRecord } from "../../harness/contracts/native-execution";
+import {
+  finalizeAttemptRunSummary,
+  finalizeWorkflowRunSummary
+} from "../../harness/contracts/run-record";
 import {
   FileConversationStoreV2
 } from "../../harness/conversation/conversation-store-v2";
+import {
+  FileRunRecordStore
+} from "../../harness/ledger/run-record-store";
+import {
+  inspectConversationMigrationOwnerProof
+} from "../../harness/lifecycle/conversation-migration-owner-proof";
 import {
   conversationMigrationInventoryFromLegacySessions,
   conversationMigrationInventoryFromV2Commits,
@@ -33,6 +44,9 @@ import {
   validateRecordMigration,
   type RecordMigrationValidationProof
 } from "../../harness/lifecycle/record-migration-validator";
+import {
+  NativeExecutionStore
+} from "../../harness/native/native-execution-store";
 
 const BASE_TIME = 1_721_260_800_000;
 
@@ -45,8 +59,174 @@ Promise<void> {
   assertDeletionAuthorityCannotDisappearDuringCutover();
   assertUntrustedProofCannotAuthorizeCutover();
   assertLegacyUnknownFieldsAndExternalOwnersFailClosed();
+  await assertOwnerProofComesFromRealStoresAndMissingStoresStayBlocked();
   await assertDeletionTombstoneMigrationUsesDurableTargetAuthority();
   await assertLegacyConversationMigrationSnapshotIsReadOnly();
+}
+
+async function assertOwnerProofComesFromRealStoresAndMissingStoresStayBlocked():
+Promise<void> {
+  const parent = await mkdtemp(
+    path.join(tmpdir(), "echoink-owner-proof-")
+  );
+  const session = storedSession();
+  session.threadId = "native-thread";
+  session.rollingSummary = {
+    text: "durable settings summary",
+    updatedAt: BASE_TIME + 2
+  };
+  session.messages[0].runId = "harness-run";
+
+  const settingsSession = structuredClone(session);
+  settingsSession.messages = [];
+  delete settingsSession.threadId;
+  const settingsDataPath = path.join(parent, "data.json");
+  await writeFile(settingsDataPath, `${JSON.stringify({
+    settingsVersion: 39,
+    sessions: [settingsSession]
+  })}\n`, "utf8");
+
+  const nativeStore = new NativeExecutionStore({
+    rootPath: path.join(parent, "native")
+  });
+  const nativeRecord: NativeExecutionRecord = {
+    id: "native-record",
+    runId: "harness-run",
+    sessionId: session.id,
+    surface: "chat",
+    workflow: "chat.generic",
+    native: {
+      backendId: "codex-cli",
+      id: session.threadId,
+      kind: "thread",
+      persistence: "provider-persistent",
+      deviceKey: "device",
+      vaultId: "vault",
+      createdAt: BASE_TIME
+    },
+    policy: {
+      historyAuthority: "echoink",
+      mode: "leased-conversation",
+      preferredDisposition: ["archive", "retain"],
+      retainWhenLocalCommitFails: true,
+      cleanupRequiredForTaskSuccess: false
+    },
+    localCommit: "committed",
+    cleanup: "disposed",
+    attempts: 1,
+    nextAttemptAt: 0,
+    lastError: "",
+    createdAt: BASE_TIME,
+    settledAt: BASE_TIME + 2,
+    committedAt: BASE_TIME + 1,
+    disposedAt: BASE_TIME + 2
+  };
+  await nativeStore.upsert(nativeRecord);
+
+  const runStorageRoot = path.join(parent, "run-storage");
+  await mkdir(runStorageRoot);
+  const runStore = new FileRunRecordStore({
+    storageRootPath: runStorageRoot
+  });
+  const workflowRunId = "workflow-run";
+  const attemptId = "attempt-run";
+  await runStore.writeWorkflowRunSummary(finalizeWorkflowRunSummary({
+    schemaVersion: 1,
+    recordType: "workflow-run-summary",
+    workflowRunId,
+    surface: "chat",
+    workflow: "chat.generic",
+    conversationRef: { conversationId: session.id },
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 2,
+    attemptRefs: [{ attemptId, ordinal: 1 }],
+    artifactRefs: [],
+    localMutation: {
+      state: "committed",
+      committedAt: BASE_TIME + 2
+    },
+    retention: { holdReasons: [] },
+    revision: 0
+  }), {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await runStore.writeAttemptRunSummary(finalizeAttemptRunSummary({
+    schemaVersion: 1,
+    recordType: "attempt-run-summary",
+    workflowRunId,
+    attemptId,
+    ordinal: 1,
+    harnessRunId: session.messages[0].runId,
+    backendId: "codex-cli",
+    nativeExecutionRecordIds: [nativeRecord.id],
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 2,
+    localCommit: {
+      state: "committed",
+      authorityKind: "conversation",
+      committedAt: BASE_TIME + 2
+    },
+    cleanup: {
+      status: "disposed",
+      attempts: 1,
+      settledAt: BASE_TIME + 2,
+      reasonCode: "cleanup-completed"
+    },
+    payload: { expected: false },
+    retention: { holdReasons: [] },
+    revision: 0
+  }), {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await runStore.markAttemptPayloadNotCaptured({
+    workflowRunId,
+    attemptId,
+    harnessRunId: session.messages[0].runId,
+    reasonCode: "capture-disabled",
+    recordedAt: BASE_TIME + 2,
+    revision: 0
+  }, {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+
+  const ready = await inspectConversationMigrationOwnerProof({
+    sourceSessions: [session],
+    settingsDataPath,
+    nativeStore,
+    runStore
+  });
+  assert.equal(ready.status, "ready", JSON.stringify(ready.findings));
+  assert.equal(ready.targetExternalOwnerEdges.length, 3);
+  assert.doesNotMatch(
+    JSON.stringify(ready),
+    /conversation-secret|message-secret|durable settings summary|native-thread|harness-run|echoink-owner-proof/
+  );
+
+  const missingRoot = path.join(parent, "missing");
+  const missingSettings = path.join(missingRoot, "data.json");
+  const missingNativeRoot = path.join(missingRoot, "native");
+  const missingRunStorage = path.join(missingRoot, "run-storage");
+  const blocked = await inspectConversationMigrationOwnerProof({
+    sourceSessions: [session],
+    settingsDataPath: missingSettings,
+    nativeStore: new NativeExecutionStore({ rootPath: missingNativeRoot }),
+    runStore: new FileRunRecordStore({ storageRootPath: missingRunStorage })
+  });
+  assert.equal(blocked.status, "blocked");
+  assert.ok(blocked.findings.some((finding) =>
+    finding.code === "settings-store-missing"));
+  assert.ok(blocked.findings.some((finding) =>
+    finding.code === "native-store-missing"));
+  assert.ok(blocked.findings.some((finding) =>
+    finding.code === "run-store-missing"));
+  await assert.rejects(() => readFile(missingSettings, "utf8"));
+  await assert.rejects(() => readdir(missingNativeRoot));
+  await assert.rejects(() => readdir(missingRunStorage));
 }
 
 function assertExactConversationProjectionProducesTrustedProof(): void {
