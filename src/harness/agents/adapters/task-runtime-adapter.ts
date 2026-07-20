@@ -61,19 +61,35 @@ export class TaskRuntimeAgentAdapter implements AgentAdapter {
       id: options.backendId,
       displayName: options.displayName,
       version: options.version,
-      capabilities: options.capabilities === "legacy" ? legacyTaskRuntimeCapabilities(options.backendId) : options.capabilities,
+      capabilities: options.capabilities === "legacy"
+        ? legacyTaskRuntimeCapabilities(options.backendId, options.runtime)
+        : options.capabilities,
       nativeExecution: nativeExecutionCapabilitiesForRuntime(options.backendId, options.runtime)
     };
+    this.refreshRuntimeCapabilitySnapshot();
   }
 
   async connect(_context: AgentConnectContext): Promise<AgentConnectionStatus> {
     const status = await this.options.runtime.connect();
+    this.refreshRuntimeCapabilitySnapshot();
     return {
       connected: status.connected,
       label: status.label,
       version: status.version,
       errors: status.errors
     };
+  }
+
+  private refreshRuntimeCapabilitySnapshot(): void {
+    const snapshot = this.options.runtime.capabilitySnapshot?.();
+    if (!snapshot) return;
+    this.manifest.capabilities.sessions.resume = snapshot.nativeSession.resume
+      ? "native"
+      : "emulated";
+    this.manifest.nativeExecution = nativeExecutionCapabilitiesForRuntime(
+      this.options.backendId,
+      this.options.runtime
+    );
   }
 
   async dispose(): Promise<void> {
@@ -449,15 +465,24 @@ function mapTaskResult(
 }
 
 function nativeExecutionCapabilitiesForRuntime(backendId: string, runtime: AgentTaskRuntime) {
+  const runtimeSnapshot = runtime.capabilitySnapshot?.()?.nativeSession;
   return {
-    persistence: nativeExecutionPersistenceForRuntime(backendId),
+    persistence:
+      runtimeSnapshot?.persistence
+      ?? nativeExecutionPersistenceForRuntime(backendId),
     dispositions: {
       processExit: false,
       archive: false,
-      delete: backendId === "opencode" && typeof runtime.deleteNativeSession === "function"
+      delete: runtimeSnapshot
+        ? runtimeSnapshot.delete
+          && typeof runtime.deleteNativeSession === "function"
+        : backendId === "opencode"
+          && typeof runtime.deleteNativeSession === "function"
     },
     idempotentDisposition: true,
-    canInspectExistence: typeof runtime.hasNativeSession === "function"
+    canInspectExistence: runtimeSnapshot
+      ? runtimeSnapshot.inspectExistence
+      : typeof runtime.hasNativeSession === "function"
   };
 }
 
@@ -535,7 +560,11 @@ function nativeExecutionPersistenceForRuntime(backendId: string): NativeExecutio
   return "unknown";
 }
 
-function legacyTaskRuntimeCapabilities(backendId: string): AgentCapabilities {
+function legacyTaskRuntimeCapabilities(
+  backendId: string,
+  runtime: AgentTaskRuntime
+): AgentCapabilities {
+  const runtimeResume = runtime.capabilitySnapshot?.()?.nativeSession.resume;
   if (backendId === "opencode") {
     return {
       ...noCapabilities(),
@@ -555,7 +584,10 @@ function legacyTaskRuntimeCapabilities(backendId: string): AgentCapabilities {
   }
   return {
     ...noCapabilities(),
-    sessions: { resume: backendId === "opencode" ? "native" : "emulated", fork: "none" },
+    sessions: {
+      resume: runtimeResume ? "native" : "emulated",
+      fork: "none"
+    },
     output: {
       streaming: backendId === "hermes" ? "native" : "emulated",
       reasoningSummary: "none",

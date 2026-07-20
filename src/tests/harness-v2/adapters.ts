@@ -50,6 +50,7 @@ export async function runHarnessV2AdapterTests(): Promise<void> {
   await assertHermesAvailableTransportsEnforceRegistrationBarrier();
   await assertHermesProductionFactoryFailsClosedBeforeCliFallback();
   await assertHermesAcpAppliesSelectedProfileAndModelBeforePrompt();
+  await assertHermesAcpResumesAdvertisedSessionAndBlocksStaleLoad();
   await assertOpenCodeProductionFactoryMapsRichSseToHarnessEvents();
   await assertOpenCodeShortBudgetSdkPathAwaitsRegistration();
   await assertOpenCodeManagedResumeCannotFallbackBelowHarness();
@@ -1087,6 +1088,166 @@ export async function assertHermesAcpAppliesSelectedProfileAndModelBeforePrompt(
   } finally {
     await rejectedAckRuntime.disconnect();
   }
+}
+
+export async function assertHermesAcpResumesAdvertisedSessionAndBlocksStaleLoad(): Promise<void> {
+  const advertisedCapabilities = {
+    protocolVersion: 1,
+    agentCapabilities: {
+      loadSession: true,
+      sessionCapabilities: { list: {} }
+    }
+  };
+  const harness = createAcpCancellationHarness(advertisedCapabilities);
+  const acpRuntime = new AcpAgentRuntime({
+    backend: "hermes",
+    command: { command: "hermes", args: ["acp"], cwd: "/vault" },
+    processFactory: () => harness.process,
+    requestTimeoutMs: 1_000
+  });
+  const runtime = createAgentEventRuntimeWithFallback(
+    fakeRuntime({
+      kind: "hermes",
+      result: { text: "fallback must not run" }
+    }),
+    acpRuntime,
+    {
+      nativeRegistrationBeforePromptSupport: "rich-only"
+    }
+  );
+  const adapter = new TaskRuntimeAgentAdapter({
+    backendId: "hermes",
+    displayName: "Hermes",
+    version: "test",
+    runtime,
+    nativeRefContext: {
+      deviceKey: "device",
+      vaultId: "/vault",
+      providerEndpoint: "hermes-acp+stdio://local/default"
+    },
+    capabilities: "legacy"
+  });
+  await adapter.connect({
+    runId: "connect-hermes-resume",
+    sessionId: "conversation-hermes-resume",
+    workspace: {
+      vaultPath: "/vault",
+      cwd: "/vault"
+    }
+  });
+  assert.equal(adapter.manifest.capabilities.sessions.resume, "native");
+  assert.equal(
+    adapter.manifest.nativeExecution?.persistence,
+    "provider-persistent"
+  );
+  assert.equal(adapter.manifest.nativeExecution?.canInspectExistence, true);
+  assert.equal(adapter.manifest.nativeExecution?.dispositions.delete, false);
+
+  const preparation = adapter.prepareNativeSession!({
+    runId: "run-hermes-resume",
+    sessionId: "conversation-hermes-resume",
+    binding: {
+      backendId: "hermes",
+      nativeSessionId: "hermes-existing-session",
+      syncedSessionRevision: 1,
+      workspaceFingerprint: "workspace",
+      contextCursor: {
+        syncedSessionRevision: 1,
+        sessionGeneration: 1,
+        workspaceFingerprint: "workspace"
+      },
+      lastUsedAt: 1
+    },
+    action: "resume",
+    reason: "reusable"
+  });
+  const listRequest = await settleWithin(
+    harness.next("session/list"),
+    250
+  );
+  harness.respond(listRequest, {
+    sessions: [{
+      sessionId: "hermes-existing-session",
+      cwd: "/vault",
+      title: "Existing"
+    }]
+  });
+  assert.equal((await preparation).status, "resumed");
+
+  const registered: NativeExecutionRef[] = [];
+  const events: HarnessEvent[] = [];
+  const run = adapter.run({
+    ...agentRunRequest("run-hermes-resume", {
+      inputText: "继续"
+    }),
+    nativeSessionId: "hermes-existing-session",
+    nativeBindingManagedByHarness: true,
+    registerNativeExecution: async (native) => {
+      registered.push(native);
+    }
+  }, (event) => {
+    events.push(event);
+  });
+  const loadRequest = await settleWithin(
+    harness.next("session/load"),
+    250
+  );
+  harness.notify("session/update", {
+    sessionId: "hermes-existing-session",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "旧历史不能冒充本轮回答" }
+    }
+  });
+  harness.respond(loadRequest, {});
+  const promptRequest = await settleWithin(
+    harness.next("session/prompt"),
+    250
+  );
+  harness.notify("session/update", {
+    sessionId: "hermes-existing-session",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "本轮回答" }
+    }
+  });
+  harness.respond(promptRequest, { stopReason: "end_turn" });
+  const result = await run;
+  assert.equal(result.outputText, "本轮回答");
+  assert.equal(harness.count("session/new"), 0);
+  assert.equal(
+    events.some((event) => event.text?.includes("旧历史不能冒充本轮回答")),
+    false
+  );
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].id, "hermes-existing-session");
+  assert.equal(registered[0].kind, "session");
+  assert.equal(registered[0].persistence, "provider-persistent");
+  await adapter.dispose();
+
+  const staleHarness = createAcpCancellationHarness(
+    advertisedCapabilities
+  );
+  const staleRuntime = new AcpAgentRuntime({
+    backend: "hermes",
+    command: { command: "hermes", args: ["acp"], cwd: "/vault" },
+    processFactory: () => staleHarness.process,
+    requestTimeoutMs: 1_000
+  });
+  const staleRun = staleRuntime.runTaskStream({
+    prompt: "must not submit",
+    nativeSessionId: "hermes-stale-session",
+    requireNativeSessionResume: true
+  }, () => undefined);
+  const staleLoad = await settleWithin(
+    staleHarness.next("session/load"),
+    250
+  );
+  staleHarness.respond(staleLoad, null);
+  await assert.rejects(staleRun, /no longer exists/);
+  assert.equal(staleHarness.count("session/new"), 0);
+  assert.equal(staleHarness.count("session/prompt"), 0);
+  await staleRuntime.disconnect();
 }
 
 async function assertTaskRuntimeAdapterPreservesNativeMemoryWhileInjectingEchoInkContext(): Promise<void> {
@@ -5142,10 +5303,16 @@ function createCodexHangingBrokerHarness(prefix: string): {
   };
 }
 
-function createAcpCancellationHarness(): {
+function createAcpCancellationHarness(
+  initializeResult: Record<string, unknown> = {
+    protocolVersion: 1,
+    agentCapabilities: {}
+  }
+): {
   process: AcpSubprocessLike;
   next(method: string): Promise<Record<string, unknown>>;
   respond(request: Record<string, unknown>, result: unknown): void;
+  notify(method: string, params: unknown): void;
   count(method: string): number;
   killed(): boolean;
 } {
@@ -5162,7 +5329,9 @@ function createAcpCancellationHarness(): {
   };
   const record = (message: Record<string, unknown>): void => {
     messages.push(message);
-    if (message.method === "initialize") respond(message, { protocolVersion: 1, agentCapabilities: {} });
+    if (message.method === "initialize") {
+      respond(message, initializeResult);
+    }
     const method = typeof message.method === "string" ? message.method : "";
     const waiter = waiters.get(method)?.shift();
     if (waiter) {
@@ -5208,6 +5377,13 @@ function createAcpCancellationHarness(): {
       });
     },
     respond,
+    notify(method, params) {
+      stdout.write(`${JSON.stringify({
+        jsonrpc: "2.0",
+        method,
+        params
+      })}\n`);
+    },
     count: (method) => messages.filter((message) => message.method === method).length,
     killed: () => processKilled
   };

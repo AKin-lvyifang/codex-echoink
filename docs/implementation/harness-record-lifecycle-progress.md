@@ -4,20 +4,21 @@
 
 ## 当前结论
 
-正式方案、ADR、Phase 0 只读盘点和 Phase 1 自动化实现已经完成。Phase 2 第一批
-基础设施已提交为 `b2db2f5`：Conversation V2、Workflow/Attempt Run Record、
-Conversation mutation lane、RecordMutation Journal/Trash/Recovery，以及终态提交失败
-后的显式 UI 恢复门禁。后续批次已经在这些 side-by-side 合同上接通正式
-Conversation clear/delete 路径，并以 `3b1ca7f` 提交 reference-only Knowledge
-History V2 与对应 Storage Inventory 扫描；`f1b4caf` 又提交 metadata-only Raw
-GC preview。`48264d6` 已提交跨 Store Run Record retention 的逻辑过期、稳定
-恢复证据和可重放 Journal，`03201f0` 又完成 payload generation 的可恢复物理退休
-与生产启动恢复，`b82df37` 完成 Raw quarantine、七天隔离、第二次完整 owner scan
-与可恢复永久 purge，`3c7a10f` 又提交 Migration Validator、Conversation V2
-deletion authority、History 首次迁移完整对账和 active V2 reader。自动创建新
-retention sweep 或 Raw GC transaction 仍未接入维护调度。当前批次继续实现并验证
-side-by-side V2→V1 exporter 和 V2→V1→V2 portable ledger 回迁夹具；reverse
-activation、真实 owner Store proof、真实迁移和全量生产 writer cutover 仍未完成。
+Phase 0–3 的本地实现已经完成。EchoInk Conversation 是跨后端对话真源；
+Run、Native Execution、Artifact 和 Memory 各自独立治理。Conversation
+清空/删除、History V2、Run 保留、Raw 隔离、正反向迁移、真实 Store owner proof
+和恢复链路均已有正式入口。
+
+Phase 2 的最终策略已经确定：自动维护只恢复已经发布的 retention/Raw GC 事务，
+不自动创建新的清理任务。没有用户单独授权时，这不是待补功能，而是安全边界。
+
+Phase 3 已按本机真实能力收口。Codex 保持 archive，OpenCode 1.4.3 支持原生
+session resume/delete；Hermes 0.18.0 的 ACP 公开支持 session list/load，
+因此开发分支现在可以复用已登记的 Hermes session。Hermes ACP 没有公开稳定的
+delete 能力，所以 cleanup 继续如实标记为 unsupported。
+
+Phase 4 没有执行。真实 Vault 当前迁移检查仍为 blocked，且备份、真实迁移、部署、
+清理和三后端 Obsidian 验收都需要单独授权。
 
 第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
 registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
@@ -163,9 +164,9 @@ authority 也按 fail closed 处理。
 - Migration Validator / Deletion authority / History cutover checkpoint：
   `3c7a10f`
 - V2→V1 compatibility exporter checkpoint：`b4dd579`
-- 当前批次：reverse activation manifest/fence、精确 namespaced V1 reader route
-  与 History restored-V1 解析
-- 下一批次：Native、Run、settings 真实 owner Store proof 与副本 dry-run
+- Reverse activation / restored-V1 route checkpoint：`3a1dccc`
+- Native、Run、settings 真实 owner Store proof checkpoint：`e43427d`
+- 当前批次：Hermes ACP runtime capability snapshot 与安全 session load
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -184,9 +185,9 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `3a1dccc`，以及本批真实 Store owner proof；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan、validated migration、portable reverse export、精确 reverse route 与既有 transaction 启动恢复 | 自动调度授权与正式集成门禁 |
-| Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
-| Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
+| Phase 2：数据治理 | 已完成 | `b2db2f5` 至 `e43427d`；live clear/delete、History V2、Run/Raw 治理、validated migration、portable reverse export、精确 reverse route 与真实 Store owner proof 已完成 | 不自动创建新清理；只恢复已发布事务 |
+| Phase 3：Backend capability | 已完成，待提交 | Codex archive、OpenCode resume/delete；Hermes 0.18.0 实机公开 list/load，不公开 delete，运行时按真实 capability 决定是否 resume | 本地提交 |
+| Phase 4：真实迁移与实机验收 | 待单独授权，未执行 | 迁移副本 dry-run 保持 blocked；未部署、未修改真实 Vault、未清理历史 | 备份、真实迁移、部署和三后端 Obsidian 验收均需用户确认 |
 
 ## 已确认决定
 
@@ -231,7 +232,7 @@ authority 也按 fail closed 处理。
   `expired`、`missing` 与 `corrupt`。生产 Run reader 与既有 retention sweep
   启动恢复已经接线；自动创建新 sweep 仍未获得调度授权。
 
-## Phase 2 剩余生产门禁
+## Phase 2 最终策略与安全边界
 
 - Conversation V2、Run Record 与 RecordMutation 仍保留 side-by-side 迁移边界；
   clear/delete 已使用正式 V2 authority，但不能据此声称全量 legacy reader/writer
@@ -264,9 +265,9 @@ authority 也按 fail closed 处理。
   preview、生成 transactionId 或创建新 GC transaction。Storage Inventory schema
   已升为 V3，并以 metadata-only `raw-gc-quarantine` source 报告 transaction、
   phase 与 evidence 计数。
-- 自动维护调度仍不得创建新的 retention sweep 或 Raw GC transaction。该授权要在
-  migration validator 与真实 Vault dry-run 完成后单独决定，不能把“可恢复启动”
-  误写成“自动清理已经上线”。
+- 自动维护调度不创建新的 retention sweep 或 Raw GC transaction。当前正式策略
+  只恢复已经发布的事务；若以后要开启自动清理，必须作为独立产品决定重新授权，
+  不能把“可恢复启动”写成“自动清理已经上线”。
 - destructive intent、prepared/finalization Trash receipt 与 recovery evidence
   已冻结完整 Root Binding Ref；全局 lock/coordinator 与 production recovery
   runner 已建立安全执行入口；`start-new-context`、`agent-cache-reset`、
@@ -316,11 +317,9 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 决定自动 retention/Raw GC 调度是否具备独立授权；没有明确授权时继续只恢复
-   已发布 transaction。
-2. 同步最新 `main` 后完成 Phase 2 集成门禁，再进入 Phase 3。
-3. Phase 4 与用户单独确认前不执行
-   历史删除、retention、Raw GC 或批量 Native cleanup。
+1. 对 Phase 3 改动执行一次最终必要门禁并提交。
+2. Phase 4 与用户单独确认前，不执行备份恢复、真实迁移、部署、历史删除、
+   retention、Raw GC 或批量 Native cleanup。
 
 ## 当前验证
 
@@ -983,3 +982,24 @@ Raw GC、History 删除或 Native cleanup。
 
 本轮 focused migration validator、V1 exporter 和 typecheck 已通过。合并前只需再
 统一运行一次 build/lint 与仓库级门禁，不重复扩张测试矩阵。
+
+## Hermes ACP 原生 session 能力（Phase 3）
+
+本机 Hermes 版本为 `0.18.0`，ACP 协议版本为 1。只读实机握手确认它公开返回
+`loadSession=true`、`sessionCapabilities.list` 和 `sessionCapabilities.resume`，
+但没有 delete capability。OpenCode 1.4.3 的 CLI 仍公开提供 session list/delete。
+
+EchoInk 不再按 backend 名称猜 Hermes 能力。Adapter 连接后读取 runtime capability
+snapshot；只有同时公开 list 和稳定 load 时，才把 resume 标成 native。复用前先
+按 cwd 列出 session，再用 `session/load` 加载精确 ID。加载期间 Hermes 回放的旧
+历史不会被当成本轮回答；session 在检查后消失时，会在发送 Prompt 前停止，也不会
+静默新建替代 session。
+
+Hermes cleanup 仍为 unsupported。没有公开稳定 delete 协议时，EchoInk 不调用
+Hermes 内部数据库方法，也不把关闭进程写成删除 session。
+
+本轮最小专项验证只覆盖一条成功路径和一条关键阻断路径：已公开能力时复用同一
+session，旧历史不污染本轮输出；加载返回不存在时零 Prompt、零新 session。最终门禁
+只统一跑一次：`npm run test` 输出 `All tests passed`，typecheck、build、
+release/public guard 与 `git diff --check` 通过；lint 保持 942 个 baseline finding，
+无新增。实机只读 capability probe 通过。没有部署或修改真实 Vault。

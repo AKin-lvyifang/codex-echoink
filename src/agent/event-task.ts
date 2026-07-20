@@ -91,19 +91,62 @@ export function createAgentEventRuntimeWithFallback(
   const nativeRegistrationSupport = options.nativeRegistrationBeforePromptSupport ?? "all-runtimes";
   const nativeRegistrationUnavailableReason = options.nativeRegistrationBeforePromptUnavailableReason
     ?? "fallback transport 无法在 Prompt 前提供 backend-owned Native execution ID。";
+  const capabilitySnapshot = () => (
+    richRuntime?.capabilitySnapshot?.()
+    ?? fallbackRuntime.capabilitySnapshot?.()
+  );
+  const hasNativeSession = richRuntime?.hasNativeSession || fallbackRuntime.hasNativeSession
+    ? async (sessionId: string): Promise<boolean> => {
+      const snapshot = richRuntime?.capabilitySnapshot?.();
+      if (
+        snapshot?.nativeSession.inspectExistence
+        && richRuntime?.hasNativeSession
+      ) {
+        return await richRuntime.hasNativeSession(sessionId);
+      }
+      if (fallbackRuntime.hasNativeSession) {
+        return await fallbackRuntime.hasNativeSession(sessionId);
+      }
+      throw new Error("Native session existence inspection is unavailable.");
+    }
+    : undefined;
+  const deleteNativeSession = richRuntime?.deleteNativeSession || fallbackRuntime.deleteNativeSession
+    ? async (sessionId: string): Promise<boolean> => {
+      const snapshot = richRuntime?.capabilitySnapshot?.();
+      if (
+        snapshot?.nativeSession.delete
+        && richRuntime?.deleteNativeSession
+      ) {
+        return await richRuntime.deleteNativeSession(sessionId);
+      }
+      if (fallbackRuntime.deleteNativeSession) {
+        return await fallbackRuntime.deleteNativeSession(sessionId);
+      }
+      return false;
+    }
+    : undefined;
   return {
     kind: fallbackRuntime.kind,
-    connect: () => fallbackRuntime.connect(),
+    connect: async () => {
+      const status = await fallbackRuntime.connect();
+      if (richRuntime?.capabilitySnapshot) {
+        await richRuntime.connect().catch(
+          swallowError(`${fallbackRuntime.kind} rich capability probe`)
+        );
+      }
+      return status;
+    },
     disconnect: async () => {
       await Promise.all([
         fallbackRuntime.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} fallback disconnect cleanup`)),
         richRuntime?.disconnect?.().catch(swallowError(`${fallbackRuntime.kind} rich disconnect cleanup`))
       ]);
     },
+    capabilitySnapshot,
     listModels: () => fallbackRuntime.listModels(),
     listAgents: fallbackRuntime.listAgents ? () => fallbackRuntime.listAgents?.() ?? Promise.resolve([]) : undefined,
-    hasNativeSession: fallbackRuntime.hasNativeSession ? (sessionId) => fallbackRuntime.hasNativeSession!(sessionId) : undefined,
-    deleteNativeSession: fallbackRuntime.deleteNativeSession ? (sessionId) => fallbackRuntime.deleteNativeSession!(sessionId) : undefined,
+    hasNativeSession,
+    deleteNativeSession,
     runTask: (input) => {
       throwIfTaskAborted(input.abortSignal);
       if (input.requireExactWriteFence && exactWriteFenceSupport !== "all-runtimes") {
@@ -149,6 +192,7 @@ export function createAgentEventRuntimeWithFallback(
       if (richRuntime && !shouldAttemptRichRuntime(input.timeoutMs)) {
         failManagedResumeBeforeFallback(
           input,
+          fallbackRuntime.kind,
           "任务超时预算不足以安全恢复显式 Native session"
         );
         failNativeRegistrationBeforeFallback(
@@ -204,6 +248,7 @@ export function createAgentEventRuntimeWithFallback(
           }
           failManagedResumeBeforeFallback(
             input,
+            fallbackRuntime.kind,
             `rich transport 在提交 prompt 前失败：${errorMessage(error)}`,
             error
           );
@@ -244,6 +289,7 @@ export function createAgentEventRuntimeWithFallback(
       }
       failManagedResumeBeforeFallback(
         input,
+        fallbackRuntime.kind,
         "rich transport 不可用，无法安全恢复显式 Native session"
       );
       failNativeRegistrationBeforeFallback(
@@ -291,13 +337,14 @@ function failNativeRegistrationBeforeFallback(
 
 function failManagedResumeBeforeFallback(
   input: AgentTaskInput,
+  backend: AgentTaskRuntime["kind"],
   reason: string,
   cause?: unknown
 ): void {
   const nativeSessionId = input.nativeSessionId?.trim() ?? "";
   if (!input.requireNativeSessionResume || !nativeSessionId) return;
   throw new NativeSessionStaleError(
-    `OpenCode Native session requires Harness retirement before fallback: ${nativeSessionId}; ${reason}`,
+    `${backend} Native session requires Harness retirement before fallback: ${nativeSessionId}; ${reason}`,
     nativeSessionId,
     cause
   );

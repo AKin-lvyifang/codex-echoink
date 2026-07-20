@@ -864,3 +864,21 @@
 - 本批未部署、未修改真实 Vault，也未执行 migration、retention、Raw GC、History
   删除或 Native cleanup。下一批接真实 Native/Run/settings owner proof 与副本
   dry-run。
+
+## 2026-07-20：Phase 2/3 收口与 Hermes ACP session resume
+
+- Phase 2 最终策略确定为：自动维护只恢复已发布的 retention/Raw GC 事务，不自动
+  创建新的清理任务。自动清理不是本轮待补项。
+- 本机只读核对 Hermes 0.18.0：ACP protocol 1 公开 `session/list`、
+  `session/load` 和不稳定的 `session/resume`，未公开 delete。EchoInk 选择稳定
+  `session/load`，不直接调用 Hermes 内部数据库删除方法。
+- ACP runtime 保存真实 capability snapshot。Adapter 连接后才决定 Hermes resume
+  是 native 还是 emulated；缺 capability 时保持 context rehydrate。
+- 已登记 session 复用前按 cwd 枚举并加载精确 ID。加载回放的旧历史被隔离，不会
+  冒充本轮输出；load 返回不存在时在 Prompt 前 fail closed，不新建替代 session。
+- OpenCode 1.4.3 的 CLI 继续公开 session list/delete；既有 resume/delete 接线
+  不变。Hermes cleanup 继续 truthful unsupported。
+- 专项只运行主路径和 stale-load 阻断路径；最终统一运行一次全量门禁。
+  `npm run test`、typecheck、build、release/public guard 和 `git diff --check`
+  通过；lint 保持 942 个 baseline finding，无新增。实机只读 capability probe
+  通过。没有部署、修改真实 Vault、执行迁移或清理。

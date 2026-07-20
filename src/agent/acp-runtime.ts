@@ -1,7 +1,17 @@
 import { spawn } from "child_process";
-import { isNativeRunRegistrationError, type AgentBackendKind, type AgentPromptPart, type AgentTaskInput, type AgentTaskResult } from "./types";
+import {
+  NativeSessionStaleError,
+  isNativeRunRegistrationError,
+  type AgentBackendKind,
+  type AgentPromptPart,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "./types";
 import type { AgentEvent, AgentEventSink } from "./events";
-import type { AgentRichStreamRuntime } from "./runtime";
+import type {
+  AgentRichStreamRuntime,
+  AgentRuntimeCapabilitySnapshot
+} from "./runtime";
 import { normalizeRichStreamEvents } from "./rich-stream";
 import { swallowError } from "../core/error-handling";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcProcessLike } from "../core/json-rpc-stdio-transport";
@@ -32,10 +42,13 @@ const DEFAULT_ACP_STARTUP_TIMEOUT_MS = 1500;
 const ACP_METHOD_CANDIDATES = {
   cancel: ["session/cancel", "cancel"],
   initialize: ["initialize"],
+  listSessions: ["session/list", "listSessions"],
+  loadSession: ["session/load", "loadSession"],
   newSession: ["session/new", "newSession"],
   setModel: ["session/set_model"],
   prompt: ["session/prompt", "prompt"]
 } as const;
+const MAX_ACP_SESSION_LIST_PAGES = 32;
 
 export class AcpAgentRuntime implements AgentRichStreamRuntime {
   readonly kind: Exclude<AgentBackendKind, "codex-cli">;
@@ -53,7 +66,9 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
   private toolCallCounter = 0;
   private readonly activeToolCalls = new Map<string, AgentEvent>();
   private deferProviderEvents = false;
+  private replayingSessionHistory = false;
   private readonly deferredProviderEvents: AgentEvent[] = [];
+  private capabilities: AgentRuntimeCapabilitySnapshot = noAcpSessionCapabilities();
 
   constructor(private readonly options: AcpRuntimeOptions) {
     this.kind = options.backend;
@@ -88,7 +103,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
       });
     }
     if (!this.initialized) {
-      await this.requestWithFallback("initialize", {
+      const initialization = await this.requestWithFallback("initialize", {
         protocolVersion: 1,
         clientCapabilities: {
           fs: { readTextFile: false, writeTextFile: false },
@@ -100,6 +115,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
           version: "1.0.3"
         }
       }, this.startupTimeoutMs);
+      this.capabilities = acpRuntimeCapabilities(initialization);
       this.initialized = true;
     }
     return { connected: true, label: this.kind, errors: [] };
@@ -109,6 +125,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
     await this.transport?.dispose();
     this.transport = null;
     this.initialized = false;
+    this.capabilities = noAcpSessionCapabilities();
     this.process?.kill();
     this.process = null;
     this.activeEmit = null;
@@ -118,6 +135,45 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
 
   async listModels() {
     return [];
+  }
+
+  capabilitySnapshot(): AgentRuntimeCapabilitySnapshot {
+    return {
+      nativeSession: { ...this.capabilities.nativeSession }
+    };
+  }
+
+  async hasNativeSession(sessionId: string): Promise<boolean> {
+    const target = sessionId.trim();
+    if (!target) return false;
+    await this.connect();
+    if (!this.capabilities.nativeSession.inspectExistence) {
+      throw new Error("ACP backend does not advertise stable session enumeration.");
+    }
+    let cursor = "";
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < MAX_ACP_SESSION_LIST_PAGES; page += 1) {
+      const response = await this.requestWithFallback("listSessions", {
+        cwd: this.options.command.cwd,
+        ...(cursor ? { cursor } : {})
+      });
+      const record = plainObject(response);
+      const sessions = Array.isArray(record?.sessions) ? record.sessions : [];
+      if (sessions.some((entry) => {
+        const session = plainObject(entry);
+        return stringValue(session?.sessionId ?? session?.session_id) === target;
+      })) {
+        return true;
+      }
+      const nextCursor = stringValue(record?.nextCursor ?? record?.next_cursor);
+      if (!nextCursor) return false;
+      if (seenCursors.has(nextCursor)) {
+        throw new Error("ACP session enumeration returned a repeated cursor.");
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    throw new Error("ACP session enumeration exceeded the safety page limit.");
   }
 
   async runTask(input: AgentTaskInput): Promise<AgentTaskResult> {
@@ -183,13 +239,53 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
       throwIfAborted(input.abortSignal);
       await emitNow({ type: "connected" });
       throwIfAborted(input.abortSignal);
-      const session = await this.requestWithFallback("newSession", {
-        cwd: this.options.command.cwd,
-        mcpServers: []
-      }, input.timeoutMs);
-      throwIfAborted(input.abortSignal);
-      const sessionRecord = plainObject(session);
-      sessionId = stringValue(sessionRecord?.sessionId ?? sessionRecord?.id);
+      const requestedSessionId = input.nativeSessionId?.trim() ?? "";
+      if (requestedSessionId) {
+        if (!this.capabilities.nativeSession.resume) {
+          if (input.requireNativeSessionResume) {
+            throw new NativeSessionStaleError(
+              `ACP backend cannot load the Harness-owned Native session: ${requestedSessionId}`,
+              requestedSessionId
+            );
+          }
+        } else {
+          sessionId = requestedSessionId;
+          this.activeRunId = sessionId;
+          this.replayingSessionHistory = true;
+          let loaded: unknown;
+          try {
+            loaded = await this.requestWithFallback("loadSession", {
+              cwd: this.options.command.cwd,
+              sessionId,
+              mcpServers: []
+            }, input.timeoutMs);
+          } catch (error) {
+            throw new NativeSessionStaleError(
+              `ACP Native session could not be loaded: ${sessionId}`,
+              sessionId,
+              error
+            );
+          } finally {
+            this.replayingSessionHistory = false;
+            this.resetRichEventState();
+          }
+          if (loaded === null || loaded === undefined) {
+            throw new NativeSessionStaleError(
+              `ACP Native session no longer exists: ${sessionId}`,
+              sessionId
+            );
+          }
+        }
+      }
+      if (!sessionId) {
+        const session = await this.requestWithFallback("newSession", {
+          cwd: this.options.command.cwd,
+          mcpServers: []
+        }, input.timeoutMs);
+        throwIfAborted(input.abortSignal);
+        const sessionRecord = plainObject(session);
+        sessionId = stringValue(sessionRecord?.sessionId ?? sessionRecord?.id);
+      }
       if (!sessionId) throw new Error("ACP backend did not return a sessionId.");
       this.activeRunId = sessionId;
       await input.onRunId?.(sessionId, {
@@ -325,6 +421,7 @@ export class AcpAgentRuntime implements AgentRichStreamRuntime {
   }
 
   private processSessionUpdate(params: unknown): void {
+    if (this.replayingSessionHistory) return;
     const notification = plainObject(params);
     const update = plainObject(notification?.update) ?? notification;
     if (!update) return;
@@ -631,6 +728,44 @@ class AcpJsonRpcError extends Error {
     super(message);
     this.name = "AcpJsonRpcError";
   }
+}
+
+function noAcpSessionCapabilities(): AgentRuntimeCapabilitySnapshot {
+  return {
+    nativeSession: {
+      resume: false,
+      inspectExistence: false,
+      delete: false,
+      kind: "session",
+      persistence: "unknown"
+    }
+  };
+}
+
+function acpRuntimeCapabilities(
+  initialization: unknown
+): AgentRuntimeCapabilitySnapshot {
+  const response = plainObject(initialization);
+  const agent = plainObject(
+    response?.agentCapabilities ?? response?.agent_capabilities
+  );
+  const sessions = plainObject(
+    agent?.sessionCapabilities ?? agent?.session_capabilities
+  );
+  const loadSession = agent?.loadSession === true
+    || agent?.load_session === true;
+  const listSessions = plainObject(sessions?.list) !== null;
+  const nativeResume = loadSession && listSessions;
+  return {
+    nativeSession: {
+      resume: nativeResume,
+      inspectExistence: listSessions,
+      delete: false,
+      kind: "session",
+      persistence: nativeResume ? "provider-persistent" : "unknown",
+      ...(nativeResume ? { transport: "acp-stdio" } : {})
+    }
+  };
 }
 
 function selectedAcpModel(
