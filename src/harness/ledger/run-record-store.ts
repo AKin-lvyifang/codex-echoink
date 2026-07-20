@@ -1109,10 +1109,7 @@ export class FileRunRecordStore {
       before
     );
     const blockers: ConversationRunRecordInventoryBlocker[] = [];
-    const workflowRuns = [...workflows.values()]
-      .filter((summary) =>
-        summary.conversationRef?.conversationId === conversationId
-      )
+    const allWorkflowRuns = [...workflows.values()]
       .sort((left, right) =>
         left.workflowRunId.localeCompare(right.workflowRunId)
       )
@@ -1212,6 +1209,9 @@ export class FileRunRecordStore {
           attempts: inventoryAttempts
         };
       });
+    const workflowRuns = allWorkflowRuns.filter((workflow) =>
+      workflow.summary.conversationRef?.conversationId === conversationId
+    );
 
     blockers.sort(compareInventoryBlockers);
     const storeRawOwners = [...payloads.entries()]

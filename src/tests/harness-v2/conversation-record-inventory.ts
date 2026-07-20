@@ -12,8 +12,17 @@ import {
   createWorkflowArtifactLifecycleRecord
 } from "../../harness/artifacts/artifact-lifecycle-store";
 import {
+  buildAttemptPayloadManifest,
+  finalizeAttemptRunSummary,
   finalizeWorkflowRunSummary
 } from "../../harness/contracts/run-record";
+import type {
+  AttemptHarnessEventV1
+} from "../../harness/contracts/run-record";
+import {
+  FileConversationStore
+} from "../../harness/conversation/conversation-store";
+import { workspaceFingerprint } from "../../harness/kernel/session-service";
 import {
   FileRunRecordStore
 } from "../../harness/ledger/run-record-store";
@@ -38,7 +47,8 @@ import {
   initializeEchoInkMemoryV2
 } from "../../harness/memory/v2-store";
 import {
-  inventoryConversationRecords
+  inventoryConversationRecords,
+  inventoryRawGcPreview
 } from "../../harness/records/conversation-record-inventory";
 import {
   buildConversationRecordMutationPlan
@@ -66,6 +76,11 @@ Promise<void> {
   await assertArtifactRequiresAnExplicitRetentionDecision();
   await assertRunInventoryBlockersArePreserved();
   await assertFrozenSelectionIsReinventoriedBeforeTrashPrepare();
+  await assertRawGcPreviewMarksGlobalOwnersAndCandidates();
+  await assertRawGcPreviewBlocksMissingAndDriftingSources();
+  await assertRawGcPreviewBlocksUnrelatedRunOwnershipGap();
+  await assertRawGcPreviewBlocksWithoutConversationAuthority();
+  await assertRawGcPreviewBlocksCorruptExplicitOwnerStore();
 }
 
 async function assertRawOwnerGraphSeparatesExclusiveAndSharedSources():
@@ -448,6 +463,461 @@ Promise<void> {
       ),
       "exclusive bytes"
     );
+  });
+}
+
+async function assertRawGcPreviewMarksGlobalOwnersAndCandidates():
+Promise<void> {
+  await withVault("raw-gc-preview", async (vaultPath) => {
+    await writeRawText(
+      vaultPath,
+      "raw/conversation-owned.txt",
+      "CONVERSATION_RAW_BODY_MUST_NOT_ENTER_PREVIEW",
+      PLUGIN_DIR
+    );
+    await writeRawText(
+      vaultPath,
+      "raw/run-owned.txt",
+      "RUN_RAW_BODY_MUST_NOT_ENTER_PREVIEW",
+      PLUGIN_DIR
+    );
+    await writeRawText(
+      vaultPath,
+      "raw/unowned.txt",
+      "UNOWNED_RAW_BODY_MUST_NOT_ENTER_PREVIEW",
+      PLUGIN_DIR
+    );
+    await persistCanonicalConversation(
+      vaultPath,
+      canonicalSession(vaultPath, "conversation-raw-gc", [
+        message(
+          "message-conversation-raw",
+          "raw/conversation-owned.txt"
+        )
+      ])
+    );
+    await writeRunPayloadRawOwner(
+      vaultPath,
+      "conversation-raw-gc",
+      "raw/run-owned.txt"
+    );
+
+    const first = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    const second = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    assert.deepEqual(second, first);
+    assert.equal(first.status, "ready");
+    assert.deepEqual(first.blockers, []);
+    assert.equal(first.retainCount, 2);
+    assert.equal(first.quarantineCandidateCount, 1);
+    assert.deepEqual(
+      first.subjects.map((subject) => ({
+        disposition: subject.disposition,
+        ownerCount: subject.ownerCount,
+        ownerKinds: subject.ownerKinds,
+        eligibleForQuarantine: subject.eligibleForQuarantine
+      })).sort((left, right) =>
+        JSON.stringify(left).localeCompare(JSON.stringify(right))
+      ),
+      [
+        {
+          disposition: "retain",
+          ownerCount: 1,
+          ownerKinds: ["workflow-run-payload"],
+          eligibleForQuarantine: false
+        },
+        {
+          disposition: "quarantine-candidate",
+          ownerCount: 0,
+          ownerKinds: [],
+          eligibleForQuarantine: true
+        },
+        {
+          disposition: "retain",
+          ownerCount: 1,
+          ownerKinds: ["conversation-message"],
+          eligibleForQuarantine: false
+        }
+      ].sort((left, right) =>
+        JSON.stringify(left).localeCompare(JSON.stringify(right))
+      )
+    );
+    assert.deepEqual(first.safetyReceipt, {
+      metadataOnly: true,
+      rawBodiesRead: false,
+      actionsApplied: 0,
+      destructiveActionCount: 0,
+      automaticActionAllowed: false
+    });
+    const serialized = JSON.stringify(first);
+    for (const forbidden of [
+      "conversation-owned.txt",
+      "run-owned.txt",
+      "unowned.txt",
+      "RAW_BODY_MUST_NOT_ENTER_PREVIEW",
+      vaultPath
+    ]) {
+      assert.doesNotMatch(serialized, new RegExp(forbidden));
+    }
+    assert.equal(
+      await readFile(
+        path.join(rawStorageDir(vaultPath, PLUGIN_DIR), "unowned.txt"),
+        "utf8"
+      ),
+      "UNOWNED_RAW_BODY_MUST_NOT_ENTER_PREVIEW"
+    );
+  });
+}
+
+async function assertRawGcPreviewBlocksMissingAndDriftingSources():
+Promise<void> {
+  await withVault("raw-gc-missing", async (vaultPath) => {
+    await writeRawText(
+      vaultPath,
+      "raw/unowned.txt",
+      "unowned",
+      PLUGIN_DIR
+    );
+    await persistCanonicalConversation(
+      vaultPath,
+      canonicalSession(vaultPath, "conversation-raw-missing", [
+        message("message-raw-missing", "raw/missing.txt")
+      ])
+    );
+    const preview = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    assert.equal(preview.status, "blocked");
+    assert.deepEqual(
+      preview.blockers.map((blocker) => blocker.code),
+      ["raw-reference-missing"]
+    );
+    assert.equal(preview.quarantineCandidateCount, 1);
+    assert.equal(
+      preview.subjects[0]?.eligibleForQuarantine,
+      false,
+      "a missing owner target must disable every quarantine candidate"
+    );
+  });
+
+  await withVault("raw-gc-drift", async (vaultPath) => {
+    await persistCanonicalConversation(
+      vaultPath,
+      canonicalSession(vaultPath, "conversation-raw-drift", [])
+    );
+    const preview = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME,
+      hooks: {
+        afterFirstSnapshot: async () => {
+          await writeRawText(
+            vaultPath,
+            "raw/appeared-during-scan.txt",
+            "drift",
+            PLUGIN_DIR
+          );
+        }
+      }
+    });
+    assert.equal(preview.status, "blocked");
+    assert.deepEqual(
+      preview.blockers.map((blocker) => blocker.code),
+      ["inventory-drift"]
+    );
+    assert.deepEqual(
+      preview.subjects,
+      [],
+      "a drifting Store must invalidate the entire classification"
+    );
+  });
+}
+
+async function assertRawGcPreviewBlocksUnrelatedRunOwnershipGap():
+Promise<void> {
+  await withVault("raw-gc-global-run-gap", async (vaultPath) => {
+    await persistCanonicalConversation(
+      vaultPath,
+      canonicalSession(vaultPath, "conversation-present", [])
+    );
+    const store = new FileRunRecordStore({
+      storageRootPath: pluginDataDir(vaultPath, PLUGIN_DIR)
+    });
+    const workflow = finalizeWorkflowRunSummary({
+      schemaVersion: 1,
+      recordType: "workflow-run-summary",
+      workflowRunId: "workflow-unrelated-missing-attempt",
+      surface: "chat",
+      workflow: "chat.turn",
+      conversationRef: {
+        conversationId: "conversation-unrelated",
+        contextId: "context-unrelated",
+        turnId: "turn-unrelated"
+      },
+      status: "completed",
+      startedAt: BASE_TIME,
+      terminalAt: BASE_TIME + 100,
+      attemptRefs: [{
+        attemptId: "attempt-unrelated-missing",
+        ordinal: 1
+      }],
+      artifactRefs: [],
+      errorCode: "none",
+      localMutation: {
+        state: "committed",
+        transactionId: "transaction-unrelated",
+        committedAt: BASE_TIME + 100
+      },
+      retention: {
+        holdReasons: []
+      },
+      revision: 0
+    });
+    await store.writeWorkflowRunSummary(workflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    const preview = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    assert.equal(preview.status, "blocked");
+    assert.deepEqual(
+      preview.blockers.map((blocker) => blocker.code),
+      ["run-owner-inventory-incomplete"],
+      "a gap in an unrelated Run must block the global owner graph"
+    );
+  });
+}
+
+async function assertRawGcPreviewBlocksWithoutConversationAuthority():
+Promise<void> {
+  await withVault("raw-gc-no-conversation-store", async (vaultPath) => {
+    await writeRawText(
+      vaultPath,
+      "raw/legacy-unowned.txt",
+      "legacy",
+      PLUGIN_DIR
+    );
+    const preview = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    assert.equal(preview.status, "blocked");
+    assert.deepEqual(
+      preview.blockers.map((blocker) => blocker.code),
+      ["conversation-store-unavailable"]
+    );
+    assert.equal(preview.quarantineCandidateCount, 1);
+    assert.equal(preview.subjects[0]?.eligibleForQuarantine, false);
+  });
+}
+
+async function assertRawGcPreviewBlocksCorruptExplicitOwnerStore():
+Promise<void> {
+  await withVault("raw-gc-corrupt-artifact-store", async (vaultPath) => {
+    await persistCanonicalConversation(
+      vaultPath,
+      canonicalSession(vaultPath, "conversation-artifact-scan", [])
+    );
+    const artifactRootPath = echoInkRecordMutationRootPath({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact
+    });
+    await mkdir(artifactRootPath, { recursive: true });
+    await writeFile(
+      path.join(artifactRootPath, "unknown-owner-entry.json"),
+      "{}\n",
+      "utf8"
+    );
+    const preview = await inventoryRawGcPreview({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      now: () => BASE_TIME
+    });
+    assert.equal(preview.status, "blocked");
+    assert.deepEqual(
+      preview.blockers.map((blocker) => blocker.code),
+      ["artifact-inventory-corrupt"],
+      "unknown Artifact schema must block a global Raw owner decision"
+    );
+  });
+}
+
+function canonicalSession(
+  vaultPath: string,
+  id: string,
+  messages: ChatMessage[]
+): StoredSession {
+  return {
+    id,
+    title: id,
+    kind: "chat",
+    cwd: vaultPath,
+    revision: 1,
+    generation: 1,
+    contextId: `context-${id}`,
+    commitId: `commit-${id}`,
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath,
+      cwd: vaultPath
+    }),
+    messages,
+    createdAt: BASE_TIME,
+    updatedAt: BASE_TIME
+  };
+}
+
+async function persistCanonicalConversation(
+  vaultPath: string,
+  value: StoredSession
+): Promise<void> {
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  await store.createPristineSession({
+    ...value,
+    messages: [],
+    contextSnapshot: undefined,
+    rollingSummary: undefined
+  });
+  await store.upsertSession(value);
+}
+
+async function writeRunPayloadRawOwner(
+  vaultPath: string,
+  conversationId: string,
+  rawRef: string
+): Promise<void> {
+  const workflowRunId = "workflow-raw-gc";
+  const attemptId = "attempt-raw-gc";
+  const harnessRunId = "harness-raw-gc";
+  const store = new FileRunRecordStore({
+    storageRootPath: pluginDataDir(vaultPath, PLUGIN_DIR)
+  });
+  const workflow = finalizeWorkflowRunSummary({
+    schemaVersion: 1,
+    recordType: "workflow-run-summary",
+    workflowRunId,
+    surface: "chat",
+    workflow: "chat.turn",
+    conversationRef: {
+      conversationId,
+      contextId: `context-${conversationId}`,
+      turnId: "turn-raw-gc"
+    },
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 300,
+    attemptRefs: [{ attemptId, ordinal: 1 }],
+    artifactRefs: [],
+    errorCode: "none",
+    localMutation: {
+      state: "committed",
+      transactionId: "transaction-raw-gc",
+      committedAt: BASE_TIME + 300
+    },
+    retention: {
+      holdReasons: []
+    },
+    revision: 0
+  });
+  const attempt = finalizeAttemptRunSummary({
+    schemaVersion: 1,
+    recordType: "attempt-run-summary",
+    workflowRunId,
+    attemptId,
+    ordinal: 1,
+    harnessRunId,
+    backendId: "codex-cli",
+    nativeExecutionRecordIds: [],
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 200,
+    errorCode: "none",
+    reasonCode: "none",
+    localCommit: {
+      state: "committed",
+      authorityKind: "conversation",
+      committedAt: BASE_TIME + 300
+    },
+    cleanup: {
+      status: "disposed",
+      attempts: 1,
+      settledAt: BASE_TIME + 400,
+      reasonCode: "cleanup-completed"
+    },
+    payload: {
+      expected: true,
+      expiresAt: BASE_TIME + 30 * 24 * 60 * 60 * 1_000
+    },
+    retention: {
+      holdReasons: []
+    },
+    revision: 0
+  });
+  const events: AttemptHarnessEventV1[] = [
+    {
+      schemaVersion: 1,
+      recordType: "attempt-harness-event",
+      workflowRunId,
+      attemptId,
+      harnessRunId,
+      eventId: `${harnessRunId}:1`,
+      runId: harnessRunId,
+      sequence: 1,
+      createdAt: BASE_TIME,
+      source: "kernel",
+      type: "run.created"
+    },
+    {
+      schemaVersion: 1,
+      recordType: "attempt-harness-event",
+      workflowRunId,
+      attemptId,
+      harnessRunId,
+      eventId: `${harnessRunId}:2`,
+      runId: harnessRunId,
+      sequence: 2,
+      createdAt: BASE_TIME + 100,
+      source: "kernel",
+      type: "run.completed",
+      data: { rawRef }
+    }
+  ];
+  const payload = buildAttemptPayloadManifest({
+    workflowRunId,
+    attemptId,
+    harnessRunId,
+    createdAt: BASE_TIME,
+    revision: 0
+  }, events);
+  await store.writeWorkflowRunSummary(workflow, {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await store.writeAttemptRunSummary(attempt, {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await store.sealAttemptPayload(payload, events, {
+    expectedRevision: null,
+    expectedDigest: null
   });
 }
 

@@ -25,6 +25,10 @@ import {
   pluginDataDir,
   rawStorageDir
 } from "../../core/raw-message-store";
+import {
+  createConversationMessageRevision,
+  FileConversationStore
+} from "../conversation/conversation-store";
 import type {
   ChatMessage,
   StoredSession
@@ -111,6 +115,65 @@ export interface InventoryConversationRecordsInput {
   };
 }
 
+export type RawGcPreviewBlockerCode =
+  | "artifact-inventory-corrupt"
+  | "conversation-inventory-corrupt"
+  | "conversation-store-unavailable"
+  | "inventory-drift"
+  | "memory-inventory-corrupt"
+  | "raw-inventory-corrupt"
+  | "raw-reference-missing"
+  | "run-inventory-corrupt"
+  | "run-owner-inventory-incomplete";
+
+export interface RawGcPreviewBlocker {
+  code: RawGcPreviewBlockerCode;
+  subjectRef: string;
+}
+
+export interface RawGcPreviewSubject {
+  subjectRef: string;
+  byteSize: number;
+  modifiedAt: number;
+  disposition: "retain" | "quarantine-candidate";
+  ownerCount: number;
+  ownerKinds: Array<ConversationRawOwner["kind"]>;
+  eligibleForQuarantine: boolean;
+}
+
+export interface RawGcPreview {
+  status: "ready" | "blocked";
+  generatedAt: number;
+  snapshotDigest: string;
+  sourceSnapshot: {
+    artifact: string | null;
+    conversation: string | null;
+    memory: string | null;
+    run: string | null;
+    raw: string | null;
+  };
+  retainCount: number;
+  quarantineCandidateCount: number;
+  subjects: RawGcPreviewSubject[];
+  blockers: RawGcPreviewBlocker[];
+  safetyReceipt: {
+    metadataOnly: true;
+    rawBodiesRead: false;
+    actionsApplied: 0;
+    destructiveActionCount: 0;
+    automaticActionAllowed: false;
+  };
+}
+
+export interface InventoryRawGcPreviewInput {
+  vaultPath: string;
+  pluginDir: string;
+  now?: () => number;
+  hooks?: {
+    afterFirstSnapshot?: () => void | Promise<void>;
+  };
+}
+
 interface RawStoreSnapshot {
   files: Array<{
     rawRef: string;
@@ -123,6 +186,27 @@ interface RawStoreSnapshot {
   }>;
   snapshotDigest: string;
 }
+
+interface ConversationRawOwnerSnapshot {
+  state: "present" | "missing";
+  owners: Array<{
+    rawRef: string;
+    owner: ConversationRawOwner;
+  }>;
+  snapshotDigest: string;
+}
+
+interface RawGcCapture {
+  artifactSnapshotDigest: string;
+  conversation: ConversationRawOwnerSnapshot;
+  memorySnapshotDigest: string;
+  run: ConversationRunRecordInventory;
+  raw: RawStoreSnapshot;
+  snapshotDigest: string;
+}
+
+const RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE =
+  "raw-gc-preview-global-owner-scan";
 
 /**
  * Builds the read-only, fail-closed selection input for a destructive
@@ -269,6 +353,153 @@ export async function inventoryConversationRecords(
     raw,
     blockers,
     snapshotDigest
+  };
+}
+
+/**
+ * Produces a metadata-only Raw quarantine preview. It never reads Raw bodies
+ * and never moves or deletes files. Conversation, Run Record, Memory,
+ * Artifact and Raw Store snapshots are captured twice; any drift invalidates
+ * the entire preview.
+ */
+export async function inventoryRawGcPreview(
+  input: InventoryRawGcPreviewInput
+): Promise<RawGcPreview> {
+  const vaultPath = requireAbsolutePath(input.vaultPath, "vaultPath");
+  const pluginDir = requirePluginDir(input.pluginDir);
+  const generatedAt = input.now?.() ?? Date.now();
+  let first: RawGcCapture;
+  let second: RawGcCapture;
+  try {
+    first = await captureRawGcPreview(vaultPath, pluginDir);
+  } catch (error) {
+    return blockedRawGcPreview(
+      generatedAt,
+      rawGcCaptureBlocker(error)
+    );
+  }
+  await input.hooks?.afterFirstSnapshot?.();
+  try {
+    second = await captureRawGcPreview(vaultPath, pluginDir);
+  } catch (error) {
+    return blockedRawGcPreview(
+      generatedAt,
+      rawGcCaptureBlocker(error)
+    );
+  }
+  if (first.snapshotDigest !== second.snapshotDigest) {
+    return blockedRawGcPreview(
+      generatedAt,
+      {
+        code: "inventory-drift",
+        subjectRef: opaqueRawGcRef(
+          "inventory-drift",
+          `${first.snapshotDigest}:${second.snapshotDigest}`
+        )
+      },
+      {
+        artifact: first.artifactSnapshotDigest,
+        conversation: first.conversation.snapshotDigest,
+        memory: first.memorySnapshotDigest,
+        run: first.run.snapshotDigest,
+        raw: first.raw.snapshotDigest
+      }
+    );
+  }
+
+  const blockers: RawGcPreviewBlocker[] = [];
+  if (
+    first.conversation.state === "missing"
+    && first.raw.files.length
+  ) {
+    blockers.push({
+      code: "conversation-store-unavailable",
+      subjectRef: opaqueRawGcRef(
+        "conversation-store",
+        first.raw.snapshotDigest
+      )
+    });
+  }
+  for (const blocker of first.run.blockers) {
+    blockers.push({
+      code: "run-owner-inventory-incomplete",
+      subjectRef: opaqueRawGcRef(
+        "run-owner",
+        `${blocker.code}:${blocker.workflowRunId}:${blocker.attemptId}`
+      )
+    });
+  }
+
+  const ownersByRef = new Map<string, ConversationRawOwner[]>();
+  for (const item of first.conversation.owners) {
+    addRawOwner(ownersByRef, item.rawRef, item.owner);
+  }
+  for (const owner of first.run.storeRawOwners) {
+    addRawOwner(ownersByRef, owner.rawRef, {
+      kind: "workflow-run-payload",
+      ownerId: `${owner.workflowRunId}:${owner.attemptId}`,
+      ...(owner.conversationId
+        ? { conversationId: owner.conversationId }
+        : {})
+    });
+  }
+  const filesByRef = new Map(
+    first.raw.files.map((file) => [file.rawRef, file])
+  );
+  for (const rawRef of ownersByRef.keys()) {
+    if (filesByRef.has(rawRef)) continue;
+    blockers.push({
+      code: "raw-reference-missing",
+      subjectRef: opaqueRawGcRef("raw", rawRef)
+    });
+  }
+  const sortedBlockers = deduplicateRawGcBlockers(blockers);
+  const eligible = sortedBlockers.length === 0;
+  const subjects = first.raw.files.map((file): RawGcPreviewSubject => {
+    const owners = ownersByRef.get(file.rawRef) ?? [];
+    const ownerKinds = [...new Set(
+      owners.map((owner) => owner.kind)
+    )].sort();
+    return {
+      subjectRef: opaqueRawGcRef("raw", file.rawRef),
+      byteSize: file.size,
+      modifiedAt: Math.trunc(file.mtimeMs),
+      disposition: owners.length
+        ? "retain"
+        : "quarantine-candidate",
+      ownerCount: owners.length,
+      ownerKinds,
+      eligibleForQuarantine: !owners.length && eligible
+    };
+  }).sort((left, right) =>
+    left.subjectRef.localeCompare(right.subjectRef)
+  );
+  const sourceSnapshot = {
+    artifact: first.artifactSnapshotDigest,
+    conversation: first.conversation.snapshotDigest,
+    memory: first.memorySnapshotDigest,
+    run: first.run.snapshotDigest,
+    raw: first.raw.snapshotDigest
+  };
+  const snapshotDigest = canonicalRunRecordDigest({
+    sourceSnapshot,
+    subjects,
+    blockers: sortedBlockers
+  });
+  return {
+    status: eligible ? "ready" : "blocked",
+    generatedAt,
+    snapshotDigest,
+    sourceSnapshot,
+    retainCount: subjects.filter(
+      (subject) => subject.disposition === "retain"
+    ).length,
+    quarantineCandidateCount: subjects.filter(
+      (subject) => subject.disposition === "quarantine-candidate"
+    ).length,
+    subjects,
+    blockers: sortedBlockers,
+    safetyReceipt: rawGcSafetyReceipt()
   };
 }
 
@@ -505,6 +736,142 @@ async function buildConversationRawInventory(input: {
   };
 }
 
+async function captureRawGcPreview(
+  vaultPath: string,
+  pluginDir: string
+): Promise<RawGcCapture> {
+  let conversation: ConversationRawOwnerSnapshot;
+  try {
+    conversation = await captureConversationRawOwners(
+      vaultPath,
+      pluginDir
+    );
+  } catch (error) {
+    throw new RawGcCaptureError(
+      "conversation-inventory-corrupt",
+      error
+    );
+  }
+  let memorySnapshotDigest: string;
+  try {
+    const memory = await readExistingEchoInkMemoryV2Snapshot(vaultPath);
+    memorySnapshotDigest = memory.state === "present"
+      ? memory.snapshotDigest
+      : canonicalRunRecordDigest({ state: "missing" });
+  } catch (error) {
+    throw new RawGcCaptureError("memory-inventory-corrupt", error);
+  }
+  let artifactSnapshotDigest: string;
+  try {
+    const artifactRootPath = echoInkRecordMutationRootPath({
+      vaultPath,
+      pluginDir,
+      rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact
+    });
+    artifactSnapshotDigest = (
+      await inventoryWorkflowArtifactsByConversation(
+        artifactRootPath,
+        RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE
+      )
+    ).snapshotDigest;
+  } catch (error) {
+    throw new RawGcCaptureError("artifact-inventory-corrupt", error);
+  }
+  let run: ConversationRunRecordInventory;
+  try {
+    run = await new FileRunRecordStore({
+      storageRootPath: pluginDataDir(vaultPath, pluginDir)
+    }).inventoryConversationRunRecords(
+      RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE
+    );
+  } catch (error) {
+    throw new RawGcCaptureError("run-inventory-corrupt", error);
+  }
+  let raw: RawStoreSnapshot;
+  try {
+    raw = await scanRawStore(rawStorageDir(vaultPath, pluginDir));
+  } catch (error) {
+    throw new RawGcCaptureError("raw-inventory-corrupt", error);
+  }
+  return {
+    artifactSnapshotDigest,
+    conversation,
+    memorySnapshotDigest,
+    run,
+    raw,
+    snapshotDigest: canonicalRunRecordDigest({
+      artifact: artifactSnapshotDigest,
+      conversation: conversation.snapshotDigest,
+      memory: memorySnapshotDigest,
+      run: run.snapshotDigest,
+      raw: raw.snapshotDigest
+    })
+  };
+}
+
+async function captureConversationRawOwners(
+  vaultPath: string,
+  pluginDir: string
+): Promise<ConversationRawOwnerSnapshot> {
+  const rootPath = path.join(
+    pluginDataDir(vaultPath, pluginDir),
+    "conversations"
+  );
+  const rootStats = await lstatOrNull(rootPath);
+  if (!rootStats) {
+    return {
+      state: "missing",
+      owners: [],
+      snapshotDigest: canonicalRunRecordDigest({
+        state: "missing",
+        sessions: []
+      })
+    };
+  }
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error("Conversation Store root is not a plain directory");
+  }
+  const sessions = await new FileConversationStore({
+    rootPath
+  }).listSessions();
+  const owners: ConversationRawOwnerSnapshot["owners"] = [];
+  const sessionSnapshot = sessions.map((session) => {
+    const messages = session.messages.map((message) => {
+      if (message.rawRef) {
+        const rawRef = normalizeRawRef(message.rawRef);
+        owners.push({
+          rawRef,
+          owner: conversationMessageOwner(session.id, message)
+        });
+      }
+      return {
+        id: message.id,
+        revision: createConversationMessageRevision(message)
+      };
+    });
+    return {
+      id: session.id,
+      generation: session.generation ?? null,
+      commitId: session.commitId ?? null,
+      revision: session.revision ?? null,
+      messages
+    };
+  }).sort((left, right) => left.id.localeCompare(right.id));
+  owners.sort((left, right) =>
+    left.rawRef.localeCompare(right.rawRef)
+    || compareRawOwners(left.owner, right.owner)
+  );
+  return {
+    state: "present",
+    owners,
+    snapshotDigest: canonicalRunRecordDigest({
+      state: "present",
+      sessions: sessionSnapshot,
+      owners
+    })
+  };
+}
+
 async function scanRawStore(rootPath: string): Promise<RawStoreSnapshot> {
   const before = await scanRawStoreOnce(rootPath);
   const after = await scanRawStoreOnce(rootPath);
@@ -566,6 +933,89 @@ function rawStoreSnapshot(
   return {
     files,
     snapshotDigest: canonicalRunRecordDigest({ files })
+  };
+}
+
+class RawGcCaptureError extends Error {
+  constructor(
+    readonly code:
+      | "artifact-inventory-corrupt"
+      | "conversation-inventory-corrupt"
+      | "memory-inventory-corrupt"
+      | "raw-inventory-corrupt"
+      | "run-inventory-corrupt",
+    cause: unknown
+  ) {
+    super("Raw GC preview capture failed", { cause });
+    this.name = "RawGcCaptureError";
+  }
+}
+
+function rawGcCaptureBlocker(error: unknown): RawGcPreviewBlocker {
+  const code = error instanceof RawGcCaptureError
+    ? error.code
+    : "raw-inventory-corrupt";
+  return {
+    code,
+    subjectRef: opaqueRawGcRef("capture", code)
+  };
+}
+
+function blockedRawGcPreview(
+  generatedAt: number,
+  blocker: RawGcPreviewBlocker,
+  sourceSnapshot: RawGcPreview["sourceSnapshot"] = {
+    artifact: null,
+    conversation: null,
+    memory: null,
+    run: null,
+    raw: null
+  }
+): RawGcPreview {
+  const blockers = [blocker];
+  return {
+    status: "blocked",
+    generatedAt,
+    snapshotDigest: canonicalRunRecordDigest({
+      sourceSnapshot,
+      blockers
+    }),
+    sourceSnapshot,
+    retainCount: 0,
+    quarantineCandidateCount: 0,
+    subjects: [],
+    blockers,
+    safetyReceipt: rawGcSafetyReceipt()
+  };
+}
+
+function deduplicateRawGcBlockers(
+  blockers: readonly RawGcPreviewBlocker[]
+): RawGcPreviewBlocker[] {
+  const unique = new Map<string, RawGcPreviewBlocker>();
+  for (const blocker of blockers) {
+    unique.set(`${blocker.code}:${blocker.subjectRef}`, blocker);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.code.localeCompare(right.code)
+    || left.subjectRef.localeCompare(right.subjectRef)
+  );
+}
+
+function opaqueRawGcRef(namespace: string, value: string): string {
+  return canonicalRunRecordDigest({
+    namespace,
+    value
+  });
+}
+
+function rawGcSafetyReceipt(): RawGcPreview["safetyReceipt"] {
+  return {
+    metadataOnly: true,
+    rawBodiesRead: false,
+    actionsApplied: 0,
+    destructiveActionCount: 0,
+    automaticActionAllowed: false
   };
 }
 
