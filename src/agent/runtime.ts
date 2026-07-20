@@ -2,6 +2,17 @@ import type { AgentBackendKind, AgentConnectionStatus, AgentModelInfo, AgentProf
 import type { AgentEventSink } from "./events";
 import type { EchoInkResource, EchoInkResourceScope } from "../resources/types";
 
+export interface AgentRuntimeCapabilitySnapshot {
+  nativeSession: {
+    resume: boolean;
+    inspectExistence: boolean;
+    delete: boolean;
+    kind: "session";
+    persistence: "provider-persistent" | "unknown";
+    transport?: string;
+  };
+}
+
 export interface EchoInkToolBridge {
   mode: "disabled" | "native-mcp" | "structured-tools" | "echoink-tool-loop";
   resourceIds: string[];
@@ -38,6 +49,7 @@ export interface AgentTaskRuntime {
   kind: AgentBackendKind;
   connect(): Promise<AgentConnectionStatus>;
   disconnect?(): Promise<void>;
+  capabilitySnapshot?(): AgentRuntimeCapabilitySnapshot | undefined;
   listModels(): Promise<AgentModelInfo[]>;
   listAgents?(): Promise<AgentProfileInfo[]>;
   hasNativeSession?(sessionId: string): Promise<boolean>;

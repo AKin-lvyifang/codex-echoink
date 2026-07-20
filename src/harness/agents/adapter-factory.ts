@@ -42,7 +42,11 @@ export interface CreateHarnessAgentAdapterInput {
     exactWriteFence?: AgentTaskInput["exactWriteFence"];
     onExactWriteFenceConfigured?: AgentTaskInput["onExactWriteFenceConfigured"];
     abortSignal?: AbortSignal;
-    onRunId?: (runId: string) => void;
+    requireNativeRegistrationBeforePrompt?: boolean;
+    onRunId?: (
+      runId: string,
+      native: NativeExecutionRef
+    ) => void | Promise<void>;
   };
   adapterFactories?: HarnessAgentAdapterRegistry;
 }

@@ -76,6 +76,9 @@ export interface PrepareAndCommitMaintenanceWorkflowInput<
   managedWrites: MaintenanceWorkflowManagedWriteDraft[];
   outcome: MaintenanceWorkflowCommitOutcome;
   settingsHost: MaintenanceWorkflowSettingsHost<T>;
+  onWalPrepared?: (
+    prepared: LoadedMaintenanceWorkflowWal
+  ) => void | Promise<void>;
   faultInjector?: (
     point: MaintenanceWorkflowCoordinatorFaultPoint
   ) => void | Promise<void>;
@@ -171,6 +174,7 @@ export async function prepareAndCommitMaintenanceWorkflow<
     draft,
     managedWrites: input.managedWrites
   });
+  await input.onWalPrepared?.(prepared);
   await input.faultInjector?.("after-prepare");
   return await resumeMaintenanceWorkflow({
     handle: prepared.handle,

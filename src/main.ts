@@ -3,8 +3,9 @@ import type { CodexService, TurnOptions } from "./core/codex-service";
 import type { AgentBackendKind } from "./agent/types";
 import { AgentRuntimeHealthStore } from "./core/agent-runtime-health";
 import type { CodexRichAgentAdapterOptions } from "./harness/agents/adapters/codex-rich-adapter";
-import type { HarnessEventSink } from "./harness/contracts/event";
+import type { HarnessEvent, HarnessEventSink } from "./harness/contracts/event";
 import type { LocalRunCommitResult, NativeExecutionRecord } from "./harness/contracts/native-execution";
+import type { ConversationMessageAuthorityProbe, ConversationMessageAuthorityProof } from "./harness/conversation/conversation-store";
 import type { HarnessRunWithAdapterInput } from "./harness/kernel/harness-kernel";
 import type { AppendRunEventInput, SettleRunTerminalInput } from "./harness/kernel/run-orchestrator";
 import type { NativeCleanupResult, SettleNativeExecutionInput } from "./harness/native/native-execution-manager";
@@ -22,20 +23,15 @@ import type { AgentBackendMode, ChatMessage, CodexForObsidianSettings, Knowledge
 import type { CodexNotification, CodexSkill, CodexStatusSnapshot, UserInput } from "./types/app-server";
 import type { CodexView } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
-import { EchoInkConnectionService } from "./plugin/connection-service";
+import { EchoInkConnectionService, type HermesConnectionTestResult } from "./plugin/connection-service";
 import { EchoInkSettingsStore, type InterruptedRunRecoveryOptions, type SettingsSaveOptions } from "./plugin/settings-store";
 import { EchoInkViewService } from "./plugin/view-service";
-import { EchoInkHarnessService } from "./plugin/harness-service";
+import { EchoInkHarnessService, type CommitChatSurfaceTerminalOptions } from "./plugin/harness-service";
+import type { NativeStartupReconciliationOptions, NativeStartupReconciliationResult } from "./plugin/native-startup-reconciliation";
+import { ensureEchoInkSessionContextIdentity, rotateEchoInkSessionContext, type EchoInkSessionContextRotationOptions, type EchoInkSessionContextRotationResult, type EchoInkSessionContextWorkspace } from "./plugin/session-context-lifecycle";
+import { commitEchoInkConversationRecordMutation, previewEchoInkConversationRecordMutation, type ConversationRecordMutationDisposition, type ConversationRecordMutationPreview, type ConversationRecordMutationReceipt } from "./plugin/conversation-record-mutation-lifecycle";
 import type { MemoryStoreStatus, CodexMemoryImportResult, CodexMemoryMigrationPreview, InitializeEchoInkMemoryResult } from "./harness/memory/file-memory";
 import type { MemorySyncResult } from "./harness/memory/v2-engine";
-
-export interface HermesConnectionTestResult {
-  connected: boolean;
-  providerConfigured: boolean;
-  message: string;
-  version: string;
-}
-
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
@@ -79,7 +75,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   async openCodexSetup(options: { autoRepair?: boolean } = {}): Promise<void> { return this.getViewService().openCodexSetup(options); }
   async openAgentSetup(options: { backend: AgentBackendMode; autoRepair?: boolean }): Promise<void> { return this.getViewService().openAgentSetup(options); }
   async openReviewHtmlPreview(relativePath: string): Promise<void> { return this.getViewService().openReviewHtmlPreview(relativePath); }
-
   async ensureCodexConnected(force = false, options: { silent?: boolean; refreshLogin?: boolean } = {}): Promise<CodexStatusSnapshot> {
     return this.getConnectionService().ensureCodexConnected(force, options);
   }
@@ -97,11 +92,19 @@ export default class CodexForObsidianPlugin extends Plugin {
   async testHermesConnection(options: { notify?: boolean; signal?: AbortSignal } = {}): Promise<HermesConnectionTestResult> {
     return this.getConnectionService().testHermesConnection(options);
   }
-
   async runHarnessWithAdapter(input: HarnessRunWithAdapterInput) { return await this.getHarnessService().runWithAdapter(input); }
-  async settleHarnessRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<void> { return await this.getHarnessService().settleRunTerminal(input, sink); }
+  async settleHarnessRunTerminal(input: SettleRunTerminalInput, sink?: HarnessEventSink): Promise<HarnessEvent> {
+    return await this.getHarnessService().settleRunTerminal(input, sink);
+  }
+  async commitChatSurfaceTerminal(
+    input: SettleRunTerminalInput,
+    options?: CommitChatSurfaceTerminalOptions
+  ): Promise<void> {
+    await this.getHarnessService().commitChatSurfaceTerminal(input, options);
+  }
   async appendHarnessRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink) { return await this.getHarnessService().appendRunEvent(input, sink); }
   async cancelHarnessRun(runId: string): Promise<void> { return await this.getHarnessService().cancelRun(runId); }
+  async migrateEchoInkConversationStoreToV2() { const settingsStore = this.getSettingsStore(); return await this.getHarnessService().migrateConversationStoreToV2({ withMigrationPersistenceQuietWindow: async <T>(quietWindowId: string, action: () => Promise<T>): Promise<T> => await settingsStore.withMigrationPersistenceQuietWindow(quietWindowId, action) }); }
   async getEchoInkMemoryStatus(): Promise<MemoryStoreStatus> { return await this.getHarnessService().getMemoryStatus(); }
   async initializeEchoInkMemory(): Promise<InitializeEchoInkMemoryResult> { return await this.getHarnessService().initializeMemory(); }
   async syncEchoInkMemoryNow(): Promise<MemorySyncResult> { return await this.getHarnessService().syncMemoryNow(); }
@@ -117,9 +120,18 @@ export default class CodexForObsidianPlugin extends Plugin {
   async recordNativeExecution(record: NativeExecutionRecord): Promise<void> { return await this.getHarnessService().recordNativeExecution(record); }
   async settleNativeExecution(input: SettleNativeExecutionInput): Promise<NativeExecutionRecord | null> { return await this.getHarnessService().settleNativeExecution(input); }
   async cleanupDueNativeExecutions(limit = 20): Promise<NativeCleanupResult[]> { return await this.getHarnessService().cleanupDueNativeExecutions(limit); }
+  async cleanupNativeExecutionRecord(recordId: string): Promise<NativeCleanupResult> { return await this.getHarnessService().cleanupNativeExecutionRecord(recordId); }
+  async reconcileNativeExecutionsAtStartup(options: NativeStartupReconciliationOptions = {}): Promise<NativeStartupReconciliationResult> { const settingsStore = this.getSettingsStore(); return await this.getHarnessService().reconcileNativeExecutionStartup(async (probe) => await settingsStore.proveConversationSessionContextAuthority(probe), options, { recoverPendingRecordMutations: async () => await settingsStore.reconcileSessionContextRecordMutationsAtStartup(), recoverStartedRawGcQuarantines: async () => await settingsStore.recoverStartedRawGcQuarantines(), readRecordMutationAuthority: async (mutationId) => await settingsStore.readRecordMutationAuthority(mutationId) }); }
+  registerEchoInkPristineConversationSession(session: StoredSession): void { this.getSettingsStore().registerPristineConversationSession(session); }
+  async ensureEchoInkConversationSessionCreated(session: StoredSession): Promise<void> { return await this.getSettingsStore().ensureConversationSessionCreated(session); }
+  async ensureEchoInkSessionContextIdentity(session: StoredSession, workspace: EchoInkSessionContextWorkspace): Promise<EchoInkSessionContextRotationResult | null> { return await ensureEchoInkSessionContextIdentity(this.getHarnessService(), this.getSettingsStore(), session, workspace); }
+  async rotateEchoInkSessionContext(session: StoredSession, options: EchoInkSessionContextRotationOptions): Promise<EchoInkSessionContextRotationResult> { return await rotateEchoInkSessionContext(this.getHarnessService(), this.getSettingsStore(), session, options); }
   async enforceNativeSessionLeaseLimits(): Promise<NativeSessionLeaseCleanupExecutionResult[]> { return await this.getHarnessService().enforceNativeSessionLeaseLimits(); }
-  async commitEchoInkSessionDeletion(session: StoredSession): Promise<NativeCleanupResult[]> { return await this.getHarnessService().commitEchoInkSessionDeletion(session); }
-  async resetEchoInkSessionNativeCache(session: StoredSession): Promise<NativeCleanupResult[]> { return await this.getHarnessService().resetEchoInkSessionNativeCache(session); }
+  async previewEchoInkSessionDeletion(session: StoredSession): Promise<ConversationRecordMutationPreview> { return await previewEchoInkConversationRecordMutation(this, session, "delete-conversation"); }
+  async previewEchoInkConversationRecordClear(session: StoredSession): Promise<ConversationRecordMutationPreview> { return await previewEchoInkConversationRecordMutation(this, session, "clear-conversation-records"); }
+  async commitEchoInkSessionDeletion(session: StoredSession, disposition: ConversationRecordMutationDisposition): Promise<ConversationRecordMutationReceipt> { return await commitEchoInkConversationRecordMutation({ plugin: this, settingsStore: this.getSettingsStore(), harnessService: this.getHarnessService(), session, operation: "delete-conversation", disposition }); }
+  async clearEchoInkConversationRecords(session: StoredSession, disposition: ConversationRecordMutationDisposition): Promise<ConversationRecordMutationReceipt> { return await commitEchoInkConversationRecordMutation({ plugin: this, settingsStore: this.getSettingsStore(), harnessService: this.getHarnessService(), session, operation: "clear-conversation-records", disposition }); }
+  async previewRawGcQuarantine() { return await this.getSettingsStore().previewRawGcQuarantine(); } async beginRawGcQuarantine(input: { transactionId: string; expectedPreviewDigest: string; selectedSubjectRefs: readonly string[]; confirmedAt: number }) { return await this.getSettingsStore().beginRawGcQuarantine(input); } async authorizeAndPurgeRawGcQuarantine(transactionId: string) { return await this.getSettingsStore().authorizeAndPurgeRawGcQuarantine(transactionId); }
   async failPendingNativeExecutionsForRecovery(input: { reason: string; surface?: string; sessionId?: string }): Promise<number> { return await this.getHarnessService().failPendingNativeExecutionsForRecovery(input); }
   createCodexRichAgentAdapter(options: Omit<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread"> & Partial<Pick<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread">>) { return this.getHarnessService().createCodexRichAgentAdapter(options); }
   hasCodexHarnessTransport(): boolean { return Boolean(this.codex); }
@@ -133,23 +145,18 @@ export default class CodexForObsidianPlugin extends Plugin {
   async refreshCodexHarnessMcpStatus() { if (!this.codex) throw new Error("Codex 未连接"); return await this.codex.refreshMcpStatus(); }
   async startCodexHarnessMcpOAuth(serverName: string) { return await this.codex?.startMcpOAuth(serverName) ?? null; }
   async buildRuntimeEchoInkResourceCatalog(): Promise<EchoInkResource[]> { return await this.getHarnessService().buildRuntimeEchoInkResourceCatalog(); }
-
-  getVaultPath(): string {
-    const adapter = this.app.vault.adapter as { basePath?: string; path?: string };
-    return adapter.basePath || adapter.path || "";
-  }
-
-  getPluginDataDirName(): string {
-    const dir = (this.manifest as { dir?: unknown }).dir;
-    return typeof dir === "string" && dir.trim() ? dir : this.manifest.id;
-  }
-
+  getVaultPath(): string { const adapter = this.app.vault.adapter as { basePath?: string; path?: string }; return adapter.basePath || adapter.path || ""; }
+  getPluginDataDirName(): string { const dir = (this.manifest as { dir?: unknown }).dir; return typeof dir === "string" && dir.trim() ? dir : this.manifest.id; }
   async loadSettings(): Promise<void> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
   getKnowledgeBaseWorkflowSettingsHost(): MaintenanceWorkflowSettingsHost<KnowledgeBaseSettings> { return this.getSettingsStore(); }
   getKnowledgeBaseWorkflowStorageRoot(vaultPath = this.getVaultPath()): string { return maintenanceWorkflowStorageRootForVault(vaultPath); }
   async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> { return await this.getSettingsStore().commitKnowledgeRunDurably(); }
-  async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }
+  async readEchoInkConversationSession(sessionId: string): Promise<StoredSession | null> { return await this.getSettingsStore().readConversationSession(sessionId); }
+  async proveEchoInkConversationMessageAuthority(probe: ConversationMessageAuthorityProbe): Promise<ConversationMessageAuthorityProof> { return await this.getSettingsStore().proveConversationMessageAuthority(probe); }
+  async withEchoInkConversationMutation<R>(conversationId: string, action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withConversationMutation(conversationId, action); }
+  async withEchoInkSettingsPersistenceAuthorityGate<R>(action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withSettingsPersistenceAuthorityGate(action); }
+  poisonEchoInkSettingsPersistenceForRecovery(message: string): void { this.getSettingsStore().poisonSettingsPersistenceForRecovery(message); }
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> { return this.getSettingsStore().readKnowledgeBaseHistoryIndex(); }
@@ -162,36 +169,29 @@ export default class CodexForObsidianPlugin extends Plugin {
   async removeKnowledgeBaseHistoryDays(dates: string[]): Promise<KnowledgeBaseHistoryRemovalResult> { return this.getSettingsStore().removeKnowledgeBaseHistoryDays(dates); }
   async pruneKnowledgeBaseHistoryByRetention(): Promise<KnowledgeBaseHistoryRemovalResult> { return this.getSettingsStore().pruneKnowledgeBaseHistoryByRetention(); }
   async runDeferredStartupMaintenance(): Promise<void> { return this.getSettingsStore().runDeferredStartupMaintenance(); }
-
   async archivePendingKnowledgeBaseThreads(): Promise<number> {
     return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0;
   }
   async settlePendingKnowledgeBaseNativeExecutions(): Promise<number> { return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0; }
-  getKnowledgeBaseManager(): KnowledgeBaseManager | null { return this.knowledgeBase; }
-  getReviewManager(): ReviewManager | null { return this.review; }
+  getKnowledgeBaseManager(): KnowledgeBaseManager | null { return this.knowledgeBase; } getReviewManager(): ReviewManager | null { return this.review; }
   getEditorActions(): EditorActionController | null { return this.editorActions; }
-
   private handleCodexNotification(notification: CodexNotification): void {
     if (notification.method === "error") this.agentRuntimeHealth.reportFailure("codex-cli", notification.params, { source: "codex-notification" });
     if (this.getHarnessService().handleCodexNotification(notification)) return;
     this.getCodexView()?.handleCodexNotification(notification);
   }
-
   private getConnectionService(): EchoInkConnectionService {
     if (!this.connectionService) this.connectionService = new EchoInkConnectionService(this, (notification) => this.handleCodexNotification(notification));
     return this.connectionService;
   }
-
   private getSettingsStore(): EchoInkSettingsStore {
     if (!this.settingsStore) this.settingsStore = new EchoInkSettingsStore(this);
     return this.settingsStore;
   }
-
   private getViewService(): EchoInkViewService {
     if (!this.viewService) this.viewService = new EchoInkViewService(this);
     return this.viewService;
   }
-
   private getHarnessService(): EchoInkHarnessService {
     if (!this.harnessService) this.harnessService = new EchoInkHarnessService(this);
     return this.harnessService;

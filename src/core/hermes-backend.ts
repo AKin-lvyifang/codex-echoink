@@ -1,5 +1,15 @@
 import { execFile } from "child_process";
-import type { AgentBackend, AgentConnectionStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions, AgentTaskInput, AgentTaskResult } from "../agent/types";
+import {
+  NativeRunRegistrationError,
+  type AgentBackend,
+  type AgentConnectionStatus,
+  type AgentModelInfo,
+  type AgentProfileInfo,
+  type AgentPromptOptions,
+  type AgentSessionOptions,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "../agent/types";
 import { swallowError } from "./error-handling";
 import { formatHermesError } from "./hermes-errors";
 import { isSyntheticHermesDefaultModel, normalizeHermesServerUrl, parseHermesVersion, resolveHermesCommand } from "./hermes-models";
@@ -164,6 +174,9 @@ export class HermesBackend implements AgentBackend {
     const prompt = buildHermesPrompt(input);
     const profile = input.profile?.trim() || this.options.profile.trim();
     if (this.options.serverUrl.trim()) {
+      if (input.requireNativeRegistrationBeforePrompt) {
+        throw new Error("Hermes HTTP run 会在返回 run_id 前提交 Prompt，无法满足 Native 提前登记边界；请使用 ACP 或 CLI transport。");
+      }
       throwIfAborted(input.abortSignal);
       const run = await this.fetchJson(`${this.connectionInfo.serverUrl || normalizeHermesServerUrl(this.options.serverUrl, this.options.hostname, this.options.port)}/runs`, {
         method: "POST",
@@ -180,13 +193,20 @@ export class HermesBackend implements AgentBackend {
       });
       const runId = String(run?.run_id ?? run?.id ?? "");
       if (!runId) throw new Error(formatHermesError("Hermes API 未返回 run_id"));
-      input.onRunId?.(runId);
-      const result = await this.pollRun(runId, input.timeoutMs ?? 20 * 60 * 1000, input.abortSignal);
+      await input.onRunId?.(runId);
+      const rawResult: unknown = await this.pollRun(runId, input.timeoutMs ?? 20 * 60 * 1000, input.abortSignal);
+      const result = hermesRecord(rawResult);
+      const usage = hermesRecord(result?.usage);
       return {
-        text: String(result?.output ?? result?.final_response ?? result?.result ?? ""),
+        text: firstHermesText(result?.output, result?.final_response, result?.result),
         runId,
-        usage: result?.usage
+        ...(usage ? { usage } : {})
       };
+    }
+    if (input.requireNativeRegistrationBeforePrompt) {
+      throw new NativeRunRegistrationError(
+        "Hermes CLI 无法在 Prompt 前提供 backend-owned Native execution ID；禁止使用本地合成 ID 通过耐久登记边界，请使用 ACP transport。"
+      );
     }
     const command = resolveHermesCommand(this.options.cliPath, { exists: this.options.commandExists });
     const promptOnly = Boolean(input.system?.trim());
@@ -201,7 +221,7 @@ export class HermesBackend implements AgentBackend {
     if (useConfiguredModel && providerId) args.push("--provider", providerId);
     if (useConfiguredModel && modelId) args.push("--model", modelId);
     const localRunId = `hermes-cli-${Date.now()}`;
-    input.onRunId?.(localRunId);
+    await input.onRunId?.(localRunId);
     const env = input.system?.trim()
       ? { HERMES_EPHEMERAL_SYSTEM_PROMPT: input.system.trim(), HERMES_IGNORE_RULES: "1" }
       : undefined;
@@ -344,6 +364,28 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
     timeout = setTimeout(finish, ms);
     if (signal) signal.addEventListener("abort", finish, { once: true });
   });
+}
+
+function hermesRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function firstHermesText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (value !== null && value !== undefined) {
+      try {
+        const serialized = JSON.stringify(value);
+        if (serialized) return serialized;
+      } catch {
+        // Ignore non-serializable transport values and try the next field.
+      }
+    }
+  }
+  return "";
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

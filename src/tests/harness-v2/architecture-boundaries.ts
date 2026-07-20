@@ -14,6 +14,158 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertEditorSurfaceRemovesLegacyRawWaiters();
   await assertCodexViewRemovesLegacyRawRenderers();
   await assertChatSurfaceRemovesInlineAssistantBranch();
+  await assertDestructiveTrashEffectsStayBehindCoordinator();
+  await assertProductionRecordMutationRecoveryUsesRunner();
+  await assertSourceDeletionParticipantsStayBehindRecoveryRunner();
+  await assertLiveContextMutationJournalKeepsAuthorityChain();
+  await assertRunRetentionUsesProductionRecoveryEvidenceAuthority();
+  await assertReverseStoreActivationUsesValidatedCoordinator();
+  await assertProductionConversationStoreUsesManifestRoute();
+}
+
+async function assertProductionConversationStoreUsesManifestRoute():
+Promise<void> {
+  const [settingsStore, router] = await Promise.all([
+    readSource("src/plugin/settings-store.ts"),
+    readSource("src/plugin/conversation-store-router.ts")
+  ]);
+  assert.doesNotMatch(
+    settingsStore,
+    /new FileConversationStore\s*\(/,
+    "production settings must not bypass the selected Conversation route"
+  );
+  assert.match(
+    settingsStore,
+    /new FileConversationStoreRouter\s*\(/
+  );
+  assert.match(
+    router,
+    /resolveConversationStoreSelection\([\s\S]*selection\.activeStore === "v2"[\s\S]*FileConversationStoreV2LiveAdapter/,
+    "V2 active must route readers and writers through the complete live adapter"
+  );
+}
+
+async function assertReverseStoreActivationUsesValidatedCoordinator():
+Promise<void> {
+  const directTransitionCallers: string[] = [];
+  for (const file of await productionTypeScriptSources()) {
+    if (
+      file.relativePath
+        === "src/harness/conversation/store-restore-manifest.ts"
+    ) {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (
+      /\badvanceConversationStoreRestoreManifestToActive\s*\(/.test(
+        source
+      )
+    ) {
+      directTransitionCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    directTransitionCallers,
+    ["src/harness/lifecycle/conversation-v1-exporter.ts"],
+    "reverse-active publication must stay behind the V1 restore coordinator"
+  );
+  const exporter = await readSource(
+    "src/harness/lifecycle/conversation-v1-exporter.ts"
+  );
+  const activation = sourceBetween(
+    exporter,
+    "export async function activateConversationStoreV1RestoreRoute(",
+    "\nexport function projectConversationCommitV2ToStoredSessionV1("
+  );
+  assert.match(
+    activation,
+    /inspectAndValidateConversationStoreV1Export\([\s\S]*validation\.report\.status !== "ready"[\s\S]*advanceConversationStoreRestoreManifestToActive\(/,
+    "the sole reverse-active coordinator must perform fresh full validation before transition"
+  );
+}
+
+async function assertRunRetentionUsesProductionRecoveryEvidenceAuthority():
+Promise<void> {
+  const [
+    evidence,
+    harnessService,
+    nativeStartup,
+    workflowWal,
+    artifactLifecycle,
+    destructiveLifecycle
+  ] = await Promise.all([
+    readSource(
+      "src/harness/ledger/run-record-retention-recovery-evidence.ts"
+    ),
+    readSource("src/plugin/harness-service.ts"),
+    readSource("src/plugin/native-startup-reconciliation.ts"),
+    readSource("src/harness/maintenance/workflow-wal.ts"),
+    readSource("src/harness/artifacts/artifact-lifecycle-store.ts"),
+    readSource("src/plugin/conversation-record-mutation-lifecycle.ts")
+  ]);
+  assert.match(
+    evidence,
+    /listMaintenanceWorkflowWals[\s\S]*listRecordMutationJournals[\s\S]*loadWorkflowArtifactLifecycleRecord/
+  );
+  assert.match(
+    evidence,
+    /withRecordMutationGlobalAuthority[\s\S]*store\.withMutation/
+  );
+  assert.match(
+    harnessService,
+    /recoverStartedRunRecordRetentions[\s\S]*createRunRecordRetentionRecoveryEvidenceAuthority[\s\S]*resolveRetirementRoots/
+  );
+  assert.match(
+    nativeStartup,
+    /recoverPendingHermesProposalLocalCommits[\s\S]*recoverStartedRunRecordRetentions[\s\S]*listAwaitingRetirements/
+  );
+  assert.match(workflowWal, /withRecordMutationGlobalAuthority/);
+  assert.match(artifactLifecycle, /withRecordMutationGlobalAuthority/);
+  assert.match(
+    destructiveLifecycle,
+    /withConversationMutation\([\s\S]*withRecordMutationGlobalAuthority/
+  );
+}
+
+async function assertLiveContextMutationJournalKeepsAuthorityChain():
+Promise<void> {
+  const [lifecycle, settingsStore, harnessService] = await Promise.all([
+    readSource("src/plugin/session-context-lifecycle.ts"),
+    readSource("src/plugin/settings-store.ts"),
+    readSource("src/plugin/harness-service.ts")
+  ]);
+  assert.match(
+    lifecycle,
+    /recordMutation:[\s\S]*stageSessionContextRecordMutation[\s\S]*settleSessionContextRecordMutation/
+  );
+  assert.match(
+    lifecycle,
+    /withConversationMutation\([\s\S]*session\.id,[\s\S]*rotate/
+  );
+  assert.match(
+    lifecycle,
+    /promoteNativeExecutionRetirements\([\s\S]*readRecordMutationAuthority/
+  );
+  assert.match(
+    settingsStore,
+    /assertConversationMutationAuthority\([\s\S]*runRecordMutationRecoveryUnderAuthority/
+  );
+  assert.match(
+    harnessService,
+    /Native retirement RecordMutation Journal is not committed/
+  );
+
+  const callers: string[] = [];
+  for (const file of await productionTypeScriptSources()) {
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\brunRecordMutationRecoveryUnderAuthority\s*\(/.test(source)) {
+      callers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(callers, [
+    "src/harness/lifecycle/record-mutation-recovery-runner.ts",
+    "src/plugin/settings-store.ts"
+  ]);
 }
 
 async function assertSingleHarnessCoreDefinitions(): Promise<void> {
@@ -39,6 +191,102 @@ async function assertChatSurfaceRemovesInlineAssistantBranch(): Promise<void> {
     readSource("src/harness/agents/backend-runtime-profile.ts")
   ]);
   assert.doesNotMatch(sources.join("\n"), /chatUsesInlineAssistant|harnessBackendUsesInlineAssistant|inlineAssistant/);
+}
+
+async function assertDestructiveTrashEffectsStayBehindCoordinator(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const finalizeCallers: string[] = [];
+  const restoreCallers: string[] = [];
+  for (const file of sources) {
+    if (file.relativePath === "src/harness/lifecycle/record-mutation-trash.ts") {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\bfinalizeRecordMutationTrash\s*\(/.test(source)) {
+      finalizeCallers.push(file.relativePath);
+    }
+    if (/\brestoreRecordMutationTrash\s*\(/.test(source)) {
+      restoreCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    finalizeCallers,
+    ["src/harness/lifecycle/record-mutation-coordinator.ts"],
+    "production source retirement must stay behind RecordMutation coordinator"
+  );
+  assert.deepEqual(
+    restoreCallers,
+    [
+      "src/harness/lifecycle/record-mutation-coordinator.ts",
+      "src/harness/lifecycle/record-mutation-recovery.ts"
+    ],
+    "production restore must stay behind coordinator; only temp-fixture recovery may bypass"
+  );
+  const fixtureRecovery = await readSource(
+    "src/harness/lifecycle/record-mutation-recovery.ts"
+  );
+  assert.match(
+    fixtureRecovery,
+    /fixtureOnly:\s*true/,
+    "the sole restore bypass must remain fixture-only"
+  );
+  assert.match(
+    fixtureRecovery,
+    /assertTemporaryFixturePath/,
+    "the sole restore bypass must remain confined to temporary fixtures"
+  );
+}
+
+async function assertProductionRecordMutationRecoveryUsesRunner(): Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const decisionCallers: string[] = [];
+  for (const file of sources) {
+    if (file.relativePath === "src/harness/lifecycle/record-mutation-recovery.ts") {
+      const source = await readFile(file.absolutePath, "utf8");
+      const callCount = source.match(/\bdecideRecordMutationRecovery\s*\(/g)?.length ?? 0;
+      assert.equal(
+        callCount,
+        2,
+        "recovery module may contain only the pure definition and fixture-only caller"
+      );
+      decisionCallers.push(file.relativePath);
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (/\bdecideRecordMutationRecovery\s*\(/.test(source)) {
+      decisionCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    decisionCallers,
+    [
+      "src/harness/lifecycle/record-mutation-recovery-runner.ts",
+      "src/harness/lifecycle/record-mutation-recovery.ts"
+    ],
+    "production recovery decisions must be built by the evidence-inspecting runner"
+  );
+}
+
+async function assertSourceDeletionParticipantsStayBehindRecoveryRunner():
+Promise<void> {
+  const sources = await productionTypeScriptSources();
+  const callers: string[] = [];
+  const guardedCall = /\b(?:coordinateRecordMutationSourceParticipantForward|coordinateRecordMutationSourceParticipantRestore|reconcileRecordMutationSourceParticipantForward|verifyRecordMutationSourceParticipantForward|verifyRecordMutationSourceParticipantAborted)\s*\(/;
+  for (const file of sources) {
+    if (
+      file.relativePath
+        === "src/harness/lifecycle/record-mutation-source-participant.ts"
+    ) {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (guardedCall.test(source)) callers.push(file.relativePath);
+  }
+  assert.deepEqual(
+    callers,
+    ["src/harness/lifecycle/record-mutation-recovery-runner.ts"],
+    "Memory/Artifact source deletion effects must stay behind the production recovery runner"
+  );
 }
 
 export async function runHarnessV2CodexViewRawParserBoundaryTests(): Promise<void> {
@@ -122,12 +370,57 @@ async function assertKnowledgeDoesNotForkSessionContextCore(): Promise<void> {
 
   for (const relativePath of [
     "src/harness/kernel/context-compiler.ts",
-    "src/harness/kernel/session-service.ts",
-    "src/harness/conversation/conversation-store.ts"
+    "src/harness/kernel/session-service.ts"
   ]) {
     const source = await readFile(path.join(process.cwd(), relativePath), "utf8");
     assert.doesNotMatch(source, /knowledge-base|KnowledgeBase|\/maintain|Raw Digest|LLM-WIKI/);
   }
+
+  const conversationStore = await readSource(
+    "src/harness/conversation/conversation-store.ts"
+  );
+  assertConversationStoreDoesNotForkKnowledgeContext(conversationStore);
+  assert.throws(
+    () => assertConversationStoreDoesNotForkKnowledgeContext(`
+      function chooseContext(session: StoredSession) {
+        return session.kind === "knowledge-base" ? buildKnowledgeContext() : buildContext();
+      }
+    `),
+    "the architecture guard must reject a Knowledge-specific Context branch"
+  );
+}
+
+function assertConversationStoreDoesNotForkKnowledgeContext(source: string): void {
+  assert.doesNotMatch(
+    source,
+    /from\s+["'][^"']*\/knowledge-base(?:\/[^"']*)?["']/,
+    "Conversation Store must not depend on the Knowledge controller layer"
+  );
+  assert.doesNotMatch(
+    source,
+    /\b(?:KnowledgeContextBridge|KnowledgeBaseManager|KnowledgeBaseHistoryStore|buildKnowledgeContextBridgeForThread|appendKnowledgeContextBridge|buildKnowledgeBasePrompt|handleKnowledgeBaseUserMessage|ensureKnowledgeBaseSession|isKnowledgeBaseSession)\b/,
+    "Conversation Store must not own Knowledge-specific Context behavior"
+  );
+  assert.doesNotMatch(
+    source,
+    /\b(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind\s*(?:===|!==)\s*["']knowledge-base["']/,
+    "Conversation Store must not branch Context behavior by Knowledge session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /["']knowledge-base["']\s*(?:===|!==)\s*\b(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind/,
+    "Conversation Store must not reverse-branch Context behavior by Knowledge session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /\bswitch\s*\(\s*(?:session|conversation|metadata|candidate|before|currentSession|storedSession)\??\.kind\s*\)/,
+    "Conversation Store must not switch Context behavior by session kind"
+  );
+  assert.doesNotMatch(
+    source,
+    /\/maintain|Raw Digest|LLM-WIKI/,
+    "Conversation Store must not embed Knowledge workflow or prompt rules"
+  );
 }
 
 async function assertKnowledgeControllersUseAgentBoundary(): Promise<void> {

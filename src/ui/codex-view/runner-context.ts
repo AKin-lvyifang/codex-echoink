@@ -3,6 +3,7 @@ import type CodexForObsidianPlugin from "../../main";
 import type { CodexErrorDiagnostic } from "../../core/codex-diagnostics";
 import type { TurnOptions } from "../../core/codex-service";
 import type { EditorActionStatusView } from "../../editor-actions/types";
+import type { HarnessAgentAdapterBuilder } from "../../harness/agents/adapter-factory";
 import type { EchoInkResource } from "../../resources/types";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
 import type { ComposerPrimaryActionState } from "../composer-state";
@@ -24,6 +25,15 @@ export interface MessageRenderFollowContext {
   messagesBottomFollowPaused: boolean;
 }
 
+export interface CodexViewLifecycleSnapshot {
+  generation: number;
+  signal: AbortSignal;
+}
+
+export interface CodexViewLifecycleContext {
+  captureViewLifecycle(): CodexViewLifecycleSnapshot;
+}
+
 export interface CodexViewRunnerBaseContext {
   readonly app: App;
   readonly plugin: CodexForObsidianPlugin;
@@ -32,6 +42,7 @@ export interface CodexViewRunnerBaseContext {
   activeRunKind: RunnerRunKind;
   activeRunSessionId: string;
   activeTurnId: string;
+  activeRunNativeExecutionRecordIds?: string[];
   applyStatus(): void;
   armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void;
   clearTurnWatchdog(): void;
@@ -47,14 +58,14 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   readonly inputEl: HTMLTextAreaElement;
   readonly attachments: StoredAttachment[];
   readonly selectedSkill: EchoInkResource | null;
-  readonly threadPrewarmPromise: Promise<boolean> | null;
-  readonly threadPrewarmSessionId: string;
   ensureSession(): StoredSession;
   composerStateForSession(session: StoredSession): ComposerPrimaryActionState;
   enqueueComposerDraft(): Promise<void>;
   resumeQueuedTurns(sessionId: string): Promise<void>;
+  recoverSessionLifecycle(sessionId: string): Promise<void>;
   stopTurn(): Promise<void>;
   pauseQueueForSession(sessionId: string): void;
+  requireQueueRecoveryForSession(sessionId: string): void;
   createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null>;
   startQueuedTurnItem(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
   startQueuedTurnItemSafely(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
@@ -85,7 +96,13 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   refreshKnowledgeDashboard(force?: boolean): Promise<void>;
 }
 
-export interface CodexViewEditorActionContext extends CodexViewRunnerBaseContext {
+export interface CodexViewEditorActionContext
+  extends CodexViewRunnerBaseContext, CodexViewLifecycleContext {
+  /**
+   * Narrow test seam for the Editor product entry. Production callers omit it
+   * and continue to use createHarnessAgentAdapter.
+   */
+  createEditorActionHarnessAdapter?: HarnessAgentAdapterBuilder;
   editorActionHarnessRunId: string;
   editorActionActiveTimeoutMs: number;
   editorActionThreadId: string;
@@ -94,15 +111,15 @@ export interface CodexViewEditorActionContext extends CodexViewRunnerBaseContext
   editorActionStartBlockReason(): string | null;
   setEditorActionStatus(status: EditorActionStatusView): void;
   withEditorActionTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T>;
-  prewarmEditorActionThread(): void;
   effectiveEditorActionModel(availableModels?: string[], configuredModel?: string): string;
   takeEditorActionThread(turnOptions: TurnOptions): Promise<string>;
+  cleanupNativeExecutionRecord(recordId: string): Promise<void>;
   releaseEditorActionRunLock(runId: string): void;
   renderEditorActionStatus(): void;
   activeProviderModels(): string[];
 }
 
-export interface CodexViewPromptEnhanceContext {
+export interface CodexViewPromptEnhanceContext extends CodexViewLifecycleContext {
   readonly plugin: CodexForObsidianPlugin;
   readonly normalTaskRunning: boolean;
   readonly inputEl: HTMLTextAreaElement;

@@ -10,6 +10,11 @@ import {
 } from "../contracts/context";
 import type { HarnessUserInput, HarnessWorkflow } from "../contracts/run";
 import type { MemoryBundle } from "../memory/provider";
+import {
+  messagesInCurrentSessionContext,
+  sessionGeneration,
+  vaultProfileFingerprint
+} from "./session-service";
 
 export interface CompileContextBundleInput {
   runId?: string;
@@ -41,7 +46,13 @@ export function compileContextBundle(input: CompileContextBundleInput): ContextB
     required: true,
     sensitive: false
   }];
-  bundle.sessionContext = sessionContextSections(input.session, input.backendId, mode, input.cursor ?? null);
+  bundle.sessionContext = sessionContextSections(
+    input.session,
+    input.backendId,
+    mode,
+    input.cursor ?? null,
+    input.runId
+  );
   bundle.memoryContext = input.memory.sections;
   bundle.attachments = input.userInput.attachments.map((attachment) => ({ ...attachment }));
   bundle.manifest = buildContextManifest({
@@ -50,6 +61,7 @@ export function compileContextBundle(input: CompileContextBundleInput): ContextB
     backendId: input.backendId,
     mode,
     sessionRevision: input.sessionRevision ?? input.session.revision ?? 1,
+    sessionGeneration: sessionGeneration(input.session),
     now: input.now ?? Date.now(),
     bundle
   });
@@ -68,16 +80,23 @@ function workflowContractSection(workflow: HarnessWorkflow): ContextSection {
   };
 }
 
-function sessionContextSections(session: StoredSession, backendId: string, mode: ContextCompileMode, cursor: ContextSyncCursor | null): ContextSection[] {
+function sessionContextSections(
+  session: StoredSession,
+  backendId: string,
+  mode: ContextCompileMode,
+  cursor: ContextSyncCursor | null,
+  runId: string | undefined
+): ContextSection[] {
   if (mode === "workflow") return [];
 
   const sections: ContextSection[] = [];
-  const snapshot = session.contextSnapshot ?? legacySnapshotFromRollingSummary(session);
+  const currentMessages = contextMessagesExcludingCurrentRun(session, runId);
+  const snapshot = currentSessionSnapshot(session);
   if (snapshot && (mode === "bootstrap" || mode === "catch-up")) {
     sections.push(sessionSnapshotSection(snapshot));
   }
 
-  const messages = messagesForMode(session.messages, mode, cursor, snapshot?.summarizedThroughMessageId);
+  const messages = messagesForMode(currentMessages, mode, cursor, snapshot?.summarizedThroughMessageId);
   const recent = messages
     .map((message) => `${message.role}: ${compactMessageText(message.text)}`)
     .filter(Boolean)
@@ -95,6 +114,17 @@ function sessionContextSections(session: StoredSession, backendId: string, mode:
     });
   }
   return sections;
+}
+
+function currentSessionSnapshot(session: StoredSession): SessionContextSnapshot | null {
+  const snapshot = session.contextSnapshot;
+  if (snapshot) {
+    if (session.contextId && snapshot.contextId !== session.contextId) return null;
+    if (snapshot.generation && snapshot.generation !== sessionGeneration(session)) return null;
+    return snapshot;
+  }
+  if (session.contextId || session.contextStartsAfterMessageId) return null;
+  return legacySnapshotFromRollingSummary(session);
 }
 
 function sessionSnapshotSection(snapshot: SessionContextSnapshot): ContextSection {
@@ -124,6 +154,7 @@ function legacySnapshotFromRollingSummary(session: StoredSession): SessionContex
   if (!session.rollingSummary?.text) return null;
   return {
     sessionId: session.id,
+    generation: sessionGeneration(session),
     version: "legacy-rolling-summary",
     goal: "",
     currentState: "",
@@ -180,9 +211,11 @@ function buildContextManifest(input: {
   backendId: string;
   mode: ContextCompileMode;
   sessionRevision: number;
+  sessionGeneration: number;
   now: number;
   bundle: ContextBundle;
 }): ContextManifest {
+  const profileFingerprint = vaultProfileFingerprint(input.bundle.vaultProfile);
   const sections = [
     ...input.bundle.corePolicy,
     ...input.bundle.workflowContract,
@@ -205,13 +238,37 @@ function buildContextManifest(input: {
     backendId: input.backendId,
     mode: input.mode,
     sections,
-    compiledThroughMessageId: lastMessageId(input.session.messages),
+    compiledThroughMessageId: lastMessageId(
+      contextMessagesExcludingCurrentRun(input.session, input.runId)
+    ),
     sessionRevision: input.sessionRevision,
-    snapshotVersion: input.session.contextSnapshot?.version,
+    sessionGeneration: input.sessionGeneration,
+    ...(input.session.contextId ? { contextId: input.session.contextId } : {}),
+    ...(input.session.contextStartsAfterMessageId
+      ? { contextStartsAfterMessageId: input.session.contextStartsAfterMessageId }
+      : {}),
+    ...(input.session.commitId ? { commitId: input.session.commitId } : {}),
+    ...(input.session.workspaceFingerprint
+      ? { workspaceFingerprint: input.session.workspaceFingerprint }
+      : {}),
+    ...(profileFingerprint
+      ? { vaultProfileFingerprint: profileFingerprint }
+      : {}),
+    snapshotVersion: currentSessionSnapshot(input.session)?.version,
     createdAt: input.now
   };
 }
 
 function lastMessageId(messages: ChatMessage[]): string | undefined {
   return messages.length ? messages[messages.length - 1].id : undefined;
+}
+
+function contextMessagesExcludingCurrentRun(
+  session: StoredSession,
+  runId: string | undefined
+): ChatMessage[] {
+  const normalizedRunId = runId?.trim();
+  const messages = messagesInCurrentSessionContext(session);
+  if (!normalizedRunId) return messages;
+  return messages.filter((message) => message.runId?.trim() !== normalizedRunId);
 }

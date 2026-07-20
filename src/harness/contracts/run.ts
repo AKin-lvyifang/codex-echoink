@@ -1,10 +1,11 @@
 import type { ContextManifest, ContextSection, ContextSyncCursor } from "./context";
 import type { NativeExecutionKind, NativeExecutionRef, NativeSessionLease } from "./native-execution";
 
-export type HarnessSurface = "chat" | "knowledge" | "editor" | "review";
+export type HarnessSurface = "chat" | "knowledge" | "editor" | "review" | "system";
 
 export type HarnessWorkflow =
   | "chat.generic"
+  | "backend.probe"
   | "prompt.enhance"
   | "knowledge.ask"
   | "knowledge.check"
@@ -100,6 +101,7 @@ export interface BackendSessionBinding {
   syncedSessionRevision: number;
   snapshotVersion?: string;
   contextCursor?: ContextSyncCursor;
+  workspaceFingerprint?: string;
   vaultProfileFingerprint?: string;
   lastUsedAt: number;
   capabilitySnapshot?: unknown;
@@ -110,6 +112,7 @@ export interface HarnessRunResult {
   status: "running" | "completed" | "failed" | "cancelled";
   outputText?: string;
   nativeExecution?: NativeExecutionRef;
+  nativeExecutionRecordIds?: string[];
   backendBinding?: BackendSessionBinding;
   contextManifest?: ContextManifest;
   effectiveModel?: {

@@ -114,6 +114,9 @@ import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime }
 import { buildActiveEchoInkResourceCatalog, buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
+import { FileConversationStore } from "../harness/conversation/conversation-store";
+import { workspaceFingerprint } from "../harness/kernel/session-service";
+import type { NativeExecutionRecord } from "../harness/contracts/native-execution";
 import { harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../harness/agents/backend-runtime-profile";
 import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../harness/memory/noop-provider";
@@ -227,6 +230,10 @@ import { shouldCloseComposerMenusForClick } from "../ui/composer-menu";
 import { composerIsBusy, composerPrimaryActionForRuntimeState, composerPrimaryActionForState } from "../ui/composer-state";
 import { CodexView, isKnowledgeDashboardHealthTooltipHoverPoint } from "../ui/codex-view";
 import { shouldShowComposerPlanIndicator } from "../ui/codex-view/composer";
+import {
+  pauseQueueForSession as pauseComposerQueueForSession,
+  requireQueueRecoveryForSession as requireComposerQueueRecoveryForSession
+} from "../ui/codex-view/composer-controller";
 import { positionAnchoredMenu, positionSubmenu } from "../ui/codex-view/floating-menu-position";
 import { CodexMessageListRenderer, knowledgeBaseMaintainExecutionItems, knowledgeBaseRunEventCopy, knowledgeBaseRunProgressState, knowledgeBaseRunProgressStateFromEvents, messageListVirtualHeight, scrollTopForMessageListBottom, shouldPinMessageListBottom } from "../ui/codex-view/message-list";
 import { MessageScrollFollowController } from "../ui/codex-view/message-scroll-follow";
@@ -279,6 +286,8 @@ import { runHarnessV2ContractTests } from "./harness-v2/contracts";
 import { runHarnessV2AdapterTests } from "./harness-v2/adapters";
 import { runHarnessV2ResourceTests } from "./harness-v2/resources";
 import { runHarnessV2ConversationStoreTests } from "./harness-v2/conversation-store";
+import { runHarnessV2ConversationStoreV2Tests } from "./harness-v2/conversation-store-v2";
+import { runHarnessV2ConversationStoreRouterTests } from "./harness-v2/conversation-store-router";
 import { runHarnessV2SessionContextTests } from "./harness-v2/session-context";
 import { runHarnessV2KnowledgePolicyProfileTests } from "./harness-v2/knowledge-policy-profile";
 import { runHarnessV2KnowledgeLedgerTests } from "./harness-v2/knowledge-ledger";
@@ -297,12 +306,41 @@ import { runMaintenanceAcceptanceTests } from "./harness-v2/maintenance-acceptan
 import { runHarnessV2MaintenanceActiveRunJournalTests } from "./harness-v2/maintenance-active-run-journal";
 import { runMaintenanceContentPlannerRegressionTests } from "./maintenance-content-planners-regression";
 import { runHarnessV2NativeExecutionTests } from "./harness-v2/native-execution";
+import { runHarnessV2NativeStartupReconciliationTests } from "./harness-v2/native-startup-reconciliation";
+import { runEphemeralUtilityNativeLifecycleTests } from "./harness-v2/ephemeral-utility-native-lifecycle";
 import { runHarnessV2KnowledgeAskLeaseTests } from "./harness-v2/knowledge-ask-lease";
 import { runHarnessV2KnowledgeTurnTests } from "./harness-v2/knowledge-turn";
 import { runHarnessV2AsyncRunSettlementTests } from "./harness-v2/async-run-settlement";
 import { runHarnessV2SurfaceRunSettlementTests } from "./harness-v2/surface-run-settlement";
 import { runHarnessV2ArchitectureBoundaryTests } from "./harness-v2/architecture-boundaries";
+import { runHarnessV2StorageInventoryTests } from "./harness-v2/storage-inventory";
+import { runHarnessV2RunRecordStoreTests } from "./harness-v2/run-record-store";
+import { runHarnessV2RunRecordRetentionTests } from "./harness-v2/run-record-retention";
+import { runHarnessV2ConversationRecordInventoryTests } from "./harness-v2/conversation-record-inventory";
+import { runHarnessV2RawGcQuarantineTests } from "./harness-v2/raw-gc-quarantine";
+import { runHarnessV2RecordMigrationValidatorTests } from "./harness-v2/record-migration-validator";
+import { runHarnessV2ConversationV1ExporterTests } from "./harness-v2/conversation-v1-exporter";
+import { runHarnessV2ConversationRecordMutationPlanTests } from "./harness-v2/conversation-record-mutation-plan";
+import { runHarnessV2ConversationRecordMutationLifecycleTests } from "./harness-v2/conversation-record-mutation-lifecycle";
+import { runHarnessV2RunRecordSourceDeletionTests } from "./harness-v2/run-record-source-deletion";
+import { runHarnessV2RecordMutationJournalTests } from "./harness-v2/record-mutation-journal";
+import { runHarnessV2RecordMutationExecutionPlanTests } from "./harness-v2/record-mutation-execution-plan";
+import { runHarnessV2RecordMutationExecutionRuntimeTests } from "./harness-v2/record-mutation-execution-runtime";
+import { runHarnessV2RecordMutationProductionTests } from "./harness-v2/record-mutation-production";
+import { runHarnessV2RecordMutationTrashTests } from "./harness-v2/record-mutation-trash";
+import { runHarnessV2RecordMutationCrashRecoveryTests } from "./harness-v2/record-mutation-crash-recovery";
+import { runHarnessV2RecordMutationCoordinatorTests } from "./harness-v2/record-mutation-coordinator";
+import { runHarnessV2RecordMutationRecoveryRunnerTests } from "./harness-v2/record-mutation-recovery-runner";
+import { runHarnessV2RecordMutationSourceBundleTests } from "./harness-v2/record-mutation-source-bundle";
+import { runHarnessV2RecordMutationSourceParticipantTests } from "./harness-v2/record-mutation-source-participant";
+import { runHarnessV2RecordRootRegistryTests } from "./harness-v2/record-root-registry";
+import { runHarnessV2HistoryProjectionRetentionTests } from "./harness-v2/history-projection-retention";
 import { runEditorActionControllerTests } from "./harness-v2/editor-action-controller";
+import { runHarnessV2EditorNativeLifecycleTests } from "./harness-v2/editor-native-lifecycle";
+import { runHarnessV2NativeSessionBindingReplacementTests } from "./harness-v2/native-session-binding-replacement";
+import { runHarnessV2ContextRotationTests } from "./harness-v2/context-rotation";
+import { runHarnessV2ContextNativeCrashRecoveryTests } from "./harness-v2/context-native-crash-recovery";
+import { runHarnessV2UiContextRotationTests } from "./harness-v2/ui-context-rotation";
 import { runPromptEnhancerHarnessTests } from "./harness-v2/prompt-enhancer";
 import { runHarnessV3ChatUiTests } from "./harness-v2/chat-ui";
 import { runOpenCodeRichRuntimeRegressionTests } from "./opencode-rich-runtime-regression";
@@ -324,7 +362,13 @@ import {
 } from "../harness/maintenance/workflow-wal";
 import { buildKnowledgeBaseMaintainReportPayload, buildKnowledgeBaseRunPayload, knowledgeBaseRunModeForCommandIntent } from "../knowledge-base/maintain-report-card";
 import { formatAgentTaskFailureContext, formatKnowledgeBaseCodexFailureSignal, isKnowledgeBaseCancelError } from "../knowledge-base/failure";
-import { buildCodexKnowledgeInput, buildOpenCodeKnowledgeParts, requiredModalities, selectOpenCodeModel } from "../knowledge-base/agent-runner";
+import {
+  buildCodexKnowledgeInput,
+  buildOpenCodeKnowledgeParts,
+  knowledgeRuntimeTimeoutWithGuardGrace,
+  requiredModalities,
+  selectOpenCodeModel
+} from "../knowledge-base/agent-runner";
 import { buildKnowledgeBaseAskPrompt, buildKnowledgeBasePrompt } from "../knowledge-base/prompt";
 import { applyRawDigestFrontmatter, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { classifyRawSnapshotChanges, contentFingerprint, diffRawSnapshot, fingerprintRawContentSnapshot, formatRawIntegrityError, isRawIntegrityErrorMessage, rawSnapshotChangeMessages, restoreRawSnapshot, snapshotRawFileContents } from "../knowledge-base/raw-integrity";
@@ -2436,6 +2480,18 @@ const setupCheckConnectionSource = settingsTabSource.slice(
   settingsTabSource.indexOf("private async connectOpenCodeAgent")
 );
 assert.match(setupCheckConnectionSource, /if \(!status\.connected \|\| status\.accountReadError\) throw new Error/);
+const openCodeConnectionCheckSource = settingsTabSource.slice(
+  settingsTabSource.indexOf("private async connectOpenCodeAgent"),
+  settingsTabSource.indexOf("private async connectHermesAgent")
+);
+assert.match(openCodeConnectionCheckSource, /runBackendProbe\(\{/);
+assert.match(openCodeConnectionCheckSource, /backendId: "opencode"/);
+assert.match(openCodeConnectionCheckSource, /expectedToken: "OPENCODE_PONG"/);
+assert.doesNotMatch(
+  openCodeConnectionCheckSource,
+  /backend\.runCliTask|backend\.sendPrompt|backend\.deleteSession/,
+  "OpenCode 设置连接探针必须由 Harness 统一登记和清理 Native execution"
+);
 assert.match(settingsTabSource, /private memoryStatusError: string \| null = null;/);
 assert.match(settingsTabSource, /!this\.memoryStatus && !this\.memoryStatusLoading && !this\.memoryStatusError/);
 assert.match(settingsTabSource, /this\.memoryStatusError = null;/);
@@ -2876,10 +2932,13 @@ const agentSwitchHost: any = {
   promptEnhancerRunning: false,
   plugin: {
     settings: agentSwitchSettings,
-    saveSettings: async (immediate: boolean) => agentSwitchCalls.push(`save:${immediate}`)
+    saveSettings: async (immediate: boolean) => agentSwitchCalls.push(`save:${immediate}`),
+    startCodexHarnessThread: async () => {
+      agentSwitchCalls.push("thread");
+      return { threadId: "unexpected-thread" };
+    }
   },
-  applyStatus: () => agentSwitchCalls.push(`status:${agentSwitchSettings.agentBackend}`),
-  prewarmActiveThread: () => agentSwitchCalls.push("prewarm")
+  applyStatus: () => agentSwitchCalls.push(`status:${agentSwitchSettings.agentBackend}`)
 };
 assert.equal(await selectAgentBackend(agentSwitchHost, "hermes"), true);
 assert.equal(agentSwitchSettings.agentBackend, "hermes");
@@ -2891,7 +2950,8 @@ assert.equal(agentSwitchSettings.agentBackend, "hermes");
 agentSwitchHost.running = false;
 assert.equal(await selectAgentBackend(agentSwitchHost, "codex-cli"), true);
 assert.equal(agentSwitchSettings.agentBackend, "codex-cli");
-assert.equal(agentSwitchCalls.at(-1), "prewarm");
+assert.deepEqual(agentSwitchCalls.slice(-2), ["status:codex-cli", "save:true"]);
+assert.equal(agentSwitchCalls.includes("thread"), false, "switching backend without a user Turn must not create a Codex thread");
 const agentEvents = makeAgentLifecycleEvents({
   backend: "hermes",
   runId: "run-1",
@@ -3235,6 +3295,32 @@ await selectedAbortRuntime.runTaskEvents({ prompt: "select fallback", timeoutMs:
 await selectedAbortRuntime.abort("fallback-selected");
 assert.equal(selectedRichAbortCalls, 1);
 assert.equal(selectedFallbackAbortCalls, 1);
+const rejectedSelectedAbortRuntime = createAgentEventRuntimeWithFallback({
+  ...fakeLifecycleRuntime,
+  async abort() {
+    throw new Error("fallback abort rejected");
+  }
+}, {
+  ...fakeLifecycleRuntime,
+  async runTaskStream() {
+    return { text: "rich", runId: "rich-rejected" };
+  },
+  async abort() {
+    throw new Error("rich abort rejected");
+  }
+});
+await rejectedSelectedAbortRuntime.runTaskEvents({ prompt: "select rich rejection" }, () => undefined);
+await assert.rejects(
+  rejectedSelectedAbortRuntime.abort("rich-rejected"),
+  /rich abort rejected/,
+  "runtime abort must propagate provider rejection so callers cannot forge an acknowledgement"
+);
+await rejectedSelectedAbortRuntime.runTaskEvents({ prompt: "select fallback rejection", timeoutMs: 10 }, () => undefined);
+await assert.rejects(
+  rejectedSelectedAbortRuntime.abort("fallback-rejected"),
+  /fallback abort rejected/,
+  "fallback abort must preserve the same acknowledgement contract"
+);
 let agentChatState = createAgentEventRenderState("hermes");
 agentChatState = reduceAgentEventForChat(agentChatState, { type: "connecting", backend: "hermes", createdAt: 1 });
 assert.equal(agentChatState.status, "running");
@@ -3871,6 +3957,35 @@ assert.equal(settingsCopy("en").general.settingsLanguage, "Settings language");
 assert.equal(settingsCopy("en").tabs.knowledgeBase, "Knowledge");
 assert.equal(settingsCopy("en").knowledge.dailyMaintenance, "Automatic maintenance");
 assert.equal(settingsCopy("en").knowledge.repairSummary("patched", DEFAULT_KNOWLEDGE_BASE_RULES_FILE), `Knowledge guide updated: ${DEFAULT_KNOWLEDGE_BASE_RULES_FILE}`);
+const zhKnowledgeRetentionCopy = settingsCopy("zh-CN").knowledge.retentionDaysDesc;
+assert.match(zhKnowledgeRetentionCopy, /知识库历史投影/);
+assert.match(zhKnowledgeRetentionCopy, /Codex thread 归档/);
+assert.match(zhKnowledgeRetentionCopy, /OpenCode session 删除/);
+assert.match(zhKnowledgeRetentionCopy, /Hermes 当前不支持自动清理/);
+assert.doesNotMatch(zhKnowledgeRetentionCopy, /不删除 Codex/);
+const enKnowledgeRetentionCopy = settingsCopy("en").knowledge.retentionDaysDesc;
+assert.match(enKnowledgeRetentionCopy, /Knowledge History projection/);
+assert.match(enKnowledgeRetentionCopy, /Codex threads are archived/);
+assert.match(enKnowledgeRetentionCopy, /OpenCode sessions are deleted/);
+assert.match(enKnowledgeRetentionCopy, /Hermes cleanup is currently unsupported/);
+assert.match(settingsCopy("zh-CN").knowledge.clearHistoryConfirm, /知识库历史投影/);
+assert.match(settingsCopy("en").knowledge.clearHistoryConfirm, /Knowledge History projection/);
+assert.equal(
+  settingsCopy("zh-CN").knowledge.commandGuide.find((item) => item.command === "/clear")?.description,
+  "开启新上下文，保留历史记录"
+);
+assert.equal(
+  settingsCopy("en").knowledge.commandGuide.find((item) => item.command === "/clear")?.description,
+  "Start a new context and keep history"
+);
+assert.equal(
+  settingsCopy("zh-CN").knowledge.deleteHistoryDatePrompt,
+  "输入日期或范围，例如 2026-06-02、2026-06-01..2026-06-07。仅删除对应日期的 EchoInk 知识库历史投影；Conversation、业务产物和长期记忆会保留。"
+);
+assert.equal(
+  settingsCopy("en").knowledge.deleteHistoryDatePrompt,
+  "Enter a date or range, for example 2026-06-02 or 2026-06-01..2026-06-07. Only the selected dates are deleted from EchoInk's Knowledge History projection; Conversations, workflow artifacts, and long-term memory are kept."
+);
 assert.deepEqual(
   getKnowledgeBaseRulesFileChoices([DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "docs/kb-rules.md", "raw/source.pdf", "CLAUDE.md", "/AGENTS.md", "../bad.md", "docs/kb-rules.md", "notes/todo.txt"]),
   [DEFAULT_KNOWLEDGE_BASE_RULES_FILE, "AGENTS.md", "CLAUDE.md", "docs/kb-rules.md"]
@@ -3948,7 +4063,12 @@ assert.equal(sessionSettings.activeSessionId, "chat-1");
 assert.equal(sessionSettings.sessions[0].id, "kb-fixed");
 assert.equal(isKnowledgeBaseSession(kbSession), true);
 assert.equal(ensureKnowledgeBaseSession(sessionSettings, "/vault-next", () => "kb-new").id, "kb-fixed");
-assert.equal(kbSession.cwd, "/vault-next");
+assert.equal(
+  kbSession.cwd,
+  "/vault",
+  "existing durable workspace identity must change only through Context Rotation"
+);
+assert.match(kbSession.workspaceFingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
 assert.equal(clearLegacyChatWorkspaceDefaults(sessionSettings, "/vault", 21), 0);
 
 const legacyWorkspaceSettings = normalizeSettingsData({
@@ -4599,6 +4719,53 @@ assert.equal(settlementQueue.isSessionQueuePaused("s2"), true);
 assert.equal(settlementQueue.dequeueNext("s2"), null);
 settlementQueue.resumeSessionQueue("s2");
 assert.equal(settlementQueue.dequeueNext("s2")?.id, "settle-b");
+const commitFailureQueue = new RuntimeTurnQueue();
+let commitFailureQueueRenderCount = 0;
+pauseComposerQueueForSession({
+  turnQueue: commitFailureQueue,
+  renderQueue: () => {
+    commitFailureQueueRenderCount += 1;
+  },
+  renderToolbar: () => {
+    commitFailureQueueRenderCount += 1;
+  }
+} as any, "commit-failure-session");
+assert.equal(
+  commitFailureQueue.isSessionQueuePaused("commit-failure-session"),
+  false,
+  "ordinary pause must not create an empty queue state"
+);
+assert.equal(commitFailureQueueRenderCount, 0);
+requireComposerQueueRecoveryForSession({
+  turnQueue: commitFailureQueue,
+  renderQueue: () => {
+    commitFailureQueueRenderCount += 1;
+  },
+  renderToolbar: () => {
+    commitFailureQueueRenderCount += 1;
+  }
+} as any, "commit-failure-session");
+assert.equal(commitFailureQueue.isSessionRecoveryRequired("commit-failure-session"), true);
+commitFailureQueue.enqueue(queuedTurn(
+  "commit-failure-next",
+  "commit-failure-session",
+  "must remain blocked"
+));
+assert.equal(
+  commitFailureQueue.dequeueNext("commit-failure-session"),
+  null,
+  "future queued turns must remain blocked until recovery explicitly resumes the queue"
+);
+commitFailureQueue.resumeSessionQueue("commit-failure-session");
+assert.equal(
+  commitFailureQueue.dequeueNext("commit-failure-session"),
+  null,
+  "ordinary Resume must not clear a recovery-required gate"
+);
+assert.equal(commitFailureQueueRenderCount, 2);
+commitFailureQueue.clearSessionRecoveryRequired("commit-failure-session");
+assert.equal(commitFailureQueue.isSessionRecoveryRequired("commit-failure-session"), false);
+assert.equal(commitFailureQueue.dequeueNext("commit-failure-session")?.id, "commit-failure-next");
 const throwingQueueViewQueue = new RuntimeTurnQueue();
 throwingQueueViewQueue.enqueue(queuedTurn("throw-a", "throw-session", "failing queued turn"));
 throwingQueueViewQueue.enqueue(queuedTurn("throw-b", "throw-session", "remaining queued turn"));
@@ -4629,7 +4796,10 @@ try {
 assert.equal(throwingQueueViewError, null);
 assert.equal(throwingQueueView.queueStartInProgress, false);
 assert.equal(throwingQueueViewQueue.isSessionQueuePaused("throw-session"), true);
+assert.equal(throwingQueueViewQueue.isSessionRecoveryRequired("throw-session"), false);
 assert.deepEqual(throwingQueueViewQueue.itemsForSession("throw-session").map((item) => item.id), ["throw-b"]);
+throwingQueueViewQueue.resumeSessionQueue("throw-session");
+assert.equal(throwingQueueViewQueue.dequeueNext("throw-session")?.id, "throw-b");
 const notificationSessions = [
   { id: "router-a", title: "A", cwd: "/vault", threadId: "thread-a", messages: [], createdAt: 1, updatedAt: 1 },
   { id: "router-b", title: "B", cwd: "/vault", threadId: "thread-b", messages: [], createdAt: 1, updatedAt: 1 }
@@ -4720,9 +4890,14 @@ let knowledgeFinalizeSaveCalls = 0;
 let knowledgeFinalizeRenderMessagesCalls = 0;
 let knowledgeFinalizeToolbarCalls = 0;
 let knowledgeFinalizeApplyStatusCalls = 0;
+const runConversationMutationImmediately = async <T>(
+  _conversationId: string,
+  action: () => Promise<T>
+): Promise<T> => await action();
 const knowledgeFinalizeView: any = {
   plugin: {
     settings: { activeSessionId: knowledgeFinalizeSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => ({ status: "success", message: "体检完成" })
 	    }),
@@ -4790,6 +4965,7 @@ const knowledgeMaintainReportView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeMaintainReportSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({
         status: "success",
@@ -4836,6 +5012,7 @@ const knowledgeInitialSaveFailureView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeInitialSaveFailureSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => {
 	        knowledgeInitialHandleCalls += 1;
@@ -4879,6 +5056,7 @@ const knowledgeCanceledView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeCanceledSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
 	    getKnowledgeBaseManager: () => ({
 	      handleUserMessage: async () => ({ status: "canceled", message: "知识库体检已取消。\n原因：用户取消" })
 	    }),
@@ -4913,6 +5091,7 @@ const knowledgeHarnessView: any = {
   ...knowledgeFinalizeView,
   plugin: {
     settings: { activeSessionId: knowledgeHarnessSession.id },
+    withEchoInkConversationMutation: runConversationMutationImmediately,
     getKnowledgeBaseManager: () => ({
       handleUserMessage: async () => ({
         status: "success",
@@ -8579,15 +8758,35 @@ assert.match(formatHermesError("No inference provider configured"), /Hermes 推�
 
 const hermesBackendSource = await readFile(path.join(process.cwd(), "src/core/hermes-backend.ts"), "utf8");
 const connectionServiceSource = await readFile(path.join(process.cwd(), "src/plugin/connection-service.ts"), "utf8");
-assert.match(connectionServiceSource, /if \(!\/\\bPONG\\b\/i\.test\(probe\.text\.trim\(\)\)\) throw new Error/);
+const backendProbeLifecycleSource = await readFile(
+  path.join(process.cwd(), "src/harness/native/backend-probe-lifecycle.ts"),
+  "utf8"
+);
 const hermesConnectionCheckSource = connectionServiceSource.slice(
   connectionServiceSource.indexOf("async testHermesConnection"),
   connectionServiceSource.indexOf("private getServerRequestRouter")
 );
 assert.match(hermesConnectionCheckSource, /signal\?: AbortSignal/);
 assert.match(hermesConnectionCheckSource, /const previousHermes = \{ \.\.\.hermes \}/);
-assert.match(hermesConnectionCheckSource, /abortSignal: options\.signal/);
+assert.match(hermesConnectionCheckSource, /runBackendProbe\(\{/);
+assert.match(hermesConnectionCheckSource, /backendId: "hermes"/);
+assert.match(hermesConnectionCheckSource, /expectedToken: "PONG"/);
+assert.match(hermesConnectionCheckSource, /signal: options\.signal/);
+assert.doesNotMatch(
+  hermesConnectionCheckSource,
+  /backend\.runTask|backend\.sendPrompt/,
+  "Hermes provider 探针必须由 Harness 统一登记 Native execution"
+);
 assert.match(hermesConnectionCheckSource, /Object\.assign\(hermes, previousHermes\);\s*throw error/);
+assert.match(backendProbeLifecycleSource, /workflow: "backend\.probe"/);
+assert.match(backendProbeLifecycleSource, /surface: "system"/);
+assert.match(backendProbeLifecycleSource, /requireNativeRegistrationBeforePrompt: true/);
+assert.match(backendProbeLifecycleSource, /runEphemeralUtility\(\{/);
+assert.doesNotMatch(
+  backendProbeLifecycleSource,
+  /hermes-(?:cli|run|session)-\$\{|nativeExecutionId:\s*runId|native\.id:\s*runId/,
+  "Backend probe lifecycle must not manufacture provider identity from a local run ID"
+);
 assert.ok(
   hermesConnectionCheckSource.indexOf("throwIfConnectionTestAborted(options.signal);")
     < hermesConnectionCheckSource.indexOf("await this.plugin.saveSettings(true)"),
@@ -10866,6 +11065,21 @@ try {
     { id: "text-only", providerId: "p", modelId: "text", label: "text", inputModalities: ["text"] },
     { id: "vision", providerId: "p", modelId: "vision", label: "vision", inputModalities: ["text", "image"] }
   ], "missing", "missing", ["text", "image"])?.id, "vision");
+  assert.equal(
+    knowledgeRuntimeTimeoutWithGuardGrace("opencode", 1_000),
+    6_000,
+    "the outer Knowledge guard must expire before OpenCode's subordinate recovery deadline"
+  );
+  assert.equal(
+    knowledgeRuntimeTimeoutWithGuardGrace("opencode", 999),
+    999,
+    "deadline grace must not make a sub-threshold task select the rich runtime"
+  );
+  assert.equal(
+    knowledgeRuntimeTimeoutWithGuardGrace("hermes", 1_000),
+    1_000,
+    "the OpenCode deadline contract must not silently change Hermes"
+  );
   const transactionSnapshotVault = await mkdtemp(path.join(tmpdir(), "codex-kb-transaction-snapshot-"));
   try {
     await mkdir(path.join(transactionSnapshotVault, "wiki"), { recursive: true });
@@ -11500,6 +11714,10 @@ try {
       createMaintenanceWorkflowSettingsHostForTest(scheduledAppendSettings);
     const scheduledAppendRawRef = "raw/scheduled-orphan.txt";
     const scheduledAppendRawPath = path.join(pluginDataDir(scheduledAppendFailureVault), scheduledAppendRawRef);
+    const scheduledAppendRawBytes = Buffer.from(
+      "orphan scheduled message\n保留等待 Phase 2 引用图回收",
+      "utf8"
+    );
     const scheduledAppendManager = new KnowledgeBaseManager({
       settings: scheduledAppendSettings,
       getVaultPath: () => scheduledAppendFailureVault,
@@ -11509,6 +11727,21 @@ try {
         scheduledAppendSaveCalls += 1;
         if (scheduledAppendSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      withEchoInkSettingsPersistenceAuthorityGate: async (
+        action: () => Promise<unknown>
+      ) => await action(),
+      proveEchoInkConversationMessageAuthority: async (probe: {
+        conversationId: string;
+        messageId: string;
+      }) => ({
+        conversationId: probe.conversationId,
+        messageId: probe.messageId,
+        state: "absent" as const,
+        expectedPayloadDigest: "scheduled-append-fixture",
+        matchingMessageCount: 0,
+        currentPayloadDigests: []
+      }),
+      readKnowledgeBaseHistoryDay: async () => [],
       getKnowledgeBaseWorkflowSettingsHost: () =>
         scheduledAppendWorkflowSettingsHost,
       failPendingNativeExecutionsForRecovery: async () => 0,
@@ -11516,7 +11749,7 @@ try {
       externalizeMessageText: async (message: ChatMessage) => {
         message.rawRef = scheduledAppendRawRef;
         await mkdir(path.dirname(scheduledAppendRawPath), { recursive: true });
-        await writeFile(scheduledAppendRawPath, "orphan scheduled message", "utf8");
+        await writeFile(scheduledAppendRawPath, scheduledAppendRawBytes);
       },
       getCodexView: () => ({
         refreshAfterBackgroundKnowledgeMessage: () => {
@@ -11562,7 +11795,11 @@ try {
     assert.equal(scheduledAppendSettings.sessions.length, 1);
     assert.equal(scheduledAppendSettings.sessions[0].messages.length, 0);
     assert.equal(scheduledAppendSaveCalls, 4);
-    assert.equal(await fileExists(scheduledAppendRawPath), false);
+    assert.deepEqual(
+      await readFile(scheduledAppendRawPath),
+      scheduledAppendRawBytes,
+      "scheduled message rollback must preserve Raw bytes until reference-graph GC"
+    );
   } finally {
     await rm(scheduledAppendFailureVault, { recursive: true, force: true });
   }
@@ -11699,6 +11936,21 @@ try {
         scheduledConcurrentSaveCalls += 1;
         if (scheduledConcurrentSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      withEchoInkSettingsPersistenceAuthorityGate: async (
+        action: () => Promise<unknown>
+      ) => await action(),
+      proveEchoInkConversationMessageAuthority: async (probe: {
+        conversationId: string;
+        messageId: string;
+      }) => ({
+        conversationId: probe.conversationId,
+        messageId: probe.messageId,
+        state: "absent" as const,
+        expectedPayloadDigest: "scheduled-concurrent-fixture",
+        matchingMessageCount: 0,
+        currentPayloadDigests: []
+      }),
+      readKnowledgeBaseHistoryDay: async () => [],
       getKnowledgeBaseWorkflowSettingsHost: () =>
         scheduledConcurrentWorkflowSettingsHost,
       failPendingNativeExecutionsForRecovery: async () => 0,
@@ -11793,6 +12045,21 @@ try {
         scheduledSameSessionSaveCalls += 1;
         if (scheduledSameSessionSaveCalls === 3) throw new Error("scheduled message save failed");
       },
+      withEchoInkSettingsPersistenceAuthorityGate: async (
+        action: () => Promise<unknown>
+      ) => await action(),
+      proveEchoInkConversationMessageAuthority: async (probe: {
+        conversationId: string;
+        messageId: string;
+      }) => ({
+        conversationId: probe.conversationId,
+        messageId: probe.messageId,
+        state: "absent" as const,
+        expectedPayloadDigest: "scheduled-same-session-fixture",
+        matchingMessageCount: 0,
+        currentPayloadDigests: []
+      }),
+      readKnowledgeBaseHistoryDay: async () => [],
       getKnowledgeBaseWorkflowSettingsHost: () =>
         scheduledSameSessionWorkflowSettingsHost,
       failPendingNativeExecutionsForRecovery: async () => 0,
@@ -11865,18 +12132,51 @@ try {
       updatedAt: new Date(2026, 4, 19, 9, 0, 1).getTime()
     }],
     activeSessionId: "kb-history-store",
-    knowledgeBase: { sessionId: "kb-history-store" }
+    knowledgeBase: {
+      sessionId: "kb-history-store",
+      historyRetentionDays: 0
+    }
   }).settings;
+  const historyConversationStore = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(kbVault, "codex-echoink"),
+      "conversations"
+    )
+  });
+  const historySession = historySettings.sessions[0];
+  historySession.revision = 1;
+  historySession.generation = 1;
+  historySession.contextId = "context-kb-history-store";
+  historySession.commitId = "commit-kb-history-store";
+  historySession.workspaceFingerprint = workspaceFingerprint({
+    vaultPath: kbVault,
+    cwd: kbVault
+  });
+  await historyConversationStore.createPristineSession({
+    ...historySession,
+    messages: [],
+    historyActiveDate: undefined
+  });
+  await historyConversationStore.upsertSession(historySession);
   const migrationResult = await migrateKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
   assert.equal(migrationResult.activeDate, "2026-05-19");
-  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-19-user", "h-19-process"]);
+  assert.deepEqual(
+    historySettings.sessions[0].messages.map((message) => message.id),
+    ["h-18-user", "h-18-assistant", "h-19-user", "h-19-process"],
+    "History V2 must not compact canonical Conversation messages"
+  );
   const historyIndex = await readKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
   assert.equal(historyIndex.sessions[0]?.dayCount, 2);
   assert.equal(historyIndex.sessions[0]?.messageCount, 4);
   assert.deepEqual((await readKnowledgeBaseHistoryDay(kbVault, "codex-echoink", "kb-history-store", "2026-05-18")).map((message) => message.id), ["h-18-user", "h-18-assistant"]);
   historySettings.sessions[0].messages.push({ id: "h-20-user", role: "user", text: "新日问题", createdAt: new Date(2026, 4, 20, 8, 0, 0).getTime() });
+  historySettings.sessions[0].updatedAt = new Date(2026, 4, 20, 8, 0, 0).getTime();
+  await historyConversationStore.upsertSession(historySettings.sessions[0]);
   await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
-  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-20-user"]);
+  assert.deepEqual(
+    historySettings.sessions[0].messages.map((message) => message.id),
+    ["h-18-user", "h-18-assistant", "h-19-user", "h-19-process", "h-20-user"]
+  );
   const rebuiltHistoryIndex = await rebuildKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
   assert.equal(rebuiltHistoryIndex.sessions[0]?.dayCount, 3);
   assert.equal(rebuiltHistoryIndex.sessions[0]?.messageCount, 5);
@@ -11899,14 +12199,32 @@ try {
     cwd: kbVault,
     historyActiveDate: "2026-05-21",
     messages: [
+      { id: "recover-19", role: "assistant" as const, text: "最近一天详情", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() },
       { id: "recover-21", role: "user" as const, text: "/maintain", createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime() }
     ],
     createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime(),
-    updatedAt: new Date(2026, 4, 21, 10, 0, 0).getTime()
+    updatedAt: new Date(2026, 4, 21, 10, 0, 0).getTime(),
+    revision: 1,
+    generation: 1,
+    contextId: "context-kb-history-recover",
+    commitId: "commit-kb-history-recover",
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath: kbVault,
+      cwd: kbVault
+    })
   };
-  await persistKnowledgeBaseHistoryMessages(kbVault, "codex-echoink", recoveredHistorySession, [
-    { id: "recover-19", role: "assistant", text: "最近一天详情", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() }
-  ]);
+  await historyConversationStore.createPristineSession({
+    ...recoveredHistorySession,
+    messages: [],
+    historyActiveDate: undefined
+  });
+  await historyConversationStore.upsertSession(recoveredHistorySession);
+  await persistKnowledgeBaseHistoryMessages(
+    kbVault,
+    "codex-echoink",
+    recoveredHistorySession,
+    recoveredHistorySession.messages
+  );
   const recoverySettings = normalizeSettingsData({
     sessions: [recoveredHistorySession],
     activeSessionId: "kb-history-recover",
@@ -12801,6 +13119,8 @@ try {
 const maintenanceOpenCodeCancelDuringPromptVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-cancel-during-prompt-");
 try {
   let managerForHook: KnowledgeBaseManager | null = null;
+  let nativeExecutionRecordsForHook: ReadonlyMap<string, NativeExecutionRecord> | null = null;
+  let nativeRecordObservedBeforePrompt = false;
   let cancelHookEntered = false;
   let cancelHookCompleted = false;
   (globalThis as any).__opencodeBackendTestHooks = {
@@ -12808,18 +13128,47 @@ try {
     abortCalls: [],
     onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
     onSendPrompt: async () => {
+      assert.ok(
+        nativeExecutionRecordsForHook,
+        "Native test store must be attached before OpenCode prompt submission"
+      );
+      const recordsBeforePrompt = [...nativeExecutionRecordsForHook.values()];
+      assert.equal(
+        recordsBeforePrompt.length,
+        1,
+        "OpenCode must durably register exactly one Native execution before prompt submission"
+      );
+      const [recordBeforePrompt] = recordsBeforePrompt;
+      assertCompleteInitialNativeExecutionRecordForTest(recordBeforePrompt);
+      assert.equal(recordBeforePrompt.surface, "knowledge");
+      assert.equal(recordBeforePrompt.workflow, "knowledge.check");
+      assert.equal(recordBeforePrompt.native.backendId, "opencode");
+      assert.equal(recordBeforePrompt.native.id, "test-opencode-session");
+      assert.equal(recordBeforePrompt.native.kind, "session");
+      assert.equal(recordBeforePrompt.native.persistence, "provider-persistent");
+      assert.equal(recordBeforePrompt.native.providerEndpoint, "http://127.0.0.1:4096");
+      assert.equal(recordBeforePrompt.localCommit, "pending");
+      assert.equal(recordBeforePrompt.cleanup, "not-needed");
+      nativeRecordObservedBeforePrompt = true;
       cancelHookEntered = true;
       await managerForHook?.cancelMaintenance();
       cancelHookCompleted = true;
     },
     sendPromptError: new Error("OpenCode aborted")
   };
-  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelDuringPromptVault, {
+  const {
+    manager,
+    settings,
+    nativeExecutionRecords,
+    recordNativeExecutionForTest
+  } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeCancelDuringPromptVault, {
     agentBackend: "opencode",
     useRealOpenCodeTask: true
   });
   managerForHook = manager;
+  nativeExecutionRecordsForHook = nativeExecutionRecords;
   const result = await manager.runMaintenance("lint", "/check 测试 OpenCode prompt 中取消");
+  assert.equal(nativeRecordObservedBeforePrompt, true);
   assert.equal(cancelHookEntered, true);
   assert.equal(cancelHookCompleted, true);
   assert.equal(result.status, "canceled", result.error);
@@ -12829,6 +13178,26 @@ try {
   assert.equal(settings.opencode.lastError, "");
   assert.equal(settings.knowledgeBase.lastRunStatus, "canceled");
   assert.equal(settings.knowledgeBase.maintenanceHistory.at(-1)?.status, "canceled");
+  const storedNativeRecord = [...nativeExecutionRecords.values()][0];
+  await recordNativeExecutionForTest(structuredClone(storedNativeRecord));
+  assert.equal(nativeExecutionRecords.size, 1, "exact Native registration replay must be idempotent");
+  await assert.rejects(
+    recordNativeExecutionForTest({
+      ...structuredClone(storedNativeRecord),
+      runId: `${storedNativeRecord.runId}-conflict`
+    }),
+    /changed registration identity/,
+    "one Native record id must reject registration identity drift"
+  );
+  await assert.rejects(
+    recordNativeExecutionForTest({
+      ...structuredClone(storedNativeRecord),
+      id: `${storedNativeRecord.id}-duplicate`,
+      runId: `${storedNativeRecord.runId}-duplicate`
+    }),
+    /Native cleanup identity already belongs to record/,
+    "one Native cleanup identity must not map to multiple records"
+  );
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeCancelDuringPromptVault, { recursive: true, force: true });
@@ -12871,6 +13240,11 @@ try {
     }, null, 2)
   );
   assert.match((result as KnowledgeBaseRunResult).attempts?.[0]?.failure?.message ?? "", /OpenCode.*长时间没有返回/);
+  assert.equal(
+    typeof (result as KnowledgeBaseRunResult).attempts?.[0]?.termination?.confirmedAt,
+    "number",
+    "safe failover requires the outer guard to persist a trusted native termination acknowledgement"
+  );
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
   assert.equal((manager as any).agentTaskService.hasActiveTask, false);
   assert.equal(settings.knowledgeBase.lastRunStatus, "success");
@@ -12878,6 +13252,80 @@ try {
 } finally {
   delete (globalThis as any).__opencodeBackendTestHooks;
   await rm(maintenanceOpenCodeStalledPromptTimeoutVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeRejectedAbortTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-rejected-abort-timeout-");
+try {
+  const codexTaskCalls: Array<{ permission: string; writeScope: string }> = [];
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    abortCalls: [],
+    onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
+    onSendPrompt: async () => await new Promise(() => undefined),
+    onAbort: async () => {
+      throw new Error("OpenCode abort rejected");
+    }
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeRejectedAbortTimeoutVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true,
+    maintenanceReadyBackends: ["codex-cli"],
+    codexTaskCalls
+  });
+  const result = await Promise.race([
+    manager.runMaintenance("lint", "/check 测试 OpenCode abort 拒绝后禁止 failover", { opencodeTaskTimeoutMs: 1_000 } as any),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
+  assert.deepEqual(
+    (result as KnowledgeBaseRunResult).attempts?.map((attempt) => attempt.backend),
+    ["opencode"],
+    "abort rejection must not start a standby backend"
+  );
+  assert.equal((result as KnowledgeBaseRunResult).attempts?.[0]?.termination?.confirmedAt, undefined);
+  assert.deepEqual(codexTaskCalls, []);
+  assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeRejectedAbortTimeoutVault, { recursive: true, force: true });
+}
+
+const maintenanceOpenCodeHungAbortTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-hung-abort-timeout-");
+try {
+  const codexTaskCalls: Array<{ permission: string; writeScope: string }> = [];
+  (globalThis as any).__opencodeBackendTestHooks = {
+    models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
+    abortCalls: [],
+    onSubscribeEvents: openCodeReadyStreamForMaintenanceTest,
+    onSendPrompt: async () => await new Promise(() => undefined),
+    onAbort: async () => await new Promise(() => undefined)
+  };
+  const { manager, settings } = makeKnowledgeBaseManagerForTest(maintenanceOpenCodeHungAbortTimeoutVault, {
+    agentBackend: "opencode",
+    useRealOpenCodeTask: true,
+    maintenanceReadyBackends: ["codex-cli"],
+    codexTaskCalls
+  });
+  const result = await Promise.race([
+    manager.runMaintenance("lint", "/check 测试 OpenCode abort 卡死后禁止 failover", { opencodeTaskTimeoutMs: 1_000 } as any),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 7_500))
+  ]);
+  assert.notEqual(result, "hung");
+  assert.equal((result as KnowledgeBaseRunResult).status, "failed");
+  assert.deepEqual(
+    (result as KnowledgeBaseRunResult).attempts?.map((attempt) => attempt.backend),
+    ["opencode"],
+    "abort acknowledgement timeout must not start a standby backend"
+  );
+  assert.equal((result as KnowledgeBaseRunResult).attempts?.[0]?.termination?.confirmedAt, undefined);
+  assert.deepEqual(codexTaskCalls, []);
+  assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
+  assert.equal(settings.knowledgeBase.lastRunStatus, "failed");
+} finally {
+  delete (globalThis as any).__opencodeBackendTestHooks;
+  await rm(maintenanceOpenCodeHungAbortTimeoutVault, { recursive: true, force: true });
 }
 
 const maintenanceOpenCodeStalledPromptCancelVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-stalled-prompt-cancel-");
@@ -16532,6 +16980,179 @@ function maintenanceWorkflowSettingsGenerationForTest(
     .digest("hex")}`;
 }
 
+function createInMemoryNativeExecutionRecordStoreForTest() {
+  const recordsById = new Map<string, NativeExecutionRecord>();
+  const recordIdByNativeCleanupIdentity = new Map<string, string>();
+
+  const record = async (candidate: NativeExecutionRecord): Promise<void> => {
+    assertCompleteInitialNativeExecutionRecordForTest(candidate);
+    const snapshot = structuredClone(candidate);
+    const existing = recordsById.get(snapshot.id);
+    if (existing) {
+      assert.deepEqual(
+        nativeExecutionRegistrationIdentityForTest(snapshot),
+        nativeExecutionRegistrationIdentityForTest(existing),
+        `Native record ${snapshot.id} changed registration identity during an idempotent replay`
+      );
+      assert.deepEqual(
+        snapshot,
+        existing,
+        `Native record ${snapshot.id} may only be replayed with the exact initial record`
+      );
+      return;
+    }
+
+    const nativeCleanupIdentity = nativeExecutionCleanupIdentityForTest(snapshot);
+    assert.equal(
+      recordIdByNativeCleanupIdentity.get(nativeCleanupIdentity),
+      undefined,
+      `Native cleanup identity already belongs to record ${recordIdByNativeCleanupIdentity.get(nativeCleanupIdentity)}`
+    );
+    recordsById.set(snapshot.id, snapshot);
+    recordIdByNativeCleanupIdentity.set(nativeCleanupIdentity, snapshot.id);
+  };
+
+  return {
+    records: recordsById as ReadonlyMap<string, NativeExecutionRecord>,
+    record
+  };
+}
+
+function assertCompleteInitialNativeExecutionRecordForTest(
+  record: NativeExecutionRecord
+): void {
+  assert.ok(record && typeof record === "object", "Native execution registration must be an object");
+  assert.ok(record.native && typeof record.native === "object", "Native execution registration requires native identity");
+  assert.ok(record.policy && typeof record.policy === "object", "Native execution registration requires lifecycle policy");
+  for (const [field, value] of [
+    ["id", record.id],
+    ["runId", record.runId],
+    ["sessionId", record.sessionId],
+    ["workflow", record.workflow],
+    ["native.backendId", record.native?.backendId],
+    ["native.id", record.native?.id],
+    ["native.deviceKey", record.native?.deviceKey],
+    ["native.vaultId", record.native?.vaultId]
+  ] as const) {
+    assert.equal(
+      typeof value === "string" && Boolean(value.trim()),
+      true,
+      `Native execution registration requires ${field}`
+    );
+  }
+  assert.equal(
+    ["knowledge", "editor", "review", "chat", "system"].includes(record.surface),
+    true,
+    "Native execution registration requires a known surface"
+  );
+  assert.equal(
+    ["thread", "session", "run", "process"].includes(record.native.kind),
+    true,
+    "Native execution registration requires a known Native kind"
+  );
+  assert.equal(
+    ["none", "process-local", "provider-persistent", "unknown"].includes(record.native.persistence),
+    true,
+    "Native execution registration requires a known persistence mode"
+  );
+  if (record.native.backendId === "opencode" || record.native.backendId === "hermes") {
+    assert.equal(
+      typeof record.native.providerEndpoint === "string"
+        && Boolean(record.native.providerEndpoint.trim()),
+      true,
+      `${record.native.backendId} Native identity requires providerEndpoint`
+    );
+  } else if (record.native.providerEndpoint !== undefined) {
+    assert.equal(
+      typeof record.native.providerEndpoint === "string"
+        && Boolean(record.native.providerEndpoint.trim()),
+      true,
+      "Native providerEndpoint must not be blank when present"
+    );
+  }
+  for (const [field, value] of [
+    ["native.createdAt", record.native.createdAt],
+    ["createdAt", record.createdAt],
+    ["attempts", record.attempts],
+    ["nextAttemptAt", record.nextAttemptAt],
+    ["settledAt", record.settledAt],
+    ["committedAt", record.committedAt],
+    ["disposedAt", record.disposedAt]
+  ] as const) {
+    assert.equal(
+      Number.isSafeInteger(value) && value >= 0,
+      true,
+      `Native execution registration requires non-negative integer ${field}`
+    );
+  }
+  assert.equal(typeof record.lastError, "string", "Native execution registration requires lastError");
+  assert.equal(
+    ["echoink", "backend", "hybrid"].includes(record.policy.historyAuthority),
+    true,
+    "Native execution registration requires a known history authority"
+  );
+  assert.equal(
+    ["ephemeral-run", "leased-conversation", "persistent-native"].includes(record.policy.mode),
+    true,
+    "Native execution registration requires a known lifecycle mode"
+  );
+  assert.equal(Array.isArray(record.policy.preferredDisposition), true);
+  assert.equal(
+    record.policy.preferredDisposition.every((value) =>
+      ["process-exit", "archive", "delete", "retain"].includes(value)
+    ),
+    true,
+    "Native execution registration contains an unknown disposition"
+  );
+  assert.equal(typeof record.policy.retainWhenLocalCommitFails, "boolean");
+  assert.equal(record.policy.cleanupRequiredForTaskSuccess, false);
+  assert.equal(record.localCommit, "pending");
+  assert.equal(record.cleanup, "not-needed");
+  assert.equal(record.attempts, 0);
+  assert.equal(record.nextAttemptAt, 0);
+  assert.equal(record.lastError, "");
+  assert.equal(record.settledAt, 0);
+  assert.equal(record.committedAt, 0);
+  assert.equal(record.disposedAt, 0);
+  assert.equal(record.runOutcome, undefined);
+  assert.equal(record.requestedDisposition, undefined);
+  assert.equal(record.appliedDisposition, undefined);
+  assert.equal(record.cleanupStartedAt, undefined);
+  assert.equal(record.quarantinedAt, undefined);
+  assert.equal(record.retirement, undefined);
+}
+
+function nativeExecutionRegistrationIdentityForTest(record: NativeExecutionRecord) {
+  return {
+    id: record.id,
+    runId: record.runId,
+    sessionId: record.sessionId,
+    surface: record.surface,
+    workflow: record.workflow,
+    native: {
+      backendId: record.native.backendId,
+      id: record.native.id,
+      kind: record.native.kind,
+      persistence: record.native.persistence,
+      providerEndpoint: record.native.providerEndpoint,
+      deviceKey: record.native.deviceKey,
+      vaultId: record.native.vaultId,
+      createdAt: record.native.createdAt
+    }
+  };
+}
+
+function nativeExecutionCleanupIdentityForTest(record: NativeExecutionRecord): string {
+  return JSON.stringify([
+    record.native.backendId,
+    record.native.id,
+    record.native.kind,
+    record.native.providerEndpoint ?? "",
+    record.native.deviceKey,
+    record.native.vaultId
+  ]);
+}
+
 function makeKnowledgeBaseManagerForTest(
   vaultPath: string,
   options: {
@@ -16569,6 +17190,7 @@ function makeKnowledgeBaseManagerForTest(
   let workflowSettingsPersistCalls = 0;
   let manager: KnowledgeBaseManager | null = null;
   let commitGateCancellation: Promise<unknown> | null = null;
+  const nativeExecutionStore = createInMemoryNativeExecutionRecordStoreForTest();
   const harnessKernel = new EchoInkHarnessKernel({
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider()
@@ -16619,7 +17241,16 @@ function makeKnowledgeBaseManagerForTest(
     runHarnessWithAdapter: async (input: any) => await harnessKernel.runWithAdapter(input),
     cancelHarnessRun: async (runId: string) => await harnessKernel.cancelRun(runId),
     settleHarnessRunTerminal: async (input: any) => await harnessKernel.settleRunTerminal(input),
-    getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: vaultPath }),
+    recordNativeExecution: nativeExecutionStore.record,
+    getNativeExecutionRefContext: (backendId: AgentBackendMode) => ({
+      deviceKey: "test-device",
+      vaultId: vaultPath,
+      ...(backendId === "opencode"
+        ? { providerEndpoint: "http://127.0.0.1:4096" }
+        : backendId === "hermes"
+          ? { providerEndpoint: "http://127.0.0.1:8000" }
+          : {})
+    }),
     buildRuntimeEchoInkResourceCatalog: async () => buildActiveEchoInkResourceCatalog({ settings: settings.resources }),
     app: {
       workspace: {
@@ -16724,6 +17355,8 @@ function makeKnowledgeBaseManagerForTest(
     workflowSettingsPersistCalls: () => workflowSettingsPersistCalls,
     maintenanceWorkflowSettingsHost,
     workflowStorageRoot,
+    nativeExecutionRecords: nativeExecutionStore.records,
+    recordNativeExecutionForTest: nativeExecutionStore.record,
     waitForCommitGateCancellation: async () => {
       assert.ok(
         commitGateCancellation,
@@ -16782,6 +17415,8 @@ await runHarnessV2ContractTests();
 await runHarnessV2AdapterTests();
 await runHarnessV2ResourceTests();
 await runHarnessV2ConversationStoreTests();
+await runHarnessV2ConversationStoreV2Tests();
+await runHarnessV2ConversationStoreRouterTests();
 await runHarnessV2SessionContextTests();
 await runHarnessV2KnowledgePolicyProfileTests();
 await runHarnessV2KnowledgeLedgerTests();
@@ -16800,12 +17435,41 @@ await runHarnessV2MaintenanceActiveRunJournalTests();
 await runMaintenanceAcceptanceTests();
 await runMaintenanceContentPlannerRegressionTests();
 await runHarnessV2NativeExecutionTests();
+await runHarnessV2NativeStartupReconciliationTests();
+await runEphemeralUtilityNativeLifecycleTests();
 await runHarnessV2KnowledgeAskLeaseTests();
 await runHarnessV2KnowledgeTurnTests();
 await runHarnessV2AsyncRunSettlementTests();
 await runHarnessV2SurfaceRunSettlementTests();
 await runHarnessV2ArchitectureBoundaryTests();
+await runHarnessV2StorageInventoryTests();
+await runHarnessV2RunRecordStoreTests();
+await runHarnessV2RunRecordRetentionTests();
+await runHarnessV2ConversationRecordInventoryTests();
+await runHarnessV2RawGcQuarantineTests();
+await runHarnessV2RecordMigrationValidatorTests();
+await runHarnessV2ConversationV1ExporterTests();
+await runHarnessV2ConversationRecordMutationPlanTests();
+await runHarnessV2ConversationRecordMutationLifecycleTests();
+await runHarnessV2RunRecordSourceDeletionTests();
+await runHarnessV2RecordMutationJournalTests();
+await runHarnessV2RecordMutationExecutionPlanTests();
+await runHarnessV2RecordMutationExecutionRuntimeTests();
+await runHarnessV2RecordMutationProductionTests();
+await runHarnessV2RecordMutationTrashTests();
+await runHarnessV2RecordMutationCrashRecoveryTests();
+await runHarnessV2RecordMutationCoordinatorTests();
+await runHarnessV2RecordMutationRecoveryRunnerTests();
+await runHarnessV2RecordMutationSourceBundleTests();
+await runHarnessV2RecordMutationSourceParticipantTests();
+await runHarnessV2RecordRootRegistryTests();
+await runHarnessV2HistoryProjectionRetentionTests();
 await runEditorActionControllerTests();
+await runHarnessV2EditorNativeLifecycleTests();
+await runHarnessV2NativeSessionBindingReplacementTests();
+await runHarnessV2ContextRotationTests();
+await runHarnessV2ContextNativeCrashRecoveryTests();
+await runHarnessV2UiContextRotationTests();
 await runPromptEnhancerHarnessTests();
 await runHarnessV3ChatUiTests();
 await runOpenCodeRichRuntimeRegressionTests();

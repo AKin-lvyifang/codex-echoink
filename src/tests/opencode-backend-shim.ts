@@ -89,7 +89,7 @@ export class OpenCodeBackend {
     hooks().runCliTaskCalls = (hooks().runCliTaskCalls ?? 0) + 1;
     hooks().sendPromptCalls = (hooks().sendPromptCalls ?? 0) + 1;
     const runId = hooks().session?.sessionId ?? "test-opencode-session";
-    options?.onRunId?.(runId);
+    await options?.onRunId?.(runId);
     options?.onPromptSubmitted?.();
     await (hooks().onRunCliTask ?? hooks().onSendPrompt)?.(options, this);
     if (hooks().runCliTaskError ?? hooks().sendPromptError) throw hooks().runCliTaskError ?? hooks().sendPromptError;

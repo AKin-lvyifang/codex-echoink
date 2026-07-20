@@ -1,21 +1,102 @@
 import * as assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { FakeAgentAdapter } from "../../harness/agents/adapters/fake";
+import type { AgentAdapter } from "../../harness/agents/adapter";
 import { normalizeSettingsData, type ChatMessage, type StoredSession } from "../../settings/settings";
-import { advanceSessionRevision, sessionBackendBinding, updateSessionBackendBinding } from "../../harness/kernel/session-service";
+import {
+  advanceSessionRevision,
+  sessionBackendBinding,
+  updateSessionBackendBinding,
+  workspaceFingerprint
+} from "../../harness/kernel/session-service";
 import { compileContextBundle } from "../../harness/kernel/context-compiler";
+import { EchoInkHarnessKernel } from "../../harness/kernel/harness-kernel";
 import { NativeSessionLeaseManager, nativeSessionLeasesFromSessions } from "../../harness/kernel/native-session-lease-manager";
 import type { BackendSessionBinding } from "../../harness/contracts/run";
 import type { NativeSessionLease } from "../../harness/contracts/native-execution";
+import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
+import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
+import { runHarnessV2ContextRotationTests } from "./context-rotation";
 
 export async function runHarnessV2SessionContextTests(): Promise<void> {
+  await runHarnessV2ContextRotationTests();
   assertLegacyThreadIdMigratesToCodexBinding();
+  assertContextCursorWorkspaceFingerprintNormalizes();
   assertSessionBindingHelpersDoNotMixBackends();
   await assertSessionRevisionAdvancesWhenHistoryTruthChanges();
   assertContextCompilerInjectsRecentHistoryForBackendSwitch();
   assertContextCompilerModesAndManifest();
+  assertContextCompilerHonorsHardContextBoundary();
   assertNativeSessionLeaseDecisions();
   assertNativeSessionLeaseCleanupPlanHonorsLimits();
   await assertNativeSessionLeaseCleanupExecutesAfterLocalCommit();
+  await assertActiveRunReservationPreventsLeaseCleanup();
+  await assertReusableLeaseIsReservedBeforeNativeResume();
+  await assertCleanupRechecksReservationAfterPlanning();
+}
+
+function assertContextCompilerHonorsHardContextBoundary(): void {
+  const session = baseSession({
+    revision: 3,
+    generation: 3,
+    contextId: "context-current",
+    commitId: "commit-current",
+    contextStartsAfterMessageId: "m2",
+    contextSnapshot: {
+      sessionId: "session-1",
+      contextId: "context-old",
+      generation: 2,
+      version: "snapshot-old",
+      goal: "OLD-CONTEXT-SECRET",
+      currentState: "",
+      decisions: [],
+      constraints: [],
+      openLoops: [],
+      keyReferences: [],
+      rollingSummary: "OLD-CONTEXT-SECRET",
+      sourceMessageCount: 2,
+      createdAt: 1,
+      updatedAt: 2
+    },
+    messages: [
+      message("user", "OLD-CONTEXT-SECRET", "m1"),
+      message("assistant", "old answer", "m2"),
+      message("user", "CURRENT-CONTEXT-MARKER", "m3"),
+      message("assistant", "current answer", "m4")
+    ]
+  });
+  const bundle = compileContextBundle({
+    runId: "run-current-context",
+    session,
+    backendId: "codex-cli",
+    workflow: "chat.generic",
+    userInput: { text: "continue", attachments: [] },
+    memory: emptyMemory(),
+    corePolicySections: [],
+    mode: "bootstrap",
+    now: 100
+  });
+  const text = sectionText(bundle.sessionContext);
+  assert.doesNotMatch(text, /OLD-CONTEXT-SECRET/);
+  assert.match(text, /CURRENT-CONTEXT-MARKER/);
+  assert.equal(bundle.manifest?.compiledThroughMessageId, "m4");
+  assert.equal(bundle.manifest?.contextId, "context-current");
+  assert.equal(bundle.manifest?.sessionGeneration, 3);
+  assert.equal(bundle.manifest?.commitId, "commit-current");
+
+  const missingBoundary = compileContextBundle({
+    runId: "run-missing-boundary",
+    session: { ...session, contextStartsAfterMessageId: "missing-message" },
+    backendId: "codex-cli",
+    workflow: "chat.generic",
+    userInput: { text: "continue", attachments: [] },
+    memory: emptyMemory(),
+    corePolicySections: [],
+    mode: "bootstrap",
+    now: 101
+  });
+  assert.equal(missingBoundary.sessionContext.length, 0);
+  assert.equal(missingBoundary.manifest?.compiledThroughMessageId, undefined);
 }
 
 async function assertNativeSessionLeaseCleanupExecutesAfterLocalCommit(): Promise<void> {
@@ -31,37 +112,34 @@ async function assertNativeSessionLeaseCleanupExecutesAfterLocalCommit(): Promis
     leaseSession("session-old", "lease-old", 100)
   ];
   assert.equal(nativeSessionLeasesFromSessions(sessions).length, 2);
-  let commitCalls = 0;
-  const disposed: string[] = [];
+  const retired: string[] = [];
   const results = await manager.cleanupSessions({
     sessions,
     now: 1_000,
-    commit: async () => { commitCalls += 1; },
-    dispose: async (lease) => {
-      assert.equal(commitCalls, 1, "cleanup must start only after cleanup-pending is durably committed");
-      disposed.push(lease.leaseId);
-      return { outcome: "disposed", applied: "delete" };
+    retire: async ({ session, binding, lease }) => {
+      retired.push(lease.leaseId);
+      delete session.backendBindings?.[binding.backendId];
+      if (binding.backendId === "codex-cli") delete session.threadId;
     }
   });
 
-  assert.deepEqual(disposed, ["lease-old"]);
-  assert.equal(commitCalls, 2);
+  assert.deepEqual(retired, ["lease-old"]);
   assert.equal(results[0]?.reason, "backend-capacity");
+  assert.equal(results[0]?.outcome, "retirement-scheduled");
   assert.equal(sessions[0].backendBindings?.opencode?.leaseStatus, "active");
-  assert.equal(sessions[1].backendBindings?.opencode?.leaseStatus, "disposed");
+  assert.equal(sessions[1].backendBindings?.opencode, undefined);
 
-  let cleanupCalls = 0;
+  let retirementCalls = 0;
   const commitFailureSession = leaseSession("session-failed", "lease-expired", 100, 500);
   const failed = await manager.cleanupSessions({
     sessions: [commitFailureSession],
     now: 1_000,
-    commit: async () => { throw new Error("conversation store failed"); },
-    dispose: async () => {
-      cleanupCalls += 1;
-      return { outcome: "disposed", applied: "delete" };
+    retire: async () => {
+      retirementCalls += 1;
+      throw new Error("conversation store failed");
     }
   });
-  assert.equal(cleanupCalls, 0);
+  assert.equal(retirementCalls, 1);
   assert.equal(failed[0]?.outcome, "local-commit-failed");
   assert.equal(commitFailureSession.backendBindings?.opencode?.leaseStatus, "active");
 
@@ -71,6 +149,222 @@ async function assertNativeSessionLeaseCleanupExecutesAfterLocalCommit(): Promis
   ]);
   assert.match(harnessSource, /enforceNativeSessionLeaseLimits[\s\S]*cleanupSessions/);
   assert.match(turnRunnerSource, /afterTurnSettled[\s\S]*enforceNativeSessionLeaseLimits/);
+}
+
+async function assertActiveRunReservationPreventsLeaseCleanup(): Promise<void> {
+  const manager = new NativeSessionLeaseManager({
+    limits: {
+      maxActiveLeasesPerSession: 4,
+      maxActiveLeasesPerBackend: 4,
+      gracePeriodMs: 0
+    }
+  });
+  const session = leaseSession(
+    "session-long-running",
+    "lease-long-running",
+    100,
+    500
+  );
+  let retirementCalls = 0;
+  const retire = async ({ session: target, binding }: {
+    session: StoredSession;
+    binding: BackendSessionBinding;
+  }): Promise<void> => {
+    retirementCalls += 1;
+    delete target.backendBindings?.[binding.backendId];
+  };
+
+  manager.reserveLeaseForRun("run-long-running", "lease-long-running");
+  manager.reserveLeaseForRun("run-also-running", "lease-long-running");
+  const cleanupWhileRunning = manager.cleanupSessions({
+    sessions: [session],
+    now: 5_000,
+    retire
+  });
+  assert.deepEqual(await cleanupWhileRunning, []);
+  assert.equal(retirementCalls, 0);
+  assert.equal(session.backendBindings?.opencode?.leaseId, "lease-long-running");
+
+  manager.releaseLeaseForRun("run-long-running");
+  const cleanupWhileAnotherRunOwnsLease = await manager.cleanupSessions({
+    sessions: [session],
+    now: 5_000,
+    retire
+  });
+  assert.deepEqual(cleanupWhileAnotherRunOwnsLease, []);
+  assert.equal(retirementCalls, 0);
+
+  manager.releaseLeaseForRun("run-also-running");
+  const cleanupAfterTerminal = await manager.cleanupSessions({
+    sessions: [session],
+    now: 5_000,
+    retire
+  });
+  assert.equal(retirementCalls, 1);
+  assert.equal(cleanupAfterTerminal[0]?.outcome, "retirement-scheduled");
+  assert.equal(session.backendBindings?.opencode, undefined);
+}
+
+async function assertReusableLeaseIsReservedBeforeNativeResume(): Promise<void> {
+  const leaseManager = new NativeSessionLeaseManager();
+  const workspace = { vaultPath: "/vault", cwd: "/vault" };
+  const fingerprint = workspaceFingerprint(workspace);
+  const native = {
+    backendId: "fake",
+    id: "native-resume-race",
+    kind: "session" as const,
+    persistence: "provider-persistent" as const,
+    deviceKey: "device-1",
+    vaultId: "/vault",
+    createdAt: 1
+  };
+  const binding: BackendSessionBinding = {
+    backendId: "fake",
+    nativeSessionId: native.id,
+    nativeExecutionKind: native.kind,
+    nativeExecutionRef: native,
+    leaseId: "lease-resume-race",
+    leaseStatus: "active",
+    leaseCreatedAt: 1,
+    leaseLastUsedAt: 100,
+    leaseExpiresAt: 1_000,
+    leaseTurnCount: 1,
+    leaseMaxTurns: 20,
+    syncedSessionRevision: 1,
+    contextCursor: {
+      syncedSessionRevision: 1,
+      sessionGeneration: 1,
+      contextId: "context-resume-race",
+      workspaceFingerprint: fingerprint
+    },
+    workspaceFingerprint: fingerprint,
+    lastUsedAt: 100
+  };
+  const session = baseSession({
+    id: "session-resume-race",
+    revision: 1,
+    generation: 1,
+    contextId: "context-resume-race",
+    commitId: "commit-resume-race",
+    workspaceFingerprint: fingerprint,
+    backendBindings: { fake: binding }
+  });
+  const resumeStarted = deferred<void>();
+  const releaseResume = deferred<void>();
+  const adapter: AgentAdapter = new FakeAgentAdapter({
+    backendId: "fake",
+    responseText: "done",
+    nativeExecution: native,
+    resumeCapability: "native"
+  });
+  adapter.prepareNativeSession = async (request) => {
+    assert.equal(request.action, "resume");
+    assert.equal(
+      leaseManager.isLeaseReserved("lease-resume-race"),
+      true,
+      "a reusable lease must be reserved before Native resume can yield"
+    );
+    resumeStarted.resolve();
+    await releaseResume.promise;
+    return { status: "resumed", nativeExecutionId: native.id };
+  };
+  const kernel = new EchoInkHarnessKernel({
+    ledger: new InMemoryRunLedger(),
+    memoryProvider: new NoopMemoryProvider(),
+    nativeSessionLeaseManager: leaseManager,
+    now: () => 100
+  });
+  const run = kernel.runWithAdapter({
+    adapter,
+    sessionProvider: () => session,
+    request: {
+      runId: "run-resume-race",
+      sessionId: session.id,
+      surface: "chat",
+      workflow: "chat.generic",
+      backendId: "fake",
+      workspace,
+      input: { text: "continue", attachments: [] },
+      permissions: {
+        mode: "read-only",
+        writableRoots: [],
+        requireApproval: false
+      },
+      resourceSelection: {
+        selected: [],
+        resolvedAt: 100,
+        warnings: []
+      },
+      memoryPolicy: { enabled: false, maxItems: 0 },
+      outputContract: { kind: "plain-text" }
+    }
+  });
+
+  await resumeStarted.promise;
+  let retirementCalls = 0;
+  const whileResuming = await leaseManager.cleanupSessions({
+    sessions: [session],
+    now: 5_000,
+    retire: async ({ session: target, binding: targetBinding }) => {
+      retirementCalls += 1;
+      delete target.backendBindings?.[targetBinding.backendId];
+    }
+  });
+  assert.deepEqual(whileResuming, []);
+  assert.equal(retirementCalls, 0);
+  assert.equal(session.backendBindings?.fake?.leaseId, "lease-resume-race");
+
+  releaseResume.resolve();
+  assert.equal((await run).status, "completed");
+  const afterTerminal = await leaseManager.cleanupSessions({
+    sessions: [session],
+    now: 5_000,
+    retire: async ({ session: target, binding: targetBinding }) => {
+      retirementCalls += 1;
+      delete target.backendBindings?.[targetBinding.backendId];
+    }
+  });
+  assert.equal(retirementCalls, 1);
+  assert.equal(afterTerminal[0]?.outcome, "retirement-scheduled");
+  assert.equal(session.backendBindings?.fake, undefined);
+}
+
+async function assertCleanupRechecksReservationAfterPlanning(): Promise<void> {
+  const manager = new NativeSessionLeaseManager();
+  const first = leaseSession("session-plan-first", "lease-plan-first", 100, 500);
+  const second = leaseSession("session-plan-second", "lease-plan-second", 100, 500);
+  const retired: string[] = [];
+
+  const firstPass = await manager.cleanupSessions({
+    sessions: [first, second],
+    now: 5_000,
+    retire: async ({ session, binding, lease }) => {
+      retired.push(lease.leaseId);
+      if (lease.leaseId === "lease-plan-first") {
+        manager.reserveLeaseForRun("run-planned-second", "lease-plan-second");
+      }
+      delete session.backendBindings?.[binding.backendId];
+    }
+  });
+
+  assert.deepEqual(retired, ["lease-plan-first"]);
+  assert.deepEqual(
+    firstPass.map((item) => item.leaseId),
+    ["lease-plan-first"]
+  );
+  assert.equal(second.backendBindings?.opencode?.leaseId, "lease-plan-second");
+
+  manager.releaseLeaseForRun("run-planned-second");
+  const secondPass = await manager.cleanupSessions({
+    sessions: [second],
+    now: 5_000,
+    retire: async ({ session, binding, lease }) => {
+      retired.push(lease.leaseId);
+      delete session.backendBindings?.[binding.backendId];
+    }
+  });
+  assert.deepEqual(retired, ["lease-plan-first", "lease-plan-second"]);
+  assert.equal(secondPass[0]?.outcome, "retirement-scheduled");
 }
 
 async function assertSessionRevisionAdvancesWhenHistoryTruthChanges(): Promise<void> {
@@ -111,7 +405,10 @@ async function assertSessionRevisionAdvancesWhenHistoryTruthChanges(): Promise<v
   assert.equal(session.backendBindings?.["codex-cli"]?.syncedSessionRevision, 4);
 
   const source = await readFile("src/ui/codex-view/session-controller.ts", "utf8");
-  assert.match(source, /restoreKnowledgeBaseHistoryDate[\s\S]*advanceSessionRevision\(session\)[\s\S]*session\.messages = messages/);
+  assert.match(
+    source,
+    /restoreKnowledgeBaseHistoryDate[\s\S]*reason: "history-restore"[\s\S]*candidate\.messages = messages/
+  );
 }
 
 function assertLegacyThreadIdMigratesToCodexBinding(): void {
@@ -132,6 +429,44 @@ function assertLegacyThreadIdMigratesToCodexBinding(): void {
   assert.equal(session.threadId, "codex-thread-1");
   assert.equal(session.backendBindings?.["codex-cli"]?.nativeThreadId, "codex-thread-1");
   assert.equal(session.backendBindings?.["codex-cli"]?.backendId, "codex-cli");
+}
+
+function assertContextCursorWorkspaceFingerprintNormalizes(): void {
+  const fingerprint = workspaceFingerprint({
+    vaultPath: "/vault",
+    cwd: "/vault/workspace-a"
+  });
+  const normalized = normalizeSettingsData({
+    settingsVersion: 29,
+    sessions: [{
+      id: "session-cursor-fingerprint",
+      title: "Cursor fingerprint",
+      cwd: "/vault/workspace-a",
+      backendBindings: {
+        opencode: {
+          backendId: "opencode",
+          nativeSessionId: "session-native",
+          syncedSessionRevision: 2,
+          workspaceFingerprint: fingerprint,
+          contextCursor: {
+            syncedThroughMessageId: "m2",
+            syncedSessionRevision: 2,
+            sessionGeneration: 2,
+            contextId: "context-current",
+            workspaceFingerprint: fingerprint
+          },
+          lastUsedAt: 2
+        }
+      },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }]
+  }).settings;
+  assert.equal(
+    normalized.sessions[0]?.backendBindings?.opencode?.contextCursor?.workspaceFingerprint,
+    fingerprint
+  );
 }
 
 function assertSessionBindingHelpersDoNotMixBackends(): void {
@@ -281,6 +616,51 @@ function assertContextCompilerModesAndManifest(): void {
   assert.match(sectionText(catchUp.sessionContext), /整理 EchoInk Harness 2\.0/);
   assert.match(sectionText(catchUp.sessionContext), /Hermes 新消息 m5/);
 
+  const currentRunId = "run-current-backend-switch";
+  const withCurrentProjection: StoredSession = {
+    ...session,
+    messages: [
+      ...session.messages,
+      {
+        ...message("user", "CURRENT-RUN-REQUEST", "m7"),
+        runId: currentRunId
+      },
+      {
+        ...message("assistant", "", "m8"),
+        runId: currentRunId,
+        status: "running"
+      }
+    ]
+  };
+  const backendSwitch = compileContextBundle({
+    runId: currentRunId,
+    session: withCurrentProjection,
+    backendId: "hermes",
+    workflow: "chat.generic",
+    userInput: { text: "CURRENT-RUN-REQUEST", attachments: [] },
+    memory: emptyMemory(),
+    corePolicySections: [],
+    mode: "catch-up",
+    cursor: { syncedThroughMessageId: "m4", syncedSessionRevision: 5 },
+    sessionRevision: 5,
+    now: 102
+  });
+  assert.doesNotMatch(sectionText(backendSwitch.sessionContext), /CURRENT-RUN-REQUEST/);
+  assert.match(sectionText(backendSwitch.sessionContext), /Hermes 新消息 m5/);
+  assert.equal(
+    sectionText([
+      ...backendSwitch.sessionContext,
+      ...backendSwitch.turnInstruction
+    ]).match(/CURRENT-RUN-REQUEST/g)?.length,
+    1,
+    "the current user turn belongs only in turnInstruction"
+  );
+  assert.equal(
+    backendSwitch.manifest?.compiledThroughMessageId,
+    "m6",
+    "the cursor must stay on durable history instead of the running placeholder"
+  );
+
   const workflow = compileContextBundle({
     runId: "run-workflow",
     session,
@@ -299,6 +679,17 @@ function assertContextCompilerModesAndManifest(): void {
 
 function assertNativeSessionLeaseDecisions(): void {
   const manager = new NativeSessionLeaseManager();
+  const expectedWorkspaceFingerprint = workspaceFingerprint({
+    vaultPath: "/vault",
+    cwd: "/vault/workspace-a"
+  });
+  const expectedContextIdentity = {
+    expectedWorkspaceFingerprint,
+    expectedSessionGeneration: 2,
+    expectedContextId: "context-lease",
+    expectedVaultProfileFingerprint: "",
+    currentContextMessageIds: ["m4", "m5", "m6"]
+  };
   const binding: BackendSessionBinding = {
     backendId: "codex-cli",
     nativeThreadId: "thread-1",
@@ -307,8 +698,12 @@ function assertNativeSessionLeaseDecisions(): void {
     syncedSessionRevision: 2,
     contextCursor: {
       syncedThroughMessageId: "m4",
-      syncedSessionRevision: 2
+      syncedSessionRevision: 2,
+      sessionGeneration: 2,
+      contextId: "context-lease",
+      workspaceFingerprint: expectedWorkspaceFingerprint
     },
+    workspaceFingerprint: expectedWorkspaceFingerprint,
     lastUsedAt: 100
   };
   const lease: NativeSessionLease = {
@@ -336,6 +731,8 @@ function assertNativeSessionLeaseDecisions(): void {
   assert.deepEqual(manager.decide({
     request: { surface: "chat", workflow: "chat.generic" },
     binding: null,
+    expectedVaultProfileFingerprint: "",
+    currentContextMessageIds: [],
     sessionRevision: 2,
     latestMessageId: "m4",
     now: 200
@@ -347,8 +744,55 @@ function assertNativeSessionLeaseDecisions(): void {
 
   assert.equal(manager.decide({
     request: { surface: "chat", workflow: "chat.generic" },
+    binding: { ...binding, workspaceFingerprint: undefined },
+    lease,
+    ...expectedContextIdentity,
+    sessionRevision: 2,
+    latestMessageId: "m4",
+    now: 200
+  }).reason, "context-identity-missing");
+
+  assert.equal(manager.decide({
+    request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease,
+    ...expectedContextIdentity,
+    expectedWorkspaceFingerprint: workspaceFingerprint({
+      vaultPath: "/vault",
+      cwd: "/vault/workspace-b"
+    }),
+    sessionRevision: 2,
+    latestMessageId: "m4",
+    now: 200
+  }).reason, "context-identity-mismatch");
+
+  assert.equal(manager.decide({
+    request: { surface: "chat", workflow: "chat.generic" },
+    binding,
+    lease,
+    ...expectedContextIdentity,
+    currentContextMessageIds: ["m5", "m6"],
+    sessionRevision: 2,
+    latestMessageId: "m6",
+    now: 200
+  }).reason, "context-identity-mismatch");
+
+  assert.equal(manager.decide({
+    request: { surface: "chat", workflow: "chat.generic" },
+    binding,
+    lease,
+    ...expectedContextIdentity,
+    currentContextMessageIds: ["m4", "m4", "m6"],
+    sessionRevision: 2,
+    latestMessageId: "m6",
+    now: 200
+  }).reason, "context-identity-mismatch");
+
+  assert.equal(manager.decide({
+    request: { surface: "chat", workflow: "chat.generic" },
+    binding,
+    lease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m4",
     now: 200
@@ -358,6 +802,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m6",
     now: 200
@@ -367,6 +812,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m6",
     requiresCatchUp: true,
@@ -377,6 +823,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease,
+    ...expectedContextIdentity,
     sessionRevision: 3,
     latestMessageId: "m6",
     now: 200
@@ -386,6 +833,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "knowledge", workflow: "knowledge.ask" },
     binding,
     lease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m4",
     now: 200
@@ -395,6 +843,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "knowledge", workflow: "knowledge.maintain" },
     binding,
     lease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m6",
     now: 200
@@ -404,6 +853,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease: { ...lease, turnCount: 10, maxTurns: 10 },
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m4",
     now: 200
@@ -413,6 +863,7 @@ function assertNativeSessionLeaseDecisions(): void {
     request: { surface: "chat", workflow: "chat.generic" },
     binding,
     lease: { ...lease, contextChars: 12_000, maxContextChars: 10_000 } as NativeSessionLease,
+    ...expectedContextIdentity,
     sessionRevision: 2,
     latestMessageId: "m4",
     now: 200
@@ -558,4 +1009,14 @@ function emptyMemory() {
 
 function sectionText(sections: Array<{ content: string }>): string {
   return sections.map((section) => section.content).join("\n");
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

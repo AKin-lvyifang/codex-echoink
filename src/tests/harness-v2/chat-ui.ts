@@ -11,8 +11,13 @@ import { buildInlineAgentProcessMessages, createAgentEventRenderState, reduceAge
 import { actionVerb, agentFooterItems, messageProvenanceMetaItems, messageTitleTime, shouldRenderMessageTitle, terminalAnswerFooterMessageIds } from "../../ui/codex-view/message-list";
 import { SessionMessageStore } from "../../ui/codex-view/session-message-store";
 import { messageRenderOptionsForRunUpdate, selectFirstNonBlankText, shouldDismissThinkingForHarnessEvent, startChatTurn } from "../../ui/codex-view/turn-runner";
-import { deleteSessions, renderTabsView } from "../../ui/codex-view/session-controller";
+import {
+  clearSessionConversationRecords,
+  deleteSessions,
+  renderTabsView
+} from "../../ui/codex-view/session-controller";
 import { buildCodexSessionNavigatorModel, formatSessionUpdatedAt } from "../../ui/codex-view/tabs";
+import { renderTurnQueue } from "../../ui/codex-view/composer";
 
 export async function runHarnessV3ChatUiTests(): Promise<void> {
   const runningMessages = createAgentTurn("running");
@@ -77,7 +82,10 @@ export async function runHarnessV3ChatUiTests(): Promise<void> {
   await testSynchronousChatCancellationUsesInterruptedUi();
   await testChatTabUpdatesPlaceholderBeforeSettingsSave();
   testSessionNavigatorModel();
-  await testBatchSessionDeletion();
+  testLifecycleRecoveryBanner();
+  await testBatchSessionDeletionUsesIndependentReceipts();
+  await testSessionDeletionHonorsCancelAndPreviewBlocker();
+  await testClearSessionConversationRecordsUsesPreviewAndReceipt();
 
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: false }), { forceBottom: true, preserveScroll: false });
   assert.deepEqual(messageRenderOptionsForRunUpdate({ messagesBottomFollowPaused: true }), { forceBottom: false, preserveScroll: true });
@@ -459,12 +467,17 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   let releaseSave!: () => void;
   const saveBlocked = new Promise<void>((resolve) => { releaseSave = resolve; });
   let placeholderUpdates = 0;
+  let nativeThreadStarts = 0;
   const tabBarEl = new FakeSessionNavigatorElement("div");
   const host: any = {
     plugin: {
       settings,
       getVaultPath: () => "/tmp/echoink-chat-ui",
-      saveSettings: async () => await saveBlocked
+      saveSettings: async () => await saveBlocked,
+      startCodexHarnessThread: async () => {
+        nativeThreadStarts += 1;
+        return { threadId: "unexpected-thread" };
+      }
     },
     turnQueue: { clearSessionQueue: () => undefined },
     tabBarEl,
@@ -480,7 +493,6 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
     renderKnowledgeDashboard: () => undefined,
     refreshKnowledgeDashboard: async () => undefined,
     updateInputPlaceholder: () => { placeholderUpdates += 1; },
-    prewarmActiveThread: () => undefined,
     closeComposerMenus: () => undefined,
     isKnowledgeBaseSession: (session: StoredSession) => session.id === knowledge.id
   };
@@ -503,6 +515,7 @@ async function testChatTabUpdatesPlaceholderBeforeSettingsSave(): Promise<void> 
   assert.equal(placeholderUpdates, 1, "chat placeholder must update before asynchronous settings persistence finishes");
   releaseSave();
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(nativeThreadStarts, 0, "activating a tab without a user Turn must not create a Codex thread");
 }
 
 function testSessionNavigatorModel(): void {
@@ -554,7 +567,43 @@ function testSessionNavigatorModel(): void {
   assert.equal(formatSessionUpdatedAt(1_000_000 - 8 * 60_000, 1_000_000), "8 分钟前");
 }
 
-async function testBatchSessionDeletion(): Promise<void> {
+function testLifecycleRecoveryBanner(): void {
+  const container = new FakeSessionNavigatorElement("div");
+  let recoverCalls = 0;
+  renderTurnQueue(
+    container as unknown as HTMLElement,
+    {
+      items: [],
+      paused: true,
+      canResume: false,
+      recoveryRequired: true,
+      canRecover: true,
+      draggedItemId: ""
+    },
+    {
+      onResume: () => undefined,
+      onRecover: () => { recoverCalls += 1; },
+      onDragStart: () => undefined,
+      onDragEnd: () => undefined,
+      onReorder: () => undefined,
+      onRemove: () => undefined
+    }
+  );
+
+  assert.match(container.className, /\bis-visible\b/);
+  assert.match(container.className, /\bis-recovery-required\b/);
+  assert.ok(container.find((element) =>
+    /本地记录待恢复/.test(element.textContent)
+  ));
+  const recover = container.find((element) =>
+    element.getAttribute("aria-label") === "重试恢复本地生命周期记录"
+  );
+  assert.ok(recover?.onclick);
+  recover.onclick({} as MouseEvent);
+  assert.equal(recoverCalls, 1);
+}
+
+async function testBatchSessionDeletionUsesIndependentReceipts(): Promise<void> {
   const knowledge: StoredSession = {
     id: "knowledge-delete",
     title: "知识库管理",
@@ -592,42 +641,270 @@ async function testBatchSessionDeletion(): Promise<void> {
   settings.knowledgeBase.sessionId = knowledge.id;
   settings.sessions = [knowledge, chatA, chatB, running];
   settings.activeSessionId = chatB.id;
-  const committed: string[] = [];
+  const mutationCalls: string[] = [];
   const clearedQueues: string[] = [];
   let resetCalls = 0;
+  let renderCalls = 0;
+  const sessionsBefore = structuredClone(settings.sessions);
   const host: any = {
     plugin: {
       settings,
-      saveSettings: async () => undefined,
+      saveSettings: async () => {
+        mutationCalls.push("save-settings");
+      },
+      previewEchoInkSessionDeletion: async (session: StoredSession) => {
+        mutationCalls.push(`preview-deletion:${session.id}`);
+        return {
+          operation: "delete-conversation",
+          conversationId: session.id,
+          inventorySnapshotDigest: `sha256:${"a".repeat(64)}`,
+          disposition: {
+            retainMemoryIds: [],
+            retainArtifactIds: []
+          },
+          blockers: []
+        };
+      },
       commitEchoInkSessionDeletion: async (session: StoredSession) => {
-        committed.push(session.id);
-        return [];
+        mutationCalls.push(`commit-deletion:${session.id}`);
+        if (session.id === chatA.id) {
+          return {
+            operation: "delete-conversation",
+            conversationId: session.id,
+            mutationId: `mutation-${session.id}`,
+            localState: "aborted",
+            projection: "updated",
+            nativeRetirement: "aborted",
+            nativeRetirementIds: [],
+            error: "simulated compensated failure"
+          };
+        }
+        settings.sessions = settings.sessions.filter(
+          (candidate: StoredSession) => candidate.id !== session.id
+        );
+        if (settings.activeSessionId === session.id) {
+          settings.activeSessionId = knowledge.id;
+        }
+        return {
+          operation: "delete-conversation",
+          conversationId: session.id,
+          mutationId: `mutation-${session.id}`,
+          localState: "committed",
+          projection: "updated",
+          nativeRetirement: "not-required",
+          nativeRetirementIds: []
+        };
       }
     },
     turnQueue: { clearSessionQueue: (sessionId: string) => clearedQueues.push(sessionId) },
     running: true,
     activeRunSessionId: running.id,
     resetVirtualWindow: () => { resetCalls += 1; },
-    renderTabs: () => undefined,
-    renderMessages: () => undefined,
-    renderToolbar: () => undefined,
-    renderKnowledgeDashboard: () => undefined,
-    refreshKnowledgeDashboard: async () => undefined,
-    updateInputPlaceholder: () => undefined,
-    prewarmActiveThread: () => undefined,
+    renderTabs: () => { renderCalls += 1; },
+    renderMessages: () => { renderCalls += 1; },
+    renderToolbar: () => { renderCalls += 1; },
+    renderKnowledgeDashboard: () => { renderCalls += 1; },
+    refreshKnowledgeDashboard: async () => { renderCalls += 1; },
+    updateInputPlaceholder: () => { renderCalls += 1; },
     createSession: () => {
       throw new Error("知识库常驻时不应补建空会话");
     },
     isKnowledgeBaseSession: (session: StoredSession) => session.id === knowledge.id
   };
 
-  await deleteSessions(host, [chatA.id, chatB.id, running.id, knowledge.id]);
+  await deleteSessions(
+    host,
+    [chatA.id, chatB.id, running.id, knowledge.id],
+    { confirm: async () => true }
+  );
 
-  assert.deepEqual(committed, [chatA.id, chatB.id]);
-  assert.deepEqual(clearedQueues, [chatA.id, chatB.id]);
-  assert.deepEqual(settings.sessions.map((session) => session.id), [knowledge.id, running.id]);
-  assert.equal(settings.activeSessionId, running.id);
+  assert.deepEqual(mutationCalls, [
+    `preview-deletion:${chatA.id}`,
+    `commit-deletion:${chatA.id}`,
+    `preview-deletion:${chatB.id}`,
+    `commit-deletion:${chatB.id}`
+  ]);
+  assert.deepEqual(clearedQueues, [chatB.id]);
+  assert.deepEqual(
+    settings.sessions.map((session: StoredSession) => session.id),
+    [knowledge.id, chatA.id, running.id]
+  );
+  assert.equal(settings.activeSessionId, knowledge.id);
   assert.equal(resetCalls, 1);
+  assert.ok(renderCalls > 0);
+  assert.notDeepEqual(settings.sessions, sessionsBefore);
+}
+
+async function testSessionDeletionHonorsCancelAndPreviewBlocker():
+Promise<void> {
+  const session: StoredSession = {
+    id: "chat-delete-cancel-or-block",
+    title: "保留的会话",
+    cwd: "",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sessions = [session];
+  settings.activeSessionId = session.id;
+  const calls: string[] = [];
+  let mode: "cancel" | "blocked" = "cancel";
+  const host: any = {
+    plugin: {
+      settings,
+      previewEchoInkSessionDeletion: async () => {
+        calls.push(`preview:${mode}`);
+        return {
+          operation: "delete-conversation",
+          conversationId: session.id,
+          inventorySnapshotDigest: `sha256:${"a".repeat(64)}`,
+          disposition: {
+            retainMemoryIds: [],
+            retainArtifactIds: []
+          },
+          blockers: mode === "blocked"
+            ? [{
+                code: "raw-reference-missing",
+                subjectId: "raw/missing.txt"
+              }]
+            : []
+        };
+      },
+      commitEchoInkSessionDeletion: async () => {
+        calls.push(`commit:${mode}`);
+        throw new Error("commit must not run");
+      }
+    },
+    turnQueue: {
+      clearSessionQueue: () => calls.push(`clear-queue:${mode}`)
+    },
+    running: false,
+    activeRunSessionId: "",
+    resetVirtualWindow: () => calls.push(`render:${mode}`),
+    renderTabs: () => calls.push(`render:${mode}`),
+    renderMessages: () => calls.push(`render:${mode}`),
+    renderToolbar: () => calls.push(`render:${mode}`),
+    renderKnowledgeDashboard: () => calls.push(`render:${mode}`),
+    refreshKnowledgeDashboard: async () => calls.push(`render:${mode}`),
+    updateInputPlaceholder: () => calls.push(`render:${mode}`),
+    isKnowledgeBaseSession: () => false
+  };
+
+  await deleteSessions(host, [session.id], {
+    confirm: async () => {
+      calls.push("confirm:cancel");
+      return false;
+    }
+  });
+  mode = "blocked";
+  await deleteSessions(host, [session.id], {
+    confirm: async () => {
+      throw new Error("blocked preview must not request confirmation");
+    }
+  });
+
+  assert.deepEqual(calls, [
+    "preview:cancel",
+    "confirm:cancel",
+    "preview:blocked"
+  ]);
+  assert.deepEqual(settings.sessions, [session]);
+  assert.equal(settings.activeSessionId, session.id);
+}
+
+async function testClearSessionConversationRecordsUsesPreviewAndReceipt():
+Promise<void> {
+  const session: StoredSession = {
+    id: "chat-clear-records",
+    title: "清空记录",
+    cwd: "",
+    messages: [{
+      id: "message-clear-records",
+      role: "user",
+      text: "old history",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 2
+  };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sessions = [session];
+  settings.activeSessionId = session.id;
+  const calls: string[] = [];
+  const host: any = {
+    plugin: {
+      settings,
+      previewEchoInkConversationRecordClear: async () => {
+        calls.push("preview");
+        return {
+          operation: "clear-conversation-records",
+          conversationId: session.id,
+          inventorySnapshotDigest: `sha256:${"b".repeat(64)}`,
+          disposition: {
+            retainMemoryIds: ["memory-pending"],
+            retainArtifactIds: ["artifact-report"]
+          },
+          blockers: []
+        };
+      },
+      clearEchoInkConversationRecords: async (
+        target: StoredSession,
+        disposition: {
+          retainMemoryIds: string[];
+          retainArtifactIds: string[];
+        }
+      ) => {
+        calls.push(
+          `commit:${disposition.retainMemoryIds.join(",")}:`
+          + disposition.retainArtifactIds.join(",")
+        );
+        target.messages = [];
+        return {
+          operation: "clear-conversation-records",
+          conversationId: target.id,
+          mutationId: "mutation-clear-records",
+          localState: "committed",
+          projection: "updated",
+          nativeRetirement: "not-required",
+          nativeRetirementIds: []
+        };
+      }
+    },
+    turnQueue: {
+      clearSessionQueue: (sessionId: string) =>
+        calls.push(`clear-queue:${sessionId}`)
+    },
+    running: false,
+    activeRunSessionId: "",
+    resetVirtualWindow: () => calls.push("render"),
+    renderTabs: () => calls.push("render"),
+    renderMessages: () => calls.push("render"),
+    renderToolbar: () => calls.push("render"),
+    renderKnowledgeDashboard: () => calls.push("render"),
+    refreshKnowledgeDashboard: async () => calls.push("render"),
+    updateInputPlaceholder: () => calls.push("render"),
+    isKnowledgeBaseSession: () => false
+  };
+
+  await clearSessionConversationRecords(host, session, {
+    confirm: async (_title, body) => {
+      calls.push("confirm");
+      assert.match(body, /1 条待确认长期记忆/);
+      assert.match(body, /1 个正式产物/);
+      assert.match(body, /单独处理/);
+      return true;
+    }
+  });
+
+  assert.deepEqual(calls.slice(0, 4), [
+    "preview",
+    "confirm",
+    "commit:memory-pending:artifact-report",
+    `clear-queue:${session.id}`
+  ]);
+  assert.equal(session.messages.length, 0);
+  assert.ok(calls.filter((call) => call === "render").length > 0);
 }
 
 class FakeSessionNavigatorElement {
@@ -741,6 +1018,10 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
   let capturedRequest: Record<string, unknown> | null = null;
   const plugin = {
     settings,
+    withEchoInkConversationMutation: async <T>(
+      _conversationId: string,
+      action: () => Promise<T>
+    ): Promise<T> => await action(),
     ensureHarnessBackendConnected: async (backend: string) => {
       connectedBackend = backend;
     },
@@ -750,7 +1031,7 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
     callEchoInkMcpTool: async () => ({ content: [] }),
     externalizeMessageText: async () => undefined,
     saveSettings: async () => undefined,
-    settleHarnessRunTerminal: async () => undefined,
+    commitChatSurfaceTerminal: async () => undefined,
     runHarnessWithAdapter: async (input: { request: Record<string, unknown>; sink: (event: HarnessEvent) => void | Promise<void> }) => {
       harnessRuns += 1;
       capturedRequest = input.request;
@@ -796,8 +1077,6 @@ async function testUnifiedChatHarnessTurn(): Promise<void> {
     set activeRunSessionId(value: string) { activeRunSessionId = value; },
     activeTurnId: "",
     turnStartedAt: 0,
-    threadPrewarmPromise: null,
-    threadPrewarmSessionId: "",
     messagesBottomFollowPaused: false,
     clearComposerDraft: () => undefined,
     renderTabs: () => undefined,
@@ -875,6 +1154,10 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
   const view: any = {
     plugin: {
       settings,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       ensureHarnessBackendConnected: async () => undefined,
       getVaultPath: () => "/tmp/echoink-chat-ui",
       getNativeExecutionRefContext: () => ({ deviceKey: "test-device", vaultId: "test-vault" }),
@@ -882,7 +1165,7 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
       callEchoInkMcpTool: async () => ({ content: [] }),
       externalizeMessageText: async () => undefined,
       saveSettings: async () => undefined,
-      settleHarnessRunTerminal: async () => undefined,
+      commitChatSurfaceTerminal: async () => undefined,
       runHarnessWithAdapter: async (input: { request: Record<string, unknown>; sink: (event: HarnessEvent) => void | Promise<void> }) => {
         const runId = String(input.request.runId);
         await input.sink(harnessEvent(runId, 1, "run.cancelled", { error: "Run cancelled" }));
@@ -896,8 +1179,6 @@ async function testSynchronousChatCancellationUsesInterruptedUi(): Promise<void>
     activeRunSessionId: "",
     activeTurnId: "",
     turnStartedAt: 0,
-    threadPrewarmPromise: null,
-    threadPrewarmSessionId: "",
     messagesBottomFollowPaused: false,
     clearComposerDraft: () => undefined,
     renderTabs: () => undefined,

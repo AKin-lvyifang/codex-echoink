@@ -24,6 +24,7 @@ export interface QueueStartState {
 
 interface SessionTurnQueue {
   paused: boolean;
+  recoveryRequired: boolean;
   items: QueuedTurnItem[];
 }
 
@@ -43,7 +44,7 @@ export class RuntimeTurnQueue {
 
   dequeueNext(sessionId: string): QueuedTurnItem | null {
     const queue = this.sessions.get(sessionId);
-    if (!queue || queue.paused) return null;
+    if (!queue || queue.paused || queue.recoveryRequired) return null;
     const item = queue.items.shift();
     this.cleanupEmptySession(sessionId);
     return item ? cloneQueuedTurnItem(item) : null;
@@ -79,15 +80,17 @@ export class RuntimeTurnQueue {
   }
 
   pauseSessionQueue(sessionId: string): void {
-    this.ensureSessionQueue(sessionId).paused = true;
+    const queue = this.sessions.get(sessionId);
+    if (queue?.items.length) queue.paused = true;
   }
 
   resumeSessionQueue(sessionId: string): void {
     const queue = this.sessions.get(sessionId);
-    if (queue) queue.paused = false;
+    if (queue && !queue.recoveryRequired) queue.paused = false;
   }
 
   settleSessionQueue(sessionId: string, succeeded: boolean): QueueSettlement {
+    if (this.isSessionRecoveryRequired(sessionId)) return "paused";
     if (succeeded) return this.hasQueuedItems(sessionId) ? "continue" : "idle";
     if (!this.hasQueuedItems(sessionId)) return "idle";
     this.pauseSessionQueue(sessionId);
@@ -98,6 +101,21 @@ export class RuntimeTurnQueue {
     return Boolean(this.sessions.get(sessionId)?.paused);
   }
 
+  requireSessionRecovery(sessionId: string): void {
+    this.ensureSessionQueue(sessionId).recoveryRequired = true;
+  }
+
+  clearSessionRecoveryRequired(sessionId: string): void {
+    const queue = this.sessions.get(sessionId);
+    if (!queue) return;
+    queue.recoveryRequired = false;
+    this.cleanupEmptySession(sessionId);
+  }
+
+  isSessionRecoveryRequired(sessionId: string): boolean {
+    return Boolean(this.sessions.get(sessionId)?.recoveryRequired);
+  }
+
   clearSessionQueue(sessionId: string): void {
     this.sessions.delete(sessionId);
   }
@@ -105,7 +123,7 @@ export class RuntimeTurnQueue {
   private ensureSessionQueue(sessionId: string): SessionTurnQueue {
     let queue = this.sessions.get(sessionId);
     if (!queue) {
-      queue = { paused: false, items: [] };
+      queue = { paused: false, recoveryRequired: false, items: [] };
       this.sessions.set(sessionId, queue);
     }
     return queue;
@@ -113,7 +131,14 @@ export class RuntimeTurnQueue {
 
   private cleanupEmptySession(sessionId: string): void {
     const queue = this.sessions.get(sessionId);
-    if (queue && queue.items.length === 0) this.sessions.delete(sessionId);
+    if (
+      queue
+      && queue.items.length === 0
+      && !queue.paused
+      && !queue.recoveryRequired
+    ) {
+      this.sessions.delete(sessionId);
+    }
   }
 }
 

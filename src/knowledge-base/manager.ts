@@ -1275,6 +1275,7 @@ export class KnowledgeBaseManager {
   private async appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void> {
     await appendScheduledMaintenanceMessageToSession(this.plugin, result, async () => {
       await this.archivePendingCodexKnowledgeThreads();
+      return this.getLastNativeLifecycleSummary();
     });
   }
 

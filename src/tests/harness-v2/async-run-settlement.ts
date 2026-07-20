@@ -1,4 +1,7 @@
 import * as assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import type { AgentTaskRuntime } from "../../agent/runtime";
 import type { AgentAdapter, AgentConnectionStatus, AgentRunRequest, AgentRunResult } from "../../harness/agents/adapter";
 import { FakeAgentAdapter } from "../../harness/agents/adapters/fake";
@@ -9,15 +12,27 @@ import type { NativeExecutionRef } from "../../harness/contracts/native-executio
 import type { HarnessRunRequest } from "../../harness/contracts/run";
 import { EchoInkHarnessKernel } from "../../harness/kernel/harness-kernel";
 import { RunOrchestrator } from "../../harness/kernel/run-orchestrator";
-import { InMemoryRunLedger, type RunLedger } from "../../harness/ledger/run-ledger";
+import { workspaceFingerprint } from "../../harness/kernel/session-service";
+import {
+  FileRunLedger,
+  InMemoryRunLedger,
+  type RunLedger
+} from "../../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
 import type { MemoryProvider } from "../../harness/memory/provider";
+import type { StoredSession } from "../../settings/settings";
 
 export async function runHarnessV2AsyncRunSettlementTests(): Promise<void> {
   await assertKernelSettlesAsyncRunningRunToCompleted();
   await assertAsyncSettlementIsIdempotent();
   await assertPreExistingTerminalShortCircuitsRun();
   await assertConcurrentSameRunIdStartsAdapterOnce();
+  await assertSurfaceCandidateRetainsSameRunStartUntilDurableTerminal();
+  await assertSurfaceCandidateStartSurvivesFailedTerminalCommit();
+  await assertPostWriteTerminalRejectKeepsKernelCompletion();
+  await assertPostWriteTerminalRejectKeepsSurfaceWinner();
+  await assertAmbiguousTerminalReadbackPoisonsCommitLane();
+  await assertSurfaceAuthoritySuppressesLateAdapterTerminals();
   await assertHydrationUsesLatestTerminalEvent();
   await assertAsyncSettlementSerializesRaces();
   await assertAppendRunEventDeduplicatesTerminalTypes();
@@ -71,7 +86,7 @@ async function assertTerminalDoesNotWaitForMemoryObservation(): Promise<void> {
       throw new Error("curator failed after terminal commit");
     }
   };
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "memory-non-blocking",
       result: { status: "completed", outputText: "done" }
@@ -111,7 +126,8 @@ async function assertKernelSettlesAsyncRunningRunToCompleted(): Promise<void> {
   const kernel = new EchoInkHarnessKernel({
     ledger,
     memoryProvider: new NoopMemoryProvider(),
-    now: fixedClock(1000)
+    now: fixedClock(1000),
+    sessionProvider: persistentSettlementSession
   });
   const result = await kernel.runWithAdapter({
     adapter: createStaticAdapter({
@@ -156,7 +172,7 @@ async function assertKernelSettlesAsyncRunningRunToCompleted(): Promise<void> {
 async function assertAsyncSettlementIsIdempotent(): Promise<void> {
   const runId = "run-async-idempotent";
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "fake-async",
       result: {
@@ -184,7 +200,7 @@ async function assertPreExistingTerminalShortCircuitsRun(): Promise<void> {
   const runId = "run-pre-existing-terminal";
   const ledger = new InMemoryRunLedger();
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "pre-settled",
       result: { status: "completed", outputText: "must not run" },
@@ -217,7 +233,7 @@ async function assertConcurrentSameRunIdStartsAdapterOnce(): Promise<void> {
   const runEntered = deferred<void>();
   const releaseRun = deferred<void>();
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "concurrent-start",
       result: {
@@ -246,6 +262,379 @@ async function assertConcurrentSameRunIdStartsAdapterOnce(): Promise<void> {
   assert.equal(firstResult.nativeExecution?.id, "single-native-thread");
 }
 
+async function assertSurfaceCandidateRetainsSameRunStartUntilDurableTerminal(): Promise<void> {
+  const runId = "run-surface-candidate-deduplicated";
+  const ledger = new InMemoryRunLedger();
+  const conversationCommitStarted = deferred<void>();
+  const releaseConversationCommit = deferred<void>();
+  let runCalls = 0;
+  const orchestrator = createSettlementOrchestrator({
+    adapters: [createStaticAdapter({
+      backendId: "surface-candidate",
+      result: {
+        status: "completed",
+        outputText: "surface candidate"
+      },
+      onRun: () => {
+        runCalls += 1;
+      }
+    })],
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    now: fixedClock(2325)
+  });
+  const request = genericChatRequest(runId, "surface-candidate");
+  const runOptions = { terminalAuthority: "surface" as const };
+
+  const firstResult = await orchestrator.run(request, undefined, runOptions);
+  assert.equal(firstResult.status, "completed");
+  assert.equal(countTerminalEvents(await ledger.readRun(runId)), 0);
+
+  const surfaceCommit = (async () => {
+    conversationCommitStarted.resolve();
+    await releaseConversationCommit.promise;
+    await orchestrator.settleRunTerminal({
+      runId,
+      status: "completed",
+      backendId: "surface-candidate",
+      text: "durable surface terminal"
+    });
+  })();
+  await conversationCommitStarted.promise;
+
+  const duplicateResult = await orchestrator.run(request, undefined, runOptions);
+  assert.equal(
+    runCalls,
+    1,
+    "a duplicate runId must reuse the resolved Surface candidate while Conversation commit is pending"
+  );
+  assert.deepEqual(duplicateResult, firstResult);
+
+  releaseConversationCommit.resolve();
+  await surfaceCommit;
+
+  const recoveredResult = await orchestrator.run(request, undefined, runOptions);
+  assert.equal(runCalls, 1, "a durable terminal must short-circuit later duplicate runId attempts");
+  assert.deepEqual(recoveredResult, {
+    runId,
+    status: "completed",
+    outputText: "durable surface terminal"
+  });
+  assert.equal(countTerminalEvents(await ledger.readRun(runId)), 1);
+}
+
+async function assertSurfaceCandidateStartSurvivesFailedTerminalCommit(): Promise<void> {
+  const runId = "run-surface-terminal-commit-retry";
+  const backingLedger = new InMemoryRunLedger();
+  let rejectTerminal = true;
+  let runCalls = 0;
+  const ledger: RunLedger = {
+    async append(event) {
+      if (rejectTerminal && isTerminalEvent(event)) {
+        throw new Error("Run Ledger unavailable");
+      }
+      await backingLedger.append(event);
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const orchestrator = createSettlementOrchestrator({
+    adapters: [createStaticAdapter({
+      backendId: "surface-terminal-retry",
+      result: {
+        status: "completed",
+        outputText: "retryable Surface candidate"
+      },
+      onRun: () => {
+        runCalls += 1;
+      }
+    })],
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    now: fixedClock(2328)
+  });
+  const request = genericChatRequest(runId, "surface-terminal-retry");
+  const runOptions = { terminalAuthority: "surface" as const };
+  const retainedStarts = (orchestrator as unknown as {
+    runStarts: Map<string, Promise<unknown>>;
+  }).runStarts;
+
+  const candidate = await orchestrator.run(request, undefined, runOptions);
+  assert.equal(candidate.status, "completed");
+  assert.equal(retainedStarts.has(runId), true);
+
+  await assert.rejects(
+    () => orchestrator.settleRunTerminal({
+      runId,
+      status: "completed",
+      backendId: "surface-terminal-retry",
+      text: "durable after retry"
+    }),
+    /Run Ledger unavailable/
+  );
+  assert.equal(
+    retainedStarts.has(runId),
+    true,
+    "a failed terminal append must retain the resolved start for recovery"
+  );
+
+  const duplicateAfterFailure = await orchestrator.run(request, undefined, runOptions);
+  assert.equal(runCalls, 1);
+  assert.deepEqual(duplicateAfterFailure, candidate);
+
+  rejectTerminal = false;
+  await orchestrator.settleRunTerminal({
+    runId,
+    status: "completed",
+    backendId: "surface-terminal-retry",
+    text: "durable after retry"
+  });
+  assert.equal(
+    retainedStarts.has(runId),
+    false,
+    "the resolved start may be released only after the terminal winner is durable"
+  );
+  assert.equal(countTerminalEvents(await backingLedger.readRun(runId)), 1);
+}
+
+async function assertPostWriteTerminalRejectKeepsKernelCompletion(): Promise<void> {
+  const runId = "run-kernel-terminal-post-write-reject";
+  const rootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-run-ledger-post-write-")
+  );
+  try {
+    const backingLedger = new FileRunLedger({ rootPath });
+    let terminalAppendCalls = 0;
+    let rejectAfterTerminalWrite = true;
+    const ledger: RunLedger = {
+      async append(event) {
+        await backingLedger.append(event);
+        if (rejectAfterTerminalWrite && isTerminalEvent(event)) {
+          rejectAfterTerminalWrite = false;
+          terminalAppendCalls += 1;
+          throw new Error("Run Ledger acknowledgement lost after durable append");
+        }
+        if (isTerminalEvent(event)) terminalAppendCalls += 1;
+      },
+      async readRun(targetRunId) {
+        return await backingLedger.readRun(targetRunId);
+      }
+    };
+    const orchestrator = createSettlementOrchestrator({
+      adapters: [createStaticAdapter({
+        backendId: "kernel-post-write-reject",
+        result: {
+          status: "completed",
+          outputText: "durable business success"
+        }
+      })],
+      ledger,
+      memoryProvider: new NoopMemoryProvider(),
+      now: fixedClock(2329)
+    });
+
+    const result = await orchestrator.run(
+      genericChatRequest(runId, "kernel-post-write-reject")
+    );
+    const events = await backingLedger.readRun(runId);
+    const terminals = events.filter(isTerminalEvent);
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.outputText, "durable business success");
+    assert.equal(terminalAppendCalls, 1);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0]?.type, "run.completed");
+    assert.equal(terminals[0]?.text, "durable business success");
+  } finally {
+    await rm(rootPath, { recursive: true, force: true });
+  }
+}
+
+async function assertPostWriteTerminalRejectKeepsSurfaceWinner(): Promise<void> {
+  const runId = "run-surface-terminal-post-write-reject";
+  const backingLedger = new InMemoryRunLedger();
+  let terminalAppendCalls = 0;
+  let rejectAfterTerminalWrite = true;
+  const ledger: RunLedger = {
+    async append(event) {
+      await backingLedger.append(event);
+      if (isTerminalEvent(event)) {
+        terminalAppendCalls += 1;
+        if (rejectAfterTerminalWrite) {
+          rejectAfterTerminalWrite = false;
+          throw new Error("Run Ledger acknowledgement lost after durable append");
+        }
+      }
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const orchestrator = createSettlementOrchestrator({
+    adapters: [],
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    now: fixedClock(2330)
+  });
+  const committedByConversation: HarnessEvent[] = [];
+
+  const winnerCommit = orchestrator.commitSurfaceRunTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "durable Conversation winner",
+    data: {
+      authority: "conversation",
+      nested: { order: 1, values: ["alpha", "beta"] }
+    }
+  }, async (winner) => {
+    committedByConversation.push(winner);
+  });
+  const competingLoser = orchestrator.commitSurfaceRunTerminal({
+    runId,
+    status: "failed",
+    backendId: "opencode",
+    error: "late competing loser",
+    data: {
+      authority: "late-candidate",
+      nested: { order: 2, values: ["wrong"] }
+    }
+  }, async (winner) => {
+    committedByConversation.push(winner);
+  });
+
+  const [winner, loser] = await Promise.all([winnerCommit, competingLoser]);
+  const events = await backingLedger.readRun(runId);
+  const terminals = events.filter(isTerminalEvent);
+
+  assert.equal(terminalAppendCalls, 1);
+  assert.equal(terminals.length, 1);
+  assert.equal(terminals[0]?.type, "run.completed");
+  assert.equal(terminals[0]?.text, "durable Conversation winner");
+  assert.deepEqual(loser, winner);
+  assert.equal(committedByConversation.length, 2);
+  assert.ok(committedByConversation.every((event) => event.eventId === winner.eventId));
+  assert.ok(committedByConversation.every((event) => event.type === "run.completed"));
+}
+
+async function assertAmbiguousTerminalReadbackPoisonsCommitLane(): Promise<void> {
+  for (const mode of ["payload-conflict", "duplicate", "readback-unavailable"] as const) {
+    const runId = `run-terminal-readback-${mode}`;
+    const persisted: HarnessEvent[] = [];
+    let appendCalls = 0;
+    let readCalls = 0;
+    const ledger: RunLedger = {
+      async append(event) {
+        appendCalls += 1;
+        const durable = structuredClone(event);
+        if (mode === "payload-conflict") {
+          persisted.push({
+            ...durable,
+            text: "conflicting durable payload"
+          });
+        } else if (mode === "duplicate") {
+          persisted.push(durable, structuredClone(durable));
+        } else {
+          persisted.push(durable);
+        }
+        throw new Error("Run Ledger acknowledgement lost after durable append");
+      },
+      async readRun() {
+        readCalls += 1;
+        if (mode === "readback-unavailable" && appendCalls > 0) {
+          throw new SyntaxError("Run Ledger readback could not be parsed");
+        }
+        return structuredClone(persisted);
+      }
+    };
+    const orchestrator = createSettlementOrchestrator({
+      adapters: [],
+      ledger,
+      memoryProvider: new NoopMemoryProvider(),
+      now: fixedClock(2331)
+    });
+    const settle = (): Promise<HarnessEvent> => orchestrator.settleRunTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "expected durable payload"
+    });
+
+    await assert.rejects(settle, /commit lane is poisoned/);
+    await assert.rejects(settle, /commit lane is poisoned/);
+    assert.equal(appendCalls, 1, `${mode} must prohibit a second terminal append`);
+    assert.equal(readCalls, 2, `${mode} must reuse the poisoned lane after exact readback`);
+  }
+}
+
+async function assertSurfaceAuthoritySuppressesLateAdapterTerminals(): Promise<void> {
+  const runId = "run-surface-suppresses-late-adapter-terminal";
+  const ledger = new InMemoryRunLedger();
+  let adapterEmit: HarnessEventSink | undefined;
+  const orchestrator = createSettlementOrchestrator({
+    adapters: [createStaticAdapter({
+      backendId: "surface-late-terminal",
+      result: {
+        status: "completed",
+        outputText: "surface candidate"
+      },
+      captureEmit: (emit) => {
+        adapterEmit = emit;
+      }
+    })],
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    now: fixedClock(2330)
+  });
+
+  const result = await orchestrator.run(
+    genericChatRequest(runId, "surface-late-terminal"),
+    undefined,
+    { terminalAuthority: "surface" }
+  );
+  assert.equal(result.status, "completed");
+  assert.ok(adapterEmit);
+
+  await adapterEmit({
+    eventId: "adapter-late-failure-before-surface-commit",
+    runId,
+    sequence: 999,
+    createdAt: 2331,
+    source: "agent",
+    type: "run.failed",
+    backendId: "surface-late-terminal",
+    error: "must remain a Surface candidate"
+  });
+  assert.equal(
+    countTerminalEvents(await ledger.readRun(runId)),
+    0,
+    "Surface authority must keep suppressing adapter terminals after adapter.run resolves"
+  );
+
+  await orchestrator.settleRunTerminal({
+    runId,
+    status: "completed",
+    backendId: "surface-late-terminal",
+    text: "durable surface terminal"
+  });
+  await adapterEmit({
+    eventId: "adapter-late-failure-after-surface-commit",
+    runId,
+    sequence: 1000,
+    createdAt: 2332,
+    source: "agent",
+    type: "run.failed",
+    backendId: "surface-late-terminal",
+    error: "must stay suppressed"
+  });
+
+  const events = await ledger.readRun(runId);
+  assert.equal(countTerminalEvents(events), 1);
+  assert.equal(events.at(-1)?.type, "run.completed");
+  assert.equal(events.at(-1)?.text, "durable surface terminal");
+}
+
 async function assertHydrationUsesLatestTerminalEvent(): Promise<void> {
   const runId = "run-hydrate-latest-terminal";
   const ledger = new InMemoryRunLedger();
@@ -268,7 +657,7 @@ async function assertHydrationUsesLatestTerminalEvent(): Promise<void> {
     text: "recovered completion"
   });
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "hydrate-latest",
       result: { status: "completed", outputText: "must not run" },
@@ -289,7 +678,7 @@ async function assertHydrationUsesLatestTerminalEvent(): Promise<void> {
 async function assertAsyncSettlementSerializesRaces(): Promise<void> {
   const runId = "run-async-race";
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
@@ -311,7 +700,7 @@ async function assertLateAdapterTerminalAfterExternalSettlementIsIgnored(): Prom
   const ledger = new InMemoryRunLedger();
   const sinkEvents: HarnessEvent[] = [];
   let lateEmit: HarnessEventSink | undefined;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "late-terminal",
       result: {
@@ -362,7 +751,7 @@ async function assertAppendRunEventDeduplicatesTerminalTypes(): Promise<void> {
   const runId = "run-append-terminal-idempotency";
   const ledger = new InMemoryRunLedger();
   const sinkEvents: HarnessEvent[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
@@ -412,7 +801,7 @@ async function assertAsyncSettlementType(
 ): Promise<void> {
   const runId = `run-async-${status}`;
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "fake-async",
       result: {
@@ -507,7 +896,7 @@ async function assertBlockedDeliveryDoesNotDelayTerminalCommitBeforeAdapterRun()
   const deliveryStarted = deferred<void>();
   const releaseDelivery = deferred<void>();
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "runlane-gate",
       result: {
@@ -558,7 +947,7 @@ async function assertTerminalSinkThrowStillKeepsTerminalAuthoritativeDuringAdapt
   const runEntered = deferred<void>();
   const releaseRun = deferred<void>();
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "sink-throw",
       result: {
@@ -613,7 +1002,7 @@ async function assertTerminalCannotCommitInsideAdapterStartBoundary(): Promise<v
       await releaseRun.promise;
     }
   });
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [adapter],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
@@ -643,7 +1032,7 @@ async function assertCommittedTerminalBeatsLateRunningAdapterResult(): Promise<v
   const releaseRun = deferred<void>();
   const sinkStarted = deferred<void>();
   const releaseSink = deferred<void>();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "late-running",
       result: {
@@ -686,7 +1075,7 @@ async function assertCommittedTerminalBeatsLateRunningAdapterResult(): Promise<v
 async function assertSameRunSinkReentryDoesNotDeadlock(): Promise<void> {
   const runId = "runlane-sink-reentry";
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
@@ -750,7 +1139,7 @@ async function assertSameRunDeliveryRemainsSerialWhileSinkIsPending(): Promise<v
   const releaseFirst = deferred<void>();
   const secondDelivered = deferred<void>();
   let secondStarted = false;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider(),
@@ -791,7 +1180,7 @@ async function assertFireAndForgetSinkThrowIsContained(): Promise<void> {
   };
   process.on("unhandledRejection", onUnhandled);
   try {
-    const orchestrator = new RunOrchestrator({
+    const orchestrator = createSettlementOrchestrator({
       adapters: [],
       ledger: new InMemoryRunLedger(),
       memoryProvider: new NoopMemoryProvider(),
@@ -819,7 +1208,7 @@ async function assertTerminalCommitReleasesOwnerBeforeSinkDeliveryCompletes(): P
   const sinkStarted = deferred<void>();
   const releaseSink = deferred<void>();
   const cancelCalls: string[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "owner-release",
       result: {
@@ -860,7 +1249,7 @@ async function assertConcurrentTerminalSourcesResolveToFirstCommittedTerminal():
   const releaseSink = deferred<void>();
   let adapterEmit: HarnessEventSink | undefined;
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "terminal-race",
       result: {
@@ -938,7 +1327,7 @@ async function assertTerminalAllowsLifecycleButRejectsLateAgentEvents(): Promise
   const releaseTerminalDelivery = deferred<void>();
   const lifecycleDelivered = deferred<void>();
   const deliveredTypes: HarnessEventType[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
@@ -1014,7 +1403,7 @@ async function assertTerminalAllowsLifecycleButRejectsLateAgentEvents(): Promise
 }
 
 async function assertTerminalRunsRecycleLanes(): Promise<void> {
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [],
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider(),
@@ -1031,7 +1420,7 @@ async function assertTerminalRunsRecycleLanes(): Promise<void> {
 
 async function assertCancelTargetsOnlyOwningAdapter(): Promise<void> {
   const calls: string[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [
       createStaticAdapter({
         backendId: "owner",
@@ -1072,7 +1461,7 @@ async function assertCancelBeforeAdapterRunSettlesCancelledWithoutInvokingAdapte
   let runCalls = 0;
   const events: HarnessEvent[] = [];
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [{
       manifest: {
         id: "pre-run",
@@ -1160,7 +1549,7 @@ async function assertExternalSettlementRacingPreRunCancellationHasOneTerminal():
       return await backingLedger.readRun(targetRunId);
     }
   };
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "pre-run-race",
       result: { status: "running" },
@@ -1206,7 +1595,7 @@ async function assertExternalSettlementBeforeCancellationCheckSkipsAdapterRun():
   const releaseRetrieve = deferred<void>();
   const ledger = new InMemoryRunLedger();
   let runCalls = 0;
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "pre-run-settled",
       result: { status: "running" },
@@ -1243,7 +1632,7 @@ async function assertCancelDuringAdapterRunStillForwardsToOwner(): Promise<void>
   const runEntered = deferred<void>();
   const cancelObserved = deferred<void>();
   const calls: string[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [{
       manifest: {
         id: "owner-forward",
@@ -1295,7 +1684,7 @@ async function assertCancelDuringRejectingAdapterRunWritesOneCancelledTerminal()
   const runEntered = deferred<void>();
   const rejectRun = deferred<AgentRunResult>();
   const ledger = new InMemoryRunLedger();
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [{
       manifest: {
         id: "rejecting-owner",
@@ -1344,7 +1733,7 @@ async function assertCancelDuringRejectingAdapterRunWritesOneCancelledTerminal()
 
 async function assertCancelOwnerReleasedAfterSynchronousTerminal(): Promise<void> {
   const calls: string[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "sync-owner",
       result: { status: "completed", outputText: "done" },
@@ -1366,7 +1755,7 @@ async function assertCancelOwnerReleasedAfterSynchronousTerminal(): Promise<void
 
 async function assertCancelOwnerReleasedAfterAsyncSettlement(): Promise<void> {
   const calls: string[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [createStaticAdapter({
       backendId: "async-owner",
       result: {
@@ -1397,7 +1786,7 @@ async function assertCancelOwnerReleasedAfterAsyncSettlement(): Promise<void> {
 
 async function runSynchronousCompletionTypes(runId: string, backendId: string, adapter: AgentAdapter): Promise<string[]> {
   const events: HarnessEvent[] = [];
-  const orchestrator = new RunOrchestrator({
+  const orchestrator = createSettlementOrchestrator({
     adapters: [adapter],
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider(),
@@ -1510,6 +1899,34 @@ function genericChatRequest(runId: string, backendId: string): HarnessRunRequest
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
     memoryPolicy: { enabled: true, maxItems: 0 },
     outputContract: { kind: "plain-text" }
+  };
+}
+
+function createSettlementOrchestrator(
+  options: ConstructorParameters<typeof RunOrchestrator>[0]
+): RunOrchestrator {
+  return new RunOrchestrator({
+    ...options,
+    sessionProvider: options.sessionProvider ?? persistentSettlementSession
+  });
+}
+
+function persistentSettlementSession(sessionId: string): StoredSession {
+  return {
+    id: sessionId,
+    title: "Async settlement fixture",
+    cwd: "/vault",
+    revision: 1,
+    generation: 1,
+    contextId: `context-${sessionId}`,
+    commitId: `commit-${sessionId}`,
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath: "/vault",
+      cwd: "/vault"
+    }),
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
   };
 }
 

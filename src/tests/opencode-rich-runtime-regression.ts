@@ -1393,9 +1393,17 @@ async function testExactWriteFenceDisablesCliFallbacks(): Promise<void> {
   );
   const events: AgentEvent[] = [];
   const receipts: AgentExactWriteFenceReceipt[] = [];
+  const order: string[] = [];
+  let releaseRegistration!: () => void;
+  const registrationGate = new Promise<void>((resolve) => {
+    releaseRegistration = resolve;
+  });
+  let markRegistrationStarted!: () => void;
+  const registrationStarted = new Promise<void>((resolve) => {
+    markRegistrationStarted = resolve;
+  });
 
-  await assert.rejects(
-    runtime.runTaskEvents({
+  const exactFenceRun = runtime.runTaskEvents({
       prompt: "maintain safely",
       permission: "workspace-write",
       writableRoots: ["/vault/wiki", "/vault/outputs"],
@@ -1406,19 +1414,35 @@ async function testExactWriteFenceDisablesCliFallbacks(): Promise<void> {
         deniedLivePaths: ["/live-vault"],
         deniedControlPaths: ["/shadow-control"]
       },
+      onRunId: async () => {
+        order.push("register:start");
+        markRegistrationStarted();
+        await registrationGate;
+        order.push("register:end");
+      },
       onExactWriteFenceConfigured: (receipt) => {
+        order.push("fence");
         assert.equal(backend.promptAsyncCalls, 0, "the receipt callback must run before prompt submission");
         receipts.push(receipt);
       },
       timeoutMs: 1_000
-    }, (event) => events.push(event)),
+    }, (event) => events.push(event));
+  const exactFenceRejected = assert.rejects(
+    exactFenceRun,
     /EXACT_WRITE_FENCE_UNAVAILABLE/
   );
+  await registrationStarted;
+  assert.deepEqual(order, ["register:start"]);
+  assert.equal(receipts.length, 0);
+  assert.equal(backend.promptAsyncCalls, 0);
+  releaseRegistration();
+  await exactFenceRejected;
 
   assert.equal(backend.promptAsyncCalls, 0, "an unavailable exact-fence rich transport must fail before prompt submission");
   assert.equal(backend.cliCalls, 0, "exact-fence tasks must never use OpenCode CLI fallback");
   assert.equal(lifecycleCalls, 0, "exact-fence tasks must never use the outer lifecycle fallback");
   assert.equal(receipts.length, 1);
+  assert.deepEqual(order, ["register:start", "register:end", "fence"]);
   assert.equal(receipts[0]?.backend, "opencode");
   assert.equal(receipts[0]?.attemptToken, "attempt-opencode-fence");
   assert.equal(receipts[0]?.leaseToken, "lease-opencode-fence");

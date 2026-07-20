@@ -16,6 +16,7 @@ import type { MemoryProvider, MemoryRetrievalRequest } from "../../harness/memor
 import { FakeAgentAdapter } from "../../harness/agents/adapters/fake";
 import type { AgentRunRequest } from "../../harness/agents/adapter";
 import type { StoredSession } from "../../settings/settings";
+import { workspaceFingerprint } from "../../harness/kernel/session-service";
 
 export async function runHarnessV2ContractTests(): Promise<void> {
   assertHarnessRunUsageNormalization();
@@ -146,6 +147,7 @@ async function assertFakeAdapterGenericChatRun(): Promise<void> {
     adapters: [adapter],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: async () => durableConversationSession(),
     now: fixedClock(1000)
   });
 
@@ -204,8 +206,13 @@ async function assertNativeExecutionContractEventsAndBinding(): Promise<void> {
       title: "Native lease test",
       cwd: "/vault",
       revision: 3,
+      generation: 3,
+      contextId: "context-session-chat-native",
+      workspaceFingerprint: workspaceFingerprint({ vaultPath: "/vault", cwd: "/vault" }),
       contextSnapshot: {
         sessionId: "session-chat",
+        contextId: "context-session-chat-native",
+        generation: 3,
         version: "snapshot-native-1",
         goal: "验证 Native Lease",
         currentState: "合同测试",
@@ -272,6 +279,10 @@ async function assertOrchestratorPassesCompiledContextToAdapter(): Promise<void>
       id: "session-chat",
       title: "跨 Agent 会话",
       cwd: "/vault",
+      revision: 1,
+      generation: 1,
+      contextId: "context-session-chat-compiled",
+      workspaceFingerprint: workspaceFingerprint({ vaultPath: "/vault", cwd: "/vault" }),
       messages: [
         { id: "m1", role: "user", text: "第一轮整理 raw/a.md", createdAt: 1 },
         { id: "m2", role: "assistant", text: "已写入 wiki/a.md", createdAt: 2 }
@@ -464,6 +475,10 @@ async function assertOrchestratorPassesSelectedVaultSkillToAdapter(): Promise<vo
     })],
     ledger: new InMemoryRunLedger(),
     memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: async () => durableConversationSession({
+      vaultPath,
+      cwd: vaultPath
+    }),
     now: fixedClock(3000)
   });
   const request = genericChatRequest();
@@ -571,11 +586,19 @@ function genericChatRequest(): HarnessRunRequest {
 }
 
 function leasedSession(): StoredSession {
+  const contextId = "context-session-chat-leased";
+  const sessionWorkspaceFingerprint = workspaceFingerprint({
+    vaultPath: "/vault",
+    cwd: "/vault"
+  });
   return {
     id: "session-chat",
     title: "Lease session",
     cwd: "/vault",
     revision: 2,
+    generation: 2,
+    contextId,
+    workspaceFingerprint: sessionWorkspaceFingerprint,
     backendBindings: {
       fake: {
         backendId: "fake",
@@ -584,9 +607,13 @@ function leasedSession(): StoredSession {
         leaseId: "lease-fake",
         syncedThroughMessageId: "m2",
         syncedSessionRevision: 2,
+        workspaceFingerprint: sessionWorkspaceFingerprint,
         contextCursor: {
           syncedThroughMessageId: "m2",
-          syncedSessionRevision: 2
+          syncedSessionRevision: 2,
+          sessionGeneration: 2,
+          contextId,
+          workspaceFingerprint: sessionWorkspaceFingerprint
         },
         lastUsedAt: 100
       }
@@ -598,6 +625,23 @@ function leasedSession(): StoredSession {
     ],
     createdAt: 1,
     updatedAt: 3
+  };
+}
+
+function durableConversationSession(
+  workspace = { vaultPath: "/vault", cwd: "/vault" }
+): StoredSession {
+  return {
+    id: "session-chat",
+    title: "Durable conversation",
+    cwd: workspace.cwd,
+    revision: 1,
+    generation: 1,
+    contextId: "context-session-chat",
+    workspaceFingerprint: workspaceFingerprint(workspace),
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
   };
 }
 

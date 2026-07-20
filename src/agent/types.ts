@@ -128,6 +128,16 @@ export interface AgentExactWriteFenceReceipt {
   readonly configuredAt: string;
 }
 
+export interface AgentNativeExecutionDescriptor {
+  kind: "thread" | "session" | "run" | "process";
+  persistence:
+    | "none"
+    | "process-local"
+    | "provider-persistent"
+    | "unknown";
+  transport: string;
+}
+
 export interface AgentTaskInput {
   prompt: string;
   system?: string;
@@ -159,7 +169,62 @@ export interface AgentTaskInput {
   timeoutMs?: number;
   tools?: Record<string, boolean>;
   abortSignal?: AbortSignal;
-  onRunId?: (runId: string) => void;
+  requireNativeRegistrationBeforePrompt?: boolean;
+  /**
+   * The supplied nativeSessionId is a Harness-owned durable binding. A runtime
+   * must either resume that exact session or report it stale; it may not
+   * silently create a replacement below the Harness retirement boundary.
+   */
+  requireNativeSessionResume?: boolean;
+  onRunId?: (
+    runId: string,
+    native?: AgentNativeExecutionDescriptor
+  ) => void | Promise<void>;
+}
+
+export const NATIVE_RUN_REGISTRATION_ERROR_CODE = "NATIVE_EXECUTION_REGISTRATION_FAILED";
+
+export class NativeRunRegistrationError extends Error {
+  readonly code = NATIVE_RUN_REGISTRATION_ERROR_CODE;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "NativeRunRegistrationError";
+    if (cause !== undefined) Object.assign(this, { cause });
+  }
+}
+
+export function isNativeRunRegistrationError(error: unknown): error is NativeRunRegistrationError {
+  return error instanceof NativeRunRegistrationError
+    || (typeof error === "object"
+      && error !== null
+      && (error as { code?: unknown }).code === NATIVE_RUN_REGISTRATION_ERROR_CODE);
+}
+
+export const NATIVE_SESSION_STALE_ERROR_CODE = "AGENT_NATIVE_SESSION_STALE";
+
+export class NativeSessionStaleError extends Error {
+  readonly code = NATIVE_SESSION_STALE_ERROR_CODE;
+
+  constructor(
+    message: string,
+    readonly nativeExecutionId: string,
+    cause?: unknown
+  ) {
+    super(message);
+    this.name = "NativeSessionStaleError";
+    if (cause !== undefined) Object.assign(this, { cause });
+  }
+}
+
+export function isNativeSessionStaleError(error: unknown): error is NativeSessionStaleError {
+  return error instanceof NativeSessionStaleError
+    || (
+      typeof error === "object"
+      && error !== null
+      && (error as { code?: unknown }).code === NATIVE_SESSION_STALE_ERROR_CODE
+      && typeof (error as { nativeExecutionId?: unknown }).nativeExecutionId === "string"
+    );
 }
 
 export interface AgentTaskResult {

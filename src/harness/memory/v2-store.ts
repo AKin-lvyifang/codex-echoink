@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 export const ECHOINK_MEMORY_SCHEMA_VERSION = 2;
@@ -54,6 +54,15 @@ export interface MemoryProjectionRecordV2 {
   statement: string;
   evidenceRefs: string[];
   sourceRunId: string;
+  sourceConversationIds?: string[];
+  sourceDeletions?: Array<{
+    mutationId: string;
+    conversationId: string;
+    deletedAt: number;
+    forwardTransactionId: string;
+    restoredAt?: number;
+    restoreTransactionId?: string;
+  }>;
   confidence: number;
   expiresAt?: number;
   supersededAt?: number;
@@ -81,6 +90,43 @@ export interface PendingMemoryEvent {
   redacted: boolean;
   checksum: string;
 }
+
+export type ExistingMemoryTransactionState =
+  | "prepared"
+  | "applied"
+  | "unresolved"
+  | "invalid"
+  | "failed"
+  | "committing"
+  | "committed"
+  | "recovered";
+
+export interface ExistingMemoryTransactionSnapshot {
+  transactionId: string;
+  state: ExistingMemoryTransactionState;
+  baseRevision: number;
+  targetRevision: number;
+  eventIds: string[];
+  sourceConversationIds: string[];
+  outcome: "no-pending" | "write" | "no-op" | "pending" | "failed";
+  committedMemoryIds: string[];
+  confirmationIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  error: string;
+  operation?: string;
+}
+
+export type ExistingEchoInkMemoryV2Snapshot =
+  | { state: "missing" }
+  | {
+      state: "present";
+      manifest: MemoryManifestV2;
+      index: MemoryIndexV2<MemoryProjectionRecordV2>;
+      pendingEvents: PendingMemoryEvent[];
+      transactions: ExistingMemoryTransactionSnapshot[];
+      snapshotDigest: string;
+    };
 
 export function echoInkMemoryV2Layout(vaultPath: string): EchoInkMemoryV2Layout {
   const root = path.join(vaultPath, ".echoink", "memory");
@@ -163,6 +209,31 @@ export async function readMemoryIndexV2<T = unknown>(vaultPath: string): Promise
   return validateMemoryIndexV2(await readStrictJson(layout.index, "index.json")) as MemoryIndexV2<T>;
 }
 
+/**
+ * Reads only the formal existing Store needed by destructive lifecycle
+ * planning. Unlike normal Memory reads, this path never initializes the root,
+ * migrates a legacy index, repairs projections or creates pending files.
+ */
+export async function readExistingEchoInkMemoryV2Snapshot(
+  vaultPath: string
+): Promise<ExistingEchoInkMemoryV2Snapshot> {
+  const first = await readExistingEchoInkMemoryV2SnapshotOnce(vaultPath);
+  const second = await readExistingEchoInkMemoryV2SnapshotOnce(vaultPath);
+  if (
+    first.state !== second.state
+    || (
+      first.state === "present"
+      && second.state === "present"
+      && first.snapshotDigest !== second.snapshotDigest
+    )
+  ) {
+    throw new Error(
+      "EchoInk Memory recovery required: formal Store changed during read-only snapshot"
+    );
+  }
+  return first;
+}
+
 export async function appendPendingMemoryEvent(
   vaultPath: string,
   input: Omit<PendingMemoryEvent, "schemaVersion" | "eventId" | "payload" | "redacted" | "checksum"> & {
@@ -205,6 +276,10 @@ export async function readPendingMemoryEvents(vaultPath: string): Promise<Pendin
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw error;
   });
+  return parsePendingMemoryEventsText(text);
+}
+
+function parsePendingMemoryEventsText(text: string): PendingMemoryEvent[] {
   const events: PendingMemoryEvent[] = [];
   let lineNumber = 0;
   for (const line of text.split(/\r?\n/)) {
@@ -357,6 +432,16 @@ function renderMemoryProjection(title: string, memories: MemoryProjectionRecordV
   const lines = [`# ${title}`, "", "<!-- Generated from index.json. Do not edit directly. -->", ""];
   for (const item of [...memories].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
     lines.push(`## ${item.id}`, "", item.statement, "", `- Kind: ${item.kind}`, `- Scope: ${item.scope}`, `- Source run: ${item.sourceRunId}`, `- Confidence: ${item.confidence}`);
+    if (item.sourceConversationIds?.length) {
+      lines.push(`- Source conversations: ${item.sourceConversationIds.join(", ")}`);
+    }
+    for (const marker of item.sourceDeletions ?? []) {
+      lines.push(
+        marker.restoredAt === undefined
+          ? `- Source deleted: ${marker.conversationId} (${marker.mutationId})`
+          : `- Source restored: ${marker.conversationId} (${marker.mutationId})`
+      );
+    }
     if (item.evidenceRefs.length) lines.push(`- Evidence: ${item.evidenceRefs.join(", ")}`);
     if (item.supersededAt !== undefined) lines.push(`- Superseded: ${item.supersededReason || "yes"}`);
     if (item.deletedAt !== undefined) lines.push(`- Deleted: ${item.deletedReason || "yes"}`);
@@ -518,7 +603,7 @@ async function readStrictJson(filePath: string, label: string): Promise<unknown>
   }
 }
 
-function validateMemoryManifest(value: unknown): MemoryManifestV2 {
+export function validateMemoryManifest(value: unknown): MemoryManifestV2 {
   if (!isRecord(value)) throw new Error("EchoInk Memory recovery required: manifest.json must be an object");
   if (value.schemaVersion !== ECHOINK_MEMORY_SCHEMA_VERSION) {
     const detail = typeof value.schemaVersion === "number" && value.schemaVersion > ECHOINK_MEMORY_SCHEMA_VERSION ? "uses a future schema" : "has an unsupported schema";
@@ -534,6 +619,379 @@ function validateMemoryManifest(value: unknown): MemoryManifestV2 {
     throw new Error("EchoInk Memory recovery required: manifest.json outcome fields are invalid");
   }
   return value as unknown as MemoryManifestV2;
+}
+
+async function readExistingEchoInkMemoryV2SnapshotOnce(
+  vaultPath: string
+): Promise<ExistingEchoInkMemoryV2Snapshot> {
+  const layout = echoInkMemoryV2Layout(vaultPath);
+  const rootStats = await lstatOrNull(layout.root);
+  if (!rootStats) return { state: "missing" };
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error(
+      "EchoInk Memory recovery required: formal Store root is not a plain directory"
+    );
+  }
+  const manifest = validateMemoryManifest(JSON.parse(
+    await readExistingMemoryRegularFile(
+      layout.manifest,
+      "manifest.json",
+      1024 * 1024
+    )
+  ) as unknown);
+  const index = validateMemoryIndexV2(JSON.parse(
+    await readExistingMemoryRegularFile(
+      layout.index,
+      "index.json",
+      32 * 1024 * 1024
+    )
+  ) as unknown) as MemoryIndexV2<MemoryProjectionRecordV2>;
+  const pendingEvents = parsePendingMemoryEventsText(
+    await readExistingMemoryRegularFile(
+      layout.pending,
+      "pending-events.jsonl",
+      32 * 1024 * 1024
+    )
+  );
+  const transactions = await readExistingMemoryTransactions(layout);
+  if (manifest.revision !== index.revision) {
+    throw new Error(
+      "EchoInk Memory recovery required: manifest and index revisions differ"
+    );
+  }
+  const snapshotDigest = `sha256:${checksum({
+    manifest,
+    index,
+    pendingEvents,
+    transactions
+  })}`;
+  return {
+    state: "present",
+    manifest: { ...manifest },
+    index: {
+      ...index,
+      memories: index.memories.map((memory) => cloneMemoryProjection(memory)),
+      confirmations: index.confirmations.map(cloneStoredValue)
+    },
+    pendingEvents: pendingEvents.map(clonePendingMemoryEvent),
+    transactions: transactions.map(cloneExistingMemoryTransaction),
+    snapshotDigest
+  };
+}
+
+async function readExistingMemoryTransactions(
+  layout: EchoInkMemoryV2Layout
+): Promise<ExistingMemoryTransactionSnapshot[]> {
+  const rootStats = await lstatOrNull(layout.transactions);
+  if (
+    !rootStats
+    || !rootStats.isDirectory()
+    || rootStats.isSymbolicLink()
+  ) {
+    throw new Error(
+      "EchoInk Memory recovery required: transactions root is missing or unsafe"
+    );
+  }
+  const entries = await readdir(layout.transactions, {
+    withFileTypes: true
+  });
+  const transactions: ExistingMemoryTransactionSnapshot[] = [];
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )) {
+    if (
+      !entry.isDirectory()
+      || entry.isSymbolicLink()
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,319}$/.test(entry.name)
+    ) {
+      throw new Error(
+        `EchoInk Memory recovery required: transactions contains unsafe entry ${entry.name}`
+      );
+    }
+    const transactionRoot = path.join(layout.transactions, entry.name);
+    const transaction = parseExistingMemoryTransaction(JSON.parse(
+      await readExistingMemoryRegularFile(
+        path.join(transactionRoot, "transaction.json"),
+        `transactions/${entry.name}/transaction.json`,
+        1024 * 1024
+      )
+    ) as unknown);
+    if (safeName(transaction.transactionId) !== entry.name) {
+      throw new Error(
+        `EchoInk Memory recovery required: transaction ${entry.name} identity mismatch`
+      );
+    }
+    let sourceConversationIds: string[] = [];
+    if (transaction.eventIds.length) {
+      const source = parseExistingMemoryTransactionSource(JSON.parse(
+        await readExistingMemoryRegularFile(
+          path.join(transactionRoot, "source.json"),
+          `transactions/${entry.name}/source.json`,
+          32 * 1024 * 1024
+        )
+      ) as unknown);
+      if (
+        source.transactionId !== transaction.transactionId
+        || source.baseRevision !== transaction.baseRevision
+        || source.eventIds.length !== transaction.eventIds.length
+        || source.eventIds.some(
+          (eventId, index) => eventId !== transaction.eventIds[index]
+        )
+      ) {
+        throw new Error(
+          `EchoInk Memory recovery required: transaction ${entry.name} source identity mismatch`
+        );
+      }
+      sourceConversationIds = [...new Set(
+        source.events.map((event) => event.sessionId)
+      )].sort(compareText);
+    }
+    transactions.push({
+      ...transaction,
+      sourceConversationIds
+    });
+  }
+  return transactions;
+}
+
+function parseExistingMemoryTransaction(
+  value: unknown
+): Omit<ExistingMemoryTransactionSnapshot, "sourceConversationIds"> {
+  if (!isRecord(value)) {
+    throw new Error(
+      "EchoInk Memory recovery required: transaction.json must be an object"
+    );
+  }
+  const allowedKeys = new Set([
+    "schemaVersion",
+    "transactionId",
+    "state",
+    "baseRevision",
+    "targetRevision",
+    "eventIds",
+    "outcome",
+    "committedMemoryIds",
+    "confirmationIds",
+    "createdAt",
+    "updatedAt",
+    "error",
+    "operation"
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    throw new Error(
+      "EchoInk Memory recovery required: transaction.json contains an unexpected field"
+    );
+  }
+  const states = new Set<ExistingMemoryTransactionState>([
+    "prepared",
+    "applied",
+    "unresolved",
+    "invalid",
+    "failed",
+    "committing",
+    "committed",
+    "recovered"
+  ]);
+  const outcomes = new Set([
+    "no-pending",
+    "write",
+    "no-op",
+    "pending",
+    "failed"
+  ]);
+  if (
+    value.schemaVersion !== ECHOINK_MEMORY_SCHEMA_VERSION
+    || !isSafeStoredText(value.transactionId, 320, false)
+    || !states.has(value.state as ExistingMemoryTransactionState)
+    || !isNonNegativeInteger(value.baseRevision)
+    || !isNonNegativeInteger(value.targetRevision)
+    || Number(value.targetRevision) < Number(value.baseRevision)
+    || !isSafeStoredStringArray(
+      value.eventIds,
+      MAX_PENDING_MEMORY_EVENTS,
+      320
+    )
+    || new Set(value.eventIds).size !== value.eventIds.length
+    || !outcomes.has(String(value.outcome))
+    || !isSafeStoredStringArray(
+      value.committedMemoryIds,
+      MAX_PENDING_MEMORY_EVENTS,
+      320
+    )
+    || !isSafeStoredStringArray(
+      value.confirmationIds,
+      MAX_PENDING_MEMORY_EVENTS,
+      320
+    )
+    || !isStoredTimestamp(value.createdAt)
+    || !isStoredTimestamp(value.updatedAt)
+    || Number(value.updatedAt) < Number(value.createdAt)
+    || typeof value.error !== "string"
+    || value.error.length > 12_000
+    || UNSAFE_MEMORY_CONTROL_CHARACTER.test(value.error)
+    || (
+      value.operation !== undefined
+      && !isSafeStoredText(value.operation, 240, false)
+    )
+  ) {
+    throw new Error(
+      "EchoInk Memory recovery required: transaction.json fields are invalid"
+    );
+  }
+  return {
+    transactionId: value.transactionId,
+    state: value.state as ExistingMemoryTransactionState,
+    baseRevision: value.baseRevision,
+    targetRevision: value.targetRevision,
+    eventIds: [...value.eventIds],
+    outcome: value.outcome as ExistingMemoryTransactionSnapshot["outcome"],
+    committedMemoryIds: [...value.committedMemoryIds],
+    confirmationIds: [...value.confirmationIds],
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    error: value.error,
+    ...(value.operation !== undefined
+      ? { operation: value.operation }
+      : {})
+  };
+}
+
+function parseExistingMemoryTransactionSource(value: unknown): {
+  transactionId: string;
+  baseRevision: number;
+  events: PendingMemoryEvent[];
+  eventIds: string[];
+} {
+  if (
+    !isRecord(value)
+    || value.schemaVersion !== ECHOINK_MEMORY_SCHEMA_VERSION
+    || !isSafeStoredText(value.transactionId, 320, false)
+    || !isNonNegativeInteger(value.baseRevision)
+    || !Array.isArray(value.events)
+    || value.events.length < 1
+    || value.events.length > MAX_PENDING_MEMORY_EVENTS
+    || !Array.isArray(value.activeMemories)
+  ) {
+    throw new Error(
+      "EchoInk Memory recovery required: transaction source fields are invalid"
+    );
+  }
+  const events = value.events.map((event) => {
+    if (
+      !isPendingMemoryEvent(event)
+      || checksum({ ...event, checksum: undefined }) !== event.checksum
+    ) {
+      throw new Error(
+        "EchoInk Memory recovery required: transaction source contains an invalid event"
+      );
+    }
+    return event;
+  });
+  for (const memory of value.activeMemories) {
+    validateStoredMemoryRecord(memory, true);
+  }
+  return {
+    transactionId: value.transactionId,
+    baseRevision: value.baseRevision,
+    events,
+    eventIds: events.map((event) => event.eventId)
+  };
+}
+
+async function readExistingMemoryRegularFile(
+  filePath: string,
+  label: string,
+  maxBytes: number
+): Promise<string> {
+  const before = await lstat(filePath).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        `EchoInk Memory recovery required: ${label} is missing`
+      );
+    }
+    throw error;
+  });
+  if (
+    !before.isFile()
+    || before.isSymbolicLink()
+    || before.nlink < 1
+    || before.nlink > 2
+    || before.size > maxBytes
+  ) {
+    throw new Error(
+      `EchoInk Memory recovery required: ${label} is unsafe`
+    );
+  }
+  const text = await readFile(filePath, "utf8");
+  const after = await lstat(filePath);
+  if (
+    !after.isFile()
+    || after.isSymbolicLink()
+    || before.dev !== after.dev
+    || before.ino !== after.ino
+    || before.size !== after.size
+    || before.mtimeMs !== after.mtimeMs
+    || before.ctimeMs !== after.ctimeMs
+    || Buffer.byteLength(text, "utf8") !== before.size
+  ) {
+    throw new Error(
+      `EchoInk Memory recovery required: ${label} changed during read-only snapshot`
+    );
+  }
+  return text;
+}
+
+function cloneMemoryProjection(
+  memory: MemoryProjectionRecordV2
+): MemoryProjectionRecordV2 {
+  return {
+    ...memory,
+    evidenceRefs: [...memory.evidenceRefs],
+    ...(memory.sourceConversationIds
+      ? { sourceConversationIds: [...memory.sourceConversationIds] }
+      : {}),
+    ...(memory.sourceDeletions
+      ? {
+          sourceDeletions: memory.sourceDeletions.map((marker) => ({
+            ...marker
+          }))
+        }
+      : {})
+  };
+}
+
+function clonePendingMemoryEvent(
+  event: PendingMemoryEvent
+): PendingMemoryEvent {
+  return {
+    ...event,
+    payload: cloneStoredValue(event.payload)
+  };
+}
+
+function cloneExistingMemoryTransaction(
+  transaction: ExistingMemoryTransactionSnapshot
+): ExistingMemoryTransactionSnapshot {
+  return {
+    ...transaction,
+    eventIds: [...transaction.eventIds],
+    sourceConversationIds: [...transaction.sourceConversationIds],
+    committedMemoryIds: [...transaction.committedMemoryIds],
+    confirmationIds: [...transaction.confirmationIds]
+  };
+}
+
+function cloneStoredValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+async function lstatOrNull(filePath: string) {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 export function validateMemoryIndexV2(value: unknown): MemoryIndexV2 {
@@ -581,6 +1039,44 @@ function isValidStoredMemoryRecord(value: unknown, requireTimes: boolean): value
   if (!isRecord(value)) return false;
   if (!isSafeStoredText(value.id, 240, false) || !MEMORY_RECORD_KINDS.has(value.kind as string) || value.scope !== "vault") return false;
   if (!isSafeStoredText(value.statement, 4_000, true) || !isSafeStoredStringArray(value.evidenceRefs, 32, 320) || !isSafeStoredText(value.sourceRunId, 320, false)) return false;
+  if (
+    value.sourceConversationIds !== undefined
+    && !isSafeStoredStringArray(value.sourceConversationIds, 32, 320)
+  ) return false;
+  const sourceConversationIds = value.sourceConversationIds;
+  if (
+    sourceConversationIds !== undefined
+    && (
+      new Set(sourceConversationIds).size !== sourceConversationIds.length
+      || sourceConversationIds.some(
+        (id, index) => id !== [...sourceConversationIds].sort(compareText)[index]
+      )
+    )
+  ) return false;
+  const sourceDeletions = value.sourceDeletions as Array<Record<string, unknown>> | undefined;
+  if (
+    sourceDeletions !== undefined
+    && (
+      !Array.isArray(sourceDeletions)
+      || sourceDeletions.length > 64
+      || !sourceDeletions.every(isValidMemorySourceDeletion)
+      || new Set(sourceDeletions.map((marker) => marker.mutationId)).size
+        !== sourceDeletions.length
+      || sourceDeletions.some(
+        (marker, index) => marker.mutationId
+          !== [...sourceDeletions].sort(
+            (left, right) => compareText(
+              String(left.mutationId),
+              String(right.mutationId)
+            )
+          )[index].mutationId
+      )
+      || !sourceConversationIds
+      || sourceDeletions.some(
+        (marker) => !sourceConversationIds.includes(String(marker.conversationId))
+      )
+    )
+  ) return false;
   if (!(typeof value.confidence === "number" && Number.isFinite(value.confidence) && value.confidence >= 0 && value.confidence <= 1)) return false;
   if (requireTimes && (!isStoredTimestamp(value.createdAt) || !isStoredTimestamp(value.updatedAt))) return false;
   if (!requireTimes && (value.createdAt !== undefined || value.updatedAt !== undefined)) return false;
@@ -591,6 +1087,37 @@ function isValidStoredMemoryRecord(value: unknown, requireTimes: boolean): value
     if (value[field] !== undefined && !isSafeStoredText(value[field], 1_000, true)) return false;
   }
   return true;
+}
+
+function isValidMemorySourceDeletion(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  const expected = value.restoredAt === undefined
+    ? ["conversationId", "deletedAt", "forwardTransactionId", "mutationId"]
+    : [
+        "conversationId",
+        "deletedAt",
+        "forwardTransactionId",
+        "mutationId",
+        "restoreTransactionId",
+        "restoredAt"
+      ];
+  if (
+    keys.length !== expected.length
+    || keys.some((key, index) => key !== [...expected].sort()[index])
+  ) return false;
+  return isSafeStoredText(value.mutationId, 320, false)
+    && isSafeStoredText(value.conversationId, 320, false)
+    && isStoredMutationTimestamp(value.deletedAt)
+    && isSafeStoredText(value.forwardTransactionId, 320, false)
+    && (
+      value.restoredAt === undefined
+      || (
+        isStoredMutationTimestamp(value.restoredAt)
+        && Number(value.restoredAt) >= Number(value.deletedAt)
+        && isSafeStoredText(value.restoreTransactionId, 320, false)
+      )
+    );
 }
 
 function validateStoredMemoryConfirmation(value: unknown): asserts value is Record<string, unknown> {
@@ -621,6 +1148,14 @@ function isSafeStoredText(value: unknown, maxChars: number, allowNewline: boolea
 
 function isStoredTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isStoredMutationTimestamp(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

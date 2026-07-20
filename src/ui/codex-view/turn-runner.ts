@@ -8,7 +8,6 @@ import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory"
 import {
   harnessBackendAdapterVersion,
   harnessBackendDisplayName,
-  harnessBackendUsesNativeThreadPrewarm,
   harnessInitialMessageModelId,
   harnessMessageProfileId,
   harnessProviderModelId,
@@ -18,12 +17,14 @@ import {
 } from "../../harness/agents/backend-runtime-profile";
 import type { HarnessEvent } from "../../harness/contracts/event";
 import type { HarnessRunResult } from "../../harness/contracts/run";
+import type { SettleRunTerminalInput } from "../../harness/kernel/run-orchestrator";
 import { sessionBackendBinding, updateSessionBackendBinding } from "../../harness/kernel/session-service";
 import { buildCallableMcpToolCatalog } from "../../resources/mcp-tool-catalog";
 import { buildActiveEchoInkResourceCatalog, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../../settings/settings";
 import { newId } from "../../settings/settings";
 import { buildUserInput, DEFAULT_REPLY_STYLE_INSTRUCTION } from "../../core/mapping";
+import { planStaleHarnessRunRecoveries } from "../../core/message-state";
 import { composerPrimaryActionForState } from "../composer-state";
 import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { knowledgeBaseHelpText, parseKnowledgeBaseCommand, type KnowledgeBaseCommandIntent } from "../../knowledge-base/commands";
@@ -33,7 +34,14 @@ import {
   knowledgeBaseRunModeForCommandIntent
 } from "../../knowledge-base/maintain-report-card";
 import type { KnowledgeBaseTurnOptionOverrides } from "../../knowledge-base/command-router";
-import { persistAndSettleChatRun } from "./turn-lifecycle";
+import {
+  chatSurfaceTerminalClaim,
+  claimChatSurfaceTerminal,
+  ensureChatSurfaceTerminalRecoveryEvidence,
+  persistAndSettleChatRun,
+  prepareChatSurfaceTerminal,
+  recordIgnoredLateChatTerminal
+} from "./turn-lifecycle";
 import {
   HarnessEventProjector,
   applyHarnessProjectionBatch,
@@ -44,10 +52,19 @@ import type { CodexViewTurnContext, MessageRenderFollowContext, QueuedTurnOutcom
 
 const INLINE_AGENT_PROCESS_SAVE_DELAY_MS = 750;
 const inlineAgentProcessSaveTimers = new WeakMap<object, ReturnType<typeof setTimeout>>();
+const settlementHandledTurnIds = new WeakMap<object, Set<string>>();
 
 export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
   const session = view.ensureSession();
   const action = composerPrimaryActionForState(view.composerStateForSession(session));
+  if (
+    view.turnQueue.isSessionRecoveryRequired(session.id)
+    && action !== "stop-turn"
+    && action !== "cancel-knowledge-task"
+  ) {
+    new Notice("本地生命周期记录待恢复，暂不能开始新任务。");
+    return;
+  }
   if (action === "enqueue") {
     await view.enqueueComposerDraft();
     return;
@@ -71,7 +88,12 @@ export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
   const item = await view.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: true });
   if (!item) return;
   const outcome = await view.startQueuedTurnItemSafely(item, "composer");
-  if (outcome !== "running") await view.afterTurnSettled(item.sessionId, outcome === "completed");
+  if (
+    outcome !== "running"
+    && !consumeQueuedTurnSettlementHandled(view, item.id)
+  ) {
+    await view.afterTurnSettled(item.sessionId, outcome === "completed");
+  }
 }
 
 export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<void> {
@@ -89,16 +111,90 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
     && knowledgeManager?.maintenanceRecoveryStatus.state !== "pending"
     && knowledgeManager?.maintenanceRecoveryStatus.state !== "blocked"
     && !view.turnQueue.isSessionQueuePaused(item.sessionId)
+    && !view.turnQueue.isSessionRecoveryRequired(item.sessionId)
   ) {
     void view.startNextQueuedTurn(item.sessionId);
   }
 }
 
 export async function resumeQueuedTurns(view: CodexViewTurnContext, sessionId: string): Promise<void> {
+  if (view.turnQueue.isSessionRecoveryRequired(sessionId)) {
+    new Notice("本地生命周期记录待恢复，队列暂不能继续。");
+    view.renderQueue();
+    view.renderToolbar();
+    return;
+  }
   view.turnQueue.resumeSessionQueue(sessionId);
   view.renderQueue();
   view.renderToolbar();
   await view.startNextQueuedTurn(sessionId);
+}
+
+export function restoreSessionLifecycleRecoveryGates(
+  view: Pick<CodexViewTurnContext, "turnQueue">,
+  sessions: readonly StoredSession[]
+): number {
+  let restored = 0;
+  for (const session of sessions) {
+    const hasPersistedRecoveryEvidence = session.messages.some((message) =>
+      message.runTerminalRecoveryPending !== undefined
+      || message.echoInkRunTerminalRecovery !== undefined
+    );
+    if (!hasPersistedRecoveryEvidence) continue;
+    view.turnQueue.requireSessionRecovery(session.id);
+    restored += 1;
+  }
+  return restored;
+}
+
+export async function recoverSessionLifecycle(
+  view: CodexViewTurnContext,
+  sessionId: string
+): Promise<void> {
+  if (!view.turnQueue.isSessionRecoveryRequired(sessionId)) return;
+  if (view.running && view.activeRunSessionId === sessionId) {
+    new Notice("当前会话仍在运行，暂不能恢复本地生命周期记录。");
+    return;
+  }
+  const session = view.sessionById(sessionId);
+  if (!session) {
+    new Notice("待恢复的会话已不存在，恢复门禁保持关闭。");
+    return;
+  }
+
+  let candidates: ReturnType<typeof planStaleHarnessRunRecoveries>;
+  try {
+    candidates = planStaleHarnessRunRecoveries(session.messages);
+  } catch (error) {
+    new Notice(`恢复证据损坏：${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  if (!candidates.length) {
+    new Notice("没有找到可验证的终态恢复证据；请重载插件后再检查。");
+    return;
+  }
+
+  try {
+    await view.plugin.withEchoInkConversationMutation(sessionId, async () => {
+      await view.plugin.recoverInterruptedHarnessRuns(sessionId, {
+        liveChatRunIds: candidates.map((candidate) => candidate.runId)
+      });
+      const unresolved = planStaleHarnessRunRecoveries(session.messages);
+      if (unresolved.length) {
+        throw new Error(
+          `仍有 ${unresolved.length} 条终态记录未完成耐久提交`
+        );
+      }
+    });
+    view.turnQueue.clearSessionRecoveryRequired(sessionId);
+    view.renderQueue();
+    view.renderToolbar();
+    new Notice("本地生命周期记录已恢复，可以继续对话。");
+  } catch (error) {
+    view.renderQueue();
+    view.renderToolbar();
+    new Notice(`本地生命周期恢复失败：${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function afterTurnSettled(view: CodexViewTurnContext, sessionId: string, succeeded: boolean): Promise<void> {
@@ -165,7 +261,12 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
   } finally {
     view.queueStartInProgress = false;
   }
-  if (outcome !== "running") await view.afterTurnSettled(item.sessionId, outcome === "completed");
+  if (
+    outcome !== "running"
+    && !consumeQueuedTurnSettlementHandled(view, item.id)
+  ) {
+    await view.afterTurnSettled(item.sessionId, outcome === "completed");
+  }
 }
 
 export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
@@ -248,9 +349,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   const backend = resolveChatBackend(view);
   const runId = newId("run");
   const provenance = messageProvenanceForTurn(view, backend, item.turnOptions.model);
-  view.activeRunId = runId;
-  view.activeRunKind = "chat";
-  view.activeRunSessionId = session.id;
+  prepareChatSurfaceTerminal(runId);
   const turnAttachments = item.attachments.map((attachment) => ({ ...attachment }));
   const userMessage: ChatMessage = {
     id: newId("msg"),
@@ -279,29 +378,31 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     answerMessage: assistantMessage
   });
   let keepRunOpen = false;
-  session.messages.push(userMessage, assistantMessage);
+  let nativeExecutionRecordIds: string[] = [];
+  let terminalCommitGateFailed = false;
+  let terminalRecoveryInput: SettleRunTerminalInput | null = null;
   try {
+    await withConversationMutation(view, session.id, async () => {
+      view.activeRunId = runId;
+      view.activeRunKind = "chat";
+      view.activeRunSessionId = session.id;
+      view.activeRunNativeExecutionRecordIds = [];
+      await view.plugin.externalizeMessageText(userMessage, userMessage.text);
+      session.messages.push(userMessage, assistantMessage);
+      session.updatedAt = Date.now();
+      if (session.title === "新会话" && item.text) session.title = item.text.slice(0, 20);
+      if (source === "composer") view.clearComposerDraft();
+      view.running = true;
+      view.turnStartedAt = Date.now();
+      view.renderTabs();
+      view.renderMessagesIfActive(session);
+      view.renderToolbar();
+      view.applyStatus();
+      view.ensureThinkingMessage(session, "初始化", "正在初始化 EchoInk 运行...");
+      view.armTurnWatchdog();
+      await view.plugin.saveSettings(true);
+    });
     await prepareChatBackendConnection(view, backend);
-    await view.plugin.externalizeMessageText(userMessage, userMessage.text);
-    session.updatedAt = Date.now();
-    if (session.title === "新会话" && item.text) session.title = item.text.slice(0, 20);
-    if (source === "composer") view.clearComposerDraft();
-    view.running = true;
-    view.turnStartedAt = Date.now();
-    view.renderTabs();
-    view.renderMessagesIfActive(session);
-    view.renderToolbar();
-    view.applyStatus();
-    view.ensureThinkingMessage(session, "初始化", "正在初始化 EchoInk 运行...");
-    view.armTurnWatchdog();
-    if (harnessBackendUsesNativeThreadPrewarm(backend)
-      && !codexNativeThreadIdForSession(session)
-      && view.threadPrewarmPromise
-      && view.threadPrewarmSessionId === session.id) {
-      const warmed = await view.threadPrewarmPromise.catch(() => false);
-      if (!warmed && !codexNativeThreadIdForSession(session)) throw new Error("新会话连接超时，请重试");
-    }
-    await view.plugin.saveSettings(true);
     const { adapter, resources } = await createChatAgentAdapter(view, session, item, turnAttachments, backend);
     const output = await view.plugin.runHarnessWithAdapter({
       adapter,
@@ -317,6 +418,55 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         view.renderToolbar();
       }
     });
+    nativeExecutionRecordIds = output.nativeExecutionRecordIds ?? [];
+    view.activeRunNativeExecutionRecordIds = [...nativeExecutionRecordIds];
+    const outputTerminalStatus = harnessResultChatTerminalStatus(output);
+    if (outputTerminalStatus) {
+      const terminalClaim = claimChatSurfaceTerminal(
+        runId,
+        "sync",
+        outputTerminalStatus
+      );
+      if (!terminalClaim.acquired) {
+        keepRunOpen = true;
+        markQueuedTurnSettlementHandled(view, item.id);
+        await recordIgnoredLateChatTerminal(view.plugin, {
+          runId,
+          backendId: backend,
+          lateStatus: outputTerminalStatus,
+          winner: terminalClaim.winner
+        });
+        return queuedTurnOutcomeForTerminalStatus(terminalClaim.winner.status);
+      }
+    } else {
+      const existingTerminal = chatSurfaceTerminalClaim(runId);
+      if (existingTerminal) {
+        keepRunOpen = true;
+        markQueuedTurnSettlementHandled(view, item.id);
+        if (typeof adapter.awaitResult === "function") {
+          void settleRunningChatTurn({
+            view,
+            adapter,
+            session,
+            runId,
+            backend,
+            assistantMessage,
+            projector
+          }).catch((error) => {
+            void recoverRunningChatSettlementFailure({
+              view,
+              session,
+              runId,
+              backend,
+              assistantMessage,
+              projector,
+              error
+            });
+          });
+        }
+        return queuedTurnOutcomeForTerminalStatus(existingTerminal.status);
+      }
+    }
     if (output.backendBinding) updateSessionBackendBinding(session, output.backendBinding);
     applyHarnessRunProvenance(userMessage, output);
     applyHarnessRunProvenance(assistantMessage, output);
@@ -365,11 +515,53 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.finishThinkingMessage(session, cancelled ? "中断" : completed ? "完成" : "失败");
     view.finishRunningProcessMessages(session, completed ? "completed" : "interrupted");
     view.finishPlanMessage(session);
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
     cancelInlineAgentProcessPersistence(view);
-    await view.plugin.saveSettings(true);
+    terminalRecoveryInput = {
+      runId,
+      status: completed ? "completed" : cancelled ? "cancelled" : "failed",
+      backendId: backend,
+      ...(completed
+        ? { text: assistantMessage.text }
+        : { error: assistantMessage.text })
+    };
+    try {
+      await persistAndSettleChatRun(view.plugin, terminalRecoveryInput);
+    } catch (error) {
+      terminalCommitGateFailed = true;
+      throw error;
+    }
     return completed ? "completed" : cancelled ? "cancelled" : "failed";
   } catch (error) {
+    if (terminalCommitGateFailed) {
+      const winner = chatSurfaceTerminalClaim(runId);
+      markQueuedTurnSettlementHandled(view, item.id);
+      view.requireQueueRecoveryForSession(session.id);
+      if (terminalRecoveryInput) {
+        ensureChatSurfaceTerminalRecoveryEvidence(
+          session,
+          terminalRecoveryInput
+        );
+      }
+      cancelInlineAgentProcessPersistence(view);
+      new Notice("回复已生成，但本地生命周期记录尚未完全提交；已保留恢复证据。");
+      return queuedTurnOutcomeForTerminalStatus(
+        winner?.status ?? "failed"
+      );
+    }
+    if (!terminalCommitGateFailed) {
+      const terminalClaim = claimChatSurfaceTerminal(runId, "error", "failed");
+      if (!terminalClaim.acquired) {
+        keepRunOpen = true;
+        markQueuedTurnSettlementHandled(view, item.id);
+        await recordIgnoredLateChatTerminal(view.plugin, {
+          runId,
+          backendId: backend,
+          lateStatus: "failed",
+          winner: terminalClaim.winner
+        });
+        return queuedTurnOutcomeForTerminalStatus(terminalClaim.winner.status);
+      }
+    }
     const message = error instanceof Error ? error.message : String(error);
     applyProjectedChatSettlement(view, session, assistantMessage, projector, {
       status: "failed",
@@ -382,16 +574,22 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.finishThinkingMessage(session, "失败");
     view.finishRunningProcessMessages(session, "interrupted");
     view.finishPlanMessage(session);
-    await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
     cancelInlineAgentProcessPersistence(view);
     new Notice(`${agentChatTitle(backend)} 发送失败：${message}`);
-    await view.plugin.saveSettings(true).catch(() => undefined);
-    await view.plugin.settleHarnessRunTerminal({
-      runId,
-      status: "failed",
-      backendId: backend,
-      error: error instanceof Error ? error.message : String(error)
-    }).catch(() => undefined);
+    const failedTerminal: SettleRunTerminalInput = {
+        runId,
+        status: "failed",
+        backendId: backend,
+        error: error instanceof Error ? error.message : String(error)
+    };
+    try {
+      await persistAndSettleChatRun(view.plugin, failedTerminal);
+    } catch {
+      markQueuedTurnSettlementHandled(view, item.id);
+      view.requireQueueRecoveryForSession(session.id);
+      ensureChatSurfaceTerminalRecoveryEvidence(session, failedTerminal);
+      new Notice("回复失败，且本地生命周期记录尚未完全提交；已保留恢复证据。");
+    }
     return "failed";
   } finally {
     if (!keepRunOpen) {
@@ -416,37 +614,99 @@ async function recoverRunningChatSettlementFailure(input: {
   projector: HarnessEventProjector;
   error: unknown;
 }): Promise<void> {
-  const { view, session, runId, backend, assistantMessage, projector } = input;
-  const completed = assistantMessage.status === "completed";
-  const message = input.error instanceof Error ? input.error.message : String(input.error);
-  if (!completed) {
-    applyProjectedChatSettlement(view, session, assistantMessage, projector, {
-      status: "failed",
-      error: message || "Agent 收口失败",
-      createdAt: Date.now()
-    });
-    assistantMessage.title = "回复失败";
-    assistantMessage.completedAt = Date.now();
-    view.finishThinkingMessage?.(session, "失败");
-    await view.plugin.externalizeMessageText?.(assistantMessage, assistantMessage.text).catch(() => undefined);
-    await persistAndSettleChatRun(view.plugin, {
+  const {
+    view,
+    session,
+    runId,
+    backend,
+    assistantMessage,
+    projector
+  } = input;
+  const terminalClaim = claimChatSurfaceTerminal(runId, "adapter", "failed");
+  if (!terminalClaim.acquired) {
+    if (terminalClaim.winner.owner === "adapter") {
+      const inheritedTerminal: SettleRunTerminalInput =
+        terminalClaim.winner.status === "completed"
+          ? {
+            runId,
+            status: "completed",
+            backendId: backend,
+            text: assistantMessage.text
+          }
+          : {
+            runId,
+            status: terminalClaim.winner.status,
+            backendId: backend,
+            error: assistantMessage.text || (
+              input.error instanceof Error
+                ? input.error.message
+                : String(input.error)
+            )
+          };
+      view.requireQueueRecoveryForSession?.(session.id);
+      ensureChatSurfaceTerminalRecoveryEvidence(session, inheritedTerminal);
+      cancelInlineAgentProcessPersistence(view);
+      session.updatedAt = Date.now();
+      view.running = false;
+      view.activeTurnId = "";
+      view.clearTurnWatchdog?.();
+      if (view.activeRunId === runId) view.clearActiveRun?.();
+      view.renderMessagesIfActive?.(session);
+      view.renderToolbar?.();
+      view.applyStatus?.();
+      new Notice("回复已生成，但本地生命周期记录需要显式恢复。");
+      return;
+    }
+    await recordIgnoredLateChatTerminal(view.plugin, {
       runId,
-      status: "failed",
       backendId: backend,
-      error: assistantMessage.text
-    }).catch(() => undefined);
+      lateStatus: "failed",
+      winner: terminalClaim.winner
+    });
+    return;
   }
-  cancelInlineAgentProcessPersistence(view);
-  session.updatedAt = Date.now();
-  view.running = false;
-  view.activeTurnId = "";
-  view.clearTurnWatchdog?.();
-  if (view.activeRunId === runId) view.clearActiveRun?.();
-  view.renderMessagesIfActive?.(session);
-  view.renderToolbar?.();
-  view.applyStatus?.();
-  await view.plugin.saveSettings?.(true).catch(() => undefined);
-  await view.afterTurnSettled?.(session.id, completed).catch(() => undefined);
+  let completed = false;
+  let terminalCommitted = true;
+  await withConversationMutation(view, session.id, async () => {
+    completed = assistantMessage.status === "completed";
+    const message = input.error instanceof Error ? input.error.message : String(input.error);
+    if (!completed) {
+      applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+        status: "failed",
+        error: message || "Agent 收口失败",
+        createdAt: Date.now()
+      });
+      assistantMessage.title = "回复失败";
+      assistantMessage.completedAt = Date.now();
+      view.finishThinkingMessage?.(session, "失败");
+      const failedTerminal: SettleRunTerminalInput = {
+        runId,
+        status: "failed",
+        backendId: backend,
+        error: assistantMessage.text
+      };
+      try {
+        await persistAndSettleChatRun(view.plugin, failedTerminal);
+      } catch {
+        terminalCommitted = false;
+        view.requireQueueRecoveryForSession?.(session.id);
+        ensureChatSurfaceTerminalRecoveryEvidence(session, failedTerminal);
+      }
+    }
+    cancelInlineAgentProcessPersistence(view);
+    session.updatedAt = Date.now();
+    view.running = false;
+    view.activeTurnId = "";
+    view.clearTurnWatchdog?.();
+    if (view.activeRunId === runId) view.clearActiveRun?.();
+    view.renderMessagesIfActive?.(session);
+    view.renderToolbar?.();
+    view.applyStatus?.();
+    await view.plugin.saveSettings?.(true).catch(() => undefined);
+  });
+  if (terminalCommitted) {
+    await view.afterTurnSettled?.(session.id, completed).catch(() => undefined);
+  }
 }
 
 async function settleRunningChatTurn(input: {
@@ -458,7 +718,14 @@ async function settleRunningChatTurn(input: {
   assistantMessage: ChatMessage;
   projector: HarnessEventProjector;
 }): Promise<void> {
-  const { view, adapter, session, runId, backend, projector } = input;
+  const {
+    view,
+    adapter,
+    session,
+    runId,
+    backend,
+    projector
+  } = input;
   let result: AgentRunResult;
   try {
     result = await adapter.awaitResult?.(runId) ?? { status: "failed", error: "Agent 不支持异步结果收口" };
@@ -471,51 +738,91 @@ async function settleRunningChatTurn(input: {
 
   const assistantMessage = input.assistantMessage;
 
-  const externallyCleared = view.activeRunId !== runId;
   const completed = result.status === "completed";
   const cancelled = result.status === "cancelled";
-  applyProjectedChatSettlement(view, session, assistantMessage, projector, {
-    status: completed ? "completed" : cancelled ? "cancelled" : "failed",
-    text: result.outputText,
-    error: result.error,
-    createdAt: Date.now()
+  const lateStatus = completed ? "completed" : cancelled ? "cancelled" : "failed";
+  const terminalClaim = claimChatSurfaceTerminal(
+    runId,
+    "adapter",
+    lateStatus
+  );
+  if (!terminalClaim.acquired) {
+    await recordIgnoredLateChatTerminal(view.plugin, {
+      runId,
+      backendId: backend,
+      lateStatus,
+      winner: terminalClaim.winner
+    });
+    return;
+  }
+  const terminalStatus: "cancelled" | "failed" = cancelled ? "cancelled" : "failed";
+  const terminalInput = completed
+    ? { runId, status: "completed" as const, backendId: backend, text: assistantMessage.text }
+    : { runId, status: terminalStatus, backendId: backend, error: assistantMessage.text };
+  let terminalCommitted = true;
+  await withConversationMutation(view, session.id, async () => {
+    applyProjectedChatSettlement(view, session, assistantMessage, projector, {
+      status: completed ? "completed" : cancelled ? "cancelled" : "failed",
+      text: result.outputText,
+      error: result.error,
+      createdAt: Date.now()
+    });
+    if (completed) delete assistantMessage.title;
+    else assistantMessage.title = cancelled ? "已中断" : "回复失败";
+    assistantMessage.text = selectFirstNonBlankText(
+      assistantMessage.text,
+      result.outputText,
+      result.error,
+      cancelled ? "本轮对话已中断。" : ""
+    ) || "Agent 未返回内容。";
+    assistantMessage.completedAt = Date.now();
+    terminalInput.text = completed ? assistantMessage.text : undefined;
+    terminalInput.error = completed ? undefined : assistantMessage.text;
+    view.finishThinkingMessage?.(session, cancelled ? "中断" : completed ? "完成" : "失败");
+    view.finishRunningProcessMessages?.(session, completed ? "completed" : "interrupted");
+    view.finishPlanMessage?.(session);
+    cancelInlineAgentProcessPersistence(view);
+    session.updatedAt = Date.now();
+    try {
+      await persistAndSettleChatRun(view.plugin, terminalInput);
+    } catch {
+      terminalCommitted = false;
+      view.requireQueueRecoveryForSession?.(session.id);
+      ensureChatSurfaceTerminalRecoveryEvidence(session, terminalInput);
+    }
+    view.running = false;
+    view.activeTurnId = "";
+    view.clearTurnWatchdog?.();
+    view.clearActiveRun?.();
+    view.renderMessages?.(messageRenderOptionsForRunUpdate(view));
+    view.renderMessagesIfActive?.(session);
+    view.renderToolbar?.();
+    view.applyStatus?.();
   });
-  if (completed) delete assistantMessage.title;
-  else assistantMessage.title = cancelled ? "已中断" : "回复失败";
-  assistantMessage.text = selectFirstNonBlankText(
-    assistantMessage.text,
-    result.outputText,
-    result.error,
-    cancelled ? "本轮对话已中断。" : ""
-  ) || "Agent 未返回内容。";
-  assistantMessage.completedAt = Date.now();
-  view.finishThinkingMessage?.(session, cancelled ? "中断" : completed ? "完成" : "失败");
-  view.finishRunningProcessMessages?.(session, completed ? "completed" : "interrupted");
-  view.finishPlanMessage?.(session);
-  await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
-  cancelInlineAgentProcessPersistence(view);
-  session.updatedAt = Date.now();
-  view.running = false;
-  view.activeTurnId = "";
-  view.clearTurnWatchdog?.();
-  if (!externallyCleared) view.clearActiveRun?.();
-  view.renderMessages?.(messageRenderOptionsForRunUpdate(view));
-  view.renderMessagesIfActive?.(session);
-  view.renderToolbar?.();
-  view.applyStatus?.();
-
-  if (!externallyCleared || !cancelled) {
-    const terminalStatus: "cancelled" | "failed" = cancelled ? "cancelled" : "failed";
-    const terminalInput = completed
-      ? { runId, status: "completed" as const, backendId: backend, text: assistantMessage.text }
-      : { runId, status: terminalStatus, backendId: backend, error: assistantMessage.text };
-    await persistAndSettleChatRun(view.plugin, terminalInput).catch(() => undefined);
-  }
-  if (typeof view.afterTurnSettled === "function") {
-    setTimeout(() => {
+  if (!terminalCommitted) {
+    new Notice("回复已生成，但本地生命周期记录尚未完全提交；已保留恢复证据。");
+  } else if (typeof view.afterTurnSettled === "function") {
+    queueMicrotask(() => {
       void view.afterTurnSettled(session.id, completed);
-    }, 0);
+    });
   }
+}
+
+function harnessResultChatTerminalStatus(
+  result: HarnessRunResult
+): "completed" | "failed" | "cancelled" | null {
+  if (result.status === "completed") return "completed";
+  if (result.status === "cancelled") return "cancelled";
+  if (result.status === "failed") return "failed";
+  return null;
+}
+
+function queuedTurnOutcomeForTerminalStatus(
+  status: "completed" | "failed" | "cancelled"
+): QueuedTurnOutcome {
+  if (status === "completed") return "completed";
+  if (status === "cancelled") return "cancelled";
+  return "failed";
 }
 
 async function createChatAgentAdapter(
@@ -745,9 +1052,6 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     : item.turnOptions;
   const backend = resolveKnowledgeBackendForCommand(view, command.intent);
   const provenance = messageProvenanceForTurn(view, backend, executionTurnOptions.model);
-  view.activeRunId = runId;
-  view.activeRunKind = "knowledge-base";
-  view.activeRunSessionId = session.id;
   const userMessage: ChatMessage = {
     id: newId("msg"),
     role: "user",
@@ -758,7 +1062,6 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     images: turnAttachments.filter((attachment) => attachment.type === "image"),
     createdAt: Date.now()
   };
-  await view.plugin.externalizeMessageText(userMessage, userMessage.text);
   const assistantMessage: ChatMessage = {
     id: newId("msg"),
     role: "assistant",
@@ -771,18 +1074,24 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     ...(runMode ? { knowledgeBaseUi: buildKnowledgeBaseRunPayload(runMode) } : {}),
     createdAt: Date.now()
   };
-  session.messages.push(userMessage, assistantMessage);
-  session.title = "知识库管理";
-  session.updatedAt = Date.now();
-  if (source === "composer") view.clearComposerDraft();
-  view.running = true;
-  view.renderTabs();
-  view.renderMessagesIfActive(session);
-  view.renderToolbar();
   let succeeded = false;
   let turnError: unknown = null;
   try {
-    await view.plugin.saveSettings(true);
+    await withConversationMutation(view, session.id, async () => {
+      view.activeRunId = runId;
+      view.activeRunKind = "knowledge-base";
+      view.activeRunSessionId = session.id;
+      await view.plugin.externalizeMessageText(userMessage, userMessage.text);
+      session.messages.push(userMessage, assistantMessage);
+      session.title = "知识库管理";
+      session.updatedAt = Date.now();
+      if (source === "composer") view.clearComposerDraft();
+      view.running = true;
+      view.renderTabs();
+      view.renderMessagesIfActive(session);
+      view.renderToolbar();
+      await view.plugin.saveSettings(true);
+    });
     const overrides = knowledgeBaseTurnOverrides(executionTurnOptions, session, runId);
     if (runMode) {
       overrides.onWorkflowEvent = (event) => {
@@ -902,35 +1211,37 @@ export async function startKnowledgeBaseTurn(view: CodexViewTurnContext, session
     }
     assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
   } finally {
-    view.running = false;
-    session.updatedAt = Date.now();
-    view.clearTurnWatchdog();
-    view.clearActiveRun();
-    try {
-      await persistAndSettleKnowledgeRun(view, assistantMessage, manager);
-    } catch (error) {
-      turnError = turnError ?? error;
-      if (
-        assistantMessage.status !== "recovery-pending"
-        && assistantMessage.status !== "recovery-blocked"
-      ) {
-        assistantMessage.status = "failed";
-        if (runMode) {
-          const reportPath = assistantMessage.knowledgeBaseUi?.kind === "maintain-report"
-            ? assistantMessage.knowledgeBaseUi.reportPath
-            : "";
-          assistantMessage.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
-            runMode,
-            "failed",
-            error instanceof Error ? error.message : String(error),
-            reportPath
-          );
+    await withConversationMutation(view, session.id, async () => {
+      session.updatedAt = Date.now();
+      view.clearTurnWatchdog();
+      try {
+        await persistAndSettleKnowledgeRun(view, assistantMessage, manager);
+      } catch (error) {
+        turnError = turnError ?? error;
+        if (
+          assistantMessage.status !== "recovery-pending"
+          && assistantMessage.status !== "recovery-blocked"
+        ) {
+          assistantMessage.status = "failed";
+          if (runMode) {
+            const reportPath = assistantMessage.knowledgeBaseUi?.kind === "maintain-report"
+              ? assistantMessage.knowledgeBaseUi.reportPath
+              : "";
+            assistantMessage.knowledgeBaseUi = buildKnowledgeBaseFallbackReportPayload(
+              runMode,
+              "failed",
+              error instanceof Error ? error.message : String(error),
+              reportPath
+            );
+          }
         }
+        assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
+        await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
+        await view.plugin.saveSettings(true).catch(() => undefined);
       }
-      assistantMessage.text = appendSettlementFailure(assistantMessage.text, error);
-      await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text).catch(() => undefined);
-      await view.plugin.saveSettings(true).catch(() => undefined);
-    }
+      view.running = false;
+      view.clearActiveRun();
+    });
     view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
@@ -961,32 +1272,74 @@ export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label
     text: "正在执行...",
     createdAt: Date.now()
   };
-  active.messages.push(userMessage, assistantMessage);
-  active.updatedAt = Date.now();
-  view.running = true;
-  view.renderTabs();
-  view.renderMessages({ forceBottom: true });
-  view.renderToolbar();
-  await view.plugin.saveSettings(true);
+  await withConversationMutation(view, active.id, async () => {
+    active.messages.push(userMessage, assistantMessage);
+    active.updatedAt = Date.now();
+    view.running = true;
+    view.renderTabs();
+    view.renderMessages({ forceBottom: true });
+    view.renderToolbar();
+    await view.plugin.saveSettings(true);
+  });
+  let terminalStatus = "completed";
+  let terminalText = "";
   try {
-    const message = await runner();
-    assistantMessage.status = "completed";
-    assistantMessage.text = message;
+    terminalText = await runner();
     new Notice(label);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    assistantMessage.status = "failed";
-    assistantMessage.text = message;
-    new Notice(`知识库管理失败：${message}`);
+    terminalStatus = "failed";
+    terminalText = error instanceof Error ? error.message : String(error);
+    new Notice(`知识库管理失败：${terminalText}`);
   } finally {
-    view.running = false;
-    active.updatedAt = Date.now();
-    await persistAndSettleKnowledgeRun(view, assistantMessage, view.plugin.getKnowledgeBaseManager());
+    await withConversationMutation(view, active.id, async () => {
+      assistantMessage.status = terminalStatus;
+      assistantMessage.text = terminalText;
+      active.updatedAt = Date.now();
+      try {
+        await persistAndSettleKnowledgeRun(
+          view,
+          assistantMessage,
+          view.plugin.getKnowledgeBaseManager()
+        );
+      } finally {
+        view.running = false;
+      }
+    });
     view.renderMessages(messageRenderOptionsForRunUpdate(view));
     view.renderToolbar();
     view.applyStatus();
     void view.refreshKnowledgeDashboard(true);
   }
+}
+
+async function withConversationMutation<T>(
+  view: CodexViewTurnContext,
+  conversationId: string,
+  action: () => Promise<T>
+): Promise<T> {
+  return await view.plugin.withEchoInkConversationMutation(
+    conversationId,
+    action
+  );
+}
+
+function markQueuedTurnSettlementHandled(
+  view: CodexViewTurnContext,
+  turnId: string
+): void {
+  const handled = settlementHandledTurnIds.get(view) ?? new Set<string>();
+  handled.add(turnId);
+  settlementHandledTurnIds.set(view, handled);
+}
+
+function consumeQueuedTurnSettlementHandled(
+  view: CodexViewTurnContext,
+  turnId: string
+): boolean {
+  const handled = settlementHandledTurnIds.get(view);
+  if (!handled?.delete(turnId)) return false;
+  if (handled.size === 0) settlementHandledTurnIds.delete(view);
+  return true;
 }
 
 function appendSettlementFailure(text: string, error: unknown): string {
@@ -1179,9 +1532,13 @@ function applyKnowledgeNativeLifecycleSummary(
 
 function dominantNativeCleanupStatus(statuses: NonNullable<ChatMessage["nativeCleanupStatus"]>[]): ChatMessage["nativeCleanupStatus"] | undefined {
   const priority: NonNullable<ChatMessage["nativeCleanupStatus"]>[] = [
+    "quarantined",
     "failed",
     "retained-for-recovery",
+    "disposing",
+    "awaiting-local-commit",
     "pending",
+    "aborted",
     "unsupported",
     "retained",
     "disposed",

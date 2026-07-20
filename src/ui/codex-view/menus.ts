@@ -68,6 +68,7 @@ export interface ModelMenuCallbacks extends KnowledgeModelMenuCallbacks {
 export interface SessionMenuCallbacks {
   onRename: () => void;
   onResetCache: () => void;
+  onClearRecords: () => void;
   onDelete: () => void;
 }
 
@@ -231,6 +232,13 @@ export function openSessionMenu(event: MouseEvent, knowledgeSession: boolean, ca
       .onClick(callbacks.onResetCache)
   );
   if (!knowledgeSession) {
+    menu.addItem((item) =>
+      item
+        .setTitle("清空会话记录")
+        .setIcon("eraser")
+        .setWarning(true)
+        .onClick(callbacks.onClearRecords)
+    );
     menu.addItem((item) =>
       item
         .setTitle("删除会话")

@@ -24,6 +24,8 @@ export interface ContextAttachment {
 
 export interface SessionContextSnapshot {
   sessionId: string;
+  contextId?: string;
+  generation?: number;
   version: string;
   goal: string;
   currentState: string;
@@ -42,6 +44,9 @@ export interface SessionContextSnapshot {
 export interface ContextSyncCursor {
   syncedThroughMessageId?: string;
   syncedSessionRevision: number;
+  sessionGeneration?: number;
+  contextId?: string;
+  workspaceFingerprint?: string;
   snapshotVersion?: string;
 }
 
@@ -58,6 +63,12 @@ export interface ContextManifest {
   }>;
   compiledThroughMessageId?: string;
   sessionRevision: number;
+  sessionGeneration?: number;
+  contextId?: string;
+  contextStartsAfterMessageId?: string;
+  commitId?: string;
+  workspaceFingerprint?: string;
+  vaultProfileFingerprint?: string;
   snapshotVersion?: string;
   createdAt: number;
 }
