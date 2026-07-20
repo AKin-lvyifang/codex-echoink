@@ -259,6 +259,19 @@ generation; it cannot substitute the canonical Conversation inventory for the
 legacy source ledger. Same-identity content conflicts are published only as
 opaque, metadata-only quarantine records.
 
+Conversation Store rollback is a new migration, not a pointer rewind. Once V2
+is active and has accepted writes, EchoInk first exports a new immutable,
+namespaced V1 compatibility generation and validates its complete portable
+ledger. Reader activation is a second transaction with its own append-only
+restore manifest and irreversible fence. The restore route binds the active
+forward manifest, source and target fingerprints, export generation, and
+immutable plan. A pending fence continues to select canonical V2; only the
+durable `reverse-active` entry selects the exact exported V1 root. Corrupt,
+missing, stale, or unsafe route authority fails closed and never falls back to
+the retained legacy V1 directory. Knowledge History and future Conversation
+consumers resolve the same explicit Store reference and root rather than
+reconstructing a path from the version label.
+
 Raw GC starts with a metadata-only global owner preview. The owner mark spans
 every canonical Conversation message and every retained Run payload; Memory
 and Artifact Stores are also scanned strictly so an unknown schema cannot hide

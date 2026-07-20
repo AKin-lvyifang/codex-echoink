@@ -33,6 +33,11 @@ import {
   legacyExternalOwnerEdges,
   prepareConversationStoreV2Migration
 } from "../../harness/lifecycle/conversation-migration-projection";
+import {
+  activateConversationStoreV1RestoreRoute,
+  prepareConversationStoreV1Export,
+  prepareConversationStoreV1RestoreRoute
+} from "../../harness/lifecycle/conversation-v1-exporter";
 import { workspaceFingerprint } from "../../harness/kernel/session-service";
 import {
   KnowledgeBaseHistoryMigrationRequiredError,
@@ -142,13 +147,14 @@ async function assertHistoryReadsActiveConversationV2(): Promise<void> {
     );
 
     const sourceSnapshot = await sourceStore.inspectMigrationSnapshot();
+    const externalOwnerEdges = legacyExternalOwnerEdges(
+      sourceSnapshot.sessions
+    );
     const targetStore = new FileConversationStoreV2({ storageRootPath });
     const migration = await prepareConversationStoreV2Migration({
       sourceStore,
       targetStore,
-      targetExternalOwnerEdges: legacyExternalOwnerEdges(
-        sourceSnapshot.sessions
-      )
+      targetExternalOwnerEdges: externalOwnerEdges
     });
     assert.equal(migration.report.status, "ready");
     assert.ok(migration.proof);
@@ -202,6 +208,55 @@ async function assertHistoryReadsActiveConversationV2(): Promise<void> {
       rebuilt.sessions[0]?.messageCount,
       1,
       "History rebuild must read the selected Conversation V2 store"
+    );
+
+    const staleLegacySession: StoredSession = {
+      ...session,
+      messages: session.messages.map((entry) => ({
+        ...entry,
+        text: "stale retained legacy V1 body"
+      })),
+      updatedAt: session.updatedAt + 100
+    };
+    await sourceStore.upsertSession(staleLegacySession);
+    const exported = await prepareConversationStoreV1Export({
+      storageRootPath,
+      externalOwnerEdges
+    });
+    await prepareConversationStoreV1RestoreRoute({
+      storageRootPath,
+      generationId: exported.generationId,
+      expectedSourceFingerprint: exported.source.fingerprint,
+      externalOwnerEdges,
+      copyingCommitId: "history-restored-v1-copying",
+      validatedCommitId: "history-restored-v1-validated",
+      createdAt: timestampForDate(date) + 3,
+      validatedAt: timestampForDate(date) + 4
+    });
+    await activateConversationStoreV1RestoreRoute({
+      storageRootPath,
+      externalOwnerEdges,
+      activeCommitId: "history-restored-v1-active",
+      activatedAt: timestampForDate(date) + 5
+    });
+    assert.deepEqual(
+      await readKnowledgeBaseHistoryDay(
+        vaultPath,
+        PLUGIN_DIR,
+        session.id,
+        date
+      ),
+      [expectedProductMessage],
+      "History must resolve the exact exported V1 generation instead of the stale retained legacy V1 root"
+    );
+    const rebuiltFromRestoredV1 = await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.equal(
+      rebuiltFromRestoredV1.sessions[0]?.messageCount,
+      1,
+      "History rebuild must continue through the restored V1 route"
     );
   } finally {
     await rm(vaultPath, { recursive: true, force: true });

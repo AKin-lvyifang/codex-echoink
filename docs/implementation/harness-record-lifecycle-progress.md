@@ -162,9 +162,10 @@ authority 也按 fail closed 处理。
 - Raw quarantine / permanent purge checkpoint：`b82df37`
 - Migration Validator / Deletion authority / History cutover checkpoint：
   `3c7a10f`
-- 当前批次：不可变 V2→V1 export generation、plan-bound restore writer 与
-  V2→V1→V2 portable ledger 回迁夹具
-- 下一批次：reverse activation、精确 reader route 与剩余 owner Store proof
+- V2→V1 compatibility exporter checkpoint：`b4dd579`
+- 当前批次：reverse activation manifest/fence、精确 namespaced V1 reader route
+  与 History restored-V1 解析
+- 下一批次：Native、Run、settings 真实 owner Store proof 与副本 dry-run
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -183,7 +184,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `3c7a10f`，以及本批 V2→V1 exporter；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan、validated migration 与既有 transaction 启动恢复 | reverse activation、真实 owner Store proof、真实 dry-run 与自动调度授权 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `b4dd579`，以及本批 reverse activation；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan、validated migration、portable reverse export 与既有 transaction 启动恢复 | 真实 owner Store proof、真实 dry-run 与自动调度授权 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -315,11 +316,11 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 提交本批 V2 → V1 exporter checkpoint。
-2. 实现独立 reverse activation manifest/fence、精确 namespaced V1 reader
-   selection，以及重启后 History reference 对 restored V1 的真实解析。
-3. 把 Native、Run 与 settings 外部 owner 对账接到真实 Store proof，并在副本上
-   完成 dry-run；继续保持真实 Vault migration `blocked`。
+1. 把 Native、Run 与 settings 外部 owner 对账接到真实 Store proof。
+2. 在真实数据副本上完成 migration validator 与 reverse route dry-run，
+   解释或保留所有 blocker；继续保持真实 Vault migration `blocked`。
+3. 决定自动 retention/Raw GC 调度是否具备独立授权；没有明确授权时继续只恢复
+   已发布 transaction。
 4. Phase 4 与用户单独确认前不执行
    历史删除、retention、Raw GC 或批量 Native cleanup。
 
@@ -910,3 +911,44 @@ index，以及 seed rename/commit marker 两个崩溃窗口。崩溃恢复中“
 切换；下一步必须独立实现 reverse manifest/fence、精确 namespaced V1 selection
 和重启恢复。真实 Vault migration、retention、Raw GC、History 删除、Native 批量
 cleanup 与部署均未执行。
+
+## Reverse activation、精确 Store route 与 History restored-V1（本轮）
+
+本轮新增独立反向状态机
+`reverse-copying → reverse-validated → reverse-active`。restore manifest 绑定
+forward active manifest digest、V2 source fingerprint、export target fingerprint、
+generation ID 与 plan digest；copying→validated 和 validated→active 都必须消费
+当前进程的 trusted migration proof。activation 高层入口在 fence 前重新执行完整
+source/target 验证，source 或 export target 在 validated 后漂移都会阻断。
+
+`reverse-active` fence 先于终态 manifest entry 耐久发布。fence 后、entry 前崩溃时，
+统一 Store selection 明确返回 canonical V2；启动恢复只能使用 fence 内的精确候选
+补齐同一终态 entry。恢复完成后 reader route 才变为
+`v1-export:<generationId>`，并返回该 generation 的精确 `store/` 路径。forward
+authority、plan、manifest chain、export root/generation/store 任一缺失、篡改、
+future schema、未知 entry 或 symlink ancestry 都 fail closed，绝不会退回保留的
+legacy `<storage>/conversations`。
+
+Knowledge History 的 list/read/day resolve/rebuild 已统一消费 Store selection 的
+精确 `rootPath`。集成夹具会先把 retained legacy V1 的同一消息改成陈旧正文，再完成
+reverse activation；History 仍从 exported V1 解析 V2 新正文，证明没有按 `"v1"`
+标签误读旧目录。架构门禁同时限制生产 `reverse-active` transition 只能由执行 fresh
+validation 的 exporter coordinator 调用。
+
+当前验证已通过：
+
+- exporter/reverse activation、Conversation V2、Migration Validator、History
+  projection/retention 与 architecture boundary focused suites。
+- `npm run test`，输出 `All tests passed`（131 秒）。
+- `npm run typecheck`。
+- `npm run build`。
+- `npm run lint`，942 个 finding 与 baseline 完全一致，无新增。
+- `npm run check:release`。
+- `npm run check:public`，明确暂存 14 个预期文件后检查 433 个 tracked files。
+- `git diff --check`。
+
+反例覆盖 fence crash 与幂等恢复、prepare/activate replay、source/target drift、
+future schema、未知 manifest entry、plan 篡改、active export root 缺失或 symlink、
+forward authority 丢失、同 revision CAS 单 winner 与 active 后禁止追加。本轮未部署、
+未修改真实 Vault，也未执行 migration、retention、Raw GC、History 删除或 Native
+cleanup；Phase 2 下一步进入 Native、Run、settings 真实 Store proof 与副本 dry-run。

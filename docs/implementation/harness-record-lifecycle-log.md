@@ -839,3 +839,28 @@
 - 本批未实现 reverse activation、精确 namespaced reader route 或真实
   Native/Run/settings Store proof；未部署、未修改真实 Vault，也未执行 migration、
   retention、Raw GC、History 删除或 Native cleanup。
+
+## 2026-07-20：Reverse activation 与精确 restored-V1 route
+
+- 新增独立 Conversation restore manifest，固定按
+  `reverse-copying → reverse-validated → reverse-active` 推进，并绑定 forward
+  active digest、source/target fingerprint、export generation 与 plan digest。
+- reverse active fence 在终态 entry 前发布；fence 后崩溃时 reader 继续选择 V2，
+  recovery 只能补齐 fence 内同一候选，完成后才选择精确
+  `v1-export:<generationId>/store`。
+- Store selection 统一返回 store ref、精确 root、route revision/digest 与双
+  manifest。forward authority、plan 或 export directory chain 损坏时 fail closed，
+  不会回落 retained legacy V1。
+- History list/read/day resolve/rebuild 已改用 selection root。真实集成 fixture
+  故意污染 legacy V1 同 ID 正文后，restored route 仍解析 exported V1 的正确正文。
+- fresh activation 同时验证 source 与 target；source/target drift、future schema、
+  未知 entry、plan tamper、missing/symlink root、missing forward authority、
+  并发 CAS 和 fence crash/recovery 均有反例。architecture guard 阻止生产代码绕过
+  exporter coordinator 直接发布 active transition。
+- focused suites、`npm run test`（`All tests passed`，131 秒）、typecheck、build、
+  baseline lint、release/public guard 与 `git diff --check` 通过。lint 保持 942 个
+  baseline finding，无新增；明确暂存 14 个预期文件后，public guard 检查 433 个
+  tracked files。
+- 本批未部署、未修改真实 Vault，也未执行 migration、retention、Raw GC、History
+  删除或 Native cleanup。下一批接真实 Native/Run/settings owner proof 与副本
+  dry-run。

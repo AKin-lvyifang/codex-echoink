@@ -19,6 +19,46 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertSourceDeletionParticipantsStayBehindRecoveryRunner();
   await assertLiveContextMutationJournalKeepsAuthorityChain();
   await assertRunRetentionUsesProductionRecoveryEvidenceAuthority();
+  await assertReverseStoreActivationUsesValidatedCoordinator();
+}
+
+async function assertReverseStoreActivationUsesValidatedCoordinator():
+Promise<void> {
+  const directTransitionCallers: string[] = [];
+  for (const file of await productionTypeScriptSources()) {
+    if (
+      file.relativePath
+        === "src/harness/conversation/store-restore-manifest.ts"
+    ) {
+      continue;
+    }
+    const source = await readFile(file.absolutePath, "utf8");
+    if (
+      /\badvanceConversationStoreRestoreManifestToActive\s*\(/.test(
+        source
+      )
+    ) {
+      directTransitionCallers.push(file.relativePath);
+    }
+  }
+  assert.deepEqual(
+    directTransitionCallers,
+    ["src/harness/lifecycle/conversation-v1-exporter.ts"],
+    "reverse-active publication must stay behind the V1 restore coordinator"
+  );
+  const exporter = await readSource(
+    "src/harness/lifecycle/conversation-v1-exporter.ts"
+  );
+  const activation = sourceBetween(
+    exporter,
+    "export async function activateConversationStoreV1RestoreRoute(",
+    "\nexport function projectConversationCommitV2ToStoredSessionV1("
+  );
+  assert.match(
+    activation,
+    /inspectAndValidateConversationStoreV1Export\([\s\S]*validation\.report\.status !== "ready"[\s\S]*advanceConversationStoreRestoreManifestToActive\(/,
+    "the sole reverse-active coordinator must perform fresh full validation before transition"
+  );
 }
 
 async function assertRunRetentionUsesProductionRecoveryEvidenceAuthority():

@@ -5,6 +5,9 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
+  rm,
+  symlink,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,23 +29,33 @@ import {
   FileConversationStoreManifest,
   advanceConversationStoreManifestToActive,
   advanceConversationStoreManifestToValidated,
-  createCopyingConversationStoreManifest,
-  resolveConversationStoreSelection
+  conversationStoreManifestRoot,
+  createCopyingConversationStoreManifest
 } from "../../harness/conversation/store-manifest";
+import {
+  resolveConversationStoreSelection
+} from "../../harness/conversation/store-selection";
 import {
   conversationMigrationInventoryFromV2Commits,
   legacyExternalOwnerEdges,
   prepareConversationStoreV2Migration
 } from "../../harness/lifecycle/conversation-migration-projection";
 import {
+  activateConversationStoreV1RestoreRoute,
   conversationStoreV1ExportPlanBinding,
   conversationStoreV1ExportGenerationRoot,
   createConversationStoreV1ExportPlan,
   createConversationStoreV1ExportGenerationId,
   inspectAndValidateConversationStoreV1Export,
   prepareConversationStoreV1Export,
+  prepareConversationStoreV1RestoreRoute,
   projectConversationCommitV2ToStoredSessionV1
 } from "../../harness/lifecycle/conversation-v1-exporter";
+import {
+  FileConversationStoreRestoreManifest,
+  advanceConversationStoreRestoreManifestToActive,
+  conversationStoreRestoreManifestRoot
+} from "../../harness/conversation/store-restore-manifest";
 import {
   assertRecordMigrationValidationProof,
   opaqueMigrationRef,
@@ -56,9 +69,371 @@ const WORKSPACE_FINGERPRINT = `sha256:${"6".repeat(64)}`;
 export async function runHarnessV2ConversationV1ExporterTests():
 Promise<void> {
   await assertV2ToV1ExportAndReverseRestoreRoundTrip();
+  await assertRestoreActivationRoutesExactExportAndRecoversFence();
+  await assertRestoreActivationRejectsSourceDrift();
+  await assertRestoreActivationRejectsTargetDrift();
+  await assertRestoreManifestAndRouteFailClosed();
+  await assertRestoreActivationHasSingleCasWinnerAndTerminalState();
   await assertExporterConflictsNeverOverwriteAndStayOpaque();
   await assertRestoreWriterRecoversSeedAndMarkerCrashWindows();
   await assertExporterRequiresActiveV2AndStrictTargetIndex();
+}
+
+async function assertRestoreActivationRoutesExactExportAndRecoversFence():
+Promise<void> {
+  const fixture = await activeV2Fixture("restore-route");
+  const evolved = await evolveActiveV2(fixture);
+  const exported = await prepareConversationStoreV1Export({
+    storageRootPath: fixture.storageRootPath,
+    externalOwnerEdges: evolved.externalOwnerEdges
+  });
+  const validated = await prepareConversationStoreV1RestoreRoute({
+    storageRootPath: fixture.storageRootPath,
+    generationId: exported.generationId,
+    expectedSourceFingerprint: exported.source.fingerprint,
+    externalOwnerEdges: evolved.externalOwnerEdges,
+    copyingCommitId: "restore-route-copying",
+    validatedCommitId: "restore-route-validated",
+    createdAt: BASE_TIME + 40,
+    validatedAt: BASE_TIME + 41
+  });
+  assert.equal(validated.migrationState, "reverse-validated");
+  const beforeActivation = await resolveConversationStoreSelection(
+    fixture.storageRootPath
+  );
+  assert.equal(beforeActivation.activeStore, "v2");
+  assert.equal(beforeActivation.storeRef, "canonical-v2");
+  assert.equal(beforeActivation.reason, "restore-migration-incomplete");
+
+  let crashed = false;
+  const crashingStore = new FileConversationStoreRestoreManifest({
+    storageRootPath: fixture.storageRootPath,
+    faultInjector(point) {
+      if (point === "after-restore-active-fence" && !crashed) {
+        crashed = true;
+        throw new Error("simulated restore fence crash");
+      }
+    }
+  });
+  await assert.rejects(
+    () => activateConversationStoreV1RestoreRoute({
+      storageRootPath: fixture.storageRootPath,
+      externalOwnerEdges: evolved.externalOwnerEdges,
+      activeCommitId: "restore-route-active",
+      activatedAt: BASE_TIME + 42,
+      restoreManifestStore: crashingStore
+    }),
+    /simulated restore fence crash/
+  );
+  const pending = await resolveConversationStoreSelection(
+    fixture.storageRootPath
+  );
+  assert.equal(pending.activeStore, "v2");
+  assert.equal(pending.storeRef, "canonical-v2");
+  assert.equal(pending.reason, "restore-active-cutover-pending");
+
+  const recovered = await new FileConversationStoreRestoreManifest({
+    storageRootPath: fixture.storageRootPath
+  }).recoverPendingActiveCutover();
+  assert.equal(recovered?.migrationState, "reverse-active");
+  const recoveredAgain = await new FileConversationStoreRestoreManifest({
+    storageRootPath: fixture.storageRootPath
+  }).recoverPendingActiveCutover();
+  assert.equal(recoveredAgain?.digest, recovered?.digest);
+  const selected = await resolveConversationStoreSelection(
+    fixture.storageRootPath
+  );
+  assert.equal(selected.activeStore, "v1");
+  assert.equal(
+    selected.storeRef,
+    `v1-export:${exported.generationId}`
+  );
+  assert.equal(selected.rootPath, exported.storeRootPath);
+  assert.notEqual(selected.rootPath, fixture.legacyRootPath);
+  assert.equal(selected.reason, "restore-manifest-active");
+  const restoredPrimary = await new FileConversationStore({
+    rootPath: selected.rootPath
+  }).readSession(fixture.legacySession.id);
+  assert.equal(
+    restoredPrimary?.messages.at(-1)?.text,
+    "V2-only final answer"
+  );
+  const replayed = await prepareConversationStoreV1RestoreRoute({
+    storageRootPath: fixture.storageRootPath,
+    generationId: exported.generationId,
+    expectedSourceFingerprint: exported.source.fingerprint,
+    externalOwnerEdges: evolved.externalOwnerEdges,
+    copyingCommitId: "restore-route-replay-copying",
+    validatedCommitId: "restore-route-replay-validated",
+    createdAt: BASE_TIME + 43,
+    validatedAt: BASE_TIME + 44
+  });
+  assert.equal(
+    replayed.digest,
+    recovered?.digest,
+    "prepare replay after activation must return the terminal route"
+  );
+}
+
+async function assertRestoreActivationRejectsSourceDrift():
+Promise<void> {
+  const fixture = await activeV2Fixture("restore-source-drift");
+  const exported = await prepareConversationStoreV1Export({
+    storageRootPath: fixture.storageRootPath,
+    externalOwnerEdges: fixture.externalOwnerEdges
+  });
+  await prepareConversationStoreV1RestoreRoute({
+    storageRootPath: fixture.storageRootPath,
+    generationId: exported.generationId,
+    expectedSourceFingerprint: exported.source.fingerprint,
+    externalOwnerEdges: fixture.externalOwnerEdges,
+    copyingCommitId: "restore-drift-copying",
+    validatedCommitId: "restore-drift-validated",
+    createdAt: BASE_TIME + 50,
+    validatedAt: BASE_TIME + 51
+  });
+  await fixture.v2Store.commitConversation(
+    v2OnlyCommit("restore-route-drifted"),
+    {
+      expectedRevision: null,
+      expectedCommitId: null
+    }
+  );
+  await assert.rejects(
+    () => activateConversationStoreV1RestoreRoute({
+      storageRootPath: fixture.storageRootPath,
+      externalOwnerEdges: fixture.externalOwnerEdges,
+      activeCommitId: "restore-drift-active",
+      activatedAt: BASE_TIME + 52
+    }),
+    /active V2 changed after the export plan/
+  );
+  const selection = await resolveConversationStoreSelection(
+    fixture.storageRootPath
+  );
+  assert.equal(selection.activeStore, "v2");
+  assert.equal(selection.reason, "restore-migration-incomplete");
+}
+
+async function assertRestoreActivationRejectsTargetDrift():
+Promise<void> {
+  const prepared = await validatedRestoreFixture(
+    "restore-target-drift"
+  );
+  const targetStore = new FileConversationStore({
+    rootPath: prepared.exported.storeRootPath
+  });
+  const targetSession = await targetStore.readSession(
+    prepared.fixture.legacySession.id
+  );
+  assert.ok(targetSession);
+  targetSession.title = "tampered after reverse validation";
+  targetSession.updatedAt += 1;
+  await targetStore.upsertSession(targetSession);
+  await assert.rejects(
+    () => activateConversationStoreV1RestoreRoute({
+      storageRootPath: prepared.fixture.storageRootPath,
+      externalOwnerEdges: prepared.externalOwnerEdges,
+      activeCommitId: "restore-target-drift-active",
+      activatedAt: BASE_TIME + 73
+    }),
+    /fresh validation failed/
+  );
+  const selection = await resolveConversationStoreSelection(
+    prepared.fixture.storageRootPath
+  );
+  assert.equal(selection.activeStore, "v2");
+  assert.equal(selection.reason, "restore-migration-incomplete");
+}
+
+async function assertRestoreManifestAndRouteFailClosed():
+Promise<void> {
+  const futureFixture = await validatedRestoreFixture(
+    "restore-future-schema"
+  );
+  const futureEntryPath = path.join(
+    conversationStoreRestoreManifestRoot(
+      futureFixture.fixture.storageRootPath
+    ),
+    "entry-0000000000000001.json"
+  );
+  const futureEntry = JSON.parse(
+    await readFile(futureEntryPath, "utf8")
+  ) as Record<string, unknown>;
+  futureEntry.schemaVersion = 2;
+  await writeFile(
+    futureEntryPath,
+    `${JSON.stringify(futureEntry, null, 2)}\n`,
+    "utf8"
+  );
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      futureFixture.fixture.storageRootPath
+    ),
+    /future restore manifest schema/
+  );
+
+  const unknownFixture = await validatedRestoreFixture(
+    "restore-unknown-entry"
+  );
+  await writeFile(
+    path.join(
+      conversationStoreRestoreManifestRoot(
+        unknownFixture.fixture.storageRootPath
+      ),
+      "unexpected.json"
+    ),
+    "{}\n",
+    "utf8"
+  );
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      unknownFixture.fixture.storageRootPath
+    ),
+    /unsafe entry/
+  );
+
+  const planFixture = await validatedRestoreFixture(
+    "restore-plan-tamper"
+  );
+  const planPath = path.join(
+    planFixture.exported.generationRootPath,
+    "plan.json"
+  );
+  const plan = JSON.parse(
+    await readFile(planPath, "utf8")
+  ) as Record<string, unknown>;
+  plan.unexpected = true;
+  await writeFile(
+    planPath,
+    `${JSON.stringify(plan, null, 2)}\n`,
+    "utf8"
+  );
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      planFixture.fixture.storageRootPath
+    ),
+    /unexpected field/
+  );
+
+  const missingFixture = await activeRestoredV1Fixture(
+    "restore-missing-root"
+  );
+  await rm(missingFixture.exported.storeRootPath, {
+    recursive: true,
+    force: false
+  });
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      missingFixture.fixture.storageRootPath
+    ),
+    /store root is missing/
+  );
+
+  const unsafeFixture = await activeRestoredV1Fixture(
+    "restore-unsafe-root"
+  );
+  const exportsRootPath = path.dirname(
+    unsafeFixture.exported.generationRootPath
+  );
+  const displacedExportsRootPath = path.join(
+    unsafeFixture.fixture.storageRootPath,
+    "displaced-conversation-v1-exports"
+  );
+  await rename(exportsRootPath, displacedExportsRootPath);
+  await symlink(displacedExportsRootPath, exportsRootPath, "dir");
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      unsafeFixture.fixture.storageRootPath
+    ),
+    /exports root must be a plain directory/
+  );
+
+  const missingForwardFixture = await activeRestoredV1Fixture(
+    "restore-missing-forward-authority"
+  );
+  await rm(
+    conversationStoreManifestRoot(
+      missingForwardFixture.fixture.storageRootPath
+    ),
+    { recursive: true, force: false }
+  );
+  await rm(
+    path.join(
+      missingForwardFixture.fixture.storageRootPath,
+      "conversation-store-v2-active.json"
+    ),
+    { force: false }
+  );
+  await assert.rejects(
+    () => resolveConversationStoreSelection(
+      missingForwardFixture.fixture.storageRootPath
+    ),
+    /source is not the expected active V2 manifest/
+  );
+}
+
+async function assertRestoreActivationHasSingleCasWinnerAndTerminalState():
+Promise<void> {
+  const prepared = await validatedRestoreFixture(
+    "restore-cas-winner"
+  );
+  const validation = await inspectAndValidateConversationStoreV1Export({
+    storageRootPath: prepared.fixture.storageRootPath,
+    generationId: prepared.exported.generationId,
+    expectedSourceFingerprint: prepared.exported.source.fingerprint,
+    externalOwnerEdges: prepared.externalOwnerEdges
+  });
+  assert.ok(validation.proof);
+  const expectation = {
+    expectedRevision: prepared.validated.revision,
+    expectedCommitId: prepared.validated.commitId
+  };
+  const candidateA = advanceConversationStoreRestoreManifestToActive(
+    prepared.validated,
+    {
+      commitId: "restore-cas-active-a",
+      proof: validation.proof,
+      activatedAt: BASE_TIME + 74
+    }
+  );
+  const candidateB = advanceConversationStoreRestoreManifestToActive(
+    prepared.validated,
+    {
+      commitId: "restore-cas-active-b",
+      proof: validation.proof,
+      activatedAt: BASE_TIME + 74
+    }
+  );
+  const results = await Promise.allSettled([
+    new FileConversationStoreRestoreManifest({
+      storageRootPath: prepared.fixture.storageRootPath
+    }).compareAndSwap(candidateA, expectation),
+    new FileConversationStoreRestoreManifest({
+      storageRootPath: prepared.fixture.storageRootPath
+    }).compareAndSwap(candidateB, expectation)
+  ]);
+  assert.equal(
+    results.filter((result) => result.status === "fulfilled").length,
+    1,
+    "exactly one reverse-active CAS candidate must win"
+  );
+  assert.equal(
+    results.filter((result) => result.status === "rejected").length,
+    1
+  );
+  const active = await new FileConversationStoreRestoreManifest({
+    storageRootPath: prepared.fixture.storageRootPath
+  }).read();
+  assert.equal(active?.migrationState, "reverse-active");
+  assert.throws(
+    () => advanceConversationStoreRestoreManifestToActive(active!, {
+      commitId: "restore-cas-illegal-append",
+      proof: validation.proof!,
+      activatedAt: BASE_TIME + 75
+    }),
+    /requires validated|must enter active from validated/
+  );
 }
 
 async function assertV2ToV1ExportAndReverseRestoreRoundTrip():
@@ -499,6 +874,59 @@ interface ActiveV2Fixture {
   legacySession: StoredSession;
   v2Store: FileConversationStoreV2;
   externalOwnerEdges: RecordMigrationOwnerEdge[];
+}
+
+interface ValidatedRestoreFixture {
+  fixture: ActiveV2Fixture;
+  exported: Awaited<ReturnType<typeof prepareConversationStoreV1Export>>;
+  externalOwnerEdges: RecordMigrationOwnerEdge[];
+  validated: Awaited<
+    ReturnType<typeof prepareConversationStoreV1RestoreRoute>
+  >;
+}
+
+async function validatedRestoreFixture(
+  suffix: string
+): Promise<ValidatedRestoreFixture> {
+  const fixture = await activeV2Fixture(suffix);
+  const exported = await prepareConversationStoreV1Export({
+    storageRootPath: fixture.storageRootPath,
+    externalOwnerEdges: fixture.externalOwnerEdges
+  });
+  const validated = await prepareConversationStoreV1RestoreRoute({
+    storageRootPath: fixture.storageRootPath,
+    generationId: exported.generationId,
+    expectedSourceFingerprint: exported.source.fingerprint,
+    externalOwnerEdges: fixture.externalOwnerEdges,
+    copyingCommitId: `${suffix}-copying`,
+    validatedCommitId: `${suffix}-validated`,
+    createdAt: BASE_TIME + 70,
+    validatedAt: BASE_TIME + 71
+  });
+  assert.equal(validated.migrationState, "reverse-validated");
+  return {
+    fixture,
+    exported,
+    externalOwnerEdges: fixture.externalOwnerEdges,
+    validated
+  };
+}
+
+async function activeRestoredV1Fixture(
+  suffix: string
+): Promise<ValidatedRestoreFixture> {
+  const prepared = await validatedRestoreFixture(suffix);
+  const active = await activateConversationStoreV1RestoreRoute({
+    storageRootPath: prepared.fixture.storageRootPath,
+    externalOwnerEdges: prepared.externalOwnerEdges,
+    activeCommitId: `${suffix}-active`,
+    activatedAt: BASE_TIME + 72
+  });
+  assert.equal(active.migrationState, "reverse-active");
+  return {
+    ...prepared,
+    validated: active
+  };
 }
 
 async function activeV2Fixture(

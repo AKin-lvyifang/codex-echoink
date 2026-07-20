@@ -45,9 +45,11 @@ import {
   advanceConversationStoreManifestToValidated,
   conversationStoreManifestRoot,
   createCopyingConversationStoreManifest,
-  finalizeConversationStoreManifest,
-  resolveConversationStoreSelection
+  finalizeConversationStoreManifest
 } from "../../harness/conversation/store-manifest";
+import {
+  resolveConversationStoreSelection
+} from "../../harness/conversation/store-selection";
 import {
   projectConversationShellV2,
   validateConversationShellV2
@@ -392,8 +394,13 @@ async function assertManifestDefaultsToV1AndRequiresOrderedCutover(): Promise<vo
 
   assert.deepEqual(await resolveConversationStoreSelection(storageRootPath), {
     activeStore: "v1",
+    storeRef: "legacy-v1",
+    rootPath: path.join(storageRootPath, "conversations"),
+    routeRevision: null,
+    routeDigest: null,
     reason: "manifest-absent",
-    manifest: null
+    manifest: null,
+    restoreManifest: null
   });
 
   const manifestStore = new FileConversationStoreManifest({ storageRootPath });

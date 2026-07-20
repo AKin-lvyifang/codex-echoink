@@ -50,16 +50,6 @@ export interface ConversationStoreManifestCasExpectation {
   expectedCommitId: string | null;
 }
 
-export interface ConversationStoreSelection {
-  activeStore: "v1" | "v2";
-  reason:
-    | "manifest-absent"
-    | "migration-incomplete"
-    | "active-cutover-pending"
-    | "manifest-active";
-  manifest: ConversationStoreManifest | null;
-}
-
 export type ConversationStoreManifestErrorCode =
   | "invalid-record"
   | "missing-field"
@@ -401,42 +391,6 @@ export class FileConversationStoreManifest {
       expectedCommitId: current.commitId
     });
   }
-}
-
-export async function resolveConversationStoreSelection(
-  storageRootPath: string
-): Promise<ConversationStoreSelection> {
-  const store = new FileConversationStoreManifest({
-    storageRootPath
-  });
-  const manifest = await store.read();
-  if (!manifest) {
-    return {
-      activeStore: "v1",
-      reason: "manifest-absent",
-      manifest: null
-    };
-  }
-  const pendingActive = await store.readPendingActiveCutover();
-  if (pendingActive) {
-    return {
-      activeStore: "v1",
-      reason: "active-cutover-pending",
-      manifest
-    };
-  }
-  if (manifest.migrationState !== "active") {
-    return {
-      activeStore: "v1",
-      reason: "migration-incomplete",
-      manifest
-    };
-  }
-  return {
-    activeStore: "v2",
-    reason: "manifest-active",
-    manifest
-  };
 }
 
 async function readManifestChain(

@@ -22,12 +22,25 @@ import {
   type ConversationStoreMigrationImportPlanBinding
 } from "../conversation/conversation-store";
 import {
+  assertConversationStoreV1ExportGenerationId,
+  CONVERSATION_STORE_V1_EXPORT_GENERATION_PREFIX,
+  conversationStoreV1ExportGenerationRoot,
+  conversationStoreV1ExportsRoot
+} from "../conversation/conversation-store-paths";
+import {
   conversationStoreV2Root,
   FileConversationStoreV2
 } from "../conversation/conversation-store-v2";
 import {
   resolveConversationStoreSelection
-} from "../conversation/store-manifest";
+} from "../conversation/store-selection";
+import {
+  FileConversationStoreRestoreManifest,
+  advanceConversationStoreRestoreManifestToActive,
+  advanceConversationStoreRestoreManifestToValidated,
+  createCopyingConversationStoreRestoreManifest,
+  type ConversationStoreRestoreManifest
+} from "../conversation/store-restore-manifest";
 import {
   conversationMigrationInventoryFromLegacySessions,
   conversationMigrationInventoryFromV2Commits
@@ -46,10 +59,7 @@ import {
   type RecordMigrationValidationReport
 } from "./record-migration-validator";
 
-const EXPORTS_DIRECTORY = "conversation-v1-exports";
 const EXPORT_STAGING_DIRECTORY = ".staging";
-const EXPORT_GENERATION_PREFIX = "export-";
-const EXPORT_GENERATION_PATTERN = /^export-[a-f0-9]{64}$/;
 const PLAN_FILE = "plan.json";
 const STORE_DIRECTORY = "store";
 const CONFLICTS_DIRECTORY = "migration-conflicts";
@@ -106,22 +116,30 @@ extends ConversationStoreV1ExportValidation {
     | null;
 }
 
-export function conversationStoreV1ExportsRoot(
-  storageRootPath: string
-): string {
-  return path.join(path.resolve(storageRootPath), EXPORTS_DIRECTORY);
+export interface PrepareConversationStoreV1RestoreRouteInput {
+  storageRootPath: string;
+  generationId: string;
+  expectedSourceFingerprint: string;
+  externalOwnerEdges?: readonly RecordMigrationOwnerEdge[];
+  copyingCommitId: string;
+  validatedCommitId: string;
+  createdAt: number;
+  validatedAt: number;
+  restoreManifestStore?: FileConversationStoreRestoreManifest;
 }
 
-export function conversationStoreV1ExportGenerationRoot(
-  storageRootPath: string,
-  generationId: string
-): string {
-  assertExportGenerationId(generationId);
-  return path.join(
-    conversationStoreV1ExportsRoot(storageRootPath),
-    generationId
-  );
+export interface ActivateConversationStoreV1RestoreRouteInput {
+  storageRootPath: string;
+  externalOwnerEdges?: readonly RecordMigrationOwnerEdge[];
+  activeCommitId: string;
+  activatedAt: number;
+  restoreManifestStore?: FileConversationStoreRestoreManifest;
 }
+
+export {
+  conversationStoreV1ExportGenerationRoot,
+  conversationStoreV1ExportsRoot
+} from "../conversation/conversation-store-paths";
 
 /**
  * Create or resume one deterministic, side-by-side V1 compatibility export.
@@ -358,6 +376,125 @@ export async function inspectAndValidateConversationStoreV1Export(
   };
 }
 
+export async function prepareConversationStoreV1RestoreRoute(
+  input: PrepareConversationStoreV1RestoreRouteInput
+): Promise<ConversationStoreRestoreManifest> {
+  const storageRootPath = safeStorageRoot(input.storageRootPath);
+  const generationRootPath = conversationStoreV1ExportGenerationRoot(
+    storageRootPath,
+    input.generationId
+  );
+  const plan = await readExportPlan(
+    path.join(generationRootPath, PLAN_FILE)
+  );
+  if (
+    plan.generationId !== input.generationId
+    || plan.sourceFingerprint !== input.expectedSourceFingerprint
+  ) {
+    throw new Error(
+      "Conversation V1 restore route blocked: export plan identity changed"
+    );
+  }
+  const store = input.restoreManifestStore
+    ?? new FileConversationStoreRestoreManifest({ storageRootPath });
+  let current = await store.read();
+  if (current) {
+    assertRestoreRouteMatchesPlan(current, plan);
+    if (current.migrationState === "reverse-active") return current;
+  }
+  const validation = await inspectAndValidateConversationStoreV1Export({
+    storageRootPath,
+    generationId: input.generationId,
+    expectedSourceFingerprint: input.expectedSourceFingerprint,
+    externalOwnerEdges: input.externalOwnerEdges
+  });
+  if (validation.report.status !== "ready" || !validation.proof) {
+    throw new Error(
+      "Conversation V1 restore route blocked: export is not ready"
+    );
+  }
+  if (!current) {
+    const copying = createCopyingConversationStoreRestoreManifest({
+      commitId: input.copyingCommitId,
+      sourceManifestDigest: plan.sourceManifestDigest,
+      sourceFingerprint: plan.sourceFingerprint,
+      generationId: plan.generationId,
+      planDigest: plan.digest,
+      createdAt: input.createdAt
+    });
+    current = await store.compareAndSwap(copying, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+  }
+  assertRestoreRouteMatchesPlan(current, plan);
+  if (current.migrationState === "reverse-validated") {
+    if (current.targetFingerprint !== validation.target.fingerprint) {
+      throw new Error(
+        "Conversation V1 restore route blocked: validated target changed"
+      );
+    }
+    return current;
+  }
+  const validated =
+    advanceConversationStoreRestoreManifestToValidated(current, {
+      commitId: input.validatedCommitId,
+      proof: validation.proof,
+      updatedAt: input.validatedAt
+    });
+  return await store.compareAndSwap(validated, {
+    expectedRevision: current.revision,
+    expectedCommitId: current.commitId
+  });
+}
+
+export async function activateConversationStoreV1RestoreRoute(
+  input: ActivateConversationStoreV1RestoreRouteInput
+): Promise<ConversationStoreRestoreManifest> {
+  const storageRootPath = safeStorageRoot(input.storageRootPath);
+  const store = input.restoreManifestStore
+    ?? new FileConversationStoreRestoreManifest({ storageRootPath });
+  const current = await store.read();
+  if (!current) {
+    throw new Error(
+      "Conversation V1 restore activation requires a validated route"
+    );
+  }
+  if (current.migrationState === "reverse-active") return current;
+  if (current.migrationState !== "reverse-validated") {
+    throw new Error(
+      "Conversation V1 restore activation requires a validated route"
+    );
+  }
+  const validation = await inspectAndValidateConversationStoreV1Export({
+    storageRootPath,
+    generationId: current.generationId,
+    expectedSourceFingerprint: current.sourceFingerprint,
+    externalOwnerEdges: input.externalOwnerEdges
+  });
+  if (
+    validation.report.status !== "ready"
+    || !validation.proof
+    || validation.target.fingerprint !== current.targetFingerprint
+  ) {
+    throw new Error(
+      "Conversation V1 restore activation blocked: fresh validation failed"
+    );
+  }
+  const active = advanceConversationStoreRestoreManifestToActive(
+    current,
+    {
+      commitId: input.activeCommitId,
+      proof: validation.proof,
+      activatedAt: input.activatedAt
+    }
+  );
+  return await store.compareAndSwap(active, {
+    expectedRevision: current.revision,
+    expectedCommitId: current.commitId
+  });
+}
+
 export function projectConversationCommitV2ToStoredSessionV1(
   commitInput: ConversationCommitV2
 ): StoredSession {
@@ -574,7 +711,7 @@ export function createConversationStoreV1ExportGenerationId(
       sourceFingerprint
     }), "utf8")
     .digest("hex");
-  return `${EXPORT_GENERATION_PREFIX}${token}`;
+  return `${CONVERSATION_STORE_V1_EXPORT_GENERATION_PREFIX}${token}`;
 }
 
 export function createConversationStoreV1ExportPlan(
@@ -642,7 +779,7 @@ async function readExportPlan(
   ) {
     throw new Error("Conversation V1 export plan schema is invalid");
   }
-  assertExportGenerationId(record.generationId);
+  assertConversationStoreV1ExportGenerationId(record.generationId);
   const plan = record as unknown as ConversationStoreV1ExportPlan;
   if (plan.digest !== createConversationStoreV1ExportPlan(
     plan.generationId,
@@ -660,7 +797,7 @@ async function activeV2ManifestDigest(
   const selection = await resolveConversationStoreSelection(storageRootPath);
   if (
     selection.activeStore !== "v2"
-    || selection.reason !== "manifest-active"
+    || selection.storeRef !== "canonical-v2"
     || selection.manifest?.migrationState !== "active"
   ) {
     throw new Error(
@@ -668,6 +805,22 @@ async function activeV2ManifestDigest(
     );
   }
   return selection.manifest.digest;
+}
+
+function assertRestoreRouteMatchesPlan(
+  manifest: ConversationStoreRestoreManifest,
+  plan: ConversationStoreV1ExportPlan
+): void {
+  if (
+    manifest.sourceManifestDigest !== plan.sourceManifestDigest
+    || manifest.sourceFingerprint !== plan.sourceFingerprint
+    || manifest.generationId !== plan.generationId
+    || manifest.planDigest !== plan.digest
+  ) {
+    throw new Error(
+      "Conversation V1 restore route conflicts with the export plan"
+    );
+  }
 }
 
 async function assertExportGenerationLayout(
@@ -861,12 +1014,6 @@ function assertSourceStoreBelongsToStorageRoot(
     throw new Error(
       "Conversation V1 export source Store is not the canonical V2 root"
     );
-  }
-}
-
-function assertExportGenerationId(value: string): void {
-  if (!EXPORT_GENERATION_PATTERN.test(value)) {
-    throw new Error("Conversation V1 export generation ID is invalid");
   }
 }
 

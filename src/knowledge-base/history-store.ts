@@ -20,7 +20,7 @@ import {
 } from "../harness/conversation/conversation-store-v2";
 import {
   resolveConversationStoreSelection
-} from "../harness/conversation/store-manifest";
+} from "../harness/conversation/store-selection";
 import type {
   ConversationCommitV2,
   MessageV2
@@ -2345,27 +2345,15 @@ async function readCanonicalKnowledgeSessions(
   const storageRootPath = pluginDataDir(vaultPath, pluginDir);
   const selection = await resolveConversationStoreSelection(storageRootPath);
   if (selection.activeStore === "v1") {
-    return await knowledgeBaseConversationStore(
-      vaultPath,
-      pluginDir
-    ).listSessions();
+    return await new FileConversationStore({
+      rootPath: selection.rootPath
+    }).listSessions();
   }
   const snapshot = await new FileConversationStoreV2({
-    storageRootPath
+    storageRootPath,
+    rootPath: selection.rootPath
   }).inspectMigrationSnapshot();
   return snapshot.commits.map(projectConversationCommitV2ForHistory);
-}
-
-function knowledgeBaseConversationStore(
-  vaultPath: string,
-  pluginDir: string
-): FileConversationStore {
-  return new FileConversationStore({
-    rootPath: path.join(
-      pluginDataDir(vaultPath, pluginDir),
-      "conversations"
-    )
-  });
 }
 
 async function readCanonicalKnowledgeConversation(
@@ -2376,12 +2364,12 @@ async function readCanonicalKnowledgeConversation(
   const storageRootPath = pluginDataDir(vaultPath, pluginDir);
   const selection = await resolveConversationStoreSelection(storageRootPath);
   const session = selection.activeStore === "v1"
-    ? await knowledgeBaseConversationStore(
-      vaultPath,
-      pluginDir
-    ).readSession(sessionId)
+    ? await new FileConversationStore({
+      rootPath: selection.rootPath
+    }).readSession(sessionId)
     : await new FileConversationStoreV2({
-      storageRootPath
+      storageRootPath,
+      rootPath: selection.rootPath
     }).readConversation(sessionId).then((commit) =>
       commit ? projectConversationCommitV2ForHistory(commit) : null);
   if (!session || session.kind !== "knowledge-base") {
