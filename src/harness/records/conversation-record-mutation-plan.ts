@@ -42,6 +42,7 @@ export interface BuildConversationRecordMutationPlanInput {
   expectedConversationContentRevision: string;
   targetConversation: RecordMutationConversationTarget;
   rootBindings: readonly RecordRootBindingRef[];
+  conversationRootId?: EchoInkRecordMutationRootId;
 }
 
 export interface BuiltConversationRecordMutationPlan {
@@ -74,11 +75,13 @@ export class ConversationRecordMutationPlanError extends Error {
  * a guessed subset that later drifts from the immutable execution plan.
  */
 export function conversationRecordMutationRequiredRootIds(
-  inventoryInput: ConversationRecordInventory
+  inventoryInput: ConversationRecordInventory,
+  conversationRootId: EchoInkRecordMutationRootId =
+    ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation
 ): EchoInkRecordMutationRootId[] {
   const inventory = requireReadyInventory(inventoryInput);
   const requiredRootIds = new Set<EchoInkRecordMutationRootId>([
-    ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+    conversationRootId,
     ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
   ]);
   if (inventory.run.workflowRuns.length) {
@@ -121,15 +124,20 @@ export function buildConversationRecordMutationPlan(
     conversationSources
   });
   const participants: RecordMutationExecutionParticipant[] = [];
+  const conversationRootId = input.conversationRootId
+    ?? ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation;
   const requiredRootIds = new Set<EchoInkRecordMutationRootId>(
-    conversationRecordMutationRequiredRootIds(inventory)
+    conversationRecordMutationRequiredRootIds(
+      inventory,
+      conversationRootId
+    )
   );
   let leafRecordCount = 0;
 
   const conversationBundle = trashBundleParticipant({
     recordKind: "conversation",
     action: "stage",
-    sourceRootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+    sourceRootId: conversationRootId,
     trashRootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.trash,
     selectionDigest,
     items: conversationSources.map((sourceRelativePath) => ({

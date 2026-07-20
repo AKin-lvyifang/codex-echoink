@@ -11,7 +11,6 @@ import {
 import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
 import {
   createConversationContentRevision,
-  FileConversationStore,
   type CommitConversationContextOptions,
   type CommitConversationRecordClearOptions,
   type ConversationAuthorityProbe,
@@ -23,6 +22,9 @@ import {
   type ConversationRecordMutationSource,
   type PlanConversationRecordMutationSourcesInput
 } from "../harness/conversation/conversation-store";
+import {
+  FileConversationStoreRouter
+} from "./conversation-store-router";
 import {
   assertConversationMutationAuthority,
   ConversationMutationLane,
@@ -156,7 +158,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   private saveQueue: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
   private rawOwnerMutationTail: Promise<void> = Promise.resolve();
-  private conversationStore: FileConversationStore | null = null;
+  private conversationStore: FileConversationStoreRouter | null = null;
   private conversationStoreRootPath = "";
   private interruptedRunRecoveryQueue: Promise<number> = Promise.resolve(0);
   private settingsCasRecoveryError: MaintenanceWorkflowWalError | null = null;
@@ -481,6 +483,14 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     return await this.getConversationStore().readSession(sessionId);
   }
 
+  async resolveConversationStoreRootPath(): Promise<string> {
+    return await this.getConversationStore().resolveLiveRootPath();
+  }
+
+  async resolveConversationRecordMutationRoute() {
+    return await this.getConversationStore().resolveRecordMutationRoute();
+  }
+
   async proveConversationMessageAuthority(
     probe: ConversationMessageAuthorityProbe
   ): Promise<ConversationMessageAuthorityProof> {
@@ -636,7 +646,9 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
                 rootIds: journal.record.intent.rootBindings.map(
                   (binding) => binding.rootId as EchoInkRecordMutationRootId
                 ),
-                createdAt: journal.record.createdAt
+                createdAt: journal.record.createdAt,
+                conversationRootPath:
+                  await this.resolveConversationStoreRootPath()
               });
             const materialized = await materializeRecordMutationExecution({
               plan: executionPlan,
@@ -1510,11 +1522,21 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     };
   }
 
-  private getConversationStore(): FileConversationStore {
-    const rootPath = path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "conversations");
-    if (this.conversationStore && this.conversationStoreRootPath === rootPath) return this.conversationStore;
-    this.conversationStoreRootPath = rootPath;
-    this.conversationStore = new FileConversationStore({ rootPath });
+  private getConversationStore(): FileConversationStoreRouter {
+    const storageRootPath = pluginDataDir(
+      this.plugin.getVaultPath(),
+      this.plugin.getPluginDataDirName()
+    );
+    if (
+      this.conversationStore
+      && this.conversationStoreRootPath === storageRootPath
+    ) {
+      return this.conversationStore;
+    }
+    this.conversationStoreRootPath = storageRootPath;
+    this.conversationStore = new FileConversationStoreRouter(
+      storageRootPath
+    );
     return this.conversationStore;
   }
 }

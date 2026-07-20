@@ -20,6 +20,10 @@ import {
   buildConversationRecordMutationPlan,
   type BuiltConversationRecordMutationPlan
 } from "./conversation-record-mutation-plan";
+import {
+  ECHOINK_RECORD_MUTATION_ROOT_IDS,
+  type EchoInkRecordMutationRootId
+} from "../lifecycle/record-mutation-production";
 
 export interface EchoInkRecordMutationSelectionVerifierInput {
   vaultPath: string;
@@ -48,6 +52,9 @@ export function createEchoInkRecordMutationSelectionVerifier(
     }
     const decisions = frozenDispositionDecisions(plan.participants);
     const conversationSources = frozenConversationSources(plan.participants);
+    const conversationRootId = frozenConversationRootId(
+      plan.participants
+    );
     const inventoryInput = {
       operation,
       conversationId: journal.record.intent.conversationId,
@@ -73,12 +80,14 @@ export function createEchoInkRecordMutationSelectionVerifier(
     const firstPlan = rebuildPlan(
       first,
       conversationSources,
-      journal.record.intent
+      journal.record.intent,
+      conversationRootId
     );
     const secondPlan = rebuildPlan(
       second,
       conversationSources,
-      journal.record.intent
+      journal.record.intent,
+      conversationRootId
     );
     assertRebuiltPlanMatchesFrozen(firstPlan, plan.participants);
     assertRebuiltPlanMatchesFrozen(secondPlan, plan.participants);
@@ -108,7 +117,8 @@ export function createEchoInkRecordMutationSelectionVerifier(
 function rebuildPlan(
   inventory: ConversationRecordInventory,
   conversationSources: Array<{ sourceRelativePath: string }>,
-  intent: RecordMutationIntent
+  intent: RecordMutationIntent,
+  conversationRootId: EchoInkRecordMutationRootId
 ): BuiltConversationRecordMutationPlan {
   if (intent.expectedConversationCommitId === null) {
     throw new Error(
@@ -123,8 +133,37 @@ function rebuildPlan(
     expectedConversationContentRevision:
       intent.expectedConversationContentRevision,
     targetConversation: intent.targetConversation,
-    rootBindings: intent.rootBindings
+    rootBindings: intent.rootBindings,
+    conversationRootId
   });
+}
+
+function frozenConversationRootId(
+  participants: readonly RecordMutationExecutionParticipant[]
+): EchoInkRecordMutationRootId {
+  const candidates = participants.filter((participant) => (
+    participant.recordKind === "conversation"
+    && participant.action === "stage"
+    && participant.execution.kind === "trash-bundle"
+  ));
+  if (
+    candidates.length !== 1
+    || candidates[0]?.execution.kind !== "trash-bundle"
+  ) {
+    throw new Error(
+      "Conversation RecordMutation frozen source root is missing"
+    );
+  }
+  const rootId = candidates[0].execution.sourceRootId;
+  if (
+    rootId !== ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation
+    && !/^echoink-conversation-store-[a-f0-9]{64}$/.test(rootId)
+  ) {
+    throw new Error(
+      "Conversation RecordMutation frozen source root is invalid"
+    );
+  }
+  return rootId as EchoInkRecordMutationRootId;
 }
 
 function assertRebuiltPlanMatchesFrozen(

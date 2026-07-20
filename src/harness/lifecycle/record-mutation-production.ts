@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
@@ -38,7 +39,7 @@ export const ECHOINK_RECORD_MUTATION_ROOT_IDS = {
 export type EchoInkRecordMutationRootId =
   typeof ECHOINK_RECORD_MUTATION_ROOT_IDS[
     keyof typeof ECHOINK_RECORD_MUTATION_ROOT_IDS
-  ];
+  ] | `echoink-conversation-store-${string}`;
 
 const ARTIFACT_LIFECYCLE_ROOT_DIRECTORY =
   "workflow-artifact-lifecycle-v1";
@@ -56,6 +57,7 @@ export async function prepareEchoInkRecordMutationRuntimeRoots(input: {
   pluginDir: string;
   rootIds: readonly EchoInkRecordMutationRootId[];
   createdAt: number;
+  conversationRootPath?: string;
 }): Promise<{
   storageRootPath: string;
   roots: RecordMutationRuntimeRoot[];
@@ -65,7 +67,8 @@ export async function prepareEchoInkRecordMutationRuntimeRoots(input: {
   await fsp.mkdir(storageRootPath, { recursive: true, mode: 0o700 });
   const definitionsById = productionRootDefinitions(
     vaultPath,
-    storageRootPath
+    storageRootPath,
+    input.conversationRootPath
   );
   const rootIds = normalizeSelectedRootIds(input.rootIds);
   const definitions = rootIds.map((rootId) => {
@@ -194,12 +197,14 @@ export function echoInkRecordMutationRootPath(input: {
   vaultPath: string;
   pluginDir: string;
   rootId: EchoInkRecordMutationRootId;
+  conversationRootPath?: string;
 }): string {
   const vaultPath = requireAbsolutePath(input.vaultPath, "vaultPath");
   const storageRootPath = pluginDataDir(vaultPath, input.pluginDir);
   const definition = productionRootDefinitions(
     vaultPath,
-    storageRootPath
+    storageRootPath,
+    input.conversationRootPath
   ).get(input.rootId);
   if (!definition) {
     throw new Error(`Unknown EchoInk RecordMutation root: ${input.rootId}`);
@@ -207,9 +212,33 @@ export function echoInkRecordMutationRootPath(input: {
   return definition.rootPath;
 }
 
+export function echoInkConversationRecordMutationRootId(input: {
+  storageRootPath: string;
+  conversationRootPath: string;
+}): EchoInkRecordMutationRootId {
+  const storageRootPath = path.resolve(input.storageRootPath);
+  const conversationRootPath = resolveConversationRootPath(
+    storageRootPath,
+    input.conversationRootPath
+  );
+  if (
+    conversationRootPath === path.join(storageRootPath, "conversations")
+  ) {
+    return ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation;
+  }
+  const relativePath = path.relative(
+    storageRootPath,
+    conversationRootPath
+  ).split(path.sep).join("/");
+  return `echoink-conversation-store-${createHash("sha256")
+    .update(relativePath, "utf8")
+    .digest("hex")}`;
+}
+
 function productionRootDefinitions(
   vaultPath: string,
-  storageRootPath: string
+  storageRootPath: string,
+  conversationRootPathInput?: string
 ): Map<EchoInkRecordMutationRootId, RecordMutationRuntimeRootDefinition> {
   const pluginOwned = (
     rootId: EchoInkRecordMutationRootId,
@@ -220,15 +249,26 @@ function productionRootDefinitions(
     boundaryRootPath: storageRootPath,
     authority: "plugin-owned"
   });
+  const conversationRootPath = resolveConversationRootPath(
+    storageRootPath,
+    conversationRootPathInput
+  );
+  const conversationRootId =
+    echoInkConversationRecordMutationRootId({
+      storageRootPath,
+      conversationRootPath
+    });
   const definitions: RecordMutationRuntimeRootDefinition[] = [
     pluginOwned(
       ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact,
       ARTIFACT_LIFECYCLE_ROOT_DIRECTORY
     ),
-    pluginOwned(
-      ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
-      "conversations"
-    ),
+    {
+      rootId: conversationRootId,
+      rootPath: conversationRootPath,
+      boundaryRootPath: storageRootPath,
+      authority: "plugin-owned"
+    },
     {
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.memory,
       rootPath: echoInkMemoryV2Layout(vaultPath).root,
@@ -253,6 +293,24 @@ function productionRootDefinitions(
   );
 }
 
+function resolveConversationRootPath(
+  storageRootPath: string,
+  rootPathInput: string | undefined
+): string {
+  const rootPath = path.resolve(
+    rootPathInput ?? path.join(storageRootPath, "conversations")
+  );
+  if (
+    rootPath === storageRootPath
+    || !rootPath.startsWith(`${storageRootPath}${path.sep}`)
+  ) {
+    throw new Error(
+      "EchoInk Conversation RecordMutation root must stay inside plugin storage"
+    );
+  }
+  return rootPath;
+}
+
 function normalizeSelectedRootIds(
   value: readonly EchoInkRecordMutationRootId[]
 ): EchoInkRecordMutationRootId[] {
@@ -263,7 +321,10 @@ function normalizeSelectedRootIds(
     Object.values(ECHOINK_RECORD_MUTATION_ROOT_IDS)
   );
   const rootIds = value.map((rootId) => {
-    if (!allowed.has(rootId)) {
+    if (
+      !allowed.has(rootId)
+      && !/^echoink-conversation-store-[a-f0-9]{64}$/.test(rootId)
+    ) {
       throw new Error(`Unknown EchoInk RecordMutation root: ${String(rootId)}`);
     }
     return rootId;

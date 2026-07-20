@@ -20,6 +20,29 @@ export async function runHarnessV2ArchitectureBoundaryTests(): Promise<void> {
   await assertLiveContextMutationJournalKeepsAuthorityChain();
   await assertRunRetentionUsesProductionRecoveryEvidenceAuthority();
   await assertReverseStoreActivationUsesValidatedCoordinator();
+  await assertProductionConversationStoreUsesManifestRoute();
+}
+
+async function assertProductionConversationStoreUsesManifestRoute():
+Promise<void> {
+  const [settingsStore, router] = await Promise.all([
+    readSource("src/plugin/settings-store.ts"),
+    readSource("src/plugin/conversation-store-router.ts")
+  ]);
+  assert.doesNotMatch(
+    settingsStore,
+    /new FileConversationStore\s*\(/,
+    "production settings must not bypass the selected Conversation route"
+  );
+  assert.match(
+    settingsStore,
+    /new FileConversationStoreRouter\s*\(/
+  );
+  assert.match(
+    router,
+    /resolveConversationStoreSelection\([\s\S]*selection\.activeStore === "v2"[\s\S]*ConversationStoreRoutingError/,
+    "V2 active must fail closed until the complete live adapter exists"
+  );
 }
 
 async function assertReverseStoreActivationUsesValidatedCoordinator():

@@ -44,6 +44,22 @@
   retention、Raw GC、Native cleanup 或 UI 验收。下一开发门禁是先完成统一 V2
   reader/writer 路由和同进程静默窗口；真实数据仍按现有 blocker fail closed。
 
+## 2026-07-20：Phase 4 生产 Conversation 路由前置接线
+
+- 新增生产 `FileConversationStoreRouter`。Settings 不再直接构造 legacy V1 Store；
+  每次读写都从 forward/reverse manifest 解析同一个精确 root。
+- manifest absent、forward copying/validated 和 active-fence pending 继续使用
+  legacy V1；reverse-active 使用精确 V1 export root。canonical V2 active 时，
+  完整 live V2 adapter 尚未接入，因此所有生产 Conversation 操作明确阻断，
+  不会回退写入 legacy V1。
+- Conversation RecordMutation runtime root 支持绑定 manifest 选中的 Store，
+  并强制该 root 位于插件存储边界内。反向恢复后的清空/删除不会再错误绑定旧 V1。
+- 最小验证覆盖 legacy V1 正常读写、V2 active 后零 legacy 写入、路由架构边界、
+  动态 mutation root 与越界阻断；focused tests、typecheck 和 `git diff --check`
+  通过。
+- 本批没有实现 V2 live clear/delete，没有发布 cutover，也没有触碰真实 Vault。
+  下一批补迁移静默窗口，然后实现 V2 live writer 的完整产品合同。
+
 ## 2026-07-18 至 2026-07-19：记录生命周期只读审计
 
 - 从 `main@a91f1b8` 建立分支 `codex/harness-record-lifecycle` 和专用 worktree。

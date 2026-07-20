@@ -19,9 +19,14 @@ delete 能力，所以 cleanup 继续如实标记为 unsupported。
 
 Phase 4 没有执行。真实 Vault 当前迁移检查仍为 blocked，且备份、真实迁移、部署、
 清理和三后端 Obsidian 验收都需要单独授权。完成度审计还确认：当前 live
-Conversation writer 仍主要落在 V1 Store，尚无覆盖 Run admission、Conversation
-写入和跨 Store mutation 的统一静默窗口与生产 cutover coordinator。此时新增一个
-局部迁移入口会制造读写分叉，因此不实施半套 Phase 4 coordinator。
+Conversation writer 还不能完整承接 V2，尚无覆盖 Run admission、Conversation
+写入和跨 Store mutation 的统一静默窗口与生产 cutover coordinator。
+
+第一批前置接线已移除 Settings Store 对 legacy V1 目录的硬编码。生产 Conversation
+读写现在每次先解析 append-only manifest：legacy V1 与 reverse-active V1 export
+都使用 manifest 选中的精确 root；canonical V2 active 时，在完整 live V2 adapter
+接入前明确 fail closed，绝不静默回写 legacy V1。Conversation RecordMutation 的
+runtime root 同样绑定该选择，并拒绝插件存储边界外路径。
 
 第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
 registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
@@ -191,7 +196,7 @@ authority 也按 fail closed 处理。
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
 | Phase 2：数据治理 | 已完成 | `b2db2f5` 至 `e43427d`；live clear/delete、History V2、Run/Raw 治理、validated migration、portable reverse export、精确 reverse route 与真实 Store owner proof 已完成 | 不自动创建新清理；只恢复已发布事务 |
 | Phase 3：Backend capability | 已完成并提交 | `19f183b`；Codex archive、OpenCode resume/delete；Hermes 0.18.0 实机公开 list/load，不公开 delete | 进入 Phase 4 前置接线 |
-| Phase 4：真实迁移与实机验收 | 已审计，真实执行阻断 | live writer 尚未完整切到 V2；迁移副本 dry-run 保持 blocked；未部署、未修改真实 Vault、未清理历史 | 先完成统一读写路由与静默窗口，再单独确认备份、迁移、部署和实机验收 |
+| Phase 4：真实迁移与实机验收 | 前置接线进行中，真实执行阻断 | manifest 已成为生产 V1 reader/writer 唯一路由；V2 active 会阻断 legacy 回写；迁移副本 dry-run 仍 blocked | 实现完整 V2 live writer 与静默窗口，再单独确认备份、迁移、部署和实机验收 |
 
 ## 已确认决定
 

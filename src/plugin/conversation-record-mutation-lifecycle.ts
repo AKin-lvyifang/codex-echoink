@@ -236,14 +236,20 @@ export async function commitEchoInkConversationRecordMutation(input: {
             mutationId,
             now: createdAt
           });
+          const conversationRoute =
+            await settingsStore.resolveConversationRecordMutationRoute();
           const requiredRootIds =
-            conversationRecordMutationRequiredRootIds(secondInventory);
+            conversationRecordMutationRequiredRootIds(
+              secondInventory,
+              conversationRoute.rootId
+            );
           const preparedRoots =
             await prepareEchoInkRecordMutationRuntimeRoots({
               vaultPath: plugin.getVaultPath(),
               pluginDir: plugin.getPluginDataDirName(),
               rootIds: requiredRootIds,
-              createdAt
+              createdAt,
+              conversationRootPath: conversationRoute.rootPath
             });
           const built = buildConversationRecordMutationPlan({
             inventory: secondInventory,
@@ -252,7 +258,8 @@ export async function commitEchoInkConversationRecordMutation(input: {
             expectedConversationCommitId: expectedCommitId,
             expectedConversationContentRevision: expectedContentRevision,
             targetConversation: target.intentTarget,
-            rootBindings: preparedRoots.roots.map((root) => root.rootBinding)
+            rootBindings: preparedRoots.roots.map((root) => root.rootBinding),
+            conversationRootId: conversationRoute.rootId
           });
           const journal = await createRecordMutationJournal({
             storageRootPath: preparedRoots.storageRootPath,
