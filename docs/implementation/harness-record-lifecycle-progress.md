@@ -87,13 +87,19 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
   `expired` authority；补偿先恢复 Trash source，再发布新的 active payload
   generation。forward/restore 的 manifest-link 崩溃窗口可恢复，production
   adapter factory 已能从 execution plan 的冻结 subject 重建 adapter。
-- 一轮长会话可能包含超过 32 条叶子记录，因此确定性 execution participant
-  构造将采用逻辑 bundle：Journal participant 绑定完整叶子集合的 digest，
-  execution plan 保存每个叶子的正式 identity/path，Store 与 Trash 保留逐叶
-  receipt，Journal 只在整组完成后追加 aggregate step。不会只调大上限，也不会
-  把一次用户删除拆成多个独立提交的业务 mutation。
-- Bundle execution plan/runtime、live clear/delete runner 以及 Native retirement
-  仍未接入，因此不能把当前 checkpoint 写成用户删除已经安全可用。
+- Execution Plan schema 已升级为 V2，支持 `retain-bundle`、`trash-bundle` 与
+  `source-deletion-bundle`。每个 bundle 绑定共同的 inventory selection digest、
+  frozen Root 和完整有序叶子；retain 叶子保存可回读的 Run digest 或 Raw
+  identity/path/owner proof。重复逻辑组、Run source-deletion/Trash 覆盖不一致、
+  超过 16,384 条的单组和超过 8 MiB 的 plan 都在 Journal stage 前整体阻断。
+- 新增 Conversation mutation planner，把 ready unified inventory、Conversation
+  source 和精确 Root Binding 编译为确定性 intent 与 execution participants。
+  40 个 Workflow Run 的夹具包含 127 条唯一记录，只生成 8 个逻辑 participant；
+  输入逆序结果保持一致。blocked inventory、缺失 Attempt summary、重复 source、
+  跨 Conversation source、Root 缺失、selection 漂移和拆组绕过容量均有失败回归。
+- Bundle runtime/materializer、live clear/delete runner 以及 Native retirement
+  仍未接入。runtime 遇到 bundle 会在 Trash prepare 和 Store effect 前返回
+  `bundle_runtime_required`，因此不能把当前 checkpoint 写成用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -121,10 +127,11 @@ authority 也按 fail closed 处理。
 - 破坏性 Conversation reader/writer checkpoint：`67719de`
 - Participant execution plan / production root checkpoint：`d683b10`
 - Conversation 统一 inventory checkpoint：`7f1b841`
-- 当前开发批次：Workflow Run payload source-deletion、restore/recovery 与
-  production adapter 接线
-- 下一批次：bundle execution plan、确定性 participant 构造、live clear/delete
-  runner 与 Native retirement
+- Workflow Run payload source-deletion checkpoint：`d27c56a`
+- 当前开发批次：Execution Plan V2、Conversation mutation planner 与 bundle
+  runtime fail-closed guard
+- 下一批次：bundle runtime/materializer、逐叶 receipt 与 aggregate step、
+  live clear/delete runner 和 Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
 

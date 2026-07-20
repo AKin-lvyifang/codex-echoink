@@ -11,6 +11,7 @@ import * as path from "node:path";
 import {
   createRecordMutationExecutionPlan,
   loadRecordMutationExecutionPlan,
+  recordMutationExecutionBundleParticipantId,
   RecordMutationExecutionPlanError,
   validateRecordMutationExecutionPlanAgainstJournal,
   workflowRunPayloadParticipantId,
@@ -35,6 +36,7 @@ Promise<void> {
   await assertMissingPlanCannotBeInventedAfterJournalStage();
   await assertPlanRejectsSubjectAndRootDrift();
   await assertPlanCorruptionFailsClosed();
+  await assertBundlesCoverMoreThanJournalParticipantLimit();
 }
 
 async function assertExecutionPlanSurvivesRestartWithoutPhysicalPaths():
@@ -204,6 +206,7 @@ async function assertPlanRejectsSubjectAndRootDrift(): Promise<void> {
         && error.code === "invalid_plan"
       )
     );
+
   });
 }
 
@@ -252,6 +255,396 @@ async function assertPlanCorruptionFailsClosed(): Promise<void> {
       )
     );
   });
+}
+
+async function assertBundlesCoverMoreThanJournalParticipantLimit():
+Promise<void> {
+  await withFixture("bundle-capacity", async (fixture) => {
+    const participants = bundleExecutionParticipants();
+    const journal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "execution-plan-bundle-capacity",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-bundle-capacity",
+        expectedConversationGeneration: 2,
+        expectedConversationCommitId: "conversation-commit-2",
+        expectedConversationContentRevision:
+          `sha256:${"8".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "tombstone-bundle-capacity",
+          digest: `sha256:${"9".repeat(64)}`
+        },
+        participants: participants.map((participant) => ({
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        })),
+        rootBindings: [
+          fixture.bindings.conversation,
+          fixture.bindings.run,
+          fixture.bindings.trash
+        ].sort((left, right) => left.rootId.localeCompare(right.rootId)),
+        trashPolicy: "required"
+      },
+      createdAt: 1_600
+    });
+    const created = await createRecordMutationExecutionPlan({
+      journal,
+      participants,
+      createdAt: 1_601
+    });
+    assert.equal(created.plan.participants.length, 3);
+    assert.equal(
+      created.plan.participants.reduce((count, participant) => {
+        if (participant.execution.kind === "trash-bundle") {
+          return count + participant.execution.items.length;
+        }
+        if (participant.execution.kind === "source-deletion-bundle") {
+          return count + participant.execution.subjects.length;
+        }
+        return count;
+      }, 0),
+      129,
+      "three logical participants must bind 129 leaf records"
+    );
+
+    const tampered = structuredClone(participants);
+    const sourceBundle = tampered.find(
+      (participant) =>
+        participant.execution.kind === "source-deletion-bundle"
+    );
+    if (
+      !sourceBundle
+      || sourceBundle.execution.kind !== "source-deletion-bundle"
+      || sourceBundle.execution.subjects[0]?.kind !== "workflow-run"
+    ) {
+      throw new Error("expected workflow-run source bundle");
+    }
+    sourceBundle.execution.subjects[0].payloadDigest =
+      `sha256:${"f".repeat(64)}`;
+    await assert.rejects(
+      createRecordMutationExecutionPlan({
+        journal,
+        participants: tampered,
+        createdAt: 1_602
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionPlanError
+        && error.code === "invalid_plan"
+      )
+    );
+
+    const inconsistent = structuredClone(participants);
+    const conversationBundle = inconsistent.find(
+      (participant) =>
+        participant.recordKind === "conversation"
+        && participant.execution.kind === "trash-bundle"
+    );
+    if (
+      !conversationBundle
+      || conversationBundle.execution.kind !== "trash-bundle"
+    ) {
+      throw new Error("expected conversation trash bundle");
+    }
+    conversationBundle.execution.selectionDigest =
+      `sha256:${"b".repeat(64)}`;
+    conversationBundle.participantId =
+      recordMutationExecutionBundleParticipantId({
+        recordKind: conversationBundle.recordKind,
+        action: conversationBundle.action,
+        execution: conversationBundle.execution
+      });
+    inconsistent.sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const inconsistentJournal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "execution-plan-bundle-selection-mismatch",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-bundle-selection-mismatch",
+        expectedConversationGeneration: 2,
+        expectedConversationCommitId: "conversation-commit-2",
+        expectedConversationContentRevision:
+          `sha256:${"c".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "tombstone-bundle-selection-mismatch",
+          digest: `sha256:${"d".repeat(64)}`
+        },
+        participants: inconsistent.map((participant) => ({
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        })),
+        rootBindings: [
+          fixture.bindings.conversation,
+          fixture.bindings.run,
+          fixture.bindings.trash
+        ].sort((left, right) => left.rootId.localeCompare(right.rootId)),
+        trashPolicy: "required"
+      },
+      createdAt: 1_603
+    });
+    await assert.rejects(
+      createRecordMutationExecutionPlan({
+        journal: inconsistentJournal,
+        participants: inconsistent,
+        createdAt: 1_604
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionPlanError
+        && error.code === "journal_mismatch"
+      )
+    );
+
+    const split = structuredClone(participants);
+    const originalConversationBundle = split.find(
+      (participant) =>
+        participant.recordKind === "conversation"
+        && participant.execution.kind === "trash-bundle"
+    );
+    if (
+      !originalConversationBundle
+      || originalConversationBundle.execution.kind !== "trash-bundle"
+    ) {
+      throw new Error("expected conversation trash bundle");
+    }
+    const splitExecution = {
+      ...structuredClone(originalConversationBundle.execution),
+      items: [{
+        itemId: "conversation-source-extra",
+        sourceRelativePath:
+          "sessions/conversation-bundle-capacity/context-payloads/payload-2"
+      }]
+    };
+    split.push({
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "conversation",
+        action: "stage",
+        execution: splitExecution
+      }),
+      recordKind: "conversation",
+      action: "stage",
+      execution: splitExecution
+    });
+    split.sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const splitJournal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "execution-plan-bundle-split-group",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-bundle-split-group",
+        expectedConversationGeneration: 2,
+        expectedConversationCommitId: "conversation-commit-2",
+        expectedConversationContentRevision:
+          `sha256:${"e".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "tombstone-bundle-split-group",
+          digest: `sha256:${"f".repeat(64)}`
+        },
+        participants: split.map((participant) => ({
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        })),
+        rootBindings: [
+          fixture.bindings.conversation,
+          fixture.bindings.run,
+          fixture.bindings.trash
+        ].sort((left, right) => left.rootId.localeCompare(right.rootId)),
+        trashPolicy: "required"
+      },
+      createdAt: 1_605
+    });
+    await assert.rejects(
+      createRecordMutationExecutionPlan({
+        journal: splitJournal,
+        participants: split,
+        createdAt: 1_606
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionPlanError
+        && error.code === "journal_mismatch"
+      ),
+      "one logical bundle group must not be split to bypass capacity"
+    );
+
+    const incompleteRunCoverage = structuredClone(participants);
+    const runTrashBundle = incompleteRunCoverage.find(
+      (participant) =>
+        participant.recordKind === "workflow-run"
+        && participant.action === "discard"
+        && participant.execution.kind === "trash-bundle"
+    );
+    if (
+      !runTrashBundle
+      || runTrashBundle.execution.kind !== "trash-bundle"
+    ) {
+      throw new Error("expected workflow-run trash bundle");
+    }
+    runTrashBundle.execution.items[0]!.itemId =
+      "run-payload-coverage-mismatch";
+    runTrashBundle.execution.items.sort((left, right) => (
+      `${left.itemId}\0${left.sourceRelativePath}`.localeCompare(
+        `${right.itemId}\0${right.sourceRelativePath}`
+      )
+    ));
+    runTrashBundle.participantId =
+      recordMutationExecutionBundleParticipantId({
+        recordKind: runTrashBundle.recordKind,
+        action: runTrashBundle.action,
+        execution: runTrashBundle.execution
+      });
+    incompleteRunCoverage.sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const incompleteRunJournal = await createBundleCoverageJournal({
+      fixture,
+      mutationId: "execution-plan-run-bundle-coverage-mismatch",
+      conversationId: "conversation-run-bundle-coverage-mismatch",
+      participants: incompleteRunCoverage,
+      createdAt: 1_607
+    });
+    await assert.rejects(
+      createRecordMutationExecutionPlan({
+        journal: incompleteRunJournal,
+        participants: incompleteRunCoverage,
+        createdAt: 1_608
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionPlanError
+        && error.code === "journal_mismatch"
+      ),
+      "Run source-deletion and Trash bundles must cover the same leaves"
+    );
+  });
+}
+
+async function createBundleCoverageJournal(input: {
+  fixture: PlanFixture;
+  mutationId: string;
+  conversationId: string;
+  participants: readonly RecordMutationExecutionParticipant[];
+  createdAt: number;
+}) {
+  return await createRecordMutationJournal({
+    storageRootPath: input.fixture.storageRootPath,
+    mutationId: input.mutationId,
+    intent: {
+      operation: "delete-conversation",
+      conversationId: input.conversationId,
+      expectedConversationGeneration: 2,
+      expectedConversationCommitId: "conversation-commit-2",
+      expectedConversationContentRevision:
+        `sha256:${"1".repeat(64)}`,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: `${input.conversationId}-tombstone`,
+        digest: `sha256:${"2".repeat(64)}`
+      },
+      participants: input.participants.map((participant) => ({
+        id: participant.participantId,
+        recordKind: participant.recordKind,
+        action: participant.action
+      })),
+      rootBindings: [
+        input.fixture.bindings.conversation,
+        input.fixture.bindings.run,
+        input.fixture.bindings.trash
+      ].sort((left, right) => left.rootId.localeCompare(right.rootId)),
+      trashPolicy: "required"
+    },
+    createdAt: input.createdAt
+  });
+}
+
+function bundleExecutionParticipants():
+RecordMutationExecutionParticipant[] {
+  const selectionDigest = `sha256:${"a".repeat(64)}`;
+  const runSubjects = Array.from({ length: 64 }, (_, index) => ({
+    kind: "workflow-run" as const,
+    workflowRunId: `workflow-bundle-${index.toString().padStart(3, "0")}`,
+    attemptId: "attempt-1",
+    harnessRunId: `harness-bundle-${index.toString().padStart(3, "0")}`,
+    payloadDigest: `sha256:${index.toString(16).padStart(64, "0")}`
+  })).sort((left, right) => (
+    JSON.stringify(left).localeCompare(JSON.stringify(right))
+  ));
+  const sourceExecution = {
+    kind: "source-deletion-bundle" as const,
+    rootId: "run",
+    selectionDigest,
+    subjects: runSubjects
+  };
+  const runTrashExecution = {
+    kind: "trash-bundle" as const,
+    sourceRootId: "run",
+    trashRootId: "trash",
+    selectionDigest,
+    items: runSubjects.map((subject) => ({
+      itemId: workflowRunPayloadParticipantId(
+        subject.workflowRunId,
+        subject.attemptId
+      ),
+      sourceRelativePath:
+        `attempt-payloads/${subject.workflowRunId}/generations/000000000001`
+    })).sort((left, right) => (
+      `${left.itemId}\0${left.sourceRelativePath}`.localeCompare(
+        `${right.itemId}\0${right.sourceRelativePath}`
+      )
+    ))
+  };
+  const conversationExecution = {
+    kind: "trash-bundle" as const,
+    sourceRootId: "conversation",
+    trashRootId: "trash",
+    selectionDigest,
+    items: [{
+      itemId: "conversation-source",
+      sourceRelativePath: "sessions/conversation-bundle-capacity"
+    }]
+  };
+  const participants: RecordMutationExecutionParticipant[] = [
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "workflow-run",
+        action: "mark-source-deleted",
+        execution: sourceExecution
+      }),
+      recordKind: "workflow-run",
+      action: "mark-source-deleted",
+      execution: sourceExecution
+    },
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "workflow-run",
+        action: "discard",
+        execution: runTrashExecution
+      }),
+      recordKind: "workflow-run",
+      action: "discard",
+      execution: runTrashExecution
+    },
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "conversation",
+        action: "stage",
+        execution: conversationExecution
+      }),
+      recordKind: "conversation",
+      action: "stage",
+      execution: conversationExecution
+    }
+  ];
+  return participants.sort((left, right) => (
+    left.participantId.localeCompare(right.participantId)
+  ));
 }
 
 function executionParticipants(): RecordMutationExecutionParticipant[] {

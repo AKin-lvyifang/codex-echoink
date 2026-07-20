@@ -454,3 +454,33 @@
   participant/step/revision 上限或拆成多个独立业务 mutation 均被拒绝。
 - 本批没有打开 clear/delete 产品 guard，没有修改真实 Vault，也没有执行
   migration、retention、Raw GC、历史删除或 Native cleanup。
+
+## 2026-07-20：Deterministic Bundle Planning
+
+- Execution Plan schema 升级为 V2，最大 durable plan 为 8 MiB，单个 bundle
+  最多保存 16,384 条叶子。新增 `retain-bundle`、`trash-bundle` 与
+  `source-deletion-bundle`，participant ID 绑定 record kind、action、Root、
+  selection digest 和完整有序叶子集合。
+- retain bundle 不再只保存不可逆 item ID。Run summary、Attempt summary、
+  expired/not-captured payload 都保存正式 identity 与 digest/reason；shared Raw
+  保存 `rawRef`、相对路径和 owner proof digest。对应 Run/Raw Root 同时进入 intent
+  的冻结 Root Binding，后续 runtime 可以逐叶回读。
+- 同一 inventory 的所有 bundle 必须使用同一个 selection digest；同一
+  record kind/action/Root 逻辑组只能出现一次，不能拆组绕过容量上限。Workflow Run
+  payload 的 source-deletion 与 Trash bundle 必须覆盖完全相同的叶子 identity。
+- 新增 Conversation mutation planner，把 ready unified inventory、冻结的
+  Conversation source 和 Root Binding 编译成 intent 与 execution plan。40 个
+  Workflow Run 的回归包含 127 条唯一记录，只生成 8 个逻辑 participant；输入逆序
+  结果一致。delete/clear source 必须分别绑定目标 Conversation 目录或其合法 payload；
+  blocked inventory、缺失 Attempt summary、重复或跨 Conversation source、Root
+  缺失、16,385 条单组、selection 不一致和重复逻辑组均在 Journal/effect 前阻断。
+- bundle runtime 尚未接线时，materializer 明确返回
+  `bundle_runtime_required`，Journal 保持 `planned`，Conversation source 不变，
+  Trash prepare 与 Store effect 都不会发生。
+- 当前 `npm run test`、`npm run typecheck`、`npm run build`、完整
+  `npm run lint`、新增生产文件定向 ESLint 与 `git diff --check` 已通过；完整
+  lint 保持 961 个 baseline finding、无新增。Watchdog terminal commit error 是
+  故障注入测试的预期日志。明确暂存 12 个预期文件后，release contract 与
+  public guard 通过；public guard 检查 414 个 tracked files，共享软链接未暂存。
+- 本批仍未打开 clear/delete 产品 guard，没有部署或修改真实 Vault，也没有执行
+  migration、retention、Raw GC、历史删除或 Native cleanup。

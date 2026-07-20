@@ -61,6 +61,7 @@ export interface MaterializedRecordMutationExecution {
 export type RecordMutationExecutionRuntimeErrorCode =
   | "root_mismatch"
   | "plan_mismatch"
+  | "bundle_runtime_required"
   | "adapter_required"
   | "adapter_mismatch";
 
@@ -143,6 +144,17 @@ export async function materializeRecordMutationExecution(input: {
     input.plan.plan,
     input.journal
   );
+  const unsupportedBundle = plan.participants.find((participant) => (
+    participant.execution.kind === "retain-bundle"
+    || participant.execution.kind === "trash-bundle"
+    || participant.execution.kind === "source-deletion-bundle"
+  ));
+  if (unsupportedBundle) {
+    throw runtimeError(
+      "bundle_runtime_required",
+      `participant ${unsupportedBundle.participantId} bundle runtime 尚未接线`
+    );
+  }
   const roots = validateRuntimeRoots(input.journal, input.roots);
   const sourceDeletedParticipants: RecordMutationSourceParticipantAdapter[] = [];
   for (const participant of plan.participants) {

@@ -95,6 +95,9 @@ Artifact kind. The plan stores no physical absolute paths. At runtime, current
 physical paths and Root Binding refs must be rebuilt from the production root
 catalog and match the frozen intent exactly. A missing, corrupt, late-created,
 wrong-root, or wrong-subject plan blocks before Trash prepare or Store effects.
+Conversation source paths are also operation-specific: delete binds exactly
+the target session directory, while clear accepts only that target session's
+payload generations and legacy payload files.
 
 The Journal participant limit applies to logical execution groups, not to the
 number of leaf records owned by a Conversation. A long-lived Conversation may
@@ -105,6 +108,12 @@ roots. A bundle participant ID is derived from the complete ordered leaf set;
 the Journal stores aggregate phase receipts while every leaf keeps its own
 durable, inspectable Store or Trash receipt. Bundle recovery must finish or
 compensate every leaf before publishing the aggregate Journal step.
+All bundles compiled from one inventory carry the same selection digest, and
+one record-kind/action/root tuple may appear only once; splitting a logical
+group cannot bypass the per-bundle limit. Retain bundles freeze their Root and
+structured Run or Raw subjects, including record digests, relative paths, and
+Raw owner proof. Workflow Run source-deletion and Trash bundles must cover the
+same payload leaf identities.
 
 The implementation must not solve this capacity boundary by only raising the
 participant, step, or revision constants: each append-only Journal revision

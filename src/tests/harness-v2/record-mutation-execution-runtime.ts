@@ -17,6 +17,7 @@ import {
 import {
   createRecordMutationExecutionPlan,
   loadRecordMutationExecutionPlan,
+  recordMutationExecutionBundleParticipantId,
   type LoadedRecordMutationExecutionPlan,
   type RecordMutationExecutionParticipant
 } from "../../harness/lifecycle/record-mutation-execution-plan";
@@ -38,6 +39,7 @@ Promise<void> {
   await assertRuntimeMaterializesPreparedParticipantsAcrossRestart();
   await assertRuntimeRootMismatchFailsBeforePrepare();
   await assertRuntimeAdapterMismatchFailsBeforePrepare();
+  await assertBundleRuntimeFailsBeforePrepareUntilMaterializerIsWired();
 }
 
 async function assertRuntimeMaterializesPreparedParticipantsAcrossRestart():
@@ -176,6 +178,84 @@ async function assertRuntimeAdapterMismatchFailsBeforePrepare(): Promise<void> {
       (error: unknown) => (
         error instanceof RecordMutationExecutionRuntimeError
         && error.code === "adapter_mismatch"
+      )
+    );
+    const readback = await loadRecordMutationJournal(journal.handle);
+    assert.equal(readback.record.state, "planned");
+    assert.equal(
+      await readFile(fixture.conversationSourcePath, "utf8"),
+      "conversation\n"
+    );
+  });
+}
+
+async function assertBundleRuntimeFailsBeforePrepareUntilMaterializerIsWired():
+Promise<void> {
+  await withFixture("bundle-blocked", async (fixture) => {
+    const execution = {
+      kind: "trash-bundle" as const,
+      sourceRootId: "conversation",
+      trashRootId: "trash",
+      selectionDigest: `sha256:${"5".repeat(64)}`,
+      items: [{
+        itemId: "conversation-source",
+        sourceRelativePath: "session-a/payloads/payload-1"
+      }]
+    };
+    const participant: RecordMutationExecutionParticipant = {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "conversation",
+        action: "stage",
+        execution
+      }),
+      recordKind: "conversation",
+      action: "stage",
+      execution
+    };
+    const journal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "execution-runtime-bundle-blocked",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-bundle-blocked",
+        expectedConversationGeneration: 3,
+        expectedConversationCommitId: "conversation-commit-3",
+        expectedConversationContentRevision:
+          `sha256:${"6".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "tombstone-bundle-blocked",
+          digest: `sha256:${"7".repeat(64)}`
+        },
+        participants: [{
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        }],
+        rootBindings: fixture.roots
+          .filter((root) => root.rootId === "conversation" || root.rootId === "trash")
+          .map((root) => root.rootBinding),
+        trashPolicy: "required"
+      },
+      createdAt: fixture.now()
+    });
+    const plan = await createRecordMutationExecutionPlan({
+      journal,
+      participants: [participant],
+      createdAt: fixture.now()
+    });
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal,
+        plan,
+        roots: fixture.roots.filter(
+          (root) => root.rootId === "conversation" || root.rootId === "trash"
+        ),
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "bundle_runtime_required"
       )
     );
     const readback = await loadRecordMutationJournal(journal.handle);

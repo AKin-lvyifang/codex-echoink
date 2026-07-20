@@ -16,6 +16,7 @@ import {
 import type { WorkflowArtifactKind } from "../contracts/run-record";
 import {
   parseRecordMutationIntent,
+  RECORD_MUTATION_MAX_PARTICIPANTS,
   recordMutationDigest,
   stableRecordMutationStringify,
   type RecordMutationIntent,
@@ -26,13 +27,14 @@ import {
 } from "./record-mutation-contract";
 import type { LoadedRecordMutationJournal } from "./record-mutation-journal";
 
-const EXECUTION_PLAN_SCHEMA_VERSION = 1 as const;
+const EXECUTION_PLAN_SCHEMA_VERSION = 2 as const;
 const EXECUTION_PLAN_NAMESPACE = "record-mutation-execution-plans";
 const EXECUTION_PLAN_ENTRY = "plan.json";
 const EXECUTION_PLAN_TOKEN_PATTERN = /^plan-[a-f0-9]{24}$/;
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
-const MAX_EXECUTION_PLAN_BYTES = 1024 * 1024;
+const MAX_EXECUTION_PLAN_BYTES = 8 * 1024 * 1024;
+export const RECORD_MUTATION_MAX_EXECUTION_BUNDLE_ITEMS = 16_384;
 const ARTIFACT_KINDS = new Set<WorkflowArtifactKind>([
   "markdown-report",
   "ui-card",
@@ -64,6 +66,66 @@ export type RecordMutationExecutionSubject =
       kind: "artifact";
       artifactId: string;
       artifactKind: WorkflowArtifactKind;
+    };
+
+export interface RecordMutationExecutionTrashBundleItem {
+  itemId: string;
+  sourceRelativePath: string;
+}
+
+export type RecordMutationExecutionRetainSubject =
+  | {
+      kind: "workflow-run-summary";
+      workflowRunId: string;
+      summaryDigest: string;
+    }
+  | {
+      kind: "attempt-run-summary";
+      workflowRunId: string;
+      attemptId: string;
+      summaryDigest: string;
+    }
+  | {
+      kind: "attempt-payload-expired";
+      workflowRunId: string;
+      attemptId: string;
+      tombstoneDigest: string;
+    }
+  | {
+      kind: "attempt-payload-not-captured";
+      workflowRunId: string;
+      attemptId: string;
+      reasonCode:
+        | "failed-before-payload"
+        | "capture-disabled"
+        | "no-attempt-required";
+    }
+  | {
+      kind: "raw";
+      rawRef: string;
+      sourceRelativePath: string;
+      ownersDigest: string;
+    };
+
+export type RecordMutationExecutionBundle =
+  | {
+      kind: "retain-bundle";
+      rootId: string;
+      selectionDigest: string;
+      subjects: RecordMutationExecutionRetainSubject[];
+    }
+  | {
+      kind: "trash-bundle";
+      sourceRootId: string;
+      trashRootId: string;
+      selectionDigest: string;
+      items: RecordMutationExecutionTrashBundleItem[];
+    }
+  | {
+      kind: "source-deletion-bundle";
+      rootId: string;
+      selectionDigest: string;
+      subjects: RecordMutationExecutionSubject[];
     };
 
 export type RecordMutationExecutionParticipant =
@@ -99,9 +161,42 @@ export type RecordMutationExecutionParticipant =
         rootId: string;
         subject: RecordMutationExecutionSubject;
       };
+    }
+  | {
+      participantId: string;
+      recordKind: RecordMutationRecordKind;
+      action: "retain";
+      execution: Extract<
+        RecordMutationExecutionBundle,
+        { kind: "retain-bundle" }
+      >;
+    }
+  | {
+      participantId: string;
+      recordKind: Extract<
+        RecordMutationRecordKind,
+        "conversation" | "workflow-run" | "raw"
+      >;
+      action: Extract<RecordMutationParticipantAction, "stage" | "discard">;
+      execution: Extract<
+        RecordMutationExecutionBundle,
+        { kind: "trash-bundle" }
+      >;
+    }
+  | {
+      participantId: string;
+      recordKind: Extract<
+        RecordMutationRecordKind,
+        "workflow-run" | "memory" | "artifact"
+      >;
+      action: "mark-source-deleted";
+      execution: Extract<
+        RecordMutationExecutionBundle,
+        { kind: "source-deletion-bundle" }
+      >;
     };
 
-export interface RecordMutationExecutionPlanV1 {
+export interface RecordMutationExecutionPlanV2 {
   schemaVersion: typeof EXECUTION_PLAN_SCHEMA_VERSION;
   kind: "record-mutation-execution-plan";
   mutationId: string;
@@ -128,7 +223,7 @@ export interface RecordMutationExecutionPlanHandle {
 
 export interface LoadedRecordMutationExecutionPlan {
   handle: RecordMutationExecutionPlanHandle;
-  plan: RecordMutationExecutionPlanV1;
+  plan: RecordMutationExecutionPlanV2;
 }
 
 export type RecordMutationExecutionPlanErrorCode =
@@ -163,6 +258,20 @@ export function workflowRunPayloadParticipantId(
     attemptId
   });
   return `run-payload-${digest.slice("sha256:".length, 31)}`;
+}
+
+export function recordMutationExecutionBundleParticipantId(input: {
+  recordKind: RecordMutationRecordKind;
+  action: RecordMutationParticipantAction;
+  execution: RecordMutationExecutionBundle;
+}): string {
+  const digest = recordMutationDigest({
+    kind: "record-mutation-execution-bundle-participant",
+    recordKind: input.recordKind,
+    action: input.action,
+    execution: input.execution
+  });
+  return `bundle-${input.recordKind}-${digest.slice("sha256:".length, 31)}`;
 }
 
 export async function createRecordMutationExecutionPlan(input: {
@@ -269,7 +378,7 @@ export async function loadRecordMutationExecutionPlan(input: {
 
 export function parseRecordMutationExecutionPlan(
   value: unknown
-): RecordMutationExecutionPlanV1 {
+): RecordMutationExecutionPlanV2 {
   const record = requirePlainRecord(value, "execution plan");
   if (Buffer.byteLength(JSON.stringify(record), "utf8") > MAX_EXECUTION_PLAN_BYTES) {
     throw invalidPlan("execution plan 超过大小上限");
@@ -302,7 +411,7 @@ export function parseRecordMutationExecutionPlan(
   if (
     !Array.isArray(record.participants)
     || record.participants.length < 1
-    || record.participants.length > 32
+    || record.participants.length > RECORD_MUTATION_MAX_PARTICIPANTS
   ) {
     throw invalidPlan("execution plan participants 数量非法");
   }
@@ -322,7 +431,7 @@ export function parseRecordMutationExecutionPlan(
   ) {
     throw invalidPlan("execution plan participants 必须唯一且按 id 排序");
   }
-  const parsed: RecordMutationExecutionPlanV1 = {
+  const parsed: RecordMutationExecutionPlanV2 = {
     schemaVersion: EXECUTION_PLAN_SCHEMA_VERSION,
     kind: "record-mutation-execution-plan",
     mutationId: requireSafeId(record.mutationId, "mutationId"),
@@ -343,7 +452,7 @@ export function parseRecordMutationExecutionPlan(
 export function validateRecordMutationExecutionPlanAgainstJournal(
   planInput: unknown,
   journal: LoadedRecordMutationJournal
-): RecordMutationExecutionPlanV1 {
+): RecordMutationExecutionPlanV2 {
   const plan = parseRecordMutationExecutionPlan(planInput);
   const intent = parseRecordMutationIntent(journal.record.intent);
   assertDestructiveIntent(intent);
@@ -376,9 +485,40 @@ export function validateRecordMutationExecutionPlanAgainstJournal(
   const rootBindingIds = intent.rootBindings.map((binding) => binding.rootId);
   const rootBindingSet = new Set(rootBindingIds);
   const usedRootIds = new Set<string>();
+  const bundleSelectionDigests = new Set<string>();
+  const bundleGroups = new Set<string>();
   for (const participant of plan.participants) {
-    if (participant.execution.kind === "retain") continue;
-    if (participant.execution.kind === "trash") {
+    if (participant.execution.kind === "retain") {
+      continue;
+    }
+    if ("selectionDigest" in participant.execution) {
+      bundleSelectionDigests.add(participant.execution.selectionDigest);
+      const groupKey = recordMutationBundleGroupKey(participant);
+      if (bundleGroups.has(groupKey)) {
+        throw journalMismatch(
+          `execution plan bundle group 重复：${groupKey}`
+        );
+      }
+      bundleGroups.add(groupKey);
+    }
+    if (participant.execution.kind === "retain-bundle") {
+      requireIntentRoot(
+        rootBindingSet,
+        participant.execution.rootId,
+        participant.participantId
+      );
+      usedRootIds.add(participant.execution.rootId);
+      assertRetainSubjectsMatchParticipant(
+        participant.participantId,
+        participant.recordKind,
+        participant.execution.subjects
+      );
+      continue;
+    }
+    if (
+      participant.execution.kind === "trash"
+      || participant.execution.kind === "trash-bundle"
+    ) {
       if (participant.execution.sourceRootId === participant.execution.trashRootId) {
         throw journalMismatch(
           `participant ${participant.participantId} source/trash root 不能相同`
@@ -406,6 +546,12 @@ export function validateRecordMutationExecutionPlanAgainstJournal(
     usedRootIds.add(participant.execution.rootId);
     assertSubjectMatchesParticipant(participant);
   }
+  if (bundleSelectionDigests.size > 1) {
+    throw journalMismatch(
+      "execution plan bundle selection digest 必须完整一致"
+    );
+  }
+  assertWorkflowRunBundleCoverage(plan.participants);
   const used = [...usedRootIds].sort(compareText);
   const frozen = [...rootBindingIds].sort(compareText);
   if (stableRecordMutationStringify(used) !== stableRecordMutationStringify(frozen)) {
@@ -420,7 +566,7 @@ function createPlanCandidate(input: {
   journal: LoadedRecordMutationJournal;
   participants: readonly RecordMutationExecutionParticipant[];
   createdAt: number;
-}): RecordMutationExecutionPlanV1 {
+}): RecordMutationExecutionPlanV2 {
   const intent = parseRecordMutationIntent(input.journal.record.intent);
   assertDestructiveIntent(intent);
   const draft = {
@@ -545,6 +691,21 @@ function parseExecutionParticipant(
     `participants[${index}].execution`
   );
   if (record.action === "retain") {
+    if (execution.kind === "retain-bundle") {
+      const bundle = parseRetainBundleExecution(execution, index);
+      assertBundleParticipantIdentity(
+        participantId,
+        recordKind,
+        "retain",
+        bundle
+      );
+      return {
+        participantId,
+        recordKind,
+        action: "retain",
+        execution: bundle
+      };
+    }
     assertExactKeys(execution, ["kind"], `participants[${index}].execution`);
     if (execution.kind !== "retain") {
       throw invalidPlan(`participants[${index}] retain execution 非法`);
@@ -565,6 +726,21 @@ function parseExecutionParticipant(
       throw invalidPlan(
         `participants[${index}] trash recordKind 非法`
       );
+    }
+    if (execution.kind === "trash-bundle") {
+      const bundle = parseTrashBundleExecution(execution, index);
+      assertBundleParticipantIdentity(
+        participantId,
+        recordKind,
+        record.action,
+        bundle
+      );
+      return {
+        participantId,
+        recordKind,
+        action: record.action,
+        execution: bundle
+      };
     }
     assertExactKeys(
       execution,
@@ -611,6 +787,25 @@ function parseExecutionParticipant(
       throw invalidPlan(
         `participants[${index}] source-deletion recordKind 非法`
       );
+    }
+    if (execution.kind === "source-deletion-bundle") {
+      const bundle = parseSourceDeletionBundleExecution(
+        execution,
+        index,
+        recordKind
+      );
+      assertBundleParticipantIdentity(
+        participantId,
+        recordKind,
+        "mark-source-deleted",
+        bundle
+      );
+      return {
+        participantId,
+        recordKind,
+        action: "mark-source-deleted",
+        execution: bundle
+      };
     }
     assertExactKeys(
       execution,
@@ -730,6 +925,365 @@ function parseExecutionSubject(
   );
 }
 
+function parseRetainBundleExecution(
+  execution: Record<string, unknown>,
+  participantIndex: number
+): Extract<RecordMutationExecutionBundle, { kind: "retain-bundle" }> {
+  assertExactKeys(
+    execution,
+    ["kind", "rootId", "selectionDigest", "subjects"],
+    `participants[${participantIndex}].execution`
+  );
+  if (
+    execution.kind !== "retain-bundle"
+    || !Array.isArray(execution.subjects)
+    || execution.subjects.length < 1
+    || execution.subjects.length > RECORD_MUTATION_MAX_EXECUTION_BUNDLE_ITEMS
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] retain bundle 非法`
+    );
+  }
+  const subjects = execution.subjects.map((subject, subjectIndex) => (
+    parseRetainSubject(subject, participantIndex, subjectIndex)
+  ));
+  const subjectKeys = subjects.map((subject) => (
+    stableRecordMutationStringify(subject)
+  ));
+  if (
+    new Set(subjectKeys).size !== subjects.length
+    || subjectKeys.some(
+      (subjectKey, index) =>
+        subjectKey !== [...subjectKeys].sort(compareText)[index]
+    )
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] retain bundle subjects 必须唯一且稳定排序`
+    );
+  }
+  return {
+    kind: "retain-bundle",
+    rootId: requireSafeId(
+      execution.rootId,
+      `participants[${participantIndex}].rootId`
+    ),
+    selectionDigest: requireDigest(
+      execution.selectionDigest,
+      `participants[${participantIndex}].selectionDigest`
+    ),
+    subjects
+  };
+}
+
+function parseTrashBundleExecution(
+  execution: Record<string, unknown>,
+  participantIndex: number
+): Extract<RecordMutationExecutionBundle, { kind: "trash-bundle" }> {
+  assertExactKeys(
+    execution,
+    [
+      "kind",
+      "sourceRootId",
+      "trashRootId",
+      "selectionDigest",
+      "items"
+    ],
+    `participants[${participantIndex}].execution`
+  );
+  if (execution.kind !== "trash-bundle") {
+    throw invalidPlan(
+      `participants[${participantIndex}] trash bundle kind 非法`
+    );
+  }
+  if (
+    !Array.isArray(execution.items)
+    || execution.items.length < 1
+    || execution.items.length > RECORD_MUTATION_MAX_EXECUTION_BUNDLE_ITEMS
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] trash bundle items 数量非法`
+    );
+  }
+  const items = execution.items.map((value, itemIndex) => {
+    const item = requirePlainRecord(
+      value,
+      `participants[${participantIndex}].items[${itemIndex}]`
+    );
+    assertExactKeys(
+      item,
+      ["itemId", "sourceRelativePath"],
+      `participants[${participantIndex}].items[${itemIndex}]`
+    );
+    let sourceRelativePath: string;
+    try {
+      sourceRelativePath = validateDurableRelativePath(
+        item.sourceRelativePath as string
+      );
+    } catch {
+      throw invalidPlan(
+        `participants[${participantIndex}].items[${itemIndex}].sourceRelativePath 非法`
+      );
+    }
+    return {
+      itemId: requireSafeId(
+        item.itemId,
+        `participants[${participantIndex}].items[${itemIndex}].itemId`
+      ),
+      sourceRelativePath
+    };
+  });
+  const itemKeys = items.map((item) => (
+    `${item.itemId}\0${item.sourceRelativePath}`
+  ));
+  const sourcePaths = items.map((item) => item.sourceRelativePath);
+  if (
+    new Set(items.map((item) => item.itemId)).size !== items.length
+    || new Set(sourcePaths).size !== sourcePaths.length
+    || itemKeys.some(
+      (itemKey, index) =>
+        itemKey !== [...itemKeys].sort(compareText)[index]
+    )
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] trash bundle items 必须唯一且稳定排序`
+    );
+  }
+  return {
+    kind: "trash-bundle",
+    sourceRootId: requireSafeId(
+      execution.sourceRootId,
+      `participants[${participantIndex}].sourceRootId`
+    ),
+    trashRootId: requireSafeId(
+      execution.trashRootId,
+      `participants[${participantIndex}].trashRootId`
+    ),
+    selectionDigest: requireDigest(
+      execution.selectionDigest,
+      `participants[${participantIndex}].selectionDigest`
+    ),
+    items
+  };
+}
+
+function parseSourceDeletionBundleExecution(
+  execution: Record<string, unknown>,
+  participantIndex: number,
+  recordKind: Extract<
+    RecordMutationRecordKind,
+    "workflow-run" | "memory" | "artifact"
+  >
+): Extract<
+  RecordMutationExecutionBundle,
+  { kind: "source-deletion-bundle" }
+> {
+  assertExactKeys(
+    execution,
+    ["kind", "rootId", "selectionDigest", "subjects"],
+    `participants[${participantIndex}].execution`
+  );
+  if (
+    execution.kind !== "source-deletion-bundle"
+    || !Array.isArray(execution.subjects)
+    || execution.subjects.length < 1
+    || execution.subjects.length > RECORD_MUTATION_MAX_EXECUTION_BUNDLE_ITEMS
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] source-deletion bundle 非法`
+    );
+  }
+  const subjects = execution.subjects.map((subject) => (
+    parseExecutionSubject(subject, participantIndex)
+  ));
+  if (
+    subjects.some((subject) => subject.kind !== recordKind)
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] source-deletion bundle subject kind 不匹配`
+    );
+  }
+  const subjectKeys = subjects.map((subject) => (
+    stableRecordMutationStringify(subject)
+  ));
+  if (
+    new Set(subjectKeys).size !== subjectKeys.length
+    || subjectKeys.some(
+      (subjectKey, index) =>
+        subjectKey !== [...subjectKeys].sort(compareText)[index]
+    )
+  ) {
+    throw invalidPlan(
+      `participants[${participantIndex}] source-deletion bundle subjects 必须唯一且稳定排序`
+    );
+  }
+  return {
+    kind: "source-deletion-bundle",
+    rootId: requireSafeId(
+      execution.rootId,
+      `participants[${participantIndex}].rootId`
+    ),
+    selectionDigest: requireDigest(
+      execution.selectionDigest,
+      `participants[${participantIndex}].selectionDigest`
+    ),
+    subjects
+  };
+}
+
+function parseRetainSubject(
+  value: unknown,
+  participantIndex: number,
+  subjectIndex: number
+): RecordMutationExecutionRetainSubject {
+  const label =
+    `participants[${participantIndex}].subjects[${subjectIndex}]`;
+  const subject = requirePlainRecord(value, label);
+  if (subject.kind === "workflow-run-summary") {
+    assertExactKeys(
+      subject,
+      ["kind", "workflowRunId", "summaryDigest"],
+      label
+    );
+    return {
+      kind: "workflow-run-summary",
+      workflowRunId: requireSafeId(
+        subject.workflowRunId,
+        `${label}.workflowRunId`
+      ),
+      summaryDigest: requireDigest(
+        subject.summaryDigest,
+        `${label}.summaryDigest`
+      )
+    };
+  }
+  if (subject.kind === "attempt-run-summary") {
+    assertExactKeys(
+      subject,
+      ["kind", "workflowRunId", "attemptId", "summaryDigest"],
+      label
+    );
+    return {
+      kind: "attempt-run-summary",
+      workflowRunId: requireSafeId(
+        subject.workflowRunId,
+        `${label}.workflowRunId`
+      ),
+      attemptId: requireSafeId(
+        subject.attemptId,
+        `${label}.attemptId`
+      ),
+      summaryDigest: requireDigest(
+        subject.summaryDigest,
+        `${label}.summaryDigest`
+      )
+    };
+  }
+  if (subject.kind === "attempt-payload-expired") {
+    assertExactKeys(
+      subject,
+      ["kind", "workflowRunId", "attemptId", "tombstoneDigest"],
+      label
+    );
+    return {
+      kind: "attempt-payload-expired",
+      workflowRunId: requireSafeId(
+        subject.workflowRunId,
+        `${label}.workflowRunId`
+      ),
+      attemptId: requireSafeId(
+        subject.attemptId,
+        `${label}.attemptId`
+      ),
+      tombstoneDigest: requireDigest(
+        subject.tombstoneDigest,
+        `${label}.tombstoneDigest`
+      )
+    };
+  }
+  if (subject.kind === "attempt-payload-not-captured") {
+    assertExactKeys(
+      subject,
+      ["kind", "workflowRunId", "attemptId", "reasonCode"],
+      label
+    );
+    if (
+      subject.reasonCode !== "failed-before-payload"
+      && subject.reasonCode !== "capture-disabled"
+      && subject.reasonCode !== "no-attempt-required"
+    ) {
+      throw invalidPlan(`${label}.reasonCode 非法`);
+    }
+    return {
+      kind: "attempt-payload-not-captured",
+      workflowRunId: requireSafeId(
+        subject.workflowRunId,
+        `${label}.workflowRunId`
+      ),
+      attemptId: requireSafeId(
+        subject.attemptId,
+        `${label}.attemptId`
+      ),
+      reasonCode: subject.reasonCode
+    };
+  }
+  if (subject.kind === "raw") {
+    assertExactKeys(
+      subject,
+      [
+        "kind",
+        "rawRef",
+        "sourceRelativePath",
+        "ownersDigest"
+      ],
+      label
+    );
+    let rawRef: string;
+    let sourceRelativePath: string;
+    try {
+      rawRef = validateDurableRelativePath(subject.rawRef as string);
+      sourceRelativePath = validateDurableRelativePath(
+        subject.sourceRelativePath as string
+      );
+    } catch {
+      throw invalidPlan(`${label} Raw path 非法`);
+    }
+    if (
+      !rawRef.startsWith("raw/")
+      || rawRef === "raw/"
+    ) {
+      throw invalidPlan(`${label}.rawRef 非法`);
+    }
+    return {
+      kind: "raw",
+      rawRef,
+      sourceRelativePath,
+      ownersDigest: requireDigest(
+        subject.ownersDigest,
+        `${label}.ownersDigest`
+      )
+    };
+  }
+  throw invalidPlan(`${label}.kind 非法`);
+}
+
+function assertBundleParticipantIdentity(
+  participantId: string,
+  recordKind: RecordMutationRecordKind,
+  action: RecordMutationParticipantAction,
+  execution: RecordMutationExecutionBundle
+): void {
+  const expected = recordMutationExecutionBundleParticipantId({
+    recordKind,
+    action,
+    execution
+  });
+  if (participantId !== expected) {
+    throw invalidPlan(
+      `participant ${participantId} bundle identity 不匹配`
+    );
+  }
+}
+
 function assertDestructiveIntent(
   intent: RecordMutationIntent
 ): asserts intent is RecordMutationIntent & {
@@ -757,9 +1311,119 @@ function sameParticipantIdentity(
   );
 }
 
+function recordMutationBundleGroupKey(
+  participant: RecordMutationExecutionParticipant
+): string {
+  const execution = participant.execution;
+  if (execution.kind === "retain-bundle") {
+    return stableRecordMutationStringify([
+      participant.recordKind,
+      participant.action,
+      execution.rootId
+    ]);
+  }
+  if (execution.kind === "trash-bundle") {
+    return stableRecordMutationStringify([
+      participant.recordKind,
+      participant.action,
+      execution.sourceRootId,
+      execution.trashRootId
+    ]);
+  }
+  if (execution.kind === "source-deletion-bundle") {
+    return stableRecordMutationStringify([
+      participant.recordKind,
+      participant.action,
+      execution.rootId
+    ]);
+  }
+  throw journalMismatch(
+    `participant ${participant.participantId} 不是 bundle`
+  );
+}
+
+function assertWorkflowRunBundleCoverage(
+  participants: readonly RecordMutationExecutionParticipant[]
+): void {
+  const sourceLeafIds: string[] = [];
+  const trashLeafIds: string[] = [];
+  for (const participant of participants) {
+    if (
+      participant.recordKind === "workflow-run"
+      && participant.execution.kind === "source-deletion-bundle"
+    ) {
+      for (const subject of participant.execution.subjects) {
+        if (subject.kind !== "workflow-run") {
+          throw journalMismatch(
+            `participant ${participant.participantId} Run subject 非法`
+          );
+        }
+        sourceLeafIds.push(
+          workflowRunPayloadParticipantId(
+            subject.workflowRunId,
+            subject.attemptId
+          )
+        );
+      }
+      continue;
+    }
+    if (
+      participant.recordKind === "workflow-run"
+      && participant.action === "discard"
+      && participant.execution.kind === "trash-bundle"
+    ) {
+      trashLeafIds.push(
+        ...participant.execution.items.map((item) => item.itemId)
+      );
+    }
+  }
+  if (!sourceLeafIds.length && !trashLeafIds.length) return;
+  const source = [...sourceLeafIds].sort(compareText);
+  const trash = [...trashLeafIds].sort(compareText);
+  if (
+    new Set(source).size !== source.length
+    || new Set(trash).size !== trash.length
+    || stableRecordMutationStringify(source)
+      !== stableRecordMutationStringify(trash)
+  ) {
+    throw journalMismatch(
+      "Workflow Run source-deletion 与 Trash bundle 叶子覆盖不一致"
+    );
+  }
+}
+
+function assertRetainSubjectsMatchParticipant(
+  participantId: string,
+  recordKind: RecordMutationRecordKind,
+  subjects: readonly RecordMutationExecutionRetainSubject[]
+): void {
+  const valid = subjects.every((subject) => (
+    recordKind === "workflow-run"
+      ? subject.kind !== "raw"
+      : recordKind === "raw" && subject.kind === "raw"
+  ));
+  if (!valid) {
+    throw journalMismatch(
+      `participant ${participantId} retain subject kind 不匹配`
+    );
+  }
+}
+
 function assertSubjectMatchesParticipant(
   participant: RecordMutationExecutionParticipant
 ): void {
+  if (
+    participant.action === "mark-source-deleted"
+    && participant.execution.kind === "source-deletion-bundle"
+  ) {
+    assertBundleParticipantIdentity(
+      participant.participantId,
+      participant.recordKind,
+      participant.action,
+      participant.execution
+    );
+    return;
+  }
   if (
     participant.action !== "mark-source-deleted"
     || participant.execution.kind !== "source-deletion"
@@ -800,8 +1464,8 @@ function requireIntentRoot(
 }
 
 function sameExecutionPlanIdentity(
-  left: RecordMutationExecutionPlanV1,
-  right: RecordMutationExecutionPlanV1
+  left: RecordMutationExecutionPlanV2,
+  right: RecordMutationExecutionPlanV2
 ): boolean {
   return stableRecordMutationStringify({
     mutationId: left.mutationId,
@@ -829,7 +1493,7 @@ function executionPlanToken(mutationId: string): string {
   return token;
 }
 
-function planBytes(plan: RecordMutationExecutionPlanV1): Buffer {
+function planBytes(plan: RecordMutationExecutionPlanV2): Buffer {
   const bytes = Buffer.from(
     `${stableRecordMutationStringify(plan)}\n`,
     "utf8"

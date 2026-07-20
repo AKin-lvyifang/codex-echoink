@@ -89,6 +89,11 @@ export function createEchoInkRecordMutationSourceAdapterFactory(input: {
 }): RecordMutationSourceAdapterFactory {
   const vaultPath = requireAbsolutePath(input.vaultPath, "vaultPath");
   return ({ journal, participant, root }) => {
+    if (participant.execution.kind !== "source-deletion") {
+      throw new Error(
+        `RecordMutation participant ${participant.participantId} bundle runtime is not materialized`
+      );
+    }
     if (
       participant.recordKind === "workflow-run"
       && participant.execution.subject.kind === "workflow-run"
