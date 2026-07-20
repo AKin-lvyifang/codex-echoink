@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   writeFile
@@ -16,9 +17,22 @@ import {
   writeRawText
 } from "../../core/raw-message-store";
 import {
-  createConversationMessageRevision,
   FileConversationStore
 } from "../../harness/conversation/conversation-store";
+import {
+  FileConversationStoreV2
+} from "../../harness/conversation/conversation-store-v2";
+import {
+  FileConversationStoreManifest,
+  advanceConversationStoreManifestToActive,
+  advanceConversationStoreManifestToValidated,
+  createCopyingConversationStoreManifest
+} from "../../harness/conversation/store-manifest";
+import {
+  createConversationProductMessageRevision,
+  legacyExternalOwnerEdges,
+  prepareConversationStoreV2Migration
+} from "../../harness/lifecycle/conversation-migration-projection";
 import { workspaceFingerprint } from "../../harness/kernel/session-service";
 import {
   KnowledgeBaseHistoryMigrationRequiredError,
@@ -67,6 +81,7 @@ const PLUGIN_DIR = "codex-echoink";
 
 export async function runHarnessV2HistoryProjectionRetentionTests(): Promise<void> {
   await assertHistoryDayStoresReferencesAndResolvesConversation();
+  await assertHistoryReadsActiveConversationV2();
   await assertHistoryRebuildUsesCanonicalConversation();
   await assertCompactedDataShellCannotTruncateCanonicalHistory();
   await assertHistoryV2ReferenceSchemaIsExact();
@@ -97,6 +112,100 @@ export async function runHarnessV2HistoryProjectionRetentionTests(): Promise<voi
   await assertLocalPersistenceReceiptSurvivesNewRunSettingsWrites();
   await assertSettingsSaveReprojectsDurableRecoveryReceipt();
   await assertConnectionRecoveryClearsScheduledLifecycleWarning();
+}
+
+async function assertHistoryReadsActiveConversationV2(): Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-active-conversation-v2-")
+  );
+  const date = "2026-01-20";
+  const message = {
+    ...messageForDate("history-active-v2-message", date),
+    runId: "legacy-run-owned-outside-conversation-v2"
+  };
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-active-conversation-v2",
+    [message]
+  );
+  const storageRootPath = pluginDataDir(vaultPath, PLUGIN_DIR);
+  const sourceStore = new FileConversationStore({
+    rootPath: path.join(storageRootPath, "conversations")
+  });
+  try {
+    await persistConversation(sourceStore, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+
+    const sourceSnapshot = await sourceStore.inspectMigrationSnapshot();
+    const targetStore = new FileConversationStoreV2({ storageRootPath });
+    const migration = await prepareConversationStoreV2Migration({
+      sourceStore,
+      targetStore,
+      targetExternalOwnerEdges: legacyExternalOwnerEdges(
+        sourceSnapshot.sessions
+      )
+    });
+    assert.equal(migration.report.status, "ready");
+    assert.ok(migration.proof);
+
+    const manifestStore = new FileConversationStoreManifest({
+      storageRootPath
+    });
+    const copying = createCopyingConversationStoreManifest({
+      commitId: "history-active-v2-copying",
+      sourceFingerprint: migration.source.fingerprint,
+      createdAt: timestampForDate(date)
+    });
+    await manifestStore.compareAndSwap(copying, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+    const validated = advanceConversationStoreManifestToValidated(copying, {
+      commitId: "history-active-v2-validated",
+      proof: migration.proof,
+      updatedAt: timestampForDate(date) + 1
+    });
+    await manifestStore.compareAndSwap(validated, {
+      expectedRevision: copying.revision,
+      expectedCommitId: copying.commitId
+    });
+    const active = advanceConversationStoreManifestToActive(validated, {
+      commitId: "history-active-v2-active",
+      activatedAt: timestampForDate(date) + 2
+    });
+    await manifestStore.compareAndSwap(active, {
+      expectedRevision: validated.revision,
+      expectedCommitId: validated.commitId
+    });
+
+    const { runId: _externalRunOwner, ...expectedProductMessage } = message;
+    assert.deepEqual(
+      await readKnowledgeBaseHistoryDay(
+        vaultPath,
+        PLUGIN_DIR,
+        session.id,
+        date
+      ),
+      [expectedProductMessage],
+      "History must resolve active Conversation V2 product messages without legacy Run ownership fields"
+    );
+    const rebuilt = await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.equal(
+      rebuilt.sessions[0]?.messageCount,
+      1,
+      "History rebuild must read the selected Conversation V2 store"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 async function assertHistoryDayStoresReferencesAndResolvesConversation():
@@ -158,7 +267,6 @@ Promise<void> {
     assert.equal(rows[0]?.kind, "conversation-message");
     assert.equal(rows[0]?.conversationId, session.id);
     assert.equal(rows[0]?.messageId, message.id);
-    assert.equal(rows[0]?.runId, message.runId);
     for (const forbidden of [
       "text",
       "previewText",
@@ -166,7 +274,8 @@ Promise<void> {
       "rawSize",
       "rawLines",
       "rawTruncatedForPreview",
-      "backendBindings"
+      "backendBindings",
+      "runId"
     ]) {
       assert.equal(
         forbidden in rows[0]!,
@@ -337,7 +446,7 @@ async function assertHistoryV2ReferenceSchemaIsExact(): Promise<void> {
     kind: "conversation-message" as const,
     conversationId: "knowledge-history-strict-reference",
     messageId: message.id,
-    messageRevision: createConversationMessageRevision(message)
+    messageRevision: createConversationProductMessageRevision(message)
   };
   assert.deepEqual(
     parseKnowledgeBaseHistoryMessageReferenceV2(valid),
@@ -351,6 +460,7 @@ async function assertHistoryV2ReferenceSchemaIsExact(): Promise<void> {
     "createdAt",
     "role",
     "status",
+    "runId",
     "unknown"
   ]) {
     assert.throws(
@@ -826,7 +936,7 @@ Promise<void> {
         settingsForKnowledgeSession(session),
         { allowLegacyCutover: true }
       ),
-      /legacy message conflict/
+      /migration blocked by full subject validation/
     );
     assert.equal(
       await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
@@ -837,6 +947,22 @@ Promise<void> {
       stat(knowledgeBaseHistoryV2MigrationPath(vaultPath, PLUGIN_DIR)),
       isNotFoundError
     );
+    const conflictRoot = path.join(
+      knowledgeBaseHistoryRoot(vaultPath, PLUGIN_DIR),
+      "v2",
+      "migration-conflicts"
+    );
+    const conflictFiles = (await readdir(conflictRoot)).filter(
+      (entry) => entry.startsWith("conflict-")
+    );
+    assert.equal(conflictFiles.length, 1);
+    const conflictBytes = await readFile(
+      path.join(conflictRoot, conflictFiles[0]!),
+      "utf8"
+    );
+    assert.doesNotMatch(conflictBytes, /history-v1-conflict/);
+    assert.doesNotMatch(conflictBytes, /conflicting legacy body/);
+    assert.doesNotMatch(conflictBytes, /history-v1-conflict-message/);
     await assertLegacyFixtureBytesUnchanged(legacy);
   } finally {
     await rm(vaultPath, { recursive: true, force: true });
@@ -897,10 +1023,14 @@ async function assertLegacyCutoverPreservesV1Bytes(): Promise<void> {
   );
   const date = "2026-01-20";
   const message = messageForDate("history-v1-message", date);
+  const canonicalOnlyMessage = messageForDate(
+    "history-v1-canonical-only-message",
+    date
+  );
   const session = knowledgeSession(
     vaultPath,
     "knowledge-history-v1-cutover",
-    [message]
+    [message, canonicalOnlyMessage]
   );
   const store = new FileConversationStore({
     rootPath: path.join(
@@ -936,7 +1066,8 @@ async function assertLegacyCutoverPreservesV1Bytes(): Promise<void> {
           date
         )
       ).map((item) => item.id),
-      [message.id]
+      [message.id],
+      "first cutover must preserve the exact V1 projection instead of silently adding canonical-only messages"
     );
   } finally {
     await rm(vaultPath, { recursive: true, force: true });
@@ -3271,4 +3402,11 @@ function isNotFoundError(error: unknown): boolean {
     && typeof error === "object"
     && (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+if (process.env.ECHOINK_RUN_HISTORY_PROJECTION_RETENTION_TEST === "1") {
+  runHarnessV2HistoryProjectionRetentionTests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

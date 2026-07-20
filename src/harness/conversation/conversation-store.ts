@@ -85,6 +85,11 @@ export interface ConversationStoreMigrationResult {
   trimmedSettingsMessageCount: number;
 }
 
+export interface ConversationStoreMigrationSnapshot {
+  sessions: StoredSession[];
+  deletionTombstones: ConversationDeletionTombstoneV1[];
+}
+
 export interface ConversationStoreStartupReconciliationResult {
   sessions: StoredSession[];
   repairedIndex: boolean;
@@ -845,6 +850,81 @@ export class FileConversationStore {
       sessions.push(session);
     }
     return sessions;
+  }
+
+  /**
+   * Strict read-only migration source scan. It reports index or directory
+   * drift instead of invoking startup reconciliation or creating empty roots.
+   */
+  async inspectMigrationSnapshot():
+  Promise<ConversationStoreMigrationSnapshot> {
+    const rootReady = await this.assertDirectoryBoundary(
+      this.options.rootPath,
+      { allowMissing: true }
+    );
+    if (!rootReady) {
+      return { sessions: [], deletionTombstones: [] };
+    }
+    const allowedRootEntries = new Set([
+      "index.json",
+      "sessions",
+      "deletions",
+      ".conversation-prepares"
+    ]);
+    const rootEntries = await readdir(
+      this.options.rootPath,
+      { withFileTypes: true }
+    );
+    for (const entry of rootEntries) {
+      if (
+        !allowedRootEntries.has(entry.name)
+        || entry.isSymbolicLink()
+        || (
+          entry.name === "index.json"
+            ? !entry.isFile()
+            : !entry.isDirectory()
+        )
+      ) {
+        throw new ConversationContextConflictError(
+          `Conversation migration source has an unsafe root entry: ${entry.name}`
+        );
+      }
+    }
+    const preparesRoot = path.join(
+      this.options.rootPath,
+      ".conversation-prepares"
+    );
+    if (
+      await this.assertDirectoryBoundary(preparesRoot, {
+        allowMissing: true
+      })
+      && (await readdir(preparesRoot)).length > 0
+    ) {
+      throw new ConversationContextConflictError(
+        "Conversation migration source has an incomplete prepare"
+      );
+    }
+    const index = await this.readIndex();
+    const deletionTombstones =
+      await this.readConversationDeletionTombstones();
+    const sessions = await this.readCommittedSessionsFromDirectories(
+      new Set(deletionTombstones.keys())
+    );
+    const expectedSummaries = sessions
+      .map(conversationSessionSummary)
+      .sort(compareConversationSessionSummaries);
+    if (!isDeepStrictEqual(index.sessions, expectedSummaries)) {
+      throw new ConversationContextConflictError(
+        "Conversation migration source index does not match committed sessions"
+      );
+    }
+    return {
+      sessions: sessions.sort((left, right) => left.id.localeCompare(right.id)),
+      deletionTombstones: [...deletionTombstones.values()].sort(
+        (left, right) =>
+          left.conversationId.localeCompare(right.conversationId)
+      )
+    };
   }
 
   private async readCommittedPayload(

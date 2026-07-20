@@ -8,11 +8,13 @@ import {
 import * as path from "node:path";
 import { pluginDataDir } from "../../core/raw-message-store";
 import {
-  createConversationMessageRevision,
   createConversationPayloadKeyV2,
   parseConversationDeletionTombstone,
   type ConversationDeletionTombstoneV1
 } from "../conversation/conversation-store";
+import {
+  createConversationProductMessageRevision
+} from "../lifecycle/conversation-migration-projection";
 import type { ChatMessage } from "../../settings/settings";
 import {
   isSafeConversationSessionId,
@@ -169,14 +171,12 @@ interface HistoryReferenceFact {
   messageRevision: string;
   date: string;
   ownerRef: string;
-  runId?: string;
 }
 
 interface HistoryReferenceRowV2 {
   conversationId: string;
   messageId: string;
   messageRevision: string;
-  runId?: string;
 }
 
 interface HistoryGenerationFileFact {
@@ -2390,18 +2390,13 @@ function parseHistoryV2ReferenceRows(
         "kind",
         "conversationId",
         "messageId",
-        "messageRevision",
-        "runId"
+        "messageRevision"
       ])
       || finiteInteger(record.version) !== CURRENT_HISTORY_SCHEMA
       || record.kind !== "conversation-message"
       || !isNonEmptyString(record.conversationId)
       || !isNonEmptyString(record.messageId)
       || !sha256RevisionOrNull(record.messageRevision)
-      || (
-        record.runId !== undefined
-        && !isNonEmptyString(record.runId)
-      )
     ) {
       accumulator.addCorrupt(
         "history-reference-invalid",
@@ -2412,8 +2407,7 @@ function parseHistoryV2ReferenceRows(
     rows.push({
       conversationId: record.conversationId,
       messageId: record.messageId,
-      messageRevision: sha256RevisionOrNull(record.messageRevision)!,
-      ...(record.runId !== undefined ? { runId: record.runId } : {})
+      messageRevision: sha256RevisionOrNull(record.messageRevision)!
     });
   }
   return rows;
@@ -2551,8 +2545,7 @@ function validateHistoryV2Index(
       (reference) => ({
         id: reference.messageId,
         createdAt: 0,
-        revision: reference.messageRevision,
-        ...(reference.runId ? { runId: reference.runId } : {})
+        revision: reference.messageRevision
       })
     );
     facts.sessions.set(session.sessionId, {
@@ -3788,12 +3781,6 @@ function correlateHistoryAndConversations(
     ) {
       status = "ambiguous";
       findingCode = "history-reference-date-drift";
-    } else if (
-      reference.runId !== undefined
-      && message.runId !== reference.runId
-    ) {
-      status = "ambiguous";
-      findingCode = "history-reference-run-mismatch";
     }
     relations.push({
       kind: "history-message-projection",
@@ -4451,7 +4438,7 @@ function collectMessageFacts(
     facts.push({
       id: message.id,
       createdAt: timestampOrZero(message.createdAt),
-      revision: createConversationMessageRevision(
+      revision: createConversationProductMessageRevision(
         message as unknown as ChatMessage
       ),
       ...(typeof message.rawRef === "string" && message.rawRef

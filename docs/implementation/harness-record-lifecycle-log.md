@@ -782,3 +782,29 @@
   预期文件，public guard 检查 424 个 tracked files。
 - 本批没有创建真实 Vault GC transaction，没有移动或删除真实 Raw，没有部署、
   migration、retention sweep 或 Native 批量 cleanup。
+
+## 2026-07-20：Migration Validator 与 History/Deletion 迁移门禁
+
+- 新增完整 subject/owner migration ledger 与 validator。缺失、额外项、parent、
+  ordinal、revision、正文 digest 和 owner 漂移都会阻断；报告与 quarantine 只含
+  opaque SHA-256 ref，trusted proof 只在当前进程内有效。
+- V1/V2 Conversation Store 新增严格只读 migration snapshot；不会初始化或修复
+  Store。未知字段、未知 entry、index/payload/metadata/staging 漂移均 fail closed。
+- side-by-side copier 对完全相同记录幂等复用，同 ID 冲突不覆盖，并默认耐久发布
+  metadata-only quarantine。Conversation manifest validated transition 必须消费
+  validator trusted proof。
+- Conversation V2 新增 immutable deletion tombstone namespace。迁移只接受目标
+  Store 真实 readback；active Conversation 与同 ID tombstone 不能同时存在。
+- active cutover fence 保存完整 active manifest。fence 发布后崩溃时 reader 保持
+  V1 并报告 `active-cutover-pending`；恢复幂等补齐 manifest entry 后才选 V2。
+- History 首次 cutover 现在比较真实 V1 index/day ledger 与 staged V2 generation，
+  首轮不应用 retention/suppression，也不把 canonical 全量清单冒充 legacy source。
+  冲突在 active publish 前写 opaque quarantine；V2 reference 移除 legacy
+  `runId`，History reader/rebuild 能按 active manifest 读取 Conversation V2。
+- 当前 `npm run test` 输出 `All tests passed`（128.0 秒）；typecheck、build、
+  baseline lint、release guard、四组 focused suites 与 `git diff --check` 通过。
+  lint 保持 942 个 baseline finding，无新增；public guard 在明确暂存本批文件后
+  执行。
+- 本批未部署、未改真实 Vault、未执行真实 migration/retention/Raw GC/History
+  删除或 Native cleanup。真实 Native/Run/settings owner proof 与 V2→V1 exporter
+  仍是 Phase 2 后续门禁。

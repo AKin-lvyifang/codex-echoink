@@ -16,6 +16,27 @@ import {
   validateChatMessage
 } from "../harness/conversation/conversation-store";
 import {
+  FileConversationStoreV2
+} from "../harness/conversation/conversation-store-v2";
+import {
+  resolveConversationStoreSelection
+} from "../harness/conversation/store-manifest";
+import type {
+  ConversationCommitV2,
+  MessageV2
+} from "../harness/contracts/conversation-v2";
+import {
+  createConversationProductMessageRevision,
+  historyMigrationInventoryFromReferences,
+  type HistoryMigrationReferenceInput
+} from "../harness/lifecycle/conversation-migration-projection";
+import {
+  publishRecordMigrationConflictQuarantine
+} from "../harness/lifecycle/record-migration-conflict-quarantine";
+import {
+  validateRecordMigration
+} from "../harness/lifecycle/record-migration-validator";
+import {
   isKnowledgeBaseSession,
   type ChatMessage,
   type CodexForObsidianSettings,
@@ -37,7 +58,6 @@ export interface KnowledgeBaseHistoryMessageReferenceV2 {
   conversationId: string;
   messageId: string;
   messageRevision: string;
-  runId?: string;
 }
 
 export interface KnowledgeBaseHistoryDaySummary {
@@ -177,6 +197,11 @@ interface KnowledgeBaseHistoryProjectionV2 {
 interface KnowledgeBaseHistorySource {
   sessions: StoredSession[];
   revision: string;
+}
+
+interface LegacyKnowledgeBaseHistoryProjectionV1 {
+  references: HistoryMigrationReferenceInput[];
+  selectedMessageKeys: Set<string>;
 }
 
 interface PublishKnowledgeBaseHistoryOptions {
@@ -991,8 +1016,7 @@ export function parseKnowledgeBaseHistoryMessageReferenceV2(
       "kind",
       "conversationId",
       "messageId",
-      "messageRevision",
-      "runId"
+      "messageRevision"
     ],
     "History reference"
   );
@@ -1004,13 +1028,6 @@ export function parseKnowledgeBaseHistoryMessageReferenceV2(
     || typeof record.messageId !== "string"
     || !record.messageId.trim()
     || !isSha256Revision(record.messageRevision)
-    || (
-      record.runId !== undefined
-      && (
-        typeof record.runId !== "string"
-        || !record.runId.trim()
-      )
-    )
   ) {
     throw new Error("History reference schema is invalid");
   }
@@ -1019,8 +1036,7 @@ export function parseKnowledgeBaseHistoryMessageReferenceV2(
     kind: HISTORY_REFERENCE_KIND,
     conversationId: record.conversationId,
     messageId: record.messageId,
-    messageRevision: record.messageRevision,
-    ...(record.runId !== undefined ? { runId: record.runId } : {})
+    messageRevision: record.messageRevision
   };
 }
 
@@ -1033,17 +1049,19 @@ async function publishKnowledgeBaseHistoryUnlocked(
   const source = preparedSource
     ?? await readStableKnowledgeBaseHistorySource(vaultPath, pluginDir);
   const current = await readActiveProjectionMetadata(vaultPath, pluginDir);
+  const legacyCutoverRequired = !current
+    && await requiresExplicitLegacyCutover(vaultPath, pluginDir);
+  let legacyProjection: LegacyKnowledgeBaseHistoryProjectionV1 | null = null;
   if (!current) {
     if (
       !options.allowLegacyCutover
-      && await requiresExplicitLegacyCutover(vaultPath, pluginDir)
+      && legacyCutoverRequired
     ) {
       throw new KnowledgeBaseHistoryMigrationRequiredError();
     }
-    await assertLegacyV1ProjectionCompatible(
+    legacyProjection = await readLegacyV1ProjectionForMigration(
       vaultPath,
-      pluginDir,
-      source
+      pluginDir
     );
   } else {
     await validateGenerationDirectory(
@@ -1054,9 +1072,13 @@ async function publishKnowledgeBaseHistoryUnlocked(
       source
     );
   }
-  const retentionDays = normalizeRetentionDays(options.retentionDays);
+  const retentionDays = legacyCutoverRequired
+    ? null
+    : normalizeRetentionDays(options.retentionDays);
   const cutoff = retentionCutoffDate(retentionDays, options.now);
-  const suppressionEntries = options.restoreSuppressed
+  const suppressionEntries = legacyCutoverRequired
+    ? []
+    : options.restoreSuppressed
     ? []
     : normalizeSuppressionEntries(
       options.suppressions ?? current?.suppressions.entries ?? []
@@ -1098,7 +1120,10 @@ async function publishKnowledgeBaseHistoryUnlocked(
       suppressions,
       retentionDays,
       cutoff,
-      options.now
+      options.now,
+      legacyCutoverRequired
+        ? legacyProjection?.selectedMessageKeys
+        : undefined
     );
     const files: KnowledgeBaseHistoryGenerationFileV2[] = [];
     for (const day of projection.days) {
@@ -1157,6 +1182,35 @@ async function publishKnowledgeBaseHistoryUnlocked(
       throw new Error(
         "Knowledge History publication blocked: canonical Conversation changed during generation build"
       );
+    }
+    if (legacyCutoverRequired) {
+      const sourceInventory = historyMigrationInventoryFromReferences(
+        "v1",
+        legacyProjection?.references ?? []
+      );
+      const targetInventory = historyMigrationInventoryFromReferences(
+        "v2",
+        historyMigrationReferencesFromProjection(projection)
+      );
+      const validation = validateRecordMigration(
+        sourceInventory,
+        targetInventory
+      );
+      if (!validation.proof || validation.report.status !== "ready") {
+        if (validation.report.quarantine) {
+          await publishRecordMigrationConflictQuarantine({
+            rootPath: path.join(
+              knowledgeBaseHistoryV2Root(vaultPath, pluginDir),
+              "migration-conflicts"
+            ),
+            quarantine: validation.report.quarantine
+          });
+        }
+        throw new Error(
+          "Knowledge History migration blocked by full subject validation "
+          + validation.report.digest
+        );
+      }
     }
 
     await mkdir(path.dirname(generationRoot), { recursive: true });
@@ -1475,7 +1529,8 @@ function buildProjection(
   suppressions: KnowledgeBaseHistorySuppressionsV2,
   retentionDays: number | null,
   cutoff: string | null,
-  now: number
+  now: number,
+  selectedMessageKeys?: ReadonlySet<string>
 ): {
   index: KnowledgeBaseHistoryIndex;
   days: Array<{
@@ -1500,6 +1555,13 @@ function buildProjection(
     const retained = session.messages.filter((message) => {
       const date = localDateKeyForTimestamp(message.createdAt);
       return (
+        (
+          selectedMessageKeys === undefined
+          || selectedMessageKeys.has(
+            historyMessageSelectionKey(session.id, message.id)
+          )
+        )
+        &&
         (!cutoff || date >= cutoff)
         && !suppressed.has(suppressionKey(session.id, message.id))
       );
@@ -1542,6 +1604,20 @@ function buildProjection(
     },
     days
   };
+}
+
+function historyMigrationReferencesFromProjection(
+  projection: ReturnType<typeof buildProjection>
+): HistoryMigrationReferenceInput[] {
+  return projection.days.flatMap((day) =>
+    day.references.map((reference, ordinal) => ({
+      conversationId: reference.conversationId,
+      messageId: reference.messageId,
+      messageRevision: reference.messageRevision,
+      date: day.date,
+      ordinal
+    }))
+  );
 }
 
 function createGenerationManifest(input: {
@@ -1625,7 +1701,7 @@ function suppressionForMessage(
     version: KNOWLEDGE_BASE_HISTORY_VERSION,
     conversationId,
     messageId: message.id,
-    messageRevision: createConversationMessageRevision(message),
+    messageRevision: createConversationProductMessageRevision(message),
     date: localDateKeyForTimestamp(message.createdAt),
     suppressedAt,
     reason: "user-delete"
@@ -2144,11 +2220,10 @@ async function requiresExplicitLegacyCutover(
   return index.sessions.length > 0 || actualFiles.length > 0;
 }
 
-async function assertLegacyV1ProjectionCompatible(
+async function readLegacyV1ProjectionForMigration(
   vaultPath: string,
-  pluginDir: string,
-  source: KnowledgeBaseHistorySource
-): Promise<void> {
+  pluginDir: string
+): Promise<LegacyKnowledgeBaseHistoryProjectionV1> {
   const legacyIndexFile = knowledgeBaseHistoryIndexPath(vaultPath, pluginDir);
   const legacyIndexExists = await fileExists(legacyIndexFile);
   const legacySessionsRoot = path.join(
@@ -2162,7 +2237,10 @@ async function assertLegacyV1ProjectionCompatible(
         "Knowledge History migration blocked: legacy day files exist without an index"
       );
     }
-    return;
+    return {
+      references: [],
+      selectedMessageKeys: new Set<string>()
+    };
   }
   const index = await readLegacyKnowledgeBaseHistoryIndex(
     vaultPath,
@@ -2181,18 +2259,9 @@ async function assertLegacyV1ProjectionCompatible(
       "Knowledge History migration blocked: legacy index and day file set disagree"
     );
   }
-  const sourceBySession = new Map(
-    source.sessions.map(
-      (session) => [session.id, uniqueCanonicalMessages(session)] as const
-    )
-  );
+  const references: HistoryMigrationReferenceInput[] = [];
+  const selectedMessageKeys = new Set<string>();
   for (const session of index.sessions) {
-    const canonical = sourceBySession.get(session.sessionId);
-    if (!canonical) {
-      throw new Error(
-        `Knowledge History migration blocked: canonical Conversation ${session.sessionId} is unavailable`
-      );
-    }
     for (const day of session.days) {
       const messages = await readLegacyKnowledgeBaseHistoryDay(
         vaultPath,
@@ -2201,28 +2270,22 @@ async function assertLegacyV1ProjectionCompatible(
         day.date
       );
       assertDaySummaryMatchesMessages(day, messages);
-      const seen = new Set<string>();
-      for (const message of messages) {
-        if (seen.has(message.id)) {
-          throw new Error(
-            `Knowledge History migration blocked: duplicate legacy message ${message.id}`
-          );
-        }
-        seen.add(message.id);
-        const durable = canonical.get(message.id);
-        if (
-          !durable
-          || createConversationMessageRevision(durable)
-            !== createConversationMessageRevision(message)
-          || localDateKeyForTimestamp(durable.createdAt) !== day.date
-        ) {
-          throw new Error(
-            `Knowledge History migration blocked: legacy message conflict ${session.sessionId}/${message.id}`
-          );
-        }
-      }
+      messages.forEach((message, ordinal) => {
+        references.push({
+          conversationId: session.sessionId,
+          messageId: message.id,
+          messageRevision:
+            createConversationProductMessageRevision(message),
+          date: day.date,
+          ordinal
+        });
+        selectedMessageKeys.add(
+          historyMessageSelectionKey(session.sessionId, message.id)
+        );
+      });
     }
   }
+  return { references, selectedMessageKeys };
 }
 
 async function readStableKnowledgeBaseHistorySource(
@@ -2243,10 +2306,10 @@ async function readKnowledgeBaseHistorySource(
   vaultPath: string,
   pluginDir: string
 ): Promise<KnowledgeBaseHistorySource> {
-  const sessions = (await knowledgeBaseConversationStore(
+  const sessions = (await readCanonicalKnowledgeSessions(
     vaultPath,
     pluginDir
-  ).listSessions())
+  ))
     .filter((session) => session.kind === "knowledge-base")
     .map((session) => structuredClone(session))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -2265,15 +2328,32 @@ async function readKnowledgeBaseHistorySource(
       id: session.id,
       title: session.title,
       kind: session.kind,
-      historyActiveDate: session.historyActiveDate ?? null,
       updatedAt: session.updatedAt,
       messages: session.messages.map((message) => ({
         id: message.id,
-        revision: createConversationMessageRevision(message)
+        revision: createConversationProductMessageRevision(message)
       }))
     }))
   );
   return { sessions, revision };
+}
+
+async function readCanonicalKnowledgeSessions(
+  vaultPath: string,
+  pluginDir: string
+): Promise<StoredSession[]> {
+  const storageRootPath = pluginDataDir(vaultPath, pluginDir);
+  const selection = await resolveConversationStoreSelection(storageRootPath);
+  if (selection.activeStore === "v1") {
+    return await knowledgeBaseConversationStore(
+      vaultPath,
+      pluginDir
+    ).listSessions();
+  }
+  const snapshot = await new FileConversationStoreV2({
+    storageRootPath
+  }).inspectMigrationSnapshot();
+  return snapshot.commits.map(projectConversationCommitV2ForHistory);
 }
 
 function knowledgeBaseConversationStore(
@@ -2293,16 +2373,130 @@ async function readCanonicalKnowledgeConversation(
   pluginDir: string,
   sessionId: string
 ): Promise<StoredSession> {
-  const session = await knowledgeBaseConversationStore(
-    vaultPath,
-    pluginDir
-  ).readSession(sessionId);
+  const storageRootPath = pluginDataDir(vaultPath, pluginDir);
+  const selection = await resolveConversationStoreSelection(storageRootPath);
+  const session = selection.activeStore === "v1"
+    ? await knowledgeBaseConversationStore(
+      vaultPath,
+      pluginDir
+    ).readSession(sessionId)
+    : await new FileConversationStoreV2({
+      storageRootPath
+    }).readConversation(sessionId).then((commit) =>
+      commit ? projectConversationCommitV2ForHistory(commit) : null);
   if (!session || session.kind !== "knowledge-base") {
     throw new Error(
       `Knowledge History recovery required: canonical Conversation ${sessionId} is unavailable`
     );
   }
   return session;
+}
+
+function projectConversationCommitV2ForHistory(
+  commit: ConversationCommitV2
+): StoredSession {
+  return {
+    id: commit.metadata.conversationId,
+    title: commit.metadata.title,
+    kind: commit.metadata.kind,
+    revision: commit.metadata.revision,
+    generation: commit.metadata.currentContext.generation,
+    contextId: commit.metadata.currentContext.id,
+    commitId: commit.metadata.commitId,
+    workspaceFingerprint:
+      commit.metadata.currentContext.workspaceFingerprint,
+    cwd: commit.metadata.currentContext.cwd,
+    messages: commit.payload.messages.map(
+      projectConversationMessageV2ForHistory
+    ),
+    createdAt: commit.metadata.createdAt,
+    updatedAt: commit.metadata.updatedAt
+  };
+}
+
+function projectConversationMessageV2ForHistory(
+  message: MessageV2
+): ChatMessage {
+  const presentation = message.presentation;
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    ...(message.turnId ? { turnId: message.turnId } : {}),
+    ...(message.previewText !== undefined
+      ? { previewText: message.previewText }
+      : {}),
+    ...(message.raw
+      ? {
+        rawRef: message.raw.ref,
+        rawSize: message.raw.size,
+        rawLines: message.raw.lines,
+        rawTruncatedForPreview: message.raw.truncatedForPreview
+      }
+      : {}),
+    ...(presentation?.itemType !== undefined
+      ? { itemType: presentation.itemType }
+      : {}),
+    ...(presentation?.title !== undefined
+      ? { title: presentation.title }
+      : {}),
+    ...(presentation?.status !== undefined
+      ? { status: presentation.status }
+      : {}),
+    ...(presentation?.details !== undefined
+      ? { details: presentation.details }
+      : {}),
+    ...(presentation?.attachments !== undefined
+      ? {
+        attachments: cloneHistoryProjectionValue(
+          presentation.attachments
+        ) as unknown as ChatMessage["attachments"]
+      }
+      : {}),
+    ...(presentation?.files !== undefined
+      ? {
+        files: cloneHistoryProjectionValue(
+          presentation.files
+        ) as unknown as ChatMessage["files"]
+      }
+      : {}),
+    ...(presentation?.images !== undefined
+      ? {
+        images: cloneHistoryProjectionValue(
+          presentation.images
+        ) as unknown as ChatMessage["images"]
+      }
+      : {}),
+    ...(presentation?.citations !== undefined
+      ? {
+        citations: cloneHistoryProjectionValue(
+          presentation.citations
+        ) as unknown as ChatMessage["citations"]
+      }
+      : {}),
+    ...(presentation?.diffSummary !== undefined
+      ? {
+        diffSummary: cloneHistoryProjectionValue(
+          presentation.diffSummary
+        ) as unknown as ChatMessage["diffSummary"]
+      }
+      : {}),
+    ...(presentation?.knowledgeBaseUi !== undefined
+      ? {
+        knowledgeBaseUi: cloneHistoryProjectionValue(
+          presentation.knowledgeBaseUi
+        ) as unknown as ChatMessage["knowledgeBaseUi"]
+      }
+      : {}),
+    createdAt: message.createdAt,
+    ...(message.completedAt !== undefined
+      ? { completedAt: message.completedAt }
+      : {})
+  };
+}
+
+function cloneHistoryProjectionValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function uniqueCanonicalMessages(
@@ -2331,8 +2525,7 @@ function createHistoryMessageReference(
     kind: HISTORY_REFERENCE_KIND,
     conversationId,
     messageId: message.id,
-    messageRevision: createConversationMessageRevision(message),
-    ...(message.runId?.trim() ? { runId: message.runId.trim() } : {})
+    messageRevision: createConversationProductMessageRevision(message)
   };
 }
 
@@ -2380,13 +2573,9 @@ function assertHistoryReferencesMatchCanonical(
     const canonical = canonicalById.get(reference.messageId);
     if (
       !canonical
-      || createConversationMessageRevision(canonical)
+      || createConversationProductMessageRevision(canonical)
         !== reference.messageRevision
       || localDateKeyForTimestamp(canonical.createdAt) !== date
-      || (
-        reference.runId !== undefined
-        && canonical.runId?.trim() !== reference.runId
-      )
     ) {
       throw new Error(
         `Knowledge History recovery required: canonical message conflict ${reference.messageId}`
@@ -2667,6 +2856,13 @@ function isSafeGenerationRelativePath(value: string): boolean {
 }
 
 function suppressionKey(
+  conversationId: string,
+  messageId: string
+): string {
+  return `${conversationId}\0${messageId}`;
+}
+
+function historyMessageSelectionKey(
   conversationId: string,
   messageId: string
 ): string {

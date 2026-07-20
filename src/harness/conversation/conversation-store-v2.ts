@@ -17,10 +17,16 @@ import {
   validateConversationShellV2,
   type ConversationShellV2
 } from "./conversation-shell";
+import {
+  parseConversationDeletionTombstone,
+  type ConversationDeletionTombstoneV1
+} from "./conversation-store";
 
 const STORE_DIRECTORY = "conversations-v2";
 const CONVERSATIONS_DIRECTORY = "conversations";
 const PAYLOADS_DIRECTORY = "payloads";
+const DELETIONS_DIRECTORY = "deletions";
+const MIGRATION_CONFLICTS_DIRECTORY = "migration-conflicts";
 const STAGING_DIRECTORY = ".staging";
 const METADATA_DIRECTORY = "metadata";
 const HEAD_FILE = "head.json";
@@ -29,10 +35,12 @@ const ENTRY_PREFIX = "entry-";
 const ENTRY_WIDTH = 16;
 const ENTRY_PATTERN = /^entry-([0-9]{16})\.json$/;
 const CONVERSATION_TOKEN_PATTERN = /^conversation-[a-f0-9]{64}$/;
+const DELETION_FILE_PATTERN = /^conversation-[a-f0-9]{64}\.json$/;
 const PAYLOAD_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const MAX_RECORD_BYTES = 64 * 1024 * 1024;
 const INDEX_SCHEMA_VERSION = 2 as const;
+const conversationMutationTails = new Map<string, Promise<void>>();
 
 export type ConversationStoreV2FaultPoint =
   | "before-payload"
@@ -101,6 +109,11 @@ export interface ConversationStoreV2CommitOptions {
   ) => void | Promise<void>;
 }
 
+export interface ConversationStoreV2MigrationSnapshot {
+  commits: ConversationCommitV2[];
+  deletionTombstones: ConversationDeletionTombstoneV1[];
+}
+
 interface ConversationIndexEntryV2 {
   metadataRevision: number;
   metadataCommitId: string;
@@ -118,6 +131,8 @@ interface StoreLayout {
   rootPath: string;
   conversationsRootPath: string;
   payloadsRootPath: string;
+  deletionsRootPath: string;
+  migrationConflictsRootPath: string;
   stagingRootPath: string;
   indexPath: string;
 }
@@ -172,8 +187,29 @@ export class FileConversationStoreV2 {
     options: ConversationStoreV2CommitOptions
   ): Promise<ConversationCommitV2> {
     const candidate = validateConversationCommitV2(candidateInput);
+    return await enqueueConversationStoreV2Mutation(
+      this.rootPath,
+      candidate.metadata.conversationId,
+      async () => await this.commitConversationUnlocked(candidate, options)
+    );
+  }
+
+  private async commitConversationUnlocked(
+    candidate: ConversationCommitV2,
+    options: ConversationStoreV2CommitOptions
+  ): Promise<ConversationCommitV2> {
     const layout = await ensureStoreLayout(this.rootPath);
     await assertStoreNamespacesSafe(layout);
+    if (
+      await readDeletionTombstoneFromLayout(
+        layout,
+        candidate.metadata.conversationId
+      )
+    ) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 cannot commit a Conversation with a durable deletion tombstone"
+      );
+    }
     const conversation = await ensureConversationLayout(
       layout,
       candidate.metadata.conversationId
@@ -257,6 +293,81 @@ export class FileConversationStoreV2 {
     return await this.readConversation(conversationId);
   }
 
+  async commitDeletionTombstone(
+    tombstoneInput: ConversationDeletionTombstoneV1
+  ): Promise<ConversationDeletionTombstoneV1> {
+    const tombstone = parseConversationDeletionTombstone(tombstoneInput);
+    return await enqueueConversationStoreV2Mutation(
+      this.rootPath,
+      tombstone.conversationId,
+      async () => await this.commitDeletionTombstoneUnlocked(tombstone)
+    );
+  }
+
+  private async commitDeletionTombstoneUnlocked(
+    tombstone: ConversationDeletionTombstoneV1
+  ): Promise<ConversationDeletionTombstoneV1> {
+    const layout = await ensureStoreLayout(this.rootPath);
+    await assertStoreNamespacesSafe(layout);
+    const conversation = conversationLayout(
+      layout,
+      tombstone.conversationId
+    );
+    if (await readCurrentMetadata(conversation)) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 cannot tombstone an active Conversation"
+      );
+    }
+    const existing = await readDeletionTombstoneFromLayout(
+      layout,
+      tombstone.conversationId
+    );
+    if (existing) {
+      if (!isDeepStrictEqual(existing, tombstone)) {
+        throw new ConversationStoreV2ConflictError(
+          "Conversation Store V2 deletion tombstone conflicts"
+        );
+      }
+      return existing;
+    }
+    const targetPath = deletionTombstonePath(
+      layout,
+      tombstone.conversationId
+    );
+    await publishImmutableFile(
+      layout,
+      targetPath,
+      Buffer.from(canonicalConversationV2Json(tombstone), "utf8"),
+      {
+        kind: "deletion-tombstone",
+        existingIsSuccess: true
+      }
+    );
+    const readback = await readDeletionTombstoneFromLayout(
+      layout,
+      tombstone.conversationId
+    );
+    if (!readback || !isDeepStrictEqual(readback, tombstone)) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation Store V2 deletion tombstone readback mismatch"
+      );
+    }
+    await this.reconcileIndexInternal(layout);
+    return readback;
+  }
+
+  async readDeletionTombstone(
+    conversationId: string
+  ): Promise<ConversationDeletionTombstoneV1 | null> {
+    const layout = storeLayout(this.rootPath);
+    const rootStat = await lstatOrNull(layout.rootPath);
+    if (!rootStat) return null;
+    assertPlainDirectory(rootStat, "Conversation Store V2 root");
+    await assertStoreNamespacesSafe(layout);
+    return await readDeletionTombstoneFromLayout(layout, conversationId);
+  }
+
   async listConversationShells(): Promise<ConversationShellV2[]> {
     const layout = await ensureStoreLayout(this.rootPath);
     const index = await this.reconcileIndexInternal(layout);
@@ -275,6 +386,105 @@ export class FileConversationStoreV2 {
     await assertStoreNamespacesSafe(layout);
     const index = await readIndexOrNull(layout.indexPath);
     return index?.entries.map((entry) => ({ ...entry.shell })) ?? [];
+  }
+
+  /**
+   * Strict read-only migration snapshot. Unlike listConversationShells(), this
+   * never initializes namespaces or repairs index drift.
+   */
+  async inspectMigrationSnapshot():
+  Promise<ConversationStoreV2MigrationSnapshot> {
+    const layout = storeLayout(this.rootPath);
+    const rootStat = await lstatOrNull(layout.rootPath);
+    if (!rootStat) {
+      return { commits: [], deletionTombstones: [] };
+    }
+    assertPlainDirectory(rootStat, "Conversation Store V2 root");
+    await assertStoreNamespacesSafe(layout);
+    const stagingEntries = await fsp.readdir(
+      layout.stagingRootPath,
+      { withFileTypes: true }
+    );
+    if (stagingEntries.length) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation Store V2 migration snapshot 含未收口 staging"
+      );
+    }
+    const scannedEntries = await scanCommittedConversations(layout);
+    const index = await readIndexOrNull(layout.indexPath);
+    if (!index || !isDeepStrictEqual(index.entries, scannedEntries)) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation Store V2 migration snapshot index 漂移"
+      );
+    }
+    const commits: ConversationCommitV2[] = [];
+    const conversationIds = new Set<string>();
+    const referencedPayloadFiles = new Set<string>();
+    for (const entry of scannedEntries) {
+      const commit = await this.readConversation(entry.shell.conversationId);
+      if (!commit) {
+        throw new ConversationStoreV2Error(
+          "store-corrupt",
+          "Conversation Store V2 migration snapshot 丢失 committed payload"
+        );
+      }
+      commits.push(commit);
+      conversationIds.add(commit.metadata.conversationId);
+      const conversation = conversationLayout(
+        layout,
+        commit.metadata.conversationId
+      );
+      const committedMetadata = await readMetadataChain(conversation);
+      const metadataEntries = await fsp.readdir(
+        conversation.metadataRootPath,
+        { withFileTypes: true }
+      );
+      if (metadataEntries.length !== committedMetadata.length) {
+        throw new ConversationStoreV2Error(
+          "store-corrupt",
+          "Conversation Store V2 migration snapshot contains uncommitted metadata"
+        );
+      }
+      for (const metadata of committedMetadata) {
+        await readPayload(layout, metadata.payloadDigest);
+        referencedPayloadFiles.add(
+          `${metadata.payloadDigest.slice("sha256:".length)}.json`
+        );
+      }
+    }
+    const payloadFiles = (await fsp.readdir(
+      layout.payloadsRootPath,
+      { withFileTypes: true }
+    )).map((entry) => entry.name).sort();
+    if (
+      !isDeepStrictEqual(
+        payloadFiles,
+        [...referencedPayloadFiles].sort()
+      )
+    ) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation Store V2 migration snapshot 含未归属 payload"
+      );
+    }
+    const deletionTombstones = await scanDeletionTombstones(layout);
+    for (const tombstone of deletionTombstones) {
+      if (conversationIds.has(tombstone.conversationId)) {
+        throw new ConversationStoreV2Error(
+          "store-corrupt",
+          "Conversation Store V2 contains both an active Conversation and its deletion tombstone"
+        );
+      }
+    }
+    return {
+      commits: commits.sort((left, right) =>
+        left.metadata.conversationId.localeCompare(
+          right.metadata.conversationId
+        )),
+      deletionTombstones
+    };
   }
 
   private async reconcileIndexInternal(
@@ -367,7 +577,7 @@ async function publishImmutableFile(
   targetPath: string,
   bytes: Buffer,
   options: {
-    kind: "payload" | "metadata";
+    kind: "payload" | "metadata" | "deletion-tombstone";
     existingIsSuccess: boolean;
   }
 ): Promise<void> {
@@ -401,9 +611,12 @@ async function publishImmutableFile(
         [1, 2]
       );
       if (!existing.equals(bytes)) {
-        if (options.kind === "metadata") {
+        if (
+          options.kind === "metadata"
+          || options.kind === "deletion-tombstone"
+        ) {
           throw new ConversationStoreV2ConflictError(
-            "Conversation Store V2 revision 已由不同 metadata 占用"
+            `Conversation Store V2 ${options.kind} identity is already occupied`
           );
         }
         throw new ConversationStoreV2Error(
@@ -765,6 +978,8 @@ async function ensureStoreLayout(rootPath: string): Promise<StoreLayout> {
   await ensurePlainDirectory(layout.rootPath);
   await ensurePlainDirectory(layout.conversationsRootPath);
   await ensurePlainDirectory(layout.payloadsRootPath);
+  await ensurePlainDirectory(layout.deletionsRootPath);
+  await ensurePlainDirectory(layout.migrationConflictsRootPath);
   await ensurePlainDirectory(layout.stagingRootPath);
   await syncDirectory(layout.rootPath);
   return layout;
@@ -776,6 +991,11 @@ function storeLayout(rootPath: string): StoreLayout {
     rootPath: resolved,
     conversationsRootPath: path.join(resolved, CONVERSATIONS_DIRECTORY),
     payloadsRootPath: path.join(resolved, PAYLOADS_DIRECTORY),
+    deletionsRootPath: path.join(resolved, DELETIONS_DIRECTORY),
+    migrationConflictsRootPath: path.join(
+      resolved,
+      MIGRATION_CONFLICTS_DIRECTORY
+    ),
     stagingRootPath: path.join(resolved, STAGING_DIRECTORY),
     indexPath: path.join(resolved, INDEX_FILE)
   };
@@ -829,6 +1049,11 @@ async function assertStoreNamespacesSafe(layout: StoreLayout): Promise<void> {
   for (const [directoryPath, label] of [
     [layout.conversationsRootPath, "Conversation Store V2 conversations"],
     [layout.payloadsRootPath, "Conversation Store V2 payloads"],
+    [layout.deletionsRootPath, "Conversation Store V2 deletions"],
+    [
+      layout.migrationConflictsRootPath,
+      "Conversation Store V2 migration conflicts"
+    ],
     [layout.stagingRootPath, "Conversation Store V2 staging"]
   ] as const) {
     const stat = await fsp.lstat(directoryPath);
@@ -838,6 +1063,8 @@ async function assertStoreNamespacesSafe(layout: StoreLayout): Promise<void> {
   const allowedRootEntries = new Set([
     CONVERSATIONS_DIRECTORY,
     PAYLOADS_DIRECTORY,
+    DELETIONS_DIRECTORY,
+    MIGRATION_CONFLICTS_DIRECTORY,
     STAGING_DIRECTORY,
     INDEX_FILE
   ]);
@@ -878,6 +1105,116 @@ async function assertStoreNamespacesSafe(layout: StoreLayout): Promise<void> {
       );
     }
   }
+  const deletionEntries = await fsp.readdir(
+    layout.deletionsRootPath,
+    { withFileTypes: true }
+  );
+  for (const entry of deletionEntries) {
+    if (
+      !DELETION_FILE_PATTERN.test(entry.name)
+      || !entry.isFile()
+      || entry.isSymbolicLink()
+    ) {
+      throw new ConversationStoreV2Error(
+        "unsafe-entry",
+        `Conversation Store V2 deletions contains unknown/unsafe entry: ${entry.name}`
+      );
+    }
+  }
+}
+
+function deletionTombstonePath(
+  layout: StoreLayout,
+  conversationId: string
+): string {
+  return path.join(
+    layout.deletionsRootPath,
+    `${conversationToken(conversationId)}.json`
+  );
+}
+
+async function readDeletionTombstoneFromLayout(
+  layout: StoreLayout,
+  conversationId: string
+): Promise<ConversationDeletionTombstoneV1 | null> {
+  const absolutePath = deletionTombstonePath(layout, conversationId);
+  if (!await lstatOrNull(absolutePath)) return null;
+  let parsed: ConversationDeletionTombstoneV1;
+  try {
+    parsed = parseConversationDeletionTombstone(
+      await readJsonFileSafely(
+        absolutePath,
+        "Conversation Store V2 deletion tombstone",
+        [1, 2]
+      )
+    );
+  } catch (error) {
+    if (error instanceof ConversationStoreV2Error) throw error;
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      `Conversation Store V2 deletion tombstone is invalid: ${errorMessage(error)}`
+    );
+  }
+  if (parsed.conversationId !== conversationId) {
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      "Conversation Store V2 deletion tombstone identity mismatch"
+    );
+  }
+  return parsed;
+}
+
+async function scanDeletionTombstones(
+  layout: StoreLayout
+): Promise<ConversationDeletionTombstoneV1[]> {
+  const entries = await fsp.readdir(
+    layout.deletionsRootPath,
+    { withFileTypes: true }
+  );
+  const output: ConversationDeletionTombstoneV1[] = [];
+  const conversationIds = new Set<string>();
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name))) {
+    if (
+      !DELETION_FILE_PATTERN.test(entry.name)
+      || !entry.isFile()
+      || entry.isSymbolicLink()
+    ) {
+      throw new ConversationStoreV2Error(
+        "unsafe-entry",
+        `Conversation Store V2 deletions contains unknown/unsafe entry: ${entry.name}`
+      );
+    }
+    let tombstone: ConversationDeletionTombstoneV1;
+    try {
+      tombstone = parseConversationDeletionTombstone(
+        await readJsonFileSafely(
+          path.join(layout.deletionsRootPath, entry.name),
+          "Conversation Store V2 deletion tombstone",
+          [1, 2]
+        )
+      );
+    } catch (error) {
+      if (error instanceof ConversationStoreV2Error) throw error;
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        `Conversation Store V2 deletion tombstone is invalid: ${errorMessage(error)}`
+      );
+    }
+    if (
+      entry.name !== `${conversationToken(tombstone.conversationId)}.json`
+      || conversationIds.has(tombstone.conversationId)
+    ) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation Store V2 deletion tombstone namespace conflict"
+      );
+    }
+    conversationIds.add(tombstone.conversationId);
+    output.push(tombstone);
+  }
+  return output.sort((left, right) =>
+    left.conversationId.localeCompare(right.conversationId));
 }
 
 async function assertConversationDirectorySafe(
@@ -1335,4 +1672,28 @@ async function lstatOrNull(absolutePath: string): Promise<Stats | null> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function enqueueConversationStoreV2Mutation<T>(
+  rootPath: string,
+  conversationId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const key = `${path.resolve(rootPath)}\0${conversationId}`;
+  const previous = conversationMutationTails.get(key) ?? Promise.resolve();
+  const result = previous
+    .catch(() => undefined)
+    .then(operation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined
+  );
+  conversationMutationTails.set(key, tail);
+  try {
+    return await result;
+  } finally {
+    if (conversationMutationTails.get(key) === tail) {
+      conversationMutationTails.delete(key);
+    }
+  }
 }

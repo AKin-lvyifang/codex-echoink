@@ -20,6 +20,10 @@ import {
   createConversationPayloadKeyV2
 } from "../../harness/conversation/conversation-store";
 import {
+  createConversationProductMessageRevision
+} from "../../harness/lifecycle/conversation-migration-projection";
+import type { ChatMessage } from "../../settings/settings";
+import {
   canonicalRunRecordDigest
 } from "../../harness/contracts/run-record";
 import {
@@ -750,10 +754,10 @@ Promise<void> {
       historyV2Reference("knowledge-session", linked),
       {
         ...historyV2Reference("knowledge-session", drifted),
-        messageRevision: stableFixtureRevision({
+        messageRevision: createConversationProductMessageRevision({
           ...drifted,
           text: "same ID, different canonical body"
-        })
+        } as unknown as ChatMessage)
       },
       historyV2Reference(
         "knowledge-session",
@@ -3369,7 +3373,9 @@ function historyV2Reference(
     kind: "conversation-message",
     conversationId,
     messageId: messageValue.id,
-    messageRevision: stableFixtureRevision(messageValue)
+    messageRevision: createConversationProductMessageRevision(
+      messageValue as unknown as ChatMessage
+    )
   };
 }
 
@@ -3730,4 +3736,11 @@ async function writeJsonl(filePath: string, rows: unknown[]): Promise<void> {
 function isWithin(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+if (process.env.ECHOINK_RUN_STORAGE_INVENTORY_TEST === "1") {
+  runHarnessV2StorageInventoryTests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

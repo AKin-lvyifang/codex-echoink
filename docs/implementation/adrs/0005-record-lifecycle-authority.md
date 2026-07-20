@@ -245,14 +245,19 @@ been restored exactly and every registered retirement is already aborted.
 
 Knowledge History is a reference-only dated projection of canonical
 Conversation messages. A V2 day row contains only the Conversation/message
-identity, the exact message revision, and an optional Harness run reference;
-it never owns copied text, Raw, or backend bindings. A complete immutable
+identity and the exact product message revision; Harness run ownership remains
+in Run Record rather than being copied into History. It never owns copied text,
+Raw, or backend bindings. A complete immutable
 generation is validated against a stable Conversation source before the
 active pointer changes. Explicit History deletion is a suppression projection,
 so ordinary rebuilds cannot revive deleted references. Populated V1 History
 requires a separately authorized, side-by-side migration; startup,
 ordinary persistence, rebuild, deletion, and retention cannot perform the
 first cutover implicitly, and V1 bytes remain a preserved recovery source.
+The first cutover validates the actual V1 rows against the staged V2
+generation; it cannot substitute the canonical Conversation inventory for the
+legacy source ledger. Same-identity content conflicts are published only as
+opaque, metadata-only quarantine records.
 
 Raw GC starts with a metadata-only global owner preview. The owner mark spans
 every canonical Conversation message and every retained Run payload; Memory

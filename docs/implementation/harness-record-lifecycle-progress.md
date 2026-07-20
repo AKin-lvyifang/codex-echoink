@@ -12,10 +12,11 @@ Conversation clear/delete 路径，并以 `3b1ca7f` 提交 reference-only Knowle
 History V2 与对应 Storage Inventory 扫描；`f1b4caf` 又提交 metadata-only Raw
 GC preview。`48264d6` 已提交跨 Store Run Record retention 的逻辑过期、稳定
 恢复证据和可重放 Journal，`03201f0` 又完成 payload generation 的可恢复物理退休
-与生产启动恢复。本轮继续接通 Raw quarantine、七天隔离、第二次完整 owner scan
-与可恢复永久 purge；自动创建新 retention sweep 或 Raw GC transaction 仍未接入
-维护调度。全量 V1→V2 reader cutover、migration validator、V2→V1 exporter 和
-真实迁移仍未完成。
+与生产启动恢复，`b82df37` 完成 Raw quarantine、七天隔离、第二次完整 owner scan
+与可恢复永久 purge。本批正在提交 Migration Validator、Conversation V2 deletion
+tombstone authority、History 首次迁移完整对账和 active V2 reader；自动创建新
+retention sweep 或 Raw GC transaction 仍未接入维护调度。V2→V1 exporter、真实
+迁移和全量生产 writer cutover 仍未完成。
 
 第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
 registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
@@ -156,9 +157,11 @@ authority 也按 fail closed 处理。
 - Knowledge History V2 / Inventory checkpoint：`3b1ca7f`
 - Raw GC preview checkpoint：`f1b4caf`
 - Run Record retention checkpoint：`48264d6`
-- 下一批次：payload generation 可恢复 Trash retirement、retention Journal
-  启动恢复与 Storage Inventory、Raw quarantine/二次稳定扫描、migration
-  validator 与 V2→V1 exporter
+- Run payload retirement checkpoint：`03201f0`
+- Raw quarantine / permanent purge checkpoint：`b82df37`
+- 当前批次：Migration Validator、Conversation V2 deletion authority 与
+  History validated cutover
+- 下一批次：V2→V1 exporter、reverse export/restore 演练与剩余 owner Store proof
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -177,7 +180,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5` 至本轮 Raw quarantine checkpoint；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan 与既有 transaction 启动恢复 | migration validator、V2→V1 exporter、真实 dry-run 与自动调度授权 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5` 至 `b82df37`，以及本批 Migration Validator；live clear/delete、History V2、Run payload 可恢复物理退休、Raw 七天隔离/二次 owner scan 与既有 transaction 启动恢复 | V2→V1 exporter、真实 owner Store proof、真实 dry-run 与自动调度授权 |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -309,10 +312,9 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 完成并提交 Raw quarantine、七天隔离、第二次完整稳定 owner scan、永久 purge
-   与 Storage Inventory V3 checkpoint。
-2. 实现 migration validator 与 V2 → V1 exporter，并在 fixture/副本上完成
-   reverse export/restore 演练。
+1. 完成本批 Migration Validator 全量门禁并形成 checkpoint。
+2. 实现 V2 → V1 exporter，并在 fixture/副本上完成 reverse export/restore
+   演练；同时把 Native、Run 与 settings 外部 owner 对账接到真实 Store proof。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
    历史删除、retention、Raw GC 或批量 Native cleanup。
 
@@ -820,3 +822,43 @@ finalization 与 purge evidence 计数，不泄露 transaction ID、rawRef、文
 
 本轮仍未对真实 Vault 创建 GC transaction、移动或删除 Raw，也未部署、迁移或执行
 Native 批量 cleanup。Phase 2 下一步是 migration validator 与 V2→V1 exporter。
+
+## Migration Validator、Deletion authority 与 History validated cutover（本轮）
+
+本批新增完整 Migration Validator。Conversation、message、snapshot、deletion
+tombstone 与 History reference 都进入稳定 subject ledger；Raw、Native、Run、
+settings projection 与 History source 进入 owner ledger。Validator 精确比较
+identity、parent、ordinal、revision、content digest 和 owner edge，只输出
+SHA-256 opaque ref。同 identity 不同 revision/body 会生成 metadata-only conflict
+quarantine；ready 结果只返回当前进程生成的不可序列化 trusted proof，伪造或重启
+后的对象不能授权 manifest cutover。
+
+V1/V2 Conversation Store 都增加严格只读 migration snapshot：Store 缺失时不
+初始化，index、payload、metadata chain、staging、未知 entry 或扫描漂移都 fail
+closed。side-by-side copier 只创建缺失 Conversation；完全相同项幂等复用，同 ID
+冲突不覆盖目标，并默认把 quarantine 耐久写入 V2 namespace。legacy session 或
+message 出现未知字段时直接阻断，不能静默丢弃新字段。
+
+Deletion tombstone 已成为 Conversation V2 Store 的正式 immutable authority。
+copier 会分别统计 created/reused/conflicting tombstone；active Conversation 与同 ID
+tombstone 不允许共存。Migration Validator 只接受从目标 V2 Store 严格快照读回的
+tombstone，不再接受调用方临时传入的“目标已删除”声明。
+
+Knowledge History 首次 V1→V2 cutover 改为读取真实 V1 index/day rows，并与 staged
+V2 generation 完整对账。首轮强制零 retention、零 suppression，只迁移 V1 当前
+投影，不能把 canonical Conversation 全量清单冒充 V1 source ledger。同 ID 不同
+正文会在 active publish 前阻断并持久化 opaque quarantine。History V2 reference
+不再复制 legacy Harness `runId`；message revision 使用跨 V1/V2 稳定的 product
+revision。History reader/rebuild 会按 Conversation Store active manifest 选择 V1
+或 V2，active-fence 已发布但 manifest entry 尚未落盘时继续读 V1，恢复后才切 V2。
+
+当前验证已通过 `npm run test`（`All tests passed`，128.0 秒）、`npm run
+typecheck`、`npm run build`、`npm run lint`、`npm run check:release`、四组
+Migration/Conversation/History/Inventory focused suites 与 `git diff --check`。
+完整 lint 保持 942 个 baseline finding，无新增；public guard 在明确暂存本批文件
+后执行。
+
+真实 Vault 仍保持 `blocked`。Native、Run 与 settings external owner 目前只有完整
+ledger 合同，尚未全部接入真实 Store proof；Conversation V2 全量生产 writer
+cutover、V2→V1 exporter、reverse restore 演练、自动 retention/Raw GC 调度和真实
+迁移都不属于本批已完成范围。

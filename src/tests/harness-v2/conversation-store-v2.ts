@@ -28,7 +28,11 @@ import {
   type SnapshotV2
 } from "../../harness/contracts/conversation-v2";
 import {
+  createConversationDeletionTombstone
+} from "../../harness/conversation/conversation-store";
+import {
   FileConversationStoreV2,
+  ConversationStoreV2Error,
   ConversationStoreV2ConflictError,
   ConversationStoreV2SimulatedCrash,
   conversationStoreV2Root,
@@ -48,10 +52,25 @@ import {
   projectConversationShellV2,
   validateConversationShellV2
 } from "../../harness/conversation/conversation-shell";
+import {
+  finalizeRecordMigrationInventory,
+  validateRecordMigration,
+  type RecordMigrationValidationProof
+} from "../../harness/lifecycle/record-migration-validator";
 
 const BASE_TIME = 1_721_260_800_000;
-const SOURCE_FINGERPRINT = `sha256:${"1".repeat(64)}`;
-const TARGET_FINGERPRINT = `sha256:${"2".repeat(64)}`;
+const SOURCE_INVENTORY = finalizeRecordMigrationInventory({
+  domain: "conversation",
+  storeVersion: "v1",
+  subjects: []
+});
+const TARGET_INVENTORY = finalizeRecordMigrationInventory({
+  domain: "conversation",
+  storeVersion: "v2",
+  subjects: []
+});
+const SOURCE_FINGERPRINT = SOURCE_INVENTORY.fingerprint;
+const TARGET_FINGERPRINT = TARGET_INVENTORY.fingerprint;
 const WORKSPACE_FINGERPRINT = `sha256:${"4".repeat(64)}`;
 
 export async function runHarnessV2ConversationStoreV2Tests(): Promise<void> {
@@ -60,9 +79,11 @@ export async function runHarnessV2ConversationStoreV2Tests(): Promise<void> {
   assertSnapshotMustExactlyDescribeCurrentContext();
   assertConversationShellUsesAnExplicitAllowlist();
   await assertManifestDefaultsToV1AndRequiresOrderedCutover();
+  await assertManifestActiveCutoverRecoversAfterFenceCrash();
   await assertManifestCasAllowsOnlyOneSameRevisionWinner();
   await assertManifestChainFailsClosedOnFutureAndUnknownEntries();
   await assertContentAddressedCommitAndIndexRoundTrip();
+  await assertMigrationSnapshotIsStrictlyReadOnly();
   await assertConversationStoreRejectsMessageRewriteAndTailTruncation();
   await assertConversationStoreCrashWindows();
   await assertConversationStoreCasAllowsOnlyOneSameRevisionWinner();
@@ -411,9 +432,18 @@ async function assertManifestDefaultsToV1AndRequiresOrderedCutover(): Promise<vo
     )
   );
 
+  const trustedProof = manifestValidationProof();
+  assert.throws(
+    () => advanceConversationStoreManifestToValidated(copying, {
+      commitId: "manifest-forged-validation",
+      proof: { report: trustedProof.report },
+      updatedAt: BASE_TIME + 1
+    }),
+    /not trusted/
+  );
   const validated = advanceConversationStoreManifestToValidated(copying, {
     commitId: "manifest-validated",
-    targetFingerprint: TARGET_FINGERPRINT,
+    proof: trustedProof,
     updatedAt: BASE_TIME + 1
   });
   await manifestStore.compareAndSwap(validated, {
@@ -464,12 +494,12 @@ async function assertManifestDefaultsToV1AndRequiresOrderedCutover(): Promise<vo
     conversationStoreManifestRoot(storageRootPath),
     "entry-0000000000000002.json"
   ));
-  await assert.rejects(
-    () => resolveConversationStoreSelection(storageRootPath),
-    (error: unknown) => (
-      error instanceof ConversationStoreManifestError
-      && error.code === "corrupt-chain"
-    )
+  const recoverable = await resolveConversationStoreSelection(storageRootPath);
+  assert.equal(recoverable.activeStore, "v1");
+  assert.equal(recoverable.reason, "active-cutover-pending");
+  assert.equal(
+    (await manifestStore.recoverPendingActiveCutover())?.digest,
+    active.digest
   );
 
 }
@@ -488,12 +518,12 @@ async function assertManifestCasAllowsOnlyOneSameRevisionWinner(): Promise<void>
   });
   const left = advanceConversationStoreManifestToValidated(copying, {
     commitId: "validated-left",
-    targetFingerprint: TARGET_FINGERPRINT,
+    proof: manifestValidationProof(),
     updatedAt: BASE_TIME + 1
   });
   const right = advanceConversationStoreManifestToValidated(copying, {
     commitId: "validated-right",
-    targetFingerprint: `sha256:${"3".repeat(64)}`,
+    proof: manifestValidationProof(),
     updatedAt: BASE_TIME + 1
   });
   const results = await Promise.allSettled([
@@ -513,6 +543,66 @@ async function assertManifestCasAllowsOnlyOneSameRevisionWinner(): Promise<void>
   assert.ok(
     current.commitId === left.commitId || current.commitId === right.commitId
   );
+}
+
+async function assertManifestActiveCutoverRecoversAfterFenceCrash():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-manifest-active-recovery-")
+  );
+  const proof = manifestValidationProof();
+  const setup = new FileConversationStoreManifest({ storageRootPath });
+  const copying = createCopyingConversationStoreManifest({
+    commitId: "active-recovery-copying",
+    sourceFingerprint: SOURCE_FINGERPRINT,
+    createdAt: BASE_TIME
+  });
+  await setup.compareAndSwap(copying, {
+    expectedRevision: null,
+    expectedCommitId: null
+  });
+  const validated = advanceConversationStoreManifestToValidated(copying, {
+    commitId: "active-recovery-validated",
+    proof,
+    updatedAt: BASE_TIME + 1
+  });
+  await setup.compareAndSwap(validated, {
+    expectedRevision: copying.revision,
+    expectedCommitId: copying.commitId
+  });
+  const active = advanceConversationStoreManifestToActive(validated, {
+    commitId: "active-recovery-active",
+    activatedAt: BASE_TIME + 2
+  });
+
+  let crashed = false;
+  const crashing = new FileConversationStoreManifest({
+    storageRootPath,
+    faultInjector(point) {
+      if (point === "after-active-fence" && !crashed) {
+        crashed = true;
+        throw new Error("simulated crash after active fence");
+      }
+    }
+  });
+  await assert.rejects(
+    () => crashing.compareAndSwap(active, {
+      expectedRevision: validated.revision,
+      expectedCommitId: validated.commitId
+    }),
+    /simulated crash/
+  );
+  const pending = await resolveConversationStoreSelection(storageRootPath);
+  assert.equal(pending.activeStore, "v1");
+  assert.equal(pending.reason, "active-cutover-pending");
+  assert.equal(pending.manifest?.migrationState, "validated");
+
+  const recovered = await setup.recoverPendingActiveCutover();
+  assert.equal(recovered?.digest, active.digest);
+  const selected = await resolveConversationStoreSelection(storageRootPath);
+  assert.equal(selected.activeStore, "v2");
+  assert.equal(selected.reason, "manifest-active");
+  assert.deepEqual(await setup.recoverPendingActiveCutover(), recovered);
 }
 
 async function assertManifestChainFailsClosedOnFutureAndUnknownEntries(): Promise<void> {
@@ -608,6 +698,131 @@ async function assertContentAddressedCommitAndIndexRoundTrip(): Promise<void> {
     (await readdir(path.join(conversationStoreV2Root(storageRootPath), "payloads"))).length,
     1,
     "a metadata-only rename must reuse the same immutable content-addressed payload"
+  );
+}
+
+async function assertMigrationSnapshotIsStrictlyReadOnly(): Promise<void> {
+  const absentRoot = await mkdtemp(
+    path.join(tmpdir(), "echoink-v2-readonly-absent-")
+  );
+  const absentStore = new FileConversationStoreV2({
+    rootPath: path.join(absentRoot, "does-not-exist")
+  });
+  assert.deepEqual(await absentStore.inspectMigrationSnapshot(), {
+    commits: [],
+    deletionTombstones: []
+  });
+  assert.equal(
+    (await readdir(absentRoot)).includes("does-not-exist"),
+    false,
+    "read-only migration inspection must not initialize an absent root"
+  );
+
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-v2-readonly-")
+  );
+  const store = new FileConversationStoreV2({ storageRootPath });
+  const commit = conversationCommit();
+  await store.commitConversation(commit, {
+    expectedRevision: null,
+    expectedCommitId: null
+  });
+  const tombstone = createConversationDeletionTombstone({
+    conversationId: "deleted-conversation-v2",
+    mutationId: "deleted-conversation-v2-mutation",
+    tombstoneId: "deleted-conversation-v2-tombstone",
+    sourceGeneration: 1,
+    sourceCommitId: "deleted-conversation-v2-commit",
+    sourceContentRevision:
+      `sha256:${"8".repeat(64)}`,
+    deletedAt: BASE_TIME + 10
+  });
+  assert.deepEqual(
+    await store.commitDeletionTombstone(tombstone),
+    tombstone
+  );
+  assert.deepEqual(
+    await store.commitDeletionTombstone(tombstone),
+    tombstone,
+    "replaying the exact tombstone must be idempotent"
+  );
+  assert.deepEqual(
+    await store.readDeletionTombstone(tombstone.conversationId),
+    tombstone
+  );
+  assert.deepEqual(await store.inspectMigrationSnapshot(), {
+    commits: [commit],
+    deletionTombstones: [tombstone]
+  });
+  await assert.rejects(
+    () => store.commitDeletionTombstone(
+      createConversationDeletionTombstone({
+        conversationId: commit.metadata.conversationId,
+        mutationId: "conflicting-live-mutation",
+        tombstoneId: "conflicting-live-tombstone",
+        sourceGeneration: 1,
+        sourceCommitId: "conflicting-live-commit",
+        sourceContentRevision:
+          `sha256:${"9".repeat(64)}`,
+        deletedAt: BASE_TIME + 11
+      })
+    ),
+    ConversationStoreV2ConflictError
+  );
+
+  const raceRoot = await mkdtemp(
+    path.join(tmpdir(), "echoink-v2-conversation-tombstone-race-")
+  );
+  const raceStore = new FileConversationStoreV2({
+    storageRootPath: raceRoot
+  });
+  const raceConversation = conversationCommit({
+    conversationId: "conversation-tombstone-race"
+  });
+  const raceTombstone = createConversationDeletionTombstone({
+    conversationId: raceConversation.metadata.conversationId,
+    mutationId: "conversation-tombstone-race-mutation",
+    tombstoneId: "conversation-tombstone-race-tombstone",
+    sourceGeneration: 1,
+    sourceCommitId: "conversation-tombstone-race-source",
+    sourceContentRevision: `sha256:${"7".repeat(64)}`,
+    deletedAt: BASE_TIME + 12
+  });
+  const raceResults = await Promise.allSettled([
+    raceStore.commitConversation(raceConversation, {
+      expectedRevision: null,
+      expectedCommitId: null
+    }),
+    raceStore.commitDeletionTombstone(raceTombstone)
+  ]);
+  assert.equal(
+    raceResults.filter((result) => result.status === "fulfilled").length,
+    1,
+    "an active Conversation and its tombstone must have exactly one winner"
+  );
+  assert.ok(
+    raceResults.find((result) => result.status === "rejected")
+      ?.reason instanceof ConversationStoreV2ConflictError
+  );
+  const raceSnapshot = await raceStore.inspectMigrationSnapshot();
+  assert.equal(
+    raceSnapshot.commits.length
+      + raceSnapshot.deletionTombstones.length,
+    1
+  );
+
+  const root = conversationStoreV2Root(storageRootPath);
+  const indexPath = path.join(root, "index.json");
+  await writeFile(indexPath, "{}\n", "utf8");
+  const corruptIndexBytes = await readFile(indexPath, "utf8");
+  await assert.rejects(
+    () => store.inspectMigrationSnapshot(),
+    ConversationStoreV2Error
+  );
+  assert.equal(
+    await readFile(indexPath, "utf8"),
+    corruptIndexBytes,
+    "migration inspection must not repair a corrupt index"
   );
 }
 
@@ -951,11 +1166,13 @@ async function crashFixture(point: ConversationStoreV2FaultPoint): Promise<{
 }
 
 function conversationCommit(options: {
+  conversationId?: string;
   revision?: number;
   commitId?: string;
   title?: string;
   previousMetadata?: ConversationMetadataV2;
 } = {}): ConversationCommitV2 {
+  const conversationId = options.conversationId ?? "conversation-v2";
   const messages = [
     {
       ...message("message-a", "context-a", 1),
@@ -965,7 +1182,7 @@ function conversationCommit(options: {
     message("message-b", "context-b", 2)
   ];
   return finalizeConversationCommitV2({
-    conversationId: "conversation-v2",
+    conversationId,
     revision: options.revision ?? 0,
     commitId: options.commitId ?? "commit-v2",
     previousMetadata: options.previousMetadata,
@@ -973,10 +1190,20 @@ function conversationCommit(options: {
     kind: "chat",
     currentContext: currentContext("context-b", 2),
     messages,
-    snapshot: snapshot("context-b", ["message-b"], 2),
+    snapshot: snapshot("context-b", ["message-b"], 2, conversationId),
     createdAt: BASE_TIME,
     updatedAt: BASE_TIME + 2 + (options.revision ?? 0)
   });
+}
+
+function manifestValidationProof(): RecordMigrationValidationProof {
+  const result = validateRecordMigration(
+    SOURCE_INVENTORY,
+    TARGET_INVENTORY
+  );
+  assert.equal(result.report.status, "ready");
+  assert.ok(result.proof);
+  return result.proof;
 }
 
 function presentation(): Presentation {
@@ -1012,12 +1239,13 @@ function message(id: string, contextId: string, offset: number): MessageV2 {
 function snapshot(
   contextId: string,
   messageIds: string[],
-  contextGeneration: number
+  contextGeneration: number,
+  conversationId = "conversation-v2"
 ): SnapshotV2 {
   return {
     schemaVersion: 2,
     recordType: "conversation-snapshot",
-    conversationId: "conversation-v2",
+    conversationId,
     contextId,
     contextGeneration,
     version: `snapshot-${contextId}`,
@@ -1074,4 +1302,11 @@ function withoutKey<T extends object>(
   const clone = { ...value } as Record<string, unknown>;
   delete clone[key];
   return clone;
+}
+
+if (process.env.ECHOINK_RUN_CONVERSATION_STORE_V2_TEST === "1") {
+  runHarnessV2ConversationStoreV2Tests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

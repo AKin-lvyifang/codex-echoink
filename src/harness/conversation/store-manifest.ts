@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, type Stats } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import {
+  assertRecordMigrationValidationProof,
+  type RecordMigrationValidationProof
+} from "../lifecycle/record-migration-validator";
 
 const MANIFEST_SCHEMA_VERSION = 1 as const;
 const MANIFEST_DIRECTORY = "conversation-store-manifest";
@@ -48,7 +52,11 @@ export interface ConversationStoreManifestCasExpectation {
 
 export interface ConversationStoreSelection {
   activeStore: "v1" | "v2";
-  reason: "manifest-absent" | "migration-incomplete" | "manifest-active";
+  reason:
+    | "manifest-absent"
+    | "migration-incomplete"
+    | "active-cutover-pending"
+    | "manifest-active";
   manifest: ConversationStoreManifest | null;
 }
 
@@ -77,6 +85,10 @@ export class ConversationStoreManifestError extends Error {
 
 export interface FileConversationStoreManifestOptions {
   storageRootPath: string;
+  faultInjector?: (
+    point: "after-active-fence",
+    manifest: ConversationStoreManifest
+  ) => void | Promise<void>;
 }
 
 export function conversationStoreManifestRoot(
@@ -120,7 +132,7 @@ export function advanceConversationStoreManifestToValidated(
   current: ConversationStoreManifest,
   input: {
     commitId: string;
-    targetFingerprint: string;
+    proof: RecordMigrationValidationProof;
     updatedAt: number;
   }
 ): ConversationStoreManifest {
@@ -131,11 +143,16 @@ export function advanceConversationStoreManifestToValidated(
       "Conversation Store manifest 只能从 copying 进入 validated"
     );
   }
+  assertRecordMigrationValidationProof(input.proof, {
+    domain: "conversation",
+    sourceFingerprint: current.sourceFingerprint,
+    targetFingerprint: input.proof.report.targetFingerprint
+  });
   return finalizeManifest({
     ...manifestWithoutDigest(current),
     migrationState: "validated",
     activeStore: "v1",
-    targetFingerprint: input.targetFingerprint,
+    targetFingerprint: input.proof.report.targetFingerprint,
     revision: current.revision + 1,
     commitId: input.commitId,
     previousRevision: current.revision,
@@ -243,6 +260,9 @@ export class FileConversationStoreManifest {
   readonly manifestRootPath: string;
   readonly stagingRootPath: string;
   readonly activeFencePath: string;
+  private readonly faultInjector:
+    | FileConversationStoreManifestOptions["faultInjector"]
+    | undefined;
 
   constructor(options: FileConversationStoreManifestOptions) {
     this.storageRootPath = path.resolve(options.storageRootPath);
@@ -252,10 +272,15 @@ export class FileConversationStoreManifest {
       MANIFEST_STAGING_DIRECTORY
     );
     this.activeFencePath = path.join(this.storageRootPath, ACTIVE_FENCE_FILE);
+    this.faultInjector = options.faultInjector;
   }
 
   async read(): Promise<ConversationStoreManifest | null> {
-    return await readManifestChain(this.manifestRootPath, this.activeFencePath);
+    return await readManifestChain(
+      this.manifestRootPath,
+      this.activeFencePath,
+      true
+    );
   }
 
   async readManifest(): Promise<ConversationStoreManifest | null> {
@@ -277,6 +302,7 @@ export class FileConversationStoreManifest {
     assertManifestTransition(current, candidate);
     if (candidate.migrationState === "active") {
       await publishActiveFence(this, candidate);
+      await this.faultInjector?.("after-active-fence", candidate);
     }
 
     const stagedPath = path.join(
@@ -332,19 +358,68 @@ export class FileConversationStoreManifest {
       throw error;
     }
   }
+
+  async readPendingActiveCutover():
+  Promise<ConversationStoreManifest | null> {
+    const current = await readManifestChain(
+      this.manifestRootPath,
+      this.activeFencePath,
+      true
+    );
+    const fence = await readActiveFenceOrNull(this.activeFencePath);
+    if (!fence || current?.migrationState === "active") return null;
+    if (!current || current.migrationState !== "validated") {
+      throw manifestError(
+        "corrupt-chain",
+        "active fence 缺少 validated predecessor"
+      );
+    }
+    assertManifestTransition(current, fence.manifest);
+    return fence.manifest;
+  }
+
+  async recoverPendingActiveCutover():
+  Promise<ConversationStoreManifest | null> {
+    const pending = await this.readPendingActiveCutover();
+    if (!pending) return await this.read();
+    const current = await readManifestChain(
+      this.manifestRootPath,
+      this.activeFencePath,
+      true
+    );
+    if (!current || current.migrationState !== "validated") {
+      throw manifestError(
+        "corrupt-chain",
+        "active cutover recovery 缺少 validated predecessor"
+      );
+    }
+    return await this.compareAndSwap(pending, {
+      expectedRevision: current.revision,
+      expectedCommitId: current.commitId
+    });
+  }
 }
 
 export async function resolveConversationStoreSelection(
   storageRootPath: string
 ): Promise<ConversationStoreSelection> {
-  const manifest = await new FileConversationStoreManifest({
+  const store = new FileConversationStoreManifest({
     storageRootPath
-  }).read();
+  });
+  const manifest = await store.read();
   if (!manifest) {
     return {
       activeStore: "v1",
       reason: "manifest-absent",
       manifest: null
+    };
+  }
+  const pendingActive = await store.readPendingActiveCutover();
+  if (pendingActive) {
+    return {
+      activeStore: "v1",
+      reason: "active-cutover-pending",
+      manifest
     };
   }
   if (manifest.migrationState !== "active") {
@@ -425,12 +500,21 @@ async function readManifestChain(
   }
   if (activeFence) {
     const matchesCurrent = current?.migrationState === "active"
-      && activeFence.revision === current.revision
-      && activeFence.commitId === current.commitId
-      && activeFence.manifestDigest === current.digest;
-    const isPending = allowPendingActiveFence
+      && activeFence.manifest.revision === current.revision
+      && activeFence.manifest.commitId === current.commitId
+      && activeFence.manifest.digest === current.digest;
+    let isPending = false;
+    if (
+      allowPendingActiveFence
       && current?.migrationState === "validated"
-      && activeFence.revision === current.revision + 1;
+    ) {
+      try {
+        assertManifestTransition(current, activeFence.manifest);
+        isPending = true;
+      } catch {
+        isPending = false;
+      }
+    }
     if (!matchesCurrent && !isPending) {
       throw manifestError("corrupt-chain", "active fence 与 manifest chain 不一致");
     }
@@ -441,11 +525,9 @@ async function readManifestChain(
 }
 
 interface ConversationStoreActiveFence {
-  schemaVersion: 1;
+  schemaVersion: 2;
   recordType: "conversation-store-active-fence";
-  revision: number;
-  commitId: string;
-  manifestDigest: string;
+  manifest: ConversationStoreManifest;
 }
 
 async function publishActiveFence(
@@ -453,11 +535,9 @@ async function publishActiveFence(
   manifest: ConversationStoreManifest
 ): Promise<void> {
   const fence: ConversationStoreActiveFence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     recordType: "conversation-store-active-fence",
-    revision: manifest.revision,
-    commitId: manifest.commitId,
-    manifestDigest: manifest.digest
+    manifest
   };
   const bytes = Buffer.from(`${JSON.stringify(fence, null, 2)}\n`, "utf8");
   try {
@@ -468,9 +548,9 @@ async function publishActiveFence(
     const existing = await readActiveFenceOrNull(store.activeFencePath);
     if (
       !existing
-      || existing.revision !== fence.revision
-      || existing.commitId !== fence.commitId
-      || existing.manifestDigest !== fence.manifestDigest
+      || existing.manifest.revision !== fence.manifest.revision
+      || existing.manifest.commitId !== fence.manifest.commitId
+      || existing.manifest.digest !== fence.manifest.digest
     ) {
       throw manifestError("revision-conflict", "active fence 已由另一个 cutover winner 占用");
     }
@@ -488,21 +568,29 @@ async function readActiveFenceOrNull(
   assertExactKeys(record, [
     "schemaVersion",
     "recordType",
-    "revision",
-    "commitId",
-    "manifestDigest"
+    "manifest"
   ], "Conversation Store active fence");
   if (
-    record.schemaVersion !== 1
+    record.schemaVersion !== 2
     || record.recordType !== "conversation-store-active-fence"
-    || !Number.isSafeInteger(record.revision)
-    || (record.revision as number) < 0
   ) {
     throw manifestError("corrupt-chain", "Conversation Store active fence 非法");
   }
-  requireIdentifier(record.commitId, "active fence commitId");
-  requireDigest(record.manifestDigest, "active fence manifestDigest");
-  return record as unknown as ConversationStoreActiveFence;
+  const manifest = validateConversationStoreManifest(record.manifest);
+  if (
+    manifest.migrationState !== "active"
+    || manifest.activeStore !== "v2"
+  ) {
+    throw manifestError(
+      "corrupt-chain",
+      "Conversation Store active fence 未绑定 active manifest"
+    );
+  }
+  return {
+    schemaVersion: 2,
+    recordType: "conversation-store-active-fence",
+    manifest
+  };
 }
 
 function assertManifestTransition(
