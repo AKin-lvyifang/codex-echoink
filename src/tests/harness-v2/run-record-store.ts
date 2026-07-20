@@ -19,6 +19,7 @@ import {
   finalizeRetentionTombstone,
   finalizeWorkflowRunSummary,
   previewRunRecordRetention,
+  runRecordSubjectDigest,
   safeRunRecordToken,
   validateAttemptPayloadManifest,
   validateAttemptRunSummary,
@@ -42,6 +43,7 @@ export async function runHarnessV2RunRecordStoreTests(): Promise<void> {
   assertStrictV1ContractsAndCanonicalDigests();
   assertSafeTokensDoNotCollapseSanitizedIds();
   assertRetentionBoundariesAndHoldsArePure();
+  await assertSummaryRetentionTombstonesAreOrderedAndRecoverable();
   await assertSummaryCasAndRoundTrip();
   await assertSummaryTransitionsAreMonotonic();
   await assertAttemptIdsAreScopedToWorkflowRuns();
@@ -54,6 +56,161 @@ export async function runHarnessV2RunRecordStoreTests(): Promise<void> {
   await assertConversationInventoryIsDeterministicAndComplete();
   await assertConversationInventoryBlocksIncompleteOwnership();
   await assertConversationInventoryRejectsUnknownStoreEntries();
+}
+
+async function assertSummaryRetentionTombstonesAreOrderedAndRecoverable():
+Promise<void> {
+  await withFixture("summary-retention", async (storageRootPath) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const workflow = workflowSummary(
+      0,
+      "workflow-summary-retention",
+      "conversation-summary-retention",
+      "attempt-summary-retention"
+    );
+    const attempt = attemptSummary(
+      0,
+      workflow.workflowRunId,
+      workflow.attemptRefs[0].attemptId,
+      "harness-summary-retention"
+    );
+    const events = payloadEvents(
+      attempt.workflowRunId,
+      attempt.attemptId,
+      attempt.harnessRunId
+    );
+    const payload = buildAttemptPayloadManifest({
+      workflowRunId: attempt.workflowRunId,
+      attemptId: attempt.attemptId,
+      harnessRunId: attempt.harnessRunId,
+      createdAt: BASE_TIME,
+      revision: 0
+    }, events);
+    await store.writeWorkflowRunSummary(workflow, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.writeAttemptRunSummary(attempt, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    await store.sealAttemptPayload(payload, events, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+
+    const attemptTombstone = summaryRetentionTombstone(
+      "attempt-summary",
+      attempt
+    );
+    await assert.rejects(
+      store.publishAttemptRunSummaryTombstone(
+        attemptTombstone,
+        {
+          expectedRevision: attempt.revision,
+          expectedDigest: attempt.digest
+        }
+      ),
+      /requires its payload to be expired/
+    );
+    const workflowTombstone = summaryRetentionTombstone(
+      "workflow-summary",
+      workflow
+    );
+    await assert.rejects(
+      store.publishWorkflowRunSummaryTombstone(
+        workflowTombstone,
+        {
+          expectedRevision: workflow.revision,
+          expectedDigest: workflow.digest
+        }
+      ),
+      /requires every Attempt summary to be expired/
+    );
+
+    const payloadExpired = payloadTombstone(payload);
+    await store.publishAttemptPayloadTombstone(payloadExpired, {
+      expectedRevision: payload.revision,
+      expectedDigest: payload.digest
+    });
+    await store.publishAttemptPayloadTombstone(payloadExpired, {
+      expectedRevision: payload.revision,
+      expectedDigest: payload.digest
+    });
+    await store.publishAttemptRunSummaryTombstone(
+      attemptTombstone,
+      {
+        expectedRevision: attempt.revision,
+        expectedDigest: attempt.digest
+      }
+    );
+    assert.deepEqual(
+      await store.readAttemptRunSummary(attempt),
+      {
+        state: "expired",
+        tombstone: attemptTombstone,
+        priorRecord: attempt
+      }
+    );
+    await store.publishWorkflowRunSummaryTombstone(
+      workflowTombstone,
+      {
+        expectedRevision: workflow.revision,
+        expectedDigest: workflow.digest
+      }
+    );
+    assert.deepEqual(
+      await store.readWorkflowRunSummary(workflow.workflowRunId),
+      {
+        state: "expired",
+        tombstone: workflowTombstone,
+        priorRecord: workflow
+      }
+    );
+
+    await store.publishAttemptRunSummaryTombstone(
+      attemptTombstone,
+      {
+        expectedRevision: attempt.revision,
+        expectedDigest: attempt.digest
+      }
+    );
+    await store.publishWorkflowRunSummaryTombstone(
+      workflowTombstone,
+      {
+        expectedRevision: workflow.revision,
+        expectedDigest: workflow.digest
+      }
+    );
+    const inventory = await store.inventoryRunRecords();
+    assert.deepEqual(inventory.blockers, []);
+    assert.deepEqual(inventory.storeRawOwners, []);
+    assert.equal(
+      inventory.workflowRuns[0]?.summaryTombstone?.digest,
+      workflowTombstone.digest
+    );
+    assert.equal(
+      inventory.workflowRuns[0]?.attempts[0]
+        ?.summaryTombstone?.digest,
+      attemptTombstone.digest
+    );
+    assert.equal(
+      inventory.workflowRuns[0]?.attempts[0]?.payload.state,
+      "expired"
+    );
+    await assert.rejects(
+      store.writeAttemptRunSummary(attemptSummary(
+        1,
+        attempt.workflowRunId,
+        attempt.attemptId,
+        attempt.harnessRunId
+      ), {
+        expectedRevision: attemptTombstone.revision,
+        expectedDigest: attemptTombstone.digest
+      }),
+      /cannot be revived/
+    );
+  });
 }
 
 async function assertUserDeletedPayloadRemainsExpiredAndCanRestore():
@@ -1726,6 +1883,47 @@ function payloadTombstone(
     retentionTransactionId: `retention-${manifest.attemptId}`,
     committedAt: manifest.expiresAt + 1,
     revision: manifest.revision + 1
+  });
+}
+
+function summaryRetentionTombstone(
+  scope: "attempt-summary" | "workflow-summary",
+  summary: AttemptRunSummaryV1 | WorkflowRunSummaryV1
+): ReturnType<typeof finalizeRetentionTombstone> {
+  const attemptId = scope === "attempt-summary"
+    ? (summary as AttemptRunSummaryV1).attemptId
+    : undefined;
+  const terminalAt = summary.terminalAt;
+  if (terminalAt === undefined) {
+    throw new Error("summary retention fixture requires terminal summary");
+  }
+  const eligibleAt = terminalAt + 90 * RUN_RECORD_DAY_MS;
+  return finalizeRetentionTombstone({
+    schemaVersion: 1,
+    recordType: "run-retention-tombstone",
+    scope,
+    workflowRunId: summary.workflowRunId,
+    ...(attemptId ? { attemptId } : {}),
+    subjectDigest: runRecordSubjectDigest(
+      scope,
+      summary.workflowRunId,
+      attemptId
+    ),
+    reasonCode: "policy-expired",
+    eligibleAt,
+    expiredAt: eligibleAt,
+    prior: {
+      schemaVersion: summary.schemaVersion,
+      digest: summary.digest,
+      terminalAt
+    },
+    policy: {
+      version: 1,
+      retentionDays: 90
+    },
+    retentionTransactionId: `retention-${scope}-${summary.workflowRunId}`,
+    committedAt: eligibleAt + 1,
+    revision: summary.revision + 1
   });
 }
 

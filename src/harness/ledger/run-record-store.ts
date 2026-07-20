@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants as fsConstants, type Stats } from "node:fs";
 import {
   link,
@@ -55,6 +56,11 @@ export interface AttemptRunRecordLocator {
 
 export type RunRecordStoreReadResult<T> =
   | { state: "present"; record: T }
+  | {
+      state: "expired";
+      tombstone: RunRetentionTombstoneV1;
+      priorRecord: T;
+    }
   | { state: "missing" }
   | { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string };
 
@@ -185,11 +191,13 @@ export interface ConversationAttemptRunInventory {
   attemptId: string;
   ordinal: number;
   summary: AttemptRunSummaryV1 | null;
+  summaryTombstone?: RunRetentionTombstoneV1;
   payload: ConversationAttemptPayloadInventory;
 }
 
 export interface ConversationWorkflowRunInventory {
   summary: WorkflowRunSummaryV1;
+  summaryTombstone?: RunRetentionTombstoneV1;
   attempts: ConversationAttemptRunInventory[];
 }
 
@@ -202,6 +210,13 @@ export interface ConversationRunRecordInventory {
     attemptId: string;
     conversationId?: string;
   }>;
+  blockers: ConversationRunRecordInventoryBlocker[];
+  snapshotDigest: string;
+}
+
+export interface RunRecordStoreInventory {
+  workflowRuns: ConversationWorkflowRunInventory[];
+  storeRawOwners: ConversationRunRecordInventory["storeRawOwners"];
   blockers: ConversationRunRecordInventoryBlocker[];
   snapshotDigest: string;
 }
@@ -320,6 +335,8 @@ const CAPTURE_REASON_CODES = new Set<RunRecordReasonCode>([
   "capture-disabled",
   "no-attempt-required"
 ]);
+const runRecordStoreMutationContext = new AsyncLocalStorage<string>();
+const runRecordStoreMutationTails = new Map<string, Promise<void>>();
 
 /**
  * Attempts are only unique inside a Workflow Run. Keep the compound identity
@@ -346,6 +363,20 @@ export class FileRunRecordStore {
     this.rootPath = path.join(
       path.resolve(options.storageRootPath),
       RUN_RECORD_STORE_DIRECTORY
+    );
+  }
+
+  /**
+   * Serializes a multi-record mutation with every generation publication for
+   * this Store root. Nested calls in the same async flow reuse the authority;
+   * unrelated concurrent callers still queue behind it.
+   */
+  async withMutation<T>(action: () => Promise<T>): Promise<T> {
+    if (runRecordStoreMutationContext.getStore() === this.rootPath) {
+      return await action();
+    }
+    return await enqueueRunRecordStoreMutation(this.rootPath, async () =>
+      await runRecordStoreMutationContext.run(this.rootPath, action)
     );
   }
 
@@ -380,6 +411,7 @@ export class FileRunRecordStore {
     workflowRunId: string
   ): Promise<RunRecordStoreReadResult<WorkflowRunSummaryV1>> {
     return await this.readSummary(
+      "workflow-summary",
       "workflow-summary",
       workflowRunId,
       validateWorkflowRunSummary,
@@ -419,12 +451,105 @@ export class FileRunRecordStore {
   ): Promise<RunRecordStoreReadResult<AttemptRunSummaryV1>> {
     return await this.readSummary(
       "attempt-summary",
+      "attempt-summary",
       attemptRecordSubjectId(locator),
       validateAttemptRunSummary,
       (record) =>
         record.workflowRunId === locator.workflowRunId
         && record.attemptId === locator.attemptId
     );
+  }
+
+  async publishWorkflowRunSummaryTombstone(
+    tombstone: RunRetentionTombstoneV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateRetentionTombstone(tombstone);
+    if (
+      record.scope !== "workflow-summary"
+      || record.attemptId !== undefined
+      || record.harnessRunId !== undefined
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Workflow summary tombstone has the wrong scope or identity"
+      );
+    }
+    const current = await this.readWorkflowRunSummary(
+      record.workflowRunId
+    );
+    const summary = current.state === "present"
+      ? current.record
+      : current.state === "expired"
+        ? current.priorRecord
+        : null;
+    if (summary) {
+      for (const reference of summary.attemptRefs) {
+        const attempt = await this.readAttemptRunSummary({
+          workflowRunId: summary.workflowRunId,
+          attemptId: reference.attemptId
+        });
+        if (attempt.state !== "expired") {
+          throw new RunRecordStoreConflictError(
+            "Workflow summary retention requires every Attempt summary to be expired"
+          );
+        }
+      }
+    }
+    await this.publishSummaryTombstone({
+      recordKind: "workflow-summary",
+      subjectId: record.workflowRunId,
+      current,
+      tombstone: record,
+      cas,
+      faultInjector
+    });
+  }
+
+  async publishAttemptRunSummaryTombstone(
+    tombstone: RunRetentionTombstoneV1,
+    cas: RunRecordStoreCas,
+    faultInjector?: RunRecordStoreFaultInjector
+  ): Promise<void> {
+    const record = validateRetentionTombstone(tombstone);
+    if (
+      record.scope !== "attempt-summary"
+      || !record.attemptId
+      || record.harnessRunId !== undefined
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Attempt summary tombstone has the wrong scope or identity"
+      );
+    }
+    const locator = {
+      workflowRunId: record.workflowRunId,
+      attemptId: record.attemptId
+    };
+    const current = await this.readAttemptRunSummary(locator);
+    const summary = current.state === "present"
+      ? current.record
+      : current.state === "expired"
+        ? current.priorRecord
+        : null;
+    if (summary) {
+      const payload = await this.readAttemptPayload(locator);
+      const payloadSettled = summary.payload.expected
+        ? payload.state === "expired"
+        : payload.state === "not-captured";
+      if (!payloadSettled) {
+        throw new RunRecordStoreConflictError(
+          "Attempt summary retention requires its payload to be expired or not-captured"
+        );
+      }
+    }
+    await this.publishSummaryTombstone({
+      recordKind: "attempt-summary",
+      subjectId: attemptRecordSubjectId(locator),
+      current,
+      tombstone: record,
+      cas,
+      faultInjector
+    });
   }
 
   async sealAttemptPayload(
@@ -542,6 +667,12 @@ export class FileRunRecordStore {
     }
     if (current.state === "corrupt") {
       throw new RunRecordStoreCorruptError(current.code, current.error);
+    }
+    if (current.state === "expired") {
+      if (current.tombstone.digest === record.digest) return;
+      throw new RunRecordStoreConflictError(
+        "Attempt payload already has a different expired tombstone"
+      );
     }
     if (current.state !== "present") {
       throw new RunRecordStoreConflictError(
@@ -1057,15 +1188,50 @@ export class FileRunRecordStore {
       conversationIdInput,
       "conversationId"
     );
+    const store = await this.inventoryRunRecords();
+    const workflowRuns = store.workflowRuns.filter((workflow) =>
+      workflow.summary.conversationRef?.conversationId === conversationId
+    );
+    return {
+      conversationId,
+      workflowRuns,
+      storeRawOwners: store.storeRawOwners,
+      blockers: store.blockers,
+      snapshotDigest: canonicalRunRecordDigest({
+        conversationId,
+        storeSnapshotDigest: store.snapshotDigest,
+        workflowRuns
+      })
+    };
+  }
+
+  /**
+   * Strict, stable inventory of every active Run Record subject. This is the
+   * authority for global owner and retention planning.
+   */
+  async inventoryRunRecords(): Promise<RunRecordStoreInventory> {
     const before = await this.scanInventorySnapshot();
     const workflows = new Map<string, WorkflowRunSummaryV1>();
+    const workflowTombstones = new Map<
+      string,
+      RunRetentionTombstoneV1
+    >();
     const attempts = new Map<string, AttemptRunSummaryV1>();
+    const attemptTombstones = new Map<
+      string,
+      RunRetentionTombstoneV1
+    >();
     const payloads = new Map<string, ConversationAttemptPayloadInventory>();
 
     for (const workflowRunId of before.workflowRunIds) {
       const read = await this.readWorkflowRunSummary(workflowRunId);
       if (read.state === "corrupt") {
         throw new RunRecordStoreCorruptError(read.code, read.error);
+      }
+      if (read.state === "expired") {
+        workflows.set(workflowRunId, read.priorRecord);
+        workflowTombstones.set(workflowRunId, read.tombstone);
+        continue;
       }
       if (read.state !== "present") {
         throw new RunRecordStoreCorruptError(
@@ -1079,6 +1245,12 @@ export class FileRunRecordStore {
       const read = await this.readAttemptRunSummary(locator);
       if (read.state === "corrupt") {
         throw new RunRecordStoreCorruptError(read.code, read.error);
+      }
+      if (read.state === "expired") {
+        const key = attemptInventoryKey(locator);
+        attempts.set(key, read.priorRecord);
+        attemptTombstones.set(key, read.tombstone);
+        continue;
       }
       if (read.state !== "present") {
         throw new RunRecordStoreCorruptError(
@@ -1107,6 +1279,13 @@ export class FileRunRecordStore {
       attempts,
       payloads,
       before
+    );
+    assertExpiredRunInventoryIsComplete(
+      workflows,
+      workflowTombstones,
+      attempts,
+      attemptTombstones,
+      payloads
     );
     const blockers: ConversationRunRecordInventoryBlocker[] = [];
     const allWorkflowRuns = [...workflows.values()]
@@ -1201,18 +1380,23 @@ export class FileRunRecordStore {
             attemptId: reference.attemptId,
             ordinal: reference.ordinal,
             summary: attempt,
+            ...(attemptTombstones.has(key)
+              ? { summaryTombstone: attemptTombstones.get(key)! }
+              : {}),
             payload
           };
         });
         return {
           summary,
+          ...(workflowTombstones.has(summary.workflowRunId)
+            ? {
+                summaryTombstone:
+                  workflowTombstones.get(summary.workflowRunId)!
+              }
+            : {}),
           attempts: inventoryAttempts
         };
       });
-    const workflowRuns = allWorkflowRuns.filter((workflow) =>
-      workflow.summary.conversationRef?.conversationId === conversationId
-    );
-
     blockers.sort(compareInventoryBlockers);
     const storeRawOwners = [...payloads.entries()]
       .flatMap(([key, payload]) => {
@@ -1243,15 +1427,13 @@ export class FileRunRecordStore {
       );
     }
     const snapshotDigest = canonicalRunRecordDigest({
-      conversationId,
       storeDigest: before.digest,
-      workflowRuns,
+      workflowRuns: allWorkflowRuns,
       storeRawOwners,
       blockers
     });
     return {
-      conversationId,
-      workflowRuns,
+      workflowRuns: allWorkflowRuns,
       storeRawOwners,
       blockers,
       snapshotDigest
@@ -1460,32 +1642,68 @@ export class FileRunRecordStore {
     );
     let identity: string | AttemptRunRecordLocator;
     if (recordKind === "workflow-summary") {
-      if (manifest.contentKind !== "record") {
+      if (manifest.contentKind === "expired") {
+        const tombstone = validateRetentionTombstone(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        if (
+          tombstone.scope !== "workflow-summary"
+          || tombstone.revision !== manifest.revision
+          || tombstone.digest !== manifest.contentDigest
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "tombstone-corrupt",
+            "Workflow summary inventory tombstone is invalid"
+          );
+        }
+        identity = tombstone.workflowRunId;
+      } else if (manifest.contentKind !== "record") {
         throw new RunRecordStoreCorruptError(
           "manifest-corrupt",
           "Workflow Run inventory manifest points at non-record content"
         );
+      } else {
+        const summary = validateWorkflowRunSummary(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        assertInventoryGenerationIdentity(summary, manifest);
+        identity = summary.workflowRunId;
       }
-      const summary = validateWorkflowRunSummary(
-        await readJsonFile(path.join(generationPath, "record.json"))
-      );
-      assertInventoryGenerationIdentity(summary, manifest);
-      identity = summary.workflowRunId;
     } else if (recordKind === "attempt-summary") {
-      if (manifest.contentKind !== "record") {
+      if (manifest.contentKind === "expired") {
+        const tombstone = validateRetentionTombstone(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        if (
+          tombstone.scope !== "attempt-summary"
+          || !tombstone.attemptId
+          || tombstone.revision !== manifest.revision
+          || tombstone.digest !== manifest.contentDigest
+        ) {
+          throw new RunRecordStoreCorruptError(
+            "tombstone-corrupt",
+            "Attempt summary inventory tombstone is invalid"
+          );
+        }
+        identity = {
+          workflowRunId: tombstone.workflowRunId,
+          attemptId: tombstone.attemptId
+        };
+      } else if (manifest.contentKind !== "record") {
         throw new RunRecordStoreCorruptError(
           "manifest-corrupt",
           "Attempt Run inventory manifest points at non-record content"
         );
+      } else {
+        const summary = validateAttemptRunSummary(
+          await readJsonFile(path.join(generationPath, "record.json"))
+        );
+        assertInventoryGenerationIdentity(summary, manifest);
+        identity = {
+          workflowRunId: summary.workflowRunId,
+          attemptId: summary.attemptId
+        };
       }
-      const summary = validateAttemptRunSummary(
-        await readJsonFile(path.join(generationPath, "record.json"))
-      );
-      assertInventoryGenerationIdentity(summary, manifest);
-      identity = {
-        workflowRunId: summary.workflowRunId,
-        attemptId: summary.attemptId
-      };
     } else if (manifest.contentKind === "payload") {
       const payload = validateAttemptPayloadManifest(
         await readJsonFile(path.join(generationPath, "manifest.json"))
@@ -1546,6 +1764,7 @@ export class FileRunRecordStore {
 
   private async readSummary<T>(
     recordKind: "workflow-summary" | "attempt-summary",
+    tombstoneScope: "workflow-summary" | "attempt-summary",
     subjectId: string,
     validate: (value: unknown) => T,
     identityMatches: (record: T) => boolean
@@ -1558,6 +1777,72 @@ export class FileRunRecordStore {
         code: latest.code,
         error: latest.error
       };
+    }
+    if (latest.manifest.contentKind === "expired") {
+      try {
+        const tombstone = validateRetentionTombstone(
+          await readJsonFile(path.join(
+            latest.layout.generationsPath,
+            latest.manifest.generation,
+            "record.json"
+          ))
+        );
+        if (
+          tombstone.scope !== tombstoneScope
+          || tombstone.revision !== latest.manifest.revision
+          || tombstone.digest !== latest.manifest.contentDigest
+          || tombstone.revision <= 0
+        ) {
+          throw new Error("summary tombstone identity mismatch");
+        }
+        const priorPointer = validateGenerationManifest(
+          await readJsonFile(path.join(
+            latest.layout.manifestsPath,
+            manifestFileName(tombstone.revision - 1)
+          ))
+        );
+        if (
+          priorPointer.recordKind !== recordKind
+          || priorPointer.subjectToken !== latest.manifest.subjectToken
+          || priorPointer.contentKind !== "record"
+          || priorPointer.contentDigest !== tombstone.prior.digest
+          || latest.manifest.previousContentDigest
+            !== priorPointer.contentDigest
+        ) {
+          throw new Error(
+            "summary tombstone lacks its active prior summary"
+          );
+        }
+        const priorRecord = validate(await readJsonFile(path.join(
+          latest.layout.generationsPath,
+          priorPointer.generation,
+          "record.json"
+        )));
+        const prior = priorRecord as {
+          workflowRunId?: unknown;
+          attemptId?: unknown;
+          revision?: unknown;
+          terminalAt?: unknown;
+          digest?: unknown;
+        };
+        if (
+          !identityMatches(priorRecord)
+          || prior.revision !== priorPointer.revision
+          || prior.digest !== priorPointer.contentDigest
+          || prior.digest !== tombstone.prior.digest
+          || prior.terminalAt !== tombstone.prior.terminalAt
+          || prior.workflowRunId !== tombstone.workflowRunId
+          || (
+            tombstoneScope === "attempt-summary"
+            && prior.attemptId !== tombstone.attemptId
+          )
+        ) {
+          throw new Error("summary tombstone prior record mismatch");
+        }
+        return { state: "expired", tombstone, priorRecord };
+      } catch (error) {
+        return corruptResult("tombstone-corrupt", error);
+      }
     }
     if (latest.manifest.contentKind !== "record") {
       return corruptResult(
@@ -1652,7 +1937,81 @@ export class FileRunRecordStore {
     return { state: "present", manifest, events };
   }
 
+  private async publishSummaryTombstone<T extends
+    WorkflowRunSummaryV1 | AttemptRunSummaryV1>(input: {
+      recordKind: "workflow-summary" | "attempt-summary";
+      subjectId: string;
+      current: RunRecordStoreReadResult<T>;
+      tombstone: RunRetentionTombstoneV1;
+      cas: RunRecordStoreCas;
+      faultInjector?: RunRecordStoreFaultInjector;
+    }): Promise<void> {
+    if (input.current.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        "Cannot publish expired tombstone for a missing summary"
+      );
+    }
+    if (input.current.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(
+        input.current.code,
+        input.current.error
+      );
+    }
+    if (input.current.state === "expired") {
+      if (
+        input.current.tombstone.digest === input.tombstone.digest
+      ) {
+        return;
+      }
+      throw new RunRecordStoreConflictError(
+        "Summary already has a different expired tombstone"
+      );
+    }
+    const summary = input.current.record;
+    if (
+      summary.workflowRunId !== input.tombstone.workflowRunId
+      || (
+        input.tombstone.scope === "attempt-summary"
+        && (
+          !("attemptId" in summary)
+          || summary.attemptId !== input.tombstone.attemptId
+        )
+      )
+      || summary.digest !== input.tombstone.prior.digest
+      || summary.terminalAt === undefined
+      || summary.terminalAt !== input.tombstone.prior.terminalAt
+      || input.tombstone.revision !== summary.revision + 1
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Summary tombstone does not exactly describe the active summary"
+      );
+    }
+    await this.publishGeneration({
+      recordKind: input.recordKind,
+      subjectId: input.subjectId,
+      revision: input.tombstone.revision,
+      contentKind: "expired",
+      contentDigest: input.tombstone.digest,
+      cas: input.cas,
+      files: [{
+        relativePath: "record.json",
+        content: jsonLine(input.tombstone)
+      }],
+      faultInjector: input.faultInjector,
+      allowedPreviousContentKinds: ["record"],
+      committedAt: input.tombstone.committedAt
+    });
+  }
+
   private async publishGeneration(
+    input: PublishGenerationInput
+  ): Promise<void> {
+    await this.withMutation(async () => {
+      await this.publishGenerationWithAuthority(input);
+    });
+  }
+
+  private async publishGenerationWithAuthority(
     input: PublishGenerationInput
   ): Promise<void> {
     await this.ensureRoot();
@@ -2152,6 +2511,57 @@ function assertRunInventoryOwnershipComplete(
   }
 }
 
+function assertExpiredRunInventoryIsComplete(
+  workflows: ReadonlyMap<string, WorkflowRunSummaryV1>,
+  workflowTombstones: ReadonlyMap<string, RunRetentionTombstoneV1>,
+  attempts: ReadonlyMap<string, AttemptRunSummaryV1>,
+  attemptTombstones: ReadonlyMap<string, RunRetentionTombstoneV1>,
+  payloads: ReadonlyMap<string, ConversationAttemptPayloadInventory>
+): void {
+  for (const [key, tombstone] of attemptTombstones) {
+    const attempt = attempts.get(key);
+    const payload = payloads.get(key);
+    if (
+      !attempt
+      || tombstone.scope !== "attempt-summary"
+      || (
+        attempt.payload.expected
+          ? payload?.state !== "expired"
+          : payload?.state !== "not-captured"
+      )
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        "Expired Attempt summary still has live or incomplete payload state"
+      );
+    }
+  }
+  for (const [workflowRunId, tombstone] of workflowTombstones) {
+    const workflow = workflows.get(workflowRunId);
+    if (
+      !workflow
+      || tombstone.scope !== "workflow-summary"
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        "Expired Workflow summary identity is incomplete"
+      );
+    }
+    for (const reference of workflow.attemptRefs) {
+      const key = attemptInventoryKey({
+        workflowRunId,
+        attemptId: reference.attemptId
+      });
+      if (!attempts.has(key) || !attemptTombstones.has(key)) {
+        throw new RunRecordStoreCorruptError(
+          "record-corrupt",
+          "Expired Workflow summary has a live or missing Attempt summary"
+        );
+      }
+    }
+  }
+}
+
 function payloadHarnessRunId(
   payload: ConversationAttemptPayloadInventory
 ): string | null {
@@ -2439,6 +2849,34 @@ function assertCas(
 function assertReadableCurrent<T>(current: RunRecordStoreReadResult<T>): void {
   if (current.state === "corrupt") {
     throw new RunRecordStoreCorruptError(current.code, current.error);
+  }
+  if (current.state === "expired") {
+    throw new RunRecordStoreConflictError(
+      "Expired Run summary cannot be revived"
+    );
+  }
+}
+
+async function enqueueRunRecordStoreMutation<T>(
+  rootPath: string,
+  action: () => Promise<T>
+): Promise<T> {
+  const previous = runRecordStoreMutationTails.get(rootPath)
+    ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  runRecordStoreMutationTails.set(rootPath, tail);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (runRecordStoreMutationTails.get(rootPath) === tail) {
+      runRecordStoreMutationTails.delete(rootPath);
+    }
   }
 }
 

@@ -10,7 +10,8 @@ import {
 } from "../contracts/run-record";
 import {
   FileRunRecordStore,
-  type ConversationRunRecordInventory
+  type ConversationRunRecordInventory,
+  type RunRecordStoreInventory
 } from "../ledger/run-record-store";
 import {
   readExistingEchoInkMemoryV2Snapshot,
@@ -200,12 +201,12 @@ interface RawGcCapture {
   artifactSnapshotDigest: string;
   conversation: ConversationRawOwnerSnapshot;
   memorySnapshotDigest: string;
-  run: ConversationRunRecordInventory;
+  run: RunRecordStoreInventory;
   raw: RawStoreSnapshot;
   snapshotDigest: string;
 }
 
-const RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE =
+const RAW_GC_PREVIEW_GLOBAL_SCOPE =
   "raw-gc-preview-global-owner-scan";
 
 /**
@@ -771,19 +772,17 @@ async function captureRawGcPreview(
     artifactSnapshotDigest = (
       await inventoryWorkflowArtifactsByConversation(
         artifactRootPath,
-        RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE
+        RAW_GC_PREVIEW_GLOBAL_SCOPE
       )
     ).snapshotDigest;
   } catch (error) {
     throw new RawGcCaptureError("artifact-inventory-corrupt", error);
   }
-  let run: ConversationRunRecordInventory;
+  let run: RunRecordStoreInventory;
   try {
     run = await new FileRunRecordStore({
       storageRootPath: pluginDataDir(vaultPath, pluginDir)
-    }).inventoryConversationRunRecords(
-      RAW_GC_PREVIEW_RUN_INVENTORY_SCOPE
-    );
+    }).inventoryRunRecords();
   } catch (error) {
     throw new RawGcCaptureError("run-inventory-corrupt", error);
   }

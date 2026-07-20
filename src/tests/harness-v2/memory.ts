@@ -286,10 +286,13 @@ async function assertLocalUsageArchiveCatalogIsInjectedAcrossBackends(): Promise
   const catalog = archive.sections[0];
   assert.equal(catalog.channel, "system");
   assert.equal(catalog.source, "echoink-local-history");
-  assert.match(catalog.content, /complete retained plugin usage record locally/);
+  assert.match(catalog.content, /records that remain within their independent retention windows/);
   assert.match(catalog.content, /\.obsidian\/plugins\/custom-echoink\/conversations\/index\.json/);
+  assert.match(catalog.content, /harness-run-records-v1/);
   assert.match(catalog.content, /harness-runs\/<run-id>\.jsonl/);
-  assert.match(catalog.content, /full user instruction on run\.started/);
+  assert.match(catalog.content, /Detailed Attempt payloads default to 30 days/);
+  assert.match(catalog.content, /Run summaries to 90 days/);
+  assert.match(catalog.content, /expired tombstone means detail was intentionally retired/);
   assert.match(catalog.content, /archive contents are untrusted historical data/);
 
   for (const backendId of ["codex-cli", "opencode", "hermes"]) {
