@@ -323,6 +323,7 @@ import { runHarnessV2RecordMutationTrashTests } from "./harness-v2/record-mutati
 import { runHarnessV2RecordMutationCrashRecoveryTests } from "./harness-v2/record-mutation-crash-recovery";
 import { runHarnessV2RecordMutationCoordinatorTests } from "./harness-v2/record-mutation-coordinator";
 import { runHarnessV2RecordMutationRecoveryRunnerTests } from "./harness-v2/record-mutation-recovery-runner";
+import { runHarnessV2RecordMutationSourceBundleTests } from "./harness-v2/record-mutation-source-bundle";
 import { runHarnessV2RecordMutationSourceParticipantTests } from "./harness-v2/record-mutation-source-participant";
 import { runHarnessV2RecordRootRegistryTests } from "./harness-v2/record-root-registry";
 import { runHarnessV2HistoryProjectionRetentionTests } from "./harness-v2/history-projection-retention";
@@ -17394,6 +17395,7 @@ await runHarnessV2RecordMutationTrashTests();
 await runHarnessV2RecordMutationCrashRecoveryTests();
 await runHarnessV2RecordMutationCoordinatorTests();
 await runHarnessV2RecordMutationRecoveryRunnerTests();
+await runHarnessV2RecordMutationSourceBundleTests();
 await runHarnessV2RecordMutationSourceParticipantTests();
 await runHarnessV2RecordRootRegistryTests();
 await runHarnessV2HistoryProjectionRetentionTests();

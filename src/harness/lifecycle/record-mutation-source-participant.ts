@@ -61,6 +61,17 @@ export interface RecordMutationSourceParticipantAdapter {
   rootBinding: RecordRootBindingRef;
   withMutation<T>(action: () => Promise<T>): Promise<T>;
   recover(): Promise<void>;
+  reconcileForward?(input: {
+    mutationId: string;
+    conversationId: string;
+    participantId: string;
+    occurredAt: number;
+  }): Promise<void>;
+  verifyForwardState?(input: {
+    mutationId: string;
+    conversationId: string;
+    participantId: string;
+  }): Promise<void>;
   inspect(input: {
     mutationId: string;
     conversationId: string;
@@ -221,6 +232,14 @@ function isRecordMutationSourceParticipantAdapter(
     && adapter.rootBinding !== null
     && typeof adapter.withMutation === "function"
     && typeof adapter.recover === "function"
+    && (
+      adapter.reconcileForward === undefined
+      || typeof adapter.reconcileForward === "function"
+    )
+    && (
+      adapter.verifyForwardState === undefined
+      || typeof adapter.verifyForwardState === "function"
+    )
     && typeof adapter.inspect === "function"
     && typeof adapter.stage === "function"
     && typeof adapter.restore === "function";
@@ -237,6 +256,13 @@ export async function coordinateRecordMutationSourceParticipantForward(input: {
       input.adapter
     );
     const identity = participantIdentity(current, input.adapter);
+    if (input.adapter.reconcileForward) {
+      await input.adapter.reconcileForward({
+        ...identity,
+        occurredAt: nextTimestamp(current, input.now)
+      });
+      current = await loadAndVerify(current, input.adapter);
+    }
     let observation = await inspectAndParse(input.adapter, identity);
     if (observation.status === "source-restored") {
       throw effectConflict(
@@ -261,6 +287,7 @@ export async function coordinateRecordMutationSourceParticipantForward(input: {
         `participant ${input.adapter.participantId} forward readback 不一致`
       );
     }
+    await input.adapter.verifyForwardState?.(identity);
     const existing = participantStep(
       current,
       input.adapter.participantId,
@@ -305,9 +332,36 @@ export async function reconcileRecordMutationSourceParticipantForward(input: {
       input.adapter
     );
     const identity = participantIdentity(current, input.adapter);
+    if (input.adapter.reconcileForward) {
+      await input.adapter.reconcileForward({
+        ...identity,
+        occurredAt: nextTimestamp(current, input.now)
+      });
+      current = await loadAndVerify(current, input.adapter);
+    }
     const observation = await inspectAndParse(input.adapter, identity);
     if (observation.status === "before") return current;
     if (observation.status === "source-restored") {
+      const forward = participantStep(
+        current,
+        input.adapter.participantId,
+        "forward",
+        "participant-staged"
+      );
+      const compensationPrepared = participantStep(
+        current,
+        input.adapter.participantId,
+        "compensating",
+        "compensation-prepared"
+      );
+      if (
+        current.record.state === "compensating"
+        && forward?.evidenceDigest === observation.forwardReceipt.digest
+        && compensationPrepared?.evidenceDigest
+          === observation.forwardReceipt.digest
+      ) {
+        return current;
+      }
       throw effectConflict(
         `participant ${input.adapter.participantId} restore 先于 Journal compensation`
       );
@@ -359,6 +413,7 @@ export async function verifyRecordMutationSourceParticipantForward(input: {
       input.adapter
     );
     const identity = participantIdentity(current, input.adapter);
+    await input.adapter.verifyForwardState?.(identity);
     const observation = await inspectAndParse(input.adapter, identity);
     const existing = participantStep(
       current,

@@ -18,6 +18,7 @@ import {
   RunRecordStoreSimulatedCrash
 } from "../../harness/ledger/run-record-store";
 import {
+  recordMutationExecutionBundleParticipantId,
   workflowRunPayloadParticipantId,
   type RecordMutationExecutionParticipant
 } from "../../harness/lifecycle/record-mutation-execution-plan";
@@ -49,6 +50,7 @@ export async function runHarnessV2RunRecordSourceDeletionTests():
 Promise<void> {
   await assertRunPayloadAdapterRecoversForwardAndRestoreCrashWindows();
   await assertProductionAdapterSupportsTerminalProof();
+  await assertProductionBundleAdapterSupportsTerminalProof();
 }
 
 async function assertRunPayloadAdapterRecoversForwardAndRestoreCrashWindows():
@@ -347,18 +349,177 @@ Promise<void> {
   }
 }
 
-function payloadEvents(): AttemptHarnessEventV1[] {
+async function assertProductionBundleAdapterSupportsTerminalProof():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-run-source-bundle-production-")
+  );
+  try {
+    const pluginDir = "codex-echoink";
+    const storageRootPath = pluginDataDir(vaultPath, pluginDir);
+    const prepared = await prepareEchoInkRecordMutationRuntimeRoots({
+      vaultPath,
+      pluginDir,
+      rootIds: [
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+      ].sort((left, right) => left.localeCompare(right)),
+      createdAt: BASE_TIME
+    });
+    const runRoot = prepared.roots.find(
+      (root) => root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.run
+    );
+    if (!runRoot) throw new Error("expected production Run root");
+    const store = new FileRunRecordStore({ storageRootPath });
+    const manifests = ["bundle-a", "bundle-b"].map((suffix, index) => {
+      const events = payloadEvents(suffix);
+      return {
+        events,
+        manifest: buildAttemptPayloadManifest({
+          workflowRunId: `workflow-source-delete-${suffix}`,
+          attemptId: `attempt-source-delete-${suffix}`,
+          harnessRunId: `harness-source-delete-${suffix}`,
+          createdAt: BASE_TIME + index,
+          revision: 0
+        }, events)
+      };
+    });
+    for (const item of manifests) {
+      await store.sealAttemptPayload(item.manifest, item.events, {
+        expectedRevision: null,
+        expectedDigest: null
+      });
+    }
+    const selectionDigest = `sha256:${"5".repeat(64)}`;
+    const subjects = manifests.map(({ manifest }) => ({
+      kind: "workflow-run" as const,
+      workflowRunId: manifest.workflowRunId,
+      attemptId: manifest.attemptId,
+      harnessRunId: manifest.harnessRunId,
+      payloadDigest: manifest.digest
+    })).sort((left, right) => (
+      JSON.stringify(left).localeCompare(JSON.stringify(right))
+    ));
+    const execution = {
+      kind: "source-deletion-bundle" as const,
+      rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
+      selectionDigest,
+      subjects
+    };
+    const participantId = recordMutationExecutionBundleParticipantId({
+      recordKind: "workflow-run",
+      action: "mark-source-deleted",
+      execution
+    });
+    const journal = await createRecordMutationJournal({
+      storageRootPath,
+      mutationId: "mutation-run-bundle-production",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-run-source-bundle",
+        expectedConversationGeneration: 1,
+        expectedConversationCommitId: "conversation-before",
+        expectedConversationContentRevision:
+          `sha256:${"6".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "conversation-bundle-deleted",
+          digest: `sha256:${"7".repeat(64)}`
+        },
+        participants: [
+          {
+            id: participantId,
+            recordKind: "workflow-run",
+            action: "mark-source-deleted"
+          },
+          {
+            id: "conversation-stage",
+            recordKind: "conversation",
+            action: "stage"
+          }
+        ].sort((left, right) => left.id.localeCompare(right.id)),
+        rootBindings: prepared.roots.map((root) => root.rootBinding),
+        trashPolicy: "required"
+      },
+      createdAt: BASE_TIME + 3_000
+    });
+    const staged = await stageRecordMutationJournal(journal.handle, {
+      expectedRevision: journal.record.revision,
+      expectedDigest: journal.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: 1,
+        participantId: "conversation-stage",
+        action: "trash-staged",
+        evidenceDigest: `sha256:${"8".repeat(64)}`
+      },
+      updatedAt: BASE_TIME + 3_001
+    });
+    const executionParticipant: RecordMutationExecutionParticipant = {
+      participantId,
+      recordKind: "workflow-run",
+      action: "mark-source-deleted",
+      execution
+    };
+    const adapter = createEchoInkRecordMutationSourceAdapterFactory({
+      vaultPath
+    })({
+      journal: staged,
+      participant: executionParticipant,
+      root: runRoot
+    });
+    const forwarded =
+      await coordinateRecordMutationSourceParticipantForward({
+        journal: staged,
+        adapter,
+        now: () => BASE_TIME + 3_002
+      });
+    const retired = await stageRecordMutationJournal(forwarded.handle, {
+      expectedRevision: forwarded.record.revision,
+      expectedDigest: forwarded.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: 3,
+        participantId: "conversation-stage",
+        action: "source-retired",
+        evidenceDigest: `sha256:${"9".repeat(64)}`
+      },
+      updatedAt: BASE_TIME + 3_003
+    });
+    const committed = await commitRecordMutationJournal(retired.handle, {
+      expectedRevision: retired.record.revision,
+      expectedDigest: retired.record.digest,
+      committedAt: BASE_TIME + 3_004,
+      message: "Run source bundle production proof"
+    });
+    await verifyRecordMutationSourceParticipantForward({
+      journal: committed,
+      adapter
+    });
+    for (const { manifest } of manifests) {
+      assert.equal(
+        (await store.readAttemptPayload(manifest)).state,
+        "expired"
+      );
+    }
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+function payloadEvents(suffix?: string): AttemptHarnessEventV1[] {
+  const idSuffix = suffix ? `-${suffix}` : "";
   const identity = {
-    workflowRunId: "workflow-source-delete",
-    attemptId: "attempt-source-delete",
-    harnessRunId: "harness-source-delete"
+    workflowRunId: `workflow-source-delete${idSuffix}`,
+    attemptId: `attempt-source-delete${idSuffix}`,
+    harnessRunId: `harness-source-delete${idSuffix}`
   };
   return [
     {
       schemaVersion: 1,
       recordType: "attempt-harness-event",
       ...identity,
-      eventId: "run-source-delete:1",
+      eventId: `run-source-delete${idSuffix}:1`,
       runId: identity.harnessRunId,
       sequence: 1,
       createdAt: BASE_TIME,
@@ -369,7 +530,7 @@ function payloadEvents(): AttemptHarnessEventV1[] {
       schemaVersion: 1,
       recordType: "attempt-harness-event",
       ...identity,
-      eventId: "run-source-delete:2",
+      eventId: `run-source-delete${idSuffix}:2`,
       runId: identity.harnessRunId,
       sequence: 2,
       createdAt: BASE_TIME + 100,
@@ -380,7 +541,7 @@ function payloadEvents(): AttemptHarnessEventV1[] {
       schemaVersion: 1,
       recordType: "attempt-harness-event",
       ...identity,
-      eventId: "run-source-delete:3",
+      eventId: `run-source-delete${idSuffix}:3`,
       runId: identity.harnessRunId,
       sequence: 3,
       createdAt: BASE_TIME + 200,

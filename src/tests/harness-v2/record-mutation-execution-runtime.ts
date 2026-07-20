@@ -41,7 +41,7 @@ Promise<void> {
   await assertRuntimeRootMismatchFailsBeforePrepare();
   await assertRuntimeAdapterMismatchFailsBeforePrepare();
   await assertTrashBundleMaterializesAcrossRestart();
-  await assertSourceDeletionBundleStillFailsBeforeTrashPrepare();
+  await assertSourceDeletionBundleMaterializesBeforeTrashPrepare();
 }
 
 async function assertRuntimeMaterializesPreparedParticipantsAcrossRestart():
@@ -310,7 +310,7 @@ async function assertTrashBundleMaterializesAcrossRestart(): Promise<void> {
   });
 }
 
-async function assertSourceDeletionBundleStillFailsBeforeTrashPrepare():
+async function assertSourceDeletionBundleMaterializesBeforeTrashPrepare():
 Promise<void> {
   await withFixture("source-bundle-blocked", async (fixture) => {
     const selectionDigest = `sha256:${"8".repeat(64)}`;
@@ -421,20 +421,23 @@ Promise<void> {
       participants,
       createdAt: fixture.now()
     });
-    await assert.rejects(
-      materializeRecordMutationExecution({
-        journal,
-        plan,
-        roots,
-        now: fixture.now
-      }),
-      (error: unknown) => (
-        error instanceof RecordMutationExecutionRuntimeError
-        && error.code === "bundle_runtime_required"
-      )
+    const materialized = await materializeRecordMutationExecution({
+      journal,
+      plan,
+      roots,
+      createSourceAdapter: fakeSourceAdapterFactory,
+      now: fixture.now
+    });
+    assert.equal(materialized.sourceDeletedParticipants.length, 1);
+    assert.equal(
+      materialized.sourceDeletedParticipants[0]?.participantId,
+      participants.find(
+        (participant) =>
+          participant.execution.kind === "source-deletion-bundle"
+      )?.participantId
     );
-    const readback = await loadRecordMutationJournal(journal.handle);
-    assert.equal(readback.record.state, "planned");
+    assert.equal(materialized.trashParticipants.length, 2);
+    assert.equal(materialized.journal.record.state, "staged");
     assert.equal(await readFile(fixture.runSourcePath, "utf8"), "run\n");
   });
 }

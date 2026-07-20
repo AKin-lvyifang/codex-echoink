@@ -5,6 +5,10 @@ import {
 } from "../artifacts/artifact-lifecycle-store";
 import { RUN_RECORD_STORE_DIRECTORY } from "../ledger/run-record-store";
 import {
+  workflowRunPayloadParticipantId,
+  type RecordMutationExecutionSubject
+} from "./record-mutation-execution-plan";
+import {
   createRunRecordSourceDeletionAdapter
 } from "../ledger/run-record-source-deletion";
 import {
@@ -12,6 +16,9 @@ import {
 } from "../memory/source-deletion";
 import { echoInkMemoryV2Layout } from "../memory/v2-store";
 import { pluginDataDir } from "../../core/raw-message-store";
+import {
+  createRecordMutationSourceBundleAdapter
+} from "./record-mutation-source-bundle";
 import {
   registerRecordMutationRuntimeRoots,
   type RecordMutationRuntimeRoot,
@@ -89,60 +96,98 @@ export function createEchoInkRecordMutationSourceAdapterFactory(input: {
 }): RecordMutationSourceAdapterFactory {
   const vaultPath = requireAbsolutePath(input.vaultPath, "vaultPath");
   return ({ journal, participant, root }) => {
-    if (participant.execution.kind !== "source-deletion") {
+    const createLeafAdapter = (
+      subject: RecordMutationExecutionSubject,
+      participantId: string
+    ) => {
+      if (
+        participant.recordKind === "workflow-run"
+        && subject.kind === "workflow-run"
+      ) {
+        return createRunRecordSourceDeletionAdapter({
+          storageRootPath: journal.handle.storageRootPath,
+          rootPath: root.rootPath,
+          boundaryRootPath: root.boundaryRootPath,
+          rootBinding: root.rootBinding,
+          mutationId: journal.record.mutationId,
+          conversationId: journal.record.intent.conversationId,
+          participantId,
+          workflowRunId: subject.workflowRunId,
+          attemptId: subject.attemptId,
+          harnessRunId: subject.harnessRunId,
+          payloadDigest: subject.payloadDigest
+        });
+      }
+      if (
+        participant.recordKind === "memory"
+        && subject.kind === "memory"
+      ) {
+        return createMemorySourceDeletionAdapter({
+          vaultPath,
+          storageRootPath: journal.handle.storageRootPath,
+          boundaryRootPath: root.boundaryRootPath,
+          rootBinding: root.rootBinding,
+          participantId,
+          subjectState: subject.state
+        });
+      }
+      if (
+        participant.recordKind === "artifact"
+        && subject.kind === "artifact"
+      ) {
+        return createArtifactSourceDeletionAdapter({
+          storageRootPath: journal.handle.storageRootPath,
+          rootPath: root.rootPath,
+          boundaryRootPath: root.boundaryRootPath,
+          rootBinding: root.rootBinding,
+          participantId,
+          artifactKind: subject.artifactKind
+        });
+      }
       throw new Error(
-        `RecordMutation participant ${participant.participantId} bundle runtime is not materialized`
+        `RecordMutation participant ${participant.participantId} subject kind mismatch`
+      );
+    };
+    if (participant.execution.kind === "source-deletion-bundle") {
+      const subjects = participant.execution.subjects;
+      return createRecordMutationSourceBundleAdapter({
+        storageRootPath: journal.handle.storageRootPath,
+        rootPath: root.rootPath,
+        boundaryRootPath: root.boundaryRootPath,
+        rootBinding: root.rootBinding,
+        participantId: participant.participantId,
+        recordKind: participant.recordKind,
+        selectionDigest: participant.execution.selectionDigest,
+        subjects,
+        leafAdapters: subjects.map((subject) => (
+          createLeafAdapter(subject, sourceSubjectParticipantId(subject))
+        ))
+      });
+    }
+    if (participant.execution.kind === "source-deletion") {
+      return createLeafAdapter(
+        participant.execution.subject,
+        participant.participantId
       );
     }
-    if (
-      participant.recordKind === "workflow-run"
-      && participant.execution.subject.kind === "workflow-run"
-    ) {
-      return createRunRecordSourceDeletionAdapter({
-        storageRootPath: journal.handle.storageRootPath,
-        rootPath: root.rootPath,
-        boundaryRootPath: root.boundaryRootPath,
-        rootBinding: root.rootBinding,
-        mutationId: journal.record.mutationId,
-        conversationId: journal.record.intent.conversationId,
-        participantId: participant.participantId,
-        workflowRunId:
-          participant.execution.subject.workflowRunId,
-        attemptId: participant.execution.subject.attemptId,
-        harnessRunId: participant.execution.subject.harnessRunId,
-        payloadDigest: participant.execution.subject.payloadDigest
-      });
-    }
-    if (
-      participant.recordKind === "memory"
-      && participant.execution.subject.kind === "memory"
-    ) {
-      return createMemorySourceDeletionAdapter({
-        vaultPath,
-        storageRootPath: journal.handle.storageRootPath,
-        boundaryRootPath: root.boundaryRootPath,
-        rootBinding: root.rootBinding,
-        participantId: participant.participantId,
-        subjectState: participant.execution.subject.state
-      });
-    }
-    if (
-      participant.recordKind === "artifact"
-      && participant.execution.subject.kind === "artifact"
-    ) {
-      return createArtifactSourceDeletionAdapter({
-        storageRootPath: journal.handle.storageRootPath,
-        rootPath: root.rootPath,
-        boundaryRootPath: root.boundaryRootPath,
-        rootBinding: root.rootBinding,
-        participantId: participant.participantId,
-        artifactKind: participant.execution.subject.artifactKind
-      });
-    }
     throw new Error(
-      `RecordMutation participant ${participant.participantId} subject kind mismatch`
+      `RecordMutation participant ${participant.participantId} execution kind mismatch`
     );
   };
+}
+
+function sourceSubjectParticipantId(
+  subject: RecordMutationExecutionSubject
+): string {
+  if (subject.kind === "workflow-run") {
+    return workflowRunPayloadParticipantId(
+      subject.workflowRunId,
+      subject.attemptId
+    );
+  }
+  return subject.kind === "memory"
+    ? subject.memoryId
+    : subject.artifactId;
 }
 
 export function echoInkRecordMutationRootPath(input: {

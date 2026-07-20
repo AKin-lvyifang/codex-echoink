@@ -147,7 +147,6 @@ export async function materializeRecordMutationExecution(input: {
   );
   const unsupportedBundle = plan.participants.find((participant) => (
     participant.execution.kind === "retain-bundle"
-    || participant.execution.kind === "source-deletion-bundle"
   ));
   if (unsupportedBundle) {
     throw runtimeError(
@@ -160,7 +159,10 @@ export async function materializeRecordMutationExecution(input: {
   for (const participant of plan.participants) {
     if (
       participant.action !== "mark-source-deleted"
-      || participant.execution.kind !== "source-deletion"
+      || (
+        participant.execution.kind !== "source-deletion"
+        && participant.execution.kind !== "source-deletion-bundle"
+      )
     ) {
       continue;
     }

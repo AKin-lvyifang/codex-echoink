@@ -513,3 +513,33 @@
   检查 414 个 tracked files，暂存区不含共享软链接或无关文件。
 - `retain-bundle` 与 `source-deletion-bundle` runtime 仍未接线。产品 guard 保持
   关闭，本批没有部署或修改真实 Vault。
+
+## 2026-07-20：Source-deletion Bundle Runtime 与聚合恢复
+
+- 新增 logical source bundle adapter。Run、Memory、Artifact 每个叶子继续使用
+  原 Store adapter 与独立 durable receipt；aggregate forward/restore receipt
+  由 frozen subject、selection digest、Root Binding 和完整有序 leaf receipt
+  digest 推导，不新增可漂移的聚合 Store。
+- 只有所有叶子 forward 并稳定回读后，Journal 才发布一次
+  `participant-staged`。部分 forward 崩溃后，通用 adapter 的可选
+  `reconcileForward` 只在已经存在部分 durable effect 时补齐缺失叶子；全组 before
+  时不会为了补偿凭空制造 forward effect。
+- compensation 绑定 aggregate forward digest。部分 restore 可幂等补齐；如果
+  所有叶子已经恢复、但进程在 aggregate `participant-restored` 发布前中断，重启会
+  接受已有 `compensation-prepared` 与 forward proof，再重建 aggregate restore
+  receipt 并收口 Journal。
+- 每个叶子 recover、inspect、forward 与 restore 前后重新验证 frozen Root
+  Binding。bundle participant ID、selection、subject 顺序、语义叶子 ID、Store
+  adapter 和物理 Root 任一漂移都会在首个叶子 effect 前失败。
+- production factory 按正式 subject 构造逐叶 adapter：Run 使用
+  `workflowRunPayloadParticipantId(workflowRunId, attemptId)`，Memory 使用
+  `memoryId`，Artifact 使用 `artifactId`。execution materializer 已接受
+  `source-deletion-bundle`，并保持 `retain-bundle` fail closed。
+- focused source-bundle、execution-runtime 与 production Run adapter suites
+  通过；全量 `npm run test` 输出 `All tests passed`，`npm run typecheck`、
+  `npm run build`、修改生产文件定向 ESLint 与 `git diff --check` 通过。完整
+  `npm run lint` 保持 961 个 baseline finding、无新增。Watchdog terminal commit
+  error 是故障注入测试的预期日志。
+- `retain-bundle`、live clear/delete、Conversation target commit 与 Native
+  retirement 仍未接线，destructive product guard 保持关闭。本批未部署或修改真实
+  Vault。

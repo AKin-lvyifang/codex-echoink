@@ -97,8 +97,9 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
   40 个 Workflow Run 的夹具包含 127 条唯一记录，只生成 8 个逻辑 participant；
   输入逆序结果保持一致。blocked inventory、缺失 Attempt summary、重复 source、
   跨 Conversation source、Root 缺失、selection 漂移和拆组绕过容量均有失败回归。
-- Bundle runtime/materializer、live clear/delete runner 以及 Native retirement
-  仍未接入。runtime 遇到 bundle 会在 Trash prepare 和 Store effect 前返回
+- Trash 与 source-deletion bundle 已接入 materializer 和 production adapter；
+  `retain-bundle`、live clear/delete runner 以及 Native retirement 仍未接入。
+  runtime 遇到 retain bundle 继续在 Trash prepare 和 Store effect 前返回
   `bundle_runtime_required`，因此不能把当前 checkpoint 写成用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
@@ -128,9 +129,11 @@ authority 也按 fail closed 处理。
 - Participant execution plan / production root checkpoint：`d683b10`
 - Conversation 统一 inventory checkpoint：`7f1b841`
 - Workflow Run payload source-deletion checkpoint：`d27c56a`
-- 当前开发批次：Execution Plan V2、Conversation mutation planner 与 bundle
-  runtime fail-closed guard
-- 下一批次：bundle runtime/materializer、逐叶 receipt 与 aggregate step、
+- Deterministic bundle planning checkpoint：`92ea4db`
+- Trash bundle runtime checkpoint：`5ce326d`
+- 当前开发批次：Run/Memory/Artifact `source-deletion-bundle` runtime、
+  partial-forward/restore replay 与 production factory
+- 下一批次：`retain-bundle` production inspector、inventory 二次盘点、
   live clear/delete runner 和 Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
@@ -150,7 +153,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`、`d683b10`、`7f1b841`；当前 worktree 正在收口 Run payload source-deletion | Bundle participant、live 清空/删除与 Native retirement |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`、`d683b10`、`7f1b841`、`d27c56a`、`92ea4db`、`5ce326d`；当前 worktree 正在收口 source-deletion bundle | Retain bundle、live 清空/删除与 Native retirement |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -412,7 +415,7 @@ Participant execution plan 与破坏性启动恢复批次当前已通过：
 
 Phase 0、Phase 1 与 `b2db2f5` 的 public guard 都已在各自明确暂存状态下复验。
 
-## Trash bundle runtime（进行中）
+## Trash bundle runtime（已提交）
 
 Trash bundle 已从 execution plan 接入正式 coordinator、materializer 与 production
 recovery runner。每个叶子继续使用独立的 durable Trash prepare/finalization
@@ -433,9 +436,7 @@ receipt；bundle prepared/finalization receipt 只由完整有序的逐叶 recei
 
 execution materializer 现在可以跨重启重建 `trash-bundle` recovery participant；
 production runner 可以对整组执行 roll-forward，或先补齐部分 retirement 再整组
-restore。当前 `retain-bundle` 与 `source-deletion-bundle` 仍返回
-`bundle_runtime_required`，因此 Conversation planner 生成的完整多 bundle 计划尚未
-达到生产可执行状态，clear/delete 产品 guard 继续关闭。
+restore。该批次已提交为 `5ce326d`。
 
 本轮当前证据：
 
@@ -452,3 +453,31 @@ restore。当前 `retain-bundle` 与 `source-deletion-bundle` 仍返回
 `npm run check:public` 通过；public guard 检查 414 个 tracked files，暂存区不含
 共享 `.codex-memory`、`node_modules` 或无关文件。没有部署或修改真实 Vault，也
 没有执行 migration、retention、Raw GC、历史删除或 Native cleanup。
+
+## Source-deletion bundle runtime（进行中）
+
+Run、Memory 与 Artifact 的 `source-deletion-bundle` 现在使用一个逻辑 Journal
+participant 协调完整有序的逐叶 Store adapter。每个叶子仍保存原有 durable
+forward/restore receipt；aggregate receipt 只由 frozen subject、selection digest、
+Root Binding 和全部逐叶 receipt digest 确定性推导，不创建第二份聚合 Store。
+
+当前实现遵守以下恢复边界：
+
+- 全部叶子 forward 并稳定回读后，Journal 才追加一次 aggregate
+  `participant-staged`；部分 forward 崩溃不会发布聚合成功，重启只补齐缺失叶子。
+- compensation 只接受与 aggregate forward digest 一致的
+  `compensation-prepared`；全部叶子 restore 后才追加一次 aggregate
+  `participant-restored`。
+- 叶子全部恢复但 aggregate Journal 尚未发布的崩溃窗口可以重放；已有完整
+  forward proof 的 partial restore 继续按 source-deleted 聚合态补齐剩余叶子。
+- 每个叶子 recover、inspect、forward 与 restore 前后都重新验证 frozen Root
+  Binding。selection、subject 顺序、语义叶子 ID、adapter Root 或 participant ID
+  漂移会在首个叶子 effect 前阻断。
+- production factory 会为 Run 使用 `workflowRunId + attemptId` 的正式叶子 ID，
+  为 Memory/Artifact 使用正式 record ID，再构造 logical bundle adapter；
+  materializer 已不再阻断 `source-deletion-bundle`。
+
+当前 `retain-bundle` 仍返回 `bundle_runtime_required`，所以 Conversation planner
+生成的完整计划仍不能进入 live clear/delete；产品 guard 继续关闭。本批没有部署或
+修改真实 Vault，也没有执行 migration、retention、Raw GC、历史删除或 Native
+cleanup。
