@@ -2490,6 +2490,9 @@ async function maintenanceWorkflowWalSnapshot(
     { status: "ready" | "blocked" }
   >["wal"]["intent"];
 } | null> {
+  let exactReadError = preparedHandle
+    ? ""
+    : "prepared WAL handle was not captured";
   if (preparedHandle) {
     try {
       const loaded = await loadMaintenanceWorkflowWal(preparedHandle);
@@ -2499,7 +2502,10 @@ async function maintenanceWorkflowWalSnapshot(
           intent: loaded.intent
         };
       }
-    } catch {
+      exactReadError = "prepared WAL workflowRunId did not match";
+    } catch (error) {
+      exactReadError =
+        error instanceof Error ? error.message : String(error);
       // Fall through to the complete inventory so an independently recovered
       // or relocated WAL can still be found without trusting stale memory.
     }
@@ -2511,19 +2517,44 @@ async function maintenanceWorkflowWalSnapshot(
     entries = await listMaintenanceWorkflowWals(
       storageRootPath
     );
-  } catch {
+  } catch (error) {
+    console.warn(
+      "Prepared maintenance WAL could not be read directly or inventoried",
+      {
+        workflowRunId,
+        exactReadError,
+        inventoryError:
+          error instanceof Error ? error.message : String(error)
+      }
+    );
     return null;
   }
   const matching = entries.find((entry) =>
     entry.status !== "invalid"
     && entry.wal.intent.workflowRunId === workflowRunId
   );
-  return matching && matching.status !== "invalid"
-    ? {
+  if (matching && matching.status !== "invalid") {
+    return {
       phase: matching.wal.state.phase,
       intent: matching.wal.intent
+    };
+  }
+  console.warn(
+    "Prepared maintenance WAL could not be recovered from inventory",
+    {
+      workflowRunId,
+      exactReadError,
+      inventory: entries.map((entry) =>
+        entry.status === "invalid"
+          ? { status: entry.status, error: entry.error }
+          : {
+            status: entry.status,
+            workflowRunId: entry.wal.intent.workflowRunId,
+            phase: entry.wal.state.phase
+          })
     }
-    : null;
+  );
+  return null;
 }
 
 async function reconcileTerminalActiveMaintenanceRunJournals(
