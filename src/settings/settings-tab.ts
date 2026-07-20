@@ -820,15 +820,6 @@ export class CodexSettingTab extends PluginSettingTab {
       new Notice(copy.knowledge.historyExported(exported));
       this.scheduleDisplay();
     };
-    const compact = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.compactHistory, attr: { type: "button" } });
-    compact.onclick = async () => {
-      const accepted = await confirmModal(this.app, copy.knowledge.compactHistory, "只压缩旧日期的过程记录，不删除用户与助手正文。", "压缩", "取消");
-      if (!accepted) return;
-      compact.disabled = true;
-      const count = await this.plugin.compactOldKnowledgeBaseProcessHistory();
-      new Notice(copy.knowledge.historyCompacted(count));
-      this.scheduleDisplay();
-    };
     const prune = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.pruneHistory, attr: { type: "button" } });
     prune.onclick = async () => {
       const accepted = await confirmModal(this.app, copy.knowledge.pruneHistory, copy.knowledge.retentionDaysDesc, copy.knowledge.pruneHistory, "取消");

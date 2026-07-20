@@ -1085,8 +1085,7 @@ async function assertWorkflowCasCommitsFullSourceBeforeHistoryProjection(): Prom
 
     assert.deepEqual(events, [
       "conversation:cas-history-old,cas-history-recent,cas-history-today",
-      "history",
-      "conversation:cas-history-recent,cas-history-today"
+      "history"
     ]);
     assert.equal(
       fixture.persistedKnowledgeBase().lastSummary,
@@ -1095,7 +1094,8 @@ async function assertWorkflowCasCommitsFullSourceBeforeHistoryProjection(): Prom
     assert.deepEqual(
       (await fixture.store.readConversationSession(session.id))
         ?.messages.map((message) => message.id),
-      ["cas-history-recent", "cas-history-today"]
+      ["cas-history-old", "cas-history-recent", "cas-history-today"],
+      "History projection must not compact the canonical Conversation"
     );
   } finally {
     restoreProjection?.();
@@ -1208,7 +1208,7 @@ async function assertActiveKnowledgeConversationFailureDoesNotPublishHistory(): 
 async function assertSecondConversationPassFailureRestartsFromFullSource(): Promise<void> {
   const fixture = await createFixture();
   const originalConsoleError = console.error;
-  let restoreUpsert: (() => void) | null = null;
+  let restoreProjection: (() => void) | null = null;
   try {
     console.error = () => undefined;
     const now = Date.now();
@@ -1233,22 +1233,18 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
     const saveCallsBeforeFailure = fixture.saveCalls();
 
     const internals = fixture.store as unknown as {
-      getConversationStore(): FileConversationStore;
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
     };
-    const conversationStore = internals.getConversationStore();
-    const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
-    let targetPass = 0;
-    conversationStore.upsertSession = async (candidate) => {
-      if (candidate.id === session.id) {
-        targetPass += 1;
-        if (targetPass === 2) {
-          throw new Error("fixture compacted Conversation second-pass failure");
-        }
-      }
-      await originalUpsert(candidate);
+    const originalProjection =
+      internals.projectKnowledgeBaseHistory.bind(fixture.store);
+    internals.projectKnowledgeBaseHistory = async () => {
+      throw new Error("fixture History projection failure");
     };
-    restoreUpsert = () => {
-      conversationStore.upsertSession = originalUpsert;
+    restoreProjection = () => {
+      internals.projectKnowledgeBaseHistory = originalProjection;
     };
 
     await assert.rejects(
@@ -1257,7 +1253,7 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
         strictConversationStore: false,
         strictKnowledgeBaseHistory: true
       }),
-      /compacted Conversation second-pass failure/
+      /fixture History projection failure/
     );
 
     const durableFull =
@@ -1265,7 +1261,7 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
     assert.deepEqual(
       durableFull?.messages.map((message) => message.id),
       ["second-pass-old", "second-pass-recent", "second-pass-today"],
-      "pass 1 must remain the complete durable source when pass 2 fails before its marker"
+      "a failed History projection must leave the complete durable Conversation intact"
     );
     assert.ok(session.contextSnapshot);
     assert.equal(
@@ -1275,25 +1271,25 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
     assert.strictEqual(session.messages[0], messageReferences[0]);
     assert.strictEqual(session.messages[1], messageReferences[1]);
     assert.strictEqual(session.messages[2], messageReferences[2]);
-    assert.deepEqual(
-      (await readKnowledgeBaseHistoryDay(
+    await assert.rejects(
+      readKnowledgeBaseHistoryDay(
         fixture.plugin.getVaultPath(),
         fixture.plugin.getPluginDataDirName(),
         session.id,
         oldDate
-      )).map((message) => message.id),
-      ["second-pass-old"],
-      "the published History row must remain readable because pass 1 owns its complete source"
+      ),
+      (error: unknown) => isNotFoundError(error),
+      "a failed projection must not publish a partial History generation"
     );
     assert.equal(fixture.saveCalls(), saveCallsBeforeFailure);
     assert.deepEqual(
       fixture.persistedSettings(),
       persistedBeforeFailure,
-      "data.json must stay behind a failed compacted Conversation pass"
+      "data.json must stay behind a failed History projection"
     );
 
-    restoreUpsert();
-    restoreUpsert = null;
+    restoreProjection();
+    restoreProjection = null;
     const restartedStore = new EchoInkSettingsStore(fixture.plugin as never);
     await restartedStore.loadSettings();
     fixture.store = restartedStore;
@@ -1304,17 +1300,7 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
     assert.deepEqual(
       restartedSession.messages.map((message) => message.id),
       ["second-pass-old", "second-pass-recent", "second-pass-today"],
-      "restart must hydrate the complete pass-1 Conversation instead of trusting the stale data shell"
-    );
-    assert.deepEqual(
-      (await readKnowledgeBaseHistoryDay(
-        fixture.plugin.getVaultPath(),
-        fixture.plugin.getPluginDataDirName(),
-        session.id,
-        oldDate
-      )).map((message) => message.id),
-      ["second-pass-old"],
-      "History restore evidence must survive a fresh SettingsStore instance"
+      "restart must hydrate the durable Conversation instead of trusting the stale data shell"
     );
 
     await restartedStore.saveSettings(true, {
@@ -1324,13 +1310,13 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
     });
     assert.deepEqual(
       restartedSession.messages.map((message) => message.id),
-      ["second-pass-recent", "second-pass-today"]
+      ["second-pass-old", "second-pass-recent", "second-pass-today"]
     );
     assert.deepEqual(
       (await restartedStore.readConversationSession(session.id))
         ?.messages.map((message) => message.id),
-      ["second-pass-recent", "second-pass-today"],
-      "a retry must finish the compacted Conversation pass before data.json"
+      ["second-pass-old", "second-pass-recent", "second-pass-today"],
+      "a retry must keep the complete canonical Conversation before data.json"
     );
     assert.deepEqual(
       (await readKnowledgeBaseHistoryDay(
@@ -1340,11 +1326,11 @@ async function assertSecondConversationPassFailureRestartsFromFullSource(): Prom
         oldDate
       )).map((message) => message.id),
       ["second-pass-old"],
-      "compaction must leave the full old-day record restorable from History"
+      "a retry must publish the old-day reference from canonical Conversation"
     );
     assert.equal(fixture.saveCalls(), saveCallsBeforeFailure + 1);
   } finally {
-    restoreUpsert?.();
+    restoreProjection?.();
     console.error = originalConsoleError;
     await fixture.dispose();
   }
@@ -1376,11 +1362,11 @@ async function assertOrdinarySaveUsesConversationAuthorityForHistoryAndRotation(
     const durable = await fixture.store.readConversationSession(session.id);
     assert.deepEqual(
       session.messages.map((message) => message.id),
-      ["history-recent", "history-today"]
+      ["history-old", "history-recent", "history-today"]
     );
     assert.deepEqual(
       durable?.messages.map((message) => message.id),
-      ["history-recent", "history-today"]
+      ["history-old", "history-recent", "history-today"]
     );
     assert.equal(
       createConversationContentRevision(session),

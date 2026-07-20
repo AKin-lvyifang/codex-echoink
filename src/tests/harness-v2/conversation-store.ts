@@ -2127,9 +2127,19 @@ async function assertConversationStoreParticipatesInDurableCommit(): Promise<voi
   );
   assert.match(settingsSource, /recoveredLintReportSummary\(settings\.lastReportPath\)/);
   assert.doesNotMatch(settingsSource, /上次 Codex 返回失败状态/);
-  assert.match(
+  const canonicalHistoryCommit = sourceSection(
     settingsSource,
-    /await this\.flushConversationStore\(\s*true,\s*fullCandidate,\s*synchronizeCanonicalSession\s*\)[\s\S]*const historyCandidate = cloneSettings\(fullCandidate\)[\s\S]*await this\.projectKnowledgeBaseHistory\([\s\S]*await this\.flushConversationStore\(\s*true,\s*historyCandidate,\s*synchronizeCanonicalSession\s*\)/
+    "private async persistCanonicalConversationAndHistory",
+    "private async projectKnowledgeBaseHistory"
+  );
+  assert.match(
+    canonicalHistoryCommit,
+    /prepareKnowledgeBaseHistoryMetadata\(fullCandidate\)[\s\S]*await this\.flushConversationStore\(\s*true,\s*fullCandidate,\s*synchronizeCanonicalSession\s*\)[\s\S]*const historyCandidate = cloneSettings\(fullCandidate\)[\s\S]*await this\.projectKnowledgeBaseHistory/
+  );
+  assert.doesNotMatch(
+    canonicalHistoryCommit,
+    /await this\.projectKnowledgeBaseHistory\([\s\S]*this\.flushConversationStore\(/,
+    "reference-only History publication must not rewrite canonical Conversation after projection"
   );
   assert.match(
     settingsSource,

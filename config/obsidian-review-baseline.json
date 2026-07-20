@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "source": "eslint-plugin-obsidianmd recommended",
-  "total": 961,
-  "errors": 704,
+  "total": 942,
+  "errors": 685,
   "warnings": 257,
   "ruleCounts": {
     "src/agent/opencode-rich-runtime.ts::@typescript-eslint/no-explicit-any::warning": 2,
@@ -155,12 +155,6 @@
     "src/knowledge-base/digest-evidence.ts::no-useless-escape::error": 2,
     "src/knowledge-base/failure.ts::@typescript-eslint/no-explicit-any::warning": 3,
     "src/knowledge-base/failure.ts::@typescript-eslint/no-unsafe-member-access::error": 21,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-base-to-string::error": 1,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-unsafe-argument::error": 2,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-unsafe-assignment::error": 2,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-unsafe-call::error": 2,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-unsafe-member-access::error": 9,
-    "src/knowledge-base/history-store.ts::@typescript-eslint/no-unsafe-return::error": 3,
     "src/knowledge-base/incremental-index.ts::obsidianmd/hardcoded-config-path::warning": 1,
     "src/knowledge-base/initializer.ts::obsidianmd/hardcoded-config-path::warning": 1,
     "src/knowledge-base/journal.ts::@typescript-eslint/no-unsafe-argument::error": 2,
@@ -5684,156 +5678,6 @@
       "message": "Unsafe member access .turn on an `any` value.",
       "evidence": "export function formatKnowledgeBaseCodexFailureSignal(method: string, params: any, fallbackMessage: string): string { const status = firstString(params?.turn?.status, params?.status, params?.error?.status, params?.turn?.error?.status); const code = firstString(params?.code, params?.error?.code, params?.turn?.error?.code, params?.exitCode);",
       "count": 2
-    },
-    {
-      "fingerprint": "310fd15987f8d24519d72af65b8569adb52e5923c99d4dc39208aaa3a4e78b82",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-base-to-string",
-      "severity": "error",
-      "messageId": "baseToString",
-      "message": "'record.sessionId' will use Object's default stringification format ('[object Object]') when stringified.",
-      "evidence": "return { sessionId: String(record.sessionId), title: typeof record.title === \"string\" && record.title.trim() ? record.title.trim() : \"知识库管理\",",
-      "count": 1
-    },
-    {
-      "fingerprint": "65333687117e7e70ef3840e7d3ac3769dbcaed60424da6061c0b2acf7ec67ef7",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": "error",
-      "messageId": "unsafeArgument",
-      "message": "Unsafe argument of type `any[]` assigned to a parameter of type `ChatMessage[]`.",
-      "evidence": "}); if (changed) await writeJsonlAtomic(knowledgeBaseHistoryDayPath(vaultPath, pluginDir, session.sessionId, day.date), compacted); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "ea87f2cf2bcfd27c7e4c732aab821cbc7dbea40e45102a572c48aa41153d0fc5",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": "error",
-      "messageId": "unsafeArgument",
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `ChatMessage`.",
-      "evidence": "if (!message.itemType || message.role === \"user\" || message.role === \"assistant\") return message; const text = compactProcessText(message); if (text === message.text) return message;",
-      "count": 1
-    },
-    {
-      "fingerprint": "f6d65ed3c7b7d7df1fa4074ee1e48390aca44560da5be7c9a1af80404db4b7ba",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "try { const raw = JSON.parse(await readFile(file, \"utf8\")); const sessions = Array.isArray(raw?.sessions) ? raw.sessions.map(normalizeHistorySessionSummary).filter(Boolean) as KnowledgeBaseHistorySessionSummary[] : [];",
-      "count": 1
-    },
-    {
-      "fingerprint": "7b24ed60add438abbf1b6f3a50c3a486e6a5f6b4ac30d9e707fef9f6c26adfd2",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": "error",
-      "messageId": "anyAssignment",
-      "message": "Unsafe assignment of an `any` value.",
-      "evidence": "version: KNOWLEDGE_BASE_HISTORY_VERSION, updatedAt: typeof raw?.updatedAt === \"number\" ? raw.updatedAt : 0, sessions",
-      "count": 1
-    },
-    {
-      "fingerprint": "27b5d9913a5fbc93da612d7b233686e377dc8012e20b44cbdbab37e50262a0cc",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-call",
-      "severity": "error",
-      "messageId": "unsafeCall",
-      "message": "Unsafe call of an `any` typed value.",
-      "evidence": "const raw = JSON.parse(await readFile(file, \"utf8\")); const sessions = Array.isArray(raw?.sessions) ? raw.sessions.map(normalizeHistorySessionSummary).filter(Boolean) as KnowledgeBaseHistorySessionSummary[] : []; return {",
-      "count": 2
-    },
-    {
-      "fingerprint": "828bc1a947e8fbe3c5781aa38e1bcbf9d54712a65db1a6a8db988fc91e5700b5",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .itemType on an `any` value.",
-      "evidence": "const compacted = messages.map((message) => { if (!message.itemType || message.role === \"user\" || message.role === \"assistant\") return message; const text = compactProcessText(message);",
-      "count": 1
-    },
-    {
-      "fingerprint": "b80d7c95830eb0ed0d550102fff65c73e2b467c88291c20de9447ca86892900e",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .role on an `any` value.",
-      "evidence": "const compacted = messages.map((message) => { if (!message.itemType || message.role === \"user\" || message.role === \"assistant\") return message; const text = compactProcessText(message);",
-      "count": 2
-    },
-    {
-      "fingerprint": "1f6964498968a00c616a263fba2218cb2db41fcbfdb7b6316c0af6b3f537e0cb",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .sessions on an `any` value.",
-      "evidence": "const raw = JSON.parse(await readFile(file, \"utf8\")); const sessions = Array.isArray(raw?.sessions) ? raw.sessions.map(normalizeHistorySessionSummary).filter(Boolean) as KnowledgeBaseHistorySessionSummary[] : []; return {",
-      "count": 2
-    },
-    {
-      "fingerprint": "273b058fcf03d858486de5e92c8a78823c4baf6d775e5e8f0c4230733716bff4",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .filter on an `any` value.",
-      "evidence": "const raw = JSON.parse(await readFile(file, \"utf8\")); const sessions = Array.isArray(raw?.sessions) ? raw.sessions.map(normalizeHistorySessionSummary).filter(Boolean) as KnowledgeBaseHistorySessionSummary[] : []; return {",
-      "count": 1
-    },
-    {
-      "fingerprint": "4fe22d1174936871d989867491d8ee4ca25002fdfd501d7bf343046dbaac6df4",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .text on an `any` value.",
-      "evidence": "const text = compactProcessText(message); if (text === message.text) return message; changed = true;",
-      "count": 1
-    },
-    {
-      "fingerprint": "d81b58d6d57405bc57af52cc0a892c6fece84f292c586114074c646ce7cd36aa",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": "error",
-      "messageId": "unsafeMemberExpression",
-      "message": "Unsafe member access .updatedAt on an `any` value.",
-      "evidence": "version: KNOWLEDGE_BASE_HISTORY_VERSION, updatedAt: typeof raw?.updatedAt === \"number\" ? raw.updatedAt : 0, sessions",
-      "count": 2
-    },
-    {
-      "fingerprint": "741ce8ff09c808273f6fe562f15406bdc1e4af2eb720633813ede7017e345a2f",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-return",
-      "severity": "error",
-      "messageId": "unsafeReturn",
-      "message": "Unsafe return of a value of type `any`.",
-      "evidence": "changedCount += 1; return { ...message, text, previewText: undefined, rawRef: undefined, rawSize: undefined, rawLines: undefined, rawTruncatedForPreview: undefined }; });",
-      "count": 1
-    },
-    {
-      "fingerprint": "9bbe43a381257c0b58cd0279395675b0d6137377ea775e848e088f08374b5823",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-return",
-      "severity": "error",
-      "messageId": "unsafeReturn",
-      "message": "Unsafe return of a value of type `any`.",
-      "evidence": "const compacted = messages.map((message) => { if (!message.itemType || message.role === \"user\" || message.role === \"assistant\") return message; const text = compactProcessText(message);",
-      "count": 1
-    },
-    {
-      "fingerprint": "9cac7aff42efb55e8afb3bfe5c5d87a476983b4407ee00bca5d7e63007a5fd3f",
-      "path": "src/knowledge-base/history-store.ts",
-      "rule": "@typescript-eslint/no-unsafe-return",
-      "severity": "error",
-      "messageId": "unsafeReturn",
-      "message": "Unsafe return of a value of type `any`.",
-      "evidence": "const text = compactProcessText(message); if (text === message.text) return message; changed = true;",
-      "count": 1
     },
     {
       "fingerprint": "5ce11aaee5c518b4afdf5d04c0e771d11bba13a230c1e4b320741654e6dd334d",

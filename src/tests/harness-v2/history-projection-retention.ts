@@ -15,16 +15,28 @@ import {
   resolveRawRef,
   writeRawText
 } from "../../core/raw-message-store";
-import { FileConversationStore } from "../../harness/conversation/conversation-store";
+import {
+  createConversationMessageRevision,
+  FileConversationStore
+} from "../../harness/conversation/conversation-store";
 import { workspaceFingerprint } from "../../harness/kernel/session-service";
 import {
-  knowledgeBaseHistoryRoot,
+  KnowledgeBaseHistoryMigrationRequiredError,
   knowledgeBaseHistoryDayPath,
+  knowledgeBaseHistoryGenerationDayPath,
+  knowledgeBaseHistoryIndexPath,
+  knowledgeBaseHistoryRoot,
+  knowledgeBaseHistoryV2MigrationPath,
   localDateKeyForTimestamp,
   migrateKnowledgeBaseHistory,
+  parseKnowledgeBaseHistoryMessageReferenceV2,
+  persistAndCompactKnowledgeBaseHistory,
   persistKnowledgeBaseHistoryMessages,
   pruneKnowledgeBaseHistoryByRetention,
+  readKnowledgeBaseHistoryActive,
+  readKnowledgeBaseHistoryDay,
   readKnowledgeBaseHistoryIndex,
+  rebuildKnowledgeBaseHistoryIndex,
   removeKnowledgeBaseHistory,
   removeKnowledgeBaseHistoryDays
 } from "../../knowledge-base/history-store";
@@ -40,7 +52,10 @@ import {
 } from "../../knowledge-base/scheduled-maintenance";
 import type { KnowledgeBaseRunResult } from "../../knowledge-base/types";
 import { EchoInkConnectionService } from "../../plugin/connection-service";
-import { EchoInkSettingsStore } from "../../plugin/settings-store";
+import {
+  EchoInkSettingsStore,
+  settingsForDataSave
+} from "../../plugin/settings-store";
 import {
   normalizeSettingsData,
   type ChatMessage,
@@ -51,6 +66,19 @@ import {
 const PLUGIN_DIR = "codex-echoink";
 
 export async function runHarnessV2HistoryProjectionRetentionTests(): Promise<void> {
+  await assertHistoryDayStoresReferencesAndResolvesConversation();
+  await assertHistoryRebuildUsesCanonicalConversation();
+  await assertCompactedDataShellCannotTruncateCanonicalHistory();
+  await assertHistoryV2ReferenceSchemaIsExact();
+  await assertGenerationFailureKeepsPreviousActiveProjection();
+  await assertGenerationRejectsConversationSourceDrift();
+  await assertExplicitDeletionSuppressionAllowsOnlyNewMessages();
+  await assertHistoryWriterLaneSerializesConcurrentMutations();
+  await assertLegacyStartupAndOrdinarySaveDoNotCutover();
+  await assertLegacyMutationsRequireExplicitMigration();
+  await assertLegacyConflictLeavesSourceAndActiveUnchanged();
+  await assertEmptyLegacyProjectionCanInitializeV2();
+  await assertLegacyCutoverPreservesV1Bytes();
   await assertRemoveDayPreservesConversationOwnedRaw();
   await assertRemoveAllPreservesConversationOwnedRaw();
   await assertRetentionPreservesConversationOwnedRaw();
@@ -69,6 +97,850 @@ export async function runHarnessV2HistoryProjectionRetentionTests(): Promise<voi
   await assertLocalPersistenceReceiptSurvivesNewRunSettingsWrites();
   await assertSettingsSaveReprojectsDurableRecoveryReceipt();
   await assertConnectionRecoveryClearsScheduledLifecycleWarning();
+}
+
+async function assertHistoryDayStoresReferencesAndResolvesConversation():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-reference-projection-")
+  );
+  const date = "2026-01-20";
+  const rawRef = "raw/reference-projection.txt";
+  const message = {
+    ...messageForDate("history-reference-message", date, rawRef),
+    runId: "run-history-reference"
+  };
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-reference-projection",
+    [message]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await writeRawText(
+      vaultPath,
+      rawRef,
+      "canonical raw text must not be copied into History",
+      PLUGIN_DIR
+    );
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+
+    const active = await readKnowledgeBaseHistoryActive(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.ok(active, "V2 projection must publish an active generation");
+    const rows = (await readFile(
+      knowledgeBaseHistoryGenerationDayPath(
+        vaultPath,
+        PLUGIN_DIR,
+        active.generationId,
+        session.id,
+        date
+      ),
+      "utf8"
+    ))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.kind, "conversation-message");
+    assert.equal(rows[0]?.conversationId, session.id);
+    assert.equal(rows[0]?.messageId, message.id);
+    assert.equal(rows[0]?.runId, message.runId);
+    for (const forbidden of [
+      "text",
+      "previewText",
+      "rawRef",
+      "rawSize",
+      "rawLines",
+      "rawTruncatedForPreview",
+      "backendBindings"
+    ]) {
+      assert.equal(
+        forbidden in rows[0]!,
+        false,
+        `History reference row must not copy ${forbidden}`
+      );
+    }
+    assert.deepEqual(
+      await readKnowledgeBaseHistoryDay(
+        vaultPath,
+        PLUGIN_DIR,
+        session.id,
+        date
+      ),
+      [message],
+      "History browsing must resolve exact canonical Conversation messages"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertHistoryRebuildUsesCanonicalConversation(): Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-authoritative-rebuild-")
+  );
+  const oldDate = "2026-01-19";
+  const activeDate = "2026-01-20";
+  const oldMessage = messageForDate("history-rebuild-old", oldDate);
+  const activeMessage = messageForDate("history-rebuild-active", activeDate);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-authoritative-rebuild",
+    [oldMessage, activeMessage]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    await removeKnowledgeBaseHistory(vaultPath, PLUGIN_DIR);
+
+    const suppressedRebuild = await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.deepEqual(
+      suppressedRebuild.sessions,
+      [],
+      "ordinary rebuild must honor explicit History deletion suppressions"
+    );
+    const rebuilt = await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR,
+      { restoreSuppressed: true }
+    );
+    assert.equal(rebuilt.sessions[0]?.messageCount, 2);
+    assert.deepEqual(
+      (
+        await readKnowledgeBaseHistoryDay(
+          vaultPath,
+          PLUGIN_DIR,
+          session.id,
+          oldDate
+        )
+      ).map((message) => message.id),
+      [oldMessage.id],
+      "rebuild must recreate missing projection rows from Conversation authority"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertCompactedDataShellCannotTruncateCanonicalHistory():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-canonical-compaction-")
+  );
+  const oldDate = "2026-01-19";
+  const activeDate = "2026-01-20";
+  const oldMessage = messageForDate("history-canonical-old", oldDate);
+  const activeMessage = messageForDate("history-canonical-active", activeDate);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-canonical-compaction",
+    [oldMessage, activeMessage]
+  );
+  const conversationStore = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(conversationStore, session);
+    const settings = normalizeSettingsData({
+      settingsVersion: 29,
+      sessions: [session],
+      activeSessionId: session.id,
+      knowledgeBase: { sessionId: session.id }
+    }).settings;
+    await migrateKnowledgeBaseHistory(vaultPath, PLUGIN_DIR, settings);
+    assert.deepEqual(
+      settings.sessions[0]?.messages.map((message) => message.id),
+      [oldMessage.id, activeMessage.id],
+      "History V2 must keep the full canonical Conversation in live settings"
+    );
+    assert.deepEqual(
+      settingsForDataSave(settings).sessions[0]?.messages,
+      [],
+      "the persisted data.json shell must omit Conversation-owned messages"
+    );
+
+    const plugin = startupSettingsPlugin(vaultPath, settings);
+    const settingsStore = new EchoInkSettingsStore(plugin as never);
+    await settingsStore.saveSettings(true, {
+      strictConversationStore: true,
+      strictKnowledgeBaseHistory: true
+    });
+
+    assert.deepEqual(
+      (
+        await conversationStore.readSession(session.id)
+      )?.messages.map((message) => message.id),
+      [oldMessage.id, activeMessage.id],
+      "saving a compact data shell must preserve the full canonical Conversation"
+    );
+    await removeKnowledgeBaseHistory(vaultPath, PLUGIN_DIR);
+    await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR,
+      { restoreSuppressed: true }
+    );
+    assert.deepEqual(
+      (
+        await readKnowledgeBaseHistoryDay(
+          vaultPath,
+          PLUGIN_DIR,
+          session.id,
+          activeDate
+        )
+      ).map((message) => message.id),
+      [activeMessage.id],
+      "a rebuilt projection must recover messages omitted from the data shell"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertHistoryV2ReferenceSchemaIsExact(): Promise<void> {
+  const message = messageForDate(
+    "history-strict-reference",
+    "2026-01-20"
+  );
+  const valid = {
+    version: 2 as const,
+    kind: "conversation-message" as const,
+    conversationId: "knowledge-history-strict-reference",
+    messageId: message.id,
+    messageRevision: createConversationMessageRevision(message)
+  };
+  assert.deepEqual(
+    parseKnowledgeBaseHistoryMessageReferenceV2(valid),
+    valid
+  );
+  for (const forbidden of [
+    "text",
+    "previewText",
+    "rawRef",
+    "backendBindings",
+    "createdAt",
+    "role",
+    "status",
+    "unknown"
+  ]) {
+    assert.throws(
+      () => parseKnowledgeBaseHistoryMessageReferenceV2({
+        ...valid,
+        [forbidden]: "must fail closed"
+      }),
+      new RegExp(`unknown field ${forbidden}`),
+      `History V2 reference rows must reject ${forbidden}`
+    );
+  }
+  assert.throws(
+    () => parseKnowledgeBaseHistoryMessageReferenceV2({
+      ...valid,
+      version: 3
+    }),
+    /schema is invalid/
+  );
+}
+
+async function assertGenerationFailureKeepsPreviousActiveProjection():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-generation-failure-")
+  );
+  const date = "2026-01-20";
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-generation-failure",
+    [messageForDate("history-generation-stable", date)]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    const before = await readKnowledgeBaseHistoryActive(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.ok(before);
+    await assert.rejects(
+      rebuildKnowledgeBaseHistoryIndex(
+        vaultPath,
+        PLUGIN_DIR,
+        {
+          hooks: {
+            beforeActivePublish: () => {
+              throw new Error("fixture failure before active publish");
+            }
+          }
+        }
+      ),
+      /fixture failure before active publish/
+    );
+    const after = await readKnowledgeBaseHistoryActive(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.deepEqual(
+      after,
+      before,
+      "an orphan complete generation must not replace the previous active projection"
+    );
+    assert.deepEqual(
+      (
+        await readKnowledgeBaseHistoryDay(
+          vaultPath,
+          PLUGIN_DIR,
+          session.id,
+          date
+        )
+      ).map((message) => message.id),
+      ["history-generation-stable"]
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertGenerationRejectsConversationSourceDrift():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-source-drift-")
+  );
+  const date = "2026-01-20";
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-source-drift",
+    [messageForDate("history-source-before", date)]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    const activeBefore = await readKnowledgeBaseHistoryActive(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.ok(activeBefore);
+    let mutated = false;
+    await assert.rejects(
+      rebuildKnowledgeBaseHistoryIndex(
+        vaultPath,
+        PLUGIN_DIR,
+        {
+          hooks: {
+            beforeSourceRevalidation: async () => {
+              if (mutated) return;
+              mutated = true;
+              session.messages.push(
+                messageForDate("history-source-after", date)
+              );
+              session.updatedAt += 1;
+              await store.upsertSession(session);
+            }
+          }
+        }
+      ),
+      /canonical Conversation changed during generation build/
+    );
+    assert.deepEqual(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      activeBefore,
+      "Conversation drift must leave the previous active generation unchanged"
+    );
+    const rebuilt = await rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.equal(rebuilt.sessions[0]?.messageCount, 2);
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertExplicitDeletionSuppressionAllowsOnlyNewMessages():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-delete-suppression-")
+  );
+  const date = "2026-01-20";
+  const oldMessage = messageForDate("history-suppressed-old", date);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-delete-suppression",
+    [oldMessage]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    await removeKnowledgeBaseHistoryDays(
+      vaultPath,
+      PLUGIN_DIR,
+      [date],
+      session.id
+    );
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryIndex(vaultPath, PLUGIN_DIR)).sessions,
+      [],
+      "ordinary saves must not revive explicitly deleted references"
+    );
+
+    const newMessage = messageForDate(
+      "history-after-suppression",
+      date
+    );
+    session.messages.push(newMessage);
+    session.updatedAt += 1;
+    await store.upsertSession(session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    assert.deepEqual(
+      (
+        await readKnowledgeBaseHistoryDay(
+          vaultPath,
+          PLUGIN_DIR,
+          session.id,
+          date
+        )
+      ).map((message) => message.id),
+      [newMessage.id],
+      "new messages may enter a date without reviving suppressed message IDs"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertHistoryWriterLaneSerializesConcurrentMutations():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-writer-lane-")
+  );
+  const date = "2026-01-20";
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-writer-lane",
+    [messageForDate("history-writer-lane-message", date)]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  let releaseStaged!: () => void;
+  const stagedRelease = new Promise<void>((resolve) => {
+    releaseStaged = resolve;
+  });
+  let markStaged!: () => void;
+  const staged = new Promise<void>((resolve) => {
+    markStaged = resolve;
+  });
+  try {
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    const rebuilding = rebuildKnowledgeBaseHistoryIndex(
+      vaultPath,
+      PLUGIN_DIR,
+      {
+        hooks: {
+          afterGenerationStaged: async () => {
+            markStaged();
+            await stagedRelease;
+          }
+        }
+      }
+    );
+    await staged;
+    const removing = removeKnowledgeBaseHistoryDays(
+      vaultPath,
+      PLUGIN_DIR,
+      [date],
+      session.id
+    );
+    releaseStaged();
+    await Promise.all([rebuilding, removing]);
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryIndex(vaultPath, PLUGIN_DIR)).sessions,
+      [],
+      "the later delete must run after the in-flight rebuild and remain authoritative"
+    );
+  } finally {
+    releaseStaged();
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertLegacyStartupAndOrdinarySaveDoNotCutover():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-v1-startup-gate-")
+  );
+  const date = "2026-01-20";
+  const message = messageForDate("history-v1-startup-message", date);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-v1-startup-gate",
+    [message]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  const settings = settingsForKnowledgeSession(session, 7);
+  let originalConsoleError = console.error;
+  let originalConsoleWarn = console.warn;
+  try {
+    await persistConversation(store, session);
+    const legacy = await writeLegacyHistoryFixture(
+      vaultPath,
+      session,
+      message
+    );
+
+    const ordinary = await persistAndCompactKnowledgeBaseHistory(
+      vaultPath,
+      PLUGIN_DIR,
+      settings,
+      timestampForDate("2026-01-21")
+    );
+    assert.equal(ordinary.messageCount, 1);
+    assert.equal(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      null,
+      "ordinary History persistence must not cut over populated V1 data"
+    );
+
+    const startupErrors: unknown[] = [];
+    originalConsoleError = console.error;
+    originalConsoleWarn = console.warn;
+    console.error = (...args: unknown[]) => {
+      startupErrors.push(...args);
+    };
+    console.warn = (...args: unknown[]) => {
+      startupErrors.push(...args);
+    };
+    const plugin = startupSettingsPlugin(vaultPath, settings);
+    await new EchoInkSettingsStore(
+      plugin as never
+    ).runDeferredStartupMaintenance();
+    console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
+
+    assert.ok(
+      startupErrors.some(
+        (value) =>
+          value instanceof KnowledgeBaseHistoryMigrationRequiredError
+      ),
+      "startup retention must report the explicit migration gate"
+    );
+    assert.equal(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      null,
+      "startup maintenance must not cut over populated V1 data"
+    );
+    await assertLegacyFixtureBytesUnchanged(legacy);
+  } finally {
+    console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertLegacyMutationsRequireExplicitMigration():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-v1-mutation-gate-")
+  );
+  const date = "2026-01-20";
+  const message = messageForDate("history-v1-mutation-message", date);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-v1-mutation-gate",
+    [message]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    const legacy = await writeLegacyHistoryFixture(
+      vaultPath,
+      session,
+      message
+    );
+    const operations: Array<() => Promise<unknown>> = [
+      () => persistKnowledgeBaseHistoryMessages(
+        vaultPath,
+        PLUGIN_DIR,
+        session,
+        session.messages
+      ),
+      () => rebuildKnowledgeBaseHistoryIndex(vaultPath, PLUGIN_DIR),
+      () => removeKnowledgeBaseHistory(vaultPath, PLUGIN_DIR),
+      () => removeKnowledgeBaseHistoryDays(
+        vaultPath,
+        PLUGIN_DIR,
+        [date],
+        session.id
+      ),
+      () => pruneKnowledgeBaseHistoryByRetention(
+        vaultPath,
+        PLUGIN_DIR,
+        7,
+        timestampForDate("2026-02-20")
+      )
+    ];
+    for (const operation of operations) {
+      await assert.rejects(
+        operation,
+        (error: unknown) =>
+          error instanceof KnowledgeBaseHistoryMigrationRequiredError
+      );
+      assert.equal(
+        await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+        null
+      );
+    }
+    await assertLegacyFixtureBytesUnchanged(legacy);
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertLegacyConflictLeavesSourceAndActiveUnchanged():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-v1-conflict-")
+  );
+  const date = "2026-01-20";
+  const canonicalMessage = messageForDate(
+    "history-v1-conflict-message",
+    date
+  );
+  const legacyMessage = {
+    ...canonicalMessage,
+    text: "conflicting legacy body"
+  };
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-v1-conflict",
+    [canonicalMessage]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    const legacy = await writeLegacyHistoryFixture(
+      vaultPath,
+      session,
+      legacyMessage
+    );
+    await assert.rejects(
+      migrateKnowledgeBaseHistory(
+        vaultPath,
+        PLUGIN_DIR,
+        settingsForKnowledgeSession(session),
+        { allowLegacyCutover: true }
+      ),
+      /legacy message conflict/
+    );
+    assert.equal(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      null,
+      "a conflicting V1 projection must not publish an active V2 generation"
+    );
+    await assert.rejects(
+      stat(knowledgeBaseHistoryV2MigrationPath(vaultPath, PLUGIN_DIR)),
+      isNotFoundError
+    );
+    await assertLegacyFixtureBytesUnchanged(legacy);
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertEmptyLegacyProjectionCanInitializeV2():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-empty-v1-")
+  );
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-empty-v1",
+    [messageForDate("history-empty-v1-message", "2026-01-20")]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  const legacyIndexPath = knowledgeBaseHistoryIndexPath(
+    vaultPath,
+    PLUGIN_DIR
+  );
+  try {
+    await persistConversation(store, session);
+    await mkdir(path.dirname(legacyIndexPath), { recursive: true });
+    const legacyIndexBytes = `${JSON.stringify({
+      version: 1,
+      updatedAt: 0,
+      sessions: []
+    }, null, 2)}\n`;
+    await writeFile(legacyIndexPath, legacyIndexBytes, "utf8");
+    await persistAndCompactKnowledgeBaseHistory(
+      vaultPath,
+      PLUGIN_DIR,
+      settingsForKnowledgeSession(session)
+    );
+    assert.ok(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      "an empty V1 projection may initialize V2 without a migration action"
+    );
+    assert.equal(
+      await readFile(legacyIndexPath, "utf8"),
+      legacyIndexBytes,
+      "initializing V2 must not rewrite an empty V1 index"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertLegacyCutoverPreservesV1Bytes(): Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-history-v1-cutover-")
+  );
+  const date = "2026-01-20";
+  const message = messageForDate("history-v1-message", date);
+  const session = knowledgeSession(
+    vaultPath,
+    "knowledge-history-v1-cutover",
+    [message]
+  );
+  const store = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, PLUGIN_DIR),
+      "conversations"
+    )
+  });
+  try {
+    await persistConversation(store, session);
+    const legacy = await writeLegacyHistoryFixture(
+      vaultPath,
+      session,
+      message
+    );
+    await migrateKnowledgeBaseHistory(
+      vaultPath,
+      PLUGIN_DIR,
+      settingsForKnowledgeSession(session),
+      { allowLegacyCutover: true }
+    );
+    await assertLegacyFixtureBytesUnchanged(legacy);
+    assert.ok(
+      await readKnowledgeBaseHistoryActive(vaultPath, PLUGIN_DIR),
+      "explicitly validated V1 data must publish a separate V2 active generation"
+    );
+    await stat(knowledgeBaseHistoryV2MigrationPath(vaultPath, PLUGIN_DIR));
+    assert.deepEqual(
+      (
+        await readKnowledgeBaseHistoryDay(
+          vaultPath,
+          PLUGIN_DIR,
+          session.id,
+          date
+        )
+      ).map((item) => item.id),
+      [message.id]
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 async function assertRemoveDayPreservesConversationOwnedRaw(): Promise<void> {
@@ -96,11 +968,15 @@ async function assertRemoveAllPreservesConversationOwnedRaw(): Promise<void> {
   try {
     const result = await removeKnowledgeBaseHistory(fixture.vaultPath, PLUGIN_DIR);
     assert.deepEqual(result, { removedDayCount: 1, removedMessageCount: 1 });
-    await assert.rejects(
-      stat(knowledgeBaseHistoryRoot(fixture.vaultPath, PLUGIN_DIR)),
-      (error: unknown) => isNotFoundError(error),
-      "removing all History must remove the projection root"
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryIndex(
+        fixture.vaultPath,
+        PLUGIN_DIR
+      )).sessions,
+      [],
+      "removing all History must publish an empty V2 projection"
     );
+    await stat(knowledgeBaseHistoryRoot(fixture.vaultPath, PLUGIN_DIR));
     await assertConversationRawUnchanged(fixture);
   } finally {
     await fixture.dispose();
@@ -161,8 +1037,8 @@ async function assertStartupRetentionPreservesConversationOwnedRaw(): Promise<vo
     await migrateKnowledgeBaseHistory(vaultPath, PLUGIN_DIR, settings);
     assert.deepEqual(
       settings.sessions[0]?.messages.map((message) => message.id),
-      [activeMessage.id],
-      "the startup fixture must leave old history only in the projection"
+      [oldMessage.id, activeMessage.id],
+      "startup History publication must preserve the full canonical Conversation"
     );
 
     const plugin = startupSettingsPlugin(vaultPath, settings);
@@ -204,12 +1080,6 @@ async function assertHistoryWriteRejectsCorruptExistingDay(): Promise<void> {
     "knowledge-history-corrupt-write-readback",
     [messageForDate("history-corrupt-incoming", date)]
   );
-  const dayPath = knowledgeBaseHistoryDayPath(
-    vaultPath,
-    PLUGIN_DIR,
-    session.id,
-    date
-  );
   const corruptCases = [
     {
       name: "malformed JSON",
@@ -226,7 +1096,31 @@ async function assertHistoryWriteRejectsCorruptExistingDay(): Promise<void> {
     }
   ] as const;
   try {
-    await mkdir(path.dirname(dayPath), { recursive: true });
+    const store = new FileConversationStore({
+      rootPath: path.join(
+        pluginDataDir(vaultPath, PLUGIN_DIR),
+        "conversations"
+      )
+    });
+    await persistConversation(store, session);
+    await persistKnowledgeBaseHistoryMessages(
+      vaultPath,
+      PLUGIN_DIR,
+      session,
+      session.messages
+    );
+    const active = await readKnowledgeBaseHistoryActive(
+      vaultPath,
+      PLUGIN_DIR
+    );
+    assert.ok(active);
+    const dayPath = knowledgeBaseHistoryGenerationDayPath(
+      vaultPath,
+      PLUGIN_DIR,
+      active.generationId,
+      session.id,
+      date
+    );
     for (const corruptCase of corruptCases) {
       await writeFile(dayPath, corruptCase.bytes, "utf8");
       await assert.rejects(
@@ -236,7 +1130,7 @@ async function assertHistoryWriteRejectsCorruptExistingDay(): Promise<void> {
           session,
           session.messages
         ),
-        /Knowledge History recovery required: invalid ChatMessage row 1/,
+        /Knowledge History recovery required: staged generation digest mismatch/,
         `${corruptCase.name} must fail closed instead of becoming an empty History day`
       );
       assert.equal(
@@ -2201,6 +3095,81 @@ async function assertConversationRawUnchanged(
     fixture.rawText,
     "the canonical Conversation rawRef must remain readable after History cleanup"
   );
+}
+
+interface LegacyHistoryFixtureBytes {
+  dayPath: string;
+  dayBytes: string;
+  indexPath: string;
+  indexBytes: string;
+}
+
+async function writeLegacyHistoryFixture(
+  vaultPath: string,
+  session: StoredSession,
+  message: ChatMessage
+): Promise<LegacyHistoryFixtureBytes> {
+  const date = localDateKeyForTimestamp(message.createdAt);
+  const dayPath = knowledgeBaseHistoryDayPath(
+    vaultPath,
+    PLUGIN_DIR,
+    session.id,
+    date
+  );
+  const indexPath = knowledgeBaseHistoryIndexPath(
+    vaultPath,
+    PLUGIN_DIR
+  );
+  const dayBytes = `${JSON.stringify(message)}\n`;
+  const indexBytes = `${JSON.stringify({
+    version: 1,
+    updatedAt: message.createdAt,
+    sessions: [{
+      sessionId: session.id,
+      title: session.title,
+      kind: "knowledge-base",
+      activeDate: date,
+      messageCount: 1,
+      dayCount: 1,
+      updatedAt: message.createdAt,
+      days: [{
+        date,
+        messageCount: 1,
+        userMessageCount: message.role === "user" ? 1 : 0,
+        assistantMessageCount: message.role === "assistant" ? 1 : 0,
+        processMessageCount: message.isProcess ? 1 : 0,
+        failedMessageCount: message.isError ? 1 : 0,
+        firstMessageAt: message.createdAt,
+        lastMessageAt: message.createdAt
+      }]
+    }]
+  }, null, 2)}\n`;
+  await mkdir(path.dirname(dayPath), { recursive: true });
+  await writeFile(dayPath, dayBytes, "utf8");
+  await writeFile(indexPath, indexBytes, "utf8");
+  return { dayPath, dayBytes, indexPath, indexBytes };
+}
+
+async function assertLegacyFixtureBytesUnchanged(
+  fixture: LegacyHistoryFixtureBytes
+): Promise<void> {
+  assert.equal(await readFile(fixture.dayPath, "utf8"), fixture.dayBytes);
+  assert.equal(await readFile(fixture.indexPath, "utf8"), fixture.indexBytes);
+}
+
+function settingsForKnowledgeSession(
+  session: StoredSession,
+  historyRetentionDays = 0
+): CodexForObsidianSettings {
+  return normalizeSettingsData({
+    settingsVersion: 29,
+    sessions: [session],
+    activeSessionId: session.id,
+    knowledgeBase: {
+      sessionId: session.id,
+      historyRetentionDays
+    }
+  }).settings;
 }
 
 async function persistConversation(

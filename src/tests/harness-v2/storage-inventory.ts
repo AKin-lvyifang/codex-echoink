@@ -76,6 +76,8 @@ export async function runHarnessV2StorageInventoryTests(): Promise<void> {
   await assertV2ConversationPayloadContentAddressing();
   await assertCommittedConversationPayloadPointersFailClosed();
   await assertHistoryIndexAndDuplicateMessageDrift();
+  await assertHistoryV2ReferencesLinkAndNeverOwnRaw();
+  await assertHistoryV2RejectsBodyFields();
   await assertRawReferenceGraphNeverReadsRawBodies();
   await assertRunLedgerIntegrityFindings();
   await assertRunEventWithoutRunIdBlocksMigration();
@@ -633,6 +635,120 @@ async function assertHistoryIndexAndDuplicateMessageDrift(): Promise<void> {
   assertFinding(report, "history-day-unindexed");
   assertFinding(report, "duplicate-message-id");
   assert.ok(report.migrationPreview.candidateRecordCount > 0);
+}
+
+async function assertHistoryV2ReferencesLinkAndNeverOwnRaw():
+Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-history-v2-"
+  );
+  const linked = {
+    ...message("history-v2-linked", "assistant"),
+    rawRef: "raw/history-v2-linked.txt"
+  };
+  const drifted = message("history-v2-drifted", "user");
+  await writeDataJson(fixture, ["knowledge-session"]);
+  await writeConversation(
+    fixture,
+    "knowledge-session",
+    [linked, drifted],
+    "knowledge-base"
+  );
+  await writeConversationIndex(fixture, [
+    conversationSummary("knowledge-session", 2, "knowledge-base")
+  ]);
+  await writeFile(
+    path.join(fixture.rawPath, "history-v2-linked.txt"),
+    `${SECRET}:history-v2`,
+    "utf8"
+  );
+  await writeHistoryV2Projection(
+    fixture,
+    "knowledge-session",
+    [linked, drifted],
+    [
+      historyV2Reference("knowledge-session", linked),
+      {
+        ...historyV2Reference("knowledge-session", drifted),
+        messageRevision: stableFixtureRevision({
+          ...drifted,
+          text: "same ID, different canonical body"
+        })
+      },
+      historyV2Reference(
+        "knowledge-session",
+        message("history-v2-missing", "assistant")
+      )
+    ]
+  );
+
+  const report = await scanAndBuild(fixture);
+  const historySource = report.sources.find(
+    (source) => source.sourceId === "history"
+  );
+  assert.equal(historySource?.schemaVersion, "2");
+  assert.equal(
+    historySource?.metrics?.find(
+      (metric) => metric.name === "raw-reference-count"
+    )?.value,
+    0,
+    "History V2 must never become a Raw owner"
+  );
+  const historyRelations = report.relations.filter(
+    (relation) => relation.kind === "history-message-projection"
+  );
+  assert.deepEqual(
+    [...new Set(historyRelations.map((relation) => relation.status))].sort(),
+    ["ambiguous", "linked", "missing"],
+    "every V2 ref must produce a linked, missing, or ambiguous relation"
+  );
+  assertBlockingFinding(
+    report,
+    "history-reference-revision-mismatch"
+  );
+  assertBlockingFinding(
+    report,
+    "history-reference-source-missing"
+  );
+  assert.equal(
+    report.relations.some(
+      (relation) =>
+        relation.from.sourceId === "history"
+        && relation.kind.includes("raw")
+    ),
+    false
+  );
+}
+
+async function assertHistoryV2RejectsBodyFields(): Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-history-v2-body-"
+  );
+  const canonical = message("history-v2-body", "assistant");
+  await writeDataJson(fixture, ["knowledge-session"]);
+  await writeConversation(
+    fixture,
+    "knowledge-session",
+    [canonical],
+    "knowledge-base"
+  );
+  await writeConversationIndex(fixture, [
+    conversationSummary("knowledge-session", 1, "knowledge-base")
+  ]);
+  await writeHistoryV2Projection(
+    fixture,
+    "knowledge-session",
+    [canonical],
+    [{
+      ...historyV2Reference("knowledge-session", canonical),
+      text: "History must reject copied body text",
+      rawRef: "raw/forbidden.txt"
+    }]
+  );
+
+  const report = await scanAndBuild(fixture);
+  assertBlockingFinding(report, "history-reference-invalid");
+  assert.equal(sourceStatus(report, "history"), "partial");
 }
 
 async function assertRawReferenceGraphNeverReadsRawBodies(): Promise<void> {
@@ -2678,7 +2794,7 @@ async function createFixture(prefix: string): Promise<Fixture> {
   ]);
   await writeDataJson(fixture, []);
   await writeConversationIndex(fixture, []);
-  await writeHistoryIndex(fixture, []);
+  await writeEmptyHistoryV2(fixture);
   await writeNativeIndex(fixture, []);
   await writeNativeEvents(fixture, []);
   return fixture;
@@ -2960,11 +3076,247 @@ async function writeHistoryIndex(
   fixture: Fixture,
   sessions: unknown[]
 ): Promise<void> {
+  await rm(path.join(fixture.historyPath, "v2"), {
+    recursive: true,
+    force: true
+  });
   await writeJson(path.join(fixture.historyPath, "index.json"), {
     version: 1,
     updatedAt: 2,
     sessions
   });
+}
+
+async function writeEmptyHistoryV2(fixture: Fixture): Promise<void> {
+  const generationId = "g-fixture-empty";
+  const root = path.join(fixture.historyPath, "v2");
+  const generationRoot = path.join(
+    root,
+    "generations",
+    generationId
+  );
+  const index = {
+    version: 2,
+    updatedAt: FIXED_NOW,
+    sessions: []
+  };
+  const suppressions = {
+    version: 2,
+    kind: "knowledge-history-suppressions",
+    revision: stableFixtureRevision({
+      version: 2,
+      kind: "knowledge-history-suppressions",
+      entries: []
+    }),
+    updatedAt: FIXED_NOW,
+    entries: []
+  };
+  const files: unknown[] = [];
+  const indexRevision = stableFixtureRevision(index);
+  const manifest = {
+    version: 2,
+    kind: "knowledge-history-generation",
+    generationId,
+    createdAt: FIXED_NOW,
+    sourceRevision: stableFixtureRevision([]),
+    suppressionRevision: suppressions.revision,
+    retentionDays: null,
+    retentionCutoffDate: null,
+    indexRevision,
+    projectionRevision: stableFixtureRevision({
+      indexRevision,
+      suppressionRevision: suppressions.revision,
+      files
+    }),
+    sessionCount: 0,
+    dayCount: 0,
+    messageCount: 0,
+    files
+  };
+  await mkdir(generationRoot, { recursive: true });
+  await writeJson(path.join(generationRoot, "index.json"), index);
+  await writeJson(
+    path.join(generationRoot, "suppressions.json"),
+    suppressions
+  );
+  await writeJson(path.join(generationRoot, "manifest.json"), manifest);
+  await writeJson(path.join(root, "suppressions.json"), suppressions);
+  await writeJson(path.join(root, "active.json"), {
+    version: 2,
+    kind: "knowledge-history-active",
+    generationId,
+    generationRevision: stableFixtureRevision(manifest),
+    sourceRevision: manifest.sourceRevision,
+    suppressionRevision: suppressions.revision,
+    publishedAt: FIXED_NOW
+  });
+}
+
+async function writeHistoryV2Projection(
+  fixture: Fixture,
+  sessionId: string,
+  canonicalMessages: Array<Record<string, unknown>>,
+  references: Array<Record<string, unknown>>
+): Promise<void> {
+  const generationId = "g-fixture-projection";
+  const root = path.join(fixture.historyPath, "v2");
+  await rm(root, { recursive: true, force: true });
+  const generationRoot = path.join(
+    root,
+    "generations",
+    generationId
+  );
+  const date = localFixtureDateKey(
+    Number(canonicalMessages[0]?.createdAt ?? 1)
+  );
+  const relativePath = path.posix.join(
+    "sessions",
+    sessionId,
+    `${date}.jsonl`
+  );
+  const dayText =
+    references.map((reference) => JSON.stringify(reference)).join("\n")
+    + (references.length ? "\n" : "");
+  const daySummary = {
+    date,
+    messageCount: references.length,
+    userMessageCount: 0,
+    assistantMessageCount: 0,
+    processMessageCount: 0,
+    failedMessageCount: 0,
+    firstMessageAt: 1,
+    lastMessageAt: 1
+  };
+  const index = {
+    version: 2,
+    updatedAt: FIXED_NOW,
+    sessions: [{
+      sessionId,
+      title: `title:${sessionId}`,
+      kind: "knowledge-base",
+      activeDate: date,
+      messageCount: references.length,
+      dayCount: 1,
+      updatedAt: 2,
+      days: [daySummary]
+    }]
+  };
+  const suppressions = {
+    version: 2,
+    kind: "knowledge-history-suppressions",
+    revision: stableFixtureRevision({
+      version: 2,
+      kind: "knowledge-history-suppressions",
+      entries: []
+    }),
+    updatedAt: FIXED_NOW,
+    entries: []
+  };
+  const files = [{
+    relativePath,
+    digest: `sha256:${createHash("sha256")
+      .update(dayText)
+      .digest("hex")}`,
+    rowCount: references.length
+  }];
+  const indexRevision = stableFixtureRevision(index);
+  const sourceRevision = stableFixtureRevision([{
+    id: sessionId,
+    title: `title:${sessionId}`,
+    kind: "knowledge-base",
+    historyActiveDate: null,
+    updatedAt: 2,
+    messages: canonicalMessages.map((messageValue) => ({
+      id: messageValue.id,
+      revision: stableFixtureRevision(messageValue)
+    }))
+  }]);
+  const manifest = {
+    version: 2,
+    kind: "knowledge-history-generation",
+    generationId,
+    createdAt: FIXED_NOW,
+    sourceRevision,
+    suppressionRevision: suppressions.revision,
+    retentionDays: null,
+    retentionCutoffDate: null,
+    indexRevision,
+    projectionRevision: stableFixtureRevision({
+      indexRevision,
+      suppressionRevision: suppressions.revision,
+      files
+    }),
+    sessionCount: 1,
+    dayCount: 1,
+    messageCount: references.length,
+    files
+  };
+  await mkdir(
+    path.dirname(path.join(generationRoot, relativePath)),
+    { recursive: true }
+  );
+  await writeFile(
+    path.join(generationRoot, relativePath),
+    dayText,
+    "utf8"
+  );
+  await writeJson(path.join(generationRoot, "index.json"), index);
+  await writeJson(
+    path.join(generationRoot, "suppressions.json"),
+    suppressions
+  );
+  await writeJson(path.join(generationRoot, "manifest.json"), manifest);
+  await writeJson(path.join(root, "suppressions.json"), suppressions);
+  await writeJson(path.join(root, "active.json"), {
+    version: 2,
+    kind: "knowledge-history-active",
+    generationId,
+    generationRevision: stableFixtureRevision(manifest),
+    sourceRevision,
+    suppressionRevision: suppressions.revision,
+    publishedAt: FIXED_NOW
+  });
+}
+
+function historyV2Reference(
+  conversationId: string,
+  messageValue: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    version: 2,
+    kind: "conversation-message",
+    conversationId,
+    messageId: messageValue.id,
+    messageRevision: stableFixtureRevision(messageValue)
+  };
+}
+
+function localFixtureDateKey(value: number): string {
+  const date = new Date(value);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function stableFixtureRevision(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(sortFixtureValue(value)))
+    .digest("hex")}`;
+}
+
+function sortFixtureValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortFixtureValue);
+  if (!value || typeof value !== "object") {
+    return value === undefined ? null : value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, nested]) => nested !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, sortFixtureValue(nested)])
+  );
 }
 
 async function writeRun(

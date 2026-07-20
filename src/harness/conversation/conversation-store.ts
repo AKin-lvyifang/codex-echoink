@@ -832,6 +832,21 @@ export class FileConversationStore {
     return storedSessionFromCommittedPayload(metadata, { messages, snapshots });
   }
 
+  async listSessions(): Promise<StoredSession[]> {
+    const index = await this.readIndexForMutation(undefined, false);
+    const sessions: StoredSession[] = [];
+    for (const summary of index.sessions) {
+      const session = await this.readSession(summary.sessionId);
+      if (!session) {
+        throw new Error(
+          `Conversation recovery required: indexed conversation ${summary.sessionId} is unavailable`
+        );
+      }
+      sessions.push(session);
+    }
+    return sessions;
+  }
+
   private async readCommittedPayload(
     sessionId: string,
     metadata: ConversationSessionMetadata

@@ -8,10 +8,12 @@ import {
 import * as path from "node:path";
 import { pluginDataDir } from "../../core/raw-message-store";
 import {
+  createConversationMessageRevision,
   createConversationPayloadKeyV2,
   parseConversationDeletionTombstone,
   type ConversationDeletionTombstoneV1
 } from "../conversation/conversation-store";
+import type { ChatMessage } from "../../settings/settings";
 import {
   isSafeConversationSessionId,
   legacyConversationPathPart
@@ -53,7 +55,7 @@ import {
 
 const CURRENT_SETTINGS_SCHEMA = 39;
 const CURRENT_CONVERSATION_SCHEMA = 1;
-const CURRENT_HISTORY_SCHEMA = 1;
+const CURRENT_HISTORY_SCHEMA = 2;
 const CURRENT_NATIVE_SCHEMA = NATIVE_EXECUTION_STORE_SCHEMA_VERSION;
 const RECORD_MUTATION_CHAIN_TOKEN_PATTERN = /^mutation-[a-f0-9]{24}$/;
 const RECORD_MUTATION_ENTRY_PATTERN = /^entry-([0-9]{16})\.json$/;
@@ -108,6 +110,7 @@ export interface StorageInventoryOptions {
 interface MessageFact {
   id: string;
   createdAt: number;
+  revision: string;
   rawRef?: string;
   runId?: string;
 }
@@ -115,10 +118,16 @@ interface MessageFact {
 interface SessionFact {
   id: string;
   messageIds: Set<string>;
+  messages: Map<string, MessageFact>;
+  messageOrder: string[];
+  duplicateMessageIds: Set<string>;
   messageCount: number;
   rawReferences: RawReference[];
   createdAt: number;
   updatedAt: number;
+  title?: string;
+  kind?: string;
+  historyActiveDate?: string;
   generation?: number;
   contextId?: string;
   contextStartsAfterMessageId?: string;
@@ -144,9 +153,34 @@ interface ConversationFacts {
   rawReferences: RawReference[];
 }
 
+interface HistoryReferenceFact {
+  conversationId: string;
+  messageId: string;
+  messageRevision: string;
+  date: string;
+  ownerRef: string;
+  runId?: string;
+}
+
+interface HistoryReferenceRowV2 {
+  conversationId: string;
+  messageId: string;
+  messageRevision: string;
+  runId?: string;
+}
+
+interface HistoryGenerationFileFact {
+  relativePath: string;
+  digest: string;
+  rowCount: number;
+}
+
 interface HistoryFacts {
   sessions: Map<string, SessionFact>;
+  references: HistoryReferenceFact[];
   rawReferences: RawReference[];
+  activeSourceRevision?: string;
+  activeGenerationId?: string;
 }
 
 interface RunFacts {
@@ -269,7 +303,8 @@ export async function scanStorageInventory(
   correlateHistoryAndConversations(
     history.facts,
     conversations.facts,
-    relations
+    relations,
+    findings
   );
   correlateNativeRecords(
     native.facts,
@@ -282,8 +317,7 @@ export async function scanStorageInventory(
 
   const raw = await scanRawMetadata(context, [
     ...data.facts.rawReferences,
-    ...conversations.facts.rawReferences,
-    ...history.facts.rawReferences
+    ...conversations.facts.rawReferences
   ]);
   findings.push(...raw.accumulator.findings);
   relations.push(...raw.relations);
@@ -411,10 +445,22 @@ async function scanDataJson(context: ScanContext): Promise<SourceScan<DataFacts>
     facts.sessions.set(sessionId, {
       id: sessionId,
       messageIds,
+      messages: messageFactMap(messageFacts),
+      messageOrder: messageFacts.map((message) => message.id),
+      duplicateMessageIds: duplicateMessageFactIds(messageFacts),
       messageCount: messageFacts.length,
       rawReferences,
       createdAt: timestampOrZero(session.createdAt),
       updatedAt: timestampOrZero(session.updatedAt),
+      ...(nonEmptyStringOrNull(session.title)
+        ? { title: nonEmptyStringOrNull(session.title)! }
+        : {}),
+      ...(nonEmptyStringOrNull(session.kind)
+        ? { kind: nonEmptyStringOrNull(session.kind)! }
+        : {}),
+      ...(nonEmptyStringOrNull(session.historyActiveDate)
+        ? { historyActiveDate: nonEmptyStringOrNull(session.historyActiveDate)! }
+        : {}),
       generation: conversationGeneration(session),
       ...(nonEmptyStringOrNull(session.contextId)
         ? { contextId: nonEmptyStringOrNull(session.contextId)! }
@@ -648,10 +694,22 @@ async function scanConversations(
     const fact: SessionFact = {
       id: sessionId,
       messageIds: new Set(messageFacts.map((message) => message.id)),
+      messages: messageFactMap(messageFacts),
+      messageOrder: messageFacts.map((message) => message.id),
+      duplicateMessageIds: duplicateMessageFactIds(messageFacts),
       messageCount: messageFacts.length,
       rawReferences,
       createdAt: timestampOrZero(metadata?.createdAt),
       updatedAt: timestampOrZero(metadata?.updatedAt),
+      ...(nonEmptyStringOrNull(metadata?.title)
+        ? { title: nonEmptyStringOrNull(metadata?.title)! }
+        : {}),
+      ...(nonEmptyStringOrNull(metadata?.kind)
+        ? { kind: nonEmptyStringOrNull(metadata?.kind)! }
+        : {}),
+      ...(nonEmptyStringOrNull(metadata?.historyActiveDate)
+        ? { historyActiveDate: nonEmptyStringOrNull(metadata?.historyActiveDate)! }
+        : {}),
       generation: conversationGeneration(metadata),
       ...(nonEmptyStringOrNull(metadata?.contextId)
         ? { contextId: nonEmptyStringOrNull(metadata?.contextId)! }
@@ -1228,10 +1286,467 @@ function recordMutationToken(mutationId: string): string {
     .slice(0, 24)}`;
 }
 
-async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFacts>> {
+async function scanHistory(
+  context: ScanContext
+): Promise<SourceScan<HistoryFacts>> {
+  const probe = new SourceAccumulator("history", context.pluginRoot);
+  const facts: HistoryFacts = {
+    sessions: new Map(),
+    references: [],
+    rawReferences: []
+  };
+  const root = path.join(context.pluginRoot, "history");
+  const rootStats = await safeLstat(context, probe, root, true);
+  if (!rootStats) {
+    probe.markUnavailable("history-store-unavailable");
+    probe.missingCount += 1;
+    return { accumulator: probe, facts };
+  }
+  if (!rootStats.isDirectory()) {
+    probe.addCorrupt("expected-directory", root);
+    return { accumulator: probe, facts };
+  }
+  const activePath = path.join(root, "v2", "active.json");
+  const activeStats = await safeLstat(
+    context,
+    probe,
+    activePath,
+    true
+  );
+  return activeStats
+    ? await scanHistoryV2(context)
+    : await scanLegacyHistoryV1(context);
+}
+
+async function scanHistoryV2(
+  context: ScanContext
+): Promise<SourceScan<HistoryFacts>> {
   const accumulator = new SourceAccumulator("history", context.pluginRoot);
   const facts: HistoryFacts = {
     sessions: new Map(),
+    references: [],
+    rawReferences: []
+  };
+  accumulator.schemaVersion = String(CURRENT_HISTORY_SCHEMA);
+  const root = path.join(context.pluginRoot, "history", "v2");
+  const rootEntries = await listDirectory(
+    context,
+    accumulator,
+    root,
+    false
+  );
+  if (!rootEntries) {
+    accumulator.markUnavailable("history-v2-store-unavailable");
+    accumulator.missingCount += 1;
+    return { accumulator, facts };
+  }
+  const activePath = path.join(root, "active.json");
+  const activeRead = await readTextFile(
+    context,
+    accumulator,
+    activePath,
+    false
+  );
+  const active = activeRead
+    ? parseJsonObject(
+      activeRead.text,
+      accumulator,
+      "history-active-corrupt",
+      activePath
+    )
+    : null;
+  if (!active) {
+    accumulator.missingCount += 1;
+    accumulator.markPartial("history-active-missing");
+    return { accumulator, facts };
+  }
+  if (!hasExactKeys(active, [
+    "version",
+    "kind",
+    "generationId",
+    "generationRevision",
+    "sourceRevision",
+    "suppressionRevision",
+    "publishedAt"
+  ])) {
+    accumulator.addCorrupt("history-active-schema-invalid", "active");
+    return { accumulator, facts };
+  }
+  const activeVersion = finiteInteger(active.version);
+  if (activeVersion !== CURRENT_HISTORY_SCHEMA) {
+    if (
+      activeVersion !== null
+      && activeVersion > CURRENT_HISTORY_SCHEMA
+    ) {
+      accumulator.futureSchemaCount += 1;
+      accumulator.addFinding({
+        code: "future-schema",
+        category: "future-schema",
+        severity: "blocking",
+        recordRaw: "active",
+        blocksMigration: true
+      });
+    } else {
+      accumulator.addCorrupt("history-active-schema-invalid", "active");
+    }
+    accumulator.markPartial("history-active-schema-invalid");
+    return { accumulator, facts };
+  }
+  const generationId = nonEmptyStringOrNull(active.generationId);
+  const generationRevision = sha256RevisionOrNull(
+    active.generationRevision
+  );
+  const sourceRevision = sha256RevisionOrNull(active.sourceRevision);
+  const suppressionRevision = sha256RevisionOrNull(
+    active.suppressionRevision
+  );
+  if (
+    active.kind !== "knowledge-history-active"
+    || !generationId
+    || !safePathSegment(generationId)
+    || !generationRevision
+    || !sourceRevision
+    || !suppressionRevision
+    || finiteTimestamp(active.publishedAt) === null
+  ) {
+    accumulator.addCorrupt("history-active-schema-invalid", "active");
+    return { accumulator, facts };
+  }
+  facts.activeSourceRevision = sourceRevision;
+  facts.activeGenerationId = generationId;
+  accumulator.observeRecordMetadata("history-active", {
+    version: activeVersion,
+    kind: active.kind,
+    generationId,
+    generationRevision,
+    sourceRevision,
+    suppressionRevision,
+    publishedAt: finiteTimestamp(active.publishedAt)
+  });
+
+  const generationRoot = path.join(
+    root,
+    "generations",
+    generationId
+  );
+  const generationEntries = await listDirectory(
+    context,
+    accumulator,
+    generationRoot,
+    false
+  );
+  if (!generationEntries) {
+    accumulator.missingCount += 1;
+    accumulator.addFinding({
+      code: "history-generation-missing",
+      category: "missing",
+      severity: "blocking",
+      recordRaw: generationId,
+      blocksMigration: true
+    });
+    return { accumulator, facts };
+  }
+  const manifestPath = path.join(generationRoot, "manifest.json");
+  const indexPath = path.join(generationRoot, "index.json");
+  const suppressionsPath = path.join(
+    generationRoot,
+    "suppressions.json"
+  );
+  const [manifestRead, indexRead, suppressionsRead] = await Promise.all([
+    readTextFile(context, accumulator, manifestPath, false),
+    readTextFile(context, accumulator, indexPath, false),
+    readTextFile(context, accumulator, suppressionsPath, false)
+  ]);
+  const manifest = manifestRead
+    ? parseJsonObject(
+      manifestRead.text,
+      accumulator,
+      "history-generation-corrupt",
+      manifestPath
+    )
+    : null;
+  const index = indexRead
+    ? parseJsonObject(
+      indexRead.text,
+      accumulator,
+      "history-index-corrupt",
+      indexPath
+    )
+    : null;
+  const suppressions = suppressionsRead
+    ? parseJsonObject(
+      suppressionsRead.text,
+      accumulator,
+      "history-suppressions-corrupt",
+      suppressionsPath
+    )
+    : null;
+  if (!manifest || !index || !suppressions) {
+    accumulator.markPartial("history-generation-incomplete");
+    return { accumulator, facts };
+  }
+  if (!validateHistoryGenerationManifest(
+    manifest,
+    generationId,
+    accumulator
+  )) {
+    return { accumulator, facts };
+  }
+  if (!validateHistorySuppressions(
+    suppressions,
+    suppressionRevision,
+    accumulator,
+    "generation"
+  )) {
+    return { accumulator, facts };
+  }
+  if (
+    stableInventoryRevision(manifest) !== generationRevision
+    || sha256RevisionOrNull(manifest.sourceRevision)
+      !== sourceRevision
+    || sha256RevisionOrNull(manifest.suppressionRevision)
+      !== suppressionRevision
+    || stableInventoryRevision(index)
+      !== sha256RevisionOrNull(manifest.indexRevision)
+  ) {
+    accumulator.addCorrupt(
+      "history-generation-revision-mismatch",
+      generationId
+    );
+    return { accumulator, facts };
+  }
+
+  const descriptors = parseHistoryGenerationFiles(
+    manifest.files,
+    accumulator,
+    generationId
+  );
+  if (!descriptors) return { accumulator, facts };
+  const expectedProjectionRevision = stableInventoryRevision({
+    indexRevision: manifest.indexRevision,
+    suppressionRevision: manifest.suppressionRevision,
+    files: descriptors
+  });
+  if (
+    expectedProjectionRevision
+    !== sha256RevisionOrNull(manifest.projectionRevision)
+  ) {
+    accumulator.addCorrupt(
+      "history-generation-revision-mismatch",
+      `${generationId}:projection`
+    );
+    return { accumulator, facts };
+  }
+  const actualPaths = await listHistoryV2DayPaths(
+    context,
+    accumulator,
+    generationRoot
+  );
+  const declaredPaths = descriptors.map(
+    (descriptor) => descriptor.relativePath
+  );
+  if (
+    stableCanonicalJson(actualPaths)
+    !== stableCanonicalJson(declaredPaths)
+  ) {
+    accumulator.addCorrupt(
+      "history-generation-file-set-mismatch",
+      generationId
+    );
+  }
+
+  const referencesBySessionDate = new Map<
+    string,
+    HistoryReferenceFact[]
+  >();
+  const globalReferences = new Set<string>();
+  for (const descriptor of descriptors) {
+    const target = path.join(generationRoot, descriptor.relativePath);
+    if (!isWithin(generationRoot, target)) {
+      accumulator.addCorrupt(
+        "history-generation-path-invalid",
+        descriptor.relativePath
+      );
+      continue;
+    }
+    const read = await readTextFile(
+      context,
+      accumulator,
+      target,
+      false
+    );
+    if (!read) continue;
+    if (sha256TextRevision(read.text) !== descriptor.digest) {
+      accumulator.addCorrupt(
+        "history-generation-file-digest-mismatch",
+        descriptor.relativePath
+      );
+      continue;
+    }
+    const identity = historyV2DayIdentity(descriptor.relativePath);
+    if (!identity) {
+      accumulator.addCorrupt(
+        "history-generation-path-invalid",
+        descriptor.relativePath
+      );
+      continue;
+    }
+    const rows = parseHistoryV2ReferenceRows(
+      read.text,
+      accumulator,
+      descriptor.relativePath
+    );
+    if (rows.length !== descriptor.rowCount) {
+      accumulator.addCorrupt(
+        "history-generation-row-count-mismatch",
+        descriptor.relativePath
+      );
+    }
+    for (const reference of rows) {
+      if (
+        sanitizeHistoryPathPart(reference.conversationId)
+        !== identity.sessionDirectory
+      ) {
+        accumulator.addCorrupt(
+          "history-reference-conversation-mismatch",
+          `${descriptor.relativePath}:${reference.messageId}`
+        );
+      }
+      const duplicateKey =
+        `${reference.conversationId}\0${reference.messageId}`;
+      if (globalReferences.has(duplicateKey)) {
+        accumulator.addCorrupt(
+          "history-reference-duplicate",
+          `${reference.conversationId}:${reference.messageId}`
+        );
+      }
+      globalReferences.add(duplicateKey);
+      const fact: HistoryReferenceFact = {
+        ...reference,
+        date: identity.date,
+        ownerRef: opaque(
+          "history-message",
+          `${reference.conversationId}:${identity.date}:${reference.messageId}`
+        )
+      };
+      facts.references.push(fact);
+      const bucketKey =
+        `${reference.conversationId}\0${identity.date}`;
+      const bucket = referencesBySessionDate.get(bucketKey) ?? [];
+      bucket.push(fact);
+      referencesBySessionDate.set(bucketKey, bucket);
+    }
+  }
+
+  const indexSessions = validateHistoryV2Index(
+    index,
+    referencesBySessionDate,
+    facts,
+    accumulator
+  );
+  if (indexSessions !== null) {
+    const manifestSessionCount = finiteInteger(manifest.sessionCount);
+    const manifestDayCount = finiteInteger(manifest.dayCount);
+    const manifestMessageCount = finiteInteger(manifest.messageCount);
+    const actualDayCount = indexSessions.reduce(
+      (sum, session) => sum + session.dayCount,
+      0
+    );
+    const actualMessageCount = indexSessions.reduce(
+      (sum, session) => sum + session.messageCount,
+      0
+    );
+    if (
+      manifestSessionCount !== indexSessions.length
+      || manifestDayCount !== actualDayCount
+      || manifestMessageCount !== actualMessageCount
+      || descriptors.length !== actualDayCount
+      || descriptors.reduce(
+        (sum, descriptor) => sum + descriptor.rowCount,
+        0
+      ) !== actualMessageCount
+    ) {
+      accumulator.addCorrupt(
+        "history-generation-count-mismatch",
+        generationId
+      );
+    }
+  }
+
+  const rootSuppressionsPath = path.join(root, "suppressions.json");
+  const rootSuppressionsRead = await readTextFile(
+    context,
+    accumulator,
+    rootSuppressionsPath,
+    true
+  );
+  if (
+    !rootSuppressionsRead
+    || !validateHistorySuppressions(
+      parseJsonObject(
+        rootSuppressionsRead.text,
+        accumulator,
+        "history-suppressions-corrupt",
+        rootSuppressionsPath
+      ),
+      suppressionRevision,
+      accumulator,
+      "root"
+    )
+  ) {
+    accumulator.addFinding({
+      code: "history-suppression-projection-drift",
+      category: "ambiguous",
+      severity: "warning",
+      recordRaw: generationId,
+      blocksMigration: false
+    });
+  }
+
+  accumulator.observeRecordMetadata("history-generation", {
+    generationId,
+    sourceRevision,
+    suppressionRevision,
+    retentionDays: finiteInteger(manifest.retentionDays),
+    retentionCutoffDate: stringOrNull(manifest.retentionCutoffDate),
+    sessionCount: finiteInteger(manifest.sessionCount),
+    dayCount: finiteInteger(manifest.dayCount),
+    messageCount: finiteInteger(manifest.messageCount)
+  });
+  accumulator.recordCount = facts.sessions.size;
+  accumulator.incrementMetric("session-count", facts.sessions.size);
+  accumulator.incrementMetric(
+    "day-count",
+    facts.sessions.size
+      ? [...facts.sessions.values()].reduce(
+        (sum, session) =>
+          sum + new Set(
+            facts.references
+              .filter(
+                (reference) =>
+                  reference.conversationId === session.id
+              )
+              .map((reference) => reference.date)
+          ).size,
+        0
+      )
+      : 0
+  );
+  accumulator.incrementMetric(
+    "message-count",
+    facts.references.length
+  );
+  accumulator.incrementMetric("raw-reference-count", 0);
+  return { accumulator, facts };
+}
+
+async function scanLegacyHistoryV1(
+  context: ScanContext
+): Promise<SourceScan<HistoryFacts>> {
+  const accumulator = new SourceAccumulator("history", context.pluginRoot);
+  const facts: HistoryFacts = {
+    sessions: new Map(),
+    references: [],
     rawReferences: []
   };
   const root = path.join(context.pluginRoot, "history");
@@ -1302,7 +1817,6 @@ async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFact
     if (!sessionStats || !sessionStats.isDirectory()) continue;
     const files = await listDirectory(context, accumulator, sessionDir, false) ?? [];
     const dayMap = new Map<string, MessageFact[]>();
-    const sessionRawRefs: RawReference[] = [];
     for (const fileName of files.filter((name) => name.endsWith(".jsonl")).sort()) {
       const date = fileName.slice(0, -".jsonl".length);
       const filePath = path.join(sessionDir, fileName);
@@ -1326,13 +1840,6 @@ async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFact
         const owners = globalMessageOwners.get(message.id) ?? [];
         owners.push(owner);
         globalMessageOwners.set(message.id, owners);
-        if (message.rawRef) {
-          sessionRawRefs.push({
-            sourceId: "history",
-            ownerRef: opaque("history-message", `${owner}:${message.id}`),
-            rawRef: message.rawRef
-          });
-        }
       }
     }
     actualDays.set(directoryName, dayMap);
@@ -1343,18 +1850,34 @@ async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFact
     const sessionId = typeof indexed?.sessionId === "string"
       ? indexed.sessionId
       : directoryName;
+    for (const [date, messages] of dayMap) {
+      for (const message of messages) {
+        facts.references.push({
+          conversationId: sessionId,
+          messageId: message.id,
+          messageRevision: message.revision,
+          date,
+          ownerRef: opaque(
+            "history-message",
+            `${sessionId}:${date}:${message.id}`
+          ),
+          ...(message.runId ? { runId: message.runId } : {})
+        });
+      }
+    }
     facts.sessions.set(sessionId, {
       id: sessionId,
       messageIds: new Set(allMessages.map((message) => message.id)),
+      messages: messageFactMap(allMessages),
+      messageOrder: allMessages.map((message) => message.id),
+      duplicateMessageIds: duplicateMessageFactIds(allMessages),
       messageCount: allMessages.length,
-      rawReferences: sessionRawRefs,
+      rawReferences: [],
       createdAt: minimumPositive(allMessages.map((message) => message.createdAt)),
       updatedAt: maximumPositive(allMessages.map((message) => message.createdAt))
     });
-    facts.rawReferences.push(...sessionRawRefs);
     accumulator.incrementMetric("day-count", dayMap.size);
     accumulator.incrementMetric("message-count", allMessages.length);
-    accumulator.incrementMetric("raw-reference-count", sessionRawRefs.length);
   }
 
   const indexedDirectoryNames = new Set<string>();
@@ -1494,7 +2017,582 @@ async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFact
   }
   accumulator.recordCount = facts.sessions.size;
   accumulator.incrementMetric("session-count", facts.sessions.size);
+  accumulator.incrementMetric("raw-reference-count", 0);
+  accumulator.markPartial("history-schema-migration-required");
+  accumulator.addFinding({
+    code: "history-schema-migration-required",
+    category: "unlinked",
+    severity: "blocking",
+    recordRaw: "v1",
+    blocksMigration: true
+  });
   return { accumulator, facts };
+}
+
+function validateHistoryGenerationManifest(
+  manifest: Record<string, unknown>,
+  generationId: string,
+  accumulator: SourceAccumulator
+): boolean {
+  if (!hasExactKeys(manifest, [
+    "version",
+    "kind",
+    "generationId",
+    "createdAt",
+    "sourceRevision",
+    "suppressionRevision",
+    "retentionDays",
+    "retentionCutoffDate",
+    "indexRevision",
+    "projectionRevision",
+    "sessionCount",
+    "dayCount",
+    "messageCount",
+    "files"
+  ])) {
+    accumulator.addCorrupt(
+      "history-generation-schema-invalid",
+      generationId
+    );
+    return false;
+  }
+  const version = finiteInteger(manifest.version);
+  if (version !== CURRENT_HISTORY_SCHEMA) {
+    if (version !== null && version > CURRENT_HISTORY_SCHEMA) {
+      accumulator.futureSchemaCount += 1;
+      accumulator.addFinding({
+        code: "future-schema",
+        category: "future-schema",
+        severity: "blocking",
+        recordRaw: generationId,
+        blocksMigration: true
+      });
+    } else {
+      accumulator.addCorrupt(
+        "history-generation-schema-invalid",
+        generationId
+      );
+    }
+    return false;
+  }
+  const retentionDays = manifest.retentionDays;
+  const retentionCutoffDate = manifest.retentionCutoffDate;
+  const validRetention = (
+    retentionDays === null
+    && retentionCutoffDate === null
+  ) || (
+    finiteInteger(retentionDays) !== null
+    && (finiteInteger(retentionDays) ?? 0) > 0
+    && typeof retentionCutoffDate === "string"
+    && isHistoryDateKey(retentionCutoffDate)
+  );
+  if (
+    manifest.kind !== "knowledge-history-generation"
+    || manifest.generationId !== generationId
+    || finiteTimestamp(manifest.createdAt) === null
+    || !sha256RevisionOrNull(manifest.sourceRevision)
+    || !sha256RevisionOrNull(manifest.suppressionRevision)
+    || !sha256RevisionOrNull(manifest.indexRevision)
+    || !sha256RevisionOrNull(manifest.projectionRevision)
+    || !validRetention
+    || finiteInteger(manifest.sessionCount) === null
+    || finiteInteger(manifest.dayCount) === null
+    || finiteInteger(manifest.messageCount) === null
+    || !Array.isArray(manifest.files)
+  ) {
+    accumulator.addCorrupt(
+      "history-generation-schema-invalid",
+      generationId
+    );
+    return false;
+  }
+  return true;
+}
+
+function validateHistorySuppressions(
+  value: Record<string, unknown> | null,
+  expectedRevision: string,
+  accumulator: SourceAccumulator,
+  owner: string
+): boolean {
+  if (
+    !value
+    || !hasExactKeys(value, [
+      "version",
+      "kind",
+      "revision",
+      "updatedAt",
+      "entries"
+    ])
+    || finiteInteger(value.version) !== CURRENT_HISTORY_SCHEMA
+    || value.kind !== "knowledge-history-suppressions"
+    || !sha256RevisionOrNull(value.revision)
+    || finiteTimestamp(value.updatedAt) === null
+    || !Array.isArray(value.entries)
+  ) {
+    accumulator.addCorrupt(
+      "history-suppressions-schema-invalid",
+      owner
+    );
+    return false;
+  }
+  const seen = new Set<string>();
+  let valid = true;
+  for (const [index, entryValue] of value.entries.entries()) {
+    const entry = objectRecord(entryValue);
+    if (
+      !entry
+      || !hasExactKeys(entry, [
+        "version",
+        "conversationId",
+        "messageId",
+        "messageRevision",
+        "date",
+        "suppressedAt",
+        "reason"
+      ])
+      || finiteInteger(entry.version) !== CURRENT_HISTORY_SCHEMA
+      || !isNonEmptyString(entry.conversationId)
+      || !isNonEmptyString(entry.messageId)
+      || !sha256RevisionOrNull(entry.messageRevision)
+      || typeof entry.date !== "string"
+      || !isHistoryDateKey(entry.date)
+      || finiteTimestamp(entry.suppressedAt) === null
+      || entry.reason !== "user-delete"
+    ) {
+      accumulator.addCorrupt(
+        "history-suppression-invalid",
+        `${owner}:${index}`
+      );
+      valid = false;
+      continue;
+    }
+    const key = `${entry.conversationId}\0${entry.messageId}`;
+    if (seen.has(key)) {
+      accumulator.addCorrupt(
+        "history-suppression-duplicate",
+        `${owner}:${entry.conversationId}:${entry.messageId}`
+      );
+      valid = false;
+    }
+    seen.add(key);
+  }
+  const revision = stableInventoryRevision({
+    version: CURRENT_HISTORY_SCHEMA,
+    kind: "knowledge-history-suppressions",
+    entries: value.entries
+  });
+  if (
+    revision !== value.revision
+    || revision !== expectedRevision
+  ) {
+    accumulator.addCorrupt(
+      "history-suppression-revision-mismatch",
+      owner
+    );
+    return false;
+  }
+  accumulator.observeRecordMetadata("history-suppressions", {
+    owner,
+    revision,
+    entryCount: value.entries.length,
+    updatedAt: finiteTimestamp(value.updatedAt)
+  });
+  return valid;
+}
+
+function parseHistoryGenerationFiles(
+  value: unknown,
+  accumulator: SourceAccumulator,
+  generationId: string
+): HistoryGenerationFileFact[] | null {
+  if (!Array.isArray(value)) {
+    accumulator.addCorrupt(
+      "history-generation-files-invalid",
+      generationId
+    );
+    return null;
+  }
+  const files: HistoryGenerationFileFact[] = [];
+  const seen = new Set<string>();
+  let previous = "";
+  for (const [index, item] of value.entries()) {
+    const record = objectRecord(item);
+    const relativePath =
+      typeof record?.relativePath === "string"
+        ? record.relativePath
+        : "";
+    const digest = sha256RevisionOrNull(record?.digest);
+    const rowCount = finiteInteger(record?.rowCount);
+    if (
+      !record
+      || !hasExactKeys(record, [
+        "relativePath",
+        "digest",
+        "rowCount"
+      ])
+      || !historyV2DayIdentity(relativePath)
+      || !digest
+      || rowCount === null
+      || rowCount < 0
+      || seen.has(relativePath)
+      || (previous && relativePath.localeCompare(previous) < 0)
+    ) {
+      accumulator.addCorrupt(
+        "history-generation-file-invalid",
+        `${generationId}:${index}`
+      );
+      return null;
+    }
+    seen.add(relativePath);
+    previous = relativePath;
+    files.push({ relativePath, digest, rowCount });
+  }
+  return files;
+}
+
+async function listHistoryV2DayPaths(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  generationRoot: string
+): Promise<string[]> {
+  const sessionsRoot = path.join(generationRoot, "sessions");
+  const sessionDirectories = await listDirectory(
+    context,
+    accumulator,
+    sessionsRoot,
+    true
+  ) ?? [];
+  const paths: string[] = [];
+  for (const sessionDirectory of sessionDirectories.sort()) {
+    const sessionRoot = path.join(sessionsRoot, sessionDirectory);
+    const stats = await safeLstat(
+      context,
+      accumulator,
+      sessionRoot,
+      false
+    );
+    if (!stats?.isDirectory()) {
+      accumulator.addCorrupt(
+        "history-generation-path-invalid",
+        sessionDirectory
+      );
+      continue;
+    }
+    const dayFiles = await listDirectory(
+      context,
+      accumulator,
+      sessionRoot,
+      false
+    ) ?? [];
+    for (const dayFile of dayFiles.sort()) {
+      const relativePath = path.posix.join(
+        "sessions",
+        sessionDirectory,
+        dayFile
+      );
+      if (!historyV2DayIdentity(relativePath)) {
+        accumulator.addCorrupt(
+          "history-generation-path-invalid",
+          relativePath
+        );
+        continue;
+      }
+      paths.push(relativePath);
+    }
+  }
+  return paths.sort();
+}
+
+function historyV2DayIdentity(
+  relativePath: string
+): { sessionDirectory: string; date: string } | null {
+  if (
+    !relativePath
+    || relativePath.includes("\\")
+    || relativePath.startsWith("/")
+    || path.posix.normalize(relativePath) !== relativePath
+  ) {
+    return null;
+  }
+  const parts = relativePath.split("/");
+  if (
+    parts.length !== 3
+    || parts[0] !== "sessions"
+    || !safePathSegment(parts[1] ?? "")
+    || !/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(parts[2] ?? "")
+  ) {
+    return null;
+  }
+  const date = (parts[2] ?? "").slice(0, -".jsonl".length);
+  return isHistoryDateKey(date)
+    ? { sessionDirectory: parts[1], date }
+    : null;
+}
+
+function parseHistoryV2ReferenceRows(
+  text: string,
+  accumulator: SourceAccumulator,
+  owner: string
+): HistoryReferenceRowV2[] {
+  const rows: HistoryReferenceRowV2[] = [];
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed) as unknown;
+    } catch {
+      accumulator.addCorrupt(
+        "history-reference-invalid",
+        `${owner}:${index + 1}`
+      );
+      continue;
+    }
+    const record = objectRecord(value);
+    if (
+      !record
+      || !hasExactKeys(record, [
+        "version",
+        "kind",
+        "conversationId",
+        "messageId",
+        "messageRevision",
+        "runId"
+      ])
+      || finiteInteger(record.version) !== CURRENT_HISTORY_SCHEMA
+      || record.kind !== "conversation-message"
+      || !isNonEmptyString(record.conversationId)
+      || !isNonEmptyString(record.messageId)
+      || !sha256RevisionOrNull(record.messageRevision)
+      || (
+        record.runId !== undefined
+        && !isNonEmptyString(record.runId)
+      )
+    ) {
+      accumulator.addCorrupt(
+        "history-reference-invalid",
+        `${owner}:${index + 1}`
+      );
+      continue;
+    }
+    rows.push({
+      conversationId: record.conversationId,
+      messageId: record.messageId,
+      messageRevision: sha256RevisionOrNull(record.messageRevision)!,
+      ...(record.runId !== undefined ? { runId: record.runId } : {})
+    });
+  }
+  return rows;
+}
+
+function validateHistoryV2Index(
+  index: Record<string, unknown>,
+  referencesBySessionDate: ReadonlyMap<
+    string,
+    HistoryReferenceFact[]
+  >,
+  facts: HistoryFacts,
+  accumulator: SourceAccumulator
+): Array<{ messageCount: number; dayCount: number }> | null {
+  if (
+    !hasExactKeys(index, ["version", "updatedAt", "sessions"])
+    || finiteInteger(index.version) !== CURRENT_HISTORY_SCHEMA
+    || finiteTimestamp(index.updatedAt) === null
+    || !Array.isArray(index.sessions)
+  ) {
+    accumulator.addCorrupt("history-index-invalid", "v2-index");
+    return null;
+  }
+  const indexedBuckets = new Set<string>();
+  const sessionCounts: Array<{
+    messageCount: number;
+    dayCount: number;
+  }> = [];
+  const sessionIds = new Set<string>();
+  for (const [sessionPosition, sessionValue] of index.sessions.entries()) {
+    const session = objectRecord(sessionValue);
+    if (
+      !session
+      || !hasExactKeys(session, [
+        "sessionId",
+        "title",
+        "kind",
+        "activeDate",
+        "messageCount",
+        "dayCount",
+        "updatedAt",
+        "days"
+      ])
+      || !isNonEmptyString(session.sessionId)
+      || !isNonEmptyString(session.title)
+      || session.kind !== "knowledge-base"
+      || typeof session.activeDate !== "string"
+      || (
+        session.activeDate
+        && !isHistoryDateKey(session.activeDate)
+      )
+      || finiteInteger(session.messageCount) === null
+      || finiteInteger(session.dayCount) === null
+      || finiteTimestamp(session.updatedAt) === null
+      || !Array.isArray(session.days)
+      || sessionIds.has(session.sessionId)
+    ) {
+      accumulator.addCorrupt(
+        "history-index-entry-invalid",
+        `v2-index:${sessionPosition}`
+      );
+      continue;
+    }
+    sessionIds.add(session.sessionId);
+    const sessionReferences: HistoryReferenceFact[] = [];
+    const indexedDates = new Set<string>();
+    let dayMessageCount = 0;
+    for (const [dayPosition, dayValue] of session.days.entries()) {
+      const day = objectRecord(dayValue);
+      if (
+        !day
+        || !hasExactKeys(day, [
+          "date",
+          "messageCount",
+          "userMessageCount",
+          "assistantMessageCount",
+          "processMessageCount",
+          "failedMessageCount",
+          "firstMessageAt",
+          "lastMessageAt"
+        ])
+        || typeof day.date !== "string"
+        || !isHistoryDateKey(day.date)
+        || indexedDates.has(day.date)
+        || finiteInteger(day.messageCount) === null
+        || finiteInteger(day.userMessageCount) === null
+        || finiteInteger(day.assistantMessageCount) === null
+        || finiteInteger(day.processMessageCount) === null
+        || finiteInteger(day.failedMessageCount) === null
+        || finiteTimestamp(day.firstMessageAt) === null
+        || finiteTimestamp(day.lastMessageAt) === null
+      ) {
+        accumulator.addCorrupt(
+          "history-day-index-invalid",
+          `${session.sessionId}:${dayPosition}`
+        );
+        continue;
+      }
+      indexedDates.add(day.date);
+      const bucketKey = `${session.sessionId}\0${day.date}`;
+      indexedBuckets.add(bucketKey);
+      const references = referencesBySessionDate.get(bucketKey) ?? [];
+      if (finiteInteger(day.messageCount) !== references.length) {
+        accumulator.addCorrupt(
+          "history-day-count-drift",
+          `${session.sessionId}:${day.date}`
+        );
+      }
+      dayMessageCount += references.length;
+      sessionReferences.push(...references);
+      accumulator.addTimestamp(day.firstMessageAt);
+      accumulator.addTimestamp(day.lastMessageAt);
+      accumulator.observeRecordMetadata("history-index-day", {
+        sessionId: session.sessionId,
+        date: day.date,
+        messageCount: finiteInteger(day.messageCount),
+        userMessageCount: finiteInteger(day.userMessageCount),
+        assistantMessageCount: finiteInteger(day.assistantMessageCount),
+        processMessageCount: finiteInteger(day.processMessageCount),
+        failedMessageCount: finiteInteger(day.failedMessageCount),
+        firstMessageAt: finiteTimestamp(day.firstMessageAt),
+        lastMessageAt: finiteTimestamp(day.lastMessageAt)
+      });
+    }
+    if (
+      finiteInteger(session.dayCount) !== session.days.length
+      || finiteInteger(session.messageCount) !== dayMessageCount
+    ) {
+      accumulator.addCorrupt(
+        "history-index-count-drift",
+        session.sessionId
+      );
+    }
+    const messageFacts: MessageFact[] = sessionReferences.map(
+      (reference) => ({
+        id: reference.messageId,
+        createdAt: 0,
+        revision: reference.messageRevision,
+        ...(reference.runId ? { runId: reference.runId } : {})
+      })
+    );
+    facts.sessions.set(session.sessionId, {
+      id: session.sessionId,
+      messageIds: new Set(
+        sessionReferences.map((reference) => reference.messageId)
+      ),
+      messages: messageFactMap(messageFacts),
+      messageOrder: messageFacts.map((message) => message.id),
+      duplicateMessageIds: duplicateMessageFactIds(messageFacts),
+      messageCount: sessionReferences.length,
+      rawReferences: [],
+      createdAt: minimumPositive(
+        session.days
+          .map(objectRecord)
+          .map((day) => finiteTimestamp(day?.firstMessageAt) ?? 0)
+      ),
+      updatedAt: finiteTimestamp(session.updatedAt) ?? 0,
+      title: session.title,
+      kind: "knowledge-base",
+      ...(session.activeDate
+        ? { historyActiveDate: session.activeDate }
+        : {})
+    });
+    sessionCounts.push({
+      messageCount: sessionReferences.length,
+      dayCount: session.days.length
+    });
+    accumulator.observeRecordMetadata("history-index-session", {
+      sessionId: session.sessionId,
+      title: session.title,
+      activeDate: session.activeDate,
+      messageCount: finiteInteger(session.messageCount),
+      dayCount: finiteInteger(session.dayCount),
+      updatedAt: finiteTimestamp(session.updatedAt)
+    });
+  }
+  for (const key of referencesBySessionDate.keys()) {
+    if (!indexedBuckets.has(key)) {
+      accumulator.addCorrupt(
+        "history-day-unindexed",
+        key.replace("\0", ":")
+      );
+    }
+  }
+  return sessionCounts;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[]
+): boolean {
+  const allowedSet = new Set(allowed);
+  return Object.keys(value).every((key) => allowedSet.has(key));
+}
+
+function sha256RevisionOrNull(value: unknown): string | null {
+  return (
+    typeof value === "string"
+    && /^sha256:[a-f0-9]{64}$/.test(value)
+  ) ? value : null;
+}
+
+function sha256TextRevision(text: string): string {
+  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+function stableInventoryRevision(value: unknown): string {
+  return sha256TextRevision(stableCanonicalJson(value));
+}
+
+function isHistoryDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 async function scanHarnessRuns(context: ScanContext): Promise<SourceScan<RunFacts>> {
@@ -2301,9 +3399,11 @@ function correlateDataAndConversations(
 function correlateHistoryAndConversations(
   history: HistoryFacts,
   conversations: ConversationFacts,
-  relations: StorageInventoryRelation[]
+  relations: StorageInventoryRelation[],
+  findings: StorageInventoryFinding[]
 ): void {
   for (const session of history.sessions.values()) {
+    const conversation = conversations.sessions.get(session.id);
     relations.push({
       kind: "history-conversation-projection",
       from: {
@@ -2316,28 +3416,124 @@ function correlateHistoryAndConversations(
         entityType: "session",
         ref: opaque("conversation-session", session.id)
       },
-      status: conversations.sessions.has(session.id) ? "linked" : "unlinked"
+      status: conversation ? "linked" : "missing"
     });
-    const conversation = conversations.sessions.get(session.id);
-    if (!conversation) continue;
-    for (const messageId of session.messageIds) {
-      if (!conversation.messageIds.has(messageId)) continue;
-      relations.push({
-        kind: "history-message-projection",
-        from: {
-          sourceId: "history",
-          entityType: "message",
-          ref: opaque("history-message", `${session.id}:${messageId}`)
-        },
-        to: {
-          sourceId: "conversations",
-          entityType: "message",
-          ref: opaque("conversation-message", `${session.id}:${messageId}`)
-        },
-        status: "linked"
-      });
+    if (!conversation) {
+      findings.push(makeFinding({
+        sourceId: "history",
+        code: "history-reference-source-missing",
+        category: "missing",
+        severity: "blocking",
+        recordRaw: session.id,
+        count: Math.max(1, session.messageCount),
+        blocksMigration: true
+      }));
     }
   }
+  for (const reference of history.references) {
+    const conversation = conversations.sessions.get(
+      reference.conversationId
+    );
+    const message = conversation?.messages.get(reference.messageId);
+    let status: StorageInventoryRelation["status"] = "linked";
+    let findingCode = "";
+    if (!conversation || !message) {
+      status = "missing";
+      findingCode = "history-reference-source-missing";
+    } else if (
+      conversation.duplicateMessageIds.has(reference.messageId)
+    ) {
+      status = "ambiguous";
+      findingCode = "history-reference-source-ambiguous";
+    } else if (message.revision !== reference.messageRevision) {
+      status = "ambiguous";
+      findingCode = "history-reference-revision-mismatch";
+    } else if (
+      localHistoryDateKey(message.createdAt) !== reference.date
+    ) {
+      status = "ambiguous";
+      findingCode = "history-reference-date-drift";
+    } else if (
+      reference.runId !== undefined
+      && message.runId !== reference.runId
+    ) {
+      status = "ambiguous";
+      findingCode = "history-reference-run-mismatch";
+    }
+    relations.push({
+      kind: "history-message-projection",
+      from: {
+        sourceId: "history",
+        entityType: "message",
+        ref: reference.ownerRef
+      },
+      to: {
+        sourceId: "conversations",
+        entityType: "message",
+        ref: opaque(
+          "conversation-message",
+          `${reference.conversationId}:${reference.messageId}`
+        )
+      },
+      status
+    });
+    if (findingCode) {
+      findings.push(makeFinding({
+        sourceId: "history",
+        code: findingCode,
+        category: status === "missing" ? "missing" : "ambiguous",
+        severity: "blocking",
+        recordRaw:
+          `${reference.conversationId}:${reference.messageId}`,
+        blocksMigration: true
+      }));
+    }
+  }
+  if (history.activeSourceRevision) {
+    const currentSourceRevision =
+      conversationKnowledgeHistorySourceRevision(conversations);
+    if (currentSourceRevision !== history.activeSourceRevision) {
+      findings.push(makeFinding({
+        sourceId: "history",
+        code: "history-source-revision-mismatch",
+        category: "ambiguous",
+        severity: "blocking",
+        recordRaw: history.activeGenerationId ?? "active",
+        blocksMigration: true
+      }));
+    }
+  }
+}
+
+function conversationKnowledgeHistorySourceRevision(
+  conversations: ConversationFacts
+): string {
+  const sessions = [...conversations.sessions.values()]
+    .filter((session) => session.kind === "knowledge-base")
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((session) => ({
+      id: session.id,
+      title: session.title ?? "",
+      kind: session.kind,
+      historyActiveDate: session.historyActiveDate ?? null,
+      updatedAt: session.updatedAt,
+      messages: session.messageOrder.map((messageId) => {
+        const message = session.messages.get(messageId);
+        return {
+          id: messageId,
+          revision: message?.revision ?? "missing"
+        };
+      })
+    }));
+  return stableInventoryRevision(sessions);
+}
+
+function localHistoryDateKey(value: number): string {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function correlateNativeRecords(
@@ -2920,6 +4116,9 @@ function collectMessageFacts(
     facts.push({
       id: message.id,
       createdAt: timestampOrZero(message.createdAt),
+      revision: createConversationMessageRevision(
+        message as unknown as ChatMessage
+      ),
       ...(typeof message.rawRef === "string" && message.rawRef
         ? { rawRef: message.rawRef }
         : {}),
@@ -2930,6 +4129,26 @@ function collectMessageFacts(
   }
   void sourceId;
   return facts;
+}
+
+function messageFactMap(
+  facts: readonly MessageFact[]
+): Map<string, MessageFact> {
+  const messages = new Map<string, MessageFact>();
+  for (const fact of facts) messages.set(fact.id, fact);
+  return messages;
+}
+
+function duplicateMessageFactIds(
+  facts: readonly MessageFact[]
+): Set<string> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const fact of facts) {
+    if (seen.has(fact.id)) duplicates.add(fact.id);
+    seen.add(fact.id);
+  }
+  return duplicates;
 }
 
 function nativeRecordMetadataKey(record: NativeExecutionRecord): string {

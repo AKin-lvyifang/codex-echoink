@@ -114,6 +114,8 @@ import type { AgentRichStreamRuntime, AgentTaskRuntime, AgentToolBridgeRuntime }
 import { buildActiveEchoInkResourceCatalog, buildEchoInkResourceCatalog, prepareAgentResources } from "../resources/registry";
 import { buildCallableMcpToolCatalog } from "../resources/mcp-tool-catalog";
 import { EchoInkHarnessKernel } from "../harness/kernel/harness-kernel";
+import { FileConversationStore } from "../harness/conversation/conversation-store";
+import { workspaceFingerprint } from "../harness/kernel/session-service";
 import type { NativeExecutionRecord } from "../harness/contracts/native-execution";
 import { harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../harness/agents/backend-runtime-profile";
 import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
@@ -12125,18 +12127,51 @@ try {
       updatedAt: new Date(2026, 4, 19, 9, 0, 1).getTime()
     }],
     activeSessionId: "kb-history-store",
-    knowledgeBase: { sessionId: "kb-history-store" }
+    knowledgeBase: {
+      sessionId: "kb-history-store",
+      historyRetentionDays: 0
+    }
   }).settings;
+  const historyConversationStore = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(kbVault, "codex-echoink"),
+      "conversations"
+    )
+  });
+  const historySession = historySettings.sessions[0];
+  historySession.revision = 1;
+  historySession.generation = 1;
+  historySession.contextId = "context-kb-history-store";
+  historySession.commitId = "commit-kb-history-store";
+  historySession.workspaceFingerprint = workspaceFingerprint({
+    vaultPath: kbVault,
+    cwd: kbVault
+  });
+  await historyConversationStore.createPristineSession({
+    ...historySession,
+    messages: [],
+    historyActiveDate: undefined
+  });
+  await historyConversationStore.upsertSession(historySession);
   const migrationResult = await migrateKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
   assert.equal(migrationResult.activeDate, "2026-05-19");
-  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-19-user", "h-19-process"]);
+  assert.deepEqual(
+    historySettings.sessions[0].messages.map((message) => message.id),
+    ["h-18-user", "h-18-assistant", "h-19-user", "h-19-process"],
+    "History V2 must not compact canonical Conversation messages"
+  );
   const historyIndex = await readKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
   assert.equal(historyIndex.sessions[0]?.dayCount, 2);
   assert.equal(historyIndex.sessions[0]?.messageCount, 4);
   assert.deepEqual((await readKnowledgeBaseHistoryDay(kbVault, "codex-echoink", "kb-history-store", "2026-05-18")).map((message) => message.id), ["h-18-user", "h-18-assistant"]);
   historySettings.sessions[0].messages.push({ id: "h-20-user", role: "user", text: "新日问题", createdAt: new Date(2026, 4, 20, 8, 0, 0).getTime() });
+  historySettings.sessions[0].updatedAt = new Date(2026, 4, 20, 8, 0, 0).getTime();
+  await historyConversationStore.upsertSession(historySettings.sessions[0]);
   await persistAndCompactKnowledgeBaseHistory(kbVault, "codex-echoink", historySettings);
-  assert.deepEqual(historySettings.sessions[0].messages.map((message) => message.id), ["h-20-user"]);
+  assert.deepEqual(
+    historySettings.sessions[0].messages.map((message) => message.id),
+    ["h-18-user", "h-18-assistant", "h-19-user", "h-19-process", "h-20-user"]
+  );
   const rebuiltHistoryIndex = await rebuildKnowledgeBaseHistoryIndex(kbVault, "codex-echoink");
   assert.equal(rebuiltHistoryIndex.sessions[0]?.dayCount, 3);
   assert.equal(rebuiltHistoryIndex.sessions[0]?.messageCount, 5);
@@ -12159,14 +12194,32 @@ try {
     cwd: kbVault,
     historyActiveDate: "2026-05-21",
     messages: [
+      { id: "recover-19", role: "assistant" as const, text: "最近一天详情", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() },
       { id: "recover-21", role: "user" as const, text: "/maintain", createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime() }
     ],
     createdAt: new Date(2026, 4, 21, 10, 0, 0).getTime(),
-    updatedAt: new Date(2026, 4, 21, 10, 0, 0).getTime()
+    updatedAt: new Date(2026, 4, 21, 10, 0, 0).getTime(),
+    revision: 1,
+    generation: 1,
+    contextId: "context-kb-history-recover",
+    commitId: "commit-kb-history-recover",
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath: kbVault,
+      cwd: kbVault
+    })
   };
-  await persistKnowledgeBaseHistoryMessages(kbVault, "codex-echoink", recoveredHistorySession, [
-    { id: "recover-19", role: "assistant", text: "最近一天详情", createdAt: new Date(2026, 4, 19, 9, 0, 0).getTime() }
-  ]);
+  await historyConversationStore.createPristineSession({
+    ...recoveredHistorySession,
+    messages: [],
+    historyActiveDate: undefined
+  });
+  await historyConversationStore.upsertSession(recoveredHistorySession);
+  await persistKnowledgeBaseHistoryMessages(
+    kbVault,
+    "codex-echoink",
+    recoveredHistorySession,
+    recoveredHistorySession.messages
+  );
   const recoverySettings = normalizeSettingsData({
     sessions: [recoveredHistorySession],
     activeSessionId: "kb-history-recover",

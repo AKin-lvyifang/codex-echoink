@@ -82,6 +82,7 @@ import {
 } from "../settings/settings";
 import { DEFAULT_KNOWLEDGE_BASE_RULES_FILE } from "../knowledge-base/constants";
 import {
+  activeKnowledgeBaseHistoryDate,
   collectKnowledgeBaseStorageStats,
   compactOldKnowledgeBaseProcessHistory,
   exportKnowledgeBaseHistory,
@@ -755,7 +756,14 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   async rebuildKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
-    return rebuildKnowledgeBaseHistoryIndex(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName());
+    return rebuildKnowledgeBaseHistoryIndex(
+      this.plugin.getVaultPath(),
+      this.plugin.getPluginDataDirName(),
+      {
+        retentionDays:
+          this.plugin.settings.knowledgeBase.historyRetentionDays
+      }
+    );
   }
 
   async getKnowledgeBaseStorageStats(): Promise<KnowledgeBaseStorageStats> {
@@ -1064,6 +1072,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       strictKnowledgeBaseHistory: boolean;
     }
   ): Promise<CodexForObsidianSettings> {
+    prepareKnowledgeBaseHistoryMetadata(fullCandidate);
     const synchronizeCanonicalSession =
       createAdvancingCanonicalSessionSynchronizer(
         this.plugin.settings,
@@ -1097,15 +1106,8 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       options.strictKnowledgeBaseHistory
     );
     if (!projected) return fullCandidate;
-
-    // A successful History publication may compact the active Knowledge
-    // Conversation. data.json cannot move ahead until that compacted source is
-    // also durable. This pass therefore always fails closed.
-    await this.flushConversationStore(
-      true,
-      historyCandidate,
-      synchronizeCanonicalSession
-    );
+    // History V2 is a reference-only projection. It cannot mutate or compact
+    // the canonical Conversation, so no second Conversation write is allowed.
     return historyCandidate;
   }
 
@@ -1307,6 +1309,23 @@ export function settingsForDataSave(settings: CodexForObsidianSettings): CodexFo
     delete session.threadId;
   }
   return data;
+}
+
+function prepareKnowledgeBaseHistoryMetadata(
+  settings: CodexForObsidianSettings,
+  now = Date.now()
+): void {
+  const session = settings.sessions.find(
+    (item) => item.id === settings.knowledgeBase.sessionId
+      && item.kind === "knowledge-base"
+  );
+  if (!session) return;
+  const activeDate = activeKnowledgeBaseHistoryDate(
+    session.messages,
+    session.historyActiveDate,
+    now
+  );
+  session.historyActiveDate = activeDate || undefined;
 }
 
 function cloneSettings(settings: CodexForObsidianSettings): CodexForObsidianSettings {
