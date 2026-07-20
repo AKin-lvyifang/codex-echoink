@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile
 } from "node:fs/promises";
@@ -29,6 +30,7 @@ import type {
 import {
   createRecordMutationJournal,
   loadRecordMutationJournal,
+  stageRecordMutationJournal,
   type LoadedRecordMutationJournal
 } from "../../harness/lifecycle/record-mutation-journal";
 import type {
@@ -42,6 +44,9 @@ Promise<void> {
   await assertRuntimeAdapterMismatchFailsBeforePrepare();
   await assertTrashBundleMaterializesAcrossRestart();
   await assertSourceDeletionBundleMaterializesBeforeTrashPrepare();
+  await assertRetainBundleRequiresFrozenSelectionVerification();
+  await assertRetainBundleRejectsInvalidJournalEvidence();
+  await assertRetainBundleRechecksPhysicalRootsAfterVerification();
 }
 
 async function assertRuntimeMaterializesPreparedParticipantsAcrossRestart():
@@ -440,6 +445,402 @@ Promise<void> {
     assert.equal(materialized.journal.record.state, "staged");
     assert.equal(await readFile(fixture.runSourcePath, "utf8"), "run\n");
   });
+}
+
+async function assertRetainBundleRequiresFrozenSelectionVerification():
+Promise<void> {
+  await withFixture("retain-bundle-verification", async (fixture) => {
+    const {
+      journal,
+      plan,
+      roots,
+      retainParticipants,
+      trashParticipant
+    } = await createRetainBundleExecution(
+      fixture,
+      "retain-verification"
+    );
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal,
+        plan,
+        roots,
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "inventory_verification_required"
+      )
+    );
+    assert.equal(
+      (await loadRecordMutationJournal(journal.handle)).record.state,
+      "planned"
+    );
+    assert.equal(
+      await readFile(fixture.conversationSourcePath, "utf8"),
+      "conversation\n"
+    );
+
+    let rejectedVerificationCalls = 0;
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal,
+        plan,
+        roots,
+        verifyFrozenSelection: async () => {
+          rejectedVerificationCalls += 1;
+          throw new Error("fixture inventory mismatch");
+        },
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "inventory_mismatch"
+      )
+    );
+    assert.equal(rejectedVerificationCalls, 1);
+    assert.equal(
+      (await loadRecordMutationJournal(journal.handle)).record.state,
+      "planned"
+    );
+
+    let verificationCalls = 0;
+    const materialized = await materializeRecordMutationExecution({
+      journal,
+      plan,
+      roots,
+      verifyFrozenSelection: async (input) => {
+        verificationCalls += 1;
+        assert.equal(input.plan.digest, plan.plan.digest);
+        assert.equal(input.journal.record.digest, journal.record.digest);
+      },
+      now: fixture.now
+    });
+    assert.equal(verificationCalls, 1);
+    assert.equal(retainParticipants.length, 2);
+    for (const retainParticipant of retainParticipants) {
+      assert.deepEqual(
+        participantActions(
+          materialized.journal,
+          retainParticipant.participantId
+        ),
+        ["prepared"]
+      );
+    }
+    assert.deepEqual(
+      materialized.journal.chain.flatMap((revision) => (
+        revision.step ? [revision.step.action] : []
+      )),
+      ["prepared", "prepared", "trash-staged"],
+      "all retain proofs must publish before the first Trash preparation"
+    );
+    assert.deepEqual(
+      participantActions(
+        materialized.journal,
+        trashParticipant.participantId
+      ),
+      ["trash-staged"]
+    );
+    assert.equal(materialized.trashParticipants.length, 1);
+
+    const replayed = await materializeRecordMutationExecution({
+      journal,
+      plan,
+      roots,
+      now: fixture.now
+    });
+    assert.equal(
+      replayed.journal.record.digest,
+      materialized.journal.record.digest,
+      "stale caller snapshots must reload durable retain evidence"
+    );
+    assert.equal(
+      await readFile(fixture.conversationSourcePath, "utf8"),
+      "conversation\n"
+    );
+  });
+}
+
+async function assertRetainBundleRejectsInvalidJournalEvidence():
+Promise<void> {
+  await withFixture("retain-bundle-invalid-evidence", async (fixture) => {
+    const first = await createRetainBundleExecution(
+      fixture,
+      "retain-invalid-evidence"
+    );
+    const invalidEvidence = await stageRecordMutationJournal(
+      first.journal.handle,
+      {
+        expectedRevision: first.journal.record.revision,
+        expectedDigest: first.journal.record.digest,
+        step: {
+          direction: "forward",
+          ordinal: 1,
+          participantId: first.retainParticipants[0]!.participantId,
+          action: "prepared",
+          evidenceDigest: `sha256:${"f".repeat(64)}`
+        },
+        updatedAt: fixture.now()
+      }
+    );
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal: invalidEvidence,
+        plan: first.plan,
+        roots: first.roots,
+        verifyFrozenSelection: async () => undefined,
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "inventory_mismatch"
+      )
+    );
+    assert.deepEqual(
+      participantActions(
+        await loadRecordMutationJournal(first.journal.handle),
+        first.trashParticipant.participantId
+      ),
+      []
+    );
+    assert.equal(
+      await readFile(fixture.conversationSourcePath, "utf8"),
+      "conversation\n"
+    );
+
+    const second = await createRetainBundleExecution(
+      fixture,
+      "retain-missing-after-trash"
+    );
+    const prematureTrash = await stageRecordMutationJournal(
+      second.journal.handle,
+      {
+        expectedRevision: second.journal.record.revision,
+        expectedDigest: second.journal.record.digest,
+        step: {
+          direction: "forward",
+          ordinal: 1,
+          participantId: second.trashParticipant.participantId,
+          action: "trash-staged",
+          evidenceDigest: `sha256:${"e".repeat(64)}`
+        },
+        updatedAt: fixture.now()
+      }
+    );
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal: prematureTrash,
+        plan: second.plan,
+        roots: second.roots,
+        verifyFrozenSelection: async () => undefined,
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "inventory_mismatch"
+      )
+    );
+    for (const retainParticipant of second.retainParticipants) {
+      assert.deepEqual(
+        participantActions(
+          await loadRecordMutationJournal(second.journal.handle),
+          retainParticipant.participantId
+        ),
+        []
+      );
+    }
+  });
+}
+
+async function assertRetainBundleRechecksPhysicalRootsAfterVerification():
+Promise<void> {
+  await withFixture("retain-bundle-root-drift", async (fixture) => {
+    const prepared = await createRetainBundleExecution(
+      fixture,
+      "retain-root-drift"
+    );
+    const runRoot = prepared.roots.find((root) => root.rootId === "run");
+    assert.ok(runRoot);
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal: prepared.journal,
+        plan: prepared.plan,
+        roots: prepared.roots,
+        verifyFrozenSelection: async () => {
+          await rename(runRoot.rootPath, `${runRoot.rootPath}-replaced`);
+          await mkdir(runRoot.rootPath);
+        },
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "root_mismatch"
+      )
+    );
+    assert.equal(
+      (await loadRecordMutationJournal(prepared.journal.handle)).record.state,
+      "planned"
+    );
+    assert.deepEqual(
+      participantActions(
+        await loadRecordMutationJournal(prepared.journal.handle),
+        prepared.trashParticipant.participantId
+      ),
+      []
+    );
+  });
+}
+
+async function createRetainBundleExecution(
+  fixture: ExecutionRuntimeFixture,
+  suffix: string
+): Promise<{
+  journal: LoadedRecordMutationJournal;
+  plan: LoadedRecordMutationExecutionPlan;
+  roots: RecordMutationRuntimeRoot[];
+  retainParticipants: Array<Extract<
+    RecordMutationExecutionParticipant,
+    { execution: { kind: "retain-bundle" } }
+  >>;
+  trashParticipant: Extract<
+    RecordMutationExecutionParticipant,
+    { execution: { kind: "trash-bundle" } }
+  >;
+}> {
+  const selectionDigest = `sha256:${"c".repeat(64)}`;
+  const runRetainExecution = {
+    kind: "retain-bundle" as const,
+    rootId: "run",
+    selectionDigest,
+    subjects: [{
+      kind: "attempt-payload-not-captured" as const,
+      workflowRunId: "workflow-retained",
+      attemptId: "attempt-retained",
+      reasonCode: "capture-disabled" as const
+    }]
+  };
+  const rawRetainExecution = {
+    kind: "retain-bundle" as const,
+    rootId: "raw",
+    selectionDigest,
+    subjects: [{
+      kind: "raw" as const,
+      rawRef: "raw/shared.txt",
+      sourceRelativePath: "shared.txt",
+      ownersDigest: `sha256:${"b".repeat(64)}`
+    }]
+  };
+  const trashExecution = {
+    kind: "trash-bundle" as const,
+    sourceRootId: "conversation",
+    trashRootId: "trash",
+    selectionDigest,
+    items: [{
+      itemId: "conversation-source",
+      sourceRelativePath: "session-a/payloads/payload-1"
+    }]
+  };
+  const participants: RecordMutationExecutionParticipant[] = [
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "workflow-run",
+        action: "retain",
+        execution: runRetainExecution
+      }),
+      recordKind: "workflow-run",
+      action: "retain",
+      execution: runRetainExecution
+    },
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "raw",
+        action: "retain",
+        execution: rawRetainExecution
+      }),
+      recordKind: "raw",
+      action: "retain",
+      execution: rawRetainExecution
+    },
+    {
+      participantId: recordMutationExecutionBundleParticipantId({
+        recordKind: "conversation",
+        action: "stage",
+        execution: trashExecution
+      }),
+      recordKind: "conversation",
+      action: "stage",
+      execution: trashExecution
+    }
+  ].sort((left, right) => (
+    left.participantId.localeCompare(right.participantId)
+  ));
+  const retainParticipants = participants.filter(
+    (participant): participant is Extract<
+      RecordMutationExecutionParticipant,
+      { execution: { kind: "retain-bundle" } }
+    > => participant.execution.kind === "retain-bundle"
+  );
+  const trashParticipant = participants.find(
+    (participant): participant is Extract<
+      RecordMutationExecutionParticipant,
+      { execution: { kind: "trash-bundle" } }
+    > => participant.execution.kind === "trash-bundle"
+  );
+  assert.ok(trashParticipant);
+  const rawRootPath = path.join(fixture.storageRootPath, "raw");
+  await mkdir(rawRootPath, { recursive: true });
+  const roots = await registerRecordMutationRuntimeRoots({
+    storageRootPath: fixture.storageRootPath,
+    definitions: [
+      "conversation",
+      "raw",
+      "run",
+      "trash"
+    ].map((rootId) => ({
+      rootId,
+      rootPath: path.join(fixture.storageRootPath, rootId),
+      boundaryRootPath: fixture.storageRootPath,
+      authority: "plugin-owned" as const
+    })),
+    createdAt: fixture.now()
+  });
+  const journal = await createRecordMutationJournal({
+    storageRootPath: fixture.storageRootPath,
+    mutationId: `execution-runtime-${suffix}`,
+    intent: {
+      operation: "delete-conversation",
+      conversationId: `conversation-${suffix}`,
+      expectedConversationGeneration: 3,
+      expectedConversationCommitId: "conversation-commit-3",
+      expectedConversationContentRevision:
+        `sha256:${"d".repeat(64)}`,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: `tombstone-${suffix}`,
+        digest: `sha256:${"e".repeat(64)}`
+      },
+      participants: participants.map((participant) => ({
+        id: participant.participantId,
+        recordKind: participant.recordKind,
+        action: participant.action
+      })),
+      rootBindings: roots.map((root) => root.rootBinding),
+      trashPolicy: "required"
+    },
+    createdAt: fixture.now()
+  });
+  const plan = await createRecordMutationExecutionPlan({
+    journal,
+    participants,
+    createdAt: fixture.now()
+  });
+  return {
+    journal,
+    plan,
+    roots,
+    retainParticipants,
+    trashParticipant
+  };
 }
 
 function fakeSourceAdapterFactory(input: {

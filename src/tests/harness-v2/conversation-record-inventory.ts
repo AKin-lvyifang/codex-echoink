@@ -2,7 +2,9 @@ import * as assert from "node:assert/strict";
 import {
   mkdir,
   mkdtemp,
-  rm
+  readFile,
+  rm,
+  writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -16,8 +18,20 @@ import {
   FileRunRecordStore
 } from "../../harness/ledger/run-record-store";
 import {
+  createRecordMutationExecutionPlan
+} from "../../harness/lifecycle/record-mutation-execution-plan";
+import {
+  materializeRecordMutationExecution,
+  RecordMutationExecutionRuntimeError
+} from "../../harness/lifecycle/record-mutation-execution-runtime";
+import {
+  createRecordMutationJournal,
+  loadRecordMutationJournal
+} from "../../harness/lifecycle/record-mutation-journal";
+import {
   ECHOINK_RECORD_MUTATION_ROOT_IDS,
-  echoInkRecordMutationRootPath
+  echoInkRecordMutationRootPath,
+  prepareEchoInkRecordMutationRuntimeRoots
 } from "../../harness/lifecycle/record-mutation-production";
 import {
   appendPendingMemoryEvent,
@@ -27,7 +41,14 @@ import {
   inventoryConversationRecords
 } from "../../harness/records/conversation-record-inventory";
 import {
+  buildConversationRecordMutationPlan
+} from "../../harness/records/conversation-record-mutation-plan";
+import {
+  createEchoInkRecordMutationSelectionVerifier
+} from "../../harness/records/conversation-record-mutation-selection-verifier";
+import {
   pluginDataDir,
+  rawStorageDir,
   writeRawText
 } from "../../core/raw-message-store";
 import type {
@@ -44,6 +65,7 @@ Promise<void> {
   await assertMissingRawAndPendingMemoryBlockSelection();
   await assertArtifactRequiresAnExplicitRetentionDecision();
   await assertRunInventoryBlockersArePreserved();
+  await assertFrozenSelectionIsReinventoriedBeforeTrashPrepare();
 }
 
 async function assertRawOwnerGraphSeparatesExclusiveAndSharedSources():
@@ -263,6 +285,169 @@ async function assertRunInventoryBlockersArePreserved(): Promise<void> {
       code: "run-missing-attempt-summary",
       subjectId: "workflow-missing-attempt:attempt-missing"
     }]);
+  });
+}
+
+async function assertFrozenSelectionIsReinventoriedBeforeTrashPrepare():
+Promise<void> {
+  await withVault("selection-verifier", async (vaultPath) => {
+    await writeRawText(
+      vaultPath,
+      "raw/exclusive.txt",
+      "exclusive bytes",
+      PLUGIN_DIR
+    );
+    await writeRawText(
+      vaultPath,
+      "raw/shared.txt",
+      "shared bytes",
+      PLUGIN_DIR
+    );
+    const conversations = [
+      session("conversation-target", [
+        message("message-exclusive", "raw/exclusive.txt"),
+        message("message-shared-target", "raw/shared.txt")
+      ]),
+      session("conversation-other", [
+        message("message-shared-other", "raw/shared.txt")
+      ])
+    ];
+    const prepared = await prepareEchoInkRecordMutationRuntimeRoots({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      rootIds: [
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.raw,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+      ].sort((left, right) => left.localeCompare(right)),
+      createdAt: BASE_TIME
+    });
+    const conversationRoot = prepared.roots.find(
+      (root) =>
+        root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation
+    );
+    assert.ok(conversationRoot);
+    const conversationSourcePath = path.join(
+      conversationRoot.rootPath,
+      "sessions",
+      "conversation-target"
+    );
+    await mkdir(conversationSourcePath, { recursive: true });
+    await writeFile(
+      path.join(conversationSourcePath, "messages.jsonl"),
+      "{}\n",
+      "utf8"
+    );
+    const inventory = await inventoryConversationRecords({
+      operation: "delete-conversation",
+      conversationId: "conversation-target",
+      conversations,
+      vaultPath,
+      pluginDir: PLUGIN_DIR
+    });
+    assert.equal(inventory.status, "ready");
+    const built = buildConversationRecordMutationPlan({
+      inventory,
+      conversationSources: [{
+        sourceRelativePath: "sessions/conversation-target"
+      }],
+      expectedConversationGeneration: 2,
+      expectedConversationCommitId: "conversation-commit-2",
+      expectedConversationContentRevision:
+        `sha256:${"a".repeat(64)}`,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: "conversation-selection-deleted",
+        digest: `sha256:${"b".repeat(64)}`
+      },
+      rootBindings: prepared.roots.map((root) => root.rootBinding)
+    });
+    const verifier = createEchoInkRecordMutationSelectionVerifier({
+      vaultPath,
+      pluginDir: PLUGIN_DIR,
+      getConversations: () => conversations
+    });
+    const firstJournal = await createRecordMutationJournal({
+      storageRootPath: prepared.storageRootPath,
+      mutationId: "mutation-selection-verified",
+      intent: built.intent,
+      createdAt: BASE_TIME + 1
+    });
+    const firstPlan = await createRecordMutationExecutionPlan({
+      journal: firstJournal,
+      participants: built.executionParticipants,
+      createdAt: BASE_TIME + 2
+    });
+    const materialized = await materializeRecordMutationExecution({
+      journal: firstJournal,
+      plan: firstPlan,
+      roots: prepared.roots,
+      verifyFrozenSelection: verifier,
+      now: () => BASE_TIME + 3
+    });
+    const retainParticipant = built.executionParticipants.find(
+      (participant) => participant.execution.kind === "retain-bundle"
+    );
+    assert.ok(retainParticipant);
+    assert.equal(
+      materialized.journal.chain.some((revision) => (
+        revision.step?.participantId === retainParticipant.participantId
+        && revision.step.action === "prepared"
+      )),
+      true
+    );
+    assert.equal(
+      await readFile(
+        path.join(rawStorageDir(vaultPath, PLUGIN_DIR), "shared.txt"),
+        "utf8"
+      ),
+      "shared bytes"
+    );
+    assert.equal(
+      await readFile(
+        path.join(rawStorageDir(vaultPath, PLUGIN_DIR), "exclusive.txt"),
+        "utf8"
+      ),
+      "exclusive bytes"
+    );
+
+    conversations[1].messages = [];
+    const driftedJournal = await createRecordMutationJournal({
+      storageRootPath: prepared.storageRootPath,
+      mutationId: "mutation-selection-drifted",
+      intent: built.intent,
+      createdAt: BASE_TIME + 10
+    });
+    const driftedPlan = await createRecordMutationExecutionPlan({
+      journal: driftedJournal,
+      participants: built.executionParticipants,
+      createdAt: BASE_TIME + 11
+    });
+    await assert.rejects(
+      materializeRecordMutationExecution({
+        journal: driftedJournal,
+        plan: driftedPlan,
+        roots: prepared.roots,
+        verifyFrozenSelection: verifier,
+        now: () => BASE_TIME + 12
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionRuntimeError
+        && error.code === "inventory_mismatch"
+      )
+    );
+    assert.equal(
+      (await loadRecordMutationJournal(driftedJournal.handle))
+        .record.state,
+      "planned"
+    );
+    assert.equal(
+      await readFile(
+        path.join(rawStorageDir(vaultPath, PLUGIN_DIR), "exclusive.txt"),
+        "utf8"
+      ),
+      "exclusive bytes"
+    );
   });
 }
 

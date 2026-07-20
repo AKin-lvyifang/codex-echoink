@@ -56,6 +56,9 @@ import {
   prepareEchoInkRecordMutationRuntimeRoots,
   type EchoInkRecordMutationRootId
 } from "../harness/lifecycle/record-mutation-production";
+import {
+  createEchoInkRecordMutationSelectionVerifier
+} from "../harness/records/conversation-record-mutation-selection-verifier";
 import type {
   RecordMutationIntent,
   RecordMutationRevision
@@ -400,44 +403,69 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       ) {
         continue;
       }
-      let recoverableJournal = journal;
-      let trashParticipants: RecordMutationRecoveryTrashParticipant[] = [];
-      let sourceDeletedParticipants:
-        RecordMutationSourceParticipantAdapter[] = [];
       if (journal.record.intent.trashPolicy === "required") {
-        const executionPlan = await loadRecordMutationExecutionPlan({
-          storageRootPath: this.recordMutationStorageRootPath(),
-          mutationId: journal.record.mutationId,
-          journal
-        });
-        if (!executionPlan) {
+        const result = await this.withConversationMutation(
+          journal.record.intent.conversationId,
+          async (authority) => {
+            const executionPlan = await loadRecordMutationExecutionPlan({
+              storageRootPath: this.recordMutationStorageRootPath(),
+              mutationId: journal.record.mutationId,
+              journal
+            });
+            if (!executionPlan) {
+              throw new Error(
+                `Destructive RecordMutation execution plan is missing: ${journal.record.mutationId}`
+              );
+            }
+            const preparedRoots =
+              await prepareEchoInkRecordMutationRuntimeRoots({
+                vaultPath: this.plugin.getVaultPath(),
+                pluginDir: this.plugin.getPluginDataDirName(),
+                rootIds: journal.record.intent.rootBindings.map(
+                  (binding) => binding.rootId as EchoInkRecordMutationRootId
+                ),
+                createdAt: journal.record.createdAt
+              });
+            const materialized = await materializeRecordMutationExecution({
+              plan: executionPlan,
+              journal,
+              roots: preparedRoots.roots,
+              createSourceAdapter:
+                createEchoInkRecordMutationSourceAdapterFactory({
+                  vaultPath: this.plugin.getVaultPath()
+                }),
+              verifyFrozenSelection:
+                createEchoInkRecordMutationSelectionVerifier({
+                  vaultPath: this.plugin.getVaultPath(),
+                  pluginDir: this.plugin.getPluginDataDirName(),
+                  getConversations: () => this.plugin.settings.sessions
+                })
+            });
+            return await runRecordMutationRecoveryUnderAuthority({
+              journal: materialized.journal,
+              withConversationMutation: async (conversationId, action) =>
+                await this.withConversationMutation(conversationId, action),
+              inspectConversation: async (intent) =>
+                await this.inspectRecordMutationConversation(intent),
+              trashParticipants: materialized.trashParticipants,
+              sourceDeletedParticipants:
+                materialized.sourceDeletedParticipants
+            }, authority);
+          }
+        );
+        if (result.status === "blocked") {
           throw new Error(
-            `Destructive RecordMutation execution plan is missing: ${journal.record.mutationId}`
+            `RecordMutation startup recovery blocked for ${journal.record.mutationId}: ${result.blocker}`
           );
         }
-        const preparedRoots =
-          await prepareEchoInkRecordMutationRuntimeRoots({
-            vaultPath: this.plugin.getVaultPath(),
-            pluginDir: this.plugin.getPluginDataDirName(),
-            rootIds: journal.record.intent.rootBindings.map(
-              (binding) => binding.rootId as EchoInkRecordMutationRootId
-            ),
-            createdAt: journal.record.createdAt
-          });
-        const materialized = await materializeRecordMutationExecution({
-          plan: executionPlan,
-          journal,
-          roots: preparedRoots.roots,
-          createSourceAdapter:
-            createEchoInkRecordMutationSourceAdapterFactory({
-              vaultPath: this.plugin.getVaultPath()
-            })
-        });
-        recoverableJournal = materialized.journal;
-        trashParticipants = materialized.trashParticipants;
-        sourceDeletedParticipants =
-          materialized.sourceDeletedParticipants;
-      } else if (recoverableJournal.record.state === "planned") {
+        recovered += 1;
+        continue;
+      }
+      let recoverableJournal = journal;
+      const trashParticipants: RecordMutationRecoveryTrashParticipant[] = [];
+      const sourceDeletedParticipants:
+        RecordMutationSourceParticipantAdapter[] = [];
+      if (recoverableJournal.record.state === "planned") {
         const participant = recoverableJournal.record.intent.participants.find(
           (candidate) =>
             candidate.recordKind === "conversation"

@@ -23,8 +23,13 @@ import {
   workspaceFingerprint
 } from "../../harness/kernel/session-service";
 import {
-  createRecordMutationExecutionPlan
+  createRecordMutationExecutionPlan,
+  recordMutationExecutionBundleParticipantId,
+  type RecordMutationExecutionParticipant
 } from "../../harness/lifecycle/record-mutation-execution-plan";
+import {
+  materializeRecordMutationExecution
+} from "../../harness/lifecycle/record-mutation-execution-runtime";
 import {
   createRecordMutationJournal
 } from "../../harness/lifecycle/record-mutation-journal";
@@ -67,6 +72,7 @@ export async function runHarnessV2ConversationStoreTests(): Promise<void> {
   await assertClearSurvivesRestartAndExcludesOldContext();
   await assertContextRotationRecordMutationRecoversCrashWindows();
   await assertDestructiveRecordMutationRebuildsParticipantsAtStartup();
+  await assertDestructiveRetainProofReplaysAfterTargetDeletion();
   await assertSettingsStoreBlocksUnmigratedLegacyConversation();
   await assertConversationStoreParticipatesInDurableCommit();
   await assertSessionDeletionServiceFailsClosedBeforeMutation();
@@ -324,6 +330,207 @@ Promise<void> {
     assert.equal(
       await settingsStore.reconcileSessionContextRecordMutationsAtStartup(),
       1
+    );
+    assert.equal(
+      (await settingsStore.readRecordMutationAuthority(mutationId)).state,
+      "committed"
+    );
+    await assert.rejects(
+      readdir(path.join(conversationRootPath, "sessions", sessionId)),
+      (error: unknown) => (
+        typeof error === "object"
+        && error !== null
+        && "code" in error
+        && (error as { code?: string }).code === "ENOENT"
+      )
+    );
+    assert.equal(
+      await settingsStore.reconcileSessionContextRecordMutationsAtStartup(),
+      0
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
+}
+
+async function assertDestructiveRetainProofReplaysAfterTargetDeletion():
+Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-destructive-retain-startup-")
+  );
+  const sessionId = "destructive-retain-startup";
+  const source: StoredSession = {
+    id: sessionId,
+    title: "Destructive Retain Recovery",
+    cwd: vaultPath,
+    revision: 1,
+    generation: 1,
+    contextId: "context-destructive-retain",
+    commitId: "commit-destructive-retain",
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath,
+      cwd: vaultPath
+    }),
+    messages: [{
+      id: "message-destructive-retain",
+      role: "user",
+      text: "durable history",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 2
+  };
+  let persisted: unknown = {
+    settingsVersion: 29,
+    sessions: [source]
+  };
+  try {
+    const storageRootPath = pluginDataDir(vaultPath, "codex-echoink");
+    const conversationRootPath = path.join(
+      storageRootPath,
+      "conversations"
+    );
+    const seedStore = new FileConversationStore({
+      rootPath: conversationRootPath
+    });
+    await createPristineSettingsSessions(seedStore, [source]);
+    await seedStore.persistSettingsSessions({ sessions: [source] });
+    const current = await seedStore.readSession(sessionId);
+    assert.ok(current);
+    const roots = await prepareEchoInkRecordMutationRuntimeRoots({
+      vaultPath,
+      pluginDir: "codex-echoink",
+      rootIds: [
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.trash,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.run
+      ],
+      createdAt: 200
+    });
+    const selectionDigest = `sha256:${"a".repeat(64)}`;
+    const retainExecution = {
+      kind: "retain-bundle" as const,
+      rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
+      selectionDigest,
+      subjects: [{
+        kind: "attempt-payload-not-captured" as const,
+        workflowRunId: "workflow-retained-at-startup",
+        attemptId: "attempt-retained-at-startup",
+        reasonCode: "capture-disabled" as const
+      }]
+    };
+    const trashExecution = {
+      kind: "trash-bundle" as const,
+      sourceRootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+      trashRootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.trash,
+      selectionDigest,
+      items: [{
+        itemId: "conversation-session",
+        sourceRelativePath: `sessions/${sessionId}`
+      }]
+    };
+    const participants: RecordMutationExecutionParticipant[] = [
+      {
+        participantId: recordMutationExecutionBundleParticipantId({
+          recordKind: "workflow-run",
+          action: "retain",
+          execution: retainExecution
+        }),
+        recordKind: "workflow-run",
+        action: "retain",
+        execution: retainExecution
+      },
+      {
+        participantId: recordMutationExecutionBundleParticipantId({
+          recordKind: "conversation",
+          action: "stage",
+          execution: trashExecution
+        }),
+        recordKind: "conversation",
+        action: "stage",
+        execution: trashExecution
+      }
+    ].sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const mutationId = "destructive-retain-startup-recovery";
+    const tombstone = createConversationDeletionTombstone({
+      conversationId: current.id,
+      mutationId,
+      tombstoneId: "tombstone-destructive-retain-startup",
+      sourceGeneration: sessionGeneration(current),
+      sourceCommitId: current.commitId!,
+      sourceContentRevision: createConversationContentRevision(current),
+      deletedAt: 201
+    });
+    const journal = await createRecordMutationJournal({
+      storageRootPath,
+      mutationId,
+      intent: {
+        operation: "delete-conversation",
+        conversationId: current.id,
+        expectedConversationGeneration: sessionGeneration(current),
+        expectedConversationCommitId: current.commitId!,
+        expectedConversationContentRevision:
+          createConversationContentRevision(current),
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: tombstone.tombstoneId,
+          digest: tombstone.digest
+        },
+        participants: participants.map((participant) => ({
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        })),
+        rootBindings: roots.roots.map((root) => root.rootBinding),
+        trashPolicy: "required"
+      },
+      createdAt: 202
+    });
+    const plan = await createRecordMutationExecutionPlan({
+      journal,
+      participants,
+      createdAt: 203
+    });
+    let now = 203;
+    let verificationCalls = 0;
+    const materialized = await materializeRecordMutationExecution({
+      journal,
+      plan,
+      roots: roots.roots,
+      verifyFrozenSelection: async () => {
+        verificationCalls += 1;
+      },
+      now: () => {
+        now += 1;
+        return now;
+      }
+    });
+    assert.equal(verificationCalls, 1);
+    assert.equal(materialized.journal.record.state, "staged");
+    await seedStore.commitConversationDeletionTombstone(tombstone, {
+      expectedGeneration: sessionGeneration(current),
+      expectedCommitId: current.commitId!,
+      expectedContentRevision: createConversationContentRevision(current)
+    });
+
+    const plugin = fakeSettingsPlugin(
+      vaultPath,
+      () => persisted,
+      (next) => { persisted = next; }
+    );
+    const settingsStore = new EchoInkSettingsStore(plugin as never);
+    await settingsStore.loadSettings();
+    assert.equal(
+      plugin.settings.sessions.some((session) => session.id === sessionId),
+      false,
+      "deleted target must be absent before startup recovery"
+    );
+    assert.equal(
+      await settingsStore.reconcileSessionContextRecordMutationsAtStartup(),
+      1,
+      "startup must reuse durable retain proof without re-inventorying the deleted target"
     );
     assert.equal(
       (await settingsStore.readRecordMutationAuthority(mutationId)).state,

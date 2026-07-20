@@ -115,6 +115,19 @@ structured Run or Raw subjects, including record digests, relative paths, and
 Raw owner proof. Workflow Run source-deletion and Trash bundles must cover the
 same payload leaf identities.
 
+Before the first Trash preparation, a plan containing retain bundles must
+rebuild the complete Conversation inventory twice and recompile the frozen
+selection. The rebuilt intent, participants, selection digest, and runtime
+Roots must match the immutable plan. Only then may the runtime publish one
+deterministic `prepared` proof for each retain bundle, with every retain proof
+ordered before the first `trash-staged` step. It re-verifies each retain Root's
+current physical binding before publishing that proof. Missing or conflicting
+retain evidence after any Trash participant has staged is a hard block.
+Startup may reuse complete matching retain proofs without re-inventorying a
+Conversation whose deletion tombstone is already the durable target; an
+incomplete proof set still requires the live Conversation and fails closed
+when that inventory can no longer be reconstructed.
+
 The implementation must not solve this capacity boundary by only raising the
 participant, step, or revision constants: each append-only Journal revision
 repeats the immutable intent, and full compensation would otherwise exceed the

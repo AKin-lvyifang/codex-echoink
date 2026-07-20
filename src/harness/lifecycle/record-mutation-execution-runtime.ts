@@ -4,6 +4,7 @@ import {
   createOrLoadRecordRootBinding,
   recordRootBindingRef,
   sameRecordRootBindingRef,
+  verifyRecordRootBindingRef,
   type RecordRootAuthority,
   type RecordRootBindingRef
 } from "../storage/record-root-registry";
@@ -14,11 +15,17 @@ import {
 import {
   validateRecordMutationExecutionPlanAgainstJournal,
   type LoadedRecordMutationExecutionPlan,
-  type RecordMutationExecutionParticipant
+  type RecordMutationExecutionParticipant,
+  type RecordMutationExecutionPlanV2
 } from "./record-mutation-execution-plan";
-import type {
+import {
+  loadRecordMutationJournal,
+  stageRecordMutationJournal,
   LoadedRecordMutationJournal
 } from "./record-mutation-journal";
+import {
+  recordMutationDigest
+} from "./record-mutation-contract";
 import type {
   RecordMutationRecoveryTrashParticipant
 } from "./record-mutation-recovery-runner";
@@ -53,6 +60,16 @@ export type RecordMutationSourceAdapterFactory = (
   input: RecordMutationSourceAdapterFactoryInput
 ) => RecordMutationSourceParticipantAdapter;
 
+export interface RecordMutationFrozenSelectionVerifierInput {
+  plan: RecordMutationExecutionPlanV2;
+  journal: LoadedRecordMutationJournal;
+  roots: readonly RecordMutationRuntimeRoot[];
+}
+
+export type RecordMutationFrozenSelectionVerifier = (
+  input: RecordMutationFrozenSelectionVerifierInput
+) => Promise<void>;
+
 export interface MaterializedRecordMutationExecution {
   journal: LoadedRecordMutationJournal;
   trashParticipants: RecordMutationRecoveryTrashParticipant[];
@@ -62,7 +79,8 @@ export interface MaterializedRecordMutationExecution {
 export type RecordMutationExecutionRuntimeErrorCode =
   | "root_mismatch"
   | "plan_mismatch"
-  | "bundle_runtime_required"
+  | "inventory_verification_required"
+  | "inventory_mismatch"
   | "adapter_required"
   | "adapter_mismatch";
 
@@ -130,6 +148,7 @@ export async function materializeRecordMutationExecution(input: {
   journal: LoadedRecordMutationJournal;
   roots: readonly RecordMutationRuntimeRoot[];
   createSourceAdapter?: RecordMutationSourceAdapterFactory;
+  verifyFrozenSelection?: RecordMutationFrozenSelectionVerifier;
   now?: () => number;
 }): Promise<MaterializedRecordMutationExecution> {
   if (
@@ -145,16 +164,14 @@ export async function materializeRecordMutationExecution(input: {
     input.plan.plan,
     input.journal
   );
-  const unsupportedBundle = plan.participants.find((participant) => (
-    participant.execution.kind === "retain-bundle"
-  ));
-  if (unsupportedBundle) {
-    throw runtimeError(
-      "bundle_runtime_required",
-      `participant ${unsupportedBundle.participantId} bundle runtime 尚未接线`
-    );
-  }
   const roots = validateRuntimeRoots(input.journal, input.roots);
+  let current = await verifyAndJournalRetainBundles({
+    plan,
+    journal: input.journal,
+    roots: [...roots.values()],
+    verifyFrozenSelection: input.verifyFrozenSelection,
+    now: input.now
+  });
   const sourceDeletedParticipants: RecordMutationSourceParticipantAdapter[] = [];
   for (const participant of plan.participants) {
     if (
@@ -174,7 +191,7 @@ export async function materializeRecordMutationExecution(input: {
     }
     const root = requireRuntimeRoot(roots, participant.execution.rootId);
     const adapter = input.createSourceAdapter({
-      journal: input.journal,
+      journal: current,
       participant,
       root
     });
@@ -182,12 +199,11 @@ export async function materializeRecordMutationExecution(input: {
       adapter,
       participant,
       root,
-      input.journal.handle.storageRootPath
+      current.handle.storageRootPath
     );
     sourceDeletedParticipants.push(adapter);
   }
 
-  let current = input.journal;
   const trashParticipants: RecordMutationRecoveryTrashParticipant[] = [];
 
   for (const participant of plan.participants) {
@@ -270,6 +286,234 @@ export async function materializeRecordMutationExecution(input: {
     trashParticipants,
     sourceDeletedParticipants
   };
+}
+
+async function verifyAndJournalRetainBundles(input: {
+  plan: RecordMutationExecutionPlanV2;
+  journal: LoadedRecordMutationJournal;
+  roots: readonly RecordMutationRuntimeRoot[];
+  verifyFrozenSelection?: RecordMutationFrozenSelectionVerifier;
+  now?: () => number;
+}): Promise<LoadedRecordMutationJournal> {
+  const retainBundles = input.plan.participants.filter(
+    (participant): participant is Extract<
+      RecordMutationExecutionParticipant,
+      { execution: { kind: "retain-bundle" } }
+    > => participant.execution.kind === "retain-bundle"
+  );
+  if (!retainBundles.length) return input.journal;
+  let current = await loadRecordMutationJournal(input.journal.handle);
+  validateRecordMutationExecutionPlanAgainstJournal(input.plan, current);
+  validateRuntimeRoots(current, input.roots);
+  const rootMap = new Map(input.roots.map((root) => [root.rootId, root]));
+  await verifyRetainBundleRootBindings(
+    current,
+    retainBundles,
+    rootMap
+  );
+  const missing = retainBundles.filter((participant) => {
+    const root = requireRuntimeRoot(rootMap, participant.execution.rootId);
+    const expected = retainBundleVerificationDigest(
+      input.plan,
+      current,
+      participant,
+      root
+    );
+    const existing = participantPreparedEvidence(
+      current,
+      participant.participantId
+    );
+    if (existing && existing !== expected) {
+      throw runtimeError(
+        "inventory_mismatch",
+        `participant ${participant.participantId} retain evidence 已变化`
+      );
+    }
+    return existing === null;
+  });
+  if (!missing.length) return current;
+  if (current.chain.some(
+    (revision) => revision.step?.action === "trash-staged"
+  )) {
+    throw runtimeError(
+      "inventory_mismatch",
+      "retain verification 缺失但 destructive Trash 已经 stage"
+    );
+  }
+  if (!input.verifyFrozenSelection) {
+    throw runtimeError(
+      "inventory_verification_required",
+      "retain bundle 缺少 execution 前 unified inventory 复验"
+    );
+  }
+  try {
+    await input.verifyFrozenSelection({
+      plan: input.plan,
+      journal: current,
+      roots: input.roots
+    });
+  } catch {
+    throw runtimeError(
+      "inventory_mismatch",
+      "frozen RecordMutation selection 与当前 unified inventory 不一致"
+    );
+  }
+  current = await loadRecordMutationJournal(current.handle);
+  validateRecordMutationExecutionPlanAgainstJournal(input.plan, current);
+  validateRuntimeRoots(current, input.roots);
+  if (
+    current.chain.some(
+      (revision) => revision.step?.action === "trash-staged"
+    )
+    && retainBundles.some((participant) => (
+      participantPreparedEvidence(
+        current,
+        participant.participantId
+      ) === null
+    ))
+  ) {
+    throw runtimeError(
+      "inventory_mismatch",
+      "retain verification 缺失但 destructive Trash 已经 stage"
+    );
+  }
+  await verifyRetainBundleRootBindings(
+    current,
+    retainBundles,
+    rootMap
+  );
+  for (const participant of retainBundles) {
+    const root = requireRuntimeRoot(rootMap, participant.execution.rootId);
+    const expected = retainBundleVerificationDigest(
+      input.plan,
+      current,
+      participant,
+      root
+    );
+    const existing = participantPreparedEvidence(
+      current,
+      participant.participantId
+    );
+    if (existing) {
+      if (existing !== expected) {
+        throw runtimeError(
+          "inventory_mismatch",
+          `participant ${participant.participantId} retain evidence 已变化`
+        );
+      }
+      continue;
+    }
+    await verifyRetainBundleRootBinding(current, participant, root);
+    current = await stageRecordMutationJournal(current.handle, {
+      expectedRevision: current.record.revision,
+      expectedDigest: current.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: nextForwardOrdinal(current),
+        participantId: participant.participantId,
+        action: "prepared",
+        evidenceDigest: expected
+      },
+      updatedAt: nextRuntimeTimestamp(current, input.now)
+    });
+  }
+  return current;
+}
+
+async function verifyRetainBundleRootBindings(
+  journal: LoadedRecordMutationJournal,
+  participants: readonly Extract<
+    RecordMutationExecutionParticipant,
+    { execution: { kind: "retain-bundle" } }
+  >[],
+  roots: ReadonlyMap<string, RecordMutationRuntimeRoot>
+): Promise<void> {
+  for (const participant of participants) {
+    await verifyRetainBundleRootBinding(
+      journal,
+      participant,
+      requireRuntimeRoot(roots, participant.execution.rootId)
+    );
+  }
+}
+
+async function verifyRetainBundleRootBinding(
+  journal: LoadedRecordMutationJournal,
+  participant: Extract<
+    RecordMutationExecutionParticipant,
+    { execution: { kind: "retain-bundle" } }
+  >,
+  root: RecordMutationRuntimeRoot
+): Promise<void> {
+  try {
+    await verifyRecordRootBindingRef(root.rootBinding, {
+      storageRootPath: journal.handle.storageRootPath,
+      rootPath: root.rootPath,
+      boundaryRootPath: root.boundaryRootPath
+    });
+  } catch {
+    throw runtimeError(
+      "root_mismatch",
+      `participant ${participant.participantId} retain Root Binding 已变化`
+    );
+  }
+}
+
+function retainBundleVerificationDigest(
+  plan: RecordMutationExecutionPlanV2,
+  journal: LoadedRecordMutationJournal,
+  participant: Extract<
+    RecordMutationExecutionParticipant,
+    { execution: { kind: "retain-bundle" } }
+  >,
+  root: RecordMutationRuntimeRoot
+): string {
+  return recordMutationDigest({
+    kind: "record-mutation-retain-bundle-verification",
+    mutationId: journal.record.mutationId,
+    intentDigest: journal.record.intentDigest,
+    executionPlanDigest: plan.digest,
+    participantId: participant.participantId,
+    recordKind: participant.recordKind,
+    execution: participant.execution,
+    rootBinding: root.rootBinding
+  });
+}
+
+function participantPreparedEvidence(
+  journal: LoadedRecordMutationJournal,
+  participantId: string
+): string | null {
+  return journal.chain.find((revision) => (
+    revision.step?.participantId === participantId
+    && revision.step.direction === "forward"
+    && revision.step.action === "prepared"
+  ))?.step?.evidenceDigest ?? null;
+}
+
+function nextForwardOrdinal(
+  journal: LoadedRecordMutationJournal
+): number {
+  const ordinals = journal.chain.flatMap((revision) => (
+    revision.step?.direction === "forward"
+      ? [revision.step.ordinal]
+      : []
+  ));
+  return (ordinals.length ? Math.max(...ordinals) : 0) + 1;
+}
+
+function nextRuntimeTimestamp(
+  journal: LoadedRecordMutationJournal,
+  now: (() => number) | undefined
+): number {
+  const candidate = now ? now() : Date.now();
+  if (!Number.isSafeInteger(candidate) || candidate < 0) {
+    throw runtimeError(
+      "inventory_mismatch",
+      "RecordMutation runtime clock 非法"
+    );
+  }
+  return Math.max(candidate, journal.record.updatedAt + 1);
 }
 
 function validateRuntimeRoots(

@@ -97,10 +97,15 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
   40 个 Workflow Run 的夹具包含 127 条唯一记录，只生成 8 个逻辑 participant；
   输入逆序结果保持一致。blocked inventory、缺失 Attempt summary、重复 source、
   跨 Conversation source、Root 缺失、selection 漂移和拆组绕过容量均有失败回归。
-- Trash 与 source-deletion bundle 已接入 materializer 和 production adapter；
-  `retain-bundle`、live clear/delete runner 以及 Native retirement 仍未接入。
-  runtime 遇到 retain bundle 继续在 Trash prepare 和 Store effect 前返回
-  `bundle_runtime_required`，因此不能把当前 checkpoint 写成用户删除已经安全可用。
+- Trash、source-deletion 与 retain bundle 已接入 materializer。retain bundle
+  会在首次 Trash prepare 前连续重建两次 unified inventory，用冻结选择重新编译
+  完整计划，并依次发布绑定 mutation、intent、plan、participant、subjects 与
+  Root 的 `prepared` evidence；全部 retain proof 必须先于第一条
+  `trash-staged`。proof 缺失、伪造、Root 漂移或 owner graph 变化均 fail closed。
+  启动恢复在同一 Conversation mutation authority 内完成 materialize 与 runner；
+  tombstone 已提交时可复用完整 proof，不会重新依赖已删除的 live Conversation。
+  live clear/delete runner、Conversation target commit 与 Native retirement
+  仍未接入，因此当前 checkpoint 仍不代表用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -131,10 +136,11 @@ authority 也按 fail closed 处理。
 - Workflow Run payload source-deletion checkpoint：`d27c56a`
 - Deterministic bundle planning checkpoint：`92ea4db`
 - Trash bundle runtime checkpoint：`5ce326d`
-- 当前开发批次：Run/Memory/Artifact `source-deletion-bundle` runtime、
-  partial-forward/restore replay 与 production factory
-- 下一批次：`retain-bundle` production inspector、inventory 二次盘点、
-  live clear/delete runner 和 Native retirement
+- Source-deletion bundle runtime checkpoint：`8a72e6e`
+- 当前开发批次：`retain-bundle` unified inventory 二次复验、prepared proof、
+  Root 再验证与 destructive startup recovery
+- 下一批次：live clear/delete runner、Conversation target commit 和
+  Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -153,7 +159,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`、`d683b10`、`7f1b841`、`d27c56a`、`92ea4db`、`5ce326d`；当前 worktree 正在收口 source-deletion bundle | Retain bundle、live 清空/删除与 Native retirement |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`、`d683b10`、`7f1b841`、`d27c56a`、`92ea4db`、`5ce326d`、`8a72e6e`；当前 worktree 正在收口 retain bundle | live 清空/删除、Conversation target commit 与 Native retirement |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 
@@ -222,6 +228,10 @@ authority 也按 fail closed 处理。
   相对路径和 subject identity，不保存绝对路径。Root/adapter 错绑会在 prepare
   前失败。prepare-only coordinator 只写 durable Trash 与 `trash-staged`，不会
   退休 source；启动恢复可幂等重建 receipt 后再由 Runner 决定 forward/compensate。
+- retain bundle 已建立首次 destructive prepare 前的完整 inventory 二次复验、
+  确定性 `prepared` evidence、物理 Root 再验证和重启复用；这只证明冻结选择不会
+  被 materializer 静默绕过，尚未代替 live runner 的 Conversation target CAS、
+  Native retirement 和用户收据。
 - Memory adapter 通过正式 index transaction 保存 Conversation lineage 与
   source-deleted/restored transaction proof；Artifact adapter 通过独立 append-only
   lifecycle chain 保存同类证明。两者都是 side-by-side 基础设施，尚未代表 legacy
@@ -249,9 +259,8 @@ authority 也按 fail closed 处理。
 
 ## 下一检查点
 
-1. 提交 participant execution plan、production root catalog、prepare-only Trash
-   与破坏性启动恢复 checkpoint；随后实现 Run/Raw/Memory/Artifact 的完整枚举和
-   policy selection，并接入 live clear/delete runner 与 Native retirement。
+1. 提交 retain bundle 的 unified inventory 复验与启动恢复 checkpoint；随后
+   接入 live clear/delete runner、Conversation target CAS 与 Native retirement。
 2. 接入 History 引用投影、Raw owner graph/GC
    preview、migration validator 与 V2 → V1 exporter。
 3. 继续保持真实 Vault migration `blocked`；Phase 4 与用户单独确认前不执行
@@ -454,7 +463,7 @@ restore。该批次已提交为 `5ce326d`。
 共享 `.codex-memory`、`node_modules` 或无关文件。没有部署或修改真实 Vault，也
 没有执行 migration、retention、Raw GC、历史删除或 Native cleanup。
 
-## Source-deletion bundle runtime（进行中）
+## Source-deletion bundle runtime（已提交）
 
 Run、Memory 与 Artifact 的 `source-deletion-bundle` 现在使用一个逻辑 Journal
 participant 协调完整有序的逐叶 Store adapter。每个叶子仍保存原有 durable
@@ -477,7 +486,40 @@ Root Binding 和全部逐叶 receipt digest 确定性推导，不创建第二份
   为 Memory/Artifact 使用正式 record ID，再构造 logical bundle adapter；
   materializer 已不再阻断 `source-deletion-bundle`。
 
-当前 `retain-bundle` 仍返回 `bundle_runtime_required`，所以 Conversation planner
-生成的完整计划仍不能进入 live clear/delete；产品 guard 继续关闭。本批没有部署或
-修改真实 Vault，也没有执行 migration、retention、Raw GC、历史删除或 Native
-cleanup。
+该批次已提交为 `8a72e6e`。对应 focused suites、全量测试、typecheck、build、
+baseline lint、修改生产文件定向 ESLint、`git diff --check`、release contract 与
+public guard 均已通过；本批没有部署或修改真实 Vault。
+
+## Retain bundle runtime 与统一选择复验（当前开发批次）
+
+`retain-bundle` 不执行删除，但它证明“本轮明确保留的 Run summary、Attempt
+summary、expired/not-captured payload 状态与 shared Raw owner graph”仍与最初
+冻结的选择一致。当前实现固定为：
+
+- 首次 destructive preparation 前连续生成两次完整 Conversation inventory，
+  从 execution plan 恢复 Memory/Artifact 处置选择和 Conversation source，再用
+  planner 重新编译；snapshot、intent、participants、selection digest 和 runtime
+  Root 集合必须全部同序一致。
+- 复验成功后才为每个 retain bundle 依次写入 `prepared` evidence；evidence 绑定
+  mutation、intent、execution plan、participant、完整 subjects 与 Root Binding，
+  且全部 retain proof 必须排在第一条 `trash-staged` 之前。
+- proof 发布前重新读取 Registry 并验证 retain Root 的当前物理 binding。verifier
+  抛错、owner graph 漂移、Root 替换、伪造 evidence，或 Trash 已 stage 但 proof
+  缺失都会在 Trash/Store effect 前阻断。
+- materializer 会先重载 durable Journal；调用方持有旧 snapshot 时仍能复用已经
+  发布的合法 proof。多个 retain bundle 的部分 checkpoint 可重入，完整 proof
+  存在时不会再次依赖 live inventory。
+- destructive startup recovery 现在在同一 Conversation mutation authority 中
+  完成 plan load、Root materialize、retain proof 处理与 recovery runner。删除
+  tombstone 已提交、目标 Conversation 已从 data shell 移除时，完整 proof 可直接
+  复用；proof 不完整则明确阻断。
+
+当前 focused execution-runtime、Conversation inventory 与 Conversation Store
+startup suites 已经通过；最终工作树的 `npm run test` 输出 `All tests passed`，
+typecheck、build、baseline lint 和 `git diff --check` 通过。完整 lint 仍为 961 个
+历史 finding、无新增；两个新增/修改的 Harness 生产文件定向 ESLint 为 0。
+明确暂存 10 个预期文件后，release contract 与 public guard 通过，public guard
+检查 417 个 tracked files；共享 `.codex-memory` 与 `node_modules` 软链接未暂存。
+产品 guard 继续关闭；live clear/delete runner、Conversation target commit、
+Native retirement、retention/GC 和真实迁移尚未接线。本批没有部署或修改真实
+Vault。

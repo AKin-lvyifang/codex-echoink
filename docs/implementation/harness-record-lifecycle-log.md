@@ -543,3 +543,35 @@
 - `retain-bundle`、live clear/delete、Conversation target commit 与 Native
   retirement 仍未接线，destructive product guard 保持关闭。本批未部署或修改真实
   Vault。
+
+## 2026-07-20：Retain Bundle Runtime 与 destructive startup recovery
+
+- `retain-bundle` 已从 `bundle_runtime_required` 升级为首次 Trash prepare 前的
+  frozen selection 门禁。materializer 先重载 durable Journal；缺少合法 proof 时
+  必须调用 production verifier，缺 verifier 返回
+  `inventory_verification_required`，选择漂移返回 `inventory_mismatch`。
+- production verifier 连续两次重建完整 Conversation inventory，从 execution plan
+  恢复 Memory/Artifact 处置选择和 Conversation source，再通过正式 planner 重编译
+  intent 与 participants。snapshot、selection digest、intent、participant 顺序和
+  runtime Root 集合必须全部与冻结计划一致。
+- 每个 retain bundle 的 `prepared` evidence 绑定 mutation、intent、execution
+  plan、participant、完整 subjects 和 Root Binding。全部 retain proof 必须先于
+  第一条 `trash-staged`；错误 evidence、Trash 已 stage 但 proof 缺失均 fail
+  closed。
+- runtime 在 verifier 前后和每条 proof 发布前重新验证 retain Root 的 Registry
+  authority 与当前物理 binding。测试已覆盖 verifier 抛错、shared Raw owner graph
+  漂移、Root 目录替换、伪造 evidence、多个 retain bundle 有序发布和旧 Journal
+  snapshot 幂等重放。
+- destructive startup recovery 取得同一 Conversation mutation authority 后，
+  在 authority 内完成 execution plan load、Root materialize、selection proof 和
+  recovery runner，不再重复取得 authority。目标 Conversation 已通过 deletion
+  tombstone 移出 data shell 时，已有完整 proof 可直接复用；缺 proof 时仍因无法
+  重建 inventory 而阻断。
+- 当前 focused execution-runtime、Conversation inventory 与 Conversation Store
+  startup suites 已通过；最终工作树的 `npm run test` 输出 `All tests passed`，
+  typecheck、build、baseline lint 和 `git diff --check` 通过。完整 lint 仍为
+  961 个历史 finding、无新增；两个新增/修改的 Harness 生产文件定向 ESLint 为
+  0。明确暂存 10 个预期文件后，release contract 与 public guard 通过，public
+  guard 检查 417 个 tracked files；共享软链接未暂存。本批尚待提交。
+- destructive product guard 保持关闭；没有部署或修改真实 Vault，也没有执行
+  migration、retention、Raw GC、历史删除或 Native cleanup。
