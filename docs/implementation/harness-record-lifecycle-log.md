@@ -748,3 +748,37 @@
   24 个预期文件，public guard 检查 422 个 tracked files。
 - 本批没有自动创建 retention sweep，没有部署或修改真实 Vault，也没有执行 Raw
   quarantine、migration、历史批量删除或 Native 批量 cleanup。
+
+## 2026-07-20：Raw quarantine、七天隔离与可恢复 purge
+
+- 新增 `raw-gc-quarantine.ts`。显式执行必须提交精确 preview digest、排序且唯一的
+  opaque subject 集合和确认时间；执行时重复完整 metadata-only owner scan，
+  candidate/owner/source snapshot 漂移会在 Journal 创建前失败。
+- append-only plan 冻结 transaction、Raw/Trash Root Binding、source relative
+  path 与 dev/inode/size/mtime/ctime。Trash prepare、source quarantine、
+  purge recheck、purge authorization、两份 Trash unlink 和终态 receipt 都有独立
+  evidence/step；未知文件、非连续 step、错绑 receipt 或 future schema fail closed。
+- quarantine 先建立带 SHA-256 的独立 Trash copy，再把 exact source rename 到
+  retired 区。source move 后但 progress 前的崩溃可从 finalization readback
+  roll-forward，不会重新发明 source、Root 或 transaction identity。
+- 永久 purge 至少等待 7 天，并重新运行全量稳定 Conversation/Run/Memory/
+  Artifact/Raw owner scan。新 owner 会表现为 missing reference blocker；相同
+  rawRef 被重建也会阻断。`purge-authorized` 在首个 unlink 前耐久发布，unlink 后、
+  progress 前崩溃可幂等收口；Trash SHA/identity 改变时两份副本都保留。
+- 生产 owner authority 持有 settings saveQueue、Raw owner lane、全局
+  RecordMutation authority 和 Run Store mutation lane。Raw 外置写入、启动 Raw
+  migration 与普通 Conversation mutation 已进入相同冻结边界，避免未提交引用被
+  当成 orphan。
+- 启动 reconciliation 在全部 local commit recovery 后先恢复已发布 Raw GC plan，
+  再恢复 Run retention，最后才处理 Native promotion/provider cleanup。启动不
+  preview、不创建 GC transaction，也不会因满 7 天自动发布 purge authorization。
+- Storage Inventory schema 升为 V3，新增 `raw-gc-quarantine` source，严格解析
+  plan/step/prepare/finalization/recheck/purge evidence 并仅报告 metadata 计数。
+- 故障注入覆盖 source quarantine 后、purge authorization 后、retired-source
+  unlink 后的崩溃；还覆盖 preview drift、七天门禁、late owner、启动不自动授权和
+  Trash byte tamper。focused suite 与全量 `npm run test`（`All tests passed`，
+  125.1 秒）、typecheck、build、baseline lint、release/public guard 和
+  `git diff --check` 均通过。lint 保持 942 个 baseline finding；明确暂存 15 个
+  预期文件，public guard 检查 424 个 tracked files。
+- 本批没有创建真实 Vault GC transaction，没有移动或删除真实 Raw，没有部署、
+  migration、retention sweep 或 Native 批量 cleanup。

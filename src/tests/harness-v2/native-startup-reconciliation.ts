@@ -95,12 +95,15 @@ Promise<void> {
     reconciliationHost({
       records: [],
       calls,
+      recoverRawGc: async () => 1,
       recoverRetention: async () => 2,
       cleanup: async () => []
     })
   );
+  assert.equal(result.recoveredStartedRawGcQuarantineCount, 1);
   assert.equal(result.recoveredStartedRunRetentionCount, 2);
   assert.deepEqual(calls, [
+    "recover-raw-gc",
     "recover-retention",
     "list",
     `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
@@ -2946,12 +2949,25 @@ async function assertProductionStartupWiringUsesConversationAuthority(): Promise
     settingsSource,
     /proveConversationSessionContextAuthority[\s\S]*proveSessionContextAuthority/
   );
+  assert.match(
+    settingsSource,
+    /externalizeMessageText[\s\S]*withRawOwnerMutation[\s\S]*withRecordMutationGlobalAuthority/
+  );
+  assert.match(
+    settingsSource,
+    /withRawGcStableOwners[\s\S]*saveQueue[\s\S]*withRawOwnerMutation[\s\S]*withRecordMutationGlobalAuthority[\s\S]*FileRunRecordStore[\s\S]*withMutation/
+  );
+  assert.match(
+    harnessSource,
+    /recoverStartedRawGcQuarantines[\s\S]*recoverStartedRunRecordRetentions[\s\S]*listAwaitingRetirements/
+  );
 }
 
 function reconciliationHost(input: {
   records: NativeExecutionRecord[];
   calls?: string[];
   recoverMutations?: () => Promise<number>;
+  recoverRawGc?: () => Promise<number>;
   recoverRetention?: () => Promise<number>;
   readMutation?: (mutationId: string) => Promise<RecordMutationRevision>;
   prove?: (probe: ConversationAuthorityProbe) => Promise<ConversationAuthorityProof>;
@@ -2975,6 +2991,14 @@ function reconciliationHost(input: {
         async recoverStartedRunRecordRetentions() {
           calls.push("recover-retention");
           return await input.recoverRetention!();
+        }
+      }
+      : {}),
+    ...(input.recoverRawGc
+      ? {
+        async recoverStartedRawGcQuarantines() {
+          calls.push("recover-raw-gc");
+          return await input.recoverRawGc!();
         }
       }
       : {}),

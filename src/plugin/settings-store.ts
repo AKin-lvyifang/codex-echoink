@@ -42,6 +42,9 @@ import {
   stageRecordMutationJournal
 } from "../harness/lifecycle/record-mutation-journal";
 import {
+  withRecordMutationGlobalAuthority
+} from "../harness/lifecycle/record-mutation-coordinator";
+import {
   runRecordMutationRecovery,
   runRecordMutationRecoveryUnderAuthority,
   type RecordMutationRecoveryRunnerResult,
@@ -59,9 +62,27 @@ import {
 } from "../harness/lifecycle/record-mutation-execution-runtime";
 import {
   createEchoInkRecordMutationSourceAdapterFactory,
+  ECHOINK_RECORD_MUTATION_ROOT_IDS,
   prepareEchoInkRecordMutationRuntimeRoots,
   type EchoInkRecordMutationRootId
 } from "../harness/lifecycle/record-mutation-production";
+import {
+  FileRunRecordStore
+} from "../harness/ledger/run-record-store";
+import {
+  inventoryRawGcPreview,
+  type RawGcPreview
+} from "../harness/records/conversation-record-inventory";
+import {
+  RAW_GC_QUARANTINE_TRANSACTION_DIRECTORY,
+  authorizeAndPurgeRawGcQuarantine,
+  beginRawGcQuarantine,
+  recoverStartedRawGcQuarantines,
+  type RawGcPurgeResult,
+  type RawGcQuarantineResult,
+  type RawGcQuarantineRoots,
+  type RawGcStableOwnerAuthority
+} from "../harness/records/raw-gc-quarantine";
 import {
   createEchoInkRecordMutationSelectionVerifier
 } from "../harness/records/conversation-record-mutation-selection-verifier";
@@ -112,6 +133,7 @@ export interface SettingsSaveOptions {
   strictConversationStore?: boolean;
   flushKnowledgeBaseHistory?: boolean;
   strictKnowledgeBaseHistory?: boolean;
+  flushRawWrites?: boolean;
 }
 
 export interface InterruptedRunRecoveryOptions {
@@ -133,6 +155,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
+  private rawOwnerMutationTail: Promise<void> = Promise.resolve();
   private conversationStore: FileConversationStore | null = null;
   private conversationStoreRootPath = "";
   private interruptedRunRecoveryQueue: Promise<number> = Promise.resolve(0);
@@ -252,13 +275,28 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> {
-    const write = prepareRawMessage(message, fullText);
-    if (!write) return;
     let tracked: Promise<void>;
-    tracked = writeRawText(this.plugin.getVaultPath(), write.rawRef, write.text, this.plugin.getPluginDataDirName())
+    let attemptedRawRef: string | null = null;
+    tracked = this.withRawOwnerMutation(async () => {
+      const write = prepareRawMessage(message, fullText);
+      if (!write) return;
+      attemptedRawRef = write.rawRef;
+      await withRecordMutationGlobalAuthority(
+        this.recordMutationStorageRootPath(),
+        `raw-write-${randomUUID()}`,
+        async () => await writeRawText(
+          this.plugin.getVaultPath(),
+          write.rawRef,
+          write.text,
+          this.plugin.getPluginDataDirName()
+        )
+      );
+    })
       .catch((error) => {
         console.error("Codex raw message write failed", error);
-        if (message.rawRef === write.rawRef) {
+        // The lane owns both the in-memory rawRef mutation and its file write,
+        // so a failed write can safely restore the full inline message.
+        if (attemptedRawRef && message.rawRef === attemptedRawRef) {
           message.text = fullText;
           delete message.previewText;
           delete message.rawRef;
@@ -270,6 +308,169 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       .finally(() => this.rawWrites.delete(tracked));
     this.rawWrites.add(tracked);
     await tracked;
+  }
+
+  async previewRawGcQuarantine(): Promise<RawGcPreview> {
+    return await inventoryRawGcPreview({
+      vaultPath: this.plugin.getVaultPath(),
+      pluginDir: this.plugin.getPluginDataDirName()
+    });
+  }
+
+  async beginRawGcQuarantine(input: {
+    transactionId: string;
+    expectedPreviewDigest: string;
+    selectedSubjectRefs: readonly string[];
+    confirmedAt: number;
+  }): Promise<RawGcQuarantineResult> {
+    const roots = await this.prepareRawGcQuarantineRoots(input.confirmedAt);
+    return await beginRawGcQuarantine({
+      vaultPath: this.plugin.getVaultPath(),
+      pluginDir: this.plugin.getPluginDataDirName(),
+      ...input,
+      roots,
+      ownerAuthority: this.rawGcOwnerAuthority()
+    });
+  }
+
+  async authorizeAndPurgeRawGcQuarantine(
+    transactionId: string
+  ): Promise<RawGcPurgeResult> {
+    const roots = await this.prepareRawGcQuarantineRoots(Date.now());
+    return await authorizeAndPurgeRawGcQuarantine({
+      vaultPath: this.plugin.getVaultPath(),
+      pluginDir: this.plugin.getPluginDataDirName(),
+      transactionId,
+      roots,
+      ownerAuthority: this.rawGcOwnerAuthority()
+    });
+  }
+
+  async recoverStartedRawGcQuarantines(): Promise<number> {
+    const namespacePath = path.join(
+      this.recordMutationStorageRootPath(),
+      RAW_GC_QUARANTINE_TRANSACTION_DIRECTORY
+    );
+    const namespace = await fsp.lstat(namespacePath).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+    );
+    if (!namespace) return 0;
+    if (!namespace.isDirectory() || namespace.isSymbolicLink()) {
+      throw new Error("Raw GC quarantine journal root is unsafe");
+    }
+    const roots = await this.prepareRawGcQuarantineRoots(Date.now());
+    return await recoverStartedRawGcQuarantines({
+      vaultPath: this.plugin.getVaultPath(),
+      pluginDir: this.plugin.getPluginDataDirName(),
+      roots,
+      ownerAuthority: this.rawGcOwnerAuthority()
+    });
+  }
+
+  private rawGcOwnerAuthority(): RawGcStableOwnerAuthority {
+    return {
+      withStableOwners: async <T>(
+        action: () => Promise<T>
+      ): Promise<T> => await this.withRawGcStableOwners(action)
+    };
+  }
+
+  private async withRawGcStableOwners<T>(
+    action: () => Promise<T>
+  ): Promise<T> {
+    const run = this.saveQueue.then(async () => {
+      this.assertNoSettingsCasRecoveryConflict();
+      await this.flushRawWrites();
+      return await this.withRawOwnerMutation(async () => {
+        // Persist every Raw ref that completed before this authority. The raw
+        // owner lane blocks new externalization, saveQueue blocks projection
+        // flushes, the global authority freezes Conversation/Artifact/WAL
+        // writers, and the Run Store mutation lane freezes payload owners.
+        ensureKnowledgeBaseNativeLifecycleRecoveryProjection(
+          this.plugin.settings.knowledgeBase
+        );
+        const prepared = await this.prepareCanonicalSettingsCandidate();
+        const candidate = await this.persistCanonicalConversationAndHistory(
+          prepared.candidate,
+          prepared.liveBefore,
+          {
+            flushConversationStore: true,
+            strictConversationStore: true,
+            flushKnowledgeBaseHistory: true,
+            strictKnowledgeBaseHistory: false
+          }
+        );
+        await this.persistSettingsDataCandidate(
+          candidate,
+          prepared.persistedBefore
+        );
+        const storageRootPath = this.recordMutationStorageRootPath();
+        return await withRecordMutationGlobalAuthority(
+          storageRootPath,
+          `raw-gc-owner-${randomUUID()}`,
+          async () => await new FileRunRecordStore({
+            storageRootPath
+          }).withMutation(action)
+        );
+      });
+    });
+    this.saveQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return await run;
+  }
+
+  private async prepareRawGcQuarantineRoots(
+    createdAt: number
+  ): Promise<RawGcQuarantineRoots> {
+    const prepared = await prepareEchoInkRecordMutationRuntimeRoots({
+      vaultPath: this.plugin.getVaultPath(),
+      pluginDir: this.plugin.getPluginDataDirName(),
+      rootIds: [
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.raw,
+        ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+      ],
+      createdAt
+    });
+    const source = prepared.roots.find((root) =>
+      root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.raw
+    );
+    const trash = prepared.roots.find((root) =>
+      root.rootId === ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+    );
+    if (!source || !trash) {
+      throw new Error("Raw GC quarantine roots are incomplete");
+    }
+    return {
+      storageRootPath: prepared.storageRootPath,
+      sourceRootPath: source.rootPath,
+      sourceBoundaryRootPath: source.boundaryRootPath,
+      sourceRootBinding: source.rootBinding,
+      trashRootPath: trash.rootPath,
+      trashBoundaryRootPath: trash.boundaryRootPath,
+      trashRootBinding: trash.rootBinding
+    };
+  }
+
+  private async withRawOwnerMutation<T>(
+    action: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.rawOwnerMutationTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.rawOwnerMutationTail = previous.then(() => current);
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+    }
   }
 
   async readRawMessageText(rawRef: string): Promise<string> {
@@ -303,7 +504,11 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   ): Promise<R> {
     return await this.conversationMutationLane.withConversationMutation(
       conversationId,
-      action
+      async (authority) => await withRecordMutationGlobalAuthority(
+        this.recordMutationStorageRootPath(),
+        `conversation-write-${randomUUID()}`,
+        async () => await action(authority)
+      )
     );
   }
 
@@ -799,7 +1004,17 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     this.startupMaintenancePromise = (async () => {
       let changed = false;
       try {
-        changed = await externalizeLargeMessages(this.plugin.getVaultPath(), this.plugin.settings, this.plugin.getPluginDataDirName()) > 0 || changed;
+        changed = await this.withRawOwnerMutation(async () =>
+          await withRecordMutationGlobalAuthority(
+            this.recordMutationStorageRootPath(),
+            `raw-migration-${randomUUID()}`,
+            async () => await externalizeLargeMessages(
+              this.plugin.getVaultPath(),
+              this.plugin.settings,
+              this.plugin.getPluginDataDirName()
+            )
+          )
+        ) > 0 || changed;
       } catch (error) {
         console.error("Codex raw message migration failed", error);
       }
@@ -855,7 +1070,9 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
       ensureKnowledgeBaseNativeLifecycleRecoveryProjection(
         this.plugin.settings.knowledgeBase
       );
-      await this.flushRawWrites();
+      if (options.flushRawWrites !== false) {
+        await this.flushRawWrites();
+      }
       const prepared = await this.prepareCanonicalSettingsCandidate();
       const candidate = await this.persistCanonicalConversationAndHistory(
         prepared.candidate,

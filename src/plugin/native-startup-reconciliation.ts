@@ -34,6 +34,7 @@ export interface NativeStartupReconciliationResult {
   recoveredPendingRecordMutationCount: number;
   recoveredPendingChatCount: number;
   recoveredPendingHermesProposalCount: number;
+  recoveredStartedRawGcQuarantineCount?: number;
   recoveredStartedRunRetentionCount?: number;
   awaitingCount: number;
   promotedCount: number;
@@ -49,6 +50,7 @@ export interface NativeStartupReconciliationHost {
   recoverPendingEditorLocalCommits?(): Promise<void>;
   recoverPendingEphemeralUtilityLocalCommits?(): Promise<void>;
   recoverPendingHermesProposalLocalCommits?(): Promise<number>;
+  recoverStartedRawGcQuarantines?(): Promise<number>;
   recoverStartedRunRecordRetentions?(): Promise<number>;
   listAwaitingRetirements(): Promise<NativeExecutionRecord[]>;
   proveConversationAuthority(
@@ -103,6 +105,13 @@ export async function reconcileNativeExecutionsAtStartup(
   // the global cleanup gate opens; neither proof is sufficient on its own.
   const recoveredPendingHermesProposalCount =
     await host.recoverPendingHermesProposalLocalCommits?.() ?? 0;
+  // Raw GC recovery may finish only an explicitly confirmed quarantine plan
+  // or an already-published purge authorization. It never creates a plan,
+  // treats elapsed time as deletion authority, or races local commit recovery.
+  const hasRawGcRecovery =
+    host.recoverStartedRawGcQuarantines !== undefined;
+  const recoveredStartedRawGcQuarantineCount =
+    await host.recoverStartedRawGcQuarantines?.() ?? 0;
   // Retention recovery is deliberately after every local-commit authority and
   // before Native promotion/provider cleanup. It may only resume an already
   // published retention plan; creating a new sweep is never a startup action.
@@ -273,6 +282,9 @@ export async function reconcileNativeExecutionsAtStartup(
     recoveredPendingRecordMutationCount,
     recoveredPendingChatCount,
     recoveredPendingHermesProposalCount,
+    ...(hasRawGcRecovery
+      ? { recoveredStartedRawGcQuarantineCount }
+      : {}),
     ...(hasRunRetentionRecovery
       ? { recoveredStartedRunRetentionCount }
       : {}),

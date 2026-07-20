@@ -36,6 +36,10 @@ import {
   RUN_RECORD_RETENTION_TRANSACTION_DIRECTORY,
   inspectRunRecordRetentionJournalSnapshot
 } from "../ledger/run-record-retention";
+import {
+  RAW_GC_QUARANTINE_TRANSACTION_DIRECTORY,
+  inspectRawGcQuarantineJournalSnapshot
+} from "./raw-gc-quarantine";
 import { NATIVE_EXECUTION_STORE_SCHEMA_VERSION } from "../native/native-execution-store";
 import {
   createStorageInventoryOpaqueRef,
@@ -69,6 +73,7 @@ const LOCAL_SOURCE_IDS: readonly StorageInventoryLocalSourceId[] = [
   "history",
   "harness-runs",
   "run-record-retention",
+  "raw-gc-quarantine",
   "record-mutations",
   "native-store",
   "raw"
@@ -198,6 +203,10 @@ interface RunRecordRetentionFacts {
   transactionCount: number;
 }
 
+interface RawGcQuarantineFacts {
+  transactionCount: number;
+}
+
 interface NativeFacts {
   records: NativeExecutionRecord[];
 }
@@ -295,6 +304,7 @@ export async function scanStorageInventory(
     history,
     runs,
     runRecordRetention,
+    rawGcQuarantine,
     recordMutations,
     native
   ] =
@@ -304,6 +314,7 @@ export async function scanStorageInventory(
     scanHistory(context),
     scanHarnessRuns(context),
     scanRunRecordRetention(context),
+    scanRawGcQuarantine(context),
     scanRecordMutations(context),
     scanNativeStore(context)
   ]);
@@ -314,6 +325,7 @@ export async function scanStorageInventory(
     ...history.accumulator.findings,
     ...runs.accumulator.findings,
     ...runRecordRetention.accumulator.findings,
+    ...rawGcQuarantine.accumulator.findings,
     ...recordMutations.accumulator.findings,
     ...native.accumulator.findings
   ];
@@ -357,6 +369,7 @@ export async function scanStorageInventory(
     history.accumulator.finalize(),
     runs.accumulator.finalize(),
     runRecordRetention.accumulator.finalize(),
+    rawGcQuarantine.accumulator.finalize(),
     recordMutations.accumulator.finalize(),
     native.accumulator.finalize(),
     raw.accumulator.finalize()
@@ -2893,6 +2906,151 @@ async function scanRunRecordRetention(
   accumulator.recordCount = facts.transactionCount;
   accumulator.incrementMetric(
     "retention-transaction-count",
+    facts.transactionCount
+  );
+  return { accumulator, facts };
+}
+
+async function scanRawGcQuarantine(
+  context: ScanContext
+): Promise<SourceScan<RawGcQuarantineFacts>> {
+  const accumulator = new SourceAccumulator(
+    "raw-gc-quarantine",
+    context.pluginRoot
+  );
+  const facts: RawGcQuarantineFacts = { transactionCount: 0 };
+  const root = path.join(
+    context.pluginRoot,
+    RAW_GC_QUARANTINE_TRANSACTION_DIRECTORY
+  );
+  const entries = await listDirectory(context, accumulator, root, true);
+  if (!entries) return { accumulator, facts };
+  accumulator.schemaVersion = "1";
+
+  if (!entries.includes(".staging")) {
+    accumulator.addCorrupt("raw-gc-staging-missing", root);
+  } else {
+    const staged = await listDirectory(
+      context,
+      accumulator,
+      path.join(root, ".staging"),
+      false
+    );
+    if (staged?.length) {
+      accumulator.addFinding({
+        code: "raw-gc-staging-present",
+        category: "ambiguous",
+        severity: "blocking",
+        recordRaw: path.join(root, ".staging"),
+        count: staged.length,
+        blocksMigration: true
+      });
+    }
+  }
+
+  for (const chainToken of entries
+    .filter((name) => name !== ".staging")
+    .sort()) {
+    if (!/^raw-gc-[a-f0-9]{24}$/.test(chainToken)) {
+      accumulator.addCorrupt("raw-gc-entry-unsafe", chainToken);
+      continue;
+    }
+    const chainRoot = path.join(root, chainToken);
+    const fileNames = await listDirectory(
+      context,
+      accumulator,
+      chainRoot,
+      false
+    );
+    if (!fileNames?.length) {
+      accumulator.addCorrupt("raw-gc-chain-corrupt", chainToken);
+      continue;
+    }
+    const files: Array<{ name: string; value: unknown }> = [];
+    let readable = true;
+    for (const name of fileNames.sort()) {
+      const read = await readTextFile(
+        context,
+        accumulator,
+        path.join(chainRoot, name),
+        false
+      );
+      if (!read) {
+        readable = false;
+        break;
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(read.text) as unknown;
+      } catch {
+        readable = false;
+        break;
+      }
+      const raw = objectRecord(value);
+      const schemaVersion = finiteInteger(raw?.schemaVersion);
+      if (schemaVersion !== null && schemaVersion > 1) {
+        accumulator.futureSchemaCount += 1;
+        accumulator.markPartial("future-schema");
+        accumulator.addFinding({
+          code: "future-schema",
+          category: "future-schema",
+          severity: "blocking",
+          recordRaw: path.join(chainRoot, name),
+          blocksMigration: true
+        });
+      }
+      files.push({ name, value });
+    }
+    if (!readable) {
+      accumulator.addCorrupt("raw-gc-chain-corrupt", chainToken);
+      continue;
+    }
+    try {
+      const inspection = inspectRawGcQuarantineJournalSnapshot({
+        chainToken,
+        files
+      });
+      facts.transactionCount += 1;
+      accumulator.observeRecordMetadata(
+        "raw-gc-quarantine",
+        inspection
+      );
+      accumulator.addTimestamp(inspection.createdAt);
+      accumulator.incrementMetric(
+        "raw-gc-action-count",
+        inspection.actionCount
+      );
+      accumulator.incrementMetric(
+        "raw-gc-step-count",
+        inspection.stepCount
+      );
+      accumulator.incrementMetric(
+        "raw-gc-quarantined-count",
+        inspection.quarantinedCount
+      );
+      accumulator.incrementMetric(
+        "raw-gc-purge-authorized-count",
+        inspection.purgeAuthorized ? 1 : 0
+      );
+      accumulator.incrementMetric(
+        "raw-gc-purged-count",
+        inspection.purgedCount
+      );
+      accumulator.incrementMetric(
+        "raw-gc-prepared-receipt-count",
+        inspection.preparedReceiptCount
+      );
+      accumulator.incrementMetric(
+        "raw-gc-finalization-receipt-count",
+        inspection.finalizationReceiptCount
+      );
+    } catch {
+      accumulator.addCorrupt("raw-gc-chain-corrupt", chainToken);
+    }
+  }
+  accumulator.recordCount = facts.transactionCount;
+  accumulator.incrementMetric(
+    "raw-gc-transaction-count",
     facts.transactionCount
   );
   return { accumulator, facts };

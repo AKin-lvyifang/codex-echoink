@@ -2950,6 +2950,7 @@ function readyInventoryInput(fixture: Fixture): StorageInventoryReportInput {
       source("history"),
       source("harness-runs"),
       source("run-record-retention"),
+      source("raw-gc-quarantine"),
       source("record-mutations"),
       source("native-store"),
       source("raw")

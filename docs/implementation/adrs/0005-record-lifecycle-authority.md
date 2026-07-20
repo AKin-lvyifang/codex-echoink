@@ -264,6 +264,21 @@ candidates, not deletion authority; any missing reference, corrupt source,
 unavailable Conversation authority, or snapshot drift makes every candidate
 ineligible.
 
+An explicitly confirmed quarantine freezes the exact preview digest, selected
+opaque subjects, Raw file identity, and Raw/Trash Root Binding refs in an
+immutable append-only plan before the first Trash effect. Production execution
+holds the settings/Raw owner lane, global RecordMutation authority, and Run
+Store mutation lane while it persists pending Raw refs, repeats the complete
+owner scan, prepares recoverable Trash, and then moves the exact source into
+quarantine. Startup may resume only a published plan.
+
+Permanent deletion is a separate transition. Every source must remain in
+quarantine for at least seven days, then pass another complete stable global
+owner scan. The recheck receipt and `purge-authorized` step are durable before
+the first unlink; exact Trash SHA-256 and Root Bindings are verified again.
+Startup may roll forward an existing purge authorization, but elapsed time
+alone never creates that authorization and never starts a new GC transaction.
+
 Detailed run payload is retained for 30 days by default and bounded run summary
 metadata for 90 days by default. Recovery evidence for an unsettled local
 commit, WAL, cleanup, or quarantine is exempt from ordinary retention until it

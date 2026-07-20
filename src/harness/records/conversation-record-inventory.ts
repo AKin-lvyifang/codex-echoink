@@ -393,7 +393,7 @@ export async function inventoryRawGcPreview(
       generatedAt,
       {
         code: "inventory-drift",
-        subjectRef: opaqueRawGcRef(
+        subjectRef: rawGcSubjectRef(
           "inventory-drift",
           `${first.snapshotDigest}:${second.snapshotDigest}`
         )
@@ -415,7 +415,7 @@ export async function inventoryRawGcPreview(
   ) {
     blockers.push({
       code: "conversation-store-unavailable",
-      subjectRef: opaqueRawGcRef(
+      subjectRef: rawGcSubjectRef(
         "conversation-store",
         first.raw.snapshotDigest
       )
@@ -424,7 +424,7 @@ export async function inventoryRawGcPreview(
   for (const blocker of first.run.blockers) {
     blockers.push({
       code: "run-owner-inventory-incomplete",
-      subjectRef: opaqueRawGcRef(
+      subjectRef: rawGcSubjectRef(
         "run-owner",
         `${blocker.code}:${blocker.workflowRunId}:${blocker.attemptId}`
       )
@@ -451,7 +451,7 @@ export async function inventoryRawGcPreview(
     if (filesByRef.has(rawRef)) continue;
     blockers.push({
       code: "raw-reference-missing",
-      subjectRef: opaqueRawGcRef("raw", rawRef)
+      subjectRef: rawGcSubjectRef("raw", rawRef)
     });
   }
   const sortedBlockers = deduplicateRawGcBlockers(blockers);
@@ -462,7 +462,7 @@ export async function inventoryRawGcPreview(
       owners.map((owner) => owner.kind)
     )].sort();
     return {
-      subjectRef: opaqueRawGcRef("raw", file.rawRef),
+      subjectRef: rawGcSubjectRef("raw", file.rawRef),
       byteSize: file.size,
       modifiedAt: Math.trunc(file.mtimeMs),
       disposition: owners.length
@@ -956,7 +956,7 @@ function rawGcCaptureBlocker(error: unknown): RawGcPreviewBlocker {
     : "raw-inventory-corrupt";
   return {
     code,
-    subjectRef: opaqueRawGcRef("capture", code)
+    subjectRef: rawGcSubjectRef("capture", code)
   };
 }
 
@@ -1001,7 +1001,12 @@ function deduplicateRawGcBlockers(
   );
 }
 
-function opaqueRawGcRef(namespace: string, value: string): string {
+/**
+ * Stable opaque identity shared by the metadata-only preview and the
+ * destructive quarantine authority. The rawRef never leaves the internal
+ * execution plan, while UI/report surfaces only receive this digest.
+ */
+export function rawGcSubjectRef(namespace: string, value: string): string {
   return canonicalRunRecordDigest({
     namespace,
     value

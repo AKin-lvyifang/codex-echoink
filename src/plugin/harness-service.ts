@@ -193,6 +193,7 @@ export interface CommitChatSurfaceTerminalOptions {
 
 export interface RecordMutationStartupAuthority {
   recoverPendingRecordMutations(): Promise<number>;
+  recoverStartedRawGcQuarantines?(): Promise<number>;
   readRecordMutationAuthority(
     mutationId: string
   ): Promise<RecordMutationRevision>;
@@ -528,6 +529,13 @@ export class EchoInkHarnessService {
         await this.recoverPendingEphemeralUtilityNativeExecutions(),
       recoverPendingHermesProposalLocalCommits: async () =>
         await this.recoverPendingHermesProposalHostNativeExecutions(),
+      ...(recordMutationAuthority?.recoverStartedRawGcQuarantines
+        ? {
+          recoverStartedRawGcQuarantines: async () =>
+            await recordMutationAuthority
+              .recoverStartedRawGcQuarantines!()
+        }
+        : {}),
       recoverStartedRunRecordRetentions: async () =>
         await this.recoverStartedRunRecordRetentions(),
       listAwaitingRetirements: async () =>

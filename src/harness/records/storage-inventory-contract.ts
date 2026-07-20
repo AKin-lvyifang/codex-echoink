@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const STORAGE_INVENTORY_SCHEMA_VERSION = 2 as const;
+export const STORAGE_INVENTORY_SCHEMA_VERSION = 3 as const;
 
 export const STORAGE_INVENTORY_LOCAL_SOURCE_IDS = Object.freeze([
   "data-json",
@@ -8,6 +8,7 @@ export const STORAGE_INVENTORY_LOCAL_SOURCE_IDS = Object.freeze([
   "history",
   "harness-runs",
   "run-record-retention",
+  "raw-gc-quarantine",
   "record-mutations",
   "native-store",
   "raw"
@@ -400,6 +401,10 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "provider-vault-result-truncated",
   "quarantined-candidate",
   "raw-file-unreferenced",
+  "raw-gc-chain-corrupt",
+  "raw-gc-entry-unsafe",
+  "raw-gc-staging-missing",
+  "raw-gc-staging-present",
   "raw-reference-missing",
   "raw-store-unavailable",
   "record-mutation-chain-corrupt",
@@ -463,6 +468,14 @@ export const STORAGE_INVENTORY_METRIC_NAMES = Object.freeze([
   "mutation-count",
   "native-record-count",
   "raw-bodies-read",
+  "raw-gc-action-count",
+  "raw-gc-finalization-receipt-count",
+  "raw-gc-prepared-receipt-count",
+  "raw-gc-purge-authorized-count",
+  "raw-gc-purged-count",
+  "raw-gc-quarantined-count",
+  "raw-gc-step-count",
+  "raw-gc-transaction-count",
   "raw-reference-count",
   "retention-completed-action-count",
   "retention-execution-header-count",
