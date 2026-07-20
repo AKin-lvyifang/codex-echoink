@@ -15,7 +15,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createConversationPayloadKeyV2 } from "../../harness/conversation/conversation-store";
+import {
+  createConversationDeletionTombstone,
+  createConversationPayloadKeyV2
+} from "../../harness/conversation/conversation-store";
+import {
+  commitRecordMutationJournal,
+  createRecordMutationJournal,
+  stageRecordMutationJournal
+} from "../../harness/lifecycle/record-mutation-journal";
 import {
   scanStorageInventory,
   type ReadOnlyDirEntry,
@@ -49,6 +57,9 @@ import {
   STORAGE_INVENTORY_EXIT_CODES,
   STORAGE_INVENTORY_OUTPUT_FILES
 } from "../../harness/records/storage-inventory-cli";
+import {
+  fixtureRecordMutationRootBindings
+} from "./record-root-fixtures";
 
 const SECRET = "TOP_SECRET_BODY";
 const FIXED_NOW = Date.parse("2026-07-19T00:00:00.000Z");
@@ -72,6 +83,7 @@ export async function runHarnessV2StorageInventoryTests(): Promise<void> {
   await assertNativeAuditProjectionNeverBecomesAuthority();
   await assertNativeSchemaAndLifecycleCompatibility();
   await assertNativeRetirementUsesConversationCommitAuthority();
+  await assertDeletedNativeRetirementUsesCommittedTombstoneAuthority();
   await assertProviderUnknownIsNotMissingOrOrphaned();
   await assertIncompleteLinkedInspectionRemainsUnknown();
   await assertProviderKindMismatchRemainsAmbiguous();
@@ -1141,6 +1153,175 @@ async function assertNativeRetirementUsesConversationCommitAuthority(): Promise<
       relation.kind === "native-retirement-commit"
       && relation.status === "ambiguous"),
     true
+  );
+}
+
+async function assertDeletedNativeRetirementUsesCommittedTombstoneAuthority():
+Promise<void> {
+  const fixture = await createFixture(
+    "echoink-storage-inventory-deleted-retirement-"
+  );
+  const sessionId = "conversation-deleted-retirement";
+  const mutationId = "mutation-deleted-retirement";
+  const sourceGeneration = 2;
+  const sourceCommitId = "commit-deleted-retirement-source";
+  const sourceContentRevision = `sha256:${"1".repeat(64)}`;
+  const tombstone = createConversationDeletionTombstone({
+    conversationId: sessionId,
+    mutationId,
+    tombstoneId: "tombstone-deleted-retirement",
+    sourceGeneration,
+    sourceCommitId,
+    sourceContentRevision,
+    deletedAt: 10
+  });
+  await writeJson(
+    path.join(
+      fixture.conversationsPath,
+      "deletions",
+      `${sessionId}.json`
+    ),
+    tombstone
+  );
+
+  let journal = await createRecordMutationJournal({
+    storageRootPath: fixture.pluginDataPath,
+    mutationId,
+    intent: {
+      operation: "delete-conversation",
+      conversationId: sessionId,
+      expectedConversationGeneration: sourceGeneration,
+      expectedConversationCommitId: sourceCommitId,
+      expectedConversationContentRevision: sourceContentRevision,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: tombstone.tombstoneId,
+        digest: tombstone.digest
+      },
+      participants: [{
+        id: "conversation",
+        recordKind: "conversation",
+        action: "stage"
+      }],
+      rootBindings: fixtureRecordMutationRootBindings(),
+      trashPolicy: "required"
+    },
+    createdAt: 10
+  });
+  journal = await stageRecordMutationJournal(journal.handle, {
+    expectedRevision: journal.record.revision,
+    expectedDigest: journal.record.digest,
+    step: {
+      direction: "forward",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "trash-staged",
+      evidenceDigest: journal.record.intentDigest
+    },
+    updatedAt: 11
+  });
+  journal = await stageRecordMutationJournal(journal.handle, {
+    expectedRevision: journal.record.revision,
+    expectedDigest: journal.record.digest,
+    step: {
+      direction: "forward",
+      ordinal: 2,
+      participantId: "conversation",
+      action: "source-retired",
+      evidenceDigest: journal.record.intentDigest
+    },
+    updatedAt: 12
+  });
+  await commitRecordMutationJournal(journal.handle, {
+    expectedRevision: journal.record.revision,
+    expectedDigest: journal.record.digest,
+    committedAt: 13,
+    message: "committed fixture deletion"
+  });
+
+  const record = nativeRecord(
+    "native-deleted-retirement",
+    "opencode",
+    "session-deleted-retirement",
+    {
+      runId: `conversation-deletion:${mutationId}`,
+      sessionId,
+      surface: "chat",
+      workflow: "session.context-rotation.delete-conversation",
+      policy: {
+        historyAuthority: "echoink",
+        mode: "leased-conversation",
+        preferredDisposition: ["delete"],
+        retainWhenLocalCommitFails: true,
+        cleanupRequiredForTaskSuccess: false
+      },
+      localCommit: "committed",
+      cleanup: "pending",
+      requestedDisposition: "delete",
+      nextAttemptAt: 13,
+      disposedAt: 0,
+      retirement: {
+        recordMutationId: mutationId,
+        targetConversationId: sessionId,
+        sourceGeneration,
+        sourceCommitId,
+        sourceContextId: "context-deleted-retirement",
+        sourceWorkspaceFingerprint: `sha256:${"2".repeat(64)}`,
+        targetStatus: "deleted",
+        targetTombstoneId: tombstone.tombstoneId,
+        targetTombstoneDigest: tombstone.digest,
+        reason: "delete-conversation"
+      }
+    }
+  );
+  await writeNativeIndex(fixture, [record], 2);
+  await writeNativeEvents(fixture, [{
+    type: "upsert",
+    record,
+    createdAt: 13
+  }]);
+
+  const report = await scanAndBuild(fixture, { nativeScope: "none" });
+  assert.equal(
+    report.findings.some(
+      (finding) =>
+        finding.code === "native-retirement-commit-mismatch"
+    ),
+    false
+  );
+  assert.equal(sourceStatus(report, "record-mutations"), "scanned");
+  assert.equal(
+    report.relations.some((relation) =>
+      relation.kind === "native-retirement-commit"
+      && relation.to.sourceId === "record-mutations"
+      && relation.status === "linked"),
+    true
+  );
+  assert.equal(
+    report.relations.some((relation) =>
+      relation.kind === "native-conversation-ownership"
+      && relation.to.entityType === "tombstone"
+      && relation.status === "linked"),
+    true
+  );
+
+  const mismatched = structuredClone(record);
+  if (mismatched.retirement?.targetStatus === "deleted") {
+    mismatched.retirement.targetTombstoneDigest =
+      `sha256:${"e".repeat(64)}`;
+  }
+  await writeNativeIndex(fixture, [mismatched], 2);
+  await writeNativeEvents(fixture, [{
+    type: "upsert",
+    record: mismatched,
+    createdAt: 14
+  }]);
+  const mismatch = await scanAndBuild(fixture, {
+    nativeScope: "none"
+  });
+  assertBlockingFinding(
+    mismatch,
+    "native-retirement-commit-mismatch"
   );
 }
 
@@ -2572,6 +2753,7 @@ function readyInventoryInput(fixture: Fixture): StorageInventoryReportInput {
       source("conversations"),
       source("history"),
       source("harness-runs"),
+      source("record-mutations"),
       source("native-store"),
       source("raw")
     ],

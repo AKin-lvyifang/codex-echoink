@@ -23,6 +23,7 @@ import {
 } from "../../harness/lifecycle/record-mutation-production";
 import {
   buildConversationRecordMutationPlan,
+  conversationRecordMutationRequiredRootIds,
   ConversationRecordMutationPlanError
 } from "../../harness/records/conversation-record-mutation-plan";
 import type {
@@ -39,8 +40,46 @@ const BASE_TIME = 1_721_260_800_000;
 export async function runHarnessV2ConversationRecordMutationPlanTests():
 Promise<void> {
   await assertInventoryCompilesIntoBoundedDeterministicBundles();
+  await assertRequiredRootsCanBePreviewedBeforeRegistration();
   await assertBlockedInventoryAndWrongRootsFailBeforeJournal();
   await assertOversizedBundleFailsBeforeJournal();
+}
+
+async function assertRequiredRootsCanBePreviewedBeforeRegistration():
+Promise<void> {
+  const full = readyInventory(1);
+  assert.deepEqual(
+    conversationRecordMutationRequiredRootIds(full),
+    Object.values(ECHOINK_RECORD_MUTATION_ROOT_IDS).sort(
+      (left, right) => left.localeCompare(right)
+    )
+  );
+
+  const shellOnly = readyInventory(0);
+  shellOnly.memory!.subjects = [];
+  shellOnly.artifacts!.subjects = [];
+  shellOnly.raw!.subjects = [];
+  assert.deepEqual(
+    conversationRecordMutationRequiredRootIds(shellOnly),
+    [
+      ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+      ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+    ].sort((left, right) => left.localeCompare(right))
+  );
+
+  const blocked = structuredClone(shellOnly);
+  blocked.status = "blocked";
+  blocked.blockers = [{
+    code: "memory-transaction-unresolved",
+    subjectId: "transaction-pending"
+  }];
+  assert.throws(
+    () => conversationRecordMutationRequiredRootIds(blocked),
+    (error: unknown) => (
+      error instanceof ConversationRecordMutationPlanError
+      && error.code === "inventory_blocked"
+    )
+  );
 }
 
 async function assertInventoryCompilesIntoBoundedDeterministicBundles():

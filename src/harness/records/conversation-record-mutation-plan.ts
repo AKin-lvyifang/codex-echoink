@@ -69,6 +69,36 @@ export class ConversationRecordMutationPlanError extends Error {
 }
 
 /**
+ * Derives the complete logical Root set before any physical Root registration.
+ * The final builder reuses the same function, so live callers cannot register
+ * a guessed subset that later drifts from the immutable execution plan.
+ */
+export function conversationRecordMutationRequiredRootIds(
+  inventoryInput: ConversationRecordInventory
+): EchoInkRecordMutationRootId[] {
+  const inventory = requireReadyInventory(inventoryInput);
+  const requiredRootIds = new Set<EchoInkRecordMutationRootId>([
+    ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
+    ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
+  ]);
+  if (inventory.run.workflowRuns.length) {
+    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.run);
+  }
+  if (inventory.raw.subjects.length) {
+    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.raw);
+  }
+  if (inventory.memory.subjects.length) {
+    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.memory);
+  }
+  if (inventory.artifacts.subjects.length) {
+    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact);
+  }
+  return [...requiredRootIds].sort(
+    (left, right) => left.localeCompare(right)
+  );
+}
+
+/**
  * Compiles one stable metadata-only inventory into a bounded logical
  * participant set. Leaf records remain explicit inside immutable bundles, so
  * a long-lived Conversation does not consume one Journal participant per
@@ -91,10 +121,9 @@ export function buildConversationRecordMutationPlan(
     conversationSources
   });
   const participants: RecordMutationExecutionParticipant[] = [];
-  const requiredRootIds = new Set<EchoInkRecordMutationRootId>([
-    ECHOINK_RECORD_MUTATION_ROOT_IDS.conversation,
-    ECHOINK_RECORD_MUTATION_ROOT_IDS.trash
-  ]);
+  const requiredRootIds = new Set<EchoInkRecordMutationRootId>(
+    conversationRecordMutationRequiredRootIds(inventory)
+  );
   let leafRecordCount = 0;
 
   const conversationBundle = trashBundleParticipant({
@@ -194,7 +223,6 @@ export function buildConversationRecordMutationPlan(
     }
   }
   if (runRetainSubjects.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.run);
     participants.push(retainBundleParticipant({
       recordKind: "workflow-run",
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
@@ -204,7 +232,6 @@ export function buildConversationRecordMutationPlan(
     leafRecordCount += runRetainSubjects.length;
   }
   if (runSubjects.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.run);
     participants.push(sourceDeletionBundleParticipant({
       recordKind: "workflow-run",
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.run,
@@ -256,7 +283,6 @@ export function buildConversationRecordMutationPlan(
     }
   }
   if (rawRetainSubjects.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.raw);
     participants.push(retainBundleParticipant({
       recordKind: "raw",
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.raw,
@@ -266,7 +292,6 @@ export function buildConversationRecordMutationPlan(
     leafRecordCount += rawRetainSubjects.length;
   }
   if (rawTrashItems.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.raw);
     participants.push(trashBundleParticipant({
       recordKind: "raw",
       action: "discard",
@@ -292,7 +317,6 @@ export function buildConversationRecordMutationPlan(
     };
   });
   if (memorySubjects.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.memory);
     participants.push(sourceDeletionBundleParticipant({
       recordKind: "memory",
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.memory,
@@ -316,7 +340,6 @@ export function buildConversationRecordMutationPlan(
     };
   });
   if (artifactSubjects.length) {
-    requiredRootIds.add(ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact);
     participants.push(sourceDeletionBundleParticipant({
       recordKind: "artifact",
       rootId: ECHOINK_RECORD_MUTATION_ROOT_IDS.artifact,

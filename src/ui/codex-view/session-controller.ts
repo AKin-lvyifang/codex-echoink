@@ -6,14 +6,11 @@ import { sessionBackendBinding } from "../../harness/kernel/session-service";
 import type { EchoInkSessionContextRotationResult } from "../../plugin/session-context-lifecycle";
 import { ensureKnowledgeBaseSession, isKnowledgeBaseSession as isKnowledgeSession, newId, type StoredAttachment, type StoredSession } from "../../settings/settings";
 import { RuntimeTurnQueue } from "../turn-queue";
-import { textInputModal } from "../modals";
+import { confirmModal, textInputModal } from "../modals";
 import { KnowledgeBaseHistoryModal } from "./history-modal";
 import { openSessionMenu as showSessionMenu } from "./menus";
 import { renderCodexTabs } from "./tabs";
 import type { EchoInkResource } from "../../resources/types";
-
-export const SESSION_DELETION_DISABLED_NOTICE =
-  "安全删除正在迁移中。为避免只删掉部分记录，当前不会删除会话、历史或关联 Agent 缓存。";
 
 export interface CodexSessionHost {
   readonly app: App;
@@ -89,6 +86,8 @@ export function openSessionMenuView(host: CodexSessionHost, event: MouseEvent, s
   showSessionMenu(event, host.isKnowledgeBaseSession(session), {
     onRename: () => void host.renameSession(session),
     onResetCache: () => void resetSessionNativeCache(host, session),
+    onClearRecords: () =>
+      void clearSessionConversationRecords(host, session),
     onDelete: () => void confirmDeleteSessions(host, [session.id])
   });
 }
@@ -133,17 +132,246 @@ export async function deleteSession(host: CodexSessionHost, sessionId: string): 
   await deleteSessions(host, [sessionId]);
 }
 
+type ConversationRecordMutationConfirm = (
+  title: string,
+  body: string,
+  acceptText: string,
+  declineText: string
+) => Promise<boolean>;
+
+interface ConversationRecordMutationUiOptions {
+  confirm?: ConversationRecordMutationConfirm;
+}
+
+export async function clearSessionConversationRecords(
+  host: CodexSessionHost,
+  session: StoredSession,
+  options: ConversationRecordMutationUiOptions = {}
+): Promise<void> {
+  if (host.isKnowledgeBaseSession(session)) {
+    new Notice("知识库记录请在知识库历史管理中单独处理");
+    return;
+  }
+  if (host.running && host.activeRunSessionId === session.id) {
+    new Notice("当前会话正在运行，结束后再清空记录");
+    return;
+  }
+  const confirm = options.confirm ?? defaultRecordMutationConfirm(host);
+  try {
+    const preview =
+      await host.plugin.previewEchoInkConversationRecordClear(session);
+    if (preview.blockers.length) {
+      new Notice(
+        `“${session.title}”暂时不能安全清空：`
+        + recordMutationBlockerDetail(preview.blockers)
+      );
+      return;
+    }
+    const accepted = await confirm(
+      `清空会话“${session.title}”的记录？`,
+      recordMutationConfirmationBody(
+        session,
+        "clear-conversation-records",
+        preview.disposition.retainMemoryIds.length,
+        preview.disposition.retainArtifactIds.length
+      ),
+      "安全清空",
+      "取消"
+    );
+    if (!accepted) return;
+    if (host.running && host.activeRunSessionId === session.id) {
+      new Notice("当前会话正在运行，已跳过清空");
+      return;
+    }
+    const receipt = await host.plugin.clearEchoInkConversationRecords(
+      session,
+      preview.disposition
+    );
+    if (receipt.localState === "committed") {
+      host.turnQueue.clearSessionQueue(session.id);
+      renderCommittedConversationRecordMutation(host);
+      const pending =
+        receipt.projection === "awaiting-recovery"
+        || receipt.nativeRetirement === "awaiting-recovery";
+      new Notice(
+        pending
+          ? "会话记录已提交清空；后台清理或界面投影等待恢复"
+          : "会话记录已安全清空；关联 Agent 记录按后端能力后台清理"
+      );
+      return;
+    }
+    if (receipt.localState === "awaiting-recovery") {
+      new Notice("会话记录清空已进入恢复队列，暂不重复操作");
+      return;
+    }
+    new Notice(
+      `清空“${session.title}”失败，记录已安全恢复：`
+      + (receipt.error ?? "未知错误")
+    );
+  } catch (error) {
+    new Notice(
+      `清空“${session.title}”失败：`
+      + (error instanceof Error ? error.message : String(error))
+    );
+  }
+}
+
 export async function confirmDeleteSessions(host: CodexSessionHost, sessionIds: string[]): Promise<void> {
   await deleteSessions(host, sessionIds);
 }
 
-export async function deleteSessions(host: CodexSessionHost, sessionIds: string[]): Promise<void> {
+export async function deleteSessions(
+  host: CodexSessionHost,
+  sessionIds: string[],
+  options: ConversationRecordMutationUiOptions = {}
+): Promise<void> {
   const candidates = deletableSessions(host, sessionIds);
   if (!candidates.length) {
     new Notice("所选会话不可删除；知识库和运行中会话会被保留");
     return;
   }
-  new Notice(SESSION_DELETION_DISABLED_NOTICE);
+  const confirm = options.confirm ?? defaultRecordMutationConfirm(host);
+  let committedCount = 0;
+  let pendingRecoveryCount = 0;
+  for (const session of candidates) {
+    try {
+      const preview =
+        await host.plugin.previewEchoInkSessionDeletion(session);
+      if (preview.blockers.length) {
+        const detail = recordMutationBlockerDetail(preview.blockers);
+        new Notice(`“${session.title}”暂时不能安全删除：${detail}`);
+        continue;
+      }
+      const accepted = await confirm(
+        `删除会话“${session.title}”？`,
+        recordMutationConfirmationBody(
+          session,
+          "delete-conversation",
+          preview.disposition.retainMemoryIds.length,
+          preview.disposition.retainArtifactIds.length
+        ),
+        "安全删除",
+        "取消"
+      );
+      if (!accepted) continue;
+      if (
+        host.running
+        && host.activeRunSessionId === session.id
+      ) {
+        new Notice(`“${session.title}”正在运行，已跳过删除`);
+        continue;
+      }
+      const receipt = await host.plugin.commitEchoInkSessionDeletion(
+        session,
+        preview.disposition
+      );
+      if (receipt.localState === "committed") {
+        committedCount += 1;
+        host.turnQueue.clearSessionQueue(session.id);
+        if (
+          receipt.projection === "awaiting-recovery"
+          || receipt.nativeRetirement === "awaiting-recovery"
+        ) {
+          pendingRecoveryCount += 1;
+        }
+        continue;
+      }
+      if (receipt.localState === "awaiting-recovery") {
+        pendingRecoveryCount += 1;
+        new Notice(
+          `“${session.title}”的删除已进入恢复队列，暂不重复操作`
+        );
+        continue;
+      }
+      new Notice(
+        `删除“${session.title}”失败，记录已安全恢复：${receipt.error ?? "未知错误"}`
+      );
+    } catch (error) {
+      new Notice(
+        `删除“${session.title}”失败：${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  if (committedCount) {
+    renderCommittedConversationRecordMutation(host);
+    new Notice(
+      pendingRecoveryCount
+        ? `已提交 ${committedCount} 个会话删除；${pendingRecoveryCount} 个后台清理或界面投影等待恢复`
+        : `已安全删除 ${committedCount} 个会话；关联 Agent 记录按后端能力后台清理`
+    );
+  }
+}
+
+function defaultRecordMutationConfirm(
+  host: CodexSessionHost
+): ConversationRecordMutationConfirm {
+  return async (title, body, acceptText, declineText) =>
+    await confirmModal(
+      host.app,
+      title,
+      body,
+      acceptText,
+      declineText
+    );
+}
+
+function recordMutationBlockerDetail(
+  blockers: ReadonlyArray<{ code: string; subjectId: string }>
+): string {
+  return blockers
+    .slice(0, 3)
+    .map((blocker) => `${blocker.code}:${blocker.subjectId}`)
+    .join("；");
+}
+
+function renderCommittedConversationRecordMutation(
+  host: CodexSessionHost
+): void {
+  host.resetVirtualWindow();
+  host.renderTabs();
+  host.renderMessages({ forceBottom: true });
+  host.renderToolbar();
+  host.renderKnowledgeDashboard();
+  void host.refreshKnowledgeDashboard();
+  host.updateInputPlaceholder();
+}
+
+function recordMutationConfirmationBody(
+  session: StoredSession,
+  operation: "clear-conversation-records" | "delete-conversation",
+  retainedMemoryCount: number,
+  retainedArtifactCount: number
+): string {
+  const retained = [
+    retainedMemoryCount
+      ? `${retainedMemoryCount} 条待确认长期记忆`
+      : "",
+    retainedArtifactCount
+      ? `${retainedArtifactCount} 个正式产物`
+      : ""
+  ].filter(Boolean).join("、");
+  const sourceMarker = operation === "delete-conversation"
+    ? "来源会话已删除"
+    : "来源会话记录已清空";
+  const retention = retained
+    ? (
+        `会保留${retained}，并标记${sourceMarker}。`
+        + "如需丢弃，请先在对应的 Memory 或产物管理中单独处理。"
+      )
+    : "没有需要额外确认保留的长期记忆或正式产物。";
+  const localEffect = operation === "delete-conversation"
+    ? (
+        `将删除“${session.title}”的 Conversation、消息、快照、`
+        + "独占 Raw 和策略选中的运行明细。"
+      )
+    : (
+        `将保留“${session.title}”的会话入口，但删除消息、快照、`
+        + "独占 Raw 和策略选中的运行明细，并开启空上下文。"
+      );
+  return (
+    localEffect
+    + `${retention}关联 Agent thread/session 的清理由独立收据跟踪，失败不会把已提交的本地操作伪装成失败。`
+  );
 }
 
 function deletableSessions(host: CodexSessionHost, sessionIds: string[]): StoredSession[] {

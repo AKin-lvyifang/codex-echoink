@@ -184,24 +184,92 @@ export type NativeCleanupStatus =
   | "aborted"
   | "quarantined";
 
-/**
- * Durable proof target for retiring a Conversation backend binding.
- *
- * The lifecycle layer may promote an awaiting retirement only after the
- * Conversation Store proves this exact generation and commit identity.
- */
-export interface NativeBindingRetirement {
+interface NativeBindingRetirementBase {
   recordMutationId?: string;
   targetConversationId: string;
   sourceGeneration?: number;
   sourceCommitId?: string | null;
   sourceContextId?: string | null;
   sourceWorkspaceFingerprint?: string | null;
-  targetGeneration: number;
-  targetCommitId: string;
-  targetContextId?: string;
-  targetWorkspaceFingerprint?: string;
   reason: string;
+}
+
+/**
+ * Durable proof target for retiring a Conversation backend binding.
+ *
+ * Existing Context rotations prove an exact present generation/commit. A
+ * destructive Conversation deletion instead proves the exact tombstone bound
+ * to its committed RecordMutation Journal. Legacy present targets omit the
+ * discriminator and remain readable.
+ */
+export type NativeBindingRetirement =
+  | (NativeBindingRetirementBase & {
+      targetStatus?: "present";
+      targetGeneration: number;
+      targetCommitId: string;
+      targetContextId?: string;
+      targetWorkspaceFingerprint?: string;
+      targetTombstoneId?: never;
+      targetTombstoneDigest?: never;
+    })
+  | (NativeBindingRetirementBase & {
+      targetStatus: "deleted";
+      targetGeneration?: never;
+      targetCommitId?: never;
+      targetContextId?: never;
+      targetWorkspaceFingerprint?: never;
+      targetTombstoneId: string;
+      targetTombstoneDigest: string;
+    });
+
+export type NativeRetirementTargetState =
+  | "present"
+  | "deleted"
+  | "invalid";
+
+export function nativeRetirementTargetState(
+  value: unknown
+): NativeRetirementTargetState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "invalid";
+  }
+  const target = value as Record<string, unknown>;
+  if (target.targetStatus === "deleted") {
+    return (
+      target.targetGeneration === undefined
+      && target.targetCommitId === undefined
+      && target.targetContextId === undefined
+      && target.targetWorkspaceFingerprint === undefined
+      && isNonEmptyIdentity(target.targetTombstoneId)
+      && typeof target.targetTombstoneDigest === "string"
+      && /^sha256:[a-f0-9]{64}$/.test(target.targetTombstoneDigest)
+    )
+      ? "deleted"
+      : "invalid";
+  }
+  if (
+    target.targetStatus !== undefined
+    && target.targetStatus !== "present"
+  ) {
+    return "invalid";
+  }
+  return (
+    Number.isSafeInteger(target.targetGeneration)
+    && (target.targetGeneration as number) > 0
+    && isNonEmptyIdentity(target.targetCommitId)
+    && (
+      target.targetContextId === undefined
+      || isNonEmptyIdentity(target.targetContextId)
+    )
+    && (
+      target.targetWorkspaceFingerprint === undefined
+      || isNonEmptyIdentity(target.targetWorkspaceFingerprint)
+    )
+    && target.targetTombstoneId === undefined
+    && target.targetTombstoneDigest === undefined
+  )
+    ? "present"
+    : "invalid";
 }
 
 export type NativeRetirementSourceIdentityState =
@@ -249,6 +317,12 @@ export function nativeRetirementSourceIdentityState(
   )
     ? "complete"
     : "invalid";
+}
+
+function isNonEmptyIdentity(value: unknown): value is string {
+  return typeof value === "string"
+    && value === value.trim()
+    && Boolean(value);
 }
 
 export interface NativeExecutionRecord {

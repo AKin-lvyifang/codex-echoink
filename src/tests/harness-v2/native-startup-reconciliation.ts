@@ -38,9 +38,13 @@ import {
   reconcileNativeExecutionsAtStartup,
   type NativeStartupReconciliationHost
 } from "../../plugin/native-startup-reconciliation";
+import {
+  fixtureRecordMutationRootBindings
+} from "./record-root-fixtures";
 
 export async function runHarnessV2NativeStartupReconciliationTests(): Promise<void> {
   await assertRecordMutationAuthorityGatesNativePromotion();
+  await assertDeletionTombstoneAuthorityGatesNativePromotion();
   await assertAuthorityProofClassificationPrecedesBoundedCleanup();
   await assertIncompleteAuthorityIsQuarantinedWithoutPromoteOrAbort();
   await assertPartialSourceIdentityFailsClosedWhileLegacyRemainsReadable();
@@ -81,6 +85,69 @@ export async function runHarnessV2NativeStartupReconciliationTests(): Promise<vo
   await assertPendingChatRecoveryLeavesRetirementsForAuthorityGate();
   await assertConcurrentCommittedChatSettlementWinsStartupRecovery();
   await assertProductionStartupWiringUsesConversationAuthority();
+}
+
+async function assertDeletionTombstoneAuthorityGatesNativePromotion():
+Promise<void> {
+  const committedRecord = deletionRetirementRecord(
+    "deletion-journal-committed",
+    "mutation-deletion-journal-committed"
+  );
+  const committedCalls: string[] = [];
+  const committed = await reconcileNativeExecutionsAtStartup(
+    reconciliationHost({
+      records: [committedRecord],
+      calls: committedCalls,
+      recoverMutations: async () => 1,
+      readMutation: async () => deletionMutationRevision(
+        committedRecord,
+        "committed"
+      ),
+      prove: async () => {
+        throw new Error(
+          "deleted retirement must use the committed tombstone Journal"
+        );
+      }
+    })
+  );
+  assert.equal(committed.promotedCount, 1);
+  assert.deepEqual(committedCalls, [
+    "recover-mutations",
+    "list",
+    "mutation:mutation-deletion-journal-committed",
+    "promote:deletion-journal-committed",
+    `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
+  ]);
+
+  const abortedRecord = deletionRetirementRecord(
+    "deletion-journal-aborted",
+    "mutation-deletion-journal-aborted"
+  );
+  const abortedCalls: string[] = [];
+  const aborted = await reconcileNativeExecutionsAtStartup(
+    reconciliationHost({
+      records: [abortedRecord],
+      calls: abortedCalls,
+      recoverMutations: async () => 1,
+      readMutation: async () => deletionMutationRevision(
+        abortedRecord,
+        "aborted"
+      ),
+      prove: async () => {
+        throw new Error(
+          "aborted deletion retirement must not probe a deleted Conversation"
+        );
+      }
+    })
+  );
+  assert.equal(aborted.abortedCount, 1);
+  assert.deepEqual(abortedCalls, [
+    "recover-mutations",
+    "list",
+    "mutation:mutation-deletion-journal-aborted",
+    "abort:deletion-journal-aborted",
+    `cleanup:${DEFAULT_STARTUP_NATIVE_CLEANUP_LIMIT}`
+  ]);
 }
 
 async function assertRecordMutationAuthorityGatesNativePromotion(): Promise<void> {
@@ -3075,6 +3142,117 @@ function journaledRetirementRecord(
     sourceWorkspaceFingerprint: "sha256:0123456789abcdef"
   };
   return record;
+}
+
+function deletionRetirementRecord(
+  id: string,
+  mutationId: string
+): NativeExecutionRecord {
+  const record = retirementRecord(id, 3, `unused-present-target-${id}`);
+  record.retirement = {
+    recordMutationId: mutationId,
+    targetConversationId: "conversation-1",
+    sourceGeneration: 2,
+    sourceCommitId: `source-commit-${id}`,
+    sourceContextId: "context-2",
+    sourceWorkspaceFingerprint: "sha256:0123456789abcdef",
+    targetStatus: "deleted",
+    targetTombstoneId: `tombstone-${id}`,
+    targetTombstoneDigest: `sha256:${"d".repeat(64)}`,
+    reason: "delete-conversation"
+  };
+  record.runId = `conversation-deletion:${mutationId}`;
+  record.workflow = "session.delete-conversation";
+  return record;
+}
+
+function deletionMutationRevision(
+  record: NativeExecutionRecord,
+  state: "committed" | "aborted"
+): RecordMutationRevision {
+  const retirement = record.retirement!;
+  assert.equal(retirement.targetStatus, "deleted");
+  const planned = createPlannedRecordMutationRevision({
+    mutationId: retirement.recordMutationId!,
+    intent: {
+      operation: "delete-conversation",
+      conversationId: retirement.targetConversationId,
+      expectedConversationGeneration: retirement.sourceGeneration!,
+      expectedConversationCommitId: retirement.sourceCommitId!,
+      expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: retirement.targetTombstoneId,
+        digest: retirement.targetTombstoneDigest
+      },
+      participants: [{
+        id: "conversation",
+        recordKind: "conversation",
+        action: "stage"
+      }],
+      rootBindings: fixtureRecordMutationRootBindings(),
+      trashPolicy: "required"
+    },
+    createdAt: 1
+  });
+  const staged = transitionRecordMutationRevision(planned, {
+    state: "staged",
+    step: {
+      direction: "forward",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "trash-staged",
+      evidenceDigest: planned.intentDigest
+    },
+    terminal: null,
+    updatedAt: 2
+  });
+  if (state === "committed") {
+    return transitionRecordMutationRevision(staged, {
+      state: "committed",
+      step: null,
+      terminal: {
+        at: 3,
+        code: "committed",
+        message: "test deletion committed"
+      },
+      updatedAt: 3
+    });
+  }
+  const compensating = transitionRecordMutationRevision(staged, {
+    state: "compensating",
+    step: {
+      direction: "compensating",
+      ordinal: 1,
+      participantId: "conversation",
+      action: "compensation-prepared",
+      evidenceDigest: planned.intentDigest
+    },
+    terminal: null,
+    updatedAt: 3
+  });
+  const restored = transitionRecordMutationRevision(compensating, {
+    state: "compensating",
+    step: {
+      direction: "compensating",
+      ordinal: 2,
+      participantId: "conversation",
+      action: "trash-restored",
+      evidenceDigest: planned.intentDigest
+    },
+    terminal: null,
+    updatedAt: 4
+  });
+  return transitionRecordMutationRevision(restored, {
+    state: "aborted",
+    step: null,
+    terminal: {
+      at: 5,
+      code: "compensated",
+      message: "test deletion aborted"
+    },
+    updatedAt: 5
+  });
 }
 
 function contextMutationRevision(

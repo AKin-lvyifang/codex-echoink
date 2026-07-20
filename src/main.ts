@@ -29,9 +29,9 @@ import { EchoInkViewService } from "./plugin/view-service";
 import { EchoInkHarnessService, type CommitChatSurfaceTerminalOptions } from "./plugin/harness-service";
 import type { NativeStartupReconciliationOptions, NativeStartupReconciliationResult } from "./plugin/native-startup-reconciliation";
 import { ensureEchoInkSessionContextIdentity, rotateEchoInkSessionContext, type EchoInkSessionContextRotationOptions, type EchoInkSessionContextRotationResult, type EchoInkSessionContextWorkspace } from "./plugin/session-context-lifecycle";
+import { commitEchoInkConversationRecordMutation, previewEchoInkConversationRecordMutation, type ConversationRecordMutationDisposition, type ConversationRecordMutationPreview, type ConversationRecordMutationReceipt } from "./plugin/conversation-record-mutation-lifecycle";
 import type { MemoryStoreStatus, CodexMemoryImportResult, CodexMemoryMigrationPreview, InitializeEchoInkMemoryResult } from "./harness/memory/file-memory";
 import type { MemorySyncResult } from "./harness/memory/v2-engine";
-
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   codex: CodexService | null = null;
@@ -127,7 +127,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   async ensureEchoInkSessionContextIdentity(session: StoredSession, workspace: EchoInkSessionContextWorkspace): Promise<EchoInkSessionContextRotationResult | null> { return await ensureEchoInkSessionContextIdentity(this.getHarnessService(), this.getSettingsStore(), session, workspace); }
   async rotateEchoInkSessionContext(session: StoredSession, options: EchoInkSessionContextRotationOptions): Promise<EchoInkSessionContextRotationResult> { return await rotateEchoInkSessionContext(this.getHarnessService(), this.getSettingsStore(), session, options); }
   async enforceNativeSessionLeaseLimits(): Promise<NativeSessionLeaseCleanupExecutionResult[]> { return await this.getHarnessService().enforceNativeSessionLeaseLimits(); }
-  async commitEchoInkSessionDeletion(session: StoredSession): Promise<NativeCleanupResult[]> { return await this.getHarnessService().commitEchoInkSessionDeletion(session); }
+  async previewEchoInkSessionDeletion(session: StoredSession): Promise<ConversationRecordMutationPreview> { return await previewEchoInkConversationRecordMutation(this, session, "delete-conversation"); }
+  async previewEchoInkConversationRecordClear(session: StoredSession): Promise<ConversationRecordMutationPreview> { return await previewEchoInkConversationRecordMutation(this, session, "clear-conversation-records"); }
+  async commitEchoInkSessionDeletion(session: StoredSession, disposition: ConversationRecordMutationDisposition): Promise<ConversationRecordMutationReceipt> { return await commitEchoInkConversationRecordMutation({ plugin: this, settingsStore: this.getSettingsStore(), harnessService: this.getHarnessService(), session, operation: "delete-conversation", disposition }); }
+  async clearEchoInkConversationRecords(session: StoredSession, disposition: ConversationRecordMutationDisposition): Promise<ConversationRecordMutationReceipt> { return await commitEchoInkConversationRecordMutation({ plugin: this, settingsStore: this.getSettingsStore(), harnessService: this.getHarnessService(), session, operation: "clear-conversation-records", disposition }); }
   async failPendingNativeExecutionsForRecovery(input: { reason: string; surface?: string; sessionId?: string }): Promise<number> { return await this.getHarnessService().failPendingNativeExecutionsForRecovery(input); }
   createCodexRichAgentAdapter(options: Omit<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread"> & Partial<Pick<CodexRichAgentAdapterOptions, "startThread" | "resumeThread" | "startTurn" | "interruptTurn" | "archiveThread">>) { return this.getHarnessService().createCodexRichAgentAdapter(options); }
   hasCodexHarnessTransport(): boolean { return Boolean(this.codex); }
@@ -143,7 +146,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   async buildRuntimeEchoInkResourceCatalog(): Promise<EchoInkResource[]> { return await this.getHarnessService().buildRuntimeEchoInkResourceCatalog(); }
   getVaultPath(): string { const adapter = this.app.vault.adapter as { basePath?: string; path?: string }; return adapter.basePath || adapter.path || ""; }
   getPluginDataDirName(): string { const dir = (this.manifest as { dir?: unknown }).dir; return typeof dir === "string" && dir.trim() ? dir : this.manifest.id; }
-
   async loadSettings(): Promise<void> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
   getKnowledgeBaseWorkflowSettingsHost(): MaintenanceWorkflowSettingsHost<KnowledgeBaseSettings> { return this.getSettingsStore(); }
@@ -154,7 +156,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   async withEchoInkConversationMutation<R>(conversationId: string, action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withConversationMutation(conversationId, action); }
   async withEchoInkSettingsPersistenceAuthorityGate<R>(action: () => Promise<R>): Promise<R> { return await this.getSettingsStore().withSettingsPersistenceAuthorityGate(action); }
   poisonEchoInkSettingsPersistenceForRecovery(message: string): void { this.getSettingsStore().poisonSettingsPersistenceForRecovery(message); }
-  async deleteStoredConversationSession(sessionId: string): Promise<boolean> { return await this.getSettingsStore().deleteConversationSession(sessionId); }
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   async readKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> { return this.getSettingsStore().readKnowledgeBaseHistoryIndex(); }

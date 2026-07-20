@@ -216,6 +216,23 @@ choice and does not represent `sourceDeleted` only in a deletion receipt.
 The existing Knowledge `/clear` action means **Start new context**. It does not
 mean Clear Conversation records or Delete Conversation.
 
+The live Clear Conversation records and Delete Conversation controls first run
+a read-only preview. Pending-confirmation Memory and published Artifacts are
+retained with an explicit source-deleted marker; discarding either is a
+separate operation in its authoritative product manager. After confirmation,
+the coordinator repeats the full inventory twice under the Conversation
+mutation authority, prepares immutable execution evidence, and only then
+commits the empty Conversation target or deletion tombstone. A committed local
+mutation is not reversed merely because the `data.json` projection or later
+Native cleanup fails; those states remain independently recoverable and
+visible in the receipt.
+
+A deleted Native retirement is authorized only by the conjunction of the
+deletion tombstone, a committed RecordMutation Journal, and exact source and
+target identity. A tombstone or cleanup record alone is insufficient. An
+aborted Journal is consistent only when the original Conversation identity has
+been restored exactly and every registered retirement is already aborted.
+
 Detailed run payload is retained for 30 days by default and bounded run summary
 metadata for 90 days by default. Recovery evidence for an unsettled local
 commit, WAL, cleanup, or quarantine is exempt from ordinary retention until it

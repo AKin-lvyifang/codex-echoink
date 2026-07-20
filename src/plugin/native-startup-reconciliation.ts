@@ -9,6 +9,7 @@ import {
 import {
   nativeCleanupAuthorityEvidenceMissingReason,
   nativeRetirementSourceIdentityState,
+  nativeRetirementTargetState,
   type NativeBindingRetirement,
   type NativeExecutionRecord
 } from "../harness/contracts/native-execution";
@@ -116,9 +117,17 @@ export async function reconcileNativeExecutionsAtStartup(
     }
     const sourceIdentityState =
       nativeRetirementSourceIdentityState(retirement);
+    const targetState = nativeRetirementTargetState(retirement);
     if (sourceIdentityState === "invalid") {
       const reason = (
         `Native retirement source identity is partial or invalid: ${record.id}`
+      );
+      await host.quarantineRetirement(record, reason);
+      throw new Error(reason);
+    }
+    if (targetState === "invalid") {
+      const reason = (
+        `Native retirement target identity is partial or invalid: ${record.id}`
       );
       await host.quarantineRetirement(record, reason);
       throw new Error(reason);
@@ -157,6 +166,28 @@ export async function reconcileNativeExecutionsAtStartup(
         await host.quarantineRetirement(record, reason);
         throw new Error(reason);
       }
+    }
+
+    if (retirement.targetStatus === "deleted") {
+      if (recordMutationState === "committed") {
+        await host.promoteRetirement(record);
+        retirements.push({ recordId: record.id, action: "promoted" });
+        continue;
+      }
+      if (recordMutationState === "aborted") {
+        const reason = "Conversation deletion RecordMutation was aborted";
+        await host.abortRetirement(record, reason);
+        retirements.push({
+          recordId: record.id,
+          action: "aborted",
+          reason
+        });
+        continue;
+      }
+      const reason =
+        "Deleted Native retirement lacks a terminal RecordMutation authority";
+      await host.quarantineRetirement(record, reason);
+      throw new Error(reason);
     }
 
     let proof: ConversationAuthorityProof;
@@ -252,22 +283,35 @@ export function assertNativeRetirementRecordMutationAuthority(
     ? "start-new-context"
     : retirement.reason === "agent-cache-reset"
       ? "reset-agent-cache"
+      : retirement.reason === "clear-conversation-records"
+        ? "clear-conversation-records"
+        : retirement.reason === "delete-conversation"
+          ? "delete-conversation"
       : null;
   const target = mutation.intent.targetConversation;
-  if (
+  const expectedTrashPolicy = expectedOperation === "clear-conversation-records"
+    || expectedOperation === "delete-conversation"
+    ? "required"
+    : "not-required";
+  const sharedMismatch = (
     !expectedOperation
     || mutation.mutationId !== retirement.recordMutationId
     || mutation.intent.operation !== expectedOperation
-    || mutation.intent.trashPolicy !== "not-required"
+    || mutation.intent.trashPolicy !== expectedTrashPolicy
     || mutation.intent.conversationId !== retirement.targetConversationId
     || mutation.intent.expectedConversationGeneration
       !== retirement.sourceGeneration
     || mutation.intent.expectedConversationCommitId
       !== retirement.sourceCommitId
-    || target.status !== "present"
-    || target.generation !== retirement.targetGeneration
-    || target.commitId !== retirement.targetCommitId
-  ) {
+  );
+  const targetMismatch = retirement.targetStatus === "deleted"
+    ? target.status !== "deleted"
+      || target.tombstoneId !== retirement.targetTombstoneId
+      || target.digest !== retirement.targetTombstoneDigest
+    : target.status !== "present"
+      || target.generation !== retirement.targetGeneration
+      || target.commitId !== retirement.targetCommitId;
+  if (sharedMismatch || targetMismatch) {
     throw new Error(
       `RecordMutation Journal does not bind the Native retirement: ${recordId}`
     );

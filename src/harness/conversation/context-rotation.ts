@@ -14,15 +14,20 @@ export type SessionContextRotationReason =
   | "agent-cache-reset"
   | "lease-rollover";
 
+export type SessionRecordMutationRetirementReason =
+  | "clear-conversation-records"
+  | "delete-conversation";
+
 export interface SessionContextRetirement {
   retirementId: string;
   recordMutationId?: string;
-  reason: SessionContextRotationReason;
+  reason: SessionContextRotationReason | "clear-conversation-records";
   targetConversationId: string;
   sourceGeneration?: number;
   sourceCommitId?: string | null;
   sourceContextId?: string | null;
   sourceWorkspaceFingerprint?: string | null;
+  targetStatus?: "present";
   targetGeneration: number;
   targetCommitId: string;
   targetContextId?: string;
@@ -30,6 +35,26 @@ export interface SessionContextRetirement {
   backendId: string;
   binding: BackendSessionBinding;
 }
+
+export interface SessionDeletionRetirement {
+  retirementId: string;
+  recordMutationId: string;
+  reason: "delete-conversation";
+  targetConversationId: string;
+  sourceGeneration: number;
+  sourceCommitId: string;
+  sourceContextId: string | null;
+  sourceWorkspaceFingerprint: string | null;
+  targetStatus: "deleted";
+  targetTombstoneId: string;
+  targetTombstoneDigest: string;
+  backendId: string;
+  binding: BackendSessionBinding;
+}
+
+export type SessionNativeRetirement =
+  | SessionContextRetirement
+  | SessionDeletionRetirement;
 
 export interface SessionContextCommitInput {
   session: StoredSession;
@@ -118,6 +143,111 @@ export interface SessionContextRotationResult {
   recordMutationState?: "committed" | "awaiting-recovery";
   retirementPromotion: "not-required" | "promoted" | "awaiting-recovery";
   promotionError?: string;
+}
+
+export function createSessionDeletionRetirements(input: {
+  session: StoredSession;
+  recordMutationId: string;
+  targetTombstoneId: string;
+  targetTombstoneDigest: string;
+  retirementId?: (
+    binding: BackendSessionBinding,
+    index: number
+  ) => string;
+}): SessionDeletionRetirement[] {
+  const conversationId = input.session.id.trim();
+  const recordMutationId = requiredRecordMutationId(input.recordMutationId);
+  const sourceCommitId = input.session.commitId?.trim();
+  const targetTombstoneId = input.targetTombstoneId.trim();
+  const targetTombstoneDigest = input.targetTombstoneDigest.trim();
+  if (
+    !conversationId
+    || !sourceCommitId
+    || !targetTombstoneId
+    || !/^sha256:[a-f0-9]{64}$/.test(targetTombstoneDigest)
+  ) {
+    throw new Error(
+      "Conversation deletion Native retirement target is invalid"
+    );
+  }
+  const retirementId = input.retirementId
+    ?? ((binding: BackendSessionBinding, index: number) =>
+      `binding-retirement-${recordMutationId}-${binding.backendId}-${index + 1}`);
+  return Array.from(retirementBindings(input.session).values()).map(
+    (binding, index): SessionDeletionRetirement => ({
+      retirementId: retirementId(binding, index),
+      recordMutationId,
+      reason: "delete-conversation",
+      targetConversationId: conversationId,
+      sourceGeneration: sessionGeneration(input.session),
+      sourceCommitId,
+      sourceContextId: input.session.contextId?.trim() || null,
+      sourceWorkspaceFingerprint:
+        input.session.workspaceFingerprint?.trim() || null,
+      targetStatus: "deleted",
+      targetTombstoneId,
+      targetTombstoneDigest,
+      backendId: binding.backendId,
+      binding: cloneBinding(binding)
+    })
+  );
+}
+
+export function createSessionRecordClearRetirements(input: {
+  sourceSession: StoredSession;
+  targetSession: StoredSession;
+  recordMutationId: string;
+  retirementId?: (
+    binding: BackendSessionBinding,
+    index: number
+  ) => string;
+}): SessionContextRetirement[] {
+  const conversationId = input.sourceSession.id.trim();
+  const recordMutationId = requiredRecordMutationId(input.recordMutationId);
+  const sourceCommitId = input.sourceSession.commitId?.trim();
+  const targetCommitId = input.targetSession.commitId?.trim();
+  const targetContextId = input.targetSession.contextId?.trim();
+  const sourceGeneration = sessionGeneration(input.sourceSession);
+  const targetGeneration = sessionGeneration(input.targetSession);
+  if (
+    !conversationId
+    || input.targetSession.id !== conversationId
+    || !sourceCommitId
+    || !targetCommitId
+    || !targetContextId
+    || targetGeneration !== sourceGeneration + 1
+  ) {
+    throw new Error(
+      "Conversation record-clear Native retirement target is invalid"
+    );
+  }
+  const retirementId = input.retirementId
+    ?? ((binding: BackendSessionBinding, index: number) =>
+      `binding-retirement-${recordMutationId}-${binding.backendId}-${index + 1}`);
+  return Array.from(retirementBindings(input.sourceSession).values()).map(
+    (binding, index): SessionContextRetirement => ({
+      retirementId: retirementId(binding, index),
+      recordMutationId,
+      reason: "clear-conversation-records",
+      targetConversationId: conversationId,
+      sourceGeneration,
+      sourceCommitId,
+      sourceContextId: input.sourceSession.contextId?.trim() || null,
+      sourceWorkspaceFingerprint:
+        input.sourceSession.workspaceFingerprint?.trim() || null,
+      targetGeneration,
+      targetCommitId,
+      targetContextId,
+      ...(input.targetSession.workspaceFingerprint?.trim()
+        ? {
+          targetWorkspaceFingerprint:
+            input.targetSession.workspaceFingerprint.trim()
+        }
+        : {}),
+      backendId: binding.backendId,
+      binding: cloneBinding(binding)
+    })
+  );
 }
 
 export async function rotateSessionContext(

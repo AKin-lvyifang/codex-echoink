@@ -7,6 +7,7 @@ import {
   isNativeCleanupAuthorityEvidenceMissing,
   isValidEchoInkHostProcessDispositionReceipt,
   nativeRetirementSourceIdentityState,
+  nativeRetirementTargetState,
   type NativeExecutionRecord
 } from "../contracts/native-execution";
 
@@ -642,14 +643,14 @@ function isValidRetirement(value: NativeExecutionRecord["retirement"] | undefine
     && typeof value.targetConversationId === "string"
     && value.targetConversationId.trim()
     && nativeRetirementSourceIdentityState(value) !== "invalid"
-    && Number.isSafeInteger(value.targetGeneration)
-    && value.targetGeneration > 0
-    && typeof value.targetCommitId === "string"
-    && value.targetCommitId.trim()
-    && (value.targetContextId === undefined || isNonEmptyString(value.targetContextId))
+    && nativeRetirementTargetState(value) !== "invalid"
     && (
-      value.targetWorkspaceFingerprint === undefined
-      || isNonEmptyString(value.targetWorkspaceFingerprint)
+      nativeRetirementTargetState(value) !== "deleted"
+      || (
+        isNonEmptyString(value.recordMutationId)
+        && nativeRetirementSourceIdentityState(value) === "complete"
+        && value.reason === "delete-conversation"
+      )
     )
     && typeof value.reason === "string"
     && value.reason.trim()

@@ -37,10 +37,6 @@ import {
   ECHOINK_RECORD_MUTATION_ROOT_IDS,
   prepareEchoInkRecordMutationRuntimeRoots
 } from "../../harness/lifecycle/record-mutation-production";
-import {
-  EchoInkHarnessService,
-  SESSION_DELETION_JOURNAL_REQUIRED_ERROR
-} from "../../plugin/harness-service";
 import { rotateEchoInkSessionContext } from "../../plugin/session-context-lifecycle";
 import { EchoInkSettingsStore } from "../../plugin/settings-store";
 import {
@@ -75,7 +71,6 @@ export async function runHarnessV2ConversationStoreTests(): Promise<void> {
   await assertDestructiveRetainProofReplaysAfterTargetDeletion();
   await assertSettingsStoreBlocksUnmigratedLegacyConversation();
   await assertConversationStoreParticipatesInDurableCommit();
-  await assertSessionDeletionServiceFailsClosedBeforeMutation();
 }
 
 async function assertContextRotationRecordMutationRecoversCrashWindows(): Promise<void> {
@@ -2104,11 +2099,23 @@ async function assertConversationStoreCanTrimMigratedSettingsMessages(): Promise
 }
 
 async function assertConversationStoreParticipatesInDurableCommit(): Promise<void> {
-  const [settingsSource, harnessSource, sessionSource, lifecycleSource] = await Promise.all([
+  const [
+    settingsSource,
+    harnessSource,
+    sessionSource,
+    lifecycleSource,
+    recordLifecycleSource,
+    mainSource
+  ] = await Promise.all([
     readFile("src/plugin/settings-store.ts", "utf8"),
     readFile("src/plugin/harness-service.ts", "utf8"),
     readFile("src/ui/codex-view/session-controller.ts", "utf8"),
-    readFile("src/plugin/session-context-lifecycle.ts", "utf8")
+    readFile("src/plugin/session-context-lifecycle.ts", "utf8"),
+    readFile(
+      "src/plugin/conversation-record-mutation-lifecycle.ts",
+      "utf8"
+    ),
+    readFile("src/main.ts", "utf8")
   ]);
   assert.match(
     settingsSource,
@@ -2136,16 +2143,6 @@ async function assertConversationStoreParticipatesInDurableCommit(): Promise<voi
   assert.match(settingsSource, /delete session\.threadId/);
   assert.match(settingsSource, /readSession\(session\.id\)/);
   assert.match(settingsSource, /session\.messages = \[\]/);
-  const harnessDeletion = sourceSection(
-    harnessSource,
-    "async commitEchoInkSessionDeletion",
-    "async failPendingNativeExecutionsForRecovery"
-  );
-  assert.match(harnessDeletion, /throw new Error\(SESSION_DELETION_JOURNAL_REQUIRED_ERROR\)/);
-  assert.doesNotMatch(
-    harnessDeletion,
-    /saveSettings|deleteStoredConversationSession|cleanupSessionNativeExecutions/
-  );
   const confirmDeletion = sourceSection(
     sessionSource,
     "export async function confirmDeleteSessions",
@@ -2157,44 +2154,30 @@ async function assertConversationStoreParticipatesInDurableCommit(): Promise<voi
     "export async function deleteSessions",
     "function deletableSessions"
   );
-  assert.match(productDeletion, /new Notice\(SESSION_DELETION_DISABLED_NOTICE\)/);
-  assert.doesNotMatch(
-    productDeletion,
-    /settings\.sessions\s*=|saveSettings|commitEchoInkSessionDeletion|deleteStoredConversationSession|clearSessionQueue|cleanup/
+  assert.match(productDeletion, /previewEchoInkSessionDeletion/);
+  assert.match(productDeletion, /commitEchoInkSessionDeletion/);
+  assert.match(productDeletion, /clearSessionQueue/);
+  assert.doesNotMatch(productDeletion, /deleteStoredConversationSession/);
+  assert.doesNotMatch(settingsSource, /deleteConversationSession\(/);
+  assert.doesNotMatch(harnessSource, /commitEchoInkSessionDeletion\(/);
+  assert.match(
+    recordLifecycleSource,
+    /materializeRecordMutationExecution[\s\S]*registerNativeExecutionRetirements[\s\S]*commitConversation(?:DeletionTombstone|RecordClear)[\s\S]*settleConversationRecordMutationExecution[\s\S]*promoteNativeExecutionRetirements/
+  );
+  assert.match(
+    mainSource,
+    /commitEchoInkSessionDeletion[\s\S]*commitEchoInkConversationRecordMutation/
+  );
+  assert.match(
+    mainSource,
+    /previewEchoInkConversationRecordClear[\s\S]*clearEchoInkConversationRecords/
   );
   assert.doesNotMatch(harnessSource, /resetEchoInkSessionNativeCache/);
   assert.match(sessionSource, /resetSessionNativeCache[\s\S]*reason: "agent-cache-reset"[\s\S]*advanceContext: false/);
   assert.match(lifecycleSource, /registerNativeExecutionRetirements[\s\S]*commitConversationSessionContext[\s\S]*promoteNativeExecutionRetirements/);
   const menuSource = await readFile("src/ui/codex-view/menus.ts", "utf8");
   assert.match(menuSource, /重置 Agent 缓存[\s\S]*onResetCache/);
-}
-
-async function assertSessionDeletionServiceFailsClosedBeforeMutation(): Promise<void> {
-  let pluginAccessCount = 0;
-  const plugin = new Proxy({}, {
-    get() {
-      pluginAccessCount += 1;
-      throw new Error("session deletion guard accessed the plugin");
-    }
-  });
-  const service = new EchoInkHarnessService(plugin as never);
-  const session: StoredSession = {
-    id: "session-delete-disabled",
-    title: "Delete disabled",
-    cwd: "/vault",
-    messages: [],
-    createdAt: 1,
-    updatedAt: 1
-  };
-
-  await assert.rejects(
-    service.commitEchoInkSessionDeletion(session),
-    (error: unknown) => (
-      error instanceof Error
-      && error.message === SESSION_DELETION_JOURNAL_REQUIRED_ERROR
-    )
-  );
-  assert.equal(pluginAccessCount, 0);
+  assert.match(menuSource, /清空会话记录[\s\S]*onClearRecords/);
 }
 
 function sourceSection(source: string, startMarker: string, endMarker: string): string {

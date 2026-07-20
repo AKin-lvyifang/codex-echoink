@@ -40,7 +40,9 @@ import {
   isValidEchoInkHostProcessDispositionReceipt,
   nativeRetirementSourceIdentityState
 } from "../harness/contracts/native-execution";
-import type { SessionContextRetirement } from "../harness/conversation/context-rotation";
+import type {
+  SessionNativeRetirement
+} from "../harness/conversation/context-rotation";
 import type {
   ConversationAuthorityProbe,
   ConversationAuthorityProof
@@ -118,8 +120,6 @@ const CHAT_NATIVE_BINDING_RECOVERY_REASON =
 const CHAT_NATIVE_SETTLEMENT_MAX_ATTEMPTS = 3;
 const CHAT_NATIVE_SETTLEMENT_RETRY_DELAY_MS = 5;
 const MAX_CHAT_NATIVE_RECEIPT_STATES = 256;
-export const SESSION_DELETION_JOURNAL_REQUIRED_ERROR =
-  "Session deletion is disabled until recoverable RecordMutationJournal support is available";
 
 interface ChatNativeExecutionReceipt {
   recordId: string;
@@ -542,7 +542,7 @@ export class EchoInkHarnessService {
   }
 
   async registerNativeExecutionRetirements(
-    retirements: readonly SessionContextRetirement[]
+    retirements: readonly SessionNativeRetirement[]
   ): Promise<void> {
     const manager = this.getNativeExecutionManager();
     const records = this.nativeExecutionRetirementRecords(retirements);
@@ -556,7 +556,7 @@ export class EchoInkHarnessService {
   }
 
   async promoteNativeExecutionRetirements(
-    retirements: readonly SessionContextRetirement[],
+    retirements: readonly SessionNativeRetirement[],
     readRecordMutationAuthority?: (
       mutationId: string
     ) => Promise<RecordMutationRevision>
@@ -590,7 +590,7 @@ export class EchoInkHarnessService {
   }
 
   async abortNativeExecutionRetirements(
-    retirements: readonly SessionContextRetirement[],
+    retirements: readonly SessionNativeRetirement[],
     reason: string
   ): Promise<void> {
     const manager = this.getNativeExecutionManager();
@@ -601,7 +601,7 @@ export class EchoInkHarnessService {
   }
 
   async quarantineNativeExecutionRetirements(
-    retirements: readonly SessionContextRetirement[],
+    retirements: readonly SessionNativeRetirement[],
     reason: string
   ): Promise<void> {
     const manager = this.getNativeExecutionManager();
@@ -621,13 +621,6 @@ export class EchoInkHarnessService {
       }));
     this.nativeLeaseCleanupQueue = run;
     return await run;
-  }
-
-  async commitEchoInkSessionDeletion(_session: StoredSession): Promise<NativeCleanupResult[]> {
-    // Phase 2 will replace this guard with a recoverable RecordMutationJournal.
-    // Until then, keeping the entry point but rejecting before the first
-    // settings, Conversation, or Native mutation prevents partial deletion.
-    throw new Error(SESSION_DELETION_JOURNAL_REQUIRED_ERROR);
   }
 
   async failPendingNativeExecutionsForRecovery(input: { reason: string; surface?: string; sessionId?: string }): Promise<number> {
@@ -1280,7 +1273,7 @@ export class EchoInkHarnessService {
     });
   }
 
-  private nativeExecutionRetirementRecord(retirement: SessionContextRetirement): NativeExecutionRecord {
+  private nativeExecutionRetirementRecord(retirement: SessionNativeRetirement): NativeExecutionRecord {
     const backendId = retirement.backendId.trim();
     if (!backendId || retirement.binding.backendId.trim() !== backendId) {
       throw new Error(`Native binding retirement backend mismatch: ${retirement.retirementId}`);
@@ -1294,7 +1287,9 @@ export class EchoInkHarnessService {
     const createdAt = native.createdAt;
     return {
       id: retirement.retirementId,
-      runId: `context-retirement:${retirement.targetCommitId}`,
+      runId: retirement.targetStatus === "deleted"
+        ? `conversation-deletion:${retirement.recordMutationId}`
+        : `context-retirement:${retirement.targetCommitId}`,
       sessionId: retirement.targetConversationId,
       surface: "chat",
       workflow: `session.context-rotation.${retirement.reason}`,
@@ -1349,14 +1344,25 @@ export class EchoInkHarnessService {
               retirement.sourceWorkspaceFingerprint
           }
           : {}),
-        targetGeneration: retirement.targetGeneration,
-        targetCommitId: retirement.targetCommitId,
-        ...(retirement.targetContextId
-          ? { targetContextId: retirement.targetContextId }
-          : {}),
-        ...(retirement.targetWorkspaceFingerprint
-          ? { targetWorkspaceFingerprint: retirement.targetWorkspaceFingerprint }
-          : {}),
+        ...(retirement.targetStatus === "deleted"
+          ? {
+            targetStatus: "deleted" as const,
+            targetTombstoneId: retirement.targetTombstoneId,
+            targetTombstoneDigest: retirement.targetTombstoneDigest
+          }
+          : {
+            targetGeneration: retirement.targetGeneration,
+            targetCommitId: retirement.targetCommitId,
+            ...(retirement.targetContextId
+              ? { targetContextId: retirement.targetContextId }
+              : {}),
+            ...(retirement.targetWorkspaceFingerprint
+              ? {
+                targetWorkspaceFingerprint:
+                  retirement.targetWorkspaceFingerprint
+              }
+              : {})
+          }),
         reason: retirement.reason
       },
       emitEvents: false,
@@ -1365,14 +1371,14 @@ export class EchoInkHarnessService {
   }
 
   private nativeExecutionRetirementRecords(
-    retirements: readonly SessionContextRetirement[]
+    retirements: readonly SessionNativeRetirement[]
   ): NativeExecutionRecord[] {
     return uniqueRetirements(retirements).map((retirement) => (
       this.nativeExecutionRetirementRecord(retirement)
     ));
   }
 
-  private nativeExecutionRefForRetirement(retirement: SessionContextRetirement): NativeExecutionRef {
+  private nativeExecutionRefForRetirement(retirement: SessionNativeRetirement): NativeExecutionRef {
     const backendId = retirement.backendId.trim();
     const existing = retirement.binding.nativeExecutionRef;
     if (existing) {
@@ -2233,9 +2239,9 @@ export class EchoInkHarnessService {
 }
 
 function uniqueRetirements(
-  retirements: readonly SessionContextRetirement[]
-): SessionContextRetirement[] {
-  const unique = new Map<string, SessionContextRetirement>();
+  retirements: readonly SessionNativeRetirement[]
+): SessionNativeRetirement[] {
+  const unique = new Map<string, SessionNativeRetirement>();
   for (const retirement of retirements) {
     const existing = unique.get(retirement.retirementId);
     if (existing && retirementIdentityKey(existing) !== retirementIdentityKey(retirement)) {
@@ -2838,7 +2844,7 @@ function sameNativeExecutionRefIdentity(
     && left.vaultId.trim() === right.vaultId.trim();
 }
 
-function retirementIdentityKey(retirement: SessionContextRetirement): string {
+function retirementIdentityKey(retirement: SessionNativeRetirement): string {
   return JSON.stringify(canonicalIdentityValue(retirement));
 }
 

@@ -7,6 +7,7 @@ export const STORAGE_INVENTORY_LOCAL_SOURCE_IDS = Object.freeze([
   "conversations",
   "history",
   "harness-runs",
+  "record-mutations",
   "native-store",
   "raw"
 ] as const);
@@ -276,6 +277,9 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "cleanup-pending",
   "cleanup-quarantined",
   "conversation-active-payload-missing",
+  "conversation-deletion-tombstone-corrupt",
+  "conversation-deletion-tombstone-entry-unsafe",
+  "conversation-deletion-tombstone-identity-mismatch",
   "conversation-directory-unindexed",
   "conversation-index-corrupt",
   "conversation-index-count-drift",
@@ -365,6 +369,11 @@ export const STORAGE_INVENTORY_REPORT_CODES = Object.freeze([
   "raw-file-unreferenced",
   "raw-reference-missing",
   "raw-store-unavailable",
+  "record-mutation-chain-corrupt",
+  "record-mutation-duplicate-id",
+  "record-mutation-entry-unsafe",
+  "record-mutation-staging-missing",
+  "record-mutation-staging-present",
   "run-event-duplicate-id",
   "run-event-metadata-invalid",
   "run-id-ambiguous",
@@ -396,25 +405,34 @@ export const STORAGE_INVENTORY_ENTITY_TYPES = Object.freeze([
   "commit",
   "index-entry",
   "message",
+  "mutation",
   "native-execution",
   "raw-body",
   "run",
-  "session"
+  "session",
+  "tombstone"
 ] as const);
 export const STORAGE_INVENTORY_METRIC_NAMES = Object.freeze([
   "backend-binding-count",
   "cleanup-backlog-count",
   "day-count",
+  "deletion-tombstone-count",
   "event-count",
   "legacy-thread-binding-count",
   "local-commit-run-count",
   "message-count",
   "metadata-entry-count",
+  "mutation-count",
   "native-record-count",
   "raw-bodies-read",
   "raw-reference-count",
   "run-count",
   "session-count",
+  "state-aborted",
+  "state-committed",
+  "state-compensating",
+  "state-planned",
+  "state-staged",
   "terminal-run-count"
 ] as const);
 export const STORAGE_INVENTORY_FINDING_METADATA_NAMES = Object.freeze([
@@ -689,7 +707,7 @@ function validateSources(value: unknown): void {
     seen.size !== STORAGE_INVENTORY_LOCAL_SOURCE_IDS.length
     || STORAGE_INVENTORY_LOCAL_SOURCE_IDS.some((sourceId) => !seen.has(sourceId))
   ) {
-    fail("invalid-envelope", "sources 必须逐一包含六个本地 Store");
+    fail("invalid-envelope", "sources 必须逐一包含全部本地 Store");
   }
 }
 

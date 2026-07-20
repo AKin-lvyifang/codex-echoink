@@ -575,3 +575,37 @@
   guard 检查 417 个 tracked files；共享软链接未暂存。本批尚待提交。
 - destructive product guard 保持关闭；没有部署或修改真实 Vault，也没有执行
   migration、retention、Raw GC、历史删除或 Native cleanup。
+
+## 2026-07-20：Live Conversation RecordMutation 与跨 Store authority
+
+- 新增 live `ConversationRecordMutation` coordinator。普通 Conversation 的清空和
+  删除现在统一执行双次稳定 inventory、Root Registry、不可变 execution plan、
+  retain proof、Journal/Trash、Conversation target CAS、Store readback recovery、
+  Native retirement 与 `data.json` 投影；每个会话使用独立 mutation 和 receipt。
+- `clear-conversation-records` 提交新的空 payload/context 并保留会话壳；
+  `delete-conversation` 提交外置 deletion tombstone。目标写入 Promise 抛错后仍以
+  durable readback 为准：tombstone 已落盘则 roll-forward，未落盘则补偿并恢复
+  原 Conversation。
+- 删除会话产品 guard 已移除；普通会话右键菜单新增“清空会话记录”。preview
+  blocker 与用户取消都不会创建 mutation，Knowledge/运行中会话继续阻断。
+- 产品确认文案明确 Memory/Artifact 边界：会话操作只保留记录并追加来源变化；
+  如需丢弃，必须先在正式 Memory 或产物管理中单独处理。
+- Native deletion retirement 新增 tombstone target identity。promotion 必须读到
+  committed RecordMutation Journal，并同时匹配 mutation、source Conversation、
+  tombstone ID/digest；partial registration 失败时已登记记录会被补偿为
+  failed/aborted，不能进入 cleanup。
+- Storage Inventory 新增正式来源 `record-mutations`，严格扫描完整 revision
+  chain。deleted Native retirement 只有同时匹配 deletion tombstone、committed
+  Journal 与 source/target identity 才视为 linked；aborted Journal 只有在原
+  Conversation 精确恢复且 retirement 已 aborted 时视为一致，错绑继续阻断迁移。
+- 故障注入覆盖 target CAS 失败、tombstone 耐久后 Promise 抛错、`data.json`
+  投影失败后的重启修复、Native retirement 部分登记、用户取消、preview blocker
+  和 tombstone digest 错绑。本批最终全量 `npm run test` 已输出
+  `All tests passed`；typecheck、build、baseline lint、`git diff --check` 与新增
+  coordinator 定向 ESLint 均通过。明确暂存 25 个预期文件后 release contract 与
+  public guard 通过，public guard 检查 419 个 tracked files；checkpoint commit
+  尚待收口。
+- 本批没有部署或修改真实 Vault，也没有执行 migration、retention、Raw GC、
+  历史删除或 Native 批量 cleanup。Phase 2 仍未完成；下一批进入 Knowledge
+  History 引用投影、Raw GC preview、retention、migration validator 与 V2→V1
+  exporter。

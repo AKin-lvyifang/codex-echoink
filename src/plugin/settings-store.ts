@@ -13,11 +13,15 @@ import {
   createConversationContentRevision,
   FileConversationStore,
   type CommitConversationContextOptions,
+  type CommitConversationRecordClearOptions,
   type ConversationAuthorityProbe,
   type ConversationAuthorityProof,
   type ConversationContextCommitReceipt,
+  type ConversationDeletionTombstoneV1,
   type ConversationMessageAuthorityProbe,
-  type ConversationMessageAuthorityProof
+  type ConversationMessageAuthorityProof,
+  type ConversationRecordMutationSource,
+  type PlanConversationRecordMutationSourcesInput
 } from "../harness/conversation/conversation-store";
 import {
   assertConversationMutationAuthority,
@@ -40,6 +44,7 @@ import {
 import {
   runRecordMutationRecovery,
   runRecordMutationRecoveryUnderAuthority,
+  type RecordMutationRecoveryRunnerResult,
   type RecordMutationRecoveryTrashParticipant
 } from "../harness/lifecycle/record-mutation-recovery-runner";
 import type {
@@ -49,7 +54,8 @@ import {
   loadRecordMutationExecutionPlan
 } from "../harness/lifecycle/record-mutation-execution-plan";
 import {
-  materializeRecordMutationExecution
+  materializeRecordMutationExecution,
+  type MaterializedRecordMutationExecution
 } from "../harness/lifecycle/record-mutation-execution-runtime";
 import {
   createEchoInkRecordMutationSourceAdapterFactory,
@@ -528,10 +534,6 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     this.poisonSettingsRecovery("settings_persist_failed", message);
   }
 
-  async deleteConversationSession(sessionId: string): Promise<boolean> {
-    return await this.getConversationStore().deleteSession(sessionId);
-  }
-
   registerPristineConversationSession(session: StoredSession): void {
     this.assertAuthoritativeLiveSession(session);
     assertRuntimePristineConversation(session);
@@ -595,6 +597,103 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     probe: ConversationAuthorityProbe
   ): Promise<ConversationAuthorityProof> {
     return await this.getConversationStore().proveSessionContextAuthority(probe);
+  }
+
+  async planConversationRecordMutationSources(
+    input: PlanConversationRecordMutationSourcesInput,
+    authority: ConversationMutationAuthority
+  ): Promise<ConversationRecordMutationSource[]> {
+    assertConversationMutationAuthority(authority, input.conversationId);
+    return await this.getConversationStore()
+      .planConversationRecordMutationSources(input);
+  }
+
+  async commitConversationRecordClear(
+    session: StoredSession,
+    options: CommitConversationRecordClearOptions,
+    authority: ConversationMutationAuthority
+  ): Promise<ConversationContextCommitReceipt> {
+    assertConversationMutationAuthority(authority, session.id);
+    return await this.getConversationStore()
+      .commitConversationRecordClear(session, options);
+  }
+
+  async commitConversationDeletionTombstone(
+    tombstone: ConversationDeletionTombstoneV1,
+    options: CommitConversationContextOptions,
+    authority: ConversationMutationAuthority
+  ): Promise<ConversationDeletionTombstoneV1> {
+    assertConversationMutationAuthority(
+      authority,
+      tombstone.conversationId
+    );
+    return await this.getConversationStore()
+      .commitConversationDeletionTombstone(tombstone, options);
+  }
+
+  async settleConversationRecordMutationExecution(
+    execution: MaterializedRecordMutationExecution,
+    authority: ConversationMutationAuthority
+  ): Promise<RecordMutationRecoveryRunnerResult> {
+    assertConversationMutationAuthority(
+      authority,
+      execution.journal.record.intent.conversationId
+    );
+    return await runRecordMutationRecoveryUnderAuthority({
+      journal: execution.journal,
+      withConversationMutation: async (conversationId, action) =>
+        await this.withConversationMutation(conversationId, action),
+      inspectConversation: async (intent) =>
+        await this.inspectRecordMutationConversation(intent),
+      trashParticipants: execution.trashParticipants,
+      sourceDeletedParticipants: execution.sourceDeletedParticipants
+    }, authority);
+  }
+
+  async projectCommittedConversationRecordMutation(input: {
+    operation: "clear-conversation-records" | "delete-conversation";
+    sourceContentRevision: string;
+    sourceSession: StoredSession;
+    targetSession?: StoredSession;
+  }, authority: ConversationMutationAuthority): Promise<
+    "updated" | "awaiting-recovery"
+  > {
+    assertConversationMutationAuthority(authority, input.sourceSession.id);
+    const index = this.plugin.settings.sessions.findIndex(
+      (candidate) => candidate.id === input.sourceSession.id
+    );
+    if (index < 0) {
+      return input.operation === "delete-conversation"
+        ? "updated"
+        : "awaiting-recovery";
+    }
+    const live = this.plugin.settings.sessions[index];
+    if (
+      live !== input.sourceSession
+      || createConversationContentRevision(live)
+        !== input.sourceContentRevision
+    ) {
+      return "awaiting-recovery";
+    }
+    if (input.operation === "delete-conversation") {
+      this.plugin.settings.sessions.splice(index, 1);
+      if (this.plugin.settings.activeSessionId === input.sourceSession.id) {
+        this.plugin.settings.activeSessionId =
+          this.plugin.settings.sessions[0]?.id ?? "";
+      }
+    } else {
+      if (!input.targetSession) return "awaiting-recovery";
+      replaceStoredSessionInPlace(live, input.targetSession);
+    }
+    try {
+      await this.saveSettings(true, {
+        flushConversationStore: false,
+        flushKnowledgeBaseHistory: false
+      });
+      return "updated";
+    } catch {
+      return "awaiting-recovery";
+    }
   }
 
   async commitKnowledgeRunDurably(): Promise<LocalRunCommitResult> {
@@ -1212,6 +1311,19 @@ export function settingsForDataSave(settings: CodexForObsidianSettings): CodexFo
 
 function cloneSettings(settings: CodexForObsidianSettings): CodexForObsidianSettings {
   return JSON.parse(JSON.stringify(settings)) as CodexForObsidianSettings;
+}
+
+function replaceStoredSessionInPlace(
+  target: StoredSession,
+  source: StoredSession
+): void {
+  for (const key of Object.keys(target) as Array<keyof StoredSession>) {
+    delete target[key];
+  }
+  Object.assign(
+    target,
+    JSON.parse(JSON.stringify(source)) as StoredSession
+  );
 }
 
 function cloneJsonValue(value: unknown): unknown {

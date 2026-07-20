@@ -12,7 +12,8 @@ import {
   hasTrustedNativeExecutionIdentity,
   isNativeCleanupAuthorityEvidenceMissing,
   isValidEchoInkHostProcessDispositionReceipt,
-  nativeCleanupAuthorityEvidenceMissingReason
+  nativeCleanupAuthorityEvidenceMissingReason,
+  nativeRetirementTargetState
 } from "../contracts/native-execution";
 import { NativeExecutionStore } from "./native-execution-store";
 
@@ -1311,12 +1312,31 @@ function sameRetirementIdentity(left: NativeExecutionRecord, right: NativeExecut
     && leftRetirement.sourceContextId === rightRetirement.sourceContextId
     && leftRetirement.sourceWorkspaceFingerprint
       === rightRetirement.sourceWorkspaceFingerprint
-    && leftRetirement.targetGeneration === rightRetirement.targetGeneration
-    && leftRetirement.targetCommitId === rightRetirement.targetCommitId
-    && leftRetirement.targetContextId === rightRetirement.targetContextId
-    && leftRetirement.targetWorkspaceFingerprint === rightRetirement.targetWorkspaceFingerprint
+    && sameRetirementTarget(leftRetirement, rightRetirement)
     && leftRetirement.reason === rightRetirement.reason
   );
+}
+
+function sameRetirementTarget(
+  left: NonNullable<NativeExecutionRecord["retirement"]>,
+  right: NonNullable<NativeExecutionRecord["retirement"]>
+): boolean {
+  const leftState = nativeRetirementTargetState(left);
+  const rightState = nativeRetirementTargetState(right);
+  if (leftState !== rightState || leftState === "invalid") return false;
+  if (leftState === "deleted") {
+    return left.targetStatus === "deleted"
+      && right.targetStatus === "deleted"
+      && left.targetTombstoneId === right.targetTombstoneId
+      && left.targetTombstoneDigest === right.targetTombstoneDigest;
+  }
+  return left.targetStatus !== "deleted"
+    && right.targetStatus !== "deleted"
+    && left.targetGeneration === right.targetGeneration
+    && left.targetCommitId === right.targetCommitId
+    && left.targetContextId === right.targetContextId
+    && left.targetWorkspaceFingerprint
+      === right.targetWorkspaceFingerprint;
 }
 
 function sameCleanupAuthorityIdentity(

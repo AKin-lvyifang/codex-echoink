@@ -7,7 +7,11 @@ import {
 } from "node:fs/promises";
 import * as path from "node:path";
 import { pluginDataDir } from "../../core/raw-message-store";
-import { createConversationPayloadKeyV2 } from "../conversation/conversation-store";
+import {
+  createConversationPayloadKeyV2,
+  parseConversationDeletionTombstone,
+  type ConversationDeletionTombstoneV1
+} from "../conversation/conversation-store";
 import {
   isSafeConversationSessionId,
   legacyConversationPathPart
@@ -15,8 +19,17 @@ import {
 import {
   isSafeNativeExecutionTransport,
   nativeRetirementSourceIdentityState,
+  nativeRetirementTargetState,
   type NativeExecutionRecord
 } from "../contracts/native-execution";
+import {
+  assertRecordMutationChainCompleteness,
+  assertRecordMutationTransition,
+  parseRecordMutationRevision,
+  RECORD_MUTATION_MAX_REVISIONS,
+  RECORD_MUTATION_SCHEMA_VERSION,
+  type RecordMutationRevision
+} from "../lifecycle/record-mutation-contract";
 import { NATIVE_EXECUTION_STORE_SCHEMA_VERSION } from "../native/native-execution-store";
 import {
   createStorageInventoryOpaqueRef,
@@ -42,11 +55,14 @@ const CURRENT_SETTINGS_SCHEMA = 39;
 const CURRENT_CONVERSATION_SCHEMA = 1;
 const CURRENT_HISTORY_SCHEMA = 1;
 const CURRENT_NATIVE_SCHEMA = NATIVE_EXECUTION_STORE_SCHEMA_VERSION;
+const RECORD_MUTATION_CHAIN_TOKEN_PATTERN = /^mutation-[a-f0-9]{24}$/;
+const RECORD_MUTATION_ENTRY_PATTERN = /^entry-([0-9]{16})\.json$/;
 const LOCAL_SOURCE_IDS: readonly StorageInventoryLocalSourceId[] = [
   "data-json",
   "conversations",
   "history",
   "harness-runs",
+  "record-mutations",
   "native-store",
   "raw"
 ];
@@ -123,6 +139,7 @@ interface DataFacts {
 
 interface ConversationFacts {
   sessions: Map<string, SessionFact>;
+  deletionTombstones: Map<string, ConversationDeletionTombstoneV1>;
   messageOwners: Map<string, string[]>;
   rawReferences: RawReference[];
 }
@@ -140,6 +157,10 @@ interface RunFacts {
 
 interface NativeFacts {
   records: NativeExecutionRecord[];
+}
+
+interface RecordMutationFacts {
+  records: Map<string, RecordMutationRevision>;
 }
 
 interface ScanContext {
@@ -225,11 +246,13 @@ export async function scanStorageInventory(
     );
   }
 
-  const [data, conversations, history, runs, native] = await Promise.all([
+  const [data, conversations, history, runs, recordMutations, native] =
+    await Promise.all([
     scanDataJson(context),
     scanConversations(context),
     scanHistory(context),
     scanHarnessRuns(context),
+    scanRecordMutations(context),
     scanNativeStore(context)
   ]);
   const relations: StorageInventoryRelation[] = [];
@@ -238,6 +261,7 @@ export async function scanStorageInventory(
     ...conversations.accumulator.findings,
     ...history.accumulator.findings,
     ...runs.accumulator.findings,
+    ...recordMutations.accumulator.findings,
     ...native.accumulator.findings
   ];
 
@@ -251,6 +275,7 @@ export async function scanStorageInventory(
     native.facts,
     runs.facts,
     conversations.facts,
+    recordMutations.facts,
     relations,
     findings
   );
@@ -278,6 +303,7 @@ export async function scanStorageInventory(
     conversations.accumulator.finalize(),
     history.accumulator.finalize(),
     runs.accumulator.finalize(),
+    recordMutations.accumulator.finalize(),
     native.accumulator.finalize(),
     raw.accumulator.finalize()
   ];
@@ -458,6 +484,7 @@ async function scanConversations(
   const accumulator = new SourceAccumulator("conversations", context.pluginRoot);
   const facts: ConversationFacts = {
     sessions: new Map(),
+    deletionTombstones: new Map(),
     messageOwners: new Map(),
     rawReferences: []
   };
@@ -469,6 +496,12 @@ async function scanConversations(
     accumulator.missingCount += 1;
     return { accumulator, facts };
   }
+  facts.deletionTombstones =
+    await scanConversationDeletionTombstones(
+      context,
+      accumulator,
+      root
+    );
 
   const indexPath = path.join(root, "index.json");
   const indexRead = await readTextFile(context, accumulator, indexPath, false);
@@ -752,10 +785,94 @@ async function scanConversations(
     });
     accumulator.markPartial("conversation-session-id-collision");
   }
-  accumulator.recordCount = facts.sessions.size;
+  accumulator.recordCount =
+    facts.sessions.size + facts.deletionTombstones.size;
   accumulator.incrementMetric("session-count", facts.sessions.size);
+  accumulator.incrementMetric(
+    "deletion-tombstone-count",
+    facts.deletionTombstones.size
+  );
   accumulator.relations.push(...[]);
   return { accumulator, facts };
+}
+
+async function scanConversationDeletionTombstones(
+  context: ScanContext,
+  accumulator: SourceAccumulator,
+  conversationRoot: string
+): Promise<Map<string, ConversationDeletionTombstoneV1>> {
+  const tombstones = new Map<string, ConversationDeletionTombstoneV1>();
+  const root = path.join(conversationRoot, "deletions");
+  const entries = await listDirectory(
+    context,
+    accumulator,
+    root,
+    true
+  );
+  if (!entries) return tombstones;
+  for (const name of entries.sort()) {
+    if (!name.endsWith(".json")) {
+      accumulator.addCorrupt(
+        "conversation-deletion-tombstone-entry-unsafe",
+        name
+      );
+      continue;
+    }
+    const conversationId = name.slice(0, -".json".length);
+    if (!isSafeConversationSessionId(conversationId)) {
+      accumulator.addCorrupt(
+        "conversation-deletion-tombstone-entry-unsafe",
+        name
+      );
+      continue;
+    }
+    const tombstonePath = path.join(root, name);
+    const read = await readTextFile(
+      context,
+      accumulator,
+      tombstonePath,
+      false
+    );
+    if (!read) continue;
+    let tombstone: ConversationDeletionTombstoneV1;
+    try {
+      tombstone = parseConversationDeletionTombstone(
+        JSON.parse(read.text) as unknown
+      );
+    } catch {
+      accumulator.addCorrupt(
+        "conversation-deletion-tombstone-corrupt",
+        tombstonePath
+      );
+      continue;
+    }
+    if (
+      tombstone.conversationId !== conversationId
+      || tombstones.has(conversationId)
+    ) {
+      accumulator.addCorrupt(
+        "conversation-deletion-tombstone-identity-mismatch",
+        tombstonePath
+      );
+      continue;
+    }
+    tombstones.set(conversationId, tombstone);
+    accumulator.observeRecordMetadata(
+      "conversation-deletion-tombstone",
+      {
+        conversationId,
+        mutationId: tombstone.mutationId,
+        tombstoneId: tombstone.tombstoneId,
+        sourceGeneration: tombstone.sourceGeneration,
+        sourceCommitId: tombstone.sourceCommitId,
+        sourceContentRevision: tombstone.sourceContentRevision,
+        deletedAt: tombstone.deletedAt,
+        digest: tombstone.digest
+      }
+    );
+    accumulator.addTimestamp(tombstone.deletedAt);
+  }
+  return tombstones;
 }
 
 function validateConversationPayloadPointers(
@@ -1102,6 +1219,13 @@ function conversationPayloadKey(commitId: string): string {
   return `payload-${createHash("sha256")
     .update(commitId)
     .digest("hex")}`;
+}
+
+function recordMutationToken(mutationId: string): string {
+  return `mutation-${createHash("sha256")
+    .update(Buffer.from(mutationId, "utf8"))
+    .digest("hex")
+    .slice(0, 24)}`;
 }
 
 async function scanHistory(context: ScanContext): Promise<SourceScan<HistoryFacts>> {
@@ -1496,6 +1620,220 @@ async function scanHarnessRuns(context: ScanContext): Promise<SourceScan<RunFact
   accumulator.incrementMetric("run-count", facts.runIds.size);
   accumulator.incrementMetric("terminal-run-count", facts.terminalRunIds.size);
   accumulator.incrementMetric("local-commit-run-count", facts.locallyCommittedRunIds.size);
+  return { accumulator, facts };
+}
+
+async function scanRecordMutations(
+  context: ScanContext
+): Promise<SourceScan<RecordMutationFacts>> {
+  const accumulator = new SourceAccumulator(
+    "record-mutations",
+    context.pluginRoot
+  );
+  const facts: RecordMutationFacts = { records: new Map() };
+  const root = path.join(context.pluginRoot, "record-mutations");
+  const entries = await listDirectory(
+    context,
+    accumulator,
+    root,
+    true
+  );
+  if (!entries) return { accumulator, facts };
+  accumulator.schemaVersion = String(RECORD_MUTATION_SCHEMA_VERSION);
+
+  if (!entries.includes(".staging")) {
+    accumulator.addCorrupt(
+      "record-mutation-staging-missing",
+      root
+    );
+  } else {
+    const staged = await listDirectory(
+      context,
+      accumulator,
+      path.join(root, ".staging"),
+      false
+    );
+    if (staged?.length) {
+      accumulator.addFinding({
+        code: "record-mutation-staging-present",
+        category: "ambiguous",
+        severity: "blocking",
+        recordRaw: path.join(root, ".staging"),
+        count: staged.length,
+        blocksMigration: true
+      });
+    }
+  }
+
+  for (const chainToken of entries
+    .filter((name) => name !== ".staging")
+    .sort()) {
+    if (!RECORD_MUTATION_CHAIN_TOKEN_PATTERN.test(chainToken)) {
+      accumulator.addCorrupt(
+        "record-mutation-entry-unsafe",
+        chainToken
+      );
+      continue;
+    }
+    const chainRoot = path.join(root, chainToken);
+    const chainEntries = await listDirectory(
+      context,
+      accumulator,
+      chainRoot,
+      false
+    );
+    if (
+      !chainEntries
+      || !chainEntries.length
+      || chainEntries.length > RECORD_MUTATION_MAX_REVISIONS
+    ) {
+      accumulator.addCorrupt(
+        "record-mutation-chain-corrupt",
+        chainToken
+      );
+      continue;
+    }
+    const ordered = chainEntries.map((name) => {
+      const match = RECORD_MUTATION_ENTRY_PATTERN.exec(name);
+      return {
+        name,
+        revision: match ? Number(match[1]) : -1
+      };
+    }).sort((left, right) => left.revision - right.revision);
+    const chain: RecordMutationRevision[] = [];
+    let chainValid = true;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const entry = ordered[index];
+      if (
+        entry.revision !== index
+        || entry.name
+          !== `entry-${String(index).padStart(16, "0")}.json`
+      ) {
+        accumulator.addCorrupt(
+          "record-mutation-chain-corrupt",
+          `${chainToken}:${entry.name}`
+        );
+        chainValid = false;
+        break;
+      }
+      const entryPath = path.join(chainRoot, entry.name);
+      const read = await readTextFile(
+        context,
+        accumulator,
+        entryPath,
+        false
+      );
+      if (!read) {
+        chainValid = false;
+        break;
+      }
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(read.text) as unknown;
+      } catch {
+        accumulator.addCorrupt(
+          "record-mutation-chain-corrupt",
+          entryPath
+        );
+        chainValid = false;
+        break;
+      }
+      const raw = objectRecord(parsedJson);
+      const schemaVersion = finiteInteger(raw?.schemaVersion);
+      if (
+        schemaVersion !== null
+        && schemaVersion > RECORD_MUTATION_SCHEMA_VERSION
+      ) {
+        accumulator.futureSchemaCount += 1;
+        accumulator.markPartial("future-schema");
+        accumulator.addFinding({
+          code: "future-schema",
+          category: "future-schema",
+          severity: "blocking",
+          recordRaw: entryPath,
+          blocksMigration: true
+        });
+      }
+      let revision: RecordMutationRevision;
+      try {
+        revision = parseRecordMutationRevision(parsedJson);
+      } catch {
+        accumulator.addCorrupt(
+          "record-mutation-chain-corrupt",
+          entryPath
+        );
+        chainValid = false;
+        break;
+      }
+      if (
+        revision.revision !== index
+        || recordMutationToken(revision.mutationId) !== chainToken
+      ) {
+        accumulator.addCorrupt(
+          "record-mutation-chain-corrupt",
+          entryPath
+        );
+        chainValid = false;
+        break;
+      }
+      if (chain.length) {
+        try {
+          assertRecordMutationTransition(
+            chain[chain.length - 1],
+            revision
+          );
+        } catch {
+          accumulator.addCorrupt(
+            "record-mutation-chain-corrupt",
+            entryPath
+          );
+          chainValid = false;
+          break;
+        }
+      }
+      chain.push(revision);
+    }
+    if (!chainValid) continue;
+    try {
+      assertRecordMutationChainCompleteness(chain);
+    } catch {
+      accumulator.addCorrupt(
+        "record-mutation-chain-corrupt",
+        chainToken
+      );
+      continue;
+    }
+    const current = chain[chain.length - 1];
+    if (facts.records.has(current.mutationId)) {
+      accumulator.addCorrupt(
+        "record-mutation-duplicate-id",
+        current.mutationId
+      );
+      continue;
+    }
+    facts.records.set(current.mutationId, current);
+    accumulator.observeRecordMetadata("record-mutation", {
+      mutationId: current.mutationId,
+      revision: current.revision,
+      state: current.state,
+      digest: current.digest,
+      intentDigest: current.intentDigest,
+      operation: current.intent.operation,
+      conversationId: current.intent.conversationId,
+      targetConversation: current.intent.targetConversation,
+      trashPolicy: current.intent.trashPolicy,
+      participantCount: current.intent.participants.length,
+      rootBindingCount: current.intent.rootBindings.length,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+      terminalCode: current.terminal?.code ?? null
+    });
+    accumulator.addTimestamp(current.createdAt);
+    accumulator.addTimestamp(current.updatedAt);
+    accumulator.incrementMetric(`state-${current.state}`);
+  }
+  accumulator.recordCount = facts.records.size;
+  accumulator.incrementMetric("mutation-count", facts.records.size);
   return { accumulator, facts };
 }
 
@@ -2006,6 +2344,7 @@ function correlateNativeRecords(
   native: NativeFacts,
   runs: RunFacts,
   conversations: ConversationFacts,
+  recordMutations: RecordMutationFacts,
   relations: StorageInventoryRelation[],
   findings: StorageInventoryFinding[]
 ): void {
@@ -2017,6 +2356,91 @@ function correlateNativeRecords(
         retirement.targetConversationId
       );
       const conversationExists = Boolean(conversation);
+      if (retirement.targetStatus === "deleted") {
+        const tombstone = conversations.deletionTombstones.get(
+          retirement.targetConversationId
+        );
+        const mutation = retirement.recordMutationId
+          ? recordMutations.records.get(retirement.recordMutationId)
+          : undefined;
+        const committed =
+          deletedRetirementCommittedAuthorityMatches(
+            record,
+            conversation,
+            tombstone,
+            mutation
+          );
+        const aborted =
+          deletedRetirementAbortedAuthorityMatches(
+            record,
+            conversation,
+            tombstone,
+            mutation
+          );
+        relations.push({
+          kind: "native-conversation-ownership",
+          from: {
+            sourceId: "native-store",
+            entityType: "native-execution",
+            ref: nativeRef
+          },
+          to: {
+            sourceId: "conversations",
+            entityType: committed ? "tombstone" : "session",
+            ref: committed
+              ? opaque(
+                  "conversation-tombstone",
+                  `${retirement.targetConversationId}:`
+                  + retirement.targetTombstoneId
+                )
+              : opaque(
+                  "conversation-session",
+                  retirement.targetConversationId
+                )
+          },
+          status: committed || aborted
+            ? "linked"
+            : conversationExists || tombstone
+              ? "ambiguous"
+              : "missing"
+        });
+        relations.push({
+          kind: "native-retirement-commit",
+          from: {
+            sourceId: "native-store",
+            entityType: "native-execution",
+            ref: nativeRef
+          },
+          to: {
+            sourceId: "record-mutations",
+            entityType: "mutation",
+            ref: opaque(
+              "record-mutation",
+              retirement.recordMutationId ?? record.id
+            )
+          },
+          status: committed || aborted
+            ? "linked"
+            : mutation
+              ? "ambiguous"
+              : "missing"
+        });
+        if (committed || aborted) continue;
+        findings.push(makeFinding({
+          sourceId: "native-store",
+          code: "native-retirement-commit-mismatch",
+          category: "ambiguous",
+          severity: "blocking",
+          recordRaw: record.id,
+          relatedRaw: [
+            retirement.targetConversationId,
+            retirement.targetTombstoneId,
+            retirement.recordMutationId ?? ""
+          ],
+          blocksMigration: true
+        }));
+        continue;
+      }
       const exactCommit = Boolean(
         conversation
         && record.sessionId === retirement.targetConversationId
@@ -2148,6 +2572,93 @@ function correlateNativeRecords(
       }));
     }
   }
+}
+
+function deletedRetirementCommittedAuthorityMatches(
+  record: NativeExecutionRecord,
+  conversation: SessionFact | undefined,
+  tombstone: ConversationDeletionTombstoneV1 | undefined,
+  mutation: RecordMutationRevision | undefined
+): boolean {
+  const retirement = record.retirement;
+  if (
+    retirement?.targetStatus !== "deleted"
+    || mutation?.state !== "committed"
+    || conversation
+    || !tombstone
+    || !deletedRetirementMutationIdentityMatches(record, mutation)
+  ) {
+    return false;
+  }
+  return (
+    tombstone.conversationId === retirement.targetConversationId
+    && tombstone.mutationId === retirement.recordMutationId
+    && tombstone.tombstoneId === retirement.targetTombstoneId
+    && tombstone.digest === retirement.targetTombstoneDigest
+    && tombstone.sourceGeneration === retirement.sourceGeneration
+    && tombstone.sourceCommitId === retirement.sourceCommitId
+    && tombstone.sourceContentRevision
+      === mutation.intent.expectedConversationContentRevision
+  );
+}
+
+function deletedRetirementAbortedAuthorityMatches(
+  record: NativeExecutionRecord,
+  conversation: SessionFact | undefined,
+  tombstone: ConversationDeletionTombstoneV1 | undefined,
+  mutation: RecordMutationRevision | undefined
+): boolean {
+  const retirement = record.retirement;
+  if (
+    retirement?.targetStatus !== "deleted"
+    || mutation?.state !== "aborted"
+    || tombstone
+    || !conversation
+    || record.localCommit !== "failed"
+    || record.cleanup !== "aborted"
+    || !deletedRetirementMutationIdentityMatches(record, mutation)
+  ) {
+    return false;
+  }
+  return (
+    conversation.generation === retirement.sourceGeneration
+    && conversation.commitId === retirement.sourceCommitId
+    && (
+      retirement.sourceContextId === undefined
+      || retirement.sourceContextId === null
+      || conversation.contextId === retirement.sourceContextId
+    )
+    && (
+      retirement.sourceWorkspaceFingerprint === undefined
+      || retirement.sourceWorkspaceFingerprint === null
+      || conversation.workspaceFingerprint
+        === retirement.sourceWorkspaceFingerprint
+    )
+  );
+}
+
+function deletedRetirementMutationIdentityMatches(
+  record: NativeExecutionRecord,
+  mutation: RecordMutationRevision
+): boolean {
+  const retirement = record.retirement;
+  if (retirement?.targetStatus !== "deleted") return false;
+  const target = mutation.intent.targetConversation;
+  return (
+    mutation.mutationId === retirement.recordMutationId
+    && mutation.intent.operation === "delete-conversation"
+    && mutation.intent.trashPolicy === "required"
+    && mutation.intent.conversationId
+      === retirement.targetConversationId
+    && record.sessionId === retirement.targetConversationId
+    && mutation.intent.expectedConversationGeneration
+      === retirement.sourceGeneration
+    && mutation.intent.expectedConversationCommitId
+      === retirement.sourceCommitId
+    && target.status === "deleted"
+    && target.tombstoneId === retirement.targetTombstoneId
+    && target.digest === retirement.targetTombstoneDigest
+  );
 }
 
 async function readTextFile(
@@ -2471,11 +2982,21 @@ function nativeRecordMetadataKey(record: NativeExecutionRecord): string {
               record.retirement.sourceWorkspaceFingerprint
           }
           : {}),
-        targetGeneration: record.retirement.targetGeneration,
-        targetCommitId: record.retirement.targetCommitId,
-        targetContextId: record.retirement.targetContextId ?? null,
-        targetWorkspaceFingerprint:
-          record.retirement.targetWorkspaceFingerprint ?? null,
+        ...(record.retirement.targetStatus === "deleted"
+          ? {
+            targetStatus: "deleted",
+            targetTombstoneId: record.retirement.targetTombstoneId,
+            targetTombstoneDigest:
+              record.retirement.targetTombstoneDigest
+          }
+          : {
+            targetStatus: "present",
+            targetGeneration: record.retirement.targetGeneration,
+            targetCommitId: record.retirement.targetCommitId,
+            targetContextId: record.retirement.targetContextId ?? null,
+            targetWorkspaceFingerprint:
+              record.retirement.targetWorkspaceFingerprint ?? null
+          }),
         reason: record.retirement.reason
       }
       : null,
@@ -2592,17 +3113,14 @@ function isNativeRetirement(
     retirement
     && isNonEmptyString(retirement.targetConversationId)
     && nativeRetirementSourceIdentityState(retirement) !== "invalid"
-    && typeof retirement.targetGeneration === "number"
-    && Number.isSafeInteger(retirement.targetGeneration)
-    && retirement.targetGeneration > 0
-    && isNonEmptyString(retirement.targetCommitId)
+    && nativeRetirementTargetState(retirement) !== "invalid"
     && (
-      retirement.targetContextId === undefined
-      || isNonEmptyString(retirement.targetContextId)
-    )
-    && (
-      retirement.targetWorkspaceFingerprint === undefined
-      || isNonEmptyString(retirement.targetWorkspaceFingerprint)
+      nativeRetirementTargetState(retirement) !== "deleted"
+      || (
+        isNonEmptyString(retirement.recordMutationId)
+        && nativeRetirementSourceIdentityState(retirement) === "complete"
+        && retirement.reason === "delete-conversation"
+      )
     )
     && isNonEmptyString(retirement.reason)
   );
