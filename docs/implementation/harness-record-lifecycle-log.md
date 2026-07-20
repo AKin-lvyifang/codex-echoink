@@ -943,3 +943,17 @@
   `npm run test`、typecheck、build、release/public guard 和 `git diff --check`
   通过；lint 保持 942 个 baseline finding，无新增。实机只读 capability probe
   通过。没有部署、修改真实 Vault、执行迁移或清理。
+
+## 2026-07-21：真实旧数据补证与副本搬家通过
+
+- 新增 `conversation-legacy-evidence-v1` 只读兼容档案。档案仅含匿名 owner/resource
+  摘要，并同时绑定 portable source fingerprint 与原始 V1 snapshot digest。
+- 迁移前建立正式 Run Record Store 的完整空 layout；旧关系由兼容档案证明，新 Run
+  从上线后进入正式 Store，不回填虚构 Workflow/Attempt。
+- V1 投影只修正三种已确认的历史格式差异：标题首尾空格、超过 512 字符的工具标题、
+  Snapshot 起止范围与旧计数口径不一致。原始 V1 不改。
+- 两份从最新真实插件目录建立的全新副本均完成 V1→V2 cutover。最终一份包含 19 个
+  Conversation、251 条 message、17 个 Snapshot、526 条兼容 owner edge；
+  owner proof 与 validation finding 均为 0。
+- V1 迁移前后 58 个文件的整树 SHA-256 相同；重复执行为 `already-active`。
+- 目前只完成代码和副本演练，正式 Vault 仍未迁移、部署或清理。

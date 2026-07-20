@@ -398,6 +398,38 @@ export class FileRunRecordStore {
     );
   }
 
+  async ensureInitialized(): Promise<void> {
+    const existing = await lstatOrNull(this.rootPath);
+    if (!existing) await mkdir(this.rootPath, { recursive: true });
+    const stats = await lstat(this.rootPath);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new RunRecordStoreCorruptError(
+        "unsafe-path",
+        "Run Record Store root is not a plain directory"
+      );
+    }
+    for (const directory of [
+      ".staging",
+      "attempt-payloads",
+      "attempt-summaries",
+      "workflow-summaries"
+    ]) {
+      const target = path.join(this.rootPath, directory);
+      const current = await lstatOrNull(target);
+      if (!current) await mkdir(target);
+      const directoryStats = await lstat(target);
+      if (
+        !directoryStats.isDirectory()
+        || directoryStats.isSymbolicLink()
+      ) {
+        throw new RunRecordStoreCorruptError(
+          "unsafe-path",
+          "Run Record Store collection is not a plain directory"
+        );
+      }
+    }
+  }
+
   /**
    * Serializes a multi-record mutation with every generation publication for
    * this Store root. Nested calls in the same async flow reuse the authority;

@@ -173,8 +173,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0;
   }
   async settlePendingKnowledgeBaseNativeExecutions(): Promise<number> { return this.knowledgeBase ? this.knowledgeBase.settlePendingKnowledgeBaseNativeExecutions() : 0; }
-  getKnowledgeBaseManager(): KnowledgeBaseManager | null { return this.knowledgeBase; }
-  getReviewManager(): ReviewManager | null { return this.review; }
+  getKnowledgeBaseManager(): KnowledgeBaseManager | null { return this.knowledgeBase; } getReviewManager(): ReviewManager | null { return this.review; }
   getEditorActions(): EditorActionController | null { return this.editorActions; }
   private handleCodexNotification(notification: CodexNotification): void {
     if (notification.method === "error") this.agentRuntimeHealth.reportFailure("codex-cli", notification.params, { source: "codex-notification" });

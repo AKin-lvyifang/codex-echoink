@@ -19,8 +19,13 @@ import {
   type RecordMigrationOwnerKind
 } from "./record-migration-validator";
 import {
+  conversationMigrationInventoryFromLegacySessions,
   legacyExternalOwnerEdges
 } from "./conversation-migration-projection";
+import {
+  FileConversationLegacyEvidenceStore,
+  type ConversationLegacyEvidenceReceipt
+} from "./conversation-legacy-evidence-store";
 
 const CURRENT_SETTINGS_VERSION = 39;
 const SETTINGS_KEYS = new Set([
@@ -89,6 +94,8 @@ export type ConversationMigrationOwnerProofFindingCode =
   | "native-store-invalid"
   | "run-store-missing"
   | "run-store-invalid"
+  | "legacy-evidence-store-missing"
+  | "legacy-evidence-store-invalid"
   | "owner-unproven";
 
 export interface ConversationMigrationOwnerProofFinding {
@@ -107,9 +114,12 @@ export interface ConversationMigrationOwnerProof {
 
 export interface InspectConversationMigrationOwnerProofInput {
   sourceSessions: readonly StoredSession[];
+  sourceFingerprint?: string;
+  retainedSourceDigest?: string;
   settingsDataPath: string;
   nativeStore: NativeExecutionStore;
   runStore: FileRunRecordStore;
+  legacyEvidenceStore?: FileConversationLegacyEvidenceStore;
 }
 
 interface SettingsProjectionSnapshot {
@@ -133,6 +143,18 @@ export async function inspectConversationMigrationOwnerProof(
   );
   const native = await inspectNativeStore(input.nativeStore, findings);
   const runs = await inspectRunStore(input.runStore, findings);
+  const sourceFingerprint = input.sourceFingerprint
+    ?? conversationMigrationInventoryFromLegacySessions(
+      input.sourceSessions
+    ).fingerprint;
+  const legacyEvidence = input.legacyEvidenceStore
+    ? await inspectLegacyEvidenceStore(
+      input.legacyEvidenceStore,
+      sourceFingerprint,
+      input.retainedSourceDigest,
+      findings
+    )
+    : null;
   const proven = new Map<string, RecordMigrationOwnerEdge>();
 
   if (settings) {
@@ -148,6 +170,9 @@ export async function inspectConversationMigrationOwnerProof(
   }
   if (runs) {
     collectRunEdges(input.sourceSessions, runs, proven);
+  }
+  if (legacyEvidence) {
+    collectLegacyEvidenceEdges(required, legacyEvidence, proven);
   }
 
   for (const edge of required) {
@@ -173,7 +198,9 @@ export async function inspectConversationMigrationOwnerProof(
     nativeFingerprint: native?.fingerprint
       ?? opaqueMigrationRef("migration-owner-store-state", "native"),
     runFingerprint: runs?.snapshotDigest
-      ?? opaqueMigrationRef("migration-owner-store-state", "run")
+      ?? opaqueMigrationRef("migration-owner-store-state", "run"),
+    legacyEvidenceFingerprint: legacyEvidence?.digest
+      ?? opaqueMigrationRef("migration-owner-store-state", "legacy-evidence")
   };
   return {
     status: withoutFingerprint.status,
@@ -181,6 +208,39 @@ export async function inspectConversationMigrationOwnerProof(
     findings,
     fingerprint: migrationContentDigest(withoutFingerprint)
   };
+}
+
+async function inspectLegacyEvidenceStore(
+  store: FileConversationLegacyEvidenceStore,
+  sourceFingerprint: string,
+  retainedSourceDigest: string | undefined,
+  findings: ConversationMigrationOwnerProofFinding[]
+): Promise<ConversationLegacyEvidenceReceipt | null> {
+  try {
+    const receipt = await store.read(sourceFingerprint);
+    if (!receipt) {
+      findings.push(storeFinding(
+        "legacy-evidence-store-missing",
+        "legacy-evidence"
+      ));
+      return null;
+    }
+    if (
+      retainedSourceDigest !== undefined
+      && receipt.retainedSourceDigest !== retainedSourceDigest
+    ) {
+      throw new Error(
+        "legacy evidence does not bind the retained V1 source"
+      );
+    }
+    return receipt;
+  } catch {
+    findings.push(storeFinding(
+      "legacy-evidence-store-invalid",
+      "legacy-evidence"
+    ));
+    return null;
+  }
 }
 
 /**
@@ -500,6 +560,18 @@ function collectRunEdges(
   }
 }
 
+function collectLegacyEvidenceEdges(
+  required: readonly RecordMigrationOwnerEdge[],
+  receipt: ConversationLegacyEvidenceReceipt,
+  proven: Map<string, RecordMigrationOwnerEdge>
+): void {
+  const requiredKeys = new Set(required.map(ownerEdgeKey));
+  for (const edge of receipt.externalOwnerEdges) {
+    const key = ownerEdgeKey(edge);
+    if (requiredKeys.has(key)) proven.set(key, edge);
+  }
+}
+
 function nativeSessionEvidenceIsProven(
   source: StoredSession,
   targetSettings: StoredSession | undefined,
@@ -598,7 +670,7 @@ function storeFinding(
     ConversationMigrationOwnerProofFindingCode,
     "owner-unproven"
   >,
-  store: "settings" | "native" | "run"
+  store: "settings" | "native" | "run" | "legacy-evidence"
 ): ConversationMigrationOwnerProofFinding {
   return {
     code,

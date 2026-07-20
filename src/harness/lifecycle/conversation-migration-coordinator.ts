@@ -15,6 +15,7 @@ import {
 import { FileRunRecordStore } from "../ledger/run-record-store";
 import { NativeExecutionStore } from "../native/native-execution-store";
 import {
+  legacyExternalOwnerEdges,
   conversationMigrationInventoryFromLegacySessions,
   inspectAndValidateConversationStoreMigration,
   prepareConversationStoreV2Migration,
@@ -22,9 +23,13 @@ import {
   type ConversationStoreMigrationValidation
 } from "./conversation-migration-projection";
 import {
+  FileConversationLegacyEvidenceStore
+} from "./conversation-legacy-evidence-store";
+import {
   inspectConversationMigrationOwnerProof,
   type ConversationMigrationOwnerProof
 } from "./conversation-migration-owner-proof";
+import { migrationContentDigest } from "./record-migration-validator";
 
 export interface InspectConversationStoreMigrationWithOwnerStoresInput {
   sourceStore: FileConversationStore;
@@ -65,32 +70,46 @@ export async function inspectConversationStoreMigrationWithOwnerStores(
   input: InspectConversationStoreMigrationWithOwnerStoresInput
 ): Promise<ConversationStoreMigrationOwnerValidation> {
   const before = await input.sourceStore.inspectMigrationSnapshot();
+  const sourceBefore = conversationMigrationInventoryFromLegacySessions(
+    before.sessions,
+    { deletionTombstones: before.deletionTombstones }
+  );
+  const retainedSourceBeforeDigest = migrationContentDigest(before);
+  const legacyEvidenceStore = new FileConversationLegacyEvidenceStore(
+    input.targetStore.storageRootPath
+  );
   const firstOwnerProof = await inspectConversationMigrationOwnerProof({
     sourceSessions: before.sessions,
+    sourceFingerprint: sourceBefore.fingerprint,
+    retainedSourceDigest: retainedSourceBeforeDigest,
     settingsDataPath: input.settingsDataPath,
     nativeStore: input.nativeStore,
-    runStore: input.runStore
+    runStore: input.runStore,
+    legacyEvidenceStore
   });
   const validation = await inspectAndValidateConversationStoreMigration({
     sourceStore: input.sourceStore,
     targetStore: input.targetStore,
     targetExternalOwnerEdges: firstOwnerProof.targetExternalOwnerEdges
   });
-  const sourceBefore = conversationMigrationInventoryFromLegacySessions(
-    before.sessions,
-    { deletionTombstones: before.deletionTombstones }
-  );
   if (sourceBefore.fingerprint !== validation.source.fingerprint) {
     throw new Error(
       "Conversation migration blocked: source changed after owner proof"
     );
   }
   const after = await input.sourceStore.inspectMigrationSnapshot();
+  const retainedSourceAfterDigest = migrationContentDigest(after);
   const secondOwnerProof = await inspectConversationMigrationOwnerProof({
     sourceSessions: after.sessions,
+    sourceFingerprint: conversationMigrationInventoryFromLegacySessions(
+      after.sessions,
+      { deletionTombstones: after.deletionTombstones }
+    ).fingerprint,
+    retainedSourceDigest: retainedSourceAfterDigest,
     settingsDataPath: input.settingsDataPath,
     nativeStore: input.nativeStore,
-    runStore: input.runStore
+    runStore: input.runStore,
+    legacyEvidenceStore
   });
   if (firstOwnerProof.fingerprint !== secondOwnerProof.fingerprint) {
     throw new Error(
@@ -117,21 +136,15 @@ export async function activateConversationStoreV2WithOwnerStores(
     ?? ((stage: "copying" | "validated" | "active") =>
       `conversation-v2-${stage}-${randomUUID()}`);
   let manifest = await input.manifestStore.read();
-  if (manifest?.migrationState === "active") {
-    return {
-      status: "already-active",
-      manifest,
-      ownerProof: null,
-      preparation: null,
-      validation: null
-    };
-  }
-
   const sourceSnapshot = await input.sourceStore.inspectMigrationSnapshot();
   const sourceInventory = conversationMigrationInventoryFromLegacySessions(
     sourceSnapshot.sessions,
     { deletionTombstones: sourceSnapshot.deletionTombstones }
   );
+  const legacyEvidenceStore = new FileConversationLegacyEvidenceStore(
+    input.targetStore.storageRootPath
+  );
+  const retainedSourceDigest = migrationContentDigest(sourceSnapshot);
   if (
     manifest
     && manifest.sourceFingerprint !== sourceInventory.fingerprint
@@ -140,12 +153,42 @@ export async function activateConversationStoreV2WithOwnerStores(
       "Conversation migration blocked: source changed after manifest preparation"
     );
   }
+  await input.runStore.ensureInitialized();
+  if (manifest?.migrationState === "active") {
+    const retainedEvidence = await legacyEvidenceStore.read(
+      sourceInventory.fingerprint
+    );
+    if (
+      !retainedEvidence
+      || retainedEvidence.retainedSourceDigest !== retainedSourceDigest
+    ) {
+      throw new Error(
+        "Conversation migration active route lacks exact retained V1 evidence"
+      );
+    }
+    return {
+      status: "already-active",
+      manifest,
+      ownerProof: null,
+      preparation: null,
+      validation: null
+    };
+  }
+  await legacyEvidenceStore.prepare({
+    sourceFingerprint: sourceInventory.fingerprint,
+    retainedSourceDigest,
+    externalOwnerEdges: legacyExternalOwnerEdges(sourceSnapshot.sessions),
+    createdAt: now()
+  });
 
   const ownerProof = await inspectConversationMigrationOwnerProof({
     sourceSessions: sourceSnapshot.sessions,
+    sourceFingerprint: sourceInventory.fingerprint,
+    retainedSourceDigest,
     settingsDataPath: input.settingsDataPath,
     nativeStore: input.nativeStore,
-    runStore: input.runStore
+    runStore: input.runStore,
+    legacyEvidenceStore
   });
   if (ownerProof.status !== "ready") {
     return {

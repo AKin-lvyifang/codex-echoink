@@ -345,7 +345,7 @@ export function projectStoredSessionToConversationCommitV2(
   });
   return finalizeConversationCommitV2({
     conversationId: session.id,
-    title: session.title,
+    title: normalizedLegacyConversationTitle(session.title),
     kind: session.kind ?? "chat",
     revision: 0,
     commitId: `migration-${sourceDigest.slice("sha256:".length)}`,
@@ -441,7 +441,7 @@ export function projectStoredSessionToLiveConversationCommitV2(
   const previousMetadata = input.previous?.metadata ?? null;
   return finalizeConversationCommitV2({
     conversationId: session.id,
-    title: session.title,
+    title: normalizedLegacyConversationTitle(session.title),
     kind: session.kind ?? "chat",
     revision: previousMetadata ? previousMetadata.revision + 1 : 0,
     commitId: input.metadataCommitId,
@@ -788,6 +788,20 @@ function projectStoredSessionSnapshot(
     LEGACY_SNAPSHOT_KEYS,
     "SessionContextSnapshot"
   );
+  const fromIndex = snapshot.summarizedFromMessageId
+    ? session.messages.findIndex((message) =>
+      message.id === snapshot.summarizedFromMessageId)
+    : -1;
+  const throughIndex = snapshot.summarizedThroughMessageId
+    ? session.messages.findIndex((message) =>
+      message.id === snapshot.summarizedThroughMessageId)
+    : -1;
+  const normalizedSourceMessageCount = (
+    fromIndex >= 0
+    && throughIndex >= fromIndex
+  )
+    ? throughIndex - fromIndex + 1
+    : snapshot.sourceMessageCount;
   return {
     schemaVersion: CONVERSATION_V2_SCHEMA_VERSION,
     recordType: "conversation-snapshot",
@@ -808,7 +822,7 @@ function projectStoredSessionSnapshot(
     ...(snapshot.summarizedThroughMessageId
       ? { summarizedThroughMessageId: snapshot.summarizedThroughMessageId }
       : {}),
-    sourceMessageCount: snapshot.sourceMessageCount,
+    sourceMessageCount: normalizedSourceMessageCount,
     createdAt: snapshot.createdAt,
     updatedAt: snapshot.updatedAt
   };
@@ -894,7 +908,9 @@ function legacyMessagePresentation(
     ...(message.itemType !== undefined
       ? { itemType: message.itemType }
       : {}),
-    ...(message.title !== undefined ? { title: message.title } : {}),
+    ...(message.title !== undefined
+      ? { title: normalizedLegacyPresentationTitle(message.title) }
+      : {}),
     ...(message.status !== undefined ? { status: message.status } : {}),
     ...(message.details !== undefined ? { details: message.details } : {}),
     ...(message.attachments !== undefined
@@ -917,6 +933,20 @@ function legacyMessagePresentation(
       : {})
   };
   return Object.keys(candidate).length === 1 ? null : candidate;
+}
+
+function normalizedLegacyConversationTitle(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(
+      "Conversation migration blocked: StoredSession title is empty"
+    );
+  }
+  return normalized;
+}
+
+function normalizedLegacyPresentationTitle(value: string): string {
+  return value.length <= 512 ? value : value.slice(0, 512);
 }
 
 function sessionNativeEvidence(

@@ -32,6 +32,9 @@ import {
   activateConversationStoreV2WithOwnerStores
 } from "../../harness/lifecycle/conversation-migration-coordinator";
 import {
+  FileConversationLegacyEvidenceStore
+} from "../../harness/lifecycle/conversation-legacy-evidence-store";
+import {
   inspectConversationMigrationOwnerProof
 } from "../../harness/lifecycle/conversation-migration-owner-proof";
 import {
@@ -65,10 +68,167 @@ Promise<void> {
   assertDeletionAuthorityCannotDisappearDuringCutover();
   assertUntrustedProofCannotAuthorizeCutover();
   assertLegacyUnknownFieldsAndExternalOwnersFailClosed();
+  assertLegacyProjectionNormalizesKnownV1CompatibilityDrift();
   await assertOwnerProofComesFromRealStoresAndMissingStoresStayBlocked();
+  await assertLegacyEvidenceArchiveRequiresTheExactRetainedSource();
   await assertProductionCoordinatorActivatesOnlyWithReadyOwnerStores();
   await assertDeletionTombstoneMigrationUsesDurableTargetAuthority();
   await assertLegacyConversationMigrationSnapshotIsReadOnly();
+}
+
+function assertLegacyProjectionNormalizesKnownV1CompatibilityDrift(): void {
+  const session = storedSession();
+  session.title = "Migration fixture ";
+  session.messages[1].title = "x".repeat(600);
+  session.contextSnapshot = {
+    sessionId: session.id,
+    contextId: session.contextId,
+    generation: session.generation,
+    version: "snapshot-v1",
+    goal: "Migrate safely",
+    currentState: "Ready",
+    decisions: [],
+    constraints: [],
+    openLoops: [],
+    keyReferences: [],
+    rollingSummary: "Both product messages are summarized.",
+    summarizedFromMessageId: session.messages[0].id,
+    summarizedThroughMessageId: session.messages[1].id,
+    sourceMessageCount: 1,
+    createdAt: BASE_TIME,
+    updatedAt: BASE_TIME + 2
+  };
+  const commit = projectStoredSessionToConversationCommitV2(session);
+  assert.equal(commit.metadata.title, "Migration fixture");
+  assert.equal(
+    commit.payload.messages[1].presentation?.title?.length,
+    512
+  );
+  assert.equal(commit.payload.snapshot?.sourceMessageCount, 2);
+}
+
+async function assertLegacyEvidenceArchiveRequiresTheExactRetainedSource():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-legacy-evidence-")
+  );
+  const source = storedSession({ diagnostics: true });
+  source.rollingSummary = {
+    text: "legacy-only settings evidence",
+    updatedAt: BASE_TIME + 2
+  };
+  source.tokenUsage = {
+    total: {
+      inputTokens: 4,
+      outputTokens: 2,
+      reasoningOutputTokens: 0,
+      totalTokens: 6
+    },
+    last: {
+      inputTokens: 4,
+      outputTokens: 2,
+      reasoningOutputTokens: 0,
+      totalTokens: 6
+    },
+    modelContextWindow: 100_000
+  };
+  const sourceFingerprint =
+    conversationMigrationInventoryFromLegacySessions([source]).fingerprint;
+  await writeFile(
+    path.join(storageRootPath, "data.json"),
+    `${JSON.stringify({ settingsVersion: 39, sessions: [] })}\n`,
+    "utf8"
+  );
+  const nativeStore = new NativeExecutionStore({
+    rootPath: path.join(storageRootPath, "harness-native-executions")
+  });
+  await nativeStore.upsert({
+    id: "legacy-evidence-presence",
+    runId: "legacy-evidence-presence-run",
+    sessionId: "legacy-evidence-presence-session",
+    surface: "chat",
+    workflow: "chat.generic",
+    native: {
+      backendId: "codex-cli",
+      id: "legacy-evidence-presence-thread",
+      kind: "thread",
+      persistence: "provider-persistent",
+      deviceKey: "device",
+      vaultId: "vault",
+      createdAt: BASE_TIME
+    },
+    policy: {
+      historyAuthority: "echoink",
+      mode: "leased-conversation",
+      preferredDisposition: ["archive", "retain"],
+      retainWhenLocalCommitFails: true,
+      cleanupRequiredForTaskSuccess: false
+    },
+    localCommit: "committed",
+    cleanup: "disposed",
+    attempts: 1,
+    nextAttemptAt: 0,
+    lastError: "",
+    createdAt: BASE_TIME,
+    committedAt: BASE_TIME + 1,
+    settledAt: BASE_TIME + 2,
+    disposedAt: BASE_TIME + 2
+  });
+  const runStore = new FileRunRecordStore({ storageRootPath });
+  await runStore.ensureInitialized();
+  const legacyEvidenceStore = new FileConversationLegacyEvidenceStore(
+    storageRootPath
+  );
+  const prepared = await legacyEvidenceStore.prepare({
+    sourceFingerprint,
+    retainedSourceDigest: sourceFingerprint,
+    externalOwnerEdges: legacyExternalOwnerEdges([source]),
+    createdAt: BASE_TIME + 3
+  });
+  assert.ok(prepared.externalOwnerEdges.length >= 4);
+  const ready = await inspectConversationMigrationOwnerProof({
+    sourceSessions: [source],
+    sourceFingerprint,
+    retainedSourceDigest: sourceFingerprint,
+    settingsDataPath: path.join(storageRootPath, "data.json"),
+    nativeStore,
+    runStore,
+    legacyEvidenceStore
+  });
+  assert.equal(ready.status, "ready", JSON.stringify(ready.findings));
+  assert.deepEqual(
+    await legacyEvidenceStore.prepare({
+      sourceFingerprint,
+      retainedSourceDigest: sourceFingerprint,
+      externalOwnerEdges: legacyExternalOwnerEdges([source]),
+      createdAt: BASE_TIME + 4
+    }),
+    prepared
+  );
+  await assert.rejects(
+    () => legacyEvidenceStore.prepare({
+      sourceFingerprint,
+      retainedSourceDigest:
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      externalOwnerEdges: legacyExternalOwnerEdges([source]),
+      createdAt: BASE_TIME + 4
+    }),
+    /conflicts with the retained V1 source/
+  );
+  const changedSourceFingerprint =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const blocked = await inspectConversationMigrationOwnerProof({
+    sourceSessions: [source],
+    sourceFingerprint: changedSourceFingerprint,
+    retainedSourceDigest: changedSourceFingerprint,
+    settingsDataPath: path.join(storageRootPath, "data.json"),
+    nativeStore,
+    runStore,
+    legacyEvidenceStore
+  });
+  assert.equal(blocked.status, "blocked");
+  assert.ok(blocked.findings.some((finding) =>
+    finding.code === "legacy-evidence-store-missing"));
 }
 
 async function assertOwnerProofComesFromRealStoresAndMissingStoresStayBlocked():
