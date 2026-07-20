@@ -31,6 +31,19 @@
   `/private/tmp` worktree 按 Git common-dir 自动归到主根。本任务保留主根 cwd，
   worktree 只承载代码文件。
 
+## 2026-07-20：Phase 4 完成度审计
+
+- Phase 0–3 已完成并提交；Phase 3 checkpoint 为 `19f183b`。
+- 只读核对确认，live Conversation writer 仍主要使用 V1 Store。现有 V2 Store、
+  migration validator、manifest、reverse exporter 和全局 RecordMutation authority
+  不能单独证明生产 reader/writer 已经完成原子切换。
+- 当前也没有覆盖新 Run、普通 Conversation 写入、Memory commit、retention 和
+  cleanup 的统一迁移静默窗口。只补局部 admission gate 或独立 CLI 仍会留下并发
+  writer，不能作为真实 cutover 授权。
+- 因此本轮不新增半套 Phase 4 coordinator，不执行真实 Vault 备份、迁移、部署、
+  retention、Raw GC、Native cleanup 或 UI 验收。下一开发门禁是先完成统一 V2
+  reader/writer 路由和同进程静默窗口；真实数据仍按现有 blocker fail closed。
+
 ## 2026-07-18 至 2026-07-19：记录生命周期只读审计
 
 - 从 `main@a91f1b8` 建立分支 `codex/harness-record-lifecycle` 和专用 worktree。

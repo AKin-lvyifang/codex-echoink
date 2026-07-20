@@ -18,7 +18,10 @@ session resume/delete；Hermes 0.18.0 的 ACP 公开支持 session list/load，
 delete 能力，所以 cleanup 继续如实标记为 unsupported。
 
 Phase 4 没有执行。真实 Vault 当前迁移检查仍为 blocked，且备份、真实迁移、部署、
-清理和三后端 Obsidian 验收都需要单独授权。
+清理和三后端 Obsidian 验收都需要单独授权。完成度审计还确认：当前 live
+Conversation writer 仍主要落在 V1 Store，尚无覆盖 Run admission、Conversation
+写入和跨 Store mutation 的统一静默窗口与生产 cutover coordinator。此时新增一个
+局部迁移入口会制造读写分叉，因此不实施半套 Phase 4 coordinator。
 
 第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
 registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
@@ -166,7 +169,8 @@ authority 也按 fail closed 处理。
 - V2→V1 compatibility exporter checkpoint：`b4dd579`
 - Reverse activation / restored-V1 route checkpoint：`3a1dccc`
 - Native、Run、settings 真实 owner Store proof checkpoint：`e43427d`
-- 当前批次：Hermes ACP runtime capability snapshot 与安全 session load
+- Hermes ACP runtime capability snapshot 与安全 session load checkpoint：
+  `19f183b`
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -186,8 +190,8 @@ authority 也按 fail closed 处理。
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
 | Phase 2：数据治理 | 已完成 | `b2db2f5` 至 `e43427d`；live clear/delete、History V2、Run/Raw 治理、validated migration、portable reverse export、精确 reverse route 与真实 Store owner proof 已完成 | 不自动创建新清理；只恢复已发布事务 |
-| Phase 3：Backend capability | 已完成，待提交 | Codex archive、OpenCode resume/delete；Hermes 0.18.0 实机公开 list/load，不公开 delete，运行时按真实 capability 决定是否 resume | 本地提交 |
-| Phase 4：真实迁移与实机验收 | 待单独授权，未执行 | 迁移副本 dry-run 保持 blocked；未部署、未修改真实 Vault、未清理历史 | 备份、真实迁移、部署和三后端 Obsidian 验收均需用户确认 |
+| Phase 3：Backend capability | 已完成并提交 | `19f183b`；Codex archive、OpenCode resume/delete；Hermes 0.18.0 实机公开 list/load，不公开 delete | 进入 Phase 4 前置接线 |
+| Phase 4：真实迁移与实机验收 | 已审计，真实执行阻断 | live writer 尚未完整切到 V2；迁移副本 dry-run 保持 blocked；未部署、未修改真实 Vault、未清理历史 | 先完成统一读写路由与静默窗口，再单独确认备份、迁移、部署和实机验收 |
 
 ## 已确认决定
 
