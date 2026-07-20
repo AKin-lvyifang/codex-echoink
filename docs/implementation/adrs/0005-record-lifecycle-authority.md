@@ -233,6 +233,17 @@ target identity. A tombstone or cleanup record alone is insufficient. An
 aborted Journal is consistent only when the original Conversation identity has
 been restored exactly and every registered retirement is already aborted.
 
+Knowledge History is a reference-only dated projection of canonical
+Conversation messages. A V2 day row contains only the Conversation/message
+identity, the exact message revision, and an optional Harness run reference;
+it never owns copied text, Raw, or backend bindings. A complete immutable
+generation is validated against a stable Conversation source before the
+active pointer changes. Explicit History deletion is a suppression projection,
+so ordinary rebuilds cannot revive deleted references. Populated V1 History
+requires a separately authorized, side-by-side migration; startup,
+ordinary persistence, rebuild, deletion, and retention cannot perform the
+first cutover implicitly, and V1 bytes remain a preserved recovery source.
+
 Detailed run payload is retained for 30 days by default and bounded run summary
 metadata for 90 days by default. Recovery evidence for an unsettled local
 commit, WAL, cleanup, or quarantine is exempt from ordinary retention until it

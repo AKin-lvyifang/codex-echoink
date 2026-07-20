@@ -609,3 +609,40 @@
   历史删除或 Native 批量 cleanup。Phase 2 仍未完成；下一批进入 Knowledge
   History 引用投影、Raw GC preview、retention、migration validator 与 V2→V1
   exporter。
+
+## 2026-07-20：Knowledge History V2 引用投影
+
+- `src/knowledge-base/history-store.ts` 已改为 reference-only V2。日文件只保存
+  Conversation/message identity、message revision 和可选 run ID；浏览时按 revision
+  回读 canonical Conversation，正文、Raw 和 backend binding 不再复制进 History。
+- generation 使用 staging → 完整 manifest/index/suppressions/day refs 校验 →
+  source 二次读取 → `active.json` 原子切换。故障或 Conversation 漂移发生在 active
+  发布前时，旧 generation 继续可读。
+- rebuild、persist、retention 与 delete 进入同一个 root-keyed writer lane。
+  显式删除发布 suppression；普通保存或 rebuild 不复活旧 message，同日期的新
+  message 仍可进入投影。History remove-all 发布空 generation，不删除 V1 root、
+  Conversation 或 Conversation-owned Raw。
+- Settings 保存固定为完整 Conversation durable pass → History projection →
+  `data.json` shell；History 不再压缩 canonical message，也不再触发第二次
+  Conversation flush。设置页移除了已经失真的“压缩旧过程记录”操作。
+- V1 cutover 采用显式门禁：普通启动/保存不切换 populated V1，rebuild、delete、
+  retention 和 direct persist 统一抛出 migration-required；只有正式 migrate
+  入口传入 `allowLegacyCutover` 才能在 V1 与 canonical Conversation 完整对账后
+  发布 active。空 V1 可直接初始化；冲突时 V1 原字节、active 和迁移 receipt 均
+  保持未变。
+- Storage Inventory 已升级 History schema 扫描，验证 active generation、
+  manifest、index、suppressions、strict ref、digest、row count 和 source revision。
+  History 不再参与 Raw owner graph；History→Conversation 关系明确区分 linked、
+  missing 和 ambiguous。
+- 新增/调整测试覆盖 reference-only schema、旧 active 保留、source drift、
+  suppression、writer lane、startup/ordinary-save cutover gate、所有 mutation
+  gate、空 V1、显式迁移、V1 冲突与字节保留，以及 Inventory 的 Raw ownership 和
+  strict reference findings。
+- 最终 `npm run test` 输出 `All tests passed`（108.9 秒）；typecheck、build、
+  release/public guard 与 `git diff --check` 通过。History/Inventory 三个主要生产
+  文件定向 ESLint 为 0；完整 lint 从 961 降到 942 并同步收紧 baseline。明确暂存
+  12 个预期文件，public guard 检查 419 个 tracked files；共享软链接未暂存。
+- 代码 checkpoint 已提交为 `3b1ca7f`。本批没有执行真实 migration、retention、
+  Raw GC、历史删除、Native cleanup、部署或 Vault 修改。Phase 2 下一步进入 Raw
+  GC preview、跨 Store 30/90 天 retention、Archive Catalog、migration validator
+  与 V2→V1 exporter。
