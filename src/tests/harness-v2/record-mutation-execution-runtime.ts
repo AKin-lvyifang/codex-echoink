@@ -18,6 +18,7 @@ import {
   createRecordMutationExecutionPlan,
   loadRecordMutationExecutionPlan,
   recordMutationExecutionBundleParticipantId,
+  workflowRunPayloadParticipantId,
   type LoadedRecordMutationExecutionPlan,
   type RecordMutationExecutionParticipant
 } from "../../harness/lifecycle/record-mutation-execution-plan";
@@ -39,7 +40,8 @@ Promise<void> {
   await assertRuntimeMaterializesPreparedParticipantsAcrossRestart();
   await assertRuntimeRootMismatchFailsBeforePrepare();
   await assertRuntimeAdapterMismatchFailsBeforePrepare();
-  await assertBundleRuntimeFailsBeforePrepareUntilMaterializerIsWired();
+  await assertTrashBundleMaterializesAcrossRestart();
+  await assertSourceDeletionBundleStillFailsBeforeTrashPrepare();
 }
 
 async function assertRuntimeMaterializesPreparedParticipantsAcrossRestart():
@@ -106,10 +108,18 @@ Promise<void> {
     );
     assert.deepEqual(
       replayed.trashParticipants.map(
-        (participant) => participant.receipt.digest
+        (participant) => (
+          participant.kind === "bundle"
+            ? participant.preparedReceipt.digest
+            : participant.receipt.digest
+        )
       ),
       first.trashParticipants.map(
-        (participant) => participant.receipt.digest
+        (participant) => (
+          participant.kind === "bundle"
+            ? participant.preparedReceipt.digest
+            : participant.receipt.digest
+        )
       )
     );
     assert.equal(
@@ -189,9 +199,8 @@ async function assertRuntimeAdapterMismatchFailsBeforePrepare(): Promise<void> {
   });
 }
 
-async function assertBundleRuntimeFailsBeforePrepareUntilMaterializerIsWired():
-Promise<void> {
-  await withFixture("bundle-blocked", async (fixture) => {
+async function assertTrashBundleMaterializesAcrossRestart(): Promise<void> {
+  await withFixture("bundle-materialized", async (fixture) => {
     const execution = {
       kind: "trash-bundle" as const,
       sourceRootId: "conversation",
@@ -244,13 +253,179 @@ Promise<void> {
       participants: [participant],
       createdAt: fixture.now()
     });
+    const roots = fixture.roots.filter(
+      (root) => root.rootId === "conversation" || root.rootId === "trash"
+    );
+    const materialized = await materializeRecordMutationExecution({
+      journal,
+      plan,
+      roots,
+      now: fixture.now
+    });
+    assert.deepEqual(
+      participantActions(materialized.journal, participant.participantId),
+      ["trash-staged"]
+    );
+    assert.equal(materialized.trashParticipants.length, 1);
+    const bundle = materialized.trashParticipants[0];
+    assert.equal(bundle.kind, "bundle");
+    if (bundle.kind !== "bundle") {
+      throw new Error("expected bundle trash participant");
+    }
+    assert.equal(bundle.preparedReceipt.leaves.length, 1);
+    assert.equal(bundle.leafReceipts.length, 1);
+    assert.equal(
+      await readFile(fixture.conversationSourcePath, "utf8"),
+      "conversation\n"
+    );
+
+    const reloadedJournal = await loadRecordMutationJournal(
+      materialized.journal.handle
+    );
+    const reloadedPlan = await loadRecordMutationExecutionPlan({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: reloadedJournal.record.mutationId,
+      journal: reloadedJournal
+    });
+    assert.ok(reloadedPlan);
+    const replayed = await materializeRecordMutationExecution({
+      journal: reloadedJournal,
+      plan: reloadedPlan,
+      roots,
+      now: fixture.now
+    });
+    const replayedBundle = replayed.trashParticipants[0];
+    assert.equal(replayedBundle.kind, "bundle");
+    if (replayedBundle.kind !== "bundle") {
+      throw new Error("expected replayed bundle trash participant");
+    }
+    assert.equal(
+      replayedBundle.preparedReceipt.digest,
+      bundle.preparedReceipt.digest
+    );
+    assert.equal(
+      replayed.journal.record.digest,
+      materialized.journal.record.digest
+    );
+  });
+}
+
+async function assertSourceDeletionBundleStillFailsBeforeTrashPrepare():
+Promise<void> {
+  await withFixture("source-bundle-blocked", async (fixture) => {
+    const selectionDigest = `sha256:${"8".repeat(64)}`;
+    const subject = {
+      kind: "workflow-run" as const,
+      workflowRunId: "workflow-run-1",
+      attemptId: "attempt-1",
+      harnessRunId: "harness-run-1",
+      payloadDigest: `sha256:${"9".repeat(64)}`
+    };
+    const item = {
+      itemId: workflowRunPayloadParticipantId(
+        subject.workflowRunId,
+        subject.attemptId
+      ),
+      sourceRelativePath: "attempt-payloads/workflow-run-1"
+    };
+    const sourceExecution = {
+      kind: "source-deletion-bundle" as const,
+      rootId: "run",
+      selectionDigest,
+      subjects: [subject]
+    };
+    const trashExecution = {
+      kind: "trash-bundle" as const,
+      sourceRootId: "run",
+      trashRootId: "trash",
+      selectionDigest,
+      items: [item]
+    };
+    const conversationExecution = {
+      kind: "trash-bundle" as const,
+      sourceRootId: "conversation",
+      trashRootId: "trash",
+      selectionDigest,
+      items: [{
+        itemId: "conversation-source",
+        sourceRelativePath: "session-a/payloads/payload-1"
+      }]
+    };
+    const participants: RecordMutationExecutionParticipant[] = [
+      {
+        participantId: recordMutationExecutionBundleParticipantId({
+          recordKind: "conversation",
+          action: "stage",
+          execution: conversationExecution
+        }),
+        recordKind: "conversation",
+        action: "stage",
+        execution: conversationExecution
+      },
+      {
+        participantId: recordMutationExecutionBundleParticipantId({
+          recordKind: "workflow-run",
+          action: "mark-source-deleted",
+          execution: sourceExecution
+        }),
+        recordKind: "workflow-run",
+        action: "mark-source-deleted",
+        execution: sourceExecution
+      },
+      {
+        participantId: recordMutationExecutionBundleParticipantId({
+          recordKind: "workflow-run",
+          action: "discard",
+          execution: trashExecution
+        }),
+        recordKind: "workflow-run",
+        action: "discard",
+        execution: trashExecution
+      }
+    ].sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const roots = fixture.roots.filter(
+      (root) =>
+        root.rootId === "conversation"
+        || root.rootId === "run"
+        || root.rootId === "trash"
+    );
+    const journal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "execution-runtime-source-bundle-blocked",
+      intent: {
+        operation: "delete-conversation",
+        conversationId: "conversation-source-bundle-blocked",
+        expectedConversationGeneration: 3,
+        expectedConversationCommitId: "conversation-commit-3",
+        expectedConversationContentRevision:
+          `sha256:${"a".repeat(64)}`,
+        targetConversation: {
+          status: "deleted",
+          tombstoneId: "tombstone-source-bundle-blocked",
+          digest: `sha256:${"b".repeat(64)}`
+        },
+        participants: participants.map((participant) => ({
+          id: participant.participantId,
+          recordKind: participant.recordKind,
+          action: participant.action
+        })),
+        rootBindings: roots.map((root) => root.rootBinding),
+        trashPolicy: "required"
+      },
+      createdAt: fixture.now()
+    });
+    const plan = await createRecordMutationExecutionPlan({
+      journal,
+      participants,
+      createdAt: fixture.now()
+    });
     await assert.rejects(
       materializeRecordMutationExecution({
         journal,
         plan,
-        roots: fixture.roots.filter(
-          (root) => root.rootId === "conversation" || root.rootId === "trash"
-        ),
+        roots,
         now: fixture.now
       }),
       (error: unknown) => (
@@ -260,10 +435,7 @@ Promise<void> {
     );
     const readback = await loadRecordMutationJournal(journal.handle);
     assert.equal(readback.record.state, "planned");
-    assert.equal(
-      await readFile(fixture.conversationSourcePath, "utf8"),
-      "conversation\n"
-    );
+    assert.equal(await readFile(fixture.runSourcePath, "utf8"), "run\n");
   });
 }
 

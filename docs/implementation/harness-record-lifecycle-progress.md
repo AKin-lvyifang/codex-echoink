@@ -411,3 +411,44 @@ Participant execution plan 与破坏性启动恢复批次当前已通过：
 - 第二次运行的 `generatedAt` 不同，但 report ID 和 fingerprint 不变
 
 Phase 0、Phase 1 与 `b2db2f5` 的 public guard 都已在各自明确暂存状态下复验。
+
+## Trash bundle runtime（进行中）
+
+Trash bundle 已从 execution plan 接入正式 coordinator、materializer 与 production
+recovery runner。每个叶子继续使用独立的 durable Trash prepare/finalization
+receipt；bundle prepared/finalization receipt 只由完整有序的逐叶 receipt 推导，
+不新增一份可漂移的聚合存储。
+
+当前实现遵守以下发布边界：
+
+- 所有叶子 prepare 并稳定回读后，Journal 才追加一次 aggregate `trash-staged`。
+- 所有叶子 retirement 完成后，Journal 才追加一次 aggregate `source-retired`。
+- 部分 prepare、部分 retirement 或部分 restore 崩溃后，重启按 durable leaf
+  receipt 幂等补齐；Journal 不发布部分 aggregate 成功。
+- compensation 先用 aggregate prepared digest 记录
+  `compensation-prepared`，所有叶子恢复完成后再追加一次 `trash-restored`。
+- 每个叶子 effect 前重新验证当前物理 Root Binding。selection digest、完整
+  items、source/trash Root 与 participant ID 必须一致；逐叶 evidence 重排、
+  digest 漂移、重复路径或父子嵌套路径都会在 effect 前阻断。
+
+execution materializer 现在可以跨重启重建 `trash-bundle` recovery participant；
+production runner 可以对整组执行 roll-forward，或先补齐部分 retirement 再整组
+restore。当前 `retain-bundle` 与 `source-deletion-bundle` 仍返回
+`bundle_runtime_required`，因此 Conversation planner 生成的完整多 bundle 计划尚未
+达到生产可执行状态，clear/delete 产品 guard 继续关闭。
+
+本轮当前证据：
+
+- coordinator、execution plan、execution runtime 与 recovery runner focused
+  suites 通过
+- `npm run test`，输出 `All tests passed`
+- `npm run typecheck` 通过
+- `npm run build` 通过
+- `npm run lint` 通过，961 个 finding 与 baseline 完全一致，无新增 finding
+- 本轮修改的 production 文件定向 ESLint 为 0 finding
+- `git diff --check` 通过
+
+明确暂存 11 个预期文件后，`npm run check:release` 与
+`npm run check:public` 通过；public guard 检查 414 个 tracked files，暂存区不含
+共享 `.codex-memory`、`node_modules` 或无关文件。没有部署或修改真实 Vault，也
+没有执行 migration、retention、Raw GC、历史删除或 Native cleanup。

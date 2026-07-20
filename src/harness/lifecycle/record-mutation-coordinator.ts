@@ -7,7 +7,8 @@ import {
   durableLstatOrNull,
   readDurableRegularFile,
   resolveDurablePlainRoot,
-  syncDurableDirectory
+  syncDurableDirectory,
+  validateDurableRelativePath
 } from "../storage/durable-append-only-cas";
 import {
   parseRecordRootBindingRef,
@@ -21,13 +22,21 @@ import {
   stageRecordMutationJournal,
   type LoadedRecordMutationJournal
 } from "./record-mutation-journal";
-import type {
-  RecordMutationParticipant,
-  RecordMutationStepAction
+import {
+  recordMutationDigest,
+  stableRecordMutationStringify,
+  type RecordMutationParticipant,
+  type RecordMutationStepAction
 } from "./record-mutation-contract";
 import {
+  RECORD_MUTATION_MAX_EXECUTION_BUNDLE_ITEMS as MAX_BUNDLE_ITEMS,
+  recordMutationExecutionBundleParticipantId
+} from "./record-mutation-execution-plan";
+import {
   finalizeRecordMutationTrash,
+  inspectRecordMutationTrashFinalization,
   judgeRecordMutationTrashRestore,
+  parseRecordMutationTrashFinalizationReceipt,
   parseRecordMutationTrashReceipt,
   restoreRecordMutationTrash,
   stageRecordMutationTrash,
@@ -44,6 +53,10 @@ const MAX_COORDINATOR_LOCK_BYTES = 16 * 1024;
 const LOCK_PUBLICATION_GRACE_MS = 1_000;
 const LOCK_TOKEN_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const SAFE_BUNDLE_ID_PATTERN =
+  /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const MAX_BUNDLE_RECEIPT_BYTES = 8 * 1024 * 1024;
 const coordinatorLaneTails = new Map<string, Promise<void>>();
 
 class CoordinatorLockPublicationPending extends Error {
@@ -90,7 +103,7 @@ export interface RecordMutationCoordinatorRoots {
   trashRootBinding: RecordRootBindingRef;
 }
 
-interface RecordMutationCoordinatorBaseInput
+export interface RecordMutationCoordinatorBaseInput
 extends RecordMutationCoordinatorRoots {
   journal: LoadedRecordMutationJournal;
   participantId: string;
@@ -130,6 +143,82 @@ export interface CoordinatedRecordMutationTrashRestore {
   journal: LoadedRecordMutationJournal;
   judgment: RecordMutationTrashRestoreJudgment;
 }
+
+export interface RecordMutationTrashBundleItem {
+  itemId: string;
+  sourceRelativePath: string;
+}
+
+export interface RecordMutationTrashBundleLeafReceipt {
+  itemId: string;
+  receipt: RecordMutationTrashReceipt;
+}
+
+export interface RecordMutationTrashBundlePreparedReceipt {
+  schemaVersion: 1;
+  kind: "record-mutation-trash-bundle-prepared";
+  mutationId: string;
+  participantId: string;
+  selectionDigest: string;
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootBinding: RecordRootBindingRef;
+  leaves: Array<{
+    itemId: string;
+    sourceRelativePath: string;
+    receiptDigest: string;
+  }>;
+  stagedAt: number;
+  digest: string;
+}
+
+export interface RecordMutationTrashBundleFinalizationReceipt {
+  schemaVersion: 1;
+  kind: "record-mutation-trash-bundle-finalization";
+  mutationId: string;
+  participantId: string;
+  preparedReceiptDigest: string;
+  leaves: Array<{
+    itemId: string;
+    finalizationDigest: string;
+  }>;
+  finalizedAt: number;
+  digest: string;
+}
+
+export interface RecordMutationTrashBundleInput
+extends RecordMutationCoordinatorBaseInput {
+  selectionDigest: string;
+  items: readonly RecordMutationTrashBundleItem[];
+}
+
+export interface RecordMutationTrashBundleEvidenceInput
+extends RecordMutationTrashBundleInput {
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  leafReceipts: readonly RecordMutationTrashBundleLeafReceipt[];
+}
+
+export interface CoordinatedRecordMutationTrashBundlePrepare {
+  journal: LoadedRecordMutationJournal;
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  leafReceipts: RecordMutationTrashBundleLeafReceipt[];
+}
+
+export interface CoordinatedRecordMutationTrashBundleRetirement
+extends CoordinatedRecordMutationTrashBundlePrepare {
+  finalizationReceipt: RecordMutationTrashBundleFinalizationReceipt;
+}
+
+export interface InspectedRecordMutationTrashBundleRecovery {
+  journal: LoadedRecordMutationJournal;
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  judgments: Array<{
+    itemId: string;
+    judgment: RecordMutationTrashRestoreJudgment;
+  }>;
+}
+
+export type CoordinatedRecordMutationTrashBundleRestore =
+  InspectedRecordMutationTrashBundleRecovery;
 
 export interface InspectRecordMutationTrashRecoveryInput
 extends RecordMutationCoordinatorBaseInput {
@@ -195,6 +284,63 @@ export async function inspectRecordMutationTrashRecovery(
   );
 }
 
+export async function inspectRecordMutationTrashBundleRecovery(
+  input: RecordMutationTrashBundleEvidenceInput
+): Promise<InspectedRecordMutationTrashBundleRecovery> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "inspect"
+      );
+      const evidence = validateTrashBundleEvidence(current, input);
+      const trashStaged = findParticipantStep(
+        current,
+        input.participantId,
+        "forward",
+        "trash-staged"
+      );
+      if (!trashStaged) {
+        throw new RecordMutationCoordinatorError(
+          "authorization_missing",
+          "Trash bundle recovery 缺少 durable trash-staged 授权"
+        );
+      }
+      requireEvidenceDigest(
+        trashStaged.evidenceDigest,
+        evidence.preparedReceipt.digest,
+        "trash-staged"
+      );
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-root-bindings-verified");
+      const judgments: InspectedRecordMutationTrashBundleRecovery[
+        "judgments"
+      ] = [];
+      for (const leaf of evidence.leafReceipts) {
+        judgments.push({
+          itemId: leaf.itemId,
+          judgment: await judgeRecordMutationTrashRestore({
+            receipt: leaf.receipt,
+            sourceRootPath: input.sourceRootPath,
+            sourceRootBinding: input.sourceRootBinding,
+            trashRootPath: input.trashRootPath,
+            trashRootBinding: input.trashRootBinding
+          })
+        });
+      }
+      return {
+        journal: current,
+        preparedReceipt: evidence.preparedReceipt,
+        judgments
+      };
+    }
+  );
+}
+
 /**
  * Establishes the durable, independently restorable Trash copy and publishes
  * its Journal authorization without retiring the source. Live destructive
@@ -215,6 +361,28 @@ export async function coordinateRecordMutationTrashPrepare(
         "forward"
       );
       return await prepareTrashUnderAuthority(
+        input,
+        current,
+        storageRootPath
+      );
+    }
+  );
+}
+
+export async function coordinateRecordMutationTrashBundlePrepare(
+  input: RecordMutationTrashBundleInput
+): Promise<CoordinatedRecordMutationTrashBundlePrepare> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      const current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "forward"
+      );
+      return await prepareTrashBundleUnderAuthority(
         input,
         current,
         storageRootPath
@@ -298,6 +466,90 @@ export async function coordinateRecordMutationTrashRetirement(
   );
 }
 
+export async function coordinateRecordMutationTrashBundleRetirement(
+  input: RecordMutationTrashBundleInput
+): Promise<CoordinatedRecordMutationTrashBundleRetirement> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      let current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "forward"
+      );
+      const prepared = await prepareTrashBundleUnderAuthority(
+        input,
+        current,
+        storageRootPath
+      );
+      current = prepared.journal;
+      const finalizedLeaves: Array<{
+        itemId: string;
+        receipt: RecordMutationTrashFinalizationReceipt;
+      }> = [];
+      for (const leaf of prepared.leafReceipts) {
+        await verifyCoordinatorRoots(input, storageRootPath);
+        await input.faultInjector?.("after-root-bindings-verified");
+        finalizedLeaves.push({
+          itemId: leaf.itemId,
+          receipt: await finalizeRecordMutationTrash({
+            receipt: leaf.receipt,
+            sourceRootPath: input.sourceRootPath,
+            sourceRootBinding: input.sourceRootBinding,
+            trashRootPath: input.trashRootPath,
+            trashRootBinding: input.trashRootBinding,
+            finalizedAt: clockTimestamp(input.now)
+          })
+        });
+        await input.faultInjector?.("after-source-retired");
+      }
+      await verifyCoordinatorRoots(input, storageRootPath);
+      const finalizationReceipt = createTrashBundleFinalizationReceipt({
+        current,
+        participantId: input.participantId,
+        preparedReceipt: prepared.preparedReceipt,
+        finalizedLeaves
+      });
+      const sourceRetired = findParticipantStep(
+        current,
+        input.participantId,
+        "forward",
+        "source-retired"
+      );
+      if (sourceRetired) {
+        requireEvidenceDigest(
+          sourceRetired.evidenceDigest,
+          finalizationReceipt.digest,
+          "source-retired"
+        );
+      } else {
+        requireForwardAppendable(current);
+        current = await stageRecordMutationJournal(current.handle, {
+          expectedRevision: current.record.revision,
+          expectedDigest: current.record.digest,
+          step: {
+            direction: "forward",
+            ordinal: nextDirectionOrdinal(current, "forward"),
+            participantId: input.participantId,
+            action: "source-retired",
+            evidenceDigest: finalizationReceipt.digest
+          },
+          updatedAt: nextJournalTimestamp(current, input.now)
+        });
+      }
+      await input.faultInjector?.("after-source-retired-journaled");
+      return {
+        journal: current,
+        preparedReceipt: prepared.preparedReceipt,
+        leafReceipts: prepared.leafReceipts,
+        finalizationReceipt
+      };
+    }
+  );
+}
+
 async function prepareTrashUnderAuthority(
   input: CoordinateRecordMutationTrashPrepareInput,
   journal: LoadedRecordMutationJournal,
@@ -353,6 +605,652 @@ async function prepareTrashUnderAuthority(
   }
   await input.faultInjector?.("after-trash-authorized");
   return { journal: current, preparedReceipt };
+}
+
+async function prepareTrashBundleUnderAuthority(
+  input: RecordMutationTrashBundleInput,
+  journal: LoadedRecordMutationJournal,
+  storageRootPath: string
+): Promise<CoordinatedRecordMutationTrashBundlePrepare> {
+  let current = journal;
+  const items = parseTrashBundleItems(input.items);
+  const selectionDigest = requireBundleDigest(
+    input.selectionDigest,
+    "selectionDigest"
+  );
+  assertTrashBundleParticipantIdentity(
+    current,
+    input,
+    selectionDigest,
+    items
+  );
+  await verifyCoordinatorRoots(input, storageRootPath);
+  await input.faultInjector?.("after-roots-preflight");
+
+  const leafReceipts: RecordMutationTrashBundleLeafReceipt[] = [];
+  for (const item of items) {
+    // Root identity is re-verified immediately before every leaf effect. The
+    // global coordinator lock serializes plugin writers, but it cannot assume
+    // that an external process did not replace a physical directory.
+    await verifyCoordinatorRoots(input, storageRootPath);
+    const receipt = await stageRecordMutationTrash({
+      mutationId: current.record.mutationId,
+      sourceRootPath: input.sourceRootPath,
+      sourceRootBinding: input.sourceRootBinding,
+      sourceRelativePath: item.sourceRelativePath,
+      trashRootPath: input.trashRootPath,
+      trashRootBinding: input.trashRootBinding,
+      transfer: "move",
+      stagedAt: clockTimestamp(input.now)
+    });
+    assertReceiptAuthorizedByIntent(
+      current,
+      input.participantId,
+      receipt
+    );
+    leafReceipts.push({ itemId: item.itemId, receipt });
+    // Bundle tests may count this existing fault point to interrupt after an
+    // arbitrary leaf. No aggregate Journal step is published until all leaves
+    // have completed and read back successfully.
+    await input.faultInjector?.("after-trash-prepared");
+  }
+  await verifyCoordinatorRoots(input, storageRootPath);
+  const preparedReceipt = createTrashBundlePreparedReceipt({
+    current,
+    participantId: input.participantId,
+    selectionDigest,
+    items,
+    leafReceipts,
+    sourceRootBinding: input.sourceRootBinding,
+    trashRootBinding: input.trashRootBinding
+  });
+
+  const trashStaged = findParticipantStep(
+    current,
+    input.participantId,
+    "forward",
+    "trash-staged"
+  );
+  if (trashStaged) {
+    requireEvidenceDigest(
+      trashStaged.evidenceDigest,
+      preparedReceipt.digest,
+      "trash-staged"
+    );
+  } else {
+    requireForwardAppendable(current);
+    current = await stageRecordMutationJournal(current.handle, {
+      expectedRevision: current.record.revision,
+      expectedDigest: current.record.digest,
+      step: {
+        direction: "forward",
+        ordinal: nextDirectionOrdinal(current, "forward"),
+        participantId: input.participantId,
+        action: "trash-staged",
+        evidenceDigest: preparedReceipt.digest
+      },
+      updatedAt: nextJournalTimestamp(current, input.now)
+    });
+  }
+  await input.faultInjector?.("after-trash-authorized");
+  return { journal: current, preparedReceipt, leafReceipts };
+}
+
+function createTrashBundlePreparedReceipt(input: {
+  current: LoadedRecordMutationJournal;
+  participantId: string;
+  selectionDigest: string;
+  items: readonly RecordMutationTrashBundleItem[];
+  leafReceipts: readonly RecordMutationTrashBundleLeafReceipt[];
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootBinding: RecordRootBindingRef;
+}): RecordMutationTrashBundlePreparedReceipt {
+  const items = parseTrashBundleItems(input.items);
+  const leaves = normalizeTrashBundleLeafReceipts(
+    input.current,
+    input.participantId,
+    items,
+    input.leafReceipts,
+    input.sourceRootBinding,
+    input.trashRootBinding
+  );
+  const withoutDigest: Omit<
+    RecordMutationTrashBundlePreparedReceipt,
+    "digest"
+  > = {
+    schemaVersion: 1,
+    kind: "record-mutation-trash-bundle-prepared",
+    mutationId: input.current.record.mutationId,
+    participantId: requireBundleId(
+      input.participantId,
+      "participantId"
+    ),
+    selectionDigest: requireBundleDigest(
+      input.selectionDigest,
+      "selectionDigest"
+    ),
+    sourceRootBinding: parseRecordRootBindingRef(input.sourceRootBinding),
+    trashRootBinding: parseRecordRootBindingRef(input.trashRootBinding),
+    leaves: leaves.map((leaf, index) => ({
+      itemId: leaf.itemId,
+      sourceRelativePath: items[index].sourceRelativePath,
+      receiptDigest: leaf.receipt.digest
+    })),
+    stagedAt: Math.max(...leaves.map((leaf) => leaf.receipt.stagedAt))
+  };
+  return parseTrashBundlePreparedReceipt({
+    ...withoutDigest,
+    digest: recordMutationDigest(withoutDigest)
+  });
+}
+
+function parseTrashBundlePreparedReceipt(
+  value: unknown
+): RecordMutationTrashBundlePreparedReceipt {
+  try {
+    assertBundleReceiptSize(value, "Trash bundle prepared receipt");
+    const record = requireBundleRecord(
+      value,
+      "Trash bundle prepared receipt"
+    );
+    assertBundleExactKeys(record, [
+      "schemaVersion",
+      "kind",
+      "mutationId",
+      "participantId",
+      "selectionDigest",
+      "sourceRootBinding",
+      "trashRootBinding",
+      "leaves",
+      "stagedAt",
+      "digest"
+    ], "Trash bundle prepared receipt");
+    if (
+      record.schemaVersion !== 1
+      || record.kind !== "record-mutation-trash-bundle-prepared"
+      || !Array.isArray(record.leaves)
+      || record.leaves.length < 1
+      || record.leaves.length > MAX_BUNDLE_ITEMS
+    ) {
+      throw bundleMismatch("Trash bundle prepared receipt 结构非法");
+    }
+    const leaves = record.leaves.map((value, index) => {
+      const leaf = requireBundleRecord(
+        value,
+        `Trash bundle prepared leaves[${index}]`
+      );
+      assertBundleExactKeys(
+        leaf,
+        ["itemId", "sourceRelativePath", "receiptDigest"],
+        `Trash bundle prepared leaves[${index}]`
+      );
+      return {
+        itemId: requireBundleId(
+          leaf.itemId,
+          `Trash bundle prepared leaves[${index}].itemId`
+        ),
+        sourceRelativePath: requireBundleRelativePath(
+          leaf.sourceRelativePath,
+          `Trash bundle prepared leaves[${index}].sourceRelativePath`
+        ),
+        receiptDigest: requireBundleDigest(
+          leaf.receiptDigest,
+          `Trash bundle prepared leaves[${index}].receiptDigest`
+        )
+      };
+    });
+    assertTrashBundleLeafOrder(
+      leaves.map(({ itemId, sourceRelativePath }) => ({
+        itemId,
+        sourceRelativePath
+      }))
+    );
+    const parsed: RecordMutationTrashBundlePreparedReceipt = {
+      schemaVersion: 1,
+      kind: "record-mutation-trash-bundle-prepared",
+      mutationId: requireBundleId(record.mutationId, "mutationId"),
+      participantId: requireBundleId(record.participantId, "participantId"),
+      selectionDigest: requireBundleDigest(
+        record.selectionDigest,
+        "selectionDigest"
+      ),
+      sourceRootBinding: parseRecordRootBindingRef(record.sourceRootBinding),
+      trashRootBinding: parseRecordRootBindingRef(record.trashRootBinding),
+      leaves,
+      stagedAt: requireBundleTimestamp(record.stagedAt, "stagedAt"),
+      digest: requireBundleDigest(record.digest, "digest")
+    };
+    const { digest: _digest, ...withoutDigest } = parsed;
+    if (parsed.digest !== recordMutationDigest(withoutDigest)) {
+      throw bundleMismatch("Trash bundle prepared receipt digest 不匹配");
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof RecordMutationCoordinatorError) throw error;
+    throw bundleMismatch(
+      `Trash bundle prepared receipt 非法：${errorMessage(error)}`
+    );
+  }
+}
+
+function validateTrashBundleEvidence(
+  current: LoadedRecordMutationJournal,
+  input: RecordMutationTrashBundleEvidenceInput
+): {
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  leafReceipts: RecordMutationTrashBundleLeafReceipt[];
+} {
+  const items = parseTrashBundleItems(input.items);
+  const selectionDigest = requireBundleDigest(
+    input.selectionDigest,
+    "selectionDigest"
+  );
+  assertTrashBundleParticipantIdentity(
+    current,
+    input,
+    selectionDigest,
+    items
+  );
+  const leafReceipts = normalizeTrashBundleLeafReceipts(
+    current,
+    input.participantId,
+    items,
+    input.leafReceipts,
+    input.sourceRootBinding,
+    input.trashRootBinding
+  );
+  const preparedReceipt = parseTrashBundlePreparedReceipt(
+    input.preparedReceipt
+  );
+  if (
+    preparedReceipt.mutationId !== current.record.mutationId
+    || preparedReceipt.participantId !== input.participantId
+    || preparedReceipt.selectionDigest !== selectionDigest
+    || !sameRecordRootBindingRef(
+      preparedReceipt.sourceRootBinding,
+      input.sourceRootBinding
+    )
+    || !sameRecordRootBindingRef(
+      preparedReceipt.trashRootBinding,
+      input.trashRootBinding
+    )
+  ) {
+    throw bundleMismatch(
+      "Trash bundle prepared receipt 与 Journal/input 不匹配"
+    );
+  }
+  const rebuilt = createTrashBundlePreparedReceipt({
+    current,
+    participantId: input.participantId,
+    selectionDigest,
+    items,
+    leafReceipts,
+    sourceRootBinding: input.sourceRootBinding,
+    trashRootBinding: input.trashRootBinding
+  });
+  if (
+    stableRecordMutationStringify(rebuilt)
+    !== stableRecordMutationStringify(preparedReceipt)
+  ) {
+    throw bundleMismatch(
+      "Trash bundle aggregate receipt 与逐叶 durable receipt 不匹配"
+    );
+  }
+  return { preparedReceipt, leafReceipts };
+}
+
+function assertTrashBundleParticipantIdentity(
+  current: LoadedRecordMutationJournal,
+  input: Pick<
+    RecordMutationTrashBundleInput,
+    "participantId" | "sourceRootBinding" | "trashRootBinding"
+  >,
+  selectionDigest: string,
+  items: readonly RecordMutationTrashBundleItem[]
+): void {
+  const participant = current.record.intent.participants.find(
+    (candidate) => candidate.id === input.participantId
+  );
+  if (!participant) {
+    throw bundleMismatch("Trash bundle participant 不属于 Journal intent");
+  }
+  const expectedParticipantId = recordMutationExecutionBundleParticipantId({
+    recordKind: participant.recordKind,
+    action: participant.action,
+    execution: {
+      kind: "trash-bundle",
+      sourceRootId: input.sourceRootBinding.rootId,
+      trashRootId: input.trashRootBinding.rootId,
+      selectionDigest,
+      items: items.map((item) => ({ ...item }))
+    }
+  });
+  if (input.participantId !== expectedParticipantId) {
+    throw bundleMismatch(
+      "Trash bundle participantId 未绑定完整 selection/items/Root"
+    );
+  }
+}
+
+function normalizeTrashBundleLeafReceipts(
+  current: LoadedRecordMutationJournal,
+  participantId: string,
+  items: readonly RecordMutationTrashBundleItem[],
+  leafReceiptsInput: readonly RecordMutationTrashBundleLeafReceipt[],
+  sourceRootBinding: RecordRootBindingRef,
+  trashRootBinding: RecordRootBindingRef
+): RecordMutationTrashBundleLeafReceipt[] {
+  if (
+    !Array.isArray(leafReceiptsInput)
+    || leafReceiptsInput.length !== items.length
+  ) {
+    throw bundleMismatch("Trash bundle leaf receipt 数量不匹配");
+  }
+  const leaves = leafReceiptsInput.map((value, index) => {
+    const leaf = requireBundleRecord(
+      value,
+      `Trash bundle leafReceipts[${index}]`
+    );
+    assertBundleExactKeys(
+      leaf,
+      ["itemId", "receipt"],
+      `Trash bundle leafReceipts[${index}]`
+    );
+    const itemId = requireBundleId(
+      leaf.itemId,
+      `Trash bundle leafReceipts[${index}].itemId`
+    );
+    const receipt = parseRecordMutationTrashReceipt(leaf.receipt);
+    const item = items[index];
+    assertReceiptAuthorizedByIntent(current, participantId, receipt);
+    if (
+      itemId !== item.itemId
+      || receipt.locator.sourceRelativePath !== item.sourceRelativePath
+      || receipt.transfer !== "move"
+      || !sameRecordRootBindingRef(
+        receipt.sourceRootBinding,
+        sourceRootBinding
+      )
+      || !sameRecordRootBindingRef(
+        receipt.trashRootBinding,
+        trashRootBinding
+      )
+    ) {
+      throw bundleMismatch(
+        `Trash bundle leaf ${itemId} 与冻结 item/Root 不匹配`
+      );
+    }
+    return { itemId, receipt };
+  });
+  if (new Set(leaves.map((leaf) => leaf.itemId)).size !== leaves.length) {
+    throw bundleMismatch("Trash bundle leaf receipt itemId 重复");
+  }
+  return leaves;
+}
+
+function parseTrashBundleItems(
+  value: readonly RecordMutationTrashBundleItem[]
+): RecordMutationTrashBundleItem[] {
+  if (
+    !Array.isArray(value)
+    || value.length < 1
+    || value.length > MAX_BUNDLE_ITEMS
+  ) {
+    throw bundleMismatch("Trash bundle items 数量非法");
+  }
+  const items = value.map((candidate, index) => {
+    const item = requireBundleRecord(
+      candidate,
+      `Trash bundle items[${index}]`
+    );
+    assertBundleExactKeys(
+      item,
+      ["itemId", "sourceRelativePath"],
+      `Trash bundle items[${index}]`
+    );
+    return {
+      itemId: requireBundleId(
+        item.itemId,
+        `Trash bundle items[${index}].itemId`
+      ),
+      sourceRelativePath: requireBundleRelativePath(
+        item.sourceRelativePath,
+        `Trash bundle items[${index}].sourceRelativePath`
+      )
+    };
+  });
+  assertTrashBundleLeafOrder(items);
+  return items;
+}
+
+function assertTrashBundleLeafOrder(
+  items: readonly RecordMutationTrashBundleItem[]
+): void {
+  const keys = items.map(
+    (item) => `${item.itemId}\0${item.sourceRelativePath}`
+  );
+  const sorted = [...keys].sort((left, right) => left.localeCompare(right));
+  const sourcePaths = items.map((item) => item.sourceRelativePath);
+  const sourcePathSet = new Set(sourcePaths);
+  const hasNestedSourcePath = sourcePaths.some((sourcePath) => {
+    const segments = sourcePath.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      if (sourcePathSet.has(segments.slice(0, index).join("/"))) {
+        return true;
+      }
+    }
+    return false;
+  });
+  if (
+    new Set(items.map((item) => item.itemId)).size !== items.length
+    || new Set(items.map((item) => item.sourceRelativePath)).size
+      !== items.length
+    || keys.some((key, index) => key !== sorted[index])
+    || hasNestedSourcePath
+  ) {
+    throw bundleMismatch(
+      "Trash bundle items 必须按 itemId/path 唯一、稳定排序且路径不嵌套"
+    );
+  }
+}
+
+function createTrashBundleFinalizationReceipt(input: {
+  current: LoadedRecordMutationJournal;
+  participantId: string;
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  finalizedLeaves: readonly {
+    itemId: string;
+    receipt: RecordMutationTrashFinalizationReceipt;
+  }[];
+}): RecordMutationTrashBundleFinalizationReceipt {
+  const preparedReceipt = parseTrashBundlePreparedReceipt(
+    input.preparedReceipt
+  );
+  if (
+    preparedReceipt.mutationId !== input.current.record.mutationId
+    || preparedReceipt.participantId !== input.participantId
+    || input.finalizedLeaves.length !== preparedReceipt.leaves.length
+  ) {
+    throw bundleMismatch(
+      "Trash bundle finalization 与 prepared receipt 不匹配"
+    );
+  }
+  const finalizedLeaves = input.finalizedLeaves.map((value, index) => {
+    const expected = preparedReceipt.leaves[index];
+    const itemId = requireBundleId(
+      value.itemId,
+      `Trash bundle finalization leaves[${index}].itemId`
+    );
+    const receipt = parseRecordMutationTrashFinalizationReceipt(
+      value.receipt
+    );
+    if (
+      itemId !== expected.itemId
+      || receipt.mutationId !== preparedReceipt.mutationId
+      || receipt.preparedReceiptDigest !== expected.receiptDigest
+      || receipt.locator.sourceRelativePath !== expected.sourceRelativePath
+      || !sameRecordRootBindingRef(
+        receipt.sourceRootBinding,
+        preparedReceipt.sourceRootBinding
+      )
+      || !sameRecordRootBindingRef(
+        receipt.trashRootBinding,
+        preparedReceipt.trashRootBinding
+      )
+    ) {
+      throw bundleMismatch(
+        `Trash bundle finalization leaf ${itemId} 与 prepared receipt 不匹配`
+      );
+    }
+    return { itemId, receipt };
+  });
+  const withoutDigest: Omit<
+    RecordMutationTrashBundleFinalizationReceipt,
+    "digest"
+  > = {
+    schemaVersion: 1,
+    kind: "record-mutation-trash-bundle-finalization",
+    mutationId: preparedReceipt.mutationId,
+    participantId: preparedReceipt.participantId,
+    preparedReceiptDigest: preparedReceipt.digest,
+    leaves: finalizedLeaves.map((leaf) => ({
+      itemId: leaf.itemId,
+      finalizationDigest: leaf.receipt.digest
+    })),
+    finalizedAt: Math.max(
+      ...finalizedLeaves.map((leaf) => leaf.receipt.finalizedAt)
+    )
+  };
+  return parseTrashBundleFinalizationReceipt({
+    ...withoutDigest,
+    digest: recordMutationDigest(withoutDigest)
+  });
+}
+
+function parseTrashBundleFinalizationReceipt(
+  value: unknown
+): RecordMutationTrashBundleFinalizationReceipt {
+  try {
+    assertBundleReceiptSize(value, "Trash bundle finalization receipt");
+    const record = requireBundleRecord(
+      value,
+      "Trash bundle finalization receipt"
+    );
+    assertBundleExactKeys(record, [
+      "schemaVersion",
+      "kind",
+      "mutationId",
+      "participantId",
+      "preparedReceiptDigest",
+      "leaves",
+      "finalizedAt",
+      "digest"
+    ], "Trash bundle finalization receipt");
+    if (
+      record.schemaVersion !== 1
+      || record.kind !== "record-mutation-trash-bundle-finalization"
+      || !Array.isArray(record.leaves)
+      || record.leaves.length < 1
+      || record.leaves.length > MAX_BUNDLE_ITEMS
+    ) {
+      throw bundleMismatch("Trash bundle finalization receipt 结构非法");
+    }
+    const leaves = record.leaves.map((value, index) => {
+      const leaf = requireBundleRecord(
+        value,
+        `Trash bundle finalization leaves[${index}]`
+      );
+      assertBundleExactKeys(
+        leaf,
+        ["itemId", "finalizationDigest"],
+        `Trash bundle finalization leaves[${index}]`
+      );
+      return {
+        itemId: requireBundleId(
+          leaf.itemId,
+          `Trash bundle finalization leaves[${index}].itemId`
+        ),
+        finalizationDigest: requireBundleDigest(
+          leaf.finalizationDigest,
+          `Trash bundle finalization leaves[${index}].finalizationDigest`
+        )
+      };
+    });
+    const sortedItemIds = leaves
+      .map((leaf) => leaf.itemId)
+      .sort((left, right) => left.localeCompare(right));
+    if (
+      new Set(leaves.map((leaf) => leaf.itemId)).size !== leaves.length
+      || leaves.some((leaf, index) => leaf.itemId !== sortedItemIds[index])
+    ) {
+      throw bundleMismatch(
+        "Trash bundle finalization leaves 必须唯一且稳定排序"
+      );
+    }
+    const parsed: RecordMutationTrashBundleFinalizationReceipt = {
+      schemaVersion: 1,
+      kind: "record-mutation-trash-bundle-finalization",
+      mutationId: requireBundleId(record.mutationId, "mutationId"),
+      participantId: requireBundleId(record.participantId, "participantId"),
+      preparedReceiptDigest: requireBundleDigest(
+        record.preparedReceiptDigest,
+        "preparedReceiptDigest"
+      ),
+      leaves,
+      finalizedAt: requireBundleTimestamp(
+        record.finalizedAt,
+        "finalizedAt"
+      ),
+      digest: requireBundleDigest(record.digest, "digest")
+    };
+    const { digest: _digest, ...withoutDigest } = parsed;
+    if (parsed.digest !== recordMutationDigest(withoutDigest)) {
+      throw bundleMismatch("Trash bundle finalization receipt digest 不匹配");
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof RecordMutationCoordinatorError) throw error;
+    throw bundleMismatch(
+      `Trash bundle finalization receipt 非法：${errorMessage(error)}`
+    );
+  }
+}
+
+async function loadTrashBundleFinalizationReceipt(input: {
+  current: LoadedRecordMutationJournal;
+  participantId: string;
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  leafReceipts: readonly RecordMutationTrashBundleLeafReceipt[];
+  sourceRootPath: string;
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootPath: string;
+  trashRootBinding: RecordRootBindingRef;
+}): Promise<RecordMutationTrashBundleFinalizationReceipt> {
+  const finalizedLeaves: Array<{
+    itemId: string;
+    receipt: RecordMutationTrashFinalizationReceipt;
+  }> = [];
+  for (const leaf of input.leafReceipts) {
+    const receipt = await inspectRecordMutationTrashFinalization({
+      receipt: leaf.receipt,
+      sourceRootPath: input.sourceRootPath,
+      sourceRootBinding: input.sourceRootBinding,
+      trashRootPath: input.trashRootPath,
+      trashRootBinding: input.trashRootBinding
+    });
+    if (!receipt) {
+      throw bundleMismatch(
+        `Trash bundle leaf ${leaf.itemId} 缺少 durable finalization receipt`
+      );
+    }
+    finalizedLeaves.push({ itemId: leaf.itemId, receipt });
+  }
+  return createTrashBundleFinalizationReceipt({
+    current: input.current,
+    participantId: input.participantId,
+    preparedReceipt: input.preparedReceipt,
+    finalizedLeaves
+  });
 }
 
 /**
@@ -422,6 +1320,133 @@ export async function coordinateRecordMutationTrashRestore(
       }
       await input.faultInjector?.("after-trash-restore-journaled");
       return { journal: current, judgment };
+    }
+  );
+}
+
+export async function coordinateRecordMutationTrashBundleRestore(
+  input: RecordMutationTrashBundleEvidenceInput
+): Promise<CoordinatedRecordMutationTrashBundleRestore> {
+  return await withGlobalMutationAuthority(
+    input.storageRootPath,
+    input.journal.record.mutationId,
+    async (storageRootPath) => {
+      await input.faultInjector?.("after-authority-acquired");
+      let current = await loadAndValidateJournal(
+        input,
+        storageRootPath,
+        "compensating"
+      );
+      const evidence = validateTrashBundleEvidence(current, input);
+      const recovery = requireAuthorizedTrashBundleRecoveryChain(
+        current,
+        input.participantId,
+        evidence.preparedReceipt
+      );
+      await verifyCoordinatorRoots(input, storageRootPath);
+      await input.faultInjector?.("after-root-bindings-verified");
+      const finalizationReceipt = await loadTrashBundleFinalizationReceipt({
+        current,
+        participantId: input.participantId,
+        preparedReceipt: evidence.preparedReceipt,
+        leafReceipts: evidence.leafReceipts,
+        sourceRootPath: input.sourceRootPath,
+        sourceRootBinding: input.sourceRootBinding,
+        trashRootPath: input.trashRootPath,
+        trashRootBinding: input.trashRootBinding
+      });
+      requireEvidenceDigest(
+        recovery.sourceRetired.evidenceDigest,
+        finalizationReceipt.digest,
+        "source-retired"
+      );
+
+      // Inspect the whole bundle before writing the first restored leaf. This
+      // cannot make a multi-file restore physically atomic, but it prevents a
+      // known conflicting leaf from causing an avoidable partial restore.
+      const preflightJudgments: InspectedRecordMutationTrashBundleRecovery[
+        "judgments"
+      ] = [];
+      for (const leaf of evidence.leafReceipts) {
+        preflightJudgments.push({
+          itemId: leaf.itemId,
+          judgment: await judgeRecordMutationTrashRestore({
+            receipt: leaf.receipt,
+            sourceRootPath: input.sourceRootPath,
+            sourceRootBinding: input.sourceRootBinding,
+            trashRootPath: input.trashRootPath,
+            trashRootBinding: input.trashRootBinding
+          })
+        });
+      }
+      const blocked = preflightJudgments.find(
+        (entry) => entry.judgment.status === "blocked"
+      );
+      if (blocked && blocked.judgment.status === "blocked") {
+        throw bundleMismatch(
+          `Trash bundle restore 被 leaf ${blocked.itemId} 阻断：`
+          + blocked.judgment.reason
+        );
+      }
+
+      const judgments: InspectedRecordMutationTrashBundleRecovery[
+        "judgments"
+      ] = [];
+      for (const leaf of evidence.leafReceipts) {
+        await verifyCoordinatorRoots(input, storageRootPath);
+        await input.faultInjector?.("after-root-bindings-verified");
+        judgments.push({
+          itemId: leaf.itemId,
+          judgment: await restoreRecordMutationTrash({
+            receipt: leaf.receipt,
+            sourceRootPath: input.sourceRootPath,
+            sourceRootBinding: input.sourceRootBinding,
+            trashRootPath: input.trashRootPath,
+            trashRootBinding: input.trashRootBinding
+          })
+        });
+        await input.faultInjector?.("after-trash-restored");
+      }
+      await verifyCoordinatorRoots(input, storageRootPath);
+
+      const restored = findParticipantStep(
+        current,
+        input.participantId,
+        "compensating",
+        "trash-restored"
+      );
+      if (restored) {
+        requireEvidenceDigest(
+          restored.evidenceDigest,
+          evidence.preparedReceipt.digest,
+          "trash-restored"
+        );
+      } else {
+        if (current.record.state !== "compensating") {
+          throw new RecordMutationCoordinatorError(
+            "authorization_missing",
+            "Trash bundle restore 只能追加到 compensating Journal"
+          );
+        }
+        current = await beginRecordMutationCompensation(current.handle, {
+          expectedRevision: current.record.revision,
+          expectedDigest: current.record.digest,
+          step: {
+            direction: "compensating",
+            ordinal: nextDirectionOrdinal(current, "compensating"),
+            participantId: input.participantId,
+            action: "trash-restored",
+            evidenceDigest: evidence.preparedReceipt.digest
+          },
+          updatedAt: nextJournalTimestamp(current, input.now)
+        });
+      }
+      await input.faultInjector?.("after-trash-restore-journaled");
+      return {
+        journal: current,
+        preparedReceipt: evidence.preparedReceipt,
+        judgments
+      };
     }
   );
 }
@@ -563,6 +1588,51 @@ function requireAuthorizedRecoveryChain(
     receipt.digest,
     "compensation-prepared"
   );
+}
+
+function requireAuthorizedTrashBundleRecoveryChain(
+  journal: LoadedRecordMutationJournal,
+  participantId: string,
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt
+): {
+  sourceRetired: { evidenceDigest: string };
+} {
+  const trashStaged = findParticipantStep(
+    journal,
+    participantId,
+    "forward",
+    "trash-staged"
+  );
+  const sourceRetired = findParticipantStep(
+    journal,
+    participantId,
+    "forward",
+    "source-retired"
+  );
+  const compensationPrepared = findParticipantStep(
+    journal,
+    participantId,
+    "compensating",
+    "compensation-prepared"
+  );
+  if (!trashStaged || !sourceRetired || !compensationPrepared) {
+    throw new RecordMutationCoordinatorError(
+      "authorization_missing",
+      "Trash bundle restore 缺少 trash-staged/source-retired/"
+      + "compensation-prepared 授权链"
+    );
+  }
+  requireEvidenceDigest(
+    trashStaged.evidenceDigest,
+    preparedReceipt.digest,
+    "trash-staged"
+  );
+  requireEvidenceDigest(
+    compensationPrepared.evidenceDigest,
+    preparedReceipt.digest,
+    "compensation-prepared"
+  );
+  return { sourceRetired };
 }
 
 async function verifyCoordinatorRoots(
@@ -885,6 +1955,77 @@ async function withCoordinatorLane<T>(
       coordinatorLaneTails.delete(key);
     }
   }
+}
+
+function requireBundleRecord(
+  value: unknown,
+  label: string
+): Record<string, unknown> {
+  if (!isPlainRecord(value)) {
+    throw bundleMismatch(`${label} 必须是对象`);
+  }
+  return value;
+}
+
+function assertBundleExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string
+): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  if (
+    actual.length !== expected.length
+    || actual.some((key, index) => key !== expected[index])
+  ) {
+    throw bundleMismatch(`${label} 字段集合非法`);
+  }
+}
+
+function assertBundleReceiptSize(value: unknown, label: string): void {
+  const bytes = Buffer.byteLength(
+    stableRecordMutationStringify(value),
+    "utf8"
+  );
+  if (bytes > MAX_BUNDLE_RECEIPT_BYTES) {
+    throw bundleMismatch(`${label} 超过大小上限`);
+  }
+}
+
+function requireBundleId(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SAFE_BUNDLE_ID_PATTERN.test(value)) {
+    throw bundleMismatch(`${label} 非法`);
+  }
+  return value;
+}
+
+function requireBundleDigest(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA256_PATTERN.test(value)) {
+    throw bundleMismatch(`${label} 非法`);
+  }
+  return value;
+}
+
+function requireBundleRelativePath(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw bundleMismatch(`${label} 非法`);
+  }
+  try {
+    return validateDurableRelativePath(value);
+  } catch {
+    throw bundleMismatch(`${label} 非法`);
+  }
+}
+
+function requireBundleTimestamp(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw bundleMismatch(`${label} 非法`);
+  }
+  return Number(value);
+}
+
+function bundleMismatch(message: string): RecordMutationCoordinatorError {
+  return new RecordMutationCoordinatorError("journal_mismatch", message);
 }
 
 function assertExactKeys(

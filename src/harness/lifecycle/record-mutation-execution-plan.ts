@@ -1036,16 +1036,26 @@ function parseTrashBundleExecution(
     `${item.itemId}\0${item.sourceRelativePath}`
   ));
   const sourcePaths = items.map((item) => item.sourceRelativePath);
+  const sortedItemKeys = [...itemKeys].sort(compareText);
+  const sourcePathSet = new Set(sourcePaths);
+  const hasNestedSourcePath = sourcePaths.some((sourcePath) => {
+    const segments = sourcePath.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      if (sourcePathSet.has(segments.slice(0, index).join("/"))) {
+        return true;
+      }
+    }
+    return false;
+  });
   if (
     new Set(items.map((item) => item.itemId)).size !== items.length
     || new Set(sourcePaths).size !== sourcePaths.length
-    || itemKeys.some(
-      (itemKey, index) =>
-        itemKey !== [...itemKeys].sort(compareText)[index]
-    )
+    || itemKeys.some((itemKey, index) => itemKey !== sortedItemKeys[index])
+    || hasNestedSourcePath
   ) {
     throw invalidPlan(
-      `participants[${participantIndex}] trash bundle items 必须唯一且稳定排序`
+      `participants[${participantIndex}] trash bundle items`
+      + " 必须唯一、稳定排序且路径不嵌套"
     );
   }
   return {

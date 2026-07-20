@@ -633,6 +633,37 @@ export function parseRecordMutationTrashFinalizationReceipt(
   }
 }
 
+/**
+ * Reads the durable per-record finalization receipt without creating or
+ * replaying a retirement effect. Bundle recovery uses this to reconstruct its
+ * aggregate evidence from the immutable leaf receipts after a restart.
+ */
+export async function inspectRecordMutationTrashFinalization(
+  input: RecordMutationTrashRoots & {
+    receipt: RecordMutationTrashReceipt;
+  }
+): Promise<RecordMutationTrashFinalizationReceipt | null> {
+  return await withRecordMutationTrashLane(async () => {
+    try {
+      const receipt = parseRecordMutationTrashReceipt(input.receipt);
+      assertRootsMatch(receipt, input);
+      const durableReceipt = await requirePersistedPreparedReceipt(
+        input.trashRootPath,
+        receipt
+      );
+      const finalization = await readPersistedFinalizationReceipt(
+        input.trashRootPath,
+        durableReceipt.locator.finalizationRelativePath
+      );
+      if (!finalization) return null;
+      assertFinalizationMatchesPrepared(finalization, durableReceipt);
+      return finalization;
+    } catch (error) {
+      throw mapTrashError(error);
+    }
+  });
+}
+
 export async function judgeRecordMutationTrashRestore(
   input: RecordMutationTrashRoots & { receipt: RecordMutationTrashReceipt }
 ): Promise<RecordMutationTrashRestoreJudgment> {

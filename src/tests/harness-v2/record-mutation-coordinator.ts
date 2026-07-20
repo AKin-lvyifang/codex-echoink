@@ -12,9 +12,13 @@ import {
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  coordinateRecordMutationTrashBundlePrepare,
+  coordinateRecordMutationTrashBundleRestore,
+  coordinateRecordMutationTrashBundleRetirement,
   coordinateRecordMutationTrashPrepare,
   coordinateRecordMutationTrashRestore,
   coordinateRecordMutationTrashRetirement,
+  inspectRecordMutationTrashBundleRecovery,
   RECORD_MUTATION_GLOBAL_LOCK_FILE,
   RecordMutationCoordinatorError
 } from "../../harness/lifecycle/record-mutation-coordinator";
@@ -22,6 +26,9 @@ import type {
   RecordMutationIntent,
   RecordMutationStep
 } from "../../harness/lifecycle/record-mutation-contract";
+import {
+  recordMutationExecutionBundleParticipantId
+} from "../../harness/lifecycle/record-mutation-execution-plan";
 import {
   beginRecordMutationCompensation,
   createRecordMutationJournal,
@@ -35,8 +42,38 @@ import {
   type RecordRootBindingRef
 } from "../../harness/storage/record-root-registry";
 
+const BUNDLE_SELECTION_DIGEST = `sha256:${"7".repeat(64)}`;
+const BUNDLE_ITEMS = [
+  {
+    itemId: "item-first",
+    sourceRelativePath: "sessions/first.json"
+  },
+  {
+    itemId: "item-second",
+    sourceRelativePath: "sessions/second.json"
+  }
+] as const;
+const BUNDLE_PARTICIPANT_ID =
+  recordMutationExecutionBundleParticipantId({
+    recordKind: "conversation",
+    action: "stage",
+    execution: {
+      kind: "trash-bundle",
+      sourceRootId: "conversation-store",
+      trashRootId: "record-trash",
+      selectionDigest: BUNDLE_SELECTION_DIGEST,
+      items: BUNDLE_ITEMS.map((item) => ({ ...item }))
+    }
+  });
+
 export async function runHarnessV2RecordMutationCoordinatorTests(): Promise<void> {
   await assertPrepareIsDurableAndNonDestructive();
+  await assertBundlePrepareAndRetirementAreDeterministic();
+  await assertBundlePartialPrepareRecoversAsOneParticipant();
+  await assertBundleNestedSourcesFailBeforeEffect();
+  await assertBundlePartialRetirementRecoversAsOneParticipant();
+  await assertBundleRestoreRecoversAsOneParticipant();
+  await assertBundleRestorePreflightBlocksPartialCompensation();
   await assertCoordinatorAuthorizesBeforeRetirement();
   await assertGlobalAuthoritySerializesMutations();
   await assertCorruptAuthorityFailsClosed();
@@ -103,6 +140,468 @@ async function assertPrepareIsDurableAndNonDestructive(): Promise<void> {
       ["trash-staged", "source-retired"]
     );
     assert.equal(await exists(sourcePath), false);
+  });
+}
+
+async function assertBundlePrepareAndRetirementAreDeterministic(): Promise<void> {
+  await withFixture("bundle-deterministic", async (fixture) => {
+    await writeBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-deterministic"
+    );
+    const input = bundleCoordinatorInput(fixture, planned);
+    const prepared = await coordinateRecordMutationTrashBundlePrepare(input);
+
+    assert.deepEqual(
+      forwardActions(prepared.journal, BUNDLE_PARTICIPANT_ID),
+      ["trash-staged"]
+    );
+    assert.equal(prepared.preparedReceipt.leaves.length, 2);
+    assert.equal(prepared.leafReceipts.length, 2);
+    assert.equal(
+      prepared.journal.chain.find(
+        (revision) => revision.step?.action === "trash-staged"
+      )?.step?.evidenceDigest,
+      prepared.preparedReceipt.digest
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+
+    const replayedPrepare = await coordinateRecordMutationTrashBundlePrepare({
+      ...input,
+      journal: prepared.journal
+    });
+    assert.equal(
+      replayedPrepare.preparedReceipt.digest,
+      prepared.preparedReceipt.digest
+    );
+    assert.deepEqual(
+      replayedPrepare.leafReceipts.map((leaf) => leaf.receipt.digest),
+      prepared.leafReceipts.map((leaf) => leaf.receipt.digest)
+    );
+    assert.equal(
+      replayedPrepare.journal.record.digest,
+      prepared.journal.record.digest
+    );
+
+    await assert.rejects(
+      () => inspectRecordMutationTrashBundleRecovery({
+        ...input,
+        journal: replayedPrepare.journal,
+        preparedReceipt: replayedPrepare.preparedReceipt,
+        leafReceipts: [...replayedPrepare.leafReceipts].reverse()
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationCoordinatorError
+        && error.code === "journal_mismatch"
+      ),
+      "reordered leaf evidence must not be accepted as the frozen bundle"
+    );
+
+    const retired = await coordinateRecordMutationTrashBundleRetirement({
+      ...input,
+      journal: replayedPrepare.journal
+    });
+    assert.deepEqual(
+      forwardActions(retired.journal, BUNDLE_PARTICIPANT_ID),
+      ["trash-staged", "source-retired"]
+    );
+    assert.equal(retired.finalizationReceipt.leaves.length, 2);
+    assert.equal(
+      retired.journal.chain.find(
+        (revision) => revision.step?.action === "source-retired"
+      )?.step?.evidenceDigest,
+      retired.finalizationReceipt.digest
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/first.json")),
+      false
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/second.json")),
+      false
+    );
+
+    const replayedRetirement =
+      await coordinateRecordMutationTrashBundleRetirement({
+        ...input,
+        journal: retired.journal
+      });
+    assert.equal(
+      replayedRetirement.preparedReceipt.digest,
+      retired.preparedReceipt.digest
+    );
+    assert.equal(
+      replayedRetirement.finalizationReceipt.digest,
+      retired.finalizationReceipt.digest
+    );
+    assert.equal(
+      replayedRetirement.journal.record.digest,
+      retired.journal.record.digest
+    );
+  });
+}
+
+async function assertBundlePartialPrepareRecoversAsOneParticipant(): Promise<void> {
+  await withFixture("bundle-partial-prepare", async (fixture) => {
+    await writeBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-partial-prepare"
+    );
+    const input = bundleCoordinatorInput(fixture, planned);
+    let preparedLeaves = 0;
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundlePrepare({
+        ...input,
+        faultInjector(point) {
+          if (
+            point === "after-trash-prepared"
+            && ++preparedLeaves === 1
+          ) {
+            throw new Error("simulated partial bundle prepare");
+          }
+        }
+      }),
+      /simulated partial bundle prepare/
+    );
+
+    const interrupted = await loadRecordMutationJournal(planned.handle);
+    assert.deepEqual(
+      forwardActions(interrupted, BUNDLE_PARTICIPANT_ID),
+      [],
+      "partial leaf prepare must not publish aggregate trash-staged"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+
+    const recovered = await coordinateRecordMutationTrashBundlePrepare({
+      ...input,
+      journal: interrupted
+    });
+    assert.deepEqual(
+      forwardActions(recovered.journal, BUNDLE_PARTICIPANT_ID),
+      ["trash-staged"]
+    );
+    assert.equal(recovered.leafReceipts.length, 2);
+  });
+}
+
+async function assertBundleNestedSourcesFailBeforeEffect(): Promise<void> {
+  await withFixture("bundle-nested-source", async (fixture) => {
+    await writeBundleSources(fixture);
+    const items = [
+      {
+        itemId: "item-child",
+        sourceRelativePath: "sessions/first.json"
+      },
+      {
+        itemId: "item-parent",
+        sourceRelativePath: "sessions"
+      }
+    ];
+    const participantId = recordMutationExecutionBundleParticipantId({
+      recordKind: "conversation",
+      action: "stage",
+      execution: {
+        kind: "trash-bundle",
+        sourceRootId: fixture.sourceRootBinding.rootId,
+        trashRootId: fixture.trashRootBinding.rootId,
+        selectionDigest: BUNDLE_SELECTION_DIGEST,
+        items
+      }
+    });
+    const journal = await createRecordMutationJournal({
+      storageRootPath: fixture.storageRootPath,
+      mutationId: "mutation-bundle-nested-source",
+      intent: destructiveIntent(
+        "conversation-bundle-nested-source",
+        fixture.sourceRootBinding,
+        fixture.trashRootBinding,
+        participantId
+      ),
+      createdAt: fixture.now()
+    });
+
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundlePrepare({
+        journal,
+        participantId,
+        selectionDigest: BUNDLE_SELECTION_DIGEST,
+        items,
+        ...coordinatorRoots(fixture),
+        now: fixture.now
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationCoordinatorError
+        && error.code === "journal_mismatch"
+        && error.message.includes("路径不嵌套")
+      )
+    );
+    const current = await loadRecordMutationJournal(journal.handle);
+    assert.deepEqual(forwardActions(current, participantId), []);
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+  });
+}
+
+async function assertBundlePartialRetirementRecoversAsOneParticipant(): Promise<void> {
+  await withFixture("bundle-partial-retirement", async (fixture) => {
+    await writeBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-partial-retirement"
+    );
+    const input = bundleCoordinatorInput(fixture, planned);
+    const prepared = await coordinateRecordMutationTrashBundlePrepare(input);
+    let retiredLeaves = 0;
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundleRetirement({
+        ...input,
+        journal: prepared.journal,
+        faultInjector(point) {
+          if (
+            point === "after-source-retired"
+            && ++retiredLeaves === 1
+          ) {
+            throw new Error("simulated partial bundle retirement");
+          }
+        }
+      }),
+      /simulated partial bundle retirement/
+    );
+
+    const interrupted = await loadRecordMutationJournal(planned.handle);
+    assert.deepEqual(
+      forwardActions(interrupted, BUNDLE_PARTICIPANT_ID),
+      ["trash-staged"],
+      "partial leaf retirement must not publish aggregate source-retired"
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/first.json")),
+      false
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+
+    const recovered =
+      await coordinateRecordMutationTrashBundleRetirement({
+        ...input,
+        journal: interrupted
+      });
+    assert.deepEqual(
+      forwardActions(recovered.journal, BUNDLE_PARTICIPANT_ID),
+      ["trash-staged", "source-retired"]
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/second.json")),
+      false
+    );
+  });
+}
+
+async function assertBundleRestoreRecoversAsOneParticipant(): Promise<void> {
+  await withFixture("bundle-restore", async (fixture) => {
+    await writeBundleSources(fixture);
+    const planned = await plannedBundleMutation(fixture, "bundle-restore");
+    const input = bundleCoordinatorInput(fixture, planned);
+    const retired = await coordinateRecordMutationTrashBundleRetirement(input);
+    const inspected = await inspectRecordMutationTrashBundleRecovery({
+      ...input,
+      journal: retired.journal,
+      preparedReceipt: retired.preparedReceipt,
+      leafReceipts: retired.leafReceipts
+    });
+    assert.deepEqual(
+      inspected.judgments.map((entry) => entry.judgment.status),
+      ["restore-required", "restore-required"]
+    );
+
+    const compensating = await beginRecordMutationCompensation(
+      retired.journal.handle,
+      {
+        expectedRevision: retired.journal.record.revision,
+        expectedDigest: retired.journal.record.digest,
+        step: {
+          direction: "compensating",
+          ordinal: 1,
+          participantId: BUNDLE_PARTICIPANT_ID,
+          action: "compensation-prepared",
+          evidenceDigest: retired.preparedReceipt.digest
+        },
+        updatedAt: fixture.now()
+      }
+    );
+    let restoredLeaves = 0;
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundleRestore({
+        ...input,
+        journal: compensating,
+        preparedReceipt: retired.preparedReceipt,
+        leafReceipts: retired.leafReceipts,
+        faultInjector(point) {
+          if (
+            point === "after-trash-restored"
+            && ++restoredLeaves === 1
+          ) {
+            throw new Error("simulated partial bundle restore");
+          }
+        }
+      }),
+      /simulated partial bundle restore/
+    );
+    const interrupted = await loadRecordMutationJournal(compensating.handle);
+    assert.deepEqual(
+      compensatingActions(interrupted, BUNDLE_PARTICIPANT_ID),
+      ["compensation-prepared"],
+      "partial restore must not publish aggregate trash-restored"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/second.json")),
+      false
+    );
+
+    const recovered = await coordinateRecordMutationTrashBundleRestore({
+      ...input,
+      journal: interrupted,
+      preparedReceipt: retired.preparedReceipt,
+      leafReceipts: retired.leafReceipts
+    });
+    assert.deepEqual(
+      compensatingActions(recovered.journal, BUNDLE_PARTICIPANT_ID),
+      ["compensation-prepared", "trash-restored"]
+    );
+    assert.deepEqual(
+      recovered.judgments.map((entry) => entry.judgment.status),
+      ["already-restored", "already-restored"]
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+
+    const replayed = await coordinateRecordMutationTrashBundleRestore({
+      ...input,
+      journal: recovered.journal,
+      preparedReceipt: retired.preparedReceipt,
+      leafReceipts: retired.leafReceipts
+    });
+    assert.equal(replayed.journal.record.digest, recovered.journal.record.digest);
+    assert.deepEqual(
+      compensatingActions(replayed.journal, BUNDLE_PARTICIPANT_ID),
+      ["compensation-prepared", "trash-restored"]
+    );
+  });
+}
+
+async function assertBundleRestorePreflightBlocksPartialCompensation(): Promise<void> {
+  await withFixture("bundle-restore-blocked", async (fixture) => {
+    await writeBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-restore-blocked"
+    );
+    const input = bundleCoordinatorInput(fixture, planned);
+    const retired = await coordinateRecordMutationTrashBundleRetirement(input);
+    const compensating = await beginRecordMutationCompensation(
+      retired.journal.handle,
+      {
+        expectedRevision: retired.journal.record.revision,
+        expectedDigest: retired.journal.record.digest,
+        step: {
+          direction: "compensating",
+          ordinal: 1,
+          participantId: BUNDLE_PARTICIPANT_ID,
+          action: "compensation-prepared",
+          evidenceDigest: retired.preparedReceipt.digest
+        },
+        updatedAt: fixture.now()
+      }
+    );
+    await mkdir(path.join(fixture.sourceRootPath, "sessions"), {
+      recursive: true,
+      mode: 0o700
+    });
+    await writeFile(
+      path.join(fixture.sourceRootPath, "sessions/second.json"),
+      "replacement\n"
+    );
+
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundleRestore({
+        ...input,
+        journal: compensating,
+        preparedReceipt: retired.preparedReceipt,
+        leafReceipts: retired.leafReceipts
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationCoordinatorError
+        && error.code === "journal_mismatch"
+        && error.message.includes("item-second")
+      )
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/first.json")),
+      false,
+      "known later conflict must block before restoring the first leaf"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "replacement\n"
+    );
+    const current = await loadRecordMutationJournal(compensating.handle);
+    assert.deepEqual(
+      compensatingActions(current, BUNDLE_PARTICIPANT_ID),
+      ["compensation-prepared"]
+    );
   });
 }
 
@@ -605,10 +1104,28 @@ async function plannedMutation(
   });
 }
 
+async function plannedBundleMutation(
+  fixture: CoordinatorFixture,
+  suffix: string
+): Promise<LoadedRecordMutationJournal> {
+  return await createRecordMutationJournal({
+    storageRootPath: fixture.storageRootPath,
+    mutationId: `mutation-${suffix}`,
+    intent: destructiveIntent(
+      `conversation-${suffix}`,
+      fixture.sourceRootBinding,
+      fixture.trashRootBinding,
+      BUNDLE_PARTICIPANT_ID
+    ),
+    createdAt: fixture.now()
+  });
+}
+
 function destructiveIntent(
   conversationId: string,
   sourceRootBinding: RecordRootBindingRef,
-  trashRootBinding: RecordRootBindingRef
+  trashRootBinding: RecordRootBindingRef,
+  participantId = "conversation"
 ): RecordMutationIntent {
   return {
     operation: "delete-conversation",
@@ -622,13 +1139,57 @@ function destructiveIntent(
       digest: `sha256:${"2".repeat(64)}`
     },
     participants: [{
-      id: "conversation",
+      id: participantId,
       recordKind: "conversation",
       action: "stage"
     }],
     rootBindings: [sourceRootBinding, trashRootBinding],
     trashPolicy: "required"
   };
+}
+
+function bundleCoordinatorInput(
+  fixture: CoordinatorFixture,
+  journal: LoadedRecordMutationJournal
+): {
+  journal: LoadedRecordMutationJournal;
+  participantId: string;
+  selectionDigest: string;
+  items: Array<{ itemId: string; sourceRelativePath: string }>;
+  storageRootPath: string;
+  sourceRootPath: string;
+  sourceBoundaryRootPath: string;
+  sourceRootBinding: RecordRootBindingRef;
+  trashRootPath: string;
+  trashBoundaryRootPath: string;
+  trashRootBinding: RecordRootBindingRef;
+  now: () => number;
+} {
+  return {
+    journal,
+    participantId: BUNDLE_PARTICIPANT_ID,
+    selectionDigest: BUNDLE_SELECTION_DIGEST,
+    items: BUNDLE_ITEMS.map((item) => ({ ...item })),
+    ...coordinatorRoots(fixture),
+    now: fixture.now
+  };
+}
+
+async function writeBundleSources(
+  fixture: CoordinatorFixture
+): Promise<void> {
+  await mkdir(path.join(fixture.sourceRootPath, "sessions"), {
+    recursive: true,
+    mode: 0o700
+  });
+  await writeFile(
+    path.join(fixture.sourceRootPath, "sessions/first.json"),
+    "first\n"
+  );
+  await writeFile(
+    path.join(fixture.sourceRootPath, "sessions/second.json"),
+    "second\n"
+  );
 }
 
 function coordinatorRoots(fixture: CoordinatorFixture): {

@@ -15,7 +15,10 @@ import {
   type ConversationMutationAuthority
 } from "../../harness/conversation/conversation-mutation-lane";
 import {
-  coordinateRecordMutationTrashRetirement
+  coordinateRecordMutationTrashBundlePrepare,
+  coordinateRecordMutationTrashBundleRetirement,
+  coordinateRecordMutationTrashRetirement,
+  type CoordinatedRecordMutationTrashBundlePrepare
 } from "../../harness/lifecycle/record-mutation-coordinator";
 import type {
   RecordMutationConversationTarget,
@@ -29,7 +32,11 @@ import {
   type LoadedRecordMutationJournal
 } from "../../harness/lifecycle/record-mutation-journal";
 import {
-  runRecordMutationRecovery
+  recordMutationExecutionBundleParticipantId
+} from "../../harness/lifecycle/record-mutation-execution-plan";
+import {
+  runRecordMutationRecovery,
+  type RecordMutationRecoveryTrashBundleParticipant
 } from "../../harness/lifecycle/record-mutation-recovery-runner";
 import {
   stageRecordMutationTrash,
@@ -41,6 +48,18 @@ import {
   type RecordRootBindingRef
 } from "../../harness/storage/record-root-registry";
 
+const RECOVERY_BUNDLE_SELECTION_DIGEST = `sha256:${"8".repeat(64)}`;
+const RECOVERY_BUNDLE_ITEMS = [
+  {
+    itemId: "item-first",
+    sourceRelativePath: "sessions/first.json"
+  },
+  {
+    itemId: "item-second",
+    sourceRelativePath: "sessions/second.json"
+  }
+] as const;
+
 export async function runHarnessV2RecordMutationRecoveryRunnerTests(): Promise<void> {
   await assertNonDestructiveRecoveryRollsForwardExactTarget();
   await assertNonDestructiveRecoveryCompensatesBeforeTarget();
@@ -49,6 +68,9 @@ export async function runHarnessV2RecordMutationRecoveryRunnerTests(): Promise<v
   await assertContradictoryConversationBlocksWithoutMutation();
   await assertDestructiveRecoveryRollsForwardThroughCoordinator();
   await assertDestructiveRecoveryRestoresThroughCoordinator();
+  await assertBundleRecoveryRollsForwardThroughCoordinator();
+  await assertPreparedBundleCompensatesWithoutRetirement();
+  await assertBundleRecoveryRepairsPartialRetirementAndRestores();
   await assertRecreatedRootBlocksProductionRecovery();
 }
 
@@ -331,6 +353,191 @@ async function assertDestructiveRecoveryRestoresThroughCoordinator(): Promise<vo
   });
 }
 
+async function assertBundleRecoveryRollsForwardThroughCoordinator(): Promise<void> {
+  await withFixture("bundle-forward", async (fixture) => {
+    await writeRecoveryBundleSources(fixture);
+    const planned = await plannedBundleMutation(fixture, "bundle-forward");
+    const prepared = await coordinateRecordMutationTrashBundlePrepare({
+      journal: planned,
+      participantId: recoveryBundleParticipantId(fixture),
+      selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+      items: RECOVERY_BUNDLE_ITEMS,
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+    const participant = recoveryBundleParticipant(fixture, prepared);
+    const result = await runRecordMutationRecovery({
+      journal: prepared.journal,
+      withConversationMutation: fixture.withConversationMutation,
+      inspectConversation: async () => observationFor(
+        prepared.journal.record.intent.targetConversation
+      ),
+      trashParticipants: [participant],
+      sourceDeletedParticipants: [],
+      now: fixture.now
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.journal.record.state, "committed");
+    assert.deepEqual(forwardActions(result.journal), [
+      "trash-staged",
+      "source-retired"
+    ]);
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/first.json")),
+      false
+    );
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/second.json")),
+      false
+    );
+  });
+}
+
+async function assertPreparedBundleCompensatesWithoutRetirement(): Promise<void> {
+  await withFixture("bundle-prepared-compensation", async (fixture) => {
+    await writeRecoveryBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-prepared-compensation"
+    );
+    const prepared = await coordinateRecordMutationTrashBundlePrepare({
+      journal: planned,
+      participantId: recoveryBundleParticipantId(fixture),
+      selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+      items: RECOVERY_BUNDLE_ITEMS,
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+    const result = await runRecordMutationRecovery({
+      journal: prepared.journal,
+      withConversationMutation: fixture.withConversationMutation,
+      inspectConversation: async () => beforeObservation(
+        prepared.journal.record.intent
+      ),
+      trashParticipants: [recoveryBundleParticipant(fixture, prepared)],
+      sourceDeletedParticipants: [],
+      now: fixture.now
+    });
+    assert.equal(result.status, "completed");
+    assert.equal(result.journal.record.state, "aborted");
+    assert.deepEqual(forwardActions(result.journal), ["trash-staged"]);
+    assert.deepEqual(compensatingActions(result.journal), [
+      "compensation-prepared"
+    ]);
+    assert.equal(
+      result.journal.chain.find(
+        (revision) =>
+          revision.step?.direction === "compensating"
+          && revision.step.action === "compensation-prepared"
+      )?.step?.evidenceDigest,
+      prepared.preparedReceipt.digest
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+  });
+}
+
+async function assertBundleRecoveryRepairsPartialRetirementAndRestores():
+Promise<void> {
+  await withFixture("bundle-partial-compensation", async (fixture) => {
+    await writeRecoveryBundleSources(fixture);
+    const planned = await plannedBundleMutation(
+      fixture,
+      "bundle-partial-compensation"
+    );
+    const prepared = await coordinateRecordMutationTrashBundlePrepare({
+      journal: planned,
+      participantId: recoveryBundleParticipantId(fixture),
+      selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+      items: RECOVERY_BUNDLE_ITEMS,
+      ...coordinatorRoots(fixture),
+      now: fixture.now
+    });
+    let retiredLeaves = 0;
+    await assert.rejects(
+      () => coordinateRecordMutationTrashBundleRetirement({
+        journal: prepared.journal,
+        participantId: recoveryBundleParticipantId(fixture),
+        selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+        items: RECOVERY_BUNDLE_ITEMS,
+        ...coordinatorRoots(fixture),
+        now: fixture.now,
+        faultInjector(point) {
+          if (
+            point === "after-source-retired"
+            && ++retiredLeaves === 1
+          ) {
+            throw new Error("simulated bundle recovery crash");
+          }
+        }
+      }),
+      /simulated bundle recovery crash/
+    );
+    const interrupted = await loadRecordMutationJournal(planned.handle);
+    assert.deepEqual(forwardActions(interrupted), ["trash-staged"]);
+    assert.equal(
+      await exists(path.join(fixture.sourceRootPath, "sessions/first.json")),
+      false
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+
+    const participant = recoveryBundleParticipant(fixture, prepared);
+    const result = await runRecordMutationRecovery({
+      journal: interrupted,
+      withConversationMutation: fixture.withConversationMutation,
+      inspectConversation: async () => beforeObservation(
+        interrupted.record.intent
+      ),
+      trashParticipants: [participant],
+      sourceDeletedParticipants: [],
+      now: fixture.now
+    });
+    assert.equal(result.status, "completed");
+    assert.equal(result.journal.record.state, "aborted");
+    assert.deepEqual(forwardActions(result.journal), [
+      "trash-staged",
+      "source-retired"
+    ]);
+    assert.deepEqual(compensatingActions(result.journal), [
+      "compensation-prepared",
+      "trash-restored"
+    ]);
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/first.json"),
+        "utf8"
+      ),
+      "first\n"
+    );
+    assert.equal(
+      await readFile(
+        path.join(fixture.sourceRootPath, "sessions/second.json"),
+        "utf8"
+      ),
+      "second\n"
+    );
+  });
+}
+
 async function assertRecreatedRootBlocksProductionRecovery(): Promise<void> {
   await withFixture("recreated-root", async (fixture) => {
     await writeFile(path.join(fixture.sourceRootPath, "conversation.json"), "before\n");
@@ -488,6 +695,87 @@ async function plannedMutation(
     },
     createdAt: fixture.now()
   });
+}
+
+async function plannedBundleMutation(
+  fixture: RecoveryFixture,
+  suffix: string
+): Promise<LoadedRecordMutationJournal> {
+  const conversationId = `conversation-${suffix}`;
+  const participantId = recoveryBundleParticipantId(fixture);
+  return await createRecordMutationJournal({
+    storageRootPath: fixture.storageRootPath,
+    mutationId: `mutation-${suffix}`,
+    intent: {
+      operation: "delete-conversation",
+      conversationId,
+      expectedConversationGeneration: 3,
+      expectedConversationCommitId: "conversation-commit-3",
+      expectedConversationContentRevision: `sha256:${"1".repeat(64)}`,
+      targetConversation: {
+        status: "deleted",
+        tombstoneId: `tombstone-${conversationId}`,
+        digest: `sha256:${"2".repeat(64)}`
+      },
+      participants: [{
+        id: participantId,
+        recordKind: "conversation",
+        action: "stage"
+      }],
+      rootBindings: [
+        fixture.sourceRootBinding,
+        fixture.trashRootBinding
+      ],
+      trashPolicy: "required"
+    },
+    createdAt: fixture.now()
+  });
+}
+
+function recoveryBundleParticipantId(fixture: RecoveryFixture): string {
+  return recordMutationExecutionBundleParticipantId({
+    recordKind: "conversation",
+    action: "stage",
+    execution: {
+      kind: "trash-bundle",
+      sourceRootId: fixture.sourceRootBinding.rootId,
+      trashRootId: fixture.trashRootBinding.rootId,
+      selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+      items: RECOVERY_BUNDLE_ITEMS.map((item) => ({ ...item }))
+    }
+  });
+}
+
+function recoveryBundleParticipant(
+  fixture: RecoveryFixture,
+  prepared: CoordinatedRecordMutationTrashBundlePrepare
+): RecordMutationRecoveryTrashBundleParticipant {
+  return {
+    kind: "bundle",
+    participantId: recoveryBundleParticipantId(fixture),
+    selectionDigest: RECOVERY_BUNDLE_SELECTION_DIGEST,
+    items: RECOVERY_BUNDLE_ITEMS,
+    preparedReceipt: prepared.preparedReceipt,
+    leafReceipts: prepared.leafReceipts,
+    ...coordinatorRoots(fixture)
+  };
+}
+
+async function writeRecoveryBundleSources(
+  fixture: RecoveryFixture
+): Promise<void> {
+  await mkdir(path.join(fixture.sourceRootPath, "sessions"), {
+    recursive: true,
+    mode: 0o700
+  });
+  await writeFile(
+    path.join(fixture.sourceRootPath, "sessions/first.json"),
+    "first\n"
+  );
+  await writeFile(
+    path.join(fixture.sourceRootPath, "sessions/second.json"),
+    "second\n"
+  );
 }
 
 async function preparedJournal(

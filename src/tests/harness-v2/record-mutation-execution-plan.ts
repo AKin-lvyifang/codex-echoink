@@ -475,6 +475,58 @@ Promise<void> {
       "one logical bundle group must not be split to bypass capacity"
     );
 
+    const nested = structuredClone(participants);
+    const nestedConversationBundle = nested.find(
+      (participant) =>
+        participant.recordKind === "conversation"
+        && participant.execution.kind === "trash-bundle"
+    );
+    if (
+      !nestedConversationBundle
+      || nestedConversationBundle.execution.kind !== "trash-bundle"
+    ) {
+      throw new Error("expected nested conversation trash bundle");
+    }
+    nestedConversationBundle.execution.items = [
+      {
+        itemId: "conversation-child",
+        sourceRelativePath:
+          "sessions/conversation-bundle-capacity/messages.jsonl"
+      },
+      {
+        itemId: "conversation-parent",
+        sourceRelativePath: "sessions/conversation-bundle-capacity"
+      }
+    ];
+    nestedConversationBundle.participantId =
+      recordMutationExecutionBundleParticipantId({
+        recordKind: nestedConversationBundle.recordKind,
+        action: nestedConversationBundle.action,
+        execution: nestedConversationBundle.execution
+      });
+    nested.sort((left, right) => (
+      left.participantId.localeCompare(right.participantId)
+    ));
+    const nestedJournal = await createBundleCoverageJournal({
+      fixture,
+      mutationId: "execution-plan-bundle-nested-path",
+      conversationId: "conversation-bundle-nested-path",
+      participants: nested,
+      createdAt: 1_607
+    });
+    await assert.rejects(
+      createRecordMutationExecutionPlan({
+        journal: nestedJournal,
+        participants: nested,
+        createdAt: 1_608
+      }),
+      (error: unknown) => (
+        error instanceof RecordMutationExecutionPlanError
+        && error.code === "invalid_plan"
+      ),
+      "nested Trash sources must fail before any runtime effect"
+    );
+
     const incompleteRunCoverage = structuredClone(participants);
     const runTrashBundle = incompleteRunCoverage.find(
       (participant) =>
@@ -509,13 +561,13 @@ Promise<void> {
       mutationId: "execution-plan-run-bundle-coverage-mismatch",
       conversationId: "conversation-run-bundle-coverage-mismatch",
       participants: incompleteRunCoverage,
-      createdAt: 1_607
+      createdAt: 1_609
     });
     await assert.rejects(
       createRecordMutationExecutionPlan({
         journal: incompleteRunJournal,
         participants: incompleteRunCoverage,
-        createdAt: 1_608
+        createdAt: 1_610
       }),
       (error: unknown) => (
         error instanceof RecordMutationExecutionPlanError

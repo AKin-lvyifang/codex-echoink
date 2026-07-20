@@ -1,8 +1,14 @@
 import {
+  coordinateRecordMutationTrashBundleRestore,
+  coordinateRecordMutationTrashBundleRetirement,
   coordinateRecordMutationTrashRestore,
   coordinateRecordMutationTrashRetirement,
+  inspectRecordMutationTrashBundleRecovery,
   inspectRecordMutationTrashRecovery,
-  type RecordMutationCoordinatorRoots
+  type RecordMutationCoordinatorRoots,
+  type RecordMutationTrashBundleItem,
+  type RecordMutationTrashBundleLeafReceipt,
+  type RecordMutationTrashBundlePreparedReceipt
 } from "./record-mutation-coordinator";
 import {
   parseRecordMutationIntent,
@@ -42,11 +48,26 @@ import {
   type ConversationMutationAuthority
 } from "../conversation/conversation-mutation-lane";
 
-export interface RecordMutationRecoveryTrashParticipant
+export interface RecordMutationRecoveryTrashSingleParticipant
 extends RecordMutationCoordinatorRoots {
+  kind?: "single";
   participantId: string;
   receipt: RecordMutationTrashReceipt;
 }
+
+export interface RecordMutationRecoveryTrashBundleParticipant
+extends RecordMutationCoordinatorRoots {
+  kind: "bundle";
+  participantId: string;
+  selectionDigest: string;
+  items: readonly RecordMutationTrashBundleItem[];
+  preparedReceipt: RecordMutationTrashBundlePreparedReceipt;
+  leafReceipts: readonly RecordMutationTrashBundleLeafReceipt[];
+}
+
+export type RecordMutationRecoveryTrashParticipant =
+  | RecordMutationRecoveryTrashSingleParticipant
+  | RecordMutationRecoveryTrashBundleParticipant;
 
 export interface RunRecordMutationRecoveryInput {
   journal: LoadedRecordMutationJournal;
@@ -273,14 +294,29 @@ async function rollForward(
       });
     }
     for (const participant of trashParticipants) {
-      const retired = await coordinateRecordMutationTrashRetirement({
-        journal: current,
-        participantId: participant.participantId,
-        sourceRelativePath: participant.receipt.locator.sourceRelativePath,
-        ...coordinatorRoots(participant),
-        now: input.now
-      });
-      current = retired.journal;
+      if (isBundleTrashParticipant(participant)) {
+        current = (
+          await coordinateRecordMutationTrashBundleRetirement({
+            journal: current,
+            participantId: participant.participantId,
+            selectionDigest: participant.selectionDigest,
+            items: participant.items,
+            ...coordinatorRoots(participant),
+            now: input.now
+          })
+        ).journal;
+      } else {
+        current = (
+          await coordinateRecordMutationTrashRetirement({
+            journal: current,
+            participantId: participant.participantId,
+            sourceRelativePath:
+              participant.receipt.locator.sourceRelativePath,
+            ...coordinatorRoots(participant),
+            now: input.now
+          })
+        ).journal;
+      }
     }
     for (const adapter of sourceDeletedParticipants) {
       current = await verifyRecordMutationSourceParticipantForward({
@@ -344,77 +380,158 @@ async function compensate(
     // First close any "retired effect durable, source-retired Journal missing"
     // crash window. This must finish before the Journal enters compensating.
     for (const participant of trashParticipants) {
-      const inspected = await inspectRecordMutationTrashRecovery({
-        journal: current,
-        participantId: participant.participantId,
-        receipt: participant.receipt,
-        ...coordinatorRoots(participant),
-        now: input.now
-      });
-      current = inspected.journal;
-      if (
-        !hasParticipantStep(
-          current,
-          participant.participantId,
-          "forward",
-          "source-retired"
-        )
-        && inspected.judgment.status === "restore-required"
-      ) {
-        if (inspected.judgment.reason !== "source-missing-trash-exact") {
-          return blocked(
-            current,
-            evidence,
-            decision,
-            "partial-source-conflict"
-          );
-        }
-        if (current.record.state === "compensating") {
-          return blocked(
-            current,
-            evidence,
-            decision,
-            "effect-verification-failed"
-          );
-        }
-        current = (
-          await coordinateRecordMutationTrashRetirement({
-            journal: current,
-            participantId: participant.participantId,
-            sourceRelativePath: participant.receipt.locator.sourceRelativePath,
-            ...coordinatorRoots(participant),
-            now: input.now
-          })
-        ).journal;
-      }
-    }
-
-    for (const participant of trashParticipants) {
-      if (
-        !hasParticipantStep(
-          current,
-          participant.participantId,
-          "forward",
-          "source-retired"
-        )
-      ) {
-        continue;
-      }
-      current = await ensureCompensationPrepared(
+      const sourceRetired = hasParticipantStep(
         current,
         participant.participantId,
-        participant.receipt.digest,
-        input.now
+        "forward",
+        "source-retired"
       );
-      current = (
-        await coordinateRecordMutationTrashRestore({
+      if (isBundleTrashParticipant(participant)) {
+        const inspected = await inspectRecordMutationTrashBundleRecovery({
+          journal: current,
+          participantId: participant.participantId,
+          selectionDigest: participant.selectionDigest,
+          items: participant.items,
+          preparedReceipt: participant.preparedReceipt,
+          leafReceipts: participant.leafReceipts,
+          ...coordinatorRoots(participant),
+          now: input.now
+        });
+        current = inspected.journal;
+        const restoreRequired = inspected.judgments.filter(
+          (entry) => entry.judgment.status === "restore-required"
+        );
+        if (!sourceRetired && restoreRequired.length > 0) {
+          if (
+            restoreRequired.some(
+              (entry) => (
+                entry.judgment.status === "restore-required"
+                && entry.judgment.reason
+                  !== "source-missing-trash-exact"
+              )
+            )
+          ) {
+            return blocked(
+              current,
+              evidence,
+              decision,
+              "partial-source-conflict"
+            );
+          }
+          if (current.record.state === "compensating") {
+            return blocked(
+              current,
+              evidence,
+              decision,
+              "effect-verification-failed"
+            );
+          }
+          current = (
+            await coordinateRecordMutationTrashBundleRetirement({
+              journal: current,
+              participantId: participant.participantId,
+              selectionDigest: participant.selectionDigest,
+              items: participant.items,
+              ...coordinatorRoots(participant),
+              now: input.now
+            })
+          ).journal;
+        }
+      } else {
+        const inspected = await inspectRecordMutationTrashRecovery({
           journal: current,
           participantId: participant.participantId,
           receipt: participant.receipt,
           ...coordinatorRoots(participant),
           now: input.now
-        })
-      ).journal;
+        });
+        current = inspected.journal;
+        if (!sourceRetired && inspected.judgment.status === "restore-required") {
+          if (inspected.judgment.reason !== "source-missing-trash-exact") {
+            return blocked(
+              current,
+              evidence,
+              decision,
+              "partial-source-conflict"
+            );
+          }
+          if (current.record.state === "compensating") {
+            return blocked(
+              current,
+              evidence,
+              decision,
+              "effect-verification-failed"
+            );
+          }
+          current = (
+            await coordinateRecordMutationTrashRetirement({
+              journal: current,
+              participantId: participant.participantId,
+              sourceRelativePath:
+                participant.receipt.locator.sourceRelativePath,
+              ...coordinatorRoots(participant),
+              now: input.now
+            })
+          ).journal;
+        }
+      }
+    }
+
+    for (const participant of trashParticipants) {
+      const sourceRetired = hasParticipantStep(
+        current,
+        participant.participantId,
+        "forward",
+        "source-retired"
+      );
+      if (!sourceRetired && isBundleTrashParticipant(participant)) {
+        current = await ensureCompensationPrepared(
+          current,
+          participant.participantId,
+          participant.preparedReceipt.digest,
+          input.now
+        );
+        continue;
+      }
+      if (!sourceRetired) {
+        continue;
+      }
+      if (isBundleTrashParticipant(participant)) {
+        current = await ensureCompensationPrepared(
+          current,
+          participant.participantId,
+          participant.preparedReceipt.digest,
+          input.now
+        );
+        current = (
+          await coordinateRecordMutationTrashBundleRestore({
+            journal: current,
+            participantId: participant.participantId,
+            selectionDigest: participant.selectionDigest,
+            items: participant.items,
+            preparedReceipt: participant.preparedReceipt,
+            leafReceipts: participant.leafReceipts,
+            ...coordinatorRoots(participant),
+            now: input.now
+          })
+        ).journal;
+      } else {
+        current = await ensureCompensationPrepared(
+          current,
+          participant.participantId,
+          participant.receipt.digest,
+          input.now
+        );
+        current = (
+          await coordinateRecordMutationTrashRestore({
+            journal: current,
+            participantId: participant.participantId,
+            receipt: participant.receipt,
+            ...coordinatorRoots(participant),
+            now: input.now
+          })
+        ).journal;
+      }
     }
 
     for (const adapter of sourceDeletedParticipants) {
@@ -557,10 +674,30 @@ function validateTrashParticipants(
       participant.action === "stage" || participant.action === "discard"
     ))
     .map((participant) => participant.id);
-  const participants = participantsInput.map((participant) => ({
-    ...participant,
-    receipt: parseRecordMutationTrashReceipt(participant.receipt)
-  }));
+  const participants = participantsInput.map((participant) => {
+    if (isBundleTrashParticipant(participant)) {
+      return {
+        ...participant,
+        kind: "bundle" as const,
+        items: participant.items.map((item) => ({ ...item })),
+        leafReceipts: participant.leafReceipts.map((leaf) => ({
+          itemId: leaf.itemId,
+          receipt: parseRecordMutationTrashReceipt(leaf.receipt)
+        }))
+      };
+    }
+    if (participant.kind !== undefined && participant.kind !== "single") {
+      throw new RecordMutationRecoveryRunnerError(
+        "participant_mismatch",
+        "trash participant kind 非法"
+      );
+    }
+    return {
+      ...participant,
+      kind: participant.kind,
+      receipt: parseRecordMutationTrashReceipt(participant.receipt)
+    };
+  });
   const actual = participants.map((participant) => participant.participantId);
   if (
     actual.length !== expected.length
@@ -577,6 +714,12 @@ function validateTrashParticipants(
 
 function isRuntimeArray(value: unknown): boolean {
   return Array.isArray(value);
+}
+
+function isBundleTrashParticipant(
+  participant: RecordMutationRecoveryTrashParticipant
+): participant is RecordMutationRecoveryTrashBundleParticipant {
+  return participant.kind === "bundle";
 }
 
 async function inspectTrashParticipants(
@@ -599,17 +742,40 @@ async function inspectTrashParticipants(
   const judgments = new Map<string, RecordMutationTrashRestoreJudgment>();
   try {
     for (const participant of participants) {
-      const inspected = await inspectRecordMutationTrashRecovery({
-        journal: current,
-        participantId: participant.participantId,
-        receipt: participant.receipt,
-        ...coordinatorRoots(participant),
-        now
-      });
-      current = inspected.journal;
-      judgments.set(participant.participantId, inspected.judgment);
-      if (inspected.judgment.status === "blocked") {
-        return { journal: current, recoverable: false, judgments };
+      if (isBundleTrashParticipant(participant)) {
+        const inspected = await inspectRecordMutationTrashBundleRecovery({
+          journal: current,
+          participantId: participant.participantId,
+          selectionDigest: participant.selectionDigest,
+          items: participant.items,
+          preparedReceipt: participant.preparedReceipt,
+          leafReceipts: participant.leafReceipts,
+          ...coordinatorRoots(participant),
+          now
+        });
+        current = inspected.journal;
+        for (const entry of inspected.judgments) {
+          judgments.set(
+            `${participant.participantId}/${entry.itemId}`,
+            entry.judgment
+          );
+          if (entry.judgment.status === "blocked") {
+            return { journal: current, recoverable: false, judgments };
+          }
+        }
+      } else {
+        const inspected = await inspectRecordMutationTrashRecovery({
+          journal: current,
+          participantId: participant.participantId,
+          receipt: participant.receipt,
+          ...coordinatorRoots(participant),
+          now
+        });
+        current = inspected.journal;
+        judgments.set(participant.participantId, inspected.judgment);
+        if (inspected.judgment.status === "blocked") {
+          return { journal: current, recoverable: false, judgments };
+        }
       }
     }
     return { journal: current, recoverable: true, judgments };

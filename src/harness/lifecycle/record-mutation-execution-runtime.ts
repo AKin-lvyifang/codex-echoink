@@ -8,6 +8,7 @@ import {
   type RecordRootBindingRef
 } from "../storage/record-root-registry";
 import {
+  coordinateRecordMutationTrashBundlePrepare,
   coordinateRecordMutationTrashPrepare
 } from "./record-mutation-coordinator";
 import {
@@ -146,7 +147,6 @@ export async function materializeRecordMutationExecution(input: {
   );
   const unsupportedBundle = plan.participants.find((participant) => (
     participant.execution.kind === "retain-bundle"
-    || participant.execution.kind === "trash-bundle"
     || participant.execution.kind === "source-deletion-bundle"
   ));
   if (unsupportedBundle) {
@@ -189,7 +189,12 @@ export async function materializeRecordMutationExecution(input: {
   const trashParticipants: RecordMutationRecoveryTrashParticipant[] = [];
 
   for (const participant of plan.participants) {
-    if (participant.execution.kind !== "trash") continue;
+    if (
+      participant.execution.kind !== "trash"
+      && participant.execution.kind !== "trash-bundle"
+    ) {
+      continue;
+    }
     const source = requireRuntimeRoot(
       roots,
       participant.execution.sourceRootId
@@ -198,6 +203,39 @@ export async function materializeRecordMutationExecution(input: {
       roots,
       participant.execution.trashRootId
     );
+    if (participant.execution.kind === "trash-bundle") {
+      const prepared = await coordinateRecordMutationTrashBundlePrepare({
+        journal: current,
+        participantId: participant.participantId,
+        selectionDigest: participant.execution.selectionDigest,
+        items: participant.execution.items,
+        storageRootPath: current.handle.storageRootPath,
+        sourceRootPath: source.rootPath,
+        sourceBoundaryRootPath: source.boundaryRootPath,
+        sourceRootBinding: source.rootBinding,
+        trashRootPath: trash.rootPath,
+        trashBoundaryRootPath: trash.boundaryRootPath,
+        trashRootBinding: trash.rootBinding,
+        now: input.now
+      });
+      current = prepared.journal;
+      trashParticipants.push({
+        kind: "bundle",
+        participantId: participant.participantId,
+        selectionDigest: participant.execution.selectionDigest,
+        items: participant.execution.items.map((item) => ({ ...item })),
+        storageRootPath: current.handle.storageRootPath,
+        sourceRootPath: source.rootPath,
+        sourceBoundaryRootPath: source.boundaryRootPath,
+        sourceRootBinding: source.rootBinding,
+        trashRootPath: trash.rootPath,
+        trashBoundaryRootPath: trash.boundaryRootPath,
+        trashRootBinding: trash.rootBinding,
+        preparedReceipt: prepared.preparedReceipt,
+        leafReceipts: prepared.leafReceipts
+      });
+      continue;
+    }
     const prepared = await coordinateRecordMutationTrashPrepare({
       journal: current,
       participantId: participant.participantId,

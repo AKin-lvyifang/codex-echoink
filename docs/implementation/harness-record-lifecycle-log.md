@@ -484,3 +484,32 @@
   public guard 通过；public guard 检查 414 个 tracked files，共享软链接未暂存。
 - 本批仍未打开 clear/delete 产品 guard，没有部署或修改真实 Vault，也没有执行
   migration、retention、Raw GC、历史删除或 Native cleanup。
+
+## 2026-07-20：Trash Bundle Runtime 与恢复语义
+
+- Trash bundle 使用现有逐叶 durable receipt 作为真源。aggregate prepared receipt
+  绑定 mutation、participant、selection、source/trash Root、完整有序路径和 leaf
+  receipt digest；aggregate finalization receipt 绑定全部逐叶 finalization
+  digest。两类 aggregate receipt 都可由逐叶证据重建，不单独保存可变副本。
+- coordinator 只在全部叶子 prepare 后发布一次 `trash-staged`，只在全部叶子
+  retirement 后发布一次 `source-retired`。部分叶子崩溃会留下可重放证据，但不会
+  留下部分 Journal 成功；重启会先补齐整组，再发布 aggregate step。
+- bundle restore 在写第一个叶子前先检查整组 judgment。已知冲突会整体阻断；
+  运行中断造成的部分 restore 可以重入。全部恢复后才发布一次 `trash-restored`，
+  其 evidence 与 `compensation-prepared` 都绑定 aggregate prepared digest。
+- 每个叶子 effect 前重新验证物理 Root Binding。bundle participant ID 再次绑定
+  record kind、action、selection、完整 items 与 source/trash Root，不能绕过
+  execution plan 换一组路径。重复路径和父子嵌套路径在 plan/runtime effect 前
+  fail closed。
+- execution materializer 已支持跨重启重建 `trash-bundle` participant；
+  production recovery runner 已支持 single/bundle 两类 Trash participant，可对
+  partial retirement 先整组补齐再补偿恢复。
+- focused suites 已覆盖确定性 prepare/replay、逐叶 evidence 重排、部分 prepare、
+  部分 retirement、部分 restore、冲突预检、materializer 重启、exact-target
+  roll-forward 与 before-target compensation。`npm run test`、typecheck、build、
+  baseline lint、修改生产文件定向 ESLint 和 `git diff --check` 已通过；完整 lint
+  保持 961 个 baseline finding、无新增。
+- 明确暂存 11 个预期文件后，release contract 与 public guard 通过；public guard
+  检查 414 个 tracked files，暂存区不含共享软链接或无关文件。
+- `retain-bundle` 与 `source-deletion-bundle` runtime 仍未接线。产品 guard 保持
+  关闭，本批没有部署或修改真实 Vault。
