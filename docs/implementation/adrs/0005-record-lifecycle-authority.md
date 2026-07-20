@@ -244,6 +244,16 @@ requires a separately authorized, side-by-side migration; startup,
 ordinary persistence, rebuild, deletion, and retention cannot perform the
 first cutover implicitly, and V1 bytes remain a preserved recovery source.
 
+Raw GC starts with a metadata-only global owner preview. The owner mark spans
+every canonical Conversation message and every retained Run payload; Memory
+and Artifact Stores are also scanned strictly so an unknown schema cannot hide
+a future explicit owner. Conversation, Run, Memory, Artifact, and Raw Store
+snapshots must remain identical across two complete scans. A preview exposes
+only opaque subjects and cannot apply an action. Unowned files are quarantine
+candidates, not deletion authority; any missing reference, corrupt source,
+unavailable Conversation authority, or snapshot drift makes every candidate
+ineligible.
+
 Detailed run payload is retained for 30 days by default and bounded run summary
 metadata for 90 days by default. Recovery evidence for an unsettled local
 commit, WAL, cleanup, or quarantine is exempt from ordinary retention until it

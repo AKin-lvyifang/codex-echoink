@@ -646,3 +646,30 @@
   Raw GC、历史删除、Native cleanup、部署或 Vault 修改。Phase 2 下一步进入 Raw
   GC preview、跨 Store 30/90 天 retention、Archive Catalog、migration validator
   与 V2→V1 exporter。
+
+## 2026-07-20：Metadata-only Raw GC preview
+
+- 新增全局 Raw GC preview。输出只有 opaque subject ref、文件大小/mtime、owner
+  count/kind 与 retain/quarantine-candidate，不读取或返回 Raw body、rawRef、文件名
+  或绝对路径。
+- owner graph 合并全部 canonical Conversation message 与全部正式 Run payload。
+  Memory/Artifact 当前没有 Raw owner 字段，但仍执行 strict existing-store scan；
+  未知 entry、损坏 chain 或 future schema 不能被当成“无 owner”。
+- Run inventory 的 expected Attempt/payload 检查由目标 Conversation 扩展到全
+  Store。无关 Conversation 的 ownership gap 也会阻断全局 GC，而不是被过滤掉。
+- Conversation、Run、Memory、Artifact 和 Raw Store 会完整 capture 两次；跨扫描
+  任一 digest 漂移时整轮返回 `inventory-drift`，不保留旧 candidate 分类。
+- missing Raw、缺 canonical Conversation authority、Run ownership 不完整或任一
+  Store corruption 会把 preview 标为 blocked，并令全部 candidate
+  `eligibleForQuarantine=false`。safety receipt 固定零 action、零 destructive
+  effect、禁止 automatic action。
+- 测试覆盖 Conversation/Run owner 与真实 orphan 的分类、正文/路径不泄露、缺失
+  Raw、扫描中 Raw 漂移、无关 Run gap、Conversation Store 缺失和损坏 Artifact
+  Store。focused suite 与全量测试均通过；全量 `npm run test` 输出
+  `All tests passed`（111.1 秒）。
+- typecheck、build、完整 baseline lint、修改生产文件定向 ESLint、
+  `git diff --check`、release/public guard 均通过；lint 保持 942 条 baseline，
+  public guard 检查 419 个 tracked files。
+- 代码 checkpoint 已提交为 `f1b4caf`。本批没有移动、隔离或删除任何 Raw，也没有
+  修改真实 Vault。后续 destructive checkpoint 必须接入可恢复 Trash/Journal，
+  并在至少 7 天后通过第二次完整稳定 owner scan 才能永久删除。
