@@ -3,6 +3,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   unlink,
@@ -49,9 +50,113 @@ export async function runHarnessV2RunRecordStoreTests(): Promise<void> {
   await assertPayloadCorruptionIsDistinctFromMissing();
   await assertPayloadSafeReadRejectsSymlink();
   await assertAtomicGenerationCrashWindows();
+  await assertUserDeletedPayloadRemainsExpiredAndCanRestore();
   await assertConversationInventoryIsDeterministicAndComplete();
   await assertConversationInventoryBlocksIncompleteOwnership();
   await assertConversationInventoryRejectsUnknownStoreEntries();
+}
+
+async function assertUserDeletedPayloadRemainsExpiredAndCanRestore():
+Promise<void> {
+  await withFixture("payload-user-deletion", async (storageRootPath) => {
+    const store = new FileRunRecordStore({ storageRootPath });
+    const events = payloadEvents(
+      "workflow-user-delete",
+      "attempt-user-delete",
+      "harness-user-delete"
+    );
+    const manifest = buildAttemptPayloadManifest({
+      workflowRunId: "workflow-user-delete",
+      attemptId: "attempt-user-delete",
+      harnessRunId: "harness-user-delete",
+      createdAt: BASE_TIME,
+      revision: 0
+    }, events);
+    await store.sealAttemptPayload(manifest, events, {
+      expectedRevision: null,
+      expectedDigest: null
+    });
+    const forwardEffectId = "run-source-delete-test";
+    const tombstone = userPayloadTombstone(
+      manifest,
+      forwardEffectId,
+      BASE_TIME + 1_000
+    );
+    await store.publishAttemptPayloadTombstone(tombstone, {
+      expectedRevision: manifest.revision,
+      expectedDigest: manifest.digest
+    });
+    assert.deepEqual(
+      await store.inspectAttemptPayloadUserDeletion({
+        workflowRunId: manifest.workflowRunId,
+        attemptId: manifest.attemptId,
+        forwardEffectId
+      }),
+      {
+        status: "source-deleted",
+        tombstone
+      }
+    );
+
+    const eventFiles = await findNamedFiles(
+      path.join(
+        store.rootPath,
+        "attempt-payloads",
+        attemptRunRecordSubjectToken(manifest),
+        "generations"
+      ),
+      "events.jsonl"
+    );
+    assert.equal(eventFiles.length, 1);
+    const sourceGenerationPath = path.dirname(eventFiles[0]);
+    const retiredPath = path.join(
+      storageRootPath,
+      "retired-user-deleted-generation"
+    );
+    await rename(sourceGenerationPath, retiredPath);
+    assert.deepEqual(
+      await store.readAttemptPayload(manifest),
+      {
+        state: "expired",
+        tombstone
+      },
+      "user-deleted tombstone remains authoritative after Trash retirement"
+    );
+    assert.equal(
+      (await store.inspectAttemptPayloadUserDeletion({
+        workflowRunId: manifest.workflowRunId,
+        attemptId: manifest.attemptId,
+        forwardEffectId
+      })).status,
+      "source-deleted"
+    );
+
+    await rename(retiredPath, sourceGenerationPath);
+    const restored = await store.restoreAttemptPayloadUserDeletion({
+      workflowRunId: manifest.workflowRunId,
+      attemptId: manifest.attemptId,
+      forwardEffectId,
+      occurredAt: BASE_TIME + 2_000
+    });
+    assert.equal(restored.status, "source-restored");
+    assert.equal(
+      (await store.restoreAttemptPayloadUserDeletion({
+        workflowRunId: manifest.workflowRunId,
+        attemptId: manifest.attemptId,
+        forwardEffectId,
+        occurredAt: BASE_TIME + 3_000
+      })).status,
+      "source-restored",
+      "Run payload restore must be idempotent"
+    );
+    const readback = await store.readAttemptPayload(manifest);
+    assert.equal(readback.state, "present");
+    if (readback.state !== "present") {
+      throw new Error("expected restored Run payload");
+    }
+    assert.deepEqual(readback.events, events);
+    assert.equal(readback.manifest.revision, 2);
+  });
 }
 
 async function assertConversationInventoryIsDeterministicAndComplete():
@@ -165,11 +270,21 @@ Promise<void> {
       first.workflowRuns[0].attempts[0].summary?.attemptId,
       leftAttempt.attemptId
     );
-    assert.deepEqual(first.workflowRuns[0].attempts[0].payload, {
-      state: "present",
-      manifest: leftPayload,
-      rawRefs: ["raw/run-inventory-left.txt"]
-    });
+    const inventoriedPayload =
+      first.workflowRuns[0].attempts[0].payload;
+    assert.equal(inventoriedPayload.state, "present");
+    if (inventoriedPayload.state !== "present") {
+      throw new Error("expected inventoried payload");
+    }
+    assert.deepEqual(inventoriedPayload.manifest, leftPayload);
+    assert.deepEqual(
+      inventoriedPayload.rawRefs,
+      ["raw/run-inventory-left.txt"]
+    );
+    assert.match(
+      inventoriedPayload.sourceRelativePath,
+      /^attempt-payloads\/.+\/generations\/\d{12}-[a-f0-9]{16}-[a-f0-9-]{36}$/
+    );
   });
 }
 
@@ -1610,6 +1725,39 @@ function payloadTombstone(
     },
     retentionTransactionId: `retention-${manifest.attemptId}`,
     committedAt: manifest.expiresAt + 1,
+    revision: manifest.revision + 1
+  });
+}
+
+function userPayloadTombstone(
+  manifest: AttemptPayloadManifestV1,
+  retentionTransactionId: string,
+  occurredAt: number
+): ReturnType<typeof finalizeRetentionTombstone> {
+  return finalizeRetentionTombstone({
+    schemaVersion: 1,
+    recordType: "run-retention-tombstone",
+    scope: "attempt-payload",
+    workflowRunId: manifest.workflowRunId,
+    attemptId: manifest.attemptId,
+    harnessRunId: manifest.harnessRunId,
+    subjectDigest: manifest.subjectDigest,
+    reasonCode: "user-deleted",
+    eligibleAt: occurredAt,
+    expiredAt: occurredAt,
+    prior: {
+      schemaVersion: manifest.schemaVersion,
+      digest: manifest.digest,
+      eventCount: manifest.eventCount,
+      byteCount: manifest.byteCount,
+      terminalAt: manifest.terminalAt
+    },
+    policy: {
+      version: 1,
+      retentionDays: 0
+    },
+    retentionTransactionId,
+    committedAt: occurredAt,
     revision: manifest.revision + 1
   });
 }

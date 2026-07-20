@@ -427,3 +427,30 @@
 - 本批仍未实现 Workflow Run source-deletion adapter、execution participant
   构造、live clear/delete runner 或 Native retirement；产品 guard 继续关闭，
   没有读取 Raw 正文，也没有修改真实 Vault。
+
+## 2026-07-20：Workflow Run Payload Source-deletion
+
+- Run Record Store 新增 `user-deleted` payload tombstone 的 inspect、recover 与
+  restore 合同。原 payload generation 被 Trash 退休后，正式 head 仍返回
+  `expired`，不会退化成 `missing/corrupt`；补偿在 Trash source 恢复后发布新的
+  active payload generation，不回写旧 head。
+- Forward 与 restore 都能恢复“generation/manifest 已发布、head link 尚未完成”
+  的崩溃窗口。恢复会校验 Workflow Run、Attempt、Harness Run、原 payload digest、
+  tombstone 与前后 generation chain，重复进入保持幂等。
+- 新增 `run-record-source-deletion.ts`，把 Run payload 接入通用
+  `mark-source-deleted` participant。Receipt 绑定 mutation、Conversation、逻辑
+  participant、冻结 payload identity 与 effect；production factory 已能从
+  immutable execution plan 和 Run Root 重建 adapter。
+- Run inventory 的 present payload 现在返回正式 generation 相对路径，供后续
+  Trash participant 构造使用；路径仍不包含绝对目录或 event body。
+- 当前未提交树的 `npm run test`、`npm run typecheck`、`npm run build`、完整
+  `npm run lint`、新增生产文件定向 ESLint 与 `git diff --check` 已通过；完整
+  lint 保持 961 个 baseline finding、无新增。Watchdog terminal commit error 是
+  故障注入预期日志。明确暂存 13 个预期文件后，release contract 与 public guard
+  通过；public guard 检查 412 个 tracked files，暂存区不含共享软链接。
+- 容量审计确认 32 个 Journal participant 不能等同于 32 条叶子记录。后续按
+  record kind、action 与 frozen Root 生成确定性 bundle，Journal 保存 aggregate
+  step，execution plan 与 Store/Trash receipt 保留完整逐叶证据。单纯提高
+  participant/step/revision 上限或拆成多个独立业务 mutation 均被拒绝。
+- 本批没有打开 clear/delete 产品 guard，没有修改真实 Vault，也没有执行
+  migration、retention、Raw GC、历史删除或 Native cleanup。

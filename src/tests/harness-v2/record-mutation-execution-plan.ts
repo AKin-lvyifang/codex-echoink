@@ -13,6 +13,7 @@ import {
   loadRecordMutationExecutionPlan,
   RecordMutationExecutionPlanError,
   validateRecordMutationExecutionPlanAgainstJournal,
+  workflowRunPayloadParticipantId,
   type RecordMutationExecutionParticipant
 } from "../../harness/lifecycle/record-mutation-execution-plan";
 import type { RecordMutationIntent } from "../../harness/lifecycle/record-mutation-contract";
@@ -254,6 +255,10 @@ async function assertPlanCorruptionFailsClosed(): Promise<void> {
 }
 
 function executionParticipants(): RecordMutationExecutionParticipant[] {
+  const runPayloadParticipantId = workflowRunPayloadParticipantId(
+    "workflow-run-1",
+    "attempt-1"
+  );
   return [
     {
       participantId: "artifact-report",
@@ -299,6 +304,22 @@ function executionParticipants(): RecordMutationExecutionParticipant[] {
       recordKind: "raw",
       action: "retain",
       execution: { kind: "retain" }
+    },
+    {
+      participantId: runPayloadParticipantId,
+      recordKind: "workflow-run",
+      action: "mark-source-deleted",
+      execution: {
+        kind: "source-deletion",
+        rootId: "run",
+        subject: {
+          kind: "workflow-run",
+          workflowRunId: "workflow-run-1",
+          attemptId: "attempt-1",
+          harnessRunId: "harness-run-1",
+          payloadDigest: `sha256:${"7".repeat(64)}`
+        }
+      }
     },
     {
       participantId: "workflow-run-1",

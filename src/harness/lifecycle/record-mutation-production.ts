@@ -5,6 +5,9 @@ import {
 } from "../artifacts/artifact-lifecycle-store";
 import { RUN_RECORD_STORE_DIRECTORY } from "../ledger/run-record-store";
 import {
+  createRunRecordSourceDeletionAdapter
+} from "../ledger/run-record-source-deletion";
+import {
   createMemorySourceDeletionAdapter
 } from "../memory/source-deletion";
 import { echoInkMemoryV2Layout } from "../memory/v2-store";
@@ -86,6 +89,25 @@ export function createEchoInkRecordMutationSourceAdapterFactory(input: {
 }): RecordMutationSourceAdapterFactory {
   const vaultPath = requireAbsolutePath(input.vaultPath, "vaultPath");
   return ({ journal, participant, root }) => {
+    if (
+      participant.recordKind === "workflow-run"
+      && participant.execution.subject.kind === "workflow-run"
+    ) {
+      return createRunRecordSourceDeletionAdapter({
+        storageRootPath: journal.handle.storageRootPath,
+        rootPath: root.rootPath,
+        boundaryRootPath: root.boundaryRootPath,
+        rootBinding: root.rootBinding,
+        mutationId: journal.record.mutationId,
+        conversationId: journal.record.intent.conversationId,
+        participantId: participant.participantId,
+        workflowRunId:
+          participant.execution.subject.workflowRunId,
+        attemptId: participant.execution.subject.attemptId,
+        harnessRunId: participant.execution.subject.harnessRunId,
+        payloadDigest: participant.execution.subject.payloadDigest
+      });
+    }
     if (
       participant.recordKind === "memory"
       && participant.execution.subject.kind === "memory"

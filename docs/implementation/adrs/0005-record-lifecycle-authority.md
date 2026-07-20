@@ -96,6 +96,23 @@ physical paths and Root Binding refs must be rebuilt from the production root
 catalog and match the frozen intent exactly. A missing, corrupt, late-created,
 wrong-root, or wrong-subject plan blocks before Trash prepare or Store effects.
 
+The Journal participant limit applies to logical execution groups, not to the
+number of leaf records owned by a Conversation. A long-lived Conversation may
+own more Run payloads, Raw files, Memory records, or Artifacts than one Journal
+can safely represent as one participant per leaf. The immutable execution plan
+therefore groups leaves deterministically by record kind, action, and frozen
+roots. A bundle participant ID is derived from the complete ordered leaf set;
+the Journal stores aggregate phase receipts while every leaf keeps its own
+durable, inspectable Store or Trash receipt. Bundle recovery must finish or
+compensate every leaf before publishing the aggregate Journal step.
+
+The implementation must not solve this capacity boundary by only raising the
+participant, step, or revision constants: each append-only Journal revision
+repeats the immutable intent, and full compensation would otherwise exceed the
+bounded step budget. It also must not split one user deletion into independently
+committing business mutations. An oversized or malformed bundle blocks before
+Journal creation or the first stage, without selecting a partial prefix.
+
 Trash prepare is a production coordinator operation distinct from retirement.
 It establishes the durable independently restorable copy and publishes
 `trash-staged`, but leaves the source intact. Live product flows complete this
@@ -104,12 +121,14 @@ idempotently from the immutable execution plan; only subsequent exact-target
 recovery may retire the source.
 
 `mark-source-deleted` is not a Journal-only acknowledgement. The runner
-requires one Memory or Workflow Artifact adapter for every such participant,
-in the same complete order frozen by the intent. Each adapter acquires its
-Store mutation lane without touching storage, verifies its frozen Root Binding,
-recovers the existing Store, verifies the Root Binding again, and only then
-inspects or changes the participant. Store recovery must not initialize a
-missing formal Store.
+requires one Workflow Run, Memory, or Workflow Artifact adapter for every
+logical source-deletion participant, in the same complete order frozen by the
+intent. A bundle adapter may coordinate multiple frozen subjects, but its
+aggregate receipt is valid only after every leaf receipt is re-read. Each
+adapter acquires the required Store mutation lane without touching storage,
+verifies its frozen Root Binding, recovers the existing Store, verifies the
+Root Binding again, and only then inspects or changes the participant. Store
+recovery must not initialize a missing formal Store.
 
 Formal Memory records retain a deterministic set of source Conversation IDs.
 Their append-only source-deletion history stores the mutation ID, Conversation
@@ -124,14 +143,14 @@ Later revisions append source-deleted or source-restored markers without
 rewriting that identity. Missing registration, conflicting registration,
 non-contiguous or corrupt revision chains, and incomplete lineage fail closed.
 
-Roll-forward marks Memory and Artifact sources before retiring Trash, then
-re-reads every participant before committing the Journal. Compensation first
-reconciles any Store effect whose Journal step was lost, restores retired Trash,
-and finally appends restoring Memory and Artifact transactions. The Store
-effect, readback, and `participant-staged` or `participant-restored` Journal
-step remain inside the same participant mutation lane. Re-entering a committed
-or aborted Journal revalidates the participant Store receipts instead of
-returning an unchecked no-op.
+Roll-forward marks Workflow Run, Memory, and Artifact sources before retiring
+Trash, then re-reads every participant before committing the Journal.
+Compensation first reconciles any Store effect whose Journal step was lost,
+restores retired Trash, and finally appends restoring Run, Memory, and Artifact
+transactions. The Store effect, readback, and `participant-staged` or
+`participant-restored` Journal step remain inside the same participant mutation
+lane. Re-entering a committed or aborted Journal revalidates the participant
+Store receipts instead of returning an unchecked no-op.
 
 The first entry and its chain directory publish as one durable directory
 transition; same-version cooperative writers never observe an empty live

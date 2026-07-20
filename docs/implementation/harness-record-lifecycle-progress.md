@@ -82,9 +82,18 @@ retirement 才能 promotion。启动恢复先收口非终态 Journal，再处理
     exclusive Raw 才能进入 discard 选择。
   - pending confirmation 与正式 Artifact 必须有显式 retain 选择，不能被
     Conversation 删除静默处置。
-- Workflow Run source-deletion adapter、确定性 execution participant 构造、
-  live clear/delete runner 以及 Native retirement 仍未接入，因此不能把当前
-  checkpoint 写成用户删除已经安全可用。
+- 当前开发批次已实现 Workflow Run payload source-deletion adapter。正式
+  `user-deleted` tombstone 在原 payload generation 被 Trash 退休后仍保持
+  `expired` authority；补偿先恢复 Trash source，再发布新的 active payload
+  generation。forward/restore 的 manifest-link 崩溃窗口可恢复，production
+  adapter factory 已能从 execution plan 的冻结 subject 重建 adapter。
+- 一轮长会话可能包含超过 32 条叶子记录，因此确定性 execution participant
+  构造将采用逻辑 bundle：Journal participant 绑定完整叶子集合的 digest，
+  execution plan 保存每个叶子的正式 identity/path，Store 与 Trash 保留逐叶
+  receipt，Journal 只在整组完成后追加 aggregate step。不会只调大上限，也不会
+  把一次用户删除拆成多个独立提交的业务 mutation。
+- Bundle execution plan/runtime、live clear/delete runner 以及 Native retirement
+  仍未接入，因此不能把当前 checkpoint 写成用户删除已经安全可用。
 
 真实 Vault 的 Phase 0 metadata-only 报告仍为 `blocked`：现有数据包含 Raw 失联
 引用和旧 Run 结算缺口。Phase 1 没有修改这些历史记录，也没有执行真实历史删除、
@@ -111,10 +120,11 @@ authority 也按 fail closed 处理。
 - 非破坏性 Live Journal checkpoint：`1bd72af`
 - 破坏性 Conversation reader/writer checkpoint：`67719de`
 - Participant execution plan / production root checkpoint：`d683b10`
-- 当前开发批次：Run/Raw/Memory/Artifact 严格只读 inventory 与统一 blocker
-  selection
-- 下一批次：Workflow Run source-deletion adapter、确定性 participant plan、
-  live clear/delete runner 与 Native retirement
+- Conversation 统一 inventory checkpoint：`7f1b841`
+- 当前开发批次：Workflow Run payload source-deletion、restore/recovery 与
+  production adapter 接线
+- 下一批次：bundle execution plan、确定性 participant 构造、live clear/delete
+  runner 与 Native retirement
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -133,7 +143,7 @@ authority 也按 fail closed 处理。
 | 文档与决策 | 已完成 | ADR 0005、主计划与 `ae4ec4b` 文档提交 | 随代码行为持续校准 |
 | Phase 0：inventory / dry-run | 已完成并提交 | `f362a59`、fixture、真实 Vault 双次 dry-run 与稳定 fingerprint | 保持只读基线，不执行自动修复 |
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
-| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`；当前 worktree 已完成 execution plan/Root catalog/启动恢复，尚待提交 | 完整 Run/Raw/Memory/Artifact 枚举与 live 清空/删除接线 |
+| Phase 2：数据治理 | 进行中 | `b2db2f5`、`e510349`、`ab1a061`、`5091493`、`661327f`、`c90ebeb`、`1bd72af`、`67719de`、`d683b10`、`7f1b841`；当前 worktree 正在收口 Run payload source-deletion | Bundle participant、live 清空/删除与 Native retirement |
 | Phase 3：Backend capability | 未开始 | Codex/OpenCode 当前能力已核对；Hermes 保守为 unsupported | Phase 2 schema 稳定 |
 | Phase 4：迁移与实机验收 | 未开始 | Phase 0 已证明只读基线；尚未部署或修改真实数据 | 备份、side-by-side、用户确认 |
 

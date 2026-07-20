@@ -49,6 +49,13 @@ export type RecordMutationMemorySubjectState =
 
 export type RecordMutationExecutionSubject =
   | {
+      kind: "workflow-run";
+      workflowRunId: string;
+      attemptId: string;
+      harnessRunId: string;
+      payloadDigest: string;
+    }
+  | {
       kind: "memory";
       memoryId: string;
       state: RecordMutationMemorySubjectState;
@@ -82,7 +89,10 @@ export type RecordMutationExecutionParticipant =
     }
   | {
       participantId: string;
-      recordKind: Extract<RecordMutationRecordKind, "memory" | "artifact">;
+      recordKind: Extract<
+        RecordMutationRecordKind,
+        "workflow-run" | "memory" | "artifact"
+      >;
       action: "mark-source-deleted";
       execution: {
         kind: "source-deletion";
@@ -136,6 +146,23 @@ export class RecordMutationExecutionPlanError extends Error {
     super(message);
     this.name = "RecordMutationExecutionPlanError";
   }
+}
+
+export function workflowRunPayloadParticipantId(
+  workflowRunIdInput: string,
+  attemptIdInput: string
+): string {
+  const workflowRunId = requireSafeId(
+    workflowRunIdInput,
+    "workflowRunId"
+  );
+  const attemptId = requireSafeId(attemptIdInput, "attemptId");
+  const digest = recordMutationDigest({
+    kind: "workflow-run-payload-participant",
+    workflowRunId,
+    attemptId
+  });
+  return `run-payload-${digest.slice("sha256:".length, 31)}`;
 }
 
 export async function createRecordMutationExecutionPlan(input: {
@@ -576,7 +603,11 @@ function parseExecutionParticipant(
     };
   }
   if (record.action === "mark-source-deleted") {
-    if (recordKind !== "memory" && recordKind !== "artifact") {
+    if (
+      recordKind !== "workflow-run"
+      && recordKind !== "memory"
+      && recordKind !== "artifact"
+    ) {
       throw invalidPlan(
         `participants[${index}] source-deletion recordKind 非法`
       );
@@ -619,6 +650,38 @@ function parseExecutionSubject(
     value,
     `participants[${participantIndex}].subject`
   );
+  if (subject.kind === "workflow-run") {
+    assertExactKeys(
+      subject,
+      [
+        "kind",
+        "workflowRunId",
+        "attemptId",
+        "harnessRunId",
+        "payloadDigest"
+      ],
+      `participants[${participantIndex}].subject`
+    );
+    return {
+      kind: "workflow-run",
+      workflowRunId: requireSafeId(
+        subject.workflowRunId,
+        `participants[${participantIndex}].subject.workflowRunId`
+      ),
+      attemptId: requireSafeId(
+        subject.attemptId,
+        `participants[${participantIndex}].subject.attemptId`
+      ),
+      harnessRunId: requireSafeId(
+        subject.harnessRunId,
+        `participants[${participantIndex}].subject.harnessRunId`
+      ),
+      payloadDigest: requireDigest(
+        subject.payloadDigest,
+        `participants[${participantIndex}].subject.payloadDigest`
+      )
+    };
+  }
   if (subject.kind === "memory") {
     assertExactKeys(
       subject,
@@ -706,13 +769,18 @@ function assertSubjectMatchesParticipant(
     );
   }
   const subject = participant.execution.subject;
-  if (
-    participant.recordKind === "memory"
-      ? subject.kind !== "memory"
-        || subject.memoryId !== participant.participantId
-      : subject.kind !== "artifact"
-        || subject.artifactId !== participant.participantId
-  ) {
+  const matches = participant.recordKind === "workflow-run"
+    ? subject.kind === "workflow-run"
+      && workflowRunPayloadParticipantId(
+        subject.workflowRunId,
+        subject.attemptId
+      ) === participant.participantId
+    : participant.recordKind === "memory"
+      ? subject.kind === "memory"
+        && subject.memoryId === participant.participantId
+      : subject.kind === "artifact"
+        && subject.artifactId === participant.participantId;
+  if (!matches) {
     throw journalMismatch(
       `participant ${participant.participantId} subject identity 不匹配`
     );

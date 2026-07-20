@@ -75,6 +75,27 @@ export type AttemptPayloadReadResult =
   | { state: "missing" }
   | { state: "corrupt"; code: RunRecordStoreCorruptCode; error: string };
 
+export interface AttemptPayloadUserDeletionProbe
+extends AttemptRunRecordLocator {
+  forwardEffectId: string;
+}
+
+export type AttemptPayloadUserDeletionObservation =
+  | {
+      status: "before";
+      manifest: AttemptPayloadManifestV1;
+    }
+  | {
+      status: "source-deleted";
+      tombstone: RunRetentionTombstoneV1;
+    }
+  | {
+      status: "source-restored";
+      tombstone: RunRetentionTombstoneV1;
+      restoredManifest: AttemptPayloadManifestV1;
+      restoredAt: number;
+    };
+
 export type RunRecordStoreCorruptCode =
   | "unsafe-path"
   | "manifest-corrupt"
@@ -148,6 +169,7 @@ export type ConversationAttemptPayloadInventory =
       state: "present";
       manifest: AttemptPayloadManifestV1;
       rawRefs: string[];
+      sourceRelativePath: string;
     }
   | {
       state: "expired";
@@ -249,6 +271,8 @@ interface RunRecordStoreInventorySnapshot {
     recordKind: RunRecordStoreRecordKind;
     subjectToken: string;
     manifestDigest: string;
+    generation: string;
+    contentKind: RunRecordStoreContentKind;
   }>;
   digest: string;
 }
@@ -286,6 +310,7 @@ interface PublishGenerationInput {
   }[];
   faultInjector?: RunRecordStoreFaultInjector;
   allowedPreviousContentKinds: readonly (RunRecordStoreContentKind | null)[];
+  committedAt?: number;
 }
 
 const MANIFEST_FILE_PATTERN = /^(\d{12})\.json$/;
@@ -623,18 +648,22 @@ export class FileRunRecordStore {
         ) {
           throw new Error("expired generation lacks its sealed prior manifest");
         }
-        const prior = await this.readPresentPayload(
-          locator,
-          path.join(latest.layout.generationsPath, priorPointer.generation),
-          priorPointer
-        );
-        if (
-          prior.state !== "present"
-          || prior.manifest.eventCount !== tombstone.prior.eventCount
-          || prior.manifest.byteCount !== tombstone.prior.byteCount
-          || prior.manifest.terminalAt !== tombstone.prior.terminalAt
-        ) {
-          throw new Error("expired generation cannot prove its sealed prior payload");
+        if (tombstone.reasonCode !== "user-deleted") {
+          const prior = await this.readPresentPayload(
+            locator,
+            path.join(latest.layout.generationsPath, priorPointer.generation),
+            priorPointer
+          );
+          if (
+            prior.state !== "present"
+            || prior.manifest.eventCount !== tombstone.prior.eventCount
+            || prior.manifest.byteCount !== tombstone.prior.byteCount
+            || prior.manifest.terminalAt !== tombstone.prior.terminalAt
+          ) {
+            throw new Error(
+              "expired generation cannot prove its sealed prior payload"
+            );
+          }
         }
         return { state: "expired", tombstone };
       } catch (error) {
@@ -645,6 +674,375 @@ export class FileRunRecordStore {
       "manifest-corrupt",
       new Error("Attempt payload manifest points at record content")
     );
+  }
+
+  async inspectAttemptPayloadUserDeletion(
+    input: AttemptPayloadUserDeletionProbe
+  ): Promise<AttemptPayloadUserDeletionObservation> {
+    const locator = validateAttemptPayloadUserDeletionProbe(input);
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      attemptRecordSubjectId(locator)
+    );
+    if (latest.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        `Attempt payload ${locator.workflowRunId}/${locator.attemptId} is missing`
+      );
+    }
+    if (latest.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(latest.code, latest.error);
+    }
+    if (latest.orphan) {
+      throw new RunRecordStoreConflictError(
+        `Attempt payload ${locator.workflowRunId}/${locator.attemptId} requires generation recovery`
+      );
+    }
+    const matches: Array<{
+      index: number;
+      pointer: RunRecordGenerationManifest;
+      tombstone: RunRetentionTombstoneV1;
+    }> = [];
+    for (const [index, pointer] of latest.chain.entries()) {
+      if (pointer.contentKind !== "expired") continue;
+      const tombstone = validateRetentionTombstone(
+        await readJsonFile(path.join(
+          latest.layout.generationsPath,
+          pointer.generation,
+          "record.json"
+        ))
+      );
+      if (
+        tombstone.scope === "attempt-payload"
+        && tombstone.reasonCode === "user-deleted"
+        && tombstone.workflowRunId === locator.workflowRunId
+        && tombstone.attemptId === locator.attemptId
+        && tombstone.retentionTransactionId === locator.forwardEffectId
+      ) {
+        matches.push({ index, pointer, tombstone });
+      }
+    }
+    if (matches.length > 1) {
+      throw new RunRecordStoreCorruptError(
+        "tombstone-corrupt",
+        "Attempt payload has duplicate user-deletion tombstones"
+      );
+    }
+    const match = matches[0];
+    if (!match) {
+      const current = await this.readAttemptPayload(locator);
+      if (current.state === "corrupt") {
+        throw new RunRecordStoreCorruptError(current.code, current.error);
+      }
+      if (current.state !== "present") {
+        throw new RunRecordStoreConflictError(
+          `Attempt payload cannot begin source deletion from ${current.state}`
+        );
+      }
+      return {
+        status: "before",
+        manifest: current.manifest
+      };
+    }
+    if (
+      match.index === latest.chain.length - 1
+      && latest.manifest.digest === match.pointer.digest
+    ) {
+      return {
+        status: "source-deleted",
+        tombstone: match.tombstone
+      };
+    }
+    const restoredPointer = latest.chain[match.index + 1];
+    if (
+      match.index + 1 !== latest.chain.length - 1
+      || !restoredPointer
+      || restoredPointer.contentKind !== "payload"
+      || latest.manifest.digest !== restoredPointer.digest
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload changed after its user-deletion tombstone"
+      );
+    }
+    const restored = await this.readAttemptPayload(locator);
+    if (restored.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(restored.code, restored.error);
+    }
+    const priorPointer = latest.chain[match.index - 1];
+    if (
+      !priorPointer
+      || priorPointer.contentKind !== "payload"
+      || priorPointer.contentDigest !== match.tombstone.prior.digest
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "tombstone-corrupt",
+        "Attempt payload restoration lacks its prior payload pointer"
+      );
+    }
+    const prior = await this.readPresentPayload(
+      locator,
+      path.join(
+        latest.layout.generationsPath,
+        priorPointer.generation
+      ),
+      priorPointer
+    );
+    if (
+      restored.state !== "present"
+      || prior.state !== "present"
+      || !sameRestoredAttemptPayload(
+        restored.manifest,
+        prior.manifest,
+        match.tombstone
+      )
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "payload-manifest-corrupt",
+        "Attempt payload restoration does not match its tombstone"
+      );
+    }
+    return {
+      status: "source-restored",
+      tombstone: match.tombstone,
+      restoredManifest: restored.manifest,
+      restoredAt: restoredPointer.committedAt
+    };
+  }
+
+  async recoverAttemptPayloadUserDeletion(
+    input: AttemptPayloadUserDeletionProbe
+  ): Promise<void> {
+    const probe = validateAttemptPayloadUserDeletionProbe(input);
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      attemptRecordSubjectId(probe)
+    );
+    if (latest.state === "missing") {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload source deletion recovery subject is missing"
+      );
+    }
+    if (latest.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(latest.code, latest.error);
+    }
+    const orphan = latest.orphan;
+    if (!orphan) return;
+    const orphanGenerationPath = path.join(
+      latest.layout.generationsPath,
+      orphan.generation
+    );
+    if (orphan.contentKind === "expired") {
+      const tombstone = validateRetentionTombstone(
+        await readJsonFile(path.join(
+          orphanGenerationPath,
+          "record.json"
+        ))
+      );
+      if (
+        tombstone.scope !== "attempt-payload"
+        || tombstone.reasonCode !== "user-deleted"
+        || tombstone.workflowRunId !== probe.workflowRunId
+        || tombstone.attemptId !== probe.attemptId
+        || tombstone.retentionTransactionId !== probe.forwardEffectId
+      ) {
+        throw new RunRecordStoreConflictError(
+          "Attempt payload source deletion recovery orphan conflicts"
+        );
+      }
+      await this.publishAttemptPayloadTombstone(tombstone, {
+        expectedRevision: latest.manifest.revision,
+        expectedDigest: latest.manifest.contentDigest
+      });
+      return;
+    }
+    if (
+      orphan.contentKind !== "payload"
+      || latest.manifest.contentKind !== "expired"
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload source deletion has an unsupported recovery orphan"
+      );
+    }
+    const tombstone = validateRetentionTombstone(
+      await readJsonFile(path.join(
+        latest.layout.generationsPath,
+        latest.manifest.generation,
+        "record.json"
+      ))
+    );
+    if (
+      tombstone.scope !== "attempt-payload"
+      || tombstone.reasonCode !== "user-deleted"
+      || tombstone.workflowRunId !== probe.workflowRunId
+      || tombstone.attemptId !== probe.attemptId
+      || tombstone.retentionTransactionId !== probe.forwardEffectId
+    ) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload restoration recovery tombstone conflicts"
+      );
+    }
+    const priorPointer = latest.chain.at(-2);
+    if (
+      !priorPointer
+      || priorPointer.contentKind !== "payload"
+      || priorPointer.contentDigest !== tombstone.prior.digest
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "tombstone-corrupt",
+        "Attempt payload restoration recovery prior pointer is invalid"
+      );
+    }
+    const prior = await this.readPresentPayload(
+      probe,
+      path.join(
+        latest.layout.generationsPath,
+        priorPointer.generation
+      ),
+      priorPointer
+    );
+    if (prior.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(prior.code, prior.error);
+    }
+    if (prior.state !== "present") {
+      throw new RunRecordStoreCorruptError(
+        "generation-missing",
+        "Attempt payload restoration recovery source is missing"
+      );
+    }
+    const restoredManifest = restoredAttemptPayloadManifest(
+      prior.manifest,
+      orphan.revision
+    );
+    if (restoredManifest.digest !== orphan.contentDigest) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload restoration recovery orphan digest conflicts"
+      );
+    }
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId: attemptRecordSubjectId(probe),
+      revision: restoredManifest.revision,
+      contentKind: "payload",
+      contentDigest: restoredManifest.digest,
+      cas: {
+        expectedRevision: latest.manifest.revision,
+        expectedDigest: latest.manifest.contentDigest
+      },
+      files: [
+        {
+          relativePath: "manifest.json",
+          content: jsonLine(restoredManifest)
+        },
+        {
+          relativePath: "events.jsonl",
+          content: serializeAttemptPayloadEvents(prior.events, {
+            workflowRunId: restoredManifest.workflowRunId,
+            attemptId: restoredManifest.attemptId,
+            harnessRunId: restoredManifest.harnessRunId
+          })
+        }
+      ],
+      allowedPreviousContentKinds: ["expired"],
+      committedAt: orphan.committedAt
+    });
+  }
+
+  async restoreAttemptPayloadUserDeletion(input: {
+    workflowRunId: string;
+    attemptId: string;
+    forwardEffectId: string;
+    occurredAt: number;
+    faultInjector?: RunRecordStoreFaultInjector;
+  }): Promise<AttemptPayloadUserDeletionObservation> {
+    const probe = validateAttemptPayloadUserDeletionProbe(input);
+    await this.recoverAttemptPayloadUserDeletion(probe);
+    const occurredAt = requireRunRecordTimestamp(
+      input.occurredAt,
+      "occurredAt"
+    );
+    const observed = await this.inspectAttemptPayloadUserDeletion(probe);
+    if (observed.status === "before") {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload source deletion tombstone is missing"
+      );
+    }
+    if (observed.status === "source-restored") return observed;
+    const latest = await this.readLatestManifest(
+      "attempt-payload",
+      attemptRecordSubjectId(probe)
+    );
+    if (latest.state !== "present" || latest.orphan) {
+      throw new RunRecordStoreConflictError(
+        "Attempt payload source deletion is not a recoverable active tombstone"
+      );
+    }
+    const priorPointer = latest.chain.at(-2);
+    if (
+      !priorPointer
+      || priorPointer.contentKind !== "payload"
+      || priorPointer.contentDigest !== observed.tombstone.prior.digest
+    ) {
+      throw new RunRecordStoreCorruptError(
+        "tombstone-corrupt",
+        "Attempt payload source deletion lacks its prior payload pointer"
+      );
+    }
+    const prior = await this.readPresentPayload(
+      probe,
+      path.join(
+        latest.layout.generationsPath,
+        priorPointer.generation
+      ),
+      priorPointer
+    );
+    if (prior.state === "corrupt") {
+      throw new RunRecordStoreCorruptError(prior.code, prior.error);
+    }
+    if (prior.state !== "present") {
+      throw new RunRecordStoreCorruptError(
+        "generation-missing",
+        "Attempt payload source bytes have not been restored"
+      );
+    }
+    const restoredManifest = restoredAttemptPayloadManifest(
+      prior.manifest,
+      latest.manifest.revision + 1
+    );
+    await this.publishGeneration({
+      recordKind: "attempt-payload",
+      subjectId: attemptRecordSubjectId(probe),
+      revision: restoredManifest.revision,
+      contentKind: "payload",
+      contentDigest: restoredManifest.digest,
+      cas: {
+        expectedRevision: latest.manifest.revision,
+        expectedDigest: latest.manifest.contentDigest
+      },
+      files: [
+        {
+          relativePath: "manifest.json",
+          content: jsonLine(restoredManifest)
+        },
+        {
+          relativePath: "events.jsonl",
+          content: serializeAttemptPayloadEvents(prior.events, {
+            workflowRunId: restoredManifest.workflowRunId,
+            attemptId: restoredManifest.attemptId,
+            harnessRunId: restoredManifest.harnessRunId
+          })
+        }
+      ],
+      faultInjector: input.faultInjector,
+      allowedPreviousContentKinds: ["expired"],
+      committedAt: occurredAt
+    });
+    const readback = await this.inspectAttemptPayloadUserDeletion(probe);
+    if (readback.status !== "source-restored") {
+      throw new RunRecordStoreCorruptError(
+        "record-corrupt",
+        "Attempt payload source restoration readback failed"
+      );
+    }
+    return readback;
   }
 
   /**
@@ -697,7 +1095,10 @@ export class FileRunRecordStore {
       }
       payloads.set(
         attemptInventoryKey(locator),
-        summarizeAttemptPayloadInventory(read)
+        summarizeAttemptPayloadInventory(
+          read,
+          activeAttemptPayloadRelativePath(before, locator)
+        )
       );
     }
 
@@ -953,7 +1354,9 @@ export class FileRunRecordStore {
       ].map((subject) => ({
         recordKind: subject.recordKind,
         subjectToken: subject.subjectToken,
-        manifestDigest: subject.manifestDigest
+        manifestDigest: subject.manifestDigest,
+        generation: subject.generation,
+        contentKind: subject.contentKind
       }))
     );
   }
@@ -964,6 +1367,8 @@ export class FileRunRecordStore {
     recordKind: RunRecordStoreRecordKind;
     subjectToken: string;
     manifestDigest: string;
+    generation: string;
+    contentKind: RunRecordStoreContentKind;
     identity: string | AttemptRunRecordLocator;
   }>> {
     const collectionPath = path.join(
@@ -977,6 +1382,8 @@ export class FileRunRecordStore {
       recordKind: RunRecordStoreRecordKind;
       subjectToken: string;
       manifestDigest: string;
+      generation: string;
+      contentKind: RunRecordStoreContentKind;
       identity: string | AttemptRunRecordLocator;
     }> = [];
     for (const entry of entries.sort((left, right) =>
@@ -1007,6 +1414,8 @@ export class FileRunRecordStore {
     recordKind: RunRecordStoreRecordKind;
     subjectToken: string;
     manifestDigest: string;
+    generation: string;
+    contentKind: RunRecordStoreContentKind;
     identity: string | AttemptRunRecordLocator;
   }> {
     const subjectRootPath = path.join(
@@ -1129,6 +1538,8 @@ export class FileRunRecordStore {
       recordKind,
       subjectToken,
       manifestDigest: manifest.digest,
+      generation: manifest.generation,
+      contentKind: manifest.contentKind,
       identity
     };
   }
@@ -1330,7 +1741,9 @@ export class FileRunRecordStore {
         previousContentDigest: current.state === "present"
           ? current.manifest.contentDigest
           : null,
-        committedAt: Date.now()
+        committedAt: input.committedAt === undefined
+          ? Date.now()
+          : requireRunRecordTimestamp(input.committedAt, "committedAt")
       }));
       await writeNewFileDurably(stagedManifestPath, jsonLine(pointer));
       await syncDirectory(stagingRootPath);
@@ -1588,6 +2001,8 @@ function runRecordStoreInventorySnapshot(
     recordKind: RunRecordStoreRecordKind;
     subjectToken: string;
     manifestDigest: string;
+    generation: string;
+    contentKind: RunRecordStoreContentKind;
   }[]
 ): RunRecordStoreInventorySnapshot {
   const workflowRunIds = [...workflowRunIdsInput].sort((left, right) =>
@@ -1611,14 +2026,39 @@ function runRecordStoreInventorySnapshot(
   };
 }
 
+function activeAttemptPayloadRelativePath(
+  snapshot: RunRecordStoreInventorySnapshot,
+  locator: AttemptRunRecordLocator
+): string {
+  const subjectToken = attemptRunRecordSubjectToken(locator);
+  const head = snapshot.activeHeads.find((candidate) =>
+    candidate.recordKind === "attempt-payload"
+    && candidate.subjectToken === subjectToken
+  );
+  if (!head) {
+    throw new RunRecordStoreCorruptError(
+      "record-corrupt",
+      `Attempt payload ${locator.workflowRunId}/${locator.attemptId} has no active head`
+    );
+  }
+  return [
+    "attempt-payloads",
+    subjectToken,
+    "generations",
+    head.generation
+  ].join("/");
+}
+
 function summarizeAttemptPayloadInventory(
-  read: Exclude<AttemptPayloadReadResult, { state: "corrupt" }>
+  read: Exclude<AttemptPayloadReadResult, { state: "corrupt" }>,
+  sourceRelativePath: string
 ): ConversationAttemptPayloadInventory {
   if (read.state === "present") {
     return {
       state: "present",
       manifest: read.manifest,
-      rawRefs: collectRunPayloadRawRefs(read.events)
+      rawRefs: collectRunPayloadRawRefs(read.events),
+      sourceRelativePath
     };
   }
   if (read.state === "expired") {
@@ -1797,6 +2237,60 @@ function requireInventoryIdentity(value: string, label: string): string {
     );
   }
   return value;
+}
+
+function validateAttemptPayloadUserDeletionProbe<T extends {
+  workflowRunId: string;
+  attemptId: string;
+  forwardEffectId: string;
+}>(input: T): T {
+  requireInventoryIdentity(input.workflowRunId, "workflowRunId");
+  requireInventoryIdentity(input.attemptId, "attemptId");
+  requireInventoryIdentity(input.forwardEffectId, "forwardEffectId");
+  return input;
+}
+
+function requireRunRecordTimestamp(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RunRecordStoreConflictError(
+      `Run record ${label} is invalid`
+    );
+  }
+  return value;
+}
+
+function restoredAttemptPayloadManifest(
+  prior: AttemptPayloadManifestV1,
+  revision: number
+): AttemptPayloadManifestV1 {
+  const { digest: _digest, ...withoutDigest } = prior;
+  const draft = {
+    ...withoutDigest,
+    revision
+  };
+  return validateAttemptPayloadManifest({
+    ...draft,
+    digest: canonicalRunRecordDigest(draft)
+  });
+}
+
+function sameRestoredAttemptPayload(
+  restored: AttemptPayloadManifestV1,
+  prior: AttemptPayloadManifestV1,
+  tombstone: RunRetentionTombstoneV1
+): boolean {
+  if (
+    tombstone.scope !== "attempt-payload"
+    || tombstone.reasonCode !== "user-deleted"
+    || tombstone.workflowRunId !== prior.workflowRunId
+    || tombstone.attemptId !== prior.attemptId
+    || tombstone.harnessRunId !== prior.harnessRunId
+    || tombstone.prior.digest !== prior.digest
+  ) {
+    return false;
+  }
+  return restored.digest
+    === restoredAttemptPayloadManifest(prior, restored.revision).digest;
 }
 
 function assertInventoryGenerationIdentity(

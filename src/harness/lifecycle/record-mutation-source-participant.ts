@@ -23,7 +23,7 @@ const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 export type RecordMutationSourceParticipantKind = Extract<
   RecordMutationRecordKind,
-  "memory" | "artifact"
+  "workflow-run" | "memory" | "artifact"
 >;
 
 export interface RecordMutationSourceParticipantReceipt {
@@ -209,7 +209,11 @@ function isRecordMutationSourceParticipantAdapter(
   }
   const adapter = value as Record<string, unknown>;
   return typeof adapter.participantId === "string"
-    && (adapter.recordKind === "memory" || adapter.recordKind === "artifact")
+    && (
+      adapter.recordKind === "workflow-run"
+      || adapter.recordKind === "memory"
+      || adapter.recordKind === "artifact"
+    )
     && typeof adapter.storageRootPath === "string"
     && typeof adapter.rootPath === "string"
     && typeof adapter.boundaryRootPath === "string"
@@ -704,7 +708,11 @@ function nextTimestamp(
 function requireSourceParticipantKind(
   value: unknown
 ): RecordMutationSourceParticipantKind {
-  if (value !== "memory" && value !== "artifact") {
+  if (
+    value !== "workflow-run"
+    && value !== "memory"
+    && value !== "artifact"
+  ) {
     throw receiptCorrupt("source participant recordKind 非法");
   }
   return value;
