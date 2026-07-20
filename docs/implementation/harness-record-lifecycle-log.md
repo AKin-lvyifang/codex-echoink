@@ -60,6 +60,38 @@
 - 本批没有实现 V2 live clear/delete，没有发布 cutover，也没有触碰真实 Vault。
   下一批补迁移静默窗口，然后实现 V2 live writer 的完整产品合同。
 
+## 2026-07-20：Phase 4 V2 live writer 与统一静默窗口
+
+- 新增生产 V2 live adapter。canonical V2 active 后可新建、读取、追加、提交
+  Context、启动恢复、清空和删除，不再回退 legacy V1。
+- Context identity 与 Store metadata revision 分离；Conversation content
+  revision 只覆盖产品正文，排除 backend binding、Run 诊断和 Settings 投影。
+- clear 先提交新的空 Context，再使用不可变 retirement marker 和精确 source plan
+  退休旧 metadata/payload；仍被新状态引用的相同空 payload 不会误删。
+- delete 先发布 tombstone，reader/index 立即排除旧会话；旧目录等待 Journal 安全
+  退休。Settings hydration 在 V2 active 时保留 Settings 自有投影。
+- RunOrchestrator 与 HarnessService 关闭新 Run admission 并等待现有 Run；Native
+  manager 暂停新 cleanup 并等待已有 cleanup。Settings quiet window 刷新并冻结
+  Settings、Conversation、History、Raw、全局 RecordMutation、Run Store、Memory
+  formal mutation 和 Native Store。
+- 新增唯一生产 V1→V2 cutover 入口。它只能在统一静默窗口内从真实 settings、
+  Native 和 Run Store 重建 owner proof，再 copy、validate 和发布 active manifest。
+  owner proof 缺失时在创建 manifest/target 前返回 blocked；pending active fence
+  只有重新取得静默窗口并验证 source/target 后才可恢复。
+- V2→V1 compatibility export 现在把投影自身生成的 owner edge 与外部 owner
+  ledger 精确去重并对账。Conversation 产品指纹排除 Context 内部 commit ID；
+  `rollingSummary` 保持可回迁，但再次导回 V2 时仍要求目标 Settings owner proof。
+  其他重复、缺失或冲突关系继续由 Validator 阻断。
+- Focused 验证覆盖 V2 router 的 create/append/clear/clear 后继续追加/delete、
+  legacy V1 零修改、owner Store ready 才激活、缺 Store 零写阻断、quiet window
+  拒绝新 cleanup、串行 Native mutation，以及 Migration Validator、V1 exporter
+  与 History projection/retention。
+- 最终 `npm run test` 输出 `All tests passed`；typecheck、build、baseline lint、
+  release/public guard 与 `git diff --check` 通过。lint 保持 942 个 baseline
+  finding，无新增；public guard 检查 438 个 tracked files。
+- 本批没有执行真实 Vault 迁移、retention、Raw GC、History 删除、Native 批量
+  cleanup、部署或 Obsidian UI 验收。
+
 ## 2026-07-18 至 2026-07-19：记录生命周期只读审计
 
 - 从 `main@a91f1b8` 建立分支 `codex/harness-record-lifecycle` 和专用 worktree。

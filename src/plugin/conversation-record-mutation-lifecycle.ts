@@ -259,7 +259,8 @@ export async function commitEchoInkConversationRecordMutation(input: {
             expectedConversationContentRevision: expectedContentRevision,
             targetConversation: target.intentTarget,
             rootBindings: preparedRoots.roots.map((root) => root.rootBinding),
-            conversationRootId: conversationRoute.rootId
+            conversationRootId: conversationRoute.rootId,
+            conversationStoreVersion: conversationRoute.storeVersion
           });
           const journal = await createRecordMutationJournal({
             storageRootPath: preparedRoots.storageRootPath,
@@ -308,7 +309,10 @@ export async function commitEchoInkConversationRecordMutation(input: {
                 {
                   expectedGeneration,
                   expectedCommitId,
-                  expectedContentRevision
+                  expectedContentRevision,
+                  sourceRelativePaths: conversationSources.map(
+                    (source) => source.sourceRelativePath
+                  )
                 },
                 authority
               );
@@ -316,6 +320,7 @@ export async function commitEchoInkConversationRecordMutation(input: {
               await settingsStore.commitConversationRecordClear(
                 target.session!,
                 {
+                  mutationId,
                   expectedGeneration,
                   expectedCommitId,
                   expectedContentRevision,

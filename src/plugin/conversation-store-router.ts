@@ -2,6 +2,7 @@ import * as path from "node:path";
 import {
   FileConversationStore,
   type CommitConversationContextOptions,
+  type CommitConversationDeletionTombstoneOptions,
   type CommitConversationRecordClearOptions,
   type ConversationAuthorityProbe,
   type ConversationAuthorityProof,
@@ -23,41 +24,27 @@ import {
   type EchoInkRecordMutationRootId
 } from "../harness/lifecycle/record-mutation-production";
 import type { StoredSession } from "../settings/settings";
+import {
+  FileConversationStoreV2LiveAdapter
+} from "./conversation-store-v2-live-adapter";
 
-export type ConversationStoreRoutingErrorCode =
-  | "v2-live-route-unavailable";
-
-/**
- * Production routing must never infer a writable Store from a hard-coded
- * directory. A forward V2 cutover is allowed only after the live V2 adapter
- * implements the complete settings/mutation contract.
- */
-export class ConversationStoreRoutingError extends Error {
-  constructor(
-    public readonly code: ConversationStoreRoutingErrorCode,
-    public readonly selection: ConversationStoreSelection,
-    operation: string
-  ) {
-    super(
-      `Conversation Store route ${selection.storeRef} cannot execute live operation ${operation}`
-    );
-    this.name = "ConversationStoreRoutingError";
-  }
-}
+type RoutedConversationStore =
+  | FileConversationStore
+  | FileConversationStoreV2LiveAdapter;
 
 /**
- * Single production entrypoint for the legacy and restored-V1 live Stores.
+ * Single production entrypoint for legacy V1, canonical V2 and restored V1.
  *
  * Every operation resolves the append-only route first. This makes forward or
- * reverse cutover visible to both readers and writers, and prevents an active
- * V2 reader from being paired with a hidden write to the legacy V1 root.
+ * reverse cutover visible to both readers and writers.
  */
 export class FileConversationStoreRouter {
   readonly storageRootPath: string;
-  private selectedV1:
+  private selected:
     | {
+        storeRef: ConversationStoreSelection["storeRef"];
         rootPath: string;
-        store: FileConversationStore;
+        store: RoutedConversationStore;
       }
     | null = null;
 
@@ -66,33 +53,40 @@ export class FileConversationStoreRouter {
   }
 
   async resolveLiveRootPath(): Promise<string> {
-    const { selection } = await this.resolveV1("resolve-live-root");
+    const { selection } = await this.resolveStore();
     return selection.rootPath;
+  }
+
+  async resolveSelection(): Promise<ConversationStoreSelection> {
+    return (await this.resolveStore()).selection;
   }
 
   async resolveRecordMutationRoute(): Promise<{
     rootId: EchoInkRecordMutationRootId;
     rootPath: string;
+    storeVersion: "v1" | "v2";
   }> {
-    const rootPath = await this.resolveLiveRootPath();
+    const { selection } = await this.resolveStore();
+    const rootPath = selection.rootPath;
     return {
       rootId: echoInkConversationRecordMutationRootId({
         storageRootPath: this.storageRootPath,
         conversationRootPath: rootPath
       }),
-      rootPath
+      rootPath,
+      storeVersion: selection.activeStore
     };
   }
 
   async readSession(sessionId: string): Promise<StoredSession | null> {
-    const { store } = await this.resolveV1("read-session");
+    const { store } = await this.resolveStore();
     return await store.readSession(sessionId);
   }
 
   async proveMessageAuthority(
     probe: ConversationMessageAuthorityProbe
   ): Promise<ConversationMessageAuthorityProof> {
-    const { store } = await this.resolveV1("prove-message-authority");
+    const { store } = await this.resolveStore();
     return await store.proveMessageAuthority(probe);
   }
 
@@ -100,25 +94,21 @@ export class FileConversationStoreRouter {
     session: StoredSession,
     options: CommitConversationContextOptions
   ): Promise<ConversationContextCommitReceipt> {
-    const { store } = await this.resolveV1("commit-session-context");
+    const { store } = await this.resolveStore();
     return await store.commitSessionContext(session, options);
   }
 
   async proveSessionContextAuthority(
     probe: ConversationAuthorityProbe
   ): Promise<ConversationAuthorityProof> {
-    const { store } = await this.resolveV1(
-      "prove-session-context-authority"
-    );
+    const { store } = await this.resolveStore();
     return await store.proveSessionContextAuthority(probe);
   }
 
   async planConversationRecordMutationSources(
     input: PlanConversationRecordMutationSourcesInput
   ): Promise<ConversationRecordMutationSource[]> {
-    const { store } = await this.resolveV1(
-      "plan-conversation-record-mutation"
-    );
+    const { store } = await this.resolveStore();
     return await store.planConversationRecordMutationSources(input);
   }
 
@@ -126,19 +116,15 @@ export class FileConversationStoreRouter {
     session: StoredSession,
     options: CommitConversationRecordClearOptions
   ): Promise<ConversationContextCommitReceipt> {
-    const { store } = await this.resolveV1(
-      "commit-conversation-record-clear"
-    );
+    const { store } = await this.resolveStore();
     return await store.commitConversationRecordClear(session, options);
   }
 
   async commitConversationDeletionTombstone(
     tombstone: ConversationDeletionTombstoneV1,
-    options: CommitConversationContextOptions
+    options: CommitConversationDeletionTombstoneOptions
   ): Promise<ConversationDeletionTombstoneV1> {
-    const { store } = await this.resolveV1(
-      "commit-conversation-deletion-tombstone"
-    );
+    const { store } = await this.resolveStore();
     return await store.commitConversationDeletionTombstone(
       tombstone,
       options
@@ -148,9 +134,7 @@ export class FileConversationStoreRouter {
   async readConversationDeletionTombstone(
     conversationId: string
   ): Promise<ConversationDeletionTombstoneV1 | null> {
-    const { store } = await this.resolveV1(
-      "read-conversation-deletion-tombstone"
-    );
+    const { store } = await this.resolveStore();
     return await store.readConversationDeletionTombstone(conversationId);
   }
 
@@ -161,47 +145,46 @@ export class FileConversationStoreRouter {
       afterSessionPersisted?: (session: StoredSession) => void;
     } = {}
   ): Promise<ConversationStoreMigrationResult> {
-    const { store } = await this.resolveV1("persist-settings-sessions");
+    const { store } = await this.resolveStore();
     return await store.persistSettingsSessions(settings, options);
   }
 
   async reconcileCommittedSessionsAtStartup():
   Promise<ConversationStoreStartupReconciliationResult> {
-    const { store } = await this.resolveV1(
-      "reconcile-committed-sessions"
-    );
+    const { store } = await this.resolveStore();
     return await store.reconcileCommittedSessionsAtStartup();
   }
 
   async createPristineSession(session: StoredSession): Promise<void> {
-    const { store } = await this.resolveV1("create-pristine-session");
+    const { store } = await this.resolveStore();
     await store.createPristineSession(session);
   }
 
-  private async resolveV1(operation: string): Promise<{
+  private async resolveStore(): Promise<{
     selection: ConversationStoreSelection;
-    store: FileConversationStore;
+    store: RoutedConversationStore;
   }> {
     const selection = await resolveConversationStoreSelection(
       this.storageRootPath
     );
-    if (selection.activeStore === "v2") {
-      throw new ConversationStoreRoutingError(
-        "v2-live-route-unavailable",
-        selection,
-        operation
-      );
-    }
     const rootPath = path.resolve(selection.rootPath);
-    if (this.selectedV1?.rootPath !== rootPath) {
-      this.selectedV1 = {
+    if (
+      this.selected?.rootPath !== rootPath
+      || this.selected.storeRef !== selection.storeRef
+    ) {
+      this.selected = {
+        storeRef: selection.storeRef,
         rootPath,
-        store: new FileConversationStore({ rootPath })
+        store: selection.activeStore === "v2"
+          ? new FileConversationStoreV2LiveAdapter(
+            this.storageRootPath
+          )
+          : new FileConversationStore({ rootPath })
       };
     }
     return {
       selection,
-      store: this.selectedV1.store
+      store: this.selected.store
     };
   }
 }

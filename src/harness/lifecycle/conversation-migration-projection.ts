@@ -352,12 +352,110 @@ export function projectStoredSessionToConversationCommitV2(
     currentContext: {
       id: currentContextId,
       generation,
+      ...(session.commitId ? { commitId: session.commitId } : {}),
       cwd: session.cwd,
       workspaceFingerprint
     },
     messages,
     snapshot,
     createdAt: session.createdAt,
+    updatedAt: session.updatedAt
+  });
+}
+
+/**
+ * Projects a live Settings candidate onto the append-only V2 Store.
+ *
+ * Existing product messages retain their original Context and lineage. New
+ * messages join the current Context. The Store revision commit is independent
+ * from the stable product Context commit carried by currentContext.commitId.
+ */
+export function projectStoredSessionToLiveConversationCommitV2(
+  session: StoredSession,
+  input: {
+    previous: ConversationCommitV2 | null;
+    metadataCommitId: string;
+  }
+): ConversationCommitV2 {
+  assertExactLegacyKeys(session, LEGACY_SESSION_KEYS, "StoredSession");
+  const currentContextId = normalizedIdentifier(session.contextId);
+  const contextCommitId = normalizedIdentifier(session.commitId);
+  const generation = positiveSafeInteger(session.generation)
+    ?? positiveSafeInteger(session.revision);
+  if (!currentContextId || !contextCommitId || !generation) {
+    throw new Error(
+      "Conversation live V2 commit requires a complete Context identity"
+    );
+  }
+  const workspaceFingerprint = session.workspaceFingerprint;
+  if (
+    typeof workspaceFingerprint !== "string"
+    || !SHA256_PATTERN.test(workspaceFingerprint)
+  ) {
+    throw new Error(
+      "Conversation live V2 commit requires a workspace fingerprint"
+    );
+  }
+  const boundary = session.contextStartsAfterMessageId?.trim() || null;
+  const boundaryIndex = boundary === null
+    ? -1
+    : session.messages.findIndex((message) => message.id === boundary);
+  if (boundary !== null && boundaryIndex < 0) {
+    throw new Error(
+      `Conversation live V2 context boundary ${boundary} is missing`
+    );
+  }
+  const previousMessages = input.previous?.payload.messages ?? [];
+  const messages = session.messages.map((message, index) => {
+    const projected = projectStoredChatMessageToConversationMessageV2(
+      message,
+      currentContextId
+    );
+    const existing = previousMessages[index];
+    if (
+      existing
+      && existing.id === projected.id
+      && createConversationProductMessageRevision(existing)
+        === createConversationProductMessageRevision(projected)
+    ) {
+      return existing;
+    }
+    const contextId = boundaryIndex >= 0 && index <= boundaryIndex
+      ? (
+        existing?.contextId
+        ?? legacyContextId(session.id, `before:${boundary}`)
+      )
+      : currentContextId;
+    return contextId === currentContextId
+      ? projected
+      : projectStoredChatMessageToConversationMessageV2(
+        message,
+        contextId
+      );
+  });
+  const snapshot = projectStoredSessionSnapshot(
+    session,
+    currentContextId,
+    generation
+  );
+  const previousMetadata = input.previous?.metadata ?? null;
+  return finalizeConversationCommitV2({
+    conversationId: session.id,
+    title: session.title,
+    kind: session.kind ?? "chat",
+    revision: previousMetadata ? previousMetadata.revision + 1 : 0,
+    commitId: input.metadataCommitId,
+    previousMetadata,
+    currentContext: {
+      id: currentContextId,
+      generation,
+      commitId: contextCommitId,
+      cwd: session.cwd,
+      workspaceFingerprint
+    },
+    messages,
+    snapshot,
+    createdAt: previousMetadata?.createdAt ?? session.createdAt,
     updatedAt: session.updatedAt
   });
 }
@@ -408,7 +506,12 @@ export function createConversationProductRevision(
     conversationId: metadata.conversationId,
     title: metadata.title,
     kind: metadata.kind,
-    currentContext: metadata.currentContext,
+    currentContext: {
+      id: metadata.currentContext.id,
+      generation: metadata.currentContext.generation,
+      cwd: metadata.currentContext.cwd,
+      workspaceFingerprint: metadata.currentContext.workspaceFingerprint
+    },
     contextStartsAfterMessageId:
       currentContextBoundaryMessageId(commit),
     messages: payload.messages.map((message) =>

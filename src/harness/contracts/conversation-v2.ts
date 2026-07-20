@@ -82,6 +82,14 @@ export type ConversationMessageRoleV2 = "user" | "assistant" | "system" | "tool"
 export interface ConversationCurrentContextV2 {
   id: string;
   generation: number;
+  /**
+   * Stable product Context commit identity. Metadata commitId is the unique
+   * append-only Store revision and therefore changes on ordinary message
+   * appends; this value changes only when the Context itself is committed.
+   *
+   * Optional only for read compatibility with pre-live V2 migration fixtures.
+   */
+  commitId?: string;
   cwd: string;
   workspaceFingerprint: string;
 }
@@ -626,9 +634,10 @@ function validateCurrentContext(value: unknown): ConversationCurrentContextV2 {
     "generation",
     "cwd",
     "workspaceFingerprint"
-  ], [], "Conversation currentContext");
+  ], ["commitId"], "Conversation currentContext");
   requireIdentifier(record.id, "Conversation currentContext id");
   requirePositiveInteger(record.generation, "Conversation currentContext generation");
+  validateOptionalIdentifier(record, "commitId");
   requireText(
     record.cwd,
     "Conversation currentContext cwd",
@@ -724,6 +733,10 @@ function assertCurrentContextIsFinalSegment(
   messages: readonly MessageV2[],
   currentContextId: string
 ): void {
+  const currentMessageCount = messages.filter(
+    (message) => message.contextId === currentContextId
+  ).length;
+  if (currentMessageCount === 0) return;
   const finalContextId = messages[messages.length - 1]?.contextId;
   if (finalContextId !== undefined && finalContextId !== currentContextId) {
     throw contractError(

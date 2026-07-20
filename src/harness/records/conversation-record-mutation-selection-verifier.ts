@@ -134,8 +134,31 @@ function rebuildPlan(
       intent.expectedConversationContentRevision,
     targetConversation: intent.targetConversation,
     rootBindings: intent.rootBindings,
-    conversationRootId
+    conversationRootId,
+    conversationStoreVersion:
+      frozenConversationStoreVersion(conversationSources)
   });
+}
+
+function frozenConversationStoreVersion(
+  sources: readonly { sourceRelativePath: string }[]
+): "v1" | "v2" {
+  const versions = new Set(sources.map((source) => (
+    source.sourceRelativePath.startsWith("sessions/")
+      ? "v1" as const
+      : (
+        source.sourceRelativePath.startsWith("conversations/")
+        || source.sourceRelativePath.startsWith("payloads/")
+      )
+        ? "v2" as const
+        : "unknown" as const
+  )));
+  if (versions.size !== 1 || versions.has("unknown")) {
+    throw new Error(
+      "Conversation RecordMutation frozen source Store version is invalid"
+    );
+  }
+  return versions.has("v2") ? "v2" : "v1";
 }
 
 function frozenConversationRootId(

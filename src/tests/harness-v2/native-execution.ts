@@ -30,6 +30,7 @@ import { DEFAULT_SETTINGS, normalizeSettingsData, type StoredSession } from "../
 export async function runHarnessV2NativeExecutionTests(): Promise<void> {
   await assertEchoInkHostProcessDispositionClosesWithoutCleanupAdapter();
   await assertCleanupCommittedRequiresDurableCommittedAuthority();
+  await assertMigrationQuietWindowPausesCleanupAndNativeMutation();
   await assertKnowledgeLocalCommitAndCleanupEventsUseCentralLedgerSequence();
   await assertMissingNativeSettlementReceiptIsDurablyRetainedAcrossRestart();
   await assertKnowledgeLocalCommitEventFailureKeepsDurableCommitGateClosed();
@@ -92,6 +93,57 @@ export async function runHarnessV2NativeExecutionP1RegressionTests(): Promise<vo
   await assertPostClaimRecoveryRetriesAfterReleaseFailure();
   await assertNativeExecutionStoreRequiresRecoveryForTempResidueBesideCommittedIndex();
   await assertNativeTransportValidationAndLegacyReplay();
+}
+
+async function assertMigrationQuietWindowPausesCleanupAndNativeMutation():
+Promise<void> {
+  const rootPath = await tempRoot(
+    "echoink-native-migration-quiet-window-"
+  );
+  const manager = new NativeExecutionManager({
+    store: new NativeExecutionStore({ rootPath }),
+    adapters: []
+  });
+  let releaseStore!: () => void;
+  const storeReleased = new Promise<void>((resolve) => {
+    releaseStore = resolve;
+  });
+  let announceStoreHeld!: () => void;
+  const storeHeld = new Promise<void>((resolve) => {
+    announceStoreHeld = resolve;
+  });
+  const quiet = manager.withCleanupPaused(
+    "migration-test",
+    async () => await manager.withStoreMutation(async () => {
+      announceStoreHeld();
+      await storeReleased;
+    })
+  );
+  await storeHeld;
+  await assert.rejects(
+    () => manager.cleanupDue(),
+    /cleanup admission is closed/
+  );
+  await assert.rejects(
+    () => manager.cleanupById("missing-record"),
+    /cleanup admission is closed/
+  );
+
+  let writeFinished = false;
+  const queuedWrite = manager.recordCreated(baseRecord({
+    id: "quiet-window-record",
+    runId: "quiet-window-run",
+    sessionId: "quiet-window-session"
+  })).then(() => {
+    writeFinished = true;
+  });
+  await Promise.resolve();
+  assert.equal(writeFinished, false);
+  releaseStore();
+  await quiet;
+  await queuedWrite;
+  assert.equal(writeFinished, true);
+  assert.deepEqual(await manager.cleanupDue(), []);
 }
 
 async function assertEchoInkHostProcessDispositionClosesWithoutCleanupAdapter(): Promise<void> {

@@ -471,7 +471,11 @@ Promise<void> {
     storageRootPath: fixture.storageRootPath,
     externalOwnerEdges: evolved.externalOwnerEdges
   });
-  assert.equal(exported.report.status, "ready");
+  assert.equal(
+    exported.report.status,
+    "ready",
+    JSON.stringify(exported.report.findings)
+  );
   assert.ok(exported.proof);
   assert.equal(exported.createdConversationCount, 2);
   assert.equal(exported.createdDeletionTombstoneCount, 1);
@@ -495,6 +499,10 @@ Promise<void> {
     exportedSnapshot.deletionTombstones,
     [evolved.tombstone]
   );
+  const restoredTargetOwnerEdges = [
+    ...evolved.externalOwnerEdges,
+    ...legacyExternalOwnerEdges(exportedSnapshot.sessions)
+  ];
   const primary = exportedSnapshot.sessions.find(
     (session) => session.id === fixture.legacySession.id
   );
@@ -552,7 +560,7 @@ Promise<void> {
     sourceStore: exportStore,
     targetStore: restoredV2,
     sourceExternalOwnerEdges: evolved.externalOwnerEdges,
-    targetExternalOwnerEdges: evolved.externalOwnerEdges
+    targetExternalOwnerEdges: restoredTargetOwnerEdges
   });
   assert.equal(restored.report.status, "ready");
   assert.equal(restored.createdConversationCount, 2);
@@ -601,11 +609,17 @@ Promise<void> {
     extraEdge
   ];
   const sourceSnapshot = await fixture.v2Store.inspectMigrationSnapshot();
+  const portableProjectionOwnerEdges = legacyExternalOwnerEdges(
+    sourceSnapshot.commits.map(projectConversationCommitV2ToStoredSessionV1)
+  );
   const sourceInventory = conversationMigrationInventoryFromV2Commits(
     sourceSnapshot.commits,
     "v2",
     {
-      externalOwnerEdges,
+      externalOwnerEdges: [
+        ...portableProjectionOwnerEdges,
+        ...externalOwnerEdges
+      ],
       deletionTombstones: sourceSnapshot.deletionTombstones
     }
   );

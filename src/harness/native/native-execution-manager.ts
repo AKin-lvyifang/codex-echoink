@@ -44,6 +44,15 @@ export interface NativeCleanupResult {
   message?: string;
 }
 
+export class NativeCleanupAdmissionClosedError extends Error {
+  constructor(readonly quietWindowId: string) {
+    super(
+      `Native cleanup admission is closed by migration quiet window ${quietWindowId}`
+    );
+    this.name = "NativeCleanupAdmissionClosedError";
+  }
+}
+
 export interface NativePendingRecoveryFilter {
   recordId?: string;
   surface?: string;
@@ -67,6 +76,7 @@ export const ECHOINK_HOST_DISPOSITION_MISSING_REASON =
 interface NativeCleanupCoordinator {
   cleanupDueFlight: Promise<NativeCleanupResult[]> | null;
   cleanupRecovery: Promise<void> | null;
+  cleanupQuietWindowId: string | null;
   readonly activeCleanupRecordIds: Set<string>;
   readonly recordCleanupFlights: Map<string, Promise<NativeCleanupResult>>;
   readonly nativeCleanupFlights: Map<string, NativeIdentityCleanupFlight>;
@@ -246,6 +256,7 @@ export class NativeExecutionManager {
     if (this.cleanupCoordinator.cleanupDueFlight) {
       return await this.cleanupCoordinator.cleanupDueFlight;
     }
+    this.assertCleanupAdmissionOpen();
     const flight = this.performCleanupDue(limit);
     this.cleanupCoordinator.cleanupDueFlight = flight;
     try {
@@ -263,12 +274,20 @@ export class NativeExecutionManager {
    * returned unchanged and never reach the adapter.
    */
   async cleanupById(recordId: string): Promise<NativeCleanupResult> {
+    const existing =
+      this.cleanupCoordinator.recordCleanupFlights.get(recordId);
+    if (existing) return await existing;
+    this.assertCleanupAdmissionOpen();
     return await this.runRecordCleanup(recordId, {
       ignoreSchedule: true
     });
   }
 
   async cleanupCommitted(record: NativeExecutionRecord): Promise<NativeCleanupResult> {
+    const existing =
+      this.cleanupCoordinator.recordCleanupFlights.get(record.id);
+    if (existing) return await existing;
+    this.assertCleanupAdmissionOpen();
     await this.requireDurableCommittedCleanupAuthority(record);
     return await this.runRecordCleanup(record.id, {
       ignoreSchedule: true,
@@ -280,6 +299,39 @@ export class NativeExecutionManager {
       prepare: async () =>
         await this.requireDurableCommittedCleanupAuthority(record)
     });
+  }
+
+  async withCleanupPaused<T>(
+    quietWindowIdInput: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    const quietWindowId = quietWindowIdInput.trim();
+    if (!quietWindowId) {
+      throw new Error("Native cleanup quiet window requires an id");
+    }
+    if (this.cleanupCoordinator.cleanupQuietWindowId) {
+      throw new Error(
+        `Native cleanup quiet window is already active: ${
+          this.cleanupCoordinator.cleanupQuietWindowId
+        }`
+      );
+    }
+    this.cleanupCoordinator.cleanupQuietWindowId = quietWindowId;
+    try {
+      await this.waitForCleanupIdle();
+      return await action();
+    } finally {
+      if (
+        this.cleanupCoordinator.cleanupQuietWindowId
+        === quietWindowId
+      ) {
+        this.cleanupCoordinator.cleanupQuietWindowId = null;
+      }
+    }
+  }
+
+  async withStoreMutation<T>(action: () => Promise<T>): Promise<T> {
+    return await this.options.store.withMutation(action);
   }
 
   private async requireDurableCommittedCleanupAuthority(
@@ -503,6 +555,46 @@ export class NativeExecutionManager {
       if (this.cleanupCoordinator.cleanupRecovery === recovery) {
         this.cleanupCoordinator.cleanupRecovery = null;
       }
+    }
+  }
+
+  private assertCleanupAdmissionOpen(): void {
+    const quietWindowId =
+      this.cleanupCoordinator.cleanupQuietWindowId;
+    if (quietWindowId) {
+      throw new NativeCleanupAdmissionClosedError(quietWindowId);
+    }
+  }
+
+  private async waitForCleanupIdle(): Promise<void> {
+    while (true) {
+      const flights = new Set<Promise<unknown>>();
+      if (this.cleanupCoordinator.cleanupDueFlight) {
+        flights.add(this.cleanupCoordinator.cleanupDueFlight);
+      }
+      if (this.cleanupCoordinator.cleanupRecovery) {
+        flights.add(this.cleanupCoordinator.cleanupRecovery);
+      }
+      for (
+        const flight of
+        this.cleanupCoordinator.recordCleanupFlights.values()
+      ) {
+        flights.add(flight);
+      }
+      for (
+        const flight of
+        this.cleanupCoordinator.nativeCleanupFlights.values()
+      ) {
+        flights.add(flight.promise);
+      }
+      for (
+        const tail of
+        this.cleanupCoordinator.adapterCleanupTails.values()
+      ) {
+        flights.add(tail);
+      }
+      if (flights.size === 0) return;
+      await Promise.allSettled(flights);
     }
   }
 
@@ -1287,6 +1379,7 @@ function cleanupCoordinatorFor(rootKey: string): NativeCleanupCoordinator {
   const created: NativeCleanupCoordinator = {
     cleanupDueFlight: null,
     cleanupRecovery: null,
+    cleanupQuietWindowId: null,
     activeCleanupRecordIds: new Set(),
     recordCleanupFlights: new Map(),
     nativeCleanupFlights: new Map(),

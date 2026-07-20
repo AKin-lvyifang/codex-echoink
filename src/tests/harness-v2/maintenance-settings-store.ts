@@ -21,6 +21,9 @@ import {
   type SettingsSaveOptions
 } from "../../plugin/settings-store";
 import {
+  FileConversationStoreRouter
+} from "../../plugin/conversation-store-router";
+import {
   DEFAULT_SETTINGS,
   KNOWLEDGE_BASE_SESSION_TITLE,
   canonicalizeKnowledgeBaseMaintenanceHistoryEntry,
@@ -1025,7 +1028,7 @@ async function assertWorkflowCasSynchronizesCanonicalConversationBeforeRotation(
 
 async function assertWorkflowCasCommitsFullSourceBeforeHistoryProjection(): Promise<void> {
   const fixture = await createFixture();
-  let restoreUpsert: (() => void) | null = null;
+  let restoreConversationPersist: (() => void) | null = null;
   let restoreProjection: (() => void) | null = null;
   try {
     const now = Date.now();
@@ -1047,30 +1050,45 @@ async function assertWorkflowCasCommitsFullSourceBeforeHistoryProjection(): Prom
 
     const events: string[] = [];
     const internals = fixture.store as unknown as {
-      getConversationStore(): FileConversationStore;
+      getConversationStore(): {
+        persistSettingsSessions(
+          settings: { sessions: StoredSession[] },
+          options?: {
+            trimSettingsMessages?: boolean;
+            afterSessionPersisted?: (session: StoredSession) => void;
+          }
+        ): Promise<unknown>;
+      };
       projectKnowledgeBaseHistory(
         candidate: CodexForObsidianSettings,
         strict: boolean
       ): Promise<boolean>;
     };
     const conversationStore = internals.getConversationStore();
-    const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
+    const originalPersist =
+      conversationStore.persistSettingsSessions.bind(conversationStore);
     const originalProjection =
       internals.projectKnowledgeBaseHistory.bind(fixture.store);
-    conversationStore.upsertSession = async (candidate) => {
-      if (candidate.id === session.id) {
+    conversationStore.persistSettingsSessions = async (
+      settings,
+      options
+    ) => {
+      const candidate = settings.sessions.find(
+        (stored) => stored.id === session.id
+      );
+      if (candidate) {
         events.push(
           `conversation:${candidate.messages.map((message) => message.id).join(",")}`
         );
       }
-      await originalUpsert(candidate);
+      return await originalPersist(settings, options);
     };
     internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
       events.push("history");
       return await originalProjection(candidate, strict);
     };
-    restoreUpsert = () => {
-      conversationStore.upsertSession = originalUpsert;
+    restoreConversationPersist = () => {
+      conversationStore.persistSettingsSessions = originalPersist;
     };
     restoreProjection = () => {
       internals.projectKnowledgeBaseHistory = originalProjection;
@@ -1099,7 +1117,7 @@ async function assertWorkflowCasCommitsFullSourceBeforeHistoryProjection(): Prom
     );
   } finally {
     restoreProjection?.();
-    restoreUpsert?.();
+    restoreConversationPersist?.();
     await fixture.dispose();
   }
 }
@@ -1129,13 +1147,13 @@ async function assertActiveKnowledgeConversationFailureDoesNotPublishHistory(): 
     const saveCallsBeforeFailure = fixture.saveCalls();
 
     const internals = fixture.store as unknown as {
-      getConversationStore(): FileConversationStore;
       projectKnowledgeBaseHistory(
         candidate: CodexForObsidianSettings,
         strict: boolean
       ): Promise<boolean>;
     };
-    const conversationStore = internals.getConversationStore();
+    const conversationStore =
+      selectedLegacyConversationStore(fixture.store);
     const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
     const originalProjection =
       internals.projectKnowledgeBaseHistory.bind(fixture.store);
@@ -1437,13 +1455,13 @@ async function assertPartialConversationBatchSynchronizesCommittedPrefix(): Prom
     const saveCallsBeforeBatch = fixture.saveCalls();
 
     const internals = fixture.store as unknown as {
-      getConversationStore(): FileConversationStore;
       projectKnowledgeBaseHistory(
         candidate: CodexForObsidianSettings,
         strict: boolean
       ): Promise<boolean>;
     };
-    const conversationStore = internals.getConversationStore();
+    const conversationStore =
+      selectedLegacyConversationStore(fixture.store);
     const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
     const originalProjection =
       internals.projectKnowledgeBaseHistory.bind(fixture.store);
@@ -1531,14 +1549,12 @@ async function assertPartialConversationBatchSynchronizesCommittedPrefix(): Prom
     restoreProjection();
     restoreProjection = null;
     const restartedStore = new EchoInkSettingsStore(fixture.plugin as never);
-    const restartedConversationStore = (
-      restartedStore as unknown as {
-        getConversationStore(): FileConversationStore;
-      }
-    ).getConversationStore();
+    const restartedConversationRouter = conversationRouterForTest(
+      restartedStore
+    );
     assert.notStrictEqual(
-      restartedConversationStore,
-      conversationStore,
+      restartedConversationRouter,
+      conversationRouterForTest(fixture.store),
       "restart coverage must use a fresh ConversationStore instance"
     );
     await restartedStore.loadSettings();
@@ -1923,6 +1939,31 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function conversationRouterForTest(
+  store: EchoInkSettingsStore
+): FileConversationStoreRouter {
+  return (
+    store as unknown as {
+      getConversationStore(): FileConversationStoreRouter;
+    }
+  ).getConversationStore();
+}
+
+function selectedLegacyConversationStore(
+  store: EchoInkSettingsStore
+): FileConversationStore {
+  const router = conversationRouterForTest(store) as unknown as {
+    selected: {
+      store: unknown;
+    } | null;
+  };
+  assert.ok(
+    router.selected?.store instanceof FileConversationStore,
+    "fixture requires the Router to have selected legacy V1"
+  );
+  return router.selected.store;
 }
 
 function isNotFoundError(error: unknown): boolean {

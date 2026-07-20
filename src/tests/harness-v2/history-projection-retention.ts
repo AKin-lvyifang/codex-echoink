@@ -1938,23 +1938,38 @@ async function assertScheduledCanonicalWriteFailuresRecoverAcrossRestart(): Prom
         });
 
         const internals = store as unknown as {
-          getConversationStore(): FileConversationStore;
+          getConversationStore(): {
+            persistSettingsSessions(
+              settings: { sessions: StoredSession[] },
+              options?: {
+                trimSettingsMessages?: boolean;
+                afterSessionPersisted?: (session: StoredSession) => void;
+              }
+            ): Promise<unknown>;
+          };
           projectKnowledgeBaseHistory(
             candidate: CodexForObsidianSettings,
             strict: boolean
           ): Promise<boolean>;
         };
         const conversationStore = internals.getConversationStore();
-        const originalUpsert =
-          conversationStore.upsertSession.bind(conversationStore);
+        const originalPersist =
+          conversationStore.persistSettingsSessions.bind(
+            conversationStore
+          );
         const originalProjection =
           internals.projectKnowledgeBaseHistory.bind(store);
         let scheduledConversationPass = 0;
-        conversationStore.upsertSession = async (candidate) => {
-          const containsScheduled = candidate.id === session.id
+        conversationStore.persistSettingsSessions = async (
+          settings,
+          options
+        ) => {
+          const containsScheduled = settings.sessions.some(
+            (candidate) => candidate.id === session.id
             && candidate.messages.some(
               (message) => message.title === "每日知识库维护"
-            );
+            )
+          );
           if (containsScheduled) {
             scheduledConversationPass += 1;
             if (
@@ -1967,7 +1982,7 @@ async function assertScheduledCanonicalWriteFailuresRecoverAcrossRestart(): Prom
               throw new Error(`fixture ${failurePoint} failure`);
             }
           }
-          await originalUpsert(candidate);
+          return await originalPersist(settings, options);
         };
         internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
           const projected = await originalProjection(candidate, strict);
@@ -2051,7 +2066,7 @@ async function assertScheduledCanonicalWriteFailuresRecoverAcrossRestart(): Prom
           );
         }
 
-        conversationStore.upsertSession = originalUpsert;
+        conversationStore.persistSettingsSessions = originalPersist;
         internals.projectKnowledgeBaseHistory = originalProjection;
         failDataWrites = false;
         store = new EchoInkSettingsStore(plugin);

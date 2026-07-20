@@ -12,6 +12,7 @@ import { externalizeLargeMessages, pluginDataDir, prepareRawMessage, readRawText
 import {
   createConversationContentRevision,
   type CommitConversationContextOptions,
+  type CommitConversationDeletionTombstoneOptions,
   type CommitConversationRecordClearOptions,
   type ConversationAuthorityProbe,
   type ConversationAuthorityProof,
@@ -71,6 +72,9 @@ import {
 import {
   FileRunRecordStore
 } from "../harness/ledger/run-record-store";
+import {
+  withMemoryFormalMutation
+} from "../harness/memory/v2-store";
 import {
   inventoryRawGcPreview,
   type RawGcPreview
@@ -508,6 +512,66 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
     return await run;
   }
 
+  async withMigrationPersistenceQuietWindow<R>(
+    quietWindowIdInput: string,
+    action: () => Promise<R>
+  ): Promise<R> {
+    const quietWindowId = quietWindowIdInput.trim();
+    if (!quietWindowId) {
+      throw new Error("Migration persistence quiet window requires an id");
+    }
+    if (this.saveTimer) {
+      window.clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    const authorityId = `migration-quiet-${
+      createHash("sha256")
+        .update(quietWindowId)
+        .digest("hex")
+        .slice(0, 32)
+    }`;
+    const run = this.saveQueue.then(async () => {
+      this.assertNoSettingsCasRecoveryConflict();
+      await this.flushRawWrites();
+      return await this.withRawOwnerMutation(async () => {
+        ensureKnowledgeBaseNativeLifecycleRecoveryProjection(
+          this.plugin.settings.knowledgeBase
+        );
+        const prepared = await this.prepareCanonicalSettingsCandidate();
+        const candidate = await this.persistCanonicalConversationAndHistory(
+          prepared.candidate,
+          prepared.liveBefore,
+          {
+            flushConversationStore: true,
+            strictConversationStore: true,
+            flushKnowledgeBaseHistory: true,
+            strictKnowledgeBaseHistory: true
+          }
+        );
+        await this.persistSettingsDataCandidate(
+          candidate,
+          prepared.persistedBefore
+        );
+        const storageRootPath = this.recordMutationStorageRootPath();
+        return await withRecordMutationGlobalAuthority(
+          storageRootPath,
+          authorityId,
+          async () => await withMemoryFormalMutation(
+            this.plugin.getVaultPath(),
+            async () => await new FileRunRecordStore({
+              storageRootPath
+            }).withMutation(action)
+          )
+        );
+      });
+    });
+    this.saveQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return await run;
+  }
+
   async withConversationMutation<R>(
     conversationId: string,
     action: (authority: ConversationMutationAuthority) => Promise<R>
@@ -838,7 +902,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
 
   async commitConversationDeletionTombstone(
     tombstone: ConversationDeletionTombstoneV1,
-    options: CommitConversationContextOptions,
+    options: CommitConversationDeletionTombstoneOptions,
     authority: ConversationMutationAuthority
   ): Promise<ConversationDeletionTombstoneV1> {
     assertConversationMutationAuthority(
@@ -973,13 +1037,15 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   async rebuildKnowledgeBaseHistoryIndex(): Promise<KnowledgeBaseHistoryIndex> {
-    return rebuildKnowledgeBaseHistoryIndex(
-      this.plugin.getVaultPath(),
-      this.plugin.getPluginDataDirName(),
-      {
-        retentionDays:
-          this.plugin.settings.knowledgeBase.historyRetentionDays
-      }
+    return await this.withSettingsPersistenceAuthorityGate(async () =>
+      await rebuildKnowledgeBaseHistoryIndex(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName(),
+        {
+          retentionDays:
+            this.plugin.settings.knowledgeBase.historyRetentionDays
+        }
+      )
     );
   }
 
@@ -992,22 +1058,40 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   async compactOldKnowledgeBaseProcessHistory(): Promise<number> {
-    return compactOldKnowledgeBaseProcessHistory(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName());
+    return await this.withSettingsPersistenceAuthorityGate(async () =>
+      await compactOldKnowledgeBaseProcessHistory(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName()
+      )
+    );
   }
 
   async removeKnowledgeBaseHistory(): Promise<KnowledgeBaseHistoryRemovalResult> {
-    return removeKnowledgeBaseHistory(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName());
+    return await this.withSettingsPersistenceAuthorityGate(async () =>
+      await removeKnowledgeBaseHistory(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName()
+      )
+    );
   }
 
   async removeKnowledgeBaseHistoryDays(dates: string[]): Promise<KnowledgeBaseHistoryRemovalResult> {
-    return removeKnowledgeBaseHistoryDays(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName(), dates);
+    return await this.withSettingsPersistenceAuthorityGate(async () =>
+      await removeKnowledgeBaseHistoryDays(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName(),
+        dates
+      )
+    );
   }
 
   async pruneKnowledgeBaseHistoryByRetention(): Promise<KnowledgeBaseHistoryRemovalResult> {
-    return pruneKnowledgeBaseHistoryByRetention(
-      this.plugin.getVaultPath(),
-      this.plugin.getPluginDataDirName(),
-      this.plugin.settings.knowledgeBase.historyRetentionDays
+    return await this.withSettingsPersistenceAuthorityGate(async () =>
+      await pruneKnowledgeBaseHistoryByRetention(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName(),
+        this.plugin.settings.knowledgeBase.historyRetentionDays
+      )
     );
   }
 
@@ -1031,7 +1115,15 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
         console.error("Codex raw message migration failed", error);
       }
       try {
-        changed = (await migrateKnowledgeBaseHistory(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName(), this.plugin.settings)).changed || changed;
+        changed = (
+          await this.withSettingsPersistenceAuthorityGate(async () =>
+            await migrateKnowledgeBaseHistory(
+              this.plugin.getVaultPath(),
+              this.plugin.getPluginDataDirName(),
+              this.plugin.settings
+            )
+          )
+        ).changed || changed;
       } catch (error) {
         console.error("Codex knowledge history migration failed", error);
       }
@@ -1413,6 +1505,7 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
   }
 
   private async reconcileAndHydrateConversationSessions(): Promise<number> {
+    const selection = await this.getConversationStore().resolveSelection();
     const reconciliation =
       await this.getConversationStore().reconcileCommittedSessionsAtStartup();
     const storedById = new Map(
@@ -1439,7 +1532,9 @@ export class EchoInkSettingsStore implements MaintenanceWorkflowSettingsHost<Kno
           `Conversation recovery required: data shell ${session.id} lacks durable authority`
         );
       }
-      applyStoredConversation(session, stored);
+      applyStoredConversation(session, stored, {
+        preserveSettingsProjection: selection.activeStore === "v2"
+      });
       retainedLiveSessions.push(session);
     }
     this.plugin.settings.sessions = retainedLiveSessions;
@@ -1814,12 +1909,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function applyStoredConversation(target: StoredSession, stored: StoredSession): void {
+function applyStoredConversation(
+  target: StoredSession,
+  stored: StoredSession,
+  options: { preserveSettingsProjection?: boolean } = {}
+): void {
   target.title = stored.title;
   target.kind = stored.kind;
   target.cwd = stored.cwd;
   target.messages = stored.messages;
-  target.backendBindings = stored.backendBindings;
+  if (!options.preserveSettingsProjection) {
+    target.backendBindings = stored.backendBindings;
+    target.messagesHiddenBefore = stored.messagesHiddenBefore;
+    target.historyActiveDate = stored.historyActiveDate;
+    target.tokenUsage = stored.tokenUsage;
+  }
   target.revision = stored.revision;
   target.generation = stored.generation;
   target.contextId = stored.contextId;
@@ -1828,9 +1932,6 @@ function applyStoredConversation(target: StoredSession, stored: StoredSession): 
   target.workspaceFingerprint = stored.workspaceFingerprint;
   target.contextSnapshot = stored.contextSnapshot;
   target.rollingSummary = stored.rollingSummary;
-  target.messagesHiddenBefore = stored.messagesHiddenBefore;
-  target.historyActiveDate = stored.historyActiveDate;
-  target.tokenUsage = stored.tokenUsage;
   target.createdAt = stored.createdAt;
   target.updatedAt = stored.updatedAt;
 }

@@ -104,6 +104,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async appendHarnessRunEvent(input: AppendRunEventInput, sink?: HarnessEventSink) { return await this.getHarnessService().appendRunEvent(input, sink); }
   async cancelHarnessRun(runId: string): Promise<void> { return await this.getHarnessService().cancelRun(runId); }
+  async migrateEchoInkConversationStoreToV2() { const settingsStore = this.getSettingsStore(); return await this.getHarnessService().migrateConversationStoreToV2({ withMigrationPersistenceQuietWindow: async <T>(quietWindowId: string, action: () => Promise<T>): Promise<T> => await settingsStore.withMigrationPersistenceQuietWindow(quietWindowId, action) }); }
   async getEchoInkMemoryStatus(): Promise<MemoryStoreStatus> { return await this.getHarnessService().getMemoryStatus(); }
   async initializeEchoInkMemory(): Promise<InitializeEchoInkMemoryResult> { return await this.getHarnessService().initializeMemory(); }
   async syncEchoInkMemoryNow(): Promise<MemorySyncResult> { return await this.getHarnessService().syncMemoryNow(); }

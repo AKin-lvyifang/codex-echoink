@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   parseRecordMutationIntent,
   recordMutationDigest,
@@ -43,6 +44,7 @@ export interface BuildConversationRecordMutationPlanInput {
   targetConversation: RecordMutationConversationTarget;
   rootBindings: readonly RecordRootBindingRef[];
   conversationRootId?: EchoInkRecordMutationRootId;
+  conversationStoreVersion?: "v1" | "v2";
 }
 
 export interface BuiltConversationRecordMutationPlan {
@@ -114,7 +116,8 @@ export function buildConversationRecordMutationPlan(
   const conversationSources = normalizeConversationSources(
     input.conversationSources,
     inventory.operation,
-    inventory.conversationId
+    inventory.conversationId,
+    input.conversationStoreVersion ?? "v1"
   );
   const selectionDigest = recordMutationDigest({
     kind: "conversation-record-mutation-selection",
@@ -430,7 +433,8 @@ function requireReadyInventory(
 function normalizeConversationSources(
   input: readonly ConversationRecordMutationSource[],
   operation: ConversationRecordInventory["operation"],
-  conversationId: string
+  conversationId: string,
+  storeVersion: "v1" | "v2"
 ): string[] {
   if (input.length < 1) {
     throw new ConversationRecordMutationPlanError(
@@ -451,6 +455,13 @@ function normalizeConversationSources(
     throw new ConversationRecordMutationPlanError(
       "source_invalid",
       "Conversation source plan 的 Conversation ID 非法"
+    );
+  }
+  if (storeVersion === "v2") {
+    return normalizeConversationStoreV2Sources(
+      sources,
+      operation,
+      conversationId
     );
   }
   const sessionPath = `sessions/${conversationId}`;
@@ -474,6 +485,65 @@ function normalizeConversationSources(
     throw new ConversationRecordMutationPlanError(
       "source_invalid",
       "清空会话的 source plan 只能包含目标 Conversation 的 payload"
+    );
+  }
+  return sources;
+}
+
+function normalizeConversationStoreV2Sources(
+  sources: string[],
+  operation: ConversationRecordInventory["operation"],
+  conversationId: string
+): string[] {
+  const expectedToken = `conversation-${createHash("sha256")
+    .update(conversationId, "utf8")
+    .digest("hex")}`;
+  const conversationDirectories = sources.filter((source) =>
+    /^conversations\/conversation-[a-f0-9]{64}$/.test(source)
+  );
+  const metadataEntries = sources.filter((source) =>
+    /^conversations\/conversation-[a-f0-9]{64}\/metadata\/entry-[0-9]{16}\.json$/.test(
+      source
+    )
+  );
+  const payloadEntries = sources.filter((source) =>
+    /^payloads\/[a-f0-9]{64}\.json$/.test(source)
+  );
+  if (operation === "delete-conversation") {
+    if (
+      conversationDirectories.length !== 1
+      || conversationDirectories[0] !== `conversations/${expectedToken}`
+      || metadataEntries.length !== 0
+      || conversationDirectories.length + payloadEntries.length
+        !== sources.length
+    ) {
+      throw new ConversationRecordMutationPlanError(
+        "source_invalid",
+        "V2 删除会话 source plan 必须绑定目标 Conversation 目录和 payload"
+      );
+    }
+    return sources;
+  }
+  if (
+    conversationDirectories.length !== 0
+    || metadataEntries.length < 1
+    || metadataEntries.length + payloadEntries.length !== sources.length
+  ) {
+    throw new ConversationRecordMutationPlanError(
+      "source_invalid",
+      "V2 清空会话 source plan 只能包含 metadata generation 和 payload"
+    );
+  }
+  const conversationTokens = new Set(metadataEntries.map(
+    (source) => source.split("/")[1]
+  ));
+  if (
+    conversationTokens.size !== 1
+    || !conversationTokens.has(expectedToken)
+  ) {
+    throw new ConversationRecordMutationPlanError(
+      "source_invalid",
+      "V2 清空会话 source plan 跨越多个 Conversation"
     );
   }
   return sources;

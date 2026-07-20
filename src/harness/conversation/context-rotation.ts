@@ -656,6 +656,7 @@ function assertLiveRotationBaseUnchanged(
     sessionGeneration(session) !== expectedGeneration
     || normalizedOptional(session.threadId) !== normalizedOptional(before.threadId)
     || createConversationContentRevision(session) !== expectedContentRevision
+    || JSON.stringify(cloneSession(session)) !== JSON.stringify(before)
   ) {
     throw new Error(
       "Conversation changed before context commit while retirement registration was pending"

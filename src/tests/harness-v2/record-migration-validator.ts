@@ -23,8 +23,14 @@ import {
   FileConversationStoreV2
 } from "../../harness/conversation/conversation-store-v2";
 import {
+  FileConversationStoreManifest
+} from "../../harness/conversation/store-manifest";
+import {
   FileRunRecordStore
 } from "../../harness/ledger/run-record-store";
+import {
+  activateConversationStoreV2WithOwnerStores
+} from "../../harness/lifecycle/conversation-migration-coordinator";
 import {
   inspectConversationMigrationOwnerProof
 } from "../../harness/lifecycle/conversation-migration-owner-proof";
@@ -60,6 +66,7 @@ Promise<void> {
   assertUntrustedProofCannotAuthorizeCutover();
   assertLegacyUnknownFieldsAndExternalOwnersFailClosed();
   await assertOwnerProofComesFromRealStoresAndMissingStoresStayBlocked();
+  await assertProductionCoordinatorActivatesOnlyWithReadyOwnerStores();
   await assertDeletionTombstoneMigrationUsesDurableTargetAuthority();
   await assertLegacyConversationMigrationSnapshotIsReadOnly();
 }
@@ -227,6 +234,224 @@ Promise<void> {
   await assert.rejects(() => readFile(missingSettings, "utf8"));
   await assert.rejects(() => readdir(missingNativeRoot));
   await assert.rejects(() => readdir(missingRunStorage));
+}
+
+async function assertProductionCoordinatorActivatesOnlyWithReadyOwnerStores():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-production-migration-")
+  );
+  const sourceStore = new FileConversationStore({
+    rootPath: path.join(storageRootPath, "conversations")
+  });
+  const source = storedSession();
+  await sourceStore.createPristineSession({
+    ...source,
+    revision: 1,
+    generation: 1,
+    contextId: "production-context",
+    commitId: "production-pristine",
+    messages: [],
+    updatedAt: source.createdAt
+  });
+  const pristine = await sourceStore.readSession(source.id);
+  assert.ok(pristine);
+  await sourceStore.upsertSession({
+    ...pristine,
+    messages: source.messages,
+    updatedAt: source.updatedAt
+  });
+  const durable = await sourceStore.readSession(source.id);
+  assert.ok(durable);
+
+  const settingsShell = structuredClone(durable);
+  settingsShell.messages = [];
+  await writeFile(
+    path.join(storageRootPath, "data.json"),
+    `${JSON.stringify({
+      settingsVersion: 39,
+      sessions: [settingsShell]
+    })}\n`,
+    "utf8"
+  );
+
+  const nativeStore = new NativeExecutionStore({
+    rootPath: path.join(
+      storageRootPath,
+      "harness-native-executions"
+    )
+  });
+  await nativeStore.upsert({
+    id: "migration-presence-native",
+    runId: "migration-presence-run",
+    sessionId: "migration-presence-session",
+    surface: "chat",
+    workflow: "chat.generic",
+    native: {
+      backendId: "codex-cli",
+      id: "migration-presence-thread",
+      kind: "thread",
+      persistence: "provider-persistent",
+      deviceKey: "device",
+      vaultId: "vault",
+      createdAt: BASE_TIME
+    },
+    policy: {
+      historyAuthority: "echoink",
+      mode: "leased-conversation",
+      preferredDisposition: ["archive", "retain"],
+      retainWhenLocalCommitFails: true,
+      cleanupRequiredForTaskSuccess: false
+    },
+    localCommit: "committed",
+    cleanup: "disposed",
+    attempts: 1,
+    nextAttemptAt: 0,
+    lastError: "",
+    createdAt: BASE_TIME,
+    committedAt: BASE_TIME + 1,
+    settledAt: BASE_TIME + 2,
+    disposedAt: BASE_TIME + 2
+  });
+  const runStore = new FileRunRecordStore({ storageRootPath });
+  await runStore.writeWorkflowRunSummary(finalizeWorkflowRunSummary({
+    schemaVersion: 1,
+    recordType: "workflow-run-summary",
+    workflowRunId: "migration-presence-workflow",
+    surface: "chat",
+    workflow: "chat.generic",
+    conversationRef: {
+      conversationId: "migration-presence-session"
+    },
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 2,
+    attemptRefs: [{
+      attemptId: "migration-presence-attempt",
+      ordinal: 1
+    }],
+    artifactRefs: [],
+    localMutation: {
+      state: "committed",
+      committedAt: BASE_TIME + 2
+    },
+    retention: { holdReasons: [] },
+    revision: 0
+  }), {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await runStore.writeAttemptRunSummary(finalizeAttemptRunSummary({
+    schemaVersion: 1,
+    recordType: "attempt-run-summary",
+    workflowRunId: "migration-presence-workflow",
+    attemptId: "migration-presence-attempt",
+    ordinal: 1,
+    harnessRunId: "migration-presence-run",
+    backendId: "codex-cli",
+    nativeExecutionRecordIds: ["migration-presence-native"],
+    status: "completed",
+    startedAt: BASE_TIME,
+    terminalAt: BASE_TIME + 2,
+    localCommit: {
+      state: "committed",
+      authorityKind: "conversation",
+      committedAt: BASE_TIME + 2
+    },
+    cleanup: {
+      status: "disposed",
+      attempts: 1,
+      settledAt: BASE_TIME + 2,
+      reasonCode: "cleanup-completed"
+    },
+    payload: { expected: false },
+    retention: { holdReasons: [] },
+    revision: 0
+  }), {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  await runStore.markAttemptPayloadNotCaptured({
+    workflowRunId: "migration-presence-workflow",
+    attemptId: "migration-presence-attempt",
+    harnessRunId: "migration-presence-run",
+    reasonCode: "capture-disabled",
+    recordedAt: BASE_TIME + 2,
+    revision: 0
+  }, {
+    expectedRevision: null,
+    expectedDigest: null
+  });
+  const targetStore = new FileConversationStoreV2({
+    storageRootPath
+  });
+  const manifestStore = new FileConversationStoreManifest({
+    storageRootPath
+  });
+  let clock = BASE_TIME + 100;
+  const activated = await activateConversationStoreV2WithOwnerStores({
+    sourceStore,
+    targetStore,
+    manifestStore,
+    settingsDataPath: path.join(storageRootPath, "data.json"),
+    nativeStore,
+    runStore,
+    now: () => ++clock,
+    createCommitId: (stage) => `production-${stage}`
+  });
+  assert.equal(
+    activated.status,
+    "activated",
+    JSON.stringify({
+      owner: activated.ownerProof?.findings,
+      validation: activated.validation?.report.findings
+    })
+  );
+  assert.equal(activated.manifest?.migrationState, "active");
+  assert.equal(
+    (await targetStore.readConversation(durable.id))
+      ?.metadata.conversationId,
+    durable.id
+  );
+  const replayed = await activateConversationStoreV2WithOwnerStores({
+    sourceStore,
+    targetStore,
+    manifestStore,
+    settingsDataPath: path.join(storageRootPath, "data.json"),
+    nativeStore,
+    runStore
+  });
+  assert.equal(replayed.status, "already-active");
+
+  const blockedRoot = await mkdtemp(
+    path.join(tmpdir(), "echoink-production-migration-blocked-")
+  );
+  const blocked = await activateConversationStoreV2WithOwnerStores({
+    sourceStore: new FileConversationStore({
+      rootPath: path.join(blockedRoot, "conversations")
+    }),
+    targetStore: new FileConversationStoreV2({
+      storageRootPath: blockedRoot
+    }),
+    manifestStore: new FileConversationStoreManifest({
+      storageRootPath: blockedRoot
+    }),
+    settingsDataPath: path.join(blockedRoot, "data.json"),
+    nativeStore: new NativeExecutionStore({
+      rootPath: path.join(blockedRoot, "harness-native-executions")
+    }),
+    runStore: new FileRunRecordStore({
+      storageRootPath: blockedRoot
+    })
+  });
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.manifest, null);
+  assert.equal(
+    await new FileConversationStoreManifest({
+      storageRootPath: blockedRoot
+    }).read(),
+    null
+  );
 }
 
 function assertExactConversationProjectionProducesTrustedProof(): void {

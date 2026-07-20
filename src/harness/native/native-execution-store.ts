@@ -10,6 +10,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import * as path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
 import {
   hasValidNativeExecutionIdentityContract,
@@ -47,6 +48,8 @@ export interface NativeExecutionStoreMigrationSnapshot {
 }
 
 const mutationTailsByRoot = new Map<string, Promise<void>>();
+const nativeExecutionStoreMutationContext =
+  new AsyncLocalStorage<string>();
 
 export class NativeExecutionStoreMigrationRequiredError extends Error {
   readonly code = "NATIVE_EXECUTION_STORE_MIGRATION_REQUIRED";
@@ -88,6 +91,21 @@ export class NativeExecutionStore {
   constructor(private readonly options: NativeExecutionStoreOptions) {
     this.now = options.now ?? Date.now;
     this.rootCoordinationKey = path.resolve(options.rootPath);
+  }
+
+  async withMutation<T>(action: () => Promise<T>): Promise<T> {
+    if (
+      nativeExecutionStoreMutationContext.getStore()
+      === this.rootCoordinationKey
+    ) {
+      return await action();
+    }
+    return await this.enqueueMutation(async () =>
+      await nativeExecutionStoreMutationContext.run(
+        this.rootCoordinationKey,
+        action
+      )
+    );
   }
 
   async upsert(record: NativeExecutionRecord): Promise<void> {
@@ -323,6 +341,12 @@ export class NativeExecutionStore {
   }
 
   private async enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    if (
+      nativeExecutionStoreMutationContext.getStore()
+      === this.rootCoordinationKey
+    ) {
+      return await operation();
+    }
     const previous = this.currentMutationTail();
     const run = previous.then(operation, operation);
     const tail = run.then(() => undefined, () => undefined);

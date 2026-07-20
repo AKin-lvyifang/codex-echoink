@@ -17,16 +17,18 @@ session resume/delete；Hermes 0.18.0 的 ACP 公开支持 session list/load，
 因此开发分支现在可以复用已登记的 Hermes session。Hermes ACP 没有公开稳定的
 delete 能力，所以 cleanup 继续如实标记为 unsupported。
 
-Phase 4 没有执行。真实 Vault 当前迁移检查仍为 blocked，且备份、真实迁移、部署、
-清理和三后端 Obsidian 验收都需要单独授权。完成度审计还确认：当前 live
-Conversation writer 还不能完整承接 V2，尚无覆盖 Run admission、Conversation
-写入和跨 Store mutation 的统一静默窗口与生产 cutover coordinator。
+Phase 4 的真实执行没有开始。真实 Vault 当前迁移检查仍为 blocked，且备份、
+真实迁移、部署、清理和三后端 Obsidian 验收都需要单独授权。它的代码前置条件已经
+补齐：生产 Conversation V2 可承接日常读写、清空、删除和启动恢复；统一静默窗口
+会等待现有 Run 与 Native cleanup，再冻结 Settings、Conversation、History、Raw、
+Run、Memory、RecordMutation 和 Native Store；生产 cutover coordinator 只接受
+静默窗口内从真实 Store 重建的 owner proof。
 
-第一批前置接线已移除 Settings Store 对 legacy V1 目录的硬编码。生产 Conversation
-读写现在每次先解析 append-only manifest：legacy V1 与 reverse-active V1 export
-都使用 manifest 选中的精确 root；canonical V2 active 时，在完整 live V2 adapter
-接入前明确 fail closed，绝不静默回写 legacy V1。Conversation RecordMutation 的
-runtime root 同样绑定该选择，并拒绝插件存储边界外路径。
+Phase 4A 已移除 Settings Store 对 legacy V1 目录的硬编码。生产 Conversation
+读写每次先解析 append-only manifest：legacy V1、canonical V2 与 reverse-active
+V1 export 都使用 manifest 选中的精确 root。Phase 4B 已接入完整 V2 live adapter，
+并让 Conversation RecordMutation 的 runtime root 绑定同一选择，拒绝插件存储
+边界外路径。
 
 第二批建立 Root Registry，能把逻辑 `rootId` 绑定到
 registry、canonical path digest、owner boundary、目录 dev/inode 与不可变 digest；
@@ -176,6 +178,8 @@ authority 也按 fail closed 处理。
 - Native、Run、settings 真实 owner Store proof checkpoint：`e43427d`
 - Hermes ACP runtime capability snapshot 与安全 session load checkpoint：
   `19f183b`
+- Phase 4A 生产 Conversation route checkpoint：`77d3d79`
+- Phase 4B V2 live writer、统一静默窗口与生产 cutover：本提交
 
 项目开发记忆已切到本机 `codex-memory` V2：
 
@@ -196,7 +200,7 @@ authority 也按 fail closed 处理。
 | Phase 1：Context / Native lifecycle | 已完成并提交 | 统一 rotation、commit/recovery、Native cleanup、三后端 Editor/Knowledge/Utility 接线与当前全量门禁 | 进入 Phase 2 |
 | Phase 2：数据治理 | 已完成 | `b2db2f5` 至 `e43427d`；live clear/delete、History V2、Run/Raw 治理、validated migration、portable reverse export、精确 reverse route 与真实 Store owner proof 已完成 | 不自动创建新清理；只恢复已发布事务 |
 | Phase 3：Backend capability | 已完成并提交 | `19f183b`；Codex archive、OpenCode resume/delete；Hermes 0.18.0 实机公开 list/load，不公开 delete | 进入 Phase 4 前置接线 |
-| Phase 4：真实迁移与实机验收 | 前置接线进行中，真实执行阻断 | manifest 已成为生产 V1 reader/writer 唯一路由；V2 active 会阻断 legacy 回写；迁移副本 dry-run 仍 blocked | 实现完整 V2 live writer 与静默窗口，再单独确认备份、迁移、部署和实机验收 |
+| Phase 4：真实迁移与实机验收 | 代码前置完成，真实执行阻断 | V2 live writer、统一静默窗口和 Store-backed cutover coordinator 已接通；迁移副本 dry-run 仍 blocked | 单独确认备份、真实迁移、部署和三后端实机验收 |
 
 ## 已确认决定
 
@@ -1012,3 +1016,60 @@ session，旧历史不污染本轮输出；加载返回不存在时零 Prompt、
 只统一跑一次：`npm run test` 输出 `All tests passed`，typecheck、build、
 release/public guard 与 `git diff --check` 通过；lint 保持 942 个 baseline finding，
 无新增。实机只读 capability probe 通过。没有部署或修改真实 Vault。
+
+## Phase 4A–4B：生产 V2 日常读写与统一静默窗口
+
+生产 Router 在 canonical V2 active 后会使用 V2 live adapter，不再阻断日常操作，
+也绝不会退回 legacy V1。当前已接通新建、读取、消息追加、Context 提交、启动恢复、
+清空和删除。V2 Context identity 与普通 Store 写入 revision 已分开，普通追加消息
+不会错误改变当前 Context 身份；Conversation 正文指纹只覆盖产品对话字段，不把
+backend binding、Run 诊断或 Settings 投影混进正文。
+
+清空会话会先提交新的空 Context，再由 RecordMutation 退休旧 metadata/payload。
+不可变 retirement marker 允许 metadata chain 从保留的 revision 继续严格验证，
+并会保留仍被新状态复用的相同空 payload。删除会话先发布 tombstone，让 reader 和
+index 立即排除旧会话，旧目录继续等待 Journal 安全退休。
+
+统一静默窗口已接入 HarnessService：
+
+- 先关闭新 Run admission，等待已经开始的 Run 到达终态。
+- 暂停新 Native cleanup，等待已有 cleanup 结束。
+- 刷新并冻结 Settings、Conversation、History 与 Raw owner。
+- 同时持有全局 RecordMutation、Run Store、Memory formal mutation 和 Native
+  Store authority。
+- action 成功或失败都会按相反顺序自动释放；窗口内新 Run、新 cleanup 和无关
+  Store mutation 不能插入迁移快照。
+
+插件新增唯一的生产 V1→V2 cutover 入口。它只在上述静默窗口内运行，先从真实
+`data.json`、Native Store 和 Run Store 重建 owner proof，再 side-by-side copy、
+双次校验并发布 append-only active manifest。已知 owner 缺失时在创建 manifest 和
+目标数据前返回 `blocked`；active fence 崩溃窗口只能在重新取得静默窗口并复核
+source/target 后恢复。
+
+真实副本结果仍保持 `blocked`：正式 Run Store 缺失，517 条 legacy external owner
+edge 尚无真实目标 Store proof，另有一处 source/target projection 合同不一致。
+本轮没有执行真实 migration、retention、Raw GC、History 删除、Native 批量 cleanup、
+部署或 Vault 修改。
+
+最终收口修复了 V2→V1 compatibility export 的两项对账问题：
+
+- Conversation 产品正文指纹不再包含 Context 的内部 commit ID，避免同一正文只因
+  Store 提交身份不同就被误判为内容冲突。
+- Exporter 把 V1 compatibility projection 自己产生的 owner edge 与真实外部
+  owner ledger 合并为唯一集合；目标侧只移除三元组
+  `kind + ownerRef + resourceRef` 完全相同的重复项。Validator 对其他重复、缺失和
+  冲突继续 fail closed。
+- V2 Snapshot 导出的 `rollingSummary` 仍保留；再次导回 V2 时，目标 Store 必须
+  提供对应 Settings projection owner proof，不能把复制 Conversation 字节当成
+  外部 owner 已迁移。
+
+最终验证已通过：
+
+- Migration Validator、V1 exporter 与 History projection/retention focused
+  suites。
+- `npm run test`，输出 `All tests passed`。
+- `npm run typecheck`、`npm run build`。
+- `npm run lint`，942 个 finding 与 baseline 一致，无新增。
+- `npm run check:release`、`npm run check:public`，public guard 检查 438 个
+  tracked files。
+- `git diff --check`。

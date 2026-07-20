@@ -29,6 +29,7 @@ const DELETIONS_DIRECTORY = "deletions";
 const MIGRATION_CONFLICTS_DIRECTORY = "migration-conflicts";
 const STAGING_DIRECTORY = ".staging";
 const METADATA_DIRECTORY = "metadata";
+const RETIREMENTS_DIRECTORY = "retirements";
 const HEAD_FILE = "head.json";
 const INDEX_FILE = "index.json";
 const ENTRY_PREFIX = "entry-";
@@ -37,6 +38,7 @@ const ENTRY_PATTERN = /^entry-([0-9]{16})\.json$/;
 const CONVERSATION_TOKEN_PATTERN = /^conversation-[a-f0-9]{64}$/;
 const DELETION_FILE_PATTERN = /^conversation-[a-f0-9]{64}\.json$/;
 const PAYLOAD_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
+const RETIREMENT_FILE_PATTERN = /^retirement-([0-9]{16})\.json$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const MAX_RECORD_BYTES = 64 * 1024 * 1024;
 const INDEX_SCHEMA_VERSION = 2 as const;
@@ -103,6 +105,10 @@ export interface FileConversationStoreV2Options {
 export interface ConversationStoreV2CommitOptions {
   expectedRevision: number | null;
   expectedCommitId: string | null;
+  recordMutationPayloadReplacement?: {
+    mutationId: string;
+    sourceRelativePaths: readonly string[];
+  };
   faultInjector?: (
     point: ConversationStoreV2FaultPoint,
     context: ConversationStoreV2FaultContext
@@ -112,6 +118,13 @@ export interface ConversationStoreV2CommitOptions {
 export interface ConversationStoreV2MigrationSnapshot {
   commits: ConversationCommitV2[];
   deletionTombstones: ConversationDeletionTombstoneV1[];
+}
+
+export interface ConversationStoreV2DeletionOptions {
+  recordMutationRetirement?: {
+    mutationId: string;
+    sourceRelativePaths: readonly string[];
+  };
 }
 
 interface ConversationIndexEntryV2 {
@@ -141,7 +154,24 @@ interface ConversationLayout {
   token: string;
   rootPath: string;
   metadataRootPath: string;
+  retirementsRootPath: string;
   headPath: string;
+}
+
+interface ConversationPayloadRetirementMarkerV1 {
+  schemaVersion: 1;
+  recordType: "conversation-payload-retirement";
+  conversationId: string;
+  mutationId: string;
+  retainedRevision: number;
+  retainedMetadataCommitId: string;
+  retainedMetadataDigest: string;
+  retiredThroughRevision: number;
+  retiredHeadCommitId: string;
+  retiredHeadDigest: string;
+  sourceRelativePaths: string[];
+  previousMarkerDigest: string | null;
+  digest: string;
 }
 
 interface ConversationHeadV1 {
@@ -219,7 +249,24 @@ export class FileConversationStoreV2 {
     assertCandidateFollows(currentMetadata, candidate.metadata);
     if (currentMetadata) {
       const currentPayload = await readPayload(layout, currentMetadata.payloadDigest);
-      assertConversationPayloadTransition(currentPayload, candidate.payload);
+      if (options.recordMutationPayloadReplacement) {
+        await assertAndPublishPayloadRetirementMarker({
+          layout,
+          conversation,
+          currentMetadata,
+          candidate,
+          mutationId:
+            options.recordMutationPayloadReplacement.mutationId,
+          sourceRelativePaths:
+            options.recordMutationPayloadReplacement.sourceRelativePaths
+        });
+      } else {
+        assertConversationPayloadTransition(currentPayload, candidate.payload);
+      }
+    } else if (options.recordMutationPayloadReplacement) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 payload retirement requires an active Conversation"
+      );
     }
 
     const faultContext: ConversationStoreV2FaultContext = {
@@ -293,19 +340,73 @@ export class FileConversationStoreV2 {
     return await this.readConversation(conversationId);
   }
 
+  async readConversationHistory(
+    conversationId: string
+  ): Promise<ConversationCommitV2[]> {
+    const layout = storeLayout(this.rootPath);
+    const rootStat = await lstatOrNull(layout.rootPath);
+    if (!rootStat) return [];
+    assertPlainDirectory(rootStat, "Conversation Store V2 root");
+    await assertStoreNamespacesSafe(layout);
+    const conversation = conversationLayout(layout, conversationId);
+    const conversationStat = await lstatOrNull(conversation.rootPath);
+    if (!conversationStat) return [];
+    assertPlainDirectory(conversationStat, "Conversation V2 directory");
+    await assertConversationDirectorySafe(conversation);
+    const metadataChain = await readMetadataChain(conversation);
+    const commits: ConversationCommitV2[] = [];
+    for (const metadata of metadataChain) {
+      const payload = await readPayload(layout, metadata.payloadDigest);
+      const commit = { metadata, payload };
+      validateConversationCommitV2(commit);
+      commits.push(commit);
+    }
+    return commits;
+  }
+
+  async planRecordMutationSources(input: {
+    operation: "clear-conversation-records" | "delete-conversation";
+    conversationId: string;
+  }): Promise<string[]> {
+    const layout = storeLayout(this.rootPath);
+    const rootStat = await lstatOrNull(layout.rootPath);
+    if (!rootStat) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 record mutation source is missing"
+      );
+    }
+    assertPlainDirectory(rootStat, "Conversation Store V2 root");
+    await assertStoreNamespacesSafe(layout);
+    if (await readDeletionTombstoneFromLayout(layout, input.conversationId)) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 record mutation source is already deleted"
+      );
+    }
+    return await conversationRecordMutationSourceRelativePaths(
+      layout,
+      conversationLayout(layout, input.conversationId),
+      input.operation
+    );
+  }
+
   async commitDeletionTombstone(
-    tombstoneInput: ConversationDeletionTombstoneV1
+    tombstoneInput: ConversationDeletionTombstoneV1,
+    options: ConversationStoreV2DeletionOptions = {}
   ): Promise<ConversationDeletionTombstoneV1> {
     const tombstone = parseConversationDeletionTombstone(tombstoneInput);
     return await enqueueConversationStoreV2Mutation(
       this.rootPath,
       tombstone.conversationId,
-      async () => await this.commitDeletionTombstoneUnlocked(tombstone)
+      async () => await this.commitDeletionTombstoneUnlocked(
+        tombstone,
+        options
+      )
     );
   }
 
   private async commitDeletionTombstoneUnlocked(
-    tombstone: ConversationDeletionTombstoneV1
+    tombstone: ConversationDeletionTombstoneV1,
+    options: ConversationStoreV2DeletionOptions
   ): Promise<ConversationDeletionTombstoneV1> {
     const layout = await ensureStoreLayout(this.rootPath);
     await assertStoreNamespacesSafe(layout);
@@ -313,9 +414,31 @@ export class FileConversationStoreV2 {
       layout,
       tombstone.conversationId
     );
-    if (await readCurrentMetadata(conversation)) {
+    const currentMetadata = await readCurrentMetadata(conversation);
+    if (currentMetadata && !options.recordMutationRetirement) {
       throw new ConversationStoreV2ConflictError(
         "Conversation Store V2 cannot tombstone an active Conversation"
+      );
+    }
+    if (options.recordMutationRetirement) {
+      if (
+        !currentMetadata
+        || options.recordMutationRetirement.mutationId
+          !== tombstone.mutationId
+      ) {
+        throw new ConversationStoreV2ConflictError(
+          "Conversation Store V2 deletion retirement authority is invalid"
+        );
+      }
+      const planned = await conversationRecordMutationSourceRelativePaths(
+        layout,
+        conversation,
+        "delete-conversation"
+      );
+      assertRecordMutationSourcePlan(
+        options.recordMutationRetirement.sourceRelativePaths,
+        planned,
+        "deletion"
       );
     }
     const existing = await readDeletionTombstoneFromLayout(
@@ -366,6 +489,16 @@ export class FileConversationStoreV2 {
     assertPlainDirectory(rootStat, "Conversation Store V2 root");
     await assertStoreNamespacesSafe(layout);
     return await readDeletionTombstoneFromLayout(layout, conversationId);
+  }
+
+  async listDeletionTombstones():
+  Promise<ConversationDeletionTombstoneV1[]> {
+    const layout = storeLayout(this.rootPath);
+    const rootStat = await lstatOrNull(layout.rootPath);
+    if (!rootStat) return [];
+    assertPlainDirectory(rootStat, "Conversation Store V2 root");
+    await assertStoreNamespacesSafe(layout);
+    return await scanDeletionTombstones(layout);
   }
 
   async listConversationShells(): Promise<ConversationShellV2[]> {
@@ -493,7 +626,14 @@ export class FileConversationStoreV2 {
   ): Promise<ConversationIndexV2> {
     await assertStoreNamespacesSafe(layout);
     const existing = await readIndexOrNull(layout.indexPath);
-    const entries = await scanCommittedConversations(layout);
+    const deletedConversationIds = new Set(
+      (await scanDeletionTombstones(layout)).map(
+        (tombstone) => tombstone.conversationId
+      )
+    );
+    const entries = (await scanCommittedConversations(layout)).filter(
+      (entry) => !deletedConversationIds.has(entry.shell.conversationId)
+    );
     if (existing && isDeepStrictEqual(existing.entries, entries)) {
       return existing;
     }
@@ -577,7 +717,11 @@ async function publishImmutableFile(
   targetPath: string,
   bytes: Buffer,
   options: {
-    kind: "payload" | "metadata" | "deletion-tombstone";
+    kind:
+      | "payload"
+      | "metadata"
+      | "deletion-tombstone"
+      | "retirement-marker";
     existingIsSuccess: boolean;
   }
 ): Promise<void> {
@@ -614,6 +758,7 @@ async function publishImmutableFile(
         if (
           options.kind === "metadata"
           || options.kind === "deletion-tombstone"
+          || options.kind === "retirement-marker"
         ) {
           throw new ConversationStoreV2ConflictError(
             `Conversation Store V2 ${options.kind} identity is already occupied`
@@ -679,6 +824,11 @@ async function scanCommittedConversations(
         layout.conversationsRootPath,
         entry.name,
         METADATA_DIRECTORY
+      ),
+      retirementsRootPath: path.join(
+        layout.conversationsRootPath,
+        entry.name,
+        RETIREMENTS_DIRECTORY
       ),
       headPath: path.join(
         layout.conversationsRootPath,
@@ -758,10 +908,29 @@ async function readMetadataChain(
       revision: Number(match[1])
     };
   }).sort((left, right) => left.revision - right.revision);
+  const firstRevision = ordered[0].revision;
+  const retirementMarkers =
+    await readConversationPayloadRetirementMarkers(conversation);
+  const baseRetirementMarker = firstRevision === 0
+    ? null
+    : retirementMarkers.at(-1) ?? null;
+  if (
+    firstRevision > 0
+    && baseRetirementMarker?.retainedRevision !== firstRevision
+  ) {
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      "Conversation V2 retired metadata base lacks its immutable marker"
+    );
+  }
   const chain: ConversationMetadataV2[] = [];
   for (let index = 0; index < ordered.length; index += 1) {
     const entry = ordered[index];
-    if (entry.revision !== index || entry.name !== entryFileName(index)) {
+    const expectedRevision = firstRevision + index;
+    if (
+      entry.revision !== expectedRevision
+      || entry.name !== entryFileName(expectedRevision)
+    ) {
       throw new ConversationStoreV2Error(
         "store-corrupt",
         "Conversation V2 metadata revision chain 不连续"
@@ -782,7 +951,11 @@ async function readMetadataChain(
         "Conversation V2 metadata revision 或 identity 不匹配"
       );
     }
-    assertMetadataChainTransition(chain.at(-1) ?? null, metadata);
+    if (index === 0 && firstRevision > 0) {
+      assertRetiredMetadataBase(metadata, baseRetirementMarker!);
+    } else {
+      assertMetadataChainTransition(chain.at(-1) ?? null, metadata);
+    }
     chain.push(metadata);
   }
   const head = await readConversationHeadOrNull(conversation);
@@ -795,20 +968,24 @@ async function readMetadataChain(
       "Conversation V2 metadata chain 缺少 commit head"
     );
   }
-  const committed = chain[head.metadataRevision];
+  const committed = chain.find(
+    (metadata) => metadata.revision === head.metadataRevision
+  );
   if (
     !committed
     || head.conversationToken !== conversation.token
     || head.metadataCommitId !== committed.commitId
     || head.metadataDigest !== committed.digest
-    || chain.length > head.metadataRevision + 2
+    || ordered.at(-1)!.revision > head.metadataRevision + 1
   ) {
     throw new ConversationStoreV2Error(
       "store-corrupt",
       "Conversation V2 metadata head 与 append-only chain 不一致"
     );
   }
-  return chain.slice(0, head.metadataRevision + 1);
+  return chain.filter(
+    (metadata) => metadata.revision <= head.metadataRevision
+  );
 }
 
 async function readPayload(
@@ -1008,6 +1185,7 @@ async function ensureConversationLayout(
   const conversation = conversationLayout(layout, conversationId);
   await ensurePlainDirectory(conversation.rootPath);
   await ensurePlainDirectory(conversation.metadataRootPath);
+  await ensurePlainDirectory(conversation.retirementsRootPath);
   await syncDirectory(layout.conversationsRootPath);
   await syncDirectory(conversation.rootPath);
   return conversation;
@@ -1023,6 +1201,7 @@ function conversationLayout(
     token,
     rootPath,
     metadataRootPath: path.join(rootPath, METADATA_DIRECTORY),
+    retirementsRootPath: path.join(rootPath, RETIREMENTS_DIRECTORY),
     headPath: path.join(rootPath, HEAD_FILE)
   };
 }
@@ -1229,6 +1408,8 @@ async function assertConversationDirectorySafe(
       || (
         entry.name === METADATA_DIRECTORY
           ? !entry.isDirectory()
+          : entry.name === RETIREMENTS_DIRECTORY
+            ? !entry.isDirectory()
           : entry.name === HEAD_FILE
             ? !entry.isFile()
             : true
@@ -1239,6 +1420,16 @@ async function assertConversationDirectorySafe(
         `Conversation V2 directory 含 unknown/unsafe entry：${entry.name}`
       );
     }
+  }
+  const retirementStat = await lstatOrNull(
+    conversation.retirementsRootPath
+  );
+  if (retirementStat) {
+    assertPlainDirectory(
+      retirementStat,
+      "Conversation V2 retirement root"
+    );
+    await readConversationPayloadRetirementMarkers(conversation);
   }
 }
 
@@ -1258,6 +1449,357 @@ function assertConversationPayloadTransition(
       );
     }
   }
+}
+
+async function assertAndPublishPayloadRetirementMarker(input: {
+  layout: StoreLayout;
+  conversation: ConversationLayout;
+  currentMetadata: ConversationMetadataV2;
+  candidate: ConversationCommitV2;
+  mutationId: string;
+  sourceRelativePaths: readonly string[];
+}): Promise<void> {
+  if (
+    !input.mutationId.trim()
+    || input.candidate.payload.messages.length !== 0
+    || input.candidate.payload.snapshot !== null
+    || input.candidate.metadata.currentContext.generation
+      !== input.currentMetadata.currentContext.generation + 1
+  ) {
+    throw new ConversationStoreV2ConflictError(
+      "Conversation Store V2 record clear target is invalid"
+    );
+  }
+  const planned = await conversationRecordMutationSourceRelativePaths(
+    input.layout,
+    input.conversation,
+    "clear-conversation-records"
+  );
+  assertRecordMutationSourcePlan(
+    input.sourceRelativePaths,
+    planned,
+    "record clear"
+  );
+  await ensurePlainDirectory(input.conversation.retirementsRootPath);
+  const markers =
+    await readConversationPayloadRetirementMarkers(input.conversation);
+  const previousMarker = markers.at(-1) ?? null;
+  const markerWithoutDigest = {
+    schemaVersion: 1 as const,
+    recordType: "conversation-payload-retirement" as const,
+    conversationId: input.currentMetadata.conversationId,
+    mutationId: input.mutationId.trim(),
+    retainedRevision: input.candidate.metadata.revision,
+    retainedMetadataCommitId: input.candidate.metadata.commitId,
+    retainedMetadataDigest: input.candidate.metadata.digest,
+    retiredThroughRevision: input.currentMetadata.revision,
+    retiredHeadCommitId: input.currentMetadata.commitId,
+    retiredHeadDigest: input.currentMetadata.digest,
+    sourceRelativePaths: [...planned],
+    previousMarkerDigest: previousMarker?.digest ?? null
+  };
+  const marker: ConversationPayloadRetirementMarkerV1 = {
+    ...markerWithoutDigest,
+    digest: conversationV2RecordDigest(markerWithoutDigest)
+  };
+  const targetPath = path.join(
+    input.conversation.retirementsRootPath,
+    retirementFileName(marker.retainedRevision)
+  );
+  await publishImmutableFile(
+    input.layout,
+    targetPath,
+    Buffer.from(canonicalConversationV2Json(marker), "utf8"),
+    {
+      kind: "retirement-marker",
+      existingIsSuccess: true
+    }
+  );
+  const readback =
+    await readConversationPayloadRetirementMarkers(input.conversation);
+  if (!isDeepStrictEqual(readback.at(-1), marker)) {
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      "Conversation V2 payload retirement marker readback mismatch"
+    );
+  }
+}
+
+async function conversationRecordMutationSourceRelativePaths(
+  layout: StoreLayout,
+  conversation: ConversationLayout,
+  operation: "clear-conversation-records" | "delete-conversation"
+): Promise<string[]> {
+  const conversationStat = await lstatOrNull(conversation.rootPath);
+  if (!conversationStat) {
+    throw new ConversationStoreV2ConflictError(
+      "Conversation Store V2 record mutation source is missing"
+    );
+  }
+  assertPlainDirectory(conversationStat, "Conversation V2 directory");
+  await assertConversationDirectorySafe(conversation);
+  const metadataChain = await readMetadataChain(conversation);
+  if (!metadataChain.length) {
+    throw new ConversationStoreV2ConflictError(
+      "Conversation Store V2 record mutation source is uncommitted"
+    );
+  }
+  const metadataEntries = await fsp.readdir(
+    conversation.metadataRootPath,
+    { withFileTypes: true }
+  );
+  if (
+    metadataEntries.length !== metadataChain.length
+    || metadataEntries.some(
+      (entry) => !entry.isFile() || entry.isSymbolicLink()
+    )
+  ) {
+    throw new ConversationStoreV2ConflictError(
+      "Conversation Store V2 record mutation source contains uncommitted metadata"
+    );
+  }
+  const payloadPaths = [...new Set(metadataChain.map(
+    (metadata) => (
+      `${PAYLOADS_DIRECTORY}/${
+        metadata.payloadDigest.slice("sha256:".length)
+      }.json`
+    )
+  ))];
+  for (const relativePath of payloadPaths) {
+    const stat = await lstatOrNull(path.join(layout.rootPath, relativePath));
+    if (!stat) {
+      throw new ConversationStoreV2ConflictError(
+        "Conversation Store V2 record mutation payload is missing"
+      );
+    }
+    assertSafeRegularFile(
+      stat,
+      "Conversation Store V2 record mutation payload",
+      [1, 2]
+    );
+  }
+  if (operation === "delete-conversation") {
+    return [
+      `${CONVERSATIONS_DIRECTORY}/${conversation.token}`,
+      ...payloadPaths
+    ].sort((left, right) => left.localeCompare(right));
+  }
+  const retainedEmptyPayloadDigest = digestPayload({
+    schemaVersion: 2,
+    recordType: "conversation-payload",
+    conversationId: metadataChain.at(-1)!.conversationId,
+    messages: [],
+    snapshot: null
+  });
+  const retiredPayloadPaths = payloadPaths.filter(
+    (relativePath) => !relativePath.endsWith(
+      `${retainedEmptyPayloadDigest.slice("sha256:".length)}.json`
+    )
+  );
+  return [
+    ...metadataChain.map((metadata) => (
+      `${CONVERSATIONS_DIRECTORY}/${conversation.token}/${
+        METADATA_DIRECTORY
+      }/${entryFileName(metadata.revision)}`
+    )),
+    ...retiredPayloadPaths
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function assertRecordMutationSourcePlan(
+  input: readonly string[],
+  expected: readonly string[],
+  label: string
+): void {
+  const normalized = input.map((value) => {
+    if (
+      typeof value !== "string"
+      || !value.length
+      || value !== value.trim()
+      || value.startsWith("/")
+      || value.includes("\\")
+      || value.split("/").some(
+        (segment) => !segment || segment === "." || segment === ".."
+      )
+    ) {
+      throw new ConversationStoreV2ConflictError(
+        `Conversation Store V2 ${label} source plan is invalid`
+      );
+    }
+    return value;
+  }).sort((left, right) => left.localeCompare(right));
+  if (
+    new Set(normalized).size !== normalized.length
+    || !isDeepStrictEqual(normalized, expected)
+  ) {
+    throw new ConversationStoreV2ConflictError(
+      `Conversation Store V2 ${label} source plan changed`
+    );
+  }
+}
+
+async function readConversationPayloadRetirementMarkers(
+  conversation: ConversationLayout
+): Promise<ConversationPayloadRetirementMarkerV1[]> {
+  const rootStat = await lstatOrNull(conversation.retirementsRootPath);
+  if (!rootStat) return [];
+  assertPlainDirectory(rootStat, "Conversation V2 retirement root");
+  const entries = (await fsp.readdir(
+    conversation.retirementsRootPath,
+    { withFileTypes: true }
+  )).map((entry) => {
+    const match = RETIREMENT_FILE_PATTERN.exec(entry.name);
+    if (!match || !entry.isFile() || entry.isSymbolicLink()) {
+      throw new ConversationStoreV2Error(
+        "unsafe-entry",
+        `Conversation V2 retirements contains unsafe entry: ${entry.name}`
+      );
+    }
+    return {
+      name: entry.name,
+      retainedRevision: Number(match[1])
+    };
+  }).sort((left, right) =>
+    left.retainedRevision - right.retainedRevision);
+  const markers: ConversationPayloadRetirementMarkerV1[] = [];
+  for (const entry of entries) {
+    const marker = validateConversationPayloadRetirementMarker(
+      await readJsonFileSafely(
+        path.join(conversation.retirementsRootPath, entry.name),
+        "Conversation V2 payload retirement marker",
+        [1, 2]
+      )
+    );
+    if (
+      marker.retainedRevision !== entry.retainedRevision
+      || entry.name !== retirementFileName(marker.retainedRevision)
+      || conversationToken(marker.conversationId) !== conversation.token
+      || marker.previousMarkerDigest
+        !== (markers.at(-1)?.digest ?? null)
+      || (
+        markers.length > 0
+        && marker.retiredThroughRevision
+          < markers.at(-1)!.retainedRevision
+      )
+    ) {
+      throw new ConversationStoreV2Error(
+        "store-corrupt",
+        "Conversation V2 payload retirement marker chain is invalid"
+      );
+    }
+    markers.push(marker);
+  }
+  return markers;
+}
+
+function validateConversationPayloadRetirementMarker(
+  value: unknown
+): ConversationPayloadRetirementMarkerV1 {
+  const record = requirePlainRecord(
+    value,
+    "Conversation V2 payload retirement marker"
+  );
+  assertExactObjectKeys(record, [
+    "schemaVersion",
+    "recordType",
+    "conversationId",
+    "mutationId",
+    "retainedRevision",
+    "retainedMetadataCommitId",
+    "retainedMetadataDigest",
+    "retiredThroughRevision",
+    "retiredHeadCommitId",
+    "retiredHeadDigest",
+    "sourceRelativePaths",
+    "previousMarkerDigest",
+    "digest"
+  ], "Conversation V2 payload retirement marker");
+  const {
+    digest,
+    ...withoutDigest
+  } = record;
+  if (
+    record.schemaVersion !== 1
+    || record.recordType !== "conversation-payload-retirement"
+    || typeof record.conversationId !== "string"
+    || !record.conversationId.length
+    || typeof record.mutationId !== "string"
+    || !record.mutationId.length
+    || !isNonNegativeSafeInteger(record.retainedRevision)
+    || typeof record.retainedMetadataCommitId !== "string"
+    || !record.retainedMetadataCommitId.length
+    || typeof record.retainedMetadataDigest !== "string"
+    || !SHA256_PATTERN.test(record.retainedMetadataDigest)
+    || !isNonNegativeSafeInteger(record.retiredThroughRevision)
+    || record.retiredThroughRevision >= record.retainedRevision
+    || typeof record.retiredHeadCommitId !== "string"
+    || !record.retiredHeadCommitId.length
+    || typeof record.retiredHeadDigest !== "string"
+    || !SHA256_PATTERN.test(record.retiredHeadDigest)
+    || !Array.isArray(record.sourceRelativePaths)
+    || record.sourceRelativePaths.some(
+      (entry) => typeof entry !== "string" || !entry.length
+    )
+    || (
+      record.previousMarkerDigest !== null
+      && (
+        typeof record.previousMarkerDigest !== "string"
+        || !SHA256_PATTERN.test(record.previousMarkerDigest)
+      )
+    )
+    || typeof digest !== "string"
+    || !SHA256_PATTERN.test(digest)
+    || digest !== conversationV2RecordDigest(withoutDigest)
+  ) {
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      "Conversation V2 payload retirement marker is invalid"
+    );
+  }
+  return record as unknown as ConversationPayloadRetirementMarkerV1;
+}
+
+function assertRetiredMetadataBase(
+  metadata: ConversationMetadataV2,
+  marker: ConversationPayloadRetirementMarkerV1
+): void {
+  if (
+    metadata.revision !== marker.retainedRevision
+    || metadata.commitId !== marker.retainedMetadataCommitId
+    || metadata.digest !== marker.retainedMetadataDigest
+    || metadata.previousRevision !== marker.retiredThroughRevision
+    || metadata.previousCommitId !== marker.retiredHeadCommitId
+    || metadata.previousDigest !== marker.retiredHeadDigest
+  ) {
+    throw new ConversationStoreV2Error(
+      "store-corrupt",
+      "Conversation V2 retired metadata base does not match its marker"
+    );
+  }
+}
+
+function conversationV2RecordDigest(value: unknown): string {
+  const bytes = canonicalConversationV2Json(value);
+  return `sha256:${createHash("sha256")
+    .update(bytes.slice(0, -1), "utf8")
+    .digest("hex")}`;
+}
+
+function retirementFileName(retainedRevision: number): string {
+  if (!isNonNegativeSafeInteger(retainedRevision)) {
+    throw new ConversationStoreV2Error(
+      "unsafe-path",
+      "Conversation V2 retirement revision cannot map to a path"
+    );
+  }
+  return `retirement-${String(retainedRevision).padStart(
+    ENTRY_WIDTH,
+    "0"
+  )}.json`;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 async function writeConversationHeadAtomically(

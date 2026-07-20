@@ -40,8 +40,8 @@ Promise<void> {
   );
   assert.match(
     router,
-    /resolveConversationStoreSelection\([\s\S]*selection\.activeStore === "v2"[\s\S]*ConversationStoreRoutingError/,
-    "V2 active must fail closed until the complete live adapter exists"
+    /resolveConversationStoreSelection\([\s\S]*selection\.activeStore === "v2"[\s\S]*FileConversationStoreV2LiveAdapter/,
+    "V2 active must route readers and writers through the complete live adapter"
   );
 }
 

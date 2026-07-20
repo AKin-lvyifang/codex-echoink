@@ -48,6 +48,7 @@ const PORTABLE_MIGRATION_SESSION_KEYS = new Set([
   "commitId",
   "workspaceFingerprint",
   "contextSnapshot",
+  "rollingSummary",
   "cwd",
   "messages",
   "createdAt",
@@ -183,7 +184,13 @@ export interface PlanConversationRecordMutationSourcesInput {
 
 export interface CommitConversationRecordClearOptions
 extends CommitConversationContextOptions {
+  mutationId?: string;
   sourceRelativePaths: readonly string[];
+}
+
+export interface CommitConversationDeletionTombstoneOptions
+extends CommitConversationContextOptions {
+  sourceRelativePaths?: readonly string[];
 }
 
 export interface ConversationDeletionTombstoneV1 {
@@ -545,7 +552,7 @@ export class FileConversationStore {
 
   async commitConversationDeletionTombstone(
     tombstoneInput: ConversationDeletionTombstoneV1,
-    options: CommitConversationContextOptions
+    options: CommitConversationDeletionTombstoneOptions
   ): Promise<ConversationDeletionTombstoneV1> {
     const tombstone = parseConversationDeletionTombstone(tombstoneInput);
     this.sessionDir(tombstone.conversationId);
@@ -2622,38 +2629,70 @@ export function createConversationContentRevision(
   return `sha256:${sha256StableJson({
     id: session.id,
     title: session.title,
-    ...(session.kind ? { kind: session.kind } : {}),
-    ...(session.backendBindings
-      ? { backendBindings: session.backendBindings }
-      : {}),
-    ...(session.revision ? { revision: session.revision } : {}),
-    ...(session.generation ? { generation: session.generation } : {}),
-    ...(session.contextId ? { contextId: session.contextId } : {}),
-    ...(session.contextStartsAfterMessageId
-      ? { contextStartsAfterMessageId: session.contextStartsAfterMessageId }
-      : {}),
-    ...(session.commitId ? { commitId: session.commitId } : {}),
-    ...(session.workspaceFingerprint
-      ? { workspaceFingerprint: session.workspaceFingerprint }
-      : {}),
-    ...(session.contextSnapshot
-      ? { contextSnapshot: session.contextSnapshot }
-      : {}),
+    kind: session.kind ?? "chat",
+    generation: sessionGeneration(session),
+    contextId: normalizedOptionalString(session.contextId) ?? null,
+    contextStartsAfterMessageId:
+      normalizedOptionalString(session.contextStartsAfterMessageId) ?? null,
+    commitId: normalizedOptionalString(session.commitId) ?? null,
+    workspaceFingerprint:
+      normalizedOptionalString(session.workspaceFingerprint) ?? null,
+    contextSnapshot: session.contextSnapshot ?? null,
     cwd: session.cwd,
-    ...(session.rollingSummary
-      ? { rollingSummary: session.rollingSummary }
-      : {}),
-    ...(session.messagesHiddenBefore !== undefined
-      ? { messagesHiddenBefore: session.messagesHiddenBefore }
-      : {}),
-    ...(session.historyActiveDate
-      ? { historyActiveDate: session.historyActiveDate }
-      : {}),
-    ...(session.tokenUsage ? { tokenUsage: session.tokenUsage } : {}),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
-    messages: session.messages
+    messages: session.messages.map(conversationProductMessageRecord)
   })}`;
+}
+
+function conversationProductMessageRecord(message: ChatMessage): unknown {
+  const presentation = {
+    schemaVersion: 1,
+    ...(message.itemType !== undefined
+      ? { itemType: message.itemType }
+      : {}),
+    ...(message.title !== undefined ? { title: message.title } : {}),
+    ...(message.status !== undefined ? { status: message.status } : {}),
+    ...(message.details !== undefined ? { details: message.details } : {}),
+    ...(message.attachments !== undefined
+      ? { attachments: message.attachments }
+      : {}),
+    ...(message.images !== undefined ? { images: message.images } : {}),
+    ...(message.files !== undefined ? { files: message.files } : {}),
+    ...(message.citations !== undefined
+      ? { citations: message.citations }
+      : {}),
+    ...(message.diffSummary !== undefined
+      ? { diffSummary: message.diffSummary }
+      : {}),
+    ...(message.knowledgeBaseUi !== undefined
+      ? { knowledgeBaseUi: message.knowledgeBaseUi }
+      : {})
+  };
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    turnId: message.turnId ?? null,
+    previewText: message.previewText ?? null,
+    raw: message.rawRef
+      ? {
+        ref: message.rawRef,
+        size: isNonNegativeInteger(message.rawSize)
+          ? message.rawSize
+          : 0,
+        lines: isNonNegativeInteger(message.rawLines)
+          ? message.rawLines
+          : 0,
+        truncatedForPreview: message.rawTruncatedForPreview === true
+      }
+      : null,
+    presentation: Object.keys(presentation).length === 1
+      ? null
+      : presentation,
+    createdAt: message.createdAt,
+    completedAt: message.completedAt ?? null
+  };
 }
 
 export function createConversationMessageRevision(

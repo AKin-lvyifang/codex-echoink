@@ -1,8 +1,10 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  createConversationContentRevision,
+  createConversationDeletionTombstone,
   FileConversationStore
 } from "../../harness/conversation/conversation-store";
 import {
@@ -25,9 +27,9 @@ import {
 } from "../../harness/lifecycle/record-mutation-production";
 import { pluginDataDir } from "../../core/raw-message-store";
 import {
-  ConversationStoreRoutingError,
   FileConversationStoreRouter
 } from "../../plugin/conversation-store-router";
+import { sessionGeneration } from "../../harness/kernel/session-service";
 import type { StoredSession } from "../../settings/settings";
 
 const BASE_TIME = 1_721_347_200_000;
@@ -94,26 +96,137 @@ Promise<void> {
     expectedCommitId: validated.commitId
   });
 
-  const beforeBlockedWrite = await treeEntries(storageRootPath);
-  await assert.rejects(
-    () => router.createPristineSession(
-      pristineSession("blocked-conversation")
-    ),
-    (error: unknown) => (
-      error instanceof ConversationStoreRoutingError
-      && error.code === "v2-live-route-unavailable"
-      && error.selection.storeRef === "canonical-v2"
-    )
+  const beforeLegacyWrite = await treeEntries(legacyRootPath);
+  const createdV2 = pristineSession("v2-created-conversation");
+  await router.createPristineSession(createdV2);
+  assert.equal(
+    (await router.readSession(createdV2.id))?.id,
+    createdV2.id
+  );
+  const activeSession = await router.readSession(legacySession.id);
+  assert.ok(activeSession);
+  activeSession.messages.push({
+    id: "v2-live-message",
+    role: "user",
+    text: "V2 live writer",
+    createdAt: BASE_TIME + 10
+  });
+  activeSession.updatedAt = BASE_TIME + 10;
+  await router.persistSettingsSessions({ sessions: [activeSession] });
+  assert.equal(
+    (await router.readSession(activeSession.id))?.messages.at(-1)?.text,
+    "V2 live writer"
+  );
+  assert.equal(await router.resolveLiveRootPath(), targetStore.rootPath);
+  assert.equal(
+    (await router.resolveRecordMutationRoute()).storeVersion,
+    "v2"
   );
   assert.deepEqual(
-    await treeEntries(storageRootPath),
-    beforeBlockedWrite,
-    "blocked V2 live write must not create or modify the legacy Store"
+    await treeEntries(legacyRootPath),
+    beforeLegacyWrite,
+    "V2 live writes must not modify the legacy Store"
   );
   assert.equal(
     await sourceStore.readSession("blocked-conversation"),
     null
   );
+
+  const beforeClear = await router.readSession(activeSession.id);
+  assert.ok(beforeClear);
+  const clearSources =
+    await router.planConversationRecordMutationSources({
+      operation: "clear-conversation-records",
+      conversationId: beforeClear.id,
+      expectedGeneration: sessionGeneration(beforeClear),
+      expectedCommitId: beforeClear.commitId!,
+      expectedContentRevision:
+        createConversationContentRevision(beforeClear)
+    });
+  const cleared = structuredClone(beforeClear);
+  cleared.messages = [];
+  cleared.revision = sessionGeneration(beforeClear) + 1;
+  cleared.generation = sessionGeneration(beforeClear) + 1;
+  cleared.contextId = "v2-cleared-context";
+  cleared.commitId = "v2-cleared-context-commit";
+  delete cleared.contextStartsAfterMessageId;
+  delete cleared.contextSnapshot;
+  delete cleared.rollingSummary;
+  cleared.updatedAt = BASE_TIME + 20;
+  await router.commitConversationRecordClear(cleared, {
+    mutationId: "v2-clear-mutation",
+    expectedGeneration: sessionGeneration(beforeClear),
+    expectedCommitId: beforeClear.commitId,
+    expectedContentRevision:
+      createConversationContentRevision(beforeClear),
+    sourceRelativePaths: clearSources.map(
+      (source) => source.sourceRelativePath
+    )
+  });
+  for (const source of clearSources) {
+    await rm(path.join(targetStore.rootPath, source.sourceRelativePath), {
+      recursive: true
+    });
+  }
+  assert.deepEqual(
+    (await router.readSession(cleared.id))?.messages,
+    []
+  );
+  assert.equal(
+    (await targetStore.inspectMigrationSnapshot()).commits.length,
+    2
+  );
+
+  const afterClear = await router.readSession(cleared.id);
+  assert.ok(afterClear);
+  afterClear.messages.push({
+    id: "v2-after-clear-message",
+    role: "assistant",
+    text: "V2 remains writable after payload retirement",
+    createdAt: BASE_TIME + 21
+  });
+  afterClear.updatedAt = BASE_TIME + 21;
+  await router.persistSettingsSessions({ sessions: [afterClear] });
+  const beforeDelete = await router.readSession(cleared.id);
+  assert.ok(beforeDelete);
+  const deleteSources =
+    await router.planConversationRecordMutationSources({
+      operation: "delete-conversation",
+      conversationId: beforeDelete.id,
+      expectedGeneration: sessionGeneration(beforeDelete),
+      expectedCommitId: beforeDelete.commitId!,
+      expectedContentRevision:
+        createConversationContentRevision(beforeDelete)
+    });
+  const tombstone = createConversationDeletionTombstone({
+    conversationId: beforeDelete.id,
+    mutationId: "v2-delete-mutation",
+    tombstoneId: "v2-delete-tombstone",
+    sourceGeneration: sessionGeneration(beforeDelete),
+    sourceCommitId: beforeDelete.commitId!,
+    sourceContentRevision:
+      createConversationContentRevision(beforeDelete),
+    deletedAt: BASE_TIME + 30
+  });
+  await router.commitConversationDeletionTombstone(tombstone, {
+    expectedGeneration: sessionGeneration(beforeDelete),
+    expectedCommitId: beforeDelete.commitId,
+    expectedContentRevision:
+      createConversationContentRevision(beforeDelete),
+    sourceRelativePaths: deleteSources.map(
+      (source) => source.sourceRelativePath
+    )
+  });
+  assert.equal(await router.readSession(beforeDelete.id), null);
+  for (const source of deleteSources) {
+    await rm(path.join(targetStore.rootPath, source.sourceRelativePath), {
+      recursive: true
+    });
+  }
+  await targetStore.reconcileIndex();
+  const deletedSnapshot = await targetStore.inspectMigrationSnapshot();
+  assert.equal(deletedSnapshot.commits.length, 1);
+  assert.equal(deletedSnapshot.deletionTombstones.length, 1);
 }
 
 async function assertRecordMutationRootUsesSelectedConversationRoot():

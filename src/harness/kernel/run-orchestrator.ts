@@ -31,6 +31,15 @@ import {
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
 export type RunTerminalAuthority = "kernel" | "surface";
 
+export class HarnessRunAdmissionClosedError extends Error {
+  constructor(readonly quietWindowId: string) {
+    super(
+      `Harness Run admission is closed by migration quiet window ${quietWindowId}`
+    );
+    this.name = "HarnessRunAdmissionClosedError";
+  }
+}
+
 export interface SettleRunTerminalInput {
   runId: string;
   status: RunTerminalStatus;
@@ -163,6 +172,8 @@ export class RunOrchestrator {
   private readonly runLanes = new Map<string, RunLane>();
   private readonly memoryObservationTails = new Map<string, Promise<void>>();
   private readonly runStarts = new Map<string, Promise<HarnessRunResult>>();
+  private readonly runIdleWaiters = new Set<() => void>();
+  private runAdmissionQuietWindowId: string | null = null;
   private readonly now: () => number;
 
   constructor(private readonly options: RunOrchestratorOptions) {
@@ -221,6 +232,11 @@ export class RunOrchestrator {
   async run(request: HarnessRunRequest, sink: HarnessEventSink = () => undefined, runOptions: RunOrchestratorRunOptions = {}): Promise<HarnessRunResult> {
     const existingStart = this.runStarts.get(request.runId);
     if (existingStart) return await existingStart;
+    if (this.runAdmissionQuietWindowId) {
+      throw new HarnessRunAdmissionClosedError(
+        this.runAdmissionQuietWindowId
+      );
+    }
 
     // Capture before executeRun reaches its first await. The registry is only a
     // default for statically configured orchestrators; per-run adapters are
@@ -239,11 +255,41 @@ export class RunOrchestrator {
         && this.runStarts.get(request.runId) === start
       ) {
         this.runStarts.delete(request.runId);
+        this.notifyRunIdleIfNeeded();
       }
       return result;
     } catch (error) {
-      if (this.runStarts.get(request.runId) === start) this.runStarts.delete(request.runId);
+      if (this.runStarts.get(request.runId) === start) {
+        this.runStarts.delete(request.runId);
+        this.notifyRunIdleIfNeeded();
+      }
       throw error;
+    }
+  }
+
+  async withRunAdmissionClosed<T>(
+    quietWindowIdInput: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    const quietWindowId = quietWindowIdInput.trim();
+    if (!quietWindowId) {
+      throw new Error("Harness migration quiet window requires an id");
+    }
+    if (this.runAdmissionQuietWindowId) {
+      throw new Error(
+        `Harness migration quiet window is already active: ${
+          this.runAdmissionQuietWindowId
+        }`
+      );
+    }
+    this.runAdmissionQuietWindowId = quietWindowId;
+    try {
+      await this.waitForRunIdle();
+      return await action();
+    } finally {
+      if (this.runAdmissionQuietWindowId === quietWindowId) {
+        this.runAdmissionQuietWindowId = null;
+      }
     }
   }
 
@@ -1111,6 +1157,20 @@ export class RunOrchestrator {
     this.runOwners.delete(runId);
     this.cancelRequestedRuns.delete(runId);
     if (!options.preserveStart) this.runStarts.delete(runId);
+    this.notifyRunIdleIfNeeded();
+  }
+
+  private async waitForRunIdle(): Promise<void> {
+    if (this.runStarts.size === 0) return;
+    await new Promise<void>((resolve) => {
+      this.runIdleWaiters.add(resolve);
+    });
+  }
+
+  private notifyRunIdleIfNeeded(): void {
+    if (this.runStarts.size !== 0) return;
+    for (const resolve of this.runIdleWaiters) resolve();
+    this.runIdleWaiters.clear();
   }
 }
 

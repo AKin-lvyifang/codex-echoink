@@ -1,5 +1,5 @@
 import * as path from "path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type CodexForObsidianPlugin from "../main";
 import type { TurnOptions } from "../core/codex-service";
 import {
@@ -43,10 +43,23 @@ import {
 import type {
   SessionNativeRetirement
 } from "../harness/conversation/context-rotation";
-import type {
-  ConversationAuthorityProbe,
-  ConversationAuthorityProof
+import {
+  FileConversationStore,
+  type ConversationAuthorityProbe,
+  type ConversationAuthorityProof
 } from "../harness/conversation/conversation-store";
+import {
+  conversationStoreV1LegacyRoot
+} from "../harness/conversation/conversation-store-paths";
+import {
+  FileConversationStoreV2
+} from "../harness/conversation/conversation-store-v2";
+import {
+  resolveConversationStoreSelection
+} from "../harness/conversation/store-selection";
+import {
+  FileConversationStoreManifest
+} from "../harness/conversation/store-manifest";
 import type {
   RecordMutationRevision
 } from "../harness/lifecycle/record-mutation-contract";
@@ -57,13 +70,17 @@ import {
   type NativeSessionLeaseRetirementInput
 } from "../harness/kernel/native-session-lease-manager";
 import { sessionGeneration } from "../harness/kernel/session-service";
-import type {
-  AppendRunEventInput,
-  BeforeBindingReplacementInput,
-  RunTerminalStatus,
-  SettleRunTerminalInput
+import {
+  HarnessRunAdmissionClosedError,
+  type AppendRunEventInput,
+  type BeforeBindingReplacementInput,
+  type RunTerminalStatus,
+  type SettleRunTerminalInput
 } from "../harness/kernel/run-orchestrator";
 import { FileRunLedger } from "../harness/ledger/run-ledger";
+import {
+  FileRunRecordStore
+} from "../harness/ledger/run-record-store";
 import {
   recoverStartedRunRecordRetentionSweeps,
   type RunRecordRetentionRetirementRoots
@@ -71,6 +88,10 @@ import {
 import {
   createRunRecordRetentionRecoveryEvidenceAuthority
 } from "../harness/ledger/run-record-retention-recovery-evidence";
+import {
+  activateConversationStoreV2WithOwnerStores,
+  type ConversationStoreV2ActivationResult
+} from "../harness/lifecycle/conversation-migration-coordinator";
 import {
   ECHOINK_RECORD_MUTATION_ROOT_IDS,
   echoInkRecordMutationRootPath,
@@ -199,6 +220,13 @@ export interface RecordMutationStartupAuthority {
   ): Promise<RecordMutationRevision>;
 }
 
+export interface HarnessMigrationPersistenceAuthority {
+  withMigrationPersistenceQuietWindow<T>(
+    quietWindowId: string,
+    action: () => Promise<T>
+  ): Promise<T>;
+}
+
 export class EchoInkHarnessService {
   private harnessKernel: EchoInkHarnessKernel | null = null;
   private harnessKernelKey = "";
@@ -215,10 +243,28 @@ export class EchoInkHarnessService {
   private nativeStartupReconciliationFlight: Promise<NativeStartupReconciliationResult> | null = null;
   private readonly chatNativeReceipts = new Map<string, ChatNativeReceiptState>();
   private readonly chatTerminalAuthorityTails = new Map<string, Promise<void>>();
+  private readonly activeRunWithAdapterFlights =
+    new Set<Promise<unknown>>();
+  private migrationQuietWindowId: string | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   async runWithAdapter(input: HarnessRunWithAdapterInput) {
+    if (this.migrationQuietWindowId) {
+      throw new HarnessRunAdmissionClosedError(
+        this.migrationQuietWindowId
+      );
+    }
+    const flight = this.executeRunWithAdapter(input);
+    this.activeRunWithAdapterFlights.add(flight);
+    try {
+      return await flight;
+    } finally {
+      this.activeRunWithAdapterFlights.delete(flight);
+    }
+  }
+
+  private async executeRunWithAdapter(input: HarnessRunWithAdapterInput) {
     const backend = isAgentBackendKind(input.adapter.manifest.id) ? input.adapter.manifest.id : null;
     const registeredRecordIds = new Set<string>();
     let persistentChat = false;
@@ -384,6 +430,93 @@ export class EchoInkHarnessService {
 
   async cancelRun(runId: string): Promise<void> {
     await this.getHarnessKernel().cancelRun(runId);
+  }
+
+  async withMigrationQuietWindow<T>(
+    quietWindowIdInput: string,
+    persistenceAuthority: HarnessMigrationPersistenceAuthority,
+    action: () => Promise<T>
+  ): Promise<T> {
+    const quietWindowId = quietWindowIdInput.trim();
+    if (!quietWindowId) {
+      throw new Error("Harness migration quiet window requires an id");
+    }
+    if (this.migrationQuietWindowId) {
+      throw new Error(
+        `Harness migration quiet window is already active: ${
+          this.migrationQuietWindowId
+        }`
+      );
+    }
+    this.migrationQuietWindowId = quietWindowId;
+    try {
+      await this.waitForRunWithAdapterIdle();
+      const kernel = this.getHarnessKernel();
+      return await kernel.withRunAdmissionClosed(
+        quietWindowId,
+        async () => {
+          await this.requireNativeCleanupAuthority();
+          const nativeManager = this.getNativeExecutionManager();
+          return await nativeManager.withCleanupPaused(
+            quietWindowId,
+            async () =>
+              await persistenceAuthority
+                .withMigrationPersistenceQuietWindow(
+                  quietWindowId,
+                  async () =>
+                    await nativeManager.withStoreMutation(action)
+                )
+          );
+        }
+      );
+    } finally {
+      if (this.migrationQuietWindowId === quietWindowId) {
+        this.migrationQuietWindowId = null;
+      }
+    }
+  }
+
+  async migrateConversationStoreToV2(
+    persistenceAuthority: HarnessMigrationPersistenceAuthority
+  ): Promise<ConversationStoreV2ActivationResult> {
+    const quietWindowId =
+      `conversation-v2-cutover-${randomUUID()}`;
+    return await this.withMigrationQuietWindow(
+      quietWindowId,
+      persistenceAuthority,
+      async () => {
+        const storageRootPath = pluginDataDir(
+          this.plugin.getVaultPath(),
+          this.plugin.getPluginDataDirName()
+        );
+        const selection = await resolveConversationStoreSelection(
+          storageRootPath
+        );
+        if (selection.storeRef.startsWith("v1-export:")) {
+          throw new Error(
+            "Conversation V2 forward migration cannot overwrite an active V1 restore route"
+          );
+        }
+        return await activateConversationStoreV2WithOwnerStores({
+          sourceStore: new FileConversationStore({
+            rootPath: conversationStoreV1LegacyRoot(storageRootPath)
+          }),
+          targetStore: new FileConversationStoreV2({
+            storageRootPath
+          }),
+          manifestStore: new FileConversationStoreManifest({
+            storageRootPath
+          }),
+          settingsDataPath: path.join(storageRootPath, "data.json"),
+          nativeStore: new NativeExecutionStore({
+            rootPath: this.nativeExecutionStoreRootPath()
+          }),
+          runStore: new FileRunRecordStore({
+            storageRootPath
+          })
+        });
+      }
+    );
   }
 
   async getMemoryStatus(): Promise<MemoryStoreStatus> {
@@ -1213,6 +1346,14 @@ export class EchoInkHarnessService {
     });
   }
 
+  private async waitForRunWithAdapterIdle(): Promise<void> {
+    while (this.activeRunWithAdapterFlights.size > 0) {
+      await Promise.allSettled(
+        Array.from(this.activeRunWithAdapterFlights)
+      );
+    }
+  }
+
   private getHarnessKernel(): EchoInkHarnessKernel {
     const vaultPath = this.plugin.getVaultPath();
     const pluginDir = this.plugin.getPluginDataDirName();
@@ -1303,9 +1444,7 @@ export class EchoInkHarnessService {
   }
 
   private getNativeExecutionManager(): NativeExecutionManager {
-    const vaultPath = this.plugin.getVaultPath();
-    const pluginDir = this.plugin.getPluginDataDirName();
-    const rootPath = path.join(pluginDataDir(vaultPath, pluginDir), "harness-native-executions");
+    const rootPath = this.nativeExecutionStoreRootPath();
     const key = JSON.stringify({
       rootPath,
       codex: this.getNativeExecutionRefContext("codex-cli").providerEndpoint ?? "",
@@ -1326,6 +1465,16 @@ export class EchoInkHarnessService {
       }
     });
     return this.nativeExecutionManager;
+  }
+
+  private nativeExecutionStoreRootPath(): string {
+    return path.join(
+      pluginDataDir(
+        this.plugin.getVaultPath(),
+        this.plugin.getPluginDataDirName()
+      ),
+      "harness-native-executions"
+    );
   }
 
   private createNativeCleanupAdapter(backendId: AgentBackendKind): AgentAdapter {

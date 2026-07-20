@@ -45,7 +45,8 @@ import {
 } from "../conversation/store-restore-manifest";
 import {
   conversationMigrationInventoryFromLegacySessions,
-  conversationMigrationInventoryFromV2Commits
+  conversationMigrationInventoryFromV2Commits,
+  legacyExternalOwnerEdges
 } from "./conversation-migration-projection";
 import {
   inspectConversationV2MigrationOwnerProof
@@ -372,19 +373,28 @@ export async function inspectAndValidateConversationStoreV1Export(
       sourceSnapshot.commits,
       externalOwnerEdges
     );
+    const targetExternalOwnerEdges =
+      externalOwnerEdgesWithoutLegacyProjectionDuplicates(
+        targetSnapshot.sessions,
+        externalOwnerEdges
+      );
+    const sourceOwnerEdges = v1ExportOwnerEdgesFromV2Commits(
+      sourceSnapshot.commits,
+      externalOwnerEdges
+    );
     return {
       source: conversationMigrationInventoryFromV2Commits(
         sourceSnapshot.commits,
         "v2",
         {
-          externalOwnerEdges,
+          externalOwnerEdges: sourceOwnerEdges,
           deletionTombstones: sourceSnapshot.deletionTombstones
         }
       ),
       target: conversationMigrationInventoryFromLegacySessions(
         targetSnapshot.sessions,
         {
-          externalOwnerEdges,
+          externalOwnerEdges: targetExternalOwnerEdges,
           deletionTombstones: targetSnapshot.deletionTombstones
         }
       )
@@ -414,6 +424,46 @@ export async function inspectAndValidateConversationStoreV1Export(
     report: validation.report,
     proof: validation.proof
   };
+}
+
+function externalOwnerEdgesWithoutLegacyProjectionDuplicates(
+  sessions: readonly StoredSession[],
+  externalOwnerEdges: readonly RecordMigrationOwnerEdge[]
+): RecordMigrationOwnerEdge[] {
+  const projectedOwnerEdgeKeys = new Set(
+    legacyExternalOwnerEdges(sessions).map(recordMigrationOwnerEdgeKey)
+  );
+  return externalOwnerEdges.filter((edge) =>
+    !projectedOwnerEdgeKeys.has(recordMigrationOwnerEdgeKey(edge))
+  );
+}
+
+function recordMigrationOwnerEdgeKey(
+  edge: RecordMigrationOwnerEdge
+): string {
+  return JSON.stringify([
+    edge.kind,
+    edge.ownerRef,
+    edge.resourceRef
+  ]);
+}
+
+function v1ExportOwnerEdgesFromV2Commits(
+  commits: readonly ConversationCommitV2[],
+  externalOwnerEdges: readonly RecordMigrationOwnerEdge[]
+): RecordMigrationOwnerEdge[] {
+  const projectedOwnerEdges = legacyExternalOwnerEdges(
+    commits.map(projectConversationCommitV2ToStoredSessionV1)
+  );
+  const result: RecordMigrationOwnerEdge[] = [];
+  const seen = new Set<string>();
+  for (const edge of [...projectedOwnerEdges, ...externalOwnerEdges]) {
+    const key = recordMigrationOwnerEdgeKey(edge);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(edge);
+  }
+  return result;
 }
 
 export async function prepareConversationStoreV1RestoreRoute(
@@ -602,9 +652,17 @@ export function projectConversationCommitV2ToStoredSessionV1(
     ...(contextStartsAfterMessageId
       ? { contextStartsAfterMessageId }
       : {}),
-    commitId: metadata.commitId,
+    commitId: metadata.currentContext.commitId ?? metadata.commitId,
     workspaceFingerprint: metadata.currentContext.workspaceFingerprint,
-    ...(contextSnapshot ? { contextSnapshot } : {}),
+    ...(contextSnapshot
+      ? {
+        contextSnapshot,
+        rollingSummary: {
+          text: contextSnapshot.rollingSummary,
+          updatedAt: contextSnapshot.updatedAt
+        }
+      }
+      : {}),
     cwd: metadata.currentContext.cwd,
     messages,
     createdAt: metadata.createdAt,
@@ -744,11 +802,15 @@ async function inspectSourceInventory(
 ): Promise<RecordMigrationInventory> {
   const snapshot = await sourceStore.inspectMigrationSnapshot();
   assertV2LineageHasExternalOwners(snapshot.commits, externalOwnerEdges);
+  const sourceOwnerEdges = v1ExportOwnerEdgesFromV2Commits(
+    snapshot.commits,
+    externalOwnerEdges
+  );
   return conversationMigrationInventoryFromV2Commits(
     snapshot.commits,
     "v2",
     {
-      externalOwnerEdges,
+      externalOwnerEdges: sourceOwnerEdges,
       deletionTombstones: snapshot.deletionTombstones
     }
   );

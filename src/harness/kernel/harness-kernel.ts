@@ -85,4 +85,14 @@ export class EchoInkHarnessKernel {
   async cancelRun(runId: string): Promise<void> {
     await this.orchestrator.cancel(runId);
   }
+
+  async withRunAdmissionClosed<T>(
+    quietWindowId: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    return await this.orchestrator.withRunAdmissionClosed(
+      quietWindowId,
+      action
+    );
+  }
 }
