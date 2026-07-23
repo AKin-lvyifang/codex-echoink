@@ -4650,7 +4650,7 @@ async function scanEntireVault(vaultPath: string): Promise<Map<string, Maintenan
     if (child.includes("/") || child.includes("\\") || child === "." || child === "..") {
       throw new MaintenanceShadowError("invalid_path", `非法 Shadow 顶层目录项：${child}`);
     }
-    await scanSafeEntryTree(vaultPath, child, entries);
+    await scanSafeEntryTree(vaultPath, child, entries, true);
   }
   return entries;
 }
@@ -4658,7 +4658,8 @@ async function scanEntireVault(vaultPath: string): Promise<Map<string, Maintenan
 async function scanSafeEntryTree(
   vaultPath: string,
   relativePath: string,
-  entries: Map<string, MaintenanceShadowEntry>
+  entries: Map<string, MaintenanceShadowEntry>,
+  preserveFileAccessTime = false
 ): Promise<void> {
   const absolutePath = resolveVaultRelativePath(vaultPath, relativePath);
   const stat = await lstatOrNull(absolutePath);
@@ -4668,11 +4669,19 @@ async function scanSafeEntryTree(
     entries.set(relativePath, directoryEntry(relativePath, stat));
     const children = (await fsp.readdir(absolutePath)).sort(compareCanonicalText);
     for (const child of children) {
-      await scanSafeEntryTree(vaultPath, joinVaultRelativePath(relativePath, child), entries);
+      await scanSafeEntryTree(
+        vaultPath,
+        joinVaultRelativePath(relativePath, child),
+        entries,
+        preserveFileAccessTime
+      );
     }
     return;
   }
-  entries.set(relativePath, fileEntry(relativePath, await inspectRegularFile(absolutePath)));
+  entries.set(relativePath, fileEntry(
+    relativePath,
+    await inspectRegularFile(absolutePath, [1], { preserveAccessTime: preserveFileAccessTime })
+  ));
 }
 
 async function inspectRequiredEntry(vaultPath: string, relativePath: string): Promise<void> {
@@ -4822,7 +4831,8 @@ async function copyAndInspectRegularFile(
 
 async function inspectRegularFile(
   absolutePath: string,
-  allowedLinkCounts: readonly number[] = [1]
+  allowedLinkCounts: readonly number[] = [1],
+  options: { preserveAccessTime?: boolean } = {}
 ): Promise<InspectedFile> {
   const pathBefore = await fsp.lstat(absolutePath);
   if (
@@ -4864,6 +4874,21 @@ async function inspectRegularFile(
       || !sameFileIdentity(after, pathAfter)
     ) {
       throw new MaintenanceShadowError("source_changed", `读取时文件发生变化：${absolutePath}`);
+    }
+    if (options.preserveAccessTime && after.atimeMs !== before.atimeMs) {
+      // Linux relatime can advance atime while hashing. The internal Shadow
+      // baseline scan must not rewrite the evidence metadata it is verifying.
+      await handle.utimes(before.atime, before.mtime);
+      const restored = await handle.stat();
+      if (
+        Math.abs(restored.atimeMs - before.atimeMs) >= 1
+        || Math.abs(restored.mtimeMs - before.mtimeMs) >= 1
+      ) {
+        throw new MaintenanceShadowError(
+          "source_changed",
+          `读取后无法恢复文件时间：${absolutePath}`
+        );
+      }
     }
     return {
       sha256: `sha256:${hash.digest("hex")}`,
