@@ -13361,6 +13361,8 @@ try {
 }
 
 const maintenanceOpenCodeStalledPromptTimeoutVault = await createMaintenanceVaultForTest("codex-kb-maintain-opencode-stalled-prompt-timeout-");
+const maintenanceAsyncTestGuardMs = 5_000;
+const maintenanceAbortTimeoutTestGuardMs = 10_000;
 try {
   (globalThis as any).__opencodeBackendTestHooks = {
     models: [{ id: "test/text", providerId: "test", modelId: "text", displayName: "Test Text", inputModalities: ["text"] }],
@@ -13373,10 +13375,10 @@ try {
     useRealOpenCodeTask: true,
     maintenanceReadyBackends: ["codex-cli"]
   });
-  const result = await Promise.race([
+  const result = await settleWithinTestGuard(
     manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死超时", { opencodeTaskTimeoutMs: 1_000 } as any),
-    new Promise((resolve) => setTimeout(() => resolve("hung"), 1_500))
-  ]);
+    maintenanceAsyncTestGuardMs
+  );
   assert.notEqual(result, "hung");
   assert.equal(
     (result as KnowledgeBaseRunResult).status,
@@ -13429,10 +13431,10 @@ try {
     maintenanceReadyBackends: ["codex-cli"],
     codexTaskCalls
   });
-  const result = await Promise.race([
+  const result = await settleWithinTestGuard(
     manager.runMaintenance("lint", "/check 测试 OpenCode abort 拒绝后禁止 failover", { opencodeTaskTimeoutMs: 1_000 } as any),
-    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000))
-  ]);
+    maintenanceAsyncTestGuardMs
+  );
   assert.notEqual(result, "hung");
   assert.equal((result as KnowledgeBaseRunResult).status, "failed");
   assert.deepEqual(
@@ -13465,10 +13467,10 @@ try {
     maintenanceReadyBackends: ["codex-cli"],
     codexTaskCalls
   });
-  const result = await Promise.race([
+  const result = await settleWithinTestGuard(
     manager.runMaintenance("lint", "/check 测试 OpenCode abort 卡死后禁止 failover", { opencodeTaskTimeoutMs: 1_000 } as any),
-    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 7_500))
-  ]);
+    maintenanceAbortTimeoutTestGuardMs
+  );
   assert.notEqual(result, "hung");
   assert.equal((result as KnowledgeBaseRunResult).status, "failed");
   assert.deepEqual(
@@ -13509,15 +13511,15 @@ try {
   });
   managerForHook = manager;
   const maintenanceRun = manager.runMaintenance("lint", "/check 测试 OpenCode prompt 卡死时取消");
-  const promptStart = await Promise.race([
+  const promptStart = await settleWithinTestGuard(
     promptStarted.then(() => "started" as const),
-    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_500))
-  ]);
+    maintenanceAsyncTestGuardMs
+  );
   assert.equal(promptStart, "started", "OpenCode prompt must reach the stalled transport before testing cancel settlement");
-  const result = await Promise.race([
+  const result = await settleWithinTestGuard(
     Promise.all([maintenanceRun, cancelCompleted]).then(([settled]) => settled),
-    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000))
-  ]);
+    maintenanceAsyncTestGuardMs
+  );
   assert.notEqual(result, "hung");
   assert.equal((result as KnowledgeBaseRunResult).status, "canceled");
   assert.deepEqual((globalThis as any).__opencodeBackendTestHooks.abortCalls, ["test-opencode-session"]);
@@ -17333,6 +17335,23 @@ function nativeExecutionCleanupIdentityForTest(record: NativeExecutionRecord): s
     record.native.deviceKey,
     record.native.vaultId
   ]);
+}
+
+async function settleWithinTestGuard<T>(
+  operation: Promise<T>,
+  timeoutMs: number
+): Promise<T | "hung"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<"hung">((resolve) => {
+        timer = setTimeout(() => resolve("hung"), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function makeKnowledgeBaseManagerForTest(
