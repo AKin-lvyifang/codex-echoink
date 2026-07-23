@@ -12569,7 +12569,12 @@ try {
   const inboxEntriesAfterManagedCommit =
     await readdir(path.join(maintenanceFinalSaveFailureVault, "inbox"));
   const clippingsDirectoryAfterManagedCommit =
-    inboxEntriesAfterManagedCommit.includes("Clippings")
+    await fileExists(path.join(
+      maintenanceFinalSaveFailureVault,
+      "inbox",
+      "Clippings",
+      "clip.md"
+    ))
       ? "Clippings"
       : "clippings";
   assert.ok(inboxEntriesAfterManagedCommit.includes(clippingsDirectoryAfterManagedCommit));
