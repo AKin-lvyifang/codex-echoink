@@ -29,6 +29,7 @@ import { settleStaleRunningMessages } from "../core/message-state";
 import { formatRateLimitUsage, normalizeRateLimitResponse } from "../core/rate-limits";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { formatJsonRpcError } from "../core/codex-rpc";
+import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcProcessLike } from "../core/json-rpc-stdio-transport";
 import {
   AgentRuntimeHealthStore,
   createAgentRuntimeHealthRecord,
@@ -8372,6 +8373,34 @@ assert.match(jsonRpcTransportSource, /!this\.processExited/);
 assert.match(jsonRpcTransportSource, /this\.processExited = true/);
 assert.match(jsonRpcTransportSource, /disableTimeoutForNonPositive/);
 assert.match(jsonRpcTransportSource, /killOnDispose/);
+class BrokenPipeJsonRpcTransport extends JsonRpcStdioTransport {
+  constructor(private readonly child: JsonRpcProcessLike) {
+    super({ closedMessage: "fixture transport closed" });
+    this.start();
+  }
+
+  protected createProcess(): JsonRpcProcessLike {
+    return this.child;
+  }
+
+  protected handleMessage(_message: JsonRpcMessage): void {}
+}
+const brokenPipeInput = new PassThrough();
+const brokenPipeTransport = new BrokenPipeJsonRpcTransport({
+  stdin: brokenPipeInput,
+  stdout: new PassThrough(),
+  stderr: new PassThrough(),
+  killed: false,
+  kill: () => true,
+  on: () => undefined,
+  once: () => undefined
+});
+const brokenPipeRequest = brokenPipeTransport.request("fixture/ping", undefined, 1_000);
+const brokenPipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+brokenPipeInput.emit("error", brokenPipeError);
+await assert.rejects(brokenPipeRequest, (error: unknown) => error === brokenPipeError);
+assert.equal(brokenPipeTransport.isAlive(), false);
+await brokenPipeTransport.dispose();
 assert.match(codexRpcSource, /extends JsonRpcStdioTransport/);
 assert.match(codexRpcSource, /disposeMessage:\s*"Codex app-server 已关闭"/);
 assert.match(codexRpcSource, /handleTransportExit/);

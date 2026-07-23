@@ -69,6 +69,7 @@ export abstract class JsonRpcStdioTransport {
     this.process = child;
     child.stdout.setEncoding?.("utf8");
     child.stderr?.setEncoding?.("utf8");
+    child.stdin.on("error", (error) => this.handleProcessError(error instanceof Error ? error : new Error(String(error))));
     child.stdout.on("data", (chunk) => this.onData(String(chunk)));
     child.stdout.on("error", (error) => this.handleProcessError(error instanceof Error ? error : new Error(String(error))));
     child.stderr?.on("data", (chunk) => this.captureStderr(String(chunk)));
@@ -235,6 +236,7 @@ export abstract class JsonRpcStdioTransport {
   }
 
   private handleProcessError(error: Error): void {
+    if (this.processExited) return;
     const wasDisposed = this.disposed;
     this.processExited = true;
     this.process = null;
@@ -243,6 +245,7 @@ export abstract class JsonRpcStdioTransport {
   }
 
   private handleProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.processExited) return;
     const wasDisposed = this.disposed;
     this.processExited = true;
     this.process = null;
