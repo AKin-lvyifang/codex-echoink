@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.3.0 release poster showing guided setup, one multi-Agent runtime, local memory, and utility models." src="docs/images/codex-echoink-v1.3.0-release.png">
+    <img width="1024" alt="Codex EchoInk v1.4.0 release poster showing redesigned Knowledge progress cards, validated commands, and clearer reports." src="docs/images/codex-echoink-v1.4.0-release.png">
   </a>
 </p>
 
@@ -23,14 +23,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-v1.3.0-0EA5E9?style=flat-square" alt="Version v1.3.0">
+    <img src="https://img.shields.io/badge/version-v1.4.0-0EA5E9?style=flat-square" alt="Version v1.4.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="English and Chinese README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.3.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>Download v1.4.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">Latest Release</a>
 </p>
@@ -106,7 +106,7 @@
 - Shows Codex CLI knowledge-base runs with the same process cards as regular Agent chats: reasoning, commands, file changes, tool calls, and final results.
 - Shows a pinned Knowledge health dashboard above the channel: rules file, Raw/Wiki/Inbox counts, health status, detailed Wiki folder table, Raw/Inbox table, and a full-year check heatmap.
 - Uses `LLM-WIKI.md` as the knowledge-base rules source by default, or another Vault Markdown selected in settings. Before every Knowledge run, EchoInk reads the latest content, validates it, and injects it into system context; an unreadable or missing file blocks the Agent from starting. `AGENTS.md` may be absent and is never merged as Knowledge rules.
-- Includes EchoInk Memory V2 as a parallel local layer without disabling or replacing native Codex, OpenCode, or Hermes memory. Regular Agent chat and `/ask` receive a small system catalog for on-demand search across the complete retained plugin usage archive and can retrieve the same curated local memory across sessions and backends; the full archive is never loaded wholesale. Maintenance workflows record results only after the local commit succeeds. Canonical curated data lives in Vault `.echoink/memory/index.json`; settings supports initialization, sync, recovery, conflict handling, deletion, and explicit import from legacy `.codex-memory`. External [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) remains compatible as a separate tool, but is no longer required for EchoInk long-term memory.
+- Includes EchoInk Memory V2 as a parallel local layer without disabling or replacing native Codex, OpenCode, or Hermes memory. Regular Agent chat and `/ask` receive a small system catalog for on-demand search across local records that remain within their independent retention windows and can retrieve the same curated local memory across sessions and backends; the archive is never loaded wholesale. Detailed Run payloads default to 30 days and bounded Run summaries to 90 days, while Conversation, Workflow Artifact, and formal Memory retention remain independent. Maintenance workflows record results only after the local commit succeeds. Canonical curated data lives in Vault `.echoink/memory/index.json`; settings supports initialization, sync, recovery, conflict handling, deletion, and explicit import from legacy `.codex-memory`. External [`codex-memory-lite`](https://github.com/AKin-lvyifang/codex-memory-lite) remains compatible as a separate tool, but is no longer required for EchoInk long-term memory.
 - Collects WeChat articles, web pages, and text files into Raw Sources before processing.
 - Uses a four-step digest protocol: understand Raw, extract reusable knowledge, merge structured knowledge in Wiki / Projects, then mark Raw only after source evidence is verified.
 - Keeps existing Raw files unchanged, then writes structured results to Wiki / Projects, Outputs, Journal, and tracker files.
@@ -175,6 +175,19 @@ Codex EchoInk turns ink into a codex, then lets it echo back as new ideas.
 The name matches the Obsidian loop: record, organize, and get prompted into the next thought.
 
 ## What's New
+
+### v1.4.0
+
+<img width="1024" alt="Codex EchoInk v1.4.0 release poster showing redesigned Knowledge progress cards, validated commands, and clearer reports." src="docs/images/codex-echoink-v1.4.0-release.png">
+
+**Durable conversations and safer Knowledge maintenance:** EchoInk now preserves one recoverable conversation history across context changes and Agent backends, while Knowledge maintenance validates work before it reaches the Vault.
+
+- Resume existing Chat and Knowledge conversations after storage migration, context rotation, plugin reloads, or backend changes without rebuilding the session manually.
+- Run `/maintain` through a guarded workflow that isolates failed attempts, validates artifacts, and commits one accepted result before updating reports or Raw status.
+- Keep conversation history, workflow runs, business artifacts, and native Agent sessions under separate retention and recovery rules.
+- Use a compact searchable session picker with protected running sessions and batch management for completed chats.
+- Expand and collapse Knowledge reports reliably, then open referenced Vault notes directly from the report.
+- Existing Vault notes and EchoInk conversations are upgraded automatically; no manual migration or session reset is required.
 
 ### v1.3.0
 

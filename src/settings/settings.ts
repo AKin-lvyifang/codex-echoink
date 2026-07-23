@@ -2,8 +2,14 @@ import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, Permissi
 import type { AgentBackendKind, AgentModelInfo, AgentProfileInfo } from "../agent/types";
 import type { CapabilityBackendChoice } from "../agent/registry";
 import type { BackendSessionBinding } from "../harness/contracts/run";
-import type { NativeCleanupStatus, NativeExecutionRef, NativeLocalCommitStatus } from "../harness/contracts/native-execution";
+import {
+  isSafeNativeExecutionTransport,
+  type NativeCleanupStatus,
+  type NativeExecutionRef,
+  type NativeLocalCommitStatus
+} from "../harness/contracts/native-execution";
 import type { ContextCompileMode, ContextSyncCursor, SessionContextSnapshot } from "../harness/contracts/context";
+import { workspaceFingerprint } from "../harness/kernel/session-service";
 import { normalizeHarnessRunUsage, type HarnessRunUsage } from "../harness/contracts/event";
 import { defaultResourceSettings } from "../resources/registry";
 import { normalizeMcpBrokerSettings } from "../resources/mcp-broker";
@@ -54,6 +60,37 @@ export interface DiffSummary {
   files: DiffFileSummary[];
 }
 
+export type EchoInkChatTerminalPayloadSource =
+  | {
+    kind: "inline";
+    value: string;
+    contentHash: string;
+    size: number;
+    lines: number;
+  }
+  | {
+    kind: "raw";
+    rawRef: string;
+    contentHash: string;
+    previewHash: string;
+    size: number;
+    lines: number;
+  };
+
+export interface EchoInkChatRunTerminalRecovery {
+  namespace: "echoink.chat-terminal";
+  schemaVersion: 1;
+  runId: string;
+  status: "completed" | "cancelled" | "failed";
+  backendId?: string;
+  data?: Record<string, unknown>;
+  payloadPresent: boolean;
+  payloadHash: string;
+  terminalCommitId: string;
+  carrierMessageId: string;
+  payloadSource: EchoInkChatTerminalPayloadSource;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -71,7 +108,8 @@ export interface ChatMessage {
   nativeLeaseReused?: boolean;
   nativeLocalCommitStatus?: NativeLocalCommitStatus;
   nativeCleanupStatus?: NativeCleanupStatus;
-  runTerminalRecoveryPending?: "cancelled" | "failed";
+  runTerminalRecoveryPending?: "completed" | "cancelled" | "failed";
+  echoInkRunTerminalRecovery?: EchoInkChatRunTerminalRecovery;
   runTerminalRecovered?: boolean;
   previewText?: string;
   rawRef?: string;
@@ -112,6 +150,11 @@ export interface StoredSession {
   threadId?: string;
   backendBindings?: Record<string, BackendSessionBinding>;
   revision?: number;
+  generation?: number;
+  contextId?: string;
+  contextStartsAfterMessageId?: string;
+  commitId?: string;
+  workspaceFingerprint?: string;
   contextSnapshot?: SessionContextSnapshot;
   cwd: string;
   messages: ChatMessage[];
@@ -288,6 +331,25 @@ export interface KnowledgeBaseManagedThread {
   lastError: string;
 }
 
+export interface KnowledgeBaseNativeLifecycleRecoveryReceipt {
+  schemaVersion: 1;
+  issue: "local-persistence" | "native-cleanup";
+  warningId: "native-local-commit-recovery" | "native-cleanup-recovery";
+  localCommitStatus: "committed" | "failed" | "unknown";
+  cleanupStatuses: NativeCleanupStatus[];
+  cleanupAttempted: boolean;
+  recordIds: string[];
+  message: string;
+  firstObservedAt: number;
+  updatedAt: number;
+  projection: {
+    lastErrorBefore: string;
+    lastSummaryBefore: string;
+    lastErrorWithRecovery: string;
+    lastSummaryWithRecovery: string;
+  };
+}
+
 export interface KnowledgeBaseSettings {
   enabled: boolean;
   sessionId: string;
@@ -301,6 +363,8 @@ export interface KnowledgeBaseSettings {
   lastScheduledRunAt: number;
   lastScheduledRunStatus: KnowledgeBaseRunStatus;
   lastScheduledRunId: string;
+  scheduledAttemptCount: number;
+  scheduledNextRetryAt: number;
   lastReportPath: string;
   lastError: string;
   lastSummary: string;
@@ -309,12 +373,110 @@ export interface KnowledgeBaseSettings {
   lastPendingSources: string[];
   lastFailureCode: string;
   lastWarnings: KnowledgeBaseRunWarning[];
+  nativeLifecycleRecoveryReceipt?: KnowledgeBaseNativeLifecycleRecoveryReceipt | null;
   historyRetentionDays: number;
   legacyManagedThreads?: Record<string, KnowledgeBaseManagedThread>;
   initialization: KnowledgeBaseInitializationSettings;
   processedSources: Record<string, KnowledgeBaseProcessedSource>;
   healthHistory: KnowledgeBaseHealthHistoryEntry[];
   maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
+}
+
+const KNOWLEDGE_BASE_NATIVE_RECOVERY_WARNING_IDS = new Set([
+  "native-local-commit-recovery",
+  "native-cleanup-recovery"
+]);
+
+export function ensureKnowledgeBaseNativeLifecycleRecoveryProjection(
+  settings: KnowledgeBaseSettings
+): boolean {
+  const receipt = settings.nativeLifecycleRecoveryReceipt;
+  if (!receipt) return false;
+  let changed = false;
+
+  if (!hasStructuredRecoveryProjection(
+    settings.lastError,
+    receipt.projection.lastErrorWithRecovery
+  )) {
+    receipt.projection.lastErrorBefore = settings.lastError.trim();
+    receipt.projection.lastErrorWithRecovery = appendStructuredKnowledgeBaseStatus(
+      receipt.projection.lastErrorBefore,
+      receipt.message
+    );
+    settings.lastError = receipt.projection.lastErrorWithRecovery;
+    changed = true;
+  }
+
+  const summaryMessage = receipt.issue === "local-persistence"
+    ? "自动维护结果尚未完全提交；本地持久化待恢复，Native Execution 恢复收据已保留。"
+    : "Native Execution 清理待恢复，不影响已保存的维护结果。";
+  if (!hasStructuredRecoveryProjection(
+    settings.lastSummary,
+    receipt.projection.lastSummaryWithRecovery
+  )) {
+    receipt.projection.lastSummaryBefore = settings.lastSummary.trim();
+    receipt.projection.lastSummaryWithRecovery = appendStructuredKnowledgeBaseStatus(
+      receipt.projection.lastSummaryBefore,
+      summaryMessage
+    );
+    settings.lastSummary = receipt.projection.lastSummaryWithRecovery;
+    changed = true;
+  }
+
+  const retainedWarnings = settings.lastWarnings.filter(
+    (entry) => !KNOWLEDGE_BASE_NATIVE_RECOVERY_WARNING_IDS.has(entry.id)
+  );
+  const projectedWarnings = [
+    ...retainedWarnings,
+    {
+      id: receipt.warningId,
+      message: receipt.message
+    }
+  ];
+  if (!sameKnowledgeBaseRunWarnings(settings.lastWarnings, projectedWarnings)) {
+    settings.lastWarnings = projectedWarnings;
+    changed = true;
+  }
+  if (
+    receipt.issue === "native-cleanup"
+    && Number.isSafeInteger(settings.lastRunAt)
+    && settings.lastRunAt > receipt.firstObservedAt
+  ) {
+    // A cleanup-only obligation may outlive the run that first exposed it.
+    // Once its projection is rebased onto a newer committed business result,
+    // the receipt timestamp must describe that new projection as well. Keeping
+    // the old timestamp creates a self-contradictory receipt that WAL correctly
+    // rejects as stale even though every terminal field matches the new run.
+    receipt.firstObservedAt = settings.lastRunAt;
+    receipt.updatedAt = Math.max(receipt.updatedAt, settings.lastRunAt);
+    changed = true;
+  }
+  return changed;
+}
+
+function hasStructuredRecoveryProjection(
+  current: string,
+  withRecovery: string
+): boolean {
+  return current === withRecovery || current.startsWith(`${withRecovery}；`);
+}
+
+function appendStructuredKnowledgeBaseStatus(
+  previous: string,
+  message: string
+): string {
+  const normalized = previous.trim();
+  return normalized ? `${normalized}；${message}` : message;
+}
+
+function sameKnowledgeBaseRunWarnings(
+  left: readonly KnowledgeBaseRunWarning[],
+  right: readonly KnowledgeBaseRunWarning[]
+): boolean {
+  return left.length === right.length && left.every(
+    (entry, index) => entry.id === right[index]?.id
+      && entry.message === right[index]?.message
+  );
 }
 
 export interface KnowledgeBaseInitializationSettings {
@@ -633,7 +795,7 @@ const DEFAULT_HERMES_AGENT_SETTINGS: HermesAgentSettings = {
 };
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
-  settingsVersion: 39,
+  settingsVersion: 40,
   settingsLanguage: "zh-CN",
   settingsTab: "general",
   agentBackend: "codex-cli",
@@ -719,6 +881,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastScheduledRunAt: 0,
     lastScheduledRunStatus: "idle",
     lastScheduledRunId: "",
+    scheduledAttemptCount: 0,
+    scheduledNextRetryAt: 0,
     lastReportPath: "",
     lastError: "",
     lastSummary: "",
@@ -727,6 +891,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastPendingSources: [],
     lastFailureCode: "",
     lastWarnings: [],
+    nativeLifecycleRecoveryReceipt: null,
     historyRetentionDays: 30,
     initialization: {
       status: "not-started",
@@ -948,6 +1113,11 @@ export function ensureKnowledgeBaseSession(
       title: KNOWLEDGE_BASE_SESSION_TITLE,
       kind: "knowledge-base",
       cwd,
+      revision: 1,
+      generation: 1,
+      contextId: newId("context"),
+      commitId: newId("context-commit"),
+      workspaceFingerprint: workspaceFingerprint({ vaultPath: cwd, cwd }),
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -956,7 +1126,6 @@ export function ensureKnowledgeBaseSession(
   }
   session.kind = "knowledge-base";
   session.title = KNOWLEDGE_BASE_SESSION_TITLE;
-  session.cwd = cwd;
   settings.knowledgeBase.sessionId = session.id;
   const currentIndex = settings.sessions.findIndex((item) => item.id === session.id);
   if (currentIndex > 0) {
@@ -1558,7 +1727,7 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const fallback = DEFAULT_SETTINGS.knowledgeBase;
   const legacyScheduleEnabled = typeof value?.scheduleEnabled === "boolean" ? value.scheduleEnabled : true;
-  return {
+  const normalized: KnowledgeBaseSettings = {
     enabled: value?.enabled === true && legacyScheduleEnabled !== false,
     sessionId: normalizeOptionalText(value?.sessionId),
     backend: normalizeKnowledgeBaseBackendMode(value?.backend),
@@ -1571,6 +1740,15 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     lastScheduledRunAt: normalizeNonNegativeNumber(value?.lastScheduledRunAt),
     lastScheduledRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastScheduledRunStatus),
     lastScheduledRunId: normalizeLimitedText(value?.lastScheduledRunId, 512),
+    scheduledAttemptCount: normalizePositiveInteger(
+      value?.scheduledAttemptCount,
+      0,
+      0,
+      1000
+    ),
+    scheduledNextRetryAt: normalizeNonNegativeNumber(
+      value?.scheduledNextRetryAt
+    ),
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
     lastError: normalizeOptionalText(value?.lastError),
     lastSummary: normalizeOptionalText(value?.lastSummary),
@@ -1579,6 +1757,9 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     lastPendingSources: normalizeKnowledgeBasePendingSources(value?.lastPendingSources),
     lastFailureCode: normalizeLimitedText(value?.lastFailureCode, 160),
     lastWarnings: normalizeKnowledgeBaseRunWarnings(value?.lastWarnings),
+    nativeLifecycleRecoveryReceipt: normalizeKnowledgeBaseNativeLifecycleRecoveryReceipt(
+      value?.nativeLifecycleRecoveryReceipt
+    ),
     historyRetentionDays: normalizeKnowledgeBaseHistoryRetentionDays(value?.historyRetentionDays, fallback.historyRetentionDays),
     ...legacyManagedThreadsFrom(value?.legacyManagedThreads ?? value?.managedThreads),
     initialization: normalizeKnowledgeBaseInitialization(value?.initialization),
@@ -1586,6 +1767,8 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory),
     maintenanceHistory: normalizeKnowledgeBaseMaintenanceHistory(value?.maintenanceHistory, value?.healthHistory)
   };
+  ensureKnowledgeBaseNativeLifecycleRecoveryProjection(normalized);
+  return normalized;
 }
 
 function normalizeReviewSettings(input: unknown): WeeklyReviewSettings {
@@ -1671,13 +1854,19 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
       const messages = normalizeChatMessages(session.messages);
       const kind = session.kind === "knowledge-base" ? "knowledge-base" as const : undefined;
       const legacyThreadId = normalizeOptionalText(session.threadId) || undefined;
+      const generation = normalizeSessionGeneration(session.generation, session.revision);
       return {
         id,
         title: normalizeText(session.title, kind === "knowledge-base" ? KNOWLEDGE_BASE_SESSION_TITLE : "新会话"),
         ...(kind ? { kind } : {}),
         threadId: legacyThreadId,
         backendBindings: normalizeBackendSessionBindings(session.backendBindings, legacyThreadId),
-        revision: normalizeSessionRevision(session.revision),
+        revision: generation,
+        generation,
+        contextId: normalizeOptionalText(session.contextId) || undefined,
+        contextStartsAfterMessageId: normalizeOptionalText(session.contextStartsAfterMessageId) || undefined,
+        commitId: normalizeOptionalText(session.commitId) || undefined,
+        workspaceFingerprint: normalizeOptionalFingerprint(session.workspaceFingerprint),
         contextSnapshot: normalizeSessionContextSnapshot(session.contextSnapshot, id),
         cwd: normalizeOptionalText(session.cwd),
         messages,
@@ -1715,6 +1904,12 @@ function normalizeChatMessages(value: unknown): ChatMessage[] {
       message.nativeLocalCommitStatus = normalizeNativeLocalCommitStatus(item.nativeLocalCommitStatus);
       message.nativeCleanupStatus = normalizeNativeCleanupStatus(item.nativeCleanupStatus);
       message.runTerminalRecoveryPending = normalizeRunTerminalRecoveryPending(item.runTerminalRecoveryPending);
+      message.echoInkRunTerminalRecovery = normalizeEchoInkChatRunTerminalRecovery(
+        item.echoInkRunTerminalRecovery
+      );
+      if (!message.echoInkRunTerminalRecovery) {
+        delete message.echoInkRunTerminalRecovery;
+      }
       message.nativeLeaseTurnCount = normalizeOptionalPositiveNumber(item.nativeLeaseTurnCount);
       if (typeof item.nativeLeaseReused === "boolean") message.nativeLeaseReused = item.nativeLeaseReused;
       else delete message.nativeLeaseReused;
@@ -1740,7 +1935,102 @@ function normalizeChatMessageRole(value: unknown): ChatMessage["role"] | null {
 }
 
 function normalizeRunTerminalRecoveryPending(value: unknown): ChatMessage["runTerminalRecoveryPending"] {
-  return value === "cancelled" || value === "failed" ? value : undefined;
+  return value === "completed" || value === "cancelled" || value === "failed"
+    ? value
+    : undefined;
+}
+
+function normalizeEchoInkChatRunTerminalRecovery(
+  value: unknown
+): ChatMessage["echoInkRunTerminalRecovery"] {
+  const marker = settingsRecord(value);
+  if (
+    !marker
+    || marker.namespace !== "echoink.chat-terminal"
+    || marker.schemaVersion !== 1
+  ) {
+    return undefined;
+  }
+  const runId = normalizeOptionalText(marker.runId);
+  const status = normalizeRunTerminalRecoveryPending(marker.status);
+  const payloadHash = normalizeOptionalText(marker.payloadHash);
+  const terminalCommitId = normalizeOptionalText(marker.terminalCommitId);
+  const carrierMessageId = normalizeOptionalText(marker.carrierMessageId);
+  const payloadSource = normalizeEchoInkChatTerminalPayloadSource(
+    marker.payloadSource
+  );
+  if (
+    !runId
+    || !status
+    || !payloadHash
+    || !terminalCommitId
+    || !carrierMessageId
+    || !payloadSource
+    || typeof marker.payloadPresent !== "boolean"
+  ) {
+    return undefined;
+  }
+  const backendId = normalizeOptionalText(marker.backendId);
+  const data = marker.data === undefined
+    ? undefined
+    : settingsRecord(marker.data) ?? undefined;
+  if (marker.data !== undefined && !data) return undefined;
+  return {
+    namespace: "echoink.chat-terminal",
+    schemaVersion: 1,
+    runId,
+    status,
+    ...(backendId ? { backendId } : {}),
+    ...(data ? { data } : {}),
+    payloadPresent: marker.payloadPresent,
+    payloadHash,
+    terminalCommitId,
+    carrierMessageId,
+    payloadSource
+  };
+}
+
+function normalizeEchoInkChatTerminalPayloadSource(
+  value: unknown
+): EchoInkChatTerminalPayloadSource | undefined {
+  const source = settingsRecord(value);
+  if (!source) return undefined;
+  const contentHash = normalizeOptionalText(source.contentHash);
+  const size = normalizeOptionalNonNegativeInteger(source.size);
+  const lines = normalizeOptionalNonNegativeInteger(source.lines);
+  if (!contentHash || size === undefined || lines === undefined) {
+    return undefined;
+  }
+  if (source.kind === "inline" && typeof source.value === "string") {
+    return {
+      kind: "inline",
+      value: source.value,
+      contentHash,
+      size,
+      lines
+    };
+  }
+  const rawRef = normalizeOptionalText(source.rawRef);
+  const previewHash = normalizeOptionalText(source.previewHash);
+  if (source.kind !== "raw" || !rawRef || !previewHash) return undefined;
+  return {
+    kind: "raw",
+    rawRef,
+    contentHash,
+    previewHash,
+    size,
+    lines
+  };
+}
+
+function normalizeOptionalNonNegativeInteger(
+  value: unknown
+): number | undefined {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    ? value
+    : undefined;
 }
 
 function normalizeContextCompileMode(value: unknown): ContextCompileMode | undefined {
@@ -1777,6 +2067,7 @@ function normalizeBackendSessionBindings(value: unknown, legacyThreadId?: string
         syncedSessionRevision: normalizeSessionRevision(item.syncedSessionRevision),
         snapshotVersion: normalizeOptionalText(item.snapshotVersion) || undefined,
         contextCursor: normalizeContextSyncCursor(item.contextCursor, item),
+        workspaceFingerprint: normalizeOptionalFingerprint(item.workspaceFingerprint),
         vaultProfileFingerprint: normalizeOptionalText(item.vaultProfileFingerprint) || undefined,
         lastUsedAt: normalizeNonNegativeNumber(item.lastUsedAt),
         ...(item.capabilitySnapshot ? { capabilitySnapshot: item.capabilitySnapshot as BackendSessionBinding["capabilitySnapshot"] } : {})
@@ -1799,6 +2090,18 @@ function normalizeSessionRevision(value: unknown): number {
   return normalizePositiveInteger(value, 1, 1, 1_000_000_000) || 1;
 }
 
+function normalizeSessionGeneration(generation: unknown, revision: unknown): number {
+  return Math.max(
+    normalizeSessionRevision(generation),
+    normalizeSessionRevision(revision)
+  );
+}
+
+function normalizeOptionalFingerprint(value: unknown): string | undefined {
+  const normalized = normalizeOptionalText(value);
+  return /^sha256:[a-f0-9]{16,128}$/i.test(normalized) ? normalized.toLowerCase() : undefined;
+}
+
 function normalizeNativeExecutionKind(value: unknown): BackendSessionBinding["nativeExecutionKind"] | undefined {
   return value === "thread" || value === "session" || value === "run" || value === "process" ? value : undefined;
 }
@@ -1814,12 +2117,18 @@ function normalizeNativeExecutionRef(value: unknown, backendId: string): NativeE
   const deviceKey = normalizeOptionalText(item.deviceKey);
   const vaultId = normalizeOptionalText(item.vaultId);
   if (!id || !kind || !persistence || !deviceKey || !vaultId) return undefined;
+  if (
+    item.transport !== undefined
+    && !isSafeNativeExecutionTransport(item.transport)
+  ) return undefined;
+  const transport = item.transport;
   const providerEndpoint = normalizeOptionalText(item.providerEndpoint);
   return {
     backendId,
     id,
     kind,
     persistence,
+    ...(transport ? { transport } : {}),
     ...(providerEndpoint ? { providerEndpoint } : {}),
     deviceKey,
     vaultId,
@@ -1836,7 +2145,17 @@ function normalizeNativeLocalCommitStatus(value: unknown): NativeLocalCommitStat
 }
 
 function normalizeNativeCleanupStatus(value: unknown): NativeCleanupStatus | undefined {
-  return value === "not-needed" || value === "pending" || value === "disposed" || value === "unsupported" || value === "failed" || value === "retained-for-recovery" || value === "retained"
+  return value === "not-needed"
+    || value === "awaiting-local-commit"
+    || value === "pending"
+    || value === "disposing"
+    || value === "disposed"
+    || value === "unsupported"
+    || value === "failed"
+    || value === "retained-for-recovery"
+    || value === "retained"
+    || value === "aborted"
+    || value === "quarantined"
     ? value
     : undefined;
 }
@@ -1846,9 +2165,14 @@ function normalizeContextSyncCursor(value: unknown, fallback?: unknown): Context
   if (!source) return undefined;
   const syncedThroughMessageId = normalizeOptionalText(source.syncedThroughMessageId);
   const snapshotVersion = normalizeOptionalText(source.snapshotVersion);
+  const contextId = normalizeOptionalText(source.contextId);
+  const workspaceFingerprint = normalizeOptionalFingerprint(source.workspaceFingerprint);
   return {
     ...(syncedThroughMessageId ? { syncedThroughMessageId } : {}),
     syncedSessionRevision: normalizeSessionRevision(source.syncedSessionRevision),
+    sessionGeneration: normalizeSessionRevision(source.sessionGeneration ?? source.syncedSessionRevision),
+    ...(contextId ? { contextId } : {}),
+    ...(workspaceFingerprint ? { workspaceFingerprint } : {}),
     ...(snapshotVersion ? { snapshotVersion } : {})
   };
 }
@@ -1861,8 +2185,11 @@ function normalizeSessionContextSnapshot(value: unknown, sessionId: string): Ses
   if (!version && !rollingSummary) return undefined;
   const summarizedFromMessageId = normalizeOptionalText(item.summarizedFromMessageId);
   const summarizedThroughMessageId = normalizeOptionalText(item.summarizedThroughMessageId);
+  const contextId = normalizeOptionalText(item.contextId);
   return {
     sessionId: normalizeOptionalText(item.sessionId) || sessionId,
+    ...(contextId ? { contextId } : {}),
+    generation: normalizeSessionRevision(item.generation),
     version: version || "snapshot-v1",
     goal: normalizeOptionalText(item.goal).slice(0, 2000),
     currentState: normalizeOptionalText(item.currentState).slice(0, 4000),
@@ -2265,6 +2592,69 @@ function normalizeKnowledgeBaseRunWarnings(value: unknown): KnowledgeBaseRunWarn
     if (result.length >= KNOWLEDGE_BASE_RESULT_MAX_WARNINGS) break;
   }
   return result;
+}
+
+function normalizeKnowledgeBaseNativeLifecycleRecoveryReceipt(
+  value: unknown
+): KnowledgeBaseNativeLifecycleRecoveryReceipt | null {
+  const record = settingsRecord(value);
+  if (!record || record.schemaVersion !== 1) return null;
+  const issue = record.issue === "local-persistence" || record.issue === "native-cleanup"
+    ? record.issue
+    : null;
+  if (!issue) return null;
+  const warningId = issue === "local-persistence"
+    ? "native-local-commit-recovery"
+    : "native-cleanup-recovery";
+  const localCommitStatus = record.localCommitStatus === "committed"
+    || record.localCommitStatus === "failed"
+    || record.localCommitStatus === "unknown"
+    ? record.localCommitStatus
+    : "unknown";
+  const cleanupStatuses = Array.isArray(record.cleanupStatuses)
+    ? Array.from(new Set(record.cleanupStatuses
+      .map((entry) => normalizeNativeCleanupStatus(entry))
+      .filter((entry): entry is NativeCleanupStatus => Boolean(entry))))
+      .slice(0, 20)
+    : [];
+  const recordIds = Array.isArray(record.recordIds)
+    ? Array.from(new Set(record.recordIds
+      .map((entry) => normalizeLimitedText(entry, 512))
+      .filter(Boolean)))
+      .slice(0, 100)
+    : [];
+  const message = normalizeLimitedText(
+    record.message,
+    KNOWLEDGE_BASE_RESULT_MAX_MESSAGE_CHARS
+  );
+  const projection = settingsRecord(record.projection);
+  const lastErrorWithRecovery = normalizeOptionalText(
+    projection?.lastErrorWithRecovery
+  );
+  const lastSummaryWithRecovery = normalizeOptionalText(
+    projection?.lastSummaryWithRecovery
+  );
+  if (!message || !projection || !lastErrorWithRecovery || !lastSummaryWithRecovery) {
+    return null;
+  }
+  return {
+    schemaVersion: 1,
+    issue,
+    warningId,
+    localCommitStatus,
+    cleanupStatuses,
+    cleanupAttempted: record.cleanupAttempted === true,
+    recordIds,
+    message,
+    firstObservedAt: normalizeNonNegativeNumber(record.firstObservedAt),
+    updatedAt: normalizeNonNegativeNumber(record.updatedAt),
+    projection: {
+      lastErrorBefore: normalizeOptionalText(projection.lastErrorBefore),
+      lastSummaryBefore: normalizeOptionalText(projection.lastSummaryBefore),
+      lastErrorWithRecovery,
+      lastSummaryWithRecovery
+    }
+  };
 }
 
 function normalizeLimitedText(value: unknown, maxChars: number): string {

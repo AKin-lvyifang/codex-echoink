@@ -1,25 +1,36 @@
 import { Notice } from "obsidian";
 import type { AgentEvent } from "../../agent/events";
 import { getAgentBackendDefinition } from "../../agent/registry";
-import type { AgentBackendKind } from "../../agent/types";
+import { NativeRunRegistrationError, type AgentBackendKind } from "../../agent/types";
 import { createHarnessAgentAdapter } from "../../harness/agents/adapter-factory";
 import { harnessBackendDisplayName, harnessEditorActionBackend, harnessEditorActionModel, harnessEditorActionTaskModel } from "../../harness/agents/backend-runtime-profile";
 import type { AgentAdapter } from "../../harness/agents/adapter";
 import type { HarnessEvent } from "../../harness/contracts/event";
+import type {
+  LocalRunCommitResult,
+  NativeDisposition,
+  NativeExecutionRecord,
+  NativeExecutionRef,
+  NativeRunOutcome
+} from "../../harness/contracts/native-execution";
 import type { HarnessRunResult, HarnessWorkflow } from "../../harness/contracts/run";
 import { buildActiveEchoInkResourceCatalog, codexResourceOverridesFromEchoInkResources, prepareAgentResources, resourceSelectionFromPreparedResources } from "../../resources/registry";
 import { newId, resolveEditorActionModeConfig } from "../../settings/settings";
 import type { CodexForObsidianSettings } from "../../settings/settings";
 import { buildEditorActionPrompt, buildEditorActionReviewPrompt, resolveEditorActionStyle } from "../../editor-actions/prompt";
 import { buildEditorActionTurnOptions } from "../../editor-actions/turn-options";
-import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache } from "../../editor-actions/summary-cache";
+import { buildArticleUnderstandingPrompt, makeArticleUnderstandingCacheEntry, resolveArticleUnderstandingCache, upsertArticleUnderstandingCache, type EditorActionSummarySource } from "../../editor-actions/summary-cache";
 import type { ArticleUnderstandingEntry, EditorActionQualityMode, EditorActionRequest } from "../../editor-actions/types";
 import { cleanEditorActionOutput, validateEditorActionCandidateText } from "../../editor-actions/output";
 import type { ArticleUnderstandingPanelState } from "./header";
 import { agentEventToEditorStatus } from "./agent-event-renderer";
-import type { CodexViewEditorActionContext } from "./runner-context";
+import type {
+  CodexViewEditorActionContext,
+  CodexViewLifecycleSnapshot
+} from "./runner-context";
 
 export async function sendEditorActionRequest(view: CodexViewEditorActionContext, request: EditorActionRequest): Promise<string> {
+  const viewLifecycle = captureEditorActionViewLifecycle(view);
   const blockReason = view.editorActionStartBlockReason();
   if (blockReason) throw new Error(blockReason);
   const harnessRunId = newId("editor-action-harness");
@@ -37,12 +48,24 @@ export async function sendEditorActionRequest(view: CodexViewEditorActionContext
     });
     view.setEditorActionStatus({ status: "connecting", actionLabel: request.action.label, qualityMode: request.qualityMode, modeLabel: request.modeConfig.label, filePath: request.source.filePath, model: request.modeConfig.model, startedAt: requestStartedAt });
     const backend = resolveEditorActionBackend(view);
-    const status = await connectEditorActionBackend(view, backend, timeoutMs, "写作操作连接超时");
+    const status = await awaitEditorActionViewLifecycle(
+      view,
+      viewLifecycle,
+      connectEditorActionBackend(view, backend, timeoutMs, "写作操作连接超时")
+    );
     view.applyStatus();
 
     const availableModels = editorActionAvailableModels(status);
     const model = editorActionModelForBackend(view, backend, availableModels, request.modeConfig.model);
-    const understanding = await ensureArticleUnderstanding(view, request, availableModels, model, timeoutMs);
+    const understanding = await ensureArticleUnderstanding(
+      view,
+      request,
+      availableModels,
+      model,
+      timeoutMs,
+      false,
+      viewLifecycle
+    );
     const snapshot = understanding
       ? {
         ...request.snapshot,
@@ -63,7 +86,7 @@ export async function sendEditorActionRequest(view: CodexViewEditorActionContext
       statusMessage: debugMessage,
       timeoutMs,
       startedAt: requestStartedAt
-    });
+    }, viewLifecycle);
     if (request.qualityMode === "strict") {
       const candidateText = cleanEditorActionOutput(result);
       const candidateValidation = validateEditorActionCandidateText(candidateText);
@@ -79,21 +102,21 @@ export async function sendEditorActionRequest(view: CodexViewEditorActionContext
         statusMessage: `${request.modeConfig.label}审校中`,
         timeoutMs: Math.max(45000, Math.min(timeoutMs, 90000)),
         startedAt: requestStartedAt
-      });
+      }, viewLifecycle);
     }
-    prewarmEditorActionBackend(view, backend);
     return result;
   } catch (error) {
-    const diagnostic = resolveEditorActionDiagnostic(view, error);
-    view.running = false;
-    view.activeTurnId = "";
-    view.editorActionActiveTimeoutMs = 0;
-    view.clearTurnWatchdog();
-    view.clearActiveRun();
-    view.editorActionCurrentItemIds.clear();
-    view.applyStatus();
-    setArticleUnderstandingPanelState(view, { ...view.articleUnderstandingPanelState, status: "failed", error: diagnostic.text });
-    prewarmEditorActionBackend(view, resolveEditorActionBackend(view));
+    if (isEditorActionViewLifecycleCurrent(view, viewLifecycle)) {
+      const diagnostic = resolveEditorActionDiagnostic(view, error);
+      view.running = false;
+      view.activeTurnId = "";
+      view.editorActionActiveTimeoutMs = 0;
+      view.clearTurnWatchdog();
+      view.clearActiveRun();
+      view.editorActionCurrentItemIds.clear();
+      view.applyStatus();
+      setArticleUnderstandingPanelState(view, { ...view.articleUnderstandingPanelState, status: "failed", error: diagnostic.text });
+    }
     throw error;
   } finally {
     if (view.editorActionHarnessRunId === harnessRunId) view.editorActionHarnessRunId = "";
@@ -106,8 +129,10 @@ export async function ensureArticleUnderstanding(
   availableModels: string[],
   model: string,
   timeoutMs: number,
-  forceRefresh = false
+  forceRefresh = false,
+  viewLifecycle = captureEditorActionViewLifecycle(view)
 ): Promise<ArticleUnderstandingEntry | null> {
+  assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
   if (request.qualityMode === "fast") {
     setArticleUnderstandingPanelState(view, {
       status: "idle",
@@ -154,12 +179,17 @@ export async function ensureArticleUnderstanding(
     statusMessage: `${request.modeConfig.label} · 正在理解文章`,
     timeoutMs: Math.max(45000, Math.min(timeoutMs, 90000)),
     startedAt: Date.now()
-  });
+  }, viewLifecycle);
+  assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
   const understanding = cleanEditorActionOutput(understandingRaw);
   if (!understanding.trim()) throw new Error("文章理解为空");
   const entry = makeArticleUnderstandingCacheEntry(request.source, understanding, request.qualityMode, model);
   settings.articleUnderstandingCache = upsertArticleUnderstandingCache(settings.articleUnderstandingCache, entry);
-  await view.plugin.saveSettings();
+  await awaitEditorActionViewLifecycle(
+    view,
+    viewLifecycle,
+    view.plugin.saveSettings()
+  );
   setArticleUnderstandingPanelState(view, {
     status: "fresh",
     source: request.source,
@@ -183,11 +213,16 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
   statusMessage: string;
   timeoutMs: number;
   startedAt: number;
-}): Promise<string> {
+}, viewLifecycle = captureEditorActionViewLifecycle(view)): Promise<string> {
+  assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
   const backend = resolveEditorActionBackend(view);
   const runId = newId(`editor-${input.phase}-run`);
   view.editorActionCurrentItemIds.clear();
-  const catalog = await runtimeEchoInkResourceCatalog(view.plugin);
+  const catalog = await awaitEditorActionViewLifecycle(
+    view,
+    viewLifecycle,
+    runtimeEchoInkResourceCatalog(view.plugin)
+  );
   const resources = prepareAgentResources(catalog, {
     scope: "editor-actions",
     backendCapabilities: getAgentBackendDefinition(backend).capabilities,
@@ -202,15 +237,29 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
   });
   const prompt = appendPreparedResourcesToPrompt(input.prompt, resources);
   const adapterSettings = editorActionAdapterSettings(view.plugin.settings, backend, input.model);
+  const workflow = input.workflow ?? "editor.rewrite";
+  const sessionId = `editor-action:${runId}`;
   let adapter: AgentAdapter | null = null;
+  const nativeLifecycle = new EditorNativeLifecycle({
+    view,
+    runId,
+    sessionId,
+    workflow,
+    backend,
+    adapter: () => adapter
+  });
+  let runOutcome: NativeRunOutcome = "failed";
+  let localCommit = editorLocalCommitResult(false, "Run Ledger terminal 未提交");
+  let terminalCommitAttempted = false;
   try {
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
     view.activeRunId = runId;
     view.activeRunSessionId = "";
     view.activeRunKind = "editor";
     view.running = true;
     view.setEditorActionStatus({ status: "generating", actionLabel: input.actionLabel, qualityMode: input.qualityMode, modeLabel: input.modeLabel, phase: input.phase, model: input.model, message: input.statusMessage, startedAt: input.startedAt });
     view.applyStatus();
-    adapter = createHarnessAgentAdapter({
+    adapter = (view.createEditorActionHarnessAdapter ?? createHarnessAgentAdapter)({
       backendId: backend,
       settings: adapterSettings,
       vaultPath: view.plugin.getVaultPath(),
@@ -220,14 +269,17 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         turnOptions,
         getNativeThreadId: () => undefined,
         setNativeThreadId: (threadId) => {
+          if (!isEditorActionRunViewCurrent(view, viewLifecycle, runId)) return;
           view.editorActionThreadId = threadId;
         },
         buildInput: () => [{ type: "text", text: prompt, text_elements: [] }],
         startThread: async () => {
           const threadId = await view.takeEditorActionThread(turnOptions);
+          await nativeLifecycle.registerId(threadId, true);
           return { threadId, title: "EchoInk Editor Action" };
         },
         onTurnStarted: ({ threadId, turnId }) => {
+          if (!isEditorActionRunViewCurrent(view, viewLifecycle, runId)) return;
           view.editorActionThreadId = threadId;
           view.activeTurnId = turnId;
         },
@@ -238,16 +290,21 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         toolBridge: null,
         timeoutMs: input.timeoutMs,
         tools: { read: true, write: false, edit: false, bash: false },
-        model: harnessEditorActionTaskModel(adapterSettings, backend, input.model)
+        model: harnessEditorActionTaskModel(adapterSettings, backend, input.model),
+        abortSignal: viewLifecycle.signal,
+        requireNativeRegistrationBeforePrompt: true,
+        onRunId: async (nativeId, native) =>
+          await nativeLifecycle.registerRuntime(nativeId, native)
       }
     });
     const harnessResult = await view.plugin.runHarnessWithAdapter({
       adapter,
+      terminalAuthority: "surface",
       request: {
         runId,
-        sessionId: `editor-action:${runId}`,
+        sessionId,
         surface: "editor",
-        workflow: input.workflow ?? "editor.rewrite",
+        workflow,
         backendId: backend,
         workspace: {
           vaultPath: view.plugin.getVaultPath(),
@@ -272,6 +329,7 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         }
       },
       sink: (event) => {
+        if (!isEditorActionViewLifecycleCurrent(view, viewLifecycle)) return;
         const agentEvent = harnessEventToAgentEvent(event, backend);
         if (!agentEvent) return;
         view.setEditorActionStatus(agentEventToEditorStatus({
@@ -286,37 +344,169 @@ export async function runEditorActionPromptTurn(view: CodexViewEditorActionConte
         view.applyStatus();
       }
     });
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
+    await nativeLifecycle.registerFallback(harnessResult.nativeExecution);
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
     const turnResult = await resolveEditorActionResult(adapter, runId, harnessResult, input.timeoutMs);
-    const cleaned = cleanEditorActionOutput(turnResult);
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
+    await nativeLifecycle.registerFallback(turnResult.nativeExecution);
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
+    const cleaned = cleanEditorActionOutput(turnResult.text);
     const validation = validateEditorActionCandidateText(cleaned);
     if (!validation.ok) throw new Error(validation.reason);
-    await view.plugin.settleHarnessRunTerminal({ runId, status: "completed", backendId: backend, text: cleaned });
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
+    runOutcome = "success";
+    terminalCommitAttempted = true;
+    try {
+      await commitEditorRunTerminal(view, {
+        runId,
+        status: "completed",
+        backendId: backend,
+        text: cleaned
+      });
+      localCommit = editorLocalCommitResult(true);
+    } catch (terminalError) {
+      localCommit = editorLocalCommitResult(false, errorMessage(terminalError));
+      throw terminalError;
+    }
+    assertEditorActionViewLifecycleCurrent(view, viewLifecycle);
     view.setEditorActionStatus({ status: "awaiting-confirm", actionLabel: input.actionLabel, qualityMode: input.qualityMode, modeLabel: input.modeLabel, model: input.model, message: "候选已生成，等待确认", startedAt: input.startedAt });
     return cleaned;
   } catch (error) {
     const runError = error instanceof Error ? error : new Error(String(error));
-    await view.plugin.settleHarnessRunTerminal({
-      runId,
-      status: isEditorActionCancellation(runError) ? "cancelled" : "failed",
-      backendId: backend,
-      error: runError.message
-    }).catch(() => undefined);
+    if (!terminalCommitAttempted) {
+      const cancelled = isEditorActionCancellation(runError);
+      runOutcome = cancelled ? "cancelled" : "failed";
+      terminalCommitAttempted = true;
+      try {
+        await commitEditorRunTerminal(view, {
+          runId,
+          status: cancelled ? "cancelled" : "failed",
+          backendId: backend,
+          error: runError.message
+        });
+        localCommit = editorLocalCommitResult(true);
+      } catch (terminalError) {
+        localCommit = editorLocalCommitResult(false, errorMessage(terminalError));
+      }
+    }
     throw runError;
   } finally {
     await adapter?.dispose().catch(() => undefined);
-    view.running = false;
-    view.activeTurnId = "";
-    view.editorActionThreadId = "";
-    view.editorActionActiveTimeoutMs = 0;
-    view.clearTurnWatchdog();
-    view.clearActiveRun();
-    view.releaseEditorActionRunLock(runId);
-    view.applyStatus();
+    await nativeLifecycle.settleAndCleanup(runOutcome, localCommit);
+    if (isEditorActionRunViewCurrent(view, viewLifecycle, runId)) {
+      view.running = false;
+      view.activeTurnId = "";
+      view.editorActionThreadId = "";
+      view.editorActionActiveTimeoutMs = 0;
+      view.clearTurnWatchdog();
+      view.clearActiveRun();
+      view.releaseEditorActionRunLock(runId);
+      view.applyStatus();
+    }
+  }
+}
+
+async function commitEditorRunTerminal(
+  view: CodexViewEditorActionContext,
+  input: {
+    runId: string;
+    status: "completed" | "failed" | "cancelled";
+    backendId: AgentBackendKind;
+    text?: string;
+    error?: string;
+  }
+): Promise<void> {
+  const receipt = await view.plugin.settleHarnessRunTerminal(input);
+  if (!receipt) {
+    throw new Error(
+      `Editor Run Ledger terminal receipt missing for ${input.runId}`
+    );
+  }
+  const expectedType = `run.${input.status}`;
+  const payloadMatches = input.status === "completed"
+    ? receipt.text === input.text
+    : receipt.error === input.error;
+  if (
+    receipt.runId !== input.runId
+    || receipt.type !== expectedType
+    || receipt.backendId !== input.backendId
+    || !payloadMatches
+  ) {
+    throw new Error(
+      `Editor Run Ledger terminal receipt mismatch: expected ${expectedType} for ${input.runId}`
+    );
   }
 }
 
 function isEditorActionCancellation(error: Error): boolean {
-  return /已中断|已取消|cancelled|canceled/i.test(error.message);
+  return (error as Error & { code?: string }).code === "EDITOR_ACTION_VIEW_CLOSED"
+    || /已中断|已取消|cancelled|canceled/i.test(error.message);
+}
+
+function captureEditorActionViewLifecycle(
+  view: CodexViewEditorActionContext
+): CodexViewLifecycleSnapshot {
+  const lifecycle = view.captureViewLifecycle();
+  assertEditorActionViewLifecycleCurrent(view, lifecycle);
+  return lifecycle;
+}
+
+function isEditorActionViewLifecycleCurrent(
+  view: CodexViewEditorActionContext,
+  lifecycle: CodexViewLifecycleSnapshot
+): boolean {
+  if (lifecycle.signal.aborted) return false;
+  const current = view.captureViewLifecycle();
+  return current.generation === lifecycle.generation
+    && current.signal === lifecycle.signal
+    && !current.signal.aborted;
+}
+
+function isEditorActionRunViewCurrent(
+  view: CodexViewEditorActionContext,
+  lifecycle: CodexViewLifecycleSnapshot,
+  runId: string
+): boolean {
+  return isEditorActionViewLifecycleCurrent(view, lifecycle)
+    && view.activeRunId === runId;
+}
+
+function assertEditorActionViewLifecycleCurrent(
+  view: CodexViewEditorActionContext,
+  lifecycle: CodexViewLifecycleSnapshot
+): void {
+  if (isEditorActionViewLifecycleCurrent(view, lifecycle)) return;
+  throw editorActionViewClosedError();
+}
+
+async function awaitEditorActionViewLifecycle<T>(
+  view: CodexViewEditorActionContext,
+  lifecycle: CodexViewLifecycleSnapshot,
+  promise: Promise<T>
+): Promise<T> {
+  assertEditorActionViewLifecycleCurrent(view, lifecycle);
+  let removeAbortListener: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const onAbort = () => reject(editorActionViewClosedError());
+    lifecycle.signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => lifecycle.signal.removeEventListener("abort", onAbort);
+    if (lifecycle.signal.aborted) onAbort();
+  });
+  try {
+    const result = await Promise.race([promise, aborted]);
+    assertEditorActionViewLifecycleCurrent(view, lifecycle);
+    return result;
+  } finally {
+    removeAbortListener();
+  }
+}
+
+function editorActionViewClosedError(): Error {
+  return Object.assign(
+    new Error("EchoInk 侧栏已关闭，Editor 操作已取消。"),
+    { code: "EDITOR_ACTION_VIEW_CLOSED" }
+  );
 }
 
 function appendPreparedResourcesToPrompt(prompt: string, resources: ReturnType<typeof prepareAgentResources>): string {
@@ -333,15 +523,247 @@ async function runtimeEchoInkResourceCatalog(plugin: CodexViewEditorActionContex
     : buildActiveEchoInkResourceCatalog({ settings: plugin.settings.resources });
 }
 
-async function resolveEditorActionResult(adapter: AgentAdapter, runId: string, result: HarnessRunResult, timeoutMs: number): Promise<string> {
-  if (result.status === "completed") return result.outputText ?? "";
+async function resolveEditorActionResult(
+  adapter: AgentAdapter,
+  runId: string,
+  result: HarnessRunResult,
+  timeoutMs: number
+): Promise<{ text: string; nativeExecution?: NativeExecutionRef }> {
+  if (result.status === "completed") {
+    return {
+      text: result.outputText ?? "",
+      ...(result.nativeExecution ? { nativeExecution: result.nativeExecution } : {})
+    };
+  }
   if (result.status === "running") {
     if (typeof adapter.awaitResult !== "function") throw new Error("当前 Agent 不支持异步结果收口");
     const awaited = await withTimeout(adapter.awaitResult(runId), timeoutMs, "写作操作超时，请重试");
-    if (awaited.status === "completed") return awaited.outputText ?? "";
+    if (awaited.status === "completed") {
+      return {
+        text: awaited.outputText ?? "",
+        ...(awaited.nativeExecution ? { nativeExecution: awaited.nativeExecution } : {})
+      };
+    }
     throw new Error(awaited.error || (awaited.status === "cancelled" ? "写作操作已中断" : "Agent 写作任务未完成"));
   }
   throw new Error(result.error || "Agent 写作任务未完成");
+}
+
+interface EditorNativeLifecycleOptions {
+  view: CodexViewEditorActionContext;
+  runId: string;
+  sessionId: string;
+  workflow: HarnessWorkflow;
+  backend: AgentBackendKind;
+  adapter(): AgentAdapter | null;
+}
+
+interface EditorNativeLifecycleEntry {
+  recordId: string;
+  native: NativeExecutionRef;
+  registration: Promise<void>;
+  cleanupRegistrationFailureLocally: boolean;
+  bestEffortAttempted: boolean;
+}
+
+export class EditorNativeLifecycle {
+  private readonly entries = new Map<string, EditorNativeLifecycleEntry>();
+  private nextRecordOrdinal = 0;
+
+  constructor(private readonly options: EditorNativeLifecycleOptions) {}
+
+  async registerId(
+    nativeId: string,
+    cleanupRegistrationFailureLocally: boolean
+  ): Promise<void> {
+    const id = nativeId.trim();
+    if (!id) return;
+    await this.registerRef(editorNativeExecutionRef(
+      this.options.view,
+      this.options.backend,
+      id
+    ), cleanupRegistrationFailureLocally);
+  }
+
+  async registerFallback(native: NativeExecutionRef | undefined): Promise<void> {
+    if (!native?.id.trim()) return;
+    await this.registerRef(native, false);
+  }
+
+  async registerRuntime(
+    nativeId: string,
+    native: NativeExecutionRef
+  ): Promise<void> {
+    const id = nativeId.trim();
+    if (
+      !id
+      || native.id.trim() !== id
+      || native.backendId !== this.options.backend
+    ) {
+      throw new NativeRunRegistrationError(
+        "Editor Native execution registration received an inconsistent runtime descriptor"
+      );
+    }
+    await this.registerRef(native, false);
+  }
+
+  async settleAndCleanup(runOutcome: NativeRunOutcome, localCommit: LocalRunCommitResult): Promise<void> {
+    for (const entry of this.entries.values()) {
+      const registered = await entry.registration.then(
+        () => true,
+        () => false
+      );
+      if (!registered) continue;
+      let settled: NativeExecutionRecord | null;
+      try {
+        settled = await this.options.view.plugin.settleNativeExecution({
+          recordId: entry.recordId,
+          runOutcome,
+          localCommit
+        });
+      } catch (error) {
+        console.error("Editor Native lifecycle settlement failed", error);
+        continue;
+      }
+      if (settled?.localCommit !== "committed" || settled.cleanup !== "pending") continue;
+      try {
+        await this.options.view.cleanupNativeExecutionRecord(entry.recordId);
+      } catch (error) {
+        console.error("Editor Native exact cleanup failed", error);
+      }
+    }
+  }
+
+  private async registerRef(
+    native: NativeExecutionRef,
+    cleanupRegistrationFailureLocally: boolean
+  ): Promise<void> {
+    const key = nativeExecutionKey(native);
+    const existing = this.entries.get(key);
+    if (existing) return await existing.registration;
+
+    const entry = {} as EditorNativeLifecycleEntry;
+    entry.recordId = `editor-native:${this.options.runId}:${this.options.backend}:${++this.nextRecordOrdinal}`;
+    entry.native = native;
+    entry.cleanupRegistrationFailureLocally = cleanupRegistrationFailureLocally;
+    entry.bestEffortAttempted = false;
+    entry.registration = this.persist(entry);
+    this.entries.set(key, entry);
+    await entry.registration;
+  }
+
+  private async persist(entry: EditorNativeLifecycleEntry): Promise<void> {
+    try {
+      await this.options.view.plugin.recordNativeExecution(editorNativeExecutionRecord(
+        entry.recordId,
+        this.options,
+        entry.native
+      ));
+    } catch (error) {
+      if (entry.cleanupRegistrationFailureLocally) {
+        await this.bestEffortCleanup(entry);
+      }
+      throw new NativeRunRegistrationError(
+        `Native execution 登记失败：${errorMessage(error)}`,
+        error
+      );
+    }
+  }
+
+  private async bestEffortCleanup(entry: EditorNativeLifecycleEntry): Promise<void> {
+    if (entry.bestEffortAttempted) return;
+    entry.bestEffortAttempted = true;
+    const adapter = this.options.adapter();
+    if (!adapter) return;
+    const requested = bestEffortDisposition(adapter);
+    try {
+      if (requested && adapter.disposeNativeExecution) {
+        await adapter.disposeNativeExecution({
+          ref: entry.native,
+          requested,
+          reason: "manual"
+        });
+        return;
+      }
+      await adapter.cancel(this.options.runId);
+    } catch {
+      // Registration failure is authoritative; cleanup is intentionally one-shot.
+    }
+  }
+}
+
+function editorNativeExecutionRecord(
+  recordId: string,
+  options: EditorNativeLifecycleOptions,
+  native: NativeExecutionRef
+): NativeExecutionRecord {
+  const now = Date.now();
+  return {
+    id: recordId,
+    runId: options.runId,
+    sessionId: options.sessionId,
+    surface: "editor",
+    workflow: options.workflow,
+    native,
+    policy: {
+      historyAuthority: "echoink",
+      mode: "ephemeral-run",
+      preferredDisposition: ["delete", "archive", "process-exit", "retain"],
+      retainWhenLocalCommitFails: true,
+      cleanupRequiredForTaskSuccess: false
+    },
+    localCommit: "pending",
+    cleanup: "not-needed",
+    attempts: 0,
+    nextAttemptAt: 0,
+    lastError: "",
+    createdAt: now,
+    settledAt: 0,
+    committedAt: 0,
+    disposedAt: 0
+  };
+}
+
+function editorNativeExecutionRef(
+  view: CodexViewEditorActionContext,
+  backend: AgentBackendKind,
+  nativeId: string
+): NativeExecutionRef {
+  return {
+    backendId: backend,
+    id: nativeId,
+    kind: backend === "codex-cli" ? "thread" : backend === "opencode" ? "session" : "run",
+    persistence: backend === "hermes" ? "unknown" : "provider-persistent",
+    ...view.plugin.getNativeExecutionRefContext(backend),
+    createdAt: Date.now()
+  };
+}
+
+function nativeExecutionKey(native: NativeExecutionRef): string {
+  return `${native.backendId}\u0000${native.kind}\u0000${native.id}`;
+}
+
+function bestEffortDisposition(adapter: AgentAdapter): NativeDisposition | null {
+  const dispositions = adapter.manifest.nativeExecution?.dispositions;
+  if (dispositions?.delete) return "delete";
+  if (dispositions?.archive) return "archive";
+  if (dispositions?.processExit) return "process-exit";
+  return null;
+}
+
+function editorLocalCommitResult(committed: boolean, error = ""): LocalRunCommitResult {
+  return {
+    committed,
+    conversationCommitted: committed,
+    runLedgerCommitted: committed,
+    artifactsCommitted: committed,
+    historyIndexCommitted: committed,
+    ...(error ? { error } : {})
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -437,7 +859,19 @@ export async function refreshArticleUnderstandingPanelSourceState(view: CodexVie
 }
 
 export async function refreshArticleUnderstandingFromPanel(view: CodexViewEditorActionContext): Promise<void> {
-  const source = await currentArticleUnderstandingSource(view);
+  const viewLifecycle = view.captureViewLifecycle();
+  if (!isEditorActionViewLifecycleCurrent(view, viewLifecycle)) return;
+  let source: EditorActionSummarySource | null;
+  try {
+    source = await awaitEditorActionViewLifecycle(
+      view,
+      viewLifecycle,
+      currentArticleUnderstandingSource(view)
+    );
+  } catch (error) {
+    if (!isEditorActionViewLifecycleCurrent(view, viewLifecycle)) return;
+    throw error;
+  }
   if (!source) {
     new Notice("当前没有可理解的笔记");
     return;
@@ -446,7 +880,17 @@ export async function refreshArticleUnderstandingFromPanel(view: CodexViewEditor
   const mode = settings.qualityMode === "fast" ? "quality" : settings.qualityMode;
   const modeConfig = resolveEditorActionModeConfig(settings, mode);
   const backend = resolveEditorActionBackend(view);
-  const status = await connectEditorActionBackend(view, backend, settings.timeoutMs, "连接 Agent 超时");
+  let status: Awaited<ReturnType<typeof connectEditorActionBackend>>;
+  try {
+    status = await awaitEditorActionViewLifecycle(
+      view,
+      viewLifecycle,
+      connectEditorActionBackend(view, backend, settings.timeoutMs, "连接 Agent 超时")
+    );
+  } catch (error) {
+    if (!isEditorActionViewLifecycleCurrent(view, viewLifecycle)) return;
+    throw error;
+  }
   const availableModels = editorActionAvailableModels(status);
   const model = editorActionModelForBackend(view, backend, availableModels, modeConfig.model);
   const request: EditorActionRequest = {
@@ -471,8 +915,17 @@ export async function refreshArticleUnderstandingFromPanel(view: CodexViewEditor
     createdAt: Date.now()
   };
   try {
-    await ensureArticleUnderstanding(view, request, availableModels, model, editorActionTimeoutForMode(settings.timeoutMs, mode), true);
+    await ensureArticleUnderstanding(
+      view,
+      request,
+      availableModels,
+      model,
+      editorActionTimeoutForMode(settings.timeoutMs, mode),
+      true,
+      viewLifecycle
+    );
   } catch (error) {
+    if (!isEditorActionViewLifecycleCurrent(view, viewLifecycle)) return;
     const diagnostic = resolveEditorActionDiagnostic(view, error);
     setArticleUnderstandingPanelState(view, {
       status: "failed",
@@ -562,8 +1015,4 @@ async function connectEditorActionBackend(
 
 function editorActionAvailableModels(status: Awaited<ReturnType<CodexViewEditorActionContext["plugin"]["ensureHarnessBackendConnected"]>>): string[] {
   return status?.models.map((model) => model.model) ?? [];
-}
-
-function prewarmEditorActionBackend(view: CodexViewEditorActionContext, backend: AgentBackendKind): void {
-  if (backend === "codex-cli") view.prewarmEditorActionThread();
 }

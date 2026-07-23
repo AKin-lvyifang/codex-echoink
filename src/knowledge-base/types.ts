@@ -61,6 +61,10 @@ export interface KnowledgeBaseSource {
   mime: string;
   modality: AgentInputModality;
   changed: boolean;
+  readStrategy?: {
+    kind: "chunked-text";
+    maxChunkBytes: number;
+  };
 }
 
 export interface KnowledgeBaseSkippedSource {
@@ -68,8 +72,10 @@ export interface KnowledgeBaseSkippedSource {
   absolutePath: string;
   size: number;
   mtime: number;
+  fingerprint: string;
   mime: string;
   modality: AgentInputModality;
+  changed: true;
   reason: string;
 }
 

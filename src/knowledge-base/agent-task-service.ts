@@ -1,27 +1,30 @@
-import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "path";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentRunResult } from "../harness/agents/adapter";
+import { HermesProposalHostAgentAdapter } from "../harness/agents/adapters/hermes-proposal-host-adapter";
 import {
+  harnessBackendDisplayName,
   harnessKnowledgeTaskNativeExecutionKind,
   harnessKnowledgeTaskNativeExecutionPersistence,
   harnessKnowledgeTaskTimeoutMs,
   harnessMessageModelId
 } from "../harness/agents/backend-runtime-profile";
-import type {
-  LocalRunCommitResult,
-  NativeCleanupStatus,
-  NativeExecutionRecord,
-  NativeExecutionRef,
-  NativeRunOutcome,
-  NativeSessionPolicy
+import {
+  isHermesProposalHostExecutionRef,
+  type LocalRunCommitResult,
+  type NativeCleanupStatus,
+  type NativeExecutionRecord,
+  type NativeExecutionRef,
+  type NativeRunOutcome,
+  type NativeSessionPolicy
 } from "../harness/contracts/native-execution";
 import type { HarnessRunResult, HarnessWorkflow } from "../harness/contracts/run";
 import type { ContextSection } from "../harness/contracts/context";
 import type { SettleRunTerminalInput } from "../harness/kernel/run-orchestrator";
-import { sessionBackendBinding, updateSessionBackendBinding } from "../harness/kernel/session-service";
+import { updateSessionBackendBinding } from "../harness/kernel/session-service";
+import type { NativeCleanupResult } from "../harness/native/native-execution-manager";
 import { memoryRequestPolicy } from "../harness/memory/workflow-policy";
 import { resourceSelectionFromPreparedResources } from "../resources/registry";
 import {
@@ -37,6 +40,7 @@ import type {
   AgentExactWriteFenceReceipt,
   AgentTaskInput
 } from "../agent/types";
+import { NativeRunRegistrationError } from "../agent/types";
 import {
   assertExactWriteFenceRequest,
   createExactWriteFenceReceipt,
@@ -87,7 +91,11 @@ import {
 type PendingNativeExecutionCommit = {
   runId: string;
   runOutcome: NativeRunOutcome;
+  recoveryRecord: NativeExecutionRecord;
+  missingReceiptWarning?: string;
 };
+
+const SETTLED_NATIVE_EXECUTION_RUN_RECEIPT_LIMIT = 256;
 
 export interface KnowledgeBaseNativeLifecycleSummary {
   localCommitStatus?: "committed" | "failed";
@@ -95,6 +103,17 @@ export interface KnowledgeBaseNativeLifecycleSummary {
   cleanupAttempted: boolean;
   disposedCount: number;
   recordIds: string[];
+  recoveryRequired: boolean;
+  warning?: string;
+}
+
+export interface KnowledgeBaseScopedNativeSettlement {
+  requestedRunIds: string[];
+  matchedRunIds: string[];
+  matchedRecordCount: number;
+  localCommitStatus: "committed" | "failed" | "not-applicable";
+  cleanupRecoveryRequired: boolean;
+  disposedCount: number;
 }
 
 export interface KnowledgeBaseAgentTaskServiceContext {
@@ -178,8 +197,10 @@ export class KnowledgeBaseAgentTaskService {
   private activeHarnessRunId: string | null = null;
   private activeHermesProposalAbortController: AbortController | null = null;
   private readonly pendingNativeExecutionCommits = new Map<string, PendingNativeExecutionCommit>();
+  private readonly settledNativeExecutionRunIds = new Map<string, true>();
   private readonly pendingHarnessTerminalSettlements = new Map<string, SettleRunTerminalInput>();
   private readonly activeTaskSettlements = new Set<Promise<void>>();
+  private nativeExecutionSettlementTail: Promise<void> = Promise.resolve();
   private lastNativeLifecycleSummary: KnowledgeBaseNativeLifecycleSummary | null = null;
 
   constructor(
@@ -335,17 +356,91 @@ export class KnowledgeBaseAgentTaskService {
     let writableRootsOverride = input.writableRootsOverride;
     let submittedAt: number | undefined;
     let nativeExecutionId = "";
-    let nativeRecordPromise: Promise<string> | null = null;
-    const recordNativeRun = (backend: AgentBackendKind, nativeId: string): void => {
-      if (nativeId) nativeExecutionId = nativeId;
-      if (backend === "codex-cli" || !nativeId || nativeRecordPromise) return;
-      nativeRecordPromise = this.recordNativeExecution({
+    let nativeRecordPromise: Promise<NativeExecutionRecord | null> | null = null;
+    let nativeRegistrationFailure: NativeRunRegistrationError | null = null;
+    const recordNativeReference = async (
+      native: NativeExecutionRef,
+      backendLabel: string
+    ): Promise<NativeExecutionRecord> => {
+      if (input.managedKind === "ask") {
+        throw new NativeRunRegistrationError(
+          `${backendLabel} isolated execution cannot be registered as a leased Knowledge ask`
+        );
+      }
+      if (
+        native.backendId !== input.backend
+        && !(
+          input.backend === "hermes"
+          && isHermesProposalHostExecutionRef(native)
+        )
+      ) {
+        throw new NativeRunRegistrationError(
+          `${backendLabel} Native execution registration received an identity from ${native.backendId}`
+        );
+      }
+      const nextNativeExecutionId = native.id.trim();
+      if (!nextNativeExecutionId) {
+        throw new NativeRunRegistrationError(
+          `${backendLabel} Native execution registration failed: runtime returned no Native ID`
+        );
+      }
+      if (
+        nativeExecutionId
+        && nativeExecutionId !== nextNativeExecutionId
+      ) {
+        throw new NativeRunRegistrationError(
+          `${backendLabel} Native execution registration failed: runtime changed Native ID before prompt submission`
+        );
+      }
+      nativeExecutionId = nextNativeExecutionId;
+      nativeRecordPromise ??= this.recordNativeExecution({
         runId: harnessRunId,
-        native: this.buildTaskNativeExecutionRef(backend, nativeId),
+        native,
         managedKind: input.managedKind
       });
+      try {
+        return await requireNativeExecutionRegistration(
+          nativeRecordPromise,
+          backendLabel,
+          nextNativeExecutionId
+        );
+      } catch (error) {
+        nativeRegistrationFailure = nativeRunRegistrationError(
+          error,
+          backendLabel,
+          nextNativeExecutionId
+        );
+        throw nativeRegistrationFailure;
+      }
+    };
+    const recordNativeRun = async (
+      backend: AgentBackendKind,
+      nativeId: string,
+      native: NativeExecutionRef
+    ): Promise<void> => {
+      if (
+        input.managedKind === "ask"
+        || backend === "codex-cli"
+      ) {
+        if (nativeId) nativeExecutionId = nativeId;
+        return;
+      }
+      await recordNativeReference(
+        native,
+        harnessBackendDisplayName(backend)
+      );
     };
     const queueNativeCommit = async (outcome: NativeRunOutcome, result?: HarnessRunResult): Promise<void> => {
+      if (input.managedKind === "ask") {
+        this.queueHarnessNativeExecutionCommits(
+          harnessRunId,
+          outcome,
+          result,
+          input.backend,
+          input.managedKind
+        );
+        return;
+      }
       if (!nativeRecordPromise && result?.nativeExecution) {
         nativeRecordPromise = this.recordNativeExecution({
           runId: harnessRunId,
@@ -353,8 +448,14 @@ export class KnowledgeBaseAgentTaskService {
           managedKind: input.managedKind
         });
       }
-      const recordId = await nativeRecordPromise?.catch(() => "");
-      if (recordId) this.pendingNativeExecutionCommits.set(recordId, { runId: harnessRunId, runOutcome: outcome });
+      const recoveryRecord = await nativeRecordPromise?.catch(() => null);
+      if (recoveryRecord) {
+        this.pendingNativeExecutionCommits.set(recoveryRecord.id, {
+          runId: harnessRunId,
+          runOutcome: outcome,
+          recoveryRecord
+        });
+      }
     };
     const markSubmitted = (): void => {
       if (submittedAt === undefined) submittedAt = Date.now();
@@ -374,10 +475,9 @@ export class KnowledgeBaseAgentTaskService {
           input,
           harnessRunId,
           writableRoots: writableRootsOverride ?? [],
-          onSubmitted: (nativeId) => {
-            recordNativeRun("hermes", nativeId);
-            markSubmitted();
-          }
+          registerNativeExecution: async (native) =>
+            await recordNativeReference(native, "Hermes proposal host process"),
+          onSubmitted: markSubmitted
         })
         : await this.runtimeController.run({
           harnessRunId,
@@ -415,11 +515,15 @@ export class KnowledgeBaseAgentTaskService {
         } : {})
       };
     } catch (error) {
+      const taskError: unknown = nativeRegistrationFailure ?? error;
       if (input.backend !== "codex-cli") {
-        await queueNativeCommit(isKnowledgeBaseCancelError(errorMessage(error)) ? "cancelled" : "failed");
+        await queueNativeCommit(
+          isKnowledgeBaseCancelError(errorMessage(taskError)) ? "cancelled" : "failed",
+          harnessResultFromError(taskError)
+        );
       }
-      if (!maintenanceAttempt || error instanceof KnowledgeAgentAttemptError) throw error;
-      const nativeTerminationReceipt = nativeTerminationReceiptFrom(error);
+      if (!maintenanceAttempt || taskError instanceof KnowledgeAgentAttemptError) throw taskError;
+      const nativeTerminationReceipt = nativeTerminationReceiptFrom(taskError);
       throw new KnowledgeAgentAttemptError(
         submittedAt === undefined ? "preflight" : "execution",
         input.backend,
@@ -428,8 +532,8 @@ export class KnowledgeBaseAgentTaskService {
         input.attemptOrdinal!,
         harnessRunId,
         submittedAt,
-        error,
-        terminationConfirmedAtFrom(error),
+        taskError,
+        terminationConfirmedAtFrom(taskError),
         nativeTerminationReceipt?.nativeExecutionId || nativeExecutionId,
         nativeTerminationReceipt
       );
@@ -519,6 +623,7 @@ export class KnowledgeBaseAgentTaskService {
   ): Promise<boolean> {
     if (sources.some((source) =>
       source.modality !== "text"
+      || source.readStrategy?.kind === "chunked-text"
       || (source.relativePath !== "raw" && !source.relativePath.startsWith("raw/"))
     )) {
       return false;
@@ -557,7 +662,10 @@ export class KnowledgeBaseAgentTaskService {
     input: KnowledgeBaseHarnessTaskInput;
     harnessRunId: string;
     writableRoots: readonly string[];
-    onSubmitted(nativeExecutionId: string): void;
+    registerNativeExecution(
+      native: NativeExecutionRef
+    ): Promise<NativeExecutionRecord>;
+    onSubmitted(): void;
   }): Promise<KnowledgeAgentTaskOutput> {
     const task = input.input;
     assertHermesMaintenanceProposalTask(task, input.writableRoots);
@@ -569,186 +677,319 @@ export class KnowledgeBaseAgentTaskService {
     );
     const abortController = new AbortController();
     this.activeHermesProposalAbortController = abortController;
-    let capability: HermesVaultNoWriteCapability | undefined;
-    let lease: ReturnType<typeof createHermesProposalLease> | undefined;
-    let onLeaseAbort: (() => void) | undefined;
-    let nativeSubmitted = false;
-    let retainIsolation = false;
-    let nativeExecutionId = "";
-    try {
-      const probe = await this.probeHermesProposalCapability({
-        attemptId,
-        sources: task.sources,
-        abortSignal: abortController.signal
-      });
-      if (probe.ready) capability = probe.capability;
-      if (abortController.signal.aborted || this.context.isCancelRequested()) {
-        throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
-      }
-      if (!probe.ready) {
-        throw Object.assign(
-          new Error(`EXACT_WRITE_FENCE_UNAVAILABLE: Hermes proposal preflight 失败（${probe.code}）：${probe.reason}`),
-          { code: "EXACT_WRITE_FENCE_UNAVAILABLE" }
-        );
-      }
-      const prepared = await prepareHermesMaintenanceProposalInput({
-        attemptId,
-        shadowVaultPath,
-        originalPrompt: task.prompt,
-        sources: task.sources,
-        hostMaterializerRoots: input.writableRoots,
-        vaultProfileSections: task.vaultProfileSections,
-        resourcePromptPrefix: task.resources?.promptPrefix,
-        resourceWarnings: task.resources?.warnings
-      });
-      this.throwIfCanceled();
-      const inputDigest = hermesProposalInvocationInputDigest({
-        prompt: prepared.prompt,
-        systemPrompt: prepared.systemPrompt,
-        validation: prepared.validation
-      });
-      lease = createHermesProposalLease({
-        attemptId,
-        inputDigest,
-        leaseId: task.exactWriteFence!.leaseToken
-      });
-      nativeExecutionId = `hermes-proposal:${input.harnessRunId}:${lease.leaseId}`;
-      onLeaseAbort = () => {
-        try {
-          revokeHermesProposalLease(lease!, "canceled");
-        } catch {
-          // A concurrent timeout, process error or successful materialization
-          // may already have revoked this exact lease.
+    let executionError: unknown;
+    let registeredHostRecord: NativeExecutionRecord | null = null;
+    const adapter = new HermesProposalHostAgentAdapter({
+      attemptId,
+      modelId: this.plugin.settings.agents.hermes.modelId,
+      externalAbortSignal: abortController.signal,
+      nativeRefContext: this.plugin.getNativeExecutionRefContext(),
+      persistProcessDisposition: async ({ native, receipt }) => {
+        const record = registeredHostRecord;
+        if (
+          !record
+          || record.native.id !== native.id
+          || record.native.backendId !== native.backendId
+          || record.id !== `knowledge-native:${input.harnessRunId}:${native.backendId}`
+        ) {
+          throw new NativeRunRegistrationError(
+            "Hermes proposal host disposition has no matching durable Native registration"
+          );
         }
-      };
-      abortController.signal.addEventListener("abort", onLeaseAbort, { once: true });
-      if (abortController.signal.aborted) onLeaseAbort();
-      let exactWriteFenceReceipt: AgentExactWriteFenceReceipt | undefined;
-      const invocation = await runHermesProposalInvocation({
-        capability: probe.capability,
-        lease,
-        prompt: prepared.prompt,
-        systemPrompt: prepared.systemPrompt,
-        validation: prepared.validation,
-        deniedLivePaths: task.exactWriteFence!.deniedLivePaths,
-        deniedControlPaths: task.exactWriteFence!.deniedControlPaths,
-        hostMaterializerRoots: input.writableRoots,
-        timeoutMs,
-        terminationGraceMs: this.dependencies.hermesProposalTerminationGraceMs,
-        abortSignal: abortController.signal,
-        onAuthorityConfigured: async (authorityReceipt) => {
-          await assertHermesAuthorityMatchesFenceRequest({
-            authorityReceipt,
-            task,
-            writableRoots: input.writableRoots
+        const observedRecord: NativeExecutionRecord = {
+          ...record,
+          observedDisposition: receipt
+        };
+        await this.plugin.recordNativeExecution(observedRecord);
+        registeredHostRecord = observedRecord;
+      },
+      isCancellation: (error, signal) =>
+        signal.aborted
+        || this.context.isCancelRequested()
+        || isKnowledgeBaseCancelError(errorMessage(error))
+        || (
+          error instanceof HermesProposalRuntimeError
+          && error.code === "canceled"
+        ),
+      execute: async (execution) => {
+        const { native, abortSignal } = execution;
+        let capability: HermesVaultNoWriteCapability | undefined;
+        let lease: ReturnType<typeof createHermesProposalLease> | undefined;
+        let onLeaseAbort: (() => void) | undefined;
+        let nativeSubmitted = false;
+        let retainIsolation = false;
+        try {
+          const probe = await this.probeHermesProposalCapability({
+            attemptId,
+            sources: task.sources,
+            abortSignal
           });
-          const fenceTask: AgentTaskInput = {
+          if (probe.ready) capability = probe.capability;
+          if (abortSignal.aborted || this.context.isCancelRequested()) {
+            throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
+          }
+          if (!probe.ready) {
+            throw Object.assign(
+              new Error(`EXACT_WRITE_FENCE_UNAVAILABLE: Hermes proposal preflight 失败（${probe.code}）：${probe.reason}`),
+              { code: "EXACT_WRITE_FENCE_UNAVAILABLE" }
+            );
+          }
+          const prepared = await prepareHermesMaintenanceProposalInput({
+            attemptId,
+            shadowVaultPath,
+            originalPrompt: task.prompt,
+            sources: task.sources,
+            hostMaterializerRoots: input.writableRoots,
+            vaultProfileSections: task.vaultProfileSections,
+            resourcePromptPrefix: task.resources?.promptPrefix,
+            resourceWarnings: task.resources?.warnings
+          });
+          this.throwIfCanceled();
+          const inputDigest = hermesProposalInvocationInputDigest({
             prompt: prepared.prompt,
-            permission: task.permission,
-            writableRoots: [...input.writableRoots],
-            requireExactWriteFence: true,
-            exactWriteFence: task.exactWriteFence,
-            onExactWriteFenceConfigured: task.onExactWriteFenceConfigured
-          };
-          assertExactWriteFenceRequest("hermes", fenceTask, shadowVaultPath);
-          const receipt = createExactWriteFenceReceipt({
-            backend: "hermes",
-            task: fenceTask,
-            transport: "hermes-proposal-v1-host-materializer",
-            transportAck: {
-              authority: authorityReceipt.authority,
-              scope: authorityReceipt.scope,
-              osSandbox: authorityReceipt.osSandbox,
-              attemptId: authorityReceipt.attemptId,
-              leaseId: authorityReceipt.leaseId,
-              inputDigest: authorityReceipt.inputDigest,
-              promptDigest: authorityReceipt.promptDigest,
-              outputSchemaDigest: authorityReceipt.outputSchemaDigest,
-              capabilityProbeDigest: authorityReceipt.capabilityProbeDigest,
-              argvDigest: authorityReceipt.argvDigest,
-              environmentDigest: authorityReceipt.environmentDigest,
-              hostMaterializerRoots: authorityReceipt.hostMaterializerRoots
-            },
-            configuredAt: authorityReceipt.configuredAt
+            systemPrompt: prepared.systemPrompt,
+            validation: prepared.validation
           });
-          await deliverExactWriteFenceReceipt(fenceTask, receipt);
-          exactWriteFenceReceipt = receipt;
+          lease = createHermesProposalLease({
+            attemptId,
+            inputDigest,
+            leaseId: task.exactWriteFence!.leaseToken
+          });
+          onLeaseAbort = () => {
+            try {
+              revokeHermesProposalLease(lease!, "canceled");
+            } catch {
+              // A concurrent timeout, process error or successful
+              // materialization may already have revoked this exact lease.
+            }
+          };
+          abortSignal.addEventListener("abort", onLeaseAbort, { once: true });
+          if (abortSignal.aborted) onLeaseAbort();
+          let exactWriteFenceReceipt: AgentExactWriteFenceReceipt | undefined;
+          const invocation = await runHermesProposalInvocation({
+            capability: probe.capability,
+            lease,
+            prompt: prepared.prompt,
+            systemPrompt: prepared.systemPrompt,
+            validation: prepared.validation,
+            deniedLivePaths: task.exactWriteFence!.deniedLivePaths,
+            deniedControlPaths: task.exactWriteFence!.deniedControlPaths,
+            hostMaterializerRoots: input.writableRoots,
+            timeoutMs,
+            terminationGraceMs: this.dependencies.hermesProposalTerminationGraceMs,
+            abortSignal,
+            onAuthorityConfigured: async (authorityReceipt) => {
+              await assertHermesAuthorityMatchesFenceRequest({
+                authorityReceipt,
+                task,
+                writableRoots: input.writableRoots
+              });
+              const fenceTask: AgentTaskInput = {
+                prompt: prepared.prompt,
+                permission: task.permission,
+                writableRoots: [...input.writableRoots],
+                requireExactWriteFence: true,
+                exactWriteFence: task.exactWriteFence,
+                onExactWriteFenceConfigured: task.onExactWriteFenceConfigured
+              };
+              assertExactWriteFenceRequest("hermes", fenceTask, shadowVaultPath);
+              const receipt = createExactWriteFenceReceipt({
+                backend: "hermes",
+                task: fenceTask,
+                transport: "hermes-proposal-v1-host-materializer",
+                transportAck: {
+                  authority: authorityReceipt.authority,
+                  scope: authorityReceipt.scope,
+                  osSandbox: authorityReceipt.osSandbox,
+                  attemptId: authorityReceipt.attemptId,
+                  leaseId: authorityReceipt.leaseId,
+                  inputDigest: authorityReceipt.inputDigest,
+                  promptDigest: authorityReceipt.promptDigest,
+                  outputSchemaDigest: authorityReceipt.outputSchemaDigest,
+                  capabilityProbeDigest: authorityReceipt.capabilityProbeDigest,
+                  argvDigest: authorityReceipt.argvDigest,
+                  environmentDigest: authorityReceipt.environmentDigest,
+                  hostMaterializerRoots: authorityReceipt.hostMaterializerRoots
+                },
+                configuredAt: authorityReceipt.configuredAt
+              });
+              await deliverExactWriteFenceReceipt(fenceTask, receipt);
+              exactWriteFenceReceipt = receipt;
+            },
+            onSubmitted: () => {
+              nativeSubmitted = true;
+              input.onSubmitted();
+            }
+          });
+          await execution.recordProcessDisposition("exited");
+          if (!exactWriteFenceReceipt) {
+            throw Object.assign(
+              new Error("POLICY_DENIED: Hermes proposal 未签发 trusted exact-write-fence receipt"),
+              { code: "POLICY_DENIED" }
+            );
+          }
+          if (abortSignal.aborted || this.context.isCancelRequested()) {
+            throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
+          }
+          const materialized = await materializeHermesMaintenanceProposal({
+            shadowVaultPath,
+            proposal: invocation.proposal,
+            authorityReceipt: invocation.authorityReceipt,
+            lease
+          });
+          return {
+            text: [
+              `Hermes proposal 已由 EchoInk 宿主写入当前 Shadow：${materialized.materializedPaths.length} 个文件。`,
+              invocation.proposal.rejectedOperations.length
+                ? `另有 ${invocation.proposal.rejectedOperations.length} 个 operation 未通过边界校验。`
+                : "",
+              `proposalDigest=${materialized.proposalDigest}`
+            ].filter(Boolean).join("\n"),
+            terminalData: {
+              proposalDigest: materialized.proposalDigest,
+              materializedPathCount: materialized.materializedPaths.length
+            }
+          };
+        } catch (error) {
+          const dispositionState = hermesProposalHostDispositionStateAfterError({
+            error,
+            nativeSubmitted,
+            trustInjectedTermination:
+              !this.dependencies.hermesProposalProcessRunner
+              || this.dependencies.hermesProposalTrustInjectedRunnerTerminationForTests === true
+          });
+          if (dispositionState) {
+            await execution.recordProcessDisposition(
+              dispositionState,
+              error instanceof HermesProposalRuntimeError
+                && error.terminationConfirmedAt
+                ? error.terminationConfirmedAt
+                : Date.now()
+            );
+          }
+          if (
+            nativeSubmitted
+            && error instanceof HermesProposalRuntimeError
+            && error.terminationConfirmedAt
+            && (
+              !this.dependencies.hermesProposalProcessRunner
+              || this.dependencies.hermesProposalTrustInjectedRunnerTerminationForTests === true
+            )
+          ) {
+            Object.assign(error, {
+              nativeTerminationReceipt: issueKnowledgeAgentNativeTerminationReceipt({
+                backend: "hermes",
+                harnessRunId: input.harnessRunId,
+                nativeExecutionId: native.id,
+                kind: "abort-ack",
+                confirmedAt: error.terminationConfirmedAt
+              })
+            });
+          }
+          if (
+            error instanceof HermesProposalRuntimeError
+            && error.code === "canceled"
+          ) {
+            error.message = KNOWLEDGE_BASE_CANCEL_ERROR;
+          }
+          if (lease) {
+            try {
+              revokeHermesProposalLease(lease, "service_failed");
+            } catch {
+              // The materializer/runtime may already have revoked the same
+              // lease.
+            }
+          }
+          retainIsolation = nativeSubmitted
+            && shouldRetainHermesProposalIsolation(error);
+          executionError = error;
+          throw error;
+        } finally {
+          if (onLeaseAbort) {
+            abortSignal.removeEventListener("abort", onLeaseAbort);
+          }
+          if (capability && !retainIsolation) {
+            await cleanupHermesProposalIsolation(capability).catch(() => undefined);
+          }
+        }
+      }
+    });
+    try {
+      const result = await this.plugin.runHarnessWithAdapter({
+        adapter,
+        registerNativeExecution: async ({ native }) => {
+          if (!isHermesProposalHostExecutionRef(native)) {
+            throw new NativeRunRegistrationError(
+              "Hermes proposal adapter did not provide an EchoInk host-process identity"
+            );
+          }
+          const record = await input.registerNativeExecution(native);
+          registeredHostRecord = record;
+          return { recordId: record.id };
         },
-        onSubmitted: () => {
-          nativeSubmitted = true;
-          input.onSubmitted(nativeExecutionId);
+        request: {
+          runId: input.harnessRunId,
+          sessionId: this.plugin.settings.knowledgeBase.sessionId
+            || "knowledge-maintenance",
+          surface: "knowledge",
+          workflow: knowledgeWorkflowForManagedKind(task.managedKind),
+          backendId: "hermes",
+          workspace: {
+            vaultPath: shadowVaultPath,
+            cwd: shadowVaultPath
+          },
+          input: {
+            text: task.prompt,
+            attachments: task.sources.map((source) => ({
+              type: source.modality === "image"
+                ? "image" as const
+                : source.mime === "application/pdf"
+                  ? "pdf" as const
+                  : "file" as const,
+              path: source.absolutePath,
+              name: path.basename(source.absolutePath),
+              mime: source.mime
+            }))
+          },
+          permissions: {
+            mode: task.permission,
+            writableRoots: [...input.writableRoots],
+            requireApproval: true
+          },
+          resourceSelection: task.resources
+            ? resourceSelectionFromPreparedResources(task.resources, "hermes")
+            : {
+              selected: [],
+              resolvedAt: Date.now(),
+              warnings: []
+            },
+          memoryPolicy: memoryRequestPolicy(
+            knowledgeWorkflowForManagedKind(task.managedKind)
+          ),
+          outputContract: { kind: "knowledge-ledger" },
+          vaultProfileSections: task.vaultProfileSections
         }
       });
-      if (!exactWriteFenceReceipt) {
-        throw Object.assign(
-          new Error("POLICY_DENIED: Hermes proposal 未签发 trusted exact-write-fence receipt"),
-          { code: "POLICY_DENIED" }
-        );
+      if (result.status === "failed" || result.status === "cancelled") {
+        const error = executionError instanceof Error
+          ? executionError
+          : new Error(
+            result.status === "cancelled"
+              ? KNOWLEDGE_BASE_CANCEL_ERROR
+              : result.error || "Hermes proposal Harness run failed"
+          );
+        Object.assign(error, { harnessResult: result });
+        throw error;
       }
-      if (abortController.signal.aborted || this.context.isCancelRequested()) {
-        throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
-      }
-      const materialized = await materializeHermesMaintenanceProposal({
-        shadowVaultPath,
-        proposal: invocation.proposal,
-        authorityReceipt: invocation.authorityReceipt,
-        lease
-      });
       return {
-        text: [
-          `Hermes proposal 已由 EchoInk 宿主写入当前 Shadow：${materialized.materializedPaths.length} 个文件。`,
-          invocation.proposal.rejectedOperations.length
-            ? `另有 ${invocation.proposal.rejectedOperations.length} 个 operation 未通过边界校验。`
-            : "",
-          `proposalDigest=${materialized.proposalDigest}`
-        ].filter(Boolean).join("\n")
+        text: result.outputText ?? "",
+        harnessResult: result
       };
-    } catch (error) {
-      if (
-        nativeSubmitted
-        && nativeExecutionId
-        && error instanceof HermesProposalRuntimeError
-        && error.terminationConfirmedAt
-        && (
-          !this.dependencies.hermesProposalProcessRunner
-          || this.dependencies.hermesProposalTrustInjectedRunnerTerminationForTests === true
-        )
-      ) {
-        Object.assign(error, {
-          nativeTerminationReceipt: issueKnowledgeAgentNativeTerminationReceipt({
-            backend: "hermes",
-            harnessRunId: input.harnessRunId,
-            nativeExecutionId,
-            kind: "abort-ack",
-            confirmedAt: error.terminationConfirmedAt
-          })
-        });
-      }
-      if (
-        error instanceof HermesProposalRuntimeError
-        && error.code === "canceled"
-      ) {
-        error.message = KNOWLEDGE_BASE_CANCEL_ERROR;
-      }
-      if (lease) {
-        try {
-          revokeHermesProposalLease(lease, "service_failed");
-        } catch {
-          // The materializer/runtime may already have revoked the same lease.
-        }
-      }
-      retainIsolation = nativeSubmitted && shouldRetainHermesProposalIsolation(error);
-      throw error;
     } finally {
-      if (onLeaseAbort) {
-        abortController.signal.removeEventListener("abort", onLeaseAbort);
-      }
       if (this.activeHermesProposalAbortController === abortController) {
         this.activeHermesProposalAbortController = null;
       }
-      if (capability && !retainIsolation) {
-        await cleanupHermesProposalIsolation(capability).catch(() => undefined);
-      }
+      await adapter.dispose().catch(() => undefined);
     }
   }
 
@@ -829,47 +1070,233 @@ export class KnowledgeBaseAgentTaskService {
     });
   }
 
-  async settlePendingNativeExecutions(): Promise<number> {
+  async settlePendingNativeExecutions(
+    runIds?: readonly string[]
+  ): Promise<number> {
+    const result = await this.enqueueNativeExecutionSettlement(
+      async () => await this.settlePendingNativeExecutionsInternal(runIds)
+    );
+    return result.disposedCount;
+  }
+
+  async settlePendingNativeExecutionsForRunIds(
+    runIds: readonly string[]
+  ): Promise<KnowledgeBaseScopedNativeSettlement> {
+    return await this.enqueueNativeExecutionSettlement(
+      async () => await this.settlePendingNativeExecutionsInternal(runIds)
+    );
+  }
+
+  private async settlePendingNativeExecutionsInternal(
+    runIds?: readonly string[]
+  ): Promise<KnowledgeBaseScopedNativeSettlement> {
     this.lastNativeLifecycleSummary = null;
-    if (!this.hasNativeExecutionLifecycle()) return 0;
+    const requestedRunIds = runIds === undefined
+      ? []
+      : Array.from(new Set(
+        runIds.map((runId) => runId.trim()).filter(Boolean)
+      ));
+    if (!this.hasNativeExecutionLifecycle()) {
+      return {
+        requestedRunIds,
+        matchedRunIds: [],
+        matchedRecordCount: 0,
+        localCommitStatus: requestedRunIds.length
+          ? "not-applicable"
+          : "committed",
+        cleanupRecoveryRequired: false,
+        disposedCount: 0
+      };
+    }
     await this.migrateLegacyManagedThreads();
-    const pending = Array.from(this.pendingNativeExecutionCommits.entries());
+    const matchingRunIds = runIds === undefined
+      ? null
+      : new Set(requestedRunIds);
+    const pending = Array.from(this.pendingNativeExecutionCommits.entries())
+      .filter(([, item]) =>
+        matchingRunIds === null || matchingRunIds.has(item.runId)
+      );
+    const matchedRunIds = Array.from(new Set([
+      ...pending.map(([, item]) => item.runId),
+      ...requestedRunIds.filter((runId) =>
+        this.hasSettledNativeExecutionRunReceipt(runId)
+      )
+    ]));
     const localCommit = pending.length
       ? await this.commitKnowledgeRunDurably(pending.map(([, item]) => item.runId))
       : localDurableCommitResult(true);
     const settledStatuses: NativeCleanupStatus[] = [];
+    const settlementWarnings: string[] = [];
     for (const [recordId, item] of pending) {
-      const settled = await this.plugin.settleNativeExecution({
+      let settled = await this.plugin.settleNativeExecution({
         recordId,
         runOutcome: item.runOutcome,
-        localCommit
+        localCommit: item.missingReceiptWarning
+          ? localDurableCommitResult(false, item.missingReceiptWarning)
+          : localCommit
       });
+      if (!settled) {
+        const recovery = await this.retainMissingNativeExecutionReceipt(
+          recordId,
+          item
+        );
+        settled = recovery.settled;
+        settlementWarnings.push(recovery.warning);
+      } else if (item.missingReceiptWarning) {
+        settlementWarnings.push(item.missingReceiptWarning);
+      }
       if (settled?.cleanup) settledStatuses.push(settled.cleanup);
-      if (settled && localCommit.committed) this.pendingNativeExecutionCommits.delete(recordId);
+      if (!settled) settledStatuses.push("retained-for-recovery");
+      if (
+        settled
+        && localCommit.committed
+        && !item.missingReceiptWarning
+      ) {
+        this.pendingNativeExecutionCommits.delete(recordId);
+      }
     }
+    if (localCommit.committed) {
+      for (const runId of new Set(pending.map(([, item]) => item.runId))) {
+        if (
+          !Array.from(this.pendingNativeExecutionCommits.values())
+            .some((item) => item.runId === runId)
+        ) {
+          this.rememberSettledNativeExecutionRunReceipt(runId);
+        }
+      }
+    }
+    const unresolvedRequestedRunIds = requestedRunIds.filter((runId) =>
+      Array.from(this.pendingNativeExecutionCommits.values())
+        .some((item) => item.runId === runId)
+    );
+    const scopedLocalCommitStatus = unresolvedRequestedRunIds.length
+      ? "failed" as const
+      : "committed" as const;
     if (!localCommit.committed) {
+      const warning = joinNativeLifecycleWarnings([
+        `Native Execution 本地提交待恢复${localCommit.error ? `：${localCommit.error}` : ""}`,
+        ...settlementWarnings
+      ]);
       this.lastNativeLifecycleSummary = {
         localCommitStatus: "failed",
         cleanupStatuses: settledStatuses.length ? settledStatuses : ["retained-for-recovery"],
         cleanupAttempted: false,
         disposedCount: 0,
-        recordIds: pending.map(([recordId]) => recordId)
+        recordIds: pending.map(([recordId]) => recordId),
+        recoveryRequired: true,
+        warning
       };
-      return 0;
+      return {
+        requestedRunIds,
+        matchedRunIds,
+        matchedRecordCount: pending.length,
+        localCommitStatus: "failed",
+        cleanupRecoveryRequired: true,
+        disposedCount: 0
+      };
     }
-    const cleanup = await this.plugin.cleanupDueNativeExecutions(20);
+    let cleanup: NativeCleanupResult[];
+    try {
+      if (matchingRunIds === null) {
+        cleanup = await this.plugin.cleanupDueNativeExecutions(20);
+      } else {
+        cleanup = [];
+        for (const [recordId] of pending) {
+          cleanup.push(
+            await this.plugin.cleanupNativeExecutionRecord(recordId)
+          );
+        }
+      }
+    } catch (error) {
+      const warning = joinNativeLifecycleWarnings([
+        ...settlementWarnings,
+        `Native Execution 清理待恢复：${errorMessage(error)}`
+      ]);
+      console.warn("知识库 Native Execution 清理待恢复", error);
+      this.lastNativeLifecycleSummary = {
+        ...(pending.length ? { localCommitStatus: "committed" as const } : {}),
+        cleanupStatuses: Array.from(new Set([
+          ...settledStatuses,
+          "retained-for-recovery" as const
+        ])),
+        cleanupAttempted: false,
+        disposedCount: 0,
+        recordIds: pending.map(([recordId]) => recordId),
+        recoveryRequired: true,
+        warning
+      };
+      return {
+        requestedRunIds,
+        matchedRunIds,
+        matchedRecordCount: pending.length,
+        localCommitStatus: scopedLocalCommitStatus,
+        cleanupRecoveryRequired: true,
+        disposedCount: 0
+      };
+    }
     const disposedCount = cleanup.filter((result) => result.cleanup === "disposed").length;
+    const recoveryWarning = joinNativeLifecycleWarnings([
+      ...settlementWarnings,
+      nativeCleanupRecoveryWarning(cleanup)
+    ]);
+    const cleanupStatuses = cleanup.length
+      ? cleanup.map((result) => result.cleanup)
+      : settledStatuses;
     this.lastNativeLifecycleSummary = {
       ...(pending.length ? { localCommitStatus: "committed" as const } : {}),
-      cleanupStatuses: cleanup.length ? cleanup.map((result) => result.cleanup) : settledStatuses,
+      cleanupStatuses: settlementWarnings.length
+        ? Array.from(new Set([...settledStatuses, ...cleanupStatuses]))
+        : cleanupStatuses,
       cleanupAttempted: cleanup.some((result) => result.attempted),
       disposedCount,
       recordIds: Array.from(new Set([
         ...pending.map(([recordId]) => recordId),
         ...cleanup.map((result) => result.recordId)
-      ]))
+      ])),
+      recoveryRequired: Boolean(recoveryWarning),
+      ...(recoveryWarning ? { warning: recoveryWarning } : {})
     };
-    return disposedCount;
+    return {
+      requestedRunIds,
+      matchedRunIds,
+      matchedRecordCount: pending.length,
+      localCommitStatus: scopedLocalCommitStatus,
+      cleanupRecoveryRequired: Boolean(recoveryWarning),
+      disposedCount
+    };
+  }
+
+  private async enqueueNativeExecutionSettlement<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const run = this.nativeExecutionSettlementTail.then(
+      operation,
+      operation
+    );
+    this.nativeExecutionSettlementTail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return await run;
+  }
+
+  private hasSettledNativeExecutionRunReceipt(runId: string): boolean {
+    if (!this.settledNativeExecutionRunIds.delete(runId)) return false;
+    this.settledNativeExecutionRunIds.set(runId, true);
+    return true;
+  }
+
+  private rememberSettledNativeExecutionRunReceipt(runId: string): void {
+    this.settledNativeExecutionRunIds.delete(runId);
+    this.settledNativeExecutionRunIds.set(runId, true);
+    while (
+      this.settledNativeExecutionRunIds.size
+      > SETTLED_NATIVE_EXECUTION_RUN_RECEIPT_LIMIT
+    ) {
+      const oldestEntry = this.settledNativeExecutionRunIds.keys().next();
+      if (oldestEntry.done) break;
+      this.settledNativeExecutionRunIds.delete(oldestEntry.value);
+    }
   }
 
   getLastNativeLifecycleSummary(): KnowledgeBaseNativeLifecycleSummary | null {
@@ -920,18 +1347,31 @@ export class KnowledgeBaseAgentTaskService {
       ? input.turnOptionOverrides?.harnessSession ?? ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath())
       : undefined;
     const harnessSessionId = harnessSession?.id || this.plugin.settings.knowledgeBase.sessionId || "knowledge";
-    const vaultProfileFingerprint = fingerprintVaultProfile(input.vaultProfileSections);
-    const existingBinding = harnessSession ? sessionBackendBinding(harnessSession, "codex-cli") : null;
-    let threadId = input.managedKind === "ask" && existingBinding
-      && (!vaultProfileFingerprint || existingBinding.vaultProfileFingerprint === vaultProfileFingerprint)
-      ? existingBinding.nativeThreadId ?? ""
-      : "";
+    let threadId = "";
     const harnessRunId = input.harnessRunId || newId("knowledge-codex");
-    let nativeRecordPromise: Promise<string> | null = null;
+    let nativeRecordPromise: Promise<NativeExecutionRecord | null> | null = null;
+    let registeredNativeExecutionId = "";
+    let nativeRegistrationFailure: NativeRunRegistrationError | null = null;
     let harnessResult: HarnessRunResult | undefined;
     const queueNativeCommit = async (outcome: NativeRunOutcome): Promise<void> => {
-      const recordId = await nativeRecordPromise?.catch(() => "");
-      if (recordId) this.pendingNativeExecutionCommits.set(recordId, { runId: harnessRunId, runOutcome: outcome });
+      if (input.managedKind === "ask") {
+        this.queueHarnessNativeExecutionCommits(
+          harnessRunId,
+          outcome,
+          harnessResult,
+          "codex-cli",
+          input.managedKind
+        );
+        return;
+      }
+      const recoveryRecord = await nativeRecordPromise?.catch(() => null);
+      if (recoveryRecord) {
+        this.pendingNativeExecutionCommits.set(recoveryRecord.id, {
+          runId: harnessRunId,
+          runOutcome: outcome,
+          recoveryRecord
+        });
+      }
     };
     const adapter = this.plugin.createCodexRichAgentAdapter({
       displayName: "Codex",
@@ -947,13 +1387,6 @@ export class KnowledgeBaseAgentTaskService {
       nativeRefContext: this.plugin.getNativeExecutionRefContext("codex-cli"),
       buildInput: async (currentThreadId) => {
         threadId = currentThreadId;
-        if (!nativeRecordPromise) {
-          nativeRecordPromise = this.recordNativeExecution({
-            runId: harnessRunId,
-            native: this.buildCodexNativeExecutionRef(threadId),
-            managedKind: input.managedKind
-          });
-        }
         await this.plugin.setCodexHarnessThreadName(threadId, `Codex EchoInk KB: ${input.managedKind}`).catch(() => undefined);
         this.throwIfCanceled();
         return buildCodexKnowledgeInput(input.prompt, input.sources);
@@ -983,6 +1416,49 @@ export class KnowledgeBaseAgentTaskService {
       harnessResult = await this.plugin.runHarnessWithAdapter({
         adapter,
         ...(harnessSession ? { sessionProvider: () => harnessSession } : {}),
+        ...(input.managedKind !== "ask"
+          ? {
+            registerNativeExecution: async ({ native }: {
+              native: NativeExecutionRef;
+            }) => {
+              if (native.backendId !== "codex-cli" || !native.id.trim()) {
+                throw new NativeRunRegistrationError(
+                  "Codex Native execution registration received an invalid thread reference"
+                );
+              }
+              if (
+                registeredNativeExecutionId
+                && registeredNativeExecutionId !== native.id
+              ) {
+                throw new NativeRunRegistrationError(
+                  "Codex Native execution changed before the structured Knowledge prompt was submitted"
+                );
+              }
+              registeredNativeExecutionId = native.id;
+              nativeRecordPromise ??= this.recordNativeExecution({
+                runId: harnessRunId,
+                native,
+                managedKind: input.managedKind
+              });
+              let record: NativeExecutionRecord;
+              try {
+                record = await requireNativeExecutionRegistration(
+                  nativeRecordPromise,
+                  "Codex",
+                  native.id
+                );
+              } catch (error) {
+                nativeRegistrationFailure = nativeRunRegistrationError(
+                  error,
+                  "Codex",
+                  native.id
+                );
+                throw nativeRegistrationFailure;
+              }
+              return { recordId: record.id };
+            }
+          }
+          : {}),
         request: {
           runId: harnessRunId,
           sessionId: harnessSessionId,
@@ -1015,34 +1491,30 @@ export class KnowledgeBaseAgentTaskService {
       if (harnessResult.status === "cancelled") throw new Error(KNOWLEDGE_BASE_CANCEL_ERROR);
       if (harnessResult.status !== "running") throw new Error(harnessResult.error || "Codex 知识库任务未启动");
       if (input.managedKind === "ask" && harnessSession && harnessResult.backendBinding) {
-        updateSessionBackendBinding(harnessSession, {
-          ...harnessResult.backendBinding,
-          ...(vaultProfileFingerprint ? { vaultProfileFingerprint } : {})
-        });
+        updateSessionBackendBinding(harnessSession, harnessResult.backendBinding);
       }
-      if (!nativeRecordPromise && harnessResult.nativeExecution) {
-        nativeRecordPromise = this.recordNativeExecution({
-          runId: harnessRunId,
-          native: harnessResult.nativeExecution,
-          managedKind: input.managedKind
-        });
+      if (input.managedKind !== "ask" && !nativeRecordPromise) {
+        throw new NativeRunRegistrationError(
+          "Codex structured Knowledge run crossed the adapter boundary without a durable Native registration"
+        );
       }
       const text = this.resolveCodexKnowledgeRunText(await adapter.awaitResult(harnessRunId), options.model);
       await this.settleKnowledgeHarnessRun({ runId: harnessRunId, status: "completed", backendId: "codex-cli", text });
       await queueNativeCommit("success");
       return { text, harnessResult: { ...harnessResult, status: "completed", outputText: text } };
     } catch (error) {
-      const cancelled = isKnowledgeBaseCancelError(errorMessage(error));
+      const taskError: unknown = nativeRegistrationFailure ?? error;
+      const cancelled = isKnowledgeBaseCancelError(errorMessage(taskError));
       if (harnessResult?.status === "running") {
         await this.settleKnowledgeHarnessRun({
           runId: harnessRunId,
           status: cancelled ? "cancelled" : "failed",
           backendId: "codex-cli",
-          error: errorMessage(error)
+          error: errorMessage(taskError)
         }).catch(() => undefined);
       }
       await queueNativeCommit(cancelled ? "cancelled" : "failed");
-      throw error;
+      throw taskError;
     } finally {
       await adapter.dispose().catch(() => undefined);
     }
@@ -1052,11 +1524,11 @@ export class KnowledgeBaseAgentTaskService {
     runId: string;
     native: NativeExecutionRef;
     managedKind: KnowledgeBaseManagedThreadKind;
-  }): Promise<string> {
-    if (typeof (this.plugin as unknown as { recordNativeExecution?: unknown }).recordNativeExecution !== "function") return "";
+  }): Promise<NativeExecutionRecord | null> {
+    if (typeof (this.plugin as unknown as { recordNativeExecution?: unknown }).recordNativeExecution !== "function") return null;
     const recordId = `knowledge-native:${input.runId}:${input.native.backendId}`;
     const now = Date.now();
-    await this.plugin.recordNativeExecution({
+    const record: NativeExecutionRecord = {
       id: recordId,
       runId: input.runId,
       sessionId: this.plugin.settings.knowledgeBase.sessionId || "knowledge",
@@ -1073,8 +1545,130 @@ export class KnowledgeBaseAgentTaskService {
       settledAt: 0,
       committedAt: 0,
       disposedAt: 0
-    });
-    return recordId;
+    };
+    await this.plugin.recordNativeExecution(record);
+    return record;
+  }
+
+  private queueHarnessNativeExecutionCommits(
+    runId: string,
+    runOutcome: NativeRunOutcome,
+    result: HarnessRunResult | undefined,
+    backend: AgentBackendKind,
+    managedKind: KnowledgeBaseManagedThreadKind
+  ): void {
+    const recordIds = harnessNativeExecutionRecordIds(result);
+    for (const recordId of recordIds) {
+      const native = recordIds.length === 1
+        ? result?.nativeExecution
+        : undefined;
+      this.pendingNativeExecutionCommits.set(recordId, {
+        runId,
+        runOutcome,
+        recoveryRecord: this.nativeExecutionRecoveryRecord({
+          recordId,
+          runId,
+          backend,
+          managedKind,
+          native
+        })
+      });
+    }
+  }
+
+  private nativeExecutionRecoveryRecord(input: {
+    recordId: string;
+    runId: string;
+    backend: AgentBackendKind;
+    managedKind?: KnowledgeBaseManagedThreadKind;
+    native?: NativeExecutionRef;
+  }): NativeExecutionRecord {
+    const now = Date.now();
+    const native = input.native ?? {
+      backendId: input.backend,
+      id: "unknown",
+      kind: input.backend === "codex-cli"
+        ? "thread" as const
+        : harnessKnowledgeTaskNativeExecutionKind(input.backend),
+      persistence: input.backend === "codex-cli"
+        ? "provider-persistent" as const
+        : harnessKnowledgeTaskNativeExecutionPersistence(input.backend),
+      deviceKey: "unknown",
+      vaultId: "unknown",
+      createdAt: now
+    };
+    return {
+      id: input.recordId,
+      runId: input.runId,
+      sessionId: this.plugin.settings.knowledgeBase.sessionId || "knowledge",
+      surface: "knowledge",
+      workflow: input.managedKind
+        ? knowledgeWorkflowForManagedKind(input.managedKind)
+        : "knowledge.recovery",
+      native,
+      policy: input.managedKind
+        ? knowledgeNativeSessionPolicy(input.managedKind)
+        : {
+          historyAuthority: "echoink",
+          mode: "ephemeral-run",
+          preferredDisposition: ["retain"],
+          retainWhenLocalCommitFails: true,
+          cleanupRequiredForTaskSuccess: false
+        },
+      localCommit: "pending",
+      cleanup: "not-needed",
+      attempts: 0,
+      nextAttemptAt: 0,
+      lastError: "",
+      createdAt: native.createdAt || now,
+      settledAt: 0,
+      committedAt: 0,
+      disposedAt: 0
+    };
+  }
+
+  private async retainMissingNativeExecutionReceipt(
+    recordId: string,
+    item: PendingNativeExecutionCommit
+  ): Promise<{ settled: NativeExecutionRecord | null; warning: string }> {
+    const warning = item.missingReceiptWarning
+      ?? `Native Execution 结算回执缺失，已保留恢复记录：${recordId}`;
+    item.missingReceiptWarning = warning;
+    const recoveryRecord = item.recoveryRecord;
+    let registrationError = "";
+    try {
+      await this.plugin.recordNativeExecution(recoveryRecord);
+    } catch (error) {
+      registrationError = errorMessage(error);
+    }
+    try {
+      const settled = await this.plugin.settleNativeExecution({
+        recordId,
+        runOutcome: item.runOutcome,
+        localCommit: localDurableCommitResult(false, warning)
+      });
+      if (settled) return { settled, warning };
+      return {
+        settled: null,
+        warning: joinNativeLifecycleWarnings([
+          warning,
+          registrationError
+            ? `Native Execution 恢复记录登记失败：${registrationError}`
+            : "Native Execution 恢复记录仍无法读取"
+        ])
+      };
+    } catch (error) {
+      return {
+        settled: null,
+        warning: joinNativeLifecycleWarnings([
+          warning,
+          registrationError
+            ? `Native Execution 恢复记录登记失败：${registrationError}`
+            : "",
+          `Native Execution 恢复记录结算失败：${errorMessage(error)}`
+        ])
+      };
+    }
   }
 
   private buildCodexNativeExecutionRef(threadId: string): NativeExecutionRef {
@@ -1084,17 +1678,6 @@ export class KnowledgeBaseAgentTaskService {
       kind: "thread",
       persistence: "provider-persistent",
       ...this.plugin.getNativeExecutionRefContext("codex-cli"),
-      createdAt: Date.now()
-    };
-  }
-
-  private buildTaskNativeExecutionRef(backend: Exclude<AgentBackendKind, "codex-cli">, nativeId: string): NativeExecutionRef {
-    return {
-      backendId: backend,
-      id: nativeId,
-      kind: harnessKnowledgeTaskNativeExecutionKind(backend),
-      persistence: harnessKnowledgeTaskNativeExecutionPersistence(backend),
-      ...this.plugin.getNativeExecutionRefContext(backend),
       createdAt: Date.now()
     };
   }
@@ -1230,19 +1813,6 @@ export class KnowledgeBaseAgentTaskService {
   }
 }
 
-function fingerprintVaultProfile(sections: ContextSection[] | undefined): string {
-  const serialized = (sections ?? [])
-    .filter((section) => section.channel === "system")
-    .map((section) => ({
-      id: section.id,
-      source: section.source,
-      content: section.content
-    }))
-    .sort((left, right) => left.id.localeCompare(right.id) || left.source.localeCompare(right.source));
-  if (!serialized.length) return "";
-  return createHash("sha256").update(JSON.stringify(serialized)).digest("hex");
-}
-
 export function knowledgeWorkflowForManagedKind(kind: KnowledgeBaseManagedThreadKind): HarnessWorkflow {
   if (kind === "ask") return "knowledge.ask";
   if (kind === "lint") return "knowledge.check";
@@ -1276,14 +1846,124 @@ function localDurableCommitResult(committed: boolean, error = ""): LocalRunCommi
   };
 }
 
+async function requireNativeExecutionRegistration(
+  registration: Promise<NativeExecutionRecord | null> | null,
+  backendLabel: string,
+  nativeExecutionId: string
+): Promise<NativeExecutionRecord> {
+  if (!registration) {
+    throw new NativeRunRegistrationError(
+      `${backendLabel} Native execution registration did not start before prompt submission: ${nativeExecutionId}`
+    );
+  }
+  try {
+    const record = await registration;
+    if (!record) {
+      throw new NativeRunRegistrationError(
+        `${backendLabel} Native execution registration is unavailable before prompt submission: ${nativeExecutionId}`
+      );
+    }
+    return record;
+  } catch (error) {
+    if (error instanceof NativeRunRegistrationError) throw error;
+    throw new NativeRunRegistrationError(
+      `${backendLabel} Native execution registration failed before prompt submission: ${errorMessage(error)}`,
+      error
+    );
+  }
+}
+
+function nativeRunRegistrationError(
+  error: unknown,
+  backendLabel: string,
+  nativeExecutionId: string
+): NativeRunRegistrationError {
+  return error instanceof NativeRunRegistrationError
+    ? error
+    : new NativeRunRegistrationError(
+      `${backendLabel} Native execution registration failed before prompt submission: ${nativeExecutionId}: ${errorMessage(error)}`,
+      error
+    );
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function joinNativeLifecycleWarnings(warnings: readonly string[]): string {
+  return Array.from(new Set(
+    warnings
+      .map((warning) => warning.trim())
+      .filter(Boolean)
+  )).join("；");
+}
+
+function nativeCleanupRecoveryWarning(
+  cleanup: Awaited<ReturnType<CodexForObsidianPlugin["cleanupDueNativeExecutions"]>>
+): string {
+  const recovery = cleanup.filter((result) =>
+    result.cleanup === "failed"
+    || result.cleanup === "retained-for-recovery"
+    || result.cleanup === "quarantined"
+    || result.cleanup === "aborted"
+  );
+  if (!recovery.length) return "";
+  const messages = Array.from(new Set(
+    recovery
+      .map((result) => result.message?.trim() ?? "")
+      .filter(Boolean)
+  ));
+  return `Native Execution 清理待恢复${messages.length ? `：${messages.slice(0, 3).join("；")}` : ""}`;
+}
+
+function harnessResultFromError(error: unknown): HarnessRunResult | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const result = (error as { harnessResult?: unknown }).harnessResult;
+  if (!result || typeof result !== "object") return undefined;
+  const candidate = result as Partial<HarnessRunResult>;
+  return typeof candidate.runId === "string" && typeof candidate.status === "string"
+    ? result as HarnessRunResult
+    : undefined;
+}
+
+function harnessNativeExecutionRecordIds(
+  result: HarnessRunResult | undefined
+): string[] {
+  if (!result?.nativeExecutionRecordIds?.length) return [];
+  return Array.from(new Set(
+    result.nativeExecutionRecordIds
+      .map((recordId) => recordId.trim())
+      .filter(Boolean)
+  ));
 }
 
 function terminationConfirmedAtFrom(error: unknown): number | undefined {
   if (!error || typeof error !== "object") return undefined;
   const value = (error as { terminationConfirmedAt?: unknown }).terminationConfirmedAt;
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function hermesProposalHostDispositionStateAfterError(input: {
+  error: unknown;
+  nativeSubmitted: boolean;
+  trustInjectedTermination: boolean;
+}): "not-started" | "exited" | null {
+  if (!input.nativeSubmitted) return "not-started";
+  if (
+    input.error instanceof HermesProposalRuntimeError
+    && (
+      input.error.code === "timeout"
+      || input.error.code === "canceled"
+    )
+  ) {
+    return input.error.terminationConfirmedAt
+      && input.trustInjectedTermination
+      ? "exited"
+      : null;
+  }
+  // A non-abort runtime rejection is observed only after the child Promise
+  // settled; validation and materialization failures occur even later.
+  return "exited";
 }
 
 function assertAttemptSourcesStayInsideVault(

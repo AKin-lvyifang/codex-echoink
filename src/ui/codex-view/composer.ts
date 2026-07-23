@@ -79,11 +79,14 @@ export interface TurnQueueState {
   items: QueuedTurnItem[];
   paused: boolean;
   canResume: boolean;
+  recoveryRequired: boolean;
+  canRecover: boolean;
   draggedItemId: string;
 }
 
 export interface TurnQueueCallbacks {
   onResume: () => void;
+  onRecover: () => void;
   onDragStart: (itemId: string) => void;
   onDragEnd: () => void;
   onReorder: (sessionId: string, sourceId: string, targetIndex: number) => void;
@@ -299,17 +302,45 @@ export function renderComposerToolbar(
 
 export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, callbacks: TurnQueueCallbacks): void {
   container.empty();
-  container.toggleClass("is-visible", Boolean(state.items.length));
+  container.toggleClass(
+    "is-visible",
+    Boolean(state.items.length) || state.recoveryRequired
+  );
   container.toggleClass("is-paused", state.paused);
-  if (!state.items.length) return;
+  container.toggleClass("is-recovery-required", state.recoveryRequired);
+  if (!state.items.length && !state.recoveryRequired) return;
 
   const header = container.createDiv({ cls: "codex-turn-queue-header" });
   const title = header.createDiv({ cls: "codex-turn-queue-title" });
   const titleIcon = title.createSpan({ cls: "codex-turn-queue-title-icon" });
-  setIcon(titleIcon, state.paused ? "pause-circle" : "list-ordered");
-  title.createSpan({ text: state.paused ? `队列已暂停 · ${state.items.length}` : `队列 · ${state.items.length}` });
+  setIcon(
+    titleIcon,
+    state.recoveryRequired
+      ? "shield-alert"
+      : state.paused
+        ? "pause-circle"
+        : "list-ordered"
+  );
+  title.createSpan({
+    text: state.recoveryRequired
+      ? `本地记录待恢复${state.items.length ? ` · 队列 ${state.items.length}` : ""}`
+      : state.paused
+        ? `队列已暂停 · ${state.items.length}`
+        : `队列 · ${state.items.length}`
+  });
 
-  if (state.canResume) {
+  if (state.recoveryRequired && state.canRecover) {
+    const recover = header.createEl("button", {
+      cls: "codex-turn-queue-resume",
+      attr: {
+        type: "button",
+        title: "重试恢复本地生命周期记录",
+        "aria-label": "重试恢复本地生命周期记录"
+      }
+    });
+    setIcon(recover, "refresh-cw");
+    recover.onclick = callbacks.onRecover;
+  } else if (state.canResume) {
     const resume = header.createEl("button", {
       cls: "codex-turn-queue-resume",
       attr: { type: "button", title: "继续队列", "aria-label": "继续队列" }
@@ -318,8 +349,12 @@ export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, c
     resume.onclick = callbacks.onResume;
   }
 
-  const list = container.createDiv({ cls: "codex-turn-queue-list" });
-  state.items.forEach((item, index) => renderQueuedTurnItem(list, item, index, state, callbacks));
+  if (state.items.length) {
+    const list = container.createDiv({ cls: "codex-turn-queue-list" });
+    state.items.forEach((item, index) =>
+      renderQueuedTurnItem(list, item, index, state, callbacks)
+    );
+  }
 }
 
 export function renderComposerAttachments(container: HTMLElement, state: ComposerAttachmentsState, callbacks: ComposerAttachmentsCallbacks): void {

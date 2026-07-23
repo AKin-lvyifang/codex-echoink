@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   realpath,
@@ -18,6 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
   MaintenanceWorkflowSimulatedCrash,
   MaintenanceWorkflowWalError,
   applyMaintenanceWorkflowManagedWrites,
@@ -28,6 +30,7 @@ import {
   finalizeMaintenanceWorkflowWal,
   listMaintenanceWorkflowWals,
   loadMaintenanceWorkflowWal,
+  maintenanceWorkflowNoopReceiptPath,
   markMaintenanceWorkflowWalBlocked,
   mergeMaintenanceWorkflowSettings,
   prepareMaintenanceWorkflowWal,
@@ -84,22 +87,37 @@ interface WalFixture {
 }
 
 export async function runHarnessV2MaintenanceWorkflowWalTests(): Promise<void> {
+  await assertSnapshotCasRetriesTransientInPlaceWrite();
   await assertPreparePublishesAtomicallyAndReplays();
   await assertLoadRejectsMissingAndTamperedControlState();
   await assertIntentAndBlobTamperingFailClosed();
   await assertRecoveredWinnerRequiresCompletedAttempt();
   await assertRawMetadataCannotChangeBody();
   await assertRawMetadataExactlyMatchesVerifiedRaw();
+  await assertLegacyRawIntentWithoutExpectedBlobRemainsRecoverable();
+  await assertNewRawRegistryRequiresCanonicalBytes();
   await assertBinaryRawUsesRegistryWithoutMutation();
   await assertShadowReceiptMustMatchDurableJournal();
   await assertRealShadowCoreProducesCommitProof();
+  await assertShadowMetadataSuccessorProofSurvivesCleanup();
   await assertShadowJournalAndLiveCasAreRequired();
+  await assertLegacyShadowProofTargetOrderRemainsRecoverable();
   await assertNoopUsesDedicatedProofGate();
   await assertProofGatedPhasesAndConcurrentBlocker();
   await assertManagedApplyPreflightsEveryTarget();
   await assertManagedParentSymlinkFailsClosed();
   await assertManagedDisplacementNeverClobbers();
   await assertManagedCrashReplayMatrix();
+  await assertManagedReportTagsNormalizationSurvivesHardlinkCrash();
+  await assertManagedJournalLeaseAuthorityIsDurable();
+  await assertManagedLateSuccessorRecovery();
+  await assertManagedInstallTempUnlinkRechecksTarget();
+  await assertManagedRawPreApplyUpdatedSuccessorIsDurable();
+  await assertManagedRawAcceptedProofCannotForgeBody();
+  await assertManagedRawUpdatedSuccessorIsDurable();
+  await assertManagedRawIndexUpdatedSuccessorIsDurable();
+  await assertManagedRawUpdatedCannotRegress();
+  await assertManagedRawUpdatedInsertionRemainsBlocked();
   await assertSettingsMergeUsesPerSourceThreeWayCas();
   await assertSettingsPlanRejectsUnverifiedChanges();
   await assertSettingsHistoryRequiresCanonicalRoundTrip();
@@ -107,6 +125,54 @@ export async function runHarnessV2MaintenanceWorkflowWalTests(): Promise<void> {
   await assertSettingsCrashReplayAndManagedDriftBlock();
   await assertSettingsReadbackToPhaseFence();
   await assertFinalizeIsReplayableAndCleanupIsGated();
+}
+
+async function assertSnapshotCasRetriesTransientInPlaceWrite(): Promise<void> {
+  const vaultPath = await mkdtemp(path.join(
+    tmpdir(),
+    "echoink-workflow-cas-test-"
+  ));
+  try {
+    const relativePath = "raw/cas-transient.md";
+    const absolutePath = path.join(vaultPath, relativePath);
+    const beforeContent = "CAS-BEFORE\n";
+    const afterContent = "CAS-AFTER-WITH-DIFFERENT-SIZE\n";
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, beforeContent, "utf8");
+
+    const probe = await open(absolutePath, "r");
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      readFile: (...args: unknown[]) => Promise<Buffer>;
+    };
+    await probe.close();
+    const originalReadFile = fileHandlePrototype.readFile;
+    let injectedWrites = 0;
+    fileHandlePrototype.readFile = async function (
+      this: object,
+      ...args: unknown[]
+    ): Promise<Buffer> {
+      const content = await Reflect.apply(originalReadFile, this, args) as Buffer;
+      if (injectedWrites === 0) {
+        injectedWrites += 1;
+        await writeFile(absolutePath, afterContent, "utf8");
+      }
+      return content;
+    };
+    try {
+      const snapshot = await snapshotMaintenanceWorkflowFileCas(
+        vaultPath,
+        relativePath
+      );
+      assert.equal(snapshot.kind, "file");
+      assert.equal(snapshot.sha256, sha256Text(afterContent));
+      assert.equal(snapshot.size, Buffer.byteLength(afterContent));
+      assert.equal(injectedWrites, 1);
+    } finally {
+      fileHandlePrototype.readFile = originalReadFile;
+    }
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 async function assertSettingsHistoryRequiresCanonicalRoundTrip(): Promise<void> {
@@ -721,6 +787,185 @@ async function assertRawMetadataExactlyMatchesVerifiedRaw(): Promise<void> {
   });
 }
 
+async function assertLegacyRawIntentWithoutExpectedBlobRemainsRecoverable(): Promise<void> {
+  await withFixture("legacy-raw-expected-blob", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(
+      withLocaleSensitiveRawRegistry(fixture.input)
+    );
+    const intent = JSON.parse(
+      await readFile(prepared.handle.intentPath, "utf8")
+    ) as Record<string, unknown> & {
+      managedWrites: Array<{
+        kind: string;
+        blobDigest?: string;
+        expectedBlobDigest?: string;
+        desired: { kind: string; sha256?: string; size?: number };
+        rawRegistryProof?: {
+          canonicalBytes?: true;
+        };
+      }>;
+      digest: string;
+    };
+    const registryWrite = intent.managedWrites.find(
+      (write) => write.kind === "raw-registry"
+    );
+    assert.ok(registryWrite?.blobDigest);
+    const previousRegistryDigest = registryWrite.blobDigest;
+    const registry = normalizeRawDigestRegistry(JSON.parse(
+      await readFile(path.join(
+        prepared.handle.blobRootPath,
+        `${previousRegistryDigest.slice("sha256:".length)}.blob`
+      ), "utf8")
+    ));
+    const legacyRegistryContent = rawRegistryContentInLegacyLocaleOrder(
+      registry
+    );
+    const legacyRegistryDigest = sha256Text(
+      legacyRegistryContent.toString("utf8")
+    );
+    registryWrite.blobDigest = legacyRegistryDigest;
+    registryWrite.desired.sha256 = legacyRegistryDigest;
+    registryWrite.desired.size = legacyRegistryContent.byteLength;
+    delete registryWrite.rawRegistryProof?.canonicalBytes;
+    await writeFile(
+      path.join(
+        prepared.handle.blobRootPath,
+        `${legacyRegistryDigest.slice("sha256:".length)}.blob`
+      ),
+      legacyRegistryContent
+    );
+    if (previousRegistryDigest !== legacyRegistryDigest) {
+      await rm(path.join(
+        prepared.handle.blobRootPath,
+        `${previousRegistryDigest.slice("sha256:".length)}.blob`
+      ));
+    }
+    const removedDigests: string[] = [];
+    for (const write of intent.managedWrites) {
+      if (write.kind !== "raw-metadata" || !write.expectedBlobDigest) continue;
+      removedDigests.push(write.expectedBlobDigest);
+      delete write.expectedBlobDigest;
+    }
+    assert.ok(removedDigests.length > 0);
+    const { digest: _intentDigest, ...intentWithoutDigest } = intent;
+    intent.digest = digestForTest(intentWithoutDigest);
+    await writeFile(
+      prepared.handle.intentPath,
+      `${JSON.stringify(intent, null, 2)}\n`,
+      "utf8"
+    );
+
+    const stillReferenced = new Set(intent.managedWrites.flatMap((write) => [
+      write.blobDigest,
+      write.expectedBlobDigest
+    ].filter((digest): digest is string => Boolean(digest))));
+    for (const digest of removedDigests) {
+      if (stillReferenced.has(digest)) continue;
+      await rm(path.join(
+        prepared.handle.blobRootPath,
+        `${digest.slice("sha256:".length)}.blob`
+      ));
+    }
+
+    const state = JSON.parse(
+      await readFile(prepared.handle.statePath, "utf8")
+    ) as Record<string, unknown> & {
+      intentDigest: string;
+      digest: string;
+    };
+    state.intentDigest = intent.digest;
+    const { digest: _stateDigest, ...stateWithoutDigest } = state;
+    state.digest = digestForTest(stateWithoutDigest);
+    await writeFile(
+      prepared.handle.statePath,
+      `${JSON.stringify(state, null, 2)}\n`,
+      "utf8"
+    );
+
+    const legacy = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(legacy.state.phase, "prepared");
+    await confirmShadow(legacy, fixture.vaultPath);
+    const applied = await applyMaintenanceWorkflowManagedWrites(
+      legacy.handle,
+      fixture.vaultPath
+    );
+    assert.equal(applied.state.phase, "managed_committed");
+  });
+}
+
+async function assertNewRawRegistryRequiresCanonicalBytes(): Promise<void> {
+  await withFixture("new-raw-registry-canonical", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(
+      withLocaleSensitiveRawRegistry(fixture.input)
+    );
+    const intent = JSON.parse(
+      await readFile(prepared.handle.intentPath, "utf8")
+    ) as Record<string, unknown> & {
+      managedWrites: Array<{
+        kind: string;
+        blobDigest?: string;
+        desired: { kind: string; sha256?: string; size?: number };
+        rawRegistryProof?: { canonicalBytes?: true };
+      }>;
+      digest: string;
+    };
+    const registryWrite = intent.managedWrites.find(
+      (write) => write.kind === "raw-registry"
+    );
+    assert.ok(registryWrite?.blobDigest);
+    assert.equal(registryWrite.rawRegistryProof?.canonicalBytes, true);
+    const previousDigest = registryWrite.blobDigest;
+    const registry = normalizeRawDigestRegistry(JSON.parse(
+      await readFile(path.join(
+        prepared.handle.blobRootPath,
+        `${previousDigest.slice("sha256:".length)}.blob`
+      ), "utf8")
+    ));
+    const nonCanonical = rawRegistryContentInLegacyLocaleOrder(registry);
+    const nonCanonicalDigest = sha256Text(nonCanonical.toString("utf8"));
+    assert.notEqual(nonCanonicalDigest, previousDigest);
+    registryWrite.blobDigest = nonCanonicalDigest;
+    registryWrite.desired.sha256 = nonCanonicalDigest;
+    registryWrite.desired.size = nonCanonical.byteLength;
+    await writeFile(
+      path.join(
+        prepared.handle.blobRootPath,
+        `${nonCanonicalDigest.slice("sha256:".length)}.blob`
+      ),
+      nonCanonical
+    );
+    await rm(path.join(
+      prepared.handle.blobRootPath,
+      `${previousDigest.slice("sha256:".length)}.blob`
+    ));
+    const { digest: _intentDigest, ...intentWithoutDigest } = intent;
+    intent.digest = digestForTest(intentWithoutDigest);
+    await writeFile(
+      prepared.handle.intentPath,
+      `${JSON.stringify(intent, null, 2)}\n`,
+      "utf8"
+    );
+    const state = JSON.parse(
+      await readFile(prepared.handle.statePath, "utf8")
+    ) as Record<string, unknown> & {
+      intentDigest: string;
+      digest: string;
+    };
+    state.intentDigest = intent.digest;
+    const { digest: _stateDigest, ...stateWithoutDigest } = state;
+    state.digest = digestForTest(stateWithoutDigest);
+    await writeFile(
+      prepared.handle.statePath,
+      `${JSON.stringify(state, null, 2)}\n`,
+      "utf8"
+    );
+    await rejectsWithWalCode(
+      () => loadMaintenanceWorkflowWal(prepared.handle),
+      "blob_corrupt"
+    );
+  });
+}
+
 async function assertBinaryRawUsesRegistryWithoutMutation(): Promise<void> {
   await withFixture("binary-raw-commit", async (fixture) => {
     const binary = await createBinaryRawWorkflowInput(fixture);
@@ -996,6 +1241,120 @@ async function assertShadowJournalAndLiveCasAreRequired(): Promise<void> {
   });
 }
 
+async function assertLegacyShadowProofTargetOrderRemainsRecoverable(): Promise<void> {
+  await withFixture("shadow-proof-legacy-order", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await writeShadowCommitProof(prepared, fixture.vaultPath);
+    await confirmMaintenanceWorkflowShadowCommitted(
+      prepared.handle,
+      fixture.vaultPath,
+      {
+        changeSetDigest: requireShadow(prepared).changeSetDigest,
+        selectionDigest: requireShadow(prepared).selectionDigest,
+        appliedPaths: requireShadow(prepared).expectedAppliedPaths
+      }
+    );
+    const state = JSON.parse(
+      await readFile(prepared.handle.statePath, "utf8")
+    ) as Record<string, unknown> & {
+      shadowCommitProof: {
+        applyJournalDigest: string;
+        liveTargets: Array<{
+          relativePath: string;
+          observedResult?: unknown;
+          metadataSuccessor?: unknown;
+        }>;
+        commitReceipt: string;
+      };
+      digest: string;
+    };
+    assert.ok(state.shadowCommitProof.liveTargets.length > 1);
+    state.shadowCommitProof.liveTargets.reverse();
+    const journal = JSON.parse(await readFile(
+      path.join(
+        requireShadow(prepared).controlRootPath,
+        "apply-journal",
+        "journal.json"
+      ),
+      "utf8"
+    )) as Record<string, unknown> & {
+      digest: string;
+      attemptId: string;
+      liveVaultFingerprint: string;
+      changeSetDigest: string;
+      selectionDigest: string;
+      metadataSuccessorPolicy?: unknown;
+      metadataSuccessors?: unknown[];
+      state: "committed";
+    };
+    delete journal.metadataSuccessorPolicy;
+    delete journal.metadataSuccessors;
+    delete journal.metadataSuccessorInstallWindows;
+    const { digest: _journalDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(
+      path.join(
+        requireShadow(prepared).controlRootPath,
+        "apply-journal",
+        "journal.json"
+      ),
+      `${JSON.stringify(journal, null, 2)}\n`,
+      "utf8"
+    );
+    state.shadowCommitProof.applyJournalDigest = journal.digest;
+    for (const target of state.shadowCommitProof.liveTargets) {
+      delete target.observedResult;
+      delete target.metadataSuccessor;
+    }
+    state.shadowCommitProof.commitReceipt = digestForTest({
+      journalDigest: journal.digest,
+      attemptId: journal.attemptId,
+      liveVaultFingerprint: journal.liveVaultFingerprint,
+      changeSetDigest: journal.changeSetDigest,
+      selectionDigest: journal.selectionDigest,
+      selectedPaths: state.shadowCommitProof.liveTargets.map(
+        (target) => target.relativePath
+      ),
+      state: journal.state
+    });
+    const { digest: _digest, ...withoutDigest } = state;
+    state.digest = digestForTest(withoutDigest);
+    await writeFile(
+      prepared.handle.statePath,
+      `${JSON.stringify(state, null, 2)}\n`,
+      "utf8"
+    );
+
+    const legacyOrdered = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(legacyOrdered.state.phase, "shadow_committed");
+    await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    const store: MutableSettingsStore<FixtureSettings> = {
+      settings: structuredClone(fixture.baselineSettings),
+      generation: 1
+    };
+    const settingsHost = createSettingsHost(store);
+    await commitMaintenanceWorkflowSettingsDurably(
+      prepared.handle,
+      fixture.vaultPath,
+      settingsHost
+    );
+    const finalized = await finalizeMaintenanceWorkflowWal(
+      prepared.handle,
+      fixture.vaultPath,
+      async (intent) => {
+        await cleanupMaintenanceShadowVault(
+          shadowHandleFromIntentForTest(intent)
+        );
+      },
+      { settingsHost }
+    );
+    assert.equal(finalized.phase, "finalized");
+  });
+}
+
 async function assertNoopUsesDedicatedProofGate(): Promise<void> {
   await withFixture("noop", async (fixture) => {
     // Use a filesystem-representable timestamp so this test can restore the
@@ -1009,35 +1368,115 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
       mtime: sourceStat.mtimeMs,
       fingerprint: rawDigestFingerprint("raw/source.md", content)
     };
-    const proof = await createMaintenanceWorkflowNoopProof({
+    const localeSensitivePaths = [
+      "raw/articles/GitHub项目收集/a.md",
+      "raw/articles/github-trending/b.md",
+      "raw/articles/微信公众号/c.md"
+    ];
+    const localeSensitiveRecords = [];
+    for (const relativePath of localeSensitivePaths) {
+      const absolutePath = path.join(fixture.vaultPath, relativePath);
+      await mkdir(path.dirname(absolutePath), { recursive: true });
+      const sourceContent = Buffer.from(`${relativePath}\n`, "utf8");
+      await writeFile(absolutePath, sourceContent);
+      const sourceFileStat = await stat(absolutePath);
+      localeSensitiveRecords.push({
+        relativePath,
+        size: sourceContent.byteLength,
+        mtime: sourceFileStat.mtimeMs,
+        fingerprint: rawDigestFingerprint(relativePath, sourceContent)
+      });
+    }
+    const canonicalProof = await createMaintenanceWorkflowNoopProof({
       liveVaultPath: fixture.vaultPath,
-      discoveredSources: [sourceRecord],
+      discoveredSources: [sourceRecord, ...localeSensitiveRecords],
       changedSources: []
     });
-    const existingProcessed: KnowledgeBaseProcessedSource = {
-      path: sourceRecord.relativePath,
-      size: sourceRecord.size,
-      mtime: sourceRecord.mtime,
-      fingerprint: sourceRecord.fingerprint,
-      digestedAt: 50,
-      reportPath: "outputs/maintenance/previous.md",
-      evidencePaths: ["wiki/previous.md"],
-      runId: "previous-run",
-      confidence: "verified"
+    const canonicalPaths = canonicalProof.sourceSnapshot.map(
+      (source) => source.relativePath
+    );
+    assert.deepEqual(
+      canonicalPaths,
+      [...canonicalPaths].sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
+      "new noop proofs must use locale-independent ordering"
+    );
+
+    // Legacy EchoInk builds used localeCompare. Preserve the exact signed
+    // snapshot and its digests so a WAL created under zh-CN remains readable
+    // after the host locale changes.
+    const legacySnapshot = [...canonicalProof.sourceSnapshot].sort(
+      (left, right) => left.relativePath.localeCompare(
+        right.relativePath,
+        "zh-CN"
+      )
+    );
+    assert.notDeepEqual(
+      legacySnapshot.map((source) => source.relativePath),
+      canonicalPaths,
+      "fixture must exercise a historical locale-dependent order"
+    );
+    const proof = {
+      ...canonicalProof,
+      discoveryDigest: digestForTest({
+        discoveredSources: legacySnapshot,
+        changedSources: []
+      }),
+      sourceSnapshotDigest: digestForTest(legacySnapshot),
+      sourceSnapshot: legacySnapshot
     };
+    const existingProcessed = Object.fromEntries(
+      proof.sourceSnapshot.map((source) => [
+        source.relativePath,
+        {
+          path: source.relativePath,
+          size: source.size,
+          mtime: source.mtime,
+          fingerprint: source.fingerprint,
+          digestedAt: 50,
+          reportPath: "outputs/maintenance/previous.md",
+          evidencePaths: ["wiki/previous.md"],
+          runId: "previous-run",
+          confidence: "verified" as const
+        } satisfies KnowledgeBaseProcessedSource
+      ])
+    );
     const targetTerminal = {
       ...fixture.input.draft.settings.targetTerminal,
       lastSummary: "maintenance noop",
       lastCompletion: "noop" as const,
       lastAttempts: []
     };
+    const noopReceipt = {
+      schemaVersion: MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
+      kind: "run-scoped-report" as const,
+      pathStrategy: "workflow-run-id-sha256-v1" as const,
+      dateKey: "2026-07-18"
+    };
+    const noopReportPath = maintenanceWorkflowNoopReceiptPath({
+      mode: fixture.input.draft.mode,
+      workflowRunId: fixture.input.draft.workflowRunId,
+      receipt: noopReceipt
+    });
+    targetTerminal.lastReportPath = noopReportPath;
+    const originalReportWrite = fixture.input.managedWrites.find(
+      (write) => write.kind === "report"
+    );
+    assert.ok(originalReportWrite?.operation === "upsert");
     const noopInput: PrepareMaintenanceWorkflowWalInput = {
       ...fixture.input,
-      managedWrites: withoutRawDigestWrites(fixture.input),
+      managedWrites: [{
+        ...originalReportWrite,
+        relativePath: noopReportPath,
+        expected: await snapshotMaintenanceWorkflowFileCas(
+          fixture.vaultPath,
+          noopReportPath
+        )
+      }],
       draft: {
         ...fixture.input.draft,
         winner: null,
         completion: "noop",
+        noopReceipt,
         attempts: [],
         verifiedSources: [],
         pendingSources: [],
@@ -1045,23 +1484,24 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
         summary: "maintenance noop",
         shadow: null,
         noopProof: proof,
+        report: {
+          ...fixture.input.draft.report,
+          relativePath: noopReportPath
+        },
         indexReconciliation: {
           committed: [],
           deferred: [],
           warnings: []
         },
         settings: {
-          baselineProcessedSources: {
-            [sourceRecord.relativePath]: existingProcessed
-          },
-          targetProcessedSources: {
-            [sourceRecord.relativePath]: existingProcessed
-          },
+          baselineProcessedSources: existingProcessed,
+          targetProcessedSources: existingProcessed,
           removedProcessedSourcePaths: [],
           baselineTerminal: fixture.input.draft.settings.baselineTerminal,
           targetTerminal,
           historyEntry: {
             ...fixture.input.draft.settings.historyEntry,
+            reportPath: noopReportPath,
             completion: "noop",
             winnerBackend: null,
             attempts: []
@@ -1070,9 +1510,115 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
         }
       }
     };
+    const legacyTrackerWrite = fixture.input.managedWrites.find(
+      (write) => write.kind === "tracker"
+    );
+    assert.ok(legacyTrackerWrite?.operation === "upsert");
+    await rejectsWithWalCode(
+      () => prepareMaintenanceWorkflowWal({
+        ...noopInput,
+        draft: {
+          ...noopInput.draft,
+          noopReceipt: undefined
+        },
+        managedWrites: [
+          ...noopInput.managedWrites,
+          legacyTrackerWrite
+        ]
+      }),
+      "intent_corrupt"
+    );
+    await rejectsWithWalCode(
+      () => prepareMaintenanceWorkflowWal({
+        ...noopInput,
+        managedWrites: [
+          ...noopInput.managedWrites,
+          legacyTrackerWrite
+        ]
+      }),
+      "intent_corrupt"
+    );
     const prepared = await prepareMaintenanceWorkflowWal(noopInput);
     assert.equal(prepared.intent.winner, null);
     assert.equal(prepared.intent.shadow, null);
+
+    const trackerBlobDigest = `sha256:${createHash("sha256")
+      .update(legacyTrackerWrite.desiredContent)
+      .digest("hex")}`;
+    await writeFile(
+      path.join(
+        prepared.handle.blobRootPath,
+        `${trackerBlobDigest.slice("sha256:".length)}.blob`
+      ),
+      legacyTrackerWrite.desiredContent
+    );
+    const legacyIntent = JSON.parse(
+      await readFile(prepared.handle.intentPath, "utf8")
+    );
+    const legacyReportRelativePath =
+      "outputs/maintenance/kb-maintenance-2099-12-31.md";
+    delete legacyIntent.noopReceipt;
+    legacyIntent.createdAt = "2099-12-31T23:59:59.000Z";
+    legacyIntent.report.relativePath = legacyReportRelativePath;
+    const legacyReportWrite = legacyIntent.managedWrites.find(
+      (write: { kind?: string }) => write.kind === "report"
+    );
+    assert.ok(legacyReportWrite);
+    legacyReportWrite.relativePath = legacyReportRelativePath;
+    legacyIntent.settings.targetTerminal.lastReportPath =
+      legacyReportRelativePath;
+    legacyIntent.settings.targetTerminalDigest = digestForTest(
+      legacyIntent.settings.targetTerminal
+    );
+    legacyIntent.settings.historyEntry.reportPath =
+      legacyReportRelativePath;
+    legacyIntent.managedWrites.push({
+      kind: "tracker",
+      operation: "upsert",
+      relativePath: legacyTrackerWrite.relativePath,
+      expected: legacyTrackerWrite.expected,
+      desired: {
+        kind: "file",
+        sha256: trackerBlobDigest,
+        size: legacyTrackerWrite.desiredContent.byteLength,
+        mode: legacyTrackerWrite.desiredMode & 0o777
+      },
+      blobDigest: trackerBlobDigest
+    });
+    const { digest: _legacyIntentDigest, ...legacyIntentWithoutDigest } =
+      legacyIntent;
+    legacyIntent.digest = digestForTest(legacyIntentWithoutDigest);
+    await writeFile(
+      prepared.handle.intentPath,
+      `${JSON.stringify(legacyIntent, null, 2)}\n`,
+      "utf8"
+    );
+    const legacyState = JSON.parse(
+      await readFile(prepared.handle.statePath, "utf8")
+    );
+    legacyState.intentDigest = legacyIntent.digest;
+    const { digest: _legacyStateDigest, ...legacyStateWithoutDigest } =
+      legacyState;
+    legacyState.digest = digestForTest(legacyStateWithoutDigest);
+    await writeFile(
+      prepared.handle.statePath,
+      `${JSON.stringify(legacyState, null, 2)}\n`,
+      "utf8"
+    );
+    const loadedLegacy = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(loadedLegacy.intent.noopReceipt, undefined);
+    assert.equal(
+      loadedLegacy.intent.createdAt,
+      "2099-12-31T23:59:59.000Z",
+      "legacy compatibility must follow the strict old structure, not a wall-clock cutoff"
+    );
+    assert.equal(
+      loadedLegacy.intent.managedWrites.filter(
+        (write) => write.kind === "tracker"
+      ).length,
+      1,
+      "pre-cutover noop WAL with one tracker write must remain loadable"
+    );
     await rejectsWithWalCode(
       () => confirmMaintenanceWorkflowShadowCommitted(
         prepared.handle,
@@ -1117,12 +1663,15 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
       prepared.handle,
       fixture.vaultPath
     );
+    assert.deepEqual(
+      await readFile(fixture.trackerPath),
+      legacyTrackerWrite.desiredContent,
+      "legacy noop recovery must replay its already-durable tracker target"
+    );
     const store: MutableSettingsStore<FixtureSettings> = {
       settings: {
         ...structuredClone(fixture.baselineSettings),
-        processedSources: {
-          [sourceRecord.relativePath]: existingProcessed
-        }
+        processedSources: existingProcessed
       },
       generation: 1
     };
@@ -1132,6 +1681,39 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
       fixture.vaultPath,
       settingsHost
     );
+    let readbacks = 0;
+    const driftSettingsHost: MaintenanceWorkflowSettingsHost<FixtureSettings> = {
+      withExclusiveTransaction: async (action) =>
+        await settingsHost.withExclusiveTransaction(async (transaction) =>
+          await action({
+            ...transaction,
+            readWithGeneration: async () => {
+              const readback = await transaction.readWithGeneration();
+              readbacks += 1;
+              if (readbacks === 2) {
+                await writeFile(fixture.sourcePath, sameLengthDrift);
+              }
+              return readback;
+            }
+          }))
+    };
+    await rejectsWithWalCode(
+      () => finalizeMaintenanceWorkflowWal(
+        prepared.handle,
+        fixture.vaultPath,
+        () => undefined,
+        { settingsHost: driftSettingsHost }
+      ),
+      "managed_cas_conflict"
+    );
+    const blocked = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(blocked.state.blocked?.code, "managed_cas_conflict");
+    await writeFile(fixture.sourcePath, content);
+    await utimes(
+      fixture.sourcePath,
+      sourceStat.atime,
+      new Date(sourceStat.mtimeMs)
+    );
     let cleanupCalls = 0;
     const finalized = await finalizeMaintenanceWorkflowWal(
       prepared.handle,
@@ -1139,7 +1721,13 @@ async function assertNoopUsesDedicatedProofGate(): Promise<void> {
       () => {
         cleanupCalls += 1;
       },
-      { settingsHost }
+      {
+        settingsHost,
+        resumeBlocked: {
+          stateSequence: blocked.state.sequence,
+          stateDigest: blocked.state.digest
+        }
+      }
     );
     assert.equal(finalized.phase, "finalized");
     assert.equal(cleanupCalls, 0, "noop must not fabricate Shadow cleanup");
@@ -1233,6 +1821,8 @@ async function assertRealShadowCoreProducesCommitProof(): Promise<void> {
         changeSetDigest: journal.changeSetDigest,
         selectionDigest: journal.selectionDigest,
         selectedPaths: [...journal.selectedPaths].sort(),
+        metadataSuccessorPolicy: journal.metadataSuccessorPolicy,
+        metadataSuccessors: journal.metadataSuccessors ?? [],
         state: journal.state
       })
     );
@@ -1311,6 +1901,130 @@ async function assertRealShadowCoreProducesCommitProof(): Promise<void> {
     await assert.rejects(
       () => lstat(shadowHandle.rootPath),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+  });
+}
+
+async function assertShadowMetadataSuccessorProofSurvivesCleanup(): Promise<void> {
+  await withFixture("shadow-metadata-successor-proof", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    const shadow = requireShadow(prepared);
+    const winner = requireWinner(prepared);
+    const shadowHandle = {
+      attemptId: winner.attemptId,
+      rootPath: shadow.controlRootPath,
+      agentVaultPath: path.join(shadow.controlRootPath, "vault"),
+      manifestPath: path.join(shadow.controlRootPath, "manifest.json")
+    };
+    const changeSet = await loadMaintenanceShadowChangeSet(shadowHandle);
+    const observedUpdated = new Date().toISOString();
+    const applied = await applyShadowChangeSet(
+      fixture.vaultPath,
+      changeSet,
+      {
+        allowPaths: shadow.expectedAppliedPaths,
+        async faultInjector(input) {
+          if (
+            input.point !== "after-entry"
+            || input.relativePath !== "wiki/topic.md"
+          ) return;
+          const current = await readFile(
+            path.join(fixture.vaultPath, input.relativePath),
+            "utf8"
+          );
+          await writeFile(
+            path.join(fixture.vaultPath, input.relativePath),
+            current.replace(
+              /^updated: .*$/m,
+              `updated: ${observedUpdated}`
+            ),
+            "utf8"
+          );
+        }
+      }
+    );
+    const confirmed = await confirmMaintenanceWorkflowShadowCommitted(
+      prepared.handle,
+      fixture.vaultPath,
+      {
+        changeSetDigest: changeSet.digest,
+        selectionDigest: shadow.selectionDigest,
+        appliedPaths: applied.appliedPaths
+      }
+    );
+    const target = confirmed.shadowCommitProof?.liveTargets.find(
+      (candidate) => candidate.relativePath === "wiki/topic.md"
+    );
+    assert.equal(target?.result.kind, "file");
+    assert.equal(target?.observedResult?.kind, "file");
+    assert.ok(target?.metadataSuccessor);
+    assert.notDeepEqual(
+      target?.result,
+      target?.observedResult,
+      "WAL must preserve both sealed and observed successor CAS"
+    );
+    assert.deepEqual(
+      target?.observedResult,
+      target?.metadataSuccessor?.result
+    );
+
+    const observedUpdatedAgain = new Date(
+      Date.parse(observedUpdated) + 60_000
+    ).toISOString();
+    const wikiPath = path.join(fixture.vaultPath, "wiki/topic.md");
+    await writeFile(
+      wikiPath,
+      (await readFile(wikiPath, "utf8")).replace(
+        observedUpdated,
+        observedUpdatedAgain
+      ),
+      "utf8"
+    );
+
+    const managed = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    const refreshedShadowTarget = managed.state.shadowCommitProof?.liveTargets
+      .find((candidate) => candidate.relativePath === "wiki/topic.md");
+    assert.equal(
+      refreshedShadowTarget?.metadataSuccessor?.updatedAt,
+      Date.parse(observedUpdatedAgain),
+      "WAL state must advance from S' to the mark-refreshed S'' proof"
+    );
+    const store: MutableSettingsStore<FixtureSettings> = {
+      settings: structuredClone(fixture.baselineSettings),
+      generation: 1
+    };
+    const settingsHost = createSettingsHost(store);
+    await commitMaintenanceWorkflowSettingsDurably(
+      prepared.handle,
+      fixture.vaultPath,
+      settingsHost
+    );
+    const finalized = await finalizeMaintenanceWorkflowWal(
+      prepared.handle,
+      fixture.vaultPath,
+      async () => {
+        await markMaintenanceShadowCommittedFromJournal(
+          shadowHandle,
+          fixture.vaultPath
+        );
+        await cleanupMaintenanceShadowVault(shadowHandle);
+      },
+      { settingsHost }
+    );
+    assert.equal(finalized.phase, "finalized");
+    await assert.rejects(
+      () => lstat(shadowHandle.rootPath),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+    assert.match(
+      await readFile(
+        path.join(fixture.vaultPath, "wiki/topic.md"),
+        "utf8"
+      ),
+      new RegExp(`updated: ${observedUpdatedAgain.replace(/\./g, "\\.")}`)
     );
   });
 }
@@ -1615,6 +2329,587 @@ async function assertManagedCrashReplayMatrix(): Promise<void> {
       );
     });
   }
+}
+
+async function assertManagedReportTagsNormalizationSurvivesHardlinkCrash(): Promise<void> {
+  await withFixture("managed-report-tags-hardlink-crash", async (fixture) => {
+    const updated = new Date(
+      Math.floor(Date.now() / 60_000) * 60_000
+    ).toISOString().slice(0, 16);
+    const desiredReport = [
+      "---",
+      "created: 2026-07-22",
+      `updated: ${updated}`,
+      "tags: [knowledge, maintenance, EchoInk]",
+      "---",
+      "REPORT-FINAL",
+      ""
+    ].join("\n");
+    const normalizedReport = desiredReport.replace(
+      "tags: [knowledge, maintenance, EchoInk]",
+      [
+        "tags:",
+        "  - knowledge",
+        "  - maintenance",
+        "  - EchoInk"
+      ].join("\n")
+    );
+    const reportWrite = fixture.input.managedWrites.find(
+      (write) => write.kind === "report"
+    );
+    assert.ok(reportWrite && reportWrite.operation === "upsert");
+    reportWrite.desiredContent = Buffer.from(desiredReport, "utf8");
+    fixture.input.draft.report.finalBlockDigest = sha256Text(desiredReport);
+
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    let crashed = false;
+    await assert.rejects(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath,
+        {
+          async faultInjector(input) {
+            if (
+              crashed
+              || input.point !== "after-install"
+              || input.relativePath !== "outputs/maintenance/report.md"
+            ) return;
+            crashed = true;
+            await writeFile(fixture.reportPath, normalizedReport, "utf8");
+            throw new MaintenanceWorkflowSimulatedCrash(
+              "crash after Obsidian normalized report tags through the install hardlink"
+            );
+          }
+        }
+      ),
+      MaintenanceWorkflowSimulatedCrash
+    );
+
+    const recovered = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    assert.equal(recovered.state.phase, "managed_committed");
+    assert.equal(await readFile(fixture.reportPath, "utf8"), normalizedReport);
+    assert.deepEqual(
+      (await readdir(path.dirname(fixture.reportPath)))
+        .filter((name) => name.startsWith(".echoink-managed-")),
+      []
+    );
+  });
+}
+
+async function assertManagedJournalLeaseAuthorityIsDurable(): Promise<void> {
+  await withFixture("managed-journal-lease-tamper", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await crashManagedBeforeFirstEntry(prepared, fixture.vaultPath);
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as Record<string, unknown> & {
+      metadataSuccessorInstallWindows: Array<{
+        createdAt: string;
+        leaseDigest: string;
+        window: { lowerBoundMs: number; upperBoundMs: number };
+      }>;
+      digest: string;
+    };
+    const window = journal.metadataSuccessorInstallWindows[0];
+    assert.ok(window);
+    const forgedCreatedAt = new Date(
+      Date.parse(window.createdAt) - 60_000
+    ).toISOString();
+    window.createdAt = forgedCreatedAt;
+    window.window.upperBoundMs = Date.parse(forgedCreatedAt) + 5 * 60_000;
+    const { digest: _journalDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(
+      prepared.handle.managedJournalPath,
+      `${JSON.stringify(journal, null, 2)}\n`,
+      "utf8"
+    );
+    await rejectsWithWalCode(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath
+      ),
+      "managed_journal_corrupt"
+    );
+    const unchanged = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as { digest: string };
+    assert.equal(
+      unchanged.digest,
+      journal.digest,
+      "journal-only forgery must be rejected before any recovery rewrite"
+    );
+  });
+
+  await withFixture("managed-state-only-lease", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await crashManagedBeforeFirstEntry(prepared, fixture.vaultPath);
+    const stateBefore = JSON.parse(await readFile(
+      prepared.handle.statePath,
+      "utf8"
+    )) as { managedMetadataSuccessorLeases?: unknown[] };
+    assert.ok((stateBefore.managedMetadataSuccessorLeases?.length ?? 0) > 0);
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as Record<string, unknown> & {
+      metadataSuccessorInstallWindows?: unknown[];
+      digest: string;
+    };
+    delete journal.metadataSuccessorInstallWindows;
+    const { digest: _journalDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(
+      prepared.handle.managedJournalPath,
+      `${JSON.stringify(journal, null, 2)}\n`,
+      "utf8"
+    );
+    const recovered = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    assert.equal(recovered.state.phase, "managed_committed");
+  });
+}
+
+async function assertManagedLateSuccessorRecovery(): Promise<void> {
+  for (const replacement of ["hardlink", "atomic"] as const) {
+    await withFixture(
+      `managed-late-${replacement}`,
+      async (fixture) => {
+        const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+        await confirmShadow(prepared, fixture.vaultPath);
+        const acceptedTimestamp = "1970-01-01T00:01:00.000Z";
+        await replaceUpdatedTimestamp(
+          fixture.sourcePath,
+          "1970-01-01T00:00:00.000Z",
+          acceptedTimestamp
+        );
+        const successorTimestamp = new Date(
+          Math.floor(Date.now() / 60_000) * 60_000
+        ).toISOString();
+        let crashed = false;
+        await assert.rejects(
+          () => applyMaintenanceWorkflowManagedWrites(
+            prepared.handle,
+            fixture.vaultPath,
+            {
+              async faultInjector(input) {
+                if (
+                  crashed
+                  || input.point !== "after-install"
+                  || input.relativePath !== "raw/source.md"
+                ) return;
+                crashed = true;
+                const installed = await readFile(fixture.sourcePath, "utf8");
+                const next = installed.replace(
+                  acceptedTimestamp,
+                  successorTimestamp
+                );
+                assert.notEqual(next, installed);
+                if (replacement === "hardlink") {
+                  await writeFile(fixture.sourcePath, next, "utf8");
+                } else {
+                  const atomicPath = `${fixture.sourcePath}.metadata-plugin`;
+                  await writeFile(atomicPath, next, "utf8");
+                  await rename(atomicPath, fixture.sourcePath);
+                }
+                throw new MaintenanceWorkflowSimulatedCrash(
+                  `late-${replacement}`
+                );
+              }
+            }
+          ),
+          MaintenanceWorkflowSimulatedCrash
+        );
+        await expireManagedLeaseWindow(
+          prepared,
+          "raw/source.md"
+        );
+        const recovered = await applyMaintenanceWorkflowManagedWrites(
+          prepared.handle,
+          fixture.vaultPath
+        );
+        assert.equal(recovered.state.phase, "managed_committed");
+        assert.match(
+          await readFile(fixture.sourcePath, "utf8"),
+          new RegExp(`updated: ${successorTimestamp.replace(/\./g, "\\.")}`)
+        );
+      }
+    );
+  }
+}
+
+async function assertManagedInstallTempUnlinkRechecksTarget(): Promise<void> {
+  await withFixture("managed-temp-unlink-race", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    let replaced = false;
+    await rejectsWithWalCode(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath,
+        {
+          async faultInjector(input) {
+            if (
+              replaced
+              || input.point !== "before-install-temp-unlink"
+              || input.relativePath !== "outputs/maintenance/report.md"
+            ) return;
+            replaced = true;
+            const replacementPath = `${fixture.reportPath}.third-value`;
+            await writeFile(replacementPath, "THIRD-VALUE\n", "utf8");
+            await rename(replacementPath, fixture.reportPath);
+          }
+        }
+      ),
+      "managed_cas_conflict"
+    );
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as {
+      entries: Array<{
+        write: { relativePath: string };
+        installTempRelativePath?: string;
+      }>;
+    };
+    const reportEntry = journal.entries.find(
+      (entry) => entry.write.relativePath === "outputs/maintenance/report.md"
+    );
+    assert.ok(reportEntry?.installTempRelativePath);
+    assert.equal(
+      await readFile(path.join(
+        fixture.vaultPath,
+        reportEntry.installTempRelativePath
+      ), "utf8"),
+      "REPORT-FINAL\n",
+      "conflict must preserve the install temp for recovery"
+    );
+    assert.equal(await readFile(fixture.reportPath, "utf8"), "THIRD-VALUE\n");
+  });
+}
+
+async function assertManagedRawPreApplyUpdatedSuccessorIsDurable(): Promise<void> {
+  await withFixture("managed-raw-updated-successor", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    const successorTimestamp = "1970-01-01T00:01:00.000Z";
+    await replaceUpdatedTimestamp(
+      fixture.sourcePath,
+      "1970-01-01T00:00:00.000Z",
+      successorTimestamp
+    );
+    const applied = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    assert.equal(applied.state.phase, "managed_committed");
+    const finalContent = await readFile(fixture.sourcePath, "utf8");
+    assert.match(finalContent, /已处理: true/);
+    assert.match(finalContent, /updated: 1970-01-01T00:01:00\.000Z/);
+  });
+}
+
+async function assertManagedRawAcceptedProofCannotForgeBody(): Promise<void> {
+  await withFixture("managed-raw-updated-successor", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await replaceUpdatedTimestamp(
+      fixture.sourcePath,
+      "1970-01-01T00:00:00.000Z",
+      "1970-01-01T00:01:00.000Z"
+    );
+    await crashManagedBeforeFirstEntry(prepared, fixture.vaultPath);
+    const forgedContent = (await readFile(fixture.sourcePath, "utf8"))
+      .replace("RAW-SOURCE", "FORGED-BODY");
+    await writeFile(fixture.sourcePath, forgedContent, "utf8");
+    const forgedCas = await snapshotMaintenanceWorkflowFileCas(
+      fixture.vaultPath,
+      "raw/source.md"
+    );
+    assert.equal(forgedCas.kind, "file");
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as Record<string, unknown> & {
+      acceptedMetadataBaselines: Array<{
+        relativePath: string;
+        result: unknown;
+        projectionDigest: string;
+      }>;
+      digest: string;
+    };
+    const accepted = journal.acceptedMetadataBaselines.find(
+      (proof) => proof.relativePath === "raw/source.md"
+    );
+    assert.ok(accepted);
+    accepted.result = forgedCas;
+    accepted.projectionDigest = sha256Text("forged-projection");
+    const { digest: _journalDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(
+      prepared.handle.managedJournalPath,
+      `${JSON.stringify(journal, null, 2)}\n`,
+      "utf8"
+    );
+    await rejectsWithWalCode(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath
+      ),
+      "managed_journal_corrupt"
+    );
+    assert.match(await readFile(fixture.sourcePath, "utf8"), /FORGED-BODY/);
+    assert.equal(await readFile(fixture.reportPath, "utf8"), "REPORT-SHADOW\n");
+  });
+}
+
+async function assertManagedRawUpdatedCannotRegress(): Promise<void> {
+  await withFixture("managed-raw-updated-successor", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    const successorTimestamp = "1970-01-01T00:01:00.000Z";
+    await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath,
+      {
+        async faultInjector(input) {
+          if (
+            input.point !== "after-install"
+            || input.relativePath !== "raw/source.md"
+          ) return;
+          await replaceUpdatedTimestamp(
+            fixture.sourcePath,
+            "1970-01-01T00:00:00.000Z",
+            successorTimestamp
+          );
+        }
+      }
+    );
+    const loaded = await loadMaintenanceWorkflowWal(prepared.handle);
+    const rawWrite = loaded.intent.managedWrites.find(
+      (write) => write.kind === "raw-metadata"
+    );
+    assert.ok(rawWrite?.blobDigest);
+    const sealedT0 = await readFile(path.join(
+      prepared.handle.blobRootPath,
+      `${rawWrite.blobDigest.slice("sha256:".length)}.blob`
+    ));
+    await writeFile(fixture.sourcePath, sealedT0);
+    await rejectsWithWalCode(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath
+      ),
+      "managed_cas_conflict"
+    );
+    assert.match(
+      await readFile(fixture.sourcePath, "utf8"),
+      /updated: 1970-01-01T00:00:00\.000Z/
+    );
+  });
+}
+
+async function assertManagedRawUpdatedSuccessorIsDurable(): Promise<void> {
+  await withFixture("managed-raw-updated-successor", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    const successorTimestamp = "1970-01-01T00:01:00.000Z";
+    const applied = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath,
+      {
+        async faultInjector(input) {
+          if (
+            input.point !== "after-install"
+            || input.relativePath !== "raw/source.md"
+          ) return;
+          const desired = await readFile(fixture.sourcePath, "utf8");
+          assert.match(desired, /updated: 1970-01-01T00:00:00\.000Z/);
+          await writeFile(
+            fixture.sourcePath,
+            desired.replace(
+              "updated: 1970-01-01T00:00:00.000Z",
+              `updated: ${successorTimestamp}`
+            ),
+            "utf8"
+          );
+        }
+      }
+    );
+    assert.equal(applied.state.phase, "managed_committed");
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as {
+      state: string;
+      metadataSuccessorPolicy?: unknown;
+      metadataSuccessors?: Array<{ relativePath: string }>;
+    };
+    assert.equal(journal.state, "committed");
+    assert.ok(journal.metadataSuccessorPolicy);
+    assert.deepEqual(
+      journal.metadataSuccessors?.map((proof) => proof.relativePath),
+      ["raw/source.md"]
+    );
+    assert.match(
+      await readFile(fixture.sourcePath, "utf8"),
+      new RegExp(`updated: ${successorTimestamp.replace(/\./g, "\\.")}`)
+    );
+
+    const store: MutableSettingsStore<FixtureSettings> = {
+      settings: structuredClone(fixture.baselineSettings),
+      generation: 1
+    };
+    const settingsHost = createSettingsHost(store);
+    await commitMaintenanceWorkflowSettingsDurably(
+      prepared.handle,
+      fixture.vaultPath,
+      settingsHost
+    );
+    const finalized = await finalizeMaintenanceWorkflowWal(
+      prepared.handle,
+      fixture.vaultPath,
+      async (intent) => {
+        await cleanupMaintenanceShadowVault(
+          shadowHandleFromIntentForTest(intent)
+        );
+      },
+      { settingsHost }
+    );
+    assert.equal(finalized.phase, "finalized");
+  });
+}
+
+async function assertManagedRawIndexUpdatedSuccessorIsDurable(): Promise<void> {
+  await withFixture("managed-raw-index-updated-successor", async (fixture) => {
+    const relativePath = "raw/index.md";
+    const indexPath = path.join(fixture.vaultPath, relativePath);
+    const desiredUpdated = "1970-01-01T00:00:00.000Z";
+    const baselineContent = [
+      "---",
+      `updated: ${desiredUpdated}`,
+      "type: index",
+      "---",
+      "INDEX-OLD",
+      ""
+    ].join("\n");
+    const desiredContent = baselineContent.replace("INDEX-OLD", "INDEX-FINAL");
+    await writeFile(indexPath, baselineContent, "utf8");
+    fixture.input.managedWrites.push({
+      kind: "index",
+      operation: "upsert",
+      relativePath,
+      expected: await snapshotMaintenanceWorkflowFileCas(
+        fixture.vaultPath,
+        relativePath
+      ),
+      desiredContent: Buffer.from(desiredContent, "utf8"),
+      desiredMode: 0o644
+    });
+    fixture.input.draft.indexReconciliation.committed.push({
+      relativePath,
+      result: {
+        kind: "file",
+        sha256: sha256Text(desiredContent),
+        size: Buffer.byteLength(desiredContent),
+        mode: 0o644
+      },
+      sourcePaths: ["raw/source.md"]
+    });
+
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    const successorTimestamp = new Date(
+      Math.floor(Date.now() / 60_000) * 60_000
+    ).toISOString();
+    let replaced = false;
+    const applied = await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath,
+      {
+        async faultInjector(input) {
+          if (
+            replaced
+            || input.point !== "after-install"
+            || input.relativePath !== relativePath
+          ) return;
+          replaced = true;
+          const installed = await readFile(indexPath, "utf8");
+          const successor = installed.replace(
+            `updated: ${desiredUpdated}`,
+            `updated: ${successorTimestamp}`
+          );
+          assert.notEqual(successor, installed);
+          const replacementPath = `${indexPath}.metadata-plugin`;
+          await writeFile(replacementPath, successor, "utf8");
+          await rename(replacementPath, indexPath);
+        }
+      }
+    );
+    assert.equal(applied.state.phase, "managed_committed");
+    assert.equal(replaced, true);
+    assert.equal(
+      await readFile(indexPath, "utf8"),
+      desiredContent.replace(desiredUpdated, successorTimestamp)
+    );
+    const journal = JSON.parse(await readFile(
+      prepared.handle.managedJournalPath,
+      "utf8"
+    )) as {
+      state: string;
+      metadataSuccessors?: Array<{ relativePath: string }>;
+    };
+    assert.equal(journal.state, "committed");
+    assert.deepEqual(
+      journal.metadataSuccessors?.map((proof) => proof.relativePath),
+      [relativePath]
+    );
+  });
+}
+
+async function assertManagedRawUpdatedInsertionRemainsBlocked(): Promise<void> {
+  await withFixture("managed-raw-updated-insertion", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await rejectsWithWalCode(
+      () => applyMaintenanceWorkflowManagedWrites(
+        prepared.handle,
+        fixture.vaultPath,
+        {
+          async faultInjector(input) {
+            if (
+              input.point !== "after-install"
+              || input.relativePath !== "raw/source.md"
+            ) return;
+            const desired = await readFile(fixture.sourcePath, "utf8");
+            assert.doesNotMatch(desired, /^updated:/m);
+            await writeFile(
+              fixture.sourcePath,
+              desired.replace(
+                /^---\n/,
+                "---\nupdated: 1970-01-01T00:01:00.000Z\n"
+              ),
+              "utf8"
+            );
+          }
+        }
+      ),
+      "managed_cas_conflict"
+    );
+    const blocked = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(blocked.state.phase, "shadow_committed");
+    assert.equal(blocked.state.blocked?.code, "managed_cas_conflict");
+  });
 }
 
 async function assertSettingsMergeUsesPerSourceThreeWayCas(): Promise<void> {
@@ -2124,6 +3419,155 @@ async function assertFinalizeIsReplayableAndCleanupIsGated(): Promise<void> {
     assert.equal(blocked.state.blocked?.code, "settings_cas_conflict");
   });
 
+  await withFixture("finalize-managed-target-second-fence", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    const store: MutableSettingsStore<FixtureSettings> = {
+      settings: structuredClone(fixture.baselineSettings),
+      generation: 1
+    };
+    const settingsHost = createSettingsHost(store);
+    await commitMaintenanceWorkflowSettingsDurably(
+      prepared.handle,
+      fixture.vaultPath,
+      settingsHost
+    );
+    const trackerWrite = prepared.intent.managedWrites.find(
+      (write) => write.kind === "tracker"
+    );
+    assert.ok(trackerWrite?.blobDigest);
+    const trackerDesired = await readFile(path.join(
+      prepared.handle.blobRootPath,
+      `${trackerWrite.blobDigest.slice("sha256:".length)}.blob`
+    ));
+
+    await rejectsWithWalCode(
+      () => finalizeMaintenanceWorkflowWal(
+        prepared.handle,
+        fixture.vaultPath,
+        async (intent) => {
+          await cleanupMaintenanceShadowVault(
+            shadowHandleFromIntentForTest(intent)
+          );
+          await writeFile(
+            fixture.trackerPath,
+            "CONCURRENT TRACKER AFTER FIRST FENCE\n",
+            "utf8"
+          );
+        },
+        { settingsHost }
+      ),
+      "managed_cas_conflict"
+    );
+    const firstBlocked = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(firstBlocked.state.phase, "settings_committed");
+    assert.equal(firstBlocked.state.blocked?.code, "managed_cas_conflict");
+    await writeFile(fixture.trackerPath, trackerDesired);
+
+    await markMaintenanceWorkflowWalBlocked(prepared.handle, {
+      code: "managed_cas_conflict",
+      message: "blocker state changed after the first recovery token"
+    });
+    await rejectsWithWalCode(
+      () => finalizeMaintenanceWorkflowWal(
+        prepared.handle,
+        fixture.vaultPath,
+        () => undefined,
+        {
+          settingsHost,
+          resumeBlocked: {
+            stateSequence: firstBlocked.state.sequence,
+            stateDigest: firstBlocked.state.digest
+          }
+        }
+      ),
+      "phase_conflict"
+    );
+    const currentBlocked = await loadMaintenanceWorkflowWal(prepared.handle);
+    const finalized = await finalizeMaintenanceWorkflowWal(
+      prepared.handle,
+      fixture.vaultPath,
+      async (intent) => {
+        assert.ok(intent.shadow);
+        await cleanupMaintenanceShadowVault(
+          shadowHandleFromIntentForTest(intent)
+        );
+      },
+      {
+        settingsHost,
+        resumeBlocked: {
+          stateSequence: currentBlocked.state.sequence,
+          stateDigest: currentBlocked.state.digest
+        }
+      }
+    );
+    assert.equal(finalized.phase, "finalized");
+  });
+
+  await withFixture("finalize-shadow-target-second-fence", async (fixture) => {
+    const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
+    await confirmShadow(prepared, fixture.vaultPath);
+    await applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      fixture.vaultPath
+    );
+    const store: MutableSettingsStore<FixtureSettings> = {
+      settings: structuredClone(fixture.baselineSettings),
+      generation: 1
+    };
+    const settingsHost = createSettingsHost(store);
+    await commitMaintenanceWorkflowSettingsDurably(
+      prepared.handle,
+      fixture.vaultPath,
+      settingsHost
+    );
+    const shadowTargetPath = path.join(fixture.vaultPath, "wiki/topic.md");
+    await rejectsWithWalCode(
+      () => finalizeMaintenanceWorkflowWal(
+        prepared.handle,
+        fixture.vaultPath,
+        async (intent) => {
+          await cleanupMaintenanceShadowVault(
+            shadowHandleFromIntentForTest(intent)
+          );
+          await writeFile(
+            shadowTargetPath,
+            "CONCURRENT SHADOW TARGET AFTER FIRST FENCE\n",
+            "utf8"
+          );
+        },
+        { settingsHost }
+      ),
+      "managed_cas_conflict"
+    );
+    const blocked = await loadMaintenanceWorkflowWal(prepared.handle);
+    assert.equal(blocked.state.phase, "settings_committed");
+    assert.equal(blocked.state.blocked?.code, "managed_cas_conflict");
+    await writeFile(shadowTargetPath, "WIKI-FINAL\n", "utf8");
+    const finalized = await finalizeMaintenanceWorkflowWal(
+      prepared.handle,
+      fixture.vaultPath,
+      async (intent) => {
+        assert.ok(intent.shadow);
+        await cleanupMaintenanceShadowVault(
+          shadowHandleFromIntentForTest(intent)
+        );
+      },
+      {
+        settingsHost,
+        resumeBlocked: {
+          stateSequence: blocked.state.sequence,
+          stateDigest: blocked.state.digest
+        }
+      }
+    );
+    assert.equal(finalized.phase, "finalized");
+  });
+
   await withFixture("finalize-readback-generation-fence", async (fixture) => {
     const prepared = await prepareMaintenanceWorkflowWal(fixture.input);
     await confirmShadow(prepared, fixture.vaultPath);
@@ -2289,6 +3733,9 @@ async function createFixture(
   const trackerPath = path.join(vaultPath, "outputs/.ingest-tracker.md");
   const sourcePath = path.join(vaultPath, "raw/source.md");
   const workflowRunId = `workflow-${suffix}`;
+  const shadowMetadataDesiredUpdated = new Date(
+    Date.now() - 60_000
+  ).toISOString();
   await mkdir(storageRootPath, { recursive: true });
   await mkdir(path.dirname(reportPath), { recursive: true });
   await mkdir(path.dirname(sourcePath), { recursive: true });
@@ -2297,13 +3744,49 @@ async function createFixture(
   await writeFile(trackerPath, "TRACKER-BASELINE\n", "utf8");
   await writeFile(
     path.join(vaultPath, "wiki/topic.md"),
-    "WIKI-BASELINE\n",
+    suffix === "shadow-metadata-successor-proof"
+      ? [
+        "---",
+        "title: Topic",
+        `updated: ${shadowMetadataDesiredUpdated}`,
+        "---",
+        "WIKI-BASELINE",
+        ""
+      ].join("\n")
+      : "WIKI-BASELINE\n",
     "utf8"
   );
+  const legacyShadowPaths = suffix === "shadow-proof-legacy-order"
+    ? [
+      "wiki/GitHub项目收集/a.md",
+      "wiki/github-trending/b.md",
+      "wiki/微信公众号/c.md"
+    ]
+    : [];
+  for (const relativePath of legacyShadowPaths) {
+    const absolutePath = path.join(vaultPath, relativePath);
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, `BASELINE ${relativePath}\n`, "utf8");
+  }
   const rawMetadata = await createRawMetadataWriteForTest({
     vaultPath,
     relativePath: "raw/source.md",
-    baselineContent: Buffer.from("RAW-SOURCE\n", "utf8"),
+    baselineContent: Buffer.from(
+      (
+        suffix === "managed-raw-updated-successor"
+        || suffix.startsWith("managed-late-")
+      )
+        ? [
+          "---",
+          "title: Raw source",
+          "updated: 1970-01-01T00:00:00.000Z",
+          "---",
+          "RAW-SOURCE",
+          ""
+        ].join("\n")
+        : "RAW-SOURCE\n",
+      "utf8"
+    ),
     workflowRunId,
     startedAt: 100,
     reportPath: "outputs/maintenance/report.md",
@@ -2374,9 +3857,25 @@ async function createFixture(
   );
   await writeFile(
     path.join(shadowHandle.agentVaultPath, "wiki/topic.md"),
-    "WIKI-FINAL\n",
+    suffix === "shadow-metadata-successor-proof"
+      ? [
+        "---",
+        "title: Topic",
+        `updated: ${shadowMetadataDesiredUpdated}`,
+        "---",
+        "WIKI-FINAL",
+        ""
+      ].join("\n")
+      : "WIKI-FINAL\n",
     "utf8"
   );
+  for (const relativePath of legacyShadowPaths) {
+    await writeFile(
+      path.join(shadowHandle.agentVaultPath, relativePath),
+      `FINAL ${relativePath}\n`,
+      "utf8"
+    );
+  }
   const shadowChangeSet = await sealMaintenanceShadowVault(shadowHandle);
   const shadowSelectionOrder = shadowChangeSet.changes.map(
     (change) => change.relativePath
@@ -2473,7 +3972,7 @@ async function createFixture(
       changeSetDigest: shadowChangeSet.digest,
       selectionDigest: digestForTest(shadowSelectionOrder),
       liveVaultFingerprint: shadowChangeSet.liveVaultFingerprint,
-      allowPaths: ["wiki/topic.md"],
+      allowPaths: [...shadowSelectionOrder],
       expectedAppliedPaths: [...shadowSelectionOrder].sort(),
       skippedPaths: []
     },
@@ -2617,6 +4116,70 @@ async function createRawRegistryWriteForTest(input: {
     },
     desiredContent
   };
+}
+
+function withLocaleSensitiveRawRegistry(
+  input: PrepareMaintenanceWorkflowWalInput
+): PrepareMaintenanceWorkflowWalInput {
+  const registryWrite = input.managedWrites.find(
+    (write) => write.kind === "raw-registry"
+  );
+  assert.ok(registryWrite && registryWrite.operation === "upsert");
+  const registry = normalizeRawDigestRegistry(JSON.parse(
+    registryWrite.desiredContent.toString("utf8")
+  ));
+  const baseEntry = registry.entries["raw/source.md"];
+  assert.ok(baseEntry);
+  const entries = structuredClone(registry.entries);
+  for (const relativePath of [
+    "raw/articles/GitHub项目收集/a.md",
+    "raw/articles/github-trending/b.md",
+    "raw/articles/微信公众号/c.md"
+  ]) {
+    entries[relativePath] = {
+      ...structuredClone(baseEntry),
+      rawPath: relativePath,
+      fingerprint: `fixture:${relativePath}`
+    };
+  }
+  const desiredContent = buildRawDigestRegistryContent({
+    schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
+    updatedAt: registry.updatedAt,
+    entries
+  });
+  return {
+    ...input,
+    managedWrites: input.managedWrites.map((write) =>
+      write === registryWrite
+        ? { ...registryWrite, desiredContent }
+        : write
+    )
+  };
+}
+
+function rawRegistryContentInLegacyLocaleOrder(
+  registry: ReturnType<typeof normalizeRawDigestRegistry>
+): Buffer {
+  const canonicalPaths = Object.keys(registry.entries).sort(
+    (left, right) => left < right ? -1 : left > right ? 1 : 0
+  );
+  const legacyPaths = [...canonicalPaths].sort((left, right) =>
+    left.localeCompare(right, "zh-CN")
+  );
+  assert.notDeepEqual(
+    legacyPaths,
+    canonicalPaths,
+    "fixture must exercise the historical locale-sensitive registry order"
+  );
+  const entries = Object.fromEntries(legacyPaths.map((relativePath) => [
+    relativePath,
+    registry.entries[relativePath]!
+  ]));
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
+    updatedAt: registry.updatedAt,
+    entries
+  }, null, 2)}\n`, "utf8");
 }
 
 function withoutRawMetadataWrites(
@@ -2812,6 +4375,99 @@ async function rejectsWithWalCode(
   await assert.rejects(
     operation,
     (error: unknown) => isWalError(error, code)
+  );
+}
+
+async function crashManagedBeforeFirstEntry(
+  prepared: LoadedMaintenanceWorkflowWal,
+  vaultPath: string
+): Promise<void> {
+  let crashed = false;
+  await assert.rejects(
+    () => applyMaintenanceWorkflowManagedWrites(
+      prepared.handle,
+      vaultPath,
+      {
+        faultInjector(input) {
+          if (!crashed && input.point === "before-entry") {
+            crashed = true;
+            throw new MaintenanceWorkflowSimulatedCrash("before-entry");
+          }
+        }
+      }
+    ),
+    MaintenanceWorkflowSimulatedCrash
+  );
+}
+
+async function replaceUpdatedTimestamp(
+  absolutePath: string,
+  previous: string,
+  next: string
+): Promise<void> {
+  const content = await readFile(absolutePath, "utf8");
+  const replaced = content.replace(previous, next);
+  assert.notEqual(replaced, content, `missing updated timestamp: ${previous}`);
+  await writeFile(absolutePath, replaced, "utf8");
+}
+
+async function expireManagedLeaseWindow(
+  prepared: LoadedMaintenanceWorkflowWal,
+  relativePath: string
+): Promise<void> {
+  const state = JSON.parse(await readFile(
+    prepared.handle.statePath,
+    "utf8"
+  )) as Record<string, unknown> & {
+    managedMetadataSuccessorLeases: Array<{
+      relativePath: string;
+      createdAt: string;
+      window: { lowerBoundMs: number; upperBoundMs: number };
+      digest: string;
+    }>;
+    digest: string;
+  };
+  const journal = JSON.parse(await readFile(
+    prepared.handle.managedJournalPath,
+    "utf8"
+  )) as Record<string, unknown> & {
+    metadataSuccessorInstallWindows: Array<{
+      relativePath: string;
+      createdAt: string;
+      window: { lowerBoundMs: number; upperBoundMs: number };
+      leaseDigest: string;
+    }>;
+    digest: string;
+  };
+  const installWindow = journal.metadataSuccessorInstallWindows.find(
+    (window) => window.relativePath === relativePath
+  );
+  assert.ok(installWindow);
+  const lease = state.managedMetadataSuccessorLeases.find(
+    (candidate) => candidate.digest === installWindow.leaseDigest
+  );
+  assert.ok(lease);
+  const createdAt = new Date(Date.now() - 10 * 60_000).toISOString();
+  lease.createdAt = createdAt;
+  lease.window.upperBoundMs = Date.parse(createdAt) + 5 * 60_000;
+  const { digest: _leaseDigest, ...leaseWithoutDigest } = lease;
+  lease.digest = digestForTest(leaseWithoutDigest);
+  installWindow.createdAt = createdAt;
+  installWindow.window = { ...lease.window };
+  installWindow.leaseDigest = lease.digest;
+  const { digest: _stateDigest, ...stateWithoutDigest } = state;
+  state.digest = digestForTest(stateWithoutDigest);
+  const { digest: _journalDigest, ...journalWithoutDigest } = journal;
+  journal.digest = digestForTest(journalWithoutDigest);
+  await writeFile(
+    prepared.handle.statePath,
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8"
+  );
+  await writeFile(
+    prepared.handle.managedJournalPath,
+    `${JSON.stringify(journal, null, 2)}\n`,
+    "utf8"
   );
 }
 

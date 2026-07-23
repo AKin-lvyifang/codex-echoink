@@ -165,10 +165,9 @@ export function scheduleSessionSave(host: CodexMessageHost): void {
 }
 
 export async function flushSessionSave(host: CodexMessageHost): Promise<void> {
-  if (host.sessionSaveTimer) {
-    window.clearTimeout(host.sessionSaveTimer);
-    host.sessionSaveTimer = null;
-  }
+  if (!host.sessionSaveTimer) return;
+  window.clearTimeout(host.sessionSaveTimer);
+  host.sessionSaveTimer = null;
   await host.plugin.saveSettings(true);
 }
 

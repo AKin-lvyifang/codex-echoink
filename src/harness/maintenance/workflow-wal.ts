@@ -2,10 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, type Stats } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { setTimeout as nodeSetTimeout } from "node:timers";
 import type { AgentBackendKind } from "../../agent/types";
 import {
   canonicalizeKnowledgeBaseMaintenanceHistoryEntry,
   type KnowledgeBaseMaintenanceHistoryEntry,
+  type KnowledgeBaseNativeLifecycleRecoveryReceipt,
   type KnowledgeBaseProcessedSource,
   type KnowledgeBaseRunStatus
 } from "../../settings/settings";
@@ -15,6 +17,7 @@ import type {
   KnowledgeRunAttemptRecord
 } from "../../knowledge-base/types";
 import {
+  RAW_DIGEST_MANAGED_KEYS,
   RAW_DIGEST_SCHEMA_VERSION,
   RAW_DIGEST_STATUS_DIGESTED,
   buildRawDigestRegistryContent,
@@ -32,12 +35,23 @@ import {
   loadMaintenanceShadowChangeSet,
   markMaintenanceShadowCommittedFromJournal,
   type MaintenanceShadowChange,
-  type MaintenanceShadowHandle
+  type MaintenanceShadowHandle,
+  type MaintenanceShadowMetadataSuccessorPolicy,
+  type MaintenanceShadowMetadataSuccessorProof
 } from "./shadow-vault";
+import {
+  maintenanceMarkdownUpdatedMayBeInserted,
+  maintenanceMarkdownUpdatedSuccessorEvidence,
+  type MaintenanceMarkdownUpdatedSuccessorWindow
+} from "./markdown-metadata-successor";
+import {
+  withRecordMutationGlobalAuthority
+} from "../lifecycle/record-mutation-coordinator";
 
 const WAL_VERSION = 1;
 const STATE_VERSION = 1;
 const MANAGED_JOURNAL_VERSION = 1;
+const NOOP_RECEIPT_SCHEMA_VERSION = 1;
 const WAL_DIRECTORY = "workflow-wal";
 const BLOB_DIRECTORY = "blobs";
 const INTENT_FILE = "intent.json";
@@ -48,8 +62,13 @@ const STAGING_DIRECTORY = ".staging";
 const LOCK_DIRECTORY = ".locks";
 const MAX_CONTROL_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_BLOB_BYTES = 256 * 1024 * 1024;
+const FILE_CAS_SNAPSHOT_MAX_ATTEMPTS = 3;
+const FILE_CAS_SNAPSHOT_RETRY_DELAY_MS = 5;
+const MANAGED_METADATA_SUCCESSOR_WINDOW_MS = 5 * 60_000;
 const RUN_TOKEN_PATTERN = /^run-[a-f0-9]{24}$/;
 export const MAINTENANCE_WORKFLOW_WAL_VERSION = WAL_VERSION;
+export const MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION =
+  NOOP_RECEIPT_SCHEMA_VERSION;
 
 export type MaintenanceWorkflowWalPhase =
   | "prepared"
@@ -160,7 +179,11 @@ export interface MaintenanceWorkflowShadowCommitProof {
   commitReceipt: string;
   liveTargets: Array<{
     relativePath: string;
+    /** Sealed Shadow result; managed write baselines bind to this CAS. */
     result: MaintenanceWorkflowFileCas;
+    /** CAS actually observed after the metadata plugin settled. */
+    observedResult?: MaintenanceWorkflowFileCas;
+    metadataSuccessor?: MaintenanceShadowMetadataSuccessorProof;
   }>;
 }
 
@@ -212,6 +235,7 @@ export interface MaintenanceWorkflowManagedWrite {
   expected: MaintenanceWorkflowFileCas;
   desired: MaintenanceWorkflowFileCas;
   blobDigest?: string;
+  expectedBlobDigest?: string;
   rawBodyDigest?: string;
   rawUnmanagedFrontmatterDigest?: string;
   rawMetadataProof?: {
@@ -227,6 +251,8 @@ export interface MaintenanceWorkflowManagedWrite {
     updatedAt: string;
     entriesDigest: string;
     entries: Record<string, RawDigestRegistryEntry>;
+    /** New WALs require byte-canonical registry JSON; absent only on V1 legacy WALs. */
+    canonicalBytes?: true;
   };
 }
 
@@ -297,12 +323,25 @@ export interface MaintenanceWorkflowWalIntentDraft {
   summary: string;
   shadow: MaintenanceWorkflowShadowCommitDraft | null;
   noopProof?: MaintenanceWorkflowNoopProof;
+  /**
+   * New no-op intents use a run-scoped audit report and no tracker/index/Raw
+   * managed writes. Missing means a pre-cutover WAL loaded only for recovery;
+   * fresh prepares are never allowed to omit this contract.
+   */
+  noopReceipt?: MaintenanceWorkflowNoopReceiptContract;
   report: {
     relativePath: string;
     finalBlockDigest: string;
   };
   indexReconciliation: MaintenanceWorkflowIndexReconciliation;
   settings: MaintenanceWorkflowSettingsPlanDraft;
+}
+
+export interface MaintenanceWorkflowNoopReceiptContract {
+  schemaVersion: typeof NOOP_RECEIPT_SCHEMA_VERSION;
+  kind: "run-scoped-report";
+  pathStrategy: "workflow-run-id-sha256-v1";
+  dateKey: string;
 }
 
 export interface MaintenanceWorkflowReportIntent {
@@ -332,6 +371,17 @@ export interface MaintenanceWorkflowWalBlockedState {
   blockedAt: string;
 }
 
+export interface MaintenanceWorkflowManagedMetadataSuccessorLease {
+  version: 1;
+  relativePath: string;
+  intentDigest: string;
+  entryDigest: string;
+  createdAt: string;
+  window: MaintenanceMarkdownUpdatedSuccessorWindow;
+  provenanceDigest: string;
+  digest: string;
+}
+
 export interface MaintenanceWorkflowWalState {
   version: typeof STATE_VERSION;
   workflowRunId: string;
@@ -343,6 +393,8 @@ export interface MaintenanceWorkflowWalState {
   noopConfirmationDigest?: string;
   settingsGeneration?: string;
   settingsTargetProjectionDigest?: string;
+  /** Cross-file authority for recovery-only per-entry successor windows. */
+  managedMetadataSuccessorLeases?: MaintenanceWorkflowManagedMetadataSuccessorLease[];
   blocked?: MaintenanceWorkflowWalBlockedState;
   digest: string;
 }
@@ -400,6 +452,7 @@ export interface MaintenanceWorkflowSettingsSnapshot
   lastScheduledRunAt: number;
   lastScheduledRunStatus: KnowledgeBaseRunStatus;
   lastScheduledRunId: string;
+  nativeLifecycleRecoveryReceipt?: KnowledgeBaseNativeLifecycleRecoveryReceipt | null;
 }
 
 export interface MaintenanceWorkflowSettingsMergeResult<
@@ -456,6 +509,19 @@ interface MaintenanceWorkflowManagedApplyJournal {
   intentDigest: string;
   state: ManagedJournalState;
   entries: MaintenanceWorkflowManagedJournalEntry[];
+  metadataSuccessorPolicy?: {
+    version: 1;
+    kind: "managed-markdown-updated-only";
+    window: MaintenanceMarkdownUpdatedSuccessorWindow;
+  };
+  metadataSuccessorInstallWindows?: Array<{
+    relativePath: string;
+    createdAt: string;
+    window: MaintenanceMarkdownUpdatedSuccessorWindow;
+    leaseDigest: string;
+  }>;
+  acceptedMetadataBaselines?: MaintenanceShadowMetadataSuccessorProof[];
+  metadataSuccessors?: MaintenanceShadowMetadataSuccessorProof[];
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -466,6 +532,7 @@ export type MaintenanceWorkflowManagedFaultPoint =
   | "before-entry"
   | "after-displace"
   | "after-install"
+  | "before-install-temp-unlink"
   | "after-journal-commit"
   | "after-cleanup-link";
 
@@ -481,6 +548,23 @@ export interface ApplyMaintenanceWorkflowManagedWritesOptions {
   }) => void | Promise<void>;
 }
 
+export interface MaintenanceWorkflowBlockedResumeToken {
+  stateSequence: number;
+  stateDigest: string;
+}
+
+export interface MaintenanceWorkflowFinalizeCleanupEvidence {
+  /**
+   * Shadow metadata successors that the committed managed journal consumed as
+   * exact baselines before replacing overlapping Shadow targets.
+   */
+  acceptedShadowMetadataSuccessors: MaintenanceShadowMetadataSuccessorProof[];
+  /** Digest of the committed managed journal that produced this evidence. */
+  managedJournalDigest?: string;
+  /** Allowed post-managed metadata successors already re-proved against live. */
+  managedResultSuccessors: MaintenanceShadowMetadataSuccessorProof[];
+}
+
 const PHASES: MaintenanceWorkflowWalPhase[] = [
   "prepared",
   "shadow_committed",
@@ -493,7 +577,36 @@ export function maintenanceWorkflowWalRoot(storageRootPath: string): string {
   return path.join(path.resolve(storageRootPath), WAL_DIRECTORY);
 }
 
+export function maintenanceWorkflowNoopReceiptPath(input: {
+  mode: MaintenanceWorkflowWalIntentDraft["mode"];
+  workflowRunId: string;
+  receipt: MaintenanceWorkflowNoopReceiptContract;
+}): string {
+  const prefix = input.mode === "lint" ? "kb-check" : "kb-maintenance";
+  const runIdDigest = createHash("sha256")
+    .update(input.workflowRunId)
+    .digest("hex");
+  return `outputs/maintenance/${prefix}-noop-${input.receipt.dateKey}-${runIdDigest}.md`;
+}
+
 export async function prepareMaintenanceWorkflowWal(
+  input: PrepareMaintenanceWorkflowWalInput
+): Promise<LoadedMaintenanceWorkflowWal> {
+  const storageRootPath = await ensurePlainDirectory(
+    input.storageRootPath,
+    "maintenance storage root"
+  );
+  return await withRecordMutationGlobalAuthority(
+    storageRootPath,
+    workflowWalAuthorityId(input.draft.workflowRunId),
+    async () => await prepareMaintenanceWorkflowWalUnderAuthority({
+      ...input,
+      storageRootPath
+    })
+  );
+}
+
+async function prepareMaintenanceWorkflowWalUnderAuthority(
   input: PrepareMaintenanceWorkflowWalInput
 ): Promise<LoadedMaintenanceWorkflowWal> {
   const storageRootPath = await ensurePlainDirectory(input.storageRootPath, "maintenance storage root");
@@ -578,12 +691,19 @@ export async function prepareMaintenanceWorkflowWal(
   const contentByDigest = new Map<string, Buffer>();
   for (const write of input.managedWrites) {
     if (write.operation !== "upsert") continue;
-    const digest = sha256(write.desiredContent);
-    const existing = contentByDigest.get(digest);
-    if (existing && !existing.equals(write.desiredContent)) {
-      throw new MaintenanceWorkflowWalError("blob_corrupt", `blob digest 碰撞：${digest}`);
+    for (const content of [
+      durableManagedWriteDesiredContent(write),
+      ...(write.kind === "raw-metadata" && write.expectedContent
+        ? [write.expectedContent]
+        : [])
+    ]) {
+      const digest = sha256(content);
+      const existing = contentByDigest.get(digest);
+      if (existing && !existing.equals(content)) {
+        throw new MaintenanceWorkflowWalError("blob_corrupt", `blob digest 碰撞：${digest}`);
+      }
+      contentByDigest.set(digest, Buffer.from(content));
     }
-    contentByDigest.set(digest, Buffer.from(write.desiredContent));
   }
   try {
     for (const [digest, content] of contentByDigest) {
@@ -655,7 +775,10 @@ export async function loadMaintenanceWorkflowWal(
       `workflow intent 无法解析：${errorMessage(error)}`
     );
   }
-  assertValidMaintenanceWorkflowWalIntent(intent);
+  assertValidMaintenanceWorkflowWalIntent(intent, {
+    allowLegacyNoopReceipt: true,
+    allowLegacyRegistryOrdering: true
+  });
   if (runTokenForWorkflow(intent.workflowRunId) !== location.runToken) {
     throw new MaintenanceWorkflowWalError("intent_corrupt", "workflow WAL run token 与 intent 不匹配");
   }
@@ -693,7 +816,8 @@ export async function listMaintenanceWorkflowWals(
 
   const entries = await fsp.readdir(walRootPath, { withFileTypes: true });
   const result: MaintenanceWorkflowWalListEntry[] = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries.sort((left, right) =>
+    compareCanonicalText(left.name, right.name))) {
     if (entry.name === STAGING_DIRECTORY || entry.name === LOCK_DIRECTORY) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) {
         const location = walLocation(storageRootPath, runTokenForWorkflow(entry.name));
@@ -734,7 +858,7 @@ export async function listMaintenanceWorkflowWals(
     const rightCreated = right.status === "invalid" ? "" : right.wal.intent.createdAt;
     if (!leftCreated && rightCreated) return 1;
     if (leftCreated && !rightCreated) return -1;
-    return leftCreated.localeCompare(rightCreated);
+    return compareCanonicalText(leftCreated, rightCreated);
   });
 }
 
@@ -748,7 +872,7 @@ export async function markMaintenanceWorkflowWalBlocked(
     blockedAt: new Date().toISOString()
   };
   return await withWalStateLock(handle, async () => {
-    const loaded = await loadMaintenanceWorkflowWal(handle);
+    let loaded = await loadMaintenanceWorkflowWal(handle);
     if (
       loaded.state.blocked?.code === blocked.code
       && loaded.state.blocked.message === blocked.message
@@ -820,16 +944,18 @@ function buildManagedWrite(
       desired: { kind: "missing" }
     };
   }
-  if (draft.desiredContent.byteLength > MAX_BLOB_BYTES) {
+  const desiredContent = durableManagedWriteDesiredContent(draft);
+  if (desiredContent.byteLength > MAX_BLOB_BYTES) {
     throw new MaintenanceWorkflowWalError(
       "blob_corrupt",
       `managed blob 过大：${relativePath}`,
       relativePath
     );
   }
-  const digest = sha256(draft.desiredContent);
+  const digest = sha256(desiredContent);
   let rawBodyDigest: string | undefined;
   let rawUnmanagedFrontmatterDigest: string | undefined;
+  let expectedBlobDigest: string | undefined;
   let rawMetadataProof: MaintenanceWorkflowManagedWrite["rawMetadataProof"];
   let rawRegistryProof: MaintenanceWorkflowManagedWrite["rawRegistryProof"];
   if (draft.kind === "raw-metadata") {
@@ -851,8 +977,9 @@ function buildManagedWrite(
         relativePath
       );
     }
+    expectedBlobDigest = sha256(draft.expectedContent);
     const baselineBody = markdownBodyBytes(draft.expectedContent, relativePath);
-    const desiredBody = markdownBodyBytes(draft.desiredContent, relativePath);
+    const desiredBody = markdownBodyBytes(desiredContent, relativePath);
     if (!baselineBody.equals(desiredBody)) {
       throw new MaintenanceWorkflowWalError(
         "intent_corrupt",
@@ -866,7 +993,7 @@ function buildManagedWrite(
       userFrontmatterPreserved =
         rawDigestPreservesUserFrontmatterBytes(
           draft.expectedContent,
-          draft.desiredContent
+          desiredContent
         );
     } catch {
       userFrontmatterPreserved = false;
@@ -879,9 +1006,9 @@ function buildManagedWrite(
       );
     }
     rawUnmanagedFrontmatterDigest = sha256(
-      rawDigestUserFrontmatterProjectionBytes(draft.desiredContent)
+      rawDigestUserFrontmatterProjectionBytes(desiredContent)
     );
-    const record = rawDigestRecordFromMarkdown(draft.desiredContent);
+    const record = rawDigestRecordFromMarkdown(desiredContent);
     if (
       !record
       || !rawDigestRecordIsTrusted(record, record.fingerprint)
@@ -918,7 +1045,7 @@ function buildManagedWrite(
   } else if (draft.kind === "raw-registry") {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(draft.desiredContent.toString("utf8"));
+      parsed = JSON.parse(desiredContent.toString("utf8"));
     } catch (error) {
       throw new MaintenanceWorkflowWalError(
         "intent_corrupt",
@@ -930,9 +1057,7 @@ function buildManagedWrite(
     if (
       registry.schemaVersion !== RAW_DIGEST_SCHEMA_VERSION
       || !isIsoDate(registry.updatedAt)
-      || !buildRawDigestRegistryContent(registry).equals(
-        draft.desiredContent
-      )
+      || !buildCanonicalRawDigestRegistryContent(registry).equals(desiredContent)
     ) {
       throw new MaintenanceWorkflowWalError(
         "intent_corrupt",
@@ -945,7 +1070,8 @@ function buildManagedWrite(
       schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
       updatedAt: registry.updatedAt,
       entriesDigest: digestJson(entries),
-      entries
+      entries,
+      canonicalBytes: true
     };
   }
   return {
@@ -956,10 +1082,11 @@ function buildManagedWrite(
     desired: {
       kind: "file",
       sha256: digest,
-      size: draft.desiredContent.byteLength,
+      size: desiredContent.byteLength,
       mode: normalizeMode(draft.desiredMode)
     },
     blobDigest: digest,
+    ...(expectedBlobDigest ? { expectedBlobDigest } : {}),
     ...(rawBodyDigest ? { rawBodyDigest } : {}),
     ...(rawUnmanagedFrontmatterDigest
       ? { rawUnmanagedFrontmatterDigest }
@@ -967,6 +1094,59 @@ function buildManagedWrite(
     ...(rawMetadataProof ? { rawMetadataProof } : {}),
     ...(rawRegistryProof ? { rawRegistryProof } : {})
   };
+}
+
+function durableManagedWriteDesiredContent(
+  draft: MaintenanceWorkflowManagedWriteDraft
+): Buffer {
+  if (draft.operation !== "upsert" || draft.kind !== "raw-registry") {
+    return Buffer.from(draft.operation === "upsert"
+      ? draft.desiredContent
+      : Buffer.alloc(0));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(draft.desiredContent.toString("utf8"));
+  } catch (error) {
+    throw new MaintenanceWorkflowWalError(
+      "intent_corrupt",
+      `Raw registry 不是合法 JSON：${errorMessage(error)}`,
+      normalizeRelativePath(draft.relativePath)
+    );
+  }
+  const registry = normalizeRawDigestRegistry(parsed);
+  const canonical = buildCanonicalRawDigestRegistryContent(registry);
+  const plannerProjection = buildRawDigestRegistryContent(registry);
+  if (
+    registry.schemaVersion !== RAW_DIGEST_SCHEMA_VERSION
+    || !isIsoDate(registry.updatedAt)
+    || (
+      !draft.desiredContent.equals(plannerProjection)
+      && !draft.desiredContent.equals(canonical)
+    )
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "intent_corrupt",
+      `Raw registry 不是规范 durable projection：${normalizeRelativePath(draft.relativePath)}`,
+      normalizeRelativePath(draft.relativePath)
+    );
+  }
+  return canonical;
+}
+
+function buildCanonicalRawDigestRegistryContent(
+  registry: ReturnType<typeof normalizeRawDigestRegistry>
+): Buffer {
+  const entries = Object.fromEntries(
+    Object.entries(registry.entries).sort(([left], [right]) =>
+      compareCanonicalText(left, right)
+    )
+  );
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
+    updatedAt: registry.updatedAt,
+    entries
+  }, null, 2)}\n`, "utf8");
 }
 
 function buildSettingsPlan(
@@ -1098,6 +1278,8 @@ interface MaintenanceShadowCommitJournalProof {
     displacedLiveRelativePath?: string;
     installTempRelativePath?: string;
   }>;
+  metadataSuccessorPolicy?: MaintenanceShadowMetadataSuccessorPolicy;
+  metadataSuccessors?: MaintenanceShadowMetadataSuccessorProof[];
   digest: string;
   [key: string]: unknown;
 }
@@ -1143,6 +1325,16 @@ async function assertShadowCommitJournalMatches(
   }
   const { digest: _digest, ...journalWithoutDigest } = journal;
   const selectedPaths = normalizedUniquePaths(journal.selectedPaths);
+  const metadataSuccessors = shadowJournalMetadataSuccessors(journal);
+  for (const successor of metadataSuccessors) {
+    if (!selectedPaths.includes(successor.relativePath)) {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        `Shadow metadata successor 不属于 selected paths：${successor.relativePath}`,
+        successor.relativePath
+      );
+    }
+  }
   const shadowHandle = maintenanceShadowHandleFromCommitDraft(
     shadow,
     winnerAttemptId
@@ -1274,8 +1466,68 @@ function shadowProofWalError(
   );
 }
 
-function shadowCommitReceipt(
+function shadowJournalMetadataSuccessors(
   journal: MaintenanceShadowCommitJournalProof
+): MaintenanceShadowMetadataSuccessorProof[] {
+  const raw = journal.metadataSuccessors ?? [];
+  const policy = journal.metadataSuccessorPolicy;
+  if (
+    !Array.isArray(raw)
+    || (
+      raw.length > 0
+      && (
+        !policy
+        || policy.version !== 1
+        || policy.kind !== "markdown-updated-only"
+        || !Number.isFinite(policy.window?.lowerBoundMs)
+        || !Number.isFinite(policy.window?.upperBoundMs)
+        || policy.window.upperBoundMs < policy.window.lowerBoundMs
+      )
+    )
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "phase_conflict",
+      "Shadow metadata successor policy/proof 非法"
+    );
+  }
+  const seen = new Set<string>();
+  const result = raw.map((proof) => {
+    const relativePath = normalizeRelativePath(proof.relativePath);
+    if (
+      seen.has(relativePath)
+      || proof.result?.kind !== "file"
+      || !isSha256(proof.result.sha256)
+      || !Number.isSafeInteger(proof.result.size)
+      || proof.result.size < 0
+      || !Number.isSafeInteger(proof.result.mode)
+      || !Number.isFinite(proof.updatedAt)
+      || !isSha256(proof.projectionDigest)
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        `Shadow metadata successor proof 非法：${relativePath}`,
+        relativePath
+      );
+    }
+    seen.add(relativePath);
+    return {
+      ...cloneJson(proof),
+      relativePath,
+      result: {
+        ...proof.result,
+        mode: normalizeMode(proof.result.mode)
+      }
+    };
+  });
+  return result.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+}
+
+function shadowCommitReceipt(
+  journal: MaintenanceShadowCommitJournalProof,
+  selectedPaths: readonly string[] = journal.selectedPaths
 ): string {
   return digestJson({
     journalDigest: journal.digest,
@@ -1283,7 +1535,27 @@ function shadowCommitReceipt(
     liveVaultFingerprint: journal.liveVaultFingerprint,
     changeSetDigest: journal.changeSetDigest,
     selectionDigest: journal.selectionDigest,
-    selectedPaths: normalizedUniquePaths(journal.selectedPaths),
+    // Journal and state digests bind the accepted recorded orders. Verification
+    // may pass the legacy proof order when confirm happened under a different
+    // locale than the original journal apply.
+    selectedPaths: selectedPaths.map(normalizeRelativePath),
+    metadataSuccessorPolicy: journal.metadataSuccessorPolicy,
+    metadataSuccessors: shadowJournalMetadataSuccessors(journal),
+    state: journal.state
+  });
+}
+
+function legacyShadowCommitReceipt(
+  journal: MaintenanceShadowCommitJournalProof,
+  selectedPaths: readonly string[] = journal.selectedPaths
+): string {
+  return digestJson({
+    journalDigest: journal.digest,
+    attemptId: journal.attemptId,
+    liveVaultFingerprint: journal.liveVaultFingerprint,
+    changeSetDigest: journal.changeSetDigest,
+    selectionDigest: journal.selectionDigest,
+    selectedPaths: selectedPaths.map(normalizeRelativePath),
     state: journal.state
   });
 }
@@ -1304,22 +1576,127 @@ async function verifyShadowJournalLiveTargets(
 function shadowJournalLiveTargets(
   journal: MaintenanceShadowCommitJournalProof
 ): MaintenanceWorkflowShadowCommitProof["liveTargets"] {
+  const successorsByPath = new Map(
+    shadowJournalMetadataSuccessors(journal).map((proof) => [
+      proof.relativePath,
+      proof
+    ])
+  );
   return journal.entries.map((entry) => {
     const change = entry.change;
+    const relativePath = normalizeRelativePath(change.relativePath);
+    const result: MaintenanceWorkflowFileCas = change.operation === "delete"
+      ? { kind: "missing" }
+      : {
+        kind: "file",
+        sha256: change.shadowSha256,
+        size: change.size,
+        mode: change.expectedLive.kind === "file"
+          ? normalizeMode(change.expectedLive.mode)
+          : 0o644
+      };
+    const metadataSuccessor = successorsByPath.get(relativePath);
     return {
-      relativePath: normalizeRelativePath(change.relativePath),
-      result: change.operation === "delete"
-        ? { kind: "missing" } as const
-        : {
-          kind: "file" as const,
-          sha256: change.shadowSha256,
-          size: change.size,
-          mode: change.expectedLive.kind === "file"
-            ? normalizeMode(change.expectedLive.mode)
-            : 0o644
-        }
+      relativePath,
+      result,
+      observedResult: metadataSuccessor?.result ?? result,
+      ...(metadataSuccessor ? { metadataSuccessor } : {})
     };
-  }).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  }).sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+}
+
+function sameShadowLiveTargets(
+  left: MaintenanceWorkflowShadowCommitProof["liveTargets"],
+  right: MaintenanceWorkflowShadowCommitProof["liveTargets"]
+): boolean {
+  const canonical = (
+    targets: MaintenanceWorkflowShadowCommitProof["liveTargets"]
+  ) => targets.map((target) => ({
+    ...target,
+    observedResult: target.observedResult ?? target.result
+  })).sort((first, second) => compareCanonicalText(
+    first.relativePath,
+    second.relativePath
+  ));
+  return stableStringify(canonical(left)) === stableStringify(canonical(right));
+}
+
+function assertShadowCommitProofSuccessor(
+  previous: MaintenanceWorkflowShadowCommitProof,
+  next: MaintenanceWorkflowShadowCommitProof
+): void {
+  if (stableStringify(previous) === stableStringify(next)) return;
+  const previousByPath = new Map(previous.liveTargets.map((target) => [
+    normalizeRelativePath(target.relativePath),
+    target
+  ]));
+  const nextByPath = new Map(next.liveTargets.map((target) => [
+    normalizeRelativePath(target.relativePath),
+    target
+  ]));
+  if (
+    previousByPath.size !== nextByPath.size
+    || [...previousByPath.keys()].some((relativePath) => !nextByPath.has(relativePath))
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "phase_conflict",
+      "Shadow commit proof selected paths 发生变化"
+    );
+  }
+  for (const [relativePath, previousTarget] of previousByPath) {
+    const nextTarget = nextByPath.get(relativePath)!;
+    if (!sameCas(previousTarget.result, nextTarget.result)) {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        `Shadow commit sealed result 发生变化：${relativePath}`,
+        relativePath
+      );
+    }
+    const previousObserved = previousTarget.observedResult
+      ?? previousTarget.result;
+    const nextObserved = nextTarget.observedResult ?? nextTarget.result;
+    const previousSuccessor = previousTarget.metadataSuccessor;
+    const nextSuccessor = nextTarget.metadataSuccessor;
+    if (sameCas(previousObserved, nextObserved)) {
+      if (
+        stableStringify(previousSuccessor)
+        !== stableStringify(nextSuccessor)
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "phase_conflict",
+          `Shadow commit 相同 live CAS 的 successor proof 发生变化：${relativePath}`,
+          relativePath
+        );
+      }
+      continue;
+    }
+    if (
+      !nextSuccessor
+      || !sameCas(nextSuccessor.result, nextObserved)
+      || normalizeRelativePath(nextSuccessor.relativePath) !== relativePath
+      || (
+        previousSuccessor
+        && (
+          nextSuccessor.updatedAt <= previousSuccessor.updatedAt
+          || nextSuccessor.projectionDigest !== previousSuccessor.projectionDigest
+          || (
+            previousSuccessor.result.kind === "file"
+            && nextSuccessor.result.kind === "file"
+            && nextSuccessor.result.mode !== previousSuccessor.result.mode
+          )
+        )
+      )
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        `Shadow metadata successor 不得倒退或改变投影：${relativePath}`,
+        relativePath
+      );
+    }
+  }
 }
 
 async function verifyShadowProofLiveTargets(
@@ -1331,7 +1708,7 @@ async function verifyShadowProofLiveTargets(
       liveVaultPath,
       target.relativePath
     );
-    if (!sameCas(current, target.result)) {
+    if (!sameCas(current, target.observedResult ?? target.result)) {
       throw new MaintenanceWorkflowWalError(
         "managed_cas_conflict",
         `Shadow committed target CAS 不匹配：${target.relativePath}`,
@@ -1348,8 +1725,9 @@ async function verifyShadowCommitJournal(
   proof: MaintenanceWorkflowShadowCommitProof,
   options: {
     ignoredLiveTargetPaths?: ReadonlySet<string>;
+    acceptedIgnoredMetadataSuccessors?: readonly MaintenanceShadowMetadataSuccessorProof[];
   } = {}
-): Promise<void> {
+): Promise<MaintenanceWorkflowShadowCommitProof> {
   if (!intent.shadow || !intent.winner) {
     throw new MaintenanceWorkflowWalError(
       "phase_conflict",
@@ -1363,7 +1741,7 @@ async function verifyShadowCommitJournal(
       "Shadow commit proof 不属于当前 live Vault"
     );
   }
-  const journal = await readShadowCommitJournal(
+  let journal = await readShadowCommitJournal(
     handle.storageRootPath,
     intent.shadow.controlRootPath
   );
@@ -1372,8 +1750,11 @@ async function verifyShadowCommitJournal(
     intent.shadow,
     intent.winner.attemptId
   );
+  let verification: Awaited<
+    ReturnType<typeof markMaintenanceShadowCommittedFromJournal>
+  >;
   try {
-    await markMaintenanceShadowCommittedFromJournal(
+    verification = await markMaintenanceShadowCommittedFromJournal(
       maintenanceShadowHandleFromCommitDraft(
         intent.shadow,
         intent.winner.attemptId
@@ -1382,7 +1763,13 @@ async function verifyShadowCommitJournal(
       {
         ignoredTargetPaths: [
           ...(options.ignoredLiveTargetPaths ?? new Set<string>())
-        ]
+        ],
+        acceptedIgnoredMetadataSuccessors:
+          (options.acceptedIgnoredMetadataSuccessors ?? []).filter(
+            (accepted) => options.ignoredLiveTargetPaths?.has(
+              normalizeRelativePath(accepted.relativePath)
+            ) === true
+          )
       }
     );
   } catch (error) {
@@ -1391,22 +1778,75 @@ async function verifyShadowCommitJournal(
       "Shadow canonical apply journal 未通过复验"
     );
   }
+  journal = await readShadowCommitJournal(
+    handle.storageRootPath,
+    intent.shadow.controlRootPath
+  );
+  await assertShadowCommitJournalMatches(
+    journal,
+    intent.shadow,
+    intent.winner.attemptId
+  );
+  const journalLiveTargets = shadowJournalLiveTargets(journal);
   if (
-    journal.digest !== proof.applyJournalDigest
-    || proof.commitReceipt !== shadowCommitReceipt(journal)
-    || stableStringify(proof.liveTargets)
-      !== stableStringify(shadowJournalLiveTargets(journal))
+    stableStringify(verification.metadataSuccessors)
+    !== stableStringify(shadowJournalMetadataSuccessors(journal))
   ) {
     throw new MaintenanceWorkflowWalError(
       "phase_conflict",
-      "Shadow commit receipt 未通过 durable apply journal 复验"
+      "Shadow canonical verification 与 durable successor proof 不一致"
     );
+  }
+  const liveTargetsMatch = sameShadowLiveTargets(proof.liveTargets, journalLiveTargets);
+  const proofSelectedPaths = proof.liveTargets.map(
+    (target) => target.relativePath
+  );
+  const legacyReceiptAllowed =
+    journal.metadataSuccessorPolicy === undefined
+    && shadowJournalMetadataSuccessors(journal).length === 0;
+  const receiptMatches =
+    proof.commitReceipt === shadowCommitReceipt(journal)
+    || (
+      liveTargetsMatch
+      && proof.commitReceipt === shadowCommitReceipt(
+        journal,
+        proofSelectedPaths
+      )
+    )
+    || (
+      legacyReceiptAllowed
+      && (
+        proof.commitReceipt === legacyShadowCommitReceipt(journal)
+        || (
+          liveTargetsMatch
+          && proof.commitReceipt === legacyShadowCommitReceipt(
+            journal,
+            proofSelectedPaths
+          )
+        )
+      )
+    );
+  const currentProof: MaintenanceWorkflowShadowCommitProof = {
+    applyJournalDigest: journal.digest,
+    commitReceipt: shadowCommitReceipt(journal),
+    liveTargets: journalLiveTargets
+  };
+  if (journal.digest === proof.applyJournalDigest) {
+    if (!liveTargetsMatch || !receiptMatches) {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        "Shadow commit receipt 未通过 durable apply journal 复验"
+      );
+    }
+  } else {
+    assertShadowCommitProofSuccessor(proof, currentProof);
   }
   await verifyShadowJournalLiveTargets(
     liveVaultPath,
     journal,
     options.ignoredLiveTargetPaths
   );
+  return currentProof;
 }
 
 async function verifyNoopLiveEvidence(
@@ -1488,8 +1928,9 @@ async function verifyWorkflowLiveEvidence(
   options: {
     allowMissingShadowControlRoot?: boolean;
     allowManagedShadowOverrides?: boolean;
+    acceptedIgnoredMetadataSuccessors?: readonly MaintenanceShadowMetadataSuccessorProof[];
   } = {}
-): Promise<void> {
+): Promise<MaintenanceWorkflowWalState> {
   if (intent.completion === "noop") {
     if (
       !intent.noopProof
@@ -1501,7 +1942,7 @@ async function verifyWorkflowLiveEvidence(
       );
     }
     await verifyNoopLiveEvidence(liveVaultPathInput, intent.noopProof);
-    return;
+    return state;
   }
   if (!state.shadowCommitProof) {
     throw new MaintenanceWorkflowWalError(
@@ -1542,6 +1983,11 @@ async function verifyWorkflowLiveEvidence(
         )
     )
     : new Set<string>();
+  assertAcceptedIgnoredShadowMetadataSuccessors(
+    state.shadowCommitProof,
+    ignoredLiveTargetPaths,
+    options.acceptedIgnoredMetadataSuccessors ?? []
+  );
   if (
     options.allowMissingShadowControlRoot
     && intent.shadow
@@ -1563,15 +2009,134 @@ async function verifyWorkflowLiveEvidence(
         (target) => !ignoredLiveTargetPaths.has(target.relativePath)
       )
     );
-    return;
+    return state;
   }
-  await verifyShadowCommitJournal(
+  const refreshedProof = await verifyShadowCommitJournal(
     handle,
     intent,
     liveVaultPathInput,
     state.shadowCommitProof,
-    { ignoredLiveTargetPaths }
+    {
+      ignoredLiveTargetPaths,
+      acceptedIgnoredMetadataSuccessors:
+        options.acceptedIgnoredMetadataSuccessors ?? []
+    }
   );
+  if (
+    stableStringify(refreshedProof)
+    !== stableStringify(state.shadowCommitProof)
+  ) {
+    return await persistRefreshedShadowCommitProof(
+      handle,
+      refreshedProof
+    );
+  }
+  return state;
+}
+
+async function persistRefreshedShadowCommitProof(
+  handle: MaintenanceWorkflowWalHandle,
+  proof: MaintenanceWorkflowShadowCommitProof
+): Promise<MaintenanceWorkflowWalState> {
+  return await withWalStateLock(handle, async () => {
+    const current = await loadMaintenanceWorkflowWal(handle);
+    if (
+      PHASES.indexOf(current.state.phase)
+      < PHASES.indexOf("shadow_committed")
+      || !current.state.shadowCommitProof
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "state_corrupt",
+        "Shadow proof refresh 缺少已提交的 WAL authority"
+      );
+    }
+    if (
+      stableStringify(current.state.shadowCommitProof)
+      === stableStringify(proof)
+    ) return current.state;
+    assertShadowCommitProofSuccessor(
+      current.state.shadowCommitProof,
+      proof
+    );
+    return await writeNextWalState(current, {
+      ...withoutStateDigest(current.state),
+      sequence: current.state.sequence + 1,
+      updatedAt: new Date().toISOString(),
+      shadowCommitProof: proof
+    });
+  });
+}
+
+function assertAcceptedIgnoredShadowMetadataSuccessors(
+  proof: MaintenanceWorkflowShadowCommitProof,
+  ignoredPaths: ReadonlySet<string>,
+  acceptedProofs: readonly MaintenanceShadowMetadataSuccessorProof[]
+): void {
+  const acceptedByPath = new Map(
+    [...managedJournalProofsByPath(acceptedProofs)].filter(
+      ([relativePath]) => ignoredPaths.has(relativePath)
+    )
+  );
+  const consumed = new Set<string>();
+  for (const target of proof.liveTargets) {
+    const relativePath = normalizeRelativePath(target.relativePath);
+    if (!ignoredPaths.has(relativePath)) continue;
+    const accepted = acceptedByPath.get(relativePath);
+    if (target.metadataSuccessor) {
+      if (
+        !accepted
+        || stableStringify(accepted)
+          !== stableStringify(target.metadataSuccessor)
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_cas_conflict",
+          `ignored Shadow successor 缺少 managed accepted proof：${relativePath}`,
+          relativePath
+        );
+      }
+      consumed.add(relativePath);
+    } else if (accepted) {
+      throw new MaintenanceWorkflowWalError(
+        "state_corrupt",
+        `managed accepted proof 不属于 Shadow successor：${relativePath}`,
+        relativePath
+      );
+    }
+  }
+  if (consumed.size !== acceptedByPath.size) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed accepted proof 不属于 ignored Shadow target"
+    );
+  }
+}
+
+function acceptedShadowMetadataSuccessorsForCleanup(
+  state: MaintenanceWorkflowWalState,
+  managedJournal: MaintenanceWorkflowManagedApplyJournal | undefined
+): MaintenanceShadowMetadataSuccessorProof[] {
+  if (!state.shadowCommitProof || !managedJournal) return [];
+  const acceptedByPath = managedJournalProofsByPath(
+    managedJournal.acceptedMetadataBaselines
+  );
+  const result: MaintenanceShadowMetadataSuccessorProof[] = [];
+  for (const target of state.shadowCommitProof.liveTargets) {
+    if (!target.metadataSuccessor) continue;
+    const accepted = acceptedByPath.get(
+      normalizeRelativePath(target.relativePath)
+    );
+    if (
+      accepted
+      && stableStringify(accepted)
+        === stableStringify(target.metadataSuccessor)
+    ) {
+      result.push(cloneJson(accepted));
+    }
+  }
+  return result.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
 }
 
 export async function confirmMaintenanceWorkflowShadowCommitted(
@@ -1603,7 +2168,7 @@ export async function confirmMaintenanceWorkflowShadowCommitted(
       "Shadow commit evidence 与 workflow intent 不匹配"
     );
   }
-  const journal = await readShadowCommitJournal(
+  let journal = await readShadowCommitJournal(
     handle.storageRootPath,
     loaded.intent.shadow.controlRootPath
   );
@@ -1612,8 +2177,11 @@ export async function confirmMaintenanceWorkflowShadowCommitted(
     loaded.intent.shadow,
     loaded.intent.winner.attemptId
   );
+  let verification: Awaited<
+    ReturnType<typeof markMaintenanceShadowCommittedFromJournal>
+  >;
   try {
-    await markMaintenanceShadowCommittedFromJournal(
+    verification = await markMaintenanceShadowCommittedFromJournal(
       maintenanceShadowHandleFromCommitDraft(
         loaded.intent.shadow,
         loaded.intent.winner.attemptId
@@ -1626,12 +2194,30 @@ export async function confirmMaintenanceWorkflowShadowCommitted(
       "Shadow canonical apply journal 未通过复验"
     );
   }
-  const proof: MaintenanceWorkflowShadowCommitProof = {
+  journal = await readShadowCommitJournal(
+    handle.storageRootPath,
+    loaded.intent.shadow.controlRootPath
+  );
+  await assertShadowCommitJournalMatches(
+    journal,
+    loaded.intent.shadow,
+    loaded.intent.winner.attemptId
+  );
+  if (
+    stableStringify(verification.metadataSuccessors)
+    !== stableStringify(shadowJournalMetadataSuccessors(journal))
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "phase_conflict",
+      "Shadow confirm 未消费 canonical metadata successor proof"
+    );
+  }
+  let proof: MaintenanceWorkflowShadowCommitProof = {
     applyJournalDigest: journal.digest,
     commitReceipt: shadowCommitReceipt(journal),
     liveTargets: shadowJournalLiveTargets(journal)
   };
-  await verifyShadowCommitJournal(
+  proof = await verifyShadowCommitJournal(
     handle,
     loaded.intent,
     liveVaultPathInput,
@@ -1639,17 +2225,28 @@ export async function confirmMaintenanceWorkflowShadowCommitted(
   );
   return await withWalStateLock(handle, async () => {
     const current = await loadMaintenanceWorkflowWal(handle);
-    if (current.state.phase === "shadow_committed") {
-      if (
-        stableStringify(current.state.shadowCommitProof)
-        !== stableStringify(proof)
-      ) {
+    if (
+      PHASES.indexOf(current.state.phase)
+      >= PHASES.indexOf("shadow_committed")
+    ) {
+      const existingProof = current.state.shadowCommitProof;
+      if (!existingProof) {
         throw new MaintenanceWorkflowWalError(
           "state_corrupt",
-          "Shadow commit proof 与已持久化 WAL state 不一致"
+          "Shadow committed WAL 缺少 commit proof"
         );
       }
-      return current.state;
+      if (stableStringify(existingProof) === stableStringify(proof)) {
+        return current.state;
+      }
+      assertShadowCommitProofSuccessor(existingProof, proof);
+      const updatedAt = new Date().toISOString();
+      return await writeNextWalState(current, {
+        ...withoutStateDigest(current.state),
+        sequence: current.state.sequence + 1,
+        updatedAt,
+        shadowCommitProof: proof
+      });
     }
     if (current.state.phase !== "prepared") {
       throw new MaintenanceWorkflowWalError(
@@ -1683,7 +2280,10 @@ export async function createMaintenanceWorkflowNoopProof(input: {
   }
   const sourceSnapshot = input.discoveredSources
     .map((source) => cloneJson(source))
-    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    .sort((left, right) => compareCanonicalText(
+      left.relativePath,
+      right.relativePath
+    ));
   const sourcePaths = new Set<string>();
   for (const source of sourceSnapshot) {
     const relativePath = assertValidSourceRecord(source, "noop discovered source");
@@ -1779,13 +2379,37 @@ async function applyMaintenanceWorkflowManagedWritesLocked(
 ): Promise<{ appliedPaths: string[]; state: MaintenanceWorkflowWalState }> {
   let loaded = await loadMaintenanceWorkflowWal(handle);
   if (loaded.state.phase === "managed_committed") {
-    await verifyWorkflowLiveEvidence(
+    const managedVerification =
+      await finalizationManagedTargetVerificationOptions(
+        handle,
+        loaded,
+        liveVaultPathInput
+      );
+    if (!managedVerification.managedJournal) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_journal_corrupt",
+        "managed_committed WAL 缺少 durable managed journal"
+      );
+    }
+    loaded = {
+      ...loaded,
+      state: await verifyWorkflowLiveEvidence(
       handle,
       loaded.intent,
       loaded.state,
-      liveVaultPathInput
+      liveVaultPathInput,
+      {
+        allowManagedShadowOverrides: true,
+        acceptedIgnoredMetadataSuccessors:
+          managedVerification.managedJournal.acceptedMetadataBaselines ?? []
+      }
+      )
+    };
+    await verifyAllManagedTargets(
+      liveVaultPathInput,
+      loaded.intent.managedWrites,
+      managedVerification
     );
-    await verifyAllManagedTargets(liveVaultPathInput, loaded.intent.managedWrites);
     return {
       appliedPaths: loaded.intent.managedWrites.map((write) => write.relativePath),
       state: loaded.state
@@ -1810,34 +2434,66 @@ async function applyMaintenanceWorkflowManagedWritesLocked(
   let journal = await readManagedJournalOrNull(handle.managedJournalPath);
   if (journal) {
     assertValidManagedJournal(journal, loaded.intent);
+    // Validate cross-file authority before any policy upgrade or recovery
+    // rewrite. A journal-only forged window must never be "repaired" into a
+    // valid-looking record.
+    assertManagedJournalLeaseBindings(journal, loaded.state, loaded.intent);
+    journal = await ensureManagedJournalMetadataSuccessorPolicy(
+      handle,
+      journal,
+      loaded.intent
+    );
+  }
+  if (!journal) {
+    try {
+      loaded = {
+        ...loaded,
+        state: await verifyWorkflowLiveEvidence(
+        handle,
+        loaded.intent,
+        loaded.state,
+        liveVaultPath
+        )
+      };
+    } catch (error) {
+      const normalized = error instanceof MaintenanceWorkflowWalError
+        ? error
+        : new MaintenanceWorkflowWalError(
+          "managed_cas_conflict",
+          `workflow live evidence 无法复验：${errorMessage(error)}`
+        );
+      await markMaintenanceWorkflowWalBlocked(handle, {
+        code: normalized.code,
+        message: normalized.message
+      }).catch(() => undefined);
+      throw normalized;
+    }
+    journal = await prepareManagedJournal(handle, loaded.intent);
   }
   try {
-    await verifyWorkflowLiveEvidence(
+    const preflight = await preflightManagedJournal(
+      liveVaultPath,
+      handle,
+      loaded.intent,
+      loaded.state,
+      journal
+    );
+    journal = preflight.journal;
+    loaded = { ...loaded, state: preflight.state };
+    loaded = {
+      ...loaded,
+      state: await verifyWorkflowLiveEvidence(
       handle,
       loaded.intent,
       loaded.state,
       liveVaultPath,
-      { allowManagedShadowOverrides: Boolean(journal) }
-    );
-  } catch (error) {
-    const normalized = error instanceof MaintenanceWorkflowWalError
-      ? error
-      : new MaintenanceWorkflowWalError(
-        "managed_cas_conflict",
-        `workflow live evidence 无法复验：${errorMessage(error)}`
-      );
-    await markMaintenanceWorkflowWalBlocked(handle, {
-      code: normalized.code,
-      message: normalized.message
-    }).catch(() => undefined);
-    throw normalized;
-  }
-
-  if (!journal) {
-    journal = await prepareManagedJournal(handle, loaded.intent);
-  }
-  try {
-    await preflightManagedJournal(liveVaultPath, journal);
+      {
+        allowManagedShadowOverrides: true,
+        acceptedIgnoredMetadataSuccessors:
+          journal.acceptedMetadataBaselines ?? []
+      }
+      )
+    };
   } catch (error) {
     const normalized = error instanceof MaintenanceWorkflowWalError
       ? error
@@ -1857,8 +2513,24 @@ async function applyMaintenanceWorkflowManagedWritesLocked(
   }
 
   if (journal.state === "committed") {
-    await verifyAllManagedTargets(liveVaultPath, loaded.intent.managedWrites);
-    await cleanupManagedJournalArtifacts(liveVaultPath, journal, options);
+    journal = await refreshCommittedManagedMetadataSuccessors(
+      handle,
+      loaded.intent,
+      liveVaultPath,
+      journal
+    );
+    await verifyAllManagedTargets(
+      liveVaultPath,
+      loaded.intent.managedWrites,
+      { handle, intent: loaded.intent, managedJournal: journal }
+    );
+    await cleanupManagedJournalArtifacts(
+      liveVaultPath,
+      handle,
+      loaded.intent,
+      journal,
+      options
+    );
     if (loaded.state.blocked) {
       await clearMaintenanceWorkflowWalBlockedInternal(handle, {
         stateSequence: loaded.state.sequence,
@@ -1906,22 +2578,57 @@ async function applyMaintenanceWorkflowManagedWritesLocked(
         index,
         relativePath: entry.write.relativePath
       });
-      await applyManagedJournalEntry(liveVaultPath, handle, entry, index, options);
+      const effectiveInstall = await effectiveManagedInstallForEntry(
+        handle,
+        liveVaultPath,
+        journal,
+        entry
+      );
+      const lease = await ensureManagedJournalInstallWindowForEntry(
+        handle,
+        loaded.intent,
+        liveVaultPath,
+        loaded.state,
+        journal,
+        entry,
+        effectiveInstall
+      );
+      journal = lease.journal;
+      loaded = { ...loaded, state: lease.state };
+      await applyManagedJournalEntry(
+        liveVaultPath,
+        handle,
+        journal,
+        entry,
+        index,
+        options
+      );
     }
-    await verifyAllManagedTargets(
+    const metadataSuccessors = await collectManagedMetadataSuccessors(
+      handle,
+      loaded.intent,
       liveVaultPath,
-      journal.entries.map((entry) => entry.write)
+      journal
     );
-    journal = await updateManagedJournal(handle.managedJournalPath, journal, {
-      state: "committed",
-      error: undefined
-    });
+    journal = await persistCommittedManagedJournal(
+      handle,
+      loaded.intent,
+      liveVaultPath,
+      journal,
+      metadataSuccessors
+    );
     await options.faultInjector?.({
       point: "after-journal-commit",
       index: journal.entries.length,
       relativePath: ""
     });
-    await cleanupManagedJournalArtifacts(liveVaultPath, journal, options);
+    await cleanupManagedJournalArtifacts(
+      liveVaultPath,
+      handle,
+      loaded.intent,
+      journal,
+      options
+    );
     const state = await advancePhaseInternal(
       handle,
       "shadow_committed",
@@ -1966,7 +2673,7 @@ export async function commitMaintenanceWorkflowSettingsDurably<
 ): Promise<{ settings: T; changed: boolean; state: MaintenanceWorkflowWalState }> {
   const initial = await loadMaintenanceWorkflowWal(handle);
   return await withVaultCommitLock(handle, initial.intent, async () => {
-    const loaded = await loadMaintenanceWorkflowWal(handle);
+    let loaded = await loadMaintenanceWorkflowWal(handle);
     if (loaded.state.phase === "settings_committed") {
       if (loaded.state.blocked) {
         if (!host.resumeBlocked) {
@@ -1977,16 +2684,32 @@ export async function commitMaintenanceWorkflowSettingsDurably<
         }
         assertMatchingBlockedResume(loaded.state, host.resumeBlocked);
       }
-      await verifyWorkflowLiveEvidence(
+      const managedVerification =
+        await finalizationManagedTargetVerificationOptions(
+          handle,
+          loaded,
+          liveVaultPathInput
+        );
+      loaded = {
+        ...loaded,
+        state: await verifyWorkflowLiveEvidence(
         handle,
         loaded.intent,
         loaded.state,
-        liveVaultPathInput
-      );
+        liveVaultPathInput,
+        {
+          allowManagedShadowOverrides: true,
+          acceptedIgnoredMetadataSuccessors:
+            managedVerification.managedJournal
+              ?.acceptedMetadataBaselines ?? []
+        }
+        )
+      };
       await verifyManagedTargetsOrBlock(
         handle,
         liveVaultPathInput,
-        loaded.intent.managedWrites
+        loaded.intent.managedWrites,
+        managedVerification
       );
       const readback = await host.withExclusiveTransaction(async (transaction) => {
         const current = await transaction.readWithGeneration();
@@ -2029,13 +2752,32 @@ export async function commitMaintenanceWorkflowSettingsDurably<
       assertMatchingBlockedResume(loaded.state, host.resumeBlocked);
     }
     try {
-      await verifyWorkflowLiveEvidence(
+      const managedVerification =
+        await finalizationManagedTargetVerificationOptions(
+          handle,
+          loaded,
+          liveVaultPathInput
+        );
+      loaded = {
+        ...loaded,
+        state: await verifyWorkflowLiveEvidence(
         handle,
         loaded.intent,
         loaded.state,
-        liveVaultPathInput
+        liveVaultPathInput,
+        {
+          allowManagedShadowOverrides: true,
+          acceptedIgnoredMetadataSuccessors:
+            managedVerification.managedJournal
+              ?.acceptedMetadataBaselines ?? []
+        }
+        )
+      };
+      await verifyAllManagedTargets(
+        liveVaultPathInput,
+        loaded.intent.managedWrites,
+        managedVerification
       );
-      await verifyAllManagedTargets(liveVaultPathInput, loaded.intent.managedWrites);
       return await host.withExclusiveTransaction(async (transaction) => {
         const before = await transaction.readWithGeneration();
         assertSettingsReadback(before, "settings transaction baseline");
@@ -2157,13 +2899,13 @@ export async function finalizeMaintenanceWorkflowWal<
 >(
   handle: MaintenanceWorkflowWalHandle,
   liveVaultPathInput: string,
-  cleanup: (intent: MaintenanceWorkflowWalIntent) => void | Promise<void>,
+  cleanup: (
+    intent: MaintenanceWorkflowWalIntent,
+    evidence: MaintenanceWorkflowFinalizeCleanupEvidence
+  ) => void | Promise<void>,
   options: {
     settingsHost?: MaintenanceWorkflowSettingsHost<T>;
-    resumeBlocked?: {
-      stateSequence: number;
-      stateDigest: string;
-    };
+    resumeBlocked?: MaintenanceWorkflowBlockedResumeToken;
   } = {}
 ): Promise<MaintenanceWorkflowWalState> {
   const initial = await loadMaintenanceWorkflowWal(handle);
@@ -2191,18 +2933,55 @@ export async function finalizeMaintenanceWorkflowWal<
   }
   try {
     return await withVaultCommitLock(handle, initial.intent, async () => {
-      const beforeTransaction = await loadMaintenanceWorkflowWal(handle);
-      await verifyWorkflowLiveEvidence(
+      let beforeTransaction = await loadMaintenanceWorkflowWal(handle);
+      if (beforeTransaction.state.phase === "finalized") {
+        return beforeTransaction.state;
+      }
+      if (beforeTransaction.state.phase !== "settings_committed") {
+        throw new MaintenanceWorkflowWalError(
+          "phase_conflict",
+          `finalize 需要 settings_committed，当前为 ${beforeTransaction.state.phase}`
+        );
+      }
+      if (beforeTransaction.state.blocked) {
+        if (!options.resumeBlocked) {
+          throw new MaintenanceWorkflowWalError(
+            "wal_blocked",
+            `workflow WAL 已阻断：${beforeTransaction.state.blocked.message}`
+          );
+        }
+        assertMatchingBlockedResume(
+          beforeTransaction.state,
+          options.resumeBlocked
+        );
+      }
+      const beforeManagedVerification =
+        await finalizationManagedTargetVerificationOptions(
+          handle,
+          beforeTransaction,
+          liveVaultPathInput
+        );
+      beforeTransaction = {
+        ...beforeTransaction,
+        state: await verifyWorkflowLiveEvidence(
         handle,
         beforeTransaction.intent,
         beforeTransaction.state,
         liveVaultPathInput,
-        { allowMissingShadowControlRoot: true }
-      );
+        {
+          allowMissingShadowControlRoot: true,
+          allowManagedShadowOverrides: true,
+          acceptedIgnoredMetadataSuccessors:
+            beforeManagedVerification.managedJournal
+              ?.acceptedMetadataBaselines ?? []
+        }
+        )
+      };
       await verifyManagedTargetsOrBlock(
         handle,
         liveVaultPathInput,
-        beforeTransaction.intent.managedWrites
+        beforeTransaction.intent.managedWrites,
+        beforeManagedVerification
       );
       return await options.settingsHost!.withExclusiveTransaction(
         async (transaction) => {
@@ -2221,53 +3000,112 @@ export async function finalizeMaintenanceWorkflowWal<
               beforeCleanup.settings,
               beforeTransaction.intent
             );
-          if (beforeTransaction.state.blocked) {
-            await clearMaintenanceWorkflowWalBlockedInternal(handle, {
-              stateSequence: beforeTransaction.state.sequence,
-              stateDigest: beforeTransaction.state.digest
-            });
+          await cleanupShadowControlRootReplayably(
+            beforeTransaction.intent,
+            cleanup,
+            {
+              acceptedShadowMetadataSuccessors:
+                acceptedShadowMetadataSuccessorsForCleanup(
+                  beforeTransaction.state,
+                  beforeManagedVerification.managedJournal
+                ),
+              ...(beforeManagedVerification.managedJournal
+                ? {
+                  managedJournalDigest:
+                    beforeManagedVerification.managedJournal.digest
+                }
+                : {}),
+              managedResultSuccessors: cloneJson(
+                beforeManagedVerification.managedJournal
+                  ?.metadataSuccessors ?? []
+              )
+            }
+          );
+          const afterCleanup = await transaction.readWithGeneration();
+          assertSettingsReadback(
+            afterCleanup,
+            "finalize settings post-cleanup readback"
+          );
+          assertMaintenanceWorkflowSettingsTarget(
+            afterCleanup.settings,
+            beforeTransaction.intent
+          );
+          assertFinalSettingsProjection(afterCleanup.settings, beforeTransaction);
+          if (
+            afterCleanup.generation !== beforeCleanup.generation
+            || settingsTargetProjectionDigest(
+              afterCleanup.settings,
+              beforeTransaction.intent
+            ) !== beforeCleanupProjectionDigest
+            || stableStringify(afterCleanup.settings)
+              !== stableStringify(beforeCleanup.settings)
+          ) {
+            throw new MaintenanceWorkflowWalError(
+              "settings_cas_conflict",
+              "finalize cleanup 到 WAL phase 落盘前 settings 发生变化"
+            );
           }
+          // Re-prove the live evidence after cleanup without holding the WAL
+          // state lock. The final state CAS below then guarantees the blocker
+          // token did not change while these file checks were running.
+          const afterManagedVerification =
+            await finalizationManagedTargetVerificationOptions(
+              handle,
+              beforeTransaction,
+              liveVaultPathInput
+            );
+          beforeTransaction = {
+            ...beforeTransaction,
+            state: await verifyWorkflowLiveEvidence(
+            handle,
+            beforeTransaction.intent,
+            beforeTransaction.state,
+            liveVaultPathInput,
+            {
+              allowMissingShadowControlRoot: true,
+              allowManagedShadowOverrides: true,
+              acceptedIgnoredMetadataSuccessors:
+                afterManagedVerification.managedJournal
+                  ?.acceptedMetadataBaselines ?? []
+            }
+            )
+          };
+          await verifyAllManagedTargets(
+            liveVaultPathInput,
+            beforeTransaction.intent.managedWrites,
+            afterManagedVerification
+          );
           return await withWalStateLock(handle, async () => {
             const loaded = await loadMaintenanceWorkflowWal(handle);
             if (loaded.state.phase === "finalized") return loaded.state;
-            if (loaded.state.phase !== "settings_committed") {
+            if (
+              loaded.state.phase !== "settings_committed"
+              || loaded.state.sequence !== beforeTransaction.state.sequence
+              || loaded.state.digest !== beforeTransaction.state.digest
+            ) {
               throw new MaintenanceWorkflowWalError(
                 "phase_conflict",
-                `finalize 需要 settings_committed，当前为 ${loaded.state.phase}`
+                "finalize 复验后 workflow WAL state 已变化"
               );
             }
             if (loaded.state.blocked) {
-              throw new MaintenanceWorkflowWalError(
-                "wal_blocked",
-                `workflow WAL 已阻断：${loaded.state.blocked.message}`
-              );
+              if (!options.resumeBlocked) {
+                throw new MaintenanceWorkflowWalError(
+                  "wal_blocked",
+                  `workflow WAL 已阻断：${loaded.state.blocked.message}`
+                );
+              }
+              assertMatchingBlockedResume(loaded.state, options.resumeBlocked);
             }
-            await cleanupShadowControlRootReplayably(loaded.intent, cleanup);
-            const afterCleanup = await transaction.readWithGeneration();
-            assertSettingsReadback(
-              afterCleanup,
-              "finalize settings post-cleanup readback"
+            const { blocked: _blocked, ...state } = withoutStateDigest(
+              loaded.state
             );
-            assertMaintenanceWorkflowSettingsTarget(
-              afterCleanup.settings,
-              loaded.intent
-            );
-            assertFinalSettingsProjection(afterCleanup.settings, loaded);
-            if (
-              afterCleanup.generation !== beforeCleanup.generation
-              || settingsTargetProjectionDigest(
-                afterCleanup.settings,
-                loaded.intent
-              ) !== beforeCleanupProjectionDigest
-              || stableStringify(afterCleanup.settings)
-                !== stableStringify(beforeCleanup.settings)
-            ) {
-              throw new MaintenanceWorkflowWalError(
-                "settings_cas_conflict",
-                "finalize cleanup 到 WAL phase 落盘前 settings 发生变化"
-              );
-            }
-            return await advancePhaseLoadedUnlocked(loaded, "finalized");
+            return await writeNextWalState(loaded, {
+              ...state,
+              phase: "finalized",
+              sequence: loaded.state.sequence + 1,
+              updatedAt: new Date().toISOString()
+            });
           });
         }
       );
@@ -2295,6 +3133,162 @@ export async function finalizeMaintenanceWorkflowWal<
   }
 }
 
+/**
+ * Returns a CAS-bound resume token for blockers whose durable transaction can
+ * be replayed without trusting the old error text. An early managed retry
+ * requires a matching blocked journal plus WAL lease authority; replay still
+ * re-proves every live CAS before either blocker is cleared. Finalization keeps
+ * the stricter target/settings proof used for post-commit metadata successors.
+ */
+export async function maintenanceWorkflowSafeBlockedResumeToken<
+  T extends MaintenanceWorkflowSettingsSnapshot
+>(
+  loaded: LoadedMaintenanceWorkflowWal,
+  liveVaultPathInput: string,
+  settingsHost?: MaintenanceWorkflowSettingsHost<T>
+): Promise<MaintenanceWorkflowBlockedResumeToken | null> {
+  const blockerCode = loaded.state.blocked?.code;
+  if (
+    loaded.state.phase === "shadow_committed"
+    && blockerCode === "managed_cas_conflict"
+  ) {
+    try {
+      const journal = await readManagedJournalOrNull(
+        loaded.handle.managedJournalPath
+      );
+      if (
+        !journal
+        || journal.state !== "blocked"
+        || !journal.error
+        || journal.error !== loaded.state.blocked?.message
+      ) return null;
+      assertValidManagedJournal(journal, loaded.intent);
+      assertManagedJournalLeaseBindings(
+        journal,
+        loaded.state,
+        loaded.intent
+      );
+      return {
+        stateSequence: loaded.state.sequence,
+        stateDigest: loaded.state.digest
+      };
+    } catch {
+      return null;
+    }
+  }
+  if (
+    loaded.state.phase === "managed_committed"
+    && (
+      blockerCode === "settings_cas_conflict"
+      || blockerCode === "settings_persist_failed"
+    )
+  ) {
+    if (!settingsHost) return null;
+    try {
+      const options = await finalizationManagedTargetVerificationOptions(
+        loaded.handle,
+        loaded,
+        liveVaultPathInput
+      );
+      if (!options.managedJournal) return null;
+      loaded = {
+        ...loaded,
+        state: await verifyWorkflowLiveEvidence(
+          loaded.handle,
+          loaded.intent,
+          loaded.state,
+          liveVaultPathInput,
+          {
+            allowManagedShadowOverrides: true,
+            acceptedIgnoredMetadataSuccessors:
+              options.managedJournal.acceptedMetadataBaselines ?? []
+          }
+        )
+      };
+      await verifyAllManagedTargets(
+        liveVaultPathInput,
+        loaded.intent.managedWrites,
+        options
+      );
+      await settingsHost.withExclusiveTransaction(async (transaction) => {
+        const current = await transaction.readWithGeneration();
+        assertSettingsReadback(
+          current,
+          "blocked managed settings recovery preflight"
+        );
+        // This is a dry three-way merge. It grants a token only while every
+        // managed settings field is still baseline, target, or a permitted
+        // newer run; a third value remains blocked and is never overwritten.
+        mergeMaintenanceWorkflowSettings(
+          cloneJson(current.settings),
+          loaded.intent
+        );
+      });
+      return {
+        stateSequence: loaded.state.sequence,
+        stateDigest: loaded.state.digest
+      };
+    } catch {
+      return null;
+    }
+  }
+  if (
+    loaded.state.phase !== "settings_committed"
+    || (
+      blockerCode !== "managed_cas_conflict"
+      && blockerCode !== "settings_cas_conflict"
+    )
+  ) {
+    return null;
+  }
+  try {
+    const options = await finalizationManagedTargetVerificationOptions(
+      loaded.handle,
+      loaded,
+      liveVaultPathInput
+    );
+    if (!options.managedJournal) return null;
+    loaded = {
+      ...loaded,
+      state: await verifyWorkflowLiveEvidence(
+      loaded.handle,
+      loaded.intent,
+      loaded.state,
+      liveVaultPathInput,
+      {
+        allowMissingShadowControlRoot: true,
+        allowManagedShadowOverrides: true,
+        acceptedIgnoredMetadataSuccessors:
+          options.managedJournal.acceptedMetadataBaselines ?? []
+      }
+      )
+    };
+    await verifyAllManagedTargets(
+      liveVaultPathInput,
+      loaded.intent.managedWrites,
+      options
+    );
+    if (
+      blockerCode === "settings_cas_conflict"
+      && (
+        !settingsHost
+        || !await settingsConflictCurrentlyMatchesWalTarget(
+          loaded,
+          settingsHost
+        )
+      )
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return {
+    stateSequence: loaded.state.sequence,
+    stateDigest: loaded.state.digest
+  };
+}
+
 function assertFinalSettingsProjection(
   current: MaintenanceWorkflowSettingsSnapshot,
   loaded: LoadedMaintenanceWorkflowWal
@@ -2313,7 +3307,11 @@ function assertFinalSettingsProjection(
 
 async function cleanupShadowControlRootReplayably(
   intent: MaintenanceWorkflowWalIntent,
-  cleanup: (intent: MaintenanceWorkflowWalIntent) => void | Promise<void>
+  cleanup: (
+    intent: MaintenanceWorkflowWalIntent,
+    evidence: MaintenanceWorkflowFinalizeCleanupEvidence
+  ) => void | Promise<void>,
+  evidence: MaintenanceWorkflowFinalizeCleanupEvidence
 ): Promise<void> {
   if (intent.completion === "noop") return;
   if (!intent.shadow) {
@@ -2334,7 +3332,7 @@ async function cleanupShadowControlRootReplayably(
       "Shadow cleanup target 不是安全目录"
     );
   }
-  await cleanup(intent);
+  await cleanup(intent, evidence);
   const after = await lstatOrNull(intent.shadow.controlRootPath);
   if (after) {
     throw new MaintenanceWorkflowWalError(
@@ -2374,15 +3372,20 @@ export function mergeMaintenanceWorkflowSettings<
   }
   const processedSources = Object.fromEntries(
     Array.from(processedEntries.entries())
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCanonicalText(left, right))
   ) as Record<string, KnowledgeBaseProcessedSource>;
 
   const currentTerminal = terminalSettingsFromSnapshot(current);
   const currentTerminalDigest = digestJson(currentTerminal);
   const terminalMatchesBaseline =
     currentTerminalDigest === intent.settings.baselineTerminalDigest;
+  const targetProjectionTerminal = terminalSettingsForWalTargetProjection(
+    current,
+    intent
+  );
   const terminalMatchesTarget =
-    currentTerminalDigest === intent.settings.targetTerminalDigest;
+    digestJson(targetProjectionTerminal)
+      === intent.settings.targetTerminalDigest;
   const terminalIsNewer =
     Number.isFinite(currentTerminal.lastRunAt)
     && currentTerminal.lastRunAt > intent.settings.targetTerminal.lastRunAt;
@@ -2480,8 +3483,13 @@ export function assertMaintenanceWorkflowSettingsTarget(
     }
   }
   const terminal = terminalSettingsFromSnapshot(current);
+  const targetProjectionTerminal = terminalSettingsForWalTargetProjection(
+    current,
+    intent
+  );
   const terminalMatchesTarget =
-    digestJson(terminal) === intent.settings.targetTerminalDigest;
+    digestJson(targetProjectionTerminal)
+      === intent.settings.targetTerminalDigest;
   const terminalIsNewer =
     Number.isFinite(terminal.lastRunAt)
     && terminal.lastRunAt > intent.settings.targetTerminal.lastRunAt;
@@ -2560,7 +3568,7 @@ function settingsTargetProjectionDigest(
   ) ?? null;
   return digestJson({
     processedSources,
-    terminal: terminalSettingsFromSnapshot(current),
+    terminal: terminalSettingsForWalTargetProjection(current, intent),
     ...(intent.settings.scheduled
       ? {
         scheduled: {
@@ -2571,6 +3579,152 @@ function settingsTargetProjectionDigest(
       : {}),
     historyEntry
   });
+}
+
+async function settingsConflictCurrentlyMatchesWalTarget<
+  T extends MaintenanceWorkflowSettingsSnapshot
+>(
+  loaded: LoadedMaintenanceWorkflowWal,
+  settingsHost: MaintenanceWorkflowSettingsHost<T>
+): Promise<boolean> {
+  try {
+    return await settingsHost.withExclusiveTransaction(async (transaction) => {
+      const readback = await transaction.readWithGeneration();
+      assertSettingsReadback(readback, "blocked settings recovery preflight");
+      assertMaintenanceWorkflowSettingsTarget(readback.settings, loaded.intent);
+      assertFinalSettingsProjection(readback.settings, loaded);
+      const terminal = terminalSettingsFromSnapshot(readback.settings);
+      const projected = terminalSettingsForWalTargetProjection(
+        readback.settings,
+        loaded.intent
+      );
+      const rawMatchesTarget =
+        digestJson(terminal) === loaded.intent.settings.targetTerminalDigest;
+      const exactNativeCleanupProjection =
+        !rawMatchesTarget
+        && digestJson(projected)
+          === loaded.intent.settings.targetTerminalDigest;
+      return rawMatchesTarget || exactNativeCleanupProjection;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Native Execution cleanup runs after the business result is durable. Its
+ * structured receipt decorates the visible terminal error/summary/warnings,
+ * but must not turn that same committed maintenance terminal into a WAL CAS
+ * conflict. Only an exact, post-run native-cleanup projection is unwrapped;
+ * local-persistence receipts and every other terminal drift remain visible to
+ * the normal digest checks and therefore fail closed.
+ */
+function terminalSettingsForWalTargetProjection(
+  current: MaintenanceWorkflowSettingsSnapshot,
+  intent: MaintenanceWorkflowWalIntent
+): MaintenanceWorkflowTerminalSettings {
+  const terminal = terminalSettingsFromSnapshot(current);
+  if (digestJson(terminal) === intent.settings.targetTerminalDigest) {
+    return terminal;
+  }
+  const receipt = current.nativeLifecycleRecoveryReceipt;
+  if (!isExactPostRunNativeCleanupProjection(
+    terminal,
+    receipt,
+    intent.settings.targetTerminal
+  )) {
+    return terminal;
+  }
+  return {
+    ...terminal,
+    lastError: receipt.projection.lastErrorBefore,
+    lastSummary: receipt.projection.lastSummaryBefore,
+    lastWarnings: terminal.lastWarnings.filter(
+      (warning) => warning.id !== receipt.warningId
+    )
+  };
+}
+
+function isExactPostRunNativeCleanupProjection(
+  terminal: MaintenanceWorkflowTerminalSettings,
+  receipt: KnowledgeBaseNativeLifecycleRecoveryReceipt | null | undefined,
+  target: MaintenanceWorkflowTerminalSettings
+): receipt is KnowledgeBaseNativeLifecycleRecoveryReceipt {
+  if (
+    !receipt
+    || receipt.schemaVersion !== 1
+    || receipt.issue !== "native-cleanup"
+    || receipt.warningId !== "native-cleanup-recovery"
+    || (
+      receipt.localCommitStatus !== "committed"
+      && receipt.localCommitStatus !== "unknown"
+    )
+    || !Array.isArray(receipt.cleanupStatuses)
+    || receipt.cleanupStatuses.some((status) =>
+      typeof status !== "string" || !status.trim()
+    )
+    || typeof receipt.cleanupAttempted !== "boolean"
+    || !Array.isArray(receipt.recordIds)
+    || receipt.recordIds.some((recordId) =>
+      typeof recordId !== "string" || !recordId.trim()
+    )
+    || !Number.isSafeInteger(receipt.firstObservedAt)
+    || !Number.isSafeInteger(receipt.updatedAt)
+    || receipt.firstObservedAt < target.lastRunAt
+    || receipt.updatedAt < receipt.firstObservedAt
+    || typeof receipt.message !== "string"
+    || !receipt.message.startsWith(NATIVE_CLEANUP_RECOVERY_ERROR_PREFIX)
+    || !receipt.message.slice(
+      NATIVE_CLEANUP_RECOVERY_ERROR_PREFIX.length
+    ).trim()
+    || !receipt.projection
+    || typeof receipt.projection !== "object"
+    || typeof receipt.projection.lastErrorBefore !== "string"
+    || typeof receipt.projection.lastSummaryBefore !== "string"
+    || typeof receipt.projection.lastErrorWithRecovery !== "string"
+    || typeof receipt.projection.lastSummaryWithRecovery !== "string"
+    || receipt.projection.lastErrorBefore !== target.lastError
+    || receipt.projection.lastSummaryBefore !== target.lastSummary
+    || receipt.projection.lastErrorWithRecovery
+      !== appendNativeLifecycleRecoveryProjection(
+        target.lastError,
+        receipt.message
+      )
+    || receipt.projection.lastSummaryWithRecovery
+      !== appendNativeLifecycleRecoveryProjection(
+        target.lastSummary,
+        NATIVE_CLEANUP_RECOVERY_SUMMARY_PROJECTION
+      )
+    || terminal.lastError !== receipt.projection.lastErrorWithRecovery
+    || terminal.lastSummary !== receipt.projection.lastSummaryWithRecovery
+    || target.lastWarnings.some((warning) =>
+      warning.id === "native-cleanup-recovery"
+      || warning.id === "native-local-commit-recovery"
+    )
+  ) {
+    return false;
+  }
+  const nativeRecoveryWarnings = terminal.lastWarnings.filter((warning) =>
+    warning.id === "native-cleanup-recovery"
+    || warning.id === "native-local-commit-recovery"
+  );
+  return nativeRecoveryWarnings.length === 1
+    && nativeRecoveryWarnings[0]?.id === receipt.warningId
+    && nativeRecoveryWarnings[0]?.message === receipt.message;
+}
+
+const NATIVE_CLEANUP_RECOVERY_ERROR_PREFIX = "自动维护结果已保存；";
+const NATIVE_CLEANUP_RECOVERY_SUMMARY_PROJECTION =
+  "Native Execution 清理待恢复，不影响已保存的维护结果。";
+
+function appendNativeLifecycleRecoveryProjection(
+  previous: string,
+  warning: string
+): string {
+  const normalized = previous.trim();
+  if (!normalized) return warning;
+  if (normalized.includes(warning)) return normalized;
+  return `${normalized}；${warning}`;
 }
 
 export async function snapshotMaintenanceWorkflowFileCas(
@@ -2587,7 +3741,8 @@ export async function snapshotMaintenanceWorkflowFileCas(
 async function snapshotRootRelativeFileCas(
   rootPathInput: string,
   relativePathInput: string,
-  label: string
+  label: string,
+  allowedLinkCounts: readonly number[] = [1]
 ): Promise<MaintenanceWorkflowFileCas> {
   const rootPath = await ensurePlainDirectory(rootPathInput, `${label} root`);
   const relativePath = normalizeRelativePath(relativePathInput);
@@ -2598,7 +3753,8 @@ async function snapshotRootRelativeFileCas(
   if (!chain.complete) return { kind: "missing" };
   await assertSafeDirectoryChainUnchanged(chain);
   const result = await snapshotAbsoluteFileCas(
-    resolveInsideRoot(rootPath, relativePath)
+    resolveInsideRoot(rootPath, relativePath),
+    allowedLinkCounts
   );
   await assertSafeDirectoryChainUnchanged(chain);
   return result;
@@ -2608,51 +3764,139 @@ async function snapshotAbsoluteFileCas(
   absolutePath: string,
   allowedLinkCounts: readonly number[] = [1]
 ): Promise<MaintenanceWorkflowFileCas> {
-  const stat = await fsp.lstat(absolutePath).catch((error) => {
-    if (isNotFound(error)) return null;
-    throw error;
-  });
-  if (!stat) return { kind: "missing" };
-  if (
-    !stat.isFile()
-    || stat.isSymbolicLink()
-    || !allowedLinkCounts.includes(stat.nlink)
-  ) {
+  for (let attempt = 0; attempt < FILE_CAS_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+    const pathBefore = await lstatOrNull(absolutePath);
+    if (!pathBefore) return { kind: "missing" };
+    if (
+      !pathBefore.isFile()
+      || pathBefore.isSymbolicLink()
+      || !allowedLinkCounts.includes(pathBefore.nlink)
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "unsafe_entry",
+        `CAS 目标不是独立普通文件：${absolutePath}`
+      );
+    }
+    const handle = await fsp.open(
+      absolutePath,
+      fsConstants.O_RDONLY | noFollowFlag()
+    );
+    let snapshot: MaintenanceWorkflowFileCas | undefined;
+    try {
+      const before = await handle.stat();
+      assertSafeRegularStat(before, absolutePath, allowedLinkCounts);
+      if (before.size > MAX_BLOB_BYTES) {
+        throw new MaintenanceWorkflowWalError(
+          "blob_corrupt",
+          `CAS 文件过大：${absolutePath}`
+        );
+      }
+      const content = await handle.readFile();
+      const after = await handle.stat();
+      const pathAfter = await lstatOrNull(absolutePath);
+      if (
+        sameOpenFileVersion(pathBefore, before)
+        && sameOpenFileVersion(before, after)
+        && pathAfter
+        && sameOpenFileVersion(after, pathAfter)
+        && content.byteLength === before.size
+      ) {
+        snapshot = {
+          kind: "file",
+          sha256: sha256(content),
+          size: content.byteLength,
+          mode: normalizeMode(before.mode)
+        };
+      }
+    } finally {
+      await handle.close();
+    }
+    if (snapshot) return snapshot;
+    if (attempt === FILE_CAS_SNAPSHOT_MAX_ATTEMPTS - 1) break;
+    await new Promise<void>((resolve) => {
+      const delayMs = FILE_CAS_SNAPSHOT_RETRY_DELAY_MS * (attempt + 1);
+      if (typeof window === "undefined") {
+        nodeSetTimeout(resolve, delayMs);
+      } else {
+        window.setTimeout(resolve, delayMs);
+      }
+    });
+  }
+  throw new MaintenanceWorkflowWalError(
+    "managed_cas_conflict",
+    `读取 CAS 时文件持续变化：${absolutePath}`
+  );
+}
+
+type ManagedMetadataSuccessorPolicy = NonNullable<
+  MaintenanceWorkflowManagedApplyJournal["metadataSuccessorPolicy"]
+>;
+
+function managedMetadataSuccessorPolicyForWrite(
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  relativePathInput: string
+): ManagedMetadataSuccessorPolicy | undefined {
+  const policy = journal.metadataSuccessorPolicy;
+  if (!policy) return undefined;
+  const relativePath = normalizeRelativePath(relativePathInput);
+  const installWindow = journal.metadataSuccessorInstallWindows?.find(
+    (entry) => normalizeRelativePath(entry.relativePath) === relativePath
+  );
+  return installWindow
+    ? { ...policy, window: { ...installWindow.window } }
+    : policy;
+}
+
+function managedMetadataSuccessorPolicyFor(
+  intent: MaintenanceWorkflowWalIntent
+): ManagedMetadataSuccessorPolicy {
+  const terminalAt = intent.settings.targetTerminal.lastRunAt;
+  const workflowAnchorMs = Math.max(
+    intent.startedAt,
+    Number.isFinite(terminalAt) ? terminalAt : intent.startedAt
+  );
+  if (!Number.isFinite(workflowAnchorMs)) {
     throw new MaintenanceWorkflowWalError(
-      "unsafe_entry",
-      `CAS 目标不是独立普通文件：${absolutePath}`
+      "intent_corrupt",
+      "managed metadata successor 缺少 immutable workflow 时间"
     );
   }
-  const handle = await fsp.open(
-    absolutePath,
-    fsConstants.O_RDONLY | noFollowFlag()
+  return {
+    version: 1,
+    kind: "managed-markdown-updated-only",
+    window: {
+      lowerBoundMs: workflowAnchorMs,
+      upperBoundMs: workflowAnchorMs + MANAGED_METADATA_SUCCESSOR_WINDOW_MS
+    }
+  };
+}
+
+async function ensureManagedJournalMetadataSuccessorPolicy(
+  handle: MaintenanceWorkflowWalHandle,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  intent: MaintenanceWorkflowWalIntent
+): Promise<MaintenanceWorkflowManagedApplyJournal> {
+  if (journal.metadataSuccessorPolicy) return journal;
+  const policy = managedMetadataSuccessorPolicyFor(intent);
+  const upgraded = await updateManagedJournal(
+    handle.managedJournalPath,
+    journal,
+    { metadataSuccessorPolicy: policy }
   );
-  try {
-    const before = await handle.stat();
-    assertSafeRegularStat(before, absolutePath, allowedLinkCounts);
-    if (before.size > MAX_BLOB_BYTES) {
-      throw new MaintenanceWorkflowWalError(
-        "blob_corrupt",
-        `CAS 文件过大：${absolutePath}`
-      );
-    }
-    const content = await handle.readFile();
-    const after = await handle.stat();
-    if (!sameOpenFileVersion(before, after)) {
-      throw new MaintenanceWorkflowWalError(
-        "managed_cas_conflict",
-        `读取 CAS 时文件发生变化：${absolutePath}`
-      );
-    }
-    return {
-      kind: "file",
-      sha256: sha256(content),
-      size: content.byteLength,
-      mode: normalizeMode(before.mode)
-    };
-  } finally {
-    await handle.close();
+  await syncDirectory(path.dirname(handle.managedJournalPath));
+  const readBack = await readManagedJournalOrNull(handle.managedJournalPath);
+  if (
+    !readBack
+    || readBack.digest !== upgraded.digest
+    || stableStringify(readBack.metadataSuccessorPolicy)
+      !== stableStringify(policy)
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "legacy managed successor policy durable read-back 失败"
+    );
   }
+  return readBack;
 }
 
 async function prepareManagedJournal(
@@ -2669,6 +3913,7 @@ async function prepareManagedJournal(
     intentDigest: intent.digest,
     state: "prepared",
     entries,
+    metadataSuccessorPolicy: managedMetadataSuccessorPolicyFor(intent),
     createdAt: now,
     updatedAt: now
   });
@@ -2676,11 +3921,984 @@ async function prepareManagedJournal(
   return journal;
 }
 
+interface ManagedInstallRecoveryObservation {
+  target: MaintenanceWorkflowFileCas;
+  installTemp: MaintenanceWorkflowFileCas;
+  displaced: MaintenanceWorkflowFileCas;
+  targetTempSameIdentity: boolean;
+}
+
+async function observeManagedInstallRecovery(
+  liveVaultPath: string,
+  entry: MaintenanceWorkflowManagedJournalEntry
+): Promise<ManagedInstallRecoveryObservation> {
+  const targetPath = resolveInsideRoot(liveVaultPath, entry.write.relativePath);
+  const installTempPath = entry.installTempRelativePath
+    ? resolveInsideRoot(liveVaultPath, entry.installTempRelativePath)
+    : null;
+  const [targetStat, tempStat] = await Promise.all([
+    lstatOrNull(targetPath),
+    installTempPath ? lstatOrNull(installTempPath) : Promise.resolve(null)
+  ]);
+  const targetTempSameIdentity = Boolean(
+    targetStat
+    && tempStat
+    && targetStat.isFile()
+    && !targetStat.isSymbolicLink()
+    && tempStat.isFile()
+    && !tempStat.isSymbolicLink()
+    && targetStat.dev === tempStat.dev
+    && targetStat.ino === tempStat.ino
+  );
+  const [target, installTemp, displaced] = await Promise.all([
+    snapshotRootRelativeFileCas(
+      liveVaultPath,
+      entry.write.relativePath,
+      "managed recovery lease target",
+      targetTempSameIdentity ? [2] : [1]
+    ),
+    entry.installTempRelativePath
+      ? snapshotRootRelativeFileCas(
+        liveVaultPath,
+        entry.installTempRelativePath,
+        "managed recovery lease temp",
+        targetTempSameIdentity ? [2] : [1]
+      )
+      : Promise.resolve<MaintenanceWorkflowFileCas>({ kind: "missing" }),
+    entry.displacedLiveRelativePath
+      ? snapshotRootRelativeFileCas(
+        liveVaultPath,
+        entry.displacedLiveRelativePath,
+        "managed recovery lease displaced",
+        [1, 2]
+      )
+      : Promise.resolve<MaintenanceWorkflowFileCas>({ kind: "missing" })
+  ]);
+  return { target, installTemp, displaced, targetTempSameIdentity };
+}
+
+function managedInstallRecoveryEligible(
+  observation: ManagedInstallRecoveryObservation,
+  entry: MaintenanceWorkflowManagedJournalEntry,
+  effectiveExpected: MaintenanceWorkflowFileCas,
+  effectiveDesired: MaintenanceWorkflowFileCas
+): boolean {
+  const displacedSafe = observation.displaced.kind === "missing"
+    || sameCas(observation.displaced, effectiveExpected);
+  const tempMissing = observation.installTemp.kind === "missing";
+  const tempExactDesired = sameCas(
+    observation.installTemp,
+    effectiveDesired
+  );
+  const stillBaseline = sameCas(observation.target, effectiveExpected)
+    && observation.displaced.kind === "missing"
+    && (tempMissing || tempExactDesired);
+  const readyToInstall = observation.target.kind === "missing"
+    && (tempMissing || tempExactDesired)
+    && (
+      effectiveExpected.kind === "missing"
+        ? observation.displaced.kind === "missing"
+        : sameCas(observation.displaced, effectiveExpected)
+    );
+  const unsettledHardlink = observation.targetTempSameIdentity
+    && observation.target.kind === "file"
+    && observation.installTemp.kind === "file"
+    && displacedSafe;
+  const unsettledAtomicReplace = tempExactDesired
+    && observation.target.kind === "file"
+    && displacedSafe;
+  const installedWithRecoveryBaseline = tempMissing
+    && observation.target.kind === "file"
+    && effectiveExpected.kind === "file"
+    && sameCas(observation.displaced, effectiveExpected);
+  return stillBaseline
+    || readyToInstall
+    || unsettledHardlink
+    || unsettledAtomicReplace
+    || installedWithRecoveryBaseline;
+}
+
+function managedMetadataLeaseDigest(
+  lease: Omit<MaintenanceWorkflowManagedMetadataSuccessorLease, "digest">
+): string {
+  return digestJson(lease);
+}
+
+async function persistManagedMetadataSuccessorLease(
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  entry: MaintenanceWorkflowManagedJournalEntry,
+  observation: ManagedInstallRecoveryObservation,
+  journal: MaintenanceWorkflowManagedApplyJournal
+): Promise<MaintenanceWorkflowWalState> {
+  return await withWalStateLock(handle, async () => {
+    const loaded = await loadMaintenanceWorkflowWal(handle);
+    if (loaded.state.phase !== "shadow_committed") {
+      throw new MaintenanceWorkflowWalError(
+        "phase_conflict",
+        `managed recovery lease 只能写入 shadow_committed：${loaded.state.phase}`
+      );
+    }
+    const now = Date.now();
+    const relativePath = normalizeRelativePath(entry.write.relativePath);
+    const existing = [...(loaded.state.managedMetadataSuccessorLeases ?? [])]
+      .filter((lease) => normalizeRelativePath(lease.relativePath) === relativePath)
+      .sort((left, right) => right.window.upperBoundMs - left.window.upperBoundMs)[0];
+    if (existing && existing.window.upperBoundMs >= now) return loaded.state;
+    const createdAt = new Date(now).toISOString();
+    const policy = managedMetadataSuccessorPolicyFor(intent);
+    const leaseWithoutDigest: Omit<
+      MaintenanceWorkflowManagedMetadataSuccessorLease,
+      "digest"
+    > = {
+      version: 1,
+      relativePath,
+      intentDigest: intent.digest,
+      entryDigest: digestJson(entry),
+      createdAt,
+      window: {
+        lowerBoundMs: policy.window.lowerBoundMs,
+        upperBoundMs: now + MANAGED_METADATA_SUCCESSOR_WINDOW_MS
+      },
+      provenanceDigest: digestJson(observation)
+    };
+    const lease: MaintenanceWorkflowManagedMetadataSuccessorLease = {
+      ...leaseWithoutDigest,
+      digest: managedMetadataLeaseDigest(leaseWithoutDigest)
+    };
+    const journalLeaseDigests = new Set(
+      (journal.metadataSuccessorInstallWindows ?? []).map(
+        (window) => window.leaseDigest
+      )
+    );
+    const leases = [
+      ...(loaded.state.managedMetadataSuccessorLeases ?? []).filter(
+        (candidate) =>
+          normalizeRelativePath(candidate.relativePath) !== relativePath
+          || journalLeaseDigests.has(candidate.digest)
+      ),
+      lease
+    ].sort((left, right) => {
+      const pathOrder = compareCanonicalText(left.relativePath, right.relativePath);
+      if (pathOrder !== 0) return pathOrder;
+      return left.window.upperBoundMs - right.window.upperBoundMs;
+    });
+    return await writeNextWalState(loaded, {
+      ...withoutStateDigest(loaded.state),
+      sequence: loaded.state.sequence + 1,
+      updatedAt: createdAt,
+      managedMetadataSuccessorLeases: leases
+    });
+  });
+}
+
+async function ensureManagedJournalInstallWindowForEntry(
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  liveVaultPath: string,
+  state: MaintenanceWorkflowWalState,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  entry: MaintenanceWorkflowManagedJournalEntry,
+  effectiveInstall: ManagedEffectiveInstall
+): Promise<{
+  state: MaintenanceWorkflowWalState;
+  journal: MaintenanceWorkflowManagedApplyJournal;
+}> {
+  assertManagedJournalLeaseBindings(journal, state, intent);
+  const relativePath = normalizeRelativePath(entry.write.relativePath);
+  const now = Date.now();
+  const existingWindow = journal.metadataSuccessorInstallWindows?.find(
+    (candidate) => normalizeRelativePath(candidate.relativePath) === relativePath
+  );
+  const stateLease = [...(state.managedMetadataSuccessorLeases ?? [])]
+    .filter((lease) => normalizeRelativePath(lease.relativePath) === relativePath)
+    .sort((left, right) => right.window.upperBoundMs - left.window.upperBoundMs)[0];
+  if (
+    existingWindow
+    && stateLease
+    && existingWindow.leaseDigest === stateLease.digest
+    && stableStringify(existingWindow.window) === stableStringify(stateLease.window)
+    && existingWindow.createdAt === stateLease.createdAt
+    && existingWindow.window.upperBoundMs >= now
+  ) {
+    return { state, journal };
+  }
+
+  const acceptedBaseline = managedJournalProofsByPath(
+    journal.acceptedMetadataBaselines
+  ).get(relativePath);
+  const effectiveExpected = acceptedBaseline?.result ?? entry.write.expected;
+  const observation = await observeManagedInstallRecovery(liveVaultPath, entry);
+  if (!managedInstallRecoveryEligible(
+    observation,
+    entry,
+    effectiveExpected,
+    effectiveInstall.desired
+  )) {
+    return { state, journal };
+  }
+
+  let durableState = stateLease && stateLease.window.upperBoundMs >= now
+    ? state
+    : await persistManagedMetadataSuccessorLease(
+      handle,
+      intent,
+      entry,
+      observation,
+      journal
+    );
+  const durableLease = [...(durableState.managedMetadataSuccessorLeases ?? [])]
+    .filter((lease) => normalizeRelativePath(lease.relativePath) === relativePath)
+    .sort((left, right) => right.window.upperBoundMs - left.window.upperBoundMs)[0];
+  if (!durableLease) {
+    throw new MaintenanceWorkflowWalError(
+      "state_corrupt",
+      `managed recovery lease 写后丢失：${relativePath}`,
+      relativePath
+    );
+  }
+  const installWindow = {
+    relativePath,
+    createdAt: durableLease.createdAt,
+    window: { ...durableLease.window },
+    leaseDigest: durableLease.digest
+  };
+  const windows = [
+    ...(journal.metadataSuccessorInstallWindows ?? []).filter(
+      (candidate) => normalizeRelativePath(candidate.relativePath) !== relativePath
+    ),
+    installWindow
+  ].sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+  const updated = await updateManagedJournal(
+    handle.managedJournalPath,
+    journal,
+    { metadataSuccessorInstallWindows: windows }
+  );
+  await syncDirectory(path.dirname(handle.managedJournalPath));
+  const readBack = await readManagedJournalOrNull(handle.managedJournalPath);
+  if (!readBack || readBack.digest !== updated.digest) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `managed install window durable read-back 失败：${relativePath}`,
+      relativePath
+    );
+  }
+  assertValidManagedJournal(readBack, intent);
+  assertManagedJournalLeaseBindings(readBack, durableState, intent);
+  const observedAgain = await observeManagedInstallRecovery(liveVaultPath, entry);
+  if (!managedInstallRecoveryEligible(
+    observedAgain,
+    entry,
+    effectiveExpected,
+    effectiveInstall.desired
+  )) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_cas_conflict",
+      `managed recovery lease 后 artifact 已变化：${relativePath}`,
+      relativePath
+    );
+  }
+  return { state: durableState, journal: readBack };
+}
+
+async function managedMetadataSuccessorEvidence(
+  handle: MaintenanceWorkflowWalHandle,
+  liveVaultPath: string,
+  write: MaintenanceWorkflowManagedWrite,
+  current: MaintenanceWorkflowFileCas,
+  policy: ManagedMetadataSuccessorPolicy,
+  basis: "expected" | "desired",
+  effectiveInstall?: ManagedEffectiveInstall
+): Promise<MaintenanceShadowMetadataSuccessorProof | null> {
+  return await managedMetadataSuccessorEvidenceAtPath(
+    handle,
+    liveVaultPath,
+    write,
+    current,
+    policy,
+    basis,
+    write.relativePath,
+    [1],
+    effectiveInstall
+  );
+}
+
+async function managedMetadataSuccessorEvidenceAtPath(
+  handle: MaintenanceWorkflowWalHandle,
+  liveVaultPath: string,
+  write: MaintenanceWorkflowManagedWrite,
+  current: MaintenanceWorkflowFileCas,
+  policy: ManagedMetadataSuccessorPolicy,
+  basis: "expected" | "desired",
+  currentRelativePathInput: string,
+  allowedLinkCounts: readonly number[] = [1],
+  effectiveInstall?: ManagedEffectiveInstall
+): Promise<MaintenanceShadowMetadataSuccessorProof | null> {
+  if (
+    write.operation !== "upsert"
+    || current.kind !== "file"
+    || !["index", "raw-metadata", "report"].includes(write.kind)
+  ) return null;
+  const baseline = basis === "desired" && effectiveInstall
+    ? effectiveInstall.desired
+    : basis === "desired" ? write.desired : write.expected;
+  if (baseline.kind !== "file") return null;
+  const desiredContent = basis === "desired" && effectiveInstall?.content
+    ? Buffer.from(effectiveInstall.content)
+    : await managedMetadataBaselineContent(handle, write, basis);
+  if (!desiredContent) return null;
+  const relativePath = normalizeRelativePath(write.relativePath);
+  const currentRelativePath = normalizeRelativePath(currentRelativePathInput);
+  const parentChain = await captureSafeDirectoryChain(
+    liveVaultPath,
+    path.posix.dirname(currentRelativePath)
+  );
+  if (!parentChain.complete) return null;
+  const currentContent = await readIndependentRegularFile(
+    resolveInsideRoot(liveVaultPath, currentRelativePath),
+    `managed metadata ${basis} successor`,
+    MAX_BLOB_BYTES,
+    allowedLinkCounts
+  );
+  await assertSafeDirectoryChainUnchanged(parentChain);
+  if (
+    currentContent.byteLength !== current.size
+    || sha256(currentContent) !== current.sha256
+  ) return null;
+
+  const evidence = maintenanceMarkdownUpdatedSuccessorEvidence({
+    relativePath,
+    desiredContent,
+    currentContent,
+    desiredMode: baseline.mode,
+    currentMode: current.mode,
+    window: policy.window,
+    allowInsertedUpdated:
+      basis === "desired"
+      && write.kind === "report"
+      && maintenanceMarkdownUpdatedMayBeInserted(relativePath),
+    allowRawMetadata:
+      write.kind === "raw-metadata"
+      || write.kind === "index"
+  });
+  return evidence
+    ? {
+      relativePath,
+      result: current,
+      updatedAt: evidence.updatedAt,
+      projectionDigest: evidence.projectionDigest
+    }
+    : null;
+}
+
+async function managedMetadataBaselineContent(
+  handle: MaintenanceWorkflowWalHandle,
+  write: MaintenanceWorkflowManagedWrite,
+  basis: "expected" | "desired"
+): Promise<Buffer | null> {
+  const baseline = basis === "desired" ? write.desired : write.expected;
+  if (baseline.kind !== "file" || write.operation !== "upsert") return null;
+  const directDigest = basis === "desired"
+    ? write.blobDigest
+    : write.expectedBlobDigest;
+  if (directDigest) {
+    if (directDigest !== baseline.sha256) return null;
+    const content = await readIndependentRegularFile(
+      path.join(handle.blobRootPath, blobFileName(directDigest)),
+      `managed metadata ${basis} blob`,
+      MAX_BLOB_BYTES
+    );
+    return content.byteLength === baseline.size
+      && sha256(content) === baseline.sha256
+      ? content
+      : null;
+  }
+  if (
+    basis !== "expected"
+    || write.kind !== "raw-metadata"
+    || !write.blobDigest
+    || write.desired.kind !== "file"
+  ) return null;
+  const desiredContent = await readIndependentRegularFile(
+    path.join(handle.blobRootPath, blobFileName(write.blobDigest)),
+    "legacy Raw desired blob",
+    MAX_BLOB_BYTES
+  );
+  for (const candidate of rawUserOwnedContentCandidates(desiredContent)) {
+    if (
+      candidate.byteLength === baseline.size
+      && sha256(candidate) === baseline.sha256
+    ) return candidate;
+  }
+  return null;
+}
+
+interface RawMarkdownByteLine {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function readRawMarkdownByteLine(
+  content: Buffer,
+  start: number
+): RawMarkdownByteLine | null {
+  if (start < 0 || start >= content.length) return null;
+  const newlineIndex = content.indexOf(0x0a, start);
+  const contentEnd = newlineIndex < 0 ? content.length : newlineIndex;
+  const lineEnd = contentEnd > start && content[contentEnd - 1] === 0x0d
+    ? contentEnd - 1
+    : contentEnd;
+  return {
+    start,
+    end: newlineIndex < 0 ? content.length : newlineIndex + 1,
+    text: content.subarray(start, lineEnd).toString("utf8")
+  };
+}
+
+function rawUserOwnedContentCandidates(content: Buffer): Buffer[] {
+  const opening = readRawMarkdownByteLine(content, 0);
+  if (!opening || opening.text !== "---") return [Buffer.from(content)];
+  let cursor = opening.end;
+  let closing: RawMarkdownByteLine | null = null;
+  const frontmatterLines: RawMarkdownByteLine[] = [];
+  while (cursor < content.length) {
+    const line = readRawMarkdownByteLine(content, cursor);
+    if (!line) break;
+    if (line.text === "---" || line.text === "...") {
+      closing = line;
+      break;
+    }
+    frontmatterLines.push(line);
+    cursor = line.end;
+  }
+  if (!closing) return [];
+  const kept: Buffer[] = [];
+  let skipping = false;
+  for (const line of frontmatterLines) {
+    const key = rawFrontmatterColumnZeroKey(line.text);
+    if (key) {
+      skipping = RAW_DIGEST_MANAGED_KEYS.has(key);
+      if (!skipping) kept.push(Buffer.from(content.subarray(line.start, line.end)));
+    } else if (skipping && /^\s+/.test(line.text)) {
+      // Continuation of an EchoInk-owned list field.
+    } else {
+      skipping = false;
+      kept.push(Buffer.from(content.subarray(line.start, line.end)));
+    }
+  }
+  const unmanaged = Buffer.concat(kept);
+  const withFrontmatter = Buffer.concat([
+    Buffer.from(content.subarray(0, opening.end)),
+    unmanaged,
+    Buffer.from(content.subarray(closing.start))
+  ]);
+  const candidates = [withFrontmatter];
+  if (unmanaged.length === 0) {
+    candidates.push(Buffer.from(content.subarray(closing.end)));
+  }
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const digest = sha256(candidate);
+    if (seen.has(digest)) return false;
+    seen.add(digest);
+    return true;
+  });
+}
+
+function rawFrontmatterColumnZeroKey(line: string): string | null {
+  const match = line.match(/^([^\s:#\n][^:\n]*):(?:\s|$)/);
+  return match?.[1]?.trim() || null;
+}
+
+interface ManagedEffectiveInstall {
+  desired: MaintenanceWorkflowFileCas;
+  content?: Buffer;
+  metadataSuccessor?: MaintenanceShadowMetadataSuccessorProof;
+}
+
+interface ValidatedRawAcceptedBaseline {
+  content: Buffer;
+  proof: MaintenanceShadowMetadataSuccessorProof;
+}
+
+async function validateRawAcceptedBaselineFromArtifacts(
+  handle: MaintenanceWorkflowWalHandle,
+  liveVaultPath: string,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  entry: MaintenanceWorkflowManagedJournalEntry,
+  accepted: MaintenanceShadowMetadataSuccessorProof
+): Promise<ValidatedRawAcceptedBaseline> {
+  const write = entry.write;
+  if (
+    write.kind !== "raw-metadata"
+    || write.expected.kind !== "file"
+    || accepted.result.kind !== "file"
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw accepted baseline 类型非法：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const policy = managedMetadataSuccessorPolicyForWrite(
+    journal,
+    write.relativePath
+  ) ?? journal.metadataSuccessorPolicy;
+  if (!policy) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw accepted baseline 缺少 successor policy：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const expectedContent = await managedMetadataBaselineContent(
+    handle,
+    write,
+    "expected"
+  );
+  if (!expectedContent) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw accepted baseline 缺少可复验 expected blob：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const candidatePaths = [
+    write.relativePath,
+    entry.displacedLiveRelativePath
+  ].filter((value): value is string => Boolean(value));
+  for (const candidatePath of candidatePaths) {
+    const absolutePath = resolveInsideRoot(liveVaultPath, candidatePath);
+    const stat = await lstatOrNull(absolutePath);
+    if (!stat || !stat.isFile() || stat.isSymbolicLink() || ![1, 2].includes(stat.nlink)) {
+      continue;
+    }
+    const candidateCas = await snapshotRootRelativeFileCas(
+      liveVaultPath,
+      candidatePath,
+      "Raw accepted baseline artifact",
+      [1, 2]
+    );
+    if (candidateCas.kind !== "file") continue;
+    const artifactContent = await readIndependentRegularFile(
+      absolutePath,
+      "Raw accepted baseline artifact",
+      MAX_BLOB_BYTES,
+      [1, 2]
+    );
+    const possibleBaselines = sameCas(candidateCas, accepted.result)
+      ? [artifactContent]
+      : await rawBaselineCandidatesFromManagedSuccessor(
+        handle,
+        liveVaultPath,
+        write,
+        candidatePath,
+        candidateCas,
+        artifactContent,
+        policy,
+        accepted
+      );
+    for (const currentContent of possibleBaselines) {
+      const currentCas: MaintenanceWorkflowCasFile = {
+        kind: "file",
+        sha256: sha256(currentContent),
+        size: currentContent.byteLength,
+        mode: accepted.result.mode
+      };
+      if (!sameCas(currentCas, accepted.result)) continue;
+      const evidence = maintenanceMarkdownUpdatedSuccessorEvidence({
+        relativePath: write.relativePath,
+        desiredContent: expectedContent,
+        currentContent,
+        desiredMode: write.expected.mode,
+        currentMode: currentCas.mode,
+        window: policy.window,
+        allowRawMetadata: true
+      });
+      const reproved = evidence ? {
+        relativePath: normalizeRelativePath(write.relativePath),
+        result: currentCas,
+        updatedAt: evidence.updatedAt,
+        projectionDigest: evidence.projectionDigest
+      } : null;
+      if (
+        reproved
+        && stableStringify(reproved) === stableStringify(accepted)
+      ) {
+        return { content: currentContent, proof: reproved };
+      }
+    }
+  }
+  throw new MaintenanceWorkflowWalError(
+    "managed_journal_corrupt",
+    `Raw accepted baseline 无法从真实 artifact 重证明：${write.relativePath}`,
+    write.relativePath
+  );
+}
+
+async function rawBaselineCandidatesFromManagedSuccessor(
+  handle: MaintenanceWorkflowWalHandle,
+  liveVaultPath: string,
+  write: MaintenanceWorkflowManagedWrite,
+  candidatePath: string,
+  candidateCas: MaintenanceWorkflowCasFile,
+  artifactContent: Buffer,
+  policy: ManagedMetadataSuccessorPolicy,
+  accepted: MaintenanceShadowMetadataSuccessorProof
+): Promise<Buffer[]> {
+  const desiredProof = await managedMetadataSuccessorEvidenceAtPath(
+    handle,
+    liveVaultPath,
+    write,
+    candidateCas,
+    policy,
+    "desired",
+    candidatePath,
+    [1, 2]
+  );
+  if (!desiredProof) return [];
+  const result: Buffer[] = [];
+  for (const candidate of rawUserOwnedContentCandidates(artifactContent)) {
+    result.push(candidate);
+    const rewound = rewriteTopLevelUpdatedAt(candidate, accepted.updatedAt);
+    if (rewound) result.push(rewound);
+  }
+  const seen = new Set<string>();
+  return result.filter((candidate) => {
+    const digest = sha256(candidate);
+    if (seen.has(digest)) return false;
+    seen.add(digest);
+    return true;
+  });
+}
+
+async function effectiveManagedInstallForEntry(
+  handle: MaintenanceWorkflowWalHandle,
+  liveVaultPath: string,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  entry: MaintenanceWorkflowManagedJournalEntry
+): Promise<ManagedEffectiveInstall> {
+  const write = entry.write;
+  const accepted = managedJournalProofsByPath(
+    journal.acceptedMetadataBaselines
+  ).get(normalizeRelativePath(write.relativePath));
+  if (
+    !accepted
+    || write.kind !== "raw-metadata"
+    || write.operation !== "upsert"
+    || write.desired.kind !== "file"
+  ) return { desired: write.desired };
+  const validated = await validateRawAcceptedBaselineFromArtifacts(
+    handle,
+    liveVaultPath,
+    journal,
+    entry,
+    accepted
+  );
+  const desiredContent = await managedMetadataBaselineContent(
+    handle,
+    write,
+    "desired"
+  );
+  if (!desiredContent) {
+    throw new MaintenanceWorkflowWalError(
+      "blob_corrupt",
+      `Raw carry-forward 缺少 desired blob：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const carriedContent = carryForwardTopLevelUpdated(
+    desiredContent,
+    validated.content,
+    write.relativePath
+  );
+  const carried: MaintenanceWorkflowCasFile = {
+    kind: "file",
+    sha256: sha256(carriedContent),
+    size: carriedContent.byteLength,
+    mode: write.desired.mode
+  };
+  const policy = managedMetadataSuccessorPolicyForWrite(
+    journal,
+    write.relativePath
+  ) ?? journal.metadataSuccessorPolicy;
+  if (!policy) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw carry-forward 缺少 successor policy：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const evidence = maintenanceMarkdownUpdatedSuccessorEvidence({
+    relativePath: write.relativePath,
+    desiredContent,
+    currentContent: carriedContent,
+    desiredMode: write.desired.mode,
+    currentMode: carried.mode,
+    window: policy.window,
+    allowRawMetadata: true
+  });
+  if (!evidence || evidence.updatedAt !== validated.proof.updatedAt) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw carry-forward 无法证明 updated 单调前进：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  return {
+    desired: carried,
+    content: carriedContent,
+    metadataSuccessor: {
+      relativePath: normalizeRelativePath(write.relativePath),
+      result: carried,
+      updatedAt: evidence.updatedAt,
+      projectionDigest: evidence.projectionDigest
+    }
+  };
+}
+
+function carryForwardTopLevelUpdated(
+  desiredContent: Buffer,
+  acceptedContent: Buffer,
+  relativePath: string
+): Buffer {
+  const desired = topLevelUpdatedScalar(desiredContent);
+  const accepted = topLevelUpdatedScalar(acceptedContent);
+  if (!desired || !accepted) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      `Raw carry-forward 缺少唯一顶层 updated：${relativePath}`,
+      relativePath
+    );
+  }
+  const desiredText = desiredContent.toString("utf8");
+  const carried = [
+    desiredText.slice(0, desired.valueStart),
+    accepted.value,
+    desiredText.slice(desired.valueEnd)
+  ].join("");
+  return Buffer.from(carried, "utf8");
+}
+
+function topLevelUpdatedScalar(content: Buffer): {
+  value: string;
+  valueStart: number;
+  valueEnd: number;
+} | null {
+  const text = content.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(content)) return null;
+  const lines = text.match(/[^\n]*(?:\n|$)/g)?.filter(Boolean) ?? [];
+  if (!lines.length || !/^---\r?\n$/.test(lines[0])) return null;
+  let offset = lines[0].length;
+  let result: { value: string; valueStart: number; valueEnd: number } | null = null;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^(?:---|\.\.\.)\r?\n$/.test(line)) return result;
+    const match = line.match(
+      /^((?:updated|["']updated["'])\s*:\s*)(.*?)([ \t]*)(\r?\n)$/i
+    );
+    if (match) {
+      if (result) return null;
+      const value = match[2] ?? "";
+      const valueStart = offset + (match[1]?.length ?? 0);
+      result = { value, valueStart, valueEnd: valueStart + value.length };
+    }
+    offset += line.length;
+  }
+  return null;
+}
+
+function rewriteTopLevelUpdatedAt(
+  content: Buffer,
+  updatedAt: number
+): Buffer | null {
+  const scalar = topLevelUpdatedScalar(content);
+  if (!scalar) return null;
+  const formatted = formatUpdatedScalarAt(scalar.value, updatedAt);
+  if (!formatted) return null;
+  const text = content.toString("utf8");
+  return Buffer.from([
+    text.slice(0, scalar.valueStart),
+    formatted,
+    text.slice(scalar.valueEnd)
+  ].join(""), "utf8");
+}
+
+function formatUpdatedScalarAt(templateValue: string, updatedAt: number): string | null {
+  const raw = templateValue.trim();
+  const quoted = raw.match(/^(?:"([^"]*)"|'([^']*)')$/);
+  const quote = quoted ? (raw.startsWith("\"") ? "\"" : "'") : "";
+  const timestamp = quoted ? (quoted[1] ?? quoted[2] ?? "") : raw;
+  const match = timestamp.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-](\d{2}):(\d{2}))?$/
+  );
+  if (!match || !Number.isFinite(updatedAt)) return null;
+  const zone = match[8];
+  let shifted = new Date(updatedAt);
+  let useUtc = false;
+  if (zone) {
+    useUtc = true;
+    if (zone !== "Z") {
+      const sign = zone.startsWith("-") ? -1 : 1;
+      const offsetMinutes = sign * (
+        Number(match[9]) * 60 + Number(match[10])
+      );
+      shifted = new Date(updatedAt + offsetMinutes * 60_000);
+    }
+  }
+  const component = (utc: number, local: number, width = 2) =>
+    String(useUtc ? utc : local).padStart(width, "0");
+  const year = component(
+    shifted.getUTCFullYear(),
+    shifted.getFullYear(),
+    4
+  );
+  const month = component(
+    shifted.getUTCMonth() + 1,
+    shifted.getMonth() + 1
+  );
+  const day = component(shifted.getUTCDate(), shifted.getDate());
+  const hour = component(shifted.getUTCHours(), shifted.getHours());
+  const minute = component(shifted.getUTCMinutes(), shifted.getMinutes());
+  let next = `${year}-${month}-${day}T${hour}:${minute}`;
+  if (match[6] !== undefined) {
+    next += `:${component(shifted.getUTCSeconds(), shifted.getSeconds())}`;
+    if (match[7] !== undefined) {
+      next += `.${component(
+        shifted.getUTCMilliseconds(),
+        shifted.getMilliseconds(),
+        3
+      ).slice(0, match[7].length)}`;
+    }
+  }
+  next += zone ?? "";
+  if (Date.parse(next) !== updatedAt) return null;
+  return quote ? `${quote}${next}${quote}` : next;
+}
+
+function managedJournalProofsByPath(
+  proofs: readonly MaintenanceShadowMetadataSuccessorProof[] | undefined
+): Map<string, MaintenanceShadowMetadataSuccessorProof> {
+  return new Map((proofs ?? []).map((proof) => [
+    normalizeRelativePath(proof.relativePath),
+    proof
+  ]));
+}
+
+function managedMetadataSuccessorTransition(
+  previous: MaintenanceShadowMetadataSuccessorProof,
+  next: MaintenanceShadowMetadataSuccessorProof,
+  relativePathInput: string
+): "same" | "advance" {
+  const relativePath = normalizeRelativePath(relativePathInput);
+  if (stableStringify(previous) === stableStringify(next)) return "same";
+  if (
+    normalizeRelativePath(previous.relativePath) !== relativePath
+    || normalizeRelativePath(next.relativePath) !== relativePath
+    || previous.result.kind !== "file"
+    || next.result.kind !== "file"
+    || next.updatedAt <= previous.updatedAt
+    || next.projectionDigest !== previous.projectionDigest
+    || next.result.mode !== previous.result.mode
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_cas_conflict",
+      `managed metadata successor 不得倒退或改变投影：${relativePath}`,
+      relativePath
+    );
+  }
+  return "advance";
+}
+
+function shadowAcceptedBaselineProof(
+  state: MaintenanceWorkflowWalState,
+  write: MaintenanceWorkflowManagedWrite,
+  current: MaintenanceWorkflowFileCas
+): MaintenanceShadowMetadataSuccessorProof | null {
+  const target = state.shadowCommitProof?.liveTargets.find(
+    (candidate) => normalizeRelativePath(candidate.relativePath)
+      === normalizeRelativePath(write.relativePath)
+  );
+  if (
+    !target?.metadataSuccessor
+    || !sameCas(target.result, write.expected)
+    || !sameCas(target.observedResult ?? target.result, current)
+    || !sameCas(target.metadataSuccessor.result, current)
+  ) return null;
+  return cloneJson(target.metadataSuccessor);
+}
+
 async function preflightManagedJournal(
   liveVaultPath: string,
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  state: MaintenanceWorkflowWalState,
   journal: MaintenanceWorkflowManagedApplyJournal
-): Promise<void> {
+): Promise<{
+  state: MaintenanceWorkflowWalState;
+  journal: MaintenanceWorkflowManagedApplyJournal;
+}> {
+  const policy = journal.metadataSuccessorPolicy;
+  if (!policy) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed preflight 缺少固定 metadata successor policy"
+    );
+  }
+  const acceptedByPath = managedJournalProofsByPath(
+    journal.acceptedMetadataBaselines
+  );
+  const resultSuccessorsByPath = managedJournalProofsByPath(
+    journal.metadataSuccessors
+  );
+  let proofsChanged = false;
+  let resultProofsChanged = false;
+  let workflowState = state;
+  assertManagedJournalLeaseBindings(journal, workflowState, intent);
   for (const entry of journal.entries) {
+    const relativePath = normalizeRelativePath(entry.write.relativePath);
+    let acceptedBaseline = acceptedByPath.get(relativePath);
+    let effectiveExpected = acceptedBaseline?.result ?? entry.write.expected;
+    if (acceptedBaseline) {
+      const shadowProof = shadowAcceptedBaselineProof(
+        workflowState,
+        entry.write,
+        acceptedBaseline.result
+      );
+      if (
+        (!shadowProof
+          || stableStringify(shadowProof)
+            !== stableStringify(acceptedBaseline))
+        && entry.write.kind !== "raw-metadata"
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_journal_corrupt",
+          `managed accepted baseline 缺少 Shadow/Raw authority：${relativePath}`,
+          relativePath
+        );
+      }
+    }
+    let effectiveInstall = await effectiveManagedInstallForEntry(
+      handle,
+      liveVaultPath,
+      journal,
+      entry
+    );
+    const lease = await ensureManagedJournalInstallWindowForEntry(
+      handle,
+      intent,
+      liveVaultPath,
+      workflowState,
+      journal,
+      entry,
+      effectiveInstall
+    );
+    journal = lease.journal;
+    workflowState = lease.state;
     const relativeDirectory = path.posix.dirname(entry.write.relativePath);
     const chain = await captureSafeDirectoryChain(
       liveVaultPath,
@@ -2697,13 +4915,23 @@ async function preflightManagedJournal(
       ? resolveInsideRoot(liveVaultPath, entry.displacedLiveRelativePath)
       : null;
     if (installTempPath) {
-      await repairExclusiveInstallLink(targetPath, installTempPath);
+      await repairManagedExclusiveInstallLink(
+        liveVaultPath,
+        handle,
+        journal,
+        entry.write,
+        targetPath,
+        installTempPath,
+        effectiveInstall
+      );
     }
     if (displacedPath && entry.write.expected.kind === "file") {
       await repairExclusiveDisplacementLink(
         targetPath,
         displacedPath,
-        entry.write.expected
+        effectiveExpected.kind === "file"
+          ? effectiveExpected
+          : entry.write.expected
       );
     }
     const [target, installTemp, displaced] = await Promise.all([
@@ -2732,48 +4960,191 @@ async function preflightManagedJournal(
     }
     if (
       installTemp.kind !== "missing"
-      && !sameCas(installTemp, entry.write.desired)
+      && !sameCas(installTemp, effectiveInstall.desired)
     ) {
       throw managedCasConflict(
         entry.write.relativePath,
         installTemp,
         { kind: "missing" },
-        entry.write.desired
+        effectiveInstall.desired
       );
     }
     if (
       displaced.kind !== "missing"
-      && !sameCas(displaced, entry.write.expected)
+      && !sameCas(displaced, effectiveExpected)
     ) {
       throw managedCasConflict(
         entry.write.relativePath,
         displaced,
-        entry.write.expected,
+        effectiveExpected,
         entry.write.desired
       );
     }
+    if (
+      !acceptedBaseline
+      && displaced.kind === "missing"
+      && installTemp.kind === "missing"
+      && !sameCas(target, entry.write.expected)
+      && !sameCas(target, entry.write.desired)
+    ) {
+      const proof = shadowAcceptedBaselineProof(
+        workflowState,
+        entry.write,
+        target
+      ) ?? await managedMetadataSuccessorEvidence(
+        handle,
+        liveVaultPath,
+        entry.write,
+        target,
+        managedMetadataSuccessorPolicyForWrite(journal, relativePath)
+          ?? policy,
+        "expected"
+      );
+      if (proof) {
+        acceptedBaseline = proof;
+        acceptedByPath.set(relativePath, proof);
+        effectiveExpected = proof.result;
+        proofsChanged = true;
+        if (entry.write.kind === "raw-metadata") {
+          const provisionalJournal: MaintenanceWorkflowManagedApplyJournal = {
+            ...journal,
+            acceptedMetadataBaselines: [...acceptedByPath.values()]
+          };
+          effectiveInstall = await effectiveManagedInstallForEntry(
+            handle,
+            liveVaultPath,
+            provisionalJournal,
+            entry
+          );
+        }
+      }
+    }
+    let resultSuccessor = resultSuccessorsByPath.get(relativePath);
+    const currentResultSuccessor = sameCas(
+      target,
+      effectiveInstall.desired
+    )
+      ? effectiveInstall.metadataSuccessor
+      : await managedMetadataSuccessorEvidence(
+        handle,
+        liveVaultPath,
+        entry.write,
+        target,
+        managedMetadataSuccessorPolicyForWrite(journal, relativePath)
+          ?? policy,
+        "desired",
+        effectiveInstall
+      );
+    if (currentResultSuccessor) {
+      const transition = resultSuccessor
+        ? managedMetadataSuccessorTransition(
+          resultSuccessor,
+          currentResultSuccessor,
+          relativePath
+        )
+        : "advance";
+      if (!resultSuccessor || transition === "advance") {
+        resultSuccessor = currentResultSuccessor;
+        resultSuccessorsByPath.set(relativePath, currentResultSuccessor);
+        resultProofsChanged = true;
+      }
+    } else if (resultSuccessor) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_cas_conflict",
+          `managed durable result successor 不再匹配 live target：${relativePath}`,
+          relativePath
+        );
+    }
     const isBaseline =
-      sameCas(target, entry.write.expected)
+      sameCas(target, effectiveExpected)
       && displaced.kind === "missing";
     const isDisplaced =
       target.kind === "missing"
-      && entry.write.expected.kind === "file"
-      && sameCas(displaced, entry.write.expected);
+      && effectiveExpected.kind === "file"
+      && sameCas(displaced, effectiveExpected);
     const isInstalled =
-      sameCas(target, entry.write.desired)
+      (
+        sameCas(target, effectiveInstall.desired)
+        || Boolean(
+          resultSuccessor
+          && sameCas(target, resultSuccessor.result)
+        )
+      )
       && (
         displaced.kind === "missing"
-        || sameCas(displaced, entry.write.expected)
+        || sameCas(displaced, effectiveExpected)
       );
     if (!isBaseline && !isDisplaced && !isInstalled) {
       throw managedCasConflict(
         entry.write.relativePath,
         target,
-        entry.write.expected,
+        effectiveExpected,
         entry.write.desired
       );
     }
   }
+  if (proofsChanged || resultProofsChanged) {
+    journal = await updateManagedJournal(
+      handle.managedJournalPath,
+      journal,
+      {
+        ...(proofsChanged ? {
+          acceptedMetadataBaselines: [...acceptedByPath.values()].sort(
+            (left, right) => compareCanonicalText(
+              left.relativePath,
+              right.relativePath
+            )
+          )
+        } : {}),
+        ...(resultProofsChanged ? {
+          metadataSuccessors: [...resultSuccessorsByPath.values()].sort(
+            (left, right) => compareCanonicalText(
+              left.relativePath,
+              right.relativePath
+            )
+          )
+        } : {})
+      }
+    );
+    await syncDirectory(path.dirname(handle.managedJournalPath));
+    const readBack = await readManagedJournalOrNull(
+      handle.managedJournalPath
+    );
+    if (!readBack || readBack.digest !== journal.digest) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_journal_corrupt",
+        "managed accepted baseline durable read-back 失败"
+      );
+    }
+    journal = readBack;
+  }
+  if (proofsChanged) {
+    // A newly accepted baseline (notably Raw updated T1) changes both the
+    // effective expected CAS and the bytes that will be installed. Acquire
+    // the per-entry recovery lease only after that proof is durable, before
+    // apply is allowed to mutate live files.
+    for (const entry of journal.entries) {
+      const effectiveInstall = await effectiveManagedInstallForEntry(
+        handle,
+        liveVaultPath,
+        journal,
+        entry
+      );
+      const lease = await ensureManagedJournalInstallWindowForEntry(
+        handle,
+        intent,
+        liveVaultPath,
+        workflowState,
+        journal,
+        entry,
+        effectiveInstall
+      );
+      workflowState = lease.state;
+      journal = lease.journal;
+    }
+  }
+  assertManagedJournalLeaseBindings(journal, workflowState, intent);
+  return { state: workflowState, journal };
 }
 
 async function snapshotManagedCleanupAwareArtifactCas(
@@ -2820,11 +5191,25 @@ async function snapshotManagedCleanupAwareArtifactCas(
 async function applyManagedJournalEntry(
   liveVaultPath: string,
   handle: MaintenanceWorkflowWalHandle,
+  journal: MaintenanceWorkflowManagedApplyJournal,
   entry: MaintenanceWorkflowManagedJournalEntry,
   index: number,
   options: ApplyMaintenanceWorkflowManagedWritesOptions
 ): Promise<void> {
   const write = entry.write;
+  const acceptedBaseline = managedJournalProofsByPath(
+    journal.acceptedMetadataBaselines
+  ).get(normalizeRelativePath(write.relativePath));
+  const durableResultSuccessor = managedJournalProofsByPath(
+    journal.metadataSuccessors
+  ).get(normalizeRelativePath(write.relativePath));
+  const effectiveExpected = acceptedBaseline?.result ?? write.expected;
+  const effectiveInstall = await effectiveManagedInstallForEntry(
+    handle,
+    liveVaultPath,
+    journal,
+    entry
+  );
   await ensureSafeParentDirectory(liveVaultPath, path.posix.dirname(write.relativePath));
   const parentChain = await captureSafeDirectoryChain(
     liveVaultPath,
@@ -2846,14 +5231,29 @@ async function applyManagedJournalEntry(
     ? resolveInsideRoot(liveVaultPath, entry.displacedLiveRelativePath)
     : null;
   if (installTempPath) {
-    await repairExclusiveInstallLink(targetPath, installTempPath);
+    await repairManagedExclusiveInstallLink(
+      liveVaultPath,
+      handle,
+      journal,
+      write,
+      targetPath,
+      installTempPath,
+      effectiveInstall,
+      async () => {
+        await options.faultInjector?.({
+          point: "before-install-temp-unlink",
+          index,
+          relativePath: write.relativePath
+        });
+      }
+    );
     await assertSafeDirectoryChainUnchanged(parentChain);
   }
-  if (displacedPath && write.expected.kind === "file") {
+  if (displacedPath && effectiveExpected.kind === "file") {
     await repairExclusiveDisplacementLink(
       targetPath,
       displacedPath,
-      write.expected
+      effectiveExpected
     );
     await assertSafeDirectoryChainUnchanged(parentChain);
   }
@@ -2863,11 +5263,35 @@ async function applyManagedJournalEntry(
     write.relativePath,
     "managed apply target"
   );
-  if (sameCas(current, write.desired)) {
+  if (sameCas(current, effectiveInstall.desired)) {
     return;
   }
+  const writeMetadataSuccessorPolicy =
+    managedMetadataSuccessorPolicyForWrite(journal, write.relativePath);
+  if (writeMetadataSuccessorPolicy) {
+    const currentResultSuccessor = await managedMetadataSuccessorEvidence(
+      handle,
+      liveVaultPath,
+      write,
+      current,
+      writeMetadataSuccessorPolicy,
+      "desired",
+      effectiveInstall
+    );
+    if (
+      currentResultSuccessor
+      && (
+        !durableResultSuccessor
+        || managedMetadataSuccessorTransition(
+          durableResultSuccessor,
+          currentResultSuccessor,
+          write.relativePath
+        )
+      )
+    ) return;
+  }
 
-  if (write.expected.kind === "file") {
+  if (effectiveExpected.kind === "file") {
     if (!displacedPath) {
       throw new MaintenanceWorkflowWalError(
         "managed_journal_corrupt",
@@ -2880,13 +5304,13 @@ async function applyManagedJournalEntry(
       "managed apply displaced"
     );
     if (displaced.kind === "missing") {
-      if (!sameCas(current, write.expected)) {
-        throw managedCasConflict(write.relativePath, current, write.expected, write.desired);
+      if (!sameCas(current, effectiveExpected)) {
+        throw managedCasConflict(write.relativePath, current, effectiveExpected, effectiveInstall.desired);
       }
       await displaceLiveFileNoClobber(
         targetPath,
         displacedPath,
-        write.expected,
+        effectiveExpected,
         parentChain
       );
       await options.faultInjector?.({
@@ -2905,11 +5329,11 @@ async function applyManagedJournalEntry(
         "managed target readback"
       );
     }
-    if (!sameCas(displaced, write.expected) || current.kind !== "missing") {
-      throw managedCasConflict(write.relativePath, current, write.expected, write.desired);
+    if (!sameCas(displaced, effectiveExpected) || current.kind !== "missing") {
+      throw managedCasConflict(write.relativePath, current, effectiveExpected, effectiveInstall.desired);
     }
-  } else if (!sameCas(current, write.expected)) {
-    throw managedCasConflict(write.relativePath, current, write.expected, write.desired);
+  } else if (!sameCas(current, effectiveExpected)) {
+    throw managedCasConflict(write.relativePath, current, effectiveExpected, effectiveInstall.desired);
   }
 
   if (write.operation === "delete") {
@@ -2919,7 +5343,7 @@ async function applyManagedJournalEntry(
       relativePath: write.relativePath
     });
   } else {
-    if (!installTempPath || !write.blobDigest || write.desired.kind !== "file") {
+    if (!installTempPath || !write.blobDigest || effectiveInstall.desired.kind !== "file") {
       throw new MaintenanceWorkflowWalError(
         "managed_journal_corrupt",
         `managed upsert 缺少安装证据：${write.relativePath}`
@@ -2928,7 +5352,8 @@ async function applyManagedJournalEntry(
     await prepareInstallArtifact(
       path.join(handle.blobRootPath, blobFileName(write.blobDigest)),
       installTempPath,
-      write.desired
+      effectiveInstall.desired,
+      effectiveInstall.content
     );
     await assertSafeDirectoryChainUnchanged(parentChain);
     try {
@@ -2940,27 +5365,59 @@ async function applyManagedJournalEntry(
         write.relativePath,
         "managed concurrent install"
       );
-      if (!sameCas(installed, write.desired)) {
-        throw managedCasConflict(write.relativePath, installed, write.expected, write.desired);
+      if (!sameCas(installed, effectiveInstall.desired)) {
+        throw managedCasConflict(write.relativePath, installed, effectiveExpected, effectiveInstall.desired);
       }
     }
     await syncDirectory(path.dirname(targetPath));
-    await assertSafeDirectoryChainUnchanged(parentChain);
-    await repairExclusiveInstallLink(targetPath, installTempPath);
     await assertSafeDirectoryChainUnchanged(parentChain);
     await options.faultInjector?.({
       point: "after-install",
       index,
       relativePath: write.relativePath
     });
+    await repairManagedExclusiveInstallLink(
+      liveVaultPath,
+      handle,
+      journal,
+      write,
+      targetPath,
+      installTempPath,
+      effectiveInstall,
+      async () => {
+        await options.faultInjector?.({
+          point: "before-install-temp-unlink",
+          index,
+          relativePath: write.relativePath
+        });
+      }
+    );
+    await assertSafeDirectoryChainUnchanged(parentChain);
   }
   const installed = await snapshotRootRelativeFileCas(
     liveVaultPath,
     write.relativePath,
     "managed installed target"
   );
-  if (!sameCas(installed, write.desired)) {
-    throw managedCasConflict(write.relativePath, installed, write.expected, write.desired);
+  if (sameCas(installed, effectiveInstall.desired)) return;
+  const installedSuccessor = writeMetadataSuccessorPolicy
+    ? await managedMetadataSuccessorEvidence(
+      handle,
+      liveVaultPath,
+      write,
+      installed,
+      writeMetadataSuccessorPolicy,
+      "desired",
+      effectiveInstall
+    )
+    : null;
+  if (!installedSuccessor) {
+    throw managedCasConflict(
+      write.relativePath,
+      installed,
+      effectiveExpected,
+      effectiveInstall.desired
+    );
   }
 }
 
@@ -3066,7 +5523,8 @@ async function repairExclusiveDisplacementLink(
 async function prepareInstallArtifact(
   blobPath: string,
   installTempPath: string,
-  desired: MaintenanceWorkflowCasFile
+  desired: MaintenanceWorkflowCasFile,
+  contentOverride?: Buffer
 ): Promise<void> {
   const existingStat = await fsp.lstat(installTempPath).catch((error) => {
     if (isNotFound(error)) return null;
@@ -3084,7 +5542,9 @@ async function prepareInstallArtifact(
     await fsp.rm(installTempPath, { force: true });
     await syncDirectory(path.dirname(installTempPath));
   }
-  const blob = await readIndependentRegularFile(blobPath, "managed blob", MAX_BLOB_BYTES);
+  const blob = contentOverride
+    ? Buffer.from(contentOverride)
+    : await readIndependentRegularFile(blobPath, "managed blob", MAX_BLOB_BYTES);
   if (
     sha256(blob) !== desired.sha256
     || blob.byteLength !== desired.size
@@ -3106,9 +5566,15 @@ async function prepareInstallArtifact(
   await syncDirectory(path.dirname(installTempPath));
 }
 
-async function repairExclusiveInstallLink(
+async function repairManagedExclusiveInstallLink(
+  liveVaultPath: string,
+  handle: MaintenanceWorkflowWalHandle,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  write: MaintenanceWorkflowManagedWrite,
   targetPath: string,
-  installTempPath: string
+  installTempPath: string,
+  effectiveInstall: ManagedEffectiveInstall,
+  beforeUnlink: () => void | Promise<void> = () => undefined
 ): Promise<void> {
   const [target, temp] = await Promise.all([
     fsp.lstat(targetPath).catch((error) => isNotFound(error) ? null : Promise.reject(error)),
@@ -3120,12 +5586,119 @@ async function repairExclusiveInstallLink(
     || target.isSymbolicLink()
     || !temp.isFile()
     || temp.isSymbolicLink()
-    || target.dev !== temp.dev
-    || target.ino !== temp.ino
   ) {
     throw new MaintenanceWorkflowWalError(
       "managed_cas_conflict",
       `managed exclusive install artifact 与目标冲突：${targetPath}`
+    );
+  }
+  const sameIdentity = target.dev === temp.dev && target.ino === temp.ino;
+  const tempCas = await snapshotAbsoluteFileCas(
+    installTempPath,
+    sameIdentity ? [2] : [1]
+  );
+  const targetCas = await snapshotRootRelativeFileCas(
+    liveVaultPath,
+    write.relativePath,
+    "managed install target settle",
+    sameIdentity ? [2] : [1]
+  );
+  const writePolicy = managedMetadataSuccessorPolicyForWrite(
+    journal,
+    write.relativePath
+  );
+  const successor = writePolicy
+    ? await managedMetadataSuccessorEvidenceAtPath(
+      handle,
+      liveVaultPath,
+      write,
+      targetCas,
+      writePolicy,
+      "desired",
+      write.relativePath,
+      sameIdentity ? [2] : [1],
+      effectiveInstall
+    )
+    : null;
+  if (
+    !(
+      sameCas(targetCas, effectiveInstall.desired)
+      || successor
+    )
+    || !(
+      sameCas(tempCas, effectiveInstall.desired)
+      || (sameIdentity && sameCas(tempCas, targetCas))
+    )
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_cas_conflict",
+      `managed exclusive install artifact 与目标冲突：${targetPath}`,
+      write.relativePath
+    );
+  }
+  await beforeUnlink();
+  const [targetAgain, tempAgain] = await Promise.all([
+    lstatOrNull(targetPath),
+    lstatOrNull(installTempPath)
+  ]);
+  if (
+    !targetAgain
+    ||
+    !tempAgain
+    || !targetAgain.isFile()
+    || targetAgain.isSymbolicLink()
+    || !tempAgain.isFile()
+    || tempAgain.isSymbolicLink()
+    || tempAgain.dev !== temp.dev
+    || tempAgain.ino !== temp.ino
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_cas_conflict",
+      `managed install artifact 清理前 inode 已变化：${write.relativePath}`,
+      write.relativePath
+    );
+  }
+  const sameIdentityAgain = targetAgain.dev === tempAgain.dev
+    && targetAgain.ino === tempAgain.ino;
+  const [targetCasAgain, tempCasAgain] = await Promise.all([
+    snapshotRootRelativeFileCas(
+      liveVaultPath,
+      write.relativePath,
+      "managed install target pre-unlink",
+      sameIdentityAgain ? [2] : [1]
+    ),
+    snapshotAbsoluteFileCas(
+      installTempPath,
+      sameIdentityAgain ? [2] : [1]
+    )
+  ]);
+  const successorAgain = writePolicy
+    ? await managedMetadataSuccessorEvidenceAtPath(
+      handle,
+      liveVaultPath,
+      write,
+      targetCasAgain,
+      writePolicy,
+      "desired",
+      write.relativePath,
+      sameIdentityAgain ? [2] : [1],
+      effectiveInstall
+    )
+    : null;
+  if (
+    !(
+      sameCas(targetCasAgain, effectiveInstall.desired)
+      || successorAgain
+    )
+    || !(
+      sameCas(tempCasAgain, effectiveInstall.desired)
+      || (sameIdentityAgain && sameCas(tempCasAgain, targetCasAgain))
+    )
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_cas_conflict",
+      `managed install artifact 清理前 target/temp 已变化：${write.relativePath}`,
+      write.relativePath
     );
   }
   await fsp.unlink(installTempPath);
@@ -3134,6 +5707,8 @@ async function repairExclusiveInstallLink(
 
 async function cleanupManagedJournalArtifacts(
   liveVaultPath: string,
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
   journal: MaintenanceWorkflowManagedApplyJournal,
   options: ApplyMaintenanceWorkflowManagedWritesOptions
 ): Promise<void> {
@@ -3145,9 +5720,19 @@ async function cleanupManagedJournalArtifacts(
   }
   await verifyAllManagedTargets(
     liveVaultPath,
-    journal.entries.map((entry) => entry.write)
+    journal.entries.map((entry) => entry.write),
+    { handle, intent, managedJournal: journal }
+  );
+  const acceptedByPath = managedJournalProofsByPath(
+    journal.acceptedMetadataBaselines
   );
   for (const [index, entry] of journal.entries.entries()) {
+    const effectiveInstall = await effectiveManagedInstallForEntry(
+      handle,
+      liveVaultPath,
+      journal,
+      entry
+    );
     const parentChain = await captureSafeDirectoryChain(
       liveVaultPath,
       path.posix.dirname(entry.write.relativePath)
@@ -3169,17 +5754,35 @@ async function cleanupManagedJournalArtifacts(
         if (isNotFound(error)) return null;
         throw error;
       });
-      if (!stat) continue;
-      if (!stat.isFile() || stat.isSymbolicLink()) {
+      const quarantineStat = await fsp.lstat(`${absolutePath}.cleanup`).catch(
+        (error) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        }
+      );
+      if (!stat && !quarantineStat) continue;
+      if (stat && (!stat.isFile() || stat.isSymbolicLink())) {
         throw new MaintenanceWorkflowWalError(
           "unsafe_entry",
           `managed journal artifact 不安全：${relativePath}`,
           relativePath
         );
       }
+      if (
+        quarantineStat
+        && (!quarantineStat.isFile() || quarantineStat.isSymbolicLink())
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "unsafe_entry",
+          `managed journal quarantine 不安全：${relativePath}`,
+          relativePath
+        );
+      }
       const expected = relativePath === entry.installTempRelativePath
-        ? entry.write.desired
-        : entry.write.expected;
+        ? effectiveInstall.desired
+        : acceptedByPath.get(
+          normalizeRelativePath(entry.write.relativePath)
+        )?.result ?? entry.write.expected;
       await removeManagedArtifactDurably(
         absolutePath,
         expected,
@@ -3373,30 +5976,144 @@ async function removeManagedArtifactDurably(
   await assertSafeDirectoryChainUnchanged(parentChain);
 }
 
+interface ManagedTargetVerificationOptions {
+  handle?: MaintenanceWorkflowWalHandle;
+  intent?: MaintenanceWorkflowWalIntent;
+  managedJournal?: MaintenanceWorkflowManagedApplyJournal;
+}
+
+async function finalizationManagedTargetVerificationOptions(
+  handle: MaintenanceWorkflowWalHandle,
+  loaded: LoadedMaintenanceWorkflowWal,
+  liveVaultPathInput: string
+): Promise<ManagedTargetVerificationOptions> {
+  if (
+    PHASES.indexOf(loaded.state.phase)
+    < PHASES.indexOf("managed_committed")
+  ) return {};
+  let journal = await readManagedJournalOrNull(handle.managedJournalPath);
+  if (!journal) return {};
+  assertValidManagedJournal(journal, loaded.intent);
+  assertManagedJournalLeaseBindings(journal, loaded.state, loaded.intent);
+  journal = await ensureManagedJournalMetadataSuccessorPolicy(
+    handle,
+    journal,
+    loaded.intent
+  );
+  if (journal.state !== "committed") return {};
+  journal = await refreshCommittedManagedMetadataSuccessors(
+    handle,
+    loaded.intent,
+    liveVaultPathInput,
+    journal
+  );
+  return { handle, intent: loaded.intent, managedJournal: journal };
+}
+
 async function verifyAllManagedTargets(
   liveVaultPathInput: string,
-  writes: readonly MaintenanceWorkflowManagedWrite[]
+  writes: readonly MaintenanceWorkflowManagedWrite[],
+  options: ManagedTargetVerificationOptions = {}
 ): Promise<void> {
   const liveVaultPath = await ensurePlainDirectory(liveVaultPathInput, "live Vault");
+  const successorByPath = managedJournalProofsByPath(
+    options.managedJournal?.metadataSuccessors
+  );
+  const entryByPath = new Map(
+    (options.managedJournal?.entries ?? []).map((entry) => [
+      normalizeRelativePath(entry.write.relativePath),
+      entry
+    ])
+  );
+  const consumedSuccessors = new Set<string>();
   for (const write of writes) {
     const current = await snapshotRootRelativeFileCas(
       liveVaultPath,
       write.relativePath,
       "managed target verify"
     );
-    if (!sameCas(current, write.desired)) {
-      throw managedCasConflict(write.relativePath, current, write.expected, write.desired);
+    const relativePath = normalizeRelativePath(write.relativePath);
+    const durableSuccessor = successorByPath.get(relativePath);
+    let effectiveInstall: ManagedEffectiveInstall = { desired: write.desired };
+    if (options.handle && options.managedJournal) {
+      const entry = entryByPath.get(relativePath);
+      if (!entry) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_journal_corrupt",
+          `managed target 缺少 journal entry：${relativePath}`,
+          relativePath
+        );
+      }
+      effectiveInstall = await effectiveManagedInstallForEntry(
+        options.handle,
+        liveVaultPath,
+        options.managedJournal,
+        entry
+      );
     }
+    if (sameCas(current, effectiveInstall.desired)) {
+      const effectiveSuccessor = effectiveInstall.metadataSuccessor;
+      if (
+        durableSuccessor
+          ? !effectiveSuccessor
+            || stableStringify(durableSuccessor)
+              !== stableStringify(effectiveSuccessor)
+          : Boolean(effectiveSuccessor)
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_journal_corrupt",
+          `managed effective target 与 durable successor proof 不一致：${relativePath}`,
+          relativePath
+        );
+      }
+      if (durableSuccessor) consumedSuccessors.add(relativePath);
+      continue;
+    }
+    if (
+      options.handle
+      && options.intent
+      && options.managedJournal?.metadataSuccessorPolicy
+      && durableSuccessor
+    ) {
+      const currentSuccessor = await managedMetadataSuccessorEvidence(
+        options.handle,
+        liveVaultPath,
+        write,
+        current,
+        managedMetadataSuccessorPolicyForWrite(
+          options.managedJournal,
+          relativePath
+        )!,
+        "desired",
+        effectiveInstall
+      );
+      if (
+        currentSuccessor
+        && stableStringify(currentSuccessor)
+          === stableStringify(durableSuccessor)
+      ) {
+        consumedSuccessors.add(relativePath);
+        continue;
+      }
+    }
+    throw managedCasConflict(write.relativePath, current, write.expected, write.desired);
+  }
+  if (consumedSuccessors.size !== successorByPath.size) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed successor proof 未被当前 live target 完整消费"
+    );
   }
 }
 
 async function verifyManagedTargetsOrBlock(
   handle: MaintenanceWorkflowWalHandle,
   liveVaultPathInput: string,
-  writes: readonly MaintenanceWorkflowManagedWrite[]
+  writes: readonly MaintenanceWorkflowManagedWrite[],
+  options: ManagedTargetVerificationOptions = {}
 ): Promise<void> {
   try {
-    await verifyAllManagedTargets(liveVaultPathInput, writes);
+    await verifyAllManagedTargets(liveVaultPathInput, writes, options);
   } catch (error) {
     const normalized = error instanceof MaintenanceWorkflowWalError
       ? error
@@ -3410,6 +6127,149 @@ async function verifyManagedTargetsOrBlock(
     }).catch(() => undefined);
     throw normalized;
   }
+}
+
+async function collectManagedMetadataSuccessors(
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  liveVaultPath: string,
+  journal: MaintenanceWorkflowManagedApplyJournal
+): Promise<MaintenanceShadowMetadataSuccessorProof[]> {
+  const policy = journal.metadataSuccessorPolicy;
+  if (!policy) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed committed proof 缺少固定 successor policy"
+    );
+  }
+  const proofs: MaintenanceShadowMetadataSuccessorProof[] = [];
+  const previousByPath = managedJournalProofsByPath(
+    journal.metadataSuccessors
+  );
+  for (const entry of journal.entries) {
+    const write = entry.write;
+    const relativePath = normalizeRelativePath(write.relativePath);
+    const effectiveInstall = await effectiveManagedInstallForEntry(
+      handle,
+      liveVaultPath,
+      journal,
+      entry
+    );
+    const current = await snapshotRootRelativeFileCas(
+      liveVaultPath,
+      write.relativePath,
+      "managed successor collect"
+    );
+    const proof = sameCas(current, effectiveInstall.desired)
+      ? effectiveInstall.metadataSuccessor
+      : await managedMetadataSuccessorEvidence(
+        handle,
+        liveVaultPath,
+        write,
+        current,
+        managedMetadataSuccessorPolicyForWrite(
+          journal,
+          write.relativePath
+        ) ?? policy,
+        "desired",
+        effectiveInstall
+      );
+    const previous = previousByPath.get(relativePath);
+    if (!proof && previous) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_cas_conflict",
+        `managed metadata successor 回退到旧基线：${relativePath}`,
+        relativePath
+      );
+    }
+    if (!proof && !sameCas(current, effectiveInstall.desired)) {
+      throw managedCasConflict(
+        write.relativePath,
+        current,
+        write.expected,
+        effectiveInstall.desired
+      );
+    }
+    if (!proof) continue;
+    if (previous) {
+      managedMetadataSuccessorTransition(previous, proof, relativePath);
+    }
+    proofs.push(proof);
+  }
+  return proofs.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+}
+
+async function persistCommittedManagedJournal(
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  liveVaultPath: string,
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  metadataSuccessors: MaintenanceShadowMetadataSuccessorProof[]
+): Promise<MaintenanceWorkflowManagedApplyJournal> {
+  const committed = await updateManagedJournal(
+    handle.managedJournalPath,
+    journal,
+    {
+      state: "committed",
+      error: undefined,
+      metadataSuccessors
+    }
+  );
+  await syncDirectory(path.dirname(handle.managedJournalPath));
+  const readBack = await readManagedJournalOrNull(handle.managedJournalPath);
+  if (!readBack || readBack.digest !== committed.digest) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed successor committed journal durable read-back 失败"
+    );
+  }
+  assertValidManagedJournal(readBack, intent);
+  await verifyAllManagedTargets(
+    liveVaultPath,
+    intent.managedWrites,
+    { handle, intent, managedJournal: readBack }
+  );
+  return readBack;
+}
+
+async function refreshCommittedManagedMetadataSuccessors(
+  handle: MaintenanceWorkflowWalHandle,
+  intent: MaintenanceWorkflowWalIntent,
+  liveVaultPathInput: string,
+  journal: MaintenanceWorkflowManagedApplyJournal
+): Promise<MaintenanceWorkflowManagedApplyJournal> {
+  if (journal.state !== "committed") return journal;
+  const liveVaultPath = await ensurePlainDirectory(
+    liveVaultPathInput,
+    "live Vault"
+  );
+  const proofs = await collectManagedMetadataSuccessors(
+    handle,
+    intent,
+    liveVaultPath,
+    journal
+  );
+  if (
+    stableStringify(proofs)
+    === stableStringify(journal.metadataSuccessors ?? [])
+  ) {
+    await verifyAllManagedTargets(
+      liveVaultPath,
+      intent.managedWrites,
+      { handle, intent, managedJournal: journal }
+    );
+    return journal;
+  }
+  return await persistCommittedManagedJournal(
+    handle,
+    intent,
+    liveVaultPath,
+    journal,
+    proofs
+  );
 }
 
 async function readManagedJournalOrNull(
@@ -3429,11 +6289,35 @@ async function readManagedJournalOrNull(
 async function updateManagedJournal(
   journalPath: string,
   journal: MaintenanceWorkflowManagedApplyJournal,
-  patch: { state?: ManagedJournalState; error?: string | undefined }
+  patch: {
+    state?: ManagedJournalState;
+    error?: string | undefined;
+    metadataSuccessorPolicy?: ManagedMetadataSuccessorPolicy;
+    metadataSuccessorInstallWindows?: NonNullable<
+      MaintenanceWorkflowManagedApplyJournal["metadataSuccessorInstallWindows"]
+    >;
+    acceptedMetadataBaselines?: MaintenanceShadowMetadataSuccessorProof[];
+    metadataSuccessors?: MaintenanceShadowMetadataSuccessorProof[];
+  }
 ): Promise<MaintenanceWorkflowManagedApplyJournal> {
   const nextBase = {
     ...withoutManagedJournalDigest(journal),
     ...(patch.state ? { state: patch.state } : {}),
+    ...(patch.metadataSuccessorPolicy
+      ? { metadataSuccessorPolicy: patch.metadataSuccessorPolicy }
+      : {}),
+    ...("metadataSuccessorInstallWindows" in patch
+      ? {
+        metadataSuccessorInstallWindows:
+          patch.metadataSuccessorInstallWindows ?? []
+      }
+      : {}),
+    ...("acceptedMetadataBaselines" in patch
+      ? { acceptedMetadataBaselines: patch.acceptedMetadataBaselines ?? [] }
+      : {}),
+    ...("metadataSuccessors" in patch
+      ? { metadataSuccessors: patch.metadataSuccessors ?? [] }
+      : {}),
     updatedAt: new Date().toISOString()
   };
   if (patch.error === undefined) delete nextBase.error;
@@ -3452,9 +6336,18 @@ function assertValidManagedJournal(
     || journal.workflowRunId !== intent.workflowRunId
     || journal.intentDigest !== intent.digest
     || !["prepared", "applying", "committed", "blocked"].includes(journal.state)
+    || !isIsoDate(journal.createdAt)
+    || !isIsoDate(journal.updatedAt)
+    || Date.parse(journal.updatedAt) < Date.parse(journal.createdAt)
     || journal.digest !== digestJson(withoutManagedJournalDigest(journal))
     || !Array.isArray(journal.entries)
     || journal.entries.length !== intent.managedWrites.length
+    || !managedMetadataSuccessorPolicyValid(journal.metadataSuccessorPolicy)
+    || (
+      journal.metadataSuccessorPolicy !== undefined
+      && stableStringify(journal.metadataSuccessorPolicy)
+        !== stableStringify(managedMetadataSuccessorPolicyFor(intent))
+    )
   ) {
     throw new MaintenanceWorkflowWalError(
       "managed_journal_corrupt",
@@ -3474,6 +6367,123 @@ function assertValidManagedJournal(
       );
     }
   }
+  const entryPaths = new Set(
+    journal.entries.map((entry) => normalizeRelativePath(
+      entry.write.relativePath
+    ))
+  );
+  const rawInstallWindows = journal.metadataSuccessorInstallWindows;
+  if (rawInstallWindows !== undefined && !Array.isArray(rawInstallWindows)) {
+    throw new MaintenanceWorkflowWalError(
+      "managed_journal_corrupt",
+      "managed successor install window list 非法"
+    );
+  }
+  const installWindowPaths = new Set<string>();
+  for (const installWindow of rawInstallWindows ?? []) {
+    const relativePath = normalizeRelativePath(installWindow.relativePath);
+    const createdAtMs = Date.parse(installWindow.createdAt);
+    if (
+      installWindowPaths.has(relativePath)
+      || !entryPaths.has(relativePath)
+      || !Number.isFinite(createdAtMs)
+      || !isSha256(installWindow.leaseDigest)
+      || installWindow.window?.lowerBoundMs
+        !== managedMetadataSuccessorPolicyFor(intent).window.lowerBoundMs
+      || installWindow.window?.upperBoundMs
+        !== createdAtMs + MANAGED_METADATA_SUCCESSOR_WINDOW_MS
+      || createdAtMs > Date.parse(journal.updatedAt)
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_journal_corrupt",
+        `managed successor install window 非法：${relativePath}`,
+        relativePath
+      );
+    }
+    installWindowPaths.add(relativePath);
+  }
+  for (const [label, proofs] of [
+    ["accepted baseline", journal.acceptedMetadataBaselines ?? []],
+    ["result successor", journal.metadataSuccessors ?? []]
+  ] as const) {
+    if (!Array.isArray(proofs)) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_journal_corrupt",
+        `managed ${label} proof list 非法`
+      );
+    }
+    const seen = new Set<string>();
+    for (const proof of proofs) {
+      const relativePath = normalizeRelativePath(proof.relativePath);
+      const proofPolicy = managedMetadataSuccessorPolicyForWrite(
+        journal,
+        relativePath
+      );
+      if (
+        seen.has(relativePath)
+        || !entryPaths.has(relativePath)
+        || proof.result?.kind !== "file"
+        || !isSha256(proof.result.sha256)
+        || !Number.isSafeInteger(proof.result.size)
+        || proof.result.size < 0
+        || !Number.isSafeInteger(proof.result.mode)
+        || !Number.isFinite(proof.updatedAt)
+        || !isSha256(proof.projectionDigest)
+        || !proofPolicy
+        || proof.updatedAt
+          < Math.floor(
+            proofPolicy.window.lowerBoundMs / 60_000
+          ) * 60_000
+        || proof.updatedAt
+          > proofPolicy.window.upperBoundMs
+      ) {
+        throw new MaintenanceWorkflowWalError(
+          "managed_journal_corrupt",
+          `managed ${label} proof 非法：${relativePath}`,
+          relativePath
+        );
+      }
+      seen.add(relativePath);
+    }
+  }
+}
+
+function assertManagedJournalLeaseBindings(
+  journal: MaintenanceWorkflowManagedApplyJournal,
+  state: MaintenanceWorkflowWalState,
+  intent: MaintenanceWorkflowWalIntent
+): void {
+  const leases = state.managedMetadataSuccessorLeases ?? [];
+  const leaseByDigest = new Map(leases.map((lease) => [lease.digest, lease]));
+  for (const installWindow of journal.metadataSuccessorInstallWindows ?? []) {
+    const lease = leaseByDigest.get(installWindow.leaseDigest);
+    if (
+      !lease
+      || normalizeRelativePath(lease.relativePath)
+        !== normalizeRelativePath(installWindow.relativePath)
+      || lease.intentDigest !== intent.digest
+      || lease.createdAt !== installWindow.createdAt
+      || stableStringify(lease.window) !== stableStringify(installWindow.window)
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "managed_journal_corrupt",
+        `managed install window 缺少 WAL state authority：${installWindow.relativePath}`,
+        normalizeRelativePath(installWindow.relativePath)
+      );
+    }
+  }
+}
+
+function managedMetadataSuccessorPolicyValid(
+  policy: ManagedMetadataSuccessorPolicy | undefined
+): boolean {
+  return policy === undefined || (
+    policy.version === 1
+    && policy.kind === "managed-markdown-updated-only"
+    && Number.isFinite(policy.window?.lowerBoundMs)
+    && Number.isFinite(policy.window?.upperBoundMs)
+    && policy.window.upperBoundMs >= policy.window.lowerBoundMs
+  );
 }
 
 function derivedManagedJournalEntry(
@@ -3726,7 +6736,7 @@ function managedProcessedSourceKeys(
       recordEntry(settings.baselineProcessedSources, key),
       recordEntry(settings.targetProcessedSources, key)
     ))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
 }
 
 function assertMatchingBlockedResume(
@@ -3757,25 +6767,38 @@ async function withWalStateLock<T>(
   action: () => Promise<T>
 ): Promise<T> {
   normalizeWalLocation(handle);
-  const lockRootPath = path.join(handle.walRootPath, LOCK_DIRECTORY);
-  await ensurePlainDirectory(lockRootPath, "workflow WAL lock root", true);
-  await syncDirectory(handle.walRootPath);
-  const lock = await acquireWorkflowFileLock(
-    path.join(lockRootPath, `${handle.runToken}.lock`),
-    {
-      version: 1,
-      pid: process.pid,
-      token: randomUUID(),
-      workflowRunId: handle.workflowRunId,
-      createdAt: new Date().toISOString()
-    },
-    "workflow state lock"
+  return await withRecordMutationGlobalAuthority(
+    handle.storageRootPath,
+    workflowWalAuthorityId(handle.workflowRunId),
+    async () => {
+      const lockRootPath = path.join(handle.walRootPath, LOCK_DIRECTORY);
+      await ensurePlainDirectory(lockRootPath, "workflow WAL lock root", true);
+      await syncDirectory(handle.walRootPath);
+      const lock = await acquireWorkflowFileLock(
+        path.join(lockRootPath, `${handle.runToken}.lock`),
+        {
+          version: 1,
+          pid: process.pid,
+          token: randomUUID(),
+          workflowRunId: handle.workflowRunId,
+          createdAt: new Date().toISOString()
+        },
+        "workflow state lock"
+      );
+      try {
+        return await action();
+      } finally {
+        await releaseWorkflowFileLock(lock);
+      }
+    }
   );
-  try {
-    return await action();
-  } finally {
-    await releaseWorkflowFileLock(lock);
-  }
+}
+
+function workflowWalAuthorityId(workflowRunId: string): string {
+  return `workflow-wal-${createHash("sha256")
+    .update(String(workflowRunId), "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 async function withVaultCommitLock<T>(
@@ -3964,7 +6987,11 @@ function withoutStateDigest(
 }
 
 function assertValidMaintenanceWorkflowWalIntent(
-  intent: MaintenanceWorkflowWalIntent
+  intent: MaintenanceWorkflowWalIntent,
+  options: {
+    allowLegacyNoopReceipt?: boolean;
+    allowLegacyRegistryOrdering?: boolean;
+  } = {}
 ): void {
   const fail = (message: string): never => {
     throw new MaintenanceWorkflowWalError("intent_corrupt", message);
@@ -4012,6 +7039,7 @@ function assertValidMaintenanceWorkflowWalIntent(
   }
 
   const noop = intent.completion === "noop";
+  const legacyNoopReceipt = noop && intent.noopReceipt === undefined;
   if (noop) {
     if (
       intent.winner !== null
@@ -4025,11 +7053,21 @@ function assertValidMaintenanceWorkflowWalIntent(
       fail("noop workflow 必须是零 Agent、零变更来源、零 Shadow");
     }
     assertValidNoopProof(intent.noopProof as MaintenanceWorkflowNoopProof);
+    if (legacyNoopReceipt) {
+      if (!options.allowLegacyNoopReceipt) {
+        fail("新 noop workflow 缺少 run-scoped receipt contract");
+      }
+    } else {
+      assertValidNoopReceiptContract(
+        intent.noopReceipt as MaintenanceWorkflowNoopReceiptContract
+      );
+    }
   } else {
     if (
       !intent.winner
       || !intent.shadow
       || intent.noopProof !== undefined
+      || intent.noopReceipt !== undefined
       || !isAgentBackendKind(intent.winner.backend)
       || !intent.candidateBackends.includes(intent.winner.backend)
       || !Number.isSafeInteger(intent.winner.ordinal)
@@ -4177,6 +7215,17 @@ function assertValidMaintenanceWorkflowWalIntent(
   }
 
   const reportPath = normalizeRelativePath(intent.report.relativePath);
+  if (
+    noop
+    && !legacyNoopReceipt
+    && reportPath !== maintenanceWorkflowNoopReceiptPath({
+      mode: intent.mode,
+      workflowRunId: intent.workflowRunId,
+      receipt: intent.noopReceipt as MaintenanceWorkflowNoopReceiptContract
+    })
+  ) {
+    fail("noop workflow report 未使用 run-scoped receipt 路径");
+  }
   assertValidCas(intent.report.expectedPostShadow, "report expectedPostShadow");
   assertValidCas(intent.report.desired, "report desired");
   const seenPaths = new Set<string>();
@@ -4189,6 +7238,9 @@ function assertValidMaintenanceWorkflowWalIntent(
     string,
     MaintenanceWorkflowManagedWrite
   >();
+  const hasNewRawExpectedBlobs = intent.managedWrites.some((write) =>
+    write.kind === "raw-metadata" && write.expectedBlobDigest !== undefined
+  );
   for (const write of intent.managedWrites) {
     if (!write || typeof write !== "object") fail("managed write 非法");
     const relativePath = normalizeRelativePath(write.relativePath);
@@ -4203,7 +7255,11 @@ function assertValidMaintenanceWorkflowWalIntent(
     assertValidCas(write.expected, `managed expected ${relativePath}`);
     assertValidCas(write.desired, `managed desired ${relativePath}`);
     if (write.operation === "delete") {
-      if (write.desired.kind !== "missing" || write.blobDigest !== undefined) {
+      if (
+        write.desired.kind !== "missing"
+        || write.blobDigest !== undefined
+        || write.expectedBlobDigest !== undefined
+      ) {
         fail(`managed delete 目标非法：${relativePath}`);
       }
     } else {
@@ -4256,6 +7312,15 @@ function assertValidMaintenanceWorkflowWalIntent(
         || typeof proof.entries !== "object"
         || Array.isArray(proof.entries)
         || proof.entriesDigest !== digestJson(proof.entries)
+        || (
+          proof.canonicalBytes !== true
+          && (
+            proof.canonicalBytes !== undefined
+            ||
+            !options.allowLegacyRegistryOrdering
+            || hasNewRawExpectedBlobs
+          )
+        )
       ) {
         fail(`Raw registry managed write 路径或操作非法：${relativePath}`);
       }
@@ -4287,6 +7352,11 @@ function assertValidMaintenanceWorkflowWalIntent(
         || !target
         || write.operation !== "upsert"
         || write.desired.kind !== "file"
+        || write.expected.kind !== "file"
+        || (
+          write.expectedBlobDigest !== undefined
+          && write.expectedBlobDigest !== write.expected.sha256
+        )
         || !isSha256(write.rawBodyDigest)
         || !isSha256(write.rawUnmanagedFrontmatterDigest)
         || !proof
@@ -4325,14 +7395,32 @@ function assertValidMaintenanceWorkflowWalIntent(
       write.rawBodyDigest !== undefined
       || write.rawUnmanagedFrontmatterDigest !== undefined
       || write.rawMetadataProof !== undefined
+      || write.expectedBlobDigest !== undefined
     ) {
       fail(`非 Raw metadata write 不得携带 Raw proof：${relativePath}`);
     }
   }
   if (matchingReports !== 1) fail("workflow intent 必须包含唯一报告 managed write");
   if (
-    (intent.mode === "lint" && trackerWrites !== 0)
-    || (intent.mode !== "lint" && trackerWrites !== 1)
+    legacyNoopReceipt
+    && (
+      intent.managedWrites.length !== 2
+      || trackerWrites !== 1
+      || rawRegistryWrites !== 0
+      || indexWrites.size !== 0
+      || rawMetadataWrites.size !== 0
+      || !isLegacyNoopReportPath(intent.mode, reportPath)
+    )
+  ) {
+    fail("legacy noop workflow 不符合旧版 report + tracker 严格结构");
+  }
+  if (
+    noop
+      ? trackerWrites !== (legacyNoopReceipt ? 1 : 0)
+      : (
+        (intent.mode === "lint" && trackerWrites !== 0)
+        || (intent.mode !== "lint" && trackerWrites !== 1)
+      )
   ) {
     fail("workflow intent tracker managed write 与运行模式不一致");
   }
@@ -4341,12 +7429,12 @@ function assertValidMaintenanceWorkflowWalIntent(
     || intent.mode === "reingest";
   const verifiedRawPaths = Array.from(verifiedPaths)
     .filter((relativePath) => relativePath.startsWith("raw/"))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
   const expectedRawMetadataPaths = digestMode
     ? verifiedRawPaths.filter(isRawMarkdownPath)
     : [];
   const actualRawMetadataPaths = Array.from(rawMetadataWrites.keys())
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
   if (!sameStringArray(actualRawMetadataPaths, expectedRawMetadataPaths)) {
     fail(
       intent.mode === "maintain" || intent.mode === "reingest"
@@ -4598,10 +7686,6 @@ function assertValidNoopProof(proof: MaintenanceWorkflowNoopProof): void {
     || proof.sourceCount !== normalizedSnapshot.length
     || proof.changedSourceCount !== 0
     || new Set(sourcePaths).size !== sourcePaths.length
-    || !sameStringArray(
-      sourcePaths,
-      [...sourcePaths].sort((left, right) => left.localeCompare(right))
-    )
     || proof.discoveryDigest !== digestJson({
       discoveredSources: normalizedSnapshot,
       changedSources: []
@@ -4613,6 +7697,48 @@ function assertValidNoopProof(proof: MaintenanceWorkflowNoopProof): void {
       "noop proof 不是规范零变更快照"
     );
   }
+}
+
+function assertValidNoopReceiptContract(
+  receipt: MaintenanceWorkflowNoopReceiptContract
+): void {
+  if (
+    !receipt
+    || typeof receipt !== "object"
+    || receipt.schemaVersion !== NOOP_RECEIPT_SCHEMA_VERSION
+    || receipt.kind !== "run-scoped-report"
+    || receipt.pathStrategy !== "workflow-run-id-sha256-v1"
+    || !isCalendarDateKey(receipt.dateKey)
+  ) {
+    throw new MaintenanceWorkflowWalError(
+      "intent_corrupt",
+      "noop receipt contract 非法"
+    );
+  }
+}
+
+function isCalendarDateKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+function isLegacyNoopReportPath(
+  mode: MaintenanceWorkflowWalIntent["mode"],
+  relativePath: string
+): boolean {
+  if (mode !== "maintain" && mode !== "reingest") return false;
+  const match = relativePath.match(
+    /^outputs\/maintenance\/kb-maintenance-(\d{4}-\d{2}-\d{2})\.md$/
+  );
+  return Boolean(match && isCalendarDateKey(match[1]));
 }
 
 function assertValidScheduledProjection(
@@ -4843,6 +7969,64 @@ function assertValidState(
   ) {
     throw new MaintenanceWorkflowWalError("state_corrupt", "workflow WAL state 校验失败");
   }
+  const rawLeases = state.managedMetadataSuccessorLeases;
+  if (rawLeases !== undefined && !Array.isArray(rawLeases)) {
+    throw new MaintenanceWorkflowWalError(
+      "state_corrupt",
+      "managed metadata successor lease list 非法"
+    );
+  }
+  const leaseDigests = new Set<string>();
+  const leaseCountByPath = new Map<string, number>();
+  const immutableWindow = managedMetadataSuccessorPolicyFor(intent).window;
+  for (const lease of rawLeases ?? []) {
+    const relativePath = normalizeRelativePath(lease.relativePath);
+    const writeIndex = intent.managedWrites.findIndex(
+      (write) => normalizeRelativePath(write.relativePath) === relativePath
+    );
+    const createdAtMs = Date.parse(lease.createdAt);
+    const { digest: _leaseDigest, ...leaseWithoutDigest } = lease;
+    if (
+      leaseDigests.has(lease.digest)
+      || writeIndex < 0
+      || lease.version !== 1
+      || lease.intentDigest !== intent.digest
+      || lease.entryDigest !== digestJson(derivedManagedJournalEntry(
+        intent.workflowRunId,
+        intent.managedWrites[writeIndex],
+        writeIndex
+      ))
+      || !Number.isFinite(createdAtMs)
+      || createdAtMs > Date.parse(state.updatedAt)
+      || lease.window?.lowerBoundMs !== immutableWindow.lowerBoundMs
+      || lease.window?.upperBoundMs
+        !== createdAtMs + MANAGED_METADATA_SUCCESSOR_WINDOW_MS
+      || !isSha256(lease.provenanceDigest)
+      || lease.digest !== managedMetadataLeaseDigest(leaseWithoutDigest)
+    ) {
+      throw new MaintenanceWorkflowWalError(
+        "state_corrupt",
+        `managed metadata successor lease 非法：${relativePath}`,
+        relativePath
+      );
+    }
+    leaseDigests.add(lease.digest);
+    const count = (leaseCountByPath.get(relativePath) ?? 0) + 1;
+    if (count > 2) {
+      throw new MaintenanceWorkflowWalError(
+        "state_corrupt",
+        `managed metadata successor lease 超出双阶段上限：${relativePath}`,
+        relativePath
+      );
+    }
+    leaseCountByPath.set(relativePath, count);
+  }
+  if ((rawLeases?.length ?? 0) > 0 && phaseIndex < PHASES.indexOf("shadow_committed")) {
+    throw new MaintenanceWorkflowWalError(
+      "state_corrupt",
+      "shadow commit 前不得存在 managed recovery lease"
+    );
+  }
   const shadowCommitted = phaseIndex >= PHASES.indexOf("shadow_committed");
   if (shadowCommitted) {
     if (intent.completion === "noop") {
@@ -4881,11 +8065,41 @@ function assertValidState(
         }
         targetPaths.add(relativePath);
         assertValidCas(target.result, `Shadow commit proof ${relativePath}`);
+        const observed = target.observedResult ?? target.result;
+        assertValidCas(
+          observed,
+          `Shadow observed commit proof ${relativePath}`
+        );
+        if (target.metadataSuccessor) {
+          const successor = target.metadataSuccessor;
+          if (
+            normalizeRelativePath(successor.relativePath) !== relativePath
+            || successor.result.kind !== "file"
+            || !sameCas(observed, successor.result)
+            || !Number.isFinite(successor.updatedAt)
+            || !isSha256(successor.projectionDigest)
+          ) {
+            throw new MaintenanceWorkflowWalError(
+              "state_corrupt",
+              `Shadow observed successor proof 非法：${relativePath}`
+            );
+          }
+        } else if (!sameCas(observed, target.result)) {
+          throw new MaintenanceWorkflowWalError(
+            "state_corrupt",
+            `Shadow observed CAS 缺少 successor proof：${relativePath}`
+          );
+        }
       }
-      if (!sameStringArray(
-        Array.from(targetPaths).sort(),
-        normalizedUniquePaths(intent.shadow.expectedAppliedPaths)
-      )) {
+      const expectedTargetPaths = new Set(
+        intent.shadow.expectedAppliedPaths.map(normalizeRelativePath)
+      );
+      if (
+        targetPaths.size !== expectedTargetPaths.size
+        || Array.from(targetPaths).some(
+          (relativePath) => !expectedTargetPaths.has(relativePath)
+        )
+      ) {
         throw new MaintenanceWorkflowWalError(
           "state_corrupt",
           "Shadow commit proof targets 与 intent 不一致"
@@ -4976,6 +8190,12 @@ async function validateIntentBlobs(
   for (const write of intent.managedWrites) {
     if (write.operation !== "upsert" || write.desired.kind !== "file" || !write.blobDigest) continue;
     expected.set(write.blobDigest, write.desired);
+    if (
+      write.expectedBlobDigest
+      && write.expected.kind === "file"
+    ) {
+      expected.set(write.expectedBlobDigest, write.expected);
+    }
   }
   const entries = await fsp.readdir(location.blobRootPath, { withFileTypes: true });
   const expectedNames = new Set(Array.from(expected.keys(), blobFileName));
@@ -5056,11 +8276,16 @@ async function validateIntentBlobs(
         schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
         updatedAt: registry.updatedAt,
         entriesDigest: digestJson(registry.entries),
-        entries: registry.entries
+        entries: registry.entries,
+        ...(proof?.canonicalBytes === true ? { canonicalBytes: true as const } : {})
       };
+      const canonicalBytes = buildCanonicalRawDigestRegistryContent(registry)
+        .equals(content);
+      const legacyOrderedBytes = proof?.canonicalBytes === undefined
+        && legacyRawRegistryBytesMatch(content, parsed, registry);
       if (
         !proof
-        || !buildRawDigestRegistryContent(registry).equals(content)
+        || (!canonicalBytes && !legacyOrderedBytes)
         || stableStringify(proof) !== stableStringify(computedProof)
       ) {
         throw new MaintenanceWorkflowWalError(
@@ -5071,6 +8296,44 @@ async function validateIntentBlobs(
       }
     }
   }
+}
+
+function legacyRawRegistryBytesMatch(
+  content: Buffer,
+  parsed: unknown,
+  registry: ReturnType<typeof normalizeRawDigestRegistry>
+): boolean {
+  if (
+    !parsed
+    || typeof parsed !== "object"
+    || Array.isArray(parsed)
+  ) return false;
+  const record = parsed as Record<string, unknown>;
+  const rawEntries = record.entries;
+  if (
+    record.schemaVersion !== RAW_DIGEST_SCHEMA_VERSION
+    || record.updatedAt !== registry.updatedAt
+    || !rawEntries
+    || typeof rawEntries !== "object"
+    || Array.isArray(rawEntries)
+    || !sameStringArray(
+      Object.keys(record).sort(compareCanonicalText),
+      ["entries", "schemaVersion", "updatedAt"].sort(compareCanonicalText)
+    )
+  ) return false;
+  const orderedEntries: Record<string, RawDigestRegistryEntry> = {};
+  const sourceKeys = Object.keys(rawEntries);
+  if (sourceKeys.length !== Object.keys(registry.entries).length) return false;
+  for (const key of sourceKeys) {
+    const relativePath = normalizeRelativePath(key);
+    if (relativePath !== key || !registry.entries[relativePath]) return false;
+    orderedEntries[relativePath] = registry.entries[relativePath]!;
+  }
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
+    updatedAt: registry.updatedAt,
+    entries: orderedEntries
+  }, null, 2)}\n`, "utf8").equals(content);
 }
 
 async function readStateOrNull(
@@ -5181,7 +8444,8 @@ async function writeBufferDurably(
 async function readIndependentRegularFile(
   absolutePath: string,
   label: string,
-  maxBytes: number
+  maxBytes: number,
+  allowedLinkCounts: readonly number[] = [1]
 ): Promise<Buffer> {
   let handle: fsp.FileHandle;
   try {
@@ -5191,7 +8455,7 @@ async function readIndependentRegularFile(
   }
   try {
     const before = await handle.stat();
-    assertSafeRegularStat(before, label);
+    assertSafeRegularStat(before, label, allowedLinkCounts);
     if (before.size > maxBytes) {
       throw new MaintenanceWorkflowWalError("unsafe_entry", `${label} 超过安全读取上限`);
     }
@@ -5470,7 +8734,7 @@ function normalizeRelativePath(input: string): string {
 
 function normalizedUniquePaths(values: readonly string[]): string[] {
   return Array.from(new Set(values.map(normalizeRelativePath)))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
 }
 
 function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
@@ -5547,6 +8811,7 @@ function assertSafeRegularStat(
 function sameOpenFileVersion(before: Stats, after: Stats): boolean {
   return before.dev === after.dev
     && before.ino === after.ino
+    && before.nlink === after.nlink
     && before.size === after.size
     && before.mtimeMs === after.mtimeMs
     && before.ctimeMs === after.ctimeMs;
@@ -5609,6 +8874,16 @@ function stableStringify(value: unknown): string {
       .join(",")}}`;
   }
   return value === undefined ? "null" : JSON.stringify(value);
+}
+
+/**
+ * Durable record ordering must not inherit the host language. `localeCompare`
+ * can order the same Chinese and Latin paths differently after an Obsidian or
+ * process locale change, which made otherwise intact legacy WALs unreadable.
+ */
+function compareCanonicalText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function cloneJson<T>(value: T): T {

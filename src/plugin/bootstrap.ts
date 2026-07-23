@@ -73,6 +73,10 @@ export function registerEchoInkStartupTasks(plugin: CodexForObsidianPlugin): voi
     });
   }
   plugin.app.workspace.onLayoutReady(() => {
+    if (plugin.isEchoInkConversationStoreV2MigrationRequired()) return;
+    void plugin.reconcileNativeExecutionsAtStartup().catch((error) => {
+      console.error("EchoInk Native startup reconciliation failed", error);
+    });
     window.setTimeout(() => void plugin.runDeferredStartupMaintenance(), 1200);
     if (plugin.settings.memory.enabled) {
       window.setTimeout(() => void plugin.recoverEchoInkMemory().catch(() => undefined), 1500);

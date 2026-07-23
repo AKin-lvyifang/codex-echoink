@@ -1,20 +1,60 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { pluginDataDir } from "../../core/raw-message-store";
+import { rotateSessionContext } from "../../harness/conversation/context-rotation";
+import {
+  createConversationContentRevision,
+  FileConversationStore
+} from "../../harness/conversation/conversation-store";
+import {
+  FileConversationStoreV2
+} from "../../harness/conversation/conversation-store-v2";
+import {
+  advanceConversationStoreManifestToActive,
+  advanceConversationStoreManifestToValidated,
+  createCopyingConversationStoreManifest,
+  FileConversationStoreManifest
+} from "../../harness/conversation/store-manifest";
+import { workspaceFingerprint } from "../../harness/kernel/session-service";
+import {
+  legacyExternalOwnerEdges,
+  prepareConversationStoreV2Migration,
+  projectStoredSessionToConversationCommitV2
+} from "../../harness/lifecycle/conversation-migration-projection";
 import { MaintenanceWorkflowWalError } from "../../harness/maintenance/workflow-wal";
+import {
+  localDateKeyForTimestamp,
+  readKnowledgeBaseHistoryDay,
+  readKnowledgeBaseHistoryIndex
+} from "../../knowledge-base/history-store";
+import {
+  buildKnowledgeBaseMaintainReportPayload,
+  buildKnowledgeBaseRunPayload
+} from "../../knowledge-base/maintain-report-card";
 import {
   EchoInkSettingsStore,
   settingsForDataSave,
   type SettingsSaveOptions
 } from "../../plugin/settings-store";
+import { rotateEchoInkSessionContext } from "../../plugin/session-context-lifecycle";
+import {
+  FileConversationStoreV2LiveAdapter
+} from "../../plugin/conversation-store-v2-live-adapter";
+import {
+  FileConversationStoreRouter
+} from "../../plugin/conversation-store-router";
 import {
   DEFAULT_SETTINGS,
+  KNOWLEDGE_BASE_SESSION_TITLE,
   canonicalizeKnowledgeBaseMaintenanceHistoryEntry,
   normalizeSettingsData,
   type CodexForObsidianSettings,
+  type ChatMessage,
   type KnowledgeBaseMaintenanceHistoryEntry,
-  type KnowledgeBaseSettings
+  type KnowledgeBaseSettings,
+  type StoredSession
 } from "../../settings/settings";
 
 interface SettingsStoreFixture {
@@ -28,28 +68,940 @@ interface SettingsStoreFixture {
     settleHarnessRunTerminal(input: { runId: string }): Promise<void>;
   };
   persistedKnowledgeBase(): KnowledgeBaseSettings;
+  persistedSettings(): CodexForObsidianSettings;
   replacePersistedKnowledgeBase(settings: KnowledgeBaseSettings): void;
   blockNextSave(): {
     started: Promise<void>;
     release(): void;
   };
+  failNextSave(mode: SettingsSaveFailureMode): void;
   saveCalls(): number;
   settledRunIds(): string[];
   dispose(): Promise<void>;
 }
 
+type SettingsSaveFailureMode =
+  | "before-write"
+  | "after-write"
+  | "conflict-after-write"
+  | "unknown-after-write";
+
 export async function runMaintenanceSettingsStoreTests(): Promise<void> {
   assertAttemptFailurePhaseNormalization();
   assertOpaqueNativeAndOptionalTerminationNormalization();
   assertScheduledRunIdNormalization();
-  await assertGenerationCasPersistsAndReplacesMemory();
+  await assertLegacyIncompleteContextStartupDefersConversationFlush();
+  await assertGenerationCasPersistsAndUpdatesMemoryInPlace();
   await assertCanonicalDurableHistoryRoundTripsAndReplays();
   await assertOversizeDurableMetadataCanonicalizesAndReplays();
   await assertGenerationCasRejectsConcurrentPersistentChange();
   await assertGenerationCasRejectsUnqueuedMemoryChange();
   await assertReadbackMismatchDoesNotReplaceMemory();
   await assertWorkflowTransactionSharesTheOrdinarySaveQueue();
+  await assertWorkflowCasRollsForwardConcurrentNonKnowledgeSettings();
+  await assertWorkflowCasThreeWayMergesLaterKnowledgeSettings();
+  await assertWorkflowCasPoisonsSameFieldKnowledgeConflict();
+  await assertActiveV2WorkspaceFreePristineChatLifecycle();
+  await assertWorkflowCasPersistsNewSessionShellWithoutConversationMutation();
+  await assertWorkflowCasBoundsPreCommitDriftAndDrainsQueue();
+  await assertWorkflowCasAcceptsPostWriteRejectAndContinues();
+  await assertWorkflowCasPropagatesUnwrittenFailureAndCanRetry();
+  await assertWorkflowCasFailsClosedOnAmbiguousWriteFailure();
+  await assertWorkflowCasIgnoresUnrelatedConversationRewriteConflict();
+  await assertWorkflowCasLeavesConversationForDurableRunCommit();
+  await assertDurableKnowledgeRunCommitsFullSourceBeforeHistoryProjection();
+  await assertActiveKnowledgeConversationFailureDoesNotPublishHistory();
+  await assertSecondConversationPassFailureRestartsFromFullSource();
+  await assertOrdinarySaveUsesConversationAuthorityForHistoryAndRotation();
+  await assertPartialConversationBatchSynchronizesCommittedPrefix();
+  await assertActiveV2MaintenanceLifecycleKeepsTransientUiOutOfDurableState();
+  await assertActiveV2HistoryRestoreUsesRecordMutationReplacement();
+  await assertDurableLegacyRunCardStaysImmutableWhenRecoveryAppendsTerminal();
+  await assertLegacyV2ContextFallbackAdvancesAcrossMaintenanceSaves();
   await assertStartupRecoveryDefersKnowledgeMaintenanceUi();
+}
+
+async function assertActiveV2HistoryRestoreUsesRecordMutationReplacement():
+Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const messages = [
+      messageAt("history-day-1-user", "user", 1),
+      messageAt("history-day-1-assistant", "assistant", 2),
+      messageAt("history-day-2-user", "user", 3),
+      messageAt("history-day-2-assistant", "assistant", 4)
+    ];
+    const session = await createKnowledgeConversation(
+      fixture,
+      "active-v2-history-restore",
+      messages
+    );
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    });
+    const targetStore = await activateFixtureConversationStoreV2(
+      fixture,
+      "active-v2-history-restore"
+    );
+    const before = await targetStore.readConversation(session.id);
+    assert.ok(before);
+
+    const restored = cloneMessages(messages.slice(0, 2));
+    const retirementHost = {
+      async registerNativeExecutionRetirements(retirements: unknown[]) {
+        assert.deepEqual(retirements, []);
+      },
+      async promoteNativeExecutionRetirements(retirements: unknown[]) {
+        assert.deepEqual(retirements, []);
+      },
+      async abortNativeExecutionRetirements() {
+        assert.fail("a valid history replacement must not abort");
+      },
+      async cleanupNativeExecutionRecord() {}
+    };
+    const rotation = await rotateEchoInkSessionContext(
+      retirementHost as never,
+      fixture.store,
+      session,
+      {
+        reason: "history-restore",
+        contextStartsAfterMessageId: restored.at(-1)!.id,
+        mutate(candidate) {
+          candidate.messages = restored;
+          candidate.historyActiveDate = "2026-07-18";
+          delete candidate.messagesHiddenBefore;
+          delete candidate.tokenUsage;
+        }
+      }
+    );
+
+    assert.ok(rotation.recordMutationId);
+    const mutation = await fixture.store.readRecordMutationAuthority(
+      rotation.recordMutationId
+    );
+    assert.equal(
+      rotation.recordMutationState,
+      "committed"
+    );
+    assert.equal(
+      mutation.state,
+      "committed"
+    );
+    assert.deepEqual(session.messages.map((message) => message.id), [
+      "history-day-1-user",
+      "history-day-1-assistant"
+    ]);
+    assert.equal(session.contextStartsAfterMessageId, "history-day-1-assistant");
+    assert.equal(session.historyActiveDate, "2026-07-18");
+
+    const committed = await targetStore.readConversation(session.id);
+    assert.ok(committed);
+    assert.equal(committed.metadata.revision, before.metadata.revision + 1);
+    assert.deepEqual(committed.payload.messages.map((message) => message.id), [
+      "history-day-1-user",
+      "history-day-1-assistant"
+    ]);
+    const readback = await fixture.store.readConversationSession(session.id);
+    assert.ok(readback);
+    assert.equal(
+      readback.contextStartsAfterMessageId,
+      "history-day-1-assistant",
+      "the restored payload must remain outside the newly advanced model Context"
+    );
+
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    });
+    assert.equal(
+      (await targetStore.readConversation(session.id))?.metadata.revision,
+      committed.metadata.revision,
+      "a normal save after history restore must be idempotent"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function activateFixtureConversationStoreV2(
+  fixture: SettingsStoreFixture,
+  commitPrefix: string
+): Promise<FileConversationStoreV2> {
+  const storageRootPath = pluginDataDir(
+    fixture.plugin.getVaultPath(),
+    "codex-echoink"
+  );
+  const sourceStore = selectedLegacyConversationStore(fixture.store);
+  const targetStore = new FileConversationStoreV2({ storageRootPath });
+  const sourceSnapshot = await sourceStore.inspectMigrationSnapshot();
+  const migration = await prepareConversationStoreV2Migration({
+    sourceStore,
+    targetStore,
+    targetExternalOwnerEdges: legacyExternalOwnerEdges(
+      sourceSnapshot.sessions
+    )
+  });
+  assert.equal(migration.report.status, "ready");
+  assert.ok(migration.proof);
+  const manifestStore = new FileConversationStoreManifest({ storageRootPath });
+  const copying = createCopyingConversationStoreManifest({
+    commitId: `${commitPrefix}-copying`,
+    sourceFingerprint: migration.source.fingerprint,
+    createdAt: 10
+  });
+  await manifestStore.compareAndSwap(copying, {
+    expectedRevision: null,
+    expectedCommitId: null
+  });
+  const validated = advanceConversationStoreManifestToValidated(copying, {
+    commitId: `${commitPrefix}-validated`,
+    proof: migration.proof,
+    updatedAt: 11
+  });
+  await manifestStore.compareAndSwap(validated, {
+    expectedRevision: copying.revision,
+    expectedCommitId: copying.commitId
+  });
+  const active = advanceConversationStoreManifestToActive(validated, {
+    commitId: `${commitPrefix}-active`,
+    activatedAt: 12
+  });
+  await manifestStore.compareAndSwap(active, {
+    expectedRevision: validated.revision,
+    expectedCommitId: validated.commitId
+  });
+  return targetStore;
+}
+
+async function assertActiveV2MaintenanceLifecycleKeepsTransientUiOutOfDurableState():
+Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const vaultPath = fixture.plugin.getVaultPath();
+    const session: StoredSession = {
+      id: "active-v2-maintenance-lifecycle",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: vaultPath,
+      revision: 1,
+      generation: 1,
+      contextId: "context-active-v2-maintenance",
+      commitId: "commit-active-v2-maintenance",
+      workspaceFingerprint: workspaceFingerprint({
+        vaultPath,
+        cwd: vaultPath
+      }),
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    fixture.plugin.settings.sessions.push(session);
+    fixture.plugin.settings.activeSessionId = session.id;
+    fixture.plugin.settings.knowledgeBase.sessionId = session.id;
+    fixture.store.registerPristineConversationSession(session);
+    await fixture.store.ensureConversationSessionCreated(session);
+
+    const sourceStore = selectedLegacyConversationStore(fixture.store);
+    const storageRootPath = pluginDataDir(vaultPath, "codex-echoink");
+    const targetStore = new FileConversationStoreV2({ storageRootPath });
+    const sourceSnapshot = await sourceStore.inspectMigrationSnapshot();
+    const migration = await prepareConversationStoreV2Migration({
+      sourceStore,
+      targetStore,
+      targetExternalOwnerEdges: legacyExternalOwnerEdges(
+        sourceSnapshot.sessions
+      )
+    });
+    assert.equal(migration.report.status, "ready");
+    assert.ok(migration.proof);
+    const manifestStore = new FileConversationStoreManifest({
+      storageRootPath
+    });
+    const copying = createCopyingConversationStoreManifest({
+      commitId: "active-v2-maintenance-copying",
+      sourceFingerprint: migration.source.fingerprint,
+      createdAt: 2
+    });
+    await manifestStore.compareAndSwap(copying, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+    const validated = advanceConversationStoreManifestToValidated(copying, {
+      commitId: "active-v2-maintenance-validated",
+      proof: migration.proof,
+      updatedAt: 3
+    });
+    await manifestStore.compareAndSwap(validated, {
+      expectedRevision: copying.revision,
+      expectedCommitId: copying.commitId
+    });
+    const active = advanceConversationStoreManifestToActive(validated, {
+      commitId: "active-v2-maintenance-active",
+      activatedAt: 4
+    });
+    await manifestStore.compareAndSwap(active, {
+      expectedRevision: validated.revision,
+      expectedCommitId: validated.commitId
+    });
+
+    const userMessage: ChatMessage = {
+      id: "active-v2-maintenance-user",
+      role: "user",
+      text: "/maintain",
+      runId: "active-v2-maintenance-run",
+      createdAt: 5
+    };
+    const assistantMessage: ChatMessage = {
+      id: "active-v2-maintenance-assistant",
+      role: "assistant",
+      title: "知识库管理",
+      itemType: "knowledgeBase",
+      status: "running",
+      text: "正在识别命令并执行...",
+      runId: "active-v2-maintenance-run",
+      knowledgeBaseUi: buildKnowledgeBaseRunPayload("maintain"),
+      createdAt: 6
+    };
+    session.messages.push(userMessage, assistantMessage);
+    session.updatedAt = 6;
+
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    });
+
+    assert.equal(session.messages.length, 2);
+    assert.equal(session.messages[1], assistantMessage);
+    assert.equal(assistantMessage.knowledgeBaseUi?.kind, "maintain-run");
+    assert.ok(
+      assistantMessage.knowledgeBaseUi?.kind === "maintain-run"
+      && assistantMessage.knowledgeBaseUi.events?.length
+    );
+    const runningCommit = await targetStore.readConversation(session.id);
+    assert.ok(runningCommit);
+    assert.deepEqual(
+      runningCommit.payload.messages.map((message) => message.id),
+      [userMessage.id],
+      "the running assistant card must stay live without entering durable V2"
+    );
+
+    assistantMessage.status = "completed";
+    assistantMessage.text = "维护完成";
+    assistantMessage.knowledgeBaseUi =
+      buildKnowledgeBaseMaintainReportPayload("maintain", {
+        status: "success",
+        completion: "full",
+        reportPath: "outputs/maintenance/active-v2.md",
+        summary: "维护完成",
+        processedSources: [],
+        workflowRunId: "active-v2-maintenance-run",
+        selectedBackend: "codex-cli",
+        winnerBackend: "codex-cli",
+        terminalPhase: "finalized",
+        commitState: "committed",
+        attempts: [{
+          attemptId: "active-v2-maintenance-attempt",
+          ordinal: 1,
+          backend: "codex-cli",
+          terminal: { status: "completed", at: 7 }
+        }],
+        performance: {
+          startedAt: 5,
+          completedAt: 7,
+          totalMs: 2,
+          agentCalled: true,
+          phases: []
+        }
+      });
+    (assistantMessage.knowledgeBaseUi as unknown as Record<string, unknown>)
+      .internalLeaseId = "must-not-enter-conversation-v2";
+    session.updatedAt = 7;
+
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    });
+
+    const terminalCommit = await targetStore.readConversation(session.id);
+    assert.ok(terminalCommit);
+    assert.deepEqual(
+      terminalCommit.payload.messages.map((message) => message.id),
+      [userMessage.id, assistantMessage.id]
+    );
+    const durableUi = terminalCommit.payload.messages[1]?.presentation
+      ?.knowledgeBaseUi as Record<string, unknown> | undefined;
+    assert.equal(durableUi?.kind, "maintain-report");
+    assert.equal(durableUi?.reportPath, "outputs/maintenance/active-v2.md");
+    for (const forbidden of [
+      "runId",
+      "backend",
+      "selectedBackend",
+      "winnerBackend",
+      "terminalPhase",
+      "attemptCount",
+      "attempts",
+      "performance",
+      "internalLeaseId"
+    ]) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(durableUi ?? {}, forbidden),
+        false,
+        `${forbidden} must remain outside durable Conversation presentation`
+      );
+    }
+    assert.equal(session.messages[1], assistantMessage);
+    assert.equal(
+      assistantMessage.knowledgeBaseUi?.kind === "maintain-report"
+        ? assistantMessage.knowledgeBaseUi.attempts?.length
+        : 0,
+      1,
+      "the live report card must retain its execution detail"
+    );
+    assert.equal(session.commitId, terminalCommit.metadata.currentContext.commitId);
+    assert.equal(
+      fixture.persistedSettings().sessions.find(
+        (candidate) => candidate.id === session.id
+      )?.commitId,
+      session.commitId,
+      "the data shell and live session must share canonical Context identity"
+    );
+
+    const retirementHost = {
+      async registerNativeExecutionRetirements(retirements: unknown[]) {
+        assert.deepEqual(retirements, []);
+      },
+      async promoteNativeExecutionRetirements(retirements: unknown[]) {
+        assert.deepEqual(retirements, []);
+      },
+      async abortNativeExecutionRetirements() {
+        assert.fail("runtime-only maintenance detail must not block rotation");
+      },
+      async cleanupNativeExecutionRecord() {}
+    };
+    const generationBeforeRotation = session.generation;
+    await rotateEchoInkSessionContext(
+      retirementHost as never,
+      fixture.store,
+      session,
+      {
+        reason: "start-new-context",
+        workspace: {
+          vaultPath,
+          cwd: vaultPath
+        },
+        contextStartsAfterMessageId: assistantMessage.id
+      }
+    );
+    assert.equal(
+      session.generation,
+      (generationBeforeRotation ?? 1) + 1,
+      "the live card and its trimmed durable projection must share one content baseline"
+    );
+    assert.equal(
+      assistantMessage.knowledgeBaseUi?.kind === "maintain-report"
+        ? assistantMessage.knowledgeBaseUi.attempts?.length
+        : 0,
+      1,
+      "rotation must preserve live execution detail"
+    );
+
+    const originalText = assistantMessage.text;
+    assistantMessage.text = `${originalText}（并发改写）`;
+    await assert.rejects(
+      rotateEchoInkSessionContext(
+        retirementHost as never,
+        fixture.store,
+        session,
+        {
+          reason: "start-new-context",
+          workspace: {
+            vaultPath,
+            cwd: vaultPath
+          },
+          contextStartsAfterMessageId: assistantMessage.id
+        }
+      ),
+      /diverges from its durable baseline/,
+      "a real product-body rewrite must still fail the durable CAS check"
+    );
+    assistantMessage.text = originalText;
+
+    const terminalRevision = (
+      await targetStore.readConversation(session.id)
+    )!.metadata.revision;
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    });
+    assert.equal(
+      (await targetStore.readConversation(session.id))?.metadata.revision,
+      terminalRevision,
+      "a repeated save must not rewrite the immutable terminal message"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertLegacyV2ContextFallbackAdvancesAcrossMaintenanceSaves():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-active-v2-legacy-context-")
+  );
+  try {
+    const adapter = new FileConversationStoreV2LiveAdapter(storageRootPath);
+    const source: StoredSession = {
+      id: "active-v2-legacy-context-maintenance",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: "/vault",
+      revision: 1,
+      generation: 1,
+      contextId: "legacy-context-without-explicit-commit",
+      workspaceFingerprint: `sha256:${"6".repeat(64)}`,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const seed = projectStoredSessionToConversationCommitV2(source);
+    assert.equal(seed.metadata.currentContext.commitId, undefined);
+    await adapter.store.commitConversation(seed, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+    const live = await adapter.readSession(source.id);
+    assert.ok(live);
+    const synchronizeIdentity = (canonical: StoredSession) => {
+      live.revision = canonical.revision;
+      live.generation = canonical.generation;
+      live.contextId = canonical.contextId;
+      live.contextStartsAfterMessageId =
+        canonical.contextStartsAfterMessageId;
+      live.commitId = canonical.commitId;
+      live.workspaceFingerprint = canonical.workspaceFingerprint;
+      live.contextSnapshot = canonical.contextSnapshot;
+      live.rollingSummary = canonical.rollingSummary;
+      live.updatedAt = canonical.updatedAt;
+    };
+    const persist = async () => await adapter.persistSettingsSessions(
+      { sessions: [live] },
+      { afterSessionPersisted: synchronizeIdentity }
+    );
+
+    live.messages.push({
+      id: "legacy-context-maintenance-user",
+      role: "user",
+      text: "/maintain",
+      createdAt: 2
+    }, {
+      id: "legacy-context-maintenance-assistant",
+      role: "assistant",
+      itemType: "knowledgeBase",
+      status: "running",
+      text: "正在维护",
+      knowledgeBaseUi: buildKnowledgeBaseRunPayload("maintain"),
+      createdAt: 3
+    });
+    live.updatedAt = 3;
+    await persist();
+    const afterRunning = await adapter.store.readConversation(live.id);
+    assert.ok(afterRunning);
+    assert.equal(
+      afterRunning.metadata.currentContext.commitId,
+      seed.metadata.commitId
+    );
+    assert.equal(live.commitId, seed.metadata.commitId);
+
+    const assistant = live.messages[1]!;
+    assistant.status = "completed";
+    assistant.text = "维护完成";
+    assistant.knowledgeBaseUi = buildKnowledgeBaseMaintainReportPayload(
+      "maintain",
+      {
+        status: "success",
+        reportPath: "outputs/maintenance/legacy-context.md",
+        summary: "维护完成",
+        processedSources: [],
+        workflowRunId: "legacy-context-maintenance-run",
+        selectedBackend: "codex-cli",
+        winnerBackend: "codex-cli",
+        attempts: []
+      }
+    );
+    live.updatedAt = 4;
+    await persist();
+    const afterTerminal = await adapter.store.readConversation(live.id);
+    assert.ok(afterTerminal);
+    assert.equal(
+      afterTerminal.metadata.currentContext.commitId,
+      seed.metadata.commitId
+    );
+    assert.equal(live.commitId, seed.metadata.commitId);
+    assert.deepEqual(
+      afterTerminal.payload.messages.map((message) => message.id),
+      live.messages.map((message) => message.id)
+    );
+
+    const terminalRevision = afterTerminal.metadata.revision;
+    await persist();
+    assert.equal(
+      (await adapter.store.readConversation(live.id))?.metadata.revision,
+      terminalRevision,
+      "the canonical fallback identity must not drift on a third save"
+    );
+    assert.equal(
+      (await adapter.store.readConversation(live.id))
+        ?.metadata.currentContext.commitId,
+      seed.metadata.commitId
+    );
+  } finally {
+    await rm(storageRootPath, { recursive: true, force: true });
+  }
+}
+
+async function assertDurableLegacyRunCardStaysImmutableWhenRecoveryAppendsTerminal():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-active-v2-recovered-prefix-")
+  );
+  try {
+    const runId = "active-v2-recovered-prefix-run";
+    const adapter = new FileConversationStoreV2LiveAdapter(storageRootPath);
+    const source: StoredSession = {
+      id: "active-v2-recovered-prefix",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: "/vault",
+      revision: 1,
+      generation: 1,
+      contextId: "active-v2-recovered-prefix-context",
+      commitId: "active-v2-recovered-prefix-commit",
+      workspaceFingerprint: `sha256:${"7".repeat(64)}`,
+      messages: [{
+        id: "active-v2-recovered-prefix-user",
+        role: "user",
+        text: "/maintain",
+        runId,
+        createdAt: 1
+      }, {
+        id: "active-v2-recovered-prefix-assistant",
+        role: "assistant",
+        itemType: "knowledgeBase",
+        status: "running",
+        text: "正在维护",
+        runId,
+        knowledgeBaseUi: buildKnowledgeBaseRunPayload("maintain"),
+        createdAt: 2
+      }],
+      createdAt: 1,
+      updatedAt: 2
+    };
+    (source.messages[1]!.knowledgeBaseUi as unknown as Record<string, unknown>)
+      .internalLeaseId = "legacy-runtime-only";
+    const seed = projectStoredSessionToConversationCommitV2(source);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        (seed.payload.messages[1]?.presentation?.knowledgeBaseUi ?? {}) as object,
+        "internalLeaseId"
+      ),
+      false,
+      "legacy projection must persist only the explicit product UI allowlist"
+    );
+    await adapter.store.commitConversation(seed, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+    const durablePrefix = structuredClone(seed.payload.messages);
+    const live = await adapter.readSession(source.id);
+    assert.ok(live);
+    const legacyRunCard = live.messages[1]!;
+    legacyRunCard.status = "failed";
+    legacyRunCard.text = "知识库维护恢复后确认失败";
+    legacyRunCard.completedAt = 3;
+    legacyRunCard.runTerminalRecovered = true;
+    live.messages.push({
+      id: "active-v2-recovered-prefix-terminal",
+      role: "assistant",
+      itemType: "knowledgeBase",
+      status: "failed",
+      text: "知识库维护恢复后确认失败：插件重载",
+      runId,
+      knowledgeBaseUi: buildKnowledgeBaseMaintainReportPayload("maintain", {
+        status: "failed",
+        reportPath: "",
+        summary: "",
+        processedSources: [],
+        workflowRunId: runId,
+        selectedBackend: "codex-cli",
+        winnerBackend: null,
+        attempts: [],
+        terminalPhase: "recovery-blocked",
+        commitState: "pre-wal",
+        failureCode: "orphaned-running-without-wal",
+        error: "插件重载"
+      }),
+      createdAt: 3,
+      completedAt: 3,
+      runTerminalRecovered: true
+    });
+    live.updatedAt = 3;
+
+    await adapter.persistSettingsSessions({ sessions: [live] });
+    const committed = await adapter.store.readConversation(source.id);
+    assert.ok(committed);
+    assert.deepEqual(
+      committed.payload.messages.slice(0, durablePrefix.length),
+      durablePrefix,
+      "recovery must preserve an already-durable run card byte-for-byte as the immutable prefix"
+    );
+    assert.deepEqual(
+      committed.payload.messages.map((message) => message.id),
+      [
+        "active-v2-recovered-prefix-user",
+        "active-v2-recovered-prefix-assistant",
+        "active-v2-recovered-prefix-terminal"
+      ]
+    );
+    assert.equal(
+      committed.payload.messages[2]?.presentation?.knowledgeBaseUi
+        && (committed.payload.messages[2]!.presentation!.knowledgeBaseUi as {
+          kind?: string;
+        }).kind,
+      "maintain-report"
+    );
+  } finally {
+    await rm(storageRootPath, { recursive: true, force: true });
+  }
+}
+
+async function assertLegacyIncompleteContextStartupDefersConversationFlush(): Promise<void> {
+  const vaultPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-settings-legacy-startup-")
+  );
+  try {
+    const pluginDir = "codex-echoink";
+    const conversationRoot = path.join(
+      pluginDataDir(vaultPath, pluginDir),
+      "conversations"
+    );
+    const durableStore = new FileConversationStore({
+      rootPath: conversationRoot,
+      now: () => 10
+    });
+    const completeSession: StoredSession = {
+      id: "legacy-startup-session",
+      title: KNOWLEDGE_BASE_SESSION_TITLE,
+      kind: "knowledge-base",
+      cwd: vaultPath,
+      revision: 1,
+      generation: 1,
+      contextId: "legacy-startup-context",
+      commitId: "legacy-startup-commit",
+      workspaceFingerprint: workspaceFingerprint({
+        vaultPath,
+        cwd: vaultPath
+      }),
+      messages: [
+        messageAt("legacy-startup-message", "user", 1)
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    await durableStore.createPristineSession({
+      ...completeSession,
+      messages: []
+    });
+    await durableStore.upsertSession(completeSession);
+
+    const sessionRoot = path.join(
+      conversationRoot,
+      "sessions",
+      completeSession.id
+    );
+    const metadataPath = path.join(sessionRoot, "metadata.json");
+    const metadata = JSON.parse(
+      await readFile(metadataPath, "utf8")
+    ) as Record<string, unknown>;
+    const payloadKey = String(metadata.payloadKey);
+    const payloadRoot = path.join(
+      sessionRoot,
+      "context-payloads",
+      payloadKey
+    );
+    const legacyMessagesPath = path.join(sessionRoot, "messages.jsonl");
+    await writeFile(
+      legacyMessagesPath,
+      await readFile(path.join(payloadRoot, "messages.jsonl"), "utf8"),
+      "utf8"
+    );
+    const snapshots = (
+      await readFile(path.join(payloadRoot, "snapshots.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    for (const snapshot of snapshots) delete snapshot.contextId;
+    const legacySnapshotsPath = path.join(sessionRoot, "snapshots.jsonl");
+    await writeFile(
+      legacySnapshotsPath,
+      snapshots.map((snapshot) => JSON.stringify(snapshot)).join("\n") + "\n",
+      "utf8"
+    );
+
+    delete metadata.contextId;
+    delete metadata.commitId;
+    delete metadata.payloadVersion;
+    delete metadata.payloadKey;
+    delete metadata.previousPayloadKey;
+    delete metadata.previousPayloadCommitId;
+    if (
+      metadata.contextSnapshot
+      && typeof metadata.contextSnapshot === "object"
+    ) {
+      delete (
+        metadata.contextSnapshot as Record<string, unknown>
+      ).contextId;
+    }
+    await writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
+
+    const legacySession = await durableStore.readSession(completeSession.id);
+    assert.ok(legacySession);
+    assert.equal(legacySession.contextId, undefined);
+    assert.equal(legacySession.messages.length, 1);
+
+    const settings = cloneSettings(DEFAULT_SETTINGS);
+    settings.settingsVersion = 0;
+    settings.sessions = [{
+      ...legacySession,
+      messages: []
+    }];
+    settings.activeSessionId = legacySession.id;
+    settings.knowledgeBase.sessionId = legacySession.id;
+    let persisted = settingsForDataSave(cloneSettings(settings));
+    let saveCalls = 0;
+    const plugin = {
+      settings,
+      loadData: async () => cloneSettings(persisted),
+      saveData: async (data: unknown) => {
+        saveCalls += 1;
+        persisted = cloneSettings(data as CodexForObsidianSettings);
+      },
+      getVaultPath: () => vaultPath,
+      getPluginDataDirName: () => pluginDir,
+      settleHarnessRunTerminal: async () => undefined
+    };
+    const guardedPaths = [
+      path.join(conversationRoot, "index.json"),
+      metadataPath,
+      legacyMessagesPath,
+      legacySnapshotsPath
+    ];
+    const before = await Promise.all(
+      guardedPaths.map(async (target) => await readFile(target, "utf8"))
+    );
+
+    const settingsStore = new EchoInkSettingsStore(plugin as never);
+    await settingsStore.loadSettings();
+
+    assert.equal(saveCalls, 1);
+    assert.equal(settingsStore.isConversationStoreV2MigrationRequired(), true);
+    assert.equal(plugin.settings.sessions[0]?.messages.length, 1);
+    assert.equal(persisted.sessions[0]?.messages.length, 0);
+    assert.deepEqual(
+      await Promise.all(
+        guardedPaths.map(async (target) => await readFile(target, "utf8"))
+      ),
+      before,
+      "startup normalization must not rewrite incomplete legacy payloads before V2 migration"
+    );
+
+    let migrationActionCalls = 0;
+    assert.equal(
+      await settingsStore.withMigrationPersistenceQuietWindow(
+        "legacy-incomplete-context-cutover",
+        async () => {
+          migrationActionCalls += 1;
+          return "cutover-ready";
+        }
+      ),
+      "cutover-ready"
+    );
+    assert.equal(migrationActionCalls, 1);
+    assert.equal(saveCalls, 2);
+    assert.deepEqual(
+      await Promise.all(
+        guardedPaths.map(async (target) => await readFile(target, "utf8"))
+      ),
+      before,
+      "the migration quiet window must freeze legacy owners without rewriting incomplete V1 payloads"
+    );
+
+    const storageRootPath = pluginDataDir(vaultPath, pluginDir);
+    const targetStore = new FileConversationStoreV2({ storageRootPath });
+    const externalOwnerEdges = legacyExternalOwnerEdges([legacySession]);
+    const migrated = await prepareConversationStoreV2Migration({
+      sourceStore: durableStore,
+      targetStore,
+      targetExternalOwnerEdges: externalOwnerEdges
+    });
+    assert.equal(migrated.report.status, "ready");
+    assert.ok(migrated.proof);
+    const manifestStore = new FileConversationStoreManifest({
+      storageRootPath
+    });
+    const copying = createCopyingConversationStoreManifest({
+      commitId: "settings-cutover-copying",
+      sourceFingerprint: migrated.source.fingerprint,
+      createdAt: 20
+    });
+    await manifestStore.compareAndSwap(copying, {
+      expectedRevision: null,
+      expectedCommitId: null
+    });
+    const validated = advanceConversationStoreManifestToValidated(copying, {
+      commitId: "settings-cutover-validated",
+      proof: migrated.proof,
+      updatedAt: 21
+    });
+    await manifestStore.compareAndSwap(validated, {
+      expectedRevision: copying.revision,
+      expectedCommitId: copying.commitId
+    });
+    const active = advanceConversationStoreManifestToActive(validated, {
+      commitId: "settings-cutover-active",
+      activatedAt: 22
+    });
+    await manifestStore.compareAndSwap(active, {
+      expectedRevision: validated.revision,
+      expectedCommitId: validated.commitId
+    });
+
+    await settingsStore.markConversationStoreV2MigrationComplete();
+    assert.equal(settingsStore.isConversationStoreV2MigrationRequired(), false);
+    assert.ok(plugin.settings.sessions[0]?.contextId);
+    assert.ok(plugin.settings.sessions[0]?.commitId);
+    assert.ok(plugin.settings.sessions[0]?.workspaceFingerprint);
+    assert.ok(plugin.settings.sessions[0]?.cwd);
+
+    const durableBeforeReplay = await targetStore.readConversation(
+      legacySession.id
+    );
+    assert.ok(durableBeforeReplay);
+    plugin.settings.sessions[0].messages[0].text =
+      "transient Run projection must not enter cutover";
+    assert.equal(
+      await settingsStore.withMigrationPersistenceQuietWindow(
+        "post-cutover-replay",
+        async () => "already-active"
+      ),
+      "already-active",
+      "the first post-cutover replay must enter the quiet window without flushing transient projections"
+    );
+    assert.deepEqual(
+      await targetStore.readConversation(legacySession.id),
+      durableBeforeReplay,
+      "an idempotent cutover replay must not rewrite V2 with transient Run projection state"
+    );
+  } finally {
+    await rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 async function assertOversizeDurableMetadataCanonicalizesAndReplays(): Promise<void> {
@@ -359,7 +1311,7 @@ function attemptWithFailurePhase(
   };
 }
 
-async function assertGenerationCasPersistsAndReplacesMemory(): Promise<void> {
+async function assertGenerationCasPersistsAndUpdatesMemoryInPlace(): Promise<void> {
   const fixture = await createFixture();
   try {
     const memoryBefore = fixture.plugin.settings.knowledgeBase;
@@ -383,9 +1335,24 @@ async function assertGenerationCasPersistsAndReplacesMemory(): Promise<void> {
 
     assert.equal(result.settings.lastRunStatus, "success");
     assert.equal(fixture.persistedKnowledgeBase().lastSummary, "recovered from workflow WAL");
-    assert.notEqual(fixture.plugin.settings.knowledgeBase, memoryBefore);
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase,
+      memoryBefore,
+      "CAS must preserve the object captured by the live Settings tab"
+    );
     assert.deepEqual(fixture.plugin.settings.knowledgeBase, result.settings);
-    assert.equal(fixture.saveCalls(), 1);
+    memoryBefore.catchUpOnStartup = !memoryBefore.catchUpOnStartup;
+    const capturedReferenceValue = memoryBefore.catchUpOnStartup;
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    assert.equal(
+      fixture.persistedKnowledgeBase().catchUpOnStartup,
+      capturedReferenceValue,
+      "a Settings tab callback using the pre-CAS reference must remain durable"
+    );
+    assert.equal(fixture.saveCalls(), 2);
   } finally {
     await fixture.dispose();
   }
@@ -496,14 +1463,1352 @@ async function assertWorkflowTransactionSharesTheOrdinarySaveQueue(): Promise<vo
   }
 }
 
+async function assertWorkflowCasRollsForwardConcurrentNonKnowledgeSettings(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const blockedSave = fixture.blockNextSave();
+    const transaction = fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "knowledge CAS with concurrent UI settings";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    await blockedSave.started;
+
+    fixture.plugin.settings.settingsLanguage =
+      fixture.plugin.settings.settingsLanguage === "en" ? "zh-CN" : "en";
+    const concurrentLanguage = fixture.plugin.settings.settingsLanguage;
+    const ordinarySave = fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    blockedSave.release();
+    await transaction;
+    await ordinarySave;
+
+    assert.equal(
+      fixture.persistedSettings().settingsLanguage,
+      concurrentLanguage
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "knowledge CAS with concurrent UI settings"
+    );
+    assert.equal(fixture.saveCalls(), 2);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasThreeWayMergesLaterKnowledgeSettings(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const blockedSave = fixture.blockNextSave();
+    const transaction = fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "workflow target survives";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    await blockedSave.started;
+
+    fixture.plugin.settings.knowledgeBase.catchUpOnStartup =
+      !fixture.plugin.settings.knowledgeBase.catchUpOnStartup;
+    const laterCatchUp =
+      fixture.plugin.settings.knowledgeBase.catchUpOnStartup;
+    const ordinarySave = fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    blockedSave.release();
+    await transaction;
+    await ordinarySave;
+
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.lastSummary,
+      "workflow target survives"
+    );
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.catchUpOnStartup,
+      laterCatchUp
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "workflow target survives"
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().catchUpOnStartup,
+      laterCatchUp
+    );
+    assert.equal(fixture.saveCalls(), 2);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasPoisonsSameFieldKnowledgeConflict(): Promise<void> {
+  const fixture = await createFixture();
+  const originalConsoleError = console.error;
+  try {
+    console.error = () => undefined;
+    const blockedSave = fixture.blockNextSave();
+    const transaction = fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "durable workflow target";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    await blockedSave.started;
+
+    fixture.plugin.settings.knowledgeBase.lastSummary = "later live edit";
+    const ordinarySave = fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    blockedSave.release();
+
+    await assert.rejects(
+      transaction,
+      (error: unknown) =>
+        error instanceof MaintenanceWorkflowWalError
+        && error.code === "settings_cas_conflict"
+        && /target 已耐久.*lastSummary.*重启恢复/.test(error.message)
+    );
+    await assert.rejects(
+      ordinarySave,
+      (error: unknown) =>
+        error instanceof MaintenanceWorkflowWalError
+        && error.code === "settings_cas_conflict"
+    );
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.lastSummary,
+      "later live edit",
+      "same-field conflict must not overwrite the later live edit"
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "durable workflow target",
+      "the queued ordinary save must not overwrite the committed workflow target"
+    );
+    assert.equal(fixture.saveCalls(), 1);
+  } finally {
+    console.error = originalConsoleError;
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasBoundsPreCommitDriftAndDrainsQueue(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const internals = fixture.store as unknown as {
+      readPersistedSettingsDataStrict(): Promise<unknown>;
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
+    };
+    const originalReadback =
+      internals.readPersistedSettingsDataStrict.bind(fixture.store);
+    const originalProjection = internals.projectKnowledgeBaseHistory.bind(
+      fixture.store
+    );
+    let readbackCalls = 0;
+    let projectionCalls = 0;
+    internals.readPersistedSettingsDataStrict = async () => {
+      const persisted = await originalReadback();
+      readbackCalls += 1;
+      if (readbackCalls <= 3) {
+        fixture.plugin.settings.settingsLanguage =
+          fixture.plugin.settings.settingsLanguage === "en" ? "zh-CN" : "en";
+      }
+      return persisted;
+    };
+    internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
+      const projected = await originalProjection(candidate, strict);
+      projectionCalls += 1;
+      return projected;
+    };
+
+    const transaction = fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "must not starve the settings queue";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    const ordinarySave = fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+
+    await assert.rejects(
+      transaction,
+      (error: unknown) =>
+        error instanceof MaintenanceWorkflowWalError
+        && error.code === "settings_cas_conflict"
+    );
+    await ordinarySave;
+
+    assert.equal(
+      readbackCalls,
+      4,
+      "the transaction must stop after three stability reads, then release one read to the queued save"
+    );
+    assert.equal(
+      projectionCalls,
+      0,
+      "History must remain outside the workflow settings CAS"
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "",
+      "an exhausted CAS must not claim the workflow target"
+    );
+    assert.equal(
+      fixture.saveCalls(),
+      1,
+      "the queued ordinary save must run after the failed transaction drains"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasAcceptsPostWriteRejectAndContinues(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    fixture.failNextSave("after-write");
+    const first = await fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "post-write rejection was committed";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+
+    assert.equal(first.settings.lastSummary, "post-write rejection was committed");
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.lastSummary,
+      "post-write rejection was committed"
+    );
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "post-write rejection was committed"
+    );
+
+    const second = await fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastError = "same-process WAL lane remains usable";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    assert.equal(second.settings.lastError, "same-process WAL lane remains usable");
+    assert.equal(fixture.saveCalls(), 2);
+
+    const restarted = new EchoInkSettingsStore(fixture.plugin as never);
+    await restarted.loadSettings();
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.lastSummary,
+      "post-write rejection was committed"
+    );
+    assert.equal(
+      fixture.plugin.settings.knowledgeBase.lastError,
+      "same-process WAL lane remains usable"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasPropagatesUnwrittenFailureAndCanRetry(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-before-write-recovery",
+      [
+        messageAt("before-write-user", "user", Date.now() - 1_000),
+        messageAt("before-write-assistant", "assistant", Date.now())
+      ]
+    );
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    fixture.failNextSave("before-write");
+    await assert.rejects(
+      fixture.store.withExclusiveTransaction(async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "first attempt must remain unwritten";
+        return await host.persistCas(before.generation, target);
+      }),
+      /fixture save failed before write/
+    );
+    assert.equal(fixture.persistedKnowledgeBase().lastSummary, "");
+    assert.equal(fixture.plugin.settings.knowledgeBase.lastSummary, "");
+    const durableAfterFailure =
+      await fixture.store.readConversationSession(session.id);
+    assert.equal(session.contextSnapshot, undefined);
+    assert.deepEqual(
+      durableAfterFailure?.messages,
+      [],
+      "an unwritten workflow settings CAS must not mutate Conversation"
+    );
+
+    const retry = await fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        const target = cloneKnowledgeBaseSettings(before.settings);
+        target.lastSummary = "retry committed";
+        return await host.persistCas(before.generation, target);
+      }
+    );
+    assert.equal(retry.settings.lastSummary, "retry committed");
+    assert.equal(fixture.saveCalls(), 3);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasFailsClosedOnAmbiguousWriteFailure(): Promise<void> {
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    for (const mode of [
+      "conflict-after-write",
+      "unknown-after-write"
+    ] as const) {
+      const fixture = await createFixture();
+      try {
+        const session = await createKnowledgeConversation(
+          fixture,
+          `settings-ambiguous-${mode}`,
+          [
+            messageAt(`${mode}-user`, "user", Date.now() - 1_000),
+            messageAt(`${mode}-assistant`, "assistant", Date.now())
+          ]
+        );
+        await fixture.store.saveSettings(true, {
+          flushConversationStore: false,
+          flushKnowledgeBaseHistory: false
+        });
+        fixture.failNextSave(mode);
+        await assert.rejects(
+          fixture.store.withExclusiveTransaction(async (host) => {
+            const before = await host.readWithGeneration();
+            const target = cloneKnowledgeBaseSettings(before.settings);
+            target.lastSummary = `ambiguous ${mode}`;
+            return await host.persistCas(before.generation, target);
+          }),
+          (error: unknown) =>
+            error instanceof MaintenanceWorkflowWalError
+            && error.code === "settings_persist_failed"
+        );
+        assert.equal(
+          fixture.plugin.settings.knowledgeBase.lastSummary,
+          "",
+          "an ambiguous write must not replace the live Knowledge settings"
+        );
+        const durable = await fixture.store.readConversationSession(session.id);
+        assert.equal(session.contextSnapshot, undefined);
+        assert.deepEqual(
+          durable?.messages,
+          [],
+          "an ambiguous data shell outcome must remain Conversation-independent"
+        );
+        const saveCallsAfterAmbiguousWrite = fixture.saveCalls();
+        assert.equal(
+          fixture.persistedKnowledgeBase().lastSummary,
+          `ambiguous ${mode}`,
+          "the fixture must prove the workflow target may already be durable"
+        );
+        await assert.rejects(
+          fixture.store.saveSettings(true, {
+            flushConversationStore: false,
+            flushKnowledgeBaseHistory: false
+          }),
+          (error: unknown) =>
+            error instanceof MaintenanceWorkflowWalError
+            && error.code === "settings_persist_failed"
+        );
+        await assert.rejects(
+          fixture.store.withExclusiveTransaction(async (host) =>
+            await host.readWithGeneration()
+          ),
+          (error: unknown) =>
+            error instanceof MaintenanceWorkflowWalError
+            && error.code === "settings_persist_failed"
+        );
+        assert.equal(
+          fixture.saveCalls(),
+          saveCallsAfterAmbiguousWrite,
+          "the recovery gate must block every later writer before saveData"
+        );
+        assert.equal(
+          fixture.persistedKnowledgeBase().lastSummary,
+          `ambiguous ${mode}`,
+          "blocked writers must not overwrite the possibly committed target"
+        );
+
+        await fixture.store.loadSettings();
+        assert.equal(
+          fixture.plugin.settings.knowledgeBase.lastSummary,
+          `ambiguous ${mode}`,
+          "loadSettings must recover the durable target and clear the gate"
+        );
+        await fixture.store.saveSettings(true, {
+          flushConversationStore: false,
+          flushKnowledgeBaseHistory: false
+        });
+        assert.equal(
+          fixture.saveCalls(),
+          saveCallsAfterAmbiguousWrite + 1,
+          "an explicit durable reload must make the save lane usable again"
+        );
+      } finally {
+        await fixture.dispose();
+      }
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+}
+
+async function assertWorkflowCasIgnoresUnrelatedConversationRewriteConflict(): Promise<void> {
+  const fixture = await createFixture();
+  const internals = fixture.store as unknown as {
+    ensureRuntimePristineConversationSessionsCreated(): Promise<void>;
+    persistCanonicalConversationAndHistory(
+      ...args: unknown[]
+    ): Promise<CodexForObsidianSettings>;
+  };
+  const originalEnsure =
+    internals.ensureRuntimePristineConversationSessionsCreated.bind(
+      fixture.store
+    );
+  const originalCanonical =
+    internals.persistCanonicalConversationAndHistory.bind(fixture.store);
+  let conversationTouches = 0;
+  try {
+    internals.ensureRuntimePristineConversationSessionsCreated = async () => {
+      conversationTouches += 1;
+      throw new Error(
+        "Conversation V2 normal commit cannot rewrite existing messages"
+      );
+    };
+    internals.persistCanonicalConversationAndHistory = async () => {
+      conversationTouches += 1;
+      throw new Error(
+        "Conversation V2 normal commit cannot rewrite existing messages"
+      );
+    };
+
+    await fixture.store.withExclusiveTransaction(async (host) => {
+      const before = await host.readWithGeneration();
+      const target = cloneKnowledgeBaseSettings(before.settings);
+      target.lastSummary = "WAL settings CAS is Conversation-independent";
+      return await host.persistCas(before.generation, target);
+    });
+
+    assert.equal(conversationTouches, 0);
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "WAL settings CAS is Conversation-independent"
+    );
+  } finally {
+    internals.ensureRuntimePristineConversationSessionsCreated = originalEnsure;
+    internals.persistCanonicalConversationAndHistory = originalCanonical;
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasLeavesConversationForDurableRunCommit(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-cas-canonical",
+      [
+        messageAt("cas-user", "user", Date.now() - 1_000),
+        messageAt("cas-assistant", "assistant", Date.now())
+      ]
+    );
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    assert.equal(session.contextSnapshot, undefined);
+
+    await fixture.store.withExclusiveTransaction(async (host) => {
+      const before = await host.readWithGeneration();
+      const target = cloneKnowledgeBaseSettings(before.settings);
+      target.lastSummary = "canonical Conversation projection";
+      return await host.persistCas(before.generation, target);
+    });
+
+    const durableBeforeRunCommit =
+      await fixture.store.readConversationSession(session.id);
+    assert.equal(session.contextSnapshot, undefined);
+    assert.equal(durableBeforeRunCommit?.contextSnapshot, undefined);
+    assert.deepEqual(
+      durableBeforeRunCommit?.messages,
+      [],
+      "the WAL settings CAS must not append or rewrite Conversation messages"
+    );
+    assert.equal(
+      fixture.persistedSettings().sessions.find(
+        (candidate) => candidate.id === session.id
+      )?.contextSnapshot,
+      undefined
+    );
+
+    const committed = await fixture.store.commitKnowledgeRunDurably();
+    assert.equal(committed.committed, true);
+    const durable = await fixture.store.readConversationSession(session.id);
+    assert.ok(session.contextSnapshot);
+    assert.ok(durable?.contextSnapshot);
+    assert.equal(
+      createConversationContentRevision(session),
+      createConversationContentRevision(durable!)
+    );
+    assert.deepEqual(
+      fixture.persistedSettings().sessions.find(
+        (candidate) => candidate.id === session.id
+      )?.contextSnapshot,
+      durable?.contextSnapshot
+    );
+
+    await rotateKnowledgeConversation(
+      fixture,
+      session,
+      "cas-canonical-rotation"
+    );
+    assert.equal(session.generation, 2);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertDurableKnowledgeRunCommitsFullSourceBeforeHistoryProjection(): Promise<void> {
+  const fixture = await createFixture();
+  let restoreConversationPersist: (() => void) | null = null;
+  let restoreProjection: (() => void) | null = null;
+  try {
+    const now = Date.now();
+    const oldTimestamp = now - (3 * 24 * 60 * 60 * 1_000);
+    const recentTimestamp = now - (24 * 60 * 60 * 1_000);
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-cas-source-before-history",
+      [
+        messageAt("cas-history-old", "user", oldTimestamp),
+        messageAt("cas-history-recent", "assistant", recentTimestamp),
+        messageAt("cas-history-today", "user", now)
+      ]
+    );
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+
+    const events: string[] = [];
+    const internals = fixture.store as unknown as {
+      getConversationStore(): {
+        persistSettingsSessions(
+          settings: { sessions: StoredSession[] },
+          options?: {
+            trimSettingsMessages?: boolean;
+            afterSessionPersisted?: (session: StoredSession) => void;
+          }
+        ): Promise<unknown>;
+      };
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
+    };
+    const conversationStore = internals.getConversationStore();
+    const originalPersist =
+      conversationStore.persistSettingsSessions.bind(conversationStore);
+    const originalProjection =
+      internals.projectKnowledgeBaseHistory.bind(fixture.store);
+    conversationStore.persistSettingsSessions = async (
+      settings,
+      options
+    ) => {
+      const candidate = settings.sessions.find(
+        (stored) => stored.id === session.id
+      );
+      if (candidate) {
+        events.push(
+          `conversation:${candidate.messages.map((message) => message.id).join(",")}`
+        );
+      }
+      return await originalPersist(settings, options);
+    };
+    internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
+      events.push("history");
+      return await originalProjection(candidate, strict);
+    };
+    restoreConversationPersist = () => {
+      conversationStore.persistSettingsSessions = originalPersist;
+    };
+    restoreProjection = () => {
+      internals.projectKnowledgeBaseHistory = originalProjection;
+    };
+
+    fixture.plugin.settings.knowledgeBase.lastSummary =
+      "Conversation source precedes History";
+    const committed = await fixture.store.commitKnowledgeRunDurably();
+    assert.equal(committed.committed, true);
+
+    assert.deepEqual(events, [
+      "conversation:cas-history-old,cas-history-recent,cas-history-today",
+      "history"
+    ]);
+    assert.equal(
+      fixture.persistedKnowledgeBase().lastSummary,
+      "Conversation source precedes History"
+    );
+    assert.deepEqual(
+      (await fixture.store.readConversationSession(session.id))
+        ?.messages.map((message) => message.id),
+      ["cas-history-old", "cas-history-recent", "cas-history-today"],
+      "History projection must not compact the canonical Conversation"
+    );
+  } finally {
+    restoreProjection?.();
+    restoreConversationPersist?.();
+    await fixture.dispose();
+  }
+}
+
+async function assertActiveKnowledgeConversationFailureDoesNotPublishHistory(): Promise<void> {
+  const fixture = await createFixture();
+  const originalConsoleError = console.error;
+  let restoreUpsert: (() => void) | null = null;
+  let restoreProjection: (() => void) | null = null;
+  try {
+    console.error = () => undefined;
+    const now = Date.now();
+    const oldTimestamp = now - (2 * 24 * 60 * 60 * 1_000);
+    const oldDate = localDateKeyForTimestamp(oldTimestamp);
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-active-kb-pre-marker-failure",
+      [
+        messageAt("active-failure-old", "user", oldTimestamp),
+        messageAt("active-failure-today", "assistant", now)
+      ]
+    );
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    const saveCallsBeforeFailure = fixture.saveCalls();
+
+    const internals = fixture.store as unknown as {
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
+    };
+    const conversationStore =
+      selectedLegacyConversationStore(fixture.store);
+    const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
+    const originalProjection =
+      internals.projectKnowledgeBaseHistory.bind(fixture.store);
+    let projectionCalls = 0;
+    conversationStore.upsertSession = async (candidate) => {
+      if (candidate.id === session.id) {
+        throw new Error("fixture active Knowledge Conversation pre-marker failure");
+      }
+      await originalUpsert(candidate);
+    };
+    internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
+      projectionCalls += 1;
+      return await originalProjection(candidate, strict);
+    };
+    restoreUpsert = () => {
+      conversationStore.upsertSession = originalUpsert;
+    };
+    restoreProjection = () => {
+      internals.projectKnowledgeBaseHistory = originalProjection;
+    };
+
+    await assert.rejects(
+      fixture.store.saveSettings(true, {
+        flushConversationStore: false,
+        strictConversationStore: false,
+        strictKnowledgeBaseHistory: true
+      }),
+      /active Knowledge Conversation pre-marker failure/
+    );
+
+    assert.equal(
+      projectionCalls,
+      0,
+      "History publication must never start before the active Knowledge Conversation is durable"
+    );
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryIndex(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName()
+      )).sessions,
+      []
+    );
+    await assert.rejects(
+      readKnowledgeBaseHistoryDay(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName(),
+        session.id,
+        oldDate
+      ),
+      (error: unknown) => isNotFoundError(error)
+    );
+    assert.deepEqual(
+      (await fixture.store.readConversationSession(session.id))?.messages,
+      [],
+      "the injected pre-marker failure must leave the pristine durable source unchanged"
+    );
+    assert.equal(
+      fixture.saveCalls(),
+      saveCallsBeforeFailure,
+      "data.json must not advance after the required Conversation pass fails"
+    );
+  } finally {
+    restoreProjection?.();
+    restoreUpsert?.();
+    console.error = originalConsoleError;
+    await fixture.dispose();
+  }
+}
+
+async function assertSecondConversationPassFailureRestartsFromFullSource(): Promise<void> {
+  const fixture = await createFixture();
+  const originalConsoleError = console.error;
+  let restoreProjection: (() => void) | null = null;
+  try {
+    console.error = () => undefined;
+    const now = Date.now();
+    const oldTimestamp = now - (3 * 24 * 60 * 60 * 1_000);
+    const recentTimestamp = now - (24 * 60 * 60 * 1_000);
+    const oldDate = localDateKeyForTimestamp(oldTimestamp);
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-second-pass-recovery",
+      [
+        messageAt("second-pass-old", "user", oldTimestamp),
+        messageAt("second-pass-recent", "assistant", recentTimestamp),
+        messageAt("second-pass-today", "user", now)
+      ]
+    );
+    const messageReferences = [...session.messages];
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    const persistedBeforeFailure = fixture.persistedSettings();
+    const saveCallsBeforeFailure = fixture.saveCalls();
+
+    const internals = fixture.store as unknown as {
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
+    };
+    const originalProjection =
+      internals.projectKnowledgeBaseHistory.bind(fixture.store);
+    internals.projectKnowledgeBaseHistory = async () => {
+      throw new Error("fixture History projection failure");
+    };
+    restoreProjection = () => {
+      internals.projectKnowledgeBaseHistory = originalProjection;
+    };
+
+    await assert.rejects(
+      fixture.store.saveSettings(true, {
+        flushConversationStore: false,
+        strictConversationStore: false,
+        strictKnowledgeBaseHistory: true
+      }),
+      /fixture History projection failure/
+    );
+
+    const durableFull =
+      await fixture.store.readConversationSession(session.id);
+    assert.deepEqual(
+      durableFull?.messages.map((message) => message.id),
+      ["second-pass-old", "second-pass-recent", "second-pass-today"],
+      "a failed History projection must leave the complete durable Conversation intact"
+    );
+    assert.ok(session.contextSnapshot);
+    assert.equal(
+      createConversationContentRevision(session),
+      createConversationContentRevision(durableFull!)
+    );
+    assert.strictEqual(session.messages[0], messageReferences[0]);
+    assert.strictEqual(session.messages[1], messageReferences[1]);
+    assert.strictEqual(session.messages[2], messageReferences[2]);
+    await assert.rejects(
+      readKnowledgeBaseHistoryDay(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName(),
+        session.id,
+        oldDate
+      ),
+      (error: unknown) => isNotFoundError(error),
+      "a failed projection must not publish a partial History generation"
+    );
+    assert.equal(fixture.saveCalls(), saveCallsBeforeFailure);
+    assert.deepEqual(
+      fixture.persistedSettings(),
+      persistedBeforeFailure,
+      "data.json must stay behind a failed History projection"
+    );
+
+    restoreProjection();
+    restoreProjection = null;
+    const restartedStore = new EchoInkSettingsStore(fixture.plugin as never);
+    await restartedStore.loadSettings();
+    fixture.store = restartedStore;
+    const restartedSession = fixture.plugin.settings.sessions.find(
+      (candidate) => candidate.id === session.id
+    );
+    assert.ok(restartedSession);
+    assert.deepEqual(
+      restartedSession.messages.map((message) => message.id),
+      ["second-pass-old", "second-pass-recent", "second-pass-today"],
+      "restart must hydrate the durable Conversation instead of trusting the stale data shell"
+    );
+
+    await restartedStore.saveSettings(true, {
+      flushConversationStore: false,
+      strictConversationStore: false,
+      strictKnowledgeBaseHistory: true
+    });
+    assert.deepEqual(
+      restartedSession.messages.map((message) => message.id),
+      ["second-pass-old", "second-pass-recent", "second-pass-today"]
+    );
+    assert.deepEqual(
+      (await restartedStore.readConversationSession(session.id))
+        ?.messages.map((message) => message.id),
+      ["second-pass-old", "second-pass-recent", "second-pass-today"],
+      "a retry must keep the complete canonical Conversation before data.json"
+    );
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryDay(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName(),
+        session.id,
+        oldDate
+      )).map((message) => message.id),
+      ["second-pass-old"],
+      "a retry must publish the old-day reference from canonical Conversation"
+    );
+    assert.equal(fixture.saveCalls(), saveCallsBeforeFailure + 1);
+  } finally {
+    restoreProjection?.();
+    console.error = originalConsoleError;
+    await fixture.dispose();
+  }
+}
+
+async function assertOrdinarySaveUsesConversationAuthorityForHistoryAndRotation(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const now = Date.now();
+    const oldTimestamp = now - (3 * 24 * 60 * 60 * 1_000);
+    const recentTimestamp = now - (24 * 60 * 60 * 1_000);
+    const oldDate = localDateKeyForTimestamp(oldTimestamp);
+    const session = await createKnowledgeConversation(
+      fixture,
+      "settings-ordinary-history-canonical",
+      [
+        messageAt("history-old", "user", oldTimestamp),
+        messageAt("history-recent", "assistant", recentTimestamp),
+        messageAt("history-today", "user", now)
+      ]
+    );
+
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      strictConversationStore: false,
+      strictKnowledgeBaseHistory: true
+    });
+
+    const durable = await fixture.store.readConversationSession(session.id);
+    assert.deepEqual(
+      session.messages.map((message) => message.id),
+      ["history-old", "history-recent", "history-today"]
+    );
+    assert.deepEqual(
+      durable?.messages.map((message) => message.id),
+      ["history-old", "history-recent", "history-today"]
+    );
+    assert.equal(
+      createConversationContentRevision(session),
+      createConversationContentRevision(durable!)
+    );
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryDay(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName(),
+        session.id,
+        oldDate
+      )).map((message) => message.id),
+      ["history-old"],
+      "History projection must keep the complete dated message set"
+    );
+    const persistedShell = fixture.persistedSettings().sessions.find(
+      (candidate) => candidate.id === session.id
+    );
+    assert.deepEqual(persistedShell?.messages, []);
+    assert.deepEqual(persistedShell?.contextSnapshot, durable?.contextSnapshot);
+    assert.deepEqual(persistedShell?.rollingSummary, durable?.rollingSummary);
+    assert.equal(persistedShell?.historyActiveDate, durable?.historyActiveDate);
+
+    await rotateKnowledgeConversation(
+      fixture,
+      session,
+      "ordinary-history-rotation"
+    );
+    assert.equal(session.generation, 2);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertPartialConversationBatchSynchronizesCommittedPrefix(): Promise<void> {
+  const fixture = await createFixture();
+  const originalConsoleError = console.error;
+  let restoreUpsert: (() => void) | null = null;
+  let restoreProjection: (() => void) | null = null;
+  try {
+    console.error = () => undefined;
+    const first = await createKnowledgeConversation(
+      fixture,
+      "settings-partial-prefix",
+      [
+        messageAt("partial-prefix-user", "user", Date.now() - 3_000),
+        messageAt("partial-prefix-assistant", "assistant", Date.now() - 2_000)
+      ]
+    );
+    const failing = await createKnowledgeConversation(
+      fixture,
+      "settings-partial-failing",
+      [
+        messageAt("partial-failing-user", "user", Date.now() - 1_000),
+        messageAt("partial-failing-assistant", "assistant", Date.now())
+      ]
+    );
+    const firstMessageReferences = [...first.messages];
+    fixture.plugin.settings.knowledgeBase.sessionId = first.id;
+    await fixture.store.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
+    const durableFailingBeforeBatch =
+      await fixture.store.readConversationSession(failing.id);
+    assert.ok(durableFailingBeforeBatch);
+    const persistedBeforeBatch = fixture.persistedSettings();
+    const saveCallsBeforeBatch = fixture.saveCalls();
+
+    const internals = fixture.store as unknown as {
+      projectKnowledgeBaseHistory(
+        candidate: CodexForObsidianSettings,
+        strict: boolean
+      ): Promise<boolean>;
+    };
+    const conversationStore =
+      selectedLegacyConversationStore(fixture.store);
+    const originalUpsert = conversationStore.upsertSession.bind(conversationStore);
+    const originalProjection =
+      internals.projectKnowledgeBaseHistory.bind(fixture.store);
+    let projectionCalls = 0;
+    conversationStore.upsertSession = async (session) => {
+      if (session.id === failing.id) {
+        throw new Error("fixture second conversation pre-marker failure");
+      }
+      await originalUpsert(session);
+    };
+    internals.projectKnowledgeBaseHistory = async (candidate, strict) => {
+      projectionCalls += 1;
+      return await originalProjection(candidate, strict);
+    };
+    restoreUpsert = () => {
+      conversationStore.upsertSession = originalUpsert;
+    };
+    restoreProjection = () => {
+      internals.projectKnowledgeBaseHistory = originalProjection;
+    };
+
+    await assert.rejects(
+      fixture.store.saveSettings(true, {
+        strictConversationStore: true,
+        strictKnowledgeBaseHistory: true
+      }),
+      /fixture second conversation pre-marker failure/
+    );
+
+    const durableFirst =
+      await fixture.store.readConversationSession(first.id);
+    const durableFailing =
+      await fixture.store.readConversationSession(failing.id);
+    assert.ok(first.contextSnapshot);
+    assert.equal(
+      createConversationContentRevision(first),
+      createConversationContentRevision(durableFirst!),
+      "a committed prefix session must synchronize immediately even when a later session fails"
+    );
+    assert.strictEqual(
+      first.messages[0],
+      firstMessageReferences[0],
+      "canonical synchronization must preserve retained live message identity"
+    );
+    assert.strictEqual(
+      first.messages[1],
+      firstMessageReferences[1],
+      "canonical synchronization must preserve every retained live message identity"
+    );
+    assert.equal(
+      failing.contextSnapshot,
+      undefined,
+      "the failed session must not receive candidate-derived state"
+    );
+    assert.deepEqual(
+      durableFailing,
+      durableFailingBeforeBatch,
+      "a pre-marker failure must leave the failed durable authority unchanged"
+    );
+    assert.equal(
+      fixture.saveCalls(),
+      saveCallsBeforeBatch,
+      "a partial Conversation batch must not reach the data shell commit"
+    );
+    assert.deepEqual(
+      fixture.persistedSettings(),
+      persistedBeforeBatch,
+      "data shells must not disguise a partial Conversation prefix as a successful batch"
+    );
+    assert.equal(
+      projectionCalls,
+      0,
+      "a failed full Conversation batch must not publish any History projection"
+    );
+    assert.deepEqual(
+      (await readKnowledgeBaseHistoryIndex(
+        fixture.plugin.getVaultPath(),
+        fixture.plugin.getPluginDataDirName()
+      )).sessions,
+      []
+    );
+
+    restoreUpsert();
+    restoreUpsert = null;
+    restoreProjection();
+    restoreProjection = null;
+    const restartedStore = new EchoInkSettingsStore(fixture.plugin as never);
+    const restartedConversationRouter = conversationRouterForTest(
+      restartedStore
+    );
+    assert.notStrictEqual(
+      restartedConversationRouter,
+      conversationRouterForTest(fixture.store),
+      "restart coverage must use a fresh ConversationStore instance"
+    );
+    await restartedStore.loadSettings();
+    fixture.store = restartedStore;
+
+    const restartedFirst = fixture.plugin.settings.sessions.find(
+      (session) => session.id === first.id
+    );
+    const restartedFailing = fixture.plugin.settings.sessions.find(
+      (session) => session.id === failing.id
+    );
+    assert.ok(restartedFirst);
+    assert.ok(restartedFailing);
+    assert.equal(
+      createConversationContentRevision(restartedFirst),
+      createConversationContentRevision(durableFirst!),
+      "restart must hydrate the committed prefix from durable canonical authority"
+    );
+    assert.deepEqual(
+      restartedFirst.contextSnapshot,
+      durableFirst?.contextSnapshot,
+      "restart must recover the committed prefix canonical snapshot"
+    );
+    assert.equal(
+      createConversationContentRevision(restartedFailing),
+      createConversationContentRevision(durableFailingBeforeBatch),
+      "restart must hydrate the failed session from its pre-batch durable authority"
+    );
+    assert.deepEqual(
+      fixture.persistedSettings(),
+      persistedBeforeBatch,
+      "restart must not manufacture a whole-batch data shell commit"
+    );
+
+    await rotateKnowledgeConversation(
+      fixture,
+      restartedFirst,
+      "partial-prefix-restart-rotation"
+    );
+    assert.equal(restartedFirst.generation, 2);
+  } finally {
+    restoreProjection?.();
+    restoreUpsert?.();
+    console.error = originalConsoleError;
+    await fixture.dispose();
+  }
+}
+
+async function assertWorkflowCasPersistsNewSessionShellWithoutConversationMutation(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    const session: StoredSession = {
+      id: "settings-cas-pristine-session",
+      title: "CAS pristine session",
+      kind: "chat",
+      cwd: "",
+      messages: [],
+      revision: 1,
+      generation: 1,
+      createdAt: 1,
+      updatedAt: 1
+    };
+    fixture.plugin.settings.sessions.push(session);
+    fixture.store.registerPristineConversationSession(session);
+
+    const blockedSave = fixture.blockNextSave();
+    const transaction = fixture.store.withExclusiveTransaction(
+      async (host) => {
+        const before = await host.readWithGeneration();
+        return await host.persistCas(
+          before.generation,
+          cloneKnowledgeBaseSettings(before.settings)
+        );
+      }
+    );
+    await blockedSave.started;
+
+    assert.equal(
+      fixture.persistedSettings().sessions.some(
+        (candidate) => candidate.id === session.id
+      ),
+      false
+    );
+    const conversationStore = new FileConversationStore({
+      rootPath: path.join(
+        pluginDataDir(
+          fixture.plugin.getVaultPath(),
+          fixture.plugin.getPluginDataDirName()
+        ),
+        "conversations"
+      )
+    });
+    assert.equal(await conversationStore.readSession(session.id), null);
+
+    blockedSave.release();
+    await transaction;
+    assert.equal(
+      fixture.persistedSettings().sessions.some(
+        (candidate) => candidate.id === session.id
+      ),
+      true
+    );
+    assert.equal(
+      await conversationStore.readSession(session.id),
+      null,
+      "the workflow settings CAS must persist only the data shell"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertActiveV2WorkspaceFreePristineChatLifecycle(): Promise<void> {
+  const fixture = await createFixture();
+  try {
+    await mkdir(
+      pluginDataDir(fixture.plugin.getVaultPath(), "codex-echoink"),
+      { recursive: true }
+    );
+    await conversationRouterForTest(fixture.store).resolveSelection();
+    const targetStore = await activateFixtureConversationStoreV2(
+      fixture,
+      "active-v2-workspace-free-pristine-chat"
+    );
+    const session: StoredSession = {
+      id: "active-v2-workspace-free-pristine-chat",
+      title: "新会话",
+      cwd: "",
+      revision: 1,
+      generation: 1,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    fixture.plugin.settings.sessions.push(session);
+    fixture.plugin.settings.activeSessionId = session.id;
+    fixture.store.registerPristineConversationSession(session);
+
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    }).catch((error: unknown) => {
+      throw new Error("workspace-free pristine Chat initial save failed", {
+        cause: error
+      });
+    });
+    const pristineCommit = await targetStore.readConversation(session.id);
+    assert.ok(pristineCommit);
+    assert.equal(session.cwd, "");
+    assert.equal(session.contextId, undefined);
+    assert.equal(session.commitId, undefined);
+    assert.equal(session.workspaceFingerprint, undefined);
+    const restoredPristine = await fixture.store.readConversationSession(
+      session.id
+    );
+    assert.ok(restoredPristine);
+    assert.equal(restoredPristine.cwd, "");
+    assert.equal(restoredPristine.contextId, undefined);
+    assert.equal(restoredPristine.commitId, undefined);
+    assert.equal(restoredPristine.workspaceFingerprint, undefined);
+
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    }).catch((error: unknown) => {
+      throw new Error("workspace-free pristine Chat repeated save failed", {
+        cause: error
+      });
+    });
+    assert.equal(
+      (await targetStore.readConversation(session.id))?.metadata.revision,
+      pristineCommit.metadata.revision,
+      "an unchanged workspace-free pristine Chat save must be a V2 no-op"
+    );
+    await assert.rejects(
+      conversationRouterForTest(fixture.store).persistSettingsSessions({
+        sessions: [{
+          ...cloneSettings(fixture.plugin.settings).sessions.find(
+            (candidate) => candidate.id === session.id
+          )!,
+          threadId: "invalid-pristine-thread"
+        }]
+      }),
+      /complete Context identity/,
+      "the pristine no-op must not accept runtime or backend identity"
+    );
+
+    const vaultPath = fixture.plugin.getVaultPath();
+    await rotateSessionContext(session, {
+      reason: "workspace-switch",
+      identityFactory: {
+        commitId: () => "active-v2-workspace-chat-commit",
+        contextId: () => "active-v2-workspace-chat-context"
+      },
+      workspace: {
+        vaultPath,
+        cwd: vaultPath
+      },
+      hooks: {
+        async register(retirements) {
+          assert.deepEqual(retirements, []);
+        },
+        async commit(input) {
+          await fixture.store.commitConversationSessionContext(
+            input.session,
+            {
+              expectedGeneration: input.expectedGeneration,
+              expectedCommitId: input.expectedCommitId,
+              expectedContentRevision: input.expectedContentRevision
+            }
+          );
+        },
+        async promote(retirements) {
+          assert.deepEqual(retirements, []);
+        },
+        async abort() {
+          assert.fail("a pristine workspace selection must not abort");
+        }
+      }
+    }).catch((error: unknown) => {
+      throw new Error("workspace-free pristine Chat rotation failed", {
+        cause: error
+      });
+    });
+    assert.equal(session.generation, 2);
+    assert.equal(session.cwd, vaultPath);
+    assert.equal(
+      session.workspaceFingerprint,
+      workspaceFingerprint({ vaultPath, cwd: vaultPath })
+    );
+
+    const userCreatedAt = session.updatedAt + 1;
+    const assistantCreatedAt = userCreatedAt + 1;
+    session.messages.push({
+      id: "active-v2-workspace-chat-user",
+      role: "user",
+      text: "hello from a new Chat",
+      createdAt: userCreatedAt
+    }, {
+      id: "active-v2-workspace-chat-assistant",
+      role: "assistant",
+      status: "completed",
+      text: "new Chat completed",
+      createdAt: assistantCreatedAt,
+      completedAt: assistantCreatedAt
+    });
+    session.updatedAt = assistantCreatedAt;
+    await fixture.store.saveSettings(true, {
+      flushKnowledgeBaseHistory: false
+    }).catch((error: unknown) => {
+      throw new Error("workspace-free pristine Chat message save failed", {
+        cause: error
+      });
+    });
+    const durable = await fixture.store.readConversationSession(session.id);
+    assert.ok(durable);
+    assert.equal(durable.generation, 2);
+    assert.equal(durable.commitId, "active-v2-workspace-chat-commit");
+    assert.deepEqual(
+      durable.messages.map((message) => [message.id, message.status]),
+      [
+        ["active-v2-workspace-chat-user", undefined],
+        ["active-v2-workspace-chat-assistant", "completed"]
+      ]
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
 async function assertStartupRecoveryDefersKnowledgeMaintenanceUi(): Promise<void> {
   const fixture = await createFixture();
   try {
-    const session = {
+    const vaultPath = fixture.plugin.getVaultPath();
+    const session: StoredSession = {
       id: "knowledge-recovery-session",
       title: "知识库管理",
       kind: "knowledge-base" as const,
-      cwd: fixture.plugin.getVaultPath(),
+      revision: 1,
+      generation: 1,
+      contextId: "context-knowledge-recovery",
+      commitId: "commit-knowledge-recovery",
+      workspaceFingerprint: workspaceFingerprint({ vaultPath, cwd: vaultPath }),
+      cwd: vaultPath,
       messages: [
         {
           id: "maintain-running",
@@ -543,6 +2848,14 @@ async function assertStartupRecoveryDefersKnowledgeMaintenanceUi(): Promise<void
       createdAt: 1,
       updatedAt: 3
     };
+    const conversationStore = new FileConversationStore({
+      rootPath: path.join(pluginDataDir(vaultPath, "codex-echoink"), "conversations")
+    });
+    await conversationStore.createPristineSession({
+      ...session,
+      messages: [],
+      updatedAt: session.createdAt
+    });
     fixture.plugin.settings.sessions.push(session);
     fixture.plugin.settings.knowledgeBase.sessionId = session.id;
 
@@ -562,6 +2875,94 @@ async function assertStartupRecoveryDefersKnowledgeMaintenanceUi(): Promise<void
   }
 }
 
+async function createKnowledgeConversation(
+  fixture: SettingsStoreFixture,
+  sessionId: string,
+  messages: ChatMessage[]
+): Promise<StoredSession> {
+  const vaultPath = fixture.plugin.getVaultPath();
+  const createdAt = Math.min(...messages.map((message) => message.createdAt));
+  const session: StoredSession = {
+    id: sessionId,
+    title: KNOWLEDGE_BASE_SESSION_TITLE,
+    kind: "knowledge-base",
+    cwd: vaultPath,
+    revision: 1,
+    generation: 1,
+    contextId: `context-${sessionId}`,
+    commitId: `commit-${sessionId}`,
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath,
+      cwd: vaultPath
+    }),
+    messages: [],
+    createdAt,
+    updatedAt: createdAt
+  };
+  fixture.plugin.settings.sessions.push(session);
+  fixture.plugin.settings.activeSessionId = session.id;
+  fixture.plugin.settings.knowledgeBase.sessionId = session.id;
+  fixture.store.registerPristineConversationSession(session);
+  await fixture.store.ensureConversationSessionCreated(session);
+  session.messages = cloneMessages(messages);
+  session.updatedAt = Math.max(...messages.map((message) => message.createdAt));
+  return session;
+}
+
+async function rotateKnowledgeConversation(
+  fixture: SettingsStoreFixture,
+  session: StoredSession,
+  label: string
+): Promise<void> {
+  const vaultPath = fixture.plugin.getVaultPath();
+  await rotateSessionContext(session, {
+    reason: "start-new-context",
+    identityFactory: {
+      commitId: () => `commit-${label}`,
+      contextId: () => `context-${label}`
+    },
+    workspace: {
+      vaultPath,
+      cwd: vaultPath
+    },
+    hooks: {
+      async register(retirements) {
+        assert.deepEqual(retirements, []);
+      },
+      async commit(input) {
+        await fixture.store.commitConversationSessionContext(input.session, {
+          expectedGeneration: input.expectedGeneration,
+          expectedCommitId: input.expectedCommitId,
+          expectedContentRevision: input.expectedContentRevision
+        });
+      },
+      async promote(retirements) {
+        assert.deepEqual(retirements, []);
+      },
+      async abort() {
+        assert.fail("a canonical Settings projection must rotate without aborting");
+      }
+    }
+  });
+}
+
+function messageAt(
+  id: string,
+  role: ChatMessage["role"],
+  createdAt: number
+): ChatMessage {
+  return {
+    id,
+    role,
+    text: `${id} text`,
+    createdAt
+  };
+}
+
+function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
+  return JSON.parse(JSON.stringify(messages)) as ChatMessage[];
+}
+
 async function createFixture(
   options: { discardNextSave?: boolean } = {}
 ): Promise<SettingsStoreFixture> {
@@ -575,13 +2976,21 @@ async function createFixture(
   let saveCallCount = 0;
   const settledRunIds: string[] = [];
   let discardNextSave = options.discardNextSave === true;
+  let nextSaveFailure: SettingsSaveFailureMode | null = null;
+  let failNextLoad = false;
   let blockedSave: {
     started: ReturnType<typeof deferred>;
     release: ReturnType<typeof deferred>;
   } | null = null;
   const plugin = {
     settings,
-    loadData: async () => cloneSettings(persisted),
+    loadData: async () => {
+      if (failNextLoad) {
+        failNextLoad = false;
+        throw new Error("fixture strict readback unavailable");
+      }
+      return cloneSettings(persisted);
+    },
     saveData: async (data: unknown) => {
       saveCallCount += 1;
       if (blockedSave) {
@@ -593,7 +3002,25 @@ async function createFixture(
         discardNextSave = false;
         return;
       }
-      persisted = cloneSettings(data as CodexForObsidianSettings);
+      const failure = nextSaveFailure;
+      nextSaveFailure = null;
+      if (failure === "before-write") {
+        throw new Error("fixture save failed before write");
+      }
+      const target = cloneSettings(data as CodexForObsidianSettings);
+      if (failure === "conflict-after-write") {
+        target.settingsLanguage = target.settingsLanguage === "en" ? "zh-CN" : "en";
+        persisted = target;
+        throw new Error("fixture save wrote conflicting data and rejected");
+      }
+      persisted = target;
+      if (failure === "unknown-after-write") {
+        failNextLoad = true;
+        throw new Error("fixture save wrote data but readback will fail");
+      }
+      if (failure === "after-write") {
+        throw new Error("fixture save wrote target and rejected");
+      }
     },
     getVaultPath: () => vaultPath,
     getPluginDataDirName: () => "codex-echoink",
@@ -609,6 +3036,7 @@ async function createFixture(
       cloneKnowledgeBaseSettings(
         normalizeSettingsData(persisted).settings.knowledgeBase
       ),
+    persistedSettings: () => cloneSettings(persisted),
     replacePersistedKnowledgeBase: (knowledgeBase) => {
       persisted = {
         ...cloneSettings(persisted),
@@ -624,6 +3052,9 @@ async function createFixture(
         release: release.resolve
       };
     },
+    failNextSave: (mode) => {
+      nextSaveFailure = mode;
+    },
     saveCalls: () => saveCallCount,
     settledRunIds: () => [...settledRunIds],
     dispose: async () => {
@@ -638,6 +3069,40 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function conversationRouterForTest(
+  store: EchoInkSettingsStore
+): FileConversationStoreRouter {
+  return (
+    store as unknown as {
+      getConversationStore(): FileConversationStoreRouter;
+    }
+  ).getConversationStore();
+}
+
+function selectedLegacyConversationStore(
+  store: EchoInkSettingsStore
+): FileConversationStore {
+  const router = conversationRouterForTest(store) as unknown as {
+    selected: {
+      store: unknown;
+    } | null;
+  };
+  assert.ok(
+    router.selected?.store instanceof FileConversationStore,
+    "fixture requires the Router to have selected legacy V1"
+  );
+  return router.selected.store;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT"
+  );
 }
 
 function cloneSettings(

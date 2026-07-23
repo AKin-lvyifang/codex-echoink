@@ -444,7 +444,9 @@ async function attachRawFingerprints(
       result.push({ ...file, fingerprint: cachedFingerprint, rawDigest: null });
       continue;
     }
-    if (!shouldReadKnowledgeBaseFileContent(file, budget).ok) {
+    if (!shouldReadKnowledgeBaseFileContent(file, budget, {
+      allowChunkedText: isDashboardRawTextPath(file.path)
+    }).ok) {
       result.push(file);
       continue;
     }
@@ -458,6 +460,10 @@ async function attachRawFingerprints(
     });
   }
   return result;
+}
+
+function isDashboardRawTextPath(relativePath: string): boolean {
+  return isRawMarkdownPath(relativePath) || /\.txt$/i.test(relativePath);
 }
 
 function cachedRawFingerprint(

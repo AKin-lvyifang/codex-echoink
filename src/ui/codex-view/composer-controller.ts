@@ -4,7 +4,11 @@ import { skillResourcesForScope } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
 import type { AgentBackendMode, StoredAttachment, StoredSession } from "../../settings/settings";
 import type { PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
-import { knowledgeCommandQueryForInput } from "../../knowledge-base/commands";
+import {
+  knowledgeCommandQueryForInput,
+  parseKnowledgeBaseCommand,
+  requiresMaintenanceAuthority
+} from "../../knowledge-base/commands";
 import { contextUsageView } from "../../core/mapping";
 import { composerStateForRuntimeState, type ComposerPrimaryActionState } from "../composer-state";
 import { RuntimeTurnQueue } from "../turn-queue";
@@ -75,6 +79,7 @@ export interface CodexComposerHost {
   stopTurn(): Promise<void>;
   enqueueComposerDraft(): Promise<void>;
   resumeQueuedTurns(sessionId: string): Promise<void>;
+  recoverSessionLifecycle(sessionId: string): Promise<void>;
   sendMessage(): Promise<void>;
   attachActiveFile(): void;
   pickFiles(imagesOnly: boolean): void;
@@ -166,21 +171,36 @@ export function renderQueue(host: CodexComposerHost): void {
   if (!host.queueEl) return;
   const session = host.ensureSession();
   const knowledgeManager = host.plugin.getKnowledgeBaseManager();
-  const maintenanceReady = knowledgeManager?.maintenanceRecoveryStatus.state !== "pending"
-    && knowledgeManager?.maintenanceRecoveryStatus.state !== "blocked";
+  const maintenanceReady = (knowledgeManager?.maintenanceRecoveryStatus?.state ?? "ready") === "ready";
+  const queueHead = host.turnQueue.itemsForSession(session.id)[0];
+  const maintenanceRecoveryBlocksHead = Boolean(
+    !maintenanceReady
+    && queueHead?.kind === "knowledge-base"
+    && requiresMaintenanceAuthority(
+      parseKnowledgeBaseCommand(queueHead.text, queueHead.attachments.length)
+    )
+  );
   renderTurnQueue(
     host.queueEl,
     {
       items: host.turnQueue.itemsForSession(session.id),
-      paused: host.turnQueue.isSessionQueuePaused(session.id),
+      paused: host.turnQueue.isSessionQueuePaused(session.id)
+        || host.turnQueue.isSessionRecoveryRequired(session.id),
       canResume: !host.running
         && !host.promptEnhancerRunning
         && !knowledgeManager?.isRunning
-        && maintenanceReady,
+        && !maintenanceRecoveryBlocksHead
+        && !host.turnQueue.isSessionRecoveryRequired(session.id),
+      recoveryRequired:
+        host.turnQueue.isSessionRecoveryRequired(session.id),
+      canRecover: !host.running
+        && !host.promptEnhancerRunning
+        && !knowledgeManager?.isRunning,
       draggedItemId: host.draggedQueueItemId
     },
     {
       onResume: () => void host.resumeQueuedTurns(session.id),
+      onRecover: () => void host.recoverSessionLifecycle(session.id),
       onDragStart: (itemId) => {
         host.draggedQueueItemId = itemId;
       },
@@ -388,6 +408,12 @@ export function composerStateForSession(host: CodexComposerHost, session: Stored
 export function pauseQueueForSession(host: CodexComposerHost, sessionId: string): void {
   if (!host.turnQueue.hasQueuedItems(sessionId)) return;
   host.turnQueue.pauseSessionQueue(sessionId);
+  host.renderQueue();
+  host.renderToolbar();
+}
+
+export function requireQueueRecoveryForSession(host: CodexComposerHost, sessionId: string): void {
+  host.turnQueue.requireSessionRecovery(sessionId);
   host.renderQueue();
   host.renderToolbar();
 }

@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+## v1.4.0 - 2026-07-23
+
+版本号：`v1.4.0`
+
+### 中文
+
+#### 可靠对话与自动迁移
+
+1. Conversation V2 成为普通对话和知识库对话的本地历史真源，插件重载、上下文切换或更换 Agent 后仍可恢复连续对话。
+2. 旧会话会自动迁移并保留消息、工作区边界和后端连接信息；新建空白对话也可以正常保存和继续。
+3. 对话线程、单轮执行和 Agent 原生会话使用明确身份，避免恢复时把不同运行记录误判为同一个会话。
+
+#### 更安全的知识维护
+
+1. `/maintain` 默认使用启动时选中的 Agent；只有失败尝试已安全隔离且没有可提交成果时，才尝试备用 Agent。
+2. 维护成果先在隔离环境中验证，再通过可恢复提交写入 Vault；超时、重载或部分失败不会重复提交同一成果。
+3. 大文件、无变化来源和恢复中的任务会得到准确状态，不再被误标为已提炼或普通失败。
+4. 修复维护报告在界面保留执行详情后，被误判为“实时对话与持久记录不一致”的问题；执行详情仍可查看，但不会再阻断下一轮正常对话。
+5. 后台定时维护不再向交互对话追加消息；只有明确可重试的失败才会再次运行，并限制为当天最多 3 次，间隔 5 分钟和 15 分钟。
+6. EchoInk 启动的 Codex 进程会关闭全局 Hook 和全局 Memory 注入，避免维护 Shadow 被外部记忆系统改写；插件自带的 `.echoink/memory` 保持不变。
+7. 修复 Obsidian 自动更新 `updated` 元数据恰好发生在事务安装窗口时，合法硬链接被误判为外部篡改、导致维护恢复受阻的问题；真正的额外硬链接仍会被严格拦截。
+
+#### 记录治理与界面改进
+
+1. 对话历史、工作流运行、业务成果和 Agent 原生会话使用独立的保留、恢复与清理规则。
+2. 新增紧凑会话选择器，支持搜索、键盘导航和批量管理，并保护知识库频道与运行中会话。
+3. 修复知识库报告无法稳定展开/收起的问题，报告中的 Vault 笔记现在可以直接点击打开。
+
+升级说明：从 `v1.3.0` 直接覆盖安装 `main.js`、`manifest.json`、`styles.css` 即可。现有 Vault 笔记和 EchoInk 会话会自动升级，不需要手动迁移或重置会话。
+
+### English
+
+#### Durable conversations and automatic migration
+
+1. Conversation V2 now provides the local history of record for Chat and Knowledge conversations, preserving continuity across plugin reloads, context changes, and Agent switches.
+2. Existing sessions migrate automatically while preserving messages, workspace boundaries, and backend bindings. New blank chats can also be saved and continued normally.
+3. Conversation threads, individual turns, and native Agent sessions now use distinct identities so recovery does not confuse separate execution records.
+
+#### Safer Knowledge maintenance
+
+1. `/maintain` starts with the selected Agent and tries a fallback only when the failed attempt is safely isolated and contains no committable result.
+2. Maintenance output is validated in isolation before a recoverable commit reaches the Vault. Timeouts, reloads, and partial failures do not commit the same result twice.
+3. Oversized sources, unchanged inputs, and recovering tasks now receive accurate states instead of being marked as processed or reduced to generic failures.
+4. Fixed maintenance execution details being mistaken for a divergence between the live conversation and its durable record. Diagnostics remain visible without blocking the next turn.
+5. Scheduled maintenance no longer appends background messages to the interactive conversation. Only explicitly retryable failures run again, with at most three daily attempts after 5- and 15-minute delays.
+6. Codex processes launched by EchoInk disable global hooks and global memory injection so maintenance Shadows cannot be rewritten by an external memory layer. EchoInk's own `.echoink/memory` remains unchanged.
+7. Fixed recovery being blocked when Obsidian updated `updated` metadata during the transactional install window and the expected hardlink was mistaken for external tampering. A genuine additional hardlink remains strictly blocked.
+
+#### Record governance and interface improvements
+
+1. Conversation history, workflow runs, business artifacts, and native Agent sessions now follow separate retention, recovery, and cleanup rules.
+2. A compact session picker adds search, keyboard navigation, and batch management while protecting the Knowledge channel and running sessions.
+3. Knowledge reports now expand and collapse reliably, and referenced Vault notes open directly from the report.
+
+Upgrade: replace `main.js`, `manifest.json`, and `styles.css` from `v1.4.0`. Existing Vault notes and EchoInk conversations upgrade automatically; no manual migration or session reset is required.
+
 ## v1.3.0 - 2026-07-17
 
 版本号：`v1.3.0`

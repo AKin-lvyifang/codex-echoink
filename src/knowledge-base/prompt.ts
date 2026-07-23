@@ -2,6 +2,7 @@ import type { KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSou
 import { AGENTS_RULES_FILE } from "./constants";
 import { formatAskMatchesForPrompt, type KnowledgeBaseAskMatch } from "./query";
 import { coreKnowledgePolicySections } from "../workflows/knowledge/policy/core-policy";
+import type { MaintenanceShadowSourceChunk } from "../harness/maintenance/shadow-vault";
 
 export interface KnowledgeBasePromptInput {
   vaultPath: string;
@@ -18,13 +19,14 @@ export interface KnowledgeBasePromptInput {
   hasTracker: boolean;
   remainingSourceCount?: number;
   skippedSources?: KnowledgeBaseSkippedSource[];
+  sourceChunks?: readonly MaintenanceShadowSourceChunk[];
   targetPaths?: string[];
   fullScan?: boolean;
 }
 
 export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): string {
   const sourceLines = input.sources.length
-    ? input.sources.map((source) => `- ${source.relativePath} | ${source.mime} | ${Math.round(source.size / 1024)} KB | ${source.changed ? "新增/变更" : "已处理"}`).join("\n")
+    ? input.sources.map((source) => `- ${source.relativePath} | ${source.mime} | ${Math.round(source.size / 1024)} KB | ${source.changed ? "新增/变更" : "已处理"}${source.readStrategy?.kind === "chunked-text" ? " | 只读分块" : ""}`).join("\n")
     : "- 本轮没有检测到新增或变更 raw 文件；请执行体检并生成 no-op 体检报告。";
   const skippedSourceLines = formatSkippedSources(input.skippedSources ?? []);
   const executionScope = formatExecutionScope(input);
@@ -84,6 +86,7 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
       ? `- 批次限制：本轮只处理上面列出的 ${input.sources.length} 个 raw；其余 ${input.remainingSourceCount} 个保留到下次 /maintain，不要标记为已消化。`
       : "",
     skippedSourceLines,
+    formatSourceChunks(input.sourceChunks ?? []),
     "",
     "## 知识库管理写入边界",
     "- 以下边界只适用于本次知识库管理任务；不要把它扩展成普通 Agent 对话的全局限制。",
@@ -112,6 +115,31 @@ export function buildKnowledgeBasePrompt(input: KnowledgeBasePromptInput): strin
     input.mode === "lint" ? "- /check 只体检，不提炼；不要写 Raw 托管属性；不要写 Wiki / Projects 正文；不要更新 outputs/.ingest-tracker.md。" : "",
     "",
     "开始执行。"
+  ].join("\n");
+}
+
+function formatSourceChunks(
+  chunks: readonly MaintenanceShadowSourceChunk[]
+): string {
+  if (!chunks.length) return "";
+  const grouped = new Map<string, MaintenanceShadowSourceChunk[]>();
+  for (const chunk of chunks) {
+    const existing = grouped.get(chunk.sourceRelativePath) ?? [];
+    existing.push(chunk);
+    grouped.set(chunk.sourceRelativePath, existing);
+  }
+  return [
+    "## 超限文本安全分块",
+    "以下文件超过单文件读取上限。EchoInk 已在只读 Shadow 中生成逐字节连续、带哈希证据的临时分块；必须按编号读完所有分块后再综合，不要直接整文件打开原始 Raw。",
+    "分块只是本轮只读传输视图，不是新的知识来源：报告、Wiki 回链和最终证据仍必须引用原始 Raw 路径，禁止引用或写入分块路径。",
+    ...Array.from(grouped.entries()).flatMap(([sourcePath, sourceChunks]) => [
+      `- 原始来源：${sourcePath}`,
+      ...sourceChunks
+        .sort((left, right) => left.index - right.index)
+        .map((chunk) =>
+          `  - ${chunk.relativePath} | ${chunk.index}/${chunk.count} | bytes ${chunk.startByte}-${chunk.endByte - 1} | ${chunk.sha256}`
+        )
+    ])
   ].join("\n");
 }
 

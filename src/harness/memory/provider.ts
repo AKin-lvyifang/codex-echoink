@@ -25,6 +25,15 @@ export interface MemoryItem {
   statement: string;
   evidenceRefs?: string[];
   sourceRunId?: string;
+  sourceConversationIds?: string[];
+  sourceDeletions?: Array<{
+    mutationId: string;
+    conversationId: string;
+    deletedAt: number;
+    forwardTransactionId: string;
+    restoredAt?: number;
+    restoreTransactionId?: string;
+  }>;
   confidence: number;
   createdAt?: number;
   updatedAt: number;
@@ -45,6 +54,7 @@ export interface MemoryCandidate {
   statement: string;
   evidenceRefs: string[];
   sourceRunId: string;
+  sourceConversationIds?: string[];
   confidence: number;
   requiresConfirmation?: boolean;
   confirmed?: boolean;

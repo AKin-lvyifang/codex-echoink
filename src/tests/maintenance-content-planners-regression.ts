@@ -41,7 +41,8 @@ import {
 import {
   appendKnowledgeBaseMaintenanceFinalBlockContent,
   buildKnowledgeBaseFallbackReportContent,
-  planKnowledgeBaseMaintenanceReportWrite
+  planKnowledgeBaseMaintenanceReportWrite,
+  withMaintenanceReportTimestamps
 } from "../knowledge-base/report";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import type {
@@ -194,12 +195,39 @@ async function assertReportBuildersUsePostShadowBaseline(): Promise<void> {
     expected,
     baselineContent: shadowReport,
     desiredMode: 0o600,
+    startedAt: Date.parse("2026-07-18T03:00:00.000Z"),
+    completedAt: Date.parse("2026-07-18T03:01:00.000Z"),
     finalBlock: finalInput
   });
   assert.deepEqual(write.expected, expected);
   assert.equal(write.desiredMode, 0o600);
   assert.match(write.desiredContent.toString("utf8"), /Agent 已写入的正文必须保留/);
   assert.match(write.desiredContent.toString("utf8"), /EchoInk 验证终态/);
+  assert.match(write.desiredContent.toString("utf8"), /^created: /m);
+  assert.match(write.desiredContent.toString("utf8"), /^updated: /m);
+
+  const crlfReport = [
+    "---\r\n",
+    "source: codex-echoink\r\n",
+    "---\r\n",
+    "# CRLF body\r\n"
+  ].join("");
+  const timestampedCrlfReport = withMaintenanceReportTimestamps(
+    crlfReport,
+    Date.parse("2026-07-18T03:00:00.000Z"),
+    Date.parse("2026-07-18T03:01:00.000Z")
+  );
+  assert.match(
+    timestampedCrlfReport,
+    /^---\r\nsource: codex-echoink\r\ncreated: /
+  );
+  assert.ok(timestampedCrlfReport.includes("updated: "));
+  assert.ok(timestampedCrlfReport.endsWith("---\r\n# CRLF body\r\n"));
+  assert.equal(
+    timestampedCrlfReport.replace(/\r\n/g, "").includes("\n"),
+    false,
+    "timestamp injection must not rewrite a CRLF report to LF"
+  );
 
   const replaced = appendKnowledgeBaseMaintenanceFinalBlockContent(
     write.desiredContent.toString("utf8"),
@@ -500,6 +528,8 @@ async function assertPlannerDraftsPrepareInWorkflowWal(): Promise<void> {
       expected: reportBaseline.expected,
       baselineContent: reportBaseline.content,
       desiredMode: reportBaseline.mode,
+      startedAt,
+      completedAt: startedAt + 60_000,
       finalBlock
     });
     const reportResult = maintenanceContentFileCas(

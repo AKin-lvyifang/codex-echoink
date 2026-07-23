@@ -23,6 +23,7 @@ const POLICIES: Partial<Record<HarnessWorkflow, MemoryWorkflowPolicy>> = {
   "knowledge.inbox": WORKFLOW_RESULT_POLICY,
   "knowledge.journal": WORKFLOW_RESULT_POLICY,
   "knowledge.check": DISABLED_POLICY,
+  "backend.probe": DISABLED_POLICY,
   "prompt.enhance": DISABLED_POLICY,
   "editor.rewrite": DISABLED_POLICY,
   "editor.expand": DISABLED_POLICY,
@@ -32,11 +33,11 @@ const POLICIES: Partial<Record<HarnessWorkflow, MemoryWorkflowPolicy>> = {
   "memory.curate": DISABLED_POLICY
 };
 
-export function memoryWorkflowPolicy(workflow: HarnessWorkflow | string): MemoryWorkflowPolicy {
+export function memoryWorkflowPolicy(workflow: string): MemoryWorkflowPolicy {
   return POLICIES[workflow as HarnessWorkflow] ?? DISABLED_POLICY;
 }
 
-export function memoryRequestPolicy(workflow: HarnessWorkflow | string, maxReadItems = 8): MemoryPolicy {
+export function memoryRequestPolicy(workflow: string, maxReadItems = 8): MemoryPolicy {
   const policy = memoryWorkflowPolicy(workflow);
   return {
     enabled: policy.read || policy.capture !== "none",

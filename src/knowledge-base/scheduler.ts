@@ -2,7 +2,10 @@ import type {
   KnowledgeBaseMaintenanceHistoryEntry,
   KnowledgeBaseSettings
 } from "../settings/settings";
-import { shouldRunScheduledKnowledgeBaseMaintenance } from "./schedule";
+import {
+  scheduledMaintenanceRetryDelayMs,
+  shouldRunScheduledKnowledgeBaseMaintenance
+} from "./schedule";
 import {
   assertDurableMaintenanceResult,
   durableMaintenanceResultFromHistory
@@ -24,7 +27,7 @@ export interface KnowledgeBaseSchedulerHost {
   waitUntilMaintenanceReady(): Promise<void>;
   persistSettings(): Promise<void>;
   runMaintenance(invocation: ScheduledMaintenanceInvocation): Promise<KnowledgeBaseRunResult>;
-  appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void>;
+  settleScheduledMaintenance(result: KnowledgeBaseRunResult): Promise<void>;
   refreshKnowledgeBaseSurfaces(): void;
 }
 
@@ -70,7 +73,12 @@ export class KnowledgeBaseScheduler {
       }
       this.recoveryPendingRunId = "";
     }
-    if (!shouldRunScheduledKnowledgeBaseMaintenance(settings, new Date(), this.schedulerStartedAt, forceCatchUp)) return;
+    if (!shouldRunScheduledKnowledgeBaseMaintenance(
+      settings,
+      new Date(Date.now()),
+      this.schedulerStartedAt,
+      forceCatchUp
+    )) return;
 
     try {
       await this.host.waitUntilMaintenanceReady();
@@ -86,7 +94,7 @@ export class KnowledgeBaseScheduler {
     if (!readySettings.enabled) return;
     if (!shouldRunScheduledKnowledgeBaseMaintenance(
       readySettings,
-      new Date(),
+      new Date(Date.now()),
       this.schedulerStartedAt,
       forceCatchUp
     )) return;
@@ -102,8 +110,15 @@ export class KnowledgeBaseScheduler {
     const previousScheduledState = {
       lastScheduledRunAt: readySettings.lastScheduledRunAt,
       lastScheduledRunStatus: readySettings.lastScheduledRunStatus,
-      lastScheduledRunId: readySettings.lastScheduledRunId
+      lastScheduledRunId: readySettings.lastScheduledRunId,
+      scheduledAttemptCount: readySettings.scheduledAttemptCount,
+      scheduledNextRetryAt: readySettings.scheduledNextRetryAt
     };
+    readySettings.scheduledAttemptCount = scheduledAttemptCountForInvocation(
+      readySettings,
+      invocation.scheduledStartedAt
+    );
+    readySettings.scheduledNextRetryAt = 0;
     readySettings.lastScheduledRunAt = invocation.scheduledStartedAt;
     readySettings.lastScheduledRunStatus = "running";
     readySettings.lastScheduledRunId = invocation.workflowRunId;
@@ -188,11 +203,14 @@ export class KnowledgeBaseScheduler {
       return;
     }
     currentSettings.lastScheduledRunStatus = result.status;
+    currentSettings.scheduledNextRetryAt =
+      scheduledMaintenanceNextRetryAt(result, currentSettings);
     try {
       await this.host.persistSettings();
     } catch (error) {
       if (this.matchesScheduledState(currentSettings, invocation, result.status)) {
         currentSettings.lastScheduledRunStatus = "running";
+        currentSettings.scheduledNextRetryAt = 0;
       }
       this.recoveryPendingRunId = invocation.workflowRunId;
       console.warn(
@@ -271,22 +289,28 @@ export class KnowledgeBaseScheduler {
     status: KnowledgeBaseSettings["lastScheduledRunStatus"],
     previous: Pick<
       KnowledgeBaseSettings,
-      "lastScheduledRunAt" | "lastScheduledRunStatus" | "lastScheduledRunId"
+      | "lastScheduledRunAt"
+      | "lastScheduledRunStatus"
+      | "lastScheduledRunId"
+      | "scheduledAttemptCount"
+      | "scheduledNextRetryAt"
     >
   ): void {
     if (!this.matchesScheduledState(settings, invocation, status)) return;
     settings.lastScheduledRunAt = previous.lastScheduledRunAt;
     settings.lastScheduledRunStatus = previous.lastScheduledRunStatus;
     settings.lastScheduledRunId = previous.lastScheduledRunId;
+    settings.scheduledAttemptCount = previous.scheduledAttemptCount;
+    settings.scheduledNextRetryAt = previous.scheduledNextRetryAt;
   }
 
   private async publishScheduledTerminal(
     result: KnowledgeBaseRunResult
   ): Promise<void> {
     try {
-      await this.host.appendScheduledMaintenanceMessage(result);
+      await this.host.settleScheduledMaintenance(result);
     } catch (error) {
-      console.warn("每日知识库维护消息保存失败", error);
+      console.warn("每日知识库维护终态收口失败", error);
     }
     try {
       this.host.refreshKnowledgeBaseSurfaces();
@@ -306,6 +330,39 @@ export class KnowledgeBaseScheduler {
     await this.runScheduledIfDue(true);
   }
 
+}
+
+function scheduledAttemptCountForInvocation(
+  settings: KnowledgeBaseSettings,
+  scheduledStartedAt: number
+): number {
+  const previous = settings.lastScheduledRunAt > 0
+    ? new Date(settings.lastScheduledRunAt)
+    : null;
+  const current = new Date(scheduledStartedAt);
+  const previousAttemptCount = Number.isSafeInteger(
+    settings.scheduledAttemptCount
+  )
+    ? Math.max(0, settings.scheduledAttemptCount)
+    : 0;
+  return previous?.toDateString() === current.toDateString()
+    ? previousAttemptCount + 1
+    : 1;
+}
+
+function scheduledMaintenanceNextRetryAt(
+  result: KnowledgeBaseRunResult,
+  settings: KnowledgeBaseSettings
+): number {
+  if (result.status !== "failed") return 0;
+  const terminalFailure = [...(result.attempts ?? [])]
+    .reverse()
+    .find((attempt) => attempt.failure)?.failure;
+  if (terminalFailure?.retryable !== true) return 0;
+  const delay = scheduledMaintenanceRetryDelayMs(
+    settings.scheduledAttemptCount
+  );
+  return delay === null ? 0 : Date.now() + delay;
 }
 
 function durableHistoryMatchesResult(

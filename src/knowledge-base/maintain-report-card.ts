@@ -68,6 +68,7 @@ export interface KnowledgeBaseMaintainReportSection {
 
 export interface KnowledgeBaseMaintainReportSectionItem {
   title: string;
+  path?: string;
   description: string;
   tone?: "success" | "warning" | "info";
 }
@@ -321,6 +322,7 @@ function buildReportSections(mode: KnowledgeBaseCommandUiMode, result: Knowledge
               emptyText: "没有发现额外新增的 Raw 文件。",
               items: (result.externalRawAdditions ?? []).map((item) => ({
                 title: item,
+                path: item,
                 description: "维护过程中发现的新 Raw；已保留在 raw/，留到下一次处理。",
                 tone: "info" as const
               }))
@@ -346,6 +348,7 @@ function buildOutcomeSections(result: KnowledgeBaseRunResult): KnowledgeBaseMain
       emptyText: "没有留待下轮的来源。",
       items: result.pendingSources.map((source) => ({
         title: source,
+        path: source,
         description: "本轮未达到提交条件，已保持原状并留待下轮。",
         tone: "warning" as const
       }))
@@ -398,6 +401,7 @@ function lintStructureDriftItems(structure?: StructureNormalizationResult): Know
   if (!structure) return [];
   const rootNotes = structure.remainingRootNotes.map((item) => ({
     title: item,
+    path: item,
     description: "根目录散落笔记，建议归入 wiki/、projects/ 或 inbox/。",
     tone: "warning" as const
   }));
@@ -434,6 +438,7 @@ function buildCalibrationSections(result: KnowledgeBaseRunResult): KnowledgeBase
       emptyText: "没有需要手动复核的 raw。",
       items: review.map((source) => ({
         title: source.relativePath,
+        path: source.relativePath,
         description: "状态或证据不完整，建议先补来源再确认状态。",
         tone: "warning" as const
       }))
@@ -445,6 +450,7 @@ function buildCalibrationSections(result: KnowledgeBaseRunResult): KnowledgeBase
       emptyText: "没有发现 Raw 正文变更。",
       items: changed.map((source) => ({
         title: source.relativePath,
+        path: source.relativePath,
         description: "Raw 正文已变化，需要重新提炼后再登记状态。",
         tone: "warning" as const
       }))
@@ -508,6 +514,7 @@ function sourceToReportItem(source: KnowledgeBaseSource, evidencePaths: string[]
   const evidence = evidencePaths.slice(0, 2).join("，");
   return {
     title: source.relativePath,
+    path: source.relativePath,
     description: source.changed
       ? evidence
         ? `已写入 ${evidence}。`
@@ -522,6 +529,7 @@ function sourceToReportItem(source: KnowledgeBaseSource, evidencePaths: string[]
 function sourceToCalibrationItem(source: KnowledgeBaseSource, evidencePaths: string[] = []): KnowledgeBaseMaintainReportSectionItem {
   return {
     title: source.relativePath,
+    path: source.relativePath,
     description: evidencePaths.length ? `已确认来源证据：${evidencePaths.slice(0, 2).join("，")}。` : "已确认有对应知识证据，并登记状态。",
     tone: "success"
   };
@@ -531,16 +539,19 @@ function structureToReportItems(structure?: StructureNormalizationResult): Knowl
   if (!structure) return [];
   const moves = structure.moves.map((item) => ({
     title: item.to,
+    path: item.to,
     description: `移动：${item.from} -> ${item.to}。${item.reason}`.trim(),
     tone: "info" as const
   }));
   const links = structure.updatedLinks.map((item) => ({
     title: item.path,
+    path: item.path,
     description: `更新引用 ${item.replacements} 处。`,
     tone: "info" as const
   }));
   const skipped = structure.skipped.map((item) => ({
     title: item.from,
+    path: item.from,
     description: item.to ? `跳过：${item.to}。${item.reason}` : `跳过：${item.reason}`,
     tone: "warning" as const
   }));

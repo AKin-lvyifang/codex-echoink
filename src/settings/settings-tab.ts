@@ -107,6 +107,7 @@ import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i1
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 import { CODEX_CLI_INSTALL_COMMAND, HERMES_DOCS_URL, OPENCODE_DOCS_URL, completeSetupState } from "./setup-check";
 import type { CodexMemoryMigrationPreview, MemoryStoreStatus } from "../harness/memory/file-memory";
+import { runBackendProbe } from "../harness/native/backend-probe-lifecycle";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -817,15 +818,6 @@ export class CodexSettingTab extends PluginSettingTab {
       exportButton.disabled = true;
       const exported = await this.plugin.exportKnowledgeBaseHistory();
       new Notice(copy.knowledge.historyExported(exported));
-      this.scheduleDisplay();
-    };
-    const compact = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.compactHistory, attr: { type: "button" } });
-    compact.onclick = async () => {
-      const accepted = await confirmModal(this.app, copy.knowledge.compactHistory, "只压缩旧日期的过程记录，不删除用户与助手正文。", "压缩", "取消");
-      if (!accepted) return;
-      compact.disabled = true;
-      const count = await this.plugin.compactOldKnowledgeBaseProcessHistory();
-      new Notice(copy.knowledge.historyCompacted(count));
       this.scheduleDisplay();
     };
     const prune = actions.createEl("button", { cls: "codex-resource-tab", text: copy.knowledge.pruneHistory, attr: { type: "button" } });
@@ -2313,7 +2305,6 @@ export class CodexSettingTab extends PluginSettingTab {
     throwIfAgentSetupAborted(context.signal);
     if (current.command) this.writeAgentCliPath("opencode", current.command);
     const backend = this.createOpenCodeSetupBackend(current.command || this.plugin.settings.opencode.cliPath);
-    let probeSessionId = "";
     try {
       await backend.connect();
       this.plugin.agentRuntimeHealth.reportHealthy("opencode");
@@ -2343,16 +2334,21 @@ export class CodexSettingTab extends PluginSettingTab {
       const agent = agents.find((item) => item.id.toLowerCase() === this.plugin.settings.opencode.agent.toLowerCase())
         ?? agents.find((item) => item.id.toLowerCase() === "build")
         ?? agents[0];
-      const probe = await backend.runCliTask({
+      await runBackendProbe({
+        host: this.plugin,
+        backendId: "opencode",
+        settings: this.plugin.settings,
+        vaultPath: this.plugin.getVaultPath(),
+        nativeRefContext: this.plugin.getNativeExecutionRefContext("opencode"),
         prompt: "只回复 OPENCODE_PONG",
+        expectedToken: "OPENCODE_PONG",
+        failureMessage: copy.opencodeProbeFailed,
         model: { providerId: model.providerId, modelId: model.modelId },
         agent: agent?.id || "build",
         timeoutMs: 60_000,
-        abortSignal: context.signal
+        signal: context.signal
       });
       throwIfAgentSetupAborted(context.signal);
-      probeSessionId = probe.runId || "";
-      if (!/\bOPENCODE_PONG\b/i.test(probe.text.trim())) throw new Error(copy.opencodeProbeFailed);
       const info = backend.getConnectionInfo();
       this.plugin.settings.opencode.cliPath = current.command || info.command || this.plugin.settings.opencode.cliPath;
       this.plugin.settings.agents.opencode = this.plugin.settings.opencode;
@@ -2369,7 +2365,6 @@ export class CodexSettingTab extends PluginSettingTab {
         checkedAt: Date.now()
       });
     } finally {
-      if (probeSessionId) await backend.deleteSession(probeSessionId).catch(swallowError("delete OpenCode setup probe session"));
       await backend.disconnect().catch(swallowError("disconnect OpenCode setup backend"));
     }
   }

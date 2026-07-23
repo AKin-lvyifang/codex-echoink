@@ -5,6 +5,7 @@ import { CodexRichNotificationHub } from "../harness/agents/adapters/codex-rich-
 import type { HarnessEvent } from "../harness/contracts/event";
 import type { HarnessRunRequest } from "../harness/contracts/run";
 import { RunOrchestrator } from "../harness/kernel/run-orchestrator";
+import { workspaceFingerprint } from "../harness/kernel/session-service";
 import { InMemoryRunLedger } from "../harness/ledger/run-ledger";
 import { NoopMemoryProvider } from "../harness/memory/noop-provider";
 import type { ChatMessage } from "../settings/settings";
@@ -105,6 +106,9 @@ async function testCompletedBrokerLoopKeepsOneFinalTerminal(): Promise<void> {
     adapters: [adapter],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: () => brokerConversationSession(
+      "session-codex-broker-orchestrator-regression"
+    ),
     now: monotonicNow()
   });
   const request: HarnessRunRequest = {
@@ -437,6 +441,7 @@ async function startBrokerScenario(input: {
     adapters: [adapter],
     ledger,
     memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: () => brokerConversationSession(`${input.runId}-session`),
     now: monotonicNow()
   });
   const initial = await orchestrator.run(harnessRequest(input.runId), (event) => {
@@ -501,6 +506,22 @@ function harnessRequest(runId: string): HarnessRunRequest {
     resourceSelection: { selected: [], resolvedAt: 1, warnings: [] },
     memoryPolicy: { enabled: false, maxItems: 0 },
     outputContract: { kind: "plain-text" }
+  };
+}
+
+function brokerConversationSession(sessionId: string) {
+  const workspace = { vaultPath: "/vault", cwd: "/vault" };
+  return {
+    id: sessionId,
+    title: "Codex broker regression",
+    cwd: workspace.cwd,
+    revision: 1,
+    generation: 1,
+    contextId: `context-${sessionId}`,
+    workspaceFingerprint: workspaceFingerprint(workspace),
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
   };
 }
 

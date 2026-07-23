@@ -601,7 +601,15 @@ export function buildCodexLaunchConfig(options: {
   activeApiProvider: ApiProviderConfig | null;
 }): CodexLaunchConfig {
   const env = buildEnv(options.proxyEnabled, options.proxyUrl);
-  const args = ["app-server", "--listen", "stdio://"];
+  const args = [
+    "app-server",
+    "--listen",
+    "stdio://",
+    "--disable",
+    "hooks",
+    "--disable",
+    "memories"
+  ];
   const provider = options.providerMode === "custom-api" ? options.activeApiProvider : null;
   if (!provider) return { args, env };
 

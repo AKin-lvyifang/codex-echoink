@@ -20,12 +20,15 @@ import {
   finalizeMaintenanceWorkflowWal,
   listMaintenanceWorkflowWals,
   loadMaintenanceWorkflowWal,
+  maintenanceWorkflowSafeBlockedResumeToken,
   prepareMaintenanceWorkflowWal,
   removeFinalizedMaintenanceWorkflowWal,
   type LoadedMaintenanceWorkflowWal,
   type MaintenanceWorkflowManagedWriteDraft,
+  type MaintenanceWorkflowBlockedResumeToken,
   type MaintenanceWorkflowSettingsHost,
   type MaintenanceWorkflowSettingsSnapshot,
+  type MaintenanceWorkflowSettingsTransaction,
   type MaintenanceWorkflowSourceRecord,
   type MaintenanceWorkflowWalHandle,
   type MaintenanceWorkflowWalIntent,
@@ -76,6 +79,9 @@ export interface PrepareAndCommitMaintenanceWorkflowInput<
   managedWrites: MaintenanceWorkflowManagedWriteDraft[];
   outcome: MaintenanceWorkflowCommitOutcome;
   settingsHost: MaintenanceWorkflowSettingsHost<T>;
+  onWalPrepared?: (
+    prepared: LoadedMaintenanceWorkflowWal
+  ) => void | Promise<void>;
   faultInjector?: (
     point: MaintenanceWorkflowCoordinatorFaultPoint
   ) => void | Promise<void>;
@@ -87,6 +93,7 @@ export interface ResumeMaintenanceWorkflowInput<
   handle: MaintenanceWorkflowWalHandle;
   liveVaultPath: string;
   settingsHost: MaintenanceWorkflowSettingsHost<T>;
+  resumeBlocked?: MaintenanceWorkflowBlockedResumeToken;
   faultInjector?: (
     point: MaintenanceWorkflowCoordinatorFaultPoint
   ) => void | Promise<void>;
@@ -171,6 +178,7 @@ export async function prepareAndCommitMaintenanceWorkflow<
     draft,
     managedWrites: input.managedWrites
   });
+  await input.onWalPrepared?.(prepared);
   await input.faultInjector?.("after-prepare");
   return await resumeMaintenanceWorkflow({
     handle: prepared.handle,
@@ -194,9 +202,29 @@ export async function resumeMaintenanceWorkflow<
   let settingsChanged = false;
 
   if (loaded.state.blocked) {
-    throw new Error(
-      `workflow WAL 已阻断：${loaded.state.blocked.code} ${loaded.state.blocked.message}`
-    );
+    const blockedPhaseCanResume =
+      loaded.state.phase === "settings_committed"
+      || (
+        loaded.state.phase === "shadow_committed"
+        && loaded.state.blocked.code === "managed_cas_conflict"
+      )
+      || (
+        loaded.state.phase === "managed_committed"
+        && (
+          loaded.state.blocked.code === "settings_cas_conflict"
+          || loaded.state.blocked.code === "settings_persist_failed"
+        )
+      );
+    if (
+      !blockedPhaseCanResume
+      || !input.resumeBlocked
+      || input.resumeBlocked.stateSequence !== loaded.state.sequence
+      || input.resumeBlocked.stateDigest !== loaded.state.digest
+    ) {
+      throw new Error(
+        `workflow WAL 已阻断：${loaded.state.blocked.code} ${loaded.state.blocked.message}`
+      );
+    }
   }
 
   if (loaded.state.phase === "prepared") {
@@ -247,17 +275,31 @@ export async function resumeMaintenanceWorkflow<
   if (loaded.state.phase === "shadow_committed") {
     await applyMaintenanceWorkflowManagedWrites(
       loaded.handle,
-      input.liveVaultPath
+      input.liveVaultPath,
+      input.resumeBlocked
+        ? { resumeBlocked: input.resumeBlocked }
+        : undefined
     );
     await input.faultInjector?.("after-managed-commit");
     loaded = await loadMaintenanceWorkflowWal(loaded.handle);
   }
 
   if (loaded.state.phase === "managed_committed") {
+    const settingsHost = input.resumeBlocked
+      ? {
+        withExclusiveTransaction: async <R>(
+          action: (
+            transaction: MaintenanceWorkflowSettingsTransaction<T>
+          ) => Promise<R>
+        ): Promise<R> =>
+          await input.settingsHost.withExclusiveTransaction(action),
+        resumeBlocked: input.resumeBlocked
+      }
+      : input.settingsHost;
     const committed = await commitMaintenanceWorkflowSettingsDurably(
       loaded.handle,
       input.liveVaultPath,
-      input.settingsHost
+      settingsHost
     );
     settingsChanged = committed.changed;
     await input.faultInjector?.("after-settings-commit");
@@ -268,11 +310,17 @@ export async function resumeMaintenanceWorkflow<
     await finalizeMaintenanceWorkflowWal(
       loaded.handle,
       input.liveVaultPath,
-      async (finalIntent) => {
+      async (finalIntent, cleanupEvidence) => {
         if (!finalIntent.shadow || !finalIntent.winner) return;
         const shadowHandle = maintenanceShadowHandleFromIntent(finalIntent);
         const shadowPaths = new Set(
           finalIntent.shadow.expectedAppliedPaths
+        );
+        const managedSuccessorsByPath = new Map(
+          cleanupEvidence.managedResultSuccessors.map((proof) => [
+            proof.relativePath,
+            proof
+          ])
         );
         await markMaintenanceShadowCommittedFromJournal(
           shadowHandle,
@@ -283,13 +331,23 @@ export async function resumeMaintenanceWorkflow<
               .map((write) => ({
                 relativePath: write.relativePath,
                 expected: write.expected,
-                desired: write.desired
-              }))
+                desired: managedSuccessorsByPath.get(write.relativePath)
+                  ?.result ?? write.desired
+              })),
+            acceptedIgnoredMetadataSuccessors:
+              cleanupEvidence.acceptedShadowMetadataSuccessors.filter(
+                (proof) => shadowPaths.has(proof.relativePath)
+              )
           }
         );
         await cleanupMaintenanceShadowVault(shadowHandle);
       },
-      { settingsHost: input.settingsHost }
+      {
+        settingsHost: input.settingsHost,
+        ...(input.resumeBlocked
+          ? { resumeBlocked: input.resumeBlocked }
+          : {})
+      }
     );
     await input.faultInjector?.("after-finalize");
     loaded = await loadMaintenanceWorkflowWal(loaded.handle);
@@ -339,7 +397,10 @@ export async function recoverPendingMaintenanceWorkflows<
     invalid: 0,
     issues: []
   };
-  const ready: LoadedMaintenanceWorkflowWal[] = [];
+  const ready: Array<{
+    wal: LoadedMaintenanceWorkflowWal;
+    resumeBlocked?: MaintenanceWorkflowBlockedResumeToken;
+  }> = [];
 
   for (const entry of listed) {
     if (entry.status === "invalid") {
@@ -350,27 +411,44 @@ export async function recoverPendingMaintenanceWorkflows<
       continue;
     }
     if (entry.status === "blocked") {
+      const resumeBlocked =
+        await maintenanceWorkflowSafeBlockedResumeToken(
+          entry.wal,
+          input.liveVaultPath,
+          input.settingsHost
+        );
+      if (resumeBlocked) {
+        ready.push({ wal: entry.wal, resumeBlocked });
+        continue;
+      }
       result.blocked += 1;
       result.issues.push(
         `${entry.wal.intent.workflowRunId}: ${entry.wal.state.blocked?.message ?? "workflow WAL blocked"}`
       );
       continue;
     }
-    ready.push(entry.wal);
+    ready.push({ wal: entry.wal });
   }
 
   if (result.blocked > 0 || result.invalid > 0) return result;
 
   ready.sort((left, right) =>
-    left.intent.startedAt - right.intent.startedAt
-    || left.intent.workflowRunId.localeCompare(right.intent.workflowRunId)
+    left.wal.intent.startedAt - right.wal.intent.startedAt
+    || compareCanonicalText(
+      left.wal.intent.workflowRunId,
+      right.wal.intent.workflowRunId
+    )
   );
-  for (const wal of ready) {
+  for (const entry of ready) {
+    const wal = entry.wal;
     try {
       await resumeMaintenanceWorkflow({
         handle: wal.handle,
         liveVaultPath: input.liveVaultPath,
-        settingsHost: input.settingsHost
+        settingsHost: input.settingsHost,
+        ...(entry.resumeBlocked
+          ? { resumeBlocked: entry.resumeBlocked }
+          : {})
       });
       result.recovered += 1;
     } catch (error) {
@@ -545,6 +623,11 @@ function stableStringify(value: unknown): string {
       .join(",")}}`;
   }
   return value === undefined ? "null" : JSON.stringify(value);
+}
+
+function compareCanonicalText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function errorMessage(error: unknown): string {

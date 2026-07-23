@@ -22,6 +22,8 @@ export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Pro
     new Notice(`输入过长，请控制在 ${settings.maxInputChars} 字以内`);
     return;
   }
+  const lifecycle = view.captureViewLifecycle();
+  if (lifecycle.signal.aborted) return;
 
   clearPromptEnhanceReview(view.promptEnhanceReviewEl);
   view.promptEnhancerRunning = true;
@@ -34,15 +36,27 @@ export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Pro
     const enhanced = await runPromptEnhancer({
       plugin: view.plugin,
       prompt: originalInput,
+      signal: lifecycle.signal,
       onRunCreated: (createdRunId) => {
+        if (!isCurrentViewLifecycle(view, lifecycle)) return;
         runId = createdRunId;
         view.promptEnhancerRunId = createdRunId;
       },
       onTurnStarted: (turnId) => {
-        if (view.promptEnhancerRunId === runId) view.promptEnhancerTurnId = turnId;
+        if (
+          isCurrentViewLifecycle(view, lifecycle)
+          && view.promptEnhancerRunId === runId
+        ) {
+          view.promptEnhancerTurnId = turnId;
+        }
       }
     });
-    if (view.promptEnhancerRunId !== runId) return;
+    if (
+      !isCurrentViewLifecycle(view, lifecycle)
+      || view.promptEnhancerRunId !== runId
+    ) {
+      return;
+    }
     view.inputEl.value = enhanced;
     view.inputEl.setSelectionRange(enhanced.length, enhanced.length);
     view.onInputChanged();
@@ -59,15 +73,31 @@ export async function enhanceChatInput(view: CodexViewPromptEnhanceContext): Pro
     view.focusInput();
     new Notice("提示词已增强，可编辑后发送");
   } catch (error) {
-    if (!runId || view.promptEnhancerRunId === runId) {
+    if (
+      isCurrentViewLifecycle(view, lifecycle)
+      && (!runId || view.promptEnhancerRunId === runId)
+    ) {
       new Notice(`增强失败：${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
-    if (!runId || view.promptEnhancerRunId === runId) {
+    if (
+      isCurrentViewLifecycle(view, lifecycle)
+      && (!runId || view.promptEnhancerRunId === runId)
+    ) {
       view.promptEnhancerRunning = false;
       view.promptEnhancerRunId = "";
       view.promptEnhancerTurnId = "";
       view.applyStatus();
     }
   }
+}
+
+function isCurrentViewLifecycle(
+  view: CodexViewPromptEnhanceContext,
+  lifecycle: ReturnType<CodexViewPromptEnhanceContext["captureViewLifecycle"]>
+): boolean {
+  return (
+    !lifecycle.signal.aborted
+    && view.captureViewLifecycle().generation === lifecycle.generation
+  );
 }

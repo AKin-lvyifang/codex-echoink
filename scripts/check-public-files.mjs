@@ -15,7 +15,23 @@ function trackedFiles() {
 const rules = [
   {
     reason: "private Codex collaboration state",
-    matches: (file) => file === "AGENTS.md" || file.startsWith(".codex-memory/") || file.startsWith(".omx/")
+    matches: (file) =>
+      file === "AGENTS.md"
+      || file.endsWith("/AGENTS.md")
+      || file.startsWith(".codex-memory/")
+      || file.startsWith(".omx/")
+  },
+  {
+    reason: "private release context or design QA",
+    matches: (file) => /(?:^|\/)(?:CONTEXT|design-qa)\.md$/i.test(file)
+  },
+  {
+    reason: "internal implementation documentation",
+    matches: (file) => file.startsWith("docs/implementation/")
+  },
+  {
+    reason: "internal prototype source or artifact",
+    matches: (file) => /(?:^|\/)prototypes?\//i.test(file)
   },
   {
     reason: "internal Superpowers execution documents",
@@ -33,7 +49,7 @@ const rules = [
     reason: "internal documentation filename",
     matches: (file) =>
       file.startsWith("docs/") &&
-      /(?:^|\/)(?:PRD|test-cases)[^/]*\.md$/i.test(file)
+      /(?:^|\/)(?:PRD|test-cases|[^/]*-prd)[^/]*\.md$/i.test(file)
   },
   {
     reason: "internal planning or draft document",
@@ -57,6 +73,10 @@ const contentRules = [
   {
     reason: "local absolute user path",
     pattern: /\/Users\/lyuakin\//
+  },
+  {
+    reason: "local macOS temporary path",
+    pattern: /\/(?:private\/tmp|var\/folders)\//
   },
   {
     reason: "private vault path or name",

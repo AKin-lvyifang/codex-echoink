@@ -7,6 +7,7 @@ import type { EchoInkResource } from "../../resources/types";
 import type { PermissionMode, ReasoningEffort, ServiceTierChoice, UiMode } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
 import { textInputModal } from "../modals";
+import { contextRotationCleanupNoticeSuffix } from "./session-controller";
 import { openWorkspaceMenu as showWorkspaceMenu } from "./menus";
 import { normalizeWorkspacePath, pickWorkspaceDirectory, workspaceDirectoryExists, workspaceDisplayName } from "./workspace-utils";
 
@@ -19,14 +20,11 @@ export interface CodexWorkspaceHost {
   selectedServiceTier: ServiceTierChoice;
   selectedPermission: PermissionMode;
   selectedMode: UiMode;
-  threadPrewarmPromise: Promise<boolean> | null;
-  threadPrewarmSessionId: string;
   ensureSession(): StoredSession;
   isKnowledgeBaseSession(session: StoredSession): boolean;
   renderToolbar(): void;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
   updateInputPlaceholder(): void;
-  prewarmActiveThread(): void;
   currentTurnOptions(session?: StoredSession): TurnOptions;
   effectiveModel(): string;
 }
@@ -50,24 +48,35 @@ export async function chooseChatWorkspace(host: CodexWorkspaceHost, session: Sto
     ? await textInputModal(host.app, "选择工作区", "文件夹路径", session.cwd)
     : pickedPath;
   if (!selectedPath) return false;
+  if (host.running) {
+    new Notice("当前会话运行中，结束后再切换工作区");
+    return false;
+  }
   const workspacePath = normalizeWorkspacePath(selectedPath);
   if (!workspaceDirectoryExists(workspacePath)) {
     new Notice("请选择一个存在的文件夹作为工作区");
     return false;
   }
   const changed = normalizeWorkspacePath(session.cwd) !== workspacePath;
-  session.cwd = workspacePath;
+  let cleanupNotice = "";
   if (changed) {
-    delete session.threadId;
-    delete session.tokenUsage;
+    try {
+      cleanupNotice = await commitChatWorkspaceSelection(
+        host,
+        session,
+        workspacePath
+      );
+    } catch (error) {
+      new Notice(`切换工作区失败：${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
-  session.updatedAt = Date.now();
-  await host.plugin.saveSettings(true);
   host.renderToolbar();
   host.updateInputPlaceholder();
   host.renderMessages();
-  host.prewarmActiveThread();
-  new Notice(changed ? `工作区已设为：${workspaceDisplayName(workspacePath)}，下一轮将开启新线程` : `工作区已设为：${workspaceDisplayName(workspacePath)}`);
+  new Notice(changed
+    ? `工作区已设为：${workspaceDisplayName(workspacePath)}，下一轮将开启新上下文${cleanupNotice}`
+    : `工作区已设为：${workspaceDisplayName(workspacePath)}`);
   return true;
 }
 
@@ -76,15 +85,54 @@ export async function clearChatWorkspace(host: CodexWorkspaceHost, session: Stor
     new Notice("当前会话运行中，结束后再清除工作区");
     return;
   }
-  session.cwd = "";
-  delete session.threadId;
-  delete session.tokenUsage;
-  session.updatedAt = Date.now();
-  await host.plugin.saveSettings(true);
+  let cleanupNotice = "";
+  try {
+    await host.plugin.ensureEchoInkConversationSessionCreated(session);
+    const rotation = await host.plugin.rotateEchoInkSessionContext(session, {
+      reason: "workspace-clear",
+      precondition: () => {
+        if (host.running) {
+          throw new Error("当前会话运行中，结束后再清除工作区");
+        }
+      },
+      workspace: null,
+      mutate: (candidate) => {
+        delete candidate.tokenUsage;
+      }
+    });
+    cleanupNotice = contextRotationCleanupNoticeSuffix(rotation);
+  } catch (error) {
+    new Notice(`清除工作区失败：${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
   host.renderToolbar();
   host.updateInputPlaceholder();
   host.renderMessages();
-  new Notice("已清除工作区");
+  new Notice(`已清除工作区${cleanupNotice}`);
+}
+
+export async function commitChatWorkspaceSelection(
+  host: CodexWorkspaceHost,
+  session: StoredSession,
+  workspacePath: string
+): Promise<string> {
+  await host.plugin.ensureEchoInkConversationSessionCreated(session);
+  const rotation = await host.plugin.rotateEchoInkSessionContext(session, {
+    reason: "workspace-switch",
+    precondition: () => {
+      if (host.running) {
+        throw new Error("当前会话运行中，结束后再切换工作区");
+      }
+    },
+    workspace: {
+      vaultPath: host.plugin.getVaultPath(),
+      cwd: workspacePath
+    },
+    mutate: (candidate) => {
+      delete candidate.tokenUsage;
+    }
+  });
+  return contextRotationCleanupNoticeSuffix(rotation);
 }
 
 export async function ensureChatWorkspaceSelected(host: CodexWorkspaceHost, session: StoredSession): Promise<boolean> {
@@ -134,32 +182,4 @@ export function effectiveModel(host: CodexWorkspaceHost): string {
     return providerModels.includes(host.selectedModel) ? host.selectedModel : providerModels[0];
   }
   return host.selectedModel || host.plugin.settings.defaultModel || "";
-}
-
-export function prewarmActiveThread(host: CodexWorkspaceHost): void {
-  const session = host.ensureSession();
-  if (host.isKnowledgeBaseSession(session)) return;
-  if (session.threadId || host.running) return;
-  if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return;
-  if (host.threadPrewarmPromise && host.threadPrewarmSessionId === session.id) return;
-  host.threadPrewarmSessionId = session.id;
-  host.threadPrewarmPromise = startThreadForSession(host, session)
-    .catch(() => false)
-    .finally(() => {
-      if (host.threadPrewarmSessionId === session.id) {
-        host.threadPrewarmPromise = null;
-        host.threadPrewarmSessionId = "";
-      }
-    });
-}
-
-export async function startThreadForSession(host: CodexWorkspaceHost, session: StoredSession): Promise<boolean> {
-  if (session.threadId) return true;
-  if (!normalizeWorkspacePath(session.cwd) || !workspaceDirectoryExists(session.cwd)) return false;
-  const status = await host.plugin.ensureCodexConnected();
-  if (!status.connected || !host.plugin.codex || session.threadId) return Boolean(session.threadId);
-  const started = await host.plugin.startCodexHarnessThread(currentTurnOptions(host, session));
-  session.threadId = started.threadId;
-  await host.plugin.saveSettings();
-  return true;
 }

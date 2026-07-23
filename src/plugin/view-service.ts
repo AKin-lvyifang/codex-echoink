@@ -29,11 +29,14 @@ export class EchoInkViewService {
 
   async activateView(): Promise<void> {
     const leaves = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX);
-    let leaf = leaves[0];
+    let leaf = leaves.find((candidate) => candidate.view instanceof CodexView) ?? leaves[0];
     if (!leaf) {
       const rightLeaf = this.plugin.app.workspace.getRightLeaf(false);
       if (!rightLeaf) throw new Error("无法创建 Codex 右侧栏");
       leaf = rightLeaf;
+      await leaf.setViewState({ type: VIEW_TYPE_CODEX, active: true });
+    } else if (!(leaf.view instanceof CodexView)) {
+      await leaf.setViewState({ type: "empty", active: false });
       await leaf.setViewState({ type: VIEW_TYPE_CODEX, active: true });
     }
     if (this.plugin.app.workspace.rightSplit.collapsed) this.plugin.app.workspace.rightSplit.expand();
@@ -44,7 +47,10 @@ export class EchoInkViewService {
   async activateKnowledgeBaseChannel(): Promise<void> {
     const session = ensureKnowledgeBaseSession(this.plugin.settings, this.plugin.getVaultPath());
     this.plugin.settings.activeSessionId = session.id;
-    await this.plugin.saveSettings(true);
+    await this.plugin.saveSettings(true, {
+      flushConversationStore: false,
+      flushKnowledgeBaseHistory: false
+    });
     await this.activateView();
     this.getCodexView()?.refreshActiveSession();
   }

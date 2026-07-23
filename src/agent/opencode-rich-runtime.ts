@@ -1,6 +1,16 @@
 import type { AgentEvent, AgentEventSink } from "./events";
 import type { AgentRichStreamRuntime } from "./runtime";
-import type { AgentConnectionStatus, AgentModelInfo, AgentProfileInfo, AgentPromptOptions, AgentSessionOptions, AgentTaskInput, AgentTaskResult } from "./types";
+import {
+  NativeSessionStaleError,
+  isNativeRunRegistrationError,
+  type AgentConnectionStatus,
+  type AgentModelInfo,
+  type AgentProfileInfo,
+  type AgentPromptOptions,
+  type AgentSessionOptions,
+  type AgentTaskInput,
+  type AgentTaskResult
+} from "./types";
 import type { OpenCodeBackend, OpenCodeCliTaskOptions, OpenCodeConnectionInfo } from "../core/opencode-backend";
 import { openCodeAssistantMessageIds } from "../core/opencode-run";
 import type { PermissionMode } from "../types/app-server";
@@ -148,16 +158,23 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
     let projector: OpenCodeEventProjector | null = null;
     let activeStreamSource: OpenCodeStreamSource = "sse";
     try {
-      const resumed = input.nativeSessionId && await this.options.backend.hasSession(input.nativeSessionId)
-        ? input.nativeSessionId
-        : "";
+      const requestedSessionId = input.nativeSessionId?.trim() ?? "";
+      const requestedSessionExists = requestedSessionId
+        ? await this.options.backend.hasSession(requestedSessionId)
+        : false;
+      if (
+        requestedSessionId
+        && input.requireNativeSessionResume
+        && !requestedSessionExists
+      ) {
+        throw new NativeSessionStaleError(
+          `OpenCode Native session became stale while resuming: ${requestedSessionId}`,
+          requestedSessionId
+        );
+      }
+      const resumed = requestedSessionExists ? requestedSessionId : "";
       if (resumed) {
         sessionId = resumed;
-        await this.options.backend.updateSessionPermissions(
-          sessionId,
-          input.permission ?? "workspace-write",
-          input.writableRoots
-        );
       } else {
         const session = await this.options.backend.startSession({
           title: this.options.title ?? "EchoInk Chat",
@@ -167,6 +184,15 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
           writableRoots: input.writableRoots
         });
         sessionId = session.sessionId;
+      }
+      this.activeRunId = sessionId;
+      await input.onRunId?.(sessionId);
+      if (resumed) {
+        await this.options.backend.updateSessionPermissions(
+          sessionId,
+          input.permission ?? "workspace-write",
+          input.writableRoots
+        );
       }
       if (input.requireExactWriteFence) {
         exactWriteFenceReceipt = createExactWriteFenceReceipt({
@@ -182,8 +208,6 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
         });
         await deliverExactWriteFenceReceipt(input, exactWriteFenceReceipt);
       }
-      this.activeRunId = sessionId;
-      input.onRunId?.(sessionId);
       await emitDraft({ type: "run_started", data: { streamSource: "sse", promptSubmitted: false } });
 
       // A resumed session can already contain completed assistant messages. If
@@ -393,7 +417,7 @@ export class OpenCodeRichRuntime implements AgentRichStreamRuntime {
       if (interruptedProjection) {
         await emitProjection(interruptedProjection, activeStreamSource).catch(() => undefined);
       }
-      if (runController.signal.aborted || input.abortSignal?.aborted) {
+      if ((runController.signal.aborted || input.abortSignal?.aborted) && !isNativeRunRegistrationError(error)) {
         await this.abortBackendOnce(sessionId).catch(() => undefined);
         await emitDraft({
           type: "cancelled",

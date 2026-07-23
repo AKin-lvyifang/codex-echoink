@@ -1,48 +1,139 @@
 import * as assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { DEFAULT_SETTINGS, type StoredSession } from "../../settings/settings";
+import type {
+  AgentAdapter,
+  AgentConnectionStatus,
+  AgentRunRequest,
+  AgentRunResult
+} from "../../harness/agents/adapter";
 import { CodexRichAgentAdapter } from "../../harness/agents/adapters/codex-rich-adapter";
 import { CodexRichNotificationHub } from "../../harness/agents/adapters/codex-rich-notification-hub";
+import { noCapabilities } from "../../harness/contracts/capability";
+import type { HarnessEvent, HarnessEventSink } from "../../harness/contracts/event";
+import type {
+  NativeExecutionRecord,
+  NativeExecutionRef
+} from "../../harness/contracts/native-execution";
+import type { HarnessRunRequest } from "../../harness/contracts/run";
 import { EchoInkHarnessKernel } from "../../harness/kernel/harness-kernel";
-import { InMemoryRunLedger } from "../../harness/ledger/run-ledger";
+import {
+  updateSessionBackendBinding,
+  workspaceFingerprint
+} from "../../harness/kernel/session-service";
+import { InMemoryRunLedger, type RunLedger } from "../../harness/ledger/run-ledger";
+import { FileConversationStore } from "../../harness/conversation/conversation-store";
+import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
 import { NoopMemoryProvider } from "../../harness/memory/noop-provider";
 import { emptyContextBundle } from "../../harness/contracts/context";
+import type { SettleNativeExecutionInput } from "../../harness/native/native-execution-manager";
+import { EchoInkHarnessService } from "../../plugin/harness-service";
+import { EchoInkSettingsStore } from "../../plugin/settings-store";
 import { RuntimeTurnQueue } from "../../ui/turn-queue";
 import { CodexView } from "../../ui/codex-view";
 import { CodexNotificationRouter } from "../../ui/codex-view/notification-router";
 import {
   afterTurnSettled,
+  recoverSessionLifecycle,
+  restoreSessionLifecycleRecoveryGates,
+  resumeQueuedTurns,
+  sendMessage,
   startChatTurn,
   startKnowledgeBaseTurn,
   startNextQueuedTurn,
   startQueuedTurnItem,
   startQueuedTurnItemSafely
 } from "../../ui/codex-view/turn-runner";
-import { armTurnWatchdog, persistAndSettleChatRun, stopTurn } from "../../ui/codex-view/turn-lifecycle";
-import { recoverStaleHarnessRuns } from "../../core/message-state";
+import {
+  armTurnWatchdog,
+  chatSurfaceTerminalClaim,
+  claimChatSurfaceTerminal,
+  persistAndSettleChatRun,
+  prepareChatSurfaceTerminal,
+  recordIgnoredLateChatTerminal,
+  stopTurn
+} from "../../ui/codex-view/turn-lifecycle";
+import {
+  applyChatRunTerminalWinner,
+  echoInkChatTerminalRawRef,
+  recoverStaleChatHarnessRuns,
+  recoverStaleHarnessRuns
+} from "../../core/message-state";
+import { pluginDataDir, prepareRawMessage } from "../../core/raw-message-store";
 import { KnowledgeBaseAgentTaskService } from "../../knowledge-base/agent-task-service";
+import type { EchoInkResource } from "../../resources/types";
 
 export async function runHarnessV2SurfaceRunSettlementTests(): Promise<void> {
   await assertChatTerminalPersistsHistoryBeforeLedger();
+  await assertChatTerminalRequiresConversationMarker();
+  await assertLiveCommitProjectsExistingDurableWinner();
+  await assertDurableConversationWinnerRejectsSameStatusPayloadReplacement();
+  await assertConcurrentDurableConversationWinnerSurvivesLedgerFailure();
+  await assertLargeDurableWinnerUsesImmutableRawIdentity();
+  await assertRestartRejectsNonCommitAddressedRawAuthority();
+  await assertRestartRetainsMissingRawAuthorityForRecovery();
+  await assertTerminalDataRejectsNonPersistableValues();
+  await assertConversationMarkerRollsBackWhenSaveFails();
+  await assertConversationMarkerRollsForwardAfterDataSaveFails();
+  await assertConversationReadbackFailurePreservesTerminalCandidate();
+  await assertTerminalMarkerClearRollsBackWhenSaveFails();
+  await assertTerminalMarkerClearStaysClearedAfterDataSaveFails();
+  await assertClearReadbackFailurePreservesClearedCandidate();
+  await assertServiceOwnedSynchronousChatTerminalsWaitForConversationCommit();
+  await assertTerminalGateFailureDoesNotRewriteBusinessWinner();
+  await assertChatNativeReceiptRegistrationBeforeIntent();
+  await assertChatNativeReceiptIntentBeforeRegistration();
+  await assertChatNativeReceiptIdentityAndIntentConflictsFailClosed();
+  await assertChatNativeSettlementFailureRemainsRetryable();
+  await assertLedgerFailureRecoversSameWinnerAfterRestart();
+  await assertLiveNativeSettlementExhaustionRecoversAfterRestart();
+  await assertSynchronousChatConversationCommitFailureRetainsNative();
+  await assertSynchronousChatLedgerCommitFailureRetainsNative();
   await assertChatStopCommitsCancellationTerminal();
   await assertChatStopUsesActualBackend();
   await assertChatStopPropagatesCancelFailureAndAllowsRetry();
+  await assertChatStopFailedCommitReleasesLaneFailClosed();
+  await assertChatStopBeforeNativeRegistrationRetainsRecoveryEvidence();
+  await assertChatStopIgnoresLateCompletedTerminal();
+  await assertChatWatchdogSettlesNativeAfterDurableCommit();
+  await assertChatWatchdogFailedCommitReleasesLaneFailClosed();
+  await assertChatWatchdogBeforeNativeRegistrationRetainsRecoveryEvidence();
+  await assertChatWatchdogIgnoresLateFailedTerminal();
+  await assertLateChatTerminalAuditRetriesAfterAppendFailure();
+  await assertLateChatTerminalAuditWaitsForTimerTransient();
+  await assertLateChatTerminalAuditCanRetryAfterBoundedExhaustion();
+  await assertConcurrentLateChatTerminalAuditsAppendExactlyOnce();
+  await assertChatNativeSettlementWaitsForTimerTransient();
   await assertKnowledgeStopDelegatesToManager();
   await assertKnowledgeStopDoesNotPauseAfterCommitLock();
   await assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure();
   await assertKnowledgeCleanupFailureDoesNotFailCompletedTurn();
+  await assertFastMaintenanceRecoveryCannotBeOverwrittenByPendingResult();
   await assertKnowledgeUnloadWaitsForActiveRunSettlement();
   await assertEditorStopUsesHarnessCancel();
   await assertEditorStopPropagatesCancelFailureAndAllowsRetry();
   await assertKnowledgeWatchdogUsesHarnessCancel();
   await assertCodexChatProcessEventsRenderThroughHarnessSink();
+  await assertMaintenanceRecoveryChatUsesReadOnlyRuntime();
   await assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue();
+  await assertMaintenanceRecoveryQueueRespectsHeadAuthority();
+  await assertAsyncChatKeepsMutationLaneUntilConversationCommit();
+  await assertSynchronousChatTerminalCommitFailureSkipsGenericSettlement();
+  await assertRestartRestoresQueueRecoveryGateFromPersistedMarkers();
+  await assertQueueRecoveryRequiresDurableEvidenceAndExplicitRetry();
   await assertLateRunScopedNotificationsDoNotPolluteNextRunView();
   await assertUsageNotificationsReachDriverWithoutConsumingViewRoute();
   await assertUsageAndCompactionOnlyUpdateMatchingSessionThread();
   await assertViewCloseCancelsActiveRunDuringReload();
+  await assertViewClosePreservesExistingAdapterWinner();
+  await assertPromptEnhancerPreStartViewCloseAbortsWithoutCancelIntent();
+  await assertViewCloseCancellationWinsLateAsyncCompletion();
+  await assertViewCloseBeforeNativeRegistrationKeepsIntentRecoverable();
   await assertViewCloseDisposesRendererWhenRecoveryFails();
+  await assertReloadChatRecoveryUsesCentralTerminalAndRetries();
+  await assertReloadProjectsDurableTerminalWinnerBeforeConversationSave();
   await assertReloadRecoveryCommitsLocalHistoryBeforeLedgerTerminal();
   await assertReloadRecoveryKeepsTerminalPendingWhenLocalCommitFails();
   await assertReloadRecoveryRetriesFailedLedgerTerminal();
@@ -68,6 +159,7 @@ async function assertCodexChatProcessEventsRenderThroughHarnessSink(): Promise<v
 
   const outcome = await startChatTurn(harness.view, session, queuedTurn("chat-process", session.id, "请检查"), "composer");
   assert.equal(outcome, "running");
+  assert.deepEqual(harness.startedThreads, ["thread-chat-process"], "a real user Turn must create its Codex thread through the adapter");
 
   harness.notificationHub.dispatch({
     method: "item/reasoning/summaryTextDelta",
@@ -104,13 +196,1680 @@ async function assertCodexChatProcessEventsRenderThroughHarnessSink(): Promise<v
   await waitFor(() => harness.view.running === false);
 }
 
+async function assertMaintenanceRecoveryChatUsesReadOnlyRuntime(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-recovery-read-only-chat",
+    title: "Knowledge recovery chat",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-recovery-read-only-chat",
+    turnId: "turn-recovery-read-only-chat",
+    text: "只读回答"
+  }], {
+    maintenanceRecoveryState: "blocked",
+    resourceCatalog: [
+      {
+        id: "manual:mcp-server:unsafe",
+        kind: "mcp-server",
+        source: "manual",
+        name: "unsafe",
+        description: "must not be callable during maintenance recovery",
+        enabled: true,
+        scopes: ["chat"],
+        bridgeMode: "echoink-tool-loop"
+      },
+      {
+        id: "manual:skill:unsafe",
+        kind: "skill",
+        source: "manual",
+        name: "unsafe-skill",
+        description: "must not be injected during maintenance recovery",
+        enabled: true,
+        scopes: ["chat"],
+        bridgeMode: "prompt-only"
+      }
+    ]
+  });
+  const item = queuedTurn(
+    "recovery-read-only-chat",
+    session.id,
+    "解释当前恢复状态"
+  );
+  item.turnOptions.permission = "danger-full-access";
+  item.turnOptions.mcpEnabled = true;
+  item.turnOptions.workspaceResources = {
+    plugins: { unsafe: true },
+    mcpServers: { unsafe: true },
+    skills: { unsafe: true }
+  };
+  item.skill = {
+    id: "manual:skill:unsafe",
+    kind: "skill",
+    source: "manual",
+    name: "unsafe-skill",
+    description: "must not be injected during maintenance recovery",
+    enabled: true,
+    scopes: ["chat"],
+    bridgeMode: "prompt-only"
+  };
+
+  const outcome = await startChatTurn(harness.view, session, item, "composer");
+  assert.equal(outcome, "running");
+  await waitFor(() => harness.view.running === false);
+
+  assert.equal(harness.harnessRequests[0]?.permissions.mode, "read-only");
+  assert.deepEqual(harness.harnessRequests[0]?.permissions.writableRoots, []);
+  assert.deepEqual(harness.harnessRequests[0]?.resourceSelection.selected, []);
+  assert.doesNotMatch(
+    harness.harnessRequests[0]?.input.text ?? "",
+    /unsafe-skill/
+  );
+  assert.equal(harness.adapterOptions[0]?.turnOptions.permission, "read-only");
+  assert.equal(harness.adapterOptions[0]?.turnOptions.mcpEnabled, false);
+  assert.equal(harness.adapterOptions[0]?.turnOptions.externalResources, "disabled");
+  assert.deepEqual(harness.adapterOptions[0]?.turnOptions.workspaceResources, {
+    plugins: {},
+    mcpServers: {},
+    skills: {}
+  });
+  assert.equal(harness.adapterOptions[0]?.toolBridge, null);
+  assert.equal(harness.mcpToolListCalls(), 0);
+}
+
+async function assertMaintenanceRecoveryQueueRespectsHeadAuthority(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-recovery-authority-queue",
+    title: "Knowledge recovery queue",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-recovery-safe-queue",
+    turnId: "turn-recovery-safe-queue",
+    text: "safe"
+  }], {
+    maintenanceRecoveryState: "blocked"
+  });
+  harness.view.turnQueue.enqueue(queuedTurn(
+    "recovery-safe-head",
+    session.id,
+    "普通只读对话"
+  ));
+
+  await startNextQueuedTurn(harness.view, session.id);
+  await waitFor(() => harness.view.running === false);
+  assert.deepEqual(harness.startedTurns.map((turn) => turn.turnId), [
+    "turn-recovery-safe-queue"
+  ]);
+
+  const blockedWrite = {
+    ...queuedTurn("recovery-write-head", session.id, "/maintain"),
+    kind: "knowledge-base" as const
+  };
+  const safeFollower = queuedTurn(
+    "recovery-safe-follower",
+    session.id,
+    "不得越过前面的写命令"
+  );
+  harness.view.turnQueue.enqueue(blockedWrite);
+  harness.view.turnQueue.enqueue(safeFollower);
+
+  await startNextQueuedTurn(harness.view, session.id);
+
+  assert.deepEqual(
+    harness.view.turnQueue.itemsForSession(session.id).map((item: any) => item.id),
+    [blockedWrite.id, safeFollower.id],
+    "a blocked authority head must remain FIFO and must not be bypassed"
+  );
+  assert.equal(harness.startedTurns.length, 1);
+}
+
 async function assertChatTerminalPersistsHistoryBeforeLedger(): Promise<void> {
   const calls: string[] = [];
-  await persistAndSettleChatRun({
+  const plugin: any = {
+    settings: {
+      sessions: [{
+        messages: [{
+          id: "run-chat-order-answer",
+          role: "assistant",
+          itemType: "assistant",
+          status: "completed",
+          text: "done",
+          runId: "run-chat-order",
+          createdAt: 1
+        }]
+      }]
+    },
     saveSettings: async () => { calls.push("history"); },
-    settleHarnessRunTerminal: async () => { calls.push("ledger"); }
-  }, { runId: "run-chat-order", status: "completed", backendId: "codex-cli" });
+    agentRuntimeHealth: {
+      reportHealthy: () => undefined,
+      reportFailure: () => undefined
+    }
+  };
+  const service = new EchoInkHarnessService(plugin);
+  (service as any).getHarnessKernel = () => ({
+    commitSurfaceRunTerminal: async (
+      _input: unknown,
+      beforeTerminalCommit: (winner: HarnessEvent) => Promise<void>
+    ) => {
+      const winner = terminalEvent(
+        "run-chat-order",
+        "completed",
+        "codex-cli"
+      );
+      await beforeTerminalCommit(winner);
+      calls.push("ledger");
+      return winner;
+    }
+  });
+  plugin.commitChatSurfaceTerminal = async (input: any) =>
+    await service.commitChatSurfaceTerminal(input);
+
+  await persistAndSettleChatRun(
+    plugin,
+    { runId: "run-chat-order", status: "completed", backendId: "codex-cli" }
+  );
   assert.deepEqual(calls, ["history", "ledger"]);
+}
+
+async function assertChatTerminalRequiresConversationMarker(): Promise<void> {
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-chat-terminal-without-marker"
+  });
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId: "run-chat-terminal-without-marker",
+      status: "completed",
+      backendId: "codex-cli",
+      text: "orphaned"
+    }),
+    /requires a Conversation marker/
+  );
+
+  assert.equal(harness.saveCalls.length, 0);
+  assert.equal(
+    terminalEvents(
+      await harness.ledger.readRun("run-chat-terminal-without-marker")
+    ).length,
+    0
+  );
+  assert.equal(harness.nativeManager.settlementAttempts.length, 0);
+}
+
+async function assertLiveCommitProjectsExistingDurableWinner(): Promise<void> {
+  const runId = "run-live-existing-durable-winner";
+  const session: StoredSession = {
+    id: "session-live-existing-durable-winner",
+    title: "Existing durable winner",
+    cwd: "/vault",
+    messages: [{
+      id: "existing-winner-answer",
+      role: "assistant",
+      itemType: "assistant",
+      status: "completed",
+      text: "requested completed answer",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const ledger = new InMemoryRunLedger();
+  await ledger.append(terminalEvent(runId, "cancelled", "codex-cli"));
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    ledger
+  });
+
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "requested completed answer"
+  });
+
+  assert.equal(session.messages[0]?.status, "interrupted");
+  assert.equal(session.messages[0]?.title, "已中断");
+  assert.equal(
+    session.messages[0]?.runTerminalRecoveryPending,
+    "cancelled"
+  );
+  const terminals = terminalEvents(await ledger.readRun(runId));
+  assert.equal(terminals.length, 1);
+  assert.equal(terminals[0]?.type, "run.cancelled");
+  assert.equal(harness.nativeManager.settlementAttempts.length, 0);
+
+  const completedRunId = "run-live-existing-completed-payload-winner";
+  const completedSession: StoredSession = {
+    id: "session-live-existing-completed-payload-winner",
+    title: "Existing durable completed payload winner",
+    cwd: "/vault",
+    messages: [{
+      id: "existing-completed-payload-answer",
+      role: "assistant",
+      itemType: "assistant",
+      status: "completed",
+      text: "late completed answer",
+      runId: completedRunId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const completedLedger = new InMemoryRunLedger();
+  await completedLedger.append({
+    ...terminalEvent(completedRunId, "completed", "codex-cli"),
+    text: "durable completed answer"
+  });
+  const completedHarness = createServiceReceiptTestBed({
+    sessionId: completedSession.id,
+    session: completedSession,
+    ledger: completedLedger
+  });
+
+  await completedHarness.service.commitChatSurfaceTerminal({
+    runId: completedRunId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "late completed answer"
+  });
+
+  assert.equal(
+    completedSession.messages[0]?.text,
+    "durable completed answer",
+    "Conversation must project the durable Ledger payload even when the status matches"
+  );
+  assert.equal(
+    completedSession.messages[0]?.runTerminalRecoveryPending,
+    "completed"
+  );
+  assert.equal(
+    terminalEvents(await completedLedger.readRun(completedRunId)).length,
+    1
+  );
+}
+
+async function assertDurableConversationWinnerRejectsSameStatusPayloadReplacement(): Promise<void> {
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    const runId = `run-durable-authority-${status}`;
+    const answer: any = {
+      id: `answer-durable-authority-${status}`,
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    };
+    const session: StoredSession = {
+      id: `session-durable-authority-${status}`,
+      title: `Durable authority ${status}`,
+      cwd: "/vault",
+      messages: [answer],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const backingLedger = new InMemoryRunLedger();
+    let terminalAppendFailures = 1;
+    const ledger: RunLedger = {
+      async append(event) {
+        if (isTerminalHarnessEvent(event) && terminalAppendFailures > 0) {
+          terminalAppendFailures -= 1;
+          throw new Error("Run Ledger unavailable");
+        }
+        await backingLedger.append(event);
+      },
+      async readRun(targetRunId) {
+        return await backingLedger.readRun(targetRunId);
+      }
+    };
+    const harness = createServiceReceiptTestBed({
+      sessionId: session.id,
+      session,
+      ledger
+    });
+    const winnerPayload = {
+      runId,
+      status,
+      backendId: "codex-cli",
+      ...(status === "completed"
+        ? { text: `winner-${status}` }
+        : { error: `winner-${status}` }),
+      data: {
+        authority: "winner-a",
+        nested: { order: 1, values: ["alpha", "beta"] }
+      }
+    } as const;
+
+    await assert.rejects(
+      () => harness.service.commitChatSurfaceTerminal(winnerPayload),
+      /Run Ledger unavailable/
+    );
+    const durableMarker = structuredClone(
+      answer.echoInkRunTerminalRecovery
+    );
+    assert.equal(
+      durableMarker?.namespace,
+      "echoink.chat-terminal"
+    );
+    assert.equal(durableMarker?.status, status);
+    assert.equal(durableMarker?.backendId, "codex-cli");
+    assert.deepEqual(
+      durableMarker?.data,
+      winnerPayload.data
+    );
+    assert.equal(terminalEvents(await backingLedger.readRun(runId)).length, 0);
+
+    answer.text = `loser-${status}`;
+    answer.backendId = "opencode";
+    answer.status = status === "completed"
+      ? "completed"
+      : status === "failed"
+        ? "failed"
+        : "interrupted";
+    await harness.service.commitChatSurfaceTerminal({
+      runId,
+      status,
+      backendId: "opencode",
+      ...(status === "completed"
+        ? { text: `loser-${status}` }
+        : { error: `loser-${status}` }),
+      data: {
+        authority: "loser-b",
+        nested: { order: 2, values: ["wrong"] }
+      }
+    });
+
+    const [terminal] = terminalEvents(await backingLedger.readRun(runId));
+    assert.ok(terminal);
+    assert.equal(terminal.backendId, "codex-cli");
+    assert.equal(
+      status === "completed" ? terminal.text : terminal.error,
+      `winner-${status}`
+    );
+    assert.deepEqual(terminal.data, winnerPayload.data);
+    assert.equal(answer.text, `winner-${status}`);
+    assert.equal(answer.backendId, "codex-cli");
+    assert.deepEqual(
+      answer.echoInkRunTerminalRecovery,
+      durableMarker,
+      "a retry may heal the missing Ledger terminal but cannot replace the durable Conversation authority"
+    );
+  }
+}
+
+async function assertConcurrentDurableConversationWinnerSurvivesLedgerFailure(): Promise<void> {
+  for (const loserStatus of ["completed", "failed", "cancelled"] as const) {
+    const runId = `run-concurrent-durable-authority-${loserStatus}`;
+    const answer: any = {
+      id: `answer-concurrent-durable-authority-${loserStatus}`,
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    };
+    const session: StoredSession = {
+      id: `session-concurrent-durable-authority-${loserStatus}`,
+      title: `Concurrent durable authority ${loserStatus}`,
+      cwd: "/vault",
+      messages: [answer],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const backingLedger = new InMemoryRunLedger();
+    const firstTerminalAppendEntered = deferred();
+    const releaseFirstTerminalAppend = deferred();
+    let terminalAppendAttempts = 0;
+    const ledger: RunLedger = {
+      async append(event) {
+        if (isTerminalHarnessEvent(event)) {
+          terminalAppendAttempts += 1;
+          if (terminalAppendAttempts === 1) {
+            firstTerminalAppendEntered.resolve();
+            await releaseFirstTerminalAppend.promise;
+            throw new Error("Run Ledger unavailable");
+          }
+        }
+        await backingLedger.append(event);
+      },
+      async readRun(targetRunId) {
+        return await backingLedger.readRun(targetRunId);
+      }
+    };
+    const harness = createServiceReceiptTestBed({
+      sessionId: session.id,
+      session,
+      ledger
+    });
+    const winner = {
+      runId,
+      status: "completed" as const,
+      backendId: "codex-cli",
+      text: `winner-completed-${loserStatus}`,
+      data: {
+        authority: "winner-a",
+        nested: { order: 1, values: ["alpha", "beta"] }
+      }
+    };
+    const loser = {
+      runId,
+      status: loserStatus,
+      backendId: "opencode",
+      ...(loserStatus === "completed"
+        ? { text: `loser-completed-${loserStatus}` }
+        : { error: `loser-${loserStatus}` }),
+      data: {
+        authority: "loser-b",
+        nested: { order: 2, values: ["wrong"] }
+      }
+    };
+
+    const winnerCommit = harness.service.commitChatSurfaceTerminal(winner);
+    const loserCommit = harness.service.commitChatSurfaceTerminal(loser);
+    await firstTerminalAppendEntered.promise;
+    releaseFirstTerminalAppend.resolve();
+    const [winnerResult, loserResult] = await Promise.allSettled([
+      winnerCommit,
+      loserCommit
+    ]);
+
+    assert.equal(winnerResult.status, "rejected");
+    if (winnerResult.status === "rejected") {
+      assert.match(String(winnerResult.reason), /Run Ledger unavailable/);
+    }
+    assert.equal(loserResult.status, "fulfilled");
+    const [terminal] = terminalEvents(await backingLedger.readRun(runId));
+    assert.ok(terminal);
+    assert.equal(terminal.type, "run.completed");
+    assert.equal(terminal.backendId, winner.backendId);
+    assert.equal(terminal.text, winner.text);
+    assert.deepEqual(terminal.data, winner.data);
+    assert.equal(answer.status, "completed");
+    assert.equal(answer.backendId, winner.backendId);
+    assert.equal(answer.text, winner.text);
+    assert.equal(answer.runTerminalRecoveryPending, "completed");
+    assert.deepEqual(
+      answer.echoInkRunTerminalRecovery?.data,
+      winner.data
+    );
+    assert.equal(
+      (harness.service as any).chatTerminalAuthorityTails.size,
+      0,
+      "the per-run authority lane must be reclaimed after the queued retry"
+    );
+  }
+}
+
+async function assertLargeDurableWinnerUsesImmutableRawIdentity(): Promise<void> {
+  const runId = "run-large-durable-authority";
+  const answer: any = {
+    id: "answer-large-durable-authority",
+    role: "assistant",
+    itemType: "assistant",
+    status: "running",
+    text: "",
+    runId,
+    backendId: "codex-cli",
+    createdAt: 1
+  };
+  const session: StoredSession = {
+    id: "session-large-durable-authority",
+    title: "Large durable authority",
+    cwd: "/vault",
+    messages: [answer],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const rawTexts = new Map<string, string>();
+  const backingLedger = new InMemoryRunLedger();
+  let terminalAppendFailures = 1;
+  const ledger: RunLedger = {
+    async append(event) {
+      if (isTerminalHarnessEvent(event) && terminalAppendFailures > 0) {
+        terminalAppendFailures -= 1;
+        throw new Error("Run Ledger unavailable");
+      }
+      await backingLedger.append(event);
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    ledger,
+    rawTexts
+  });
+  const winnerText = `winner-a:${"A".repeat(90_000)}`;
+  const loserText = `loser-b:${"B".repeat(90_000)}`;
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "hermes",
+      text: winnerText,
+      data: { source: "winner-a" }
+    }),
+    /Run Ledger unavailable/
+  );
+
+  const durableMarker = structuredClone(answer.echoInkRunTerminalRecovery);
+  assert.equal(durableMarker?.payloadSource?.kind, "raw");
+  const winnerRawRef = durableMarker?.payloadSource?.rawRef;
+  assert.equal(typeof winnerRawRef, "string");
+  assert.match(winnerRawRef, /echoink-chat-terminal/);
+  assert.equal(rawTexts.get(winnerRawRef), winnerText);
+  assert.equal(
+    JSON.stringify(durableMarker).includes("A".repeat(1_000)),
+    false,
+    "the >80k body must not be duplicated inside the settings marker"
+  );
+
+  const loserTerminal = {
+    runId,
+    status: "completed" as const,
+    backendId: "opencode",
+    text: loserText,
+    data: { source: "loser-b" }
+  };
+  const loserRawRef = echoInkChatTerminalRawRef(
+    loserTerminal,
+    answer.id
+  );
+  const loserProjection: any = {
+    ...answer,
+    rawRef: loserRawRef,
+    rawTruncatedForPreview: false
+  };
+  const loserRawWrite = prepareRawMessage(loserProjection, loserText);
+  assert.ok(loserRawWrite);
+  rawTexts.set(loserRawWrite.rawRef, loserText);
+  assert.match(loserRawRef, /echoink-chat-terminal-[a-f0-9]{24}/);
+
+  await harness.service.commitChatSurfaceTerminal(loserTerminal);
+
+  const [terminal] = terminalEvents(await backingLedger.readRun(runId));
+  assert.equal(terminal?.backendId, "hermes");
+  assert.equal(terminal?.text, winnerText);
+  assert.deepEqual(terminal?.data, { source: "winner-a" });
+  assert.equal(answer.rawRef, winnerRawRef);
+  assert.equal(rawTexts.get(answer.rawRef!), winnerText);
+  assert.notEqual(
+    loserRawRef,
+    winnerRawRef,
+    "each terminal candidate needs an immutable Raw identity"
+  );
+  assert.equal(
+    rawTexts.get(loserRawRef),
+    loserText,
+    "the losing Raw may remain as an orphan for later reference-graph GC, but must never be linked as the winner"
+  );
+  assert.deepEqual(answer.echoInkRunTerminalRecovery, durableMarker);
+}
+
+async function assertRestartRejectsNonCommitAddressedRawAuthority(): Promise<void> {
+  const fixture = await createPendingLargeRawAuthorityFixture(
+    "non-commit-addressed"
+  );
+  const marker = fixture.answer.echoInkRunTerminalRecovery;
+  assert.equal(marker?.payloadSource?.kind, "raw");
+  const originalRawRef = marker.payloadSource.rawRef;
+  const mutableRawRef = "raw/mutable-terminal-copy.txt";
+  fixture.rawTexts.set(
+    mutableRawRef,
+    fixture.terminal.text
+  );
+  marker.payloadSource.rawRef = mutableRawRef;
+  fixture.answer.rawRef = mutableRawRef;
+  assert.notEqual(mutableRawRef, originalRawRef);
+
+  const recovery = await recoverPendingLargeRawAuthority(fixture);
+
+  assert.deepEqual(recovery.settledRunIds, []);
+  assert.deepEqual(recovery.failedRunIds, [fixture.terminal.runId]);
+  assert.equal(
+    fixture.answer.echoInkRunTerminalRecovery?.payloadSource.kind,
+    "raw"
+  );
+  assert.equal(
+    fixture.answer.echoInkRunTerminalRecovery?.payloadSource.rawRef,
+    mutableRawRef,
+    "startup recovery must leave a suspicious marker pending for diagnosis"
+  );
+  assert.equal(
+    terminalEvents(
+      await fixture.backingLedger.readRun(fixture.terminal.runId)
+    ).length,
+    0
+  );
+}
+
+async function assertRestartRetainsMissingRawAuthorityForRecovery(): Promise<void> {
+  const fixture = await createPendingLargeRawAuthorityFixture("missing-raw");
+  const marker = fixture.answer.echoInkRunTerminalRecovery;
+  assert.equal(marker?.payloadSource?.kind, "raw");
+  fixture.rawTexts.delete(marker.payloadSource.rawRef);
+
+  const recovery = await recoverPendingLargeRawAuthority(fixture);
+
+  assert.deepEqual(recovery.settledRunIds, []);
+  assert.deepEqual(recovery.failedRunIds, [fixture.terminal.runId]);
+  assert.equal(
+    fixture.answer.runTerminalRecoveryPending,
+    "completed",
+    "a missing Raw payload must remain pending instead of committing a guessed terminal"
+  );
+  assert.equal(
+    terminalEvents(
+      await fixture.backingLedger.readRun(fixture.terminal.runId)
+    ).length,
+    0
+  );
+}
+
+async function assertTerminalDataRejectsNonPersistableValues(): Promise<void> {
+  const runId = "run-terminal-data-non-persistable";
+  const session: StoredSession = {
+    id: "session-terminal-data-non-persistable",
+    title: "Terminal data validation",
+    cwd: "/vault",
+    messages: [{
+      id: "answer-terminal-data-non-persistable",
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session
+  });
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "candidate",
+      data: { invalid: undefined }
+    }),
+    /non-persistable value/
+  );
+  assert.equal(harness.saveCalls.length, 0);
+  assert.equal(terminalEvents(await harness.ledger.readRun(runId)).length, 0);
+  assert.equal(
+    (session.messages[0] as any).echoInkRunTerminalRecovery,
+    undefined
+  );
+}
+
+async function assertConversationMarkerRollsBackWhenSaveFails(): Promise<void> {
+  const runId = "run-terminal-marker-save-rollback";
+  const answer: any = {
+    id: "answer-terminal-marker-save-rollback",
+    role: "assistant",
+    itemType: "assistant",
+    status: "running",
+    text: "streaming candidate",
+    runId,
+    backendId: "codex-cli",
+    createdAt: 1
+  };
+  const session: StoredSession = {
+    id: "session-terminal-marker-save-rollback",
+    title: "Terminal marker save rollback",
+    cwd: "/vault",
+    messages: [answer],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const rawTexts = new Map<string, string>();
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    rawTexts,
+    saveFailureAtCalls: [1]
+  });
+  const before = structuredClone(session.messages);
+  const failedText = `failed-save:${"X".repeat(90_000)}`;
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: failedText
+    }),
+    /Conversation persistence unavailable/
+  );
+
+  assert.deepEqual(
+    session.messages,
+    before,
+    "an uncommitted marker and its in-memory projection must roll back together"
+  );
+  assert.equal(terminalEvents(await harness.ledger.readRun(runId)).length, 0);
+  assert.equal(rawTexts.size, 1, "Raw-first failure may leave one safe orphan");
+  const [orphanRef] = rawTexts.keys();
+
+  const retryText = `retry-winner:${"Y".repeat(90_000)}`;
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "hermes",
+    text: retryText
+  });
+  assert.equal(answer.backendId, "hermes");
+  assert.equal(
+    rawTexts.get(answer.rawRef!),
+    retryText
+  );
+  assert.notEqual(answer.rawRef, orphanRef);
+}
+
+async function assertConversationMarkerRollsForwardAfterDataSaveFails(): Promise<void> {
+  const fixture = await createRealConversationPartialSaveFixture(
+    "terminal-marker-forward"
+  );
+  try {
+    const answer = fixture.session.messages[0]!;
+    const terminal = {
+      runId: fixture.runId,
+      status: "completed" as const,
+      backendId: "codex-cli" as const,
+      text: "durable despite data.json failure",
+      data: { source: "conversation-store" }
+    };
+    fixture.failNextDataSave();
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      await fixture.service.commitChatSurfaceTerminal(terminal);
+    } finally {
+      console.error = originalError;
+    }
+
+    const marker = answer.echoInkRunTerminalRecovery;
+    assert.ok(marker);
+    assert.equal(fixture.dataSaveFailures(), 1);
+    assert.equal(answer.runTerminalRecoveryPending, "completed");
+    assert.equal(answer.text, terminal.text);
+    assert.strictEqual(
+      fixture.session.messages[0],
+      answer,
+      "strict Conversation readback should reuse the live message object"
+    );
+    const [committedTerminal] = terminalEvents(
+      await fixture.ledger.readRun(fixture.runId)
+    );
+    assert.equal(committedTerminal?.type, "run.completed");
+    assert.equal(committedTerminal?.backendId, terminal.backendId);
+    assert.equal(committedTerminal?.text, terminal.text);
+    assert.deepEqual(committedTerminal?.data, terminal.data);
+
+    const restarted = fixture.createRestartedSettingsStore();
+    const stored = await restarted.readConversationSession(
+      fixture.session.id
+    );
+    const restartedMarker = stored?.messages.find(
+      (message) => message.id === answer.id
+    )?.echoInkRunTerminalRecovery;
+    assert.equal(
+      restartedMarker?.terminalCommitId,
+      marker.terminalCommitId
+    );
+    assert.equal(restartedMarker?.payloadHash, marker.payloadHash);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertConversationReadbackFailurePreservesTerminalCandidate(): Promise<void> {
+  const runId = "run-terminal-readback-unknown";
+  const session: StoredSession = {
+    id: "session-terminal-readback-unknown",
+    title: "Terminal readback unknown",
+    cwd: "/vault",
+    messages: [{
+      id: "answer-terminal-readback-unknown",
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "streaming",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    saveFailureAtCalls: [1],
+    conversationReadFailures: 1
+  });
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "candidate with unknown durable state"
+    }),
+    /readback is indeterminate.*recovery required/
+  );
+
+  const answer = session.messages[0]!;
+  assert.equal(answer.status, "completed");
+  assert.equal(answer.text, "candidate with unknown durable state");
+  assert.equal(answer.runTerminalRecoveryPending, "completed");
+  assert.ok(answer.echoInkRunTerminalRecovery?.terminalCommitId);
+  assert.equal(
+    terminalEvents(await harness.ledger.readRun(runId)).length,
+    0,
+    "an indeterminate Conversation readback must not advance the Run Ledger"
+  );
+}
+
+async function assertTerminalMarkerClearRollsBackWhenSaveFails(): Promise<void> {
+  const runId = "run-terminal-marker-clear-rollback";
+  const native = serviceTestNative("thread-terminal-marker-clear-rollback");
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-terminal-marker-clear-rollback",
+    saveFailureAtCalls: [2]
+  });
+  const result = await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "durable answer",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(harness.session, result.backendBinding!);
+  const answer: any = harness.session.messages.find((message) =>
+    message.runId === runId && message.itemType === "assistant"
+  );
+  assert.ok(answer);
+  answer.status = "completed";
+  answer.text = "durable answer";
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "durable answer"
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const marker = structuredClone(answer.echoInkRunTerminalRecovery);
+  assert.ok(marker?.terminalCommitId);
+  assert.equal(answer.runTerminalRecoveryPending, "completed");
+  assert.equal(answer.runTerminalRecovered, undefined);
+  assert.equal(
+    harness.nativeManager.records.values().next().value?.localCommit,
+    "committed"
+  );
+
+  const restarted = createServiceReceiptTestBed({
+    sessionId: harness.session.id,
+    session: harness.session,
+    ledger: harness.ledger,
+    nativeManager: harness.nativeManager
+  });
+  const recovery = await recoverStaleChatHarnessRuns({
+    messages: harness.session.messages,
+    commitLocalHistory: async () => {
+      await restarted.plugin.saveSettings(true);
+    },
+    commitRunTerminal: async (terminal, persistWinner) => {
+      await restarted.service.commitChatSurfaceTerminal(terminal, {
+        mode: "recovery-restart",
+        persistConversation: persistWinner
+      });
+    }
+  });
+  assert.deepEqual(recovery.settledRunIds, [runId]);
+  assert.equal(answer.echoInkRunTerminalRecovery, undefined);
+  assert.equal(answer.runTerminalRecoveryPending, undefined);
+  assert.equal(answer.runTerminalRecovered, true);
+}
+
+async function assertTerminalMarkerClearStaysClearedAfterDataSaveFails(): Promise<void> {
+  const fixture = await createRealConversationPartialSaveFixture(
+    "terminal-marker-clear-forward"
+  );
+  try {
+    const answer = fixture.session.messages[0]!;
+    await fixture.service.commitChatSurfaceTerminal({
+      runId: fixture.runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "durable answer before clear"
+    });
+    const marker = answer.echoInkRunTerminalRecovery;
+    assert.ok(marker);
+
+    fixture.failNextDataSave();
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      await (fixture.service as any).clearChatTerminalRecoveryPending(
+        fixture.runId,
+        marker.terminalCommitId
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    assert.equal(fixture.dataSaveFailures(), 1);
+    assert.strictEqual(
+      fixture.session.messages[0],
+      answer,
+      "clear readback should preserve the live message object"
+    );
+    assert.equal(answer.runTerminalRecoveryPending, undefined);
+    assert.equal(answer.echoInkRunTerminalRecovery, undefined);
+    assert.equal(answer.runTerminalRecovered, true);
+
+    const restarted = fixture.createRestartedSettingsStore();
+    const stored = await restarted.readConversationSession(
+      fixture.session.id
+    );
+    const restartedAnswer = stored?.messages.find(
+      (message) => message.id === answer.id
+    );
+    assert.ok(restartedAnswer);
+    assert.equal(restartedAnswer.runTerminalRecoveryPending, undefined);
+    assert.equal(restartedAnswer.echoInkRunTerminalRecovery, undefined);
+    assert.equal(restartedAnswer.runTerminalRecovered, true);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertClearReadbackFailurePreservesClearedCandidate(): Promise<void> {
+  const runId = "run-terminal-clear-readback-unknown";
+  const session: StoredSession = {
+    id: "session-terminal-clear-readback-unknown",
+    title: "Terminal clear readback unknown",
+    cwd: "/vault",
+    messages: [{
+      id: "answer-terminal-clear-readback-unknown",
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "streaming",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    saveFailureAtCalls: [2],
+    conversationReadFailures: 1
+  });
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "durable before unknown clear"
+  });
+  const answer = session.messages[0]!;
+  const marker = answer.echoInkRunTerminalRecovery;
+  assert.ok(marker);
+
+  await assert.rejects(
+    () => (harness.service as any).clearChatTerminalRecoveryPending(
+      runId,
+      marker.terminalCommitId
+    ),
+    /clear readback is indeterminate.*recovery required/
+  );
+
+  assert.equal(answer.runTerminalRecoveryPending, undefined);
+  assert.equal(answer.echoInkRunTerminalRecovery, undefined);
+  assert.equal(answer.runTerminalRecovered, true);
+}
+
+async function assertServiceOwnedSynchronousChatTerminalsWaitForConversationCommit(): Promise<void> {
+  for (const status of ["completed", "cancelled", "failed"] as const) {
+    const runId = `run-service-sync-${status}`;
+    const native = serviceTestNative(`thread-service-sync-${status}`);
+    const harness = createServiceReceiptTestBed({
+      sessionId: `session-service-sync-${status}`
+    });
+    const result = await harness.service.runWithAdapter({
+      adapter: createServiceTestAdapter({
+        result: {
+          status,
+          ...(status === "completed"
+            ? { outputText: "synchronous answer" }
+            : { error: `synchronous ${status}` }),
+          nativeExecution: native,
+          nativeThreadId: native.id
+        },
+        native,
+        emittedTerminal: status
+      }),
+      request: serviceChatRequest(runId, harness.session.id),
+      sessionProvider: () => harness.session
+    });
+
+    assert.equal(result.status, status);
+    assert.equal(
+      terminalEvents(await harness.ledger.readRun(runId)).length,
+      0,
+      `the real HarnessService must set terminalAuthority=surface for synchronous ${status}`
+    );
+    if (result.backendBinding) {
+      updateSessionBackendBinding(harness.session, result.backendBinding);
+    }
+
+    await harness.service.commitChatSurfaceTerminal({
+      runId,
+      status,
+      backendId: "codex-cli",
+      ...(status === "completed"
+        ? { text: "synchronous answer" }
+        : { error: `synchronous ${status}` })
+    });
+
+    const terminals = terminalEvents(await harness.ledger.readRun(runId));
+    assert.equal(terminals.length, 1);
+    assert.equal(
+      terminals[0]?.type,
+      status === "completed"
+        ? "run.completed"
+        : status === "cancelled"
+          ? "run.cancelled"
+          : "run.failed"
+    );
+    assert.equal(harness.nativeManager.settlementAttempts.length, 1);
+  }
+}
+
+async function assertTerminalGateFailureDoesNotRewriteBusinessWinner(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-terminal-gate-business-winner",
+    title: "Terminal gate business winner",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const backingLedger = new InMemoryRunLedger();
+  let terminalAppendFailures = 1;
+  const ledger: RunLedger = {
+    async append(event) {
+      if (isTerminalHarnessEvent(event) && terminalAppendFailures > 0) {
+        terminalAppendFailures -= 1;
+        throw new Error("Run Ledger unavailable");
+      }
+      await backingLedger.append(event);
+    },
+    async readRun(runId) {
+      return await backingLedger.readRun(runId);
+    }
+  };
+  const harness = createChatSurfaceHarness(
+    session,
+    [{
+      threadId: "thread-terminal-gate-business-winner",
+      turnId: "turn-terminal-gate-business-winner",
+      text: "unused"
+    }],
+    { ledger }
+  );
+  harness.view.plugin.runHarnessWithAdapter = async (input: any) => ({
+    runId: input.request.runId,
+    status: "completed",
+    outputText: "business winner"
+  });
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  let outcome: string;
+  try {
+    outcome = await startChatTurn(
+      harness.view,
+      session,
+      queuedTurn(
+        "terminal-gate-business-winner",
+        session.id,
+        "give me the winner"
+      ),
+      "composer"
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  const answer: any = session.messages.find((message) =>
+    message.role === "assistant" && message.itemType === "assistant"
+  );
+  assert.equal(outcome, "completed");
+  assert.equal(answer?.status, "completed");
+  assert.equal(answer?.title, undefined);
+  assert.equal(answer?.text, "business winner");
+  assert.equal(answer?.runTerminalRecoveryPending, "completed");
+  assert.equal(answer?.echoInkRunTerminalRecovery?.status, "completed");
+  assert.equal(
+    terminalEvents(await backingLedger.readRun(answer.runId)).length,
+    0,
+    "the lifecycle gate may remain pending, but it cannot rewrite the business winner as a failed response"
+  );
+}
+
+async function assertChatNativeReceiptRegistrationBeforeIntent(): Promise<void> {
+  const runId = "run-receipt-registration-before-intent";
+  const native = serviceTestNative("thread-registration-before-intent");
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-receipt-registration-before-intent"
+  });
+  const result = await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "running",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+  assert.equal(result.status, "running");
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(harness.session, result.backendBinding!);
+
+  const stateBeforeIntent = receiptStateForRun(harness.service, runId);
+  assert.ok(stateBeforeIntent);
+  assert.equal(stateBeforeIntent.registrationsClosed, true);
+  assert.equal(stateBeforeIntent.receipts.size, 1);
+  assert.equal(stateBeforeIntent.intent, undefined);
+
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "done"
+  });
+
+  assert.equal(harness.nativeManager.settlementAttempts.length, 1);
+  assert.equal(
+    harness.nativeManager.settlementAttempts[0]?.localCommit.committed,
+    true,
+    "a receipt matching the durable Conversation binding must commit locally"
+  );
+  assert.equal(receiptStateForRun(harness.service, runId), undefined);
+}
+
+async function assertChatNativeReceiptIntentBeforeRegistration(): Promise<void> {
+  const runId = "run-receipt-intent-before-registration";
+  const native = serviceTestNative("thread-intent-before-registration");
+  const registrationEntered = deferred<void>();
+  const releaseRegistration = deferred<void>();
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-receipt-intent-before-registration"
+  });
+  const run = harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "running",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native,
+      beforeRegistration: async () => {
+        registrationEntered.resolve();
+        await releaseRegistration.promise;
+      }
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+  await registrationEntered.promise;
+
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "cancelled",
+    backendId: "codex-cli",
+    error: "stopped before Native registration"
+  });
+  const stateBeforeRegistration = receiptStateForRun(harness.service, runId);
+  assert.ok(stateBeforeRegistration);
+  assert.equal(stateBeforeRegistration.registrationsClosed, false);
+  assert.equal(stateBeforeRegistration.receipts.size, 0);
+  assert.equal(stateBeforeRegistration.intent?.status, "cancelled");
+  assert.equal(harness.nativeManager.settlementAttempts.length, 0);
+
+  releaseRegistration.resolve();
+  await run;
+
+  assert.equal(harness.nativeManager.settlementAttempts.length, 1);
+  assert.equal(
+    harness.nativeManager.settlementAttempts[0]?.localCommit.committed,
+    false
+  );
+  assert.match(
+    harness.nativeManager.settlementAttempts[0]?.localCommit.error ?? "",
+    /no durable Conversation binding/
+  );
+  assert.equal(receiptStateForRun(harness.service, runId), undefined);
+}
+
+async function assertChatNativeReceiptIdentityAndIntentConflictsFailClosed(): Promise<void> {
+  const runId = "run-receipt-idempotency-conflict";
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-receipt-idempotency-conflict"
+  });
+  const captureReceipt = (harness.service as any).captureChatNativeExecutionReceipt.bind(
+    harness.service
+  ) as (receipt: unknown, targetRunId: string) => Promise<void>;
+  const recordIntent = (harness.service as any).recordChatNativeSettlementIntent.bind(
+    harness.service
+  ) as (targetRunId: string, intent: unknown) => Promise<void>;
+  const receipt = {
+    recordId: "receipt-stable-id",
+    sessionId: harness.session.id,
+    native: serviceTestNative("thread-receipt-stable")
+  };
+  await harness.nativeManager.recordCreated({
+    id: receipt.recordId,
+    runId,
+    sessionId: receipt.sessionId,
+    surface: "chat",
+    workflow: "chat.generic",
+    native: receipt.native,
+    policy: {
+      historyAuthority: "echoink",
+      mode: "leased-conversation",
+      preferredDisposition: ["retain"],
+      retainWhenLocalCommitFails: true,
+      cleanupRequiredForTaskSuccess: false
+    },
+    localCommit: "pending",
+    cleanup: "not-needed",
+    attempts: 0,
+    nextAttemptAt: 0,
+    lastError: "",
+    createdAt: 1,
+    settledAt: 0,
+    committedAt: 0,
+    disposedAt: 0
+  });
+
+  await captureReceipt(receipt, runId);
+  await captureReceipt(structuredClone(receipt), runId);
+  assert.equal(receiptStateForRun(harness.service, runId)?.receipts.size, 1);
+  await assert.rejects(
+    () => captureReceipt({
+      ...receipt,
+      native: serviceTestNative("thread-receipt-conflict")
+    }, runId),
+    /receipt conflicts/
+  );
+
+  const stableIntent = {
+    status: "completed",
+    runOutcome: "success",
+    terminalCommitId: "echoink:chat-terminal:v1:stable-intent"
+  };
+  await recordIntent(runId, stableIntent);
+  await recordIntent(runId, stableIntent);
+  await assert.rejects(
+    () => recordIntent(runId, {
+      status: "failed",
+      runOutcome: "failed",
+      terminalCommitId: "echoink:chat-terminal:v1:conflicting-intent"
+    }),
+    /settlement intent conflicts/
+  );
+  assert.equal(
+    harness.nativeManager.settlementAttempts.length,
+    1,
+    "idempotent receipt and intent observations must settle a record only once"
+  );
+}
+
+async function assertChatNativeSettlementFailureRemainsRetryable(): Promise<void> {
+  const runId = "run-receipt-settlement-retry";
+  const native = serviceTestNative("thread-receipt-settlement-retry");
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-receipt-settlement-retry",
+    settlementFailures: 1
+  });
+  const result = await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "done",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(harness.session, result.backendBinding!);
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "done"
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(harness.nativeManager.settlementAttempts.length, 2);
+  assert.equal(
+    terminalEvents(await harness.ledger.readRun(runId)).length,
+    1
+  );
+  assert.equal(receiptStateForRun(harness.service, runId), undefined);
+}
+
+async function assertLedgerFailureRecoversSameWinnerAfterRestart(): Promise<void> {
+  const runId = "run-chat-ledger-restart-recovery";
+  const native = serviceTestNative("thread-chat-ledger-restart-recovery");
+  const backingLedger = new InMemoryRunLedger();
+  let terminalAppendFailures = 1;
+  const ledger: RunLedger = {
+    async append(event) {
+      if (isTerminalHarnessEvent(event) && terminalAppendFailures > 0) {
+        terminalAppendFailures -= 1;
+        throw new Error("Run Ledger unavailable");
+      }
+      await backingLedger.append(event);
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const serviceA = createServiceReceiptTestBed({
+    sessionId: "session-chat-ledger-restart-recovery",
+    ledger
+  });
+  const result = await serviceA.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "durable winner",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, serviceA.session.id),
+    sessionProvider: () => serviceA.session
+  });
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(serviceA.session, result.backendBinding!);
+  const answer = serviceA.session.messages.find((message) =>
+    message.runId === runId && message.itemType === "assistant"
+  );
+  assert.ok(answer);
+  answer.status = "completed";
+  answer.text = "durable winner";
+
+  await assert.rejects(
+    () => serviceA.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "durable winner"
+    }),
+    /Run Ledger unavailable/
+  );
+  assert.equal(answer.runTerminalRecoveryPending, "completed");
+  assert.equal(terminalEvents(await backingLedger.readRun(runId)).length, 0);
+  assert.equal(serviceA.nativeManager.settlementAttempts.length, 0);
+
+  const serviceB = createServiceReceiptTestBed({
+    sessionId: serviceA.session.id,
+    session: serviceA.session,
+    ledger,
+    nativeManager: serviceA.nativeManager
+  });
+  assert.equal(receiptStateForRun(serviceB.service, runId), undefined);
+  const recover = async () => {
+    await serviceB.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "durable winner"
+    }, {
+      mode: "recovery-restart",
+      persistConversation: async (winner) => {
+        applyChatRunTerminalWinner(serviceB.session.messages, winner);
+        await serviceB.plugin.saveSettings(true);
+      }
+    });
+  };
+
+  await recover();
+  await recover();
+
+  const terminals = terminalEvents(await backingLedger.readRun(runId));
+  assert.equal(terminals.length, 1);
+  assert.equal(terminals[0]?.type, "run.completed");
+  assert.equal(serviceA.nativeManager.settlementAttempts.length, 1);
+  assert.equal(
+    serviceA.nativeManager.records.values().next().value?.localCommit,
+    "committed"
+  );
+  assert.equal(receiptStateForRun(serviceB.service, runId), undefined);
+}
+
+async function assertLiveNativeSettlementExhaustionRecoversAfterRestart(): Promise<void> {
+  const runId = "run-chat-live-native-exhaustion";
+  const native = serviceTestNative("thread-chat-live-native-exhaustion");
+  const ledger = new InMemoryRunLedger();
+  const serviceA = createServiceReceiptTestBed({
+    sessionId: "session-chat-live-native-exhaustion",
+    ledger,
+    settlementFailures: 3
+  });
+  const result = await serviceA.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "winner survives Native failure",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, serviceA.session.id),
+    sessionProvider: () => serviceA.session
+  });
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(serviceA.session, result.backendBinding!);
+  const answer = serviceA.session.messages.find((message) =>
+    message.runId === runId && message.itemType === "assistant"
+  );
+  assert.ok(answer);
+  answer.status = "completed";
+  answer.text = "winner survives Native failure";
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await serviceA.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: answer.text
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(terminalEvents(await ledger.readRun(runId)).length, 1);
+  assert.equal(serviceA.nativeManager.settlementAttempts.length, 3);
+  assert.equal(answer.runTerminalRecoveryPending, "completed");
+  assert.equal(receiptStateForRun(serviceA.service, runId), undefined);
+  assert.equal(
+    serviceA.nativeManager.records.values().next().value?.localCommit,
+    "pending"
+  );
+
+  const serviceB = createServiceReceiptTestBed({
+    sessionId: serviceA.session.id,
+    session: serviceA.session,
+    ledger,
+    nativeManager: serviceA.nativeManager
+  });
+  await serviceB.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: answer.text
+  }, {
+    mode: "recovery-restart",
+    persistConversation: async (winner) => {
+      applyChatRunTerminalWinner(serviceB.session.messages, winner);
+      await serviceB.plugin.saveSettings(true);
+    }
+  });
+
+  assert.equal(terminalEvents(await ledger.readRun(runId)).length, 1);
+  assert.equal(serviceA.nativeManager.settlementAttempts.length, 4);
+  assert.equal(
+    serviceA.nativeManager.records.values().next().value?.localCommit,
+    "committed"
+  );
+  assert.equal(receiptStateForRun(serviceB.service, runId), undefined);
+}
+
+async function assertSynchronousChatConversationCommitFailureRetainsNative(): Promise<void> {
+  const runId = "run-chat-conversation-commit-failure";
+  const native = serviceTestNative("thread-chat-conversation-commit-failure");
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-chat-conversation-commit-failure",
+    saveFailures: 1
+  });
+  await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "candidate",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "candidate"
+    }),
+    /Conversation persistence unavailable/
+  );
+  assert.equal(harness.saveCalls.length, 1);
+  assert.equal(terminalEvents(await harness.ledger.readRun(runId)).length, 0);
+  assert.equal(harness.nativeManager.settlementAttempts.length, 0);
+  assert.ok(receiptStateForRun(harness.service, runId));
+}
+
+async function assertSynchronousChatLedgerCommitFailureRetainsNative(): Promise<void> {
+  const runId = "run-chat-ledger-commit-failure";
+  const native = serviceTestNative("thread-chat-ledger-commit-failure");
+  const backingLedger = new InMemoryRunLedger();
+  const ledger: RunLedger = {
+    async append(event) {
+      if (isTerminalHarnessEvent(event)) throw new Error("Run Ledger unavailable");
+      await backingLedger.append(event);
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-chat-ledger-commit-failure",
+    ledger
+  });
+  await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "candidate",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "completed",
+      backendId: "codex-cli",
+      text: "candidate"
+    }),
+    /Run Ledger unavailable/
+  );
+  assert.equal(harness.saveCalls.length, 1);
+  assert.equal(terminalEvents(await backingLedger.readRun(runId)).length, 0);
+  assert.equal(harness.nativeManager.settlementAttempts.length, 0);
+  assert.ok(receiptStateForRun(harness.service, runId));
 }
 
 async function assertChatStopCommitsCancellationTerminal(): Promise<void> {
@@ -128,14 +1887,16 @@ async function assertChatStopCommitsCancellationTerminal(): Promise<void> {
     activeRunId: "run-chat-stop",
     activeTurnId: "turn-chat-stop",
     activeRunKind: "chat",
+    activeRunNativeExecutionRecordIds: [" record-chat-stop ", "record-chat-stop"],
     editorActionActiveTimeoutMs: 1,
     running: true,
     plugin: {
+      withEchoInkConversationMutation: immediateConversationMutation,
       cancelHarnessRun: async (runId: string) => {
         calls.push(`cancel:${runId}`);
       },
-      saveSettings: async () => { calls.push("history"); },
-      settleHarnessRunTerminal: async (input: any) => {
+      commitChatSurfaceTerminal: async (input: any) => {
+        calls.push("history");
         calls.push("ledger");
         assert.deepEqual(input, {
           runId: "run-chat-stop",
@@ -153,12 +1914,18 @@ async function assertChatStopCommitsCancellationTerminal(): Promise<void> {
     finishRunningProcessMessages: () => undefined,
     addMessageToSession: (_session: StoredSession, message: any) => session.messages.push({ id: "cancel-message", createdAt: 2, ...message }),
     clearActiveRun: () => { calls.push("clear"); view.activeRunId = ""; },
-    applyStatus: () => undefined
+    applyStatus: () => undefined,
+    afterTurnSettled: async () => undefined
   };
 
   await stopTurn(view);
 
-  assert.deepEqual(calls, ["cancel:run-chat-stop", "clear", "history", "ledger"]);
+  assert.deepEqual(calls, [
+    "cancel:run-chat-stop",
+    "history",
+    "ledger",
+    "clear"
+  ]);
   assert.equal(session.messages.at(-1)?.runId, "run-chat-stop");
   assert.equal(session.messages.at(-1)?.status, "canceled");
   assert.equal(view.activeRunId, "");
@@ -181,10 +1948,11 @@ async function assertChatStopUsesActualBackend(): Promise<void> {
     editorActionActiveTimeoutMs: 1,
     running: true,
     plugin: {
+      withEchoInkConversationMutation: immediateConversationMutation,
       interruptCodexHarnessTurn: async () => { calls.push("wrong-interrupt"); },
       cancelHarnessRun: async (runId: string) => { calls.push(`cancel:${runId}`); },
-      saveSettings: async () => { calls.push("history"); },
-      settleHarnessRunTerminal: async (input: any) => {
+      commitChatSurfaceTerminal: async (input: any) => {
+        calls.push("history");
         calls.push("ledger");
         assert.equal(input.backendId, "hermes");
       }
@@ -197,12 +1965,13 @@ async function assertChatStopUsesActualBackend(): Promise<void> {
     finishRunningProcessMessages: () => undefined,
     addMessageToSession: (_session: StoredSession, message: any) => session.messages.push({ id: "hermes-cancel", createdAt: 2, ...message }),
     clearActiveRun: () => { calls.push("clear"); view.activeRunId = ""; },
-    applyStatus: () => undefined
+    applyStatus: () => undefined,
+    afterTurnSettled: async () => undefined
   };
 
   await stopTurn(view);
 
-  assert.deepEqual(calls, ["cancel:run-hermes-stop", "clear", "history", "ledger"]);
+  assert.deepEqual(calls, ["cancel:run-hermes-stop", "history", "ledger", "clear"]);
 }
 
 async function assertEditorStopUsesHarnessCancel(): Promise<void> {
@@ -213,6 +1982,7 @@ async function assertEditorStopUsesHarnessCancel(): Promise<void> {
     activeRunKind: "chat",
     running: true,
     plugin: {
+      withEchoInkConversationMutation: immediateConversationMutation,
       cancelHarnessRun: async (runId: string) => {
         calls.push(`cancel:${runId}`);
       }
@@ -376,6 +2146,10 @@ async function assertKnowledgeTurnSettlesNativeBeforePostRunSaveFailure(): Promi
   const view: any = {
     plugin: {
       settings,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       getKnowledgeBaseManager: () => manager,
       externalizeMessageText: async (_message: unknown, _text: string) => { calls.push("externalize"); },
       saveSettings: async () => {
@@ -455,6 +2229,10 @@ async function assertKnowledgeCleanupFailureDoesNotFailCompletedTurn(): Promise<
   const view: any = {
     plugin: {
       settings,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       getKnowledgeBaseManager: () => manager,
       externalizeMessageText: async () => undefined,
       saveSettings: async () => undefined,
@@ -504,6 +2282,105 @@ async function assertKnowledgeCleanupFailureDoesNotFailCompletedTurn(): Promise<
   } finally {
     console.warn = originalWarn;
   }
+}
+
+async function assertFastMaintenanceRecoveryCannotBeOverwrittenByPendingResult(): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "opencode";
+  settings.knowledgeBase.backend = "opencode";
+  settings.activeSessionId = "session-fast-maintenance-recovery";
+  const session: StoredSession = {
+    id: settings.activeSessionId,
+    title: "Knowledge",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  let nativeSettlementCalls = 0;
+  const manager = {
+    maintenanceRecoveryStatus: { state: "ready" as const, message: "" },
+    handleUserMessage: async (
+      _text: string,
+      _attachments: unknown[],
+      overrides: { workflowRunId?: string }
+    ) => {
+      await Promise.resolve();
+      const assistant = session.messages.find(
+        (message) => message.role === "assistant" && message.itemType === "knowledgeBase"
+      );
+      assert.ok(assistant, "the live maintenance assistant must exist before recovery projects");
+      assistant.status = "completed";
+      assistant.text = "维护已由当前进程恢复并提交";
+      assistant.completedAt = Date.now();
+      assistant.runTerminalRecovered = true;
+      delete assistant.runTerminalRecoveryPending;
+      return {
+        status: "failed" as const,
+        message: "旧的 WAL pending 返回值",
+        workflowRunId: overrides.workflowRunId,
+        maintenanceRecoveryState: "pending" as const
+      };
+    },
+    getLastNativeLifecycleSummary: () => null
+  };
+  const view: any = {
+    plugin: {
+      settings,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
+      getKnowledgeBaseManager: () => manager,
+      externalizeMessageText: async () => undefined,
+      saveSettings: async () => undefined,
+      settlePendingKnowledgeBaseNativeExecutions: async () => {
+        nativeSettlementCalls += 1;
+      }
+    },
+    running: false,
+    activeRunId: "",
+    activeRunKind: "",
+    activeRunSessionId: "",
+    messagesBottomFollowPaused: false,
+    clearComposerDraft: () => undefined,
+    renderTabs: () => undefined,
+    renderMessagesIfActive: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    clearTurnWatchdog: () => undefined,
+    clearActiveRun: () => undefined,
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    finishPlanMessage: () => undefined,
+    moveMessageToEnd: () => undefined,
+    fillKnowledgeBaseCommand: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined
+  };
+
+  const outcome = await startKnowledgeBaseTurn(
+    view,
+    session,
+    {
+      ...queuedTurn(
+        "fast-maintenance-recovery",
+        session.id,
+        "/maintain"
+      ),
+      kind: "knowledge-base"
+    },
+    "composer"
+  );
+  const assistant = session.messages.find(
+    (message) => message.role === "assistant" && message.itemType === "knowledgeBase"
+  );
+  assert.equal(outcome, "completed");
+  assert.equal(assistant?.status, "completed");
+  assert.equal(assistant?.text, "维护已由当前进程恢复并提交");
+  assert.equal(assistant?.runTerminalRecovered, true);
+  assert.equal(nativeSettlementCalls, 0);
 }
 
 async function assertKnowledgeUnloadWaitsForActiveRunSettlement(): Promise<void> {
@@ -576,13 +2453,16 @@ async function assertChatStopPropagatesCancelFailureAndAllowsRetry(): Promise<vo
     editorActionActiveTimeoutMs: 1,
     running: true,
     plugin: {
+      withEchoInkConversationMutation: immediateConversationMutation,
       cancelHarnessRun: async (runId: string) => {
         attempts += 1;
         calls.push(`cancel:${attempts}:${runId}`);
         if (attempts === 1) throw failure;
       },
-      saveSettings: async () => { calls.push("history"); },
-      settleHarnessRunTerminal: async () => { calls.push("ledger"); }
+      commitChatSurfaceTerminal: async () => {
+        calls.push("history");
+        calls.push("ledger");
+      }
     },
     isEditorActionRunActive: () => false,
     activeRunSession: () => session,
@@ -595,7 +2475,8 @@ async function assertChatStopPropagatesCancelFailureAndAllowsRetry(): Promise<vo
       calls.push("clear");
       view.activeRunId = "";
     },
-    applyStatus: () => { calls.push("apply"); }
+    applyStatus: () => { calls.push("apply"); },
+    afterTurnSettled: async () => undefined
   };
 
   await assert.rejects(() => stopTurn(view), failure);
@@ -613,14 +2494,237 @@ async function assertChatStopPropagatesCancelFailureAndAllowsRetry(): Promise<vo
     "pause",
     "thinking",
     "process",
-    "clear",
     "history",
     "ledger",
+    "clear",
     "apply"
   ]);
   assert.equal(view.running, false);
   assert.equal(view.activeRunId, "");
   assert.equal(session.messages.at(-1)?.status, "canceled");
+}
+
+async function assertChatStopFailedCommitReleasesLaneFailClosed(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const commitEntered = deferred<void>();
+  const releaseCommit = deferred<void>();
+  const session: StoredSession = {
+    id: "session-chat-stop-failed-commit-lane",
+    title: "Chat stop failed commit lane",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  let pauseCalls = 0;
+  let recoveryRequiredCalls = 0;
+  let afterTurnSettledCalls = 0;
+  const failure = new Error("stop terminal commit failed");
+  const view: any = {
+    activeRunId: "run-chat-stop-failed-commit-lane",
+    activeTurnId: "turn-chat-stop-failed-commit-lane",
+    activeRunKind: "chat",
+    editorActionActiveTimeoutMs: 1,
+    running: true,
+    plugin: {
+      withEchoInkConversationMutation: async <T>(
+        conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await lane.withConversationMutation(conversationId, action),
+      cancelHarnessRun: async () => undefined,
+      commitChatSurfaceTerminal: async () => {
+        commitEntered.resolve();
+        await releaseCommit.promise;
+        throw failure;
+      }
+    },
+    isEditorActionRunActive: () => false,
+    activeRunSession: () => session,
+    pauseQueueForSession: () => { pauseCalls += 1; },
+    requireQueueRecoveryForSession: () => { recoveryRequiredCalls += 1; },
+    clearTurnWatchdog: () => undefined,
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    addMessageToSession: (_session: StoredSession, message: any) => {
+      session.messages.push({ id: "stop-failed-commit", createdAt: 2, ...message });
+    },
+    clearActiveRun: () => { view.activeRunId = ""; },
+    applyStatus: () => undefined,
+    afterTurnSettled: async () => { afterTurnSettledCalls += 1; }
+  };
+
+  const stopPromise = stopTurn(view);
+  await commitEntered.promise;
+  assert.equal(
+    view.running,
+    true,
+    "Stop must keep context rotation blocked until terminal persistence settles"
+  );
+
+  let laterMutationEntered = false;
+  const laterMutation = lane.withConversationMutation(session.id, async () => {
+    laterMutationEntered = true;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(laterMutationEntered, false);
+
+  releaseCommit.resolve();
+  await assert.rejects(() => stopPromise, failure);
+  await laterMutation;
+  assert.equal(laterMutationEntered, true, "a failed Stop commit must still release the lane");
+  assert.equal(view.running, false);
+  assert.equal(view.activeRunId, "");
+  assert.equal(pauseCalls, 1, "Stop commit failure must leave the queue fail-closed");
+  assert.equal(recoveryRequiredCalls, 1);
+  assert.equal(
+    afterTurnSettledCalls,
+    0,
+    "Stop commit failure must not run generic settlement"
+  );
+}
+
+async function assertChatStopBeforeNativeRegistrationRetainsRecoveryEvidence(): Promise<void> {
+  const registrationEntered = deferred<void>();
+  const releaseRegistration = deferred<void>();
+  const session: StoredSession = {
+    id: "session-chat-stop-before-registration",
+    title: "Chat stop before registration",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-chat-stop-before-registration",
+    turnId: "turn-chat-stop-before-registration",
+    text: "",
+    autoComplete: false,
+    beforeStartThread: async () => {
+      registrationEntered.resolve();
+      await releaseRegistration.promise;
+    }
+  }]);
+
+  const turn = startChatTurn(
+    harness.view,
+    session,
+    queuedTurn("chat-stop-before-registration", session.id, "continue"),
+    "composer"
+  );
+  await registrationEntered.promise;
+  const runId = harness.view.activeRunId;
+
+  await stopTurn(harness.view);
+  assert.deepEqual(harness.terminalCalls, [{ runId, status: "cancelled" }]);
+  assert.equal(
+    harness.nativeSettlements.length,
+    0,
+    "Stop must be able to commit before the Native registration receipt exists"
+  );
+
+  releaseRegistration.resolve();
+  assert.equal(await turn, "cancelled");
+  await waitFor(() => harness.nativeSettlements.length === 1);
+
+  const settlement = harness.nativeSettlements[0]!;
+  assert.equal(settlement.runOutcome, "cancelled");
+  assert.equal(settlement.localCommit.committed, false);
+  const record = harness.nativeRecords.get(settlement.recordId);
+  assert.equal(record?.localCommit, "failed");
+  assert.equal(record?.cleanup, "retained-for-recovery");
+  assert.match(record?.lastError ?? "", /no durable Conversation binding/);
+}
+
+async function assertChatStopIgnoresLateCompletedTerminal(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-chat-stop-late-completed",
+    title: "Chat stop late completed",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-chat-stop-late-completed",
+    turnId: "turn-chat-stop-late-completed",
+    text: "late answer",
+    autoComplete: false
+  }]);
+
+  const outcome = await startChatTurn(
+    harness.view,
+    session,
+    queuedTurn("chat-stop-late-completed", session.id, "continue"),
+    "composer"
+  );
+  assert.equal(outcome, "running");
+  const runId = harness.view.activeRunId;
+
+  await stopTurn(harness.view);
+  assert.equal(
+    harness.view.turnQueue.isSessionQueuePaused(session.id),
+    false,
+    "successful Stop with no queued work must not fabricate an ordinary pause"
+  );
+  assert.equal(harness.view.turnQueue.isSessionRecoveryRequired(session.id), false);
+  assert.equal(harness.nativeSettlements.length, 1);
+  assert.equal(harness.nativeSettlements[0]?.localCommit.committed, true);
+  const stoppedRecord = harness.nativeRecords.get(
+    harness.nativeSettlements[0]?.recordId
+  );
+  assert.equal(stoppedRecord?.localCommit, "committed");
+  assert.equal(stoppedRecord?.cleanup, "not-needed");
+  const messagesAfterWinner = structuredClone(session.messages);
+  const terminalCountAfterWinner = harness.terminalCalls.length;
+  const nativeCountAfterWinner = harness.nativeSettlements.length;
+  const saveCountAfterWinner = harness.saveCalls.length;
+  const queueCountAfterWinner = harness.afterTurnSettledCalls.length;
+
+  harness.notificationHub.dispatch({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "assistant-turn-chat-stop-late-completed",
+        threadId: "thread-chat-stop-late-completed",
+        turnId: "turn-chat-stop-late-completed",
+        type: "agentMessage",
+        text: "late answer"
+      }
+    }
+  } as any);
+  harness.notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-chat-stop-late-completed",
+      turn: {
+        id: "turn-chat-stop-late-completed",
+        threadId: "thread-chat-stop-late-completed",
+        status: "completed"
+      }
+    }
+  } as any);
+
+  await waitFor(() => harness.ignoredLateTerminalAppendInputs.length === 1);
+  const ledgerEvents = await harness.ledger.readRun(runId);
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.surface_terminal.ignored").length,
+    1,
+    "the late terminal warning must be durably appended exactly once"
+  );
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.completed").length,
+    0,
+    "the late adapter completion must not replace the stop terminal"
+  );
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.cancelled").length,
+    1
+  );
+  assert.deepEqual(session.messages, messagesAfterWinner);
+  assert.equal(harness.terminalCalls.length, terminalCountAfterWinner);
+  assert.equal(harness.nativeSettlements.length, nativeCountAfterWinner);
+  assert.equal(harness.saveCalls.length, saveCountAfterWinner);
+  assert.equal(harness.afterTurnSettledCalls.length, queueCountAfterWinner);
 }
 
 async function assertEditorStopPropagatesCancelFailureAndAllowsRetry(): Promise<void> {
@@ -673,6 +2777,517 @@ async function assertEditorStopPropagatesCancelFailureAndAllowsRetry(): Promise<
   assert.equal(view.activeRunId, "");
   assert.equal(view.activeTurnId, "");
   assert.equal(view.editorActionCurrentItemIds.size, 0);
+}
+
+async function assertChatWatchdogSettlesNativeAfterDurableCommit(): Promise<void> {
+  const calls: string[] = [];
+  let watchdog: (() => void) | undefined;
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    setTimeout: (callback: () => void) => {
+      watchdog = callback;
+      return 1;
+    }
+  };
+  const session: StoredSession = {
+    id: "session-chat-watchdog",
+    title: "Chat watchdog",
+    cwd: "/vault",
+    messages: [{
+      id: "chat-watchdog-user",
+      role: "user",
+      text: "continue",
+      runId: "run-chat-watchdog",
+      backendId: "opencode",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const view: any = {
+    activeRunId: "run-chat-watchdog",
+    activeTurnId: "turn-chat-watchdog",
+    activeRunKind: "chat",
+    activeRunNativeExecutionRecordIds: ["record-chat-watchdog"],
+    running: true,
+    plugin: {
+      withEchoInkConversationMutation: immediateConversationMutation,
+      cancelHarnessRun: async (runId: string) => { calls.push(`cancel:${runId}`); },
+      commitChatSurfaceTerminal: async (input: any) => {
+        calls.push("history");
+        calls.push(`ledger:${input.status}:${input.backendId}`);
+      }
+    },
+    clearTurnWatchdog: () => undefined,
+    isEditorActionRunActive: () => false,
+    activeRunSession: () => session,
+    pauseQueueForSession: () => undefined,
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    addMessageToSession: () => undefined,
+    clearActiveRun: () => {
+      view.activeRunId = "";
+      view.activeRunNativeExecutionRecordIds = [];
+    },
+    applyStatus: () => undefined,
+    afterTurnSettled: async () => undefined
+  };
+
+  try {
+    armTurnWatchdog(view, 1, "timeout");
+    assert.ok(watchdog);
+    watchdog();
+    await waitFor(() => calls.some((call) => call.startsWith("ledger:")));
+    assert.deepEqual(calls, [
+      "cancel:run-chat-watchdog",
+      "history",
+      "ledger:failed:opencode"
+    ]);
+  } finally {
+    (globalThis as any).window = previousWindow;
+  }
+}
+
+async function assertChatWatchdogFailedCommitReleasesLaneFailClosed(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const commitEntered = deferred<void>();
+  const releaseCommit = deferred<void>();
+  let watchdog: (() => void) | undefined;
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    setTimeout: (callback: () => void) => {
+      watchdog = callback;
+      return 1;
+    }
+  };
+  const session: StoredSession = {
+    id: "session-chat-watchdog-failed-commit-lane",
+    title: "Chat watchdog failed commit lane",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  let pauseCalls = 0;
+  let recoveryRequiredCalls = 0;
+  let afterTurnSettledCalls = 0;
+  const view: any = {
+    activeRunId: "run-chat-watchdog-failed-commit-lane",
+    activeTurnId: "turn-chat-watchdog-failed-commit-lane",
+    activeRunKind: "chat",
+    running: true,
+    plugin: {
+      withEchoInkConversationMutation: async <T>(
+        conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await lane.withConversationMutation(conversationId, action),
+      cancelHarnessRun: async () => undefined,
+      commitChatSurfaceTerminal: async () => {
+        commitEntered.resolve();
+        await releaseCommit.promise;
+        throw new Error("watchdog terminal commit failed");
+      }
+    },
+    clearTurnWatchdog: () => undefined,
+    isEditorActionRunActive: () => false,
+    activeRunSession: () => session,
+    pauseQueueForSession: () => { pauseCalls += 1; },
+    requireQueueRecoveryForSession: () => { recoveryRequiredCalls += 1; },
+    finishThinkingMessage: () => undefined,
+    finishRunningProcessMessages: () => undefined,
+    addMessageToSession: (_session: StoredSession, message: any) => {
+      session.messages.push({ id: "watchdog-failed-commit", createdAt: 2, ...message });
+    },
+    clearActiveRun: () => { view.activeRunId = ""; },
+    applyStatus: () => undefined,
+    afterTurnSettled: async () => { afterTurnSettledCalls += 1; }
+  };
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    armTurnWatchdog(view, 1, "timeout");
+    assert.ok(watchdog);
+    watchdog();
+    await commitEntered.promise;
+    assert.equal(
+      view.running,
+      true,
+      "Watchdog must keep context rotation blocked until terminal persistence settles"
+    );
+
+    let laterMutationEntered = false;
+    const laterMutation = lane.withConversationMutation(session.id, async () => {
+      laterMutationEntered = true;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.equal(laterMutationEntered, false);
+
+    releaseCommit.resolve();
+    await laterMutation;
+    await waitFor(() => view.running === false);
+    assert.equal(laterMutationEntered, true, "a failed Watchdog commit must release the lane");
+    assert.equal(view.activeRunId, "");
+    assert.equal(pauseCalls, 1, "Watchdog commit failure must leave the queue fail-closed");
+    assert.equal(recoveryRequiredCalls, 1);
+    assert.equal(
+      afterTurnSettledCalls,
+      0,
+      "Watchdog commit failure must not run generic settlement"
+    );
+  } finally {
+    console.error = originalError;
+    releaseCommit.resolve();
+    (globalThis as any).window = previousWindow;
+  }
+}
+
+async function assertChatWatchdogBeforeNativeRegistrationRetainsRecoveryEvidence(): Promise<void> {
+  const registrationEntered = deferred<void>();
+  const releaseRegistration = deferred<void>();
+  let watchdog: (() => void) | undefined;
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    setTimeout: (callback: () => void) => {
+      watchdog = callback;
+      return 1;
+    }
+  };
+  const session: StoredSession = {
+    id: "session-chat-watchdog-before-registration",
+    title: "Chat watchdog before registration",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-chat-watchdog-before-registration",
+    turnId: "turn-chat-watchdog-before-registration",
+    text: "",
+    autoComplete: false,
+    beforeStartThread: async () => {
+      registrationEntered.resolve();
+      await releaseRegistration.promise;
+    }
+  }]);
+
+  try {
+    const turn = startChatTurn(
+      harness.view,
+      session,
+      queuedTurn("chat-watchdog-before-registration", session.id, "continue"),
+      "composer"
+    );
+    await registrationEntered.promise;
+    const runId = harness.view.activeRunId;
+
+    armTurnWatchdog(harness.view, 1, "timeout before Native registration");
+    assert.ok(watchdog);
+    watchdog();
+    await waitFor(() => harness.terminalCalls.length === 1);
+    assert.deepEqual(harness.terminalCalls, [{ runId, status: "failed" }]);
+    assert.equal(harness.nativeSettlements.length, 0);
+
+    releaseRegistration.resolve();
+    assert.equal(await turn, "failed");
+    await waitFor(() => harness.nativeSettlements.length === 1);
+    const settlement = harness.nativeSettlements[0]!;
+    assert.equal(settlement.runOutcome, "failed");
+    assert.equal(settlement.localCommit.committed, false);
+    const record = harness.nativeRecords.get(settlement.recordId);
+    assert.equal(record?.localCommit, "failed");
+    assert.equal(record?.cleanup, "retained-for-recovery");
+  } finally {
+    releaseRegistration.resolve();
+    (globalThis as any).window = previousWindow;
+  }
+}
+
+async function assertChatWatchdogIgnoresLateFailedTerminal(): Promise<void> {
+  let watchdog: (() => void) | undefined;
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    setTimeout: (callback: () => void) => {
+      watchdog = callback;
+      return 1;
+    }
+  };
+  const session: StoredSession = {
+    id: "session-chat-watchdog-late-failed",
+    title: "Chat watchdog late failed",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-chat-watchdog-late-failed",
+    turnId: "turn-chat-watchdog-late-failed",
+    text: "",
+    autoComplete: false
+  }]);
+
+  try {
+    const outcome = await startChatTurn(
+      harness.view,
+      session,
+      queuedTurn("chat-watchdog-late-failed", session.id, "continue"),
+      "composer"
+    );
+    assert.equal(outcome, "running");
+    const runId = harness.view.activeRunId;
+
+    armTurnWatchdog(harness.view, 1, "timeout");
+    assert.ok(watchdog);
+    watchdog();
+    await waitFor(() => harness.nativeSettlements.length === 1);
+    assert.equal(harness.nativeSettlements[0]?.localCommit.committed, true);
+    const watchdogRecord = harness.nativeRecords.get(
+      harness.nativeSettlements[0]?.recordId
+    );
+    assert.equal(watchdogRecord?.localCommit, "committed");
+    assert.equal(watchdogRecord?.cleanup, "not-needed");
+
+    const messagesAfterWinner = structuredClone(session.messages);
+    const terminalCountAfterWinner = harness.terminalCalls.length;
+    const nativeCountAfterWinner = harness.nativeSettlements.length;
+    const saveCountAfterWinner = harness.saveCalls.length;
+    const queueCountAfterWinner = harness.afterTurnSettledCalls.length;
+
+    harness.notificationHub.dispatch({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-chat-watchdog-late-failed",
+        turn: {
+          id: "turn-chat-watchdog-late-failed",
+          threadId: "thread-chat-watchdog-late-failed",
+          status: "failed",
+          error: "late provider failure"
+        }
+      }
+    } as any);
+
+    await waitFor(() => harness.ignoredLateTerminalAppendInputs.length === 1);
+    const ledgerEvents = await harness.ledger.readRun(runId);
+    assert.equal(
+      ledgerEvents.filter((event) => event.type === "run.surface_terminal.ignored").length,
+      1
+    );
+    assert.equal(
+      ledgerEvents.filter((event) => event.type === "run.failed").length,
+      1,
+      "the watchdog failure must remain the only failed Run terminal"
+    );
+    assert.deepEqual(session.messages, messagesAfterWinner);
+    assert.equal(harness.terminalCalls.length, terminalCountAfterWinner);
+    assert.equal(harness.nativeSettlements.length, nativeCountAfterWinner);
+    assert.equal(harness.saveCalls.length, saveCountAfterWinner);
+    assert.equal(harness.afterTurnSettledCalls.length, queueCountAfterWinner);
+  } finally {
+    (globalThis as any).window = previousWindow;
+  }
+}
+
+async function assertLateChatTerminalAuditRetriesAfterAppendFailure(): Promise<void> {
+  const runId = "run-late-audit-retry";
+  prepareChatSurfaceTerminal(runId);
+  const winner = claimChatSurfaceTerminal(runId, "stop", "cancelled").winner;
+  let appendAttempts = 0;
+  const durableAudits: unknown[] = [];
+  const plugin = {
+    appendHarnessRunEvent: async (input: unknown) => {
+      appendAttempts += 1;
+      if (appendAttempts === 1) throw new Error("audit ledger unavailable");
+      durableAudits.push(input);
+    }
+  };
+  const input = {
+    runId,
+    backendId: "codex-cli",
+    lateStatus: "completed" as const,
+    winner
+  };
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  try {
+    await recordIgnoredLateChatTerminal(plugin, input);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(appendAttempts, 2);
+  assert.equal(durableAudits.length, 1);
+}
+
+async function assertLateChatTerminalAuditWaitsForTimerTransient(): Promise<void> {
+  const runId = "run-late-audit-timer-transient";
+  prepareChatSurfaceTerminal(runId);
+  const winner = claimChatSurfaceTerminal(runId, "stop", "cancelled").winner;
+  let appendAttempts = 0;
+  let ready = false;
+  let durableAudits = 0;
+  const plugin = {
+    appendHarnessRunEvent: async () => {
+      appendAttempts += 1;
+      if (!ready) {
+        if (appendAttempts === 1) {
+          globalThis.setTimeout(() => {
+            ready = true;
+          }, 1);
+        }
+        throw new Error("audit ledger recovers on the next timer tick");
+      }
+      durableAudits += 1;
+    }
+  };
+
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  try {
+    await recordIgnoredLateChatTerminal(plugin, {
+      runId,
+      backendId: "codex-cli",
+      lateStatus: "completed",
+      winner
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(appendAttempts, 2);
+  assert.equal(durableAudits, 1);
+}
+
+async function assertLateChatTerminalAuditCanRetryAfterBoundedExhaustion(): Promise<void> {
+  const runId = "run-late-audit-bounded-exhaustion";
+  prepareChatSurfaceTerminal(runId);
+  const winner = claimChatSurfaceTerminal(runId, "view-close", "cancelled").winner;
+  let appendAttempts = 0;
+  let durableAudits = 0;
+  let allowSuccess = false;
+  const plugin = {
+    appendHarnessRunEvent: async () => {
+      appendAttempts += 1;
+      if (!allowSuccess) throw new Error("audit ledger unavailable");
+      durableAudits += 1;
+    }
+  };
+  const input = {
+    runId,
+    backendId: "hermes",
+    lateStatus: "completed" as const,
+    winner
+  };
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  try {
+    await recordIgnoredLateChatTerminal(plugin, input);
+    assert.equal(appendAttempts, 3);
+    assert.equal(durableAudits, 0);
+
+    allowSuccess = true;
+    await recordIgnoredLateChatTerminal(plugin, input);
+    await recordIgnoredLateChatTerminal(plugin, input);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(appendAttempts, 4);
+  assert.equal(durableAudits, 1);
+}
+
+async function assertChatNativeSettlementWaitsForTimerTransient(): Promise<void> {
+  const runId = "run-chat-native-timer-transient";
+  const native = serviceTestNative("thread-chat-native-timer-transient");
+  const harness = createServiceReceiptTestBed({
+    sessionId: "session-chat-native-timer-transient"
+  });
+  const originalSettle = harness.nativeManager.settleRun.bind(
+    harness.nativeManager
+  );
+  let attempts = 0;
+  let ready = false;
+  harness.nativeManager.settleRun = async (input) => {
+    attempts += 1;
+    if (!ready) {
+      if (attempts === 1) {
+        globalThis.setTimeout(() => {
+          ready = true;
+        }, 1);
+      }
+      throw new Error("Native Store recovers on the next timer tick");
+    }
+    return await originalSettle(input);
+  };
+
+  const result = await harness.service.runWithAdapter({
+    adapter: createServiceTestAdapter({
+      result: {
+        status: "completed",
+        outputText: "timer winner",
+        nativeExecution: native,
+        nativeThreadId: native.id
+      },
+      native
+    }),
+    request: serviceChatRequest(runId, harness.session.id),
+    sessionProvider: () => harness.session
+  });
+  assert.ok(result.backendBinding);
+  updateSessionBackendBinding(harness.session, result.backendBinding!);
+  const answer = harness.session.messages.find((message) =>
+    message.runId === runId && message.itemType === "assistant"
+  );
+  assert.ok(answer);
+  answer.status = "completed";
+  answer.text = "timer winner";
+
+  await harness.service.commitChatSurfaceTerminal({
+    runId,
+    status: "completed",
+    backendId: "codex-cli",
+    text: "timer winner"
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(
+    harness.nativeManager.records.values().next().value?.localCommit,
+    "committed"
+  );
+}
+
+async function assertConcurrentLateChatTerminalAuditsAppendExactlyOnce(): Promise<void> {
+  const runId = "run-late-audit-single-flight";
+  prepareChatSurfaceTerminal(runId);
+  const winner = claimChatSurfaceTerminal(runId, "watchdog", "failed").winner;
+  const appendStarted = deferred<void>();
+  const releaseAppend = deferred<void>();
+  let appendAttempts = 0;
+  const plugin = {
+    appendHarnessRunEvent: async () => {
+      appendAttempts += 1;
+      appendStarted.resolve();
+      await releaseAppend.promise;
+    }
+  };
+  const input = {
+    runId,
+    backendId: "opencode",
+    lateStatus: "failed" as const,
+    winner
+  };
+
+  const observations = Array.from(
+    { length: 8 },
+    () => recordIgnoredLateChatTerminal(plugin, input)
+  );
+  await appendStarted.promise;
+  assert.equal(appendAttempts, 1);
+  releaseAppend.resolve();
+  await Promise.all(observations);
+  await recordIgnoredLateChatTerminal(plugin, input);
+  assert.equal(appendAttempts, 1);
 }
 
 async function assertKnowledgeWatchdogUsesHarnessCancel(): Promise<void> {
@@ -761,6 +3376,152 @@ async function assertQueuedCodexChatSettlesViaAwaitResultAndAdvancesQueue(): Pro
     firstMarkdown,
     "asynchronous settlement must preserve nonblank Markdown byte-for-byte"
   );
+}
+
+async function assertAsyncChatKeepsMutationLaneUntilConversationCommit(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-async-chat-commit-window",
+    title: "Async chat commit window",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-async-chat-commit-window",
+    turnId: "turn-async-chat-commit-window",
+    text: "durable answer"
+  }]);
+  const commitEntered = deferred<void>();
+  const releaseCommit = deferred<void>();
+  const originalCommit = harness.view.plugin.commitChatSurfaceTerminal;
+  harness.view.plugin.commitChatSurfaceTerminal = async (input: unknown) => {
+    commitEntered.resolve();
+    await releaseCommit.promise;
+    await originalCommit(input);
+  };
+
+  const outcome = await startChatTurn(
+    harness.view,
+    session,
+    queuedTurn(
+      "async-chat-commit-window",
+      session.id,
+      "wait for durable commit"
+    ),
+    "composer"
+  );
+  assert.equal(outcome, "running");
+  await commitEntered.promise;
+  assert.equal(
+    harness.view.running,
+    true,
+    "async settlement must keep context rotation blocked until the durable terminal commit"
+  );
+
+  let laterMutationEntered = false;
+  const laterMutation = harness.view.plugin.withEchoInkConversationMutation(
+    session.id,
+    async () => {
+      laterMutationEntered = true;
+    }
+  );
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    laterMutationEntered,
+    false,
+    "a later Conversation mutation must wait behind terminal persistence"
+  );
+
+  releaseCommit.resolve();
+  await laterMutation;
+  await waitFor(() => harness.view.running === false);
+  assert.equal(laterMutationEntered, true);
+}
+
+async function assertSynchronousChatTerminalCommitFailureSkipsGenericSettlement(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-sync-chat-terminal-commit-failure",
+    title: "Sync chat terminal commit failure",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const item = queuedTurn(
+    "sync-chat-terminal-commit-failure",
+    session.id,
+    "complete synchronously"
+  );
+  const harness = createChatSurfaceHarness(session, []);
+  let recoveryRequiredCalls = 0;
+  harness.view.requireQueueRecoveryForSession = (sessionId: string) => {
+    recoveryRequiredCalls += 1;
+    harness.view.turnQueue.requireSessionRecovery(sessionId);
+  };
+  harness.view.plugin.runHarnessWithAdapter = async (input: any) => ({
+    runId: input.request.runId,
+    status: "completed",
+    outputText: "candidate answer",
+    nativeExecutionRecordIds: []
+  });
+  harness.view.plugin.commitChatSurfaceTerminal = async () => {
+    throw new Error("sync terminal commit failed");
+  };
+  harness.view.turnQueue.enqueue(item);
+
+  await startNextQueuedTurn(harness.view, session.id);
+
+  assert.equal(recoveryRequiredCalls, 1);
+  assert.equal(harness.view.turnQueue.isSessionQueuePaused(session.id), false);
+  assert.equal(harness.view.turnQueue.isSessionRecoveryRequired(session.id), true);
+  assert.equal(
+    session.messages.some((message) =>
+      message.runTerminalRecoveryPending === "completed"
+      && message.runId
+    ),
+    true,
+    "a failed terminal commit must leave an explicit retry candidate in the live Conversation"
+  );
+  assert.equal(
+    harness.afterTurnSettledCalls.length,
+    0,
+    "generic afterTurnSettled must not treat a failed synchronous terminal commit as closed"
+  );
+  assert.equal(harness.view.running, false);
+
+  let composerTurnCreations = 0;
+  harness.view.ensureSession = () => session;
+  harness.view.composerStateForSession = () => ({
+    viewRunning: false,
+    knowledgeTaskRunning: false,
+    hasDraft: true,
+    hasQueuedItems: false
+  });
+  harness.view.createQueuedTurnFromComposer = async () => {
+    composerTurnCreations += 1;
+    return queuedTurn("blocked-composer-turn", session.id, "must not start");
+  };
+  await sendMessage(harness.view);
+  assert.equal(
+    composerTurnCreations,
+    0,
+    "sendMessage must stop before creating a turn while recovery is required"
+  );
+
+  const blockedQueuedTurn = queuedTurn(
+    "blocked-recovery-queue-turn",
+    session.id,
+    "must remain queued"
+  );
+  harness.view.turnQueue.enqueue(blockedQueuedTurn);
+  await resumeQueuedTurns(harness.view, session.id);
+  assert.deepEqual(
+    harness.view.turnQueue.itemsForSession(session.id).map((queued: any) => queued.id),
+    [blockedQueuedTurn.id],
+    "ordinary queue Resume must not bypass a recovery-required gate"
+  );
+  assert.equal(harness.view.turnQueue.dequeueNext(session.id), null);
 }
 
 async function assertLateRunScopedNotificationsDoNotPolluteNextRunView(): Promise<void> {
@@ -873,6 +3634,186 @@ async function assertUsageNotificationsReachDriverWithoutConsumingViewRoute(): P
   );
 }
 
+async function assertRestartRestoresQueueRecoveryGateFromPersistedMarkers(): Promise<void> {
+  const pendingSession: StoredSession = {
+    id: "session-restart-lifecycle-recovery",
+    title: "Restart lifecycle recovery",
+    cwd: "/vault",
+    messages: [{
+      id: "answer-restart-lifecycle-recovery",
+      role: "assistant",
+      itemType: "assistant",
+      status: "completed",
+      text: "durable answer",
+      runId: "run-restart-lifecycle-recovery",
+      runTerminalRecoveryPending: "completed",
+      createdAt: 1,
+      completedAt: 2
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const corruptAuthoritySession = {
+    ...pendingSession,
+    id: "session-restart-lifecycle-recovery-corrupt",
+    messages: [{
+      ...pendingSession.messages[0]!,
+      id: "answer-restart-lifecycle-recovery-corrupt",
+      runId: "run-restart-lifecycle-recovery-corrupt",
+      runTerminalRecoveryPending: undefined,
+      echoInkRunTerminalRecovery: {
+        namespace: "echoink.chat-terminal",
+        schemaVersion: 1,
+        runId: "run-restart-lifecycle-recovery-corrupt",
+        status: "completed",
+        payloadPresent: true,
+        payloadHash: "sha256:".padEnd(71, "0"),
+        terminalCommitId: "echoink:chat-terminal:v1:".padEnd(89, "0"),
+        carrierMessageId: "answer-restart-lifecycle-recovery-corrupt",
+        payloadSource: {
+          kind: "inline",
+          value: "durable answer",
+          contentHash: "sha256:".padEnd(71, "0"),
+          size: 14,
+          lines: 1
+        }
+      }
+    }]
+  } as StoredSession;
+  const cleanSession: StoredSession = {
+    ...pendingSession,
+    id: "session-restart-lifecycle-clean",
+    messages: []
+  };
+  const queue = new RuntimeTurnQueue();
+
+  assert.equal(
+    restoreSessionLifecycleRecoveryGates(
+      { turnQueue: queue },
+      [pendingSession, corruptAuthoritySession, cleanSession]
+    ),
+    2
+  );
+  assert.equal(queue.isSessionRecoveryRequired(pendingSession.id), true);
+  assert.equal(
+    queue.isSessionRecoveryRequired(corruptAuthoritySession.id),
+    true,
+    "corrupt persisted authority must fail closed until explicit recovery"
+  );
+  assert.equal(queue.isSessionRecoveryRequired(cleanSession.id), false);
+}
+
+async function assertQueueRecoveryRequiresDurableEvidenceAndExplicitRetry(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-explicit-lifecycle-recovery",
+    title: "Explicit lifecycle recovery",
+    cwd: "/vault",
+    messages: [{
+      id: "answer-explicit-lifecycle-recovery",
+      role: "assistant",
+      itemType: "assistant",
+      status: "completed",
+      text: "durable answer",
+      runId: "run-explicit-lifecycle-recovery",
+      runTerminalRecoveryPending: "completed",
+      createdAt: 1,
+      completedAt: 2
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const queue = new RuntimeTurnQueue();
+  queue.requireSessionRecovery(session.id);
+  let recoveryCalls = 0;
+  let queueRenders = 0;
+  let toolbarRenders = 0;
+  const view: any = {
+    plugin: {
+      withEchoInkConversationMutation: async <T>(
+        _sessionId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
+      recoverInterruptedHarnessRuns: async (
+        sessionId: string,
+        options: { liveChatRunIds?: readonly string[] }
+      ) => {
+        recoveryCalls += 1;
+        assert.equal(sessionId, session.id);
+        assert.deepEqual(
+          options.liveChatRunIds,
+          ["run-explicit-lifecycle-recovery"]
+        );
+        for (const message of session.messages) {
+          delete message.runTerminalRecoveryPending;
+          message.runTerminalRecovered = true;
+        }
+        return 1;
+      }
+    },
+    turnQueue: queue,
+    running: false,
+    activeRunSessionId: "",
+    sessionById: (sessionId: string) =>
+      sessionId === session.id ? session : null,
+    renderQueue: () => { queueRenders += 1; },
+    renderToolbar: () => { toolbarRenders += 1; }
+  };
+
+  await recoverSessionLifecycle(view, session.id);
+
+  assert.equal(recoveryCalls, 1);
+  assert.equal(queue.isSessionRecoveryRequired(session.id), false);
+  assert.equal(queueRenders > 0, true);
+  assert.equal(toolbarRenders > 0, true);
+
+  const unresolvedSession: StoredSession = {
+    ...session,
+    id: "session-explicit-lifecycle-recovery-failed",
+    messages: [{
+      ...session.messages[0]!,
+      id: "answer-explicit-lifecycle-recovery-failed",
+      runId: "run-explicit-lifecycle-recovery-failed",
+      runTerminalRecoveryPending: "failed",
+      runTerminalRecovered: undefined
+    }]
+  };
+  queue.requireSessionRecovery(unresolvedSession.id);
+  view.sessionById = (sessionId: string) =>
+    sessionId === unresolvedSession.id ? unresolvedSession : null;
+  view.plugin.recoverInterruptedHarnessRuns = async () => 0;
+
+  await recoverSessionLifecycle(view, unresolvedSession.id);
+
+  assert.equal(
+    queue.isSessionRecoveryRequired(unresolvedSession.id),
+    true,
+    "the queue gate must remain closed when the retry leaves a terminal marker unresolved"
+  );
+
+  const missingEvidenceSession: StoredSession = {
+    ...session,
+    id: "session-explicit-lifecycle-recovery-missing-evidence",
+    messages: []
+  };
+  queue.requireSessionRecovery(missingEvidenceSession.id);
+  view.sessionById = (sessionId: string) =>
+    sessionId === missingEvidenceSession.id ? missingEvidenceSession : null;
+  let missingEvidenceRecoveryCalls = 0;
+  view.plugin.recoverInterruptedHarnessRuns = async () => {
+    missingEvidenceRecoveryCalls += 1;
+    return 0;
+  };
+
+  await recoverSessionLifecycle(view, missingEvidenceSession.id);
+
+  assert.equal(missingEvidenceRecoveryCalls, 0);
+  assert.equal(
+    queue.isSessionRecoveryRequired(missingEvidenceSession.id),
+    true,
+    "a missing retry candidate must fail closed instead of clearing recovery-required"
+  );
+}
+
 async function assertUsageAndCompactionOnlyUpdateMatchingSessionThread(): Promise<void> {
   const sessionA: StoredSession = {
     id: "session-thread-a",
@@ -936,7 +3877,7 @@ async function assertUsageAndCompactionOnlyUpdateMatchingSessionThread(): Promis
   router.handle({
     method: "thread/compacted",
     params: {
-      threadId: "prewarm-thread",
+      threadId: "unrelated-thread",
       tokenUsage: { total: { totalTokens: 101 } }
     }
   });
@@ -981,6 +3922,365 @@ async function assertViewCloseCancelsActiveRunDuringReload(): Promise<void> {
   assert.ok(calls.includes("message-list-dispose"));
 }
 
+async function assertViewClosePreservesExistingAdapterWinner(): Promise<void> {
+  const runId = "run-view-close-existing-adapter-winner";
+  prepareChatSurfaceTerminal(runId);
+  claimChatSurfaceTerminal(runId, "adapter", "completed");
+  const calls: string[] = [];
+  const session: StoredSession = {
+    id: "session-view-close-existing-adapter-winner",
+    title: "Existing adapter winner",
+    cwd: "/vault",
+    messages: [{
+      id: "existing-adapter-answer",
+      role: "assistant",
+      itemType: "assistant",
+      status: "completed",
+      text: "durable answer",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const view: any = {
+    activeRunId: runId,
+    activeRunKind: "chat",
+    running: true,
+    activeRunSession: () => session,
+    clearTurnWatchdog: () => undefined,
+    clearEditorActionStatusTimers: () => undefined,
+    clearKnowledgeBaseRunProgressTimer: () => undefined,
+    knowledgeDashboardTooltipState: {
+      panels: [],
+      tooltips: [],
+      closeTimers: new Set(),
+      cleanups: []
+    },
+    clearActiveRun: () => {
+      view.activeRunId = "";
+      view.activeRunKind = "";
+    },
+    messageListRenderer: { dispose: () => undefined },
+    flushSessionSave: async () => {
+      calls.push("flush");
+    },
+    plugin: {
+      cancelHarnessRun: async () => {
+        calls.push("cancel");
+      },
+      recoverInterruptedHarnessRuns: async () => {
+        calls.push("recover");
+      }
+    }
+  };
+
+  await CodexView.prototype.onClose.call(view);
+
+  assert.deepEqual(calls, ["cancel", "flush"]);
+  assert.equal(session.messages[0]?.status, "completed");
+  assert.equal(session.messages[0]?.text, "durable answer");
+}
+
+async function assertPromptEnhancerPreStartViewCloseAbortsWithoutCancelIntent(): Promise<void> {
+  const calls: string[] = [];
+  const lifecycle = new AbortController();
+  const view: any = {
+    viewLifecycleGeneration: 7,
+    viewLifecycleAbortController: lifecycle,
+    activeRunId: "",
+    activeRunKind: "",
+    promptEnhancerRunning: true,
+    // Workspace/backend setup has not entered runEphemeralUtility yet, so the
+    // service must not have published a cancellable Harness ID to the View.
+    promptEnhancerRunId: "",
+    promptEnhancerTurnId: "",
+    clearTurnWatchdog: () => undefined,
+    clearEditorActionStatusTimers: () => undefined,
+    clearKnowledgeBaseRunProgressTimer: () => undefined,
+    knowledgeDashboardTooltipState: {
+      panels: [],
+      tooltips: [],
+      closeTimers: new Set(),
+      cleanups: []
+    },
+    flushSessionSave: async () => {
+      calls.push("flush");
+    },
+    messageListRenderer: {
+      dispose: () => {
+        calls.push("dispose");
+      }
+    },
+    plugin: {
+      cancelHarnessRun: async () => {
+        calls.push("cancel");
+      }
+    }
+  };
+
+  await CodexView.prototype.onClose.call(view);
+
+  assert.equal(lifecycle.signal.aborted, true);
+  assert.equal(view.viewLifecycleGeneration, 8);
+  assert.equal(view.promptEnhancerRunning, false);
+  assert.equal(view.promptEnhancerRunId, "");
+  assert.equal(view.promptEnhancerTurnId, "");
+  assert.deepEqual(calls, ["flush", "dispose"]);
+}
+
+async function assertViewCloseCancellationWinsLateAsyncCompletion(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-view-close-late-completed",
+    title: "View close late completed",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-view-close-late-completed",
+    turnId: "turn-view-close-late-completed",
+    text: "late answer",
+    autoComplete: false
+  }]);
+  const outcome = await startChatTurn(
+    harness.view,
+    session,
+    queuedTurn(
+      "view-close-late-completed",
+      session.id,
+      "continue"
+    ),
+    "composer"
+  );
+  assert.equal(outcome, "running");
+  const runId = harness.view.activeRunId;
+  const promptEnhancerRunId = "run-view-close-prompt-enhancer";
+  const promptCancellationEntered = deferred<void>();
+  const releasePromptCancellation = deferred<void>();
+  const cancellationEntered = deferred<void>();
+  const releaseCancellation = deferred<void>();
+  let rendererDisposed = 0;
+
+  harness.view.plugin.cancelHarnessRun = async (targetRunId: string) => {
+    if (targetRunId === promptEnhancerRunId) {
+      promptCancellationEntered.resolve();
+      await releasePromptCancellation.promise;
+      return;
+    }
+    assert.equal(targetRunId, runId);
+    cancellationEntered.resolve();
+    await releaseCancellation.promise;
+  };
+  harness.view.plugin.recoverInterruptedHarnessRuns = async (
+    sessionId: string,
+    options: { liveChatRunIds?: readonly string[] } = {}
+  ) => {
+    assert.equal(sessionId, session.id);
+    assert.deepEqual(options.liveChatRunIds, [runId]);
+    const recovery = await recoverStaleChatHarnessRuns({
+      messages: session.messages,
+      commitLocalHistory: async () => {
+        await harness.view.plugin.saveSettings(true);
+      },
+      commitRunTerminal: async (terminal, persistWinner) => {
+        await harness.view.plugin.commitChatSurfaceTerminal(terminal, {
+          mode: "recovery-live",
+          persistConversation: persistWinner
+        });
+      }
+    });
+    return recovery.settledRunIds.length;
+  };
+  Object.assign(harness.view, {
+    promptEnhancerRunning: true,
+    promptEnhancerRunId,
+    promptEnhancerTurnId: "turn-view-close-prompt-enhancer",
+    clearEditorActionStatusTimers: () => undefined,
+    clearKnowledgeBaseRunProgressTimer: () => undefined,
+    knowledgeDashboardTooltipState: {
+      panels: [],
+      tooltips: [],
+      closeTimers: new Set(),
+      cleanups: []
+    },
+    flushSessionSave: async () => {
+      await harness.view.plugin.saveSettings(true);
+    },
+    messageListRenderer: {
+      dispose: () => {
+        rendererDisposed += 1;
+      }
+    }
+  });
+
+  const close = CodexView.prototype.onClose.call(harness.view);
+  await promptCancellationEntered.promise;
+  assert.deepEqual(chatSurfaceTerminalClaim(runId), {
+    runId,
+    owner: "view-close",
+    status: "cancelled",
+    claimedAt: chatSurfaceTerminalClaim(runId)?.claimedAt
+  });
+
+  harness.notificationHub.dispatch({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-view-close-late-completed",
+      turn: {
+        id: "turn-view-close-late-completed",
+        threadId: "thread-view-close-late-completed",
+        status: "completed"
+      }
+    }
+  } as any);
+  await waitFor(() => harness.ignoredLateTerminalAppendInputs.length === 1);
+  releasePromptCancellation.resolve();
+  await cancellationEntered.promise;
+  releaseCancellation.resolve();
+  await close;
+
+  const ledgerEvents = await harness.ledger.readRun(runId);
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.cancelled").length,
+    1
+  );
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.completed").length,
+    0,
+    "a late async completion must not replace the view-close cancellation"
+  );
+  assert.equal(
+    ledgerEvents.filter((event) => event.type === "run.surface_terminal.ignored").length,
+    1
+  );
+  assert.deepEqual(harness.terminalCalls, [{ runId, status: "cancelled" }]);
+  assert.equal(
+    session.messages.find((message) => message.itemType === "assistant")?.status,
+    "interrupted"
+  );
+  assert.equal(
+    session.messages.some((message) => message.runTerminalRecoveryPending),
+    false
+  );
+  assert.equal(harness.nativeSettlements.length, 1);
+  assert.equal(harness.nativeSettlements[0]?.runOutcome, "cancelled");
+  assert.equal(harness.nativeSettlements[0]?.localCommit.committed, true);
+  assert.equal(rendererDisposed, 1);
+}
+
+async function assertViewCloseBeforeNativeRegistrationKeepsIntentRecoverable(): Promise<void> {
+  const registrationEntered = deferred<void>();
+  const releaseRegistration = deferred<void>();
+  const session: StoredSession = {
+    id: "session-view-close-before-native-registration",
+    title: "View close before Native registration",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const harness = createChatSurfaceHarness(session, [{
+    threadId: "thread-view-close-before-native-registration",
+    turnId: "turn-view-close-before-native-registration",
+    text: "",
+    autoComplete: false,
+    beforeStartThread: async () => {
+      registrationEntered.resolve();
+      await releaseRegistration.promise;
+    }
+  }]);
+  const turn = startChatTurn(
+    harness.view,
+    session,
+    queuedTurn(
+      "view-close-before-native-registration",
+      session.id,
+      "continue"
+    ),
+    "composer"
+  );
+  await registrationEntered.promise;
+  const runId = harness.view.activeRunId;
+
+  harness.view.plugin.recoverInterruptedHarnessRuns = async (
+    sessionId: string,
+    options: { liveChatRunIds?: readonly string[] } = {}
+  ) => {
+    assert.equal(sessionId, session.id);
+    const recovery = await recoverStaleChatHarnessRuns({
+      messages: session.messages,
+      commitLocalHistory: async () => {
+        await harness.view.plugin.saveSettings(true);
+      },
+      commitRunTerminal: async (terminal, persistWinner) => {
+        await harness.view.plugin.commitChatSurfaceTerminal(terminal, {
+          mode: options.liveChatRunIds?.includes(terminal.runId)
+            ? "recovery-live"
+            : "recovery-restart",
+          persistConversation: persistWinner
+        });
+      }
+    });
+    return recovery.settledRunIds.length;
+  };
+  Object.assign(harness.view, {
+    promptEnhancerRunning: false,
+    promptEnhancerRunId: "",
+    promptEnhancerTurnId: "",
+    clearEditorActionStatusTimers: () => undefined,
+    clearKnowledgeBaseRunProgressTimer: () => undefined,
+    knowledgeDashboardTooltipState: {
+      panels: [],
+      tooltips: [],
+      closeTimers: new Set(),
+      cleanups: []
+    },
+    flushSessionSave: async () => {
+      await harness.view.plugin.saveSettings(true);
+    },
+    messageListRenderer: { dispose: () => undefined }
+  });
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await CodexView.prototype.onClose.call(harness.view);
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(
+    session.messages.some((message) =>
+      message.runId === runId
+      && message.runTerminalRecoveryPending === "cancelled"
+    ),
+    true
+  );
+  assert.equal(harness.nativeSettlements.length, 0);
+
+  releaseRegistration.resolve();
+  assert.equal(await turn, "cancelled");
+  await waitFor(() => harness.nativeSettlements.length === 1);
+  assert.equal(harness.nativeSettlements[0]?.runOutcome, "cancelled");
+  assert.equal(harness.nativeSettlements[0]?.localCommit.committed, false);
+
+  assert.equal(
+    await harness.view.plugin.recoverInterruptedHarnessRuns(session.id),
+    1
+  );
+  assert.equal(
+    session.messages.some((message) =>
+      message.runId === runId
+      && message.runTerminalRecoveryPending
+    ),
+    false
+  );
+  assert.equal(terminalEvents(await harness.ledger.readRun(runId)).length, 1);
+  assert.equal(harness.nativeSettlements.length, 1);
+}
+
 async function assertViewCloseDisposesRendererWhenRecoveryFails(): Promise<void> {
   let disposeCalls = 0;
   const session = {
@@ -1010,6 +4310,163 @@ async function assertViewCloseDisposesRendererWhenRecoveryFails(): Promise<void>
     /recovery failed/
   );
   assert.equal(disposeCalls, 1);
+}
+
+async function assertReloadChatRecoveryUsesCentralTerminalAndRetries(): Promise<void> {
+  const session: StoredSession = {
+    id: "session-reload-central-chat-terminal",
+    title: "Reload central Chat terminal",
+    kind: "chat",
+    cwd: "/vault",
+    messages: [{
+      id: "reload-central-answer",
+      role: "assistant",
+      text: "partial",
+      status: "running",
+      runId: "run-reload-central-chat-terminal",
+      backendId: "opencode",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sessions = [session];
+  settings.activeSessionId = session.id;
+  const centralInputs: any[] = [];
+  let directTerminalCalls = 0;
+  let centralAttempts = 0;
+  let localCommits = 0;
+  const plugin: any = {
+    settings,
+    commitChatSurfaceTerminal: async (input: any, options: any) => {
+      centralAttempts += 1;
+      centralInputs.push(structuredClone(input));
+      assert.equal(options.mode, "recovery-restart");
+      await options.persistConversation(input);
+      if (centralAttempts === 1) {
+        throw new Error("Native settlement intent unavailable");
+      }
+    },
+    settleHarnessRunTerminal: async () => {
+      directTerminalCalls += 1;
+    }
+  };
+  const store = new EchoInkSettingsStore(plugin);
+  (store as any).saveSettings = async () => {
+    localCommits += 1;
+  };
+
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    assert.equal(
+      await store.recoverInterruptedHarnessRuns(session.id),
+      0,
+      "a failed central settlement must remain pending"
+    );
+    assert.equal(session.messages[0]?.status, "interrupted");
+    assert.equal(
+      session.messages[0]?.runTerminalRecoveryPending,
+      "cancelled"
+    );
+    assert.equal(centralAttempts, 1);
+    assert.equal(directTerminalCalls, 0);
+
+    assert.equal(await store.recoverInterruptedHarnessRuns(session.id), 1);
+    assert.equal(centralAttempts, 2);
+    assert.equal(directTerminalCalls, 0);
+    assert.equal(session.messages[0]?.runTerminalRecoveryPending, undefined);
+    assert.equal(session.messages[0]?.runTerminalRecovered, true);
+
+    assert.equal(await store.recoverInterruptedHarnessRuns(session.id), 0);
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(centralAttempts, 2, "recovered terminals must be idempotent");
+  assert.equal(localCommits, 3);
+  assert.deepEqual(centralInputs, [
+    {
+      runId: "run-reload-central-chat-terminal",
+      backendId: "opencode",
+      status: "cancelled",
+      error: "插件重载导致运行中断"
+    },
+    {
+      runId: "run-reload-central-chat-terminal",
+      backendId: "opencode",
+      status: "cancelled",
+      error: "插件重载导致运行中断"
+    }
+  ]);
+}
+
+async function assertReloadProjectsDurableTerminalWinnerBeforeConversationSave(): Promise<void> {
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    const runId = `run-reload-durable-${status}`;
+    const session: StoredSession = {
+      id: `session-reload-durable-${status}`,
+      title: `Reload durable ${status}`,
+      kind: "chat",
+      cwd: "/vault",
+      messages: [{
+        id: `answer-reload-durable-${status}`,
+        role: "assistant",
+        itemType: "assistant",
+        status: "running",
+        text: "partial",
+        runId,
+        backendId: "hermes",
+        createdAt: 1
+      }],
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const ledger = new InMemoryRunLedger();
+    await ledger.append({
+      ...terminalEvent(runId, status, "hermes"),
+      ...(status === "completed"
+        ? { text: "durable completed answer" }
+        : { error: `durable ${status}` })
+    });
+    const harness = createServiceReceiptTestBed({
+      sessionId: session.id,
+      session,
+      ledger
+    });
+    const persistedStatuses: Array<string | undefined> = [];
+
+    await harness.service.commitChatSurfaceTerminal({
+      runId,
+      status: "cancelled",
+      backendId: "hermes",
+      error: "reload candidate"
+    }, {
+      mode: "recovery-restart",
+      persistConversation: async (winner) => {
+        applyChatRunTerminalWinner(session.messages, winner);
+        persistedStatuses.push(session.messages[0]?.status);
+        await harness.plugin.saveSettings(true);
+      }
+    });
+
+    assert.deepEqual(persistedStatuses, [
+      status === "completed"
+        ? "completed"
+        : status === "failed"
+          ? "failed"
+          : "interrupted"
+    ]);
+    assert.equal(
+      session.messages[0]?.runTerminalRecoveryPending,
+      status
+    );
+    assert.equal(terminalEvents(await ledger.readRun(runId)).length, 1);
+    if (status === "completed") {
+      assert.equal(session.messages[0]?.text, "durable completed answer");
+    }
+  }
 }
 
 async function assertReloadRecoveryCommitsLocalHistoryBeforeLedgerTerminal(): Promise<void> {
@@ -1102,8 +4559,20 @@ async function assertEachSurfaceHasOneTerminalOwner(): Promise<void> {
   ]);
 
   assert.match(main, /settleHarnessRunTerminal\(input: SettleRunTerminalInput/);
+  assert.match(
+    main,
+    /commitChatSurfaceTerminal\(\s*input: SettleRunTerminalInput/
+  );
   assert.match(chatRunner, /persistAndSettleChatRun\(view\.plugin/);
-  assert.match(chatRunner, /settleHarnessRunTerminal\(\{[\s\S]*status: "failed"/);
+  assert.match(
+    lifecycle,
+    /export async function persistAndSettleChatRun[\s\S]*await plugin\.commitChatSurfaceTerminal\(input\)/
+  );
+  assert.doesNotMatch(
+    chatRunner,
+    /\.settleHarnessRunTerminal\(/,
+    "Chat terminal persistence must go through the durable Conversation + Run Ledger gate"
+  );
   assert.match(lifecycle, /status: "cancelled"/);
   assert.match(lifecycle, /status: "failed"/);
   assert.doesNotMatch(methodBody(lifecycle, "export async function stopTurn(", "export function armTurnWatchdog("), /interruptCodexHarnessTurn|backendId === "codex-cli"/);
@@ -1119,6 +4588,569 @@ function methodBody(source: string, start: string, end: string): string {
   const endIndex = source.indexOf(end, startIndex + start.length);
   assert.ok(startIndex >= 0 && endIndex > startIndex, `Expected method range ${start} -> ${end}`);
   return source.slice(startIndex, endIndex);
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+}
+
+interface ServiceReceiptStateView {
+  receipts: Map<string, unknown>;
+  settledRecordIds: Set<string>;
+  registrationsClosed: boolean;
+  intent?: {
+    status: "completed" | "failed" | "cancelled";
+    runOutcome: "success" | "failed" | "cancelled";
+    terminalCommitId: string;
+  };
+}
+
+interface ServiceNativeManagerDouble {
+  records: Map<string, NativeExecutionRecord>;
+  settlementAttempts: SettleNativeExecutionInput[];
+  recordCreated(record: NativeExecutionRecord): Promise<void>;
+  settleRun(input: SettleNativeExecutionInput): Promise<NativeExecutionRecord | null>;
+  listPendingLocalCommits(filter?: {
+    surface?: string;
+    sessionId?: string;
+  }): Promise<NativeExecutionRecord[]>;
+}
+
+interface PendingLargeRawAuthorityFixture {
+  answer: any;
+  session: StoredSession;
+  terminal: {
+    runId: string;
+    status: "completed";
+    backendId: "hermes";
+    text: string;
+    data: { source: string };
+  };
+  rawTexts: Map<string, string>;
+  backingLedger: InMemoryRunLedger;
+  harness: ReturnType<typeof createServiceReceiptTestBed>;
+}
+
+async function createPendingLargeRawAuthorityFixture(
+  label: string
+): Promise<PendingLargeRawAuthorityFixture> {
+  const runId = `run-raw-restart-${label}`;
+  const answer: any = {
+    id: `answer-raw-restart-${label}`,
+    role: "assistant",
+    itemType: "assistant",
+    status: "running",
+    text: "",
+    runId,
+    backendId: "hermes",
+    createdAt: 1
+  };
+  const session: StoredSession = {
+    id: `session-raw-restart-${label}`,
+    title: `Raw restart ${label}`,
+    cwd: "/vault",
+    messages: [answer],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const rawTexts = new Map<string, string>();
+  const backingLedger = new InMemoryRunLedger();
+  let failFirstTerminalAppend = true;
+  const ledger: RunLedger = {
+    async append(event) {
+      if (isTerminalHarnessEvent(event) && failFirstTerminalAppend) {
+        failFirstTerminalAppend = false;
+        throw new Error("Run Ledger unavailable");
+      }
+      await backingLedger.append(event);
+    },
+    async readRun(targetRunId) {
+      return await backingLedger.readRun(targetRunId);
+    }
+  };
+  const harness = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    ledger,
+    rawTexts
+  });
+  const terminal = {
+    runId,
+    status: "completed" as const,
+    backendId: "hermes" as const,
+    text: `${label}:${"R".repeat(90_000)}`,
+    data: { source: label }
+  };
+  await assert.rejects(
+    () => harness.service.commitChatSurfaceTerminal(terminal),
+    /Run Ledger unavailable/
+  );
+  assert.equal(answer.runTerminalRecoveryPending, "completed");
+  assert.equal(answer.echoInkRunTerminalRecovery?.payloadSource.kind, "raw");
+  return {
+    answer,
+    session,
+    terminal,
+    rawTexts,
+    backingLedger,
+    harness
+  };
+}
+
+async function recoverPendingLargeRawAuthority(
+  fixture: PendingLargeRawAuthorityFixture
+) {
+  return await recoverStaleChatHarnessRuns({
+    messages: fixture.session.messages,
+    commitLocalHistory: async () => {
+      await fixture.harness.plugin.saveSettings(true);
+    },
+    commitRunTerminal: async (terminal, persistWinner) => {
+      await fixture.harness.service.commitChatSurfaceTerminal(terminal, {
+        mode: "recovery-restart",
+        persistConversation: persistWinner
+      });
+    }
+  });
+}
+
+interface RealConversationPartialSaveFixture {
+  runId: string;
+  session: StoredSession;
+  service: EchoInkHarnessService;
+  ledger: InMemoryRunLedger;
+  failNextDataSave(): void;
+  dataSaveFailures(): number;
+  createRestartedSettingsStore(): EchoInkSettingsStore;
+  dispose(): Promise<void>;
+}
+
+async function createRealConversationPartialSaveFixture(
+  label: string
+): Promise<RealConversationPartialSaveFixture> {
+  const vaultPath = await mkdtemp(path.join(
+    tmpdir(),
+    `echoink-chat-partial-save-${label}-`
+  ));
+  const runId = `run-${label}`;
+  const session: StoredSession = {
+    id: `session-${label}`,
+    title: `Partial save ${label}`,
+    cwd: vaultPath,
+    revision: 1,
+    generation: 1,
+    contextId: `context-${label}`,
+    commitId: `commit-${label}`,
+    workspaceFingerprint: workspaceFingerprint({
+      vaultPath,
+      cwd: vaultPath
+    }),
+    messages: [{
+      id: `answer-${label}`,
+      role: "assistant",
+      itemType: "assistant",
+      status: "running",
+      text: "streaming",
+      runId,
+      backendId: "codex-cli",
+      createdAt: 1
+    }],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "codex-cli";
+  settings.capabilities.chatBackend = "default";
+  settings.sessions = [session];
+  settings.activeSessionId = session.id;
+  let persistedData: unknown = structuredClone(settings);
+  let failNextSave = false;
+  let dataSaveFailureCount = 0;
+  const plugin: any = {
+    settings,
+    loadData: async () => structuredClone(persistedData),
+    saveData: async (data: unknown) => {
+      if (failNextSave) {
+        failNextSave = false;
+        dataSaveFailureCount += 1;
+        throw new Error("data.json persistence unavailable");
+      }
+      persistedData = structuredClone(data);
+    },
+    getVaultPath: () => vaultPath,
+    getPluginDataDirName: () => "codex-echoink",
+    ensureEchoInkConversationSessionCreated: async () => undefined,
+    ensureEchoInkSessionContextIdentity: async () => undefined,
+    agentRuntimeHealth: {
+      reportHealthy: () => undefined,
+      reportFailure: () => undefined
+    }
+  };
+  const seedConversationStore = new FileConversationStore({
+    rootPath: path.join(
+      pluginDataDir(vaultPath, "codex-echoink"),
+      "conversations"
+    )
+  });
+  await seedConversationStore.createPristineSession({
+    ...structuredClone(session),
+    messages: []
+  });
+  const settingsStore = new EchoInkSettingsStore(plugin);
+  plugin.saveSettings = async (
+    force = false,
+    options: Record<string, unknown> = {}
+  ) => await settingsStore.saveSettings(force, {
+    ...options,
+    flushKnowledgeBaseHistory: false
+  });
+  plugin.readEchoInkConversationSession = async (sessionId: string) =>
+    await settingsStore.readConversationSession(sessionId);
+  plugin.externalizeMessageText = async (message: any, text: string) =>
+    await settingsStore.externalizeMessageText(message, text);
+  plugin.readRawMessageText = async (rawRef: string) =>
+    await settingsStore.readRawMessageText(rawRef);
+  await settingsStore.saveSettings(true, {
+    flushKnowledgeBaseHistory: false
+  });
+
+  const ledger = new InMemoryRunLedger();
+  const kernel = new EchoInkHarnessKernel({
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: () => session
+  });
+  const service = new EchoInkHarnessService(plugin);
+  (service as any).getHarnessKernel = () => kernel;
+
+  return {
+    runId,
+    session,
+    service,
+    ledger,
+    failNextDataSave() {
+      failNextSave = true;
+    },
+    dataSaveFailures() {
+      return dataSaveFailureCount;
+    },
+    createRestartedSettingsStore() {
+      return new EchoInkSettingsStore({
+        settings: structuredClone(DEFAULT_SETTINGS),
+        getVaultPath: () => vaultPath,
+        getPluginDataDirName: () => "codex-echoink"
+      } as never);
+    },
+    async dispose() {
+      await rm(vaultPath, { recursive: true, force: true });
+    }
+  };
+}
+
+function createServiceReceiptTestBed(options: {
+  sessionId: string;
+  session?: StoredSession;
+  ledger?: RunLedger;
+  nativeManager?: ServiceNativeManagerDouble;
+  saveFailures?: number;
+  saveFailureAtCalls?: number[];
+  conversationReadFailures?: number;
+  settlementFailures?: number;
+  rawTexts?: Map<string, string>;
+}): {
+  service: EchoInkHarnessService;
+  session: StoredSession;
+  ledger: RunLedger;
+  nativeManager: ServiceNativeManagerDouble;
+  saveCalls: string[];
+  plugin: any;
+} {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentBackend = "codex-cli";
+  settings.capabilities.chatBackend = "default";
+  const session: StoredSession = options.session ?? {
+    id: options.sessionId,
+    title: "Service receipt fixture",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  session.revision = session.revision ?? 1;
+  session.generation = session.generation ?? session.revision;
+  session.contextId = session.contextId ?? `context-${options.sessionId}`;
+  session.commitId = session.commitId ?? `commit-${options.sessionId}`;
+  session.workspaceFingerprint = session.workspaceFingerprint ?? workspaceFingerprint({
+    vaultPath: "/vault",
+    cwd: "/vault"
+  });
+  settings.sessions = [session];
+  settings.activeSessionId = session.id;
+  const ledger = options.ledger ?? new InMemoryRunLedger();
+  const saveCalls: string[] = [];
+  let remainingSaveFailures = options.saveFailures ?? 0;
+  const saveFailureAtCalls = new Set(options.saveFailureAtCalls ?? []);
+  let remainingConversationReadFailures =
+    options.conversationReadFailures ?? 0;
+  let remainingSettlementFailures = options.settlementFailures ?? 0;
+  const rawTexts = options.rawTexts ?? new Map<string, string>();
+  let persistedSession = structuredClone(session);
+  const records = options.nativeManager?.records
+    ?? new Map<string, NativeExecutionRecord>();
+  const settlementAttempts = options.nativeManager?.settlementAttempts ?? [];
+  const nativeManager: ServiceNativeManagerDouble = options.nativeManager ?? {
+    records,
+    settlementAttempts,
+    async recordCreated(record) {
+      const existing = records.get(record.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Native record identity conflict: ${record.id}`);
+      }
+      if (!existing) records.set(record.id, structuredClone(record));
+    },
+    async settleRun(input) {
+      settlementAttempts.push(structuredClone(input));
+      if (remainingSettlementFailures > 0) {
+        remainingSettlementFailures -= 1;
+        throw new Error("Transient Native settlement failure");
+      }
+      const record = records.get(input.recordId);
+      if (!record) return null;
+      record.runOutcome = input.runOutcome;
+      record.settledAt = Date.now();
+      if (input.localCommit.committed) {
+        record.localCommit = "committed";
+        record.cleanup = "not-needed";
+        record.committedAt = Date.now();
+        record.lastError = "";
+      } else {
+        record.localCommit = "failed";
+        record.cleanup = "retained-for-recovery";
+        record.lastError = input.localCommit.error ?? "Local durable commit failed";
+      }
+      return structuredClone(record);
+    },
+    async listPendingLocalCommits(filter = {}) {
+      return Array.from(records.values())
+        .filter((record) =>
+          record.localCommit === "pending"
+          && (!filter.surface || record.surface === filter.surface)
+          && (!filter.sessionId || record.sessionId === filter.sessionId)
+        )
+        .map((record) => structuredClone(record));
+    }
+  };
+  const plugin: any = {
+    settings,
+    getVaultPath: () => "/vault",
+    getPluginDataDirName: () => "codex-echoink",
+    externalizeMessageText: async (message: any, text: string) => {
+      const write = prepareRawMessage(message, text);
+      if (write) rawTexts.set(write.rawRef, write.text);
+    },
+    readRawMessageText: async (rawRef: string) => {
+      const text = rawTexts.get(rawRef);
+      if (text === undefined) throw new Error(`Raw text not found: ${rawRef}`);
+      return text;
+    },
+    readEchoInkConversationSession: async (sessionId: string) => {
+      if (remainingConversationReadFailures > 0) {
+        remainingConversationReadFailures -= 1;
+        throw new Error("Conversation strict readback unavailable");
+      }
+      return sessionId === persistedSession.id
+        ? structuredClone(persistedSession)
+        : null;
+    },
+    saveSettings: async () => {
+      saveCalls.push("save");
+      const shouldFail = remainingSaveFailures > 0
+        || saveFailureAtCalls.has(saveCalls.length);
+      if (shouldFail) {
+        if (remainingSaveFailures > 0) remainingSaveFailures -= 1;
+        throw new Error("Conversation persistence unavailable");
+      }
+      persistedSession = structuredClone(session);
+    },
+    ensureEchoInkConversationSessionCreated: async () => undefined,
+    ensureEchoInkSessionContextIdentity: async () => undefined,
+    agentRuntimeHealth: {
+      reportHealthy: () => undefined,
+      reportFailure: () => undefined
+    }
+  };
+  const kernel = new EchoInkHarnessKernel({
+    ledger,
+    memoryProvider: new NoopMemoryProvider(),
+    sessionProvider: () => session
+  });
+  const service = new EchoInkHarnessService(plugin);
+  (service as any).getHarnessKernel = () => kernel;
+  (service as any).getNativeExecutionManager = () => nativeManager;
+  const runWithAdapter = service.runWithAdapter.bind(service);
+  service.runWithAdapter = async (input) => {
+    if (
+      input.request.workflow === "chat.generic"
+      && !session.messages.some((message) => message.runId === input.request.runId)
+    ) {
+      session.messages.push({
+        id: `${input.request.runId}-user`,
+        role: "user",
+        text: input.request.input.text,
+        runId: input.request.runId,
+        backendId: input.request.backendId,
+        createdAt: 1
+      }, {
+        id: `${input.request.runId}-answer`,
+        role: "assistant",
+        itemType: "assistant",
+        status: "running",
+        text: "",
+        runId: input.request.runId,
+        backendId: input.request.backendId,
+        createdAt: 2
+      });
+    }
+    return await runWithAdapter(input);
+  };
+
+  return {
+    service,
+    session,
+    ledger,
+    nativeManager,
+    saveCalls,
+    plugin
+  };
+}
+
+function createServiceTestAdapter(input: {
+  result: AgentRunResult;
+  native?: NativeExecutionRef;
+  beforeRegistration?: () => Promise<void> | void;
+  emittedTerminal?: "completed" | "failed" | "cancelled";
+}): AgentAdapter {
+  return {
+    manifest: {
+      id: "codex-cli",
+      displayName: "Codex test",
+      version: "test",
+      capabilities: {
+        ...noCapabilities(),
+        sessions: { resume: "emulated", fork: "none" },
+        output: {
+          streaming: "emulated",
+          reasoningSummary: "none",
+          thinkingTrace: "none",
+          planEvents: "none",
+          usage: "none"
+        },
+        input: { text: "native", image: "none", pdf: "none" },
+        cancellation: "emulated"
+      }
+    },
+    async connect(): Promise<AgentConnectionStatus> {
+      return {
+        connected: true,
+        label: "Codex test",
+        version: "test",
+        errors: []
+      };
+    },
+    async dispose(): Promise<void> {
+      return undefined;
+    },
+    async listModels(): Promise<Array<{ id: string; displayName: string }>> {
+      return [];
+    },
+    async run(request: AgentRunRequest, emit: HarnessEventSink): Promise<AgentRunResult> {
+      await input.beforeRegistration?.();
+      if (input.native) {
+        await request.registerNativeExecution?.(input.native);
+      }
+      if (input.emittedTerminal) {
+        await emit(terminalEvent(
+          request.runId,
+          input.emittedTerminal,
+          "codex-cli"
+        ));
+      }
+      return input.result;
+    }
+  };
+}
+
+function serviceChatRequest(runId: string, sessionId: string): HarnessRunRequest {
+  return {
+    runId,
+    sessionId,
+    surface: "chat",
+    workflow: "chat.generic",
+    backendId: "codex-cli",
+    workspace: { vaultPath: "/vault", cwd: "/vault" },
+    input: { text: "ping", attachments: [] },
+    permissions: {
+      mode: "workspace-write",
+      writableRoots: ["/vault"],
+      requireApproval: true
+    },
+    resourceSelection: {
+      selected: [],
+      resolvedAt: 1,
+      warnings: []
+    },
+    memoryPolicy: {
+      enabled: false,
+      maxItems: 0
+    },
+    outputContract: { kind: "plain-text" }
+  };
+}
+
+function serviceTestNative(id: string): NativeExecutionRef {
+  return {
+    backendId: "codex-cli",
+    id,
+    kind: "thread",
+    persistence: "provider-persistent",
+    deviceKey: "device-surface-test",
+    vaultId: "/vault",
+    createdAt: 1
+  };
+}
+
+function receiptStateForRun(
+  service: EchoInkHarnessService,
+  runId: string
+): ServiceReceiptStateView | undefined {
+  return ((service as any).chatNativeReceipts as Map<string, ServiceReceiptStateView>)
+    .get(runId);
+}
+
+function terminalEvents(events: HarnessEvent[]): HarnessEvent[] {
+  return events.filter(isTerminalHarnessEvent);
+}
+
+function isTerminalHarnessEvent(event: HarnessEvent): boolean {
+  return event.type === "run.completed"
+    || event.type === "run.failed"
+    || event.type === "run.cancelled";
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
+}
+
+async function immediateConversationMutation<T>(
+  _conversationId: string,
+  action: () => Promise<T>
+): Promise<T> {
+  return await action();
 }
 
 function queuedTurn(id: string, sessionId: string, text: string): any {
@@ -1141,87 +5173,186 @@ function queuedTurn(id: string, sessionId: string, text: string): any {
   };
 }
 
+function terminalEvent(
+  runId: string,
+  status: "completed" | "failed" | "cancelled",
+  backendId: string
+): HarnessEvent {
+  return {
+    eventId: `${runId}:terminal`,
+    runId,
+    sequence: 1,
+    createdAt: 1,
+    source: "kernel",
+    type: status === "completed"
+      ? "run.completed"
+      : status === "cancelled"
+        ? "run.cancelled"
+        : "run.failed",
+    backendId
+  };
+}
+
+interface PlannedChatTurn {
+  threadId: string;
+  turnId: string;
+  text: string;
+  autoComplete?: boolean;
+  beforeStartThread?: () => Promise<void>;
+}
+
 function createChatSurfaceHarness(
   session: StoredSession,
-  plannedTurns: Array<{ threadId: string; turnId: string; text: string; autoComplete?: boolean }>
+  plannedTurns: PlannedChatTurn[],
+  options: {
+    ledger?: RunLedger;
+    maintenanceRecoveryState?: "pending" | "ready" | "blocked";
+    resourceCatalog?: EchoInkResource[];
+  } = {}
 ): {
   view: any;
   terminalCalls: Array<{ runId: string; status: string }>;
   startedTurns: Array<{ threadId: string; turnId: string }>;
+  startedThreads: string[];
   notificationHub: CodexRichNotificationHub;
   renderedSnapshots: StoredSession["messages"][];
   harnessOutputs: any[];
+  ledger: RunLedger;
+  nativeSettlements: any[];
+  nativeRecords: Map<string, NativeExecutionRecord>;
+  saveCalls: string[];
+  afterTurnSettledCalls: Array<{ sessionId: string; succeeded: boolean }>;
+  ignoredLateTerminalAppendInputs: any[];
+  adapterOptions: any[];
+  harnessRequests: HarnessRunRequest[];
+  mcpToolListCalls(): number;
 } {
-  const notificationHub = new CodexRichNotificationHub();
-  const kernel = new EchoInkHarnessKernel({
-    ledger: new InMemoryRunLedger(),
-    memoryProvider: new NoopMemoryProvider(),
-    sessionProvider: () => session
+  session.revision = session.revision ?? 1;
+  session.generation = session.generation ?? session.revision;
+  session.contextId = session.contextId ?? `context-${session.id}`;
+  session.commitId = session.commitId ?? `commit-${session.id}`;
+  session.workspaceFingerprint = session.workspaceFingerprint ?? workspaceFingerprint({
+    vaultPath: "/vault",
+    cwd: "/vault"
   });
-  const settings = structuredClone(DEFAULT_SETTINGS);
-  settings.agentBackend = "codex-cli";
-  settings.capabilities.chatBackend = "default";
+  const notificationHub = new CodexRichNotificationHub();
+  const serviceBed = createServiceReceiptTestBed({
+    sessionId: session.id,
+    session,
+    ledger: options.ledger
+  });
+  const { service, ledger, nativeManager } = serviceBed;
+  const settings = serviceBed.plugin.settings;
   const terminalCalls: Array<{ runId: string; status: string }> = [];
   const startedTurns: Array<{ threadId: string; turnId: string }> = [];
+  const startedThreads: string[] = [];
   const renderedSnapshots: StoredSession["messages"][] = [];
   const harnessOutputs: any[] = [];
+  const nativeSettlements = nativeManager.settlementAttempts;
+  const saveCalls = serviceBed.saveCalls;
+  const afterTurnSettledCalls: Array<{ sessionId: string; succeeded: boolean }> = [];
+  const ignoredLateTerminalAppendInputs: any[] = [];
+  const adapterOptions: any[] = [];
+  const harnessRequests: HarnessRunRequest[] = [];
+  let mcpToolListCallCount = 0;
+  const mutationLane = new ConversationMutationLane();
   const view: any = {
     plugin: {
+      ...serviceBed.plugin,
       settings,
+      withEchoInkConversationMutation: async <T>(
+        conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await mutationLane.withConversationMutation(
+        conversationId,
+        action
+      ),
       getVaultPath: () => "/vault",
+      getNativeExecutionRefContext: () => ({
+        deviceKey: "device-surface-test",
+        vaultId: "/vault"
+      }),
       ensureHarnessBackendConnected: async () => null,
       runHarnessWithAdapter: async (input: any) => {
-        const output = await kernel.runWithAdapter(input);
+        harnessRequests.push(input.request);
+        const output = await service.runWithAdapter(input);
         harnessOutputs.push(output);
         return output;
       },
-      settleHarnessRunTerminal: async (input: any) => {
+      commitChatSurfaceTerminal: async (input: any, options?: any) => {
         terminalCalls.push({ runId: input.runId, status: input.status });
-        await kernel.settleRunTerminal(input);
+        await service.commitChatSurfaceTerminal(input, options);
       },
-      createCodexRichAgentAdapter: (options: any) => new CodexRichAgentAdapter({
-        ...options,
-        notificationHub,
-        startThread: async () => ({ threadId: plannedTurns[0]?.threadId ?? "thread-chat-await", title: "Thread" }),
-        resumeThread: async () => undefined,
-        startTurn: async (threadId: string) => {
-          const plan = plannedTurns[startedTurns.length];
-          assert.ok(plan, "missing planned Codex turn");
-          startedTurns.push({ threadId, turnId: plan.turnId });
-          if (plan.autoComplete === false) return plan.turnId;
-          setTimeout(() => {
-            notificationHub.dispatch({
-              method: "item/completed",
-              params: {
-                item: {
-                  id: `assistant-${plan.turnId}`,
-                  threadId,
-                  turnId: plan.turnId,
-                  type: "agentMessage",
-                  text: plan.text
+      appendHarnessRunEvent: async (input: any) => {
+        if (input.type === "run.surface_terminal.ignored") {
+          ignoredLateTerminalAppendInputs.push(input);
+        }
+        return await service.appendRunEvent(input);
+      },
+      cancelHarnessRun: async (runId: string) => await service.cancelRun(runId),
+      createCodexRichAgentAdapter: (adapterInput: any) => {
+        adapterOptions.push(adapterInput);
+        return new CodexRichAgentAdapter({
+          ...adapterInput,
+          notificationHub,
+          startThread: async () => {
+            const plan = plannedTurns[startedThreads.length] ?? plannedTurns[0];
+            await plan?.beforeStartThread?.();
+            const threadId = plan?.threadId ?? "thread-chat-await";
+            startedThreads.push(threadId);
+            return { threadId, title: "Thread" };
+          },
+          resumeThread: async () => undefined,
+          startTurn: async (threadId: string) => {
+            const plan = plannedTurns[startedTurns.length];
+            assert.ok(plan, "missing planned Codex turn");
+            startedTurns.push({ threadId, turnId: plan.turnId });
+            if (plan.autoComplete === false) return plan.turnId;
+            setTimeout(() => {
+              notificationHub.dispatch({
+                method: "item/completed",
+                params: {
+                  item: {
+                    id: `assistant-${plan.turnId}`,
+                    threadId,
+                    turnId: plan.turnId,
+                    type: "agentMessage",
+                    text: plan.text
+                  }
                 }
-              }
-            } as any);
-            notificationHub.dispatch({
-              method: "turn/completed",
-              params: {
-                threadId,
-                turn: {
-                  id: plan.turnId,
+              } as any);
+              notificationHub.dispatch({
+                method: "turn/completed",
+                params: {
                   threadId,
-                  status: "completed"
+                  turn: {
+                    id: plan.turnId,
+                    threadId,
+                    status: "completed"
+                  }
                 }
-              }
-            } as any);
-          }, 0);
-          return plan.turnId;
-        },
-        interruptTurn: async () => undefined
-      }),
+              } as any);
+            }, 0);
+            return plan.turnId;
+          },
+          interruptTurn: async () => undefined
+        });
+      },
       externalizeMessageText: async () => undefined,
-      saveSettings: async () => undefined,
-      getKnowledgeBaseManager: () => null,
-      listEchoInkMcpTools: async () => []
+      getKnowledgeBaseManager: () => options.maintenanceRecoveryState
+        ? {
+          isRunning: false,
+          maintenanceRecoveryStatus: {
+            state: options.maintenanceRecoveryState,
+            message: options.maintenanceRecoveryState === "blocked" ? "恢复被阻断" : ""
+          }
+        }
+        : null,
+      buildRuntimeEchoInkResourceCatalog: async () => options.resourceCatalog ?? [],
+      listEchoInkMcpTools: async () => {
+        mcpToolListCallCount += 1;
+        return [];
+      }
     },
     turnQueue: new RuntimeTurnQueue(),
     queueStartInProgress: false,
@@ -1230,24 +5361,35 @@ function createChatSurfaceHarness(
     activeRunKind: "",
     activeRunSessionId: "",
     activeTurnId: "",
+    activeRunNativeExecutionRecordIds: [],
     turnStartedAt: 0,
-    threadPrewarmPromise: null,
-    threadPrewarmSessionId: "",
+    turnWatchdog: null,
+    editorActionActiveTimeoutMs: 0,
+    editorActionThreadId: "",
+    editorActionCurrentItemIds: new Set<string>(),
     messagesBottomFollowPaused: false,
     sessionById: (sessionId: string) => sessionId === session.id ? session : null,
     clearComposerDraft: () => undefined,
+    pauseQueueForSession: () => undefined,
+    requireQueueRecoveryForSession: (sessionId: string) => {
+      view.turnQueue.requireSessionRecovery(sessionId);
+    },
+    isEditorActionRunActive: () => false,
+    setEditorActionStatus: () => undefined,
     renderQueue: () => undefined,
     renderToolbar: () => undefined,
     renderTabs: () => undefined,
     renderMessages: () => undefined,
     renderMessagesIfActive: () => { renderedSnapshots.push(structuredClone(session.messages)); },
-    renderMessages: () => undefined,
     applyStatus: () => undefined,
     ensureThinkingMessage: () => undefined,
     armTurnWatchdog: () => undefined,
-    clearTurnWatchdog: () => undefined,
+    clearTurnWatchdog: () => {
+      view.turnWatchdog = null;
+    },
     finishThinkingMessage: () => undefined,
     finishRunningProcessMessages: () => undefined,
+    finishPlanMessage: () => undefined,
     addMessageToSession: (_session: StoredSession, message: any) => {
       session.messages.push({ id: `message-${session.messages.length}`, createdAt: Date.now(), ...message });
     },
@@ -1255,9 +5397,10 @@ function createChatSurfaceHarness(
       view.activeRunId = "";
       view.activeRunKind = "";
       view.activeRunSessionId = "";
+      view.activeRunNativeExecutionRecordIds = [];
     },
     attachTurnIdToRun: () => undefined,
-    isKnowledgeBaseSession: () => false,
+    isKnowledgeBaseSession: (target: StoredSession) => target.kind === "knowledge-base",
     diagnoseCodexFailure: () => ({ title: "失败", text: "失败" }),
     activeRunSession: () => session
   };
@@ -1265,8 +5408,28 @@ function createChatSurfaceHarness(
   view.startQueuedTurnItemSafely = (item: any, source: "composer" | "queue") => startQueuedTurnItemSafely(view, item, source);
   view.startChatTurn = (target: StoredSession, item: any, source: "composer" | "queue") => startChatTurn(view, target, item, source);
   view.startNextQueuedTurn = (sessionId: string) => startNextQueuedTurn(view, sessionId);
-  view.afterTurnSettled = (sessionId: string, succeeded: boolean) => afterTurnSettled(view, sessionId, succeeded);
-  return { view, terminalCalls, startedTurns, notificationHub, renderedSnapshots, harnessOutputs };
+  view.afterTurnSettled = async (sessionId: string, succeeded: boolean) => {
+    afterTurnSettledCalls.push({ sessionId, succeeded });
+    await afterTurnSettled(view, sessionId, succeeded);
+  };
+  return {
+    view,
+    terminalCalls,
+    startedTurns,
+    startedThreads,
+    notificationHub,
+    renderedSnapshots,
+    harnessOutputs,
+    ledger,
+    nativeSettlements,
+    nativeRecords: nativeManager.records,
+    saveCalls,
+    afterTurnSettledCalls,
+    ignoredLateTerminalAppendInputs,
+    adapterOptions,
+    harnessRequests,
+    mcpToolListCalls: () => mcpToolListCallCount
+  };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 120): Promise<void> {

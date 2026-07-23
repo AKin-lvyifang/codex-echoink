@@ -13,6 +13,7 @@ import {
 import { KnowledgeBaseManager } from "../../knowledge-base/manager";
 import { runSelectedMaintenanceAgentTask } from "../../knowledge-base/maintenance-runner";
 import type { KnowledgeBaseTurnOptionOverrides } from "../../knowledge-base/command-router";
+import type { SettingsSaveOptions } from "../../plugin/settings-store";
 import {
   DEFAULT_SETTINGS,
   normalizeSettingsData,
@@ -44,7 +45,11 @@ interface ManagerFixture {
   releaseNativeRecovery(): void;
   nativeRecoveryStarted: Promise<void>;
   nativeRecoveryCalls(): number;
+  nativeSnapshotCalls(): number;
+  nativeRecoveryInputs: Array<{ recordIds?: readonly string[] }>;
+  workflowRecoveryCalls(): number;
   saveCalls(): number;
+  saveOptions: Array<SettingsSaveOptions | undefined>;
   surfaceRefreshCalls(): number;
   runnerCalls: Array<{ selectedBackend: string }>;
   routingCalls: ManagerRoutingCall[];
@@ -63,8 +68,375 @@ export async function runMaintenanceManagerRecoveryTests(): Promise<void> {
   await assertSelectedAgentFreezesBeforeRecoveryGate();
   await assertExistingTerminalHistorySettlesScheduledCrashWithoutOverwrite();
   await assertActiveRunJournalRestoresExactPreWalProvenance();
-  await assertPendingRecoveryAllowsHelpButBlocksAgentCommands();
+  await assertPendingRecoveryScopesOnlyWriteAuthority();
+  await assertWalPersistedStartsInProcessRecoveryWithoutAgentReplay();
+  await assertInProcessRecoveryBlocksOnIncompleteNativeSettlement();
+  await assertInProcessRecoveryWaitsForActiveWriteAuthority();
+  await assertUnloadClosesNewWritesAndDrainsIssuedAuthority();
   await assertInvalidWalBlocksEveryNewAgentAttempt();
+  await assertExplicitCommandRetriesRejectedRecoveryGate();
+}
+
+async function assertWalPersistedStartsInProcessRecoveryWithoutAgentReplay(): Promise<void> {
+  const fixture = await createFixture();
+  let maintenanceCalls = 0;
+  const settledNativeRunIds: string[][] = [];
+  try {
+    fixture.manager.register();
+    await fixture.nativeRecoveryStarted;
+    fixture.releaseNativeRecovery();
+    await (fixture.manager as unknown as {
+      waitUntilMaintenanceReady(): Promise<void>;
+    }).waitUntilMaintenanceReady();
+    assert.equal(fixture.nativeRecoveryCalls(), 1);
+
+    (fixture.manager as unknown as {
+      agentTaskService: {
+        settlePendingNativeExecutionsForRunIds(runIds: readonly string[]): Promise<{
+          requestedRunIds: string[];
+          matchedRunIds: string[];
+          matchedRecordCount: number;
+          localCommitStatus: "committed";
+          cleanupRecoveryRequired: boolean;
+          disposedCount: number;
+        }>;
+      };
+    }).agentTaskService.settlePendingNativeExecutionsForRunIds = async (runIds) => {
+      settledNativeRunIds.push([...runIds]);
+      return {
+        requestedRunIds: [...runIds],
+        matchedRunIds: [...runIds],
+        matchedRecordCount: runIds.length,
+        localCommitStatus: "committed",
+        cleanupRecoveryRequired: true,
+        disposedCount: 0
+      };
+    };
+
+    (fixture.manager as unknown as {
+      maintenanceRunner: {
+        runMaintenance(): Promise<KnowledgeBaseRunResult>;
+      };
+    }).maintenanceRunner.runMaintenance = async () => {
+      maintenanceCalls += 1;
+      return {
+        status: "failed",
+        reportPath: "outputs/maintenance/pending.md",
+        summary: "",
+        processedSources: [],
+        workflowRunId: "knowledge-maintain-in-process-recovery",
+        selectedBackend: "opencode",
+        winnerBackend: "codex-cli",
+        attempts: [
+          {
+            attemptId: "knowledge-maintain-in-process-recovery-attempt-1-opencode",
+            ordinal: 1,
+            backend: "opencode",
+            submitted: {
+              at: 1,
+              harnessRunId: "knowledge-maintain-in-process-harness-failed"
+            },
+            terminal: {
+              status: "failed",
+              at: 2,
+              message: "provider disconnected after submission"
+            },
+            failure: {
+              code: "provider-disconnected",
+              at: 2,
+              message: "provider disconnected after submission",
+              phase: "execution",
+              retryable: true,
+              failoverEligible: true
+            }
+          },
+          {
+            attemptId: "knowledge-maintain-in-process-recovery-attempt-2-codex-cli",
+            ordinal: 2,
+            backend: "codex-cli",
+            submitted: {
+              at: 3,
+              harnessRunId: "knowledge-maintain-in-process-harness-winner"
+            },
+            terminal: {
+              status: "completed",
+              at: 4
+            }
+          }
+        ],
+        completion: "full",
+        terminalPhase: "commit",
+        commitState: "wal-persisted",
+        failureCode: "maintenance-commit-pending",
+        error: "WAL prepared"
+      };
+    };
+
+    const result = await fixture.manager.runMaintenance(
+      "maintain",
+      "/maintain",
+      { workflowRunId: "knowledge-maintain-in-process-recovery" }
+    );
+    assert.equal(result.commitState, "wal-persisted");
+    assert.equal(maintenanceCalls, 1, "WAL recovery must not rerun the Agent");
+    await waitForCondition(
+      () => fixture.workflowRecoveryCalls() === 2
+        && fixture.manager.maintenanceRecoveryStatus.state === "ready",
+      "the current process must run one shared WAL recovery pass"
+    );
+    assert.equal(maintenanceCalls, 1, "recovery replay must remain Agent-free");
+    assert.deepEqual(settledNativeRunIds, [[
+      "knowledge-maintain-in-process-harness-failed",
+      "knowledge-maintain-in-process-harness-winner"
+    ]]);
+    assert.equal(
+      fixture.nativeRecoveryCalls(),
+      1,
+      "in-process WAL replay must not run startup-only native reconciliation"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertInProcessRecoveryBlocksOnIncompleteNativeSettlement(): Promise<void> {
+  const cases = [
+    {
+      label: "missing scoped Native record",
+      matchedRunIds: [] as string[],
+      localCommitStatus: "committed" as const,
+      expected: /缺少匹配记录/
+    },
+    {
+      label: "failed durable local commit",
+      matchedRunIds: ["knowledge-maintain-incomplete-native"],
+      localCommitStatus: "failed" as const,
+      expected: /本地终态尚未耐久/
+    }
+  ];
+  for (const testCase of cases) {
+    const fixture = await createFixture();
+    try {
+      fixture.manager.register();
+      await fixture.nativeRecoveryStarted;
+      fixture.releaseNativeRecovery();
+      await (fixture.manager as unknown as {
+        waitUntilMaintenanceReady(): Promise<void>;
+      }).waitUntilMaintenanceReady();
+
+      (fixture.manager as unknown as {
+        agentTaskService: {
+          settlePendingNativeExecutionsForRunIds(runIds: readonly string[]): Promise<{
+            requestedRunIds: string[];
+            matchedRunIds: string[];
+            matchedRecordCount: number;
+            localCommitStatus: "committed" | "failed";
+            cleanupRecoveryRequired: boolean;
+            disposedCount: number;
+          }>;
+        };
+      }).agentTaskService.settlePendingNativeExecutionsForRunIds = async (runIds) => ({
+        requestedRunIds: [...runIds],
+        matchedRunIds: [...testCase.matchedRunIds],
+        matchedRecordCount: testCase.matchedRunIds.length,
+        localCommitStatus: testCase.localCommitStatus,
+        cleanupRecoveryRequired: false,
+        disposedCount: 0
+      });
+
+      (fixture.manager as unknown as {
+        startInProcessMaintenanceRecovery(result: KnowledgeBaseRunResult): void;
+      }).startInProcessMaintenanceRecovery({
+        status: "failed",
+        reportPath: "outputs/maintenance/pending.md",
+        summary: "",
+        processedSources: [],
+        workflowRunId: `knowledge-maintain-${testCase.label}`,
+        selectedBackend: "codex-cli",
+        winnerBackend: "codex-cli",
+        attempts: [{
+          attemptId: "knowledge-maintain-incomplete-native-attempt-1-codex-cli",
+          ordinal: 1,
+          backend: "codex-cli",
+          submitted: {
+            at: 1,
+            harnessRunId: "knowledge-maintain-incomplete-native"
+          },
+          terminal: {
+            status: "completed",
+            at: 2
+          }
+        }],
+        terminalPhase: "commit",
+        commitState: "wal-persisted"
+      });
+
+      await waitForCondition(
+        () => fixture.manager.maintenanceRecoveryStatus.state === "blocked",
+        `${testCase.label} must keep maintenance recovery blocked`
+      );
+      assert.match(
+        fixture.manager.maintenanceRecoveryStatus.message,
+        testCase.expected
+      );
+      assert.equal(
+        fixture.nativeRecoveryCalls(),
+        1,
+        "in-process settlement failure must not invoke startup reconciliation"
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  }
+}
+
+async function assertInProcessRecoveryWaitsForActiveWriteAuthority(): Promise<void> {
+  const fixture = await createFixture();
+  const captureStarted = deferred();
+  const releaseCapture = deferred();
+  let captureCalls = 0;
+  try {
+    fixture.manager.register();
+    await fixture.nativeRecoveryStarted;
+    fixture.releaseNativeRecovery();
+    await (fixture.manager as unknown as {
+      waitUntilMaintenanceReady(): Promise<void>;
+    }).waitUntilMaintenanceReady();
+    assert.equal(fixture.workflowRecoveryCalls(), 1);
+    assert.equal(fixture.nativeRecoveryCalls(), 1);
+    assert.equal(fixture.nativeSnapshotCalls(), 1);
+    assert.deepEqual(
+      fixture.nativeRecoveryInputs[0]?.recordIds,
+      ["knowledge-native-before-startup"],
+      "startup native reconciliation must use the exact pre-start record snapshot"
+    );
+
+    (fixture.manager as unknown as {
+      captureService: {
+        captureLink(): Promise<string[]>;
+      };
+    }).captureService.captureLink = async () => {
+      captureCalls += 1;
+      if (captureCalls === 1) {
+        captureStarted.resolve();
+        await releaseCapture.promise;
+      }
+      return [`raw/articles/capture-${captureCalls}.md`];
+    };
+
+    const activeCapture = fixture.manager.captureLink();
+    await captureStarted.promise;
+    (fixture.manager as unknown as {
+      startInProcessMaintenanceRecovery(result: KnowledgeBaseRunResult): void;
+    }).startInProcessMaintenanceRecovery({
+      status: "failed",
+      reportPath: "outputs/maintenance/pending.md",
+      summary: "",
+      processedSources: [],
+      workflowRunId: "knowledge-maintain-authority-drain",
+      selectedBackend: "codex-cli",
+      winnerBackend: "codex-cli",
+      attempts: [],
+      terminalPhase: "commit",
+      commitState: "wal-persisted"
+    });
+    const blockedCapture = fixture.manager.captureLink();
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal(
+      fixture.manager.maintenanceRecoveryStatus.state,
+      "pending"
+    );
+    assert.equal(
+      fixture.workflowRecoveryCalls(),
+      1,
+      "WAL replay must wait for the already-issued write authority"
+    );
+    assert.equal(
+      captureCalls,
+      1,
+      "new writes must not enter while WAL replay owns authority"
+    );
+
+    releaseCapture.resolve();
+    await activeCapture;
+    await waitForCondition(
+      () => fixture.workflowRecoveryCalls() === 2
+        && fixture.manager.maintenanceRecoveryStatus.state === "ready",
+      "WAL replay must start after the prior write authority drains"
+    );
+    await blockedCapture;
+    assert.equal(captureCalls, 2);
+    assert.equal(
+      fixture.nativeRecoveryCalls(),
+      1,
+      "in-process replay must preserve live knowledge native executions"
+    );
+  } finally {
+    releaseCapture.resolve();
+    await fixture.dispose();
+  }
+}
+
+async function assertUnloadClosesNewWritesAndDrainsIssuedAuthority(): Promise<void> {
+  const fixture = await createFixture();
+  const captureStarted = deferred();
+  const releaseCapture = deferred();
+  let captureCalls = 0;
+  let unloadSettled = false;
+  try {
+    fixture.manager.register();
+    await fixture.nativeRecoveryStarted;
+    fixture.releaseNativeRecovery();
+    await (fixture.manager as unknown as {
+      waitUntilMaintenanceReady(): Promise<void>;
+    }).waitUntilMaintenanceReady();
+
+    (fixture.manager as unknown as {
+      captureService: {
+        captureLink(): Promise<string[]>;
+      };
+    }).captureService.captureLink = async () => {
+      captureCalls += 1;
+      captureStarted.resolve();
+      await releaseCapture.promise;
+      return ["raw/articles/capture-before-unload.md"];
+    };
+
+    const activeCapture = fixture.manager.captureLink();
+    await captureStarted.promise;
+    const unload = fixture.manager.unload().then(() => {
+      unloadSettled = true;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal(
+      unloadSettled,
+      false,
+      "unload must wait for write authority already issued before disposal"
+    );
+    await assert.rejects(
+      () => fixture.manager.captureLink(),
+      /知识库管理器已卸载/
+    );
+    const runnerCallsBefore = fixture.runnerCalls.length;
+    const maintenance = await fixture.manager.runMaintenance("maintain");
+    assert.equal(maintenance.status, "failed");
+    assert.match(maintenance.error ?? "", /知识库管理器已卸载/);
+    assert.equal(
+      fixture.runnerCalls.length,
+      runnerCallsBefore,
+      "a stale command callback must not start an Agent after unload"
+    );
+    assert.equal(captureCalls, 1);
+
+    releaseCapture.resolve();
+    await activeCapture;
+    await unload;
+    assert.equal(unloadSettled, true);
+  } finally {
+    releaseCapture.resolve();
+    await fixture.dispose();
+  }
 }
 
 async function assertIncompleteHistoryCannotSuppressActiveJournalRecovery(): Promise<void> {
@@ -187,6 +559,8 @@ async function assertAllMaintenanceEntrypointsShareSelectedFirstHarness(): Promi
     // The scheduler's monotonic run-id guarantee is based on that baseline;
     // clearing it would make two same-millisecond test triggers indistinguishable.
     fixture.settings.knowledgeBase.lastScheduledRunStatus = "failed";
+    fixture.settings.knowledgeBase.scheduledAttemptCount = 1;
+    fixture.settings.knowledgeBase.scheduledNextRetryAt = Date.now() - 1;
     const layoutReady = fixture.layoutReadyCallbacks[0];
     assert.ok(layoutReady, "layout-ready startup callback must be registered");
     layoutReady();
@@ -384,11 +758,20 @@ async function assertActiveRunJournalWithoutAttemptsKeepsZeroEvidence(): Promise
     const assistant = session.messages.find(
       (message) => message.id === "active-zero-assistant"
     );
-    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-report");
-    if (assistant?.knowledgeBaseUi?.kind === "maintain-report") {
-      assert.equal(assistant.knowledgeBaseUi.selectedBackend, "hermes");
-      assert.equal(assistant.knowledgeBaseUi.winnerBackend, null);
-      assert.deepEqual(assistant.knowledgeBaseUi.attempts, []);
+    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-run");
+    assert.equal(assistant?.status, "failed");
+    assert.equal(assistant?.runTerminalRecovered, true);
+    const terminal = session.messages.find((message) =>
+      message.id !== assistant?.id
+      && message.runId === workflowRunId
+      && message.runTerminalRecovered === true
+      && message.knowledgeBaseUi?.kind === "maintain-report"
+    );
+    assert.ok(terminal, "startup recovery must append a durable terminal card");
+    if (terminal.knowledgeBaseUi?.kind === "maintain-report") {
+      assert.equal(terminal.knowledgeBaseUi.selectedBackend, "hermes");
+      assert.equal(terminal.knowledgeBaseUi.winnerBackend, null);
+      assert.deepEqual(terminal.knowledgeBaseUi.attempts, []);
     }
 
     fixture.releaseNativeRecovery();
@@ -445,6 +828,13 @@ async function assertExistingTerminalHistorySettlesScheduledCrashWithoutOverwrit
       }]
     }]
   });
+  fixture.settings.sessions[0]!.messages.push({
+    id: "scheduled-terminal-user",
+    role: "user",
+    text: "/maintain",
+    runId,
+    createdAt: scheduledStartedAt
+  });
 
   try {
     fixture.manager.register();
@@ -465,7 +855,29 @@ async function assertExistingTerminalHistorySettlesScheduledCrashWithoutOverwrit
     assert.equal(history?.phase, "preflight");
     assert.equal(history?.errorCode, "BACKEND_UNAVAILABLE");
     assert.equal(history?.attempts?.[0]?.failure?.phase, "preflight");
+    assert.equal(
+      fixture.settings.sessions[0]!.messages.length,
+      2,
+      "a crash-rehydrated Conversation containing only the user command must append its recovered terminal"
+    );
+    assert.equal(
+      fixture.settings.sessions[0]!.messages[0]?.id,
+      "scheduled-terminal-user"
+    );
+    const terminal = fixture.settings.sessions[0]!.messages[1];
+    assert.match(
+      terminal?.id ?? "",
+      /^knowledge-maintenance-recovery-[a-f0-9]{64}$/
+    );
+    assert.equal(terminal?.runId, runId);
+    assert.equal(terminal?.runTerminalRecovered, true);
+    assert.equal(terminal?.knowledgeBaseUi?.kind, "maintain-report");
+    assert.match(terminal?.text ?? "", /恢复后确认失败/);
     assert.equal(fixture.saveCalls(), 1);
+    assert.deepEqual(fixture.saveOptions, [{
+      flushConversationStore: true,
+      flushKnowledgeBaseHistory: false
+    }]);
 
     fixture.releaseNativeRecovery();
     await (fixture.manager as unknown as {
@@ -484,7 +896,7 @@ async function assertSelectedAgentFreezesBeforeRecoveryGate(): Promise<void> {
     assert.equal(fixture.manager.isRunning, false);
     assert.deepEqual(fixture.manager.maintenanceRecoveryStatus, {
       state: "pending",
-      message: "正在恢复上次知识库维护；尚未启动新的 Agent。/history 和 /help 仍可使用。"
+      message: "正在恢复上次知识库维护；尚未启动新的写入 Agent。普通对话、/ask、/history、/clear 和 /help 仍可使用。"
     });
 
     const overrides = {
@@ -680,7 +1092,7 @@ async function assertRecoveredTerminalProjectsToMaintenanceUi(): Promise<void> {
       message.id === "recovered-assistant"
     );
     assert.equal(assistant?.status, "completed");
-    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-report");
+    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-run");
     assert.match(assistant?.text ?? "", /已从上次中断中恢复/);
     assert.equal(assistant?.backendId, "opencode");
     assert.equal(assistant?.modelId, undefined);
@@ -691,16 +1103,30 @@ async function assertRecoveredTerminalProjectsToMaintenanceUi(): Promise<void> {
     assert.equal(user?.backendId, "opencode");
     assert.equal(user?.modelId, undefined);
     assert.equal(user?.profileId, undefined);
-    if (assistant?.knowledgeBaseUi?.kind === "maintain-report") {
-      assert.equal(assistant.knowledgeBaseUi.selectedBackend, "codex-cli");
-      assert.equal(assistant.knowledgeBaseUi.winnerBackend, "opencode");
-      assert.equal(assistant.knowledgeBaseUi.backend, "opencode");
-    }
-    assert.equal(
-      session.messages.some((message) =>
-        message.id === "recovered-thinking"),
-      false
+    const terminal = session.messages.find((message) =>
+      message.id !== assistant?.id
+      && message.runId === runId
+      && message.runTerminalRecovered === true
+      && message.knowledgeBaseUi?.kind === "maintain-report"
     );
+    assert.ok(terminal, "recovery must append a terminal report card");
+    assert.match(terminal.text, /已从上次中断中恢复/);
+    assert.equal(terminal.backendId, "opencode");
+    assert.equal(terminal.modelId, undefined);
+    assert.equal(terminal.profileId, undefined);
+    if (terminal.knowledgeBaseUi?.kind === "maintain-report") {
+      assert.equal(terminal.knowledgeBaseUi.selectedBackend, "codex-cli");
+      assert.equal(terminal.knowledgeBaseUi.winnerBackend, "opencode");
+      assert.equal(terminal.knowledgeBaseUi.backend, "opencode");
+    }
+    const thinking = session.messages.find((message) =>
+      message.id === "recovered-thinking"
+    );
+    assert.ok(thinking, "recovery must not delete an already-durable prefix");
+    assert.equal(thinking.status, "recovery-pending");
+    assert.equal(thinking.backendId, "opencode");
+    assert.equal(thinking.modelId, undefined);
+    assert.equal(thinking.profileId, undefined);
     assert.equal(fixture.saveCalls(), 1);
 
     fixture.releaseNativeRecovery();
@@ -759,11 +1185,20 @@ async function assertOrphanedUiRunUsesPersistedBackendWithoutAttempt(): Promise<
     assert.equal(assistant?.backendId, undefined);
     assert.equal(assistant?.modelId, undefined);
     assert.equal(assistant?.profileId, undefined);
-    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-report");
-    if (assistant?.knowledgeBaseUi?.kind === "maintain-report") {
-      assert.equal(assistant.knowledgeBaseUi.selectedBackend, "hermes");
-      assert.equal(assistant.knowledgeBaseUi.winnerBackend, null);
-      assert.deepEqual(assistant.knowledgeBaseUi.attempts, []);
+    assert.equal(assistant?.knowledgeBaseUi?.kind, "maintain-run");
+    assert.equal(assistant?.status, "failed");
+    assert.equal(assistant?.runTerminalRecovered, true);
+    const terminal = session.messages.find((message) =>
+      message.id !== assistant?.id
+      && message.runId === runId
+      && message.runTerminalRecovered === true
+      && message.knowledgeBaseUi?.kind === "maintain-report"
+    );
+    assert.ok(terminal, "orphan recovery must append a terminal report card");
+    if (terminal.knowledgeBaseUi?.kind === "maintain-report") {
+      assert.equal(terminal.knowledgeBaseUi.selectedBackend, "hermes");
+      assert.equal(terminal.knowledgeBaseUi.winnerBackend, null);
+      assert.deepEqual(terminal.knowledgeBaseUi.attempts, []);
     }
 
     fixture.releaseNativeRecovery();
@@ -775,9 +1210,10 @@ async function assertOrphanedUiRunUsesPersistedBackendWithoutAttempt(): Promise<
   }
 }
 
-async function assertPendingRecoveryAllowsHelpButBlocksAgentCommands(): Promise<void> {
+async function assertPendingRecoveryScopesOnlyWriteAuthority(): Promise<void> {
   const fixture = await createFixture();
   let captureCalls = 0;
+  let askCalls = 0;
   (fixture.manager as unknown as {
     captureService: {
       captureChatInput(): Promise<string[]>;
@@ -785,6 +1221,14 @@ async function assertPendingRecoveryAllowsHelpButBlocksAgentCommands(): Promise<
   }).captureService.captureChatInput = async () => {
     captureCalls += 1;
     return ["inbox/forbidden-history-capture.md"];
+  };
+  (fixture.manager as unknown as {
+    queryJournalService: {
+      answerQuestion(): Promise<{ status: "success"; message: string }>;
+    };
+  }).queryJournalService.answerQuestion = async () => {
+    askCalls += 1;
+    return { status: "success", message: "只读回答" };
   };
   try {
     fixture.manager.register();
@@ -799,34 +1243,63 @@ async function assertPendingRecoveryAllowsHelpButBlocksAgentCommands(): Promise<
     const history = await fixture.manager.handleUserMessage("/history", [], {
       workflowRunId: "kb-history-during-recovery"
     });
-    assert.equal(history.status, "failed");
-    assert.equal(history.maintenanceRecoveryState, "pending");
-    assert.equal(history.workflowRunId, "kb-history-during-recovery");
-    assert.match(history.message, /尚未启动新的 Agent/);
+    assert.equal(history.status, "success");
+    assert.match(history.message, /本地历史视图/);
     assert.equal(
       captureCalls,
       0,
-      "/history is handled by the local composer; Manager must fail closed instead of falling through to capture"
+      "/history must never fall through to capture"
     );
     assert.doesNotMatch(history.message, /已收集到|没有可收集的内容/);
 
-    const blocked = await fixture.manager.handleUserMessage("/ask 恢复到哪了", [], {
-      workflowRunId: "kb-agent-command-during-recovery"
+    const cleared = await fixture.manager.handleUserMessage("/clear", [], {
+      workflowRunId: "kb-clear-during-recovery"
     });
-    assert.equal(blocked.status, "failed");
-    assert.equal(blocked.maintenanceRecoveryState, "pending");
-    assert.equal(blocked.workflowRunId, "kb-agent-command-during-recovery");
-    assert.match(blocked.message, /尚未启动新的 Agent/);
-    assert.deepEqual(fixture.runnerCalls, []);
+    assert.equal(cleared.status, "success");
+    assert.match(cleared.message, /本地清空/);
     assert.equal(captureCalls, 0);
 
-    const maintenance = await fixture.manager.handleUserMessage("/maintain", [], {
-      workflowRunId: "kb-maintenance-during-recovery"
+    const chat = await fixture.manager.handleUserMessage("解释当前状态", [], {
+      workflowRunId: "kb-chat-during-recovery"
     });
-    assert.equal(maintenance.status, "failed");
-    assert.equal(maintenance.maintenanceRecoveryState, "pending");
-    assert.equal(maintenance.ui?.kind, "maintain-run");
-    assert.equal(maintenance.ui?.mode, "maintain");
+    assert.equal(chat.status, "success");
+    assert.match(chat.message, /普通 Agent 对话/);
+
+    const asked = await fixture.manager.handleUserMessage("/ask 恢复到哪了", [], {
+      workflowRunId: "kb-agent-command-during-recovery"
+    });
+    assert.equal(asked.status, "success");
+    assert.equal(asked.message, "只读回答");
+    assert.equal(askCalls, 1);
+    assert.deepEqual(fixture.runnerCalls, []);
+    assert.equal(captureCalls, 0);
+    assert.equal(
+      fixture.nativeRecoveryCalls(),
+      1,
+      "safe commands must not start or retry maintenance recovery"
+    );
+
+    const writeCommands = [
+      "/init",
+      "/maintain",
+      "/check",
+      "/reingest",
+      "/calibrate",
+      "/outputs",
+      "/inbox",
+      "/journal",
+      "/week",
+      "记一下：恢复后再处理"
+    ];
+    for (const command of writeCommands) {
+      const blocked = await fixture.manager.handleUserMessage(command, [], {
+        workflowRunId: `kb-write-during-recovery-${writeCommands.indexOf(command)}`
+      });
+      assert.equal(blocked.status, "failed", command);
+      assert.equal(blocked.maintenanceRecoveryState, "pending", command);
+    }
+    assert.deepEqual(fixture.runnerCalls, []);
+    assert.equal(captureCalls, 0);
 
     fixture.releaseNativeRecovery();
     await (fixture.manager as unknown as {
@@ -865,6 +1338,38 @@ async function assertInvalidWalBlocksEveryNewAgentAttempt(): Promise<void> {
   const errors: unknown[][] = [];
   const originalError = console.error;
   console.error = (...args: unknown[]) => errors.push(args);
+  let askCalls = 0;
+  let calibrationCalls = 0;
+  let captureCalls = 0;
+  (fixture.manager as unknown as {
+    queryJournalService: {
+      answerQuestion(): Promise<{ status: "success"; message: string }>;
+    };
+  }).queryJournalService.answerQuestion = async () => {
+    askCalls += 1;
+    return { status: "success", message: "blocked recovery read" };
+  };
+  (fixture.manager as unknown as {
+    rawDigestCalibrationRunner: {
+      calibrateRawDigestStatus(): Promise<KnowledgeBaseRunResult>;
+    };
+  }).rawDigestCalibrationRunner.calibrateRawDigestStatus = async () => {
+    calibrationCalls += 1;
+    return {
+      status: "success",
+      reportPath: "",
+      summary: "unexpected",
+      processedSources: []
+    };
+  };
+  (fixture.manager as unknown as {
+    captureService: {
+      captureLink(): Promise<string[]>;
+    };
+  }).captureService.captureLink = async () => {
+    captureCalls += 1;
+    return ["raw/articles/unexpected.md"];
+  };
   try {
     fixture.manager.register();
     const result = await fixture.manager.runMaintenance("maintain");
@@ -892,13 +1397,77 @@ async function assertInvalidWalBlocksEveryNewAgentAttempt(): Promise<void> {
     );
     assert.match(
       fixture.settings.sessions[0]!.messages.at(-1)?.text ?? "",
-      /尚未启动新的 Agent/
+      /尚未启动新的写入 Agent/
     );
     assert.equal(fixture.manager.isRunning, false);
     assert.equal(fixture.manager.maintenanceRecoveryStatus.state, "blocked");
     assert.match(fixture.manager.maintenanceRecoveryStatus.message, /恢复被阻断/);
     assert.equal(fixture.surfaceRefreshCalls(), 2);
     assert.ok(errors.length >= 1);
+
+    const safeAsk = await fixture.manager.handleUserMessage("/ask 恢复为何失败");
+    assert.equal(safeAsk.status, "success");
+    assert.equal(safeAsk.message, "blocked recovery read");
+    assert.equal(askCalls, 1);
+    assert.equal(
+      fixture.nativeRecoveryCalls(),
+      0,
+      "read-only ask must not retry a rejected recovery gate"
+    );
+    assert.deepEqual(fixture.runnerCalls, []);
+
+    const calibration = await fixture.manager.calibrateRawDigestStatus();
+    assert.equal(calibration.status, "failed");
+    assert.equal(calibration.failureCode, "maintenance-recovery-blocked");
+    assert.equal(calibrationCalls, 0);
+    assert.equal(fixture.nativeRecoveryCalls(), 0);
+
+    await assert.rejects(
+      fixture.manager.captureLink(),
+      /恢复被阻断/
+    );
+    assert.equal(captureCalls, 0);
+    assert.equal(fixture.nativeRecoveryCalls(), 0);
+  } finally {
+    console.error = originalError;
+    await fixture.dispose();
+  }
+}
+
+async function assertExplicitCommandRetriesRejectedRecoveryGate(): Promise<void> {
+  const fixture = await createFixture();
+  const walRoot = path.join(fixture.workflowStorageRoot, "workflow-wal");
+  const invalidPath = path.join(walRoot, "unsafe-entry.txt");
+  await mkdir(walRoot, { recursive: true });
+  await writeFile(invalidPath, "invalid", "utf8");
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    fixture.manager.register();
+    const first = await fixture.manager.runMaintenance("maintain");
+    assert.equal(first.status, "failed");
+    assert.equal(
+      fixture.manager.maintenanceRecoveryStatus.state,
+      "blocked"
+    );
+    await rm(invalidPath, { force: true });
+    fixture.releaseNativeRecovery();
+
+    const retried = await fixture.manager.handleUserMessage("/maintain", [], {
+      workflowRunId: "kb-maintenance-after-recovery-retry"
+    });
+    assert.equal(retried.status, "success");
+    assert.equal(
+      fixture.manager.maintenanceRecoveryStatus.state,
+      "ready"
+    );
+    assert.equal(fixture.nativeRecoveryCalls(), 1);
+    assert.equal(
+      fixture.nativeSnapshotCalls(),
+      1,
+      "startup retry must reuse the exact original Native record snapshot"
+    );
+    assert.equal(fixture.runnerCalls.length, 1);
   } finally {
     console.error = originalError;
     await fixture.dispose();
@@ -934,8 +1503,13 @@ async function createFixture(
     }]
   }).settings;
   let saveCallCount = 0;
+  const saveOptions: Array<SettingsSaveOptions | undefined> = [];
   let nativeCallCount = 0;
+  let nativeSnapshotCallCount = 0;
+  let workflowRecoveryCallCount = 0;
   let surfaceRefreshCallCount = 0;
+  const startupNativeRecordIds = ["knowledge-native-before-startup"];
+  const nativeRecoveryInputs: Array<{ recordIds?: readonly string[] }> = [];
   const nativeStarted = deferred();
   const nativeRelease = deferred();
   const layoutReadyCallbacks: Array<() => void> = [];
@@ -946,13 +1520,27 @@ async function createFixture(
     settings,
     getVaultPath: () => vaultPath,
     getKnowledgeBaseWorkflowStorageRoot: () => workflowStorageRoot,
-    getKnowledgeBaseWorkflowSettingsHost: () =>
-      unusedSettingsHost(settings.knowledgeBase),
-    saveSettings: async () => {
-      saveCallCount += 1;
+    getKnowledgeBaseWorkflowSettingsHost: () => {
+      workflowRecoveryCallCount += 1;
+      return unusedSettingsHost(settings.knowledgeBase);
     },
-    failPendingNativeExecutionsForRecovery: async () => {
+    isEchoInkConversationStoreV2MigrationRequired: () => false,
+    saveSettings: async (
+      _notify = true,
+      options?: SettingsSaveOptions
+    ) => {
+      saveCallCount += 1;
+      saveOptions.push(options ? { ...options } : undefined);
+    },
+    snapshotPendingNativeExecutionRecordIdsForRecovery: async () => {
+      nativeSnapshotCallCount += 1;
+      return [...startupNativeRecordIds];
+    },
+    failPendingNativeExecutionsForRecovery: async (input: { recordIds?: readonly string[] }) => {
       nativeCallCount += 1;
+      nativeRecoveryInputs.push({
+        ...(input.recordIds ? { recordIds: [...input.recordIds] } : {})
+      });
       nativeStarted.resolve();
       await nativeRelease.promise;
       return 0;
@@ -1095,7 +1683,11 @@ async function createFixture(
     releaseNativeRecovery: nativeRelease.resolve,
     nativeRecoveryStarted: nativeStarted.promise,
     nativeRecoveryCalls: () => nativeCallCount,
+    nativeSnapshotCalls: () => nativeSnapshotCallCount,
+    nativeRecoveryInputs,
+    workflowRecoveryCalls: () => workflowRecoveryCallCount,
     saveCalls: () => saveCallCount,
+    saveOptions,
     surfaceRefreshCalls: () => surfaceRefreshCallCount,
     runnerCalls,
     routingCalls,
@@ -1112,6 +1704,8 @@ function resetScheduledState(settings: CodexForObsidianSettings): void {
   settings.knowledgeBase.lastScheduledRunAt = 0;
   settings.knowledgeBase.lastScheduledRunStatus = "idle";
   settings.knowledgeBase.lastScheduledRunId = "";
+  settings.knowledgeBase.scheduledAttemptCount = 0;
+  settings.knowledgeBase.scheduledNextRetryAt = 0;
 }
 
 async function waitForRoutingCalls(
@@ -1127,6 +1721,17 @@ async function waitForRoutingCalls(
     count,
     `expected ${count} maintenance Runner calls`
   );
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  message: string
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(predicate(), true, message);
 }
 
 function unusedSettingsHost<T extends MaintenanceWorkflowSettingsSnapshot>(

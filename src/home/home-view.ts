@@ -1,6 +1,7 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeBaseDashboardFile, KnowledgeBaseDashboardRecommendationCard, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import { rawDigestStateForRecord, rawDigestStateLabel } from "../knowledge-base/digest-status";
 
 export const VIEW_TYPE_ECHOINK_HOME = "codex-echoink-home";
 
@@ -668,10 +669,10 @@ export function buildHomeCards(snapshot: KnowledgeBaseDashboardSnapshot | null):
     return snapshot.recommendations.cards.map(recommendationToHomeCard).filter((card) => !isSystemHomeCardPath(card.path));
   }
   const cards: HomeCard[] = [
-    ...visibleHomeFiles(snapshot.raw.recentFiles).map((file) => fileToCard(file, "raw", snapshot)),
-    ...visibleHomeFiles(snapshot.wiki.recentFiles).map((file) => fileToCard(file, "wiki", snapshot)),
-    ...visibleHomeFiles(snapshot.inbox.recentFiles).map((file) => fileToCard(file, "inbox", snapshot)),
-    ...visibleHomeFiles(snapshot.outputs.recentFiles).map((file) => fileToCard(file, "outputs", snapshot))
+    ...visibleHomeFiles(snapshot.raw.recentFiles).map((file) => fileToCard(file, "raw")),
+    ...visibleHomeFiles(snapshot.wiki.recentFiles).map((file) => fileToCard(file, "wiki")),
+    ...visibleHomeFiles(snapshot.inbox.recentFiles).map((file) => fileToCard(file, "inbox")),
+    ...visibleHomeFiles(snapshot.outputs.recentFiles).map((file) => fileToCard(file, "outputs"))
   ];
   return cards
     .sort((a, b) => b.touchedAt - a.touchedAt)
@@ -714,15 +715,15 @@ export function isSystemHomeCardPath(relativePath: string): boolean {
   return false;
 }
 
-function fileToCard(file: KnowledgeBaseDashboardFile, kind: HomeCardKind, snapshot: KnowledgeBaseDashboardSnapshot): HomeCard {
+function fileToCard(file: KnowledgeBaseDashboardFile, kind: HomeCardKind): HomeCard {
   return {
     id: `${kind}:${file.path}`,
     title: titleFromPath(file.path),
     path: file.path,
     kind,
-    summary: cardSummary(file, kind, snapshot),
+    summary: cardSummary(file, kind),
     tags: cardTags(file.path, kind),
-    status: cardStatus(file, kind, snapshot),
+    status: cardStatus(file, kind),
     touchedAt: file.mtime
   };
 }
@@ -847,18 +848,28 @@ export function homeCardFolderScope(relativePath: string): string {
   return parts[0] ?? "根目录";
 }
 
-function cardStatus(file: KnowledgeBaseDashboardFile, kind: HomeCardKind, snapshot: KnowledgeBaseDashboardSnapshot): string {
+function cardStatus(file: KnowledgeBaseDashboardFile, kind: HomeCardKind): string {
   if (kind === "raw") {
-    if (snapshot.raw.changedCount > 0) return "Raw 待提炼";
-    return file.rawDigest ? "已提炼" : "待校准";
+    return rawDigestStateLabel(rawDigestStateForRecord({
+      fingerprint: file.fingerprint ?? "",
+      frontmatter: file.rawDigest ?? null,
+      hasTrackerHint: false
+    }));
   }
   if (kind === "inbox") return "Inbox 待分流";
   if (kind === "outputs") return "维护报告";
   return "Wiki 更新";
 }
 
-function cardSummary(file: KnowledgeBaseDashboardFile, kind: HomeCardKind, snapshot: KnowledgeBaseDashboardSnapshot): string {
-  if (kind === "raw") return snapshot.raw.changedCount > 0 ? "这条来源可能还没有完全沉淀到 Wiki，适合进入下一轮维护。" : "原始来源已登记，可作为后续引用和复盘依据。";
+function cardSummary(file: KnowledgeBaseDashboardFile, kind: HomeCardKind): string {
+  if (kind === "raw") {
+    const status = cardStatus(file, kind);
+    if (status === "已提炼") return "原始来源已登记，可作为后续引用和复盘依据。";
+    if (status === "待校准") return "历史记录显示可能已提炼，但仍需要校准可信证据。";
+    if (status === "待重新提炼") return "这条来源内容变化，需要重新进入四步提炼。";
+    if (status === "提炼失败") return "上次提炼失败，需要重新写入 Wiki / Projects 并验证来源证据。";
+    return "这条来源还需要进入 Wiki / Projects 的结构化知识。";
+  }
   if (kind === "wiki") return "结构化知识页，适合作为问答、复盘和关联推荐的长期依据。";
   if (kind === "inbox") return "临时收集内容，需要判断是进入 Raw、Wiki、Journal 还是项目区。";
   return "近期输出记录，可用于复盘、沉淀和追踪 Agent 工作结果。";

@@ -30,7 +30,9 @@ export type DigestEvidencePendingReasonCode =
   | "maintenance-report-source-missing"
   | "transaction-snapshot-missing"
   | "structure-evidence-missing"
-  | "shared-target-dependency";
+  | "shared-target-dependency"
+  | "batch-limit"
+  | "resource-limit";
 
 export interface DigestEvidencePendingReason {
   code: DigestEvidencePendingReasonCode;

@@ -17,6 +17,8 @@ export interface KnowledgeBaseIoBudget {
 export interface KnowledgeBaseIoDecision {
   ok: boolean;
   reason?: string;
+  strategy?: "whole-file" | "chunked-text";
+  maxChunkBytes?: number;
 }
 
 export interface KnowledgeBaseTextPrefix {
@@ -33,16 +35,31 @@ export function createKnowledgeBaseIoBudget(options: KnowledgeBaseIoBudgetOption
   };
 }
 
-export function shouldReadKnowledgeBaseFileContent(file: { size: number }, budget: KnowledgeBaseIoBudget): KnowledgeBaseIoDecision {
+export function shouldReadKnowledgeBaseFileContent(
+  file: { size: number },
+  budget: KnowledgeBaseIoBudget,
+  options: { allowChunkedText?: boolean } = {}
+): KnowledgeBaseIoDecision {
   const size = normalizeFileSize(file.size);
   if (size > budget.maxFileBytes) {
+    if (
+      options.allowChunkedText === true
+      && budget.consumedBytes + size <= budget.maxTotalBytes
+    ) {
+      budget.consumedBytes += size;
+      return {
+        ok: true,
+        strategy: "chunked-text",
+        maxChunkBytes: budget.maxFileBytes
+      };
+    }
     return { ok: false, reason: `文件超过单文件读取上限 ${budget.maxFileBytes} bytes` };
   }
   if (budget.consumedBytes + size > budget.maxTotalBytes) {
     return { ok: false, reason: `文件读取总量超过上限 ${budget.maxTotalBytes} bytes` };
   }
   budget.consumedBytes += size;
-  return { ok: true };
+  return { ok: true, strategy: "whole-file" };
 }
 
 export async function readKnowledgeBaseTextPrefix(filePath: string, maxBytes: number): Promise<KnowledgeBaseTextPrefix> {

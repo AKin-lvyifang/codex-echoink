@@ -25,16 +25,24 @@ import {
   sealMaintenanceShadowVault,
   type MaintenanceShadowChangeSet,
   type MaintenanceShadowHandle,
+  type MaintenanceShadowSourceChunk,
   type MaintenanceShadowZeroResultAttestation
 } from "../harness/maintenance/shadow-vault";
 import type {
+  LoadedMaintenanceWorkflowWal,
   MaintenanceWorkflowIndexCommitRecord,
   MaintenanceWorkflowManagedWriteDraft,
+  MaintenanceWorkflowNoopReceiptContract,
   MaintenanceWorkflowScheduledProjection,
   MaintenanceWorkflowSourceRecord,
   MaintenanceWorkflowWalPhase
 } from "../harness/maintenance/workflow-wal";
-import { listMaintenanceWorkflowWals } from "../harness/maintenance/workflow-wal";
+import {
+  MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
+  listMaintenanceWorkflowWals,
+  loadMaintenanceWorkflowWal,
+  maintenanceWorkflowNoopReceiptPath
+} from "../harness/maintenance/workflow-wal";
 import {
   createActiveMaintenanceRunJournal,
   listActiveMaintenanceRunJournals,
@@ -239,6 +247,7 @@ interface ExecuteMaintenanceShadowAttemptInput {
   reportMtimeBefore: number | null;
   sources: KnowledgeBaseSource[];
   skippedSources: KnowledgeBaseDiscovery["skippedSources"];
+  remainingSources: KnowledgeBaseSource[];
   remainingSourceCount: number;
   targetPaths?: string[];
   fullScan?: boolean;
@@ -341,6 +350,53 @@ function remapMaintenanceSources(
   }));
 }
 
+function chunkedMaintenanceSources(
+  sources: readonly KnowledgeBaseSource[]
+): Array<{ relativePath: string; maxChunkBytes: number }> {
+  return sources.flatMap((source) =>
+    source.readStrategy?.kind === "chunked-text"
+      ? [{
+        relativePath: source.relativePath,
+        maxChunkBytes: source.readStrategy.maxChunkBytes
+      }]
+      : []
+  );
+}
+
+function maintenanceAgentSources(
+  logicalSources: readonly KnowledgeBaseSource[],
+  shadowVaultPath: string,
+  sourceChunks: readonly MaintenanceShadowSourceChunk[]
+): KnowledgeBaseSource[] {
+  const chunksBySource = new Map<string, MaintenanceShadowSourceChunk[]>();
+  for (const chunk of sourceChunks) {
+    const existing = chunksBySource.get(chunk.sourceRelativePath) ?? [];
+    existing.push(chunk);
+    chunksBySource.set(chunk.sourceRelativePath, existing);
+  }
+  return logicalSources.flatMap((source) => {
+    if (source.readStrategy?.kind !== "chunked-text") {
+      return [{
+        ...source,
+        absolutePath: path.join(shadowVaultPath, source.relativePath)
+      }];
+    }
+    const chunks = (chunksBySource.get(source.relativePath) ?? [])
+      .sort((left, right) => left.index - right.index);
+    if (!chunks.length) {
+      throw new Error(`分块来源缺少 Shadow 只读视图：${source.relativePath}`);
+    }
+    return chunks.map((chunk) => ({
+      ...source,
+      relativePath: chunk.relativePath,
+      absolutePath: path.join(shadowVaultPath, chunk.relativePath),
+      size: chunk.size,
+      fingerprint: `${source.fingerprint}:chunk:${chunk.index}:${chunk.sha256}`,
+      readStrategy: undefined
+    }));
+  });
+}
+
 function exactFenceReceiptDigest(receipt: AgentExactWriteFenceReceipt): string {
   return `sha256:${createHash("sha256").update(JSON.stringify({
     version: receipt.version,
@@ -395,11 +451,17 @@ export class KnowledgeBaseMaintenanceRunner {
         rulesPaths: [input.rules.relativePath],
         requiredSourcePaths: input.sources.map((source) => source.relativePath),
         copiedPaths: ["wiki", "projects", "outputs", "inbox"],
-        writablePaths: maintenanceShadowWritablePaths(input.mode)
+        writablePaths: maintenanceShadowWritablePaths(input.mode),
+        chunkedTextSources: chunkedMaintenanceSources(input.sources)
       });
       shadowPreparedAt = Date.now();
       const boundary = await maintenanceShadowExecutionBoundary(handle);
       const shadowSources = remapMaintenanceSources(input.sources, handle.agentVaultPath);
+      const agentSources = maintenanceAgentSources(
+        input.sources,
+        handle.agentVaultPath,
+        handle.sourceChunks ?? []
+      );
       const attemptStartedAt = Date.now();
       const beforeConflictCleanup = await snapshotKnowledgeTransaction(
         handle.agentVaultPath,
@@ -428,6 +490,7 @@ export class KnowledgeBaseMaintenanceRunner {
         requestedRawPaths: input.requestedRawPaths,
         reportPath: input.reportPath,
         sources: shadowSources,
+        sourceChunks: handle.sourceChunks,
         skippedSources: input.skippedSources,
         remainingSourceCount: input.remainingSourceCount,
         rulesFilePath: input.rules.relativePath,
@@ -480,7 +543,7 @@ export class KnowledgeBaseMaintenanceRunner {
       try {
         agentOutput = await this.context.runKnowledgeAgentTask({
           prompt,
-          sources: shadowSources,
+          sources: agentSources,
           permission: "workspace-write",
           codexWriteScope: input.mode === "lint" ? "knowledge-lint" : "knowledge-base",
           turnOptionOverrides: maintenanceTurnOverridesForAttempt(
@@ -663,7 +726,33 @@ export class KnowledgeBaseMaintenanceRunner {
         };
       const verifiedSourcePaths = new Set(evidence.verifiedSources.map((source) => source.relativePath));
       const verifiedSources = input.sources.filter((source) => verifiedSourcePaths.has(source.relativePath));
-      const hasAllEvidence = evidence.pendingSources.length === 0;
+      const pendingSources: DigestEvidencePendingSource[] = [
+        ...evidence.pendingSources,
+        ...input.skippedSources.map((source) => ({
+          source: {
+            relativePath: source.relativePath,
+            absolutePath: source.absolutePath,
+            size: source.size,
+            mtime: source.mtime,
+            fingerprint: source.fingerprint,
+            mime: source.mime,
+            modality: source.modality,
+            changed: true
+          },
+          reason: {
+            code: "resource-limit" as const,
+            message: `${source.reason}：${source.relativePath}`
+          }
+        })),
+        ...(input.remainingSources ?? []).map((source) => ({
+          source,
+          reason: {
+            code: "batch-limit" as const,
+            message: `来源超过单轮 ${MAX_ATTACHED_SOURCES} 个上限，保留到下一轮维护：${source.relativePath}`
+          }
+        }))
+      ];
+      const hasAllEvidence = pendingSources.length === 0;
       const hasSomeEvidence = verifiedSources.length > 0;
       let completion: KnowledgeBaseRunCompletion = agentError ? "recovered" : "full";
       if ((input.mode === "maintain" || input.mode === "reingest") && input.sources.length) {
@@ -763,7 +852,7 @@ export class KnowledgeBaseMaintenanceRunner {
         output: agentOutput,
         completion,
         verifiedSources,
-        pendingSources: evidence.pendingSources,
+        pendingSources,
         evidencePaths,
         handle,
         staging: {
@@ -1023,6 +1112,7 @@ export class KnowledgeBaseMaintenanceRunner {
           reportMtimeBefore,
           sources: runSources,
           skippedSources: runDiscovery.skippedSources,
+          remainingSources: promptSources.slice(MAX_ATTACHED_SOURCES),
           remainingSourceCount: Math.max(0, promptSources.length - runSources.length),
           targetPaths,
           fullScan: Boolean(incrementalScope?.full),
@@ -1553,9 +1643,13 @@ export class KnowledgeBaseMaintenanceRunner {
     let discovery: KnowledgeBaseDiscovery | null = null;
     let sealedAttempt: MaintenanceRunExecutionResult | null = null;
     let activeRunJournal: LoadedActiveMaintenanceRunJournal | null = null;
+    const preparedWorkflowWalRef: {
+      current: LoadedMaintenanceWorkflowWal | null;
+    } = { current: null };
     let storageRootPath = "";
     const runAttempts: KnowledgeRunAttemptRecord[] = [];
     const externalRawAdditions = new Set<string>();
+    let pendingSourcePathsForFailure: string[] = [];
     let routingFailureCode = "";
     let terminalPhase: KnowledgeBaseRunTerminalPhase = "preflight";
     try {
@@ -1626,10 +1720,6 @@ export class KnowledgeBaseMaintenanceRunner {
         Math.max(1, discovery.sources.length),
         `变化来源 ${discovery.changedSources.length} 个`
       );
-      const reportMtimeBefore = await readKnowledgeBaseReportMtime(
-        vaultPath,
-        discovery.reportPath
-      );
       const requestedRawPaths = extractRequestedRawPaths(userRequest);
       const promptSources = selectSourcesForRunMode(
         mode,
@@ -1637,7 +1727,48 @@ export class KnowledgeBaseMaintenanceRunner {
         userRequest
       );
       const runSources = promptSources.slice(0, MAX_ATTACHED_SOURCES);
-      const deterministicNoop = runSources.length === 0;
+      const remainingSources = promptSources.slice(MAX_ATTACHED_SOURCES);
+      const deterministicNoop = runSources.length === 0
+        && remainingSources.length === 0
+        && requestedRawPaths.length === 0
+        && discovery.changedSources.length === 0
+        && discovery.skippedSources.length === 0;
+      const noopReceipt: MaintenanceWorkflowNoopReceiptContract | undefined =
+        deterministicNoop
+          ? {
+            schemaVersion:
+              MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
+            kind: "run-scoped-report",
+            pathStrategy: "workflow-run-id-sha256-v1",
+            dateKey: formatDateForFile(new Date(startedAt))
+          }
+          : undefined;
+      const reportPathForRun = noopReceipt
+        ? maintenanceWorkflowNoopReceiptPath({
+          mode,
+          workflowRunId,
+          receipt: noopReceipt
+        })
+        : discovery.reportPath;
+      const reportMtimeBefore = await readKnowledgeBaseReportMtime(
+        vaultPath,
+        reportPathForRun
+      );
+      if (!deterministicNoop && runSources.length === 0) {
+        pendingSourcePathsForFailure = Array.from(new Set([
+          ...discovery.skippedSources.map((source) => source.relativePath),
+          ...discovery.changedSources.map((source) => source.relativePath),
+          ...requestedRawPaths
+        ])).sort();
+        throw Object.assign(
+          new Error(
+            pendingSourcePathsForFailure.length
+              ? `仍有 ${pendingSourcePathsForFailure.length} 个来源待处理，但本轮没有可安全提交给 Agent 的来源：${pendingSourcePathsForFailure.join("、")}`
+              : "本轮没有可安全提交给 Agent 的来源，不能误报为 noop"
+          ),
+          { code: "MAINTENANCE_SOURCES_PENDING" }
+        );
+      }
       this.throwIfCanceled();
 
       let routed: MaintenanceRunExecutionResult;
@@ -1649,7 +1780,8 @@ export class KnowledgeBaseMaintenanceRunner {
           verifiedSources: [],
           pendingSources: [],
           evidencePaths: {},
-          warnings: []
+          warnings: [],
+          reportPath: reportPathForRun
         };
       } else {
         progress.phase("digest", "执行", `交给所选 Agent 处理 ${runSources.length} 个来源`);
@@ -1690,10 +1822,11 @@ export class KnowledgeBaseMaintenanceRunner {
               mode,
               userRequest,
               requestedRawPaths,
-              reportPath: discovery!.reportPath,
+              reportPath: reportPathForRun,
               reportMtimeBefore,
               sources: runSources,
               skippedSources: discovery!.skippedSources,
+              remainingSources,
               remainingSourceCount: Math.max(
                 0,
                 promptSources.length - runSources.length
@@ -1733,7 +1866,7 @@ export class KnowledgeBaseMaintenanceRunner {
       }
 
       const completion = routed.completion;
-      const reportPath = routed.reportPath ?? discovery.reportPath;
+      const reportPath = routed.reportPath ?? reportPathForRun;
       workflowReportPath = reportPath;
       const structure = routed.structure;
       const conflictDuplicateCleanup =
@@ -1827,11 +1960,13 @@ export class KnowledgeBaseMaintenanceRunner {
         );
       }
 
-      const trackerWrite = await planKnowledgeBaseTrackerWrite(
-        vaultPath,
-        nextProcessedSources,
-        startedAt
-      );
+      const trackerWrite = deterministicNoop
+        ? null
+        : await planKnowledgeBaseTrackerWrite(
+          vaultPath,
+          nextProcessedSources,
+          startedAt
+        );
       const reportBaseline = deterministicNoop
         ? await readMaintenanceContentFileBaseline(
           vaultPath,
@@ -1842,6 +1977,14 @@ export class KnowledgeBaseMaintenanceRunner {
           reportPath,
           { requireExisting: true }
         );
+      if (deterministicNoop && reportBaseline.expected.kind !== "missing") {
+        throw Object.assign(
+          new Error(
+            `noop 审计 receipt 已存在，拒绝覆盖：${reportPath}`
+          ),
+          { code: "MAINTENANCE_NOOP_RECEIPT_EXISTS" }
+        );
+      }
       if (!deterministicNoop) {
         progress.phase("report", "报告", "生成报告并准备原子提交");
       }
@@ -1976,6 +2119,8 @@ export class KnowledgeBaseMaintenanceRunner {
         expected: reportExpectedPostShadow,
         baselineContent: Buffer.from(reportBaselineContent, "utf8"),
         desiredMode: reportDesiredMode,
+        startedAt,
+        completedAt,
         finalBlock: finalBlockInput
       });
 
@@ -2004,7 +2149,7 @@ export class KnowledgeBaseMaintenanceRunner {
         ...rawPlan.managedWrites,
         ...indexWrites,
         reportWrite,
-        trackerWrite
+        ...(trackerWrite ? [trackerWrite] : [])
       ];
       const verifiedSourceRecords =
         rawPlan.updatedSources.map(maintenanceWorkflowSourceRecord);
@@ -2048,6 +2193,7 @@ export class KnowledgeBaseMaintenanceRunner {
             }
             : null,
           completion: historyEntry.completion,
+          ...(noopReceipt ? { noopReceipt } : {}),
           attempts: cloneList(canonicalAttempts),
           verifiedSources: verifiedSourceRecords,
           pendingSources: pendingSourceRecords,
@@ -2094,7 +2240,10 @@ export class KnowledgeBaseMaintenanceRunner {
             allowPaths: routed.allowPaths
           },
         settingsHost:
-          this.plugin.getKnowledgeBaseWorkflowSettingsHost()
+          this.plugin.getKnowledgeBaseWorkflowSettingsHost(),
+        onWalPrepared: (prepared) => {
+          preparedWorkflowWalRef.current = prepared;
+        }
       });
       await removeTerminalActiveMaintenanceRunJournal(
         activeRunJournal,
@@ -2161,7 +2310,8 @@ export class KnowledgeBaseMaintenanceRunner {
       const walSnapshot = workflowRunId && storageRootPath
         ? await maintenanceWorkflowWalSnapshot(
           storageRootPath,
-          workflowRunId
+          workflowRunId,
+          preparedWorkflowWalRef.current?.handle
         )
         : null;
       const walPersisted = walSnapshot !== null;
@@ -2260,7 +2410,7 @@ export class KnowledgeBaseMaintenanceRunner {
       settings.lastSummary = "";
       settings.lastCompletion = "";
       settings.lastAttempts = cloneList(runAttempts);
-      settings.lastPendingSources = [];
+      settings.lastPendingSources = [...pendingSourcePathsForFailure];
       settings.lastFailureCode = canceled
         ? "cancelled"
         : routingFailureCode
@@ -2277,6 +2427,7 @@ export class KnowledgeBaseMaintenanceRunner {
         selectedBackend,
         winnerBackend: null,
         attempts: cloneList(runAttempts),
+        pendingSources: [...pendingSourcePathsForFailure],
         failureCode: settings.lastFailureCode,
         terminalPhase,
         commitState: "pre-wal",
@@ -2329,6 +2480,7 @@ export class KnowledgeBaseMaintenanceRunner {
         commitState: "pre-wal",
         error: finalMessage,
         attempts: cloneList(runAttempts),
+        pendingSources: [...pendingSourcePathsForFailure],
         failureCode: settings.lastFailureCode,
         performance: progress.fail(
           canceled ? "canceled" : "failed",
@@ -2470,7 +2622,8 @@ function maintenanceWorkflowTextDigest(text: string): string {
 
 async function maintenanceWorkflowWalSnapshot(
   storageRootPath: string,
-  workflowRunId: string
+  workflowRunId: string,
+  preparedHandle?: LoadedMaintenanceWorkflowWal["handle"]
 ): Promise<{
   phase: MaintenanceWorkflowWalPhase;
   intent: Extract<
@@ -2478,6 +2631,20 @@ async function maintenanceWorkflowWalSnapshot(
     { status: "ready" | "blocked" }
   >["wal"]["intent"];
 } | null> {
+  if (preparedHandle) {
+    try {
+      const loaded = await loadMaintenanceWorkflowWal(preparedHandle);
+      if (loaded.intent.workflowRunId === workflowRunId) {
+        return {
+          phase: loaded.state.phase,
+          intent: loaded.intent
+        };
+      }
+    } catch {
+      // Fall through to the complete inventory so an independently recovered
+      // or relocated WAL can still be found without trusting stale memory.
+    }
+  }
   let entries: Awaited<
     ReturnType<typeof listMaintenanceWorkflowWals>
   >;

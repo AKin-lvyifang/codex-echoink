@@ -9,12 +9,14 @@ export function buildCodexKnowledgeTurnOptions(input: {
   vaultPath: string;
   permission: PermissionMode;
   writeScope?: "knowledge-base" | "knowledge-lint" | "journal";
-  overrides?: Partial<Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources">>;
+  overrides?: Partial<Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources" | "externalResources">>;
   disableExternalResources?: boolean;
 }): TurnOptions {
   const model = input.overrides?.model || input.settings.defaultModel || input.availableModels.find((item) => item.isDefault)?.model || input.availableModels[0]?.model || "";
   const writableRoots = input.permission === "workspace-write" ? writableRootsForScope(input.vaultPath, input.writeScope ?? "knowledge-base") : undefined;
-  const isolatedResources = input.disableExternalResources
+  const disableExternalResources = input.disableExternalResources
+    || input.overrides?.externalResources === "disabled";
+  const isolatedResources = disableExternalResources
     ? { plugins: {}, mcpServers: {}, skills: {} }
     : input.overrides?.workspaceResources;
   return {
@@ -23,13 +25,13 @@ export function buildCodexKnowledgeTurnOptions(input: {
     serviceTier: input.overrides?.serviceTier ?? input.settings.defaultServiceTier,
     permission: input.permission,
     mode: "agent",
-    mcpEnabled: input.disableExternalResources
+    mcpEnabled: disableExternalResources
       ? false
       : input.overrides?.mcpEnabled ?? input.settings.mcpEnabled,
     persistExtendedHistory: false,
     requestTimeoutMs: 60000,
     workspaceResources: isolatedResources,
-    ...(input.disableExternalResources
+    ...(disableExternalResources
       ? { externalResources: "disabled" as const }
       : {}),
     ...(writableRoots ? { writableRoots } : {})

@@ -18,6 +18,9 @@ import {
   type PendingMemoryEvent
 } from "./v2-store";
 import { memoryWorkflowPolicy } from "./workflow-policy";
+import type {
+  MemoryTransactionAuthorityReceipt
+} from "../contracts/native-execution";
 
 export type MemoryRecordKind = "current-state" | "preference" | "decision" | "constraint" | "open-loop" | "task-state" | "workflow-rule" | "lesson";
 export type MemoryDisposition = "write" | "skip" | "unresolved";
@@ -60,6 +63,8 @@ export interface MemoryRecordV2 {
   statement: string;
   evidenceRefs: string[];
   sourceRunId: string;
+  sourceConversationIds?: string[];
+  sourceDeletions?: MemorySourceDeletionV2[];
   confidence: number;
   createdAt: number;
   updatedAt: number;
@@ -69,6 +74,15 @@ export interface MemoryRecordV2 {
   deletedReason?: string;
   expiredAt?: number;
   expiresAt?: number;
+}
+
+export interface MemorySourceDeletionV2 {
+  mutationId: string;
+  conversationId: string;
+  deletedAt: number;
+  forwardTransactionId: string;
+  restoredAt?: number;
+  restoreTransactionId?: string;
 }
 
 export interface MemoryConfirmationV2 {
@@ -110,6 +124,32 @@ export interface MemoryCuratorRequest {
 
 export interface MemoryCurator {
   curate(request: MemoryCuratorRequest): Promise<unknown>;
+}
+
+/**
+ * Internal envelope returned by the plugin-backed Curator. The public Curator
+ * JSON remains unchanged; this wrapper only carries the exact Native
+ * finalizer until the formal Memory transaction can prove a durable outcome.
+ */
+export interface DeferredMemoryCuratorInvocation {
+  kind: "deferred-memory-curator";
+  result: unknown;
+  finalize(
+    authority: MemoryTransactionAuthorityReceipt
+  ): Promise<unknown>;
+}
+
+export function deferredMemoryCuratorInvocation(
+  result: unknown,
+  finalize: (
+    authority: MemoryTransactionAuthorityReceipt
+  ) => Promise<unknown>
+): DeferredMemoryCuratorInvocation {
+  return {
+    kind: "deferred-memory-curator",
+    result,
+    finalize
+  };
 }
 
 export interface MemoryCoverageReport {
@@ -372,7 +412,12 @@ export async function commitFormalMemoryIndexSnapshot(
   vaultPath: string,
   index: MemoryIndexV2<MemoryRecordV2>,
   now: number,
-  options: { operation: string; lockHeld: true; failAfterIndexWrite?: boolean }
+  options: {
+    operation: string;
+    lockHeld: true;
+    failAfterIndexWrite?: boolean;
+    transactionId?: string;
+  }
 ): Promise<boolean> {
   if (options.lockHeld !== true) throw new Error("Formal memory commit requires the vault mutation lane");
   await recoverMemoryTransactionsUnlocked(vaultPath);
@@ -388,7 +433,11 @@ export async function commitFormalMemoryIndexSnapshot(
   const changed = JSON.stringify({ memories: previous.memories, confirmations: previous.confirmations }) !== JSON.stringify({ memories: index.memories, confirmations: index.confirmations });
   if (!changed) return false;
 
-  const transactionId = `memory-formal-${randomUUID()}`;
+  const transactionId = options.transactionId?.trim()
+    || `memory-formal-${randomUUID()}`;
+  if (!SAFE_MEMORY_REF.test(transactionId)) {
+    throw new Error("Formal memory transactionId is invalid");
+  }
   const targetRevision = previous.revision + 1;
   index.revision = targetRevision;
   index.commitId = transactionId;
@@ -460,18 +509,105 @@ async function syncPendingMemoryUnlocked(
   const source = await prepareMemoryTransaction(vaultPath, selectedEventIds);
   const manifest = await readMemoryManifestV2(vaultPath);
   if (!source) return { outcome: "no-pending", revision: manifest.revision, committedMemoryIds: [], confirmationIds: [] };
+  let invocation: ReturnType<typeof memoryCuratorInvocation> | null = null;
   try {
-    const curated = await curator.curate(source);
-    const applied = await applyMemoryCuratorResultUnlocked(vaultPath, source.transactionId, curated);
-    if (applied.outcome === "failed" || applied.outcome === "pending") return applied;
-    return await commitMemoryTransactionUnlocked(vaultPath, source.transactionId);
+    invocation = memoryCuratorInvocation(await curator.curate(source));
+    const applied = await applyMemoryCuratorResultUnlocked(
+      vaultPath,
+      source.transactionId,
+      invocation.result
+    );
+    if (applied.outcome === "failed" || applied.outcome === "pending") {
+      await finalizeMemoryCuratorNativeExecution(
+        vaultPath,
+        source.transactionId,
+        invocation
+      );
+      return applied;
+    }
+    const committed = await commitMemoryTransactionUnlocked(
+      vaultPath,
+      source.transactionId
+    );
+    await finalizeMemoryCuratorNativeExecution(
+      vaultPath,
+      source.transactionId,
+      invocation
+    );
+    return committed;
   } catch (error) {
     const layout = echoInkMemoryV2Layout(vaultPath);
     const transaction = await readTransaction(layout.transactions, source.transactionId);
     const failed = updateTransaction(transaction, { state: "failed", outcome: "failed", error: errorMessage(error) });
     await writeTransaction(layout.transactions, failed);
     await writeManifestOutcome(vaultPath, "failed", failed.error);
+    if (invocation) {
+      await finalizeMemoryCuratorNativeExecution(
+        vaultPath,
+        source.transactionId,
+        invocation
+      );
+    }
     return syncResult(failed);
+  }
+}
+
+function memoryCuratorInvocation(
+  value: unknown
+): {
+  result: unknown;
+  finalize?: DeferredMemoryCuratorInvocation["finalize"];
+} {
+  if (
+    value
+    && typeof value === "object"
+    && (value as Partial<DeferredMemoryCuratorInvocation>).kind
+      === "deferred-memory-curator"
+    && Object.prototype.hasOwnProperty.call(value, "result")
+    && typeof (value as Partial<DeferredMemoryCuratorInvocation>).finalize
+      === "function"
+  ) {
+    const invocation = value as DeferredMemoryCuratorInvocation;
+    return {
+      result: invocation.result,
+      finalize: (authority) => invocation.finalize(authority)
+    };
+  }
+  return { result: value };
+}
+
+async function finalizeMemoryCuratorNativeExecution(
+  vaultPath: string,
+  transactionId: string,
+  invocation: {
+    result: unknown;
+    finalize?: DeferredMemoryCuratorInvocation["finalize"];
+  }
+): Promise<void> {
+  if (!invocation.finalize) return;
+  let authority: MemoryTransactionAuthorityReceipt | null;
+  try {
+    authority = await resolveMemoryTransactionAuthorityUnlocked(
+      vaultPath,
+      transactionId
+    );
+  } catch (error) {
+    console.error(
+      `Memory Curator Native authority proof failed for ${transactionId}`,
+      error
+    );
+    return;
+  }
+  if (!authority) return;
+  try {
+    await invocation.finalize(authority);
+  } catch (error) {
+    // The Memory result is already durable. Native settlement/cleanup failure
+    // stays recoverable in its own Store and must not rewrite that result.
+    console.error(
+      `Memory Curator Native finalization failed for ${transactionId}`,
+      error
+    );
   }
 }
 
@@ -494,6 +630,57 @@ async function readyPendingMemoryEventIds(vaultPath: string): Promise<string[]> 
 
 export async function recoverMemoryTransactions(vaultPath: string): Promise<Array<{ transactionId: string; action: "rolled-forward" | "rolled-back" | "retained" | "superseded" }>> {
   return await withMemoryFormalMutation(vaultPath, async () => await recoverMemoryTransactionsUnlocked(vaultPath));
+}
+
+export async function recoverMemoryTransactionsUnderAuthority(
+  vaultPath: string,
+  options: { lockHeld: true }
+): Promise<Array<{
+  transactionId: string;
+  action: "rolled-forward" | "rolled-back" | "retained" | "superseded";
+}>> {
+  if (options.lockHeld !== true) {
+    throw new Error("Memory transaction recovery requires formal authority");
+  }
+  return await recoverMemoryTransactionsUnlocked(vaultPath);
+}
+
+/**
+ * Reads a formal Memory transaction without mutating it and returns cleanup
+ * authority only when every durable Store invariant agrees.
+ *
+ * `null` is intentional for prepared/applied/committing transactions: those
+ * states may still roll forward or back and cannot authorize Native cleanup.
+ * Corrupt or contradictory evidence throws so startup remains fail closed.
+ */
+export async function resolveMemoryTransactionAuthority(
+  vaultPath: string,
+  transactionId: string
+): Promise<MemoryTransactionAuthorityReceipt | null> {
+  return await withMemoryFormalMutation(
+    vaultPath,
+    async () => await resolveMemoryTransactionAuthorityUnlocked(
+      vaultPath,
+      transactionId
+    )
+  );
+}
+
+/**
+ * Startup-safe authority probe. Recovery and proof share the formal Memory
+ * mutation lane so another commit cannot race between them.
+ */
+export async function recoverAndResolveMemoryTransactionAuthority(
+  vaultPath: string,
+  transactionId: string
+): Promise<MemoryTransactionAuthorityReceipt | null> {
+  return await withMemoryFormalMutation(vaultPath, async () => {
+    await recoverMemoryTransactionsUnlocked(vaultPath);
+    return await resolveMemoryTransactionAuthorityUnlocked(
+      vaultPath,
+      transactionId
+    );
+  });
 }
 
 async function recoverMemoryTransactionsUnlocked(vaultPath: string): Promise<Array<{ transactionId: string; action: "rolled-forward" | "rolled-back" | "retained" | "superseded" }>> {
@@ -551,6 +738,156 @@ async function recoverMemoryTransactionsUnlocked(vaultPath: string): Promise<Arr
     results.push({ transactionId: transaction.transactionId, action: "rolled-back" });
   }
   return results;
+}
+
+async function resolveMemoryTransactionAuthorityUnlocked(
+  vaultPath: string,
+  transactionId: string
+): Promise<MemoryTransactionAuthorityReceipt | null> {
+  const layout = await initializeEchoInkMemoryV2(vaultPath);
+  const transaction = await readTransaction(
+    layout.transactions,
+    transactionId
+  );
+  const source = await readJson<MemoryTransactionSource>(
+    path.join(
+      transactionDir(layout.transactions, transactionId),
+      "source.json"
+    )
+  );
+  assertMemoryTransactionAuthorityIdentity(transaction, source, transactionId);
+
+  if (
+    transaction.state === "prepared"
+    || transaction.state === "applied"
+    || transaction.state === "committing"
+  ) {
+    return null;
+  }
+
+  const pending = await readPendingMemoryEvents(vaultPath);
+  const pendingIds = new Set(pending.map((event) => event.eventId));
+  const allEventsPending = transaction.eventIds.every((eventId) =>
+    pendingIds.has(eventId)
+  );
+  const anyEventPending = transaction.eventIds.some((eventId) =>
+    pendingIds.has(eventId)
+  );
+  const index = await readMemoryIndexV2<MemoryRecordV2>(vaultPath);
+  const manifest = await readMemoryManifestV2(vaultPath);
+  if (
+    index.revision !== manifest.revision
+    || index.revision < transaction.baseRevision
+  ) {
+    throw new Error(
+      `Memory transaction ${transactionId} formal revision authority is inconsistent`
+    );
+  }
+
+  if (
+    transaction.state === "unresolved"
+    || (
+      transaction.state === "recovered"
+      && transaction.outcome === "pending"
+    )
+  ) {
+    if (
+      !allEventsPending
+      || transaction.outcome !== "pending"
+      || !transaction.error.trim()
+    ) {
+      throw new Error(
+        `Memory transaction ${transactionId} has contradictory durable-pending evidence`
+      );
+    }
+    return {
+      kind: "memory-transaction",
+      transactionId,
+      state: "durable-pending",
+      durable: true,
+      revision: index.revision,
+      outcome: "pending",
+      error: transaction.error
+    };
+  }
+
+  if (transaction.state === "invalid" || transaction.state === "failed") {
+    if (
+      !allEventsPending
+      || transaction.outcome !== "failed"
+      || !transaction.error.trim()
+    ) {
+      throw new Error(
+        `Memory transaction ${transactionId} has contradictory durable-failed evidence`
+      );
+    }
+    return {
+      kind: "memory-transaction",
+      transactionId,
+      state: "durable-failed",
+      durable: true,
+      revision: index.revision,
+      outcome: "failed",
+      error: transaction.error
+    };
+  }
+
+  if (
+    transaction.state !== "committed"
+    && transaction.state !== "recovered"
+  ) {
+    throw new Error(
+      `Memory transaction ${transactionId} has unsupported authority state ${String(transaction.state)}`
+    );
+  }
+  if (
+    transaction.outcome !== "write"
+    && transaction.outcome !== "no-op"
+  ) {
+    throw new Error(
+      `Memory transaction ${transactionId} has contradictory committed outcome ${transaction.outcome}`
+    );
+  }
+  if (anyEventPending) {
+    throw new Error(
+      `Memory transaction ${transactionId} is committed but source events remain pending`
+    );
+  }
+  if (index.revision < transaction.targetRevision) {
+    throw new Error(
+      `Memory transaction ${transactionId} formal revision authority is inconsistent`
+    );
+  }
+  if (
+    transaction.outcome === "write"
+    && (
+      transaction.targetRevision !== transaction.baseRevision + 1
+      || (
+        index.revision === transaction.targetRevision
+        && index.commitId !== transactionId
+      )
+    )
+  ) {
+    throw new Error(
+      `Memory transaction ${transactionId} committed index authority is inconsistent`
+    );
+  }
+  if (
+    transaction.outcome === "no-op"
+    && transaction.targetRevision !== transaction.baseRevision
+  ) {
+    throw new Error(
+      `Memory transaction ${transactionId} no-op revision authority is inconsistent`
+    );
+  }
+  return {
+    kind: "memory-transaction",
+    transactionId,
+    state: "committed",
+    durable: true,
+    revision: transaction.targetRevision,
+    outcome: transaction.outcome
+  };
 }
 
 export async function listMemoryTransactionIssues(vaultPath: string): Promise<MemoryTransactionIssue[]> {
@@ -640,7 +977,16 @@ function buildStagedIndex(
     schemaVersion: 2,
     revision: index.revision,
     ...(index.commitId ? { commitId: index.commitId } : {}),
-    memories: index.memories.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+    memories: index.memories.map((item) => ({
+      ...item,
+      evidenceRefs: [...item.evidenceRefs],
+      ...(item.sourceConversationIds
+        ? { sourceConversationIds: [...item.sourceConversationIds] }
+        : {}),
+      ...(item.sourceDeletions
+        ? { sourceDeletions: item.sourceDeletions.map((marker) => ({ ...marker })) }
+        : {})
+    })),
     confirmations: [...index.confirmations]
   };
   const confirmations = next.confirmations as MemoryConfirmationV2[];
@@ -681,6 +1027,11 @@ function buildStagedIndex(
 
 function candidateRecord(candidate: MemoryCuratorCandidate, events: Map<string, PendingMemoryEvent>, now: number): MemoryRecordV2 {
   const firstEvent = candidate.sourceEventIds.map((id) => events.get(id)).find(Boolean);
+  const sourceConversationIds = [...new Set(
+    candidate.sourceEventIds
+      .map((id) => events.get(id)?.sessionId)
+      .filter((id): id is string => Boolean(id))
+  )].sort(compareStableIds);
   return {
     id: candidate.candidateId,
     kind: candidate.kind!,
@@ -688,6 +1039,7 @@ function candidateRecord(candidate: MemoryCuratorCandidate, events: Map<string, 
     statement: candidate.statement!.trim(),
     evidenceRefs: [...candidate.evidenceRefs!],
     sourceRunId: candidate.sourceRunId?.trim() || firstEvent?.runId || "unknown",
+    ...(sourceConversationIds.length ? { sourceConversationIds } : {}),
     confidence: candidate.confidence!,
     createdAt: now,
     updatedAt: now
@@ -812,6 +1164,37 @@ function transactionRecord(source: MemoryTransactionSource, now: number): Memory
     updatedAt: now,
     error: ""
   };
+}
+
+function assertMemoryTransactionAuthorityIdentity(
+  transaction: MemoryTransactionRecord,
+  source: MemoryTransactionSource,
+  expectedTransactionId: string
+): void {
+  const sourceEventIds = source.events.map((event) => event.eventId);
+  if (
+    transaction.schemaVersion !== 2
+    || source.schemaVersion !== 2
+    || !expectedTransactionId.trim()
+    || transaction.transactionId !== expectedTransactionId
+    || source.transactionId !== expectedTransactionId
+    || !Number.isSafeInteger(transaction.baseRevision)
+    || transaction.baseRevision < 0
+    || !Number.isSafeInteger(transaction.targetRevision)
+    || transaction.targetRevision < transaction.baseRevision
+    || source.baseRevision !== transaction.baseRevision
+    || transaction.eventIds.length === 0
+    || new Set(transaction.eventIds).size !== transaction.eventIds.length
+    || new Set(sourceEventIds).size !== sourceEventIds.length
+    || transaction.eventIds.length !== sourceEventIds.length
+    || transaction.eventIds.some((eventId, index) =>
+      !eventId.trim() || eventId !== sourceEventIds[index]
+    )
+  ) {
+    throw new Error(
+      `Memory transaction ${expectedTransactionId || "<missing>"} authority identity is invalid`
+    );
+  }
 }
 
 function updateTransaction(transaction: MemoryTransactionRecord, patch: Partial<MemoryTransactionRecord>): MemoryTransactionRecord {

@@ -22,6 +22,27 @@ export interface KnowledgeBaseCommandOption {
   description: string;
 }
 
+const RECOVERY_SAFE_COMMAND_INTENTS = new Set<KnowledgeBaseCommandIntent>([
+  "chat",
+  "ask",
+  "help",
+  "history",
+  "clear",
+  "cancel"
+]);
+
+/**
+ * Maintenance recovery owns the Vault write lane, not the whole Knowledge
+ * channel. Keep the safe list intentionally small so any future write-capable
+ * command fails closed until it is classified explicitly.
+ */
+export function requiresMaintenanceAuthority(
+  command: KnowledgeBaseCommand | KnowledgeBaseCommandIntent
+): boolean {
+  const intent = typeof command === "string" ? command : command.intent;
+  return !RECOVERY_SAFE_COMMAND_INTENTS.has(intent);
+}
+
 export const KNOWLEDGE_BASE_COMMAND_OPTIONS: KnowledgeBaseCommandOption[] = [
   { title: "提问", icon: "search", text: "/ask ", description: "对知识库发问" },
   { title: "体检", icon: "stethoscope", text: "/check ", description: "只体检知识库" },

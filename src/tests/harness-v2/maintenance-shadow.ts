@@ -7,6 +7,9 @@ import * as path from "node:path";
 import { createExactWriteFenceReceipt } from "../../agent/write-fence";
 import type { AgentExactWriteFenceReceipt } from "../../agent/types";
 import {
+  maintenanceMarkdownUpdatedSuccessorEvidence
+} from "../../harness/maintenance/markdown-metadata-successor";
+import {
   MaintenanceShadowError,
   MaintenanceShadowSimulatedCrash,
   assertMaintenanceShadowZeroResultAttestation,
@@ -22,6 +25,7 @@ import {
   isTrustedMaintenanceShadowZeroResultAttestation,
   maintenanceExactWriteFenceBindingDigest,
   maintenanceShadowExecutionBoundary,
+  markMaintenanceShadowCommittedFromJournal,
   markMaintenanceShadowTerminal,
   quarantineMaintenanceShadowZeroResult,
   recoverMaintenanceShadowApplyTransactions,
@@ -32,7 +36,9 @@ import {
 } from "../../harness/maintenance/shadow-vault";
 
 export async function runHarnessV2MaintenanceShadowTests(): Promise<void> {
+  assertMarkdownMetadataSuccessorProofIsStrict();
   await assertShadowCopiesBytesAndAppliesFilteredChanges();
+  await assertChunkedTextSourceViewsAreExactAndEphemeral();
   await assertInitialShadowCopyPreservesEvidenceTimes();
   await assertRawMutationFailsAndAbandonedShadowIsRetained();
   await assertTrackerAndRulesAreDeniedWhileReportIsWritable();
@@ -55,11 +61,189 @@ export async function runHarnessV2MaintenanceShadowTests(): Promise<void> {
   await assertClaimedDeniedProbeWriteFailsFence();
   await assertZeroResultRejectsLateShadowMutation();
   await assertInterruptedExclusiveInstallIsRecovered();
+  await assertInterruptedInstallMetadataSuccessorHardlinkIsRecovered();
+  await assertInterruptedInstallRejectsExternalHardlink();
+  await assertInterruptedInstallAcceptsAtomicMetadataSuccessor();
+  await assertInterruptedInstallPreservesConcurrentDeletion();
   await assertInterruptedNoClobberDisplacementIsRecovered();
+  await assertMetadataSuccessorsCommitDirectly();
+  await assertBlockedMetadataSuccessorsNeedCurrentAttemptAuthority();
+  await assertDuplicateAttemptIdCannotDeferAnotherBlockedJournal();
+  await assertManagedOverrideConsumesDurableMetadataSuccessorProof();
   await assertCleanupRequiresSafeTerminalState();
   await assertAbandonedChangeSetCannotApplyAfterReload();
   await assertApplyAndAbandonShareOneCommitAuthorityLock();
   await assertQuarantineRejectsForgeryLateWriteApplyAndCleanup();
+}
+
+function assertMarkdownMetadataSuccessorProofIsStrict(): void {
+  const desired = Buffer.from(metadataMarkdown(
+    "Strict",
+    "2026-07-21T10:31:00.000Z",
+    "BODY"
+  ));
+  const current = Buffer.from(metadataMarkdown(
+    "Strict",
+    "2026-07-21T10:35:00.000Z",
+    "BODY"
+  ));
+  const window = {
+    lowerBoundMs: Date.parse("2026-07-21T10:30:00.000Z"),
+    upperBoundMs: Date.parse("2026-07-21T10:36:00.000Z")
+  };
+  const prove = (
+    currentContent: Buffer,
+    overrides: Partial<Parameters<
+      typeof maintenanceMarkdownUpdatedSuccessorEvidence
+    >[0]> = {}
+  ) => maintenanceMarkdownUpdatedSuccessorEvidence({
+    relativePath: "wiki/strict.md",
+    desiredContent: desired,
+    currentContent,
+    desiredMode: 0o644,
+    currentMode: 0o644,
+    window,
+    ...overrides
+  });
+  assert.ok(prove(current));
+  for (const rejected of [
+    current.toString("utf8").replace("BODY", "BODY DRIFT"),
+    current.toString("utf8").replace("durable-proof", "changed-tag"),
+    current.toString("utf8").replace("title: Strict", "title: Other"),
+    current.toString("utf8").replace("tags:", "created: 2026-07-21\ntags:"),
+    current.toString("utf8").replace(
+      "updated: 2026-07-21T10:35:00.000Z",
+      "updated: 2026-07-21T10:30:00.000Z"
+    ),
+    current.toString("utf8").replace(
+      "updated: 2026-07-21T10:35:00.000Z",
+      "updated: 2026-07-21T10:35:00.000Z\nupdated: 2026-07-21T10:35:00.000Z"
+    )
+  ]) {
+    assert.equal(prove(Buffer.from(rejected)), null);
+  }
+  assert.equal(prove(current, { currentMode: 0o600 }), null);
+  for (const relativePath of [
+    "raw/source.md",
+    "outputs/.ingest-tracker.md",
+    "LLM-WIKI.md",
+    "wiki/strict.txt"
+  ]) {
+    assert.equal(prove(current, { relativePath }), null);
+  }
+  assert.ok(prove(current, {
+    relativePath: "raw/source.md",
+    allowRawMetadata: true
+  }));
+  const reportDesired = Buffer.from(desired.toString("utf8").replace(
+    "updated: 2026-07-21T10:31:00.000Z\n",
+    ""
+  ));
+  assert.ok(prove(current, {
+    relativePath: "outputs/maintenance/report.md",
+    desiredContent: reportDesired,
+    allowInsertedUpdated: true
+  }));
+  assert.equal(prove(current, {
+    relativePath: "raw/source.md",
+    desiredContent: reportDesired,
+    allowInsertedUpdated: true,
+    allowRawMetadata: true
+  }), null, "Raw must never inherit the report insertion allowance");
+
+  const normalizedReportDesired = Buffer.from(
+    desired.toString("utf8").replace(
+      "tags:\n  - durable-proof",
+      "tags: [durable-proof]"
+    )
+  );
+  assert.ok(prove(current, {
+    relativePath: "outputs/maintenance/report.md",
+    desiredContent: normalizedReportDesired
+  }), "maintenance reports may preserve semantic YAML normalization");
+  const sameMinuteCurrent = Buffer.from(
+    normalizedReportDesired.toString("utf8").replace(
+      "tags: [durable-proof]",
+      "tags:\n  - durable-proof"
+    )
+  );
+  assert.ok(prove(sameMinuteCurrent, {
+    relativePath: "outputs/maintenance/report.md",
+    desiredContent: normalizedReportDesired,
+    currentContent: sameMinuteCurrent
+  }), "maintenance reports may normalize tags without advancing a minute-resolution updated value");
+  assert.equal(prove(normalizedReportDesired, {
+    relativePath: "outputs/maintenance/report.md",
+    desiredContent: normalizedReportDesired,
+    currentContent: normalizedReportDesired
+  }), null, "byte-identical reports are not metadata successors");
+  for (const rejected of [
+    current.toString("utf8").replace("durable-proof", "changed-tag"),
+    current.toString("utf8").replace("BODY", "BODY DRIFT"),
+    current.toString("utf8").replace(
+      "title: Strict",
+      "title: Strict\nsource: external"
+    ),
+    current.toString("utf8").replace(
+      "tags:",
+      "tags: [durable-proof]\ntags:"
+    )
+  ]) {
+    assert.equal(prove(Buffer.from(rejected), {
+      relativePath: "outputs/maintenance/report.md",
+      desiredContent: normalizedReportDesired
+    }), null);
+  }
+}
+
+async function assertChunkedTextSourceViewsAreExactAndEphemeral(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "raw/source.md";
+    const content = Buffer.from([
+      "---",
+      "title: 分块测试",
+      "---",
+      "第一段包含中文字符，必须保持 UTF-8 完整。",
+      "第二段用于验证换行优先切分。",
+      "第三段收口。",
+      ""
+    ].join("\n"), "utf8");
+    await writeFile(path.join(vaultPath, relativePath), content);
+    const handle = await createFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "attempt-chunked-text-source",
+      storageRootPath: shadowStoragePath,
+      requiredSourcePaths: [relativePath],
+      chunkedTextSources: [{ relativePath, maxChunkBytes: 32 }]
+    });
+    const chunks = [...(handle.sourceChunks ?? [])]
+      .sort((left, right) => left.index - right.index);
+    assert.ok(chunks.length > 1);
+    assert.deepEqual(
+      chunks.map((chunk) => chunk.index),
+      Array.from({ length: chunks.length }, (_, index) => index + 1)
+    );
+    const reconstructed = Buffer.concat(await Promise.all(
+      chunks.map(async (chunk) => {
+        assert.equal(chunk.sourceRelativePath, relativePath);
+        assert.ok(chunk.size <= 32);
+        const absolutePath = path.join(handle.agentVaultPath, chunk.relativePath);
+        const stat = await lstat(absolutePath);
+        assert.equal(stat.mode & 0o222, 0, "chunk views must be read-only");
+        return await readFile(absolutePath);
+      })
+    ));
+    assert.equal(reconstructed.equals(content), true);
+    assert.equal(
+      (await readFile(path.join(vaultPath, relativePath))).equals(content),
+      true,
+      "chunking must not rewrite the live Raw"
+    );
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    assert.equal(changeSet.structuralResult, "zero-result");
+    await markMaintenanceShadowTerminal(handle, "noop");
+    await cleanupMaintenanceShadowVault(handle);
+  });
 }
 
 async function assertInitialShadowCopyPreservesEvidenceTimes(): Promise<void> {
@@ -148,6 +332,13 @@ async function assertShadowCopiesBytesAndAppliesFilteredChanges(): Promise<void>
     assert.equal(await readFile(path.join(vaultPath, "projects/old.md"), "utf8"), "PROJECT-OLD\n");
     assert.equal(await readFile(path.join(vaultPath, "raw/source.md"), "utf8"), "RAW-CONTENT\n");
     assert.equal(await readFile(path.join(vaultPath, "outputs/.ingest-tracker.md"), "utf8"), "TRACKER\n");
+    assert.equal((await lstat(path.join(vaultPath, "wiki/existing.md"))).nlink, 1);
+    assert.equal((await lstat(path.join(vaultPath, "wiki/new.md"))).nlink, 1);
+    assert.deepEqual(
+      (await readdir(path.join(vaultPath, "wiki")))
+        .filter((name) => name.startsWith(".echoink-txn-")),
+      []
+    );
 
     await markMaintenanceShadowTerminal(handle, "committed", {
       commitReceipt: result.commitReceipt
@@ -379,7 +570,7 @@ async function assertMissingParentThirdValueFailsClosed(): Promise<void> {
     const changeSet = await sealMaintenanceShadowVault(handle);
     const concurrentParent = path.join(vaultPath, "projects/concurrent");
 
-    await rejectsWithCode(
+    await assert.rejects(
       () => applyShadowChangeSet(vaultPath, changeSet, {
         beforeApplyChange: async () => {
           await mkdir(concurrentParent);
@@ -954,6 +1145,321 @@ async function assertInterruptedExclusiveInstallIsRecovered(): Promise<void> {
   });
 }
 
+async function assertInterruptedInstallMetadataSuccessorHardlinkIsRecovered(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/metadata-hardlink-crash.md";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    const desired = metadataMarkdown("Hardlink crash", desiredUpdated, "NEW");
+    const observed = metadataMarkdown("Hardlink crash", observedUpdated, "NEW");
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Hardlink crash", desiredUpdated, "OLD"),
+      "utf8"
+    );
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:metadata-hardlink-crash",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(path.join(handle.agentVaultPath, relativePath), desired, "utf8");
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    const targetPath = path.join(vaultPath, relativePath);
+
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, changeSet, {
+        async faultInjector(input) {
+          if (
+            input.point !== "after-install-link"
+            || input.relativePath !== relativePath
+          ) return;
+          await writeFile(targetPath, observed, "utf8");
+          assert.equal(
+            (await lstat(targetPath)).nlink,
+            2,
+            "metadata successor must reproduce while target and install temp share one inode"
+          );
+          throw new MaintenanceShadowSimulatedCrash(
+            "crash after in-place metadata successor during install hardlink window"
+          );
+        }
+      }),
+      (error: unknown) => error instanceof MaintenanceShadowSimulatedCrash
+    );
+
+    const transactionPaths = await readFirstTransactionPaths(handle);
+    assert.ok(transactionPaths.installTempRelativePath);
+    const tempPath = path.join(
+      vaultPath,
+      ...transactionPaths.installTempRelativePath.split("/")
+    );
+    const interruptedTarget = await lstat(targetPath);
+    const interruptedTemp = await lstat(tempPath);
+    assert.equal(interruptedTarget.nlink, 2);
+    assert.equal(interruptedTemp.nlink, 2);
+    assert.equal(interruptedTarget.dev, interruptedTemp.dev);
+    assert.equal(interruptedTarget.ino, interruptedTemp.ino);
+    assert.equal(await readFile(tempPath, "utf8"), observed);
+
+    const recovered = await applyShadowChangeSet(vaultPath, changeSet);
+    assert.ok(recovered.commitReceipt);
+    assert.equal(await readFile(targetPath, "utf8"), observed);
+    assert.equal((await lstat(targetPath)).nlink, 1);
+    await assert.rejects(
+      () => lstat(tempPath),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+    const journal = JSON.parse(await readFile(
+      path.join(handle.rootPath, "apply-journal/journal.json"),
+      "utf8"
+    )) as {
+      state: string;
+      metadataSuccessors?: Array<{ relativePath: string }>;
+    };
+    assert.equal(journal.state, "committed");
+    assert.deepEqual(
+      journal.metadataSuccessors?.map((proof) => proof.relativePath),
+      [relativePath]
+    );
+
+    await markMaintenanceShadowTerminal(handle, "committed", {
+      commitReceipt: recovered.commitReceipt
+    });
+    await cleanupMaintenanceShadowVault(handle);
+  });
+}
+
+async function assertInterruptedInstallRejectsExternalHardlink(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/external-hardlink-crash.md";
+    const targetPath = path.join(vaultPath, relativePath);
+    const externalPath = path.join(vaultPath, "wiki/external-hardlink.md");
+    await writeFile(targetPath, "EXTERNAL-HARDLINK-OLD\n", "utf8");
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:external-hardlink-crash",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(
+      path.join(handle.agentVaultPath, relativePath),
+      "EXTERNAL-HARDLINK-NEW\n",
+      "utf8"
+    );
+    const changeSet = await sealMaintenanceShadowVault(handle);
+
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, changeSet, {
+        async faultInjector(input) {
+          if (
+            input.point !== "after-install-link"
+            || input.relativePath !== relativePath
+          ) return;
+          await link(targetPath, externalPath);
+          assert.equal((await lstat(targetPath)).nlink, 3);
+          throw new MaintenanceShadowSimulatedCrash(
+            "crash after an external hardlink joined the install inode"
+          );
+        }
+      }),
+      (error: unknown) => error instanceof MaintenanceShadowSimulatedCrash
+    );
+
+    const transactionPaths = await readFirstTransactionPaths(handle);
+    assert.ok(transactionPaths.installTempRelativePath);
+    const tempPath = path.join(
+      vaultPath,
+      ...transactionPaths.installTempRelativePath.split("/")
+    );
+    await rejectsWithCode(
+      () => applyShadowChangeSet(vaultPath, changeSet),
+      "cas_conflict"
+    );
+    const [target, temp, external] = await Promise.all([
+      lstat(targetPath),
+      lstat(tempPath),
+      lstat(externalPath)
+    ]);
+    assert.equal(target.nlink, 3);
+    assert.equal(temp.nlink, 3);
+    assert.equal(external.nlink, 3);
+    assert.equal(target.dev, temp.dev);
+    assert.equal(target.ino, temp.ino);
+    assert.equal(target.dev, external.dev);
+    assert.equal(target.ino, external.ino);
+    assert.equal(await readFile(targetPath, "utf8"), "EXTERNAL-HARDLINK-NEW\n");
+    const journal = JSON.parse(await readFile(
+      path.join(handle.rootPath, "apply-journal/journal.json"),
+      "utf8"
+    )) as { state: string };
+    assert.equal(journal.state, "blocked");
+  });
+}
+
+async function assertInterruptedInstallAcceptsAtomicMetadataSuccessor(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/atomic-metadata-result.md";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    const desired = metadataMarkdown("Atomic install", desiredUpdated, "NEW");
+    const observed = metadataMarkdown("Atomic install", observedUpdated, "NEW");
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Atomic install", desiredUpdated, "OLD"),
+      "utf8"
+    );
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:atomic-metadata-install-crash",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(path.join(handle.agentVaultPath, relativePath), desired, "utf8");
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, changeSet, {
+        beforeApplyChange: () => {
+          throw new Error("fault before atomic metadata install");
+        }
+      }),
+      /fault before atomic metadata install/
+    );
+
+    const journalPath = path.join(handle.rootPath, "apply-journal/journal.json");
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      state: string;
+      updatedAt: string;
+      error?: string;
+      digest: string;
+      entries: Array<{
+        installTempRelativePath?: string;
+        displacedLiveRelativePath?: string;
+      }>;
+      [key: string]: unknown;
+    };
+    const installTempRelativePath = journal.entries[0]?.installTempRelativePath;
+    const displacedLiveRelativePath =
+      journal.entries[0]?.displacedLiveRelativePath;
+    assert.ok(installTempRelativePath);
+    assert.ok(displacedLiveRelativePath);
+    journal.state = "applying";
+    journal.updatedAt = new Date().toISOString();
+    delete journal.error;
+    const { digest: _oldDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
+
+    const tempPath = path.join(vaultPath, ...installTempRelativePath.split("/"));
+    const targetPath = path.join(vaultPath, ...relativePath.split("/"));
+    const displacedPath = path.join(
+      vaultPath,
+      ...displacedLiveRelativePath.split("/")
+    );
+    await link(targetPath, displacedPath);
+    await rm(targetPath);
+    await writeFile(tempPath, desired, "utf8");
+    await link(tempPath, targetPath);
+    const replacementPath = `${targetPath}.obsidian-replacement`;
+    await writeFile(replacementPath, observed, "utf8");
+    await rename(replacementPath, targetPath);
+    assert.equal((await lstat(tempPath)).nlink, 1);
+
+    const result = await applyShadowChangeSet(vaultPath, changeSet);
+    assert.ok(result.commitReceipt);
+    assert.equal(await readFile(targetPath, "utf8"), observed);
+    await assert.rejects(
+      () => lstat(tempPath),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+    await markMaintenanceShadowCommittedFromJournal(handle, vaultPath);
+    await cleanupMaintenanceShadowVault(handle);
+  });
+}
+
+async function assertInterruptedInstallPreservesConcurrentDeletion(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/deleted-install-result.md";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    const desired = metadataMarkdown("Deleted install", desiredUpdated, "NEW");
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Deleted install", desiredUpdated, "OLD"),
+      "utf8"
+    );
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:deleted-metadata-install",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(path.join(handle.agentVaultPath, relativePath), desired, "utf8");
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, changeSet, {
+        beforeApplyChange: () => {
+          throw new Error("fault before deleted metadata install");
+        }
+      }),
+      /fault before deleted metadata install/
+    );
+    const journalPath = path.join(handle.rootPath, "apply-journal/journal.json");
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      state: string;
+      updatedAt: string;
+      error?: string;
+      digest: string;
+      entries: Array<{
+        installTempRelativePath?: string;
+        displacedLiveRelativePath?: string;
+      }>;
+      [key: string]: unknown;
+    };
+    const installTempRelativePath = journal.entries[0]?.installTempRelativePath;
+    const displacedLiveRelativePath =
+      journal.entries[0]?.displacedLiveRelativePath;
+    assert.ok(installTempRelativePath);
+    assert.ok(displacedLiveRelativePath);
+    journal.state = "applying";
+    journal.updatedAt = new Date().toISOString();
+    delete journal.error;
+    const { digest: _oldDigest, ...journalWithoutDigest } = journal;
+    journal.digest = digestForTest(journalWithoutDigest);
+    await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
+
+    const targetPath = path.join(vaultPath, ...relativePath.split("/"));
+    const tempPath = path.join(vaultPath, ...installTempRelativePath.split("/"));
+    const displacedPath = path.join(
+      vaultPath,
+      ...displacedLiveRelativePath.split("/")
+    );
+    await link(targetPath, displacedPath);
+    await rm(targetPath);
+    await writeFile(tempPath, desired, "utf8");
+    await link(tempPath, targetPath);
+    const replacementPath = `${targetPath}.obsidian-replacement`;
+    await writeFile(
+      replacementPath,
+      metadataMarkdown("Deleted install", observedUpdated, "NEW"),
+      "utf8"
+    );
+    await rename(replacementPath, targetPath);
+    await rm(targetPath);
+
+    await rejectsWithCode(
+      () => applyShadowChangeSet(vaultPath, changeSet),
+      "cas_conflict"
+    );
+    await assert.rejects(
+      () => lstat(targetPath),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+    assert.equal(await readFile(tempPath, "utf8"), desired);
+    assert.equal(
+      await readFile(displacedPath, "utf8"),
+      metadataMarkdown("Deleted install", desiredUpdated, "OLD"),
+      "ambiguous deletion must preserve both exact install temp and displaced baseline"
+    );
+  });
+}
+
 async function assertInterruptedNoClobberDisplacementIsRecovered(): Promise<void> {
   await withFixture(async ({ vaultPath, shadowStoragePath }) => {
     const handle = await createTransportFencedShadow({
@@ -1029,6 +1535,467 @@ async function assertInterruptedNoClobberDisplacementIsRecovered(): Promise<void
     });
     await cleanupMaintenanceShadowVault(handle);
   });
+}
+
+async function assertMetadataSuccessorsCommitDirectly(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/metadata-direct.md";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date(Date.now() - 1_000).toISOString();
+    const laterObservedUpdated = new Date().toISOString();
+    const regressedObservedUpdated = new Date(Date.now() - 30_000).toISOString();
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Direct", desiredUpdated, "OLD"),
+      "utf8"
+    );
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:metadata-direct",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(
+      path.join(handle.agentVaultPath, relativePath),
+      metadataMarkdown("Direct", desiredUpdated, "NEW"),
+      "utf8"
+    );
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    const result = await applyShadowChangeSet(vaultPath, changeSet, {
+      async faultInjector(input) {
+        if (input.point !== "after-entry" || input.relativePath !== relativePath) return;
+        await writeFile(
+          path.join(vaultPath, relativePath),
+          metadataMarkdown("Direct", observedUpdated, "NEW"),
+          "utf8"
+        );
+      }
+    });
+    assert.ok(result.commitReceipt);
+    const journal = JSON.parse(await readFile(
+      path.join(handle.rootPath, "apply-journal/journal.json"),
+      "utf8"
+    )) as {
+      state: string;
+      metadataSuccessorPolicy?: unknown;
+      metadataSuccessors?: Array<{ relativePath: string }>;
+    };
+    assert.equal(journal.state, "committed");
+    assert.ok(journal.metadataSuccessorPolicy);
+    assert.deepEqual(
+      journal.metadataSuccessors?.map((proof) => proof.relativePath),
+      [relativePath]
+    );
+    assert.equal(
+      await readFile(path.join(vaultPath, relativePath), "utf8"),
+      metadataMarkdown("Direct", observedUpdated, "NEW")
+    );
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Direct", laterObservedUpdated, "NEW"),
+      "utf8"
+    );
+    await markMaintenanceShadowCommittedFromJournal(handle, vaultPath);
+    const refreshedJournal = JSON.parse(await readFile(
+      path.join(handle.rootPath, "apply-journal/journal.json"),
+      "utf8"
+    )) as {
+      metadataSuccessors?: Array<{
+        relativePath: string;
+        updatedAt: number;
+      }>;
+    };
+    assert.equal(
+      refreshedJournal.metadataSuccessors?.find(
+        (proof) => proof.relativePath === relativePath
+      )?.updatedAt,
+      Date.parse(laterObservedUpdated),
+      "committed proof must durably refresh when updated advances again inside the fixed window"
+    );
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Direct", regressedObservedUpdated, "NEW"),
+      "utf8"
+    );
+    await assert.rejects(
+      () => markMaintenanceShadowCommittedFromJournal(handle, vaultPath),
+      (error: unknown) => error instanceof MaintenanceShadowError
+        && error.code === "cas_conflict"
+    );
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Direct", laterObservedUpdated, "NEW"),
+      "utf8"
+    );
+    await markMaintenanceShadowCommittedFromJournal(handle, vaultPath);
+    await cleanupMaintenanceShadowVault(handle);
+  });
+}
+
+async function assertBlockedMetadataSuccessorsNeedCurrentAttemptAuthority(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const successorPaths = [
+      "wiki/metadata-a.md",
+      "wiki/metadata-b.md",
+      "wiki/metadata-c.md"
+    ];
+    const baselinePaths = [
+      "wiki/index.md",
+      "outputs/maintenance/metadata-report.md"
+    ];
+    const atomicRecoveryPath = baselinePaths[0]!;
+    const allPaths = [...successorPaths, ...baselinePaths];
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    for (const relativePath of allPaths) {
+      await mkdir(path.dirname(path.join(vaultPath, relativePath)), {
+        recursive: true
+      });
+      await writeFile(
+        path.join(vaultPath, relativePath),
+        metadataMarkdown(relativePath, desiredUpdated, "OLD"),
+        "utf8"
+      );
+    }
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:metadata-blocked-recovery",
+      storageRootPath: shadowStoragePath
+    });
+    for (const relativePath of allPaths) {
+      await writeFile(
+        path.join(handle.agentVaultPath, relativePath),
+        metadataMarkdown(relativePath, desiredUpdated, "NEW"),
+        "utf8"
+      );
+    }
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, changeSet, {
+        async faultInjector(input) {
+          if (
+            input.point === "after-entry"
+            && successorPaths.includes(input.relativePath)
+          ) {
+            await writeFile(
+              path.join(vaultPath, input.relativePath),
+              metadataMarkdown(input.relativePath, observedUpdated, "NEW"),
+              "utf8"
+            );
+          }
+          if (
+            input.point === "after-entry"
+            && input.index === changeSet.changes.length - 1
+          ) {
+            throw new MaintenanceShadowSimulatedCrash(
+              "crash after all five targets before journal commit"
+            );
+          }
+        }
+      }),
+      (error: unknown) => error instanceof MaintenanceShadowSimulatedCrash
+    );
+    const journalPath = path.join(
+      handle.rootPath,
+      "apply-journal/journal.json"
+    );
+    const interrupted = JSON.parse(await readFile(journalPath, "utf8")) as {
+      state: string;
+      metadataSuccessorPolicy?: unknown;
+    };
+    assert.equal(
+      interrupted.state,
+      "applying",
+      "crash must leave a durable applying journal for orphan recovery"
+    );
+    assert.ok(interrupted.metadataSuccessorPolicy);
+    for (const relativePath of successorPaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        metadataMarkdown(relativePath, observedUpdated, "NEW")
+      );
+    }
+    for (const relativePath of baselinePaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        metadataMarkdown(relativePath, desiredUpdated, "NEW")
+      );
+    }
+
+    await rejectsWithCode(
+      () => recoverMaintenanceShadowApplyTransactions(
+        vaultPath,
+        shadowStoragePath
+      ),
+      "cas_conflict"
+    );
+    const blocked = JSON.parse(await readFile(journalPath, "utf8")) as {
+      state: string;
+    };
+    assert.equal(blocked.state, "blocked");
+    for (const relativePath of successorPaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        metadataMarkdown(relativePath, observedUpdated, "NEW")
+      );
+    }
+    for (const relativePath of baselinePaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        metadataMarkdown(relativePath, desiredUpdated, "OLD")
+      );
+    }
+
+    let atomicRecoveryUpdated: string | undefined;
+    const recovered = await applyShadowChangeSet(vaultPath, changeSet, {
+      async faultInjector(input) {
+        if (
+          input.point !== "after-install-link"
+          || input.relativePath !== atomicRecoveryPath
+        ) return;
+        atomicRecoveryUpdated = new Date().toISOString();
+        const targetPath = path.join(vaultPath, atomicRecoveryPath);
+        const replacementPath = `${targetPath}.obsidian-replacement`;
+        await writeFile(
+          replacementPath,
+          metadataMarkdown(
+            atomicRecoveryPath,
+            atomicRecoveryUpdated,
+            "NEW"
+          ),
+          "utf8"
+        );
+        await rename(replacementPath, targetPath);
+      }
+    });
+    assert.ok(recovered.commitReceipt);
+    assert.ok(
+      atomicRecoveryUpdated,
+      "blocked roll-forward must reach the deterministic post-link replacement"
+    );
+    const committed = JSON.parse(await readFile(journalPath, "utf8")) as {
+      state: string;
+      metadataSuccessors?: Array<{ relativePath: string }>;
+    };
+    assert.equal(committed.state, "committed");
+    assert.deepEqual(
+      committed.metadataSuccessors?.map((proof) => proof.relativePath),
+      [...successorPaths, atomicRecoveryPath].sort()
+    );
+    for (const relativePath of successorPaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        metadataMarkdown(relativePath, observedUpdated, "NEW")
+      );
+    }
+    for (const relativePath of baselinePaths) {
+      assert.equal(
+        await readFile(path.join(vaultPath, relativePath), "utf8"),
+        relativePath === atomicRecoveryPath
+          ? metadataMarkdown(
+            relativePath,
+            atomicRecoveryUpdated,
+            "NEW"
+          )
+          : metadataMarkdown(relativePath, desiredUpdated, "NEW")
+      );
+    }
+    await markMaintenanceShadowTerminal(handle, "committed", {
+      commitReceipt: recovered.commitReceipt
+    });
+    await cleanupMaintenanceShadowVault(handle);
+  });
+}
+
+async function assertDuplicateAttemptIdCannotDeferAnotherBlockedJournal(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const attemptId = "workflow:attempt:duplicate-id";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    const blockedPath = "wiki/duplicate-blocked.md";
+    const nextPath = "wiki/duplicate-next.md";
+    for (const relativePath of [blockedPath, nextPath]) {
+      await writeFile(
+        path.join(vaultPath, relativePath),
+        metadataMarkdown(relativePath, desiredUpdated, "OLD"),
+        "utf8"
+      );
+    }
+    const blockedHandle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId,
+      storageRootPath: shadowStoragePath
+    });
+    const nextHandle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId,
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(
+      path.join(blockedHandle.agentVaultPath, blockedPath),
+      metadataMarkdown(blockedPath, desiredUpdated, "BLOCKED"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(nextHandle.agentVaultPath, nextPath),
+      metadataMarkdown(nextPath, desiredUpdated, "NEXT"),
+      "utf8"
+    );
+    const blockedChangeSet = await sealMaintenanceShadowVault(blockedHandle);
+    const nextChangeSet = await sealMaintenanceShadowVault(nextHandle);
+    await assert.rejects(
+      () => applyShadowChangeSet(vaultPath, blockedChangeSet, {
+        async faultInjector(input) {
+          if (input.point !== "after-entry") return;
+          await writeFile(
+            path.join(vaultPath, blockedPath),
+            metadataMarkdown(blockedPath, observedUpdated, "BLOCKED"),
+            "utf8"
+          );
+          throw new MaintenanceShadowSimulatedCrash(
+            "leave the first duplicate-id journal interrupted"
+          );
+        }
+      }),
+      (error: unknown) => error instanceof MaintenanceShadowSimulatedCrash
+    );
+    await rejectsWithCode(
+      () => recoverMaintenanceShadowApplyTransactions(
+        vaultPath,
+        shadowStoragePath
+      ),
+      "cas_conflict"
+    );
+    const blockedJournalPath = path.join(
+      blockedHandle.rootPath,
+      "apply-journal/journal.json"
+    );
+    assert.equal(
+      (JSON.parse(await readFile(blockedJournalPath, "utf8")) as {
+        state: string;
+      }).state,
+      "blocked"
+    );
+    await rejectsWithCode(
+      () => applyShadowChangeSet(vaultPath, nextChangeSet),
+      "cas_conflict"
+    );
+    assert.equal(
+      await readFile(path.join(vaultPath, nextPath), "utf8"),
+      metadataMarkdown(nextPath, desiredUpdated, "OLD"),
+      "a matching attempt id must not skip another control root's blocked journal"
+    );
+  });
+}
+
+async function assertManagedOverrideConsumesDurableMetadataSuccessorProof(): Promise<void> {
+  await withFixture(async ({ vaultPath, shadowStoragePath }) => {
+    const relativePath = "wiki/metadata-managed-override.md";
+    const desiredUpdated = new Date(Date.now() - 60_000).toISOString();
+    const observedUpdated = new Date().toISOString();
+    await writeFile(
+      path.join(vaultPath, relativePath),
+      metadataMarkdown("Managed override", desiredUpdated, "OLD"),
+      "utf8"
+    );
+    const handle = await createTransportFencedShadow({
+      liveVaultPath: vaultPath,
+      attemptId: "workflow:attempt:metadata-managed-override",
+      storageRootPath: shadowStoragePath
+    });
+    await writeFile(
+      path.join(handle.agentVaultPath, relativePath),
+      metadataMarkdown("Managed override", desiredUpdated, "SHADOW"),
+      "utf8"
+    );
+    const changeSet = await sealMaintenanceShadowVault(handle);
+    await applyShadowChangeSet(vaultPath, changeSet, {
+      async faultInjector(input) {
+        if (input.point !== "after-entry" || input.relativePath !== relativePath) return;
+        await writeFile(
+          path.join(vaultPath, relativePath),
+          metadataMarkdown("Managed override", observedUpdated, "SHADOW"),
+          "utf8"
+        );
+      }
+    });
+    const journalPath = path.join(
+      handle.rootPath,
+      "apply-journal/journal.json"
+    );
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      metadataSuccessors?: Array<{
+        relativePath: string;
+        result: { kind: "file"; sha256: string; size: number; mode: number };
+        updatedAt: number;
+        projectionDigest: string;
+      }>;
+    };
+    const accepted = journal.metadataSuccessors?.find(
+      (proof) => proof.relativePath === relativePath
+    );
+    assert.ok(accepted, "Shadow commit must durably record the successor proof");
+    const change = changeSet.changes.find(
+      (candidate) => candidate.relativePath === relativePath
+    );
+    assert.ok(change && change.operation === "upsert");
+    const managedContent = Buffer.from(
+      metadataMarkdown("Managed override", observedUpdated, "MANAGED"),
+      "utf8"
+    );
+    await writeFile(path.join(vaultPath, relativePath), managedContent);
+    const override = {
+      relativePath,
+      expected: {
+        kind: "file" as const,
+        sha256: change.shadowSha256,
+        size: change.size,
+        mode: change.expectedLive.kind === "file"
+          ? change.expectedLive.mode
+          : 0o644
+      },
+      desired: {
+        kind: "file" as const,
+        sha256: sha256Text(managedContent.toString("utf8")),
+        size: managedContent.byteLength,
+        mode: 0o644
+      }
+    };
+    await assert.rejects(
+      () => markMaintenanceShadowCommittedFromJournal(
+        handle,
+        vaultPath,
+        { overriddenTargets: [override] }
+      ),
+      (error: unknown) => error instanceof MaintenanceShadowError
+        && error.code === "cas_conflict"
+    );
+    await markMaintenanceShadowCommittedFromJournal(
+      handle,
+      vaultPath,
+      {
+        overriddenTargets: [override],
+        acceptedIgnoredMetadataSuccessors: [accepted]
+      }
+    );
+    await cleanupMaintenanceShadowVault(handle);
+  });
+}
+
+function metadataMarkdown(
+  title: string,
+  updated: string,
+  body: string
+): string {
+  return [
+    "---",
+    `title: ${title}`,
+    `updated: ${updated}`,
+    "tags:",
+    "  - durable-proof",
+    "---",
+    body,
+    ""
+  ].join("\n");
 }
 
 async function assertCleanupRequiresSafeTerminalState(): Promise<void> {

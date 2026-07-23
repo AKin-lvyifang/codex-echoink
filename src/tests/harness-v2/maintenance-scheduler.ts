@@ -3,7 +3,11 @@ import type {
   KnowledgeBaseMaintenanceHistoryEntry,
   KnowledgeBaseSettings
 } from "../../settings/settings";
-import { shouldRunScheduledKnowledgeBaseMaintenance } from "../../knowledge-base/schedule";
+import {
+  SCHEDULED_MAINTENANCE_MAX_ATTEMPTS,
+  scheduledMaintenanceRetryDelayMs,
+  shouldRunScheduledKnowledgeBaseMaintenance
+} from "../../knowledge-base/schedule";
 import {
   KnowledgeBaseScheduler,
   type ScheduledMaintenanceInvocation
@@ -14,15 +18,16 @@ import type {
 } from "../../knowledge-base/types";
 
 export async function runHarnessV2MaintenanceSchedulerTests(): Promise<void> {
-  assertOnlyCompletedScheduleStatusesSuppressSameDayRetry();
+  assertFailedScheduleRequiresPersistedRetryWindow();
   await assertRecoveryGateBlocksStateAndAgentUntilReady();
   await assertCommittedProjectionUsesFreshSettingsObject();
   await assertRecoveredTerminalSuppressesPreviouslyDueRetry();
   await assertRecoveryGateRejectionFailsClosed();
   await assertConcurrentTriggersShareSingleFlight();
   await assertRunningBaselinePersistenceFailureDoesNotStart();
-  await assertFailedScheduleRetriesOnNextCheck();
-  await assertRapidRetryGetsDistinctWorkflowRunId();
+  await assertNonRetryableFailureCircuitsForDay();
+  await assertRetryableFailureHonorsPersistedBackoff();
+  await assertBackoffRetryGetsDistinctWorkflowRunId();
   await assertStaleRunningScheduleRetriesWhenNoRunIsActive();
   await assertDurableRunningScheduleDoesNotDuplicateCatchUp();
   await assertCanceledScheduleDoesNotRetrySameDay();
@@ -59,7 +64,7 @@ async function assertRecoveryGateBlocksStateAndAgentUntilReady(): Promise<void> 
       runCount += 1;
       return commitResult(settings, "success", invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -102,7 +107,7 @@ async function assertCommittedProjectionUsesFreshSettingsObject(): Promise<void>
       projectCommittedResult(settings, invocation, result);
       return result;
     },
-    appendScheduledMaintenanceMessage: async () => {
+    settleScheduledMaintenance: async () => {
       appendCount += 1;
     },
     refreshKnowledgeBaseSurfaces: () => undefined
@@ -137,7 +142,7 @@ async function assertRecoveryGateRejectionFailsClosed(): Promise<void> {
         runCount += 1;
         return runResult("success");
       },
-      appendScheduledMaintenanceMessage: async () => undefined,
+      settleScheduledMaintenance: async () => undefined,
       refreshKnowledgeBaseSurfaces: () => undefined
     });
 
@@ -172,7 +177,7 @@ async function assertRecoveredTerminalSuppressesPreviouslyDueRetry(): Promise<vo
       runCount += 1;
       return commitResult(settings, "success", invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -206,7 +211,7 @@ async function assertConcurrentTriggersShareSingleFlight(): Promise<void> {
       runCount += 1;
       return commitResult(settings, "success", invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -245,7 +250,7 @@ async function assertRunningBaselinePersistenceFailureDoesNotStart(): Promise<vo
         runCount += 1;
         return runResult("failed");
       },
-      appendScheduledMaintenanceMessage: async () => undefined,
+      settleScheduledMaintenance: async () => undefined,
       refreshKnowledgeBaseSurfaces: () => undefined
     });
 
@@ -260,7 +265,7 @@ async function assertRunningBaselinePersistenceFailureDoesNotStart(): Promise<vo
   }
 }
 
-function assertOnlyCompletedScheduleStatusesSuppressSameDayRetry(): void {
+function assertFailedScheduleRequiresPersistedRetryWindow(): void {
   const now = new Date(2026, 6, 18, 9, 5);
   const attemptedAt = new Date(2026, 6, 18, 9, 0).getTime();
   const base = {
@@ -282,7 +287,7 @@ function assertOnlyCompletedScheduleStatusesSuppressSameDayRetry(): void {
   assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
     { ...base, lastScheduledRunStatus: "failed" },
     now
-  ), true);
+  ), false);
   assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
     { ...base, lastScheduledRunStatus: "running" },
     now
@@ -301,56 +306,134 @@ function assertOnlyCompletedScheduleStatusesSuppressSameDayRetry(): void {
   ), true);
   assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(base, now), true);
   assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-    { ...base, lastScheduledRunStatus: "failed" },
+    {
+      ...base,
+      lastScheduledRunStatus: "failed",
+      scheduledAttemptCount: 1,
+      scheduledNextRetryAt: now.getTime() - 1
+    },
     now,
     new Date(2026, 6, 18, 9, 1).getTime(),
     true
   ), true);
   assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
-    { ...base, catchUpOnStartup: false, lastScheduledRunStatus: "failed" },
+    {
+      ...base,
+      catchUpOnStartup: false,
+      lastScheduledRunStatus: "failed",
+      scheduledAttemptCount: 1,
+      scheduledNextRetryAt: now.getTime() - 1
+    },
     now,
     new Date(2026, 6, 18, 9, 1).getTime(),
     true
   ), false);
+  assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+    {
+      ...base,
+      lastScheduledRunStatus: "failed",
+      scheduledAttemptCount: 1,
+      scheduledNextRetryAt: now.getTime() + 1
+    },
+    now
+  ), false);
+  assert.equal(shouldRunScheduledKnowledgeBaseMaintenance(
+    {
+      ...base,
+      lastScheduledRunStatus: "failed",
+      scheduledAttemptCount: SCHEDULED_MAINTENANCE_MAX_ATTEMPTS,
+      scheduledNextRetryAt: now.getTime() - 1
+    },
+    now
+  ), false);
 }
 
-async function assertFailedScheduleRetriesOnNextCheck(): Promise<void> {
+async function assertNonRetryableFailureCircuitsForDay(): Promise<void> {
   const settings = schedulerSettings();
   let runCount = 0;
-  let persistCount = 0;
   const scheduler = new KnowledgeBaseScheduler({
     getSettings: () => settings,
     isRunning: () => false,
     registerInterval: () => undefined,
     waitUntilMaintenanceReady: async () => undefined,
-    persistSettings: async () => {
-      persistCount += 1;
-    },
+    persistSettings: async () => undefined,
     runMaintenance: async (invocation) => {
       runCount += 1;
-      return runCount === 1
-        ? preWalResult("failed", invocation)
-        : commitResult(settings, "success", invocation);
+      return nonRetryablePreWalFailure(invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
   await scheduler.runScheduledIfDue();
   assert.equal(settings.lastScheduledRunStatus, "failed");
-  assert.equal(persistCount, 2);
+  assert.equal(settings.scheduledAttemptCount, 1);
+  assert.equal(settings.scheduledNextRetryAt, 0);
   await scheduler.runScheduledIfDue();
-  assert.equal(runCount, 2);
-  assert.equal(settings.lastScheduledRunStatus, "success");
-  assert.equal(persistCount, 3);
+  assert.equal(
+    runCount,
+    1,
+    "an explicitly non-retryable failure must trip the same-day circuit"
+  );
 }
 
-async function assertRapidRetryGetsDistinctWorkflowRunId(): Promise<void> {
+async function assertRetryableFailureHonorsPersistedBackoff(): Promise<void> {
+  const settings = schedulerSettings();
+  let runCount = 0;
+  let persistCount = 0;
+  const originalNow = Date.now;
+  let now = new Date(2026, 6, 18, 9, 5).getTime();
+  Date.now = () => now;
+  try {
+    const scheduler = new KnowledgeBaseScheduler({
+      getSettings: () => settings,
+      isRunning: () => false,
+      registerInterval: () => undefined,
+      waitUntilMaintenanceReady: async () => undefined,
+      persistSettings: async () => {
+        persistCount += 1;
+      },
+      runMaintenance: async (invocation) => {
+        runCount += 1;
+        return runCount === 1
+          ? retryablePreWalFailure(invocation)
+          : commitResult(settings, "success", invocation);
+      },
+      settleScheduledMaintenance: async () => undefined,
+      refreshKnowledgeBaseSurfaces: () => undefined
+    });
+
+    await scheduler.runScheduledIfDue();
+    assert.equal(settings.lastScheduledRunStatus, "failed");
+    assert.equal(settings.scheduledAttemptCount, 1);
+    assert.equal(
+      settings.scheduledNextRetryAt,
+      now + scheduledMaintenanceRetryDelayMs(1)!
+    );
+    assert.equal(persistCount, 2);
+
+    await scheduler.runScheduledIfDue();
+    assert.equal(runCount, 1, "the next minute must not bypass backoff");
+
+    now = settings.scheduledNextRetryAt;
+    await scheduler.runScheduledIfDue();
+    assert.equal(runCount, 2);
+    assert.equal(settings.scheduledAttemptCount, 2);
+    assert.equal(settings.scheduledNextRetryAt, 0);
+    assert.equal(settings.lastScheduledRunStatus, "success");
+    assert.equal(persistCount, 3);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+async function assertBackoffRetryGetsDistinctWorkflowRunId(): Promise<void> {
   const settings = schedulerSettings();
   const workflowRunIds: string[] = [];
   const scheduledStartedAtValues: number[] = [];
   const originalNow = Date.now;
-  Date.now = () => 1_750_000_000_000;
+  let now = new Date(2026, 6, 18, 9, 5).getTime();
+  Date.now = () => now;
   try {
     const scheduler = new KnowledgeBaseScheduler({
       getSettings: () => settings,
@@ -361,13 +444,14 @@ async function assertRapidRetryGetsDistinctWorkflowRunId(): Promise<void> {
       runMaintenance: async (invocation) => {
         workflowRunIds.push(invocation.workflowRunId);
         scheduledStartedAtValues.push(invocation.scheduledStartedAt);
-        return preWalResult("failed", invocation);
+        return retryablePreWalFailure(invocation);
       },
-      appendScheduledMaintenanceMessage: async () => undefined,
+      settleScheduledMaintenance: async () => undefined,
       refreshKnowledgeBaseSurfaces: () => undefined
     });
 
     await scheduler.runScheduledIfDue();
+    now = settings.scheduledNextRetryAt;
     await scheduler.runScheduledIfDue();
   } finally {
     Date.now = originalNow;
@@ -376,8 +460,8 @@ async function assertRapidRetryGetsDistinctWorkflowRunId(): Promise<void> {
   assert.equal(workflowRunIds.length, 2);
   assert.notEqual(workflowRunIds[0], workflowRunIds[1]);
   assert.deepEqual(scheduledStartedAtValues, [
-    1_750_000_000_000,
-    1_750_000_000_001
+    new Date(2026, 6, 18, 9, 5).getTime(),
+    new Date(2026, 6, 18, 9, 10).getTime()
   ]);
 }
 
@@ -397,7 +481,7 @@ async function assertStaleRunningScheduleRetriesWhenNoRunIsActive(): Promise<voi
       runCount += 1;
       return commitResult(settings, "success", invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -426,7 +510,7 @@ async function assertDurableRunningScheduleDoesNotDuplicateCatchUp(): Promise<vo
       runCount += 1;
       return runResult("failed");
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -454,7 +538,7 @@ async function assertCanceledScheduleDoesNotRetrySameDay(): Promise<void> {
       runCount += 1;
       return preWalResult("canceled", invocation);
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -480,7 +564,7 @@ async function assertActiveRunStillPreventsConcurrentRetry(): Promise<void> {
       runCount += 1;
       return runResult("success");
     },
-    appendScheduledMaintenanceMessage: async () => undefined,
+    settleScheduledMaintenance: async () => undefined,
     refreshKnowledgeBaseSurfaces: () => undefined
   });
 
@@ -507,7 +591,7 @@ async function assertWalPersistedResultWaitsForRecovery(): Promise<void> {
       },
       runMaintenance: async (invocation) =>
         walPersistedResult(invocation),
-      appendScheduledMaintenanceMessage: async () => {
+      settleScheduledMaintenance: async () => {
         appendCount += 1;
       },
       refreshKnowledgeBaseSurfaces: () => undefined
@@ -553,7 +637,7 @@ async function assertExternalRecoveryClearsPendingLatch(): Promise<void> {
         }
         return commitResult(settings, "success", invocation);
       },
-      appendScheduledMaintenanceMessage: async () => undefined,
+      settleScheduledMaintenance: async () => undefined,
       refreshKnowledgeBaseSurfaces: () => undefined
     });
 
@@ -645,7 +729,7 @@ async function assertUntrustedPreWalResultsWaitForRecovery(): Promise<void> {
           runCount += 1;
           return testCase.result(invocation);
         },
-        appendScheduledMaintenanceMessage: async () => {
+        settleScheduledMaintenance: async () => {
           appendCount += 1;
         },
         refreshKnowledgeBaseSurfaces: () => undefined
@@ -688,7 +772,7 @@ async function assertPreWalTerminalPersistenceFailureWaitsForRecovery(): Promise
         runCount += 1;
         return preWalResult("failed", invocation);
       },
-      appendScheduledMaintenanceMessage: async () => {
+      settleScheduledMaintenance: async () => {
         appendCount += 1;
       },
       refreshKnowledgeBaseSurfaces: () => undefined
@@ -783,7 +867,7 @@ async function assertCommittedProjectionMustMatchInvocation(): Promise<void> {
           runCount += 1;
           return testCase.result(settings, invocation);
         },
-        appendScheduledMaintenanceMessage: async () => {
+        settleScheduledMaintenance: async () => {
           appendCount += 1;
         },
         refreshKnowledgeBaseSurfaces: () => {
@@ -934,7 +1018,7 @@ async function assertCommittedProjectionRequiresMatchingHistory(): Promise<void>
           testCase.mutate(settings, result);
           return result;
         },
-        appendScheduledMaintenanceMessage: async () => {
+        settleScheduledMaintenance: async () => {
           appendCount += 1;
         },
         refreshKnowledgeBaseSurfaces: () => {
@@ -1042,7 +1126,7 @@ async function assertRecoveryLatchRequiresCanonicalHistory(): Promise<void> {
             ? walPersistedResult(invocation)
             : commitResult(settings, "success", invocation);
         },
-        appendScheduledMaintenanceMessage: async () => {
+        settleScheduledMaintenance: async () => {
           appendCount += 1;
         },
         refreshKnowledgeBaseSurfaces: () => undefined
@@ -1096,7 +1180,7 @@ async function assertPostRunEffectsCannotOverrideMaintenanceResult(): Promise<vo
       persistSettings: async () => undefined,
       runMaintenance: async (invocation) =>
         commitResult(settings, "success", invocation),
-      appendScheduledMaintenanceMessage: async () => {
+      settleScheduledMaintenance: async () => {
         throw new Error("notification unavailable");
       },
       refreshKnowledgeBaseSurfaces: () => {
@@ -1135,7 +1219,7 @@ async function assertThrownMaintenanceAttemptWaitsForRecovery(): Promise<void> {
         if (runCount === 1) throw new Error("recoverable interruption");
         return commitResult(settings, "success", invocation);
       },
-      appendScheduledMaintenanceMessage: async () => undefined,
+      settleScheduledMaintenance: async () => undefined,
       refreshKnowledgeBaseSurfaces: () => undefined
     });
 
@@ -1164,6 +1248,8 @@ function schedulerSettings(overrides: Partial<KnowledgeBaseSettings> = {}): Know
     lastScheduledRunAt: 0,
     lastScheduledRunStatus: "idle",
     lastScheduledRunId: "",
+    scheduledAttemptCount: 0,
+    scheduledNextRetryAt: 0,
     maintenanceHistory: [],
     ...overrides
   } as KnowledgeBaseSettings;
@@ -1197,6 +1283,45 @@ function preWalResult(
       ? "cancelled"
       : "scheduled-maintenance-failed"
   };
+}
+
+function retryablePreWalFailure(
+  invocation: ScheduledMaintenanceInvocation
+): KnowledgeBaseRunResult {
+  const result = preWalResult("failed", invocation);
+  result.attempts = [{
+    attemptId: `${invocation.workflowRunId}:attempt:1:codex-cli`,
+    ordinal: 1,
+    backend: "codex-cli",
+    failure: {
+      code: "RETRYABLE_INFRASTRUCTURE",
+      at: invocation.scheduledStartedAt,
+      message: "temporary transport interruption",
+      phase: "execution",
+      retryable: true,
+      failoverEligible: false
+    },
+    terminal: {
+      status: "failed",
+      at: invocation.scheduledStartedAt,
+      message: "temporary transport interruption"
+    }
+  }];
+  return result;
+}
+
+function nonRetryablePreWalFailure(
+  invocation: ScheduledMaintenanceInvocation
+): KnowledgeBaseRunResult {
+  const result = retryablePreWalFailure(invocation);
+  result.failureCode = "WRITE_OUTSIDE_ALLOWED_PATHS";
+  if (result.attempts?.[0]?.failure) {
+    result.attempts[0].failure.code = "WRITE_OUTSIDE_ALLOWED_PATHS";
+    result.attempts[0].failure.message =
+      "Agent changed a path outside the allowed set";
+    result.attempts[0].failure.retryable = false;
+  }
+  return result;
 }
 
 function walPersistedResult(

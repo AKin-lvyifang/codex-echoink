@@ -1,9 +1,8 @@
 import type CodexForObsidianPlugin from "../../main";
 import type { TurnOptions } from "../../core/codex-service";
 import { editorActionStartBlockReason as editorActionStartBlockReasonState } from "../../editor-actions/state";
-import { buildEditorActionTurnOptions, resolveEditorActionModel } from "../../editor-actions/turn-options";
-import { harnessEditorActionBackend, harnessEditorActionModel } from "../../harness/agents/backend-runtime-profile";
-import { resolveEditorActionModeConfig } from "../../settings/settings";
+import { resolveEditorActionModel } from "../../editor-actions/turn-options";
+import { harnessEditorActionModel } from "../../harness/agents/backend-runtime-profile";
 import type { EditorActionStatusView } from "../../editor-actions/types";
 
 export interface CodexEditorActionRunHost {
@@ -16,14 +15,11 @@ export interface CodexEditorActionRunHost {
   editorActionActiveTimeoutMs: number;
   editorActionThreadId: string;
   editorActionCurrentItemIds: Set<string>;
-  editorActionPrewarmThreadId: string;
-  editorActionPrewarmPromise: Promise<string | null> | null;
   clearTurnWatchdog(): void;
   clearActiveRun(): void;
   applyStatus(): void;
   activeProviderModels(): string[];
   effectiveEditorActionModel(availableModels?: string[], configuredModel?: string): string;
-  prewarmEditorActionThread(): void;
   setEditorActionStatus(status: EditorActionStatusView): void;
 }
 
@@ -54,52 +50,7 @@ export function releaseEditorActionRunLock(host: CodexEditorActionRunHost, runId
 }
 
 export async function takeEditorActionThread(host: CodexEditorActionRunHost, turnOptions: TurnOptions): Promise<string> {
-  if (host.editorActionPrewarmThreadId) {
-    const threadId = host.editorActionPrewarmThreadId;
-    host.editorActionPrewarmThreadId = "";
-    return threadId;
-  }
-  if (host.editorActionPrewarmPromise) {
-    const threadId = await host.editorActionPrewarmPromise.catch(() => null);
-    if (threadId) {
-      if (host.editorActionPrewarmThreadId === threadId) host.editorActionPrewarmThreadId = "";
-      return threadId;
-    }
-  }
   const started = await host.plugin.startCodexHarnessThread(turnOptions);
-  return started.threadId;
-}
-
-export function prewarmEditorActionThread(host: CodexEditorActionRunHost): void {
-  const backend = harnessEditorActionBackend(host.plugin.settings);
-  if (backend !== "codex-cli") return;
-  if (host.editorActionPrewarmThreadId || host.editorActionPrewarmPromise || host.running) return;
-  host.editorActionPrewarmPromise = createEditorActionPrewarmThread(host)
-    .catch(() => null)
-    .finally(() => {
-      host.editorActionPrewarmPromise = null;
-    });
-}
-
-async function createEditorActionPrewarmThread(host: CodexEditorActionRunHost): Promise<string | null> {
-  const status = await host.plugin.ensureCodexConnected(false, { silent: true });
-  if (!status.connected || !host.plugin.hasCodexHarnessTransport() || host.running) return null;
-  const modeConfig = resolveEditorActionModeConfig(host.plugin.settings.editorActions);
-  const turnOptions = {
-    ...buildEditorActionTurnOptions({
-      model: host.effectiveEditorActionModel(
-        status.models.map((model) => model.model),
-        harnessEditorActionModel(host.plugin.settings, "codex-cli", modeConfig.model)
-      ),
-      serviceTier: "fast",
-      timeoutMs: host.plugin.settings.editorActions.timeoutMs,
-      workspaceResources: { plugins: {}, mcpServers: {}, skills: {} }
-    }),
-    requestTimeoutMs: 15000
-  };
-  const started = await host.plugin.startCodexHarnessThread(turnOptions);
-  if (host.running || host.editorActionPrewarmThreadId) return null;
-  host.editorActionPrewarmThreadId = started.threadId;
   return started.threadId;
 }
 

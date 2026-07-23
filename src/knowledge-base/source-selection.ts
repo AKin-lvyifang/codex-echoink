@@ -1,7 +1,5 @@
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSource } from "./types";
 
-const MAX_ATTACHED_SOURCES = 20;
-
 export function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: KnowledgeBaseDiscovery, userRequest = ""): KnowledgeBaseSource[] {
   if (mode === "lint" || mode === "outputs" || mode === "inbox") return [];
   const requestedRawPaths = extractRequestedRawPaths(userRequest);
@@ -12,7 +10,7 @@ export function selectSourcesForRunMode(mode: KnowledgeBaseRunMode, discovery: K
   if (mode === "reingest") {
     const changed = discovery.changedSources;
     if (changed.length) return changed;
-    return [...discovery.sources].sort((left, right) => right.mtime - left.mtime).slice(0, MAX_ATTACHED_SOURCES);
+    return [...discovery.sources].sort((left, right) => right.mtime - left.mtime);
   }
   return discovery.changedSources;
 }

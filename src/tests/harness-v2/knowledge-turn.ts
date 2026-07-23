@@ -1,6 +1,15 @@
 import * as assert from "node:assert/strict";
-import { createQueuedTurnFromComposer, startKnowledgeBaseTurn } from "../../ui/codex-view/turn-runner";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+import {
+  createQueuedTurnFromComposer,
+  runKnowledgeBaseShortcut,
+  startKnowledgeBaseTurn
+} from "../../ui/codex-view/turn-runner";
 import type { HarnessRunResult } from "../../harness/contracts/run";
+import { ConversationMutationLane } from "../../harness/conversation/conversation-mutation-lane";
+import { FileConversationStoreV2LiveAdapter } from "../../plugin/conversation-store-v2-live-adapter";
 import type { TurnOptions } from "../../core/codex-service";
 import { handleKnowledgeBaseUserMessage, type KnowledgeBaseChatResult } from "../../knowledge-base/command-router";
 import { buildKnowledgeBaseMaintainReportPayload } from "../../knowledge-base/maintain-report-card";
@@ -9,6 +18,7 @@ import type { QueuedTurnItem } from "../../ui/turn-queue";
 
 export async function runHarnessV2KnowledgeTurnTests(): Promise<void> {
   await assertKnowledgeAskStoresHarnessBackendBinding();
+  await assertKnowledgeCommandMatrixUsesAppendOnlyV2Persistence();
   await assertKnowledgeAskKeepsConfiguredBackendProvenance();
   await assertMaintenanceRouterExposesLastActualAttemptBackend();
   await assertMaintenanceUsesSelectedThenActualAttemptBackend();
@@ -18,6 +28,154 @@ export async function runHarnessV2KnowledgeTurnTests(): Promise<void> {
   await assertMaintenanceWithoutWinnerClearsRunProvenance();
   await assertQueuedMaintenanceRefreshesBackendSpecificTurnOptionsAtStart();
   await assertRecoveryAllowsOnlyReadOnlyLocalCommands();
+  await assertRecoveryAskDisablesExternalResources();
+  await assertKnowledgeShortcutKeepsMutationLaneUntilSettlement();
+}
+
+async function assertKnowledgeCommandMatrixUsesAppendOnlyV2Persistence():
+Promise<void> {
+  const commands = [
+    "/maintain",
+    "/check",
+    "/reingest",
+    "/calibrate",
+    "/outputs",
+    "/inbox",
+    "/ask 当前状态",
+    "/journal 今天的进展",
+    "/week",
+    "/init"
+  ];
+  for (const [index, command] of commands.entries()) {
+    const storageRootPath = await mkdtemp(
+      path.join(tmpdir(), `echoink-kb-command-v2-${index}-`)
+    );
+    try {
+      const adapter = new FileConversationStoreV2LiveAdapter(storageRootPath);
+      const session = durableKnowledgeSession(`kb-command-v2-${index}`);
+      await adapter.createPristineSession(session);
+      const commits: NonNullable<Awaited<ReturnType<
+        FileConversationStoreV2LiveAdapter["store"]["readConversation"]
+      >>>[] = [];
+      const view = fakeKnowledgeView(session, {
+        status: "success",
+        message: `${command} 完成`
+      }, []);
+      view.plugin.saveSettings = async () => {
+        await adapter.persistSettingsSessions({ sessions: [session] });
+        const commit = await adapter.store.readConversation(session.id);
+        assert.ok(commit);
+        commits.push(commit);
+      };
+      const item: QueuedTurnItem = {
+        id: `turn-kb-command-v2-${index}`,
+        sessionId: session.id,
+        text: command,
+        attachments: [],
+        createdAt: index + 1,
+        turnOptions: {}
+      };
+
+      const status = await startKnowledgeBaseTurn(
+        view,
+        session,
+        item,
+        "composer"
+      );
+
+      assert.equal(status, "completed", command);
+      assert.equal(commits.length, 2, command);
+      assert.equal(commits[0]!.payload.messages.length, 1, command);
+      assert.equal(commits[0]!.payload.messages[0]?.role, "user", command);
+      assert.equal(
+        commits[0]!.payload.messages.some((message) =>
+          message.presentation?.status === "running"
+        ),
+        false,
+        `${command} must not persist its transient running card`
+      );
+      assert.equal(commits[1]!.payload.messages.length, 2, command);
+      assert.equal(
+        commits[1]!.payload.messages[1]?.presentation?.status,
+        "completed",
+        command
+      );
+      assert.deepEqual(
+        commits[1]!.payload.messages[0],
+        commits[0]!.payload.messages[0],
+        `${command} must append its terminal without rewriting the durable user prefix`
+      );
+      const terminalRevision = commits[1]!.metadata.revision;
+      await adapter.persistSettingsSessions({ sessions: [session] });
+      assert.equal(
+        (await adapter.store.readConversation(session.id))?.metadata.revision,
+        terminalRevision,
+        `${command} repeated persistence must be idempotent`
+      );
+    } finally {
+      await rm(storageRootPath, { recursive: true, force: true });
+    }
+  }
+
+  await assertKnowledgeShortcutUsesAppendOnlyV2Persistence();
+}
+
+async function assertKnowledgeShortcutUsesAppendOnlyV2Persistence():
+Promise<void> {
+  const storageRootPath = await mkdtemp(
+    path.join(tmpdir(), "echoink-kb-shortcut-v2-")
+  );
+  try {
+    const adapter = new FileConversationStoreV2LiveAdapter(storageRootPath);
+    const session = durableKnowledgeSession("kb-shortcut-v2");
+    await adapter.createPristineSession(session);
+    const commits: Array<NonNullable<Awaited<ReturnType<
+      FileConversationStoreV2LiveAdapter["store"]["readConversation"]
+    >>>> = [];
+    const view: any = {
+      plugin: {
+        withEchoInkConversationMutation: async <T>(
+          _conversationId: string,
+          action: () => Promise<T>
+        ): Promise<T> => await action(),
+        activateKnowledgeBaseChannel: async () => undefined,
+        getKnowledgeBaseManager: () => null,
+        externalizeMessageText: async () => undefined,
+        settlePendingKnowledgeBaseNativeExecutions: async () => undefined,
+        saveSettings: async () => {
+          await adapter.persistSettingsSessions({ sessions: [session] });
+          const commit = await adapter.store.readConversation(session.id);
+          assert.ok(commit);
+          commits.push(commit);
+        }
+      },
+      running: false,
+      ensureSession: () => session,
+      isKnowledgeBaseSession: () => true,
+      renderTabs: () => undefined,
+      renderMessages: () => undefined,
+      renderToolbar: () => undefined,
+      applyStatus: () => undefined,
+      refreshKnowledgeDashboard: async () => undefined
+    };
+
+    await runKnowledgeBaseShortcut(view, "收集快捷操作", async () => "已收集");
+
+    assert.equal(commits.length, 2);
+    assert.equal(commits[0]!.payload.messages.length, 1);
+    assert.equal(commits[0]!.payload.messages[0]?.role, "user");
+    assert.equal(commits[1]!.payload.messages.length, 2);
+    assert.equal(
+      commits[1]!.payload.messages[1]?.presentation?.status,
+      "completed"
+    );
+    assert.deepEqual(
+      commits[1]!.payload.messages[0],
+      commits[0]!.payload.messages[0]
+    );
+  } finally {
+    await rm(storageRootPath, { recursive: true, force: true });
+  }
 }
 
 async function assertKnowledgeAskStoresHarnessBackendBinding(): Promise<void> {
@@ -76,6 +234,76 @@ async function assertKnowledgeAskStoresHarnessBackendBinding(): Promise<void> {
     savedSnapshots.some((snapshot) => snapshot.backendBindings?.["codex-cli"]?.leaseId === "lease-kb-codex"),
     "knowledge turn should persist backend binding before later /ask turns"
   );
+}
+
+async function assertKnowledgeShortcutKeepsMutationLaneUntilSettlement(): Promise<void> {
+  const lane = new ConversationMutationLane();
+  const commitEntered = deferred<void>();
+  const releaseCommit = deferred<void>();
+  const session: StoredSession = {
+    id: "kb-shortcut-settlement-lane",
+    title: "Knowledge",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+  const view: any = {
+    plugin: {
+      withEchoInkConversationMutation: async <T>(
+        conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await lane.withConversationMutation(conversationId, action),
+      activateKnowledgeBaseChannel: async () => undefined,
+      getKnowledgeBaseManager: () => null,
+      externalizeMessageText: async () => {
+        commitEntered.resolve();
+        await releaseCommit.promise;
+      },
+      settlePendingKnowledgeBaseNativeExecutions: async () => undefined,
+      saveSettings: async () => undefined
+    },
+    running: false,
+    ensureSession: () => session,
+    isKnowledgeBaseSession: () => true,
+    renderTabs: () => undefined,
+    renderMessages: () => undefined,
+    renderToolbar: () => undefined,
+    applyStatus: () => undefined,
+    refreshKnowledgeDashboard: async () => undefined
+  };
+
+  const shortcut = runKnowledgeBaseShortcut(
+    view,
+    "刷新索引",
+    async () => "刷新完成"
+  );
+  await commitEntered.promise;
+  assert.equal(
+    view.running,
+    true,
+    "Knowledge shortcut must stay running until terminal persistence settles"
+  );
+
+  let laterMutationEntered = false;
+  const laterMutation = lane.withConversationMutation(session.id, async () => {
+    laterMutationEntered = true;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    laterMutationEntered,
+    false,
+    "later Conversation mutations must wait behind Knowledge shortcut settlement"
+  );
+
+  releaseCommit.resolve();
+  await shortcut;
+  await laterMutation;
+  assert.equal(laterMutationEntered, true);
+  assert.equal(view.running, false);
+  assert.equal(session.messages.at(-1)?.status, "completed");
+  assert.equal(session.messages.at(-1)?.text, "刷新完成");
 }
 
 async function assertKnowledgeAskKeepsConfiguredBackendProvenance(): Promise<void> {
@@ -476,15 +704,50 @@ async function assertRecoveryAllowsOnlyReadOnlyLocalCommands(): Promise<void> {
   assert.equal(blockedHistory.clearCalls(), 1);
   assert.equal(blockedHistory.session.messages.length, 0);
 
-  const blockedMaintenance = recoveryComposerFixture("/maintain", "blocked");
-  const maintenanceItem = await createQueuedTurnFromComposer(blockedMaintenance.view as never, {
+  const pendingClear = recoveryComposerFixture("/clear", "pending");
+  const clearItem = await createQueuedTurnFromComposer(pendingClear.view as never, {
     allowLocalKnowledgeCommands: true
   });
-  assert.equal(maintenanceItem, null);
-  assert.equal(blockedMaintenance.clearCalls(), 0);
-  assert.equal(blockedMaintenance.historyCalls(), 0);
-  assert.equal(blockedMaintenance.saveCalls(), 0);
-  assert.equal(blockedMaintenance.session.messages.length, 0);
+  assert.equal(clearItem, null);
+  assert.equal(pendingClear.clearPageCalls(), 1);
+
+  const pendingChat = recoveryComposerFixture("解释一下当前知识库状态", "pending");
+  const chatItem = await createQueuedTurnFromComposer(pendingChat.view as never, {
+    allowLocalKnowledgeCommands: true
+  });
+  assert.equal(chatItem?.kind, "chat");
+
+  const blockedAsk = recoveryComposerFixture("/ask 最近有哪些资料？", "blocked");
+  const askItem = await createQueuedTurnFromComposer(blockedAsk.view as never, {
+    allowLocalKnowledgeCommands: true
+  });
+  assert.equal(askItem?.kind, "knowledge-base");
+
+  const writeCommands = [
+    "/init",
+    "/maintain",
+    "/check",
+    "/reingest",
+    "/calibrate",
+    "/outputs",
+    "/inbox",
+    "/journal",
+    "/week",
+    "记一下：恢复完成后再处理"
+  ];
+  for (const state of ["pending", "blocked"] as const) {
+    for (const command of writeCommands) {
+      const blocked = recoveryComposerFixture(command, state);
+      const blockedItem = await createQueuedTurnFromComposer(blocked.view as never, {
+        allowLocalKnowledgeCommands: true
+      });
+      assert.equal(blockedItem, null, `${command} must require maintenance authority while ${state}`);
+      assert.equal(blocked.clearPageCalls(), 0);
+      assert.equal(blocked.historyCalls(), 0);
+      assert.equal(blocked.saveCalls(), 0);
+      assert.equal(blocked.session.messages.length, 0);
+    }
+  }
 
   const readyMaintenance = recoveryComposerFixture("/maintain", "ready");
   const readyItem = await createQueuedTurnFromComposer(readyMaintenance.view as never, {
@@ -494,6 +757,45 @@ async function assertRecoveryAllowsOnlyReadOnlyLocalCommands(): Promise<void> {
   assert.equal(readyItem?.text, "/maintain");
 }
 
+async function assertRecoveryAskDisablesExternalResources(): Promise<void> {
+  const session = baseSession();
+  session.kind = "knowledge-base";
+  let receivedOptions: Record<string, unknown> | undefined;
+  const view = fakeKnowledgeView(session, {
+    status: "success",
+    message: "只读回答"
+  }, [], {
+    maintenanceRecoveryState: "blocked",
+    onHandleUserMessage: (_text, _attachments, options) => {
+      receivedOptions = options as Record<string, unknown>;
+    }
+  });
+  const item: QueuedTurnItem = {
+    ...queuedKnowledgeAsk(),
+    turnOptions: {
+      model: "gpt-test",
+      permission: "danger-full-access",
+      mcpEnabled: true,
+      workspaceResources: {
+        plugins: { unsafe: true },
+        mcpServers: { unsafe: true },
+        skills: { unsafe: true }
+      }
+    } as TurnOptions
+  };
+
+  const status = await startKnowledgeBaseTurn(view, session, item, "composer");
+
+  assert.equal(status, "completed");
+  assert.equal(receivedOptions?.externalResources, "disabled");
+  assert.equal(receivedOptions?.mcpEnabled, false);
+  assert.deepEqual(receivedOptions?.workspaceResources, {
+    plugins: {},
+    mcpServers: {},
+    skills: {}
+  });
+}
+
 function recoveryComposerFixture(
   text: string,
   state: "pending" | "ready" | "blocked"
@@ -501,6 +803,7 @@ function recoveryComposerFixture(
   const session = baseSession();
   session.kind = "knowledge-base";
   let cleared = 0;
+  let clearedPages = 0;
   let historyOpened = 0;
   let saved = 0;
   const recoveryMessage = state === "pending"
@@ -520,7 +823,9 @@ function recoveryComposerFixture(
     openKnowledgeBaseHistory: async () => {
       historyOpened += 1;
     },
-    clearKnowledgeBasePage: async () => undefined,
+    clearKnowledgeBasePage: async () => {
+      clearedPages += 1;
+    },
     currentTurnOptions: () => ({}),
     ensureChatWorkspaceSelected: async () => true,
     addMessageToSession: (
@@ -548,6 +853,7 @@ function recoveryComposerFixture(
     view,
     session,
     clearCalls: () => cleared,
+    clearPageCalls: () => clearedPages,
     historyCalls: () => historyOpened,
     saveCalls: () => saved
   };
@@ -566,6 +872,7 @@ function fakeKnowledgeView(
     onFinishThinking?: (status: string) => void;
     onFinishProcesses?: (status: string) => void;
     handleError?: Error;
+    maintenanceRecoveryState?: "pending" | "ready" | "blocked";
   } = {}
 ) {
   const chatResult: KnowledgeBaseChatResult = "runId" in result
@@ -576,6 +883,10 @@ function fakeKnowledgeView(
     }
     : result;
   const manager = {
+    maintenanceRecoveryStatus: {
+      state: options.maintenanceRecoveryState ?? "ready",
+      message: options.maintenanceRecoveryState === "blocked" ? "恢复被阻断" : ""
+    },
     handleUserMessage: async (text: string, attachments: unknown[], turnOptions: unknown) => {
       options.onHandleUserMessage?.(text, attachments, turnOptions);
       if (options.handleError) throw options.handleError;
@@ -591,6 +902,10 @@ function fakeKnowledgeView(
         knowledgeBase: { backend: options.knowledgeBackend ?? "codex-cli" }
       },
       getKnowledgeBaseManager: () => manager,
+      withEchoInkConversationMutation: async <T>(
+        _conversationId: string,
+        action: () => Promise<T>
+      ): Promise<T> => await action(),
       externalizeMessageText: async (message: ChatMessage, text: string) => {
         message.text = text;
       },
@@ -632,6 +947,23 @@ function baseSession(): StoredSession {
   };
 }
 
+function durableKnowledgeSession(id: string): StoredSession {
+  return {
+    id,
+    title: "知识库管理",
+    kind: "knowledge-base",
+    cwd: "/vault",
+    revision: 1,
+    generation: 1,
+    contextId: `context-${id}`,
+    commitId: `commit-${id}`,
+    workspaceFingerprint: `sha256:${"a".repeat(64)}`,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  };
+}
+
 function queuedKnowledgeAsk(): QueuedTurnItem {
   return {
     id: "turn-kb-ask",
@@ -641,4 +973,15 @@ function queuedKnowledgeAsk(): QueuedTurnItem {
     createdAt: 1,
     turnOptions: {}
   };
+}
+
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
 }

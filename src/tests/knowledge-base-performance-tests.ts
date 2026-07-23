@@ -19,6 +19,27 @@ export async function runKnowledgeBasePerformanceTests(): Promise<void> {
   assert.equal(shouldReadKnowledgeBaseFileContent({ size: 7 }, budget).ok, true);
   assert.equal(shouldReadKnowledgeBaseFileContent({ size: 7 }, budget).ok, false);
   assert.equal(shouldReadKnowledgeBaseFileContent({ size: 9 }, createKnowledgeBaseIoBudget({ maxFileBytes: 8 })).ok, false);
+  const chunkBudget = createKnowledgeBaseIoBudget({
+    maxFileBytes: 8,
+    maxTotalBytes: 20
+  });
+  assert.deepEqual(
+    shouldReadKnowledgeBaseFileContent(
+      { size: 18 },
+      chunkBudget,
+      { allowChunkedText: true }
+    ),
+    { ok: true, strategy: "chunked-text", maxChunkBytes: 8 }
+  );
+  assert.equal(chunkBudget.consumedBytes, 18);
+  assert.equal(
+    shouldReadKnowledgeBaseFileContent(
+      { size: 18 },
+      createKnowledgeBaseIoBudget({ maxFileBytes: 8, maxTotalBytes: 20 })
+    ).ok,
+    false,
+    "binary/non-text callers must not inherit chunking"
+  );
 
   const vault = await mkdtemp(path.join(tmpdir(), "codex-kb-io-budget-"));
   try {
@@ -118,19 +139,49 @@ export async function runKnowledgeBasePerformanceTests(): Promise<void> {
     assert.equal(cached.sources.find((source) => source.relativePath === "raw/files/big.pdf")?.changed, false);
 
     await writeFile(path.join(discoveryVault, "raw", "files", "uncached.pdf"), Buffer.from("%PDF-" + "y".repeat(256)));
+    await writeFile(
+      path.join(discoveryVault, "raw", "files", "chunked.md"),
+      Buffer.from("# Chunked\n\n" + "中文分块内容。".repeat(32))
+    );
     const uncached = await discoverKnowledgeBaseSources(discoveryVault, {}, "maintain", {
       maxRawFingerprintBytes: 16,
-      maxTotalRawFingerprintBytes: 16
+      maxTotalRawFingerprintBytes: 1024
     });
     const skippedPaths = new Set(uncached.skippedSources.map((source) => source.relativePath));
     assert.equal(skippedPaths.has("raw/files/big.pdf"), true);
     assert.equal(skippedPaths.has("raw/files/uncached.pdf"), true);
+    const chunked = uncached.sources.find(
+      (source) => source.relativePath === "raw/files/chunked.md"
+    );
+    assert.deepEqual(chunked?.readStrategy, {
+      kind: "chunked-text",
+      maxChunkBytes: 16
+    });
     const prompt = buildKnowledgeBasePrompt({
       vaultPath: discoveryVault,
       mode: "maintain",
       reportPath: uncached.reportPath,
       sources: uncached.changedSources,
       skippedSources: uncached.skippedSources,
+      sourceChunks: [{
+        sourceRelativePath: "raw/files/chunked.md",
+        relativePath: "raw/.echoink-source-chunks/test/part-0001-of-0002.md",
+        index: 1,
+        count: 2,
+        startByte: 0,
+        endByte: 16,
+        size: 16,
+        sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }, {
+        sourceRelativePath: "raw/files/chunked.md",
+        relativePath: "raw/.echoink-source-chunks/test/part-0002-of-0002.md",
+        index: 2,
+        count: 2,
+        startByte: 16,
+        endByte: 32,
+        size: 16,
+        sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }],
       rulesFilePath: "AGENTS.md",
       rulesFileExists: false,
       useCustomRulesFile: false,
@@ -140,6 +191,9 @@ export async function runKnowledgeBasePerformanceTests(): Promise<void> {
     });
     assert.equal(prompt.includes("超出读取预算，未纳入本轮 raw 来源"), true);
     assert.equal(prompt.includes("raw/files/uncached.pdf"), true);
+    assert.equal(prompt.includes("超限文本安全分块"), true);
+    assert.equal(prompt.includes("必须按编号读完所有分块后再综合"), true);
+    assert.equal(prompt.includes("原始来源：raw/files/chunked.md"), true);
   } finally {
     await rm(discoveryVault, { recursive: true, force: true });
   }

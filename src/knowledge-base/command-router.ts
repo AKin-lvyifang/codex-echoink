@@ -27,12 +27,14 @@ export interface KnowledgeBaseChatResult {
   /** Explicit null means this workflow had no Agent winner (for example noop). */
   maintenanceWinnerBackend?: AgentBackendKind | null;
   harnessResult?: HarnessRunResult;
+  /** Exact Harness runs whose Native lifecycle belongs to this result. */
+  nativeSettlementRunIds?: string[];
   citations?: KnowledgeBaseCitationSummary;
   ui?: KnowledgeBaseMessageUiPayload;
   followUpCommand?: string;
 }
 
-export interface KnowledgeBaseTurnOptionOverrides extends Partial<Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources">> {
+export interface KnowledgeBaseTurnOptionOverrides extends Partial<Pick<TurnOptions, "model" | "reasoning" | "serviceTier" | "mcpEnabled" | "workspaceResources" | "externalResources">> {
   /** Stable UI/trigger run id reused by the durable maintenance workflow. */
   workflowRunId?: string;
   /** Durable scheduled-running baseline timestamp owned by the Scheduler. */
@@ -210,6 +212,7 @@ function maintenanceBackendResult(
   | "maintenanceBackend"
   | "maintenanceSelectedBackend"
   | "maintenanceWinnerBackend"
+  | "nativeSettlementRunIds"
   | "workflowRunId"
   | "maintenanceRecoveryState"
 > {
@@ -225,6 +228,11 @@ function maintenanceBackendResult(
   const backend = hasExplicitWinner
     ? result.winnerBackend ?? undefined
     : legacyBackend;
+  const nativeSettlementRunIds = Array.from(new Set(
+    (result.attempts ?? [])
+      .map((attempt) => attempt.submitted?.harnessRunId?.trim() ?? "")
+      .filter(Boolean)
+  ));
   return {
     ...(backend ? { maintenanceBackend: backend } : {}),
     ...(result.selectedBackend
@@ -234,6 +242,7 @@ function maintenanceBackendResult(
       ? { maintenanceWinnerBackend: result.winnerBackend ?? null }
       : {}),
     ...(result.workflowRunId ? { workflowRunId: result.workflowRunId } : {}),
+    ...(nativeSettlementRunIds.length ? { nativeSettlementRunIds } : {}),
     ...(result.commitState === "wal-persisted"
       ? { maintenanceRecoveryState: "pending" as const }
       : result.terminalPhase === "recovery-blocked"

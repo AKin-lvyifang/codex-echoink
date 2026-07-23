@@ -8,7 +8,7 @@ import { diffSummaryLabel, parseFileChangeDiff, type ParsedDiffFile } from "../.
 import { displayTextForMessage, isLargeRawMessage } from "../../core/raw-message-store";
 import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../../core/virtual-window";
 import { extractKnowledgeBaseResultTitle } from "../knowledge-base-result-title";
-import type { KnowledgeBaseMaintainReportPayload, KnowledgeBaseMessageUiPayload, KnowledgeBaseRunPayload } from "../../knowledge-base/maintain-report-card";
+import type { KnowledgeBaseMaintainReportPayload, KnowledgeBaseMaintainReportSectionItem, KnowledgeBaseMessageUiPayload, KnowledgeBaseRunPayload } from "../../knowledge-base/maintain-report-card";
 import { formatMessageHeaderTime } from "../message-time";
 import { openImageOverlay, renderRichText } from "../render-message";
 import { buildActionTimeline, isActionTimelineItem, type ActionGroupKind, type ActionItemViewModel } from "./action-timeline";
@@ -124,7 +124,7 @@ export function knowledgeBaseRunProgressStateFromEvents(status: string | undefin
   const completed = new Set(events.filter((event) => event.type === "workflow.phase.completed" && event.phaseId).map((event) => event.phaseId as KnowledgeWorkflowPhaseId));
   const lastPhaseEvent = events.slice().reverse().find((event) => event.phaseId && (event.type === "workflow.phase.started" || event.type === "workflow.phase.progress" || event.type === "workflow.phase.failed"));
   const activePhase = lastPhaseEvent?.phaseId;
-  const activeIndex = status === "running" && activePhase ? phaseOrder.indexOf(activePhase) : -1;
+  const activeIndex = activePhase ? phaseOrder.indexOf(activePhase) : -1;
   const furthestCompletedSegment = events
     .filter((event) => event.type === "workflow.phase.completed" && event.phaseId)
     .reduce((furthest, event) => {
@@ -164,6 +164,17 @@ export function shouldPinMessageListBottom(options: MessageListRenderOptions, ne
   return Boolean(options.forceBottom) || (!options.fromScroll && !options.preserveScroll && nearBottom);
 }
 
+export function knowledgeBaseMaintainSectionOpenState(storedOpen: boolean | undefined, initiallyOpen: boolean): boolean {
+  return storedOpen ?? initiallyOpen;
+}
+
+export function knowledgeBaseMaintainReportItemPath(item: KnowledgeBaseMaintainReportSectionItem): string | undefined {
+  const explicitPath = item.path?.trim();
+  if (explicitPath) return explicitPath;
+  const legacyTitle = item.title.trim();
+  return /\.(?:md|markdown|txt)$/i.test(legacyTitle) ? legacyTitle : undefined;
+}
+
 export class CodexMessageListRenderer {
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
@@ -176,6 +187,7 @@ export class CodexMessageListRenderer {
   private openActionItemDetails = new Map<string, boolean>();
   private openCompletedTurns = new Map<string, boolean>();
   private openKnowledgeBaseCitations = new Map<string, boolean>();
+  private openKnowledgeBaseReportSections = new Map<string, boolean>();
   private env: MessageListEnvironment | null = null;
   private virtualRerenderScheduled = false;
   private virtualRerenderBurst = 0;
@@ -708,45 +720,51 @@ export class CodexMessageListRenderer {
       this.renderKnowledgeBaseRunCard(container, payload, message);
       return;
     }
-    this.renderKnowledgeBaseMaintainReportCard(container, payload);
+    this.renderKnowledgeBaseMaintainReportCard(container, payload, message);
   }
 
   private renderKnowledgeBaseRunCard(container: HTMLElement, payload: KnowledgeBaseRunPayload, message: ChatMessage): void {
-    const card = container.createDiv({ cls: `codex-kb-run-card codex-kb-run-card-${message.status ?? "running"}` });
+    const status = message.status ?? "running";
+    const card = container.createDiv({ cls: `codex-kb-run-card codex-kb-run-card-${status}` });
     const head = card.createDiv({ cls: "codex-kb-run-head" });
     const mark = head.createSpan({ cls: "codex-kb-run-mark" });
-    setIcon(mark, payload.icon);
+    setIcon(mark, knowledgeBaseRunStatusIcon(payload, status));
     const text = head.createDiv({ cls: "codex-kb-run-copy" });
-    text.createDiv({ cls: "codex-kb-run-title", text: knowledgeBaseRunDisplayTitle(payload, message.status) });
+    text.createDiv({ cls: "codex-kb-run-title", text: knowledgeBaseRunDisplayTitle(payload, status) });
     const liveCopy = knowledgeBaseRunEventCopy(payload);
     if (liveCopy) text.createDiv({ cls: "codex-kb-run-subtitle", text: liveCopy });
     const track = card.createDiv({ cls: "codex-kb-run-track" });
-    const cellsPerSegment = KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT;
-    const eventProgress = knowledgeBaseRunProgressStateFromEvents(message.status, payload.events ?? [], payload.phases.length);
+    const eventProgress = knowledgeBaseRunProgressStateFromEvents(status, payload.events ?? [], payload.phases.length);
+    const timedProgress = knowledgeBaseRunProgressState(status, message.createdAt, Date.now(), payload.phases.length);
     const { totalCells, filledCells, activeIndex } = eventProgress ?? {
-      totalCells: KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, payload.phases.length - 1),
-      filledCells: message.status === "completed" ? KNOWLEDGE_BASE_RUN_CELLS_PER_SEGMENT * Math.max(0, payload.phases.length - 1) : 0,
-      activeIndex: -1
+      totalCells: timedProgress.totalCells,
+      filledCells: timedProgress.filledCells,
+      activeIndex: timedProgress.activeIndex
     };
     payload.phases.forEach((phase, index) => {
       const node = track.createDiv({ cls: `codex-kb-run-node codex-kb-run-node-${phase.id} codex-kb-run-motion-${phase.motion}` });
       node.toggleClass("is-done", filledCells >= totalCells || index < activeIndex);
       node.toggleClass("is-active", index === activeIndex);
-      const icon = node.createSpan({ cls: "codex-kb-run-node-icon" });
+      const rail = node.createDiv({ cls: "codex-kb-run-phase-rail" });
+      const icon = rail.createSpan({ cls: "codex-kb-run-node-icon" });
       setIcon(icon, phase.icon);
-      node.createSpan({ cls: "codex-kb-run-node-label", text: phase.label });
-      if (index >= payload.phases.length - 1) return;
-      const segment = track.createDiv({ cls: "codex-kb-run-segment" });
-      segment.toggleClass("is-active", index === activeIndex);
-      segment.toggleClass("is-done", filledCells >= (index + 1) * cellsPerSegment);
-      for (let cellIndex = 0; cellIndex < cellsPerSegment; cellIndex += 1) {
-        const absoluteIndex = index * cellsPerSegment + cellIndex;
-        segment.createSpan({ cls: `codex-kb-run-cell ${absoluteIndex < filledCells ? "is-filled" : ""} ${absoluteIndex === filledCells ? "is-next" : ""}`.trim() });
+      if (index < payload.phases.length - 1) {
+        rail.createSpan({ cls: "codex-kb-run-phase-connector" });
+      }
+      const body = node.createDiv({ cls: "codex-kb-run-phase-body" });
+      const labelRow = body.createDiv({ cls: "codex-kb-run-phase-label-row" });
+      labelRow.createSpan({ cls: "codex-kb-run-node-label", text: phase.label });
+      if (index === activeIndex) {
+        const statusCopy = labelRow.createSpan({ cls: "codex-kb-run-phase-status-copy" });
+        statusCopy.createSpan({ cls: "codex-kb-run-phase-status-rule" });
+        statusCopy.createSpan({ cls: "codex-kb-run-phase-status-dot" });
+        statusCopy.createSpan({ cls: "codex-kb-run-phase-status-text", text: liveCopy || payload.subtitle });
+        statusCopy.createSpan({ cls: "codex-kb-run-phase-status-rule" });
       }
     });
   }
 
-  private renderKnowledgeBaseMaintainReportCard(container: HTMLElement, payload: KnowledgeBaseMaintainReportPayload): void {
+  private renderKnowledgeBaseMaintainReportCard(container: HTMLElement, payload: KnowledgeBaseMaintainReportPayload, message: ChatMessage): void {
     const card = container.createDiv({ cls: `codex-kb-maintain-card codex-kb-maintain-card-${payload.status}` });
     const header = card.createDiv({ cls: "codex-kb-maintain-header" });
     const icon = header.createSpan({ cls: "codex-kb-maintain-icon" });
@@ -761,7 +779,7 @@ export class CodexMessageListRenderer {
       open.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        void this.openKnowledgeBaseReport(payload.reportPath);
+        void this.openKnowledgeBasePath(payload.reportPath);
       };
     }
     const executionItems = knowledgeBaseMaintainExecutionItems(payload);
@@ -784,12 +802,21 @@ export class CodexMessageListRenderer {
       const sections = card.createDiv({ cls: "codex-kb-maintain-sections" });
       const firstOpenSection = payload.sections.find((section) => section.count > 0)?.id;
       for (const section of payload.sections) {
+        const sectionStateKey = `kb-maintain-report:${message.id}:${section.id}`;
         const details = sections.createEl("details", { cls: "codex-kb-maintain-section" });
-        details.open = section.id === firstOpenSection;
-        details.ontoggle = () => this.requireEnv().onScheduleMeasure();
+        details.open = knowledgeBaseMaintainSectionOpenState(
+          this.openKnowledgeBaseReportSections.get(sectionStateKey),
+          section.id === firstOpenSection
+        );
+        details.ontoggle = () => {
+          this.openKnowledgeBaseReportSections.set(sectionStateKey, details.open);
+          this.requireEnv().onScheduleMeasure();
+        };
         const summary = details.createEl("summary", { cls: "codex-kb-maintain-section-summary" });
         summary.createSpan({ cls: "codex-kb-maintain-section-name", text: section.title });
         summary.createSpan({ cls: "codex-kb-maintain-section-count", text: String(section.count) });
+        const chevron = summary.createSpan({ cls: "codex-kb-maintain-section-chevron" });
+        setIcon(chevron, "chevron-right");
         const body = details.createDiv({ cls: "codex-kb-maintain-section-body" });
         if (!section.items.length) {
           body.createDiv({ cls: "codex-kb-maintain-empty", text: section.emptyText });
@@ -797,16 +824,30 @@ export class CodexMessageListRenderer {
         }
         for (const item of section.items) {
           const row = body.createDiv({ cls: `codex-kb-maintain-detail codex-kb-maintain-detail-${item.tone ?? "info"}` });
-          row.createDiv({ cls: "codex-kb-maintain-detail-title", text: item.title });
+          const itemPath = knowledgeBaseMaintainReportItemPath(item);
+          if (itemPath) {
+            const title = row.createEl("button", {
+              cls: "codex-kb-maintain-detail-title codex-kb-maintain-detail-link",
+              text: item.title,
+              attr: { type: "button", title: `打开 ${itemPath}` }
+            });
+            title.onclick = (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void this.openKnowledgeBasePath(itemPath);
+            };
+          } else {
+            row.createDiv({ cls: "codex-kb-maintain-detail-title", text: item.title });
+          }
           row.createDiv({ cls: "codex-kb-maintain-detail-desc", text: item.description });
         }
       }
     }
   }
 
-  private async openKnowledgeBaseReport(reportPath: string): Promise<void> {
+  private async openKnowledgeBasePath(path: string): Promise<void> {
     const env = this.requireEnv();
-    const normalized = normalizePath(reportPath);
+    const normalized = normalizePath(path);
     const file = env.app.vault.getAbstractFileByPath(normalized);
     if (file instanceof TFile) {
       await env.app.workspace.getLeaf("tab").openFile(file, { active: true });
@@ -814,7 +855,7 @@ export class CodexMessageListRenderer {
     }
     const absolute = `${env.vaultPath.replace(/\/$/, "")}/${normalized}`;
     if (showItemInFinder(absolute)) return;
-    new Notice(`没有在当前 Obsidian 仓库找到：${reportPath}`);
+    new Notice(`没有在当前 Obsidian 仓库找到：${path}`);
   }
 
   private renderKnowledgeBaseContextNote(container: HTMLElement, details: string): void {
@@ -890,16 +931,7 @@ export class CodexMessageListRenderer {
   }
 
   private async openKnowledgeBaseCitation(citation: KnowledgeBaseCitation): Promise<void> {
-    const env = this.requireEnv();
-    const normalized = normalizePath(citation.path);
-    const file = env.app.vault.getAbstractFileByPath(normalized);
-    if (file instanceof TFile) {
-      await env.app.workspace.getLeaf("tab").openFile(file, { active: true });
-      return;
-    }
-    const absolute = `${env.vaultPath.replace(/\/$/, "")}/${normalized}`;
-    if (showItemInFinder(absolute)) return;
-    new Notice(`没有在当前 Obsidian 仓库找到：${citation.path}`);
+    await this.openKnowledgeBasePath(citation.path);
   }
 
   private renderActionStreamItem(container: HTMLElement, message: ChatMessage, showAgentHeader: boolean): void {
@@ -1493,10 +1525,40 @@ export function messageProvenanceMetaItems(message: ChatMessage): string[] {
     ].filter(Boolean);
     items.push(leaseParts.join(" · "));
   }
-  if (message.nativeLocalCommitStatus) items.push(`Local commit ${message.nativeLocalCommitStatus}`);
-  if (message.nativeCleanupStatus) items.push(`Native cleanup ${message.nativeCleanupStatus}`);
+  if (message.nativeLocalCommitStatus) {
+    items.push(NATIVE_LOCAL_COMMIT_LABELS[message.nativeLocalCommitStatus]);
+  }
+  if (message.nativeCleanupStatus) {
+    items.push(NATIVE_CLEANUP_LABELS[message.nativeCleanupStatus]);
+  }
   return items;
 }
+
+const NATIVE_LOCAL_COMMIT_LABELS: Record<
+  NonNullable<ChatMessage["nativeLocalCommitStatus"]>,
+  string
+> = {
+  pending: "本地记录等待提交",
+  committed: "本地记录已保存",
+  failed: "本地记录保存失败"
+};
+
+const NATIVE_CLEANUP_LABELS: Record<
+  NonNullable<ChatMessage["nativeCleanupStatus"]>,
+  string
+> = {
+  quarantined: "原生记录已隔离",
+  failed: "原生记录清理失败",
+  "retained-for-recovery": "原生记录已保留，等待恢复",
+  disposing: "原生记录清理中",
+  "awaiting-local-commit": "原生记录等待本地提交",
+  pending: "原生记录等待清理",
+  aborted: "原生记录清理已中止",
+  unsupported: "原生记录不支持自动清理",
+  retained: "原生记录已保留",
+  disposed: "原生记录已清理",
+  "not-needed": "原生记录无需清理"
+};
 
 const ACTIVE_ANSWER_FOOTER_STATUSES = new Set(["running", "in_progress", "inProgress", "approval", "blocked"]);
 const FAILED_ANSWER_STATUSES = new Set(["failed", "error", "canceled", "cancelled", "interrupted"]);
@@ -1819,6 +1881,12 @@ function knowledgeBaseRunDisplayTitle(payload: KnowledgeBaseRunPayload, status?:
   if (status === "failed") return "知识库任务失败";
   if (status === "completed") return "知识库任务已完成";
   return payload.title;
+}
+
+function knowledgeBaseRunStatusIcon(payload: KnowledgeBaseRunPayload, status: string): string {
+  if (status === "completed") return "check";
+  if (status === "recovery-blocked" || status === "interrupted" || status === "canceled" || status === "failed") return "x";
+  return payload.icon;
 }
 
 export function knowledgeBaseRunEventCopy(payload: KnowledgeBaseRunPayload): string {

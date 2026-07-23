@@ -2,10 +2,13 @@ import * as assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
+  stat,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -103,9 +106,184 @@ interface HarnessParitySnapshot {
  */
 export async function runMaintenanceAcceptanceTests(): Promise<void> {
   await assertTwentySourcePartialCommitIsAtomic();
+  await assertTwentyOneSourceBatchLimitStaysPending();
+  await assertTwentyOneUnchangedReingestStaysPending();
   await assertBusinessHarnessParityBelowInvocationAdapter();
+  await assertDurableNoopPreservesExistingKnowledgeArtifacts();
+  await assertMixedReadableAndSkippedSourcesCommitPartial();
+  await assertSkippedSourcesCannotBecomeNoop();
+  await runOversizedMarkdownAcceptanceTest();
+  await runOversizedMarkdownLintAcceptanceTest();
   await assertReingestDurableTerminalRoundTrips();
   await assertActiveRunJournalCleanupRequiresUniqueDurableHistory();
+}
+
+export async function runOversizedMarkdownLintAcceptanceTest(): Promise<void> {
+  const sourcePath = "raw/articles/source-01.md";
+  const original = Buffer.from([
+    "---",
+    "title: Oversized Lint Acceptance Source",
+    "---",
+    "# Oversized Lint Source",
+    "",
+    "y".repeat(294_700),
+    ""
+  ].join("\n"), "utf8");
+  let observedSourcePaths: string[] = [];
+  let observedPrompt = "";
+  const fixture = await createAcceptanceFixture({
+    suffix: "oversized-lint-shadow-chunks",
+    mode: "lint",
+    selectedBackend: "codex-cli",
+    sourceCount: 1,
+    materialize: async (shadowVaultPath, input) => {
+      observedSourcePaths = [...input.sourcePaths];
+      observedPrompt = input.prompt;
+      assert.deepEqual(observedSourcePaths, ["wiki/index.md"]);
+      await writeText(
+        shadowVaultPath,
+        input.reportPath,
+        [
+          "---",
+          "mode: lint-only",
+          "---",
+          "# 知识库体检报告",
+          "",
+          "已按 lint-only 边界完成知识结构体检；Raw 不作为本轮写入或提炼附件。",
+          ""
+        ].join("\n")
+      );
+    }
+  });
+
+  try {
+    await writeFile(path.join(fixture.vaultPath, sourcePath), original);
+    const originalFingerprint = rawDigestFingerprint(sourcePath, original);
+    const result = await fixture.runner.runMaintenance(
+      "lint",
+      "/check acceptance oversized markdown",
+      { workflowRunId: "acceptance-oversized-lint-shadow-chunks" },
+      "codex-cli"
+    );
+
+    assert.equal(result.status, "success", result.error);
+    assert.deepEqual(result.processedSources, []);
+    assert.match(observedPrompt, /\/check 只体检/);
+    assert.match(observedPrompt, /不要写 Wiki \/ Projects 正文/);
+    assert.doesNotMatch(observedPrompt, /超限文本安全分块/);
+    assert.equal(observedPrompt.includes(sourcePath), false);
+    const liveRaw = await readFile(path.join(fixture.vaultPath, sourcePath));
+    assert.equal(rawDigestFingerprint(sourcePath, liveRaw), originalFingerprint);
+    assert.equal(
+      await readFile(path.join(fixture.vaultPath, "wiki", "index.md"), "utf8"),
+      "# Wiki\n",
+      "/check must not rewrite Wiki while reading an oversized Raw"
+    );
+    const report = await readFile(
+      path.join(fixture.vaultPath, result.reportPath),
+      "utf8"
+    );
+    assert.match(report, /mode: lint-only/);
+    assert.equal(report.includes(sourcePath), false);
+    assert.doesNotMatch(report, /\.echoink-source-chunks/);
+    await assert.rejects(
+      () => stat(path.join(fixture.vaultPath, "raw", ".echoink-source-chunks")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+export async function runOversizedMarkdownAcceptanceTest(): Promise<void> {
+  const sourcePath = "raw/articles/source-01.md";
+  const original = Buffer.from([
+    "---",
+    "title: Oversized Acceptance Source",
+    "tags:",
+    "  - acceptance",
+    "---",
+    "# Oversized Source",
+    "",
+    "这段正文用于验证超限 Markdown 只通过 Shadow 分块交给 Agent。",
+    "x".repeat(294_700),
+    ""
+  ].join("\n"), "utf8");
+  let observedChunkPaths: string[] = [];
+  let observedPrompt = "";
+  const fixture = await createAcceptanceFixture({
+    suffix: "oversized-shadow-chunks",
+    selectedBackend: "codex-cli",
+    sourceCount: 1,
+    materialize: async (shadowVaultPath, input) => {
+      observedChunkPaths = [...input.sourcePaths];
+      observedPrompt = input.prompt;
+      assert.ok(observedChunkPaths.length > 1);
+      assert.ok(observedChunkPaths.every((relativePath) =>
+        relativePath.startsWith("raw/.echoink-source-chunks/")
+      ));
+      const reconstructed = Buffer.concat(await Promise.all(
+        observedChunkPaths.map((relativePath) =>
+          readFile(path.join(shadowVaultPath, relativePath))
+        )
+      ));
+      assert.equal(reconstructed.equals(original), true);
+      await materializeIndependentEvidence({
+        shadowVaultPath,
+        reportPath: input.reportPath,
+        sourcePaths: [sourcePath],
+        verifiedPaths: [sourcePath],
+        includeUnsafeSharedIndexEntry: false
+      });
+    }
+  });
+
+  try {
+    await writeFile(path.join(fixture.vaultPath, sourcePath), original);
+    const originalFingerprint = rawDigestFingerprint(sourcePath, original);
+    const result = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain acceptance oversized markdown",
+      { workflowRunId: "acceptance-oversized-shadow-chunks" },
+      "codex-cli"
+    );
+
+    assert.equal(result.status, "success", result.error);
+    assert.equal(result.completion, "full");
+    assert.deepEqual(
+      result.processedSources.map((source) => source.relativePath),
+      [sourcePath]
+    );
+    assert.match(observedPrompt, /超限文本安全分块/);
+    assert.ok(observedPrompt.includes(`原始来源：${sourcePath}`));
+    for (const chunkPath of observedChunkPaths) {
+      assert.ok(observedPrompt.includes(chunkPath));
+    }
+    const liveRaw = await readFile(path.join(fixture.vaultPath, sourcePath));
+    assert.equal(
+      rawDigestFingerprint(sourcePath, liveRaw),
+      originalFingerprint,
+      "managed metadata may change, but the oversized Raw body must not"
+    );
+    const report = await readFile(
+      path.join(fixture.vaultPath, result.reportPath),
+      "utf8"
+    );
+    const wiki = await readFile(
+      path.join(fixture.vaultPath, "wiki", "acceptance-01.md"),
+      "utf8"
+    );
+    assert.ok(report.includes(sourcePath));
+    assert.ok(wiki.includes("raw/articles/source-01"));
+    assert.doesNotMatch(report, /\.echoink-source-chunks/);
+    assert.doesNotMatch(wiki, /\.echoink-source-chunks/);
+    await assert.rejects(
+      () => stat(path.join(fixture.vaultPath, "raw", ".echoink-source-chunks")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT"
+    );
+  } finally {
+    await fixture.dispose();
+  }
 }
 
 /**
@@ -213,6 +391,342 @@ async function assertTwentySourcePartialCommitIsAtomic(): Promise<void> {
       ).length,
       1
     );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertTwentyOneSourceBatchLimitStaysPending(): Promise<void> {
+  const fixture = await createAcceptanceFixture({
+    suffix: "20-of-21-batch-limit",
+    selectedBackend: "codex-cli",
+    sourceCount: SOURCE_COUNT + 1,
+    materialize: async (shadowVaultPath, input) => {
+      assert.equal(
+        input.sourcePaths.length,
+        SOURCE_COUNT,
+        "the Agent must receive only the bounded 20-source batch"
+      );
+      await materializeIndependentEvidence({
+        shadowVaultPath,
+        reportPath: input.reportPath,
+        sourcePaths: input.sourcePaths,
+        verifiedPaths: input.sourcePaths,
+        includeUnsafeSharedIndexEntry: false
+      });
+    }
+  });
+
+  try {
+    const result = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain acceptance 20 of 21",
+      { workflowRunId: "acceptance-20-of-21" },
+      "codex-cli"
+    );
+
+    assert.equal(result.status, "success", result.error);
+    assert.equal(result.completion, "partial");
+    assert.deepEqual(result.pendingSources, [fixture.sourcePaths[20]]);
+    assert.equal(result.processedSources.length, SOURCE_COUNT);
+    assert.equal(
+      fixture.settings.knowledgeBase.processedSources[fixture.sourcePaths[20]!],
+      undefined,
+      "the source outside the bounded Agent batch must remain pending"
+    );
+    assert.deepEqual(fixture.executedBackends, ["codex-cli"]);
+    assert.equal(result.attempts?.length, 1);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertTwentyOneUnchangedReingestStaysPending(): Promise<void> {
+  const attachedBatches: string[][] = [];
+  const fixture = await createAcceptanceFixture({
+    suffix: "20-of-21-unchanged-reingest",
+    selectedBackend: "codex-cli",
+    sourceCount: SOURCE_COUNT + 1,
+    materialize: async (shadowVaultPath, input) => {
+      attachedBatches.push([...input.sourcePaths]);
+      await materializeIndependentEvidence({
+        shadowVaultPath,
+        reportPath: input.reportPath,
+        sourcePaths: input.sourcePaths,
+        verifiedPaths: input.sourcePaths,
+        includeUnsafeSharedIndexEntry: false
+      });
+    }
+  });
+
+  try {
+    for (const relativePath of fixture.sourcePaths) {
+      const fileStat = await stat(path.join(fixture.vaultPath, relativePath));
+      fixture.settings.knowledgeBase.processedSources[relativePath] = {
+        path: relativePath,
+        size: fileStat.size,
+        mtime: fileStat.mtimeMs,
+        fingerprint: fixture.bodyFingerprints[relativePath],
+        digestedAt: 1,
+        reportPath: "outputs/maintenance/kb-maintenance-previous.md",
+        evidencePaths: ["wiki/previous.md"],
+        runId: "acceptance-reingest-previous",
+        confidence: "verified"
+      };
+    }
+
+    const result = await fixture.runner.runMaintenance(
+      "reingest",
+      "/reingest",
+      { workflowRunId: "acceptance-reingest-20-of-21" },
+      "codex-cli"
+    );
+    const attached = attachedBatches.at(-1) ?? [];
+    const attachedSet = new Set(attached);
+    const expectedPending = fixture.sourcePaths.filter(
+      (relativePath) => !attachedSet.has(relativePath)
+    );
+
+    assert.equal(result.status, "success", result.error);
+    assert.equal(result.completion, "partial");
+    assert.equal(attached.length, SOURCE_COUNT);
+    assert.equal(expectedPending.length, 1);
+    assert.deepEqual(result.pendingSources, expectedPending);
+    assert.equal(result.processedSources.length, SOURCE_COUNT);
+    assert.deepEqual(
+      fixture.settings.knowledgeBase.maintenanceHistory.find(
+        (entry) => entry.runId === "acceptance-reingest-20-of-21"
+      )?.pendingSources,
+      expectedPending,
+      "the durable history must retain the 21st unchanged reingest source"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertDurableNoopPreservesExistingKnowledgeArtifacts(): Promise<void> {
+  const fixture = await createAcceptanceFixture({
+    suffix: "durable-noop-preservation",
+    selectedBackend: "codex-cli",
+    sourceCount: 1,
+    materialize: async (shadowVaultPath, input) => {
+      await materializeIndependentEvidence({
+        shadowVaultPath,
+        reportPath: input.reportPath,
+        sourcePaths: input.sourcePaths,
+        verifiedPaths: input.sourcePaths,
+        includeUnsafeSharedIndexEntry: false
+      });
+    }
+  });
+
+  try {
+    const seed = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain",
+      { workflowRunId: "acceptance-noop-seed" },
+      "codex-cli"
+    );
+    assert.equal(seed.status, "success", seed.error);
+    assert.equal(seed.completion, "full");
+
+    const preservedPaths = [
+      fixture.reportPath,
+      "outputs/.ingest-tracker.md",
+      "raw/index.md",
+      fixture.sourcePaths[0]!,
+      "wiki/index.md",
+      "wiki/acceptance-01.md"
+    ];
+    const before = await snapshotFiles(fixture.vaultPath, preservedPaths);
+    const agentCallsBeforeNoop = fixture.executedBackends.length;
+
+    const first = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain",
+      { workflowRunId: "acceptance-noop-first" },
+      "opencode"
+    );
+    const second = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain",
+      { workflowRunId: "acceptance-noop-second" },
+      "hermes"
+    );
+
+    for (const result of [first, second]) {
+      assert.equal(result.status, "success", result.error);
+      assert.equal(result.completion, "noop");
+      assert.equal(result.winnerBackend, null);
+      assert.deepEqual(result.attempts, []);
+      assert.equal(result.performance?.agentCalled, false);
+      assert.match(
+        result.reportPath,
+        /^outputs\/maintenance\/kb-maintenance-noop-\d{4}-\d{2}-\d{2}-[a-f0-9]{64}\.md$/
+      );
+    }
+    assert.notEqual(first.reportPath, fixture.reportPath);
+    assert.notEqual(second.reportPath, fixture.reportPath);
+    assert.notEqual(first.reportPath, second.reportPath);
+    assert.equal(
+      fixture.executedBackends.length,
+      agentCallsBeforeNoop,
+      "durable noop must not invoke any Agent"
+    );
+    assert.deepEqual(
+      await snapshotFiles(fixture.vaultPath, preservedPaths),
+      before,
+      "noop must preserve all existing report, Raw, Wiki, tracker, and index files byte-for-byte without replacing them"
+    );
+
+    const firstReceipt = await readFile(
+      path.join(fixture.vaultPath, first.reportPath),
+      "utf8"
+    );
+    const secondReceipt = await readFile(
+      path.join(fixture.vaultPath, second.reportPath),
+      "utf8"
+    );
+    assert.match(firstReceipt, /agent_called: false/);
+    assert.match(firstReceipt, /- 结果：noop/);
+    assert.match(firstReceipt, /acceptance-noop-first/);
+    assert.match(secondReceipt, /agent_called: false/);
+    assert.match(secondReceipt, /- 结果：noop/);
+    assert.match(secondReceipt, /acceptance-noop-second/);
+
+    const noopHistory = fixture.settings.knowledgeBase.maintenanceHistory
+      .filter((entry) => entry.runId?.startsWith("acceptance-noop-") && entry.runId !== "acceptance-noop-seed");
+    assert.deepEqual(
+      noopHistory.map((entry) => ({
+        runId: entry.runId,
+        reportPath: entry.reportPath,
+        completion: entry.completion,
+        winnerBackend: entry.winnerBackend,
+        attempts: entry.attempts
+      })),
+      [
+        {
+          runId: "acceptance-noop-first",
+          reportPath: first.reportPath,
+          completion: "noop",
+          winnerBackend: null,
+          attempts: []
+        },
+        {
+          runId: "acceptance-noop-second",
+          reportPath: second.reportPath,
+          completion: "noop",
+          winnerBackend: null,
+          attempts: []
+        }
+      ],
+      "each noop run must keep an independent durable history/report binding"
+    );
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertSkippedSourcesCannotBecomeNoop(): Promise<void> {
+  const fixture = await createAcceptanceFixture({
+    suffix: "skipped-source-not-noop",
+    selectedBackend: "codex-cli",
+    sourceCount: 0,
+    materialize: async () => {
+      assert.fail("an unreadable pending source must not invoke an Agent or become noop");
+    }
+  });
+  const relativePath = "raw/articles/oversized.pdf";
+
+  try {
+    await mkdir(path.dirname(path.join(fixture.vaultPath, relativePath)), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(fixture.vaultPath, relativePath),
+      Buffer.alloc(262_145, 0x61)
+    );
+    const result = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain",
+      { workflowRunId: "acceptance-skipped-source" },
+      "codex-cli"
+    );
+
+    assert.equal(result.status, "failed");
+    assert.notEqual(result.completion, "noop");
+    assert.equal(result.failureCode, "MAINTENANCE_SOURCES_PENDING");
+    assert.deepEqual(result.pendingSources, [relativePath]);
+    assert.equal(result.winnerBackend, null);
+    assert.deepEqual(result.attempts, []);
+    assert.deepEqual(fixture.executedBackends, []);
+    const history = fixture.settings.knowledgeBase.maintenanceHistory
+      .find((entry) => entry.runId === "acceptance-skipped-source");
+    assert.deepEqual(history?.pendingSources, [relativePath]);
+    assert.equal(history?.completion, undefined);
+  } finally {
+    await fixture.dispose();
+  }
+}
+
+async function assertMixedReadableAndSkippedSourcesCommitPartial(): Promise<void> {
+  const fixture = await createAcceptanceFixture({
+    suffix: "mixed-readable-and-skipped",
+    selectedBackend: "codex-cli",
+    sourceCount: 1,
+    materialize: async (shadowVaultPath, input) => {
+      await materializeIndependentEvidence({
+        shadowVaultPath,
+        reportPath: input.reportPath,
+        sourcePaths: input.sourcePaths,
+        verifiedPaths: input.sourcePaths,
+        includeUnsafeSharedIndexEntry: false
+      });
+    }
+  });
+  const skippedPath = "raw/articles/oversized-mixed.pdf";
+
+  try {
+    await writeFile(
+      path.join(fixture.vaultPath, skippedPath),
+      Buffer.alloc(262_145, 0x62)
+    );
+    const result = await fixture.runner.runMaintenance(
+      "maintain",
+      "/maintain mixed readable and skipped",
+      { workflowRunId: "acceptance-mixed-skipped-partial" },
+      "codex-cli"
+    );
+
+    assert.equal(result.status, "success", result.error);
+    assert.equal(result.completion, "partial");
+    assert.deepEqual(result.pendingSources, [skippedPath]);
+    assert.deepEqual(
+      result.processedSources.map((source) => source.relativePath),
+      [fixture.sourcePaths[0]]
+    );
+    assert.ok(
+      fixture.settings.knowledgeBase.processedSources[fixture.sourcePaths[0]!]
+    );
+    assert.equal(
+      fixture.settings.knowledgeBase.processedSources[skippedPath],
+      undefined
+    );
+    assert.deepEqual(
+      fixture.settings.knowledgeBase.maintenanceHistory.find(
+        (entry) => entry.runId === "acceptance-mixed-skipped-partial"
+      )?.pendingSources,
+      [skippedPath]
+    );
+
+    const report = await readFile(
+      path.join(fixture.vaultPath, result.reportPath),
+      "utf8"
+    );
+    assert.match(report, /- 结果：partial/);
+    assert.match(report, /### 待处理来源（1）/);
+    assert.match(report, /raw\/articles\/oversized-mixed\.pdf/);
   } finally {
     await fixture.dispose();
   }
@@ -446,7 +960,7 @@ async function assertActiveRunJournalCleanupRequiresUniqueDurableHistory(): Prom
 
 async function createAcceptanceFixture(input: {
   suffix: string;
-  mode?: "maintain" | "reingest";
+  mode?: "maintain" | "reingest" | "lint";
   selectedBackend: AgentBackendKind;
   sourceCount: number;
   materialize(
@@ -455,6 +969,7 @@ async function createAcceptanceFixture(input: {
       reportPath: string;
       sourcePaths: string[];
       backend: AgentBackendKind;
+      prompt: string;
     }
   ): Promise<void>;
 }): Promise<AcceptanceFixture> {
@@ -571,8 +1086,9 @@ async function createAcceptanceFixture(input: {
         await task.onExactWriteFenceConfigured(receipt);
         await input.materialize(task.vaultPathOverride, {
           reportPath,
-          sourcePaths,
-          backend
+          sourcePaths: task.sources.map((source) => source.relativePath),
+          backend,
+          prompt: task.prompt
         });
         return {
           text: "Acceptance Agent output: maintenance complete.",
@@ -763,6 +1279,25 @@ function assertProcessedRegistryAndRawAgree(
   assert.equal(registry.confidence, "verified");
 }
 
+async function snapshotFiles(
+  vaultPath: string,
+  relativePaths: readonly string[]
+): Promise<Record<string, { contentSha256: string; size: number; mtimeMs: number; ino: number }>> {
+  return Object.fromEntries(await Promise.all(relativePaths.map(async (relativePath) => {
+    const absolutePath = path.join(vaultPath, relativePath);
+    const [content, fileStat] = await Promise.all([
+      readFile(absolutePath),
+      stat(absolutePath)
+    ]);
+    return [relativePath, {
+      contentSha256: createHash("sha256").update(content).digest("hex"),
+      size: fileStat.size,
+      mtimeMs: fileStat.mtimeMs,
+      ino: fileStat.ino
+    }];
+  })));
+}
+
 function createSettingsHost(
   settings: CodexForObsidianSettings
 ): MaintenanceWorkflowSettingsHost<KnowledgeBaseSettings> {
@@ -849,5 +1384,24 @@ function normalizeReportPath(relativePath: string): string {
 }
 
 async function makeOwnerWritable(rootPath: string): Promise<void> {
+  const rootStat = await lstat(rootPath).catch(() => null);
+  if (!rootStat) return;
+  if (rootStat.isSymbolicLink()) return;
+  if (!rootStat.isDirectory()) {
+    await chmod(rootPath, 0o600).catch(() => undefined);
+    return;
+  }
   await chmod(rootPath, 0o700).catch(() => undefined);
+  const entries = await readdir(rootPath, { withFileTypes: true })
+    .catch(() => []);
+  for (const entry of entries) {
+    await makeOwnerWritable(path.join(rootPath, entry.name));
+  }
+}
+
+if (process.env.ECHOINK_RUN_MAINTENANCE_ACCEPTANCE_TEST === "1") {
+  runMaintenanceAcceptanceTests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

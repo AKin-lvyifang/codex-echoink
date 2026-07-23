@@ -1,6 +1,6 @@
 {
   "name": "codex-echoink",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Codex EchoInk",
   "main": "dist/main.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "check:public": "node scripts/check-public-files.mjs",
     "check:release": "node scripts/check-release-contract.mjs",
     "dev": "node esbuild.config.mjs watch",
+    "inventory:storage": "node scripts/run-storage-inventory.mjs",
     "lint": "node scripts/check-obsidian-review.mjs",
     "lint:report": "eslint .",
     "lint:update-baseline": "node scripts/check-obsidian-review.mjs --write-baseline",

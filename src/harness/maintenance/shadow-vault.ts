@@ -4,6 +4,11 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { isTrustedExactWriteFenceReceipt } from "../../agent/write-fence";
 import type { AgentExactWriteFenceReceipt } from "../../agent/types";
+import {
+  maintenanceMarkdownUpdatedMayBeInserted,
+  maintenanceMarkdownUpdatedSuccessorEvidence,
+  type MaintenanceMarkdownUpdatedSuccessorWindow
+} from "./markdown-metadata-successor";
 
 const MANIFEST_FILE = "manifest.json";
 const CHANGESET_FILE = "changeset.json";
@@ -14,6 +19,7 @@ const MANIFEST_VERSION = 1;
 const CHANGESET_VERSION = 1;
 const FILE_READ_CHUNK_SIZE = 1024 * 1024;
 const MAX_CONTROL_JSON_BYTES = 64 * 1024 * 1024;
+const SHADOW_SOURCE_CHUNK_ROOT = "raw/.echoink-source-chunks";
 
 export const DEFAULT_MAINTENANCE_SHADOW_RAW_PATHS = ["raw"] as const;
 export const DEFAULT_MAINTENANCE_SHADOW_RULES_PATHS = ["LLM-WIKI.md"] as const;
@@ -30,6 +36,7 @@ const MAINTENANCE_COMMIT_DIRECTORY_ROOTS = ["wiki", "projects", "outputs", "inbo
 const DEFAULT_MAX_CHANGED_FILE_BYTES = 128 * 1024 * 1024;
 const DEFAULT_MAX_CHANGED_TOTAL_BYTES = 512 * 1024 * 1024;
 const DEFAULT_MAX_CHANGED_FILES = 10_000;
+const METADATA_SUCCESSOR_WINDOW_MS = 5 * 60_000;
 
 export type MaintenanceShadowState = "active" | "sealed" | "abandoned" | "committed" | "discarded" | "noop";
 export type MaintenanceShadowTerminalOutcome = Extract<MaintenanceShadowState, "committed" | "discarded" | "noop">;
@@ -142,7 +149,8 @@ function isProcessAlive(pid: number): boolean {
 async function recoverPendingApplyJournals(
   liveVaultPath: string,
   storageRootPath: string,
-  liveVaultFingerprint: string
+  liveVaultFingerprint: string,
+  options: { deferJournalPath?: string } = {}
 ): Promise<void> {
   const entries = await fsp.readdir(storageRootPath, { withFileTypes: true });
   for (const entry of entries) {
@@ -154,7 +162,18 @@ async function recoverPendingApplyJournals(
     const journalPath = path.join(journalRootPath, "journal.json");
     const journal = await readApplyJournalOrNull(journalPath);
     if (!journal || journal.liveVaultFingerprint !== liveVaultFingerprint) continue;
-    const recovered = await recoverApplyJournal(liveVaultPath, journalRootPath, journal);
+    // A global/orphan scan may only finish an already-authorized apply or roll
+    // it back. Rolling a blocked transaction forward needs the caller's exact
+    // attempt/change-set authority, which is handled below by applyShadowChangeSet.
+    if (
+      options.deferJournalPath
+      && path.resolve(journalPath) === path.resolve(options.deferJournalPath)
+    ) continue;
+    const recovered = await recoverApplyJournal(
+      liveVaultPath,
+      journalRootPath,
+      journal
+    );
     if (recovered.state === "blocked") {
       throw new MaintenanceShadowError(
         "cas_conflict",
@@ -275,6 +294,10 @@ async function prepareApplyJournal(
       selectedPaths: selected.map((change) => change.relativePath),
       entries,
       createdDirectories: [],
+      metadataSuccessorPolicy: metadataSuccessorPolicyFor(
+        changeSet.createdAt,
+        now
+      ),
       createdAt: now,
       updatedAt: now
     });
@@ -290,7 +313,8 @@ async function prepareApplyJournal(
 async function applyJournalEntry(
   liveVaultPath: string,
   sealedBlobRootPath: string,
-  entry: MaintenanceApplyJournalEntry
+  entry: MaintenanceApplyJournalEntry,
+  afterInstallLink?: () => void | Promise<void>
 ): Promise<void> {
   const { change } = entry;
   await assertExpectedParentChainUnchanged(
@@ -395,7 +419,8 @@ async function applyJournalEntry(
     change.shadowSha256,
     change.size,
     resultMode || 0o644,
-    change.relativePath
+    change.relativePath,
+    afterInstallLink
   );
 }
 
@@ -545,7 +570,8 @@ async function installFileExclusively(
   expectedSha256: string,
   expectedSize: number,
   mode: number,
-  relativePath: string
+  relativePath: string,
+  afterInstallLink?: () => void | Promise<void>
 ): Promise<void> {
   const targetPath = resolveVaultRelativePath(liveVaultPath, targetRelativePath);
   const tempPath = resolveVaultRelativePath(liveVaultPath, tempRelativePath);
@@ -591,6 +617,7 @@ async function installFileExclusively(
       throw error;
     }
     await syncDirectoryDurably(path.dirname(targetPath));
+    await afterInstallLink?.();
     await assertSafeDirectoryChainUnchanged(parentChain);
     const [target, tempAgain] = await Promise.all([
       lstatOrNull(targetPath),
@@ -607,6 +634,8 @@ async function installFileExclusively(
       || target.ino !== tempAgain.ino
       || Number(target.dev) !== temp.dev
       || Number(target.ino) !== temp.ino
+      || Number(target.nlink) !== 2
+      || Number(tempAgain.nlink) !== 2
     ) {
       throw new MaintenanceShadowError(
         "cas_conflict",
@@ -614,30 +643,31 @@ async function installFileExclusively(
         relativePath
       );
     }
-    await assertRootRelativeFileMatchesCas(
-      liveVaultPath,
-      targetRelativePath,
-      expected,
-      [2]
-    );
-    await unlinkRootRelativeFileIfMatches(
+    await unlinkRootRelativeFileIfIdentityMatches(
       liveVaultPath,
       tempRelativePath,
-      expected,
+      temp,
       {
         label: "Shadow install artifact",
-        allowedLinkCounts: [2],
-        expectedIdentity: temp
+        parentChain
       }
     );
-    await assertRootRelativeFileMatchesCas(
+    const installed = await assertRootRelativeFileMatchesCas(
       liveVaultPath,
       targetRelativePath,
       expected,
       [1]
     );
+    if (installed.dev !== temp.dev || installed.ino !== temp.ino) {
+      throw new MaintenanceShadowError(
+        "cas_conflict",
+        `事务 install 目标 inode 在临时链接移除后发生变化：${relativePath}`,
+        relativePath
+      );
+    }
     return;
   } catch (error) {
+    if (error instanceof MaintenanceShadowSimulatedCrash) throw error;
     if (createdTemp) {
       await unlinkRootRelativeFileIfMatches(
         liveVaultPath,
@@ -740,22 +770,58 @@ async function moveFileNoClobber(
   );
 }
 
-type ApplyEntryState = "baseline" | "result" | "intermediate" | "conflict";
+type ApplyEntryState =
+  | "baseline"
+  | "result"
+  | "metadata-successor"
+  | "intermediate"
+  | "conflict";
+
+interface ApplyJournalMetadataSuccessorContext {
+  sealedBlobRootPath: string;
+  window: MaintenanceMarkdownUpdatedSuccessorWindow;
+  installWindows: ReadonlyMap<
+    string,
+    MaintenanceMarkdownUpdatedSuccessorWindow
+  >;
+}
+
+function refreshApplyJournalMetadataSuccessorContext(
+  context: ApplyJournalMetadataSuccessorContext | undefined,
+  journal: MaintenanceApplyJournal
+): ApplyJournalMetadataSuccessorContext | undefined {
+  if (!context) return undefined;
+  return {
+    ...context,
+    installWindows: new Map(
+      (journal.metadataSuccessorInstallWindows ?? []).map((entry) => [
+        normalizeVaultRelativePath(entry.relativePath),
+        { ...entry.window }
+      ])
+    )
+  };
+}
 
 async function classifyApplyJournalEntries(
   liveVaultPath: string,
-  entries: readonly MaintenanceApplyJournalEntry[]
+  entries: readonly MaintenanceApplyJournalEntry[],
+  metadataSuccessor?: ApplyJournalMetadataSuccessorContext
 ): Promise<ApplyEntryState[]> {
   const states: ApplyEntryState[] = [];
   for (const entry of entries) {
-    states.push(await classifyApplyJournalEntry(liveVaultPath, entry));
+    states.push(await classifyApplyJournalEntry(
+      liveVaultPath,
+      entry,
+      metadataSuccessor
+    ));
   }
   return states;
 }
 
 async function classifyApplyJournalEntry(
   liveVaultPath: string,
-  entry: MaintenanceApplyJournalEntry
+  entry: MaintenanceApplyJournalEntry,
+  metadataSuccessor?: ApplyJournalMetadataSuccessorContext
 ): Promise<ApplyEntryState> {
   await assertExpectedParentChainUnchanged(
     liveVaultPath,
@@ -796,19 +862,124 @@ async function classifyApplyJournalEntry(
     if (displaced && !displacedMatches) return "conflict";
   }
   if (resultMatches && (entry.change.expectedLive.kind === "missing" || displacedMatches)) return "result";
+  if (
+    metadataSuccessor
+    && (entry.change.expectedLive.kind === "missing" || displacedMatches)
+    && await shadowEntryMetadataSuccessorEvidence(
+      liveVaultPath,
+      entry,
+      metadataSuccessor
+    )
+  ) return "metadata-successor";
   if (baselineMatches) return "baseline";
   if (current.kind === "missing" && displacedMatches) return "intermediate";
   return "conflict";
+}
+
+async function shadowEntryMetadataSuccessorEvidence(
+  liveVaultPath: string,
+  entry: MaintenanceApplyJournalEntry,
+  context: ApplyJournalMetadataSuccessorContext,
+  options: {
+    currentAllowedLinkCounts?: readonly number[];
+    currentExpectedIdentity?: MaintenanceShadowFileIdentity;
+  } = {}
+): Promise<MaintenanceShadowMetadataSuccessorProof | null> {
+  const change = entry.change;
+  if (change.operation !== "upsert") return null;
+  const expected = resultCas(change);
+  if (expected.kind !== "file") return null;
+  const desiredPath = resolveVaultRelativePath(
+    context.sealedBlobRootPath,
+    change.blobRelativePath
+  );
+  const currentPath = resolveVaultRelativePath(
+    liveVaultPath,
+    change.relativePath
+  );
+  let desiredContent: Buffer;
+  let currentContent: Buffer;
+  try {
+    [desiredContent, currentContent] = await Promise.all([
+      readIndependentRegularFile(
+        desiredPath,
+        `Shadow metadata successor desired ${change.relativePath}`,
+        DEFAULT_MAX_CHANGED_FILE_BYTES
+      ),
+      readBoundRegularFile(
+        currentPath,
+        `Shadow metadata successor current ${change.relativePath}`,
+        DEFAULT_MAX_CHANGED_FILE_BYTES,
+        {
+          allowedLinkCounts: options.currentAllowedLinkCounts ?? [1],
+          expectedIdentity: options.currentExpectedIdentity
+        }
+      )
+    ]);
+  } catch {
+    return null;
+  }
+  if (
+    desiredContent.byteLength !== change.size
+    || hashBuffer(desiredContent) !== change.shadowSha256
+  ) return null;
+  const current = await inspectRootRelativeFile(
+    liveVaultPath,
+    change.relativePath,
+    options.currentAllowedLinkCounts ?? [1]
+  );
+  if (
+    !current
+    || current.size !== currentContent.byteLength
+    || current.sha256 !== hashBuffer(currentContent)
+    || (
+      options.currentExpectedIdentity
+      && (
+        current.dev !== options.currentExpectedIdentity.dev
+        || current.ino !== options.currentExpectedIdentity.ino
+      )
+    )
+  ) return null;
+  const evidence = maintenanceMarkdownUpdatedSuccessorEvidence({
+    relativePath: change.relativePath,
+    desiredContent,
+    currentContent,
+    desiredMode: expected.mode,
+    currentMode: current.mode,
+    window: context.installWindows.get(change.relativePath)
+      ?? context.window,
+    allowInsertedUpdated:
+      maintenanceMarkdownUpdatedMayBeInserted(change.relativePath)
+  });
+  return evidence
+    ? {
+      relativePath: change.relativePath,
+      result: casFromInspectedFile(current),
+      updatedAt: evidence.updatedAt,
+      projectionDigest: evidence.projectionDigest
+    }
+    : null;
 }
 
 async function recoverApplyJournal(
   liveVaultPath: string,
   journalRootPath: string,
   journal: MaintenanceApplyJournal,
-  forceRollback = false
+  options: {
+    forceRollback?: boolean;
+    metadataSuccessor?: ApplyJournalMetadataSuccessorContext;
+    recoverBlockedMetadataSuccessors?: boolean;
+    faultInjector?: ApplyShadowChangeSetOptions["faultInjector"];
+  } = {}
 ): Promise<MaintenanceApplyJournal> {
   const journalPath = path.join(journalRootPath, "journal.json");
-  if (journal.state === "rolled-back" || journal.state === "blocked") return journal;
+  if (
+    journal.state === "rolled-back"
+    || (
+      journal.state === "blocked"
+      && !options.recoverBlockedMetadataSuccessors
+    )
+  ) return journal;
   let working = journal;
   try {
     await assertJournalCreatedDirectoriesUnchanged(
@@ -827,7 +998,8 @@ async function recoverApplyJournal(
     }
     const artifactConflicts = await finishInterruptedExclusiveInstalls(
       liveVaultPath,
-      working.entries
+      working.entries,
+      options.metadataSuccessor
     );
     if (working.state === "committed") {
       await cleanupCommittedDisplacedFiles(liveVaultPath, working.entries);
@@ -844,31 +1016,195 @@ async function recoverApplyJournal(
       liveVaultPath,
       working.entries
     ));
-    const states = await classifyApplyJournalEntries(liveVaultPath, working.entries);
-    if (
-      !forceRollback
+    let metadataSuccessor = refreshApplyJournalMetadataSuccessorContext(
+      options.metadataSuccessor,
+      working
+    );
+    let states = await classifyApplyJournalEntries(
+      liveVaultPath,
+      working.entries,
+      metadataSuccessor
+    );
+    const hasMetadataSuccessor = states.includes("metadata-successor");
+    const hasConflict = states.includes("conflict");
+    const canRecoverBlockedByRollingForward = Boolean(
+      options.recoverBlockedMetadataSuccessors
+      && metadataSuccessor
+      && hasMetadataSuccessor
+      && !hasConflict
       && artifactConflicts.length === 0
-      && states.every((state) => state === "result")
+      && working.state !== "rolling-back"
+    );
+    if (
+      !options.forceRollback
+      && artifactConflicts.length === 0
+      && states.every(isCommittedApplyEntryState)
     ) {
-      working = await updateApplyJournal(journalPath, working, { state: "committed" });
+      working = await persistCommittedApplyJournal(
+        journalPath,
+        working,
+        await collectApplyJournalMetadataSuccessors(
+          liveVaultPath,
+          working.entries,
+          states,
+          metadataSuccessor
+        )
+      );
+      await cleanupCommittedDisplacedFiles(liveVaultPath, working.entries);
+      return working;
+    }
+    if (
+      working.state === "blocked"
+      && options.recoverBlockedMetadataSuccessors
+      && !canRecoverBlockedByRollingForward
+    ) {
+      return working;
+    }
+    if (canRecoverBlockedByRollingForward) {
+      working = await updateApplyJournal(journalPath, working, {
+        state: "applying",
+        error: undefined
+      });
+      for (const [index, entry] of working.entries.entries()) {
+        const state = states[index];
+        if (state !== "baseline" && state !== "intermediate") continue;
+        working = await ensureApplyJournalRecoveryInstallWindow(
+          journalPath,
+          working,
+          entry.change.relativePath
+        );
+        metadataSuccessor = refreshApplyJournalMetadataSuccessorContext(
+          metadataSuccessor,
+          working
+        );
+        await assertExpectedParentChainUnchanged(
+          liveVaultPath,
+          entry.change,
+          "Shadow metadata successor roll-forward"
+        );
+        await assertExpectedMissingParentState(
+          liveVaultPath,
+          entry.change,
+          working.createdDirectories,
+          "Shadow metadata successor roll-forward"
+        );
+        const createdDirectories = await ensureTrackedParentDirectories(
+          liveVaultPath,
+          path.posix.dirname(entry.change.relativePath)
+        );
+        if (createdDirectories.length) {
+          working = await updateApplyJournal(journalPath, working, {
+            createdDirectories: [
+              ...working.createdDirectories,
+              ...createdDirectories
+            ]
+          });
+        }
+        await assertJournalCreatedDirectoriesUnchanged(
+          liveVaultPath,
+          working.createdDirectories,
+          "Shadow metadata successor roll-forward"
+        );
+        try {
+          await applyJournalEntry(
+            liveVaultPath,
+            metadataSuccessor!.sealedBlobRootPath,
+            entry,
+            () => options.faultInjector?.({
+              point: "after-install-link",
+              attemptId: working.attemptId,
+              relativePath: entry.change.relativePath,
+              index
+            })
+          );
+        } catch (error) {
+          const relativePath = normalizeVaultRelativePath(
+            entry.change.relativePath
+          );
+          const hasTrustedInstallWindow = Boolean(
+            metadataSuccessor?.installWindows.has(relativePath)
+          );
+          if (
+            !(error instanceof MaintenanceShadowError)
+            || error.code !== "cas_conflict"
+            || !hasTrustedInstallWindow
+          ) throw error;
+
+          const retryArtifactConflicts = await finishInterruptedExclusiveInstalls(
+            liveVaultPath,
+            working.entries,
+            metadataSuccessor
+          );
+          const recoveredStates = await classifyApplyJournalEntries(
+            liveVaultPath,
+            working.entries,
+            metadataSuccessor
+          );
+          if (
+            retryArtifactConflicts.length > 0
+            || recoveredStates[index] !== "metadata-successor"
+            || recoveredStates.some((state) => state === "conflict")
+            || !recoveredStates
+              .slice(0, index + 1)
+              .every(isCommittedApplyEntryState)
+          ) throw error;
+          states = recoveredStates;
+        }
+        await options.faultInjector?.({
+          point: "after-entry",
+          attemptId: working.attemptId,
+          relativePath: entry.change.relativePath,
+          index
+        });
+      }
+      states = await classifyApplyJournalEntries(
+        liveVaultPath,
+        working.entries,
+        metadataSuccessor
+      );
+      if (!states.every(isCommittedApplyEntryState)) {
+        throw new MaintenanceShadowError(
+          "cas_conflict",
+          "metadata successor 恢复后的全量提交复验失败"
+        );
+      }
+      working = await persistCommittedApplyJournal(
+        journalPath,
+        working,
+        await collectApplyJournalMetadataSuccessors(
+          liveVaultPath,
+          working.entries,
+          states,
+          metadataSuccessor
+        )
+      );
       await cleanupCommittedDisplacedFiles(liveVaultPath, working.entries);
       return working;
     }
     working = await updateApplyJournal(journalPath, working, { state: "rolling-back" });
     for (let index = working.entries.length - 1; index >= 0; index -= 1) {
       const entry = working.entries[index];
-      if (!entry || states[index] === "conflict") continue;
+      if (
+        !entry
+        || states[index] === "conflict"
+        || states[index] === "metadata-successor"
+      ) continue;
       await rollbackApplyJournalEntry(liveVaultPath, journalRootPath, entry);
     }
     await cleanupJournalCreatedDirectories(liveVaultPath, working.createdDirectories);
     if (
       artifactConflicts.length
       || states.some((state) => state === "conflict")
+      || states.some((state) => state === "metadata-successor")
     ) {
       return await updateApplyJournal(journalPath, working, {
         state: "blocked",
         error: artifactConflicts[0]
-          ?? "提交恢复保留了并发目标，并已回滚其余可安全恢复的路径"
+          ?? (
+            states.includes("metadata-successor")
+              ? "提交回滚保留了已证明的 metadata successor；禁止伪装成 rolled-back"
+              : "提交恢复保留了并发目标，并已回滚其余可安全恢复的路径"
+          )
       });
     }
     return await updateApplyJournal(journalPath, working, {
@@ -876,6 +1212,7 @@ async function recoverApplyJournal(
       error: undefined
     });
   } catch (error) {
+    if (error instanceof MaintenanceShadowSimulatedCrash) throw error;
     const message = error instanceof Error ? error.message : String(error);
     if (working.state === "blocked") return working;
     return await updateApplyJournal(journalPath, working, {
@@ -883,6 +1220,40 @@ async function recoverApplyJournal(
       error: message
     });
   }
+}
+
+function isCommittedApplyEntryState(state: ApplyEntryState): boolean {
+  return state === "result" || state === "metadata-successor";
+}
+
+async function collectApplyJournalMetadataSuccessors(
+  liveVaultPath: string,
+  entries: readonly MaintenanceApplyJournalEntry[],
+  states: readonly ApplyEntryState[],
+  context: ApplyJournalMetadataSuccessorContext | undefined
+): Promise<MaintenanceShadowMetadataSuccessorProof[]> {
+  if (!context) return [];
+  const proofs: MaintenanceShadowMetadataSuccessorProof[] = [];
+  for (const [index, entry] of entries.entries()) {
+    if (states[index] !== "metadata-successor") continue;
+    const proof = await shadowEntryMetadataSuccessorEvidence(
+      liveVaultPath,
+      entry,
+      context
+    );
+    if (!proof) {
+      throw new MaintenanceShadowError(
+        "cas_conflict",
+        `metadata successor durable proof 复验失败：${entry.change.relativePath}`,
+        entry.change.relativePath
+      );
+    }
+    proofs.push(proof);
+  }
+  return proofs.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
 }
 
 async function cleanupJournalCreatedDirectories(
@@ -1065,7 +1436,8 @@ async function finishInterruptedNoClobberMoves(
 
 async function finishInterruptedExclusiveInstalls(
   liveVaultPath: string,
-  entries: readonly MaintenanceApplyJournalEntry[]
+  entries: readonly MaintenanceApplyJournalEntry[],
+  metadataSuccessor?: ApplyJournalMetadataSuccessorContext
 ): Promise<string[]> {
   const conflicts: string[] = [];
   for (const entry of entries) {
@@ -1090,38 +1462,65 @@ async function finishInterruptedExclusiveInstalls(
       [1, 2]
     );
     if (!temp) continue;
-    if (!inspectedFileMatchesCas(temp, expected)) {
-      conflicts.push(
-        `事务 install 临时项含第三值，已保留：${tempRelativePath}`
-      );
-      continue;
-    }
     const target = await inspectRootRelativeFile(
       liveVaultPath,
       entry.change.relativePath,
       [1, 2]
     );
     if (!target) {
-      await unlinkRootRelativeFileIfMatches(
-        liveVaultPath,
-        tempRelativePath,
-        expected,
-        {
-          label: "Shadow unlinked install temp",
-          allowedLinkCounts: [1],
-          expectedIdentity: temp
-        }
+      if (!inspectedFileMatchesCas(temp, expected)) {
+        conflicts.push(
+          `事务 install 目标缺失且临时项含第三值，已保留：${tempRelativePath}`
+        );
+        continue;
+      }
+      throw new MaintenanceShadowError(
+        "cas_conflict",
+        `事务 install 目标缺失且临时项仍在，无法区分安装前崩溃与安装后并发删除：${entry.change.relativePath}`,
+        entry.change.relativePath
       );
-      continue;
     }
     if (
       target.dev === temp.dev
       && target.ino === temp.ino
     ) {
+      if (target.nlink !== 2 || temp.nlink !== 2) {
+        conflicts.push(
+          `事务 install hardlink 数量异常，已保留：${entry.change.relativePath}`
+        );
+        continue;
+      }
+      const successor = inspectedFileMatchesCas(temp, expected)
+        ? null
+        : (
+          metadataSuccessor
+            ? await shadowEntryMetadataSuccessorEvidence(
+              liveVaultPath,
+              entry,
+              metadataSuccessor,
+              {
+                currentAllowedLinkCounts: [2],
+                currentExpectedIdentity: {
+                  dev: target.dev,
+                  ino: target.ino
+                }
+              }
+            )
+            : null
+        );
+      const accepted = inspectedFileMatchesCas(temp, expected)
+        ? expected
+        : successor?.result;
+      if (!accepted || !inspectedFileMatchesCas(temp, accepted)) {
+        conflicts.push(
+          `事务 install hardlink 含第三值，已保留：${entry.change.relativePath}`
+        );
+        continue;
+      }
       await unlinkRootRelativeFileIfMatches(
         liveVaultPath,
         tempRelativePath,
-        expected,
+        accepted,
         {
           label: "Shadow linked install temp",
           allowedLinkCounts: [2],
@@ -1131,8 +1530,34 @@ async function finishInterruptedExclusiveInstalls(
       await assertRootRelativeFileMatchesCas(
         liveVaultPath,
         entry.change.relativePath,
-        expected,
+        accepted,
         [1]
+      );
+      continue;
+    }
+    const successor = metadataSuccessor
+      ? await shadowEntryMetadataSuccessorEvidence(
+        liveVaultPath,
+        entry,
+        metadataSuccessor
+      )
+      : null;
+    if (
+      inspectedFileMatchesCas(temp, expected)
+      && (
+        inspectedFileMatchesCas(target, expected)
+        || Boolean(successor)
+      )
+    ) {
+      await unlinkRootRelativeFileIfMatches(
+        liveVaultPath,
+        tempRelativePath,
+        expected,
+        {
+          label: "Shadow detached install temp",
+          allowedLinkCounts: [1],
+          expectedIdentity: temp
+        }
       );
       continue;
     }
@@ -1411,25 +1836,292 @@ function assertApplyJournalMatches(
   changeSet: MaintenanceShadowChangeSet,
   selectionDigest: string
 ): void {
+  const selectedPaths = journal.selectedPaths.map(normalizeVaultRelativePath);
+  const changesByPath = new Map(
+    changeSet.changes.map((change) => [
+      normalizeVaultRelativePath(change.relativePath),
+      change
+    ])
+  );
+  const entriesMatch = journal.entries.length === selectedPaths.length
+    && journal.entries.every((entry, index) => {
+      const relativePath = normalizeVaultRelativePath(
+        entry.change.relativePath
+      );
+      const sealed = changesByPath.get(relativePath);
+      return relativePath === selectedPaths[index]
+        && Boolean(sealed)
+        && stableStringify(entry.change) === stableStringify(sealed);
+    });
+  const metadataSuccessors = Array.isArray(journal.metadataSuccessors)
+    ? journal.metadataSuccessors
+    : [];
+  const rawInstallWindows = journal.metadataSuccessorInstallWindows;
+  const installWindows = Array.isArray(rawInstallWindows)
+    ? rawInstallWindows
+    : [];
+  const policy = journal.metadataSuccessorPolicy;
+  const metadataSuccessorPolicyValid = policy === undefined || (
+    policy.version === 1
+    && policy.kind === "markdown-updated-only"
+    && Number.isFinite(policy.window?.lowerBoundMs)
+    && Number.isFinite(policy.window?.upperBoundMs)
+    && policy.window.upperBoundMs >= policy.window.lowerBoundMs
+  );
+  const metadataSuccessorPolicyBound = policy === undefined
+    || stableStringify(policy) === stableStringify(metadataSuccessorPolicyFor(
+      changeSet.createdAt,
+      journal.createdAt
+    ));
+  const metadataSuccessorPaths = new Set<string>();
+  const metadataSuccessorsValid = metadataSuccessors.every((proof) => {
+    const relativePath = normalizeVaultRelativePath(proof.relativePath);
+    if (metadataSuccessorPaths.has(relativePath)) return false;
+    metadataSuccessorPaths.add(relativePath);
+    return selectedPaths.includes(relativePath)
+      && proof.result?.kind === "file"
+      && isSha256(proof.result.sha256)
+      && Number.isSafeInteger(proof.result.size)
+      && proof.result.size >= 0
+      && Number.isSafeInteger(proof.result.mode)
+      && Number.isFinite(proof.updatedAt)
+      && isSha256(proof.projectionDigest);
+  });
+  const installWindowPaths = new Set<string>();
+  const installWindowsValid = installWindows.every((entry) => {
+    const relativePath = normalizeVaultRelativePath(entry.relativePath);
+    const createdAtMs = Date.parse(entry.createdAt);
+    if (installWindowPaths.has(relativePath)) return false;
+    installWindowPaths.add(relativePath);
+    return selectedPaths.includes(relativePath)
+      && Number.isFinite(createdAtMs)
+      && entry.window?.lowerBoundMs === createdAtMs
+      && entry.window?.upperBoundMs
+        === createdAtMs + METADATA_SUCCESSOR_WINDOW_MS
+      && createdAtMs >= Date.parse(journal.createdAt)
+      && createdAtMs <= Date.parse(journal.updatedAt);
+  });
   if (
     journal.attemptId !== changeSet.attemptId
     || journal.liveVaultFingerprint !== changeSet.liveVaultFingerprint
     || journal.changeSetDigest !== changeSet.digest
     || journal.selectionDigest !== selectionDigest
+    || journal.selectionDigest !== digestJson(selectedPaths)
+    || selectedPaths.length === 0
+    || new Set(selectedPaths).size !== selectedPaths.length
+    || !entriesMatch
+    || !Number.isFinite(Date.parse(journal.createdAt))
+    || !Number.isFinite(Date.parse(journal.updatedAt))
+    || !metadataSuccessorPolicyValid
+    || !metadataSuccessorPolicyBound
+    || (
+      journal.metadataSuccessors !== undefined
+      && !Array.isArray(journal.metadataSuccessors)
+    )
+    || (rawInstallWindows !== undefined && !Array.isArray(rawInstallWindows))
+    || !installWindowsValid
+    || (metadataSuccessors.length > 0 && !policy)
+    || !metadataSuccessorsValid
   ) {
     throw new MaintenanceShadowError("changeset_corrupt", "已有 apply journal 与本次 changeset 不一致");
   }
 }
 
+function applyJournalMetadataSuccessorContext(
+  changeSet: MaintenanceShadowChangeSet,
+  journal: MaintenanceApplyJournal
+): ApplyJournalMetadataSuccessorContext {
+  const policy = journal.metadataSuccessorPolicy;
+  if (!policy) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "metadata successor 恢复缺少固定 policy/window"
+    );
+  }
+  return {
+    sealedBlobRootPath: changeSet.sealedBlobRootPath,
+    window: { ...policy.window },
+    installWindows: new Map(
+      (journal.metadataSuccessorInstallWindows ?? []).map((entry) => [
+        normalizeVaultRelativePath(entry.relativePath),
+        { ...entry.window }
+      ])
+    )
+  };
+}
+
+function metadataSuccessorPolicyFor(
+  changeSetCreatedAt: string,
+  journalCreatedAt: string
+): MaintenanceShadowMetadataSuccessorPolicy {
+  const changeSetTime = Date.parse(changeSetCreatedAt);
+  const journalCreatedTime = Date.parse(journalCreatedAt);
+  if (!Number.isFinite(changeSetTime) || !Number.isFinite(journalCreatedTime)) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "metadata successor policy 缺少可信 immutable 时间"
+    );
+  }
+  return {
+    version: 1,
+    kind: "markdown-updated-only",
+    window: {
+      lowerBoundMs: Math.min(changeSetTime, journalCreatedTime),
+      upperBoundMs:
+        Math.max(changeSetTime, journalCreatedTime)
+        + METADATA_SUCCESSOR_WINDOW_MS
+    }
+  };
+}
+
+async function ensureApplyJournalMetadataSuccessorPolicy(
+  journalPath: string,
+  journal: MaintenanceApplyJournal,
+  changeSet: MaintenanceShadowChangeSet
+): Promise<MaintenanceApplyJournal> {
+  if (journal.metadataSuccessorPolicy) return journal;
+  const policy = metadataSuccessorPolicyFor(
+    changeSet.createdAt,
+    journal.createdAt
+  );
+  const upgraded = await updateApplyJournal(journalPath, journal, {
+    metadataSuccessorPolicy: policy
+  });
+  await syncDirectoryDurably(path.dirname(journalPath));
+  const readBack = await readApplyJournalOrNull(journalPath);
+  if (
+    !readBack
+    || readBack.digest !== upgraded.digest
+    || stableStringify(readBack.metadataSuccessorPolicy)
+      !== stableStringify(policy)
+  ) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "legacy metadata successor policy durable read-back 失败"
+    );
+  }
+  return readBack;
+}
+
+async function ensureApplyJournalRecoveryInstallWindow(
+  journalPath: string,
+  journal: MaintenanceApplyJournal,
+  relativePathInput: string
+): Promise<MaintenanceApplyJournal> {
+  const relativePath = normalizeVaultRelativePath(relativePathInput);
+  const now = Date.now();
+  const existing = (journal.metadataSuccessorInstallWindows ?? []).find(
+    (entry) => normalizeVaultRelativePath(entry.relativePath) === relativePath
+  );
+  if (existing && existing.window.upperBoundMs >= now) return journal;
+
+  // This is called only after classification proved the entry is still an
+  // exact baseline/intermediate state. Therefore refreshing an expired window
+  // cannot bless an earlier result; it durably authorizes only the install the
+  // current matching attempt is about to perform.
+  const nextWindow = {
+    relativePath,
+    createdAt: new Date(now).toISOString(),
+    window: {
+      lowerBoundMs: now,
+      upperBoundMs: now + METADATA_SUCCESSOR_WINDOW_MS
+    }
+  };
+  const windows = [
+    ...(journal.metadataSuccessorInstallWindows ?? []).filter(
+      (entry) => normalizeVaultRelativePath(entry.relativePath) !== relativePath
+    ),
+    nextWindow
+  ].sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+  const updated = await updateApplyJournal(journalPath, journal, {
+    metadataSuccessorInstallWindows: windows
+  });
+  await syncDirectoryDurably(path.dirname(journalPath));
+  const readBack = await readApplyJournalOrNull(journalPath);
+  if (
+    !readBack
+    || readBack.digest !== updated.digest
+    || stableStringify(readBack.metadataSuccessorInstallWindows ?? [])
+      !== stableStringify(windows)
+  ) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      `metadata successor recovery install window durable read-back 失败：${relativePath}`,
+      relativePath
+    );
+  }
+  return readBack;
+}
+
+async function persistCommittedApplyJournal(
+  journalPath: string,
+  journal: MaintenanceApplyJournal,
+  metadataSuccessors: MaintenanceShadowMetadataSuccessorProof[]
+): Promise<MaintenanceApplyJournal> {
+  if (!journal.metadataSuccessorPolicy) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "committed apply journal 缺少固定 metadata successor policy"
+    );
+  }
+  const committed = await updateApplyJournal(journalPath, journal, {
+    state: "committed",
+    error: undefined,
+    metadataSuccessors
+  });
+  await syncDirectoryDurably(path.dirname(journalPath));
+  const readBack = await readApplyJournalOrNull(journalPath);
+  if (
+    !readBack
+    || readBack.state !== "committed"
+    || readBack.digest !== committed.digest
+    || stableStringify(readBack.selectedPaths)
+      !== stableStringify(committed.selectedPaths)
+    || stableStringify(readBack.metadataSuccessorPolicy)
+      !== stableStringify(committed.metadataSuccessorPolicy)
+    || stableStringify(readBack.metadataSuccessors ?? [])
+      !== stableStringify(committed.metadataSuccessors ?? [])
+  ) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "successor committed journal durable read-back 失败"
+    );
+  }
+  return readBack;
+}
+
 async function updateApplyJournal(
   journalPath: string,
   journal: MaintenanceApplyJournal,
-  patch: Partial<Pick<MaintenanceApplyJournal, "state" | "error" | "createdDirectories">>
+  patch: Partial<Pick<
+    MaintenanceApplyJournal,
+    | "state"
+    | "error"
+    | "createdDirectories"
+    | "metadataSuccessorPolicy"
+    | "metadataSuccessorInstallWindows"
+    | "metadataSuccessors"
+  >>
 ): Promise<MaintenanceApplyJournal> {
   const next: Omit<MaintenanceApplyJournal, "digest"> = {
     ...withoutApplyJournalDigest(journal),
     ...(patch.state ? { state: patch.state } : {}),
     ...(patch.createdDirectories ? { createdDirectories: patch.createdDirectories } : {}),
+    ...(patch.metadataSuccessorPolicy
+      ? { metadataSuccessorPolicy: patch.metadataSuccessorPolicy }
+      : {}),
+    ...("metadataSuccessorInstallWindows" in patch
+      ? {
+        metadataSuccessorInstallWindows:
+          patch.metadataSuccessorInstallWindows ?? []
+      }
+      : {}),
+    ...(patch.metadataSuccessors
+      ? { metadataSuccessors: patch.metadataSuccessors }
+      : {}),
     updatedAt: new Date().toISOString()
   };
   if ("error" in patch) {
@@ -1463,9 +2155,17 @@ function applyCommitReceipt(journal: MaintenanceApplyJournal): string {
     throw new MaintenanceShadowError("invalid_state", "apply journal 尚未 committed");
   }
   return digestJson({
+    journalDigest: journal.digest,
     attemptId: journal.attemptId,
     changeSetDigest: journal.changeSetDigest,
     selectionDigest: journal.selectionDigest,
+    selectedPaths: journal.selectedPaths.map(normalizeVaultRelativePath),
+    metadataSuccessorPolicy: journal.metadataSuccessorPolicy,
+    metadataSuccessors: [...(journal.metadataSuccessors ?? [])]
+      .sort((left, right) => compareCanonicalText(
+        left.relativePath,
+        right.relativePath
+      )),
     state: journal.state
   });
 }
@@ -1484,7 +2184,24 @@ export interface CreateMaintenanceShadowOptions {
   requiredSourcePaths?: readonly string[];
   copiedPaths?: readonly string[];
   writablePaths?: readonly string[];
+  chunkedTextSources?: readonly MaintenanceShadowChunkedTextSource[];
   limits?: Partial<MaintenanceShadowLimits>;
+}
+
+export interface MaintenanceShadowChunkedTextSource {
+  relativePath: string;
+  maxChunkBytes: number;
+}
+
+export interface MaintenanceShadowSourceChunk {
+  sourceRelativePath: string;
+  relativePath: string;
+  index: number;
+  count: number;
+  startByte: number;
+  endByte: number;
+  size: number;
+  sha256: string;
 }
 
 export interface MaintenanceShadowLimits {
@@ -1502,6 +2219,7 @@ export interface MaintenanceShadowHandle {
    */
   agentVaultPath: string;
   manifestPath: string;
+  sourceChunks?: MaintenanceShadowSourceChunk[];
 }
 
 export interface MaintenanceShadowCasMissing {
@@ -1532,6 +2250,23 @@ export interface MaintenanceShadowCommittedTargetOverride {
   relativePath: string;
   expected: MaintenanceShadowCasBaseline;
   desired: MaintenanceShadowCasBaseline;
+}
+
+export interface MaintenanceShadowMetadataSuccessorProof {
+  relativePath: string;
+  result: MaintenanceShadowCasFile;
+  updatedAt: number;
+  projectionDigest: string;
+}
+
+export interface MaintenanceShadowMetadataSuccessorPolicy {
+  version: 1;
+  kind: "markdown-updated-only";
+  window: MaintenanceMarkdownUpdatedSuccessorWindow;
+}
+
+export interface MaintenanceShadowCommittedVerification {
+  metadataSuccessors: MaintenanceShadowMetadataSuccessorProof[];
 }
 
 export interface MaintenanceShadowUpsertChange {
@@ -1653,7 +2388,7 @@ export interface ApplyShadowChangeSetOptions {
    * Test-only crash barrier. Production callers must not provide it.
    */
   faultInjector?: (input: {
-    point: "after-entry" | "after-journal-commit";
+    point: "after-install-link" | "after-entry" | "after-journal-commit";
     attemptId: string;
     relativePath: string;
     index: number;
@@ -1862,6 +2597,12 @@ interface MaintenanceApplyJournalEntry {
   installTempRelativePath?: string;
 }
 
+interface MaintenanceApplyJournalMetadataSuccessorInstallWindow {
+  relativePath: string;
+  createdAt: string;
+  window: MaintenanceMarkdownUpdatedSuccessorWindow;
+}
+
 interface MaintenanceApplyJournal {
   version: 1;
   state: MaintenanceApplyJournalState;
@@ -1876,6 +2617,10 @@ interface MaintenanceApplyJournal {
     dev: number;
     ino: number;
   }>;
+  metadataSuccessorPolicy?: MaintenanceShadowMetadataSuccessorPolicy;
+  metadataSuccessorInstallWindows?:
+    MaintenanceApplyJournalMetadataSuccessorInstallWindow[];
+  metadataSuccessors?: MaintenanceShadowMetadataSuccessorProof[];
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -1910,9 +2655,21 @@ export async function createMaintenanceShadowVault(
   const requiredSourcePaths = normalizePathList(options.requiredSourcePaths ?? []);
   const copiedPaths = normalizePathList(options.copiedPaths ?? DEFAULT_MAINTENANCE_SHADOW_COPIED_PATHS);
   const writablePaths = normalizePathList(options.writablePaths ?? DEFAULT_MAINTENANCE_SHADOW_WRITABLE_PATHS);
+  const chunkedTextSources = normalizeChunkedTextSources(
+    options.chunkedTextSources ?? []
+  );
   const limits = normalizeShadowLimits(options.limits);
 
   const requiredPaths = uniqueSortedPaths([...rawPaths, ...rulesPaths, ...requiredSourcePaths]);
+  for (const source of chunkedTextSources) {
+    if (!requiredSourcePaths.includes(source.relativePath)) {
+      throw new MaintenanceShadowError(
+        "invalid_path",
+        `分块来源必须同时是 required source：${source.relativePath}`,
+        source.relativePath
+      );
+    }
+  }
   for (const relativePath of requiredPaths) {
     await inspectRequiredEntry(liveVaultPath, relativePath);
   }
@@ -1958,6 +2715,10 @@ export async function createMaintenanceShadowVault(
       });
     }
 
+    const sourceChunks = await materializeShadowSourceChunks(
+      shadowVaultPath,
+      chunkedTextSources
+    );
     await makePathsReadOnly(
       shadowVaultPath,
       uniqueSortedPaths([...rawPaths, ...rulesPaths, ...MAINTENANCE_PLUGIN_OWNED_PATHS])
@@ -1998,7 +2759,8 @@ export async function createMaintenanceShadowVault(
       attemptId,
       rootPath,
       agentVaultPath: shadowVaultPath,
-      manifestPath
+      manifestPath,
+      ...(sourceChunks.length ? { sourceChunks } : {})
     };
   } catch (error) {
     await makeTreeOwnerWritable(rootPath);
@@ -2286,7 +3048,7 @@ export async function sealMaintenanceShadowVault(
   const changedPaths = changedEntryPaths(shadowBaseline, beforeFreeze, false);
   const excludedPluginOwnedPaths = changedPaths
     .filter(isPluginOwnedMaintenancePath)
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
   const committableChangedPaths = changedPaths.filter((relativePath) => !isPluginOwnedMaintenancePath(relativePath));
   const liveBaseline = entryMap(manifest.liveBaseline);
   const changes = buildChanges(
@@ -2711,8 +3473,9 @@ export async function markMaintenanceShadowCommittedFromJournal(
   options: {
     overriddenTargets?: readonly MaintenanceShadowCommittedTargetOverride[];
     ignoredTargetPaths?: readonly string[];
+    acceptedIgnoredMetadataSuccessors?: readonly MaintenanceShadowMetadataSuccessorProof[];
   } = {}
-): Promise<void> {
+): Promise<MaintenanceShadowCommittedVerification> {
   const manifest = await readManifest(handle);
   assertManifestState(manifest, ["sealed", "committed"]);
   const liveVaultPath = await assertPlainDirectoryRoot(
@@ -2731,16 +3494,42 @@ export async function markMaintenanceShadowCommittedFromJournal(
     "journal.json"
   );
   const changeSet = await readStoredChangeSet(manifest);
-  const journal = await readApplyJournalOrNull(journalPath);
-  await assertCommittedApplyJournalMatchesLive(
+  let journal = await readApplyJournalOrNull(journalPath);
+  if (journal) {
+    assertApplyJournalMatches(journal, changeSet, journal.selectionDigest);
+    if (journal.state !== "committed") {
+      journal = await ensureApplyJournalMetadataSuccessorPolicy(
+        journalPath,
+        journal,
+        changeSet
+      );
+    } else if (journal.metadataSuccessorPolicy) {
+      journal = await refreshCommittedApplyJournalMetadataSuccessors(
+        journalPath,
+        journal,
+        changeSet,
+        liveVaultPath,
+        new Set([
+          ...(options.overriddenTargets ?? []).map((entry) =>
+            normalizeVaultRelativePath(entry.relativePath)
+          ),
+          ...(options.ignoredTargetPaths ?? []).map(
+            normalizeVaultRelativePath
+          )
+        ])
+      );
+    }
+  }
+  const verification = await assertCommittedApplyJournalMatchesLive(
     liveVaultPath,
     manifest,
     changeSet,
     journal,
     options.overriddenTargets ?? [],
-    options.ignoredTargetPaths ?? []
+    options.ignoredTargetPaths ?? [],
+    options.acceptedIgnoredMetadataSuccessors ?? []
   );
-  if (manifest.state === "committed") return;
+  if (manifest.state === "committed") return verification;
   await writeManifest(handle.manifestPath, withManifestDigest({
     ...withoutManifestDigest(manifest),
     state: "committed",
@@ -2754,6 +3543,85 @@ export async function markMaintenanceShadowCommittedFromJournal(
       "committed terminal durable read-back 校验失败"
     );
   }
+  return verification;
+}
+
+async function refreshCommittedApplyJournalMetadataSuccessors(
+  journalPath: string,
+  journal: MaintenanceApplyJournal,
+  changeSet: MaintenanceShadowChangeSet,
+  liveVaultPath: string,
+  excludedPaths: ReadonlySet<string>
+): Promise<MaintenanceApplyJournal> {
+  const context = applyJournalMetadataSuccessorContext(changeSet, journal);
+  const existingByPath = new Map(
+    (journal.metadataSuccessors ?? []).map((proof) => [
+      normalizeVaultRelativePath(proof.relativePath),
+      proof
+    ])
+  );
+  const next: MaintenanceShadowMetadataSuccessorProof[] = [];
+  for (const entry of journal.entries) {
+    const relativePath = normalizeVaultRelativePath(
+      entry.change.relativePath
+    );
+    const existing = existingByPath.get(relativePath);
+    existingByPath.delete(relativePath);
+    if (excludedPaths.has(relativePath)) {
+      if (existing) next.push(existing);
+      continue;
+    }
+    const live = await currentCas(liveVaultPath, relativePath);
+    if (casBaselinesEqual(live, resultCas(entry.change))) {
+      if (existing) {
+        throw new MaintenanceShadowError(
+          "cas_conflict",
+          `committed metadata successor 不得回退到 sealed result：${relativePath}`,
+          relativePath
+        );
+      }
+      continue;
+    }
+    const successor = await shadowEntryMetadataSuccessorEvidence(
+      liveVaultPath,
+      entry,
+      context
+    );
+    if (!successor) {
+      throw new MaintenanceShadowError(
+        "cas_conflict",
+        `committed metadata successor 无法在固定窗口内重新证明：${relativePath}`,
+        relativePath
+      );
+    }
+    if (
+      existing
+      && (
+        successor.updatedAt < existing.updatedAt
+        || (
+          successor.updatedAt === existing.updatedAt
+          && stableStringify(successor) !== stableStringify(existing)
+        )
+      )
+    ) {
+      throw new MaintenanceShadowError(
+        "cas_conflict",
+        `committed metadata successor proof 不得倒退或改写：${relativePath}`,
+        relativePath
+      );
+    }
+    next.push(successor);
+  }
+  next.push(...existingByPath.values());
+  next.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
+  if (
+    stableStringify(next)
+    === stableStringify(journal.metadataSuccessors ?? [])
+  ) return journal;
+  return await persistCommittedApplyJournal(journalPath, journal, next);
 }
 
 async function assertCommittedApplyJournalMatchesLive(
@@ -2762,8 +3630,9 @@ async function assertCommittedApplyJournalMatchesLive(
   changeSet: MaintenanceShadowChangeSet,
   journal: MaintenanceApplyJournal | null,
   overriddenTargets: readonly MaintenanceShadowCommittedTargetOverride[],
-  ignoredTargetPaths: readonly string[]
-): Promise<void> {
+  ignoredTargetPaths: readonly string[],
+  acceptedIgnoredMetadataSuccessors: readonly MaintenanceShadowMetadataSuccessorProof[]
+): Promise<MaintenanceShadowCommittedVerification> {
   if (
     !journal
     || journal.state !== "committed"
@@ -2783,6 +3652,7 @@ async function assertCommittedApplyJournalMatchesLive(
       "committed terminal 缺少 matching durable apply journal"
     );
   }
+  assertApplyJournalMatches(journal, changeSet, journal.selectionDigest);
   const selectedPaths = journal.selectedPaths.map(normalizeVaultRelativePath);
   if (
     new Set(selectedPaths).size !== selectedPaths.length
@@ -2826,6 +3696,32 @@ async function assertCommittedApplyJournalMatchesLive(
   }
   const consumedOverrides = new Set<string>();
   const consumedIgnoredPaths = new Set<string>();
+  const metadataProofsByPath = new Map(
+    (journal.metadataSuccessors ?? []).map((proof) => [
+      normalizeVaultRelativePath(proof.relativePath),
+      proof
+    ])
+  );
+  const consumedMetadataProofs = new Set<string>();
+  const acceptedIgnoredProofsByPath = new Map<
+    string,
+    MaintenanceShadowMetadataSuccessorProof
+  >();
+  for (const proof of acceptedIgnoredMetadataSuccessors) {
+    const relativePath = normalizeVaultRelativePath(proof.relativePath);
+    if (acceptedIgnoredProofsByPath.has(relativePath)) {
+      throw new MaintenanceShadowError(
+        "changeset_corrupt",
+        `committed ignored metadata successor proof 重复：${relativePath}`,
+        relativePath
+      );
+    }
+    acceptedIgnoredProofsByPath.set(relativePath, proof);
+  }
+  const consumedAcceptedIgnoredProofs = new Set<string>();
+  const metadataSuccessor = journal.metadataSuccessorPolicy
+    ? applyJournalMetadataSuccessorContext(changeSet, journal)
+    : undefined;
   for (const [index, entry] of journal.entries.entries()) {
     const relativePath = normalizeVaultRelativePath(entry.change.relativePath);
     const sealed = sealedByPath.get(relativePath);
@@ -2862,16 +3758,78 @@ async function assertCommittedApplyJournalMatchesLive(
     );
     if (ignoredPaths.has(relativePath)) {
       consumedIgnoredPaths.add(relativePath);
+      const durableSuccessor = metadataProofsByPath.get(relativePath);
+      if (durableSuccessor) {
+        const accepted = acceptedIgnoredProofsByPath.get(relativePath);
+        if (
+          !accepted
+          || stableStringify(accepted) !== stableStringify(durableSuccessor)
+        ) {
+          throw new MaintenanceShadowError(
+            "cas_conflict",
+            `committed ignored target 缺少下游 accepted successor proof：${relativePath}`,
+            relativePath
+          );
+        }
+        consumedAcceptedIgnoredProofs.add(relativePath);
+        consumedMetadataProofs.add(relativePath);
+      } else if (acceptedIgnoredProofsByPath.has(relativePath)) {
+        throw new MaintenanceShadowError(
+          "changeset_corrupt",
+          `下游 accepted successor 不属于 Shadow proof：${relativePath}`,
+          relativePath
+        );
+      }
       continue;
     }
     const live = await currentCas(liveVaultPath, relativePath);
-    if (!casBaselinesEqual(live, override?.desired ?? shadowResult)) {
+    if (casBaselinesEqual(live, override?.desired ?? shadowResult)) {
+      const durableSuccessor = metadataProofsByPath.get(relativePath);
+      const acceptedSuccessor = acceptedIgnoredProofsByPath.get(relativePath);
+      if (durableSuccessor) {
+        if (
+          !override
+          || !acceptedSuccessor
+          || stableStringify(acceptedSuccessor)
+            !== stableStringify(durableSuccessor)
+        ) {
+          throw new MaintenanceShadowError(
+            "cas_conflict",
+            `managed override 缺少已接受的 Shadow metadata successor proof：${relativePath}`,
+            relativePath
+          );
+        }
+        consumedMetadataProofs.add(relativePath);
+        consumedAcceptedIgnoredProofs.add(relativePath);
+      } else if (acceptedSuccessor) {
+        throw new MaintenanceShadowError(
+          "changeset_corrupt",
+          `下游 accepted successor 不属于 Shadow proof：${relativePath}`,
+          relativePath
+        );
+      }
+      continue;
+    }
+    const successor = override || !metadataSuccessor
+      ? null
+      : await shadowEntryMetadataSuccessorEvidence(
+        liveVaultPath,
+        entry,
+        metadataSuccessor
+      );
+    const durableSuccessor = metadataProofsByPath.get(relativePath);
+    if (
+      !successor
+      || !durableSuccessor
+      || stableStringify(successor) !== stableStringify(durableSuccessor)
+    ) {
       throw new MaintenanceShadowError(
         "cas_conflict",
         `committed terminal live target 已变化：${relativePath}`,
         relativePath
       );
     }
+    consumedMetadataProofs.add(relativePath);
   }
   if (consumedOverrides.size !== overridesByPath.size) {
     throw new MaintenanceShadowError(
@@ -2885,6 +3843,28 @@ async function assertCommittedApplyJournalMatchesLive(
       "committed terminal ignored target 不属于 selected Shadow journal"
     );
   }
+  if (consumedMetadataProofs.size !== metadataProofsByPath.size) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "committed metadata successor proof 不属于已验证 live target"
+    );
+  }
+  if (
+    consumedAcceptedIgnoredProofs.size
+    !== acceptedIgnoredProofsByPath.size
+  ) {
+    throw new MaintenanceShadowError(
+      "changeset_corrupt",
+      "下游 accepted successor proof 不属于 ignored Shadow target"
+    );
+  }
+  return {
+    metadataSuccessors: [...(journal.metadataSuccessors ?? [])]
+      .sort((left, right) => compareCanonicalText(
+        left.relativePath,
+        right.relativePath
+      ))
+  };
 }
 
 /**
@@ -3064,7 +4044,8 @@ export async function applyShadowChangeSet(
     await recoverPendingApplyJournals(
       liveVaultPath,
       storageRootPath,
-      changeSet.liveVaultFingerprint
+      changeSet.liveVaultFingerprint,
+      { deferJournalPath: journalPath }
     );
     const manifestHandle: MaintenanceShadowHandle = {
       attemptId: changeSet.attemptId,
@@ -3097,7 +4078,24 @@ export async function applyShadowChangeSet(
     let journal = await readApplyJournalOrNull(journalPath);
     if (journal) {
       assertApplyJournalMatches(journal, changeSet, selectionDigest);
-      journal = await recoverApplyJournal(liveVaultPath, journalRootPath, journal);
+      journal = await ensureApplyJournalMetadataSuccessorPolicy(
+        journalPath,
+        journal,
+        changeSet
+      );
+      journal = await recoverApplyJournal(
+        liveVaultPath,
+        journalRootPath,
+        journal,
+        {
+          metadataSuccessor: applyJournalMetadataSuccessorContext(
+            changeSet,
+            journal
+          ),
+          recoverBlockedMetadataSuccessors: true,
+          faultInjector: options.faultInjector
+        }
+      );
       if (journal.state === "committed") {
         return {
           appliedPaths: [...journal.selectedPaths].sort(),
@@ -3120,6 +4118,10 @@ export async function applyShadowChangeSet(
       changeSet,
       selected,
       selectionDigest
+    );
+    const metadataSuccessor = applyJournalMetadataSuccessorContext(
+      changeSet,
+      journal
     );
     journal = await updateApplyJournal(journalPath, journal, { state: "applying" });
     try {
@@ -3154,7 +4156,17 @@ export async function applyShadowChangeSet(
           journal.createdDirectories,
           "Shadow apply created parent"
         );
-        await applyJournalEntry(liveVaultPath, sealedBlobRootPath, entry);
+        await applyJournalEntry(
+          liveVaultPath,
+          sealedBlobRootPath,
+          entry,
+          () => options.faultInjector?.({
+            point: "after-install-link",
+            attemptId: changeSet.attemptId,
+            relativePath: entry.change.relativePath,
+            index
+          })
+        );
         await options.faultInjector?.({
           point: "after-entry",
           attemptId: changeSet.attemptId,
@@ -3162,12 +4174,25 @@ export async function applyShadowChangeSet(
           index
         });
       }
-      const states = await classifyApplyJournalEntries(liveVaultPath, journal.entries);
-      if (states.some((state) => state !== "result")) {
+      const states = await classifyApplyJournalEntries(
+        liveVaultPath,
+        journal.entries,
+        metadataSuccessor
+      );
+      if (!states.every(isCommittedApplyEntryState)) {
         throw new MaintenanceShadowError("cas_conflict", "维护提交结果复验失败");
       }
-      journal = await updateApplyJournal(journalPath, journal, { state: "committed" });
-      const finalEntry = journal.entries[journal.entries.length - 1]!;
+      journal = await persistCommittedApplyJournal(
+        journalPath,
+        journal,
+        await collectApplyJournalMetadataSuccessors(
+          liveVaultPath,
+          journal.entries,
+          states,
+          metadataSuccessor
+        )
+      );
+      const finalEntry = journal.entries[journal.entries.length - 1];
       await options.faultInjector?.({
         point: "after-journal-commit",
         attemptId: changeSet.attemptId,
@@ -3179,14 +4204,37 @@ export async function applyShadowChangeSet(
       if (error instanceof MaintenanceShadowSimulatedCrash) {
         throw error;
       }
-      const recovered = await recoverApplyJournal(liveVaultPath, journalRootPath, journal, true);
+      let recovered = await recoverApplyJournal(
+        liveVaultPath,
+        journalRootPath,
+        journal,
+        {
+          forceRollback: true,
+          metadataSuccessor
+        }
+      );
       if (recovered.state === "blocked") {
-        throw new MaintenanceShadowError(
-          "cas_conflict",
-          recovered.error ?? `维护提交失败且无法安全回滚：${error instanceof Error ? error.message : String(error)}`
+        recovered = await recoverApplyJournal(
+          liveVaultPath,
+          journalRootPath,
+          recovered,
+          {
+            metadataSuccessor,
+            recoverBlockedMetadataSuccessors: true,
+            faultInjector: options.faultInjector
+          }
         );
+        if (recovered.state === "committed") {
+          journal = recovered;
+        } else {
+          throw new MaintenanceShadowError(
+            "cas_conflict",
+            recovered.error ?? `维护提交失败且无法安全回滚：${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      } else {
+        throw error;
       }
-      throw error;
     }
     return {
       appliedPaths: selected.map((change) => change.relativePath).sort(),
@@ -3272,7 +4320,10 @@ function buildChanges(
       });
     }
   }
-  return changes.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return changes.sort((left, right) => compareCanonicalText(
+    left.relativePath,
+    right.relativePath
+  ));
 }
 
 function expectedParentChainForChange(
@@ -3402,7 +4453,7 @@ async function copySafeEntryTree(
   if (stat.isDirectory()) {
     await fsp.mkdir(destinationPath, { recursive: true, mode: 0o700 });
     entries.set(relativePath, directoryEntry(relativePath, stat));
-    const children = (await fsp.readdir(sourcePath)).sort((left, right) => left.localeCompare(right));
+    const children = (await fsp.readdir(sourcePath)).sort(compareCanonicalText);
     for (const child of children) {
       await copySafeEntryTree(
         liveVaultPath,
@@ -3438,6 +4489,149 @@ async function copySafeEntryTree(
   entries.set(relativePath, fileEntry(relativePath, inspected, sourceIdentity));
 }
 
+async function materializeShadowSourceChunks(
+  shadowVaultPath: string,
+  sources: readonly MaintenanceShadowChunkedTextSource[]
+): Promise<MaintenanceShadowSourceChunk[]> {
+  const result: MaintenanceShadowSourceChunk[] = [];
+  for (const source of sources) {
+    const sourcePath = resolveVaultRelativePath(
+      shadowVaultPath,
+      source.relativePath
+    );
+    const before = await fsp.lstat(sourcePath);
+    assertSafeStat(before, source.relativePath);
+    if (!before.isFile() || before.nlink !== 1) {
+      throw new MaintenanceShadowError(
+        "unsafe_entry",
+        `分块来源不是独立普通文件：${source.relativePath}`,
+        source.relativePath
+      );
+    }
+    const content = await fsp.readFile(sourcePath);
+    const after = await fsp.lstat(sourcePath);
+    if (
+      !sameOpenFileVersion(before, after)
+      || content.byteLength !== before.size
+    ) {
+      throw new MaintenanceShadowError(
+        "source_changed",
+        `生成只读分块时来源发生变化：${source.relativePath}`,
+        source.relativePath
+      );
+    }
+    const text = content.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(content)) {
+      throw new MaintenanceShadowError(
+        "unsafe_entry",
+        `文本来源不是有效 UTF-8，无法安全分块：${source.relativePath}`,
+        source.relativePath
+      );
+    }
+    const chunks = splitUtf8SourceChunks(content, source.maxChunkBytes);
+    const token = createHash("sha256")
+      .update(source.relativePath)
+      .digest("hex")
+      .slice(0, 24);
+    const chunkRoot = `${SHADOW_SOURCE_CHUNK_ROOT}/${token}`;
+    await fsp.mkdir(
+      resolveVaultRelativePath(shadowVaultPath, chunkRoot),
+      { recursive: true, mode: 0o700 }
+    );
+    const width = Math.max(4, String(chunks.length).length);
+    for (const [index, chunk] of chunks.entries()) {
+      const part = String(index + 1).padStart(width, "0");
+      const total = String(chunks.length).padStart(width, "0");
+      const relativePath = `${chunkRoot}/part-${part}-of-${total}.md`;
+      const absolutePath = resolveVaultRelativePath(
+        shadowVaultPath,
+        relativePath
+      );
+      await fsp.writeFile(absolutePath, chunk.content, {
+        flag: "wx",
+        mode: 0o400
+      });
+      const stat = await fsp.lstat(absolutePath);
+      if (
+        !stat.isFile()
+        || stat.isSymbolicLink()
+        || stat.nlink !== 1
+        || stat.size !== chunk.content.byteLength
+      ) {
+        throw new MaintenanceShadowError(
+          "unsafe_entry",
+          `只读分块落盘证据无效：${relativePath}`,
+          relativePath
+        );
+      }
+      result.push({
+        sourceRelativePath: source.relativePath,
+        relativePath,
+        index: index + 1,
+        count: chunks.length,
+        startByte: chunk.startByte,
+        endByte: chunk.endByte,
+        size: chunk.content.byteLength,
+        sha256: hashBuffer(chunk.content)
+      });
+    }
+  }
+  return result;
+}
+
+function splitUtf8SourceChunks(
+  content: Buffer,
+  maxChunkBytes: number
+): Array<{ startByte: number; endByte: number; content: Buffer }> {
+  if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes < 4) {
+    throw new MaintenanceShadowError(
+      "invalid_path",
+      `非法文本分块上限：${maxChunkBytes}`
+    );
+  }
+  const chunks: Array<{
+    startByte: number;
+    endByte: number;
+    content: Buffer;
+  }> = [];
+  let startByte = 0;
+  while (startByte < content.byteLength) {
+    let endByte = Math.min(
+      content.byteLength,
+      startByte + maxChunkBytes
+    );
+    if (endByte < content.byteLength) {
+      const newline = content.lastIndexOf(0x0a, endByte - 1);
+      if (newline >= startByte + Math.floor(maxChunkBytes / 2)) {
+        endByte = newline + 1;
+      } else {
+        while (
+          endByte > startByte
+          && (content[endByte] & 0xc0) === 0x80
+        ) {
+          endByte -= 1;
+        }
+      }
+    }
+    if (endByte <= startByte) {
+      throw new MaintenanceShadowError(
+        "unsafe_entry",
+        "文本分块无法在 UTF-8 字符边界内推进"
+      );
+    }
+    const chunk = Buffer.from(content.subarray(startByte, endByte));
+    if (!Buffer.from(chunk.toString("utf8"), "utf8").equals(chunk)) {
+      throw new MaintenanceShadowError(
+        "unsafe_entry",
+        "文本分块不是有效 UTF-8"
+      );
+    }
+    chunks.push({ startByte, endByte, content: chunk });
+    startByte = endByte;
+  }
+  return chunks;
+}
+
 async function scanSafeRoots(
   vaultPath: string,
   roots: readonly string[]
@@ -3451,7 +4645,7 @@ async function scanSafeRoots(
 
 async function scanEntireVault(vaultPath: string): Promise<Map<string, MaintenanceShadowEntry>> {
   const entries = new Map<string, MaintenanceShadowEntry>();
-  const children = (await fsp.readdir(vaultPath)).sort((left, right) => left.localeCompare(right));
+  const children = (await fsp.readdir(vaultPath)).sort(compareCanonicalText);
   for (const child of children) {
     if (child.includes("/") || child.includes("\\") || child === "." || child === "..") {
       throw new MaintenanceShadowError("invalid_path", `非法 Shadow 顶层目录项：${child}`);
@@ -3472,7 +4666,7 @@ async function scanSafeEntryTree(
   assertSafeStat(stat, relativePath);
   if (stat.isDirectory()) {
     entries.set(relativePath, directoryEntry(relativePath, stat));
-    const children = (await fsp.readdir(absolutePath)).sort((left, right) => left.localeCompare(right));
+    const children = (await fsp.readdir(absolutePath)).sort(compareCanonicalText);
     for (const child of children) {
       await scanSafeEntryTree(vaultPath, joinVaultRelativePath(relativePath, child), entries);
     }
@@ -3689,18 +4883,74 @@ async function readIndependentRegularFile(
   label: string,
   maxBytes: number
 ): Promise<Buffer> {
+  return await readBoundRegularFile(absolutePath, label, maxBytes, {
+    allowedLinkCounts: [1]
+  });
+}
+
+async function readBoundRegularFile(
+  absolutePath: string,
+  label: string,
+  maxBytes: number,
+  options: {
+    allowedLinkCounts: readonly number[];
+    expectedIdentity?: MaintenanceShadowFileIdentity;
+  }
+): Promise<Buffer> {
+  const pathBefore = await fsp.lstat(absolutePath);
+  if (
+    !pathBefore.isFile()
+    || pathBefore.isSymbolicLink()
+    || !options.allowedLinkCounts.includes(pathBefore.nlink)
+    || (
+      options.expectedIdentity
+      && (
+        Number(pathBefore.dev) !== options.expectedIdentity.dev
+        || Number(pathBefore.ino) !== options.expectedIdentity.ino
+      )
+    )
+  ) {
+    throw new MaintenanceShadowError("unsafe_entry", `${label} 不是受信普通文件`);
+  }
   const handle = await openNoFollow(absolutePath, fsConstants.O_RDONLY);
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.nlink !== 1) {
-      throw new MaintenanceShadowError("unsafe_entry", `${label} 不是独立普通文件`);
+    if (
+      !before.isFile()
+      || !options.allowedLinkCounts.includes(before.nlink)
+      || !sameFileIdentity(pathBefore, before)
+      || (
+        options.expectedIdentity
+        && (
+          Number(before.dev) !== options.expectedIdentity.dev
+          || Number(before.ino) !== options.expectedIdentity.ino
+        )
+      )
+    ) {
+      throw new MaintenanceShadowError("unsafe_entry", `${label} 不是受信普通文件`);
     }
     if (before.size > maxBytes) {
       throw new MaintenanceShadowError("unsafe_entry", `${label} 超过安全读取上限`);
     }
     const content = await handle.readFile();
     const after = await handle.stat();
-    if (!sameOpenFileVersion(before, after) || content.byteLength !== before.size) {
+    const pathAfter = await lstatOrNull(absolutePath);
+    if (
+      !sameOpenFileVersion(before, after)
+      || content.byteLength !== before.size
+      || !pathAfter
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || !options.allowedLinkCounts.includes(pathAfter.nlink)
+      || !sameFileIdentity(after, pathAfter)
+      || (
+        options.expectedIdentity
+        && (
+          Number(after.dev) !== options.expectedIdentity.dev
+          || Number(after.ino) !== options.expectedIdentity.ino
+        )
+      )
+    ) {
       throw new MaintenanceShadowError("source_changed", `${label} 在读取时发生变化`);
     }
     return content;
@@ -3832,7 +5082,7 @@ function deniedProbeAttemptsMatch(
       outcome: attempt.outcome,
       errorCode: attempt.errorCode
     }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareCanonicalText(left.path, right.path));
   const expected = canonicalAbsolutePaths(expectedPaths);
   return normalized.every((attempt, index) =>
     attempt.path === expected[index]
@@ -4455,6 +5705,37 @@ function normalizePathList(paths: readonly string[]): string[] {
   return uniqueSortedPaths(paths.map(normalizeVaultRelativePath));
 }
 
+function normalizeChunkedTextSources(
+  sources: readonly MaintenanceShadowChunkedTextSource[]
+): MaintenanceShadowChunkedTextSource[] {
+  const seen = new Set<string>();
+  const normalized = sources.map((source) => {
+    const relativePath = normalizeVaultRelativePath(source.relativePath);
+    if (seen.has(relativePath)) {
+      throw new MaintenanceShadowError(
+        "invalid_path",
+        `重复的文本分块来源：${relativePath}`,
+        relativePath
+      );
+    }
+    if (
+      !Number.isSafeInteger(source.maxChunkBytes)
+      || source.maxChunkBytes < 4
+    ) {
+      throw new MaintenanceShadowError(
+        "invalid_path",
+        `非法文本分块上限：${source.maxChunkBytes}`,
+        relativePath
+      );
+    }
+    seen.add(relativePath);
+    return { relativePath, maxChunkBytes: source.maxChunkBytes };
+  });
+  return normalized.sort((left, right) =>
+    compareCanonicalText(left.relativePath, right.relativePath)
+  );
+}
+
 function normalizeShadowLimits(input: Partial<MaintenanceShadowLimits> | undefined): MaintenanceShadowLimits {
   const limits: MaintenanceShadowLimits = {
     maxChangedFileBytes: input?.maxChangedFileBytes ?? DEFAULT_MAX_CHANGED_FILE_BYTES,
@@ -4502,12 +5783,12 @@ function joinVaultRelativePath(parent: string, child: string): string {
 }
 
 function uniqueSortedPaths(paths: readonly string[]): string[] {
-  return Array.from(new Set(paths)).sort((left, right) => left.localeCompare(right));
+  return Array.from(new Set(paths)).sort(compareCanonicalText);
 }
 
 function canonicalAbsolutePaths(paths: readonly string[]): string[] {
   return Array.from(new Set(paths.map((entry) => path.resolve(entry))))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalText);
 }
 
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -4517,13 +5798,13 @@ function stringArraysEqual(left: readonly string[], right: readonly string[]): b
 function minimalPathRoots(paths: readonly string[]): string[] {
   const sorted = uniqueSortedPaths(paths).sort((left, right) => {
     const depthDifference = left.split("/").length - right.split("/").length;
-    return depthDifference || left.localeCompare(right);
+    return depthDifference || compareCanonicalText(left, right);
   });
   const roots: string[] = [];
   for (const candidate of sorted) {
     if (!isWithinAnyPath(candidate, roots)) roots.push(candidate);
   }
-  return roots.sort((left, right) => left.localeCompare(right));
+  return roots.sort(compareCanonicalText);
 }
 
 function isWithinAnyPath(relativePath: string, roots: readonly string[]): boolean {
@@ -4646,7 +5927,13 @@ function entryMap(entries: readonly MaintenanceShadowEntry[]): Map<string, Maint
 }
 
 function sortedEntries(entries: Map<string, MaintenanceShadowEntry>): MaintenanceShadowEntry[] {
-  return Array.from(entries.values()).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return Array.from(entries.values()).sort((left, right) =>
+    compareCanonicalText(left.relativePath, right.relativePath));
+}
+
+function compareCanonicalText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function changedEntryPaths(

@@ -59,15 +59,21 @@ export async function discoverKnowledgeBaseSources(
       });
       continue;
     }
-    const readDecision = shouldReadKnowledgeBaseFileContent({ size: entry.size }, budget);
+    const readDecision = shouldReadKnowledgeBaseFileContent(
+      { size: entry.size },
+      budget,
+      { allowChunkedText: isChunkableTextSource(entry.path, modality) }
+    );
     if (!readDecision.ok) {
       skippedSources.push({
         relativePath: entry.path,
         absolutePath: file,
         size: entry.size,
         mtime: entry.mtime,
+        fingerprint: entry.fingerprint,
         mime,
         modality,
+        changed: true,
         reason: readDecision.reason ?? "文件超过读取预算"
       });
       continue;
@@ -91,7 +97,15 @@ export async function discoverKnowledgeBaseSources(
       fingerprint: entry.fingerprint,
       mime,
       modality,
-      changed: true
+      changed: true,
+      ...(readDecision.strategy === "chunked-text"
+        ? {
+          readStrategy: {
+            kind: "chunked-text" as const,
+            maxChunkBytes: readDecision.maxChunkBytes!
+          }
+        }
+        : {})
     });
   }
   const trackerPath = path.join(vaultPath, "outputs", ".ingest-tracker.md");
@@ -120,6 +134,16 @@ export async function discoverKnowledgeBaseSources(
       refreshed: refresh.indexedCount
     }
   };
+}
+
+function isChunkableTextSource(
+  relativePath: string,
+  modality: KnowledgeBaseSource["modality"]
+): boolean {
+  return modality === "text"
+    && [".md", ".markdown", ".txt"].includes(
+      path.extname(relativePath).toLowerCase()
+    );
 }
 
 export function knowledgeBaseReportPathForMode(mode: KnowledgeBaseRunMode, dateKey = formatDateForFile(new Date())): string {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as path from "path";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -46,7 +47,9 @@ import { durableMaintenanceResultFromHistory } from "./maintenance-terminal";
 import { buildKnowledgeBaseDashboardSnapshot, type KnowledgeBaseDashboardSnapshot } from "./dashboard";
 import { buildKnowledgeBaseInitializationPreview, executeKnowledgeBaseInitialization, type KnowledgeBaseInitializationPreview } from "./initializer";
 import { KnowledgeBaseScheduler } from "./scheduler";
-import { appendScheduledMaintenanceMessage as appendScheduledMaintenanceMessageToSession } from "./scheduled-maintenance";
+import {
+  settleScheduledMaintenanceLifecycle
+} from "./scheduled-maintenance";
 import {
   appendKnowledgeBaseWarning,
   saveSettingsSafely,
@@ -73,9 +76,10 @@ import {
   removeActiveMaintenanceRunJournal,
   type LoadedActiveMaintenanceRunJournal
 } from "../harness/maintenance/active-run-journal";
-import { parseKnowledgeBaseCommand } from "./commands";
+import { parseKnowledgeBaseCommand, requiresMaintenanceAuthority } from "./commands";
 const DASHBOARD_SNAPSHOT_CACHE_TTL_MS = 5000;
 export type MaintenanceRecoveryState = "pending" | "ready" | "blocked";
+type MaintenanceRecoveryKind = "startup" | "in-process";
 
 export interface MaintenanceRecoveryStatus {
   state: MaintenanceRecoveryState;
@@ -88,7 +92,7 @@ type KnowledgeBaseRunCancellationPhase =
   | "commit-locked";
 
 const MAINTENANCE_RECOVERY_PENDING_MESSAGE =
-  "正在恢复上次知识库维护；尚未启动新的 Agent。/history 和 /help 仍可使用。";
+  "正在恢复上次知识库维护；尚未启动新的写入 Agent。普通对话、/ask、/history、/clear 和 /help 仍可使用。";
 const MAINTENANCE_COMMIT_LOCKED_MESSAGE =
   "知识库维护已进入安全提交，不能取消。";
 
@@ -126,6 +130,13 @@ export class KnowledgeBaseManager {
   private maintenanceRecoveryGate: Promise<void> | null = null;
   private maintenanceRecoveryState: MaintenanceRecoveryState = "pending";
   private maintenanceRecoveryError = "";
+  private maintenanceRecoveryKind: MaintenanceRecoveryKind = "startup";
+  private maintenanceRecoveryNativeRunIds: string[] = [];
+  private maintenanceStartupNativeRecordIds: Promise<string[]> | null = null;
+  private maintenanceRecoveryGeneration = 0;
+  private maintenanceManagerDisposed = false;
+  private maintenanceWriteLeaseCount = 0;
+  private readonly maintenanceWriteDrainWaiters = new Set<() => void>();
   private dashboardSnapshotCache: { snapshot: KnowledgeBaseDashboardSnapshot; savedAt: number; signature: string } | null = null;
   private dashboardSnapshotPromise: Promise<KnowledgeBaseDashboardSnapshot> | null = null;
 
@@ -171,15 +182,17 @@ export class KnowledgeBaseManager {
           workflowRunId,
           scheduledStartedAt
         }),
-      appendScheduledMaintenanceMessage: (result) => this.appendScheduledMaintenanceMessage(result),
+      settleScheduledMaintenance: (result) => this.settleScheduledMaintenance(result),
       refreshKnowledgeBaseSurfaces: () => this.refreshKnowledgeBaseSurfaces()
     });
   }
 
   register(): void {
-    void this.startMaintenanceRecovery().catch((error) => {
-      console.error("EchoInk knowledge recovery blocked", error);
-    });
+    if (!this.plugin.isEchoInkConversationStoreV2MigrationRequired()) {
+      void this.startMaintenanceRecovery().catch((error) => {
+        console.error("EchoInk knowledge recovery blocked", error);
+      });
+    }
     this.plugin.addCommand({
       id: "knowledge-base-initialize",
       name: "知识库：初始化 LLM Wiki",
@@ -206,17 +219,23 @@ export class KnowledgeBaseManager {
     this.plugin.addCommand({
       id: "knowledge-base-capture-idea",
       name: "知识库：记录想法到 inbox",
-      callback: () => void this.captureText("inbox")
+      callback: () => void this.captureText("inbox").catch((error) => {
+        new Notice(error instanceof Error ? error.message : String(error));
+      })
     });
     this.plugin.addCommand({
       id: "knowledge-base-capture-link",
       name: "知识库：收集链接到 raw",
-      callback: () => void this.captureText("raw-articles")
+      callback: () => void this.captureText("raw-articles").catch((error) => {
+        new Notice(error instanceof Error ? error.message : String(error));
+      })
     });
     this.plugin.addCommand({
       id: "knowledge-base-capture-active-attachment",
       name: "知识库：收集当前图片或 PDF",
-      callback: () => void this.captureActiveAttachment()
+      callback: () => void this.captureActiveAttachment().catch((error) => {
+        new Notice(error instanceof Error ? error.message : String(error));
+      })
     });
     this.plugin.addCommand({
       id: "knowledge-base-cancel",
@@ -224,18 +243,23 @@ export class KnowledgeBaseManager {
       callback: () => void this.cancelMaintenance()
     });
     this.plugin.addRibbonIcon("library", "知识库管理", () => void this.plugin.activateKnowledgeBaseChannel());
-    this.plugin.app.workspace.onLayoutReady(() => {
-      void this.waitUntilMaintenanceReady()
-        .then(() => this.scheduler.start())
-        .catch((error) => {
-          console.error("EchoInk scheduled knowledge recovery blocked", error);
-        });
-    });
+    if (!this.plugin.isEchoInkConversationStoreV2MigrationRequired()) {
+      this.plugin.app.workspace.onLayoutReady(() => {
+        void this.waitUntilMaintenanceReady()
+          .then(() => this.scheduler.start())
+          .catch((error) => {
+            console.error("EchoInk scheduled knowledge recovery blocked", error);
+          });
+      });
+    }
   }
 
   async unload(): Promise<void> {
+    this.maintenanceManagerDisposed = true;
     this.scheduler.unload();
+    await this.maintenanceRecoveryGate?.catch(() => undefined);
     await this.agentTaskService.unload();
+    await this.waitForMaintenanceWriteAuthorityDrain();
     this.cancelRequested = false;
   }
 
@@ -339,13 +363,16 @@ export class KnowledgeBaseManager {
 
   async handleUserMessage(text: string, attachments: StoredAttachment[] = [], turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
     const command = parseKnowledgeBaseCommand(text, attachments.length);
+    const needsMaintenanceAuthority = requiresMaintenanceAuthority(command);
+    if (
+      this.maintenanceRecoveryState === "blocked"
+      && needsMaintenanceAuthority
+    ) {
+      await this.retryMaintenanceRecovery().catch(() => undefined);
+    }
     if (
       this.maintenanceRecoveryState !== "ready"
-      // /history is executed by the local composer before it reaches the
-      // Manager. Letting it fall through here would hit the generic capture
-      // branch in command-router and could turn a read-only command into an
-      // inbox write. /help is the only pure local result handled here.
-      && command.intent !== "help"
+      && needsMaintenanceAuthority
     ) {
       const mode = knowledgeBaseRunModeForCommandIntent(command.intent);
       return {
@@ -358,7 +385,16 @@ export class KnowledgeBaseManager {
           : {})
       };
     }
-    return handleKnowledgeBaseUserMessage({
+    // These commands are normally consumed by the local composer. Keep a
+    // Manager-level guard so alternate callers cannot fall through to the
+    // router's generic capture branch and accidentally write to inbox.
+    if (command.intent === "history") {
+      return { status: "success", message: "知识库历史由当前页面的本地历史视图打开。" };
+    }
+    if (command.intent === "clear") {
+      return { status: "success", message: "知识库页面由当前会话在本地清空并开启新上下文。" };
+    }
+    const execute = async () => await handleKnowledgeBaseUserMessage({
       previewInitialization: () => this.previewInitialization(),
       executeInitialization: (preview) => this.executeInitialization(preview),
       markInitializationFailed: () => this.markInitializationFailed(),
@@ -372,6 +408,9 @@ export class KnowledgeBaseManager {
       lastReportPath: () => this.plugin.settings.knowledgeBase.lastReportPath || "",
       formatFailureContext: (reportPath) => this.formatFailureContext(reportPath)
     }, text, attachments, turnOptionOverrides);
+    return needsMaintenanceAuthority
+      ? await this.withMaintenanceWriteAuthority(execute)
+      : await execute();
   }
 
   private async markInitializationFailed(): Promise<void> {
@@ -427,7 +466,28 @@ export class KnowledgeBaseManager {
   }
 
   async calibrateRawDigestStatus(): Promise<KnowledgeBaseRunResult> {
-    return this.rawDigestCalibrationRunner.calibrateRawDigestStatus();
+    let releaseAuthority: (() => void) | null = null;
+    try {
+      releaseAuthority = await this.acquireMaintenanceWriteAuthority();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(`知识库维护恢复被阻断：${message}`);
+      return {
+        status: "failed",
+        reportPath: this.plugin.settings.knowledgeBase.lastReportPath,
+        summary: "",
+        processedSources: [],
+        terminalPhase: "recovery-blocked",
+        commitState: "pre-wal",
+        error: message,
+        failureCode: "maintenance-recovery-blocked"
+      };
+    }
+    try {
+      return await this.rawDigestCalibrationRunner.calibrateRawDigestStatus();
+    } finally {
+      releaseAuthority();
+    }
   }
 
   async runMaintenance(mode: KnowledgeBaseRunMode = "maintain", userRequest = "", turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseRunResult> {
@@ -456,8 +516,9 @@ export class KnowledgeBaseManager {
           : {})
       }
       : snapshottedTurnOptions;
+    let releaseAuthority: (() => void) | null = null;
     try {
-      await this.waitUntilMaintenanceReady();
+      releaseAuthority = await this.acquireMaintenanceWriteAuthority();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       new Notice(`知识库维护恢复被阻断：${message}`);
@@ -480,12 +541,20 @@ export class KnowledgeBaseManager {
         failureCode: "maintenance-recovery-blocked"
       };
     }
-    return this.maintenanceRunner.runMaintenance(
-      mode,
-      userRequest,
-      frozenTurnOptions,
-      selectedBackend
-    );
+    try {
+      const result = await this.maintenanceRunner.runMaintenance(
+        mode,
+        userRequest,
+        frozenTurnOptions,
+        selectedBackend
+      );
+      if (durableWorkflow && result.commitState === "wal-persisted") {
+        this.startInProcessMaintenanceRecovery(result);
+      }
+      return result;
+    } finally {
+      releaseAuthority();
+    }
   }
 
   private async answerQuestion(text: string, turnOptionOverrides?: KnowledgeBaseTurnOptionOverrides): Promise<KnowledgeBaseChatResult> {
@@ -549,16 +618,52 @@ export class KnowledgeBaseManager {
     return await this.settlePendingKnowledgeBaseNativeExecutions();
   }
 
-  async settlePendingKnowledgeBaseNativeExecutions(): Promise<number> {
-    return await this.agentTaskService.settlePendingNativeExecutions();
+  async settlePendingKnowledgeBaseNativeExecutions(
+    runIds?: readonly string[]
+  ): Promise<number> {
+    return await this.agentTaskService.settlePendingNativeExecutions(runIds);
   }
 
   getLastNativeLifecycleSummary() {
     return this.agentTaskService.getLastNativeLifecycleSummary();
   }
 
-  private startMaintenanceRecovery(): Promise<void> {
-    if (this.maintenanceRecoveryGate) return this.maintenanceRecoveryGate;
+  private startMaintenanceRecovery(
+    kind: MaintenanceRecoveryKind = this.maintenanceRecoveryKind,
+    nativeRunIds: readonly string[] = this.maintenanceRecoveryNativeRunIds
+  ): Promise<void> {
+    if (this.maintenanceManagerDisposed) {
+      return Promise.reject(new Error("知识库管理器已卸载"));
+    }
+    if (
+      this.maintenanceRecoveryGate
+      && this.maintenanceRecoveryState !== "ready"
+    ) {
+      return this.maintenanceRecoveryGate;
+    }
+    const generation = this.maintenanceRecoveryGeneration + 1;
+    this.maintenanceRecoveryGeneration = generation;
+    const recoveryNativeRunIds = Array.from(new Set(
+      nativeRunIds.map((runId) => runId.trim()).filter(Boolean)
+    ));
+    // Queue the startup snapshot on the Native Store mutation lane before any
+    // UI refresh can re-enter and register a new knowledge execution. The
+    // later reconciliation therefore owns exact pre-start record identities,
+    // not an ambiguous wall-clock boundary.
+    const startupNativeRecordIds = kind === "startup"
+      ? this.snapshotStartupNativeRecordIds()
+      : Promise.resolve([] as string[]);
+    let resolveRecovery!: () => void;
+    let rejectRecovery!: (error: unknown) => void;
+    const recovery = new Promise<void>((resolve, reject) => {
+      resolveRecovery = resolve;
+      rejectRecovery = reject;
+    });
+    // Publish the new generation's gate before any UI callback can re-enter
+    // waitUntilMaintenanceReady() and observe the previous resolved gate.
+    this.maintenanceRecoveryGate = recovery;
+    this.maintenanceRecoveryKind = kind;
+    this.maintenanceRecoveryNativeRunIds = [...recoveryNativeRunIds];
     this.maintenanceRecoveryState = "pending";
     this.maintenanceRecoveryError = "";
     this.markPendingMaintenanceUiRecoveryState(
@@ -566,34 +671,178 @@ export class KnowledgeBaseManager {
       MAINTENANCE_RECOVERY_PENDING_MESSAGE
     );
     this.refreshSurfacesAfterRecoveryStateChange();
-    const recovery = this.recoverMaintenanceWorkflowsAtStartup().then(
+    void Promise.all([
+      this.waitForMaintenanceWriteAuthorityDrain(),
+      startupNativeRecordIds
+    ])
+      .then(([, recordIds]) =>
+        this.recoverMaintenanceWorkflows(kind, recordIds)
+      )
+      .then(async () => {
+        if (
+          kind === "in-process"
+          && recoveryNativeRunIds.length
+        ) {
+          const settlement = await this.agentTaskService
+            .settlePendingNativeExecutionsForRunIds(
+            recoveryNativeRunIds
+          );
+          const matchedRunIds = new Set(settlement.matchedRunIds);
+          const missingRunIds = recoveryNativeRunIds.filter(
+            (runId) => !matchedRunIds.has(runId)
+          );
+          if (
+            settlement.localCommitStatus !== "committed"
+            || missingRunIds.length
+          ) {
+            throw Object.assign(
+              new Error(
+                missingRunIds.length
+                  ? `WAL 维护 Native lifecycle 缺少匹配记录：${missingRunIds.join(", ")}`
+                  : "WAL 维护 Native lifecycle 本地终态尚未耐久"
+              ),
+              { code: "MAINTENANCE_NATIVE_SETTLEMENT_PENDING" }
+            );
+          }
+        }
+      })
+      .then(
       () => {
-        this.maintenanceRecoveryState = "ready";
-        this.maintenanceRecoveryError = "";
-        this.refreshSurfacesAfterRecoveryStateChange();
+        if (
+          !this.maintenanceManagerDisposed
+          && this.maintenanceRecoveryGeneration === generation
+        ) {
+          this.maintenanceRecoveryState = "ready";
+          this.maintenanceRecoveryError = "";
+          this.refreshSurfacesAfterRecoveryStateChange();
+        }
+        resolveRecovery();
       },
       (error) => {
-        this.maintenanceRecoveryState = "blocked";
-        this.maintenanceRecoveryError = error instanceof Error
-          ? error.message
-          : String(error);
-        this.markPendingMaintenanceUiRecoveryState(
-          "recovery-blocked",
-          maintenanceRecoveryBlockedMessage(this.maintenanceRecoveryError)
-        );
-        this.refreshSurfacesAfterRecoveryStateChange();
-        throw error;
+        if (
+          !this.maintenanceManagerDisposed
+          && this.maintenanceRecoveryGeneration === generation
+        ) {
+          this.maintenanceRecoveryState = "blocked";
+          this.maintenanceRecoveryError = error instanceof Error
+            ? error.message
+            : String(error);
+          this.markPendingMaintenanceUiRecoveryState(
+            "recovery-blocked",
+            maintenanceRecoveryBlockedMessage(this.maintenanceRecoveryError)
+          );
+          this.refreshSurfacesAfterRecoveryStateChange();
+        }
+        rejectRecovery(error);
       }
     );
-    this.maintenanceRecoveryGate = recovery;
     return recovery;
   }
 
   private async waitUntilMaintenanceReady(): Promise<void> {
+    this.assertMaintenanceManagerActive();
+    if (this.maintenanceRecoveryState === "ready") return;
     await this.startMaintenanceRecovery();
+    this.assertMaintenanceManagerActive();
+  }
+
+  private async retryMaintenanceRecovery(): Promise<void> {
+    this.assertMaintenanceManagerActive();
+    if (this.maintenanceRecoveryState === "ready") return;
+    if (this.maintenanceRecoveryState === "pending") {
+      await this.startMaintenanceRecovery();
+      this.assertMaintenanceManagerActive();
+      return;
+    }
+    // A rejected startup promise is intentionally cached to keep callers from
+    // racing a second replay. A later explicit command is a safe retry point:
+    // it creates one new shared gate and still never starts an Agent until the
+    // previous WAL has been fully recovered.
+    const kind = this.maintenanceRecoveryKind;
+    const nativeRunIds = [...this.maintenanceRecoveryNativeRunIds];
+    this.maintenanceRecoveryGate = null;
+    await this.startMaintenanceRecovery(kind, nativeRunIds);
+    this.assertMaintenanceManagerActive();
+  }
+
+  private async acquireMaintenanceAuthority(): Promise<void> {
+    this.assertMaintenanceManagerActive();
+    if (this.maintenanceRecoveryState === "ready") return;
+    await (this.maintenanceRecoveryState === "blocked"
+      ? this.retryMaintenanceRecovery()
+      : this.waitUntilMaintenanceReady());
+    this.assertMaintenanceManagerActive();
+  }
+
+  private async acquireMaintenanceWriteAuthority(): Promise<() => void> {
+    this.assertMaintenanceManagerActive();
+    await this.acquireMaintenanceAuthority();
+    this.assertMaintenanceManagerActive();
+    if (this.maintenanceRecoveryState !== "ready") {
+      throw new Error(this.maintenanceRecoveryStatus.message);
+    }
+    return this.issueMaintenanceWriteAuthority();
+  }
+
+  private issueMaintenanceWriteAuthority(): () => void {
+    this.assertMaintenanceManagerActive();
+    this.maintenanceWriteLeaseCount += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.maintenanceWriteLeaseCount -= 1;
+      if (this.maintenanceWriteLeaseCount !== 0) return;
+      const waiters = [...this.maintenanceWriteDrainWaiters];
+      this.maintenanceWriteDrainWaiters.clear();
+      for (const resolve of waiters) resolve();
+    };
+  }
+
+  private async withMaintenanceWriteAuthority<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    let releaseAuthority: (() => void) | null = null;
+    if (this.maintenanceRecoveryState === "ready") {
+      releaseAuthority = this.issueMaintenanceWriteAuthority();
+    } else {
+      try {
+        releaseAuthority = await this.acquireMaintenanceWriteAuthority();
+      } catch (error) {
+        if (this.maintenanceManagerDisposed) throw error;
+        throw new Error(this.maintenanceRecoveryStatus.message);
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      releaseAuthority();
+    }
+  }
+
+  private waitForMaintenanceWriteAuthorityDrain(): Promise<void> {
+    if (this.maintenanceWriteLeaseCount === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.maintenanceWriteDrainWaiters.add(resolve);
+    });
+  }
+
+  private startInProcessMaintenanceRecovery(
+    result: KnowledgeBaseRunResult
+  ): void {
+    if (this.maintenanceManagerDisposed) return;
+    if (this.maintenanceRecoveryState === "pending") return;
+    const nativeRunIds = maintenanceNativeRunIds(result);
+    void this.startMaintenanceRecovery("in-process", nativeRunIds).catch((error) => {
+      console.error(
+        `EchoInk knowledge WAL recovery blocked (${result.workflowRunId ?? "unknown"})`,
+        error
+      );
+    });
   }
 
   private refreshSurfacesAfterRecoveryStateChange(): void {
+    if (this.maintenanceManagerDisposed) return;
     try {
       this.refreshKnowledgeBaseSurfaces();
     } catch (error) {
@@ -609,6 +858,7 @@ export class KnowledgeBaseManager {
     if (!pendingRuns.length) return;
     const runIds = new Set(pendingRuns.map((run) => run.runId));
     for (const run of pendingRuns) {
+      if (run.message.runTerminalRecovered === true) continue;
       run.message.status = status;
       run.message.text = message;
       run.session.updatedAt = Date.now();
@@ -620,6 +870,7 @@ export class KnowledgeBaseManager {
           || !runIds.has(message.runId)
           || message.itemType === "knowledgeBase"
           || !isMaintenanceRecoveryUiStatus(message.status)
+          || message.runTerminalRecovered === true
         ) {
           continue;
         }
@@ -628,7 +879,28 @@ export class KnowledgeBaseManager {
     }
   }
 
-  private async recoverMaintenanceWorkflowsAtStartup(): Promise<void> {
+  private assertMaintenanceManagerActive(): void {
+    if (this.maintenanceManagerDisposed) {
+      throw new Error("知识库管理器已卸载");
+    }
+  }
+
+  private snapshotStartupNativeRecordIds(): Promise<string[]> {
+    if (!this.maintenanceStartupNativeRecordIds) {
+      this.maintenanceStartupNativeRecordIds =
+        this.plugin.snapshotPendingNativeExecutionRecordIdsForRecovery({
+          surface: "knowledge"
+        }).then((recordIds) => Array.from(new Set(
+          recordIds.map((recordId) => recordId.trim()).filter(Boolean)
+        )));
+    }
+    return this.maintenanceStartupNativeRecordIds;
+  }
+
+  private async recoverMaintenanceWorkflows(
+    kind: MaintenanceRecoveryKind,
+    startupNativeRecordIds: readonly string[]
+  ): Promise<void> {
     const vaultPath = this.plugin.getVaultPath();
     if (!vaultPath.trim()) throw new Error("知识库维护恢复无法确定当前 Vault 路径");
     const storageRootPath =
@@ -657,7 +929,9 @@ export class KnowledgeBaseManager {
       );
     }
 
-    const recoveryReason = "插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。";
+    const recoveryReason = kind === "startup"
+      ? "插件重新加载后，上次知识库任务没有正常结束，已恢复为空闲状态。"
+      : "当前进程已接管 WAL 恢复，未再次运行 Agent。";
     const activeRunRecovery = this.recoverActiveMaintenanceRuns(
       await listActiveMaintenanceRunJournals(storageRootPath),
       recoveryReason
@@ -688,6 +962,7 @@ export class KnowledgeBaseManager {
       || reconciledMessageCount
     ) {
       const saveError = await saveSettingsSafely(this.plugin, {
+        flushConversationStore: true,
         flushKnowledgeBaseHistory: false
       });
       if (saveError) {
@@ -700,10 +975,13 @@ export class KnowledgeBaseManager {
         expectedDigest: active.record.digest
       });
     }
-    await this.plugin.failPendingNativeExecutionsForRecovery({
-      reason: recoveryReason,
-      surface: "knowledge"
-    });
+    if (kind === "startup") {
+      await this.plugin.failPendingNativeExecutionsForRecovery({
+        reason: recoveryReason,
+        surface: "knowledge",
+        recordIds: startupNativeRecordIds
+      });
+    }
   }
 
   private recoverActiveMaintenanceRuns(
@@ -947,7 +1225,6 @@ export class KnowledgeBaseManager {
     recoveryReason: string
   ): number {
     const pending = this.pendingMaintenanceUiRuns();
-    if (!pending.length) return 0;
     const settings = this.plugin.settings.knowledgeBase;
     const historyByRunId = new Map<string, KnowledgeBaseMaintenanceHistoryEntry>();
     for (const entry of settings.maintenanceHistory) {
@@ -992,6 +1269,7 @@ export class KnowledgeBaseManager {
     }
 
     let changed = 0;
+    const reconciledHistoryRunIds = new Set<string>();
     for (const run of pending) {
       let history = assignments.get(run);
       if (!history) {
@@ -1001,6 +1279,22 @@ export class KnowledgeBaseManager {
         );
       }
       changed += this.projectMaintenanceHistoryToUiRun(run, history);
+      if (history.runId) reconciledHistoryRunIds.add(history.runId);
+    }
+    const knowledgeSession = this.plugin.settings.sessions.find((session) =>
+      session.kind === "knowledge-base"
+      || session.id === settings.sessionId
+    );
+    if (knowledgeSession) {
+      for (const runId of newlyRecoveredHistoryRunIds) {
+        if (reconciledHistoryRunIds.has(runId)) continue;
+        const history = historyByRunId.get(runId);
+        if (!history) continue;
+        changed += this.ensureRecoveredMaintenanceTerminal(
+          knowledgeSession,
+          history
+        ).appended ? 1 : 0;
+      }
     }
     return changed;
   }
@@ -1066,7 +1360,49 @@ export class KnowledgeBaseManager {
     run: PendingMaintenanceUiRun,
     history: KnowledgeBaseMaintenanceHistoryEntry
   ): number {
-    const mode = run.message.knowledgeBaseUi?.mode ?? "maintain";
+    const terminal = this.ensureRecoveredMaintenanceTerminal(
+      run.session,
+      history
+    );
+    for (const message of run.session.messages) {
+      if (message.runId?.trim() !== run.runId) continue;
+      projectMaintenanceMessageProvenance(message, history);
+    }
+    // Keep the original run card as a live-only projection. New run cards are
+    // filtered before V2 commit; already-durable legacy cards remain an
+    // immutable prefix. The append-only terminal above is the durable result.
+    run.message.status = terminal.message.status;
+    run.message.text = terminal.message.text;
+    run.message.completedAt = terminal.message.completedAt;
+    run.message.runTerminalRecovered = true;
+    delete run.message.runTerminalRecoveryPending;
+    run.session.updatedAt = Math.max(
+      run.session.updatedAt,
+      terminal.message.completedAt ?? terminal.message.createdAt
+    );
+    return 1;
+  }
+
+  private ensureRecoveredMaintenanceTerminal(
+    session: StoredSession,
+    history: KnowledgeBaseMaintenanceHistoryEntry
+  ): {
+    appended: boolean;
+    message: ChatMessage;
+  } {
+    const runId = history.runId?.trim() ?? "";
+    const messageId = recoveredMaintenanceMessageId(
+      runId || `${history.mode}:${history.at}`
+    );
+    const existing = session.messages.find(
+      (message) => message.id === messageId
+    );
+    if (existing) return { appended: false, message: existing };
+
+    const recoveredMode = orphanedMaintenanceMode(history.mode, false);
+    const mode: KnowledgeBaseCommandUiMode = recoveredMode === "unknown"
+      ? "maintain"
+      : recoveredMode;
     const settings = this.plugin.settings.knowledgeBase;
     const latestHistory = [...settings.maintenanceHistory]
       .reverse()
@@ -1109,41 +1445,25 @@ export class KnowledgeBaseManager {
       ...(history.warnings ? { warnings: history.warnings } : {}),
       ...(error ? { error } : {})
     };
-    for (const message of run.session.messages) {
-      if (message.runId?.trim() !== run.runId) continue;
-      projectMaintenanceMessageProvenance(message, history);
-    }
-    run.message.status = maintenanceUiMessageStatus(history.status);
-    run.message.text = recoveredMaintenanceMessageText(
-      mode,
-      history,
-      error
-    );
-    run.message.knowledgeBaseUi =
-      buildKnowledgeBaseMaintainReportPayload(mode, result);
-    run.message.completedAt = Date.now();
-    run.message.runTerminalRecovered = true;
-    delete run.message.runTerminalRecoveryPending;
-
-    for (let index = run.session.messages.length - 1; index >= 0; index -= 1) {
-      const message = run.session.messages[index];
-      if (
-        message === run.message
-        || message.runId !== run.runId
-        || !isMaintenanceRecoveryUiStatus(message.status)
-      ) {
-        continue;
-      }
-      if (isDisposableEmptyProcessMessage(message)) {
-        run.session.messages.splice(index, 1);
-        continue;
-      }
-      message.status = maintenanceProcessMessageStatus(history.status);
-      message.completedAt = run.message.completedAt;
-      delete message.runTerminalRecoveryPending;
-    }
-    run.session.updatedAt = run.message.completedAt;
-    return 1;
+    const now = Date.now();
+    const message: ChatMessage = {
+      id: messageId,
+      role: "assistant",
+      title: "知识库管理",
+      itemType: "knowledgeBase",
+      status: maintenanceUiMessageStatus(history.status),
+      text: recoveredMaintenanceMessageText(mode, history, error),
+      ...(runId ? { runId } : {}),
+      knowledgeBaseUi:
+        buildKnowledgeBaseMaintainReportPayload(mode, result),
+      createdAt: now,
+      completedAt: now,
+      runTerminalRecovered: true
+    };
+    projectMaintenanceMessageProvenance(message, history);
+    session.messages.push(message);
+    session.updatedAt = Math.max(session.updatedAt, now);
+    return { appended: true, message };
   }
 
   private async runKnowledgeAgentTask(input: {
@@ -1170,8 +1490,10 @@ export class KnowledgeBaseManager {
     throwIfKnowledgeBaseCanceled(this.cancelRequested);
     const backend = input.backend ?? this.resolveKnowledgeBackend();
     const maintenanceResourceProfile = input.maintenanceResourceProfile === true;
-    const resources = await this.prepareKnowledgeAgentResources(backend, maintenanceResourceProfile);
-    const toolBridge = !maintenanceResourceProfile && harnessKnowledgeUsesEchoInkToolBridge(backend)
+    const isolateExternalResources = maintenanceResourceProfile
+      || input.turnOptionOverrides?.externalResources === "disabled";
+    const resources = await this.prepareKnowledgeAgentResources(backend, isolateExternalResources);
+    const toolBridge = !isolateExternalResources && harnessKnowledgeUsesEchoInkToolBridge(backend)
       ? await this.prepareKnowledgeAgentToolBridge()
       : null;
     const prompt = harnessKnowledgePromptUsesPreparedResources(backend)
@@ -1272,30 +1594,44 @@ export class KnowledgeBaseManager {
     await this.scheduler.runScheduledIfDue(forceCatchUp);
   }
 
-  private async appendScheduledMaintenanceMessage(result: KnowledgeBaseRunResult): Promise<void> {
-    await appendScheduledMaintenanceMessageToSession(this.plugin, result, async () => {
-      await this.archivePendingCodexKnowledgeThreads();
+  private async settleScheduledMaintenance(result: KnowledgeBaseRunResult): Promise<void> {
+    await settleScheduledMaintenanceLifecycle(this.plugin, result, async () => {
+      const nativeRunIds = maintenanceNativeRunIds(result);
+      if (nativeRunIds.length) {
+        await this.settlePendingKnowledgeBaseNativeExecutions(nativeRunIds);
+      }
+      return this.getLastNativeLifecycleSummary();
     });
   }
 
   async captureText(target: "inbox" | "raw-articles"): Promise<void> {
-    await this.captureService.captureText(target);
+    await this.withMaintenanceWriteAuthority(async () => {
+      await this.captureService.captureText(target);
+    });
   }
 
   async captureWeChatArticle(): Promise<string[]> {
-    return this.captureService.captureWeChatArticle();
+    return await this.withMaintenanceWriteAuthority(
+      async () => await this.captureService.captureWeChatArticle()
+    );
   }
 
   async captureWebPage(): Promise<string[]> {
-    return this.captureService.captureWebPage();
+    return await this.withMaintenanceWriteAuthority(
+      async () => await this.captureService.captureWebPage()
+    );
   }
 
   async captureLink(): Promise<string[]> {
-    return this.captureService.captureLink();
+    return await this.withMaintenanceWriteAuthority(
+      async () => await this.captureService.captureLink()
+    );
   }
 
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
-    return this.captureService.captureExternalFiles(files);
+    return await this.withMaintenanceWriteAuthority(
+      async () => await this.captureService.captureExternalFiles(files)
+    );
   }
 
   private async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments", text: string, attachments: StoredAttachment[]): Promise<string[]> {
@@ -1303,7 +1639,9 @@ export class KnowledgeBaseManager {
   }
 
   async captureActiveAttachment(): Promise<void> {
-    await this.captureService.captureActiveAttachment();
+    await this.withMaintenanceWriteAuthority(async () => {
+      await this.captureService.captureActiveAttachment();
+    });
   }
 }
 
@@ -1508,24 +1846,10 @@ function maintenanceUiMessageStatus(
   return "failed";
 }
 
-function maintenanceProcessMessageStatus(
-  status: KnowledgeBaseMaintenanceHistoryEntry["status"]
-): string {
-  if (status === "success") return "completed";
-  if (status === "canceled") return "interrupted";
-  return "error";
-}
-
-function isDisposableEmptyProcessMessage(message: ChatMessage): boolean {
-  if (String(message.text ?? "").trim()) return false;
-  return message.itemType === "thinking"
-    || message.itemType === "reasoning"
-    || message.itemType === "commandExecution"
-    || message.itemType === "fileChange"
-    || message.itemType === "mcpToolCall"
-    || message.itemType === "dynamicToolCall"
-    || message.itemType === "collabAgentToolCall"
-    || message.itemType === "plan";
+function recoveredMaintenanceMessageId(runId: string): string {
+  return `knowledge-maintenance-recovery-${createHash("sha256")
+    .update(runId, "utf8")
+    .digest("hex")}`;
 }
 
 function recoveredMaintenanceMessageText(
@@ -1568,12 +1892,22 @@ function isMaintenanceRecoveryUiStatus(status: unknown): boolean {
     || status === "recovery-blocked";
 }
 
+function maintenanceNativeRunIds(
+  result: Pick<KnowledgeBaseRunResult, "attempts">
+): string[] {
+  return Array.from(new Set(
+    (result.attempts ?? [])
+      .map((attempt) => attempt.submitted?.harnessRunId?.trim() ?? "")
+      .filter(Boolean)
+  ));
+}
+
 function maintenanceRecoveryBlockedMessage(error: string): string {
   const detail = error
     .trim()
     .replace(/^知识库维护恢复被阻断[：:]\s*/, "")
     || "请检查维护诊断";
-  return `上次知识库维护恢复被阻断；尚未启动新的 Agent。原因：${detail}`;
+  return `上次知识库维护恢复被阻断；尚未启动新的写入 Agent。普通对话、/ask、/history、/clear 和 /help 仍可使用。原因：${detail}`;
 }
 
 function dashboardSnapshotSignature(settings: CodexForObsidianPlugin["settings"]["knowledgeBase"]): string {

@@ -1,6 +1,5 @@
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import type { HermesConnectionTestResult } from "../main";
 import { CodexService } from "../core/codex-service";
 import { diagnoseCodexError } from "../core/codex-diagnostics";
 import { swallowError } from "../core/error-handling";
@@ -11,8 +10,17 @@ import { skillResourcesForScope } from "../resources/registry";
 import { EchoInkMcpBrokerService, type CallEchoInkMcpToolInput } from "../resources/mcp-broker-service";
 import type { EchoInkResource } from "../resources/types";
 import { getActiveApiProvider, providerConnectionLabel } from "../settings/settings";
+import { reconcileKnowledgeBaseNativeLifecycleRecovery } from "../knowledge-base/scheduled-maintenance";
 import { confirmModal, requestUserInputModal } from "../ui/modals";
 import type { CodexNotification, CodexSkill, CodexStatusSnapshot } from "../types/app-server";
+import { runBackendProbe } from "../harness/native/backend-probe-lifecycle";
+
+export interface HermesConnectionTestResult {
+  connected: boolean;
+  providerConfigured: boolean;
+  message: string;
+  version: string;
+}
 
 export class EchoInkConnectionService {
   private skillsLoadPromise: Promise<CodexSkill[]> | null = null;
@@ -54,7 +62,11 @@ export class EchoInkConnectionService {
           rateLimits: nextStatus.rateLimits ?? previousStatus?.rateLimits ?? null,
           rateLimitsByLimitId: nextStatus.rateLimitsByLimitId ?? previousStatus?.rateLimitsByLimitId ?? null
         };
-        if (this.plugin.lastStatus.connected) void this.plugin.archivePendingKnowledgeBaseThreads();
+        if (this.plugin.lastStatus.connected) {
+          void this.reconcileKnowledgeBaseNativeLifecycleRecovery().catch((error) => {
+            console.warn("EchoInk Native execution recovery after Codex connection failed", error);
+          });
+        }
       } catch (error) {
         const diagnostic = diagnoseCodexError(error, {
           model: this.plugin.settings.defaultModel,
@@ -83,6 +95,19 @@ export class EchoInkConnectionService {
       this.connectPromise = null;
     });
     return this.connectPromise;
+  }
+
+  private async reconcileKnowledgeBaseNativeLifecycleRecovery(): Promise<void> {
+    await this.plugin.archivePendingKnowledgeBaseThreads();
+    const summary = this.plugin.getKnowledgeBaseManager()
+      ?.getLastNativeLifecycleSummary() ?? null;
+    const reconciliation = reconcileKnowledgeBaseNativeLifecycleRecovery(
+      this.plugin.settings.knowledgeBase,
+      summary
+    );
+    if (!reconciliation.changed) return;
+    await this.plugin.saveSettings(true);
+    this.plugin.refreshKnowledgeBaseSurfaces();
   }
 
   async ensureSkillsLoaded(force = false): Promise<CodexSkill[]> {
@@ -152,16 +177,21 @@ export class EchoInkConnectionService {
         hermes.modelId = selectedModel.modelId;
       }
       try {
-        const probe = await backend.runTask({
+        await runBackendProbe({
+          host: this.plugin,
+          backendId: "hermes",
+          settings: this.plugin.settings,
+          vaultPath: this.plugin.getVaultPath(),
+          nativeRefContext: this.plugin.getNativeExecutionRefContext("hermes"),
           prompt: "只回复 PONG",
-          permission: "read-only",
+          expectedToken: "PONG",
+          failureMessage: "Hermes 最小连接检查没有返回 PONG",
           timeoutMs: 60000,
-          abortSignal: options.signal,
+          signal: options.signal,
           ...(selectedModel ? { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
           profile: hermes.profile
         });
         throwIfConnectionTestAborted(options.signal);
-        if (!/\bPONG\b/i.test(probe.text.trim())) throw new Error("Hermes 最小连接检查没有返回 PONG");
         hermes.providerConfigured = true;
         hermes.lastProviderCheckAt = Date.now();
         hermes.lastProviderError = "";

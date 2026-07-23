@@ -15,7 +15,7 @@ import type {
   KnowledgeBaseRunWarning,
   KnowledgeBaseSource
 } from "./types";
-import { formatDateForFile } from "./utils";
+import { formatDateForFile, pad } from "./utils";
 
 const MAINTENANCE_FINAL_BLOCK_START = "<!-- echoink-maintenance-final:v1:start -->";
 const MAINTENANCE_FINAL_BLOCK_END = "<!-- echoink-maintenance-final:v1:end -->";
@@ -301,8 +301,15 @@ export function planKnowledgeBaseMaintenanceReportWrite(input: {
   expected: MaintenanceWorkflowFileCas;
   baselineContent: Buffer;
   desiredMode: number;
+  startedAt: number;
+  completedAt: number;
   finalBlock: KnowledgeBaseMaintenanceFinalBlockInput;
 }): MaintenanceWorkflowManagedUpsertDraft {
+  const reportWithStableTimestamps = withMaintenanceReportTimestamps(
+    input.baselineContent.toString("utf8"),
+    input.startedAt,
+    input.completedAt
+  );
   return {
     kind: "report",
     operation: "upsert",
@@ -312,13 +319,95 @@ export function planKnowledgeBaseMaintenanceReportWrite(input: {
       : { ...input.expected },
     desiredContent: Buffer.from(
       appendKnowledgeBaseMaintenanceFinalBlockContent(
-        input.baselineContent.toString("utf8"),
+        reportWithStableTimestamps,
         input.finalBlock
       ),
       "utf8"
     ),
     desiredMode: normalizeMaintenanceContentMode(input.desiredMode)
   };
+}
+
+/**
+ * Obsidian metadata plugins commonly react to a newly written Markdown file
+ * by adding `created` / `updated` frontmatter. Durable maintenance reports
+ * include those fields before the WAL is sealed so that reaction is a no-op
+ * instead of becoming a post-commit byte-CAS conflict.
+ */
+export function withMaintenanceReportTimestamps(
+  reportText: string,
+  startedAt: number,
+  completedAt: number
+): string {
+  if (
+    !Number.isFinite(startedAt)
+    || !Number.isFinite(completedAt)
+    || completedAt < startedAt
+  ) {
+    throw new Error("知识库维护报告时间戳非法");
+  }
+  const created = formatMaintenanceReportTimestamp(startedAt);
+  const updated = formatMaintenanceReportTimestamp(completedAt);
+  const opening = reportText.match(/^---(\r\n|\n)/);
+  const lineEnding = opening?.[1]
+    ?? (reportText.includes("\r\n") ? "\r\n" : "\n");
+  if (!opening) {
+    return [
+      "---",
+      `created: ${created}`,
+      `updated: ${updated}`,
+      "---",
+      "",
+      reportText
+    ].join(lineEnding);
+  }
+  const closingPattern = /^(?:---|\.\.\.)(?:\r\n|\n|$)/gm;
+  closingPattern.lastIndex = opening[0].length;
+  const closing = closingPattern.exec(reportText);
+  if (!closing) {
+    throw new Error("知识库维护报告 frontmatter 未闭合");
+  }
+  const frontmatter = reportText
+    .slice(opening[0].length, closing.index)
+    .replace(/(?:\r\n|\n)$/, "");
+  const lines = frontmatter ? frontmatter.split(/\r\n|\n/) : [];
+  const next: string[] = [];
+  let sawCreated = false;
+  let sawUpdated = false;
+  for (const line of lines) {
+    if (isTopLevelFrontmatterKey(line, "created")) {
+      if (!sawCreated) next.push(line);
+      sawCreated = true;
+      continue;
+    }
+    if (isTopLevelFrontmatterKey(line, "updated")) {
+      if (!sawUpdated) next.push(`updated: ${updated}`);
+      sawUpdated = true;
+      continue;
+    }
+    next.push(line);
+  }
+  if (!sawCreated) next.push(`created: ${created}`);
+  if (!sawUpdated) next.push(`updated: ${updated}`);
+  return [
+    `---${lineEnding}`,
+    next.length ? `${next.join(lineEnding)}${lineEnding}` : "",
+    reportText.slice(closing.index)
+  ].join("");
+}
+
+function isTopLevelFrontmatterKey(line: string, key: string): boolean {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^(?:${escaped}|["']${escaped}["'])\\s*:`, "i")
+    .test(line);
+}
+
+function formatMaintenanceReportTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error("知识库维护报告时间戳非法");
+  }
+  return `${formatDateForFile(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function buildKnowledgeBaseMaintenanceFinalBlock(

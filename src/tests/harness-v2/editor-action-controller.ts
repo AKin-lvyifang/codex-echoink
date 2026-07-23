@@ -96,6 +96,7 @@ async function assertEditorActionUsesAwaitResultInsteadOfRawDeltaWaiter(): Promi
   });
   const terminalCalls: string[] = [];
   let capturedRequest: any = null;
+  const viewLifecycleController = new AbortController();
   const view: any = {
     plugin: {
       settings: structuredClone(DEFAULT_SETTINGS),
@@ -134,7 +135,14 @@ async function assertEditorActionUsesAwaitResultInsteadOfRawDeltaWaiter(): Promi
       }),
       settleHarnessRunTerminal: async (input: { status: string }) => {
         terminalCalls.push(input.status);
-      }
+        return await kernel.settleRunTerminal(input as any);
+      },
+      recordNativeExecution: async () => undefined,
+      settleNativeExecution: async (input: { recordId: string }) => ({
+        id: input.recordId,
+        localCommit: "committed",
+        cleanup: "pending"
+      })
     },
     selectedServiceTier: "auto",
     running: false,
@@ -142,6 +150,10 @@ async function assertEditorActionUsesAwaitResultInsteadOfRawDeltaWaiter(): Promi
     activeRunKind: "",
     activeRunSessionId: "",
     activeTurnId: "",
+    captureViewLifecycle: () => ({
+      generation: 1,
+      signal: viewLifecycleController.signal
+    }),
     editorActionThreadId: "",
     editorActionThreadIds: new Set<string>(),
     editorActionTurnIds: new Set<string>(),
@@ -150,13 +162,13 @@ async function assertEditorActionUsesAwaitResultInsteadOfRawDeltaWaiter(): Promi
     editorActionActiveTimeoutMs: 0,
     editorActionRun: null,
     takeEditorActionThread: async () => "editor-thread-1",
+    cleanupNativeExecutionRecord: async () => undefined,
     releaseEditorActionRunLock: () => undefined,
     clearTurnWatchdog: () => undefined,
     clearActiveRun: () => undefined,
     applyStatus: () => undefined,
     setEditorActionStatus: () => undefined,
     armTurnWatchdog: () => undefined,
-    prewarmEditorActionThread: () => undefined,
     effectiveEditorActionModel: (_available: string[], configured: string) => configured,
     withEditorActionTimeout: async (_promise: Promise<string>, _timeoutMs: number, message: string) => {
       throw new Error(message);

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink">
-    <img width="1024" alt="Codex EchoInk v1.3.0 发布图，展示统一安装、多 Agent 运行时、本地记忆和轻量模型。" src="docs/images/codex-echoink-v1.3.0-release.png">
+    <img width="1024" alt="Codex EchoInk v1.4.0 发布图，展示全新知识维护进度卡片、校验后写入的命令流程和更清楚的报告。" src="docs/images/codex-echoink-v1.4.0-release.png">
   </a>
 </p>
 
@@ -24,14 +24,14 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-v1.3.0-0EA5E9?style=flat-square" alt="版本 v1.3.0">
+    <img src="https://img.shields.io/badge/version-v1.4.0-0EA5E9?style=flat-square" alt="版本 v1.4.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
     <img src="https://img.shields.io/badge/language-English_%2B_%E4%B8%AD%E6%96%87-F59E0B?style=flat-square" alt="英文和中文 README">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.3.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest"><strong>下载 v1.4.0</strong></a>
   ·
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">最新 Release</a>
 </p>
@@ -179,6 +179,19 @@ Codex EchoInk 的本质是：将“墨水（Ink，记录）”凝聚成“古抄
 
 <a id="更新说明"></a>
 ## 更新说明
+
+### v1.4.0
+
+<img width="1024" alt="Codex EchoInk v1.4.0 发布图，展示全新知识维护进度卡片、校验后写入的命令流程和更清楚的报告。" src="docs/images/codex-echoink-v1.4.0-release.png">
+
+**对话更可靠，知识维护更安全：** EchoInk 现在能在上下文变化和 Agent 切换后继续使用同一份可恢复对话历史；知识维护也会先校验成果，再写入 Vault。
+
+- 旧的普通对话和知识库对话会自动升级；存储迁移、上下文切换、插件重载或更换 Agent 后，无需手动重建会话。
+- `/maintain` 通过受保护的维护流程执行：失败尝试会被隔离，成果通过校验后只提交一次，再更新报告和 Raw 状态。
+- 对话历史、工作流运行记录、业务成果和 Agent 原生会话采用相互独立的保留与恢复规则。
+- 使用紧凑、可搜索的会话选择器管理长会话列表；运行中的会话受到保护，已完成会话可批量管理。
+- 知识库报告可以稳定展开和收起，报告中的 Vault 笔记可以直接点击打开。
+- 现有 Vault 笔记和 EchoInk 会话会自动升级，不需要手动迁移或重置会话。
 
 ### v1.3.0
 

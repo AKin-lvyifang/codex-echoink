@@ -8,7 +8,12 @@ import {
   type EchoInkToolCallRequest
 } from "../../../agent/tool-bridge";
 import type { AgentToolBridgeRuntime } from "../../../agent/runtime";
-import type { AgentExactWriteFenceContext, AgentExactWriteFenceReceipt, AgentTaskInput } from "../../../agent/types";
+import {
+  NativeRunRegistrationError,
+  type AgentExactWriteFenceContext,
+  type AgentExactWriteFenceReceipt,
+  type AgentTaskInput
+} from "../../../agent/types";
 import {
   assertExactWriteFenceRequest,
   createExactWriteFenceReceipt,
@@ -18,16 +23,17 @@ import type { UserInput } from "../../../types/app-server";
 import { noCapabilities } from "../../contracts/capability";
 import type { HarnessEvent, HarnessEventSink, HarnessEventType } from "../../contracts/event";
 import type { NativeExecutionDispositionRequest, NativeExecutionDispositionResult, NativeExecutionRef } from "../../contracts/native-execution";
-import type {
-  AgentAdapter,
-  AgentConnectContext,
-  AgentConnectionStatus,
-  AgentManifest,
-  AgentNativeSessionPreparationRequest,
-  AgentNativeSessionPreparationResult,
-  AgentRunRequest,
-  AgentRunResult,
-  NativeResourceSnapshot
+import {
+  AgentNativeSessionStaleError,
+  type AgentAdapter,
+  type AgentConnectContext,
+  type AgentConnectionStatus,
+  type AgentManifest,
+  type AgentNativeSessionPreparationRequest,
+  type AgentNativeSessionPreparationResult,
+  type AgentRunRequest,
+  type AgentRunResult,
+  type NativeResourceSnapshot
 } from "../adapter";
 import type { CodexRichArtifactRecoveryInput } from "./codex-rich-driver";
 import { CodexRichRunDriver } from "./codex-rich-driver";
@@ -37,6 +43,7 @@ export interface CodexRichAgentAdapterOptions {
   displayName: string;
   version: string;
   turnOptions?: TurnOptions;
+  ensureConnected?(context: AgentConnectContext): Promise<AgentConnectionStatus>;
   getNativeThreadId(): string | undefined;
   setNativeThreadId(threadId: string): void;
   buildInput(threadId: string, request: AgentRunRequest): UserInput[] | Promise<UserInput[]>;
@@ -64,7 +71,6 @@ export interface CodexRichAgentAdapterOptions {
 
 export class CodexRichAgentAdapter implements AgentAdapter {
   readonly manifest: AgentManifest;
-  private preparedThreadId = "";
   private readonly runs = new Map<string, CodexRunState>();
 
   constructor(private readonly options: CodexRichAgentAdapterOptions) {
@@ -94,7 +100,10 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     };
   }
 
-  async connect(_context: AgentConnectContext): Promise<AgentConnectionStatus> {
+  async connect(context: AgentConnectContext): Promise<AgentConnectionStatus> {
+    if (this.options.ensureConnected) {
+      return await this.options.ensureConnected(context);
+    }
     return {
       connected: true,
       label: this.manifest.displayName,
@@ -124,19 +133,22 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   }
 
   async prepareNativeSession(request: AgentNativeSessionPreparationRequest): Promise<AgentNativeSessionPreparationResult> {
-    const existing = this.options.getNativeThreadId()?.trim();
-    this.preparedThreadId = "";
-    if (!existing || request.action === "none") return { status: "not-applicable" };
+    if (request.action === "none") return { status: "not-applicable" };
+    const bindingThreadId = request.binding?.nativeThreadId?.trim()
+      || (
+        request.binding?.nativeExecutionRef?.kind === "thread"
+          ? request.binding.nativeExecutionRef.id.trim()
+          : ""
+      );
+    const existing = bindingThreadId || this.options.getNativeThreadId()?.trim();
+    if (!existing) return { status: "not-applicable" };
     if (request.action === "reset") {
-      this.options.setNativeThreadId("");
       return { status: "reset", nativeExecutionId: existing };
     }
     try {
       await this.options.resumeThread(existing, this.options.turnOptions);
-      this.preparedThreadId = existing;
       return { status: "resumed", nativeExecutionId: existing };
     } catch (error) {
-      this.options.setNativeThreadId("");
       return {
         status: "failed",
         nativeExecutionId: existing,
@@ -185,6 +197,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
   }
 
   async run(request: AgentRunRequest, emit: HarnessEventSink): Promise<AgentRunResult> {
+    const isolateNativeThread = request.context.manifest?.mode === "workflow";
     const terminalGate: CodexRunTerminalGate = { emitted: false };
     const driver = this.createDriver(request.runId, emit, terminalGate);
     const state: CodexRunState = {
@@ -196,14 +209,19 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       emit,
       terminalGate,
       toolCallCount: 0,
-      turnOptions: this.turnOptionsForRequest(request)
+      turnOptions: this.turnOptionsForRequest(request),
+      isolateNativeThread,
+      nativeBindingManagedByHarness: request.nativeBindingManagedByHarness === true
     };
     this.runs.set(request.runId, state);
     this.options.notificationHub?.register(driver);
     try {
-      let threadId = await this.ensureThread(state.turnOptions);
+      const ensured = await this.ensureThread(request, state.turnOptions, state.isolateNativeThread);
+      let threadId = ensured.threadId;
       state.threadId = threadId;
+      state.threadWasCreated = ensured.created;
       driver.setThreadId(threadId);
+      await this.registerThreadBeforePrompt(request, state);
       state.exactWriteFenceReceipt = await this.configureExactWriteFence(request, state.turnOptions, threadId);
       let input = await this.buildInitialTurnInput(threadId, request);
       if (state.cancelRequested) {
@@ -212,7 +230,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         return {
           status: "cancelled",
           error: "Run cancelled",
-          nativeExecution: this.buildNativeExecutionRef(threadId),
+          nativeExecution: this.buildNativeExecutionRef(threadId, state),
           nativeThreadId: threadId
         };
       }
@@ -221,12 +239,21 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         turnId = await this.options.startTurn(threadId, input, state.turnOptions);
       } catch (error) {
         if (!isMissingCodexThreadError(error) || state.cancelRequested) throw error;
-        this.options.setNativeThreadId("");
+        if (state.nativeBindingManagedByHarness && !state.isolateNativeThread) {
+          throw new AgentNativeSessionStaleError(
+            `Codex Native thread became stale before prompt submission: ${threadId}`,
+            threadId,
+            error
+          );
+        }
+        if (!state.isolateNativeThread) this.options.setNativeThreadId("");
         const replacement = await this.options.startThread(state.turnOptions);
         threadId = replacement.threadId;
-        this.options.setNativeThreadId(threadId);
+        if (!state.isolateNativeThread) this.options.setNativeThreadId(threadId);
         state.threadId = threadId;
+        state.threadWasCreated = true;
         driver.setThreadId(threadId);
+        await this.registerThreadBeforePrompt(request, state);
         state.exactWriteFenceReceipt = await this.configureExactWriteFence(request, state.turnOptions, threadId);
         input = await this.buildInitialTurnInput(threadId, request);
         if (state.cancelRequested) {
@@ -235,7 +262,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
           return {
             status: "cancelled",
             error: "Run cancelled",
-            nativeExecution: this.buildNativeExecutionRef(threadId),
+            nativeExecution: this.buildNativeExecutionRef(threadId, state),
             nativeThreadId: threadId
           };
         }
@@ -261,7 +288,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         } catch {
           return {
             status: "running",
-            nativeExecution: this.buildNativeExecutionRef(threadId),
+            nativeExecution: this.buildNativeExecutionRef(threadId, state),
             nativeThreadId: threadId,
             nativeSessionId: turnId
           };
@@ -269,7 +296,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       }
       return {
         status: "running",
-        nativeExecution: this.buildNativeExecutionRef(threadId),
+        nativeExecution: this.buildNativeExecutionRef(threadId, state),
         nativeThreadId: threadId,
         nativeSessionId: turnId
       };
@@ -349,7 +376,9 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         }
         await emit(event);
       },
-      interruptTurn: this.options.interruptTurn,
+      interruptTurn: this.options.interruptTurn
+        ? async (threadId, turnId) => await this.options.interruptTurn!(threadId, turnId)
+        : undefined,
       inactivityTimeoutMs: this.options.inactivityTimeoutMs,
       finalAnswerGraceMs: this.options.finalAnswerGraceMs,
       artifactRecovery: this.options.artifactRecovery,
@@ -450,7 +479,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
         signal: state.cancelGate.abortSignal
       }).then(
         (value) => ({ status: "completed", value } as const),
-        (error) => ({ status: "failed", error } as const)
+        (error: unknown) => ({ status: "failed", error } as const)
       );
       const outcome = await Promise.race<BridgeCallOutcome>([
         bridgeCall,
@@ -523,7 +552,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
       terminalData: state.exactWriteFenceReceipt
         ? { ...(result.terminalData ?? {}), exactWriteFenceReceipt: state.exactWriteFenceReceipt }
         : result.terminalData,
-      nativeExecution: result.nativeExecution ?? (state.threadId ? this.buildNativeExecutionRef(state.threadId) : undefined),
+      nativeExecution: result.nativeExecution ?? (state.threadId ? this.buildNativeExecutionRef(state.threadId, state) : undefined),
       nativeThreadId: result.nativeThreadId ?? (state.threadId || undefined),
       nativeSessionId: result.nativeSessionId ?? state.turnId
     };
@@ -581,7 +610,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     return {
       status: "cancelled",
       error: "Run cancelled",
-      nativeExecution: state.threadId ? this.buildNativeExecutionRef(state.threadId) : undefined,
+      nativeExecution: state.threadId ? this.buildNativeExecutionRef(state.threadId, state) : undefined,
       nativeThreadId: state.threadId || undefined,
       nativeSessionId: state.turnId
     };
@@ -595,40 +624,101 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     return this.injectToolBridgePrompt(input);
   }
 
-  private async ensureThread(turnOptions?: TurnOptions): Promise<string> {
-    if (this.preparedThreadId) {
-      const prepared = this.preparedThreadId;
-      this.preparedThreadId = "";
-      if (turnOptions !== this.options.turnOptions) await this.options.resumeThread(prepared, turnOptions);
-      return prepared;
+  private async ensureThread(
+    request: AgentRunRequest,
+    turnOptions?: TurnOptions,
+    isolateNativeThread = false
+  ): Promise<{ threadId: string; created: boolean }> {
+    if (isolateNativeThread) {
+      return {
+        threadId: (await this.options.startThread(turnOptions)).threadId,
+        created: true
+      };
     }
-    const existing = this.options.getNativeThreadId()?.trim();
+    const explicit = request.nativeThreadId?.trim();
+    if (request.nativeBindingManagedByHarness && explicit) {
+      try {
+        await this.options.resumeThread(explicit, turnOptions);
+        return { threadId: explicit, created: false };
+      } catch (error) {
+        if (!isMissingCodexThreadError(error)) throw error;
+        throw new AgentNativeSessionStaleError(
+          `Codex Native thread became stale while resuming: ${explicit}`,
+          explicit,
+          error
+        );
+      }
+    }
+    const existing = request.nativeBindingManagedByHarness
+      ? ""
+      : this.options.getNativeThreadId()?.trim();
     if (existing) {
       try {
         await this.options.resumeThread(existing, turnOptions);
-        return existing;
+        return { threadId: existing, created: false };
       } catch {
         // Fall through and create a replacement thread.
       }
     }
     const started = await this.options.startThread(turnOptions);
-    this.options.setNativeThreadId(started.threadId);
-    return started.threadId;
+    if (!request.nativeBindingManagedByHarness) {
+      this.options.setNativeThreadId(started.threadId);
+    }
+    return { threadId: started.threadId, created: true };
   }
 
-  private buildNativeExecutionRef(threadId: string): NativeExecutionRef | undefined {
+  private async registerThreadBeforePrompt(
+    request: AgentRunRequest,
+    state: CodexRunState
+  ): Promise<void> {
+    const register = request.registerNativeExecution;
+    if (!register || state.registeredThreadIds?.has(state.threadId)) return;
+    const native = this.buildNativeExecutionRef(state.threadId, state);
+    if (!native) {
+      throw new NativeRunRegistrationError(
+        "Codex Native execution cannot be registered without a trusted device and Vault identity"
+      );
+    }
+    try {
+      await register(native);
+      (state.registeredThreadIds ??= new Set()).add(state.threadId);
+    } catch (error) {
+      if (state.threadWasCreated && this.options.archiveThread) {
+        await this.options.archiveThread(state.threadId).catch(() => undefined);
+      }
+      throw error instanceof NativeRunRegistrationError
+        ? error
+        : new NativeRunRegistrationError(
+          `Codex Native execution registration failed: ${error instanceof Error ? error.message : String(error)}`,
+          error
+        );
+    }
+  }
+
+  private buildNativeExecutionRef(
+    threadId: string,
+    state?: CodexRunState
+  ): NativeExecutionRef | undefined {
+    const cached = state?.nativeExecutionRefs?.get(threadId);
+    if (cached) return cached;
     const context = this.options.nativeRefContext;
     if (!context) return undefined;
-    return {
+    const native: NativeExecutionRef = {
       backendId: this.manifest.id,
       id: threadId,
       kind: "thread",
-      persistence: this.options.turnOptions?.ephemeral ? "none" : "provider-persistent",
+      persistence: state?.isolateNativeThread || state?.turnOptions?.ephemeral || this.options.turnOptions?.ephemeral
+        ? "none"
+        : "provider-persistent",
       providerEndpoint: context.providerEndpoint,
       deviceKey: context.deviceKey,
       vaultId: context.vaultId,
       createdAt: Date.now()
     };
+    if (state) {
+      (state.nativeExecutionRefs ??= new Map()).set(threadId, native);
+    }
+    return native;
   }
 
   private turnOptionsForRequest(request: AgentRunRequest): TurnOptions | undefined {
@@ -646,6 +736,7 @@ export class CodexRichAgentAdapter implements AgentAdapter {
     const scoped: TurnOptions = {
       ...base,
       ...(base.cwd?.trim() ? {} : workspaceCwd ? { cwd: workspaceCwd } : {}),
+      ...(request.context.manifest?.mode === "workflow" ? { ephemeral: true } : {}),
       permission: request.permissions.mode,
       writableRoots: [...request.permissions.writableRoots]
     };
@@ -773,6 +864,11 @@ interface CodexRunState {
   terminalGate: CodexRunTerminalGate;
   toolCallCount: number;
   turnOptions?: TurnOptions;
+  isolateNativeThread: boolean;
+  nativeBindingManagedByHarness: boolean;
+  threadWasCreated?: boolean;
+  registeredThreadIds?: Set<string>;
+  nativeExecutionRefs?: Map<string, NativeExecutionRef>;
   exactWriteFenceReceipt?: AgentExactWriteFenceReceipt;
   resultPromise?: Promise<AgentRunResult>;
 }

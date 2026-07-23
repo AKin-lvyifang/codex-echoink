@@ -22,12 +22,18 @@ import {
 } from "../../harness/maintenance/shadow-vault";
 import {
   listMaintenanceWorkflowWals,
+  MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
+  maintenanceWorkflowNoopReceiptPath,
   MaintenanceWorkflowSimulatedCrash,
+  MaintenanceWorkflowWalError,
+  applyMaintenanceWorkflowManagedWrites,
+  markMaintenanceWorkflowWalBlocked,
   snapshotMaintenanceWorkflowFileCas,
   type MaintenanceWorkflowSettingsHost,
   type MaintenanceWorkflowSettingsSnapshot
 } from "../../harness/maintenance/workflow-wal";
 import { maintenanceBackendOrder } from "../../knowledge-base/maintenance-routing";
+import { reconcileKnowledgeBaseNativeLifecycleRecovery } from "../../knowledge-base/scheduled-maintenance";
 import {
   prepareAndCommitMaintenanceWorkflow,
   recoverPendingMaintenanceWorkflows,
@@ -46,11 +52,14 @@ import {
 } from "../../knowledge-base/raw-digest";
 import type {
   KnowledgeBaseMaintenanceHistoryEntry,
-  KnowledgeBaseProcessedSource
+  KnowledgeBaseNativeLifecycleRecoveryReceipt,
+  KnowledgeBaseProcessedSource,
+  KnowledgeBaseSettings
 } from "../../settings/settings";
 
 interface FixtureSettings extends MaintenanceWorkflowSettingsSnapshot {
   unrelatedPreference: string;
+  nativeLifecycleRecoveryReceipt?: KnowledgeBaseNativeLifecycleRecoveryReceipt | null;
 }
 
 const COORDINATOR_FAULT_POINTS = [
@@ -88,8 +97,758 @@ export async function runMaintenanceWorkflowCoordinatorTests(): Promise<void> {
   await assertShadowRootAndWalShareTrustedStorage();
   await assertPreparePrecedesFirstLiveWriteAndResumeDoesNotRoute();
   await assertRecoveryGateReplaysReadyWalExactlyOnce();
+  await runMaintenanceManagedBlockedRecoveryTests();
+  await runMaintenanceManagedSettingsBlockedRecoveryTests();
+  await assertBlockedReportTimestampSuccessorRecovers();
+  await assertBlockedReportWithNativeCleanupProjectionRecovers();
+  await assertInvalidNativeCleanupProjectionsRemainBlocked();
+  await assertUnsafeReportMetadataSuccessorsRemainBlocked();
   await assertEveryCoordinatorFaultPointRecovers();
   await assertSeededCoordinatorCrashSoak();
+}
+
+export async function runMaintenanceManagedSettingsBlockedRecoveryTests(): Promise<void> {
+  await withShadowFixture("managed-settings-blocked-retry", async (fixture) => {
+    await crashAfterManagedCommit(fixture);
+    const listed = await listMaintenanceWorkflowWals(
+      await realpath(fixture.storageRootPath)
+    );
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.status, "ready");
+    if (listed[0]?.status !== "ready") throw new Error("expected ready WAL");
+    assert.equal(listed[0].wal.state.phase, "managed_committed");
+    await markMaintenanceWorkflowWalBlocked(listed[0].wal.handle, {
+      code: "settings_cas_conflict",
+      message: "持久化知识库终态字段未达到 WAL target"
+    });
+
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    await assertCommittedShadowFixture(fixture);
+  });
+
+  await withShadowFixture("managed-settings-third-value", async (fixture) => {
+    await crashAfterManagedCommit(fixture);
+    fixture.host.mutate((settings) => {
+      settings.lastSummary = "第三方并发终态";
+    });
+    const listed = await listMaintenanceWorkflowWals(
+      await realpath(fixture.storageRootPath)
+    );
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.status, "ready");
+    if (listed[0]?.status !== "ready") throw new Error("expected ready WAL");
+    await markMaintenanceWorkflowWalBlocked(listed[0].wal.handle, {
+      code: "settings_cas_conflict",
+      message: "持久化知识库终态字段未达到 WAL target"
+    });
+
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.equal(recovered.recovered, 0);
+    assert.equal(recovered.blocked, 1);
+    assert.equal(fixture.host.current().lastSummary, "第三方并发终态");
+    assert.equal(
+      (await listMaintenanceWorkflowWals(
+        await realpath(fixture.storageRootPath)
+      ))[0]?.status,
+      "blocked"
+    );
+  });
+}
+
+async function crashAfterManagedCommit(
+  fixture: Awaited<ReturnType<typeof createShadowFixture>>
+): Promise<void> {
+  await assert.rejects(
+    () => prepareAndCommitMaintenanceWorkflow({
+      ...fixture.input,
+      faultInjector(point) {
+        if (point === "after-managed-commit") {
+          throw new MaintenanceWorkflowSimulatedCrash(
+            "simulated crash after managed commit"
+          );
+        }
+      }
+    }),
+    MaintenanceWorkflowSimulatedCrash
+  );
+}
+
+export async function runMaintenanceManagedBlockedRecoveryTests(): Promise<void> {
+  await withShadowFixture("blocked-managed-retry", async (fixture) => {
+    const blocked = await blockManagedJournalOnReportConflict(fixture);
+    await writeFile(fixture.reportPath, blocked.baselineReport);
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    await drainMaintenanceRecoveryTails();
+    await assertCommittedShadowFixture(fixture);
+  });
+
+  await withShadowFixture("blocked-managed-third-value", async (fixture) => {
+    const blocked = await blockManagedJournalOnReportConflict(fixture);
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.equal(recovered.recovered, 0);
+    assert.equal(recovered.blocked, 1);
+    assert.equal(recovered.invalid, 0);
+    assert.deepEqual(await readFile(fixture.reportPath), blocked.thirdValue);
+    const stillBlocked = await requireSingleBlockedWal(
+      fixture.storageRootPath
+    );
+    assert.equal(stillBlocked.state.phase, "shadow_committed");
+    assert.equal(
+      stillBlocked.state.blocked?.code,
+      "managed_cas_conflict"
+    );
+  });
+
+  await withShadowFixture("blocked-managed-report-normalization", async (fixture) => {
+    const desiredReport = Buffer.from([
+      "---",
+      "created: 1970-01-01",
+      "updated: 1970-01-01T00:00Z",
+      "tags: [knowledge, maintenance, ingest]",
+      "---",
+      "",
+      "# Maintenance report",
+      "",
+      "BODY MUST REMAIN IDENTICAL",
+      ""
+    ].join("\n"), "utf8");
+    const normalizedReport = Buffer.from([
+      "---",
+      "created: 1970-01-01",
+      "updated: 1970-01-01T00:01Z",
+      "tags:",
+      "  - knowledge",
+      "  - maintenance",
+      "  - ingest",
+      "---",
+      "",
+      "# Maintenance report",
+      "",
+      "BODY MUST REMAIN IDENTICAL",
+      ""
+    ].join("\n"), "utf8");
+    setShadowFixtureReportContent(fixture, desiredReport);
+    await blockManagedJournalOnReportConflict(fixture);
+    await writeFile(fixture.reportPath, normalizedReport);
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    await drainMaintenanceRecoveryTails();
+    await assertCommittedShadowFixture(fixture, normalizedReport);
+  });
+}
+
+function setShadowFixtureReportContent(
+  fixture: Awaited<ReturnType<typeof createShadowFixture>>,
+  desiredContent: Buffer
+): void {
+  const reportWrite = fixture.input.managedWrites.find(
+    (entry) => entry.kind === "report"
+  );
+  assert.ok(reportWrite && reportWrite.operation === "upsert");
+  reportWrite.desiredContent = desiredContent;
+  fixture.input.draft.report.finalBlockDigest = sha256(desiredContent);
+  fixture.reportContent = desiredContent;
+}
+
+async function blockManagedJournalOnReportConflict(
+  fixture: Awaited<ReturnType<typeof createShadowFixture>>
+): Promise<{ baselineReport: Buffer; thirdValue: Buffer }> {
+  const baselineReport = Buffer.from(
+    "BASELINE REPORT BEFORE MAINTENANCE\n",
+    "utf8"
+  );
+  await writeFile(fixture.reportPath, baselineReport);
+  const reportWrite = fixture.input.managedWrites.find(
+    (entry) => entry.kind === "report"
+  );
+  assert.ok(reportWrite);
+  reportWrite.expected = await snapshotMaintenanceWorkflowFileCas(
+    fixture.vaultPath,
+    fixture.input.draft.report.relativePath
+  );
+  await assert.rejects(
+    () => prepareAndCommitMaintenanceWorkflow({
+      ...fixture.input,
+      faultInjector(point) {
+        if (point === "after-shadow-confirm") {
+          throw new MaintenanceWorkflowSimulatedCrash(
+            "leave shadow_committed before managed apply"
+          );
+        }
+      }
+    }),
+    MaintenanceWorkflowSimulatedCrash
+  );
+  const handle = await requireSingleReadyWal(
+    fixture.storageRootPath,
+    "shadow_committed",
+    "prepare managed blocker"
+  );
+  await assert.rejects(
+    () => applyMaintenanceWorkflowManagedWrites(
+      handle,
+      fixture.vaultPath,
+      {
+        faultInjector(input) {
+          if (input.point === "before-entry") {
+            throw new MaintenanceWorkflowSimulatedCrash(
+              "leave durable managed journal before first entry"
+            );
+          }
+        }
+      }
+    ),
+    MaintenanceWorkflowSimulatedCrash
+  );
+  const thirdValue = Buffer.from("EXTERNAL REPORT THIRD VALUE\n", "utf8");
+  await writeFile(fixture.reportPath, thirdValue);
+  await assert.rejects(
+    () => applyMaintenanceWorkflowManagedWrites(
+      handle,
+      fixture.vaultPath
+    ),
+    (error: unknown) =>
+      error instanceof MaintenanceWorkflowWalError
+      && error.code === "managed_cas_conflict"
+  );
+  const blocked = await requireSingleBlockedWal(fixture.storageRootPath);
+  assert.equal(blocked.state.phase, "shadow_committed");
+  assert.equal(blocked.state.blocked?.code, "managed_cas_conflict");
+  const journal = JSON.parse(await readFile(
+    blocked.handle.managedJournalPath,
+    "utf8"
+  )) as { state: string; error?: string };
+  assert.equal(journal.state, "blocked");
+  assert.equal(journal.error, blocked.state.blocked?.message);
+  return { baselineReport, thirdValue };
+}
+
+async function assertBlockedReportTimestampSuccessorRecovers(): Promise<void> {
+  await withFixture("report-updated-successor", async (fixture) => {
+    const legacy = await prepareLegacyBlockedReportFixture(fixture);
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    assert.equal(
+      await readFile(fixture.reportPath, "utf8"),
+      legacy.liveReport,
+      "recovery must preserve the metadata plugin's timestamp instead of overwriting the report"
+    );
+    assert.equal(fixture.host.current().maintenanceHistory.length, 1);
+    assert.equal(
+      (await listMaintenanceWorkflowWals(
+        await realpath(fixture.storageRootPath)
+      )).length,
+      0
+    );
+  });
+}
+
+async function assertBlockedReportWithNativeCleanupProjectionRecovers(): Promise<void> {
+  await withFixture("report-updated-native-cleanup", async (fixture) => {
+    const legacy = await prepareLegacyBlockedReportFixture(fixture);
+    fixture.host.mutate((settings) => {
+      projectNativeCleanupRecovery(settings);
+    });
+    const beforeRecovery = fixture.host.current();
+    const blocked = await requireSingleBlockedWal(fixture.storageRootPath);
+    await markMaintenanceWorkflowWalBlocked(blocked.handle, {
+      code: "settings_cas_conflict",
+      message: "持久化知识库终态字段未达到 WAL target"
+    });
+
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    assert.deepEqual(
+      fixture.host.current(),
+      beforeRecovery,
+      "WAL recovery must preserve the structured Native cleanup receipt projection"
+    );
+    assert.equal(await readFile(fixture.reportPath, "utf8"), legacy.liveReport);
+    assert.equal(
+      (await listMaintenanceWorkflowWals(
+        await realpath(fixture.storageRootPath)
+      )).length,
+      0
+    );
+  });
+}
+
+async function assertInvalidNativeCleanupProjectionsRemainBlocked(): Promise<void> {
+  const cases: Array<{
+    name: string;
+    mutate(settings: FixtureSettings): void;
+  }> = [
+    {
+      name: "summary-drift",
+      mutate(settings) {
+        settings.lastSummary += "\nEXTERNAL TERMINAL DRIFT";
+      }
+    },
+    {
+      name: "self-consistent-non-production-projection",
+      mutate(settings) {
+        const receipt = settings.nativeLifecycleRecoveryReceipt;
+        assert.ok(receipt);
+        const fakeProjection =
+          `${receipt.projection.lastSummaryBefore}\n\n${receipt.projection.lastSummaryWithRecovery}`;
+        receipt.projection.lastSummaryWithRecovery = fakeProjection;
+        settings.lastSummary = fakeProjection;
+      }
+    },
+    {
+      name: "extra-business-warning",
+      mutate(settings) {
+        settings.lastWarnings.push({
+          id: "external-business-warning",
+          message: "must remain visible to the WAL target digest"
+        });
+      }
+    },
+    {
+      name: "stale-receipt",
+      mutate(settings) {
+        const receipt = settings.nativeLifecycleRecoveryReceipt;
+        assert.ok(receipt);
+        receipt.firstObservedAt = settings.lastRunAt - 1;
+      }
+    },
+    {
+      name: "receipt-time-reversed",
+      mutate(settings) {
+        const receipt = settings.nativeLifecycleRecoveryReceipt;
+        assert.ok(receipt);
+        receipt.updatedAt = receipt.firstObservedAt - 1;
+      }
+    },
+    {
+      name: "warning-mismatch",
+      mutate(settings) {
+        const warning = settings.lastWarnings.find(
+          (entry) => entry.id === "native-cleanup-recovery"
+        );
+        assert.ok(warning);
+        warning.message = "tampered Native cleanup warning";
+      }
+    },
+    {
+      name: "local-persistence-receipt",
+      mutate(settings) {
+        const receipt = settings.nativeLifecycleRecoveryReceipt;
+        assert.ok(receipt);
+        receipt.issue = "local-persistence";
+        receipt.warningId = "native-local-commit-recovery";
+        const warning = settings.lastWarnings.find(
+          (entry) => entry.id === "native-cleanup-recovery"
+        );
+        assert.ok(warning);
+        warning.id = "native-local-commit-recovery";
+      }
+    },
+    {
+      name: "failed-local-commit-status",
+      mutate(settings) {
+        const receipt = settings.nativeLifecycleRecoveryReceipt;
+        assert.ok(receipt);
+        receipt.localCommitStatus = "failed";
+      }
+    },
+    {
+      name: "duplicate-native-warning",
+      mutate(settings) {
+        const warning = settings.lastWarnings.find(
+          (entry) => entry.id === "native-cleanup-recovery"
+        );
+        assert.ok(warning);
+        settings.lastWarnings.push({ ...warning });
+      }
+    },
+    {
+      name: "history-drift",
+      mutate(settings) {
+        const historyEntry = settings.maintenanceHistory.at(-1);
+        assert.ok(historyEntry);
+        historyEntry.reportPath += ".external-drift";
+      }
+    },
+    {
+      name: "missing-receipt",
+      mutate(settings) {
+        settings.nativeLifecycleRecoveryReceipt = null;
+      }
+    }
+  ];
+
+  for (const testCase of cases) {
+    await withFixture(`report-native-${testCase.name}`, async (fixture) => {
+      const legacy = await prepareLegacyBlockedReportFixture(fixture);
+      fixture.host.mutate((settings) => {
+        projectNativeCleanupRecovery(settings);
+        testCase.mutate(settings);
+      });
+      const blocked = await requireSingleBlockedWal(fixture.storageRootPath);
+      const settingsBlocked = await markMaintenanceWorkflowWalBlocked(blocked.handle, {
+        code: "settings_cas_conflict",
+        message: "持久化知识库终态字段未达到 WAL target"
+      });
+      const recovered = await recoverPendingMaintenanceWorkflows({
+        storageRootPath: fixture.storageRootPath,
+        liveVaultPath: fixture.vaultPath,
+        settingsHost: fixture.host
+      });
+      assert.equal(recovered.recovered, 0, testCase.name);
+      assert.equal(recovered.blocked, 1, testCase.name);
+      assert.equal(recovered.invalid, 0, testCase.name);
+      assert.equal(await readFile(fixture.reportPath, "utf8"), legacy.liveReport);
+      const after = await requireSingleBlockedWal(fixture.storageRootPath);
+      assert.equal(after.state.blocked?.code, "settings_cas_conflict");
+      assert.equal(
+        after.state.sequence,
+        settingsBlocked.sequence,
+        "invalid settings conflicts must be rejected by preflight without replay mutation"
+      );
+    });
+  }
+}
+
+function projectNativeCleanupRecovery(settings: FixtureSettings): void {
+  const reconciliation = reconcileKnowledgeBaseNativeLifecycleRecovery(
+    settings as unknown as KnowledgeBaseSettings,
+    {
+      cleanupStatuses: ["retained-for-recovery"],
+      cleanupAttempted: false,
+      disposedCount: 0,
+      recordIds: [],
+      recoveryRequired: true,
+      warning: "Native cleanup is blocked until startup reconciliation succeeds"
+    },
+    settings.lastRunAt
+  );
+  assert.deepEqual(reconciliation, {
+    changed: true,
+    state: "recovery-pending",
+    issue: "native-cleanup",
+    message:
+      "自动维护结果已保存；Native cleanup is blocked until startup reconciliation succeeds"
+  });
+  assert.deepEqual(settings.nativeLifecycleRecoveryReceipt, {
+    schemaVersion: 1,
+    issue: "native-cleanup",
+    warningId: "native-cleanup-recovery",
+    localCommitStatus: "unknown",
+    cleanupStatuses: ["retained-for-recovery"],
+    cleanupAttempted: false,
+    recordIds: [],
+    message:
+      "自动维护结果已保存；Native cleanup is blocked until startup reconciliation succeeds",
+    firstObservedAt: settings.lastRunAt,
+    updatedAt: settings.lastRunAt,
+    projection: {
+      lastErrorBefore: "",
+      lastSummaryBefore: "没有待处理来源",
+      lastErrorWithRecovery:
+        "自动维护结果已保存；Native cleanup is blocked until startup reconciliation succeeds",
+      lastSummaryWithRecovery:
+        "没有待处理来源；Native Execution 清理待恢复，不影响已保存的维护结果。"
+    }
+  });
+}
+
+async function requireSingleBlockedWal(storageRootPath: string) {
+  const listed = await listMaintenanceWorkflowWals(
+    await realpath(storageRootPath)
+  );
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.status, "blocked");
+  if (listed[0]?.status !== "blocked") {
+    throw new Error("expected one blocked maintenance WAL");
+  }
+  return listed[0].wal;
+}
+
+async function assertUnsafeReportMetadataSuccessorsRemainBlocked(): Promise<void> {
+  const reportCases: Array<{
+    name: string;
+    mutate(report: string): string;
+    startedAt?: number;
+  }> = [
+    {
+      name: "body-drift",
+      mutate: (report) => report.replace(
+        "## EchoInk 验证终态",
+        "## EchoInk 验证终态（被外部改写）"
+      )
+    },
+    {
+      name: "source-drift",
+      mutate: (report) => report.replace(
+        "source: codex-echoink",
+        "source: external-editor"
+      )
+    },
+    {
+      name: "status-drift",
+      mutate: (report) => report.replace(
+        "status: success",
+        "status: failed"
+      )
+    },
+    {
+      name: "fallback-drift",
+      mutate: (report) => report.replace(
+        "fallback: true",
+        "fallback: false"
+      )
+    },
+    {
+      name: "duplicate-updated",
+      mutate: (report) => report.replace(
+        /updated: ([^\n]+)\n/,
+        "updated: $1\nupdated: $1\n"
+      )
+    },
+    {
+      name: "invalid-updated",
+      mutate: (report) => report.replace(
+        /updated: [^\n]+/,
+        "updated: not-a-timestamp"
+      )
+    },
+    {
+      name: "out-of-window-updated",
+      mutate: (report) => report.replace(
+        /updated: [^\n]+/,
+        "updated: 2099-01-01T00:00"
+      )
+    },
+    {
+      name: "before-completion-updated",
+      mutate: (report) => report.replace(
+        /updated: [^\n]+/,
+        "updated: 2026-07-19T09:20"
+      )
+    },
+    {
+      name: "invalid-calendar-updated",
+      startedAt: new Date(2026, 1, 28, 23, 58, 30).getTime(),
+      mutate: (report) => report.replace(
+        /updated: [^\n]+/,
+        "updated: 2026-02-29T00:00"
+      )
+    }
+  ];
+  for (const reportCase of reportCases) {
+    await withFixture(`report-${reportCase.name}`, async (fixture) => {
+      const legacy = await prepareLegacyBlockedReportFixture(
+        fixture,
+        reportCase.mutate,
+        reportCase.startedAt
+      );
+      await assertBlockedReportRecovery(fixture, legacy.liveReport);
+    });
+  }
+
+  await withFixture("report-mode-drift", async (fixture) => {
+    const legacy = await prepareLegacyBlockedReportFixture(fixture);
+    await chmod(fixture.reportPath, 0o600);
+    await assertBlockedReportRecovery(fixture, legacy.liveReport);
+  });
+
+  await withFixture("report-unmanaged-tracker-drift", async (fixture) => {
+    const legacy = await prepareLegacyBlockedReportFixture(fixture);
+    await writeFile(fixture.trackerPath, "EXTERNAL TRACKER DRIFT\n", "utf8");
+    const recovered = await recoverPendingMaintenanceWorkflows({
+      storageRootPath: fixture.storageRootPath,
+      liveVaultPath: fixture.vaultPath,
+      settingsHost: fixture.host
+    });
+    assert.deepEqual(recovered, {
+      recovered: 1,
+      blocked: 0,
+      invalid: 0,
+      issues: []
+    });
+    assert.equal(await readFile(fixture.reportPath, "utf8"), legacy.liveReport);
+    assert.equal(
+      await readFile(fixture.trackerPath, "utf8"),
+      "EXTERNAL TRACKER DRIFT\n",
+      "new noop recovery must not own or rewrite tracker"
+    );
+  });
+}
+
+async function prepareLegacyBlockedReportFixture(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  mutateReport: (report: string) => string = (report) => report,
+  startedAtInput?: number
+): Promise<{ liveReport: string }> {
+  const startedAt = startedAtInput
+    ?? new Date(2026, 6, 19, 9, 20, 58).getTime();
+  const updatedAt = new Date(startedAt + 60_000);
+  const updated = [
+    updatedAt.getFullYear(),
+    String(updatedAt.getMonth() + 1).padStart(2, "0"),
+    String(updatedAt.getDate()).padStart(2, "0")
+  ].join("-") + `T${String(updatedAt.getHours()).padStart(2, "0")}:${String(updatedAt.getMinutes()).padStart(2, "0")}`;
+  const desiredReport = [
+    "---",
+    "created: 2026-07-19T01:20:58.126Z",
+    "source: codex-echoink",
+    "status: success",
+    "fallback: true",
+    "---",
+    "",
+    "# 知识库维护报告 — 2026-07-19",
+    "",
+    "<!-- echoink-maintenance-final:v1:start -->",
+    "## EchoInk 验证终态",
+    "",
+    "- 结果：noop",
+    `- workflow：\`${fixture.input.draft.workflowRunId}\``,
+    "<!-- echoink-maintenance-final:v1:end -->",
+    ""
+  ].join("\n");
+  const input: PrepareAndCommitMaintenanceWorkflowInput<FixtureSettings> = {
+    ...fixture.input,
+    draft: {
+      ...fixture.input.draft,
+      startedAt,
+      createdAt: new Date(startedAt).toISOString(),
+      report: {
+        ...fixture.input.draft.report,
+        finalBlockDigest: sha256(Buffer.from(desiredReport, "utf8"))
+      },
+      settings: {
+        ...fixture.input.draft.settings,
+        targetTerminal: {
+          ...fixture.input.draft.settings.targetTerminal,
+          lastRunAt: updatedAt.getTime()
+        },
+        historyEntry: {
+          ...fixture.input.draft.settings.historyEntry,
+          at: updatedAt.getTime()
+        }
+      }
+    },
+    managedWrites: fixture.input.managedWrites.map((write) =>
+      write.kind === "report"
+        ? {
+          ...write,
+          desiredContent: Buffer.from(desiredReport, "utf8")
+        }
+        : write
+    )
+  };
+  await assert.rejects(
+    () => prepareAndCommitMaintenanceWorkflow({
+      ...input,
+      faultInjector(point) {
+        if (point === "after-settings-commit") {
+          throw new MaintenanceWorkflowSimulatedCrash(
+            "legacy crash before report metadata reaction"
+          );
+        }
+      }
+    }),
+    MaintenanceWorkflowSimulatedCrash
+  );
+  const listed = await listMaintenanceWorkflowWals(
+    await realpath(fixture.storageRootPath)
+  );
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.status, "ready");
+  if (listed[0]?.status !== "ready") throw new Error("expected ready legacy WAL");
+  assert.equal(listed[0].wal.state.phase, "settings_committed");
+
+  const liveReport = mutateReport(desiredReport.replace(
+    "fallback: true\n---",
+    [
+      "fallback: true",
+      `updated: ${updated}`,
+      "---"
+    ].join("\n")
+  ));
+  await writeFile(fixture.reportPath, liveReport, "utf8");
+  await markMaintenanceWorkflowWalBlocked(listed[0].wal.handle, {
+    code: "managed_cas_conflict",
+    message: "managed CAS 冲突：报告被 metadata plugin 更新"
+  });
+  return { liveReport };
+}
+
+async function assertBlockedReportRecovery(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  expectedReport: string
+): Promise<void> {
+  const recovered = await recoverPendingMaintenanceWorkflows({
+    storageRootPath: fixture.storageRootPath,
+    liveVaultPath: fixture.vaultPath,
+    settingsHost: fixture.host
+  });
+  assert.equal(recovered.recovered, 0);
+  assert.equal(recovered.blocked, 1);
+  assert.equal(recovered.invalid, 0);
+  assert.match(recovered.issues[0] ?? "", /managed CAS/);
+  assert.equal(await readFile(fixture.reportPath, "utf8"), expectedReport);
+  const listed = await listMaintenanceWorkflowWals(
+    await realpath(fixture.storageRootPath)
+  );
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.status, "blocked");
 }
 
 async function assertFreshVaultWithoutStorageRootIsReady(): Promise<void> {
@@ -436,7 +1195,8 @@ async function drainMaintenanceRecoveryTails(): Promise<void> {
 }
 
 async function assertCommittedShadowFixture(
-  fixture: Awaited<ReturnType<typeof createShadowFixture>>
+  fixture: Awaited<ReturnType<typeof createShadowFixture>>,
+  expectedReportContent = fixture.reportContent
 ): Promise<void> {
   const committedRaw = await readFile(fixture.rawPath);
   assert.equal(
@@ -499,7 +1259,7 @@ async function assertCommittedShadowFixture(
   );
   assert.equal(
     await readFile(fixture.reportPath, "utf8"),
-    fixture.reportContent.toString("utf8")
+    expectedReportContent.toString("utf8")
   );
   assert.equal(
     await readFile(fixture.trackerPath, "utf8"),
@@ -933,12 +1693,24 @@ async function createShadowFixture(rootPath: string, suffix: string) {
 async function createFixture(rootPath: string, suffix: string) {
   const vaultPath = path.join(rootPath, "vault");
   const storageRootPath = path.join(rootPath, "workflow-storage");
-  const reportRelativePath = "outputs/maintenance/noop.md";
+  const workflowRunId = `workflow-noop-${suffix}`;
+  const noopReceipt = {
+    schemaVersion: MAINTENANCE_WORKFLOW_NOOP_RECEIPT_SCHEMA_VERSION,
+    kind: "run-scoped-report" as const,
+    pathStrategy: "workflow-run-id-sha256-v1" as const,
+    dateKey: "2026-07-18"
+  };
+  const reportRelativePath = maintenanceWorkflowNoopReceiptPath({
+    mode: "maintain",
+    workflowRunId,
+    receipt: noopReceipt
+  });
   const reportPath = path.join(vaultPath, reportRelativePath);
+  const trackerRelativePath = "outputs/.ingest-tracker.md";
+  const trackerPath = path.join(vaultPath, trackerRelativePath);
   await mkdir(path.dirname(reportPath), { recursive: true });
   await mkdir(storageRootPath, { recursive: true });
 
-  const workflowRunId = `workflow-noop-${suffix}`;
   const baselineTerminal = {
     lastRunAt: 10,
     lastRunStatus: "idle" as const,
@@ -988,7 +1760,6 @@ async function createFixture(rootPath: string, suffix: string) {
   };
   const host = new MemorySettingsHost(baselineSettings);
   const desiredReport = Buffer.from("NOOP-REPORT\n", "utf8");
-  const trackerRelativePath = "outputs/.ingest-tracker.md";
   const input = {
     storageRootPath,
     liveVaultPath: vaultPath,
@@ -1001,6 +1772,7 @@ async function createFixture(rootPath: string, suffix: string) {
       candidateBackends: maintenanceBackendOrder("codex-cli"),
       winner: null,
       completion: "noop" as const,
+      noopReceipt,
       attempts: [],
       verifiedSources: [],
       pendingSources: [],
@@ -1037,17 +1809,6 @@ async function createFixture(rootPath: string, suffix: string) {
         ),
         desiredContent: desiredReport,
         desiredMode: 0o644
-      },
-      {
-        kind: "tracker" as const,
-        operation: "upsert" as const,
-        relativePath: trackerRelativePath,
-        expected: await snapshotMaintenanceWorkflowFileCas(
-          vaultPath,
-          trackerRelativePath
-        ),
-        desiredContent: Buffer.from("TRACKER-NOOP\n", "utf8"),
-        desiredMode: 0o644
       }
     ],
     outcome: {
@@ -1061,6 +1822,7 @@ async function createFixture(rootPath: string, suffix: string) {
     vaultPath,
     storageRootPath,
     reportPath,
+    trackerPath,
     baselineSettings,
     host,
     input
@@ -1078,6 +1840,11 @@ implements MaintenanceWorkflowSettingsHost<FixtureSettings> {
 
   current(): FixtureSettings {
     return structuredClone(this.settings);
+  }
+
+  mutate(action: (settings: FixtureSettings) => void): void {
+    action(this.settings);
+    this.generation += 1;
   }
 
   async withExclusiveTransaction<R>(
@@ -1124,4 +1891,11 @@ async function makeOwnerWritable(absolutePath: string): Promise<void> {
   if (stat.isFile()) {
     await chmod(absolutePath, 0o600).catch(() => undefined);
   }
+}
+
+if (process.env.ECHOINK_RUN_MAINTENANCE_WORKFLOW_COORDINATOR_TEST === "1") {
+  runMaintenanceWorkflowCoordinatorTests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
