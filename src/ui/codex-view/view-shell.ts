@@ -47,6 +47,7 @@ export interface CodexViewShellHost extends Component {
   renderTaskPlanDock(session: StoredSession): void;
   renderInteractionDock(session: StoredSession): void;
   updateInputPlaceholder(): void;
+  returnQuickChatToSidebar(): void;
 }
 
 export function renderViewShell(host: CodexViewShellHost): void {
@@ -61,7 +62,8 @@ export function renderViewShell(host: CodexViewShellHost): void {
           if (!handled) host.openPluginSettings();
         })
         .catch(() => host.openPluginSettings());
-    }
+    },
+    onReturnToSidebar: () => host.returnQuickChatToSidebar()
   }, host.plugin.getEchoInkAgentIdentityView(), host.plugin.settings.settingsLanguage);
   host.registerDomEvent(document, "click", (event) => {
     const target = event.target instanceof Node ? event.target : null;

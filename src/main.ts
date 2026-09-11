@@ -35,6 +35,7 @@ import {
   type SettingsSaveOptions
 } from "./plugin/settings-store";
 import { EchoInkViewService } from "./plugin/view-service";
+import { QuickChatWindowController, type QuickChatRegistrationResult } from "./plugin/quick-chat-window";
 import {
   EchoInkResourceCatalogService,
   requireAvailableEchoInkSkillResource
@@ -166,6 +167,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private review: ReviewManager | null = null;
   private settingsStore: EchoInkSettingsStore | null = null;
   private viewService: EchoInkViewService | null = null;
+  private quickChatWindow: QuickChatWindowController | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
   private pendingSettingsResourceDetailId = "";
@@ -238,6 +240,13 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.knowledgeBase = controllers.knowledgeBase;
     this.review = controllers.review;
     registerEchoInkStartupTasks(this);
+    // Global quick-chat window: registration is fail-safe by design; when the
+    // desktop bridge is missing the sidebar experience stays untouched.
+    this.quickChatWindow = new QuickChatWindowController(this);
+    const quickChatRegistration = this.quickChatWindow.applySettings();
+    if (this.settings.quickChat.enabled && !quickChatRegistration.ok) {
+      console.warn("EchoInk quick chat hotkey not registered", quickChatRegistration.reason);
+    }
   }
 
   onunload(): void {
@@ -245,6 +254,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async performUnload(): Promise<void> {
+    this.quickChatWindow?.dispose();
+    this.quickChatWindow = null;
     const activity = this.homeActivity;
     this.homeActivity = null;
     await activity?.dispose();
@@ -276,6 +287,26 @@ export default class CodexForObsidianPlugin extends Plugin {
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateView(): Promise<void> { return this.getViewService().activateView(); }
+  getQuickChatWindowController(): QuickChatWindowController | null { return this.quickChatWindow; }
+  async toggleQuickChatWindow(): Promise<void> {
+    const controller = this.quickChatWindow;
+    if (!controller) {
+      await this.activateView();
+      return;
+    }
+    await controller.toggle();
+  }
+  async returnQuickChatToSidebar(): Promise<void> {
+    const controller = this.quickChatWindow;
+    if (!controller) {
+      await this.activateView();
+      return;
+    }
+    await controller.returnToSidebar();
+  }
+  applyQuickChatSettings(): QuickChatRegistrationResult {
+    return this.quickChatWindow?.applySettings() ?? { ok: false, reason: "unavailable" };
+  }
   async openPendingEchoInkOnboarding(): Promise<void> {
     if (!this.onboardingRequested) return;
     const step = this.settings.setup.tutorialStep;

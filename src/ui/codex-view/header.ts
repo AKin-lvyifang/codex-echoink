@@ -7,6 +7,8 @@ import { conversationUiText } from "./ui-i18n";
 export interface CodexHeaderCallbacks {
   onOpenWorkspaceResources: () => void;
   onOpenSettings: () => void;
+  /** Present when the view can migrate back to the sidebar (quick chat popout). */
+  onReturnToSidebar?: () => void;
 }
 
 const DEFAULT_AGENT_IDENTITY: AgentIdentityView = Object.freeze({
@@ -27,6 +29,17 @@ export function renderCodexHeader(
   updateCodexHeaderIdentity(header, identity);
 
   const headerActions = header.createDiv({ cls: "codex-header-actions" });
+  const returnButton = headerActions.createEl("button", {
+    cls: "codex-icon-button codex-quick-return-button",
+    attr: { type: "button" }
+  });
+  applyCodexHeaderCopy(returnButton, language, "return");
+  setIcon(returnButton, "panel-right");
+  if (callbacks.onReturnToSidebar) {
+    returnButton.onclick = callbacks.onReturnToSidebar;
+  } else {
+    returnButton.remove();
+  }
   const resourceButton = headerActions.createEl("button", {
     cls: "codex-icon-button codex-resource-button",
     attr: { type: "button" }
@@ -52,16 +65,20 @@ export function refreshCodexHeaderCopy(rootEl: HTMLElement, language: SettingsLa
   if (resourceButton) applyCodexHeaderCopy(resourceButton, language, "resource");
   const settingsButton = rootEl.querySelector<HTMLButtonElement>(".codex-settings-button");
   if (settingsButton) applyCodexHeaderCopy(settingsButton, language, "settings");
+  const returnButton = rootEl.querySelector<HTMLButtonElement>(".codex-quick-return-button");
+  if (returnButton) applyCodexHeaderCopy(returnButton, language, "return");
 }
 
 function applyCodexHeaderCopy(
   button: HTMLButtonElement,
   language: SettingsLanguage,
-  kind: "resource" | "settings"
+  kind: "resource" | "settings" | "return"
 ): void {
   const label = kind === "resource"
     ? conversationUiText(language, "插件 MCP Skills 管理", "Manage plugins, MCP, and Skills")
-    : conversationUiText(language, "打开插件设置", "Open plugin settings");
+    : kind === "return"
+      ? conversationUiText(language, "回到侧边栏", "Return to sidebar")
+      : conversationUiText(language, "打开插件设置", "Open plugin settings");
   button.setAttribute("aria-label", label);
   button.setAttribute("title", label);
 }

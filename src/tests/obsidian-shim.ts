@@ -52,6 +52,14 @@ export class WorkspaceLeaf {
   async openFile(): Promise<void> {}
 }
 
+/** Minimal stand-in: tests never host leaves in popout windows, so the
+ * quick-chat controller's `instanceof WorkspaceWindow` checks fall through
+ * to the sidebar path. */
+export class WorkspaceWindow {
+  win: Window | null = null;
+  doc: Document | null = null;
+}
+
 export class ItemView extends Component {
   containerEl = {
     children: [

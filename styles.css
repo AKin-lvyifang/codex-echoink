@@ -20919,3 +20919,32 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   .echoink-origin-control[data-slot=switch],.echoink-origin-control [data-slot=switch-thumb] {transition:none}
 }
 /* ECHOINK_WORKSPACE_SETTINGS_END */
+
+/* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */
+/* 「回到侧边栏」按钮只在受管小窗（body 带 echoink-quick-chat-popout）中显示 */
+.codex-quick-return-button {
+  display: none;
+}
+
+body.echoink-quick-chat-popout .codex-quick-return-button {
+  display: inline-flex;
+}
+
+/* 小窗内隐藏与对话无关的 Obsidian 工作区 chrome，只保留会话界面 */
+body.echoink-quick-chat-popout .workspace-split.mod-left-split,
+body.echoink-quick-chat-popout .workspace-split.mod-right-split,
+body.echoink-quick-chat-popout .sidebar-toggle-button,
+body.echoink-quick-chat-popout .clickable-icon.mod-left-sidebar-toggle,
+body.echoink-quick-chat-popout .clickable-icon.mod-right-sidebar-toggle {
+  display: none !important;
+}
+
+/* 单 tab 小窗不需要文件级 header，节省纵向空间 */
+body.echoink-quick-chat-popout .workspace-leaf-content[data-type="codex-for-obsidian-view"] .view-header {
+  display: none !important;
+}
+
+body.echoink-quick-chat-popout .workspace-tab-header-container {
+  display: none !important;
+}
+/* ===== ECHOINK_QUICK_CHAT_END ===== */

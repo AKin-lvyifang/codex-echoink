@@ -12824,6 +12824,10 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     getEchoInkOnboardingStep: () => "provider" as const,
     advanceEchoInkOnboarding: async () => null,
     dismissEchoInkOnboarding: async () => undefined,
+    getQuickChatWindowController: () => null,
+    applyQuickChatSettings: () => ({ ok: false, reason: "unavailable" as const }),
+    returnQuickChatToSidebar: async () => undefined,
+    toggleQuickChatWindow: async () => undefined,
     ...plugin
   };
 }

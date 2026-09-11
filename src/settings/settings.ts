@@ -1,4 +1,5 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
+import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import {
   apiProviderAuthMode,
@@ -450,6 +451,13 @@ export interface WorkspaceResourceCache {
   skills?: WorkspaceResourceCacheEntry<CodexSkill>;
 }
 
+export interface QuickChatSettings {
+  /** Master switch for the global quick-chat hotkey and popout window. */
+  enabled: boolean;
+  /** Electron accelerator, e.g. `CommandOrControl+Shift+E`. */
+  hotkey: string;
+}
+
 export interface CodexForObsidianSettings {
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -468,6 +476,7 @@ export interface CodexForObsidianSettings {
   defaultMode: UiMode;
   autoOpen: boolean;
   autoOpenHome: boolean;
+  quickChat: QuickChatSettings;
   journalDirectory: string;
   customWelcomeEnabled: boolean;
   customWelcomeTitle: string;
@@ -504,6 +513,10 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultMode: "agent",
   autoOpen: false,
   autoOpenHome: false,
+  quickChat: {
+    enabled: false,
+    hotkey: DEFAULT_QUICK_CHAT_HOTKEY
+  },
   journalDirectory: DEFAULT_JOURNAL_DIRECTORY,
   customWelcomeEnabled: false,
   customWelcomeTitle: DEFAULT_ECHOINK_WELCOME_TITLE,
@@ -570,6 +583,17 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   activeSessionId: ""
 };
 
+export function normalizeQuickChatSettings(input: unknown): QuickChatSettings {
+  const record = settingsRecord(input) ?? {};
+  const hotkey = typeof record.hotkey === "string"
+    ? normalizeAccelerator(record.hotkey)
+    : "";
+  return {
+    enabled: record.enabled === true,
+    hotkey: hotkey || DEFAULT_QUICK_CHAT_HOTKEY
+  };
+}
+
 export function normalizeSettingsData(input: unknown): { settings: CodexForObsidianSettings; changed: boolean } {
   const data = settingsRecord(input) ?? {};
   const retiredDataPresent = hasRetiredSettingsData(data);
@@ -612,6 +636,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ),
     setup: normalizeSetupSettings(data?.setup),
     memory: normalizeMemorySettings(data?.memory),
+    quickChat: normalizeQuickChatSettings(data?.quickChat),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
     review: normalizeReviewSettings(data?.review),

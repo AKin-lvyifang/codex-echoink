@@ -155,7 +155,7 @@ export interface HomeConversationStartInput {
   readonly journalDirectory?: string;
 }
 
-interface ConversationRunState {
+export interface ConversationRunState {
   running: boolean;
   activeRunId: string;
   activeRunKind: "chat" | "";
@@ -166,6 +166,32 @@ interface ConversationRunState {
   queueStartInProgress: boolean;
   readonly controller: AbortController;
   context?: CodexViewTurnContext;
+}
+
+/**
+ * Serializable-enough handoff bundle used when the conversation view moves
+ * between the sidebar and the quick-chat popout window. Run states, the queue
+ * and interaction maps are transferred by reference (Obsidian popouts share
+ * the renderer JS heap); the successor view rebinds UI-facing closures.
+ */
+export interface CodexViewMigrationState {
+  readonly runs: Array<[string, ConversationRunState]>;
+  readonly turnQueue: RuntimeTurnQueue;
+  readonly pendingInteractions: Array<[string, Readonly<EchoInkTurnInteraction>]>;
+  readonly draftText: string;
+  readonly composer: {
+    selectedSkill: EchoInkResource | null;
+    attachments: StoredAttachment[];
+    selectedProviderSettingsId: string;
+    selectedModel: string;
+    selectedPermission: PermissionMode;
+    selectedMode: UiMode;
+  };
+  readonly promptEnhancer: {
+    running: boolean;
+    runId: string;
+    turnId: string;
+  };
 }
 
 export class CodexView extends ItemView {
@@ -231,7 +257,9 @@ export class CodexView extends ItemView {
   private skillsRequested = false;
   private viewLifecycleGeneration = 0;
   private viewLifecycleAbortController = new AbortController();
-  private readonly turnQueue = new RuntimeTurnQueue();
+  private turnQueue: RuntimeTurnQueue = new RuntimeTurnQueue();
+  private migrationMode = false;
+  private migrationSuccessor: CodexView | null = null;
   private guidedSessionStartInProgress = false;
   private draggedQueueItemId = "";
   private homeAttentionFrameTimer: number | null = null;
@@ -406,6 +434,10 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    // Window migration (quick-chat popout <-> sidebar) must NOT cancel live
+    // runs: the harness run, queue and Pi conversation stay owned by the
+    // plugin layer and are handed over to the successor view instance.
+    const migrating = this.migrationMode;
     this.viewLifecycleGeneration = (
       Number.isSafeInteger(this.viewLifecycleGeneration)
         ? this.viewLifecycleGeneration
@@ -418,39 +450,53 @@ export class CodexView extends ItemView {
       this.contextPanelOpen = false;
       this.clearKnowledgeBaseRunProgressTimer();
       const closingRuns = [...this.conversationRuns];
-      for (const [sessionId, state] of closingRuns) {
-        state.controller.abort();
-        this.turnQueue.pauseSessionQueue(sessionId);
-        if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
-        state.turnWatchdog = null;
-      }
-      const promptEnhancerRunId = this.promptEnhancerRunId;
-      this.promptEnhancerRunning = false;
-      this.promptEnhancerRunId = "";
-      this.promptEnhancerTurnId = "";
-      if (promptEnhancerRunId) {
-        await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
-          console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
-        });
-      }
-      await Promise.all(closingRuns.map(async ([sessionId, state]) => {
-        if (state.activeRunId) {
-          await this.plugin.cancelHarnessRun(state.activeRunId).catch((error) => {
-            console.error("Chat cancellation failed while closing EchoInk", error);
+      if (migrating) {
+        // Only disarm timers bound to this dying DOM context; run state itself
+        // was exported before the move and survives on the successor.
+        for (const [, state] of closingRuns) {
+          if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
+          state.turnWatchdog = null;
+        }
+        this.promptEnhancerRunning = false;
+        this.promptEnhancerRunId = "";
+        this.promptEnhancerTurnId = "";
+      } else {
+        for (const [sessionId, state] of closingRuns) {
+          state.controller.abort();
+          this.turnQueue.pauseSessionQueue(sessionId);
+          if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
+          state.turnWatchdog = null;
+        }
+        const promptEnhancerRunId = this.promptEnhancerRunId;
+        this.promptEnhancerRunning = false;
+        this.promptEnhancerRunId = "";
+        this.promptEnhancerTurnId = "";
+        if (promptEnhancerRunId) {
+          await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
+            console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
           });
         }
-        await this.plugin.releasePiConversation(sessionId).catch((error) => {
-          console.error("Pi Conversation release failed while closing EchoInk", error);
-        });
-      }));
+        await Promise.all(closingRuns.map(async ([sessionId, state]) => {
+          if (state.activeRunId) {
+            await this.plugin.cancelHarnessRun(state.activeRunId).catch((error) => {
+              console.error("Chat cancellation failed while closing EchoInk", error);
+            });
+          }
+          await this.plugin.releasePiConversation(sessionId).catch((error) => {
+            console.error("Pi Conversation release failed while closing EchoInk", error);
+          });
+        }));
+      }
       await this.flushSessionSave();
-      const activeSession = this.plugin.settings.sessions.find(
-        (session) => session.id === this.plugin.settings.activeSessionId
-      );
-      if (activeSession && !closingRuns.some(([id]) => id === activeSession.id)) {
-        await this.plugin.releasePiConversation(activeSession.id).catch((error) => {
-          console.error("Pi Conversation release failed while closing EchoInk", error);
-        });
+      if (!migrating) {
+        const activeSession = this.plugin.settings.sessions.find(
+          (session) => session.id === this.plugin.settings.activeSessionId
+        );
+        if (activeSession && !closingRuns.some(([id]) => id === activeSession.id)) {
+          await this.plugin.releasePiConversation(activeSession.id).catch((error) => {
+            console.error("Pi Conversation release failed while closing EchoInk", error);
+          });
+        }
       }
     } finally {
       this.conversationRuns.clear();
@@ -468,6 +514,172 @@ export class CodexView extends ItemView {
       signal: this.viewLifecycleAbortController.signal
     };
   }
+
+  /**
+   * Quick-chat window migration API. The controller calls enterMigrationMode
+   * before Obsidian destroys this view instance (moveLeafToPopout / detach),
+   * exports the live state, and imports it into the rebuilt instance. While
+   * migrating, onClose keeps harness runs, queues and Pi conversations alive.
+   */
+  enterMigrationMode(): void {
+    this.migrationMode = true;
+  }
+
+  exitMigrationMode(): void {
+    this.migrationMode = false;
+  }
+
+  get isMigrating(): boolean {
+    return this.migrationMode;
+  }
+
+  get migrationTarget(): CodexView | null {
+    return this.migrationSuccessor;
+  }
+
+  exportMigrationState(): CodexViewMigrationState {
+    return {
+      runs: [...this.conversationRuns],
+      turnQueue: this.turnQueue,
+      pendingInteractions: [...this.pendingInteractionsBySession],
+      draftText: this.inputEl?.value ?? "",
+      composer: {
+        selectedSkill: this.selectedSkill,
+        attachments: this.attachments,
+        selectedProviderSettingsId: this.selectedProviderSettingsId,
+        selectedModel: this.selectedModel,
+        selectedPermission: this.selectedPermission,
+        selectedMode: this.selectedMode
+      },
+      promptEnhancer: {
+        running: this.promptEnhancerRunning,
+        runId: this.promptEnhancerRunId,
+        turnId: this.promptEnhancerTurnId
+      }
+    };
+  }
+
+  importMigrationState(state: Readonly<CodexViewMigrationState>): void {
+    for (const [sessionId, runState] of state.runs) {
+      runState.turnWatchdog = null;
+      // The cached turn context closes over the previous instance's DOM;
+      // force this view to rebuild its own context lazily.
+      runState.context = undefined;
+      this.conversationRuns.set(sessionId, runState);
+    }
+    this.turnQueue = state.turnQueue;
+    for (const [sessionId, interaction] of state.pendingInteractions) {
+      this.pendingInteractionsBySession.set(sessionId, interaction);
+    }
+    this.selectedSkill = state.composer.selectedSkill;
+    this.attachments = state.composer.attachments;
+    this.selectedProviderSettingsId = state.composer.selectedProviderSettingsId;
+    this.selectedModel = state.composer.selectedModel;
+    this.selectedPermission = state.composer.selectedPermission;
+    this.selectedMode = state.composer.selectedMode;
+    this.promptEnhancerRunning = state.promptEnhancer.running;
+    this.promptEnhancerRunId = state.promptEnhancer.runId;
+    this.promptEnhancerTurnId = state.promptEnhancer.turnId;
+    if (state.draftText && this.inputEl) {
+      this.inputEl.value = state.draftText;
+      this.inputEl.setSelectionRange(state.draftText.length, state.draftText.length);
+    }
+    for (const [sessionId, runState] of this.conversationRuns) {
+      if (!runState.running && !runState.queueStartInProgress) continue;
+      if (runState.turnWatchdog !== null) continue;
+      armTurnWatchdogAction(this.turnLifecycleHost(sessionId));
+    }
+    this.renderAttachments();
+    this.renderQueue();
+    this.renderTabs();
+    this.renderMessages({ forceBottom: true });
+    this.renderToolbar();
+    this.applyStatus();
+    const activeSession = this.sessionById(this.plugin.settings.activeSessionId);
+    if (activeSession) {
+      this.renderTaskPlanDock(activeSession);
+      this.renderInteractionDock(activeSession);
+    }
+  }
+
+  /**
+   * After a migration rebuilt the view, old turn-runner subscriptions still
+   * close over THIS instance. Forward the UI-facing methods to the successor
+   * so streaming updates keep rendering while run data keeps flowing into the
+   * shared session objects. Data-layer methods that write to shared settings
+   * (scheduleSessionSave/flushSessionSave) intentionally stay local.
+   */
+  installMigrationForwarding(target: CodexView): void {
+    if (target === this) return;
+    this.migrationSuccessor = target;
+    const self = this as unknown as Record<string, unknown>;
+    const destination = target as unknown as Record<string, unknown>;
+    for (const name of CodexView.MIGRATION_FORWARDED_METHODS) {
+      if (typeof destination[name] !== "function") continue;
+      Object.defineProperty(self, name, {
+        value: (...args: unknown[]) => {
+          const method = destination[name];
+          if (typeof method !== "function") return undefined;
+          const result: unknown = (method as (...methodArgs: unknown[]) => unknown).apply(target, args);
+          return result;
+        },
+        configurable: true,
+        writable: true
+      });
+    }
+  }
+
+  returnQuickChatToSidebar(): void {
+    void this.plugin.returnQuickChatToSidebar();
+  }
+
+  private static readonly MIGRATION_FORWARDED_METHODS = [
+    "renderMessagesIfActive",
+    "renderMessages",
+    "renderToolbar",
+    "renderQueue",
+    "renderTabs",
+    "renderAttachments",
+    "applyStatus",
+    "updateInputPlaceholder",
+    "ensureThinkingMessage",
+    "dismissThinkingMessage",
+    "finishThinkingMessage",
+    "finishRunningProcessMessages",
+    "finishPlanMessage",
+    "addMessageToSession",
+    "moveMessageToEnd",
+    "attachTurnIdToRun",
+    "addContextCompactionMessage",
+    "scheduleRenderMessages",
+    "scheduleMeasureVirtualRows",
+    "scheduleKnowledgeBaseRunProgress",
+    "clearKnowledgeBaseRunProgressTimer",
+    "setPendingInteraction",
+    "afterTurnSettled",
+    "startNextQueuedTurn",
+    "updateContextForSession",
+    "isMessagesNearBottom",
+    "isMessagesAtBottom",
+    "jumpToLatest",
+    "resetVirtualWindow",
+    "composerStateForSession",
+    "currentTurnOptions",
+    "effectiveModel",
+    "sessionById",
+    "ensureSession",
+    "clearComposerDraft",
+    "fillKnowledgeBaseCommand",
+    "focusInput",
+    "renderTaskPlanDock",
+    "renderInteractionDock",
+    "diagnoseCodexFailure",
+    "pauseQueueForSession",
+    "requireQueueRecoveryForSession",
+    "clearConversationRun",
+    "settleStaleMessages",
+    "refreshActiveSession"
+  ] as const;
 
   applySavedComposerDefaults(): void {
     this.selectedProviderSettingsId = this.plugin.settings.activeApiProviderId;

@@ -40,6 +40,11 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     callback: () => void plugin.activateView()
   });
   plugin.addCommand({
+    id: "toggle-quick-chat-window",
+    name: "全局 AI 小窗：显示/收起",
+    callback: () => void plugin.toggleQuickChatWindow()
+  });
+  plugin.addCommand({
     id: "new-codex-chat",
     name: "新建 Agent 会话",
     callback: async () => {

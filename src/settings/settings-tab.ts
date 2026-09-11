@@ -3,7 +3,7 @@ import { createOriginInput, createOriginButton, createOriginSwitch, createOrigin
 import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
 import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import { mountSettingsEditor } from "./inline-editor";
-import { Modal, Notice, PluginSettingTab, Setting, TFile, type TFolder, normalizePath, setIcon, setTooltip } from "obsidian";
+import { Modal, Notice, Platform, PluginSettingTab, Setting, TFile, type TFolder, normalizePath, setIcon, setTooltip } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { settingsCategoryDefinitions } from "./settings-search";
 import type CodexForObsidianPlugin from "../main";
@@ -26,6 +26,8 @@ import type {
 } from "../harness/resources/skill-runtime";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
+import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
+import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
 import { readNativeJournalSettings, saveNativeJournalFolder } from "../home/native-journal";
 import { AgentIdentityModal } from "../ui/agent-identity-modal";
 import { renderAnimateIcon } from "../ui/animate-icon";
@@ -890,6 +892,90 @@ export class CodexSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       }));
+
+    const quickChatSection = createSettingsSection(page, {
+      title: zh ? "快捷 AI 小窗" : "Quick AI window",
+      surface: "group"
+    });
+    const quickChatGroup = createSettingsGroup(quickChatSection);
+    const quickChatToggleLabel = zh ? "全局快捷键唤起 AI 小窗" : "Global quick AI window hotkey";
+    applySettingsRow(new OriginSetting(quickChatGroup)
+      .setName(quickChatToggleLabel)
+      .setDesc(zh
+        ? "在任意应用前台时按快捷键，EchoInk 对话小窗浮现在当前屏幕上，直接提问；再次按下收起，按 Esc 关闭。收起保留草稿与正在生成的回答。需要 Obsidian 桌面端保持运行。"
+        : "From any app, press the hotkey to float the EchoInk chat window over the current screen and ask directly. Press again or hit Esc to collapse; drafts and running generations survive. Requires the Obsidian desktop app to stay running.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, quickChatToggleLabel);
+        toggle.setValue(this.plugin.settings.quickChat.enabled).onChange(async (value) => {
+          this.plugin.settings.quickChat.enabled = value;
+          await this.plugin.saveSettings();
+          const result = this.plugin.applyQuickChatSettings();
+          if (value && !result.ok) {
+            new Notice(describeQuickChatRegistration(result, true, this.plugin.settings.quickChat.hotkey, zh));
+          }
+          this.scheduleDisplay();
+        });
+      }));
+
+    applySettingsRow(new OriginSetting(quickChatGroup)
+      .setName(zh ? "快捷键" : "Hotkey")
+      .setDesc(zh
+        ? "点击输入框后按下新的组合键（需包含 Ctrl/⌘ 等修饰键）；Esc 取消录制。"
+        : "Focus the field and press a new combination (a modifier key is required); Esc cancels recording.")
+      .addOriginText((text) => {
+        const input = text.inputEl;
+        input.readOnly = true;
+        const settings = this.plugin.settings;
+        const renderHotkey = (): void => {
+          input.value = formatAcceleratorForDisplay(settings.quickChat.hotkey, Platform.isMacOS);
+        };
+        input.placeholder = zh ? "按下快捷键…" : "Press keys…";
+        renderHotkey();
+        let recording = false;
+        input.addEventListener("focus", () => {
+          recording = true;
+          input.value = zh ? "按下新组合…" : "Press a new combination…";
+        });
+        input.addEventListener("blur", () => {
+          recording = false;
+          renderHotkey();
+        });
+        input.addEventListener("keydown", (event) => {
+          if (!recording) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            input.blur();
+            return;
+          }
+          if (event.isComposing || event.keyCode === 229) return;
+          const recorded = recordAcceleratorFromEvent(event);
+          if (!recorded.valid) return;
+          const normalized = normalizeAccelerator(recorded.accelerator);
+          if (!normalized) return;
+          settings.quickChat.hotkey = normalized;
+          void (async () => {
+            await this.plugin.saveSettings();
+            const result = this.plugin.applyQuickChatSettings();
+            if (settings.quickChat.enabled && !result.ok) {
+              new Notice(describeQuickChatRegistration(result, true, normalized, zh));
+            }
+            input.blur();
+            this.scheduleDisplay();
+          })();
+        });
+      }));
+
+    const quickChatRegistration = this.plugin.getQuickChatWindowController()?.registration
+      ?? { ok: false, reason: "disabled" as const };
+    applySettingsRow(new OriginSetting(quickChatGroup)
+      .setName(zh ? "注册状态" : "Registration status")
+      .setDesc(describeQuickChatRegistration(
+        quickChatRegistration,
+        this.plugin.settings.quickChat.enabled,
+        this.plugin.settings.quickChat.hotkey,
+        zh
+      )));
 
     const journalSection = createSettingsSection(page, {
       title: zh ? "日记" : "Journal",
@@ -4972,6 +5058,37 @@ function providerConfigurationFingerprint(provider: ApiProviderConfig): string {
     model,
     apiKeyConfigured: Boolean(provider.apiKey.trim())
   });
+}
+
+function describeQuickChatRegistration(
+  result: QuickChatRegistrationResult,
+  enabled: boolean,
+  hotkey: string,
+  zh: boolean
+): string {
+  if (!enabled) {
+    return zh ? "未启用。" : "Disabled.";
+  }
+  const display = formatAcceleratorForDisplay(hotkey, Platform.isMacOS);
+  if (result.ok) {
+    return zh ? `已注册：${display}` : `Registered: ${display}`;
+  }
+  switch (result.reason) {
+    case "unavailable":
+      return zh
+        ? "桌面能力不可用（移动端或受限环境），小窗无法注册。"
+        : "Desktop capability unavailable; the quick window cannot register.";
+    case "occupied":
+      return zh
+        ? `${display} 已被系统、其他应用或另一个笔记库占用，请更换。`
+        : `${display} is taken by the system, another app, or another vault. Choose a different hotkey.`;
+    case "invalid":
+      return zh
+        ? "快捷键格式无效，请重新录制。"
+        : "Invalid hotkey format. Record it again.";
+    default:
+      return zh ? "未注册。" : "Not registered.";
+  }
 }
 
 function labelSettingsToggle(

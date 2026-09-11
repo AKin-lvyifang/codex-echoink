@@ -30,6 +30,13 @@ export class EchoInkViewService {
   }
 
   async activateView(): Promise<void> {
+    // When the shared conversation view is parked in the quick-chat popout,
+    // bring it back to the sidebar first so the sidebar stays the single
+    // visible conversation surface.
+    const quickChat = this.plugin.getQuickChatWindowController();
+    if (quickChat?.isQuickWindowHoldingView()) {
+      await quickChat.returnToSidebar();
+    }
     const leaves = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX);
     let leaf = leaves.find((candidate) => candidate.view instanceof CodexView) ?? leaves[0];
     if (!leaf) {
