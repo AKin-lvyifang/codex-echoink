@@ -20948,3 +20948,23 @@ body.echoink-quick-chat-popout .workspace-tab-header-container {
   display: none !important;
 }
 /* ===== ECHOINK_QUICK_CHAT_END ===== */
+
+/* ===== EchoInk 快捷 AI 小窗：标题栏避让与拖动（2026-09-12 修正）===== */
+/* macOS 红绿灯按钮避让：header 左侧留出原生窗口控件空间 */
+body.echoink-quick-chat-popout.mod-macos .codex-header {
+  padding-left: 78px;
+}
+
+/* 隐藏 popout 原生 tab header 后，会话 header 承担窗口拖动区；
+   交互控件排除在拖动区外 */
+body.echoink-quick-chat-popout .codex-header {
+  -webkit-app-region: drag;
+}
+
+body.echoink-quick-chat-popout .codex-header button,
+body.echoink-quick-chat-popout .codex-header input,
+body.echoink-quick-chat-popout .codex-header select,
+body.echoink-quick-chat-popout .codex-header .codex-title-icon {
+  -webkit-app-region: no-drag;
+}
+/* ===== ECHOINK_QUICK_CHAT_CHROME_END ===== */

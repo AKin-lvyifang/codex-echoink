@@ -25,6 +25,10 @@ export interface QuickNativeWindowBounds {
   height?: number;
 }
 
+export interface QuickNativeCloseEvent {
+  preventDefault(): void;
+}
+
 export interface QuickNativeWindowHandle {
   show(): void;
   hide(): void;
@@ -38,6 +42,9 @@ export interface QuickNativeWindowHandle {
     options?: { visibleOnFullScreen?: boolean }
   ): void;
   setBounds(bounds: QuickNativeWindowBounds): void;
+  getBounds(): QuickNativeWindowBounds;
+  /** Remote-proxied EventEmitter: used for the window-level `close` hook. */
+  on?(event: string, listener: (event: QuickNativeCloseEvent) => void): void;
   readonly id?: number;
   readonly webContents?: { readonly id?: number };
 }
@@ -68,6 +75,10 @@ export interface QuickElectronRemote {
   screen?: QuickScreenBridge;
   getCurrentWindow?(): QuickNativeWindowHandle;
   getCurrentWebContents?(): { readonly id?: number };
+  /** Remote-proxied Electron app; used to observe app quit for cleanup. */
+  app?: {
+    on?(event: string, listener: () => void): unknown;
+  };
   BrowserWindow?: {
     getAllWindows(): QuickNativeWindowHandle[];
     fromId?(id: number): QuickNativeWindowHandle | null;

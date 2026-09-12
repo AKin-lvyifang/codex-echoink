@@ -1,4 +1,4 @@
-import { Notice, Platform, WorkspaceWindow, type WorkspaceLeaf, type WorkspaceWindowInitData } from "obsidian";
+import { Notice, Platform, WorkspaceTabs, WorkspaceWindow, type WorkspaceLeaf, type WorkspaceSplit, type WorkspaceWindowInitData } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { CodexView, VIEW_TYPE_CODEX, type CodexViewMigrationState } from "../ui/codex-view";
 import { normalizeAccelerator } from "../core/quick-hotkey";
@@ -8,6 +8,8 @@ import {
   getQuickGlobalShortcut,
   isNativeWindowUsable,
   resolveNativeWindowForDom,
+  type QuickNativeCloseEvent,
+  type QuickNativeWindowBounds,
   type QuickNativeWindowHandle
 } from "../core/quick-window-bridge";
 
@@ -27,6 +29,15 @@ const QUICK_WINDOW_WIDTH = 420;
 const QUICK_WINDOW_HEIGHT = 640;
 const QUICK_POPOUT_BODY_CLASS = "echoink-quick-chat-popout";
 
+/** Structural view of Obsidian's internal workspace layout tree. */
+interface QuickLayoutNode {
+  children?: QuickLayoutNode[];
+  /** Runtime signature is (index, child); an out-of-range index appends. */
+  insertChild?(index: number, node: QuickLayoutNode): unknown;
+  removeChild?(node: QuickLayoutNode): unknown;
+  detach?(): void;
+}
+
 /**
  * Owns the global quick-chat window: the global accelerator, the single
  * Obsidian popout that hosts the shared CodexView, and the migration between
@@ -43,11 +54,27 @@ export class QuickChatWindowController {
   private lastRegistration: QuickChatRegistrationResult = { ok: false, reason: "disabled" };
   private escapeCleanup: (() => void) | null = null;
   private toggling: Promise<void> | null = null;
+  private disposing = false;
+  private appQuitting = false;
+  private migrationInProgress = false;
+  private lastBounds: QuickNativeWindowBounds | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     plugin.registerEvent(plugin.app.workspace.on("window-close", (closedWindow) => {
       if (closedWindow === this.workspaceWindow) this.clearAdoptedState();
     }));
+    // Observe app quit so window-level close during shutdown never triggers
+    // an automatic return-to-sidebar migration.
+    try {
+      const remoteApp = getElectronRemote()?.app;
+      for (const quitEvent of ["before-quit", "will-quit"]) {
+        remoteApp?.on?.(quitEvent, () => {
+          this.appQuitting = true;
+        });
+      }
+    } catch {
+      // Remote bridge missing: quit protection degrades to the dispose flag.
+    }
   }
 
   get currentAccelerator(): string {
@@ -83,6 +110,15 @@ export class QuickChatWindowController {
     const shortcut = getQuickGlobalShortcut();
     if (!shortcut) return { ok: false, reason: "unavailable" };
     try {
+      // Release any stale in-app registration first (e.g. an orphaned
+      // controller from a double onload). Electron unregister only touches
+      // this app's own hotkeys, so external owners keep theirs and still
+      // surface as occupied below.
+      try {
+        shortcut.unregister(normalized);
+      } catch {
+        // Nothing registered under this accelerator in-app.
+      }
       const registered = shortcut.register(normalized, () => {
         void this.toggle();
       });
@@ -160,11 +196,25 @@ export class QuickChatWindowController {
   hide(): void {
     const native = this.nativeWindow;
     if (!native || !isNativeWindowUsable(native)) return;
+    this.rememberBounds();
     try {
       native.hide();
     } catch (error) {
       console.error("EchoInk quick window hide failed", error);
     }
+  }
+
+  /**
+   * Window-level close (traffic-light button, Cmd+W, `window.close()`) returns
+   * the conversation to the right sidebar instead of destroying it: the close
+   * is blocked, the shared view migrates with runs/draft intact, and the now
+   * empty popout closes through the same native path.
+   */
+  private handleNativeClose(event?: QuickNativeCloseEvent): void {
+    if (this.disposing || this.appQuitting || this.migrationInProgress) return;
+    if (!this.leaf || !(this.leaf.view instanceof CodexView)) return;
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    void this.returnToSidebar();
   }
 
   /**
@@ -180,26 +230,63 @@ export class QuickChatWindowController {
       await this.plugin.activateView().catch(() => undefined);
       return;
     }
+    this.migrationInProgress = true;
+    this.rememberBounds();
     oldView.enterMigrationMode();
     const snapshot = oldView.exportMigrationState();
     let succeeded = false;
     try {
       const workspace = this.plugin.app.workspace;
-      const sidebarLeaf = workspace.getRightLeaf(true);
-      if (!sidebarLeaf) throw new Error("无法创建右侧栏");
-      await sidebarLeaf.setViewState({ type: VIEW_TYPE_CODEX, active: true });
-      const newView = sidebarLeaf.view instanceof CodexView ? sidebarLeaf.view : null;
+      // Move the ORIGINAL leaf back into the top sidebar tab group: one leaf
+      // for the whole conversation, no duplicate tabs or splits.
+      let targetLeaf: WorkspaceLeaf | null = null;
+      const tabGroup = this.findSidebarTabGroup(workspace.rightSplit);
+      if (tabGroup) {
+        const tabNode = tabGroup as unknown as QuickLayoutNode;
+        // Fresh leaf via the official API, then claimed by the top tab group.
+        const created = workspace.getRightLeaf(true);
+        if (created) {
+          const oldParent = created.parent as unknown as QuickLayoutNode | null;
+          tabNode.insertChild?.(tabNode.children?.length ?? 0, created);
+          // insertChild does not prune the previous parent's children array;
+          // sync it manually and drop the group when it becomes empty.
+          if (oldParent && oldParent !== tabNode) {
+            const siblings = oldParent.children;
+            if (Array.isArray(siblings)) {
+              const at = siblings.indexOf(created);
+              if (at >= 0) siblings.splice(at, 1);
+            }
+            if (!siblings || siblings.length === 0) {
+              const grand = (oldParent as { parent?: QuickLayoutNode }).parent;
+              const uncles = grand?.children;
+              if (Array.isArray(uncles)) {
+                const at = uncles.indexOf(oldParent);
+                if (at >= 0) uncles.splice(at, 1);
+              }
+              const shell = oldParent as { containerEl?: { detach?: () => void } };
+              shell.containerEl?.detach?.();
+            }
+          }
+          targetLeaf = created;
+        }
+      } else {
+        targetLeaf = workspace.getRightLeaf(true);
+      }
+      if (!targetLeaf) throw new Error("无法创建右侧栏标签");
+      await targetLeaf.setViewState({ type: VIEW_TYPE_CODEX, active: true });
+      const newView = targetLeaf.view instanceof CodexView ? targetLeaf.view : null;
       if (newView && newView !== oldView) {
         newView.importMigrationState(snapshot);
         oldView.installMigrationForwarding(newView);
       }
-      // Drop adopted state first so the popout's window-close event does not
-      // race with the migration bookkeeping.
+      // The popout leaf exits last, through the official detach path, so the
+      // window closes with no dangling leaves.
       this.clearAdoptedState();
       leaf.detach();
       succeeded = true;
+      this.cleanupEmptySidebarGroups();
       if (workspace.rightSplit.collapsed) workspace.rightSplit.expand();
-      workspace.setActiveLeaf(sidebarLeaf, { focus: true });
+      workspace.setActiveLeaf(targetLeaf, { focus: true });
       newView?.focusInput();
     } catch (error) {
       console.error("EchoInk quick window return-to-sidebar failed", error);
@@ -211,10 +298,12 @@ export class QuickChatWindowController {
     } finally {
       if (!succeeded) this.clearAdoptedState();
       oldView.exitMigrationMode();
+      this.migrationInProgress = false;
     }
   }
 
   dispose(): void {
+    this.disposing = true;
     this.unregisterAccelerator();
     this.clearAdoptedState();
   }
@@ -307,8 +396,131 @@ export class QuickChatWindowController {
       } catch (error) {
         console.warn("EchoInk quick window native decoration failed", error);
       }
+      try {
+        native.on?.("close", (event) => this.handleNativeClose(event));
+      } catch (error) {
+        console.warn("EchoInk quick window close hook failed", error);
+      }
     }
     this.installEscapeHandler(doc);
+  }
+
+  private rememberBounds(): void {
+    const native = this.nativeWindow;
+    if (!native || !isNativeWindowUsable(native)) return;
+    try {
+      // Copy eagerly: remote member proxies die with their BrowserWindow, so
+      // the remembered bounds must be plain numbers.
+      const { x, y, width, height } = native.getBounds();
+      if (typeof x === "number" && typeof y === "number") {
+        this.lastBounds = { x, y, width, height };
+      }
+    } catch {
+      // Keep the previously remembered bounds.
+    }
+  }
+
+  /**
+   * The sidebar home for the conversation is the right sidebar's existing
+   * top tab group (the one hosting Outline/Backlinks/etc.), never a fresh
+   * split: a new tab is appended there so sibling tabs stay untouched.
+   */
+  private findSidebarTabGroup(rightSplit: WorkspaceSplit): WorkspaceTabs | null {
+    const systemTabTypes = new Set([
+      "outline",
+      "backlink",
+      "outgoing-link",
+      "tag",
+      "search",
+      "file-explorer",
+      "bookmarks",
+      "starred",
+      "calendar"
+    ]);
+    let firstTabs: WorkspaceTabs | null = null;
+    let systemTabs: WorkspaceTabs | null = null;
+    const walk = (item: unknown): void => {
+      if (!item || typeof item !== "object") return;
+      if (item instanceof WorkspaceTabs) {
+        if (!firstTabs) firstTabs = item;
+        if (!systemTabs) {
+          const children = (item as unknown as QuickLayoutNode).children ?? [];
+          const hostsSystemTab = children.some((child) => {
+            const leaf = child as unknown as WorkspaceLeaf;
+            const type = typeof leaf.view?.getViewType === "function"
+              ? leaf.view.getViewType()
+              : "";
+            return systemTabTypes.has(type);
+          });
+          if (hostsSystemTab) systemTabs = item;
+        }
+        return;
+      }
+      const children = (item as QuickLayoutNode).children;
+      if (Array.isArray(children)) {
+        for (const child of children) walk(child);
+      }
+    };
+    walk(rightSplit);
+    return systemTabs ?? firstTabs;
+  }
+
+  /**
+   * Remove tab groups/splits under the right sidebar that became empty after
+   * the migration (e.g. splits created by earlier misplaced returns), while
+   * keeping the top tab group and anything still hosting a view.
+   */
+  private cleanupEmptySidebarGroups(): void {
+    const workspace = this.plugin.app.workspace;
+    const rightSplit = workspace.rightSplit;
+    const keep = this.findSidebarTabGroup(rightSplit);
+    const prune = (item: unknown): boolean => {
+      if (!item || typeof item !== "object") return false;
+      if (item instanceof WorkspaceTabs) {
+        // Drop stray empty tabs left behind by earlier misplaced migrations
+        // (never the active leaf, never real views).
+        const tabsNode = item as unknown as QuickLayoutNode;
+        for (const child of [...(tabsNode.children ?? [])]) {
+          const leaf = child as unknown as WorkspaceLeaf;
+          const type = typeof leaf.view?.getViewType === "function"
+            ? leaf.view.getViewType()
+            : "";
+          if (type === "empty" && leaf !== workspace.activeLeaf) {
+            tabsNode.removeChild?.(child);
+          }
+        }
+        if (item === keep) return false;
+        const children = tabsNode.children ?? [];
+        return children.length === 0;
+      }
+      if (item === rightSplit) return false;
+      const node = item as QuickLayoutNode;
+      if (!Array.isArray(node.children)) return false;
+      for (const child of [...node.children]) {
+        if (prune(child)) {
+          this.detachLayoutChild(node, child);
+        }
+      }
+      return node.children.length === 0;
+    };
+    try {
+      const root = rightSplit as unknown as QuickLayoutNode;
+      for (const child of [...(root.children ?? [])]) {
+        if (prune(child)) {
+          this.detachLayoutChild(root, child);
+        }
+      }
+    } catch (error) {
+      console.warn("EchoInk quick window sidebar cleanup skipped", error);
+    }
+  }
+
+  private detachLayoutChild(parent: QuickLayoutNode, child: QuickLayoutNode): void {
+    if (typeof parent.removeChild === "function") {
+      parent.removeChild(child);
+      return;
+    }
+    child.detach?.();
   }
 
   private installEscapeHandler(doc: Document | null): void {
@@ -357,6 +569,18 @@ export class QuickChatWindowController {
   }
 
   private buildWindowInitData(): WorkspaceWindowInitData {
+    // Reuse the last user-placed bounds so re-invoking the quick window never
+    // resets a position the user dragged to.
+    if (this.lastBounds?.x !== undefined && this.lastBounds?.y !== undefined) {
+      return {
+        x: this.lastBounds.x,
+        y: this.lastBounds.y,
+        size: {
+          width: this.lastBounds.width ?? QUICK_WINDOW_WIDTH,
+          height: this.lastBounds.height ?? QUICK_WINDOW_HEIGHT
+        }
+      };
+    }
     const bounds = computeQuickWindowBounds(QUICK_WINDOW_WIDTH, QUICK_WINDOW_HEIGHT);
     if (!bounds) return {};
     return {
