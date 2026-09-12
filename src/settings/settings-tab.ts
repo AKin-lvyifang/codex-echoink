@@ -26,7 +26,6 @@ import type {
 } from "../harness/resources/skill-runtime";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
-import { ECHOINK_HOME_MODULES } from "../home/home-modules";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
@@ -1080,26 +1079,24 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderLayoutSettings(page: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const layoutSection = createSettingsSection(page, {
-      title: zh ? "首页模块显示" : "Home module visibility",
+      title: zh ? "卡片入口" : "Card entries",
       surface: "group"
     });
     const layoutGroup = createSettingsGroup(layoutSection);
-    for (const module of ECHOINK_HOME_MODULES) {
-      const label = zh ? module.zhName : module.enName;
-      applySettingsRow(new OriginSetting(layoutGroup)
-        .setName(label)
-        .setDesc(zh
-          ? "控制工作台首页是否展示该模块；隐藏时保留原布局槽位，不删除模块数据。"
-          : "Show or hide this module on the workbench home. Hiding keeps its layout slot and data.")
-        .addOriginToggle((toggle) => {
-          labelSettingsToggle(toggle, label);
-          toggle.setValue(this.plugin.settings.homeModules[module.id] !== false).onChange(async (value) => {
-            this.plugin.settings.homeModules[module.id] = value;
-            await this.plugin.saveSettings();
-            this.plugin.notifyHomeSurfacesChanged();
-          });
-        }));
-    }
+    const label = zh ? "显示卡片入口" : "Show card entries";
+    applySettingsRow(new OriginSetting(layoutGroup)
+      .setName(label)
+      .setDesc(zh
+        ? "统一显示或隐藏首页的卡片入口区。"
+        : "Show or hide the home card entry area as a whole.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, label);
+        toggle.setValue(this.plugin.settings.homeCardsVisible !== false).onChange(async (value) => {
+          this.plugin.settings.homeCardsVisible = value;
+          await this.plugin.saveSettings();
+          this.plugin.notifyHomeSurfacesChanged();
+        });
+      }));
   }
 
   private renderTodosSettings(page: HTMLElement): void {
