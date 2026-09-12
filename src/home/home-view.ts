@@ -13,16 +13,12 @@ import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
 import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-service";
 import { ECHOINK_HOME_MODULES } from "./home-modules";
-import {
-  createTodo,
-  setTodoDone,
-  sortOpenTodos,
-  todoCategoryName,
-  todoDueState,
-  saveTodos,
-  type EchoInkTodoDueState
-} from "./home-todos";
+import { sortOpenTodos } from "./home-todos";
 import { EchoInkTodosModal } from "./home-todos-modal";
+import { EchoInkTodoEditModal } from "./todo-edit-modal";
+import { renderTodoTable, todoTableCopy } from "./todo-table";
+import type { ParsedTodoRecord } from "./todo-markdown";
+import { confirmModal } from "../ui/modals";
 
 export const VIEW_TYPE_ECHOINK_HOME = "codex-echoink-home";
 let nextHomeId = 0;
@@ -52,6 +48,7 @@ export class EchoInkHomeView extends ItemView {
   private searchMatches: HomeSearchMatch[] = [];
   private searchIndex = -1;
   private activityUnsubscribe: (() => void) | null = null;
+  private todoUnsubscribe: (() => void) | null = null;
   private activityModal: Modal | null = null;
   private captureBusy = false;
   private searchOpen = false;
@@ -78,6 +75,9 @@ export class EchoInkHomeView extends ItemView {
     this.contentEl.tabIndex = -1;
     this.renderShell();
     this.activityUnsubscribe = this.plugin.homeActivity?.subscribe(() => this.scheduleRefresh()) ?? null;
+    this.todoUnsubscribe = this.plugin.getTodoStore().subscribe(() => {
+      if (!this.closed) this.renderTodos();
+    });
     this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on("modify", () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
@@ -105,7 +105,7 @@ export class EchoInkHomeView extends ItemView {
     const win = this.contentEl.ownerDocument.defaultView;
     if (this.refreshTimer !== null) win?.clearTimeout(this.refreshTimer);
     if (this.searchTimer !== null) win?.clearTimeout(this.searchTimer);
-    this.searchAbort?.abort(); this.activityUnsubscribe?.(); this.activityModal?.close();
+    this.searchAbort?.abort(); this.activityUnsubscribe?.(); this.todoUnsubscribe?.(); this.activityModal?.close();
     this.contentEl.empty(); this.contentEl.removeClass("echoink-home-workspace");
   }
   private scheduleRefresh(): void {
@@ -235,46 +235,28 @@ export class EchoInkHomeView extends ItemView {
   }
   private renderTodos(): void {
     const host = this.field("todo-list");
-    const todos = this.plugin.settings.todos;
-    const open = sortOpenTodos(todos);
+    const store = this.plugin.getTodoStore();
+    const open = sortOpenTodos(store.snapshot());
     this.field("todo-subtitle").setText(this.t(
       open.length ? `还有 ${open.length} 件未完成，按期限排序` : "暂时没有未完成的事",
       open.length ? `${open.length} open, nearest due date first` : "Nothing open right now"
     ));
-    if (!open.length) {
-      markup(host, `<p class="todo-empty">${this.t("inbox 里的小想法，也可以变成一条待办。", "A loose thought from Inbox can become a to-do.")}</p>`);
-      return;
-    }
-    const preview = open.slice(0, 4);
-    const rows = preview.map((todo) => {
-      const due = todoDueState(todo);
-      const chips = [
-        todo.people ? `<span class="todo-chip todo-chip-people">${esc(todo.people)}</span>` : "",
-        todo.dueDate ? `<span class="todo-chip todo-due-${due}">${esc(this.dueLabel(due))} · ${esc(todo.dueDate)}</span>` : "",
-        `<span class="todo-chip todo-chip-category">${esc(todoCategoryName(this.plugin.settings.todoCategories, todo.categoryId, this.t("未分类", "Uncategorized")))}</span>`
-      ].join("");
-      return `<label class="todo-row"><input type="checkbox" data-todo="${esc(todo.id)}" aria-label="${esc(this.t("完成", "Done"))}：${esc(todo.title)}"><span class="todo-row-main"><strong>${esc(todo.title)}</strong><span class="todo-row-meta">${chips}</span></span></label>`;
-    }).join("");
-    const more = open.length > preview.length
-      ? `<button class="text-button" data-action="todos-all">${this.t(`还有 ${open.length - preview.length} 条，查看全部`, `${open.length - preview.length} more — view all`)}${icon("arrow-right")}</button>`
-      : "";
-    markup(host, `${rows}${more}`);
+    renderTodoTable(host, open.slice(0, 4), todoTableCopy(this.language), {
+      onToggle: (record, done) => void store.toggleDone(record, done),
+      onEdit: (record) => new EchoInkTodoEditModal(this.app, this.plugin, record).open(),
+      onDelete: (record) => void this.confirmTodoDelete(record)
+    });
   }
-  private dueLabel(state: EchoInkTodoDueState): string {
-    return this.t(
-      { overdue: "逾期", today: "今天到期", future: "到期", none: "" }[state],
-      { overdue: "Overdue", today: "Due today", future: "Due", none: "" }[state]
+  private async confirmTodoDelete(record: ParsedTodoRecord): Promise<void> {
+    const accepted = await confirmModal(
+      this.app,
+      this.t("删除待办", "Delete to-do"),
+      this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`),
+      this.t("删除", "Delete"),
+      this.t("取消", "Cancel")
     );
-  }
-  private async quickAddTodo(): Promise<void> {
-    const input = this.field("todo-quick-input") as HTMLInputElement;
-    const title = input.value.trim();
-    if (!title) { input.focus(); return; }
-    createTodo(this.plugin, { title });
-    input.value = "";
-    await saveTodos(this.plugin);
-    this.renderTodos();
-    input.focus();
+    if (!accepted) return;
+    await this.plugin.getTodoStore().removeTodo(record);
   }
   private shortDate(key: string): string { return new Intl.DateTimeFormat(this.language, { month: "short", day: "numeric" }).format(parseDate(key)); }
   private selectDate(key: string | null): void {
@@ -283,13 +265,6 @@ export class EchoInkHomeView extends ItemView {
     this.renderRecent(); this.renderActivity(); this.renderCalendar();
   }
   private async handleClick(event: MouseEvent): Promise<void> {
-    const checkbox = (event.target as HTMLElement).closest?.<HTMLInputElement>("input[data-todo]");
-    if (checkbox && this.contentEl.contains(checkbox)) {
-      setTodoDone(this.plugin, checkbox.dataset.todo!, checkbox.checked);
-      await saveTodos(this.plugin);
-      this.renderTodos();
-      return;
-    }
     const button = (event.target as HTMLElement).closest?.<HTMLButtonElement>("button");
     if (!button || !this.contentEl.contains(button)) return;
     if (button.dataset.note) { this.closeSearch(false); await this.openNote(button.dataset.note); return; }
@@ -311,12 +286,13 @@ export class EchoInkHomeView extends ItemView {
       case "week-review": this.showActivity(false); break;
       case "all-day": this.showActivity(true); break;
       case "footprint-help": this.showActivity(false, true); break;
-      case "todo-quick-add": await this.quickAddTodo(); break;
+      case "todo-new": new EchoInkTodoEditModal(this.app, this.plugin, null).open(); break;
+      case "todo-open-source": void this.plugin.getTodoStore().openSourceFile(); break;
       case "todos-all": this.openTodosModal(); break;
     }
   }
   private openTodosModal(): void {
-    new EchoInkTodosModal(this.app, this.plugin, () => this.renderTodos()).open();
+    new EchoInkTodosModal(this.app, this.plugin).open();
   }
   private async capture(): Promise<void> {
     if (this.captureBusy) return;
@@ -417,11 +393,6 @@ export class EchoInkHomeView extends ItemView {
     if ((event.metaKey || event.ctrlKey) && ["k", "j"].includes(event.key.toLowerCase())) {
       event.preventDefault(); event.stopPropagation();
       if (event.key.toLowerCase() === "k") this.openSearch(); else void this.capture().catch((error) => new Notice(errorMessage(error)));
-      return;
-    }
-    if (!this.searchOpen && event.key === "Enter" && (event.target as HTMLElement).dataset?.home === "todo-quick-input") {
-      event.preventDefault();
-      void this.quickAddTodo().catch((error) => new Notice(errorMessage(error)));
       return;
     }
     if (!this.searchOpen) return;

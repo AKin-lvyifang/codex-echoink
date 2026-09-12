@@ -27,7 +27,7 @@ import type {
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
 import { ECHOINK_HOME_MODULES } from "../home/home-modules";
-import { addTodoCategory, removeTodoCategory, renameTodoCategory } from "../home/home-todos";
+import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
 import { readNativeJournalSettings, saveNativeJournalFolder } from "../home/native-journal";
@@ -1099,6 +1099,24 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderTodosSettings(page: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
+    const store = this.plugin.getTodoStore();
+    const sourceSection = createSettingsSection(page, {
+      title: zh ? "数据文件" : "Data file",
+      surface: "group"
+    });
+    const sourceGroup = createSettingsGroup(sourceSection);
+    const sourceRow = applySettingsRow(new OriginSetting(sourceGroup)
+      .setName(zh ? "待办源文件" : "To-do source file")
+      .setDesc(zh
+        ? `待办的唯一持久化来源：Vault 内 ${TODO_SOURCE_PATH}。Obsidian 原生待办清单格式，可直接编辑；界面操作会写回同一文件。`
+        : `Single source of truth: ${TODO_SOURCE_PATH} in this vault. Native Obsidian task-list format; edit it directly and the UI follows.`));
+    const openButton = sourceRow.controlEl.createEl("button", {
+      cls: "mod-cta",
+      text: zh ? "打开源文件" : "Open source file",
+      attr: { type: "button" }
+    });
+    openButton.onclick = () => void store.openSourceFile();
+
     const section = createSettingsSection(page, {
       title: zh ? "待办分类" : "To-do categories",
       surface: "group"
@@ -1107,8 +1125,8 @@ export class CodexSettingTab extends PluginSettingTab {
     applySettingsRow(new OriginSetting(group)
       .setName(zh ? "分类与待办的关系" : "Categories and to-dos")
       .setDesc(zh
-        ? "分类以稳定标识关联待办，重命名后已有待办同步显示新名称；删除分类不会删除待办，相关事项转为「未分类」。是否在工作台显示待办，请在「基础设置 → 布局与外观」管理。"
-        : "Categories link to to-dos by stable id, so renames apply to existing to-dos. Deleting a category keeps its to-dos, which become uncategorized. Whether the to-do module shows on the workbench is managed under General → Layout & appearance."));
+        ? "分类以名称写入源文件；重命名后已有待办同步显示新名称；删除分类不会删除待办，相关事项转为「未分类」。是否在工作台显示待办，请在「基础设置 → 布局与外观」管理。"
+        : "Categories are stored by name in the source file; renames apply to existing to-dos. Deleting a category keeps its to-dos, which become uncategorized. Whether the to-do module shows on the workbench is managed under General → Layout & appearance."));
     for (const category of this.plugin.settings.todoCategories) {
       const row = applySettingsRow(new OriginSetting(group).setName(category.name));
       const renameButton = row.controlEl.createEl("button", {
@@ -1124,15 +1142,19 @@ export class CodexSettingTab extends PluginSettingTab {
           category.name
         );
         if (next === null) return;
-        if (!next.trim()) {
+        const trimmed = next.trim();
+        if (!trimmed) {
           new Notice(zh ? "分类名称不能为空" : "The category name cannot be empty");
           return;
         }
-        if (!renameTodoCategory(this.plugin, category.id, next)) {
+        if (this.plugin.settings.todoCategories.some((entry) => entry.id !== category.id && entry.name === trimmed)) {
           new Notice(zh ? "已有同名分类" : "A category with this name already exists");
           return;
         }
+        const previous = category.name;
+        category.name = trimmed;
         await this.plugin.saveSettings();
+        await store.renameCategoryInSource(previous, trimmed);
         this.plugin.notifyHomeSurfacesChanged();
         this.scheduleDisplay();
       })();
@@ -1142,7 +1164,7 @@ export class CodexSettingTab extends PluginSettingTab {
         attr: { type: "button" }
       });
       deleteButton.onclick = () => void (async () => {
-        const affected = this.plugin.settings.todos.filter((todo) => todo.categoryId === category.id).length;
+        const affected = store.snapshot().filter((record) => record.categoryName === category.name).length;
         const accepted = await confirmModal(
           this.app,
           zh ? "删除分类" : "Delete category",
@@ -1153,8 +1175,10 @@ export class CodexSettingTab extends PluginSettingTab {
           zh ? "取消" : "Cancel"
         );
         if (!accepted) return;
-        removeTodoCategory(this.plugin, category.id);
+        const index = this.plugin.settings.todoCategories.findIndex((entry) => entry.id === category.id);
+        if (index >= 0) this.plugin.settings.todoCategories.splice(index, 1);
         await this.plugin.saveSettings();
+        await store.removeCategoryFromSource(category.name);
         this.plugin.notifyHomeSurfacesChanged();
         this.scheduleDisplay();
       })();
@@ -1174,10 +1198,12 @@ export class CodexSettingTab extends PluginSettingTab {
         zh ? "分类名称" : "Category name"
       );
       if (name === null) return;
-      if (!addTodoCategory(this.plugin, name)) {
+      const trimmed = name.trim();
+      if (!trimmed || this.plugin.settings.todoCategories.some((entry) => entry.name === trimmed)) {
         new Notice(zh ? "名称为空或已存在同名分类" : "The name is empty or already exists");
         return;
       }
+      this.plugin.settings.todoCategories.push({ id: newId("todo-category"), name: trimmed });
       await this.plugin.saveSettings();
       this.scheduleDisplay();
     })();

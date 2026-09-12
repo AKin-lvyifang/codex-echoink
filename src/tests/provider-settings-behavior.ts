@@ -12829,6 +12829,13 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     applyQuickChatSettings: () => ({ ok: false, reason: "unavailable" as const }),
     returnQuickChatToSidebar: async () => undefined,
     toggleQuickChatWindow: async () => undefined,
+    getTodoStore: () => ({
+      subscribe: () => () => undefined,
+      snapshot: () => [],
+      openSourceFile: async () => undefined,
+      renameCategoryInSource: async () => undefined,
+      removeCategoryFromSource: async () => undefined
+    }),
     ...plugin
   };
 }

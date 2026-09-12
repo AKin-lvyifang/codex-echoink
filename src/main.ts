@@ -28,6 +28,7 @@ import {
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
+import { EchoInkTodoStore } from "./home/todo-store";
 import {
   EchoInkSettingsStore,
   restoreApiProviderSettings,
@@ -169,6 +170,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private settingsStore: EchoInkSettingsStore | null = null;
   private viewService: EchoInkViewService | null = null;
   private quickChatWindow: QuickChatWindowController | null = null;
+  private todoStore: EchoInkTodoStore | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
   private pendingSettingsResourceDetailId = "";
@@ -292,6 +294,15 @@ export default class CodexForObsidianPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
       if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshHomeSurfaces();
     }
+  }
+  getTodoStore(): EchoInkTodoStore {
+    if (!this.todoStore) {
+      this.todoStore = new EchoInkTodoStore(this);
+      void this.todoStore.initialize().catch((error) => {
+        console.error("EchoInk todo store initialization failed", error);
+      });
+    }
+    return this.todoStore;
   }
   async activateView(): Promise<void> { return this.getViewService().activateView(); }
   getQuickChatWindowController(): QuickChatWindowController | null { return this.quickChatWindow; }

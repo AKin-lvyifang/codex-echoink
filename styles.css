@@ -20969,134 +20969,42 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 }
 /* ===== ECHOINK_QUICK_CHAT_CHROME_END ===== */
 
-/* ===== EchoInk 工作台待办与模块可见性（2026-09-12）===== */
+/* ===== EchoInk 待办表格与模块可见性（2026-09-12 v2）===== */
 /* 固定槽位：隐藏模块保留布局位置，仅隐藏内容与交互 */
-.echoink-home-workspace .echoink-module-hidden {
-  visibility: hidden;
-  pointer-events: none;
-}
+.echoink-home-workspace .echoink-module-hidden{visibility:hidden;pointer-events:none}
 
-.todo-section {
-  margin-top: 28px;
-}
+/* 待办表格作用域变量：首页沿用工作板变量，弹窗回退 Obsidian 变量 */
+.echoink-home-workspace .todo-section,.modal.echoink-todos-dialog{--todo-ink:var(--ink,var(--text-normal));--todo-muted:var(--muted,var(--text-faint));--todo-line:var(--line,var(--background-modifier-border));--todo-soft:var(--soft,var(--background-secondary));--todo-accent:var(--accent,var(--interactive-accent))}
 
-.todo-quick {
-  display: flex;
-  gap: 8px;
-  margin: 10px 0 12px;
-}
+/* shadcn Table 语义适配：容器横滚、紧凑表头、细行分隔、轻悬停 */
+.echoink-todo-table-wrap{width:100%;overflow-x:auto}
+.echoink-todo-table{width:100%;border-collapse:collapse;font-size:inherit;color:var(--todo-ink)}
+.echoink-todo-table thead tr{border-bottom:1px solid var(--todo-line)}
+.echoink-todo-table th{height:32px;padding:0 8px;text-align:left;vertical-align:middle;font-weight:500;white-space:nowrap;color:var(--todo-muted);font-size:.92em}
+.echoink-todo-table tbody tr{border-bottom:1px solid var(--todo-line);transition:background-color .12s ease}
+.echoink-todo-table tbody tr:last-child{border-bottom:0}
+.echoink-todo-table tbody tr:hover{background:color-mix(in srgb,var(--todo-soft) 62%,transparent)}
+.echoink-todo-table td{padding:6px 8px;vertical-align:middle;white-space:nowrap;color:var(--todo-muted)}
+.echoink-todo-table td.echoink-todo-title{white-space:normal;min-width:180px;width:100%}
+.echoink-todo-table td.echoink-todo-title span{color:var(--todo-ink)}
+.echoink-todo-table tr.is-done td{color:var(--todo-muted)}
+.echoink-todo-table tr.is-done td.echoink-todo-title span{text-decoration:line-through}
+.echoink-todo-check input{accent-color:var(--todo-accent);margin:0}
+.echoink-due.echoink-due-overdue{color:#c04434;font-weight:500}
+.echoink-due.echoink-due-today{color:#a05a2c;font-weight:500}
+.theme-dark .echoink-home-workspace .echoink-due.echoink-due-overdue,.theme-dark .echoink-todos-dialog .echoink-due.echoink-due-overdue{color:#e08a7a}
+.theme-dark .echoink-home-workspace .echoink-due.echoink-due-today,.theme-dark .echoink-todos-dialog .echoink-due.echoink-due-today{color:#d8a35f}
+.echoink-todo-actions{text-align:right}
+.echoink-todo-action{background:none;border:none;padding:2px 4px;cursor:pointer;color:var(--todo-muted);border-radius:6px}
+.echoink-todo-action:hover{color:var(--todo-ink);background:var(--todo-soft)}
+.echoink-todo-action-danger:hover{color:#c04434}
+.echoink-todo-table-empty td{color:var(--todo-muted);padding:12px 8px;white-space:normal}
+.todo-head-actions{display:flex;gap:10px;align-items:center}
 
-.todo-quick input {
-  flex: 1;
-  min-width: 0;
-}
-
-.todo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.todo-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 10px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--echoink-conversation-radius-md, 8px);
-  background: var(--background-primary);
-  cursor: pointer;
-}
-
-.todo-row input[type="checkbox"] {
-  margin-top: 3px;
-}
-
-.todo-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.todo-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.todo-chip {
-  font-size: 11px;
-  line-height: 1.6;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--background-modifier-border);
-  color: var(--text-muted);
-}
-
-.todo-due-overdue {
-  background: rgba(220, 80, 60, 0.14);
-  color: #c04434;
-}
-
-.todo-due-today {
-  background: rgba(217, 127, 87, 0.16);
-  color: #a05a2c;
-}
-
-.todo-due-future {
-  background: rgba(90, 160, 120, 0.14);
-  color: #3d7a55;
-}
-
-.todo-empty {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-/* 全部待办对话框 */
-.echoink-todos-dialog .todo-dialog-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.echoink-todos-dialog .todo-filter.is-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-}
-
-.echoink-todos-dialog .todo-dialog-add {
-  margin-left: auto;
-}
-
-.echoink-todos-dialog .todo-dialog-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 55vh;
-  overflow-y: auto;
-}
-
-.echoink-todos-dialog .todo-row.is-done strong {
-  text-decoration: line-through;
-  color: var(--text-muted);
-}
-
-.echoink-todos-dialog .todo-row-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
-}
-
-.echoink-todos-dialog .todo-dialog-empty {
-  color: var(--text-muted);
-}
-
-.todo-edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-/* ===== ECHOINK_TODO_END ===== */
+/* 全部待办弹窗 */
+.modal.echoink-todos-dialog .todo-dialog-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.modal.echoink-todos-dialog .todo-filter.is-active{background:var(--interactive-accent);color:var(--text-on-accent)}
+.modal.echoink-todos-dialog .todo-dialog-add{margin-left:auto}
+.modal.echoink-todos-dialog .todo-dialog-table{max-height:55vh;overflow:auto}
+.todo-edit-actions{display:flex;justify-content:flex-end;margin-top:12px}
+/* ===== ECHOINK_TODO_V2_END ===== */
