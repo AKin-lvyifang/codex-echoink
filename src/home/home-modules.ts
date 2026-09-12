@@ -14,7 +14,6 @@ export interface EchoInkHomeModuleDefinition {
 
 export const ECHOINK_HOME_MODULES: readonly EchoInkHomeModuleDefinition[] = [
   { id: "recent-notes", selector: ".recent-section", zhName: "最近笔记", enName: "Recent notes", defaultVisible: true },
-  { id: "footprints", selector: ".footprints", zhName: "本周足迹", enName: "Weekly activity", defaultVisible: true },
   { id: "calendar", selector: ".calendar", zhName: "日记与足迹日历", enName: "Journal & activity calendar", defaultVisible: true },
   { id: "knowledge", selector: ".knowledge-section", zhName: "知识卡片区", enName: "Knowledge cards", defaultVisible: true },
   { id: "todos", selector: ".todo-section", zhName: "待办", enName: "To-dos", defaultVisible: true }
