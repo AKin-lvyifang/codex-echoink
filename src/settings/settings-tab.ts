@@ -485,6 +485,8 @@ export class CodexSettingTab extends PluginSettingTab {
         bodyEl.appendChild(this.inlineEditor.host);
       } else if (activeTab === "providers") {
         this.renderProviderModelManager(bodyEl);
+      } else if (activeTab === "layout") {
+        this.renderLayoutSettings(bodyEl);
       } else if (activeTab === "resources") {
         this.renderWorkspaceResourceManager(bodyEl);
       } else if (activeTab === "knowledgeBase") {
@@ -1070,8 +1072,15 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     runsSetting.controlEl.insertBefore(slider, runsOutput);
 
+    this.renderFilePersonalizationSettings(page);
+    this.renderDeveloperModeSettings(page);
+    this.renderAboutSection(page);
+  }
+
+  private renderLayoutSettings(page: HTMLElement): void {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
     const layoutSection = createSettingsSection(page, {
-      title: zh ? "布局与外观" : "Layout & appearance",
+      title: zh ? "首页模块显示" : "Home module visibility",
       surface: "group"
     });
     const layoutGroup = createSettingsGroup(layoutSection);
@@ -1091,10 +1100,6 @@ export class CodexSettingTab extends PluginSettingTab {
           });
         }));
     }
-
-    this.renderFilePersonalizationSettings(page);
-    this.renderDeveloperModeSettings(page);
-    this.renderAboutSection(page);
   }
 
   private renderTodosSettings(page: HTMLElement): void {
@@ -1110,7 +1115,7 @@ export class CodexSettingTab extends PluginSettingTab {
       .setDesc(zh
         ? `待办的唯一持久化来源：Vault 内 ${TODO_SOURCE_PATH}。Obsidian 原生待办清单格式，可直接编辑；界面操作会写回同一文件。`
         : `Single source of truth: ${TODO_SOURCE_PATH} in this vault. Native Obsidian task-list format; edit it directly and the UI follows.`));
-    const openButton = sourceRow.controlEl.createEl("button", {
+    const openButton = createOriginButton(sourceRow.controlEl, {
       cls: "mod-cta",
       text: zh ? "打开源文件" : "Open source file",
       attr: { type: "button" }
@@ -1125,14 +1130,16 @@ export class CodexSettingTab extends PluginSettingTab {
     applySettingsRow(new OriginSetting(group)
       .setName(zh ? "分类与待办的关系" : "Categories and to-dos")
       .setDesc(zh
-        ? "分类以名称写入源文件；重命名后已有待办同步显示新名称；删除分类不会删除待办，相关事项转为「未分类」。是否在工作台显示待办，请在「基础设置 → 布局与外观」管理。"
-        : "Categories are stored by name in the source file; renames apply to existing to-dos. Deleting a category keeps its to-dos, which become uncategorized. Whether the to-do module shows on the workbench is managed under General → Layout & appearance."));
+        ? "分类以名称写入源文件；重命名后已有待办同步显示新名称；删除分类不会删除待办，相关事项转为「未分类」。是否在工作台显示待办，请在「布局与外观」管理。"
+        : "Categories are stored by name in the source file; renames apply to existing to-dos. Deleting a category keeps its to-dos, which become uncategorized. Whether the to-do module shows on the workbench is managed under Layout & appearance."));
     for (const category of this.plugin.settings.todoCategories) {
-      const row = applySettingsRow(new OriginSetting(group).setName(category.name));
-      const renameButton = row.controlEl.createEl("button", {
-        cls: "mod-cta",
+      const row = group.createDiv({ cls: "echoink-settings-compact-row" });
+      const rowCopy = row.createDiv({ cls: "echoink-settings-compact-copy" });
+      rowCopy.createDiv({ cls: "echoink-settings-compact-title", text: category.name });
+      const rowActions = row.createDiv({ cls: "echoink-settings-compact-actions" });
+      const renameButton = createOriginButton(rowActions, {
         text: zh ? "重命名" : "Rename",
-        attr: { type: "button" }
+        attr: { type: "button", "aria-label": `${zh ? "重命名" : "Rename"} ${category.name}` }
       });
       renameButton.onclick = () => void (async () => {
         const next = await textInputModal(
@@ -1158,35 +1165,36 @@ export class CodexSettingTab extends PluginSettingTab {
         this.plugin.notifyHomeSurfacesChanged();
         this.scheduleDisplay();
       })();
-      const deleteButton = row.controlEl.createEl("button", {
+      const deleteButton = createOriginButton(rowActions, {
         cls: "mod-warning",
         text: zh ? "删除" : "Delete",
-        attr: { type: "button" }
+        attr: { type: "button", "aria-label": `${zh ? "删除" : "Delete"} ${category.name}`, "aria-expanded": "false" }
       });
-      deleteButton.onclick = () => void (async () => {
-        const affected = store.snapshot().filter((record) => record.categoryName === category.name).length;
-        const accepted = await confirmModal(
-          this.app,
-          zh ? "删除分类" : "Delete category",
-          zh
-            ? `删除「${category.name}」后，${affected} 条相关待办将转为「未分类」；待办本身不会被删除。`
-            : `Deleting "${category.name}" moves ${affected} to-do(s) to Uncategorized. The to-dos themselves are kept.`,
-          zh ? "删除" : "Delete",
-          zh ? "取消" : "Cancel"
-        );
-        if (!accepted) return;
-        const index = this.plugin.settings.todoCategories.findIndex((entry) => entry.id === category.id);
-        if (index >= 0) this.plugin.settings.todoCategories.splice(index, 1);
-        await this.plugin.saveSettings();
-        await store.removeCategoryFromSource(category.name);
-        this.plugin.notifyHomeSurfacesChanged();
-        this.scheduleDisplay();
-      })();
+      deleteButton.onclick = () => showSettingsInlineConfirmation(row, deleteButton, {
+        message: zh
+          ? `删除「${category.name}」后，${store.snapshot().filter((record) => record.categoryName === category.name).length} 条相关待办将转为「未分类」；待办本身不会被删除。`
+          : `Deleting "${category.name}" moves ${store.snapshot().filter((record) => record.categoryName === category.name).length} to-do(s) to Uncategorized. The to-dos themselves are kept.`,
+        confirmLabel: zh ? "确认删除" : "Confirm deletion",
+        cancelLabel: zh ? "取消" : "Cancel",
+        onConfirm: async () => {
+          const index = this.plugin.settings.todoCategories.findIndex((entry) => entry.id === category.id);
+          if (index >= 0) this.plugin.settings.todoCategories.splice(index, 1);
+          await this.plugin.saveSettings();
+          await store.removeCategoryFromSource(category.name);
+          this.plugin.notifyHomeSurfacesChanged();
+          this.scheduleDisplay();
+        }
+      });
     }
-    const addRow = applySettingsRow(new OriginSetting(group)
-      .setName(zh ? "新增分类" : "Add category")
-      .setDesc(zh ? "名称不能为空，也不能与已有分类同名。" : "Names cannot be empty or duplicate an existing category."));
-    const addButton = addRow.controlEl.createEl("button", {
+    const addRow = group.createDiv({ cls: "echoink-settings-compact-row" });
+    const addCopy = addRow.createDiv({ cls: "echoink-settings-compact-copy" });
+    addCopy.createDiv({ cls: "echoink-settings-compact-title", text: zh ? "新增分类" : "Add category" });
+    addCopy.createDiv({
+      cls: "echoink-settings-compact-description",
+      text: zh ? "名称不能为空，也不能与已有分类同名。" : "Names cannot be empty or duplicate an existing category."
+    });
+    const addActions = addRow.createDiv({ cls: "echoink-settings-compact-actions" });
+    const addButton = createOriginButton(addActions, {
       cls: "mod-cta",
       text: zh ? "新增" : "Add",
       attr: { type: "button" }
@@ -5389,6 +5397,7 @@ const SETTINGS_TABS: Array<{
   icon: AnimatedSettingsTabIconName;
 }> = [
   { id: "general", icon: "settings" },
+  { id: "layout", icon: "blocks" },
   { id: "providers", icon: "key-round" },
   { id: "resources", icon: "layout-list" },
   { id: "knowledgeBase", icon: "book-open-check" },

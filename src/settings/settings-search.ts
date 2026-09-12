@@ -9,6 +9,10 @@ const CATEGORY_ALIASES: Record<SettingsTab, readonly string[]> = {
     "日记", "journal", "daily notes", "文件夹", "folder", "长期记忆", "Memory",
     "个性化", "personalization", "人格", "personality", "头像", "avatar"
   ],
+  layout: [
+    "布局与外观", "Layout", "appearance", "模块", "modules", "首页", "home",
+    "工作台", "workbench", "显示", "show", "隐藏", "hide", "待办模块", "todo module"
+  ],
   providers: [
     "API Provider", "提供商", "服务商", "模型", "model", "API key", "密钥",
     "连接", "connection", "地址", "base URL", "推理", "reasoning", "上下文", "context"

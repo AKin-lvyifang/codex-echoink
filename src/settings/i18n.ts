@@ -35,6 +35,7 @@ const ZH_CN = {
   },
   tabs: {
     general: "基础设置",
+    layout: "布局与外观",
     providers: "API Provider",
     resources: "Skills & MCP",
     knowledgeBase: "知识库管理",
@@ -290,6 +291,7 @@ const EN: SettingsCopy = {
   },
   tabs: {
     general: "General",
+    layout: "Layout & appearance",
     providers: "API Provider",
     resources: "Skills & MCP",
     knowledgeBase: "Knowledge",

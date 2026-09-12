@@ -488,6 +488,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
 
   const expected = [
     ["general", "settings"],
+    ["layout", "blocks"],
     ["providers", "key-round"],
     ["resources", "layout-list"],
     ["knowledgeBase", "book-open-check"],

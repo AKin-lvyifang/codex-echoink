@@ -235,7 +235,7 @@ export type StoredSession = EchoInkConversationSessionShell<
   piDocumentReplay?: StoredPiDocumentReplayByEntry;
 };
 
-export type SettingsTab = "general" | "providers" | "resources" | "knowledgeBase" | "review" | "todos";
+export type SettingsTab = "general" | "layout" | "providers" | "resources" | "knowledgeBase" | "review" | "todos";
 export type ProviderMode = "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
@@ -1485,6 +1485,7 @@ function normalizeSettingsTab(value: unknown): SettingsTab {
     || value === "knowledgeBase"
     || value === "review"
     || value === "todos"
+    || value === "layout"
     || value === "general"
     ? value
     : DEFAULT_SETTINGS.settingsTab;
