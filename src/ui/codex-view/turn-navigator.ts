@@ -549,6 +549,7 @@ export class TurnNavigator {
     if (this.turns.length < 2) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
+      event.stopPropagation();
       const base = this.focusIndex >= 0 ? this.focusIndex : this.currentIndex >= 0 ? this.currentIndex : 0;
       const next = clamp(base + (event.key === "ArrowDown" ? 1 : -1), 0, this.turns.length - 1);
       this.focusIndex = next;
@@ -560,6 +561,7 @@ export class TurnNavigator {
     }
     if (event.key === "Enter") {
       event.preventDefault();
+      event.stopPropagation();
       const target = this.focusIndex >= 0 ? this.focusIndex : this.currentIndex;
       if (target >= 0) this.jumpToTurn(target);
       this.hidePreview(true);
@@ -567,6 +569,7 @@ export class TurnNavigator {
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       this.hidePreview(true);
     }
   }
