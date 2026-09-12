@@ -31,6 +31,7 @@ const TURN_PREVIEW_WIDTH_MAX_PX = 320;
 const TURN_PREVIEW_WIDTH_MIN_PX = 180;
 const TURN_TRACK_MIN_HEIGHT_PX = 96;
 const TURN_TRACK_SHELL_RATIO = 0.62;
+const TURN_COMPACT_SHELL_WIDTH_PX = 420;
 
 export function conversationTurnVisibleText(message: ChatMessage): string {
   return collapseWhitespace(message.text) || collapseWhitespace(message.previewText);
@@ -304,6 +305,7 @@ export class TurnNavigator {
   private layout(): void {
     const shellHeight = this.shellEl.clientHeight;
     const shellWidth = this.shellEl.clientWidth;
+    this.shellEl.toggleClass("is-compact", shellWidth > 0 && shellWidth < TURN_COMPACT_SHELL_WIDTH_PX);
     if (shellHeight > 0) {
       const trackMax = clamp(
         Math.round(shellHeight * TURN_TRACK_SHELL_RATIO),

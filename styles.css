@@ -17923,6 +17923,29 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   display: none;
 }
 
+/* Reserve a real layout gutter for the tick column so message content never
+   runs under it; width = nav footprint (right offset + tick hit area + nav
+   padding) + safe gap. Collapses back to the base padding while hidden. */
+.codex-messages-shell {
+  --echoink-turn-nav-gutter: 52px;
+}
+
+.codex-messages-shell.is-compact {
+  --echoink-turn-nav-gutter: 44px;
+}
+
+.codex-messages-shell:has(.codex-turn-nav-mount:not([hidden])) > .codex-messages {
+  padding-right: var(--echoink-turn-nav-gutter);
+}
+
+.codex-messages-shell.is-compact .codex-turn-nav {
+  padding: 6px 2px;
+}
+
+.codex-messages-shell.is-compact .codex-turn-nav-tick {
+  width: 22px;
+}
+
 .codex-turn-nav {
   display: flex;
   flex-direction: column;
@@ -21186,3 +21209,56 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-todo-combobox-create{border-top:1px solid var(--echoink-home-border);padding-top:8px}
 .echoink-todo-combobox-create button{justify-content:flex-start;min-height:30px;border-color:transparent;background:transparent;color:var(--interactive-accent);font-size:12px}
 /* ===== ECHOINK_TODO_V3_END ===== */
+
+/* ===== EchoInk 待办表格列宽与头像（2026-09-12 v4）===== */
+/* 列宽：勾选固定、事项占剩余、后四列最小宽；窄窗口仅表格区横滚 */
+.echoink-home-workspace .echoink-todo-table{table-layout:fixed;min-width:680px}
+.echoink-home-workspace .echoink-todo-table col:nth-child(1){width:40px}
+.echoink-home-workspace .echoink-todo-table col:nth-child(3){width:132px}
+.echoink-home-workspace .echoink-todo-table col:nth-child(4){width:120px}
+.echoink-home-workspace .echoink-todo-table col:nth-child(5){width:112px}
+.echoink-home-workspace .echoink-todo-table col:nth-child(6){width:88px}
+.echoink-home-workspace .echoink-todo-table td,.echoink-home-workspace .echoink-todo-table th{padding:8px 10px;vertical-align:middle}
+.echoink-home-workspace .echoink-todo-table td.echoink-todo-title{overflow:hidden;text-overflow:ellipsis}
+.echoink-todo-category-text{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 操作按钮：独立点击区域、明确间距、删除默认危险红 */
+.echoink-todo-actions{white-space:nowrap}
+.echoink-todo-action{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;border:none;background:none;border-radius:6px;cursor:pointer;color:var(--todo-muted);vertical-align:middle}
+.echoink-todo-action + .echoink-todo-action{margin-left:8px}
+.echoink-todo-action-edit:hover{color:var(--todo-ink);background:var(--todo-soft)}
+.echoink-todo-action-delete{color:var(--text-error,#c04434)}
+.echoink-todo-action-delete:hover{background:color-mix(in srgb,var(--text-error,#c04434) 12%,transparent)}
+
+/* 圆形文字头像组：轻微重叠 + 背景描边；+N 承载其余人员 */
+.echoink-todo-avatars{display:flex;align-items:center}
+.echoink-todo-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;font-size:11px;font-weight:600;color:#fff;border:2px solid var(--bg,var(--background-primary));flex:none;outline:none}
+.echoink-todo-avatar + .echoink-todo-avatar{margin-left:-7px}
+.echoink-todo-avatar-sm{width:18px;height:18px;font-size:9px;border-width:1px}
+.echoink-todo-avatar-more{background:var(--todo-soft);color:var(--todo-muted);font-size:10px}
+.echoink-todo-avatar-c0{background:#7d9b86}
+.echoink-todo-avatar-c1{background:#8a94b8}
+.echoink-todo-avatar-c2{background:#b8948a}
+.echoink-todo-avatar-c3{background:#9aa878}
+.echoink-todo-avatar-c4{background:#86a5b8}
+.echoink-todo-avatar-c5{background:#a886b0}
+.echoink-todo-avatar-c6{background:#b8ab86}
+.echoink-todo-avatar-c7{background:#78a8a0}
+.theme-dark .echoink-home-workspace .echoink-todo-avatar{filter:saturate(.85) brightness(.92)}
+
+/* 作用域内 Tooltip：悬停与键盘聚焦均显示完整姓名/操作名 */
+.echoink-todo-avatar[data-tip],.echoink-todo-action[data-tip]{position:relative}
+.echoink-todo-avatar[data-tip]:hover::after,.echoink-todo-avatar[data-tip]:focus-visible::after,.echoink-todo-action[data-tip]:hover::after,.echoink-todo-action[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:3px 8px;border-radius:6px;background:var(--todo-ink,var(--text-normal));color:var(--bg,var(--background-primary));font-size:10px;font-weight:400;white-space:nowrap;z-index:50;pointer-events:none}
+
+/* 表单人员标签字段 */
+.echoink-people-field{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px;padding:4px 6px;border:1px solid var(--echoink-home-border,var(--background-modifier-border));border-radius:8px;background:var(--echoink-home-surface-raised,var(--background-primary-alt,var(--background-primary)))}
+.echoink-people-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 6px 2px 3px;border-radius:999px;background:var(--echoink-home-surface,var(--background-secondary));color:var(--text-normal);font-size:12px}
+.echoink-people-tag-remove{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:none;background:none;color:var(--text-muted);cursor:pointer;border-radius:50%;padding:0}
+.echoink-people-tag-remove:hover{color:var(--text-normal);background:var(--background-modifier-border)}
+.echoink-people-input{flex:1;min-width:120px;min-height:26px;border:none;background:transparent;color:var(--text-normal);font:inherit}
+.echoink-people-input:focus{outline:none}
+.echoink-todo-none{color:var(--todo-muted)}
+
+/* 工具栏与表头间距对齐 section-head 规范 */
+.echoink-home-workspace .todo-toolbar{margin-bottom:11px}
+/* ===== ECHOINK_TODO_V4_END ===== */
