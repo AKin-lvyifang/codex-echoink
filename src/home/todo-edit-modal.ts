@@ -22,6 +22,11 @@ export class EchoInkTodoFormModal extends Modal {
   private categoryQuery = "";
   private openPanel: "date" | "category" | null = null;
   private allowClose = false;
+  private categoryTriggerEl: HTMLElement | null = null;
+  private categoryPopEl: HTMLElement | null = null;
+  private popOutsideHandler: ((event: PointerEvent) => void) | null = null;
+  private popScrollHandler: (() => void) | null = null;
+  private popResizeHandler: (() => void) | null = null;
   private month: Date;
   private saving = false;
 
@@ -43,10 +48,15 @@ export class EchoInkTodoFormModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("echoink-todo-form-modal");
+    // Obsidian 1.13 renders its single native close button without a label;
+    // give it the correct accessible name for this dialog.
+    const nativeClose = this.modalEl.querySelector(".modal-header-button");
+    if (nativeClose) nativeClose.setAttribute("aria-label", this.t("关闭", "Close"));
     this.render();
   }
 
   onClose(): void {
+    this.closeCategoryPop(false);
     this.contentEl.empty();
   }
 
@@ -56,7 +66,11 @@ export class EchoInkTodoFormModal extends Modal {
    * allowClose before calling close().
    */
   close(): void {
-    if (this.openPanel && !this.allowClose) {
+    if (this.openPanel === "category" && !this.allowClose) {
+      this.closeCategoryPop();
+      return;
+    }
+    if (this.openPanel === "date" && !this.allowClose) {
       this.openPanel = null;
       this.render();
       return;
@@ -76,18 +90,15 @@ export class EchoInkTodoFormModal extends Modal {
   private render(): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const { contentEl } = this;
+    if (this.categoryPopEl) this.closeCategoryPop(false);
     contentEl.empty();
 
     const head = contentEl.createDiv({ cls: "echoink-todo-form-head" });
     const headCopy = head.createDiv();
     headCopy.createEl("h2", { text: this.record ? this.t("编辑待办", "Edit to-do") : this.t("新增待办", "New to-do") });
     headCopy.createEl("p", { text: this.t("保存到 Vault 内的待办源文件。", "Saved to the vault to-do source file.") });
-    const close = head.createEl("button", {
-      cls: "echoink-todo-form-close",
-      attr: { type: "button", "aria-label": this.t("关闭", "Close") }
-    });
-    setIcon(close, "x");
-    close.onclick = () => this.requestClose();
+    // The base Modal already renders one native close button (top-right,
+    // labelled); a second custom button here only confused users.
 
     const body = contentEl.createDiv({ cls: "echoink-todo-form-body" });
 
@@ -180,16 +191,11 @@ export class EchoInkTodoFormModal extends Modal {
     const categoryTrigger = categoryRow.createEl("button", {
       cls: "echoink-home-icon-button echoink-todo-trigger",
       text: this.categoryName || this.t("未分类", "Uncategorized"),
-      attr: { type: "button" }
+      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" }
     });
     categoryTrigger.classList.toggle("is-empty", !this.categoryName);
-    categoryTrigger.onclick = () => {
-      this.openPanel = this.openPanel === "category" ? null : "category";
-      this.creatingCategory = false;
-      this.categoryQuery = "";
-      this.render();
-    };
-    if (this.openPanel === "category") categoryField.appendChild(this.renderCategoryPopover());
+    this.categoryTriggerEl = categoryTrigger;
+    categoryTrigger.onclick = () => this.toggleCategoryPop();
 
     const actions = contentEl.createDiv({ cls: "echoink-todo-form-actions" });
     const cancel = actions.createEl("button", { text: this.t("取消", "Cancel"), attr: { type: "button" } });
@@ -252,7 +258,7 @@ export class EchoInkTodoFormModal extends Modal {
 
   private renderCategoryPopover(): HTMLElement {
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const pop = this.contentEl.createDiv({ cls: "echoink-todo-pop echoink-todo-category-pop" });
+    const pop = this.modalEl.createDiv({ cls: "echoink-todo-pop echoink-todo-category-pop" });
     if (this.creatingCategory) {
       const row = pop.createDiv({ cls: "echoink-todo-field-row" });
       const input = row.createEl("input", {
@@ -277,14 +283,15 @@ export class EchoInkTodoFormModal extends Modal {
         this.categoryName = name;
         this.pendingNewCategory = "";
         this.creatingCategory = false;
-        this.openPanel = null;
+        this.closeCategoryPop(false);
         this.render();
+        this.categoryTriggerEl?.focus();
       };
       const cancelCreate = row.createEl("button", { text: this.t("取消", "Cancel"), attr: { type: "button" } });
       cancelCreate.onclick = () => {
         this.creatingCategory = false;
         this.pendingNewCategory = "";
-        this.render();
+        this.refreshCategoryPop();
       };
       input.focus();
       return pop;
@@ -308,10 +315,86 @@ export class EchoInkTodoFormModal extends Modal {
     });
     createButton.onclick = () => {
       this.creatingCategory = true;
-      this.render();
+      this.refreshCategoryPop();
     };
     search.focus();
     return pop;
+  }
+
+  /** Floating category menu anchored to its trigger: opening, searching and
+   *  picking never resize or reposition the outer dialog. */
+  private toggleCategoryPop(): void {
+    if (this.categoryPopEl) {
+      this.closeCategoryPop();
+      return;
+    }
+    this.openPanel = "category";
+    this.creatingCategory = false;
+    this.categoryQuery = "";
+    const pop = this.renderCategoryPopover();
+    this.categoryPopEl = pop;
+    this.modalEl.appendChild(pop);
+    this.positionCategoryPop();
+    this.categoryTriggerEl?.setAttribute("aria-expanded", "true");
+    this.popOutsideHandler = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (this.categoryPopEl?.contains(target) || this.categoryTriggerEl?.contains(target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeCategoryPop();
+    };
+    this.modalEl.addEventListener("pointerdown", this.popOutsideHandler, true);
+    this.popScrollHandler = () => this.positionCategoryPop();
+    this.contentEl.addEventListener("scroll", this.popScrollHandler, { passive: true });
+    this.popResizeHandler = () => this.positionCategoryPop();
+    this.contentEl.ownerDocument.defaultView?.addEventListener("resize", this.popResizeHandler);
+  }
+
+  private closeCategoryPop(focusTrigger = true): void {
+    this.categoryPopEl?.remove();
+    this.categoryPopEl = null;
+    if (this.openPanel === "category") this.openPanel = null;
+    if (this.popOutsideHandler) {
+      this.modalEl.removeEventListener("pointerdown", this.popOutsideHandler, true);
+      this.popOutsideHandler = null;
+    }
+    if (this.popScrollHandler) {
+      this.contentEl.removeEventListener("scroll", this.popScrollHandler);
+      this.popScrollHandler = null;
+    }
+    if (this.popResizeHandler) {
+      this.contentEl.ownerDocument.defaultView?.removeEventListener("resize", this.popResizeHandler);
+      this.popResizeHandler = null;
+    }
+    this.categoryTriggerEl?.setAttribute("aria-expanded", "false");
+    if (focusTrigger) this.categoryTriggerEl?.focus();
+  }
+
+  private refreshCategoryPop(): void {
+    if (!this.categoryPopEl) return;
+    this.categoryPopEl.remove();
+    const pop = this.renderCategoryPopover();
+    this.categoryPopEl = pop;
+    this.modalEl.appendChild(pop);
+    this.positionCategoryPop();
+  }
+
+  private positionCategoryPop(): void {
+    const pop = this.categoryPopEl;
+    const trigger = this.categoryTriggerEl;
+    if (!pop || !trigger) return;
+    const modalRect = this.modalEl.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const maxHeight = 264;
+    const spaceBelow = modalRect.bottom - triggerRect.bottom - 12;
+    const spaceAbove = triggerRect.top - modalRect.top - 12;
+    const up = spaceBelow < Math.min(maxHeight, 200) && spaceAbove > spaceBelow;
+    pop.classList.toggle("drop-up", up);
+    pop.style.left = `${triggerRect.left - modalRect.left}px`;
+    pop.style.width = `${Math.max(triggerRect.width, 240)}px`;
+    pop.style.top = up
+      ? `${triggerRect.top - modalRect.top - 6}px`
+      : `${triggerRect.bottom - modalRect.top + 6}px`;
   }
 
   private refreshCategoryOptions(list: HTMLElement): void {
@@ -330,8 +413,9 @@ export class EchoInkTodoFormModal extends Modal {
       });
       button.onclick = () => {
         this.categoryName = name;
-        this.openPanel = null;
+        this.closeCategoryPop(false);
         this.render();
+        this.categoryTriggerEl?.focus();
       };
     };
     if (!query || (zh ? "未分类" : "uncategorized").includes(query)) option("", zh ? "未分类" : "Uncategorized");

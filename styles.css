@@ -21177,8 +21177,6 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-todo-form-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}
 .echoink-todo-form-head h2{margin:0;font-size:20px;font-weight:600}
 .echoink-todo-form-head p{margin:4px 0 0;color:var(--text-muted);font-size:12px}
-.echoink-todo-form-close{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:0 0 auto;border:1px solid var(--echoink-home-border);border-radius:8px;color:var(--text-muted);background:var(--echoink-home-surface)}
-.echoink-todo-form-close:hover{color:var(--text-normal)}
 .echoink-todo-form-field{margin-bottom:14px}
 .echoink-todo-form-field>label{display:block;margin-bottom:6px;color:var(--text-muted);font-size:12px;font-weight:620}
 .echoink-todo-form-field input[type=text]{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--echoink-home-border);border-radius:8px;color:var(--echoink-home-body);background:var(--echoink-home-surface-raised);font:inherit}
@@ -21192,7 +21190,12 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-todo-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--background-modifier-border)}
 
 /* 日期/分类弹层：与主弹窗同视觉 */
-.echoink-todo-pop{position:static;display:flex;flex-direction:column;gap:8px;margin-top:6px;width:100%;max-width:280px;padding:10px;border:1px solid var(--echoink-home-border);border-radius:10px;background:var(--background-primary);box-shadow:0 12px 32px #00000024}
+.echoink-todo-pop{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--echoink-home-border,var(--background-modifier-border));border-radius:10px;background:var(--background-primary);box-shadow:0 12px 32px #00000024}
+.echoink-todo-date-pop{position:static;margin-top:6px;width:100%;max-width:280px}
+/* 分类菜单悬浮锚定触发框：不占表单布局、不撑高外层弹窗 */
+.modal.echoink-todo-form-modal{position:relative}
+.echoink-todo-category-pop{position:absolute;z-index:90;max-height:264px}
+.echoink-todo-category-pop.drop-up{transform:translateY(-100%)}
 .echoink-todo-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .echoink-todo-cal-head button{min-height:28px;width:28px;padding:0}
 .echoink-todo-cal-head strong{font-size:12px}
