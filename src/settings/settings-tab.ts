@@ -3219,11 +3219,17 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsTabsResizeObserver.observe(tabs);
     }
     const now = Date.now();
-    if (
-      this.lastRenderedSettingsTab !== null
-      && this.lastRenderedSettingsTab !== activeTab
-    ) {
-      this.settingsTabIconAnimation = { tabId: activeTab, startedAtMs: now };
+    const reducedMotion = Boolean(
+      container.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+    const justSwitched = this.lastRenderedSettingsTab !== null
+      && this.lastRenderedSettingsTab !== activeTab;
+    if (justSwitched) {
+      // Bookmark rise finishes first (transitionend below), then the icon's own
+      // animation starts. Reduced motion skips straight to the final state.
+      this.settingsTabIconAnimation = reducedMotion
+        ? { tabId: activeTab, startedAtMs: now }
+        : null;
     }
     const activeAnimationElapsed =
       this.settingsTabIconAnimation?.tabId === activeTab
@@ -3262,6 +3268,7 @@ export class CodexSettingTab extends PluginSettingTab {
       button.toggleClass("is-active", isActive);
       button.setAttr("aria-selected", String(isActive));
       button.setAttr("tabindex", isActive ? "0" : "-1");
+      button.setAttr("data-tab-name", label);
       const icon = button.querySelector<HTMLElement>(".codex-settings-tab-icon")
         ?? button.createSpan({ cls: "codex-settings-tab-icon settings-motion-icon" });
       renderAnimatedSettingsTabIcon(
@@ -3269,11 +3276,26 @@ export class CodexSettingTab extends PluginSettingTab {
         tab.icon,
         isActive ? activeAnimationProgress : null
       );
+      if (isActive && justSwitched && !reducedMotion) {
+        // Sequential handoff: play the icon's own animation only after the
+        // bookmark rise transition completes; stale switches self-cancel.
+        // NOTE: no `{ once: true }` — earlier background/color transitionend
+        // events would consume a once-listener before transform ends.
+        const onRiseEnd = (event: TransitionEvent): void => {
+          if (event.target !== button || event.propertyName !== "transform") return;
+          button.removeEventListener("transitionend", onRiseEnd);
+          if (this.lastRenderedSettingsTab !== tab.id) return;
+          this.settingsTabIconAnimation = { tabId: tab.id, startedAtMs: Date.now() };
+          renderAnimatedSettingsTabIcon(icon, tab.icon, 0);
+        };
+        button.addEventListener("transitionend", onRiseEnd);
+      }
       const labelEl = nativeRow?.setting.nameEl
         ?? button.createSpan({ cls: "codex-settings-tab-label" });
       labelEl.addClass("codex-settings-tab-label");
-      labelEl.setText(label);
-      if (nativeRow && labelEl.parentElement !== button) button.appendChild(labelEl);
+      if (labelEl.parentElement !== button) button.appendChild(labelEl);
+      labelEl.empty();
+      labelEl.createSpan().setText(label);
       if (isActive) {
         activeButton = button;
       }
