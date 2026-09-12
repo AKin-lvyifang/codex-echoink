@@ -121,6 +121,7 @@ import {
   type CodexTurnLifecycleHost
 } from "./codex-view/turn-lifecycle";
 import { refreshViewShellCopy, renderViewShell, type CodexViewShellHost } from "./codex-view/view-shell";
+import { TurnNavigator } from "./codex-view/turn-navigator";
 import { conversationUiText } from "./codex-view/ui-i18n";
 import { TaskPlanDockController } from "./codex-view/task-plan-dock";
 import { InteractionDockController } from "./codex-view/interaction-dock";
@@ -200,6 +201,7 @@ export class CodexView extends ItemView {
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
   private jumpToLatestEl!: HTMLButtonElement;
+  private turnNavigatorEl!: HTMLElement;
   private taskPlanDockEl!: HTMLElement;
   private interactionDockEl!: HTMLElement;
   private workspaceEl!: HTMLElement;
@@ -242,6 +244,7 @@ export class CodexView extends ItemView {
   private readonly messageScrollFollow = new MessageScrollFollowController();
   private knowledgeBaseRunProgressTimer: number | null = null;
   private messageListRenderer = new CodexMessageListRenderer();
+  private turnNavigator: TurnNavigator | null = null;
   private readonly taskPlanDock = new TaskPlanDockController();
   private readonly interactionDock = new InteractionDockController();
   private readonly pendingInteractionsBySession = new Map<
@@ -390,6 +393,7 @@ export class CodexView extends ItemView {
   refreshLanguage(): void {
     if (!this.rootEl) return;
     refreshViewShellCopy(this.shellHost());
+    this.turnNavigator?.refreshLanguage();
     this.renderTabs();
     this.renderMessages({ preserveScroll: true });
     this.renderToolbar();
@@ -505,6 +509,8 @@ export class CodexView extends ItemView {
       this.interactionDock.dispose();
       this.pendingInteractionsBySession.clear();
       this.messageListRenderer.dispose();
+      this.turnNavigator?.dispose();
+      this.turnNavigator = null;
     }
   }
 
@@ -863,13 +869,18 @@ export class CodexView extends ItemView {
 
   private render(): void {
     renderViewShell(this.shellHost());
+    this.turnNavigator?.dispose();
+    this.turnNavigator = new TurnNavigator(this.messageHost(), this.turnNavigatorEl);
   }
 
   private updateInputPlaceholder(): void { updateInputPlaceholderAction(this.headerHost()); }
   private applyStatus(): void { applyStatusAction(this.headerHost()); }
   private openPluginSettings(): void { openPluginSettingsAction(this.headerHost()); }
   private renderTabs(): void { renderTabsView(this.sessionHost()); }
-  private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void { renderMessagesAction(this.messageHost(), options); }
+  private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
+    renderMessagesAction(this.messageHost(), options);
+    this.turnNavigator?.handleRender();
+  }
   private renderTaskPlanDock(session: StoredSession): void {
     this.taskPlanDock.render(this.taskPlanDockEl, {
       sessionId: session.id,
@@ -1124,7 +1135,10 @@ export class CodexView extends ItemView {
   }
   private attachTurnIdToRun(session: StoredSession, turnId: string): void { attachTurnIdToRunAction(this.messageHost(), session, turnId); }
   private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void { renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage); }
-  private handleMessagesScroll(): void { handleMessagesScrollAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost); }
+  private handleMessagesScroll(): void {
+    handleMessagesScrollAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost);
+    this.turnNavigator?.handleScroll();
+  }
   private jumpToLatest(): void { jumpToLatestAction(this.messageHost()); }
   private scheduleRenderMessages(options: MessageRenderScheduleOptions = {}): void { scheduleRenderMessagesAction(this.messageHost(), options); }
   private scheduleMeasureVirtualRows(forceBottom = !this.messagesBottomFollowPaused): void { scheduleMeasureVirtualRowsAction(this.messageHost(), forceBottom); }

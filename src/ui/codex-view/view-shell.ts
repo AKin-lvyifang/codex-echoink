@@ -13,6 +13,7 @@ export interface CodexViewShellHost extends Component {
   tabBarEl: HTMLElement;
   messagesEl: HTMLElement;
   virtualListEl: HTMLElement;
+  turnNavigatorEl: HTMLElement;
   jumpToLatestEl: HTMLButtonElement;
   taskPlanDockEl: HTMLElement;
   interactionDockEl: HTMLElement;
@@ -86,6 +87,7 @@ export function renderViewShell(host: CodexViewShellHost): void {
   host.registerDomEvent(host.messagesEl, "touchstart", (event) => host.messageScrollFollow.handleTouchStart(event as TouchEvent));
   host.registerDomEvent(host.messagesEl, "touchmove", (event) => host.messageScrollFollow.handleTouchMove(event as TouchEvent));
   host.registerDomEvent(host.messagesEl, "scroll", () => host.handleMessagesScroll());
+  host.turnNavigatorEl = messagesShell.createDiv({ cls: "codex-turn-nav-mount" });
   host.jumpToLatestEl = messagesShell.createEl("button", {
     cls: "codex-jump-to-latest",
     attr: { type: "button" }

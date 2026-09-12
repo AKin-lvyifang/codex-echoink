@@ -17,7 +17,7 @@ import {
   type ConversationCopy
 } from "../../settings/i18n";
 import { displayTextForMessage, isLargeRawMessage } from "../../core/raw-message-store";
-import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom } from "../../core/virtual-window";
+import { calculateVirtualWindow, isNearVirtualBottom, scrollTopForVirtualBottom, VIRTUAL_ROW_ESTIMATE_PX } from "../../core/virtual-window";
 import { extractKnowledgeBaseResultTitle } from "../knowledge-base-result-title";
 import type { KnowledgeBaseMaintainReportPayload, KnowledgeBaseMaintainReportSectionItem, KnowledgeBaseMessageUiPayload, KnowledgeBaseRunPayload } from "../../knowledge-base/maintain-report-card";
 import { formatMessageHeaderTime } from "../message-time";
@@ -378,6 +378,7 @@ interface TextSelectionBookmark {
 export class CodexMessageListRenderer {
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
+  private currentRows: MessageRenderRow[] = [];
   private failedAttachmentResourceUris = new Set<string>();
   private viewportResizeObserver: ResizeObserver | null = null;
   private visibleRowsResizeObserver: ResizeObserver | null = null;
@@ -435,10 +436,12 @@ export class CodexMessageListRenderer {
         env.settingsLanguage
       );
       suggestions.addClass("codex-welcome-suggestions");
+      this.currentRows = [];
       return;
     }
 
     const rows = this.buildVirtualRows(messages);
+    this.currentRows = rows;
     const rowIds = rows.map((row) => row.id);
     this.pruneVirtualHeights(rowIds);
     const viewportHeight = Math.max(1, messagesEl.clientHeight);
@@ -551,6 +554,32 @@ export class CodexMessageListRenderer {
       Math.max(virtualListEl.scrollHeight, messagesEl.scrollHeight),
       MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX
     );
+  }
+
+  /** Content-space top of each requested row id, using the same measured/estimated heights as the virtual window. */
+  rowTopsForRowIds(rowIds: readonly string[]): Map<string, number> {
+    const wanted = new Set(rowIds);
+    const tops = new Map<string, number>();
+    let top = 0;
+    for (const row of this.currentRows) {
+      if (wanted.has(row.id) && !tops.has(row.id)) tops.set(row.id, top);
+      top += this.virtualRowHeightFor(row.id);
+    }
+    return tops;
+  }
+
+  rowTopForRowId(rowId: string): number | null {
+    let top = 0;
+    for (const row of this.currentRows) {
+      if (row.id === rowId) return top;
+      top += this.virtualRowHeightFor(row.id);
+    }
+    return null;
+  }
+
+  private virtualRowHeightFor(rowId: string): number {
+    const measured = this.virtualRowHeights.get(rowId);
+    return measured && measured > 0 ? measured : VIRTUAL_ROW_ESTIMATE_PX;
   }
 
   resetVirtualWindow(): void {
