@@ -497,8 +497,6 @@ export interface CodexForObsidianSettings {
   defaultMode: UiMode;
   autoOpen: boolean;
   autoOpenHome: boolean;
-  /** Master switch for the whole home card entry area (replaces per-card toggles). */
-  homeCardsVisible: boolean;
   quickChat: QuickChatSettings;
   homeModules: Record<string, boolean>;
   todos: EchoInkTodoItem[];
@@ -539,7 +537,6 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultMode: "agent",
   autoOpen: false,
   autoOpenHome: false,
-  homeCardsVisible: true,
   quickChat: {
     enabled: false,
     hotkey: DEFAULT_QUICK_CHAT_HOTKEY
@@ -649,7 +646,6 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
-    homeCardsVisible: deriveHomeCardsVisible(data),
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(
@@ -1495,25 +1491,20 @@ function normalizeSettingsTab(value: unknown): SettingsTab {
     : DEFAULT_SETTINGS.settingsTab;
 }
 
-/** Master switch derivation: explicit value wins; otherwise any previously
- * visible card means on, all-hidden means off. Per-card values never decide
- * visibility after the merge. */
-function deriveHomeCardsVisible(data: Record<string, unknown>): boolean {
-  const raw = data.homeCardsVisible;
-  if (typeof raw === "boolean") return raw;
-  const modules = data.homeModules;
-  if (modules && typeof modules === "object") {
-    const values = Object.values(modules as Record<string, unknown>);
-    if (values.length) return values.some((value) => value !== false);
-  }
-  return true;
-}
-
 export function normalizeHomeModules(input: unknown): Record<string, boolean> {
   const visibility = defaultHomeModuleVisibility();
   const record = settingsRecord(input) ?? {};
   for (const key of Object.keys(visibility)) {
     if (typeof record[key] === "boolean") visibility[key] = record[key] === true;
+  }
+  // Legacy configs predate the consolidated knowledge entry: derive it from
+  // the six bento cards so previously hidden cards stay hidden.
+  if (typeof record.knowledge !== "boolean") {
+    const bentoKeys = ["wiki", "outputs", "projects", "inbox", "journal", "review"];
+    const legacy = bentoKeys
+      .map((key) => record[key])
+      .filter((value): value is boolean => typeof value === "boolean");
+    if (legacy.length) visibility.knowledge = legacy.some((value) => value);
   }
   return visibility;
 }

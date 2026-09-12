@@ -134,15 +134,16 @@ export class EchoInkHomeView extends ItemView {
     if (data.status === "rejected") this.field("recent-subtitle").setText(this.t("笔记读取失败，请稍后重试", "Could not read notes. Try again."));
   }
   /**
-   * Fixed-slot module visibility driven by the single master switch: hidden
-   * modules keep their layout slot but hide content and interactions; other
-   * cards never reflow.
+   * Fixed-slot entry visibility: each of the four home entries has its own
+   * switch; hidden entries keep their layout slot but hide content and
+   * interactions; other areas never reflow.
    */
   applyModuleVisibility(): void {
-    const hidden = this.plugin.settings.homeCardsVisible === false;
+    const visibility = this.plugin.settings.homeModules;
     for (const module of ECHOINK_HOME_MODULES) {
       const root = this.contentEl.querySelector<HTMLElement>(module.selector);
       if (!root) continue;
+      const hidden = visibility[module.id] === false;
       root.toggleClass("echoink-module-hidden", hidden);
       root.toggleAttribute("aria-hidden", hidden);
     }
