@@ -1116,10 +1116,11 @@ export class CodexSettingTab extends PluginSettingTab {
         ? `待办的唯一持久化来源：Vault 内 ${TODO_SOURCE_PATH}。Obsidian 原生待办清单格式，可直接编辑；界面操作会写回同一文件。`
         : `Single source of truth: ${TODO_SOURCE_PATH} in this vault. Native Obsidian task-list format; edit it directly and the UI follows.`));
     const openButton = createOriginButton(sourceRow.controlEl, {
-      cls: "mod-cta",
-      text: zh ? "打开源文件" : "Open source file",
-      attr: { type: "button" }
+      cls: "button",
+      attr: { type: "button", "aria-label": zh ? "打开待办源文件" : "Open to-do source file" }
     });
+    setIcon(openButton.createSpan({ attr: { "aria-hidden": "true" } }), "file-text");
+    openButton.createSpan({ text: zh ? "打开源文件" : "Open source file" });
     openButton.onclick = () => void store.openSourceFile();
 
     const section = createSettingsSection(page, {
@@ -1138,9 +1139,10 @@ export class CodexSettingTab extends PluginSettingTab {
       rowCopy.createDiv({ cls: "echoink-settings-compact-title", text: category.name });
       const rowActions = row.createDiv({ cls: "echoink-settings-compact-actions" });
       const renameButton = createOriginButton(rowActions, {
-        text: zh ? "重命名" : "Rename",
-        attr: { type: "button", "aria-label": `${zh ? "重命名" : "Rename"} ${category.name}` }
+        cls: "icon-button",
+        attr: { type: "button", "aria-label": zh ? `重命名分类 ${category.name}` : `Rename category ${category.name}` }
       });
+      setIcon(renameButton, "pencil");
       renameButton.onclick = () => void (async () => {
         const next = await textInputModal(
           this.app,
@@ -1166,10 +1168,10 @@ export class CodexSettingTab extends PluginSettingTab {
         this.scheduleDisplay();
       })();
       const deleteButton = createOriginButton(rowActions, {
-        cls: "mod-warning",
-        text: zh ? "删除" : "Delete",
-        attr: { type: "button", "aria-label": `${zh ? "删除" : "Delete"} ${category.name}`, "aria-expanded": "false" }
+        cls: "icon-button settings-danger",
+        attr: { type: "button", "aria-label": zh ? `删除分类 ${category.name}` : `Delete category ${category.name}`, "aria-expanded": "false" }
       });
+      setIcon(deleteButton, "trash-2");
       deleteButton.onclick = () => showSettingsInlineConfirmation(row, deleteButton, {
         message: zh
           ? `删除「${category.name}」后，${store.snapshot().filter((record) => record.categoryName === category.name).length} 条相关待办将转为「未分类」；待办本身不会被删除。`
@@ -1195,10 +1197,11 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     const addActions = addRow.createDiv({ cls: "echoink-settings-compact-actions" });
     const addButton = createOriginButton(addActions, {
-      cls: "mod-cta",
-      text: zh ? "新增" : "Add",
-      attr: { type: "button" }
+      cls: "button",
+      attr: { type: "button", "aria-label": zh ? "新增分类" : "Add category" }
     });
+    setIcon(addButton.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
+    addButton.createSpan({ text: zh ? "新增" : "Add" });
     addButton.onclick = () => void (async () => {
       const name = await textInputModal(
         this.app,

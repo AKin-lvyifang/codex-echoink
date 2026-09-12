@@ -21280,3 +21280,15 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-todo-filter-option:hover{background:var(--todo-soft,var(--background-secondary))}
 .echoink-todo-filter-option.is-active{color:var(--todo-accent,var(--interactive-accent));background:var(--accent-soft,transparent)}
 /* ===== ECHOINK_TODO_V6_END ===== */
+
+/* ===== EchoInk 待办设置页图标按钮（2026-09-13 v8）===== */
+.echoink-settings-demo .echoink-settings-compact-actions{display:flex;align-items:center;gap:8px;flex:none}
+.echoink-settings-demo .icon-button.settings-danger{color:var(--danger)}
+.echoink-settings-demo .icon-button.settings-danger:hover{background:var(--danger-bg);color:var(--danger);border-color:transparent}
+.echoink-settings-demo .icon-button.settings-danger:focus-visible{outline:2px solid var(--danger);outline-offset:2px}
+.echoink-settings-demo .echoink-settings-compact-title{flex:1;min-width:0;overflow-wrap:anywhere}
+/* ===== ECHOINK_TODO_V8_END ===== */
+
+/* ===== EchoInk 待办设置页 danger 悬停色优先（2026-09-13 v8b）===== */
+.echoink-settings-demo .echoink-settings-compact-actions .icon-button.settings-danger:hover{color:var(--danger);background:var(--danger-bg)}
+/* ===== ECHOINK_TODO_V8B_END ===== */
