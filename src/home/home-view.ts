@@ -49,6 +49,12 @@ export class EchoInkHomeView extends ItemView {
   private activityUnsubscribe: (() => void) | null = null;
   private todoUnsubscribe: (() => void) | null = null;
   private todoFilter: "all" | "open" | "done" = "all";
+  /** null = all categories; "" = uncategorized; otherwise the category name. */
+  private todoCategoryFilter: string | null = null;
+  private categoryFilterPopEl: HTMLElement | null = null;
+  private categoryFilterOutsideHandler: ((event: PointerEvent) => void) | null = null;
+  private categoryFilterEscHandler: ((event: KeyboardEvent) => void) | null = null;
+  private categoryFilterScrollHandler: (() => void) | null = null;
   private activityModal: Modal | null = null;
   private captureBusy = false;
   private searchOpen = false;
@@ -102,6 +108,7 @@ export class EchoInkHomeView extends ItemView {
   }
   async onClose(): Promise<void> {
     this.closed = true; this.refreshVersion++;
+    this.closeCategoryFilterPop(false);
     const win = this.contentEl.ownerDocument.defaultView;
     if (this.refreshTimer !== null) win?.clearTimeout(this.refreshTimer);
     if (this.searchTimer !== null) win?.clearTimeout(this.searchTimer);
@@ -236,8 +243,11 @@ export class EchoInkHomeView extends ItemView {
   private renderTodos(): void {
     const host = this.field("todo-list");
     const store = this.plugin.getTodoStore();
-    const records = store.snapshot();
-    const open = sortOpenTodos(records);
+    const all = store.snapshot();
+    const pool = this.todoCategoryFilter === null
+      ? all
+      : all.filter((record) => (record.categoryName || "") === this.todoCategoryFilter);
+    const open = sortOpenTodos(pool);
     this.field("todo-subtitle").setText(this.t(
       open.length ? `还有 ${open.length} 件未完成，按期限排序` : "暂时没有未完成的事",
       open.length ? `${open.length} open, nearest due date first` : "Nothing open right now"
@@ -246,8 +256,8 @@ export class EchoInkHomeView extends ItemView {
     const visible = this.todoFilter === "open"
       ? open
       : this.todoFilter === "done"
-        ? records.filter((record) => record.done)
-        : [...open, ...records.filter((record) => record.done)];
+        ? pool.filter((record) => record.done)
+        : [...open, ...pool.filter((record) => record.done)];
     renderTodoTable(host, visible, todoTableCopy(this.language), {
       onToggle: (record, done) => void store.toggleDone(record, done),
       onEdit: (record) => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
@@ -257,6 +267,19 @@ export class EchoInkHomeView extends ItemView {
   private renderTodoFilterBar(): void {
     const bar = this.field("todo-filter-bar");
     bar.empty();
+    const categoryLabel = this.todoCategoryFilter === null
+      ? this.t("全部分类", "All categories")
+      : this.todoCategoryFilter === ""
+        ? this.t("未分类", "Uncategorized")
+        : this.todoCategoryFilter;
+    const trigger = bar.createEl("button", {
+      cls: `todo-filter todo-category-filter${this.todoCategoryFilter !== null ? " is-active" : ""}`,
+      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" }
+    });
+    trigger.createSpan({ cls: "todo-category-label", text: categoryLabel });
+    const caret = trigger.createSpan({ cls: "todo-category-caret", attr: { "aria-hidden": "true" } });
+    setIcon(caret, "chevron-down");
+    trigger.onclick = () => this.toggleCategoryFilterPop();
     for (const option of ["all", "open", "done"] as const) {
       const label = this.t(
         { all: "全部", open: "未完成", done: "已完成" }[option],
@@ -272,6 +295,76 @@ export class EchoInkHomeView extends ItemView {
         this.renderTodos();
       };
     }
+  }
+  /** Compact floating category filter menu: never shifts the list or page. */
+  private toggleCategoryFilterPop(): void {
+    if (this.categoryFilterPopEl) {
+      this.closeCategoryFilterPop();
+      return;
+    }
+    const bar = this.field("todo-filter-bar");
+    const trigger = bar.querySelector<HTMLElement>(".todo-category-filter");
+    if (!trigger) return;
+    const pop = bar.createDiv({ cls: "echoink-todo-filter-pop" });
+    const options: Array<{ value: string | null; label: string }> = [
+      { value: null, label: this.t("全部分类", "All categories") },
+      { value: "", label: this.t("未分类", "Uncategorized") },
+      ...this.plugin.settings.todoCategories.map((category) => ({ value: category.name, label: category.name }))
+    ];
+    for (const option of options) {
+      const button = pop.createEl("button", {
+        cls: `echoink-todo-filter-option${this.todoCategoryFilter === option.value ? " is-active" : ""}`,
+        text: option.label,
+        attr: { type: "button" }
+      });
+      button.onclick = () => {
+        this.todoCategoryFilter = option.value;
+        this.closeCategoryFilterPop();
+        this.renderTodos();
+      };
+    }
+    this.categoryFilterPopEl = pop;
+    trigger.setAttribute("aria-expanded", "true");
+    const contentRect = this.contentEl.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const spaceBelow = contentRect.bottom - triggerRect.bottom;
+    const spaceAbove = triggerRect.top - contentRect.top;
+    if (spaceBelow < 232 && spaceAbove > spaceBelow) pop.addClass("drop-up");
+    this.categoryFilterOutsideHandler = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (pop.contains(target) || trigger.contains(target)) return;
+      event.stopPropagation();
+      this.closeCategoryFilterPop();
+    };
+    this.contentEl.addEventListener("pointerdown", this.categoryFilterOutsideHandler, true);
+    this.categoryFilterEscHandler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeCategoryFilterPop();
+    };
+    this.contentEl.ownerDocument.addEventListener("keydown", this.categoryFilterEscHandler, true);
+    this.categoryFilterScrollHandler = () => this.closeCategoryFilterPop();
+    this.contentEl.addEventListener("scroll", this.categoryFilterScrollHandler, { passive: true });
+  }
+  private closeCategoryFilterPop(focusTrigger = true): void {
+    this.categoryFilterPopEl?.remove();
+    this.categoryFilterPopEl = null;
+    if (this.categoryFilterOutsideHandler) {
+      this.contentEl.removeEventListener("pointerdown", this.categoryFilterOutsideHandler, true);
+      this.categoryFilterOutsideHandler = null;
+    }
+    if (this.categoryFilterEscHandler) {
+      this.contentEl.ownerDocument.removeEventListener("keydown", this.categoryFilterEscHandler, true);
+      this.categoryFilterEscHandler = null;
+    }
+    if (this.categoryFilterScrollHandler) {
+      this.contentEl.removeEventListener("scroll", this.categoryFilterScrollHandler);
+      this.categoryFilterScrollHandler = null;
+    }
+    const trigger = this.field("todo-filter-bar").querySelector<HTMLElement>(".todo-category-filter");
+    trigger?.setAttribute("aria-expanded", "false");
+    if (focusTrigger) trigger?.focus();
   }
   private async confirmTodoDelete(record: ParsedTodoRecord): Promise<void> {
     const accepted = await confirmModal(
