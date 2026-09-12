@@ -1,6 +1,7 @@
 import { setIcon } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import type { ParsedTodoRecord } from "./todo-markdown";
+import { parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 import { todoDueState, type EchoInkTodoDueState } from "./home-todos";
 
 export interface TodoTableCallbacks {
@@ -56,6 +57,10 @@ export function renderTodoTable(
   host.empty();
   const wrap = host.createDiv({ cls: "echoink-todo-table-wrap" });
   const table = wrap.createEl("table", { cls: "echoink-todo-table" });
+  // Explicit column plan: fixed leading checkbox column, fluid item column,
+  // and min-widths for the trailing four so they never collapse.
+  const colgroup = table.createEl("colgroup");
+  for (let index = 0; index < 6; index += 1) colgroup.createEl("col");
   const thead = table.createEl("thead", { cls: "echoink-todo-table-head" });
   const headRow = thead.createEl("tr");
   for (const head of [
@@ -96,7 +101,8 @@ function renderRow(
   const titleCell = row.createEl("td", { cls: "echoink-todo-title" });
   titleCell.createEl("span", { text: record.title });
 
-  row.createEl("td", { cls: "echoink-todo-people", text: record.people });
+  const peopleCell = row.createEl("td", { cls: "echoink-todo-people" });
+  renderPeopleAvatars(peopleCell, parsePeopleNames(record.people));
 
   const dueCell = row.createEl("td", { cls: "echoink-todo-due" });
   if (record.dueDate) {
@@ -110,23 +116,52 @@ function renderRow(
     });
   }
 
-  row.createEl("td", {
-    cls: "echoink-todo-category",
-    text: record.categoryName || copy.uncategorized
+  const categoryName = record.categoryName || copy.uncategorized;
+  const categoryCell = row.createEl("td", { cls: "echoink-todo-category" });
+  categoryCell.createEl("span", {
+    cls: "echoink-todo-category-text",
+    text: categoryName,
+    attr: { title: categoryName }
   });
 
   const actionsCell = row.createEl("td", { cls: "echoink-todo-actions" });
   const editButton = actionsCell.createEl("button", {
-    cls: "echoink-todo-action",
-    attr: { type: "button", "aria-label": copy.edit, title: copy.edit }
+    cls: "echoink-todo-action echoink-todo-action-edit",
+    attr: { type: "button", "aria-label": copy.edit, "data-tip": copy.edit }
   });
   setIcon(editButton, "pencil");
   editButton.addEventListener("click", () => callbacks.onEdit(record));
   const deleteButton = actionsCell.createEl("button", {
-    cls: "echoink-todo-action echoink-todo-action-danger",
-    attr: { type: "button", "aria-label": copy.remove, title: copy.remove }
+    cls: "echoink-todo-action echoink-todo-action-delete",
+    attr: { type: "button", "aria-label": copy.remove, "data-tip": copy.remove }
   });
   setIcon(deleteButton, "trash-2");
   deleteButton.addEventListener("click", () => callbacks.onDelete(record));
   return row;
+}
+
+/** Circular text avatars with slight overlap; "+N" carries the remainder.
+ *  Hover or keyboard focus reveals the full name via a scoped CSS tooltip. */
+function renderPeopleAvatars(cell: HTMLElement, names: readonly string[]): void {
+  if (!names.length) {
+    cell.createSpan({ cls: "echoink-todo-none", text: "—" });
+    return;
+  }
+  const group = cell.createDiv({ cls: "echoink-todo-avatars" });
+  for (const name of names.slice(0, 3)) {
+    group.createEl("span", {
+      cls: `echoink-todo-avatar echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
+      text: personInitial(name),
+      attr: { tabindex: "0", role: "img", "aria-label": name, "data-tip": name }
+    });
+  }
+  const rest = names.slice(3);
+  if (rest.length) {
+    const restLabel = rest.join("、");
+    group.createEl("span", {
+      cls: "echoink-todo-avatar echoink-todo-avatar-more",
+      text: `+${rest.length}`,
+      attr: { tabindex: "0", role: "img", "aria-label": restLabel, "data-tip": restLabel }
+    });
+  }
 }

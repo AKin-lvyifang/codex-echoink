@@ -2,6 +2,7 @@ import { App, Modal, Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { newId } from "../settings/settings";
 import type { ParsedTodoRecord } from "./todo-markdown";
+import { joinPeopleNames, parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 import { dateKey } from "./home-workbench-model";
 
 /**
@@ -13,7 +14,7 @@ import { dateKey } from "./home-workbench-model";
  */
 export class EchoInkTodoFormModal extends Modal {
   private titleValue = "";
-  private peopleValue = "";
+  private peopleNames: string[] = [];
   private dueValue = "";
   private categoryName = "";
   private pendingNewCategory = "";
@@ -32,7 +33,7 @@ export class EchoInkTodoFormModal extends Modal {
     super(app);
     if (record) {
       this.titleValue = record.title;
-      this.peopleValue = record.people;
+      this.peopleNames = [...parsePeopleNames(record.people)];
       this.dueValue = record.dueDate;
       this.categoryName = record.categoryName;
     }
@@ -102,13 +103,49 @@ export class EchoInkTodoFormModal extends Modal {
 
     const peopleField = body.createDiv({ cls: "echoink-todo-form-field" });
     peopleField.createEl("label", { text: this.t("相关人员（选填）", "People (optional)") });
-    const peopleInput = peopleField.createEl("input", {
-      attr: { type: "text", placeholder: zh ? "可写一个或多个人名" : "One or more names" }
-    });
-    peopleInput.value = this.peopleValue;
-    peopleInput.oninput = () => {
-      this.peopleValue = peopleInput.value;
+    const peopleBox = peopleField.createDiv({ cls: "echoink-people-field" });
+    const renderPeopleTags = (): void => {
+      peopleBox.empty();
+      for (const name of this.peopleNames) {
+        const tag = peopleBox.createDiv({ cls: "echoink-people-tag" });
+        tag.createEl("span", {
+          cls: `echoink-todo-avatar echoink-todo-avatar-sm echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
+          text: personInitial(name),
+          attr: { "aria-hidden": "true" }
+        });
+        tag.createEl("span", { cls: "echoink-people-tag-name", text: name });
+        const remove = tag.createEl("button", {
+          cls: "echoink-people-tag-remove",
+          attr: { type: "button", "aria-label": this.t(`移除 ${name}`, `Remove ${name}`) }
+        });
+        setIcon(remove, "x");
+        remove.onclick = () => {
+          this.peopleNames = this.peopleNames.filter((entry) => entry !== name);
+          renderPeopleTags();
+        };
+      }
+      const input = peopleBox.createEl("input", {
+        cls: "echoink-people-input",
+        attr: { type: "text", placeholder: this.t("输入姓名，回车或逗号添加", "Type a name, Enter or comma to add") }
+      });
+      input.onkeydown = (event) => {
+        if (event.isComposing || event.keyCode === 229) return;
+        if (event.key === "Enter" || event.key === ",") {
+          event.preventDefault();
+          this.addPeopleFromInput(input);
+          renderPeopleTags();
+          peopleBox.querySelector<HTMLInputElement>(".echoink-people-input")?.focus();
+          return;
+        }
+        if (event.key === "Backspace" && !input.value && this.peopleNames.length) {
+          event.preventDefault();
+          this.peopleNames = this.peopleNames.slice(0, -1);
+          renderPeopleTags();
+          peopleBox.querySelector<HTMLInputElement>(".echoink-people-input")?.focus();
+        }
+      };
     };
+    renderPeopleTags();
 
     const dueField = body.createDiv({ cls: "echoink-todo-form-field" });
     dueField.createEl("label", { text: this.t("截止日期（选填）", "Due date (optional)") });
@@ -304,6 +341,17 @@ export class EchoInkTodoFormModal extends Modal {
     }
   }
 
+  /** Names are added one tag at a time; pasted separator lists split into
+   *  multiple tags, plain spaces never split English full names. */
+  private addPeopleFromInput(input: HTMLInputElement): void {
+    for (const name of parsePeopleNames(input.value)) {
+      if (!this.peopleNames.some((entry) => entry.toLowerCase() === name.toLowerCase())) {
+        this.peopleNames.push(name);
+      }
+    }
+    input.value = "";
+  }
+
   private async save(): Promise<void> {
     if (this.saving) return;
     const zh = this.plugin.settings.settingsLanguage !== "en";
@@ -324,14 +372,14 @@ export class EchoInkTodoFormModal extends Modal {
       if (this.record) {
         await store.updateTodo(this.record, {
           title,
-          people: this.peopleValue,
+          people: joinPeopleNames(this.peopleNames),
           dueDate: this.dueValue,
           categoryName
         });
       } else {
         await store.addTodo({
           title,
-          people: this.peopleValue,
+          people: joinPeopleNames(this.peopleNames),
           dueDate: this.dueValue,
           categoryName
         });
