@@ -20968,3 +20968,135 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
   -webkit-app-region: no-drag;
 }
 /* ===== ECHOINK_QUICK_CHAT_CHROME_END ===== */
+
+/* ===== EchoInk 工作台待办与模块可见性（2026-09-12）===== */
+/* 固定槽位：隐藏模块保留布局位置，仅隐藏内容与交互 */
+.echoink-home-workspace .echoink-module-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.todo-section {
+  margin-top: 28px;
+}
+
+.todo-quick {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.todo-quick input {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todo-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--echoink-conversation-radius-md, 8px);
+  background: var(--background-primary);
+  cursor: pointer;
+}
+
+.todo-row input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.todo-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.todo-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.todo-chip {
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.todo-due-overdue {
+  background: rgba(220, 80, 60, 0.14);
+  color: #c04434;
+}
+
+.todo-due-today {
+  background: rgba(217, 127, 87, 0.16);
+  color: #a05a2c;
+}
+
+.todo-due-future {
+  background: rgba(90, 160, 120, 0.14);
+  color: #3d7a55;
+}
+
+.todo-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* 全部待办对话框 */
+.echoink-todos-dialog .todo-dialog-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.echoink-todos-dialog .todo-filter.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.echoink-todos-dialog .todo-dialog-add {
+  margin-left: auto;
+}
+
+.echoink-todos-dialog .todo-dialog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.echoink-todos-dialog .todo-row.is-done strong {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.echoink-todos-dialog .todo-row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.echoink-todos-dialog .todo-dialog-empty {
+  color: var(--text-muted);
+}
+
+.todo-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+/* ===== ECHOINK_TODO_END ===== */

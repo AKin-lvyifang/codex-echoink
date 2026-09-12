@@ -26,6 +26,8 @@ import type {
 } from "../harness/resources/skill-runtime";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
+import { ECHOINK_HOME_MODULES } from "../home/home-modules";
+import { addTodoCategory, removeTodoCategory, renameTodoCategory } from "../home/home-todos";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
 import { readNativeJournalSettings, saveNativeJournalFolder } from "../home/native-journal";
@@ -489,6 +491,8 @@ export class CodexSettingTab extends PluginSettingTab {
         this.renderKnowledgeBaseSettings(bodyEl);
       } else if (activeTab === "review") {
         this.renderReviewSettings(bodyEl);
+      } else if (activeTab === "todos") {
+        this.renderTodosSettings(bodyEl);
       } else {
         this.renderGeneralSettings(bodyEl);
       }
@@ -1066,9 +1070,117 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     runsSetting.controlEl.insertBefore(slider, runsOutput);
 
+    const layoutSection = createSettingsSection(page, {
+      title: zh ? "布局与外观" : "Layout & appearance",
+      surface: "group"
+    });
+    const layoutGroup = createSettingsGroup(layoutSection);
+    for (const module of ECHOINK_HOME_MODULES) {
+      const label = zh ? module.zhName : module.enName;
+      applySettingsRow(new OriginSetting(layoutGroup)
+        .setName(label)
+        .setDesc(zh
+          ? "控制工作台首页是否展示该模块；隐藏时保留原布局槽位，不删除模块数据。"
+          : "Show or hide this module on the workbench home. Hiding keeps its layout slot and data.")
+        .addOriginToggle((toggle) => {
+          labelSettingsToggle(toggle, label);
+          toggle.setValue(this.plugin.settings.homeModules[module.id] !== false).onChange(async (value) => {
+            this.plugin.settings.homeModules[module.id] = value;
+            await this.plugin.saveSettings();
+            this.plugin.notifyHomeSurfacesChanged();
+          });
+        }));
+    }
+
     this.renderFilePersonalizationSettings(page);
     this.renderDeveloperModeSettings(page);
     this.renderAboutSection(page);
+  }
+
+  private renderTodosSettings(page: HTMLElement): void {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const section = createSettingsSection(page, {
+      title: zh ? "待办分类" : "To-do categories",
+      surface: "group"
+    });
+    const group = createSettingsGroup(section);
+    applySettingsRow(new OriginSetting(group)
+      .setName(zh ? "分类与待办的关系" : "Categories and to-dos")
+      .setDesc(zh
+        ? "分类以稳定标识关联待办，重命名后已有待办同步显示新名称；删除分类不会删除待办，相关事项转为「未分类」。是否在工作台显示待办，请在「基础设置 → 布局与外观」管理。"
+        : "Categories link to to-dos by stable id, so renames apply to existing to-dos. Deleting a category keeps its to-dos, which become uncategorized. Whether the to-do module shows on the workbench is managed under General → Layout & appearance."));
+    for (const category of this.plugin.settings.todoCategories) {
+      const row = applySettingsRow(new OriginSetting(group).setName(category.name));
+      const renameButton = row.controlEl.createEl("button", {
+        cls: "mod-cta",
+        text: zh ? "重命名" : "Rename",
+        attr: { type: "button" }
+      });
+      renameButton.onclick = () => void (async () => {
+        const next = await textInputModal(
+          this.app,
+          zh ? "重命名分类" : "Rename category",
+          zh ? "分类名称" : "Category name",
+          category.name
+        );
+        if (next === null) return;
+        if (!next.trim()) {
+          new Notice(zh ? "分类名称不能为空" : "The category name cannot be empty");
+          return;
+        }
+        if (!renameTodoCategory(this.plugin, category.id, next)) {
+          new Notice(zh ? "已有同名分类" : "A category with this name already exists");
+          return;
+        }
+        await this.plugin.saveSettings();
+        this.plugin.notifyHomeSurfacesChanged();
+        this.scheduleDisplay();
+      })();
+      const deleteButton = row.controlEl.createEl("button", {
+        cls: "mod-warning",
+        text: zh ? "删除" : "Delete",
+        attr: { type: "button" }
+      });
+      deleteButton.onclick = () => void (async () => {
+        const affected = this.plugin.settings.todos.filter((todo) => todo.categoryId === category.id).length;
+        const accepted = await confirmModal(
+          this.app,
+          zh ? "删除分类" : "Delete category",
+          zh
+            ? `删除「${category.name}」后，${affected} 条相关待办将转为「未分类」；待办本身不会被删除。`
+            : `Deleting "${category.name}" moves ${affected} to-do(s) to Uncategorized. The to-dos themselves are kept.`,
+          zh ? "删除" : "Delete",
+          zh ? "取消" : "Cancel"
+        );
+        if (!accepted) return;
+        removeTodoCategory(this.plugin, category.id);
+        await this.plugin.saveSettings();
+        this.plugin.notifyHomeSurfacesChanged();
+        this.scheduleDisplay();
+      })();
+    }
+    const addRow = applySettingsRow(new OriginSetting(group)
+      .setName(zh ? "新增分类" : "Add category")
+      .setDesc(zh ? "名称不能为空，也不能与已有分类同名。" : "Names cannot be empty or duplicate an existing category."));
+    const addButton = addRow.controlEl.createEl("button", {
+      cls: "mod-cta",
+      text: zh ? "新增" : "Add",
+      attr: { type: "button" }
+    });
+    addButton.onclick = () => void (async () => {
+      const name = await textInputModal(
+        this.app,
+        zh ? "新增分类" : "Add category",
+        zh ? "分类名称" : "Category name"
+      );
+      if (name === null) return;
+      if (!addTodoCategory(this.plugin, name)) {
+        new Notice(zh ? "名称为空或已存在同名分类" : "The name is empty or already exists");
+        return;
+      }
+      await this.plugin.saveSettings();
+      this.scheduleDisplay();
+    })();
   }
 
   private renderDeveloperModeSettings(page: HTMLElement): void {
@@ -5254,7 +5366,8 @@ const SETTINGS_TABS: Array<{
   { id: "providers", icon: "key-round" },
   { id: "resources", icon: "layout-list" },
   { id: "knowledgeBase", icon: "book-open-check" },
-  { id: "review", icon: "clipboard-check" }
+  { id: "review", icon: "clipboard-check" },
+  { id: "todos", icon: "list-todo" }
 ];
 
 function visibleSettingsTab(tab: SettingsTab): VisibleSettingsTab {

@@ -60,6 +60,11 @@ export class WorkspaceWindow {
   doc: Document | null = null;
 }
 
+/** Minimal stand-in for sidebar tab-group checks in tests. */
+export class WorkspaceTabs {
+  children: unknown[] = [];
+}
+
 export class ItemView extends Component {
   containerEl = {
     children: [

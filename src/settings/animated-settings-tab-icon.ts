@@ -17,6 +17,7 @@ export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
   "layout-list",
   "book-open-check",
   "clipboard-check",
+  "list-todo",
   "package",
   "blocks",
   "sparkles"
@@ -54,6 +55,7 @@ const ICON_RENDERERS: Record<
   "layout-list": renderLayoutListIcon,
   "book-open-check": renderBookOpenCheckIcon,
   "clipboard-check": renderClipboardCheckIcon,
+  "list-todo": renderListTodoIcon,
   package: renderPackageIcon,
   blocks: renderBlocksIcon,
   sparkles: renderSparklesIcon
@@ -109,6 +111,17 @@ function renderKeyRoundIcon(doc: Document): SVGSVGElement {
     r: 0.5,
     fill: "currentColor"
   }, "key-head");
+  return svg;
+}
+
+function renderListTodoIcon(doc: Document): SVGSVGElement {
+  const svg = createIconSvg("list-todo", doc);
+  [6, 12, 18].forEach((y, index) => {
+    appendSvg(svg, "path", { d: `M10 ${y}h11` }, "layout-line", index);
+  });
+  [5, 11, 17].forEach((y, index) => {
+    appendSvg(svg, "path", { d: `m3 ${y + 1} 1.5 1.5L7 ${y - 1}` }, "layout-box", index);
+  });
   return svg;
 }
 

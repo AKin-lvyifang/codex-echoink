@@ -38,7 +38,8 @@ const ZH_CN = {
     providers: "API Provider",
     resources: "Skills & MCP",
     knowledgeBase: "知识库管理",
-    review: "复盘"
+    review: "复盘",
+    todos: "待办"
   } satisfies Record<SettingsTab, string>,
   general: {
     settingsLanguage: "设置语言",
@@ -292,7 +293,8 @@ const EN: SettingsCopy = {
     providers: "API Provider",
     resources: "Skills & MCP",
     knowledgeBase: "Knowledge",
-    review: "Review"
+    review: "Review",
+    todos: "To-dos"
   },
   general: {
     settingsLanguage: "Settings language",

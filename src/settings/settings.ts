@@ -1,5 +1,6 @@
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
 import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
+import { defaultHomeModuleVisibility } from "../home/home-modules";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import {
   apiProviderAuthMode,
@@ -234,7 +235,7 @@ export type StoredSession = EchoInkConversationSessionShell<
   piDocumentReplay?: StoredPiDocumentReplayByEntry;
 };
 
-export type SettingsTab = "general" | "providers" | "resources" | "knowledgeBase" | "review";
+export type SettingsTab = "general" | "providers" | "resources" | "knowledgeBase" | "review" | "todos";
 export type ProviderMode = "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
@@ -458,6 +459,26 @@ export interface QuickChatSettings {
   hotkey: string;
 }
 
+/** User-defined to-do category; todos reference categories by stable id. */
+export interface EchoInkTodoCategory {
+  id: string;
+  name: string;
+}
+
+export interface EchoInkTodoItem {
+  id: string;
+  title: string;
+  /** Free-text people names; no contact system. */
+  people: string;
+  /** Local calendar date `YYYY-MM-DD`, empty when unset. */
+  dueDate: string;
+  /** Category id; empty or unknown ids render as uncategorized. */
+  categoryId: string;
+  done: boolean;
+  createdAt: number;
+  completedAt: number | null;
+}
+
 export interface CodexForObsidianSettings {
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -477,6 +498,9 @@ export interface CodexForObsidianSettings {
   autoOpen: boolean;
   autoOpenHome: boolean;
   quickChat: QuickChatSettings;
+  homeModules: Record<string, boolean>;
+  todos: EchoInkTodoItem[];
+  todoCategories: EchoInkTodoCategory[];
   journalDirectory: string;
   customWelcomeEnabled: boolean;
   customWelcomeTitle: string;
@@ -517,6 +541,12 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     enabled: false,
     hotkey: DEFAULT_QUICK_CHAT_HOTKEY
   },
+  homeModules: defaultHomeModuleVisibility(),
+  todos: [],
+  todoCategories: [
+    { id: "life", name: "生活" },
+    { id: "work", name: "工作" }
+  ],
   journalDirectory: DEFAULT_JOURNAL_DIRECTORY,
   customWelcomeEnabled: false,
   customWelcomeTitle: DEFAULT_ECHOINK_WELCOME_TITLE,
@@ -637,6 +667,9 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     setup: normalizeSetupSettings(data?.setup),
     memory: normalizeMemorySettings(data?.memory),
     quickChat: normalizeQuickChatSettings(data?.quickChat),
+    homeModules: normalizeHomeModules(data?.homeModules),
+    todos: normalizeTodos(data?.todos),
+    todoCategories: normalizeTodoCategories(data?.todoCategories),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
     review: normalizeReviewSettings(data?.review),
@@ -1451,9 +1484,61 @@ function normalizeSettingsTab(value: unknown): SettingsTab {
     || value === "resources"
     || value === "knowledgeBase"
     || value === "review"
+    || value === "todos"
     || value === "general"
     ? value
     : DEFAULT_SETTINGS.settingsTab;
+}
+
+export function normalizeHomeModules(input: unknown): Record<string, boolean> {
+  const visibility = defaultHomeModuleVisibility();
+  const record = settingsRecord(input) ?? {};
+  for (const key of Object.keys(visibility)) {
+    if (typeof record[key] === "boolean") visibility[key] = record[key] === true;
+  }
+  return visibility;
+}
+
+function normalizeTodoDueDate(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/u.test(trimmed) ? trimmed : "";
+}
+
+export function normalizeTodos(input: unknown): EchoInkTodoItem[] {
+  const raw = Array.isArray(input) ? input : [];
+  return raw
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+    .map((entry) => ({
+      id: typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : newId("todo"),
+      title: typeof entry.title === "string" ? entry.title : "",
+      people: typeof entry.people === "string" ? entry.people : "",
+      dueDate: normalizeTodoDueDate(entry.dueDate),
+      categoryId: typeof entry.categoryId === "string" ? entry.categoryId : "",
+      done: entry.done === true,
+      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : Date.now(),
+      completedAt: typeof entry.completedAt === "number" ? entry.completedAt : null
+    }))
+    .filter((entry) => entry.title.trim() !== "");
+}
+
+export function normalizeTodoCategories(input: unknown): EchoInkTodoCategory[] {
+  const raw = Array.isArray(input) ? input : [];
+  const seen = new Set<string>();
+  const categories: EchoInkTodoCategory[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!name) continue;
+    const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newId("todo-category");
+    if (seen.has(id)) continue;
+    seen.add(id);
+    categories.push({ id, name });
+  }
+  return categories.length
+    ? categories
+    : DEFAULT_SETTINGS.todoCategories.map((category) => ({ ...category }));
 }
 
 export function normalizeSettingsLanguage(value: unknown): SettingsLanguage {

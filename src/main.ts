@@ -27,6 +27,7 @@ import {
 } from "./settings/settings";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import {
   EchoInkSettingsStore,
   restoreApiProviderSettings,
@@ -286,6 +287,12 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
+  /** Push settings-driven home changes (module visibility, todos) to open home views. */
+  notifyHomeSurfacesChanged(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
+      if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshHomeSurfaces();
+    }
+  }
   async activateView(): Promise<void> { return this.getViewService().activateView(); }
   getQuickChatWindowController(): QuickChatWindowController | null { return this.quickChatWindow; }
   async toggleQuickChatWindow(): Promise<void> {

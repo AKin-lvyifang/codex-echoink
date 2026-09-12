@@ -12,6 +12,17 @@ import { openObsidianLocalGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
 import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-service";
+import { ECHOINK_HOME_MODULES } from "./home-modules";
+import {
+  createTodo,
+  setTodoDone,
+  sortOpenTodos,
+  todoCategoryName,
+  todoDueState,
+  saveTodos,
+  type EchoInkTodoDueState
+} from "./home-todos";
+import { EchoInkTodosModal } from "./home-todos-modal";
 
 export const VIEW_TYPE_ECHOINK_HOME = "codex-echoink-home";
 let nextHomeId = 0;
@@ -111,8 +122,29 @@ export class EchoInkHomeView extends ItemView {
     if (data.status === "fulfilled") this.data = data.value;
     if (health.status === "fulfilled") this.snapshot = health.value ?? null;
     else this.snapshot = null;
-    this.renderRecent(); this.renderActivity(); this.renderCalendar(); this.renderEntries();
+    this.renderRecent(); this.renderActivity(); this.renderCalendar(); this.renderEntries(); this.renderTodos();
+    this.applyModuleVisibility();
     if (data.status === "rejected") this.field("recent-subtitle").setText(this.t("笔记读取失败，请稍后重试", "Could not read notes. Try again."));
+  }
+  /**
+   * Fixed-slot module visibility: hidden modules keep their layout slot but
+   * hide content and interactions; other cards never reflow.
+   */
+  applyModuleVisibility(): void {
+    const visibility = this.plugin.settings.homeModules;
+    for (const module of ECHOINK_HOME_MODULES) {
+      const root = this.contentEl.querySelector<HTMLElement>(module.selector);
+      if (!root) continue;
+      const hidden = visibility[module.id] === false;
+      root.toggleClass("echoink-module-hidden", hidden);
+      root.toggleAttribute("aria-hidden", hidden);
+    }
+  }
+  /** Lightweight re-render for settings-driven changes (modules + todos). */
+  refreshHomeSurfaces(): void {
+    if (this.closed) return;
+    this.applyModuleVisibility();
+    this.renderTodos();
   }
   private renderShell(): void {
     markup(this.contentEl, homeWorkspaceMarkup(this.language));
@@ -201,6 +233,49 @@ export class EchoInkHomeView extends ItemView {
     const status = !health ? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);
     markup(this.el(".health"), `<b></b>${esc(status)}${icon("chevron-right")}`);
   }
+  private renderTodos(): void {
+    const host = this.field("todo-list");
+    const todos = this.plugin.settings.todos;
+    const open = sortOpenTodos(todos);
+    this.field("todo-subtitle").setText(this.t(
+      open.length ? `还有 ${open.length} 件未完成，按期限排序` : "暂时没有未完成的事",
+      open.length ? `${open.length} open, nearest due date first` : "Nothing open right now"
+    ));
+    if (!open.length) {
+      markup(host, `<p class="todo-empty">${this.t("inbox 里的小想法，也可以变成一条待办。", "A loose thought from Inbox can become a to-do.")}</p>`);
+      return;
+    }
+    const preview = open.slice(0, 4);
+    const rows = preview.map((todo) => {
+      const due = todoDueState(todo);
+      const chips = [
+        todo.people ? `<span class="todo-chip todo-chip-people">${esc(todo.people)}</span>` : "",
+        todo.dueDate ? `<span class="todo-chip todo-due-${due}">${esc(this.dueLabel(due))} · ${esc(todo.dueDate)}</span>` : "",
+        `<span class="todo-chip todo-chip-category">${esc(todoCategoryName(this.plugin.settings.todoCategories, todo.categoryId, this.t("未分类", "Uncategorized")))}</span>`
+      ].join("");
+      return `<label class="todo-row"><input type="checkbox" data-todo="${esc(todo.id)}" aria-label="${esc(this.t("完成", "Done"))}：${esc(todo.title)}"><span class="todo-row-main"><strong>${esc(todo.title)}</strong><span class="todo-row-meta">${chips}</span></span></label>`;
+    }).join("");
+    const more = open.length > preview.length
+      ? `<button class="text-button" data-action="todos-all">${this.t(`还有 ${open.length - preview.length} 条，查看全部`, `${open.length - preview.length} more — view all`)}${icon("arrow-right")}</button>`
+      : "";
+    markup(host, `${rows}${more}`);
+  }
+  private dueLabel(state: EchoInkTodoDueState): string {
+    return this.t(
+      { overdue: "逾期", today: "今天到期", future: "到期", none: "" }[state],
+      { overdue: "Overdue", today: "Due today", future: "Due", none: "" }[state]
+    );
+  }
+  private async quickAddTodo(): Promise<void> {
+    const input = this.field("todo-quick-input") as HTMLInputElement;
+    const title = input.value.trim();
+    if (!title) { input.focus(); return; }
+    createTodo(this.plugin, { title });
+    input.value = "";
+    await saveTodos(this.plugin);
+    this.renderTodos();
+    input.focus();
+  }
   private shortDate(key: string): string { return new Intl.DateTimeFormat(this.language, { month: "short", day: "numeric" }).format(parseDate(key)); }
   private selectDate(key: string | null): void {
     this.selectedDate = key;
@@ -208,6 +283,13 @@ export class EchoInkHomeView extends ItemView {
     this.renderRecent(); this.renderActivity(); this.renderCalendar();
   }
   private async handleClick(event: MouseEvent): Promise<void> {
+    const checkbox = (event.target as HTMLElement).closest?.<HTMLInputElement>("input[data-todo]");
+    if (checkbox && this.contentEl.contains(checkbox)) {
+      setTodoDone(this.plugin, checkbox.dataset.todo!, checkbox.checked);
+      await saveTodos(this.plugin);
+      this.renderTodos();
+      return;
+    }
     const button = (event.target as HTMLElement).closest?.<HTMLButtonElement>("button");
     if (!button || !this.contentEl.contains(button)) return;
     if (button.dataset.note) { this.closeSearch(false); await this.openNote(button.dataset.note); return; }
@@ -229,7 +311,12 @@ export class EchoInkHomeView extends ItemView {
       case "week-review": this.showActivity(false); break;
       case "all-day": this.showActivity(true); break;
       case "footprint-help": this.showActivity(false, true); break;
+      case "todo-quick-add": await this.quickAddTodo(); break;
+      case "todos-all": this.openTodosModal(); break;
     }
+  }
+  private openTodosModal(): void {
+    new EchoInkTodosModal(this.app, this.plugin, () => this.renderTodos()).open();
   }
   private async capture(): Promise<void> {
     if (this.captureBusy) return;
@@ -330,6 +417,11 @@ export class EchoInkHomeView extends ItemView {
     if ((event.metaKey || event.ctrlKey) && ["k", "j"].includes(event.key.toLowerCase())) {
       event.preventDefault(); event.stopPropagation();
       if (event.key.toLowerCase() === "k") this.openSearch(); else void this.capture().catch((error) => new Notice(errorMessage(error)));
+      return;
+    }
+    if (!this.searchOpen && event.key === "Enter" && (event.target as HTMLElement).dataset?.home === "todo-quick-input") {
+      event.preventDefault();
+      void this.quickAddTodo().catch((error) => new Notice(errorMessage(error)));
       return;
     }
     if (!this.searchOpen) return;

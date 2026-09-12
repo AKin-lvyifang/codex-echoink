@@ -491,7 +491,8 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
     ["providers", "key-round"],
     ["resources", "layout-list"],
     ["knowledgeBase", "book-open-check"],
-    ["review", "clipboard-check"]
+    ["review", "clipboard-check"],
+    ["todos", "list-todo"]
   ] as const;
   const icons = tab.containerEl.querySelectorAll<ProviderModalTestElement>(
     ".codex-settings-tab-icon"
@@ -535,7 +536,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   await flushProviderModalTasks();
 
   const review = tab.containerEl.querySelector<ProviderModalTestElement>(
-    '[data-settings-tab="review"]'
+    '[data-settings-tab="todos"]'
   );
   assert.equal(review?.getAttribute("aria-selected"), "true");
   assert.equal(review?.getAttribute("tabindex"), "0");
@@ -551,7 +552,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   assert.ok(mutableTab.settingsTabIconAnimation);
   mutableTab.settingsTabIconAnimation.startedAtMs = Date.now() - 400;
   mutableTab.renderSettingsContent();
-  const continuedIcon = tab.containerEl.querySelector('[data-settings-tab="review"]')
+  const continuedIcon = tab.containerEl.querySelector('[data-settings-tab="todos"]')
     ?.querySelector<ProviderModalTestElement>(".codex-settings-tab-icon");
   assert.equal(continuedIcon?.hasClass("is-animating"), true);
   assert.ok(
@@ -562,12 +563,12 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
     "same-tab rerenders continue the original timeline instead of replaying it"
   );
   mutableTab.settingsTabIconAnimation = {
-    tabId: "review",
+    tabId: "todos",
     startedAtMs: Date.now() - 1_300
   };
   mutableTab.renderSettingsContent();
   assert.equal(
-    tab.containerEl.querySelector('[data-settings-tab="review"]')
+    tab.containerEl.querySelector('[data-settings-tab="todos"]')
       ?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"),
     false,
     "the tab icon animation ends after its bounded window"
