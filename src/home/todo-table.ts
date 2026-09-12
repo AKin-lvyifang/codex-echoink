@@ -101,8 +101,9 @@ function renderRow(
   const dueCell = row.createEl("td", { cls: "echoink-todo-due" });
   if (record.dueDate) {
     const state = todoDueState(record.dueDate);
+    // Completed items show a plain date: no overdue/today warning.
     const emphasized = !record.done && (state === "overdue" || state === "today");
-    const label = copy.dueLabels[state];
+    const label = record.done ? "" : copy.dueLabels[state];
     dueCell.createEl("span", {
       cls: emphasized ? `echoink-due echoink-due-${state}` : "echoink-due",
       text: label ? `${label} · ${record.dueDate}` : record.dueDate

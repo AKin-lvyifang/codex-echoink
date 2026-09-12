@@ -14,8 +14,7 @@ import { HomeSearchService, type HomeSearchMatch } from "./home-search";
 import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-service";
 import { ECHOINK_HOME_MODULES } from "./home-modules";
 import { sortOpenTodos } from "./home-todos";
-import { EchoInkTodosModal } from "./home-todos-modal";
-import { EchoInkTodoEditModal } from "./todo-edit-modal";
+import { EchoInkTodoFormModal } from "./todo-edit-modal";
 import { renderTodoTable, todoTableCopy } from "./todo-table";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { confirmModal } from "../ui/modals";
@@ -49,6 +48,7 @@ export class EchoInkHomeView extends ItemView {
   private searchIndex = -1;
   private activityUnsubscribe: (() => void) | null = null;
   private todoUnsubscribe: (() => void) | null = null;
+  private todoFilter: "all" | "open" | "done" = "all";
   private activityModal: Modal | null = null;
   private captureBusy = false;
   private searchOpen = false;
@@ -236,16 +236,42 @@ export class EchoInkHomeView extends ItemView {
   private renderTodos(): void {
     const host = this.field("todo-list");
     const store = this.plugin.getTodoStore();
-    const open = sortOpenTodos(store.snapshot());
+    const records = store.snapshot();
+    const open = sortOpenTodos(records);
     this.field("todo-subtitle").setText(this.t(
       open.length ? `还有 ${open.length} 件未完成，按期限排序` : "暂时没有未完成的事",
       open.length ? `${open.length} open, nearest due date first` : "Nothing open right now"
     ));
-    renderTodoTable(host, open.slice(0, 4), todoTableCopy(this.language), {
+    this.renderTodoFilterBar();
+    const visible = this.todoFilter === "open"
+      ? open
+      : this.todoFilter === "done"
+        ? records.filter((record) => record.done)
+        : [...open, ...records.filter((record) => record.done)];
+    renderTodoTable(host, visible, todoTableCopy(this.language), {
       onToggle: (record, done) => void store.toggleDone(record, done),
-      onEdit: (record) => new EchoInkTodoEditModal(this.app, this.plugin, record).open(),
+      onEdit: (record) => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
       onDelete: (record) => void this.confirmTodoDelete(record)
     });
+  }
+  private renderTodoFilterBar(): void {
+    const bar = this.field("todo-filter-bar");
+    bar.empty();
+    for (const option of ["all", "open", "done"] as const) {
+      const label = this.t(
+        { all: "全部", open: "未完成", done: "已完成" }[option],
+        { all: "All", open: "Open", done: "Done" }[option]
+      );
+      const button = bar.createEl("button", {
+        cls: `todo-filter ${this.todoFilter === option ? "is-active" : ""}`,
+        text: label,
+        attr: { type: "button", "aria-pressed": String(this.todoFilter === option) }
+      });
+      button.onclick = () => {
+        this.todoFilter = option;
+        this.renderTodos();
+      };
+    }
   }
   private async confirmTodoDelete(record: ParsedTodoRecord): Promise<void> {
     const accepted = await confirmModal(
@@ -286,13 +312,9 @@ export class EchoInkHomeView extends ItemView {
       case "week-review": this.showActivity(false); break;
       case "all-day": this.showActivity(true); break;
       case "footprint-help": this.showActivity(false, true); break;
-      case "todo-new": new EchoInkTodoEditModal(this.app, this.plugin, null).open(); break;
+      case "todo-new": new EchoInkTodoFormModal(this.app, this.plugin, null).open(); break;
       case "todo-open-source": void this.plugin.getTodoStore().openSourceFile(); break;
-      case "todos-all": this.openTodosModal(); break;
     }
-  }
-  private openTodosModal(): void {
-    new EchoInkTodosModal(this.app, this.plugin).open();
   }
   private async capture(): Promise<void> {
     if (this.captureBusy) return;

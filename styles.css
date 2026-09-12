@@ -21105,12 +21105,24 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 }
 /* ===== ECHOINK_QUICK_CHAT_CHROME_END ===== */
 
-/* ===== EchoInk 待办表格与模块可见性（2026-09-12 v2）===== */
+/* ===== EchoInk 待办表格与表单（2026-09-12 v3，沿用首页/日记弹窗规范）===== */
 /* 固定槽位：隐藏模块保留布局位置，仅隐藏内容与交互 */
 .echoink-home-workspace .echoink-module-hidden{visibility:hidden;pointer-events:none}
 
-/* 待办表格作用域变量：首页沿用工作板变量，弹窗回退 Obsidian 变量 */
-.echoink-home-workspace .todo-section,.modal.echoink-todos-dialog{--todo-ink:var(--ink,var(--text-normal));--todo-muted:var(--muted,var(--text-faint));--todo-line:var(--line,var(--background-modifier-border));--todo-soft:var(--soft,var(--background-secondary));--todo-accent:var(--accent,var(--interactive-accent))}
+/* 模块间距与首页其它 section 一致（knowledge-section 规范：30px，760 断点 26px） */
+.echoink-home-workspace .todo-section{margin-top:30px}
+@container (max-width: 760px){.echoink-home-workspace .todo-section{margin-top:26px}}
+
+/* 作用域变量 */
+.echoink-home-workspace .todo-section{--todo-ink:var(--ink,var(--text-normal));--todo-muted:var(--muted,var(--text-faint));--todo-line:var(--line,var(--background-modifier-border));--todo-soft:var(--soft,var(--background-secondary));--todo-accent:var(--accent,var(--interactive-accent))}
+
+/* 工具栏：新增按钮左置，筛选段右侧 */
+.echoink-home-workspace .todo-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.echoink-home-workspace .todo-add-button{display:inline-flex;align-items:center;gap:6px}
+.echoink-home-workspace .todo-filter-bar{display:flex;gap:6px;margin-left:auto}
+.echoink-home-workspace .todo-filter{min-height:26px;padding:0 10px;border:1px solid var(--todo-line);border-radius:999px;color:var(--todo-muted);font-size:calc(var(--font-text-size,16px)*.6875);background:var(--bg)}
+.echoink-home-workspace .todo-filter:hover{color:var(--todo-ink)}
+.echoink-home-workspace .todo-filter.is-active{color:var(--todo-accent);border-color:var(--todo-accent);background:var(--accent-soft)}
 
 /* shadcn Table 语义适配：容器横滚、紧凑表头、细行分隔、轻悬停 */
 .echoink-todo-table-wrap{width:100%;overflow-x:auto}
@@ -21128,19 +21140,49 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-todo-check input{accent-color:var(--todo-accent);margin:0}
 .echoink-due.echoink-due-overdue{color:#c04434;font-weight:500}
 .echoink-due.echoink-due-today{color:#a05a2c;font-weight:500}
-.theme-dark .echoink-home-workspace .echoink-due.echoink-due-overdue,.theme-dark .echoink-todos-dialog .echoink-due.echoink-due-overdue{color:#e08a7a}
-.theme-dark .echoink-home-workspace .echoink-due.echoink-due-today,.theme-dark .echoink-todos-dialog .echoink-due.echoink-due-today{color:#d8a35f}
+.theme-dark .echoink-home-workspace .echoink-due.echoink-due-overdue{color:#e08a7a}
+.theme-dark .echoink-home-workspace .echoink-due.echoink-due-today{color:#d8a35f}
 .echoink-todo-actions{text-align:right}
 .echoink-todo-action{background:none;border:none;padding:2px 4px;cursor:pointer;color:var(--todo-muted);border-radius:6px}
 .echoink-todo-action:hover{color:var(--todo-ink);background:var(--todo-soft)}
 .echoink-todo-action-danger:hover{color:#c04434}
 .echoink-todo-table-empty td{color:var(--todo-muted);padding:12px 8px;white-space:normal}
-.todo-head-actions{display:flex;gap:10px;align-items:center}
 
-/* 全部待办弹窗 */
-.modal.echoink-todos-dialog .todo-dialog-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-.modal.echoink-todos-dialog .todo-filter.is-active{background:var(--interactive-accent);color:var(--text-on-accent)}
-.modal.echoink-todos-dialog .todo-dialog-add{margin-left:auto}
-.modal.echoink-todos-dialog .todo-dialog-table{max-height:55vh;overflow:auto}
-.todo-edit-actions{display:flex;justify-content:flex-end;margin-top:12px}
-/* ===== ECHOINK_TODO_V2_END ===== */
+/* 新增/编辑表单弹窗：沿用日记弹窗规范（head 20px 标题、20px 内容留白、36px 控件、底部操作区） */
+.modal.echoink-todo-form-modal{width:min(560px,calc(100vw - 32px));max-width:none;max-height:min(720px,calc(100dvh - 40px));padding:0;border:1px solid var(--background-modifier-border);border-radius:13px;color:var(--text-normal);background:var(--background-primary);overflow:hidden;box-shadow:0 20px 80px #21192d30;font-family:var(--font-interface);font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.55;--echoink-home-border:var(--background-modifier-border);--echoink-home-body:var(--text-normal);--echoink-home-surface:var(--background-secondary);--echoink-home-surface-raised:var(--background-primary-alt,var(--background-primary))}
+.modal.echoink-todo-form-modal .modal-content{padding:20px;max-height:min(72vh,640px);overflow-y:auto;color:var(--text-normal);background:var(--background-primary)}
+.echoink-todo-form-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}
+.echoink-todo-form-head h2{margin:0;font-size:20px;font-weight:600}
+.echoink-todo-form-head p{margin:4px 0 0;color:var(--text-muted);font-size:12px}
+.echoink-todo-form-close{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:0 0 auto;border:1px solid var(--echoink-home-border);border-radius:8px;color:var(--text-muted);background:var(--echoink-home-surface)}
+.echoink-todo-form-close:hover{color:var(--text-normal)}
+.echoink-todo-form-field{margin-bottom:14px}
+.echoink-todo-form-field>label{display:block;margin-bottom:6px;color:var(--text-muted);font-size:12px;font-weight:620}
+.echoink-todo-form-field input[type=text]{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--echoink-home-border);border-radius:8px;color:var(--echoink-home-body);background:var(--echoink-home-surface-raised);font:inherit}
+.echoink-todo-form-field input[type=text]:focus-visible{outline:2px solid var(--interactive-accent);outline-offset:1px}
+.echoink-todo-field-row{position:relative;display:flex;align-items:center;gap:8px}
+.echoink-todo-trigger{justify-content:flex-start;min-width:160px}
+.echoink-todo-trigger.is-empty{color:var(--text-muted)}
+.echoink-todo-form-modal button{min-height:36px;border:1px solid var(--echoink-home-border);border-radius:8px;color:var(--echoink-home-body);background:var(--echoink-home-surface);box-shadow:none;font-family:inherit;cursor:pointer}
+.echoink-todo-form-modal button.mod-cta{background:var(--interactive-accent);border-color:var(--interactive-accent);color:var(--text-on-accent)}
+.echoink-todo-form-modal button:disabled{opacity:.55;cursor:default}
+.echoink-todo-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--background-modifier-border)}
+
+/* 日期/分类弹层：与主弹窗同视觉 */
+.echoink-todo-pop{position:static;display:flex;flex-direction:column;gap:8px;margin-top:6px;width:100%;max-width:280px;padding:10px;border:1px solid var(--echoink-home-border);border-radius:10px;background:var(--background-primary);box-shadow:0 12px 32px #00000024}
+.echoink-todo-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.echoink-todo-cal-head button{min-height:28px;width:28px;padding:0}
+.echoink-todo-cal-head strong{font-size:12px}
+.echoink-todo-cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;color:var(--text-faint);font-size:10px;text-align:center}
+.echoink-todo-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.echoink-todo-cal-day{min-height:28px;padding:0;font-size:12px}
+.echoink-todo-cal-day.is-today{border-color:var(--interactive-accent);color:var(--interactive-accent)}
+.echoink-todo-cal-day.is-selected{background:var(--interactive-accent);border-color:var(--interactive-accent);color:var(--text-on-accent)}
+.echoink-todo-combobox-search{min-height:32px;padding:0 8px;border:1px solid var(--echoink-home-border);border-radius:8px;background:var(--echoink-home-surface-raised);color:var(--text-normal);font:inherit}
+.echoink-todo-combobox-list{display:flex;flex-direction:column;gap:2px;max-height:168px;overflow-y:auto}
+.echoink-todo-combobox-option{justify-content:flex-start;min-height:30px;padding:0 8px;font-size:12px;border-color:transparent;background:transparent}
+.echoink-todo-combobox-option:hover{background:var(--echoink-home-surface)}
+.echoink-todo-combobox-option.is-active{color:var(--interactive-accent);background:var(--echoink-home-surface)}
+.echoink-todo-combobox-create{border-top:1px solid var(--echoink-home-border);padding-top:8px}
+.echoink-todo-combobox-create button{justify-content:flex-start;min-height:30px;border-color:transparent;background:transparent;color:var(--interactive-accent);font-size:12px}
+/* ===== ECHOINK_TODO_V3_END ===== */

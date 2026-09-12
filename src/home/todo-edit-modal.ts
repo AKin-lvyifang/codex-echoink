@@ -1,12 +1,28 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
+import { newId } from "../settings/settings";
 import type { ParsedTodoRecord } from "./todo-markdown";
+import { dateKey } from "./home-workbench-model";
 
-export class EchoInkTodoEditModal extends Modal {
+/**
+ * To-do create/edit form. Follows the journal template dialog norms (head
+ * copy + close, 20px content padding, 36px controls, bottom cancel/save bar)
+ * and EchoInk design variables. Date uses a Popover + month Calendar; the
+ * category field is a searchable Combobox with inline category creation so no
+ * second-layer dialog or settings detour is needed.
+ */
+export class EchoInkTodoFormModal extends Modal {
   private titleValue = "";
   private peopleValue = "";
   private dueValue = "";
-  private categoryValue = "";
+  private categoryName = "";
+  private pendingNewCategory = "";
+  private creatingCategory = false;
+  private categoryQuery = "";
+  private openPanel: "date" | "category" | null = null;
+  private allowClose = false;
+  private month: Date;
+  private saving = false;
 
   constructor(
     app: App,
@@ -18,89 +34,322 @@ export class EchoInkTodoEditModal extends Modal {
       this.titleValue = record.title;
       this.peopleValue = record.people;
       this.dueValue = record.dueDate;
-      this.categoryValue = record.categoryName;
+      this.categoryName = record.categoryName;
     }
+    const base = record?.dueDate ? parseDateKey(record.dueDate) : new Date();
+    this.month = new Date(base.getFullYear(), base.getMonth(), 1);
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-todo-form-modal");
+    this.render();
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  /**
+   * Esc (or any base-Modal close trigger) consumes an open date/category
+   * popover first; deliberate exits (save/cancel/close button) set
+   * allowClose before calling close().
+   */
+  close(): void {
+    if (this.openPanel && !this.allowClose) {
+      this.openPanel = null;
+      this.render();
+      return;
+    }
+    super.close();
+  }
+
+  private requestClose(): void {
+    this.allowClose = true;
+    this.close();
+  }
+
+  private t(zh: string, en: string): string {
+    return this.plugin.settings.settingsLanguage === "en" ? en : zh;
+  }
+
+  private render(): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    this.modalEl.addClass("echoink-todo-edit-dialog");
-    this.titleEl.setText(zh ? (this.record ? "编辑待办" : "新建待办") : this.record ? "Edit to-do" : "New to-do");
     const { contentEl } = this;
-    new Setting(contentEl)
-      .setName(zh ? "事项标题" : "Title")
-      .addText((text) => {
-        text.setPlaceholder(zh ? "要做什么？" : "What needs doing?");
-        text.setValue(this.titleValue);
-        text.onChange((value) => {
-          this.titleValue = value;
-        });
-      });
-    new Setting(contentEl)
-      .setName(zh ? "相关人员" : "People")
-      .setDesc(zh ? "选填，自由文本，可写多个人名" : "Optional free text; multiple names are fine")
-      .addText((text) => {
-        text.setValue(this.peopleValue);
-        text.onChange((value) => {
-          this.peopleValue = value;
-        });
-      });
-    new Setting(contentEl)
-      .setName(zh ? "截止日期" : "Due date")
-      .addText((text) => {
-        text.inputEl.type = "date";
-        text.setValue(this.dueValue);
-        text.onChange((value) => {
-          this.dueValue = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? value : "";
-        });
-      });
-    new Setting(contentEl)
-      .setName(zh ? "分类" : "Category")
-      .addDropdown((dropdown) => {
-        dropdown.addOption("", zh ? "未分类" : "Uncategorized");
-        for (const category of this.plugin.settings.todoCategories) {
-          dropdown.addOption(category.name, category.name);
-        }
-        if (this.categoryValue && !this.plugin.settings.todoCategories.some((category) => category.name === this.categoryValue)) {
-          dropdown.addOption(this.categoryValue, this.categoryValue);
-        }
-        dropdown.setValue(this.categoryValue);
-        dropdown.onChange((value) => {
-          this.categoryValue = value;
-        });
-      });
-    const actions = contentEl.createDiv({ cls: "todo-edit-actions" });
-    const save = actions.createEl("button", {
-      cls: "mod-cta",
-      text: zh ? "保存" : "Save",
+    contentEl.empty();
+
+    const head = contentEl.createDiv({ cls: "echoink-todo-form-head" });
+    const headCopy = head.createDiv();
+    headCopy.createEl("h2", { text: this.record ? this.t("编辑待办", "Edit to-do") : this.t("新增待办", "New to-do") });
+    headCopy.createEl("p", { text: this.t("保存到 Vault 内的待办源文件。", "Saved to the vault to-do source file.") });
+    const close = head.createEl("button", {
+      cls: "echoink-todo-form-close",
+      attr: { type: "button", "aria-label": this.t("关闭", "Close") }
+    });
+    setIcon(close, "x");
+    close.onclick = () => this.requestClose();
+
+    const body = contentEl.createDiv({ cls: "echoink-todo-form-body" });
+
+    const titleField = body.createDiv({ cls: "echoink-todo-form-field" });
+    titleField.createEl("label", { text: this.t("事项", "Item") });
+    const titleInput = titleField.createEl("input", {
+      attr: { type: "text", placeholder: zh ? "要做什么？（必填）" : "What needs doing? (required)" }
+    });
+    titleInput.value = this.titleValue;
+    titleInput.oninput = () => {
+      this.titleValue = titleInput.value;
+    };
+
+    const peopleField = body.createDiv({ cls: "echoink-todo-form-field" });
+    peopleField.createEl("label", { text: this.t("相关人员（选填）", "People (optional)") });
+    const peopleInput = peopleField.createEl("input", {
+      attr: { type: "text", placeholder: zh ? "可写一个或多个人名" : "One or more names" }
+    });
+    peopleInput.value = this.peopleValue;
+    peopleInput.oninput = () => {
+      this.peopleValue = peopleInput.value;
+    };
+
+    const dueField = body.createDiv({ cls: "echoink-todo-form-field" });
+    dueField.createEl("label", { text: this.t("截止日期（选填）", "Due date (optional)") });
+    const dueRow = dueField.createDiv({ cls: "echoink-todo-field-row" });
+    const dueTrigger = dueRow.createEl("button", {
+      cls: "echoink-home-icon-button echoink-todo-trigger",
+      text: this.dueValue || this.t("选择日期", "Pick a date"),
       attr: { type: "button" }
     });
+    dueTrigger.classList.toggle("is-empty", !this.dueValue);
+    dueTrigger.onclick = () => {
+      this.openPanel = this.openPanel === "date" ? null : "date";
+      this.render();
+    };
+    if (this.dueValue) {
+      const clearDue = dueRow.createEl("button", {
+        cls: "echoink-home-icon-button echoink-todo-clear",
+        text: this.t("清空", "Clear"),
+        attr: { type: "button" }
+      });
+      clearDue.onclick = () => {
+        this.dueValue = "";
+        this.openPanel = null;
+        this.render();
+      };
+    }
+    if (this.openPanel === "date") dueField.appendChild(this.renderCalendar());
+
+    const categoryField = body.createDiv({ cls: "echoink-todo-form-field" });
+    categoryField.createEl("label", { text: this.t("分类（选填）", "Category (optional)") });
+    const categoryRow = categoryField.createDiv({ cls: "echoink-todo-field-row" });
+    const categoryTrigger = categoryRow.createEl("button", {
+      cls: "echoink-home-icon-button echoink-todo-trigger",
+      text: this.categoryName || this.t("未分类", "Uncategorized"),
+      attr: { type: "button" }
+    });
+    categoryTrigger.classList.toggle("is-empty", !this.categoryName);
+    categoryTrigger.onclick = () => {
+      this.openPanel = this.openPanel === "category" ? null : "category";
+      this.creatingCategory = false;
+      this.categoryQuery = "";
+      this.render();
+    };
+    if (this.openPanel === "category") categoryField.appendChild(this.renderCategoryPopover());
+
+    const actions = contentEl.createDiv({ cls: "echoink-todo-form-actions" });
+    const cancel = actions.createEl("button", { text: this.t("取消", "Cancel"), attr: { type: "button" } });
+    cancel.onclick = () => this.requestClose();
+    const save = actions.createEl("button", {
+      cls: "mod-cta",
+      text: this.t("保存", "Save"),
+      attr: { type: "button" }
+    });
+    save.disabled = this.saving;
     save.onclick = () => void this.save();
+
+    if (!this.record) titleInput.focus();
+  }
+
+  private renderCalendar(): HTMLElement {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const pop = this.contentEl.createDiv({ cls: "echoink-todo-pop echoink-todo-date-pop" });
+    const head = pop.createDiv({ cls: "echoink-todo-cal-head" });
+    const prev = head.createEl("button", { attr: { type: "button", "aria-label": zh ? "上个月" : "Previous month" } });
+    setIcon(prev, "chevron-left");
+    prev.onclick = () => {
+      this.month = new Date(this.month.getFullYear(), this.month.getMonth() - 1, 1);
+      this.render();
+    };
+    head.createEl("strong", {
+      text: new Intl.DateTimeFormat(this.plugin.settings.settingsLanguage, { year: "numeric", month: "long" }).format(this.month)
+    });
+    const next = head.createEl("button", { attr: { type: "button", "aria-label": zh ? "下个月" : "Next month" } });
+    setIcon(next, "chevron-right");
+    next.onclick = () => {
+      this.month = new Date(this.month.getFullYear(), this.month.getMonth() + 1, 1);
+      this.render();
+    };
+    const weekdays = pop.createDiv({ cls: "echoink-todo-cal-weekdays" });
+    for (const day of zh ? ["一", "二", "三", "四", "五", "六", "日"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]) {
+      weekdays.createSpan({ text: day });
+    }
+    const grid = pop.createDiv({ cls: "echoink-todo-cal-grid" });
+    const first = this.month;
+    const offset = (first.getDay() + 6) % 7;
+    const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    for (let blank = 0; blank < offset; blank += 1) grid.createSpan({ cls: "echoink-todo-cal-blank" });
+    const today = dateKey(new Date());
+    for (let day = 1; day <= days; day += 1) {
+      const key = dateKey(new Date(first.getFullYear(), first.getMonth(), day));
+      const button = grid.createEl("button", {
+        cls: `echoink-todo-cal-day${key === today ? " is-today" : ""}${key === this.dueValue ? " is-selected" : ""}`,
+        text: String(day),
+        attr: { type: "button" }
+      });
+      button.onclick = () => {
+        this.dueValue = key;
+        this.openPanel = null;
+        this.render();
+      };
+    }
+    return pop;
+  }
+
+  private renderCategoryPopover(): HTMLElement {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const pop = this.contentEl.createDiv({ cls: "echoink-todo-pop echoink-todo-category-pop" });
+    if (this.creatingCategory) {
+      const row = pop.createDiv({ cls: "echoink-todo-field-row" });
+      const input = row.createEl("input", {
+        attr: { type: "text", placeholder: zh ? "新分类名称" : "New category name" }
+      });
+      input.value = this.pendingNewCategory;
+      input.oninput = () => {
+        this.pendingNewCategory = input.value;
+      };
+      const confirm = row.createEl("button", {
+        cls: "mod-cta",
+        text: this.t("确定", "Add"),
+        attr: { type: "button" }
+      });
+      confirm.onclick = () => {
+        const name = this.pendingNewCategory.trim();
+        if (!name) {
+          new Notice(zh ? "分类名称不能为空" : "The category name cannot be empty");
+          return;
+        }
+        // Same name reuses the existing category; creation happens on save.
+        this.categoryName = name;
+        this.pendingNewCategory = "";
+        this.creatingCategory = false;
+        this.openPanel = null;
+        this.render();
+      };
+      const cancelCreate = row.createEl("button", { text: this.t("取消", "Cancel"), attr: { type: "button" } });
+      cancelCreate.onclick = () => {
+        this.creatingCategory = false;
+        this.pendingNewCategory = "";
+        this.render();
+      };
+      input.focus();
+      return pop;
+    }
+    const search = pop.createEl("input", {
+      cls: "echoink-todo-combobox-search",
+      attr: { type: "text", placeholder: zh ? "搜索分类…" : "Search categories…" }
+    });
+    search.value = this.categoryQuery;
+    search.oninput = () => {
+      this.categoryQuery = search.value;
+      this.refreshCategoryOptions(pop);
+    };
+    const list = pop.createDiv({ cls: "echoink-todo-combobox-list" });
+    this.fillCategoryOptions(list);
+    const createRow = pop.createDiv({ cls: "echoink-todo-combobox-create" });
+    const createButton = createRow.createEl("button", {
+      cls: "echoink-home-icon-button",
+      text: this.t("＋ 新建分类", "+ New category"),
+      attr: { type: "button" }
+    });
+    createButton.onclick = () => {
+      this.creatingCategory = true;
+      this.render();
+    };
+    search.focus();
+    return pop;
+  }
+
+  private refreshCategoryOptions(list: HTMLElement): void {
+    list.empty();
+    this.fillCategoryOptions(list);
+  }
+
+  private fillCategoryOptions(list: HTMLElement): void {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const query = this.categoryQuery.trim().toLowerCase();
+    const option = (name: string, label: string) => {
+      const button = list.createEl("button", {
+        cls: `echoink-todo-combobox-option${this.categoryName === name ? " is-active" : ""}`,
+        text: label,
+        attr: { type: "button" }
+      });
+      button.onclick = () => {
+        this.categoryName = name;
+        this.openPanel = null;
+        this.render();
+      };
+    };
+    if (!query || (zh ? "未分类" : "uncategorized").includes(query)) option("", zh ? "未分类" : "Uncategorized");
+    for (const category of this.plugin.settings.todoCategories) {
+      if (query && !category.name.toLowerCase().includes(query)) continue;
+      option(category.name, category.name);
+    }
   }
 
   private async save(): Promise<void> {
+    if (this.saving) return;
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const title = this.titleValue.trim();
     if (!title) {
       new Notice(zh ? "事项标题不能为空" : "The title cannot be empty");
       return;
     }
-    const store = this.plugin.getTodoStore();
-    if (this.record) {
-      await store.updateTodo(this.record, {
-        title,
-        people: this.peopleValue,
-        dueDate: this.dueValue,
-        categoryName: this.categoryValue
-      });
-    } else {
-      await store.addTodo({
-        title,
-        people: this.peopleValue,
-        dueDate: this.dueValue,
-        categoryName: this.categoryValue
-      });
+    this.saving = true;
+    this.render();
+    try {
+      let categoryName = this.categoryName;
+      if (categoryName && !this.plugin.settings.todoCategories.some((entry) => entry.name === categoryName)) {
+        this.plugin.settings.todoCategories.push({ id: newId("todo-category"), name: categoryName });
+        await this.plugin.saveSettings();
+      }
+      const store = this.plugin.getTodoStore();
+      if (this.record) {
+        await store.updateTodo(this.record, {
+          title,
+          people: this.peopleValue,
+          dueDate: this.dueValue,
+          categoryName
+        });
+      } else {
+        await store.addTodo({
+          title,
+          people: this.peopleValue,
+          dueDate: this.dueValue,
+          categoryName
+        });
+      }
+      this.requestClose();
+    } catch (error) {
+      this.saving = false;
+      new Notice(
+        zh
+          ? `保存失败：${error instanceof Error ? error.message : String(error)}；输入已保留，请重试。`
+          : `Save failed: ${error instanceof Error ? error.message : String(error)}. Your input was kept.`
+      );
+      this.render();
     }
-    this.close();
   }
+}
+
+function parseDateKey(key: string): Date {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
