@@ -249,10 +249,20 @@ export class EchoInkHomeView extends ItemView {
       ? all
       : all.filter((record) => (record.categoryName || "") === this.todoCategoryFilter);
     const open = sortOpenTodos(pool);
-    this.field("todo-subtitle").setText(this.t(
-      open.length ? `还有 ${open.length} 件未完成，按期限排序` : "暂时没有未完成的事",
-      open.length ? `${open.length} open, nearest due date first` : "Nothing open right now"
-    ));
+    const subtitle = this.field("todo-subtitle");
+    subtitle.empty();
+    const total = pool.length;
+    const done = pool.filter((record) => record.done).length;
+    const progress = subtitle.createSpan({ cls: "todo-progress" });
+    const assist = this.t(`已完成 ${done} 项，共 ${total} 项`, `${done} of ${total} done`);
+    progress.setAttr("title", assist);
+    progress.setAttr("aria-label", assist);
+    const progressIcon = progress.createSpan({ cls: "todo-progress-icon", attr: { "aria-hidden": "true" } });
+    setIcon(progressIcon, "check-square");
+    const track = progress.createSpan({ cls: "todo-progress-track", attr: { "aria-hidden": "true" } });
+    const fill = track.createSpan({ cls: "todo-progress-fill" });
+    fill.style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
+    progress.createSpan({ cls: "todo-progress-count", text: `${done}/${total}` });
     this.renderTodoFilterBar();
     const visible = this.todoFilter === "open"
       ? open

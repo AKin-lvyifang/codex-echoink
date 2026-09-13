@@ -21314,3 +21314,13 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active)::after{content:attr(data-tab-name);position:absolute;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);padding:3px 8px;border-radius:6px;background:var(--text-normal,#303238);color:var(--bg,#fff);font-size:10px;font-weight:400;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:6}
 .echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active):hover::after,.echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active):focus-visible::after{opacity:1}
 /* ===== ECHOINK_SETTINGS_V11B_END ===== */
+
+/* ===== EchoInk 待办标题旁紧凑进度（2026-09-13 v12）===== */
+.echoink-home-workspace .todo-section .title-with-detail{align-items:center;gap:10px}
+.echoink-home-workspace .todo-progress{display:inline-flex;align-items:center;gap:6px;flex:none;height:calc(var(--font-text-size,16px)*1.3125);align-self:center}
+.echoink-home-workspace .todo-progress-icon{display:inline-flex;color:var(--muted)}
+.echoink-home-workspace .todo-progress-icon svg{width:13px;height:13px}
+.echoink-home-workspace .todo-progress-track{width:64px;height:5px;border-radius:999px;background:var(--line);overflow:hidden;flex:none}
+.echoink-home-workspace .todo-progress-fill{display:block;height:100%;border-radius:999px;background:var(--secondary);transition:width .2s ease}
+.echoink-home-workspace .todo-progress-count{font-size:calc(var(--font-text-size,16px)*.6875);color:var(--secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* ===== ECHOINK_TODO_V12_END ===== */
