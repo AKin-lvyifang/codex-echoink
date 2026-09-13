@@ -226,13 +226,13 @@ export class EchoInkTodoStore {
       lineEnd: -1,
       extraMetaLines: []
     };
-    await this.enqueueWrite(async (content) => ({
+    await this.enqueueWrite((content) => ({
       content: appendRecordBlock(content, serializeTodoRecord(record))
     }));
   }
 
   async updateTodo(target: ParsedTodoRecord, patch: Partial<TodoInput>): Promise<void> {
-    await this.enqueueWrite(async (content) => {
+    await this.enqueueWrite((content) => {
       const parsed = parseTodoMarkdown(content);
       const current = locateRecord(parsed.records, target);
       if (!current) return { content, skipped: true };
@@ -253,7 +253,7 @@ export class EchoInkTodoStore {
   }
 
   async removeTodo(target: ParsedTodoRecord): Promise<void> {
-    await this.enqueueWrite(async (content) => {
+    await this.enqueueWrite((content) => {
       const parsed = parseTodoMarkdown(content);
       const current = locateRecord(parsed.records, target);
       if (!current) return { content, skipped: true };
@@ -263,7 +263,7 @@ export class EchoInkTodoStore {
 
   /** Rename writes every matching category meta line in the source file. */
   async renameCategoryInSource(oldName: string, newName: string): Promise<void> {
-    await this.enqueueWrite(async (content) => ({
+    await this.enqueueWrite((content) => ({
       content: content.split("\n").map((line) => {
         const meta = /^(\s+[-*]\s+分类[：:])\s*(.*)$/u.exec(line);
         if (meta && meta[2].trim() === oldName) return `${meta[1]}${newName}`;
@@ -274,7 +274,7 @@ export class EchoInkTodoStore {
 
   /** Deleting a category clears its meta lines; todos themselves stay. */
   async removeCategoryFromSource(name: string): Promise<void> {
-    await this.enqueueWrite(async (content) => ({
+    await this.enqueueWrite((content) => ({
       content: content
         .split("\n")
         .filter((line) => {
@@ -285,9 +285,9 @@ export class EchoInkTodoStore {
     }));
   }
 
-  /** Serialize all writes; each write re-reads the latest file content. */
+  /** Serialize UI writes and atomically transform the latest Vault content. */
   private enqueueWrite(
-    mutate: (content: string) => Promise<{ content: string; skipped?: boolean }>
+    mutate: (content: string) => { content: string; skipped?: boolean }
   ): Promise<void> {
     const run = this.writeQueue.then(async () => {
       const vault = this.plugin.app.vault;
@@ -296,11 +296,25 @@ export class EchoInkTodoStore {
       const file = abstract instanceof TFile
         ? abstract
         : await vault.create(TODO_SOURCE_PATH, `${SOURCE_HEADER}\n`);
-      const content = await vault.read(file);
-      const result = await mutate(content);
-      if (result.skipped) return;
-      await vault.modify(file, result.content);
-      await this.reload();
+      await vault.process(file, (content) => {
+        const result = mutate(content);
+        if (result.skipped) {
+          throw new Error(this.plugin.settings.settingsLanguage === "en"
+            ? "The to-do changed or was removed. Refresh the list and try again."
+            : "这条待办已被修改或删除，请刷新列表后重试。");
+        }
+        return result.content;
+      });
+      // A refresh failure after a successful write must not invite a retry
+      // that would add the same task twice.
+      try {
+        await this.reload();
+      } catch (error) {
+        console.error("[EchoInk] To-do source was saved but could not be refreshed:", error);
+        new Notice(this.plugin.settings.settingsLanguage === "en"
+          ? "To-do saved. Could not refresh the list; reopen the home page."
+          : "待办已保存，但列表刷新失败，请重新打开首页。");
+      }
     });
     this.writeQueue = run.catch((error) => {
       console.error("[EchoInk] To-do source write failed:", error);
@@ -310,6 +324,7 @@ export class EchoInkTodoStore {
           : "待办源文件写入失败。"
       );
     });
-    return this.writeQueue;
+    // Recover the internal queue, but let the caller keep its draft on failure.
+    return run;
   }
 }

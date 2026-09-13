@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/postcss";
@@ -32,6 +32,9 @@ const inputCss = [
   ""
 ].join("\n");
 
+// Tailwind resolves explicit sources relative to this directory. Ensure it
+// exists even when a clean checkout is built before running any tests.
+await mkdir(path.join(rootDir, ".tmp"), { recursive: true });
 const result = await postcss([
   tailwindcss(),
   prefixSelector({

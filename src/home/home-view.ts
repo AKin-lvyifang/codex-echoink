@@ -245,6 +245,11 @@ export class EchoInkHomeView extends ItemView {
     const host = this.field("todo-list");
     const store = this.plugin.getTodoStore();
     const all = store.snapshot();
+    if (this.todoCategoryFilter
+      && !this.plugin.settings.todoCategories.some((category) => category.name === this.todoCategoryFilter)
+      && !all.some((record) => record.categoryName === this.todoCategoryFilter)) {
+      this.todoCategoryFilter = null;
+    }
     const pool = this.todoCategoryFilter === null
       ? all
       : all.filter((record) => (record.categoryName || "") === this.todoCategoryFilter);
@@ -270,9 +275,9 @@ export class EchoInkHomeView extends ItemView {
         ? pool.filter((record) => record.done)
         : [...open, ...pool.filter((record) => record.done)];
     renderTodoTable(host, visible, todoTableCopy(this.language), {
-      onToggle: (record, done) => void store.toggleDone(record, done),
+      onToggle: (record, done) => void store.toggleDone(record, done).catch(() => this.refreshHomeSurfaces()),
       onEdit: (record) => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
-      onDelete: (record) => void this.confirmTodoDelete(record)
+      onDelete: (record) => void this.confirmTodoDelete(record).catch(() => this.refreshHomeSurfaces())
     });
   }
   private renderTodoFilterBar(): void {

@@ -1162,8 +1162,12 @@ export class CodexSettingTab extends PluginSettingTab {
         }
         const previous = category.name;
         category.name = trimmed;
+        try {
+          await store.renameCategoryInSource(previous, trimmed);
+        } catch {
+          category.name = previous;
+        }
         await this.plugin.saveSettings();
-        await store.renameCategoryInSource(previous, trimmed);
         this.plugin.notifyHomeSurfacesChanged();
         this.scheduleDisplay();
       })();
@@ -1181,8 +1185,12 @@ export class CodexSettingTab extends PluginSettingTab {
         onConfirm: async () => {
           const index = this.plugin.settings.todoCategories.findIndex((entry) => entry.id === category.id);
           if (index >= 0) this.plugin.settings.todoCategories.splice(index, 1);
+          try {
+            await store.removeCategoryFromSource(category.name);
+          } catch {
+            if (index >= 0) this.plugin.settings.todoCategories.splice(index, 0, category);
+          }
           await this.plugin.saveSettings();
-          await store.removeCategoryFromSource(category.name);
           this.plugin.notifyHomeSurfacesChanged();
           this.scheduleDisplay();
         }

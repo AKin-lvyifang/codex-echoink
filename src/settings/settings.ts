@@ -1546,7 +1546,7 @@ export function normalizeTodoCategories(input: unknown): EchoInkTodoCategory[] {
     seen.add(id);
     categories.push({ id, name });
   }
-  return categories.length
+  return Array.isArray(input)
     ? categories
     : DEFAULT_SETTINGS.todoCategories.map((category) => ({ ...category }));
 }

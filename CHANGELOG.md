@@ -1,5 +1,67 @@
 # Changelog
 
+## 2.3.0 - 2026-09-13
+
+![EchoInk Agent 2.3.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.0/assets/releases/echoink-agent-2.3.0-release.png)
+
+### 中文
+
+**随时提问，接着完成。**
+
+EchoInk Agent 2.3.0 新增快捷 AI 小窗与 Markdown 待办，并让设置和长对话更容易浏览。
+
+#### 在当前工作旁边，打开一段对话
+
+Obsidian 保持运行时，可以在其他应用中用全局快捷键唤起 AI 小窗，直接输入和提问。小窗可以拖动；关闭后，对话回到 Obsidian 右侧栏顶部，继续使用同一段会话。草稿、附件和已选择的笔记引用一起保留，正在生成的回答也能继续。
+
+在 **设置 → EchoInk Agent → 基础设置 → 快捷 AI 小窗** 中开启并设置快捷键，默认是 macOS 的 **⌘⇧E**、Windows/Linux 的 **Ctrl+Shift+E**。再次按快捷键或按 Esc 可收起小窗；若组合已被占用，请换一个快捷键。
+
+#### 待办留在你能直接编辑的笔记里
+
+首页新增待办表格，支持事项、相关人员、截止日期、分类与完成状态。可以按分类和完成状态组合筛选，标题旁的进度条显示当前分类的完成情况。
+
+点击首页的 **新增待办** 开始记录；在独立的 **待办** 设置页管理分类或打开源文件。内容保存在当前 Vault 的 **EchoInk/待办.md**，也可以直接用 Obsidian 编辑。保存失败时保留表单输入；在表格操作期间发生的源文件编辑会被保留。删除分类会把相关事项转为未分类，不会删除待办。
+
+#### 小窗口里也能看清入口
+
+一级设置导航改为书签式：未选中时只显示图标，选中后升起并展开名称，再衔接图标原有动画；悬停可以查看完整名称。**布局与外观** 独立成页，集中控制首页入口显示。长对话右侧新增轮次导航，可以预览并跳到需要回看的位置。
+
+#### 下载与升级
+
+- 已安装用户可在 Obsidian 社区插件页面检查更新。手动安装请下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用；保留自己的 `data.json`。
+- 从 2.2.2 升级无需重新初始化知识库。已有会话、Provider 配置和长期记忆继续保留；若存在旧版待办配置，将迁入 Markdown 源文件并保留迁移备份。
+- 支持 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。快捷 AI 小窗已在 macOS 实机验证；Windows/Linux 的小窗交互尚未完成实机验证。
+- 主文件仍超过 Obsidian Sync Standard 的 5 MiB 单文件限制，使用该方案时请在各设备分别更新。头图为功能示意，实际界面与数据以插件为准。
+
+### English
+
+**Ask when you need to. Pick up where you left off.**
+
+EchoInk Agent 2.3.0 adds a quick AI window and Markdown to-dos, with easier navigation for settings and long conversations.
+
+#### Open a conversation beside your work
+
+While Obsidian is running, use a global shortcut from another application to open the AI window and start typing. Move it wherever you need it. Closing the window returns the same conversation to the top tab group in Obsidian's right sidebar, keeping drafts, attachments, selected note references, and any response still being generated.
+
+Enable it under **Settings → EchoInk Agent → General → Quick AI window** and choose a shortcut. The default is **⌘⇧E** on macOS or **Ctrl+Shift+E** on Windows/Linux. Press the shortcut again or Esc to hide the window. Choose another combination if the shortcut is already occupied.
+
+#### Keep to-dos in a note you can edit
+
+The homepage now includes a to-do table with people, due dates, categories, and completion states. Combine category and completion filters; the compact progress bar shows completion for the current category.
+
+Select **Add to-do** on the homepage. Manage categories or open the source file from the separate **To-dos** settings tab. Tasks live in **EchoInk/待办.md** in the current vault and can also be edited directly in Obsidian. Failed saves keep form input, and source-file edits made during table operations are preserved. Deleting a category moves its tasks to Uncategorized without deleting them.
+
+#### Clearer navigation in a small window
+
+Settings now use bookmark-style tabs: inactive tabs show an icon, while the selected tab rises and reveals its name before playing its existing icon animation. Hover for the full label. **Layout & appearance** has its own tab for homepage visibility controls. A new turn navigator along the right edge of long conversations lets you preview and jump to earlier turns.
+
+#### Download and upgrade
+
+- Check for updates in Obsidian's Community plugins page. For manual installation, download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`.
+- Upgrading from 2.2.2 does not require vault reinitialization. Conversations, Provider settings, and long-term memory are retained. Existing legacy to-dos are migrated to the Markdown source with a migration backup.
+- Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. The quick window has been verified on macOS; real-device quick-window interaction on Windows/Linux remains unverified.
+- The main file still exceeds Obsidian Sync Standard's 5 MiB per-file limit; update each device separately if you use that plan. The cover is an illustration; the plugin is the source of truth for UI and data.
+
 ## 2.2.2 - 2026-09-09
 
 ![EchoInk Agent 2.2.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.2.0/assets/releases/echoink-agent-2.2.0-release.png)

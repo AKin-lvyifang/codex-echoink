@@ -543,6 +543,14 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   assert.equal(review?.getAttribute("tabindex"), "0");
   assert.equal(
     review?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"),
+    false,
+    "the icon waits for the bookmark to finish rising"
+  );
+  review?.fireEvent("transitionend", { propertyName: "background-color" });
+  assert.equal(review?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"), false);
+  review?.fireEvent("transitionend", { propertyName: "transform" });
+  assert.equal(
+    review?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"),
     true
   );
 
@@ -583,12 +591,26 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   providersAgain.fireEvent("pointerdown");
   providersAgain.click();
   await flushProviderModalTasks();
+  const selectedProvider = tab.containerEl.querySelector<ProviderModalTestElement>('[data-settings-tab="providers"]');
+  assert.equal(selectedProvider?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"), false);
+  selectedProvider?.fireEvent("transitionend", { propertyName: "transform" });
   assert.equal(
     tab.containerEl.querySelector('[data-settings-tab="providers"]')
       ?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"),
     true,
     "pointer tab switches animate the newly selected icon once"
   );
+
+  tab.display();
+  providerModalTestDocument.prefersReducedMotion = true;
+  try {
+    tab.containerEl.querySelector<ProviderModalTestElement>('[data-settings-tab="todos"]')!.click();
+    await flushProviderModalTasks();
+    assert.equal(mutableTab.settingsTabIconAnimation?.tabId, "todos",
+      "reduced motion completes selection without waiting for transitionend");
+  } finally {
+    providerModalTestDocument.prefersReducedMotion = false;
+  }
 
   const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
   for (const keyframe of [
@@ -12318,6 +12340,7 @@ class ProviderModalTestMouseEvent {
 class ProviderModalTestDocument {
   hasFocus(): boolean { return true; }
   activeElement: ProviderModalTestElement | null = null;
+  prefersReducedMotion = false;
   readonly defaultView = {
     MouseEvent: ProviderModalTestMouseEvent,
     ResizeObserver: ProviderModalTestResizeObserver,
@@ -12325,6 +12348,16 @@ class ProviderModalTestDocument {
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
     queueMicrotask: globalThis.queueMicrotask,
+    matchMedia: (query: string): MediaQueryList => ({
+      media: query,
+      matches: query === "(prefers-reduced-motion: reduce)" && this.prefersReducedMotion,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => true
+    }),
     innerWidth: 1200,
     innerHeight: 900,
     requestAnimationFrame: (callback: FrameRequestCallback) => {

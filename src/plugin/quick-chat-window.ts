@@ -110,15 +110,9 @@ export class QuickChatWindowController {
     const shortcut = getQuickGlobalShortcut();
     if (!shortcut) return { ok: false, reason: "unavailable" };
     try {
-      // Release any stale in-app registration first (e.g. an orphaned
-      // controller from a double onload). Electron unregister only touches
-      // this app's own hotkeys, so external owners keep theirs and still
-      // surface as occupied below.
-      try {
-        shortcut.unregister(normalized);
-      } catch {
-        // Nothing registered under this accelerator in-app.
-      }
+      // The Electron registry is shared by every Vault and plugin in this
+      // process. Only unregisterAccelerator may release our own registration;
+      // an occupied candidate must stay with its existing owner.
       const registered = shortcut.register(normalized, () => {
         void this.toggle();
       });

@@ -44,6 +44,12 @@ import type {
 } from "./codex-view/runner-context";
 import type { SessionMessageInput } from "./codex-view/session-message-store";
 import {
+  addComposerNoteMentionSelection,
+  clearComposerNoteMentions,
+  composerNoteMentionSelections,
+  type NoteMentionSelection
+} from "./codex-view/note-mentions";
+import {
   attachActiveFile as attachActiveFileAction,
   handleDroppedFiles as handleDroppedFilesAction,
   handlePastedFiles as handlePastedFilesAction,
@@ -183,6 +189,7 @@ export interface CodexViewMigrationState {
   readonly composer: {
     selectedSkill: EchoInkResource | null;
     attachments: StoredAttachment[];
+    noteMentions: readonly Readonly<NoteMentionSelection>[];
     selectedProviderSettingsId: string;
     selectedModel: string;
     selectedPermission: PermissionMode;
@@ -552,6 +559,7 @@ export class CodexView extends ItemView {
       composer: {
         selectedSkill: this.selectedSkill,
         attachments: this.attachments,
+        noteMentions: this.inputEl ? composerNoteMentionSelections(this.inputEl) : [],
         selectedProviderSettingsId: this.selectedProviderSettingsId,
         selectedModel: this.selectedModel,
         selectedPermission: this.selectedPermission,
@@ -586,9 +594,13 @@ export class CodexView extends ItemView {
     this.promptEnhancerRunning = state.promptEnhancer.running;
     this.promptEnhancerRunId = state.promptEnhancer.runId;
     this.promptEnhancerTurnId = state.promptEnhancer.turnId;
-    if (state.draftText && this.inputEl) {
+    if (this.inputEl) {
       this.inputEl.value = state.draftText;
       this.inputEl.setSelectionRange(state.draftText.length, state.draftText.length);
+      clearComposerNoteMentions(this.inputEl);
+      for (const mention of state.composer.noteMentions) {
+        addComposerNoteMentionSelection(this.inputEl, mention);
+      }
     }
     for (const [sessionId, runState] of this.conversationRuns) {
       if (!runState.running && !runState.queueStartInProgress) continue;

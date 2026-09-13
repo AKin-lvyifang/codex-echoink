@@ -29,6 +29,8 @@ await esbuild.build({
       'import { runComposerActionTests } from "./src/tests/composer-actions";',
       'import { runNoteMentionTests } from "./src/tests/note-mentions";',
       'import { runTurnNavigatorTests } from "./src/tests/turn-navigator";',
+      'import { runQuickChatWindowTests } from "./src/tests/quick-chat-window";',
+      'import { runHomeTodoTests } from "./src/tests/home-todos";',
       "await runPiNativeFileStoreTests();",
       "await runPiSessionDurabilityTests();",
       "await runPiNativeConversationRuntimeTests();",
@@ -45,6 +47,8 @@ await esbuild.build({
       "await runComposerActionTests();",
       "await runNoteMentionTests();",
       "await runTurnNavigatorTests();",
+      "await runQuickChatWindowTests();",
+      "await runHomeTodoTests();",
       'console.log("Current Pi Conversation acceptance: PASS");'
     ].filter((line) => !process.argv.includes("--daily-journal") || line.startsWith("import ") || line.includes("runDailyJournalPipelineTests") || line.includes("console.log")).join("\n"),
     resolveDir: rootDir,
