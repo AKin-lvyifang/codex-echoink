@@ -3269,6 +3269,9 @@ export class CodexSettingTab extends PluginSettingTab {
       button.setAttr("aria-selected", String(isActive));
       button.setAttr("tabindex", isActive ? "0" : "-1");
       button.setAttr("data-tab-name", label);
+      // Native Obsidian tooltip: independent floating layer, not clipped by
+      // the nav strip's overflow (a ::after pseudo-element was clipped flat).
+      setTooltip(button, label, { placement: "top" });
       const icon = button.querySelector<HTMLElement>(".codex-settings-tab-icon")
         ?? button.createSpan({ cls: "codex-settings-tab-icon settings-motion-icon" });
       renderAnimatedSettingsTabIcon(

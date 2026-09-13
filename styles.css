@@ -21309,11 +21309,7 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 }
 /* ===== ECHOINK_SETTINGS_V11_END ===== */
 
-/* ===== EchoInk 书签导航未选中项悬停/聚焦名称提示（v11b）===== */
-.echoink-settings-demo .codex-settings-tabs .codex-settings-tab{position:relative}
-.echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active)::after{content:attr(data-tab-name);position:absolute;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);padding:3px 8px;border-radius:6px;background:var(--text-normal,#303238);color:var(--bg,#fff);font-size:10px;font-weight:400;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:6}
-.echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active):hover::after,.echoink-settings-demo .codex-settings-tabs .codex-settings-tab:not(.is-active):focus-visible::after{opacity:1}
-/* ===== ECHOINK_SETTINGS_V11B_END ===== */
+
 
 /* ===== EchoInk 待办标题旁紧凑进度（2026-09-13 v12）===== */
 .echoink-home-workspace .todo-section .title-with-detail{align-items:center;gap:10px}
