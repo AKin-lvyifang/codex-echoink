@@ -7,6 +7,7 @@
     "build": "npm run build:home-magic-ui-css && node esbuild.config.mjs production",
     "build:home-magic-ui-css": "node scripts/build-home-magic-ui-css.mjs",
     "check:bundle": "node scripts/check-built-bundle.mjs",
+    "test:mobile": "node scripts/mobile-tests.mjs",
     "check:phase1-obsidian-runtime": "node scripts/check-phase1-obsidian-runtime.mjs",
     "check:public": "node scripts/check-public-files.mjs",
     "check:release": "node scripts/check-release-contract.mjs",
