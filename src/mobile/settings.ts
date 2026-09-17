@@ -1,18 +1,30 @@
-import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
+import type { ApiProviderConfig, ApiProviderModelConfig, CodexForObsidianSettings } from "../settings/settings";
 import { API_PROVIDER_PRESETS, getApiProviderPreset, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
 import { newId } from "./store";
 
-export interface MobileSettings extends Record<string, unknown> {
+export interface MobileSettings extends Record<string, unknown>, Pick<CodexForObsidianSettings, "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle"> {
   apiProviders: ApiProviderConfig[];
   activeApiProviderId: string;
   defaultModel: string;
 }
+export const MOBILE_DEFAULT_WELCOME = {
+  title: "让想法，慢慢清晰。",
+  subtitle: "聊聊此刻的思考，读一篇笔记，或把今天写下来。"
+} as const;
 export const mobilePresets = API_PROVIDER_PRESETS.filter(p => p.authMode === "api-key" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses"));
 export function supportedProvider(p: ApiProviderConfig): boolean {
   return p.authMode !== "oauth" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
 }
 export function loadMobileSettings(raw: Record<string, unknown> | null): MobileSettings {
-  return { ...raw, apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders : [], activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "", defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "" };
+  return {
+    ...raw,
+    apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders : [],
+    activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
+    defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
+    customWelcomeEnabled: raw?.customWelcomeEnabled === true,
+    customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",
+    customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : ""
+  };
 }
 export function mobileModel(id: string, existing?: ApiProviderModelConfig): ApiProviderModelConfig {
   return { input: ["text"], toolCalling: true, reasoning: false, reasoningEnabled: false, contextWindow: 128000, modelMaxTokens: 8192, maxOutputTokens: 4096, metadataSource: "manual", ...existing, id, displayName: existing?.displayName || id };

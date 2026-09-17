@@ -3,7 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ApiProviderConfig } from "../../settings/settings";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
-import { mobileModel, mobilePresets, mobileProvider, selectedModel, supportedProvider, validateMobileProvider, type MobileSettings } from "../../mobile/settings";
+import { MOBILE_DEFAULT_WELCOME, mobileModel, mobilePresets, mobileProvider, selectedModel, supportedProvider, validateMobileProvider, type MobileSettings } from "../../mobile/settings";
 import { memoryCategories } from "../../mobile/tools";
 import { type MobilePermission, MobileStore } from "../../mobile/store";
 import { MobileRuntime } from "../../mobile/runtime";
@@ -178,7 +178,11 @@ export class MobileUI {
     const session = this.host.store.session;
     if (!session.messages.length) {
       const welcome = el(body, "section", "em-welcome"); el(welcome, "span", "em-eyebrow", "EchoInk · Nova");
-      el(welcome, "h1", "", "让想法，慢慢清晰。"); el(welcome, "p", "", "聊聊此刻的思考，读一篇笔记，或把今天写下来。");
+      const settings = this.host.settings();
+      const title = settings.customWelcomeEnabled ? settings.customWelcomeTitle.trim() : "";
+      const subtitle = settings.customWelcomeEnabled ? settings.customWelcomeSubtitle.trim() : "";
+      el(welcome, "h1", "", title || MOBILE_DEFAULT_WELCOME.title);
+      el(welcome, "p", "", subtitle || MOBILE_DEFAULT_WELCOME.subtitle);
       if (!selectedModel(this.host.settings())) this.button(welcome, "添加模型与提供商", () => this.go("providers"), "plus", "em-text-action");
       return;
     }
@@ -232,7 +236,7 @@ export class MobileUI {
     }
   }
   private settings(body: HTMLElement) {
-    this.row(body, "基础设置", "长期记忆", "sliders-horizontal", () => this.go("basic"));
+    this.row(body, "基础设置", "长期记忆、自定义欢迎语", "sliders-horizontal", () => this.go("basic"));
     this.row(body, "API Provider", "模型与提供商", "cpu", () => this.go("providers"));
     this.row(body, "复盘", "查看与修正记忆", "brain", () => this.go("review"));
   }
@@ -241,6 +245,32 @@ export class MobileUI {
     const toggle = el(label, "input"); toggle.type = "checkbox"; toggle.checked = this.host.store.state.memoryEnabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", "长期记忆");
     toggle.addEventListener("change", () => { void this.act(async () => { this.host.runtime.stop(); this.host.store.state.memoryEnabled = toggle.checked; await this.host.store.save(); }); });
     el(body, "p", "em-help", "关闭后保留已有记忆，停止自动召回和写入。记忆查看与忘记仍可使用。");
+
+    const settings = this.host.settings();
+    const welcomeLabel = el(body, "label", "em-row");
+    const welcomeText = el(welcomeLabel, "span", "em-row-label");
+    el(welcomeText, "strong", "", "自定义欢迎语");
+    el(welcomeText, "small", "", "自定义空对话的标题和问候语");
+    const welcomeToggle = el(welcomeLabel, "input"); welcomeToggle.type = "checkbox";
+    welcomeToggle.checked = settings.customWelcomeEnabled;
+    welcomeToggle.setAttribute("role", "switch"); welcomeToggle.setAttribute("aria-label", "自定义欢迎语");
+    const fields = el(body, "div"); fields.hidden = !settings.customWelcomeEnabled;
+    el(fields, "p", "em-help", "输入后自动保存。留空时使用默认文案；关闭后保留自定义内容。");
+    const title = this.field(fields, "欢迎标题", settings.customWelcomeTitle, value => {
+      settings.customWelcomeTitle = value;
+      void this.act(() => this.host.saveSettings());
+    });
+    title.maxLength = 80; title.placeholder = MOBILE_DEFAULT_WELCOME.title;
+    const subtitle = this.field(fields, "问候语", settings.customWelcomeSubtitle, value => {
+      settings.customWelcomeSubtitle = value;
+      void this.act(() => this.host.saveSettings());
+    });
+    subtitle.maxLength = 240; subtitle.placeholder = MOBILE_DEFAULT_WELCOME.subtitle;
+    welcomeToggle.addEventListener("change", () => {
+      settings.customWelcomeEnabled = welcomeToggle.checked;
+      fields.hidden = !welcomeToggle.checked;
+      void this.act(() => this.host.saveSettings());
+    });
   }
   private permissionPage(body: HTMLElement) {
     for (const [id, title, description] of permissions) {
