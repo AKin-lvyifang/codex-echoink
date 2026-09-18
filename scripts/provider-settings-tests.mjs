@@ -36,10 +36,28 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
         scheduleDisplay(){this.refreshes++}; ${method}
       }
       runWikiTodoDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
-    bundle: true, format: "esm", platform: "browser", outfile: path.join(directory, "regression.js"), logLevel: "silent"
+    bundle: true, format: "esm", platform: "browser", outfile: path.join(directory, "regression.js"), logLevel: "silent",
+    define: { "process.env.NODE_ENV": '"production"' },
+    plugins: [{ name: "wiki-todo-dom-host", setup(build) {
+      build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "wiki-todo-fixture" }));
+      build.onLoad({ filter: /.*/, namespace: "wiki-todo-fixture" }, () => ({ contents: `
+        export {Scope} from "./src/tests/origin-obsidian-dom-shim";
+        export function setIcon(){};
+        export class Setting {
+          constructor(parent){
+            this.settingEl=parent.createDiv({cls:"setting-item"});
+            this.infoEl=this.settingEl.createDiv({cls:"setting-item-info"});
+            this.nameEl=this.infoEl.createDiv({cls:"setting-item-name"});
+            this.descEl=this.infoEl.createDiv({cls:"setting-item-description"});
+            this.controlEl=this.settingEl.createDiv({cls:"setting-item-control"});
+          }
+          setName(name){this.nameEl.setText(name);return this;}
+          setDesc(description){this.descEl.setText(description);return this;}
+        }`, resolveDir: rootDir, loader: "js" }));
+    } }]
   });
-  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wiki and todo UI checks</title><link rel="stylesheet" href="styles.css"><style>body{font-family:sans-serif}main{max-width:100%}.heatmap-scroll{overflow-x:auto;max-width:100%}</style><main class="echoink-settings-demo"><p id="report">Running</p><div id="fixture"></div></main><script type="module" src="regression.js"></script>');
-  await writeFile(path.join(directory,"styles.css"), await readFile(path.join(rootDir,"src/styles/workspace-settings.css")));
+  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wiki and todo UI checks</title><link rel="stylesheet" href="styles.css"><style>:root{--font-text-size:16px;--background-primary:white;--background-secondary:#f8f8f8;--text-normal:#333;--text-muted:#777;--interactive-accent:#52756e}body{font-family:sans-serif;margin:16px}main{max-width:100%}.setting-item{display:flex;align-items:center}.setting-item-info{flex:1}.setting-item-control{display:flex;align-items:center}</style><p id="report">Running</p><main id="settings" class="echoink-settings-demo"><div class="codex-settings-body"><div id="fixture" class="echoink-settings-page"></div></div></main><script type="module" src="regression.js"></script>');
+  await writeFile(path.join(directory,"styles.css"), await readFile(path.join(rootDir,"styles.css")));
   console.log(`Open ${path.join(directory,"index.html")}`);
   process.exit(0);
 }

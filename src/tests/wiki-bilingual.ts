@@ -147,6 +147,11 @@ export async function runWikiBilingualTests(): Promise<void> {
     const joined = flavor.join(rootPath, ...segments);
     assert.equal(flavor.relative(rootPath, joined).split(flavor.sep).join("/"), segments.join("/"), `${platform} portable path semantics`);
   }
+  runTodoCalendarStatisticsTests();
+  console.log("Wiki naming, directory restore, permissions, cancellation and daily counting: PASS");
+}
+
+export function runTodoCalendarStatisticsTests(): void {
   const one = new Date(2026, 8, 17, 23, 59);
   const two = new Date(2026, 8, 18, 0, 1);
   assert.equal(localTodoDate(two), "2026-09-18");
@@ -160,5 +165,31 @@ export async function runWikiBilingualTests(): Promise<void> {
   assert.equal(stats.days.find((day) => day.date === "2026-09-17")?.count, 1);
   assert.equal(stats.days.length, 365);
   assert.equal(new Set(stats.days.map((day) => day.date)).size, 365);
-  console.log("Wiki naming, directory restore, permissions, cancellation and daily counting: PASS");
+  assert.equal(stats.days[0].date, "2026-01-01");
+  assert.equal(stats.days.at(-1)?.date, "2026-12-31");
+  assert.equal(stats.yearTotal, 2);
+  const annualHistory = { unknown: null, leap: "2024-02-29", previous: "2025-12-31", today: "2026-01-01" };
+  const newYear = new Date(2026, 0, 1, 0, 1);
+  const currentYear = todoCompletionStatistics(annualHistory, newYear);
+  const leapYear = todoCompletionStatistics(annualHistory, newYear, 2024);
+  const previousYear = todoCompletionStatistics(annualHistory, newYear, 2025);
+  assert.deepEqual(currentYear.years, [2026, 2025, 2024]);
+  assert.equal(currentYear.year, 2026);
+  assert.equal(currentYear.days[0].date, "2026-01-01");
+  assert.equal(currentYear.days.at(-1)?.date, "2026-12-31");
+  assert.equal(leapYear.days.length, 366, "a leap year includes February 29");
+  assert.equal(leapYear.days.find((day) => day.date === "2024-02-29")?.count, 1);
+  assert.equal(new Set(leapYear.days.map((day) => day.date)).size, 366);
+  assert.equal(previousYear.days.length, 365);
+  assert.equal(previousYear.days.at(-1)?.count, 1, "December 31 belongs only to its local calendar year");
+  for (const year of [currentYear, leapYear, previousYear]) {
+    assert.equal(year.total, 4, "the all-time total is independent of the displayed year");
+    assert.equal(year.today, 1, "today is independent of the displayed year");
+    assert.equal(year.unknown, 1);
+    assert.equal(year.yearTotal, 1, "undated completions do not enter a year total");
+  }
+  const emptyYear = todoCompletionStatistics({}, newYear);
+  assert.deepEqual(emptyYear.years, [2026], "the current year remains selectable without dated records");
+  assert.equal(emptyYear.days.length, 365);
+  assert.equal(todoCompletionStatistics({ leap: "2024-02-29" }, newYear).years.includes(2026), true);
 }

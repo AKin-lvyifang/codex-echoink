@@ -43,7 +43,7 @@ export class EchoInkTodoStore {
     return TODO_SOURCE_PATH;
   }
 
-  completionStatistics(now = new Date()) { return todoCompletionStatistics(this.plugin.settings.todoCompletions, now); }
+  completionStatistics(now = new Date(), year = now.getFullYear()) { return todoCompletionStatistics(this.plugin.settings.todoCompletions, now, year); }
 
   snapshot(): readonly ParsedTodoRecord[] {
     return this.records;

@@ -1114,7 +1114,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const store = this.plugin.getTodoStore();
     this.disposeTodoStatistics?.();
     const statistics = page.createDiv();
-    const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage);
+    const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage, this.app);
     renderStats();
     this.disposeTodoStatistics = store.subscribe(() => {
       if (statistics.isConnected) renderStats();
