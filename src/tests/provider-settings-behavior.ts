@@ -5992,7 +5992,8 @@ function knowledgeInitButtons(panel: ReturnType<typeof knowledgeInitPanel>) {
 async function assertKnowledgeInitializationExperienceContract(): Promise<void> {
   await assertKnowledgeInitDefaultTabAndOneClickStart();
   await assertKnowledgeInitCustomTabDirectoriesAndAssignments();
-  await assertKnowledgeInitPausedMappingsHideTechnicalDetails();
+  await assertKnowledgeInitPausedReasonsAndRecovery();
+  await assertKnowledgeInitActualFailureDetails();
   await assertKnowledgeInitProgressAndCompletion();
   await assertKnowledgeInitStructureTruthAndRepair();
   await assertKnowledgeInitNotePickerModalContract();
@@ -6165,10 +6166,9 @@ function knowledgeInitBatchPicker(panel: ReturnType<typeof knowledgeInitPanel>, 
   return picker;
 }
 
-async function assertKnowledgeInitPausedMappingsHideTechnicalDetails(): Promise<void> {
+async function assertKnowledgeInitPausedReasonsAndRecovery(): Promise<void> {
   installProviderModalDomFixture();
-  // 暂停态只展示人话原因和恢复动作，内部状态、错误、Provider 与 digest
-  // 在用户界面中完全不出现。
+  // 暂停态展示真实原因和恢复动作，不额外倾倒内部状态、Provider 与 digest。
   // 夹具 digest 一致、Provider 与当前设置一致 → 派生为 continue 分支。
   const state = {
     job: makeKnowledgeInitJobFixture({
@@ -6191,7 +6191,7 @@ async function assertKnowledgeInitPausedMappingsHideTechnicalDetails(): Promise<
   const panel = knowledgeInitPanel(tab);
   assert.match(panel.textContent, /初始化没有完成/u);
   assert.match(panel.textContent, /失败原因/u);
-  assert.match(panel.textContent, /有文件未能安全归入 Raw/u);
+  assert.match(panel.textContent, /File already exists: raw\/imported\/notes\/alpha\.md/u);
   assert.match(panel.textContent, /已完成/u);
   assert.match(panel.textContent, /下一步/u);
   assert.ok(panel.querySelector(".echoink-knowledge-init-pause-icon"));
@@ -6207,7 +6207,6 @@ async function assertKnowledgeInitPausedMappingsHideTechnicalDetails(): Promise<
     "failed_recoverable",
     "blocked_conflict",
     "write_uncertain",
-    "File already exists",
     "plan-digest-fixture",
     "provider-ready",
     "Digest"
@@ -6253,6 +6252,70 @@ async function assertKnowledgeInitPausedMappingsHideTechnicalDetails(): Promise<
     knowledgeInitPanel(providerlessTab).textContent,
     /没有可用的 API Provider/u
   );
+  providerlessTab.hide();
+  rerunTab.hide();
+}
+
+async function assertKnowledgeInitActualFailureDetails(): Promise<void> {
+  installProviderModalDomFixture();
+  const sourceChanged = "待提炼来源已变化：raw/imported/验收入口.md";
+  const state = {
+    job: makeKnowledgeInitJobFixture({
+      status: "failed_recoverable",
+      phase: "batch_extraction",
+      confirmedDigest: "sha256:plan-digest-fixture",
+      extractionQueue: ["raw/imported/验收入口.md"],
+      lastError: sourceChanged,
+      productRunIds: []
+    })
+  };
+  const { plugin, calls, settings } = createKnowledgeInitPluginFixture(state);
+  const readyProvider = createApiProviderConfig("deepseek", "provider-ready");
+  readyProvider.apiKey = "custom-key-without-standard-prefix";
+  replaceProviderModels(readyProvider, "model-ready");
+  settings.apiProviders = [readyProvider];
+  activateApiProvider(settings, readyProvider);
+  settings.openAICodexCredential = {
+    type: "oauth", access: "fixture-oauth-access", refresh: "fixture-oauth-refresh", expires: 1
+  };
+
+  const assertReason = async (expected: string) => {
+    const tab = await renderKnowledgeInitTab(plugin);
+    const panel = knowledgeInitPanel(tab);
+    assert.equal(panel.querySelector(".echoink-knowledge-init-pause-value")?.textContent, expected);
+    assert.doesNotMatch(panel.textContent, /模型没有完成|确认 API Provider 可用/u);
+    const text = panel.textContent;
+    tab.hide();
+    return text;
+  };
+
+  const sourceText = await assertReason(sourceChanged);
+  assert.match(sourceText, /AI 检查 0\/1/u);
+  assert.match(sourceText, /已完成的批次不会重做/u);
+  assert.deepEqual(calls, [], "rendering a pre-model source failure must not rerun the batch");
+  for (const [phase, status, message] of [
+    ["create_directories", "failed_recoverable", "目录创建失败：权限不足"],
+    ["move_notes", "paused", "笔记移动期间已暂停"],
+    ["generate_guide", "blocked_conflict", "指南目标已存在：wiki/指南.md"],
+    ["batch_extraction", "write_uncertain", "文件写入结果尚未确认"]
+  ]) {
+    state.job = { ...state.job, phase, status, lastError: message };
+    await assertReason(message);
+  }
+
+  state.job = {
+    ...state.job, phase: "batch_extraction", status: "failed_recoverable", lastError: " \n\t "
+  };
+  await assertReason("当前这批笔记的 AI 检查尚未完成。Raw 原文和已完成的整理都会保留。");
+  settings.settingsLanguage = "en";
+  await assertReason("The AI review of the current batch has not finished. Raw sources and completed organization are preserved.");
+  settings.settingsLanguage = "zh-CN";
+
+  state.job.lastError = `请求被拒绝；${readyProvider.apiKey}；fixture-oauth-access；fixture-oauth-refresh；Bearer fixture-secret-token123；api_key=another-secret-value`;
+  const redactedText = await assertReason("请求被拒绝；[REDACTED_SECRET]；[REDACTED_SECRET]；[REDACTED_SECRET]；Bearer [REDACTED_SECRET]；api_key=[REDACTED_SECRET]");
+  for (const secret of [readyProvider.apiKey, "fixture-oauth-access", "fixture-oauth-refresh", "fixture-secret-token123", "another-secret-value"]) {
+    assert.ok(!redactedText.includes(secret), "failure reasons must redact configured and recognizable credentials");
+  }
 }
 
 async function assertKnowledgeInitProgressAndCompletion(): Promise<void> {
@@ -6754,7 +6817,7 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   );
   staleTab.hide();
 
-  // 5. 用户动作失败可见可重试：开始初始化抛错 → 只显示人话错误；
+  // 5. 用户动作失败可见可重试：开始初始化抛错 → 显示脱敏后的真实原因；
   //    再次点击成功 → 错误消失并进入进度界面。
   //    用闭包标志切换「抛错 / 成功」，避免渲染后替换方法被快照绕过。
   const errorState = { job: null as Record<string, any> | null };
@@ -6762,7 +6825,7 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   const originalStart = plugin.startEchoInkKnowledgeInitialization;
   let startShouldThrow = true;
   plugin.startEchoInkKnowledgeInitialization = async () => {
-    if (startShouldThrow) throw new Error("injected-start-failure");
+    if (startShouldThrow) throw new Error("injected-start-failure api_key=fixture-action-secret");
     return originalStart("recommended");
   };
   const errorTab = await renderKnowledgeInitTab(plugin);
@@ -6773,7 +6836,8 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   const errorBoxPresent = errorPanel.querySelector(".echoink-knowledge-init-action-error") !== null;
   assert.equal(errorBoxPresent, true, "failed user action must surface a visible error");
   assert.match(errorPanel.textContent, /操作没有完成，可以再试一次/u);
-  assert.doesNotMatch(errorPanel.textContent, /injected-start-failure|查看技术详情/u);
+  assert.match(errorPanel.textContent, /injected-start-failure api_key=\[REDACTED_SECRET\]/u);
+  assert.doesNotMatch(errorPanel.textContent, /fixture-action-secret/u);
   // 重试成功：切到成功分支，错误提示消失，进入运行态。
   startShouldThrow = false;
   errorPanel.querySelector<HTMLButtonElement>(".echoink-knowledge-init-cta")?.click();
@@ -12967,7 +13031,8 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "knowledge-ui-candidate") {
   await assertKnowledgeInitDefaultTabAndOneClickStart();
   await assertKnowledgeInitCustomTabDirectoriesAndAssignments();
-  await assertKnowledgeInitPausedMappingsHideTechnicalDetails();
+  await assertKnowledgeInitPausedReasonsAndRecovery();
+  await assertKnowledgeInitActualFailureDetails();
   await assertKnowledgeInitProgressAndCompletion();
   await assertKnowledgeInitStructureTruthAndRepair();
   await assertKnowledgeInitNotePickerModalContract();

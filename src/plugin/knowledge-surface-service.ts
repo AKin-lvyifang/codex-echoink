@@ -562,7 +562,7 @@ function createKnowledgeInitializationHost(
           return { status: "write_uncertain" as const, productRunId: handle.productRunId, message: error };
         }
         if (result.terminalState !== "completed") {
-          return { status: "failed" as const, productRunId: handle.productRunId, message: error || "Provider 批次失败。" };
+          return { status: "failed" as const, productRunId: handle.productRunId, message: error || "知识分析执行未完成，未返回具体错误。" };
         }
         return {
           status: "completed" as const,

@@ -726,15 +726,19 @@ export class KnowledgeBaseInitializer {
         return;
       }
       const batch = job.extractionQueue.slice(job.extractionCursor, job.extractionCursor + EXTRACTION_BATCH_SIZE);
-      const sourceSnapshotByPath = new Map(
-        job.extractionSources.map((source) => [source.path, source] as const)
-      );
+      const sourcePaths = new Set(job.extractionSources.map((source) => source.path));
       for (const sourcePath of batch) {
-        const snapshot = sourceSnapshotByPath.get(sourcePath);
-        const currentHash = await this.host.readFileHash(sourcePath);
-        if (!snapshot || currentHash === null || currentHash !== snapshot.contentHash) {
-          await this.pause(job, "failed_recoverable", `待提炼来源已变化：${sourcePath}`,
-            "重新生成预览并确认新的来源 revision、digest、Provider 与模型。");
+        if (!sourcePaths.has(sourcePath)) {
+          await this.pause(job, "failed_recoverable", `分析计划缺少来源记录：${sourcePath}`,
+            "重新选择方案以检查现有文件。");
+          return;
+        }
+        // The frozen hash protects the file move, not subsequent reading.
+        // Obsidian may update links as notes are archived. Maintenance reads
+        // current Raw and takes its own revision snapshot before writing.
+        if (await this.host.readFileHash(sourcePath) === null) {
+          await this.pause(job, "failed_recoverable", `待分析的原始文件不存在：${sourcePath}`,
+            "恢复该文件后继续，或重新选择方案以检查现有文件。");
           return;
         }
       }
@@ -755,7 +759,7 @@ export class KnowledgeBaseInitializer {
           break;
         }
         if (result.status === "cancelled") {
-          await this.pause(job, "cancelled", result.message ?? "Provider 批次已取消。", "检查当前进度后点击继续。");
+          await this.pause(job, "cancelled", result.message || "当前知识分析批次已取消。", "检查当前进度后点击继续。");
           return;
         }
         if (result.status === "write_uncertain") {
@@ -764,8 +768,8 @@ export class KnowledgeBaseInitializer {
           return;
         }
         if (attempt === MAX_PROVIDER_ATTEMPTS) {
-          await this.pause(job, "failed_recoverable", result.message ?? "Provider 批次失败。",
-            "修复 Provider 后点击继续；已完成批次不会重跑。");
+          await this.pause(job, "failed_recoverable", result.message || "当前知识分析批次执行失败，未返回具体错误。",
+            "查看失败原因后点击继续；已完成批次不会重跑。");
           return;
         }
       }

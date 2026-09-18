@@ -42,7 +42,8 @@ export async function runKnowledgeInitializationTests(): Promise<void> {
   await assertRecommendedArchivesOrdinaryFilesAndOnlyExtractsMarkdown();
   await assertZeroQueuePreservesUserFilesAndSkipsProvider();
   await assertSerialBatchSizes();
-  await assertFrozenExtractionSourcesAndNoProgress();
+  await assertCurrentExtractionSourcesAndNoProgress();
+  await assertArchiveLinkUpdatesDoNotBlockExtraction();
   await assertVerifiedMoveAndSourceChangePause();
   await assertConflictCancellationAndProviderRecoveryStops();
   await assertGuideConflictPreservesUserFile();
@@ -681,7 +682,7 @@ function makeProgressJobFixture(): KnowledgeInitializationJob {
   };
 }
 
-async function assertFrozenExtractionSourcesAndNoProgress(): Promise<void> {
+async function assertCurrentExtractionSourcesAndNoProgress(): Promise<void> {
   await withHost(async (host) => {
     host.addFile("raw/a.md", "before");
     const initializer = new KnowledgeBaseInitializer(host);
@@ -690,9 +691,25 @@ async function assertFrozenExtractionSourcesAndNoProgress(): Promise<void> {
     assert.match(preview.extractionSources[0]?.sourceRevision ?? "", /^sha256:/u);
     host.addFile("raw/a.md", "after");
     await initializer.confirm();
+    const completed = await waitForTerminal(initializer);
+    assert.equal(completed.status, "initialized");
+    assert.equal(completed.extractionCursor, 1);
+    assert.equal(host.read("raw/a.md"), "after");
+    assert.deepEqual(host.batchCalls, [["raw/a.md"]]);
+    assert.deepEqual(completed.extractionSources, preview.extractionSources,
+      "reading current Raw must not rewrite the confirmed move plan");
+  });
+
+  await withHost(async (host) => {
+    host.addFile("raw/a.md", "before");
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize();
+    await initializer.startPreview("recommended");
+    host.files.delete("raw/a.md");
+    await initializer.confirm();
     const paused = await waitForTerminal(initializer);
     assert.equal(paused.status, "failed_recoverable");
-    assert.match(paused.lastError, /待提炼来源已变化/u);
+    assert.match(paused.lastError, /待分析的原始文件不存在.*raw\/a.md/u);
     assert.equal(host.batchCalls.length, 0);
   });
 
@@ -708,6 +725,34 @@ async function assertFrozenExtractionSourcesAndNoProgress(): Promise<void> {
     assert.equal(paused.status, "paused");
     assert.equal(paused.extractionCursor, 0);
     assert.match(paused.lastError, /队列没有可靠下降/u);
+  });
+}
+
+async function assertArchiveLinkUpdatesDoNotBlockExtraction(): Promise<void> {
+  await withHost(async (host) => {
+    host.addFile("entry.md", "See [[notes/project]]");
+    host.addFile("notes/project.md", "A short note with nothing to distill.");
+    // Obsidian updates incoming links after moving their target. The earlier
+    // entry has already passed move verification when this update arrives.
+    host.optimizeWikiFolders = async () => {
+      host.addFile("raw/imported/entry.md", "See [[project]]");
+    };
+    const runBatch = host.runMaintenanceBatch.bind(host);
+    host.runMaintenanceBatch = async (input) => {
+      assert.equal(host.read("raw/imported/entry.md"), "See [[project]]");
+      return runBatch(input); // A successful check need not create a Wiki note.
+    };
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize();
+    const preview = await initializer.startPreview("recommended");
+    await initializer.confirm();
+    const completed = await waitForTerminal(initializer);
+    assert.equal(completed.status, "initialized");
+    assert.equal(completed.extractionCursor, 2);
+    assert.equal(host.moveCalls, 2);
+    assert.equal(host.batchCalls.length, 1);
+    assert.equal(host.read("raw/imported/entry.md"), "See [[project]]");
+    assert.deepEqual(completed.extractionSources, preview.extractionSources);
   });
 }
 

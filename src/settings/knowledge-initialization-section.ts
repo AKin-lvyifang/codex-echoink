@@ -1,5 +1,6 @@
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
+import { redactEchoInkLocalSecretsV1, REDACTED_SECRET } from "../harness/pi-native/vault-tool-result-safety";
 import {
   isKnowledgeInitializationMarkdownPath,
   isKnowledgeInitializationRole,
@@ -267,11 +268,29 @@ export class KnowledgeInitializationSection {
 
   // ------------------------------------------------------------ action errors
 
-  /** 只记录面向用户的恢复提示；内部异常不进入普通设置界面。 */
-  private recordActionError(_error: unknown, message?: string): void {
-    this.actionError = message ?? (this.zh
+  /** 保留真实失败原因，复用本地凭据脱敏后再显示。 */
+  private recordActionError(error: unknown, message?: string): void {
+    const summary = message ?? (this.zh
       ? "操作没有完成，可以再试一次。"
       : "The action didn't complete. You can try again.");
+    const detail = this.errorTextForDisplay(error);
+    this.actionError = detail ? `${summary} ${detail}` : summary;
+  }
+
+  private errorTextForDisplay(error: unknown): string {
+    let message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const credential = this.plugin.settings.openAICodexCredential;
+    const secrets = [
+      ...this.plugin.settings.apiProviders.map((provider) => provider.apiKey),
+      credential?.access,
+      credential?.refresh
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    for (const secret of secrets.sort((left, right) => right.length - left.length)) {
+      message = message.split(secret).join(REDACTED_SECRET);
+    }
+    // 先完整脱敏，再压缩为设置页可读的一段文字，避免截断后漏出半截凭据。
+    const redacted = redactEchoInkLocalSecretsV1(message).replaceAll("\u0000", " ").replace(/\s+/gu, " ").trim();
+    return redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
   }
 
   private clearActionError(): void {
@@ -1151,6 +1170,8 @@ export class KnowledgeInitializationSection {
     zh: boolean,
     needsProviderSetup = this.recoveryNeedsProviderSetup(recovery, job)
   ): string {
+    const detail = this.errorTextForDisplay(job.lastError);
+    if (detail) return detail;
     if (recovery.kind === "recheck-conflict") {
       return zh
         ? "有文件的目标位置已存在内容。EchoInk 已停止移动，避免覆盖原文件。"
@@ -1188,8 +1209,8 @@ export class KnowledgeInitializationSection {
     }
     if (job.phase === "batch_extraction") {
       return zh
-        ? "模型没有完成当前这批 Wiki 提炼。Raw 原文和已完成的整理都会保留。"
-        : "The model did not finish the current Wiki batch. Raw sources and completed organization are preserved.";
+        ? "当前这批笔记的 AI 检查尚未完成。Raw 原文和已完成的整理都会保留。"
+        : "The AI review of the current batch has not finished. Raw sources and completed organization are preserved.";
     }
     if (job.phase === "generate_guide") {
       return zh
@@ -1210,7 +1231,7 @@ export class KnowledgeInitializationSection {
     const directoryTotal = KNOWLEDGE_INITIALIZATION_ROOTS.length;
     const directories = Math.min(job.createdDirectories.length, directoryTotal);
     if (zh) {
-      return `目录 ${directories}/${directoryTotal}；归档文件 ${moved}/${moveTotal}；AI 提炼 ${job.extractionCursor}/${job.extractionQueue.length}。已完成内容和 Raw 原文都会保留。`;
+      return `目录 ${directories}/${directoryTotal}；归档文件 ${moved}/${moveTotal}；AI 检查 ${job.extractionCursor}/${job.extractionQueue.length}。已完成内容和 Raw 原文都会保留。`;
     }
     return `Folders ${directories}/${directoryTotal}; archived files ${moved}/${moveTotal}; AI sources ${job.extractionCursor}/${job.extractionQueue.length}. Completed work and Raw source files are preserved.`;
   }
@@ -1238,12 +1259,12 @@ export class KnowledgeInitializationSection {
     }
     if (job.phase === "batch_extraction") {
       return zh
-        ? "确认 API Provider 可用后，点击“继续初始化”。已完成的批次不会重做。"
-        : "Confirm the API Provider is available, then select Continue initialization. Completed batches will not run again.";
+        ? "根据上面的原因检查后，点击“继续初始化”。已完成的批次不会重做。"
+        : "Check the reason above, then select Continue initialization. Completed batches will not run again.";
     }
     return zh
-      ? "确认文件没有被其他操作占用后，点击“继续初始化”。"
-      : "Make sure no other action is using the files, then select Continue initialization.";
+      ? "根据上面的原因检查后，点击“继续初始化”。已完成的内容会保留。"
+      : "Check the reason above, then select Continue initialization. Completed work is preserved.";
   }
 
   private recoveryNeedsProviderSetup(
