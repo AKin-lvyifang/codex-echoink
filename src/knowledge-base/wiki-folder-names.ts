@@ -29,7 +29,8 @@ export function bilingualWikiFolderName(english: string, chinese: unknown): stri
   if (!ENGLISH.test(english) || typeof chinese !== "string") return null;
   const name = chinese.trim();
   if (!name || name.length > 40 || !/\p{Script=Han}/u.test(name)
-    || /[<>:"/\\|?*\u0000-\u001f（）]/u.test(name) || /[. ]$/u.test(name)) return null;
+    || /[<>:"/\\|?*（）]/u.test(name) || [...name].some((character) => character.charCodeAt(0) < 0x20)
+    || /[. ]$/u.test(name)) return null;
   return `${name}（${english}）`;
 }
 

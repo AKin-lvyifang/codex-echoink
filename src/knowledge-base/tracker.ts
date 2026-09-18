@@ -52,7 +52,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
     if (inUnprocessedSection) continue;
     if (!PROCESSED_LINE_METADATA.test(line) && lineHasUnprocessedSignalOutsideTrackablePath(line)) continue;
     const meta = parseTrackerLineMetadata(line);
-    for (const match of line.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
+    for (const match of line.matchAll(/(?:raw|[^/\s`[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
       mark(match[0], meta);
     }
   }
@@ -102,7 +102,7 @@ export async function readKnowledgeBaseTrackerHints(vaultPath: string, trackerPa
     if (/^#+\s+/.test(line)) inUnprocessedSection = headingHasUnprocessedSignal(line);
     if (!/(?:raw|（raw）)\//u.test(line) || inUnprocessedSection) continue;
     if (lineHasUnprocessedSignalOutsideTrackablePath(line)) continue;
-    for (const match of line.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
+    for (const match of line.matchAll(/(?:raw|[^/\s`[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
       mark(match[0]);
     }
   }
@@ -156,20 +156,20 @@ function parseTrackerLineMetadata(line: string): { expectedSize?: number; expect
 function lineHasUnprocessedSignalOutsideTrackablePath(line: string): boolean {
   if (!UNPROCESSED_TRACKER_TEXT.test(line)) return false;
   const withoutTrackablePaths = line
-    .replace(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi, "")
+    .replace(/(?:raw|[^/\s`[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi, "")
     .replace(/`?[^`\n\r]*?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b`?/gi, "");
   return UNPROCESSED_TRACKER_TEXT.test(withoutTrackablePaths);
 }
 
 function headingHasUnprocessedSignal(heading: string): boolean {
   if (!UNPROCESSED_TRACKER_TEXT.test(heading)) return false;
-  const withoutRawPrefixes = heading.replace(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^、，,;；—\n]+\//g, "");
+  const withoutRawPrefixes = heading.replace(/(?:raw|[^/\s`[\]（）]+（raw）)\/[^、，,;；—\n]+\//g, "");
   return UNPROCESSED_TRACKER_TEXT.test(withoutRawPrefixes);
 }
 
 function rawSectionPrefixes(heading: string): string[] {
   const prefixes = new Set<string>();
-  for (const match of heading.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^、，,;；—\n]+\//g)) {
+  for (const match of heading.matchAll(/(?:raw|[^/\s`[\]（）]+（raw）)\/[^、，,;；—\n]+\//g)) {
     const prefix = ensureTrailingSlash(normalizeRelativePath(match[0]));
     if (knowledgeRolePath(prefix).startsWith("raw/")) prefixes.add(prefix);
   }

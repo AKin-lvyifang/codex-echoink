@@ -951,7 +951,7 @@ function requireMaintenanceOutcome(value: unknown): NonNullable<PiProductRunReco
   const strings = (field: string): readonly string[] => {
     const values = object[field];
     if (!Array.isArray(values) || values.some((entry) => typeof entry !== "string")) throw new Error(`Invalid maintenance ${field}`);
-    return Object.freeze([...values] as string[]);
+    return Object.freeze([...(values as string[])]);
   };
   return Object.freeze({ analysisOnly: object.analysisOnly, processedSourcePaths: strings("processedSourcePaths"), pendingSourcePaths: strings("pendingSourcePaths"), warnings: strings("warnings") });
 }

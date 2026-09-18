@@ -1040,7 +1040,7 @@ function parseChangedRawPaths(text: string): string[] {
       continue;
     }
     if (!inChangedSection && !/(?:changed|变更|变化)/iu.test(line)) continue;
-    for (const match of line.matchAll(/(?:raw|[^\s/`\[\]（）]+（raw）)\/[^`\[\]\r\n]+?\.md\b/giu)) {
+    for (const match of line.matchAll(/(?:raw|[^\s/`[\]（）]+（raw）)\/[^`[\]\r\n]+?\.md\b/giu)) {
       try {
         changed.add(normalizeVaultRelativePath(match[0].trim()));
       } catch {
@@ -1312,7 +1312,7 @@ function safeMaintenanceError(error: unknown): string {
 
 function extractExplicitRawPaths(value: string): string[] {
   const paths = new Set<string>();
-  for (const match of value.matchAll(/(?:raw|[^\s/`\[\]（）]+（raw）)\/[^`\[\]\r\n]+?\.md\b/giu)) {
+  for (const match of value.matchAll(/(?:raw|[^\s/`[\]（）]+（raw）)\/[^`[\]\r\n]+?\.md\b/giu)) {
     try {
       paths.add(normalizeVaultRelativePath(match[0].trim()));
     } catch {
