@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { pluginDataDir } from "../plugin/plugin-data-paths";
 import { contentFingerprint } from "./raw-integrity";
 import { rawDigestFingerprint } from "./raw-digest";
 import { isMissingPathError, normalizeSlashes, writeFileAtomic } from "./utils";
 
 export const KNOWLEDGE_BASE_INDEX_SCHEMA_VERSION = 1;
-export const KNOWLEDGE_BASE_INDEX_RELATIVE_PATH = ".obsidian/plugins/codex-echoink/knowledge-index-v1.json";
 
 const DEFAULT_MAX_SEARCH_CHARS = 120_000;
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
@@ -76,7 +76,7 @@ export async function refreshKnowledgeBaseIndex(
   options: RefreshKnowledgeBaseIndexOptions
 ): Promise<KnowledgeBaseIndexRefreshResult> {
   const roots = uniqueRoots(options.roots);
-  const indexPath = path.join(vaultPath, KNOWLEDGE_BASE_INDEX_RELATIVE_PATH);
+  const indexPath = path.join(pluginDataDir(vaultPath), "knowledge-index-v1.json");
   const index = await readKnowledgeBaseIndex(indexPath);
   const previousEntries = index.entries;
   const currentPaths = new Set<string>();
@@ -185,7 +185,7 @@ export async function commitKnowledgeBaseIndexCheckpoint(
     refresh.index.checkpoints[checkpoint] = current;
   }
   refresh.index.updatedAt = Date.now();
-  await persistKnowledgeBaseIndex(path.join(vaultPath, KNOWLEDGE_BASE_INDEX_RELATIVE_PATH), refresh.index);
+  await persistKnowledgeBaseIndex(refresh.indexPath, refresh.index);
 }
 
 export function isKnowledgeBaseOutputWorkItem(entry: KnowledgeBaseIndexEntry): boolean {
@@ -210,7 +210,7 @@ export function clearKnowledgeBaseIndexMemoryCache(vaultPath?: string): void {
     indexCache.clear();
     return;
   }
-  indexCache.delete(path.join(vaultPath, KNOWLEDGE_BASE_INDEX_RELATIVE_PATH));
+  indexCache.delete(path.join(pluginDataDir(vaultPath), "knowledge-index-v1.json"));
 }
 
 async function readKnowledgeBaseIndex(indexPath: string): Promise<KnowledgeBaseIncrementalIndex> {

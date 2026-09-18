@@ -94,7 +94,7 @@ import type {
   PiTurnInteractionIdentity
 } from "./plugin/pi-turn-interaction-broker";
 import { PiLocalDataService } from "./plugin/pi-local-data-service";
-import { pluginDataDir } from "./plugin/plugin-data-paths";
+import { pluginDataDir, pluginInstallDir, preparePluginDataRoot } from "./plugin/plugin-data-paths";
 import {
   KnowledgeMaintenancePreferenceRepository
 } from "./knowledge-base/knowledge-maintenance-preferences";
@@ -209,7 +209,14 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
   async onload(): Promise<void> {
     const enabledAfterLayoutReady = this.app.workspace.layoutReady;
+    const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
+    this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
+    if (dataRoot.usingPreviousRoot) {
+      new Notice(this.settings.settingsLanguage === "en"
+        ? `EchoInk is keeping your existing conversations, memory and activity in their previous folder. You can keep using them without moving files.\nIn use: ${dataRoot.rootPath}${dataRoot.installRootHasData ? `\nThe installation folder also has data; it has been kept unchanged: ${dataRoot.installRootPath}` : ""}`
+        : `EchoInk 正在沿用原来的数据目录，已有会话、记忆和足迹可以继续使用，无需立即搬动文件。\n正在使用：${dataRoot.rootPath}${dataRoot.installRootHasData ? `\n安装目录中也有数据，已原样保留：${dataRoot.installRootPath}` : ""}`, 15000);
+    }
     this.onboardingRequested = shouldAutoStartEchoInkOnboarding(
       settingsLoad.emptyData,
       this.settings.setup,
@@ -221,7 +228,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     )) {
       await this.saveSettings(true);
     }
-    this.homeActivity = new HomeActivityService(path.join(pluginDataDir(this.getVaultPath(), this.manifest.dir ?? this.manifest.id), "home-activity.json"));
+    this.homeActivity = new HomeActivityService(path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "home-activity.json"));
     await this.homeActivity.initialize();
     this.app.workspace.onLayoutReady(() => {
       const activity = this.homeActivity;
@@ -1353,7 +1360,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     return enabledSkillResources(await this.buildRuntimeEchoInkResourceCatalog());
   }
   getVaultPath(): string { const adapter = this.app.vault.adapter as { basePath?: string; path?: string }; return adapter.basePath || adapter.path || ""; }
-  getPluginDataDirName(): string { const dir = (this.manifest as { dir?: unknown }).dir; return typeof dir === "string" && dir.trim() ? dir : this.manifest.id; }
+  getPluginDataDirName(): string {
+    return pluginInstallDir(this.manifest, this.app.vault.configDir);
+  }
   async loadSettings(): Promise<Readonly<SettingsLoadResult>> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
   async persistPiNativeSettings(): Promise<void> {

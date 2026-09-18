@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
+import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -699,9 +700,11 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   logLevel: "info",
   sourcemap: isProd ? false : "inline",
   minify: isProd,
+  metafile: isProd,
   treeShaking: true,
   plugins: [
     reactDomScriptResourcesPlugin,
+    piBraceExpansionPlugin,
     piOpenAICodexOAuthPlugin,
     piRuntimeSurfacePlugin,
     piPhotonRuntimePlugin,
@@ -718,6 +721,10 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
 if (isWatch) {
   await context.watch();
 } else {
-  await context.rebuild();
+  const result = await context.rebuild();
+  if (buildMode === "production") {
+    fs.mkdirSync(".tmp", { recursive: true });
+    fs.writeFileSync(".tmp/production-metafile.json", JSON.stringify(result.metafile));
+  }
   await context.dispose();
 }
