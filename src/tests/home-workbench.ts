@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { TFile, WorkspaceLeaf, type App } from "obsidian";
+import { TFile, TFolder, WorkspaceLeaf, type App } from "obsidian";
+import { KNOWLEDGE_ROOT_NAMES } from "../knowledge-base/root-paths";
 import {
   BUILT_IN_JOURNAL_TEMPLATES,
   DEFAULT_JOURNAL_TEMPLATE_ID,
@@ -561,6 +562,10 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
   const app = {
     vault: {
       getMarkdownFiles: () => Array.from(files.values()),
+      getAllLoadedFiles: () => [
+        ...Array.from(folders, (path) => Object.assign(new TFolder(), { path })),
+        ...files.values()
+      ],
       getAbstractFileByPath: (path: string) => files.get(path) ?? (folders.has(path) ? { path } : null),
       createFolder: async (path: string) => {
         createdFolders.push(path);
@@ -601,6 +606,9 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
   assert.equal(data.journalDays.find((day) => day.date === "2026-09-04")?.exists, true);
 
   const fallback = new HomeWorkbenchDataService(app, () => "../outside");
+  assert.equal(fallback.getJournalDirectory(), KNOWLEDGE_ROOT_NAMES.journal);
+  assert.equal(fallback.journalPathForDate(date), `${KNOWLEDGE_ROOT_NAMES.journal}/2026-09/2026-09-04.md`);
+  folders.add("journal");
   assert.equal(fallback.getJournalDirectory(), "journal");
   assert.equal(fallback.journalPathForDate(date), "journal/2026-09/2026-09-04.md");
 }
