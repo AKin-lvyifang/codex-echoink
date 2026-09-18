@@ -6711,6 +6711,34 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   assert.equal(maskedPanel.querySelector(".echoink-knowledge-init-cta")?.textContent, "继续初始化");
   maskedTab.hide();
 
+  // A restored directory history clears confirmation while retaining the pause cause.
+  // Next-step instructions must follow the current recovery action, not that old cause.
+  for (const pauseCause of ["pause_button", "reload"]) {
+    for (const [status, confirmedDigest, action, methods] of [
+      ["cancelled", null, "重新检查并继续", ["start:recommended", "confirm"]],
+      ["blocked_conflict", "sha256:plan-digest-fixture", "重新检查冲突", ["start:recommended", "confirm"]],
+      ["cancelled", "sha256:plan-digest-fixture", "继续初始化", ["continue"]]
+    ] as const) {
+      maskedState.job = makeKnowledgeInitJobFixture({ mode: "recommended", status, confirmedDigest, pauseCause, phase: "move_notes" });
+      masked.calls.length = 0;
+      const tab = await renderKnowledgeInitTab(masked.plugin);
+      const panel = knowledgeInitPanel(tab);
+      const next = Array.from(panel.querySelectorAll(".echoink-knowledge-init-pause-detail"))
+        .find((row) => row.querySelector(".echoink-knowledge-init-pause-label")?.textContent === "下一步")!;
+      const nextText = next.querySelector(".echoink-knowledge-init-pause-value")!.textContent;
+      const button = panel.querySelector<HTMLButtonElement>(".echoink-knowledge-init-cta")!;
+      assert.equal(button.textContent, action);
+      assert.ok(nextText.includes(`“${action}”`), `${pauseCause}/${status}: ${nextText}`);
+      if (action === "继续初始化") assert.equal(nextText, "点击“继续初始化”，从当前进度接着整理。已完成的项目不会重复处理。");
+      else assert.equal(nextText.includes("“继续初始化”"), false);
+      assert.ok(panel.textContent.includes(pauseCause === "pause_button" ? "已通过暂停按钮暂停" : "上次整理在完成前中断"));
+      button.click();
+      await settleKnowledgeInitTab(tab);
+      assert.deepEqual(masked.calls.map((call) => call.method), [...methods]);
+      tab.hide();
+    }
+  }
+
   // 2. 无 job + settings initialized + 真实目录完整 → 完成态。
   const doneState = {
     job: null as Record<string, any> | null,

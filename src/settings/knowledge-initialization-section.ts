@@ -1297,9 +1297,6 @@ export class KnowledgeInitializationSection {
     zh: boolean,
     needsProviderSetup = this.recoveryNeedsProviderSetup(recovery, job)
   ): string {
-    if (job.pauseCause === "pause_button" || job.pauseCause === "reload") return zh
-      ? "点击“继续初始化”，从当前进度接着整理。已完成的项目不会重复处理。"
-      : "Select Continue initialization to resume from current progress. Completed items will not be repeated.";
     if (recovery.kind === "recheck-conflict") {
       return zh
         ? "先处理目标路径的同名文件，然后点击“重新检查冲突”。"
@@ -1315,6 +1312,9 @@ export class KnowledgeInitializationSection {
         ? "点击“重新检查并继续”，EchoInk 会根据当前模型和文件重建计划。"
         : "Select Recheck and continue to rebuild the plan from the current model and files.";
     }
+    if (job.pauseCause === "pause_button" || job.pauseCause === "reload") return zh
+      ? "点击“继续初始化”，从当前进度接着整理。已完成的项目不会重复处理。"
+      : "Select Continue initialization to resume from current progress. Completed items will not be repeated.";
     if (needsProviderSetup) return zh
       ? "在 API Provider 设置中补齐失败原因列出的连接或模型配置，然后点击“继续初始化”。"
       : "Complete the connection or model settings identified above in API Provider, then select Continue initialization.";

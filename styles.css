@@ -20616,6 +20616,7 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-details{grid-template-columns:max-content minmax(0,1fr);gap:8px 12px}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-detail{display:contents}
 .echoink-settings-demo .echoink-knowledge-init-recovery :is(.echoink-knowledge-init-pause-label,.echoink-knowledge-init-pause-value){font-size:inherit;line-height:inherit;min-width:0}
+.echoink-settings-demo .echoink-knowledge-init-recovery ul.echoink-knowledge-init-pause-value{margin:0;padding-inline-start:1.2em;list-style:disc}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-label{font-weight:500}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-provider-link{margin-inline-start:0;justify-self:start}
 .echoink-settings-demo .echoink-knowledge-init-recovery>.echoink-knowledge-init-actions{margin-top:16px;padding-top:0;gap:8px 12px;justify-content:flex-start}
