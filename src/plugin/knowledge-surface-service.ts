@@ -1,3 +1,4 @@
+import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -15,10 +16,8 @@ import type {
 } from "../settings/settings";
 import {
   apiProviderHasUsableCredential,
-  apiProviderModelHadInvalidStoredReasoningEffort,
   getActiveApiProviderModel,
-  newId,
-  validateApiProvider
+  newId
 } from "../settings/settings";
 import {
   isEchoInkPiReasoningEffortSupported,
@@ -61,16 +60,13 @@ export function resolveKnowledgeMaintenanceSubmitSnapshot(
   reasoning: ReasoningEffort;
 }> {
   const active = getActiveApiProviderModel(settings);
-  if (
-    !active
-    || !apiProviderHasUsableCredential(
-      active.provider,
-      settings.openAICodexCredential
-    )
-    || validateApiProvider(active.provider).length > 0
-  ) {
-    throw new Error("知识初始化无法冻结当前 Provider/模型，请先检查 Provider 设置。");
-  }
+  if (!active) throw new Error("准备知识分析：缺少已选择的模型；本地整理保留，选择模型后继续。");
+  if (!active.model.id.trim()) throw new Error("准备知识分析：缺少模型 ID。");
+  if (!active.provider.runtimeProviderId.trim()) throw new Error("准备知识分析：缺少 Provider 连接类型。");
+  if (!active.provider.baseUrl.trim()) throw new Error("准备知识分析：缺少 API 地址。");
+  try { const url = new URL(active.provider.baseUrl); if (!["https:", "http:"].includes(url.protocol)) throw new Error(); }
+  catch { throw new Error("准备知识分析：API 地址无效，请检查连接设置。"); }
+  if (!apiProviderHasUsableCredential(active.provider, settings.openAICodexCredential)) throw new Error("准备知识分析：缺少此 Provider 所需的登录或 API Key。");
   const capabilities = resolveEchoInkPiReasoningCapabilities(
     active.provider.runtimeProviderId,
     active.model.id,
@@ -86,22 +82,9 @@ export function resolveKnowledgeMaintenanceSubmitSnapshot(
       reasoning: "none"
     });
   }
-  if (apiProviderModelHadInvalidStoredReasoningEffort(
-    active.provider.id,
-    active.model
-  )) {
-    throw new Error("知识初始化发现非法思考强度，请先在 Composer 完成回落。");
-  }
-  const stored = normalizeEchoInkReasoningEffort(
-    active.model.reasoningEffort
-  );
-  if (active.model.reasoningEffort !== undefined && !stored) {
-    throw new Error("知识初始化发现非法思考强度，请先在 Composer 完成回落。");
-  }
-  const reasoning = stored ?? capabilities.defaultEffort ?? "none";
-  if (!isEchoInkPiReasoningEffortSupported(capabilities, reasoning)) {
-    throw new Error("知识初始化发现当前思考强度已不可用，请先在 Composer 完成回落。");
-  }
+  const stored = normalizeEchoInkReasoningEffort(active.model.reasoningEffort);
+  const reasoning = stored && isEchoInkPiReasoningEffortSupported(capabilities, stored)
+    ? stored : capabilities.defaultEffort ?? "none";
   return Object.freeze({
     runtimeProviderId: active.provider.runtimeProviderId,
     modelId: active.model.id,
@@ -152,8 +135,8 @@ export class EchoInkKnowledgeSurfaceService {
     host.beforeStructureChange = (jobId) => this.directoryHistory.capture(jobId);
     host.withStructureMutation = (action) => this.withStructureMutation(action);
     host.optimizeWikiFolders = async (assertActive) => { await this.optimizeFolderNames(undefined, true, { assertActive }); };
-    host.moveFile = async (from, to, expectedHash) => {
-      if (await host.readFileHash(from) !== expectedHash) throw new Error(`源文件已变化：${from}`);
+    host.readMoveState = (from, to) => this.directoryHistory.moveState(from, to);
+    host.moveFile = async (from, to) => {
       const parent = knowledgeInitializationParentFolder(to);
       if (parent) await host.createFolder(parent);
       await this.renameTracked(from, to);
@@ -168,10 +151,10 @@ export class EchoInkKnowledgeSurfaceService {
           await this.initializer.refreshManagedGuide();
         } catch (error) {
           // 指南升级是可选维护，不得阻断知识库设置与既有初始化恢复链。
-          console.error("EchoInk managed knowledge guide refresh failed", error);
+          console.error("EchoInk managed knowledge guide refresh failed", knowledgeErrorDetail(error));
         }
       }).catch((error) => {
-        console.error("EchoInk knowledge initializer failed before guide refresh", error);
+        console.error("EchoInk knowledge initializer failed before guide refresh", knowledgeErrorDetail(error));
       });
     });
   }
@@ -398,11 +381,12 @@ function createKnowledgeInitializationHost(
     for (const segment of segments) {
       current = current ? `${current}/${segment}` : segment;
       const existing = plugin.app.vault.getAbstractFileByPath(current);
-      if (existing) continue;
+      if (existing instanceof TFolder) continue;
+      if (existing) throw new Error(`同名路径不是文件夹：${current}`);
       try {
         await plugin.app.vault.createFolder(current);
       } catch (error) {
-        if (!plugin.app.vault.getAbstractFileByPath(current)) throw error;
+        if (!(plugin.app.vault.getAbstractFileByPath(current) instanceof TFolder)) throw error;
       }
     }
   };
@@ -476,11 +460,8 @@ function createKnowledgeInitializationHost(
         return content;
       });
     },
-    async moveFile(sourcePath: string, targetPath: string, expectedContentHash: string): Promise<void> {
+    async moveFile(sourcePath: string, targetPath: string): Promise<void> {
       const source = requireVaultFile(plugin, sourcePath);
-      if (await readFileHash(sourcePath) !== expectedContentHash) {
-        throw new Error(`源文件已变化：${sourcePath}`);
-      }
       if (plugin.app.vault.getAbstractFileByPath(normalizePath(targetPath))) {
         throw new Error(`目标已存在：${targetPath}`);
       }
@@ -490,14 +471,7 @@ function createKnowledgeInitializationHost(
     },
     currentProvider() {
       const active = getActiveApiProviderModel(plugin.settings);
-      if (
-        !active
-        || !apiProviderHasUsableCredential(
-          active.provider,
-          plugin.settings.openAICodexCredential
-        )
-        || validateApiProvider(active.provider).length > 0
-      ) return null;
+      if (!active) return null;
       return Object.freeze({
         providerId: active.provider.id,
         model: active.model.id
@@ -567,7 +541,10 @@ function createKnowledgeInitializationHost(
         return {
           status: "completed" as const,
           productRunId: handle.productRunId,
-          processedSourcePaths: Object.freeze([...input.sourcePaths])
+          processedSourcePaths: Object.freeze([...(result.maintenance?.processedSourcePaths ?? [])]),
+          pendingSourcePaths: result.maintenance?.pendingSourcePaths ?? input.sourcePaths,
+          analysisOnly: result.maintenance?.analysisOnly ?? result.permission === "read-only",
+          message: result.maintenance?.warnings.join("\n")
         };
       } finally {
         input.signal.removeEventListener("abort", cancel);

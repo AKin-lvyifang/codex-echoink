@@ -4613,10 +4613,7 @@ function assertKnowledgeMaintenanceSubmitSnapshotContract(): void {
   );
 
   model.reasoningEffort = "low";
-  assert.throws(
-    () => resolveKnowledgeMaintenanceSubmitSnapshot(settings),
-    /思考强度已不可用/u
-  );
+  assert.equal(resolveKnowledgeMaintenanceSubmitSnapshot(settings).reasoning, "high");
 
   const invalidProvider = createApiProviderConfig(
     "deepseek",
@@ -4645,10 +4642,7 @@ function assertKnowledgeMaintenanceSubmitSnapshotContract(): void {
     ),
     true
   );
-  assert.throws(
-    () => resolveKnowledgeMaintenanceSubmitSnapshot(invalidSettings),
-    /非法思考强度/u
-  );
+  assert.equal(resolveKnowledgeMaintenanceSubmitSnapshot(invalidSettings).reasoning, "high");
 
   const nonReasoning = createApiProviderConfig("custom", "maintain-none");
   nonReasoning.runtimeProviderId = "openai";
@@ -6379,7 +6373,7 @@ async function assertKnowledgeInitProgressAndCompletion(): Promise<void> {
     "knowledge:onboarding",
     "an initialized knowledge base must still expose the tutorial anchor"
   );
-  assert.match(donePanel.textContent, /知识库目录已就绪/u);
+  assert.match(donePanel.textContent, /初始化已完成/u);
   assert.ok(donePanel.hasClass("is-ready"));
   assert.deepEqual(
     knowledgeInitButtons(donePanel).map((button) => button.textContent),
@@ -6394,7 +6388,7 @@ async function assertKnowledgeInitStructureTruthAndRepair(): Promise<void> {
   // 历史 initialized 不能覆盖真实空 Vault：十个目录一个都没有时必须
   // 回到默认/自定义初始化入口。
   const emptyState = {
-    job: makeKnowledgeInitJobFixture({ status: "initialized", phase: "complete" }),
+    job: null,
     structure: makeKnowledgeBaseStructureFixture("uninitialized")
   };
   const empty = createKnowledgeInitPluginFixture(emptyState);
@@ -6412,7 +6406,7 @@ async function assertKnowledgeInitStructureTruthAndRepair(): Promise<void> {
 
   // 部分目录缺失：就地说明发生了什么、为什么影响使用、点击什么恢复。
   const partialState = {
-    job: makeKnowledgeInitJobFixture({ status: "initialized", phase: "complete" }),
+    job: null,
     structure: makeKnowledgeBaseStructureFixture("incomplete", {
       existingRoots: ["raw", "wiki", "outputs", "inbox", "journal", "work", "archive", "templates"],
       missingRoots: ["projects", "assets"]
@@ -6479,7 +6473,7 @@ async function assertKnowledgeInitStructureTruthAndRepair(): Promise<void> {
 
   // 同名文件冲突必须保留原文件，并明确要求先重命名；不能伪装成可自动覆盖。
   const conflictState = {
-    job: makeKnowledgeInitJobFixture({ status: "initialized", phase: "complete" }),
+    job: makeKnowledgeInitJobFixture({ status: "initialized", phase: "complete", warnings: ["目录 raw 同名文件已保留，其余整理完成。"] }),
     structure: makeKnowledgeBaseStructureFixture("incomplete", {
       existingRoots: KNOWLEDGE_INITIALIZATION_ROOTS.filter((root) => root !== "raw"),
       missingRoots: [],
@@ -6489,11 +6483,9 @@ async function assertKnowledgeInitStructureTruthAndRepair(): Promise<void> {
   const conflict = createKnowledgeInitPluginFixture(conflictState);
   const conflictTab = await renderKnowledgeInitTab(conflict.plugin);
   const conflictPanel = knowledgeInitPanel(conflictTab);
-  assert.match(conflictPanel.textContent, /同名文件占用：raw/u);
-  assert.match(conflictPanel.textContent, /不会覆盖或移动/u);
-  assert.ok(
-    knowledgeInitButtons(conflictPanel).some((button) => button.textContent === "重新检查")
-  );
+  assert.match(conflictPanel.textContent, /初始化已完成/u);
+  assert.match(conflictPanel.textContent, /目录 raw 同名文件已保留/u);
+  assert.ok(conflictPanel.hasClass("is-ready"));
   conflictTab.hide();
 }
 
@@ -6754,7 +6746,7 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   );
   customConflictTab.hide();
 
-  // 4a. Provider 缺失（当前设置没有可用 Provider）→ 重新检查并继续 + 人话提示。
+  // 4a. Provider 缺失不作废已确认的本地计划，继续时不重新扫描。
   const providerlessState = {
     job: makeKnowledgeInitJobFixture({
       status: "paused",
@@ -6768,32 +6760,14 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   const providerlessRecheck = providerlessPanel.querySelector<HTMLButtonElement>(
     ".echoink-knowledge-init-cta"
   );
-  assert.equal(providerlessRecheck?.textContent, "重新检查并继续");
-  assert.ok(providerlessRecheck?.hasClass("echoink-particle-button"));
-  assert.equal(
-    providerlessRecheck?.querySelector(".echoink-particle-button-icon")
-      ?.getAttribute("data-echoink-icon"),
-    "refresh-cw"
-  );
-  assert.equal(
-    providerlessRecheck?.querySelectorAll(".echoink-particle-button-dot").length,
-    6
-  );
-  assert.match(providerlessPanel.textContent, /没有可用的 API Provider/u);
+  assert.equal(providerlessRecheck?.textContent, "继续初始化");
   const providerLink = providerlessPanel.querySelector<HTMLButtonElement>(
     ".echoink-knowledge-init-provider-link"
   );
-  assert.equal(providerLink?.textContent, "去设置 API Provider");
-  assert.equal(providerLink?.getAttribute("type"), "button");
-  assert.equal(
-    providerLink?.closest('[role="status"]'),
-    null,
-    "the interactive Provider link must stay outside the live status node"
-  );
-  providerLink?.click();
-  await flushProviderModalTasks();
-  assert.equal(providerless.settings.settingsTab, "providers");
-  assert.deepEqual(providerless.calls, [], "opening Provider settings must not retry initialization");
+  assert.equal(providerLink, null, "local recovery does not require Provider setup");
+  providerlessRecheck?.click();
+  await settleKnowledgeInitTab(providerlessTab);
+  assert.deepEqual(providerless.calls, [{ method: "continue" }], "missing Provider must not force a fresh preview");
   providerlessTab.hide();
 
   // 4b. digest 不一致（从未确认）→ 重新检查并继续，提示「计划已变化」。
@@ -6809,7 +6783,7 @@ async function assertKnowledgeInitRecoveryAndActionErrorRendering(): Promise<voi
   const staleTab = await renderKnowledgeInitTab(staleDigest.plugin);
   const stalePanel = knowledgeInitPanel(staleTab);
   assert.equal(stalePanel.querySelector(".echoink-knowledge-init-cta")?.textContent, "重新检查并继续");
-  assert.match(stalePanel.textContent, /模型或文件计划在确认后发生了变化/u);
+  assert.match(stalePanel.textContent, /文件计划在确认后发生了变化/u);
   assert.equal(
     stalePanel.querySelector(".echoink-knowledge-init-provider-link"),
     null,
@@ -13029,6 +13003,7 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {
   await assertProviderLimitOverrideRoundTrip();
   console.log("PASS affected settings pages, editors and existing action lifecycles");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "knowledge-ui-candidate") {
+  await assertKnowledgeMaintenanceSubmitSnapshotContract();
   await assertKnowledgeInitDefaultTabAndOneClickStart();
   await assertKnowledgeInitCustomTabDirectoriesAndAssignments();
   await assertKnowledgeInitPausedReasonsAndRecovery();

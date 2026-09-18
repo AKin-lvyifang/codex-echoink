@@ -1,3 +1,4 @@
+import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -332,7 +333,7 @@ export class KnowledgeAgentIndex {
       relativePath
     );
     const bytes = await fsp.readFile(absolutePath);
-    const currentRevision = contentRevision(bytes);
+    const currentRevision = contentRevision(bytes, relativePath);
     if (currentRevision !== entry.contentRevision) {
       this.invalidate(relativePath);
       throw new KnowledgeAgentIndexError(
@@ -382,7 +383,7 @@ export class KnowledgeAgentIndex {
       return null;
     }
     const rawFile = await resolveIndexedFile(this.vaultPath, rawPath);
-    if (await streamedContentRevision(rawFile) !== raw.contentRevision) {
+    if (await streamedContentRevision(rawFile, rawPath) !== raw.contentRevision) {
       this.invalidate(rawPath);
       return null;
     }
@@ -551,7 +552,7 @@ async function buildCandidateEntry(
     kind,
     title,
     contentRevision: bytes
-      ? contentRevision(bytes)
+      ? contentRevision(bytes, file.vaultRelativePath)
       : await streamedContentRevision(file.absolutePath),
     size: file.stat.size,
     mtimeMs: file.stat.mtimeMs,
@@ -1206,11 +1207,13 @@ function knowledgeTitle(relativePath: string, text: string): string {
     || path.posix.basename(relativePath, path.posix.extname(relativePath));
 }
 
-function contentRevision(bytes: Uint8Array): string {
+function contentRevision(bytes: Uint8Array, relativePath = ""): string {
+  if (relativePath.startsWith("raw/") && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function streamedContentRevision(absolutePath: string): Promise<string> {
+async function streamedContentRevision(absolutePath: string, relativePath = ""): Promise<string> {
+  if (relativePath.startsWith("raw/") && isRawMarkdownPath(relativePath)) return contentRevision(await fsp.readFile(absolutePath), relativePath);
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(absolutePath);

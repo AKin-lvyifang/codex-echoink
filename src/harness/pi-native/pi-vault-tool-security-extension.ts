@@ -90,6 +90,7 @@ export interface CreatePiVaultToolSecurityAdapterOptions {
   readonly resultCorrection: PiVaultToolResultCorrectionPort;
   /** Phase 3 production only: persist a citation envelope on note_read. */
   readonly includeNoteReadKnowledgeReferences?: boolean;
+  readonly onSuccessfulNoteRead?: (value: unknown) => void;
   /** One separately policy-bound product Tool may share the sole Extension. */
   readonly additionalToolSecurity?: PiVaultAdditionalToolSecurityPort;
   /** Dynamic declared-readonly MCP Tools use that same sole Extension. */
@@ -296,6 +297,7 @@ implements PiVaultToolExecutionSecurityPort {
         isError: event.isError || record.status !== "completed"
       }));
       const content = normalizeCorrectedContent(result.content);
+      if (event.toolName === "note_read" && !result.isError && record.status === "completed") this.options.onSuccessfulNoteRead?.(record.value);
       return Object.freeze({
         content,
         details: safeDetails(
@@ -447,7 +449,9 @@ function noteReadKnowledgeReferenceDetails(
     || fileName.replace(/\.[^.]+$/u, "")
     || relativePath;
   const lineNumber = firstEvidenceIndex + 1;
-  const contentRevision = `sha256:${snapshot.contentSha256}`;
+  const contentRevision = relativePath.startsWith("raw/") && typeof snapshot.bodyFingerprint === "string"
+    ? `sha256:${snapshot.bodyFingerprint.split(":").at(-1)}`
+    : `sha256:${snapshot.contentSha256}`;
   const reference = Object.freeze({
     referenceId: `knowledge-reference:${createHash("sha256")
       .update(relativePath, "utf8")

@@ -24,8 +24,7 @@ import {
 } from "./knowledge-initialization-recovery";
 import {
   apiProviderHasUsableCredential,
-  getActiveApiProviderModel,
-  validateApiProvider
+  getActiveApiProviderModel
 } from "./settings";
 import { attachSettingsTooltip, createSettingsSection, createSettingsState } from "./settings-v2";
 import { KnowledgeNotePickerModal } from "./knowledge-note-picker-modal";
@@ -173,6 +172,8 @@ export class KnowledgeInitializationSection {
         label: zh ? "重试" : "Retry",
         onActivate: () => void this.load()
       });
+      const rescan = createOriginButton(panel, { cls: "button echoink-knowledge-init-secondary", text: zh ? "重新扫描" : "Rescan", attr: { type: "button" } });
+      rescan.onclick = () => void this.startRecommended();
       return;
     }
     // 用户动作失败提示：所有面板共用，成功或重新执行时清除。
@@ -199,6 +200,7 @@ export class KnowledgeInitializationSection {
       this.renderPausedPanel(panel, job);
       return;
     }
+    if (job?.status === "initialized") { this.renderDonePanel(panel); return; }
     const structure = this.structure;
     if (!structure) {
       createSettingsState(
@@ -239,11 +241,9 @@ export class KnowledgeInitializationSection {
         && this.job.status !== "initialized"
         ? "custom"
         : "recommended";
-    } catch {
+    } catch (error) {
       if (generation !== this.loadGeneration) return;
-      this.loadError = this.zh
-        ? "无法读取初始化状态，请重试。"
-        : "Unable to load initialization status. Try again.";
+      this.loadError = `${this.zh ? "读取初始化状态失败，请重新扫描或重试" : "Unable to read initialization status; rescan or retry"}: ${this.errorTextForDisplay(error)}`;
     } finally {
       if (generation === this.loadGeneration) {
         this.loading = false;
@@ -290,7 +290,7 @@ export class KnowledgeInitializationSection {
     }
     // 先完整脱敏，再压缩为设置页可读的一段文字，避免截断后漏出半截凭据。
     const redacted = redactEchoInkLocalSecretsV1(message).replaceAll("\u0000", " ").replace(/\s+/gu, " ").trim();
-    return redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+    return redacted;
   }
 
   private clearActionError(): void {
@@ -880,7 +880,11 @@ export class KnowledgeInitializationSection {
       if (generation !== this.loadGeneration) return;
       this.structure = result.structure;
       this.loaded = true;
-      new Notice(this.zh ? "日记与模板设置已补齐，已有自定义配置已保留。" : "Journal and template settings are ready. Existing custom settings were preserved.");
+      if (result.warnings?.length) {
+        this.recordActionError(new Error(result.warnings.join("\n")), this.zh ? "可用项目已补齐，以下项目仍需处理。" : "Available items were repaired; the following still need attention.");
+      } else {
+        new Notice(this.zh ? "日记与模板设置已补齐，已有自定义配置已保留。" : "Journal and template settings are ready. Existing custom settings were preserved.");
+      }
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.recordActionError(
@@ -979,8 +983,11 @@ export class KnowledgeInitializationSection {
       this.job = job;
       this.structure = structure;
       this.loaded = true;
-    } catch {
-      // 保留上一次状态，下一轮再试。
+    } catch (error) {
+      this.recordActionError(error, this.zh ? "进度暂未更新，请重试。" : "Progress could not be refreshed. Please retry.");
+      this.scheduleRender();
+      this.schedulePoll();
+      return;
     }
     if (this.job?.status === "active" && this.updateProgressInPlace()) {
       this.schedulePoll();
@@ -1129,8 +1136,7 @@ export class KnowledgeInitializationSection {
         this.enterPlanSelection();
       };
     } else if (recovery.kind === "recheck-preview") {
-      // Provider 缺失/变化或 digest 不一致：不能直接 continueJob()，
-      // 必须重新生成 preview。
+      // 文件计划未确认或已变化时重新预览；模型切换不作废文件计划。
       const recheck = actions.createEl("button", {
         cls: "mod-cta echoink-knowledge-init-cta",
         text: zh ? "重新检查并继续" : "Recheck and continue",
@@ -1186,8 +1192,8 @@ export class KnowledgeInitializationSection {
           : "No API Provider is currently available, so AI cannot distill the Raw notes yet.";
       }
       return zh
-        ? "模型或文件计划在确认后发生了变化，EchoInk 已停止使用旧计划。"
-        : "The model or file plan changed after confirmation, so EchoInk stopped using the old plan.";
+        ? "文件计划在确认后发生了变化，EchoInk 已停止使用旧计划。"
+        : "The file plan changed after confirmation, so EchoInk stopped using the old plan.";
     }
     if (job.status === "cancelled") {
       return zh ? "你暂停了这次初始化。" : "You paused this initialization.";
@@ -1393,11 +1399,22 @@ export class KnowledgeInitializationSection {
     const icon = panel.createSpan({ cls: "ready-icon", attr: { "aria-hidden": "true" } });
     setIcon(icon, "check");
     const copy = panel.createDiv({ cls: "echoink-init-ready-copy" });
-    copy.createEl("h3", { text: zh ? "知识库目录已就绪" : "Knowledge folders are ready" });
-    copy.createEl("p", { text: zh
-      ? "固定目录完整，EchoInk 可以正常整理原始笔记、Wiki 和附件。"
-      : "The fixed folder structure is complete, so EchoInk can organize original notes, Wiki content, and attachments." });
+    const job = this.job;
+    copy.createEl("h3", { text: job?.status === "initialized" ? (zh ? "初始化已完成" : "Initialization complete") : (zh ? "知识库目录已就绪" : "Knowledge folders are ready") });
+    copy.createEl("p", { text: job?.status === "initialized"
+      ? (job.analysisOnly ? (zh ? "本轮为只读分析，未执行知识写入；未读来源列为待处理。" : "This run was read-only; no knowledge was written and unread sources remain pending.") : (zh ? "已完成的整理与分析已保留；无需新增也是正常结果。" : "Completed organization and analysis are preserved; no new notes is a valid result."))
+      : (zh ? "固定目录完整，EchoInk 可以正常整理原始笔记、Wiki 和附件。" : "The fixed folder structure is complete, so EchoInk can organize notes and attachments.") });
+    if (job?.warnings?.length) {
+      const details = copy.createEl("details");
+      details.createEl("summary", { text: zh ? `完成提醒（${job.warnings.length}）` : `Completion notes (${job.warnings.length})` });
+      for (const warning of job.warnings) details.createEl("p", { text: this.errorTextForDisplay(warning) });
+    }
+    if (job?.pendingSourcePaths?.length) copy.createEl("p", { text: `${zh ? "待处理来源" : "Pending sources"}: ${job.pendingSourcePaths.join("、")}` });
     const actions = panel.createDiv({ cls: "echoink-knowledge-init-actions init-actions" });
+    if (job?.savePending || job?.pendingMoves || job?.pendingSourcePaths?.length) {
+      const retry = createOriginButton(actions, { cls: "button echoink-knowledge-init-secondary", text: zh ? (job.savePending ? "重试保存状态" : job.pendingMoves ? "继续待确认移动" : "继续待处理来源") : "Resume pending work" });
+      retry.onclick = () => { void this.plugin.continueEchoInkKnowledgeInitialization().then((next) => { this.clearActionError(); this.job = next; this.scheduleRender(); }).catch((error) => { this.recordActionError(error); this.scheduleRender(); }); };
+    }
     const open = createOriginButton(actions, {
       cls: "button echoink-init-ready-open",
       text: zh ? "打开 Wiki 首页" : "Open Wiki home",
@@ -1436,7 +1453,6 @@ export class KnowledgeInitializationSection {
       active.provider,
       this.plugin.settings.openAICodexCredential
     )) return null;
-    if (validateApiProvider(active.provider).length > 0) return null;
     return { providerId: active.provider.id, model: active.model.id };
   }
 

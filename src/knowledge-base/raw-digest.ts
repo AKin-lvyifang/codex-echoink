@@ -216,7 +216,7 @@ export function emptyRawDigestRegistry(): RawDigestRegistry {
   return { schemaVersion: RAW_DIGEST_SCHEMA_VERSION, updatedAt: "", entries: {} };
 }
 
-function canonicalRawMarkdownForDigest(text: string): string {
+export function canonicalRawMarkdownForDigest(text: string): string {
   const parsed = splitFrontmatter(text);
   return parsed.body.replace(/^\r?\n/, "");
 }

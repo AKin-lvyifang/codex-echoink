@@ -72,6 +72,7 @@ import type {
 import {
   createPiKnowledgeMaintenanceToolDefinition,
   createPiKnowledgeMaintenanceToolSecurity,
+  maintenanceSourceFingerprintsFromEntries,
   type PiKnowledgeMaintenanceCommandContext
 } from "../harness/pi-native/pi-knowledge-maintenance-tool";
 import {
@@ -1221,11 +1222,11 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
                 echoInkKnowledgeMaintenanceProtocolPrompt(),
                 command.preference.providerResourceText,
                 maintenanceScopeProviderPrompt(command.scope),
-                "由当前同一个 AgentSession 生成完整、有序 candidateActions；",
+                "由当前同一个 AgentSession 生成 candidateActions；无需新增可自然结束，有失败候选可修正后再提交；",
                 "candidateActions 只包含 wiki/** 或 projects/** 的 Markdown 候选。",
                 "每个候选必须携带 expectedTarget：更新已有目标前先 note_read，并原样使用其 contentRevision；确认不存在时使用 kind=missing。",
                 "raw/index.md、Tracker 和维护报告由 EchoInk 自动生成，不要作为候选动作传入。",
-                "权限可写且用户要求执行维护时，自检后调用一次 knowledge_maintain，工具会写入并回读；只读或用户要求先不写入时，只分析并给出建议。",
+                "权限可写且用户要求执行维护时，自检后按需分次调用 knowledge_maintain，工具会写入并回读；只读或用户要求先不写入时，只分析并给出建议。",
                 "对重要知识主张同时给出仍有效、需补充、已过时或存在冲突的结构化判断；记录来源与日期，无法联网核验时明确标为 unverified。",
                 `用户维护请求：${command.request}`
               ].join("\n"),
@@ -1399,8 +1400,8 @@ function maintenanceScopeProviderPrompt(
   if (scope.mode === "batch") {
     return [
       `本轮范围是 batch，只读取并维护以下 ${scope.sourcePaths.length} 篇 Raw：${JSON.stringify(scope.sourcePaths)}`,
-      `调用 knowledge_maintain 时 sourcePaths 必须按原顺序精确等于 ${JSON.stringify(scope.sourcePaths)}。`,
-      "不得读取 Tracker、扩展到其他 Raw，或把批次拆成多个 Tool 调用。"
+      `调用 knowledge_maintain 时 sourcePaths 由程序绑定，不需维持顺序；若提供必须为此范围 ${JSON.stringify(scope.sourcePaths)}。`,
+      "不得读取 Tracker、扩展到其他 Raw，可分次提交候选或纠正失败项。"
     ].join("\n");
   }
   return [
@@ -1839,8 +1840,10 @@ async function createProductionAgentSession(input: {
       }
     }
   });
+  const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch());
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
+    onSourceRead: (reference) => { if (reference.vaultRelativePath.startsWith("raw/")) sourceBodyFingerprints[reference.vaultRelativePath] = reference.contentRevision; },
     currentWorkflow: () => {
       const turn = input.input.currentKnowledgeTurnContext();
       return turn?.kind ?? "none";
@@ -1865,6 +1868,10 @@ async function createProductionAgentSession(input: {
     },
     authorization,
     includeNoteReadKnowledgeReferences: true,
+    onSuccessfulNoteRead: (value) => {
+      const snapshot = (value as { snapshot?: { relativePath?: string; bodyFingerprint?: string } })?.snapshot;
+      if (snapshot?.relativePath?.startsWith("raw/") && typeof snapshot.bodyFingerprint === "string") sourceBodyFingerprints[snapshot.relativePath] = snapshot.bodyFingerprint;
+    },
     additionalToolSecurity: maintenanceSecurity,
     additionalToolSecurities: [
       mcpSecurity,
@@ -1888,7 +1895,11 @@ async function createProductionAgentSession(input: {
     obsidianSecurity
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({
-    port: input.knowledgeMaintenance,
+    port: { execute: async (request) => {
+      const result = await input.knowledgeMaintenance.execute({ ...request, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
+      Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
+      return result;
+    } },
     security: maintenanceSecurity
   });
   const taskPlanTool = createPiTaskPlanToolDefinition({

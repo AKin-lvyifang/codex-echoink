@@ -24,6 +24,8 @@ import { deriveKnowledgeInitializationRecovery } from "../settings/knowledge-ini
 
 export async function runKnowledgeInitializationTests(): Promise<void> {
   await assertDirectorySnapshotAndNamingCancellation();
+  await assertPartialRecoveryAndSaveOnlyRetry();
+  await assertCorruptJobCanBeRescanned();
   assertRootLevelInitializationFileHasNoFolderCreation();
   await assertHiddenInitializationFileExistsOutsideVaultIndex();
   await assertKnowledgeBaseStructureInspectionAndRepair();
@@ -35,7 +37,7 @@ export async function runKnowledgeInitializationTests(): Promise<void> {
   await assertPreviewStageNeverMovesOrCallsProvider();
   assertKnowledgeInitializationProgressContract();
   assertKnowledgeInitializationRecoveryDerivation();
-  await assertProviderOrModelChangeRequiresNewPreview();
+  await assertProviderOrModelChangeKeepsPlan();
   await assertInitializationDoesNotGenerateLegacyRulesFile();
   await assertGeneratedGuideIncludesOfflineAssets();
   await assertManagedLegacyGuideRefreshIsSafe();
@@ -44,12 +46,88 @@ export async function runKnowledgeInitializationTests(): Promise<void> {
   await assertSerialBatchSizes();
   await assertCurrentExtractionSourcesAndNoProgress();
   await assertArchiveLinkUpdatesDoNotBlockExtraction();
-  await assertVerifiedMoveAndSourceChangePause();
+  await assertVerifiedMoveAcceptsCurrentContent();
   await assertConflictCancellationAndProviderRecoveryStops();
   await assertGuideConflictPreservesUserFile();
   await assertGuideAssetConflictPreservesUserFile();
   await assertPriorGeneratedGuideIsReusableAfterNewPreview();
   await assertRestartPausesWithoutProviderReplay();
+}
+
+async function assertCorruptJobCanBeRescanned(): Promise<void> {
+  await withHost(async (host) => {
+    const directory = path.join(host.privateRootPath, "knowledge/initialization/onboarding-v1");
+    await fsp.mkdir(directory, { recursive: true });
+    const damaged = '{"status":';
+    await fsp.writeFile(path.join(directory, "job.json"), damaged);
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize();
+    assert.throws(() => initializer.snapshot(), /读取初始化记录.*重新扫描/u);
+    host.addFile("raw/recovered.md", "readable source");
+    const preview = await initializer.startPreview();
+    assert.equal(preview.phase, "preview");
+    assert.deepEqual(preview.extractionQueue, ["raw/recovered.md"]);
+    const backup = (await fsp.readdir(directory)).find((name) => name.startsWith("job.json.invalid-"));
+    assert.ok(backup);
+    assert.equal(await fsp.readFile(path.join(directory, backup), "utf8"), damaged);
+    const reopened = new KnowledgeBaseInitializer(host);
+    await reopened.initialize();
+    assert.equal(reopened.snapshot()?.jobId, preview.jobId);
+  });
+}
+
+async function assertPartialRecoveryAndSaveOnlyRetry(): Promise<void> {
+  await withHost(async (host) => {
+    host.addFile("notes/conflict.md", "original source");
+    host.addFile("raw/imported/notes/conflict.md", "unrelated target");
+    host.addFile("good.md", "independent source");
+    const markInitialized = host.markInitialized.bind(host);
+    let first = true;
+    host.markInitialized = async (job) => {
+      await markInitialized(job);
+      if (first) { first = false; host.failNextJobPersist = new Error("disk temporarily unavailable"); }
+    };
+    let initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize(); await initializer.startPreview(); await initializer.confirm();
+    const completed = await waitForTerminal(initializer);
+    assert.equal(completed.status, "initialized");
+    assert.equal(completed.savePending, true);
+    assert.deepEqual(host.batchCalls, [["raw/imported/good.md"]]);
+    assert.deepEqual(completed.pendingSourcePaths, ["raw/imported/notes/conflict.md"]);
+    assert.equal(host.read("raw/imported/notes/conflict.md"), "unrelated target");
+    initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize();
+    await initializer.continueJob(); // Saving has priority over pending content.
+    assert.equal(initializer.snapshot()?.savePending, false);
+    assert.equal(host.batchCalls.length, 1);
+    assert.equal(host.moveCalls, 1);
+    assert.doesNotMatch(initializer.snapshot()?.warnings?.join("\n") ?? "", /保存初始化状态：/u);
+    host.addFile("archive/preserved-target.md", host.read("raw/imported/notes/conflict.md")!);
+    host.files.delete("raw/imported/notes/conflict.md");
+    await initializer.continueJob();
+    const resumed = await waitForTerminal(initializer);
+    assert.equal(host.read("raw/imported/notes/conflict.md"), "original source");
+    assert.equal(host.read("archive/preserved-target.md"), "unrelated target");
+    assert.deepEqual(host.batchCalls, [["raw/imported/good.md"], ["raw/imported/notes/conflict.md"]]);
+    assert.deepEqual(resumed.pendingSourcePaths, []);
+    assert.doesNotMatch(resumed.warnings?.join("\n") ?? "", /来源待处理：|保存初始化状态：/u);
+  });
+  await withHost(async (host) => {
+    host.addFile("raw/missing.md", "missing later");
+    host.addFile("raw/good.md", "readable");
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize(); await initializer.startPreview();
+    host.files.delete("raw/missing.md");
+    host.openGuide = async () => { throw new Error("open denied api_key=sk-fixture-secret"); };
+    await initializer.confirm();
+    const completed = await waitForTerminal(initializer);
+    assert.equal(completed.status, "initialized");
+    assert.deepEqual(host.batchCalls, [["raw/good.md"]]);
+    const reloaded = new KnowledgeBaseInitializer(host); await reloaded.initialize();
+    assert.deepEqual(reloaded.snapshot()?.pendingSourcePaths, ["raw/missing.md"]);
+    assert.match(reloaded.snapshot()?.warnings?.join("\n") ?? "", /打开指南/u);
+    assert.doesNotMatch(completed.warnings?.join("\n") ?? "", /sk-fixture-secret/u);
+  });
 }
 
 async function assertKnowledgeBaseStructureInspectionAndRepair(): Promise<void> {
@@ -266,7 +344,7 @@ async function assertManagedLegacyGuideRefreshIsSafe(): Promise<void> {
   }, null);
 }
 
-async function assertProviderOrModelChangeRequiresNewPreview(): Promise<void> {
+async function assertProviderOrModelChangeKeepsPlan(): Promise<void> {
   for (const changedProvider of [
     { providerId: "provider-changed", model: "model-ready" },
     { providerId: "provider-ready", model: "model-changed" }
@@ -281,12 +359,13 @@ async function assertProviderOrModelChangeRequiresNewPreview(): Promise<void> {
         model: "model-ready"
       });
       host.setProvider(changedProvider);
-      const paused = await initializer.confirm();
-      assert.equal(paused.status, "paused");
-      assert.equal(paused.confirmedDigest, null);
-      assert.match(paused.lastError, /Provider 或模型已变化/u);
-      assert.match(paused.recoveryAction, /重新生成预览并确认/u);
-      assert.equal(host.batchCalls.length, 0);
+      await initializer.confirm();
+      const completed = await waitForTerminal(initializer);
+      assert.equal(completed.status, "initialized");
+      assert.equal(completed.confirmedDigest, preview.planDigest);
+      assert.deepEqual(completed.provider, changedProvider);
+      assert.equal(host.batchCalls.length, 1);
+
     });
   }
 }
@@ -624,11 +703,11 @@ function assertKnowledgeInitializationRecoveryDerivation(): void {
   assert.equal(deriveKnowledgeInitializationRecovery({
     job: { ...base, status: "paused", provider, confirmedDigest: planDigest } as never,
     currentProvider: { providerId: "provider-ready", model: "model-new" }
-  }).kind, "recheck-preview");
+  }).kind, "continue");
   assert.equal(deriveKnowledgeInitializationRecovery({
     job: { ...base, status: "paused", provider, confirmedDigest: planDigest } as never,
     currentProvider: { providerId: "provider-other", model: "model-ready" }
-  }).kind, "recheck-preview");
+  }).kind, "continue");
 
   // F. 待提炼队列非空但当前无可用 Provider → recheck-preview。
   const queueRecovery = deriveKnowledgeInitializationRecovery({
@@ -638,7 +717,7 @@ function assertKnowledgeInitializationRecoveryDerivation(): void {
     } as never,
     currentProvider: null
   });
-  assert.equal(queueRecovery.kind, "recheck-preview");
+  assert.equal(queueRecovery.kind, "continue");
   assert.equal(queueRecovery.providerOutdated, true);
 
   // G. 队列为空时，当前没有 Provider 也不算 Provider 变化（两边都视为空键），
@@ -708,8 +787,9 @@ async function assertCurrentExtractionSourcesAndNoProgress(): Promise<void> {
     host.files.delete("raw/a.md");
     await initializer.confirm();
     const paused = await waitForTerminal(initializer);
-    assert.equal(paused.status, "failed_recoverable");
-    assert.match(paused.lastError, /待分析的原始文件不存在.*raw\/a.md/u);
+    assert.equal(paused.status, "initialized");
+    assert.match(paused.warnings?.join("\n") ?? "", /raw\/a.md.*文件不存在/u);
+    assert.deepEqual(paused.pendingSourcePaths, ["raw/a.md"]);
     assert.equal(host.batchCalls.length, 0);
   });
 
@@ -722,9 +802,9 @@ async function assertCurrentExtractionSourcesAndNoProgress(): Promise<void> {
     await initializer.startPreview("recommended");
     await initializer.confirm();
     const paused = await waitForTerminal(initializer);
-    assert.equal(paused.status, "paused");
-    assert.equal(paused.extractionCursor, 0);
-    assert.match(paused.lastError, /队列没有可靠下降/u);
+    assert.equal(paused.status, "initialized");
+    assert.equal(paused.extractionCursor, 2);
+    assert.deepEqual(paused.pendingSourcePaths, ["raw/b.md"]);
   });
 }
 
@@ -764,9 +844,10 @@ async function assertGuideConflictPreservesUserFile(): Promise<void> {
     await initializer.startPreview("recommended");
     await initializer.confirm();
     const blocked = await waitForTerminal(initializer);
-    assert.equal(blocked.status, "blocked_conflict");
+    assert.equal(blocked.status, "initialized");
     assert.equal(host.read(KNOWLEDGE_INITIALIZATION_GUIDE_PATH), "# User guide\n");
-    assert.equal(host.initializedJob, null);
+    assert.equal(host.initializedJob?.status, "initialized");
+    assert.ok(blocked.warnings?.length);
   }, null);
 }
 
@@ -780,10 +861,11 @@ async function assertGuideAssetConflictPreservesUserFile(): Promise<void> {
     await initializer.startPreview("recommended");
     await initializer.confirm();
     const blocked = await waitForTerminal(initializer);
-    assert.equal(blocked.status, "blocked_conflict");
+    assert.equal(blocked.status, "initialized");
     assert.deepEqual(host.readBinary(conflictPath), userBytes);
-    assert.equal(host.read(KNOWLEDGE_INITIALIZATION_GUIDE_PATH), null);
-    assert.equal(host.initializedJob, null);
+    assert.ok(host.read(KNOWLEDGE_INITIALIZATION_GUIDE_PATH));
+    assert.equal(host.initializedJob?.status, "initialized");
+    assert.ok(blocked.warnings?.length);
   }, null);
 }
 
@@ -812,8 +894,9 @@ async function assertConflictCancellationAndProviderRecoveryStops(): Promise<voi
     await initializer.initialize();
     const preview = await initializer.startPreview("recommended");
     assert.equal(preview.items[0]?.state, "conflict");
-    const blocked = await initializer.confirm();
-    assert.equal(blocked.status, "blocked_conflict");
+    await initializer.confirm();
+    const blocked = await waitForTerminal(initializer);
+    assert.equal(blocked.status, "initialized");
     assert.equal(host.read("raw/imported/notes/conflict.md"), "user target");
   });
 
@@ -838,7 +921,7 @@ async function assertConflictCancellationAndProviderRecoveryStops(): Promise<voi
   });
 
   for (const [outcome, expectedCalls] of [
-    ["failed", 2],
+    ["failed", 1],
     ["write_uncertain", 1]
   ] as const) {
     await withHost(async (host) => {
@@ -908,7 +991,7 @@ async function assertSerialBatchSizes(): Promise<void> {
   }
 }
 
-async function assertVerifiedMoveAndSourceChangePause(): Promise<void> {
+async function assertVerifiedMoveAcceptsCurrentContent(): Promise<void> {
   await withHost(async (host) => {
     host.addFile("notes/a.md", "original");
     const initializer = new KnowledgeBaseInitializer(host);
@@ -929,9 +1012,8 @@ async function assertVerifiedMoveAndSourceChangePause(): Promise<void> {
     host.addFile("notes/changed.md", "after");
     await initializer.confirm();
     const paused = await waitForTerminal(initializer);
-    assert.equal(paused.status, "failed_recoverable");
-    assert.match(paused.lastError, /source_changed/u);
-    assert.equal(host.read("raw/imported/notes/changed.md"), null);
+    assert.equal(paused.status, "initialized");
+    assert.equal(host.read("raw/imported/notes/changed.md"), "after");
   });
 }
 
@@ -1271,7 +1353,7 @@ class MemoryKnowledgeInitializationHost implements KnowledgeInitializationHost {
   async moveFile(sourcePath: string, targetPath: string, expectedContentHash: string): Promise<void> {
     this.moveCalls += 1;
     const source = this.files.get(sourcePath);
-    if (source === undefined || hash(source) !== expectedContentHash) throw new Error("version_conflict");
+    if (source === undefined) throw new Error("source_missing");
     if (this.files.has(targetPath)) throw new Error("already_exists");
     this.files.delete(sourcePath);
     this.files.set(targetPath, source);
@@ -1376,7 +1458,9 @@ async function assertDirectorySnapshotAndNamingCancellation(): Promise<void> {
     const initializer = new KnowledgeBaseInitializer(host);
     await initializer.initialize(); await initializer.startPreview(); await initializer.confirm();
     const failed = await waitForTerminal(initializer);
-    assert.equal(failed.status, "failed_recoverable");
+    assert.equal(failed.status, "initialized");
+    assert.equal(failed.pendingMoves, true);
+    assert.match(failed.warnings?.join("\n") ?? "", /directory index unavailable/);
     assert.equal(host.folders.size, 0, "failed original index must precede all folder creation");
     assert.equal(host.moveCalls, 0);
   });
