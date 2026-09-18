@@ -1838,6 +1838,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
   const previousDocument = (globalThis as unknown as { document?: unknown }).document;
   const previousHTMLElement = (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement;
   const previousWindow = (globalThis as unknown as { window?: unknown }).window;
+  const originalDateNow = Date.now;
   const platform = Platform as { isDesktopApp: boolean };
   const previousDesktopApp = platform.isDesktopApp;
   platform.isDesktopApp = true;
@@ -2300,7 +2301,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       status: "running",
       createdAt: waitingCreatedAt
     };
-    const originalDateNow = Date.now;
     Date.now = () => waitingCreatedAt;
     const emptyRunningAnswer = renderMessage(
       renderer,
@@ -2392,6 +2392,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
         ?.textContent,
       "Going straight to the point"
     );
+    Date.now = originalDateNow;
     rendererEnv.onScheduleRunProgress = () => undefined;
 
     const reasoningMessage = renderMessage(renderer, {
@@ -4489,6 +4490,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "the English Turn does not expose private reasoning"
     );
   } finally {
+    Date.now = originalDateNow;
     platform.isDesktopApp = previousDesktopApp;
     if (previousDocument === undefined) delete (globalThis as unknown as { document?: unknown }).document;
     else Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
