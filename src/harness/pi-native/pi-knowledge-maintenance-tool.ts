@@ -40,7 +40,7 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
     if (message.role === "assistant") {
       for (const part of message.content) {
         if (part.type !== "toolCall" || !["note_read", "knowledge_read"].includes(part.name)) continue;
-        const relative = part.arguments?.relativePath ?? part.arguments?.vaultRelativePath;
+        const relative: unknown = part.arguments?.relativePath ?? part.arguments?.vaultRelativePath;
         if (typeof relative === "string") reads.set(part.id, relative);
       }
       continue;

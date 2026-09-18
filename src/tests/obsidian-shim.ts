@@ -20,7 +20,11 @@ export class TFile {
   constructor(public readonly path = "") {}
 }
 
-export class App {}
+export class App {
+  vault = {
+    getAllLoadedFiles: (): Array<TFile | TFolder> => []
+  };
+}
 
 export class Plugin {}
 

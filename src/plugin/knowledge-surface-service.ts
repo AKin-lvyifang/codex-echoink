@@ -130,7 +130,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (folder instanceof TFolder && folder.children.length === 0) await plugin.app.vault.delete(folder);
       }
     });
-    const createFolder = host.createFolder;
+    const createFolder = host.createFolder.bind(host) as typeof host.createFolder;
     host.createFolder = async (relative) => {
       const parts = relative.split("/");
       for (let i = 1; i <= parts.length; i++) {
@@ -186,6 +186,7 @@ export class EchoInkKnowledgeSurfaceService {
   optimizeFolderNames(onProgress?: (message: string) => void, initialization = false, maintenance?: { assertActive(): void; authorized?: boolean }): Promise<WikiFolderNameResult> {
     if (this.namingFlight) return this.namingFlight;
     if (this.initializer.isRunning && !initialization) return Promise.reject(new Error("初始化进行中，请稍后再优化目录。"));
+    const assertActive = maintenance ? () => maintenance.assertActive() : undefined;
     this.namingFlight = this.withStructureMutation(async () => {
       const vault = this.plugin.app.vault;
       try {
@@ -193,7 +194,7 @@ export class EchoInkKnowledgeSurfaceService {
         return await optimizeWikiFolderNames({
           folders: () => vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder)
             .map((folder) => ({ path: folder.path, titles: folder.children.filter((file) => !(file instanceof TFolder)).map((file) => file.name) })),
-          assertActive: maintenance?.assertActive,
+          assertActive,
           generate: (systemPrompt, userPrompt) => this.plugin.generateWikiFolderNames(systemPrompt, userPrompt),
           exists: (target) => vault.getAbstractFileByPath(target) !== null,
           unsafeReason: (source) => this.renameUnsafeReason(source),
@@ -201,8 +202,8 @@ export class EchoInkKnowledgeSurfaceService {
             const folder = vault.getAbstractFileByPath(source);
             if (!(folder instanceof TFolder)) throw new Error("目录已变化");
             if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), source)) throw new Error("符号链接目录保持原位");
-            maintenance?.assertActive();
-            await this.renameTracked(source, target, maintenance?.assertActive);
+            assertActive?.();
+            await this.renameTracked(source, target, assertActive);
           }
         }, onProgress);
       } finally {
@@ -257,7 +258,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (!["wiki", "projects"].includes(knowledgeRootRole(file.path) ?? "")) continue;
         const rebaseMarkers = (content: string) => content.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker, json: string) => {
           try {
-            const record = JSON.parse(json);
+            const record = JSON.parse(json) as Record<string, unknown>;
             if (typeof record.path !== "string") return marker;
             const next = rebaseKnowledgePath(record.path, from, to);
             return next === record.path ? marker : `<!-- echoink-source: ${JSON.stringify({ ...record, path: next })} -->`;

@@ -8,7 +8,7 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { App, Modal, TFile, openTestModals } from "obsidian";
+import { App, Modal, TFile, TFolder, openTestModals } from "obsidian";
 import type {
   Api,
   AssistantMessage,
@@ -4406,6 +4406,8 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
   installProviderModalDomFixture();
   const fixtureState = createIdentityFixtureState();
   const { plugin } = createIdentityTestPlugin(fixtureState);
+  // This legacy-vault scenario reuses its existing English journal folder.
+  plugin.app.vault.getAllLoadedFiles = () => [Object.assign(new TFolder(), { path: "journal", name: "journal" })];
   const saved: Array<Record<string, unknown>> = [];
   let nativeOptions: Record<string, unknown> = { folder: "journal", format: "YYYY-MM/YYYY-MM-DD" };
   const daily = { instance: { options: nativeOptions }, loadData: async () => nativeOptions, saveData: async (value: Record<string, unknown>) => { nativeOptions = value; saved.push(structuredClone(value)); } };
