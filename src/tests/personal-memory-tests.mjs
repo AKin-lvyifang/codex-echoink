@@ -78,4 +78,11 @@ const result = spawnSync(process.execPath, [outputFile], {
   stdio: "inherit"
 });
 
-process.exit(result.status ?? 1);
+if (result.status !== 0) process.exit(result.status ?? 1);
+
+const identityPathsResult = spawnSync(process.execPath, [path.join(rootDir, "src/tests/agent-identity-paths-tests.mjs")], {
+  cwd: rootDir,
+  env: { ...process.env, PI_OFFLINE: "1" },
+  stdio: "inherit"
+});
+process.exit(identityPathsResult.status ?? 1);

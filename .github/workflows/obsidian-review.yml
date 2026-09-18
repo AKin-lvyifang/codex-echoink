@@ -65,3 +65,15 @@ jobs:
 
       - name: Check native bundle loading
         run: node scripts/check-bundle-load.mjs --native-only dist/main.js
+
+      - name: Set up Node for identity persistence regression
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install regression dependencies
+        run: npm ci
+
+      - name: Check native identity persistence
+        run: node src/tests/agent-identity-paths-tests.mjs

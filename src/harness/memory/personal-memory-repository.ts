@@ -4386,7 +4386,12 @@ function sortJson(value: unknown): unknown {
 
 function dedupeChanges(changes: readonly TransactionChange[]): TransactionChange[] {
   const byPath = new Map<string, TransactionChange>();
-  for (const change of changes) byPath.set(change.relativePath, change);
+  for (const change of changes) {
+    // Transactions, cache keys and watcher expectations share POSIX paths on
+    // every desktop platform, including paths produced by Windows relative().
+    const relativePath = normalizeManagedRelativePath(change.relativePath);
+    byPath.set(relativePath, { ...change, relativePath });
+  }
   return [...byPath.values()];
 }
 
