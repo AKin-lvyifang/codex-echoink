@@ -1441,3 +1441,12 @@
 .echoink-native-settings-workspace .codex-settings-tabs>.echoink-native-settings-row>.setting-item-info {flex:0 0 auto;margin:0;padding:0}
 .echoink-native-settings-workspace .codex-settings-tabs>.echoink-native-settings-row>.setting-item-control {flex:0 0 auto;flex-wrap:nowrap;width:auto;max-width:none;margin:0;padding:0;gap:0}
 .echoink-native-settings-workspace .codex-settings-tab>.setting-item-name {margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:1;color:inherit;white-space:inherit}
+
+.echoink-settings-demo .echoink-todo-statistics { margin: 16px 0 24px; min-width: 0; }
+.echoink-settings-demo .todo-heatmap { display: grid; grid-template-rows: repeat(7, 12px); grid-template-columns: repeat(53, 12px); gap: 3px; width: max-content; padding: 4px; }
+.echoink-settings-demo .todo-heatmap .heatmap-cell { width: 12px; height: 12px; min-height: 0; padding: 0; border-radius: 2px; box-shadow: none; }
+.echoink-settings-demo .todo-heatmap .todo-level-1 { background: color-mix(in srgb, var(--green, #76ad8a) 35%, var(--background-primary)); }
+.echoink-settings-demo .todo-heatmap .todo-level-2 { background: color-mix(in srgb, var(--green, #76ad8a) 65%, var(--background-primary)); }
+.echoink-settings-demo .todo-heatmap .todo-level-3 { background: var(--green, #76ad8a); }
+.echoink-settings-demo .todo-heatmap .heatmap-cell:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.echoink-settings-demo .echoink-knowledge-folder-actions { margin: 16px 0; overflow-wrap: anywhere; }

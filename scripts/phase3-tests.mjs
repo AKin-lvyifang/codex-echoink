@@ -11,6 +11,7 @@ const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 const homeWorkbenchOnly = process.argv.includes("--home-workbench");
 const workspaceDataOnly = process.argv.includes("--workspace-data");
 const maintenanceOnly = process.argv.includes("--production-maintenance");
+const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
@@ -35,7 +36,16 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (workspaceDataOnly ? [
+    contents: (wikiTodoOnly ? [
+      'import { runWikiBilingualTests } from "./src/tests/wiki-bilingual";',
+      'import { runKnowledgeInitializationTests } from "./src/tests/knowledge-initialization";',
+      'import { runHomeTodoTests } from "./src/tests/home-todos";',
+      'import { runWikiStructurePreflightTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
+      'await runWikiStructurePreflightTests();',
+      'await runWikiBilingualTests();',
+      'await runKnowledgeInitializationTests();',
+      'await runHomeTodoTests();'
+    ] : workspaceDataOnly ? [
       'import { runHomeWorkspaceDataTests } from "./src/tests/home-workspace-data";',
       'await runHomeWorkspaceDataTests();'
     ] : maintenanceOnly ? [

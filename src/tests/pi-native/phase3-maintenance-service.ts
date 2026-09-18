@@ -514,6 +514,18 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
       "candidateActions without assessments fail before any Vault write"
     );
 
+    await fsp.mkdir(path.join(vaultRootPath, "wiki/人工智能（AI）"), { recursive: true });
+    for (const [targetPath, reason] of [["wiki/english-only/note.md", "新 Wiki 分类"], ["wiki/另一名称（AI）/note.md", "复用已有 Wiki"]]) {
+      const invalidFolder = await port.execute({
+        vaultId: VAULT_ID, conversationId: "category-contract", piSessionId: "pi-category-contract",
+        productRunId: `category-${reason}`, toolCallId: `category-${reason}`, mode: "maintain", request: "", sourcePaths: [rawPath], preferenceSnapshot: PREFERENCE,
+        candidateActions: [{ targetPath, content: "not written", expectedTarget: {kind:"missing"} }],
+        assessments: [{ claim: "fixture", status:"valid", evidence:[rawPath], asOf:DATE_KEY, verification:"unverified" }]
+      });
+      assert.equal(invalidFolder.status, "failed");
+      assert.ok(invalidFolder.message.includes(reason), invalidFolder.message);
+      assert.equal(domain.formalWrites.length, writesBeforeRejectedCandidate);
+    }
     const result = await port.execute({
       vaultId: VAULT_ID,
       conversationId: "conversation-production-noop",

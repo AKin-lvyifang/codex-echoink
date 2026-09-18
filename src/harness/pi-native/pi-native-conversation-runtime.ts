@@ -1,3 +1,4 @@
+import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
 import { normalizePiWorkspacePermission, piWorkspaceAllowsTool, type PiWorkspaceAccess } from "./pi-workspace-access";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -1598,7 +1599,7 @@ export class PiNativeConversationRuntime {
           execution.requiresFreshnessVerification = true;
           this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
         }
-      } else if (knowledgeCommand.kind === "maintain" && permission === "read-only") {
+      } else if (knowledgeCommand.kind === "maintain" && (permission === "read-only" || mode === "plan" || maintenanceRequestsAdviceOnly(knowledgeCommand.request))) {
         execution.knowledgeObservation = createKnowledgeObservation("maintain", null);
         active.knowledgeTurnContext = Object.freeze({
           kind: "chat",
@@ -1614,11 +1615,14 @@ export class PiNativeConversationRuntime {
             "Pi Knowledge maintenance preferences are unavailable"
           );
         }
-        const command = maintenanceCommandContext(
-          knowledgeCommand,
-          preference,
-          request.maintenanceScope
-        );
+        const resolvedCommand = maintenanceCommandContext(knowledgeCommand, preference, request.maintenanceScope);
+        const structureResult = await this.options.knowledge?.prepareMaintenanceStructure?.({
+          initialization: request.maintenanceScope?.mode === "batch",
+          assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
+        });
+        const command = Object.freeze({ ...resolvedCommand, preference: Object.freeze({
+          ...preference, providerResourceText: [structureResult, preference.providerResourceText].filter(Boolean).join("\n")
+        }) });
         execution.knowledgeWorkflow = { kind: "maintain", command };
         execution.knowledgeObservation = createKnowledgeObservation(
           "maintain",

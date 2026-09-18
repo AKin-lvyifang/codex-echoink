@@ -15,6 +15,34 @@ const obsidianShimPath = path.join(
 );
 
 await mkdir(outputDir, { recursive: true });
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
+  const ts = await import("typescript");
+  const source = await readFile(path.join(rootDir, "src/settings/settings-tab.ts"), "utf8");
+  const ast = ts.createSourceFile("settings-tab.ts", source, ts.ScriptTarget.Latest, true);
+  const declaration = ast.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === "CodexSettingTab");
+  const method = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "mountKnowledgeDashboard").getText(ast);
+  const directory = path.join(outputDir, "wiki-todo-dom");
+  await mkdir(directory, { recursive: true });
+  await esbuild.build({
+    stdin: { contents: `import {runWikiTodoDom} from "./src/tests/wiki-todo-dom";
+      import {renderKnowledgeFolderActions} from "./src/settings/knowledge-folder-actions";
+      class Fixture {
+        refreshes=0; knowledgeInitSection={showDashboard:false}; knowledgeDashboardSnapshot=null; knowledgeDashboardEl=null;
+        service={folderOperationBusy:false,directoryWritable:true,folderOperationMessage:"",
+          async getOriginalDirectoryStatus(){return {createdAt:1,files:2}},
+          async restoreOriginalDirectories(){return {restored:1,skipped:[{path:"old.md",reason:"原位置已被占用"}]}},
+          async optimizeFolderNames(){return {renamed:[],skipped:[]}}};
+        plugin={settings:{settingsLanguage:"zh"},getKnowledgeSurfaceService:()=>this.service};
+        scheduleDisplay(){this.refreshes++}; ${method}
+      }
+      runWikiTodoDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
+    bundle: true, format: "esm", platform: "browser", outfile: path.join(directory, "regression.js"), logLevel: "silent"
+  });
+  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wiki and todo UI checks</title><link rel="stylesheet" href="styles.css"><style>body{font-family:sans-serif}main{max-width:100%}.heatmap-scroll{overflow-x:auto;max-width:100%}</style><main class="echoink-settings-demo"><p id="report">Running</p><div id="fixture"></div></main><script type="module" src="regression.js"></script>');
+  await writeFile(path.join(directory,"styles.css"), await readFile(path.join(rootDir,"src/styles/workspace-settings.css")));
+  console.log(`Open ${path.join(directory,"index.html")}`);
+  process.exit(0);
+}
 if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "origin-dom") {
   const ts = await import("typescript");
   const source = await readFile(path.join(rootDir, "src/settings/settings-tab.ts"), "utf8");

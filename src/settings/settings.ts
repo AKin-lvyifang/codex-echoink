@@ -1,3 +1,4 @@
+import { normalizeTodoCompletions, type TodoCompletionHistory } from "../home/todo-completions";
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
 import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
 import { defaultHomeModuleVisibility } from "../home/home-modules";
@@ -500,6 +501,7 @@ export interface CodexForObsidianSettings {
   quickChat: QuickChatSettings;
   homeModules: Record<string, boolean>;
   todos: EchoInkTodoItem[];
+  todoCompletions: TodoCompletionHistory;
   todoCategories: EchoInkTodoCategory[];
   journalDirectory: string;
   customWelcomeEnabled: boolean;
@@ -543,6 +545,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   homeModules: defaultHomeModuleVisibility(),
   todos: [],
+  todoCompletions: {},
   todoCategories: [
     { id: "life", name: "生活" },
     { id: "work", name: "工作" }
@@ -669,6 +672,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     quickChat: normalizeQuickChatSettings(data?.quickChat),
     homeModules: normalizeHomeModules(data?.homeModules),
     todos: normalizeTodos(data?.todos),
+    todoCompletions: normalizeTodoCompletions(data?.todoCompletions),
     todoCategories: normalizeTodoCategories(data?.todoCategories),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),

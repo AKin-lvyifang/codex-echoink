@@ -23,6 +23,7 @@ import { buildKnowledgeInitializationProgress } from "../knowledge-base/initiali
 import { deriveKnowledgeInitializationRecovery } from "../settings/knowledge-initialization-recovery";
 
 export async function runKnowledgeInitializationTests(): Promise<void> {
+  await assertDirectorySnapshotAndNamingCancellation();
   assertRootLevelInitializationFileHasNoFolderCreation();
   await assertHiddenInitializationFileExistsOutsideVaultIndex();
   await assertKnowledgeBaseStructureInspectionAndRepair();
@@ -1321,4 +1322,33 @@ async function readPrivateFile(
     if (code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function assertDirectorySnapshotAndNamingCancellation(): Promise<void> {
+  await withHost(async (host) => {
+    host.addFile("Note.md", "body");
+    (host as KnowledgeInitializationHost).beforeStructureChange = async () => { throw new Error("directory index unavailable"); };
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize(); await initializer.startPreview(); await initializer.confirm();
+    const failed = await waitForTerminal(initializer);
+    assert.equal(failed.status, "failed_recoverable");
+    assert.equal(host.folders.size, 0, "failed original index must precede all folder creation");
+    assert.equal(host.moveCalls, 0);
+  });
+  await withHost(async (host) => {
+    let release: (() => void) | undefined;
+    let entered = false;
+    let renamed = false;
+    (host as KnowledgeInitializationHost).optimizeWikiFolders = async (assertActive) => {
+      entered = true;
+      await new Promise<void>((resolve) => { release = resolve; });
+      assertActive(); renamed = true;
+    };
+    const initializer = new KnowledgeBaseInitializer(host);
+    await initializer.initialize(); await initializer.startPreview(); await initializer.confirm();
+    await waitUntil(() => entered);
+    await initializer.cancel(); release?.();
+    await waitUntil(() => !initializer.isRunning);
+    assert.equal(renamed, false, "cancel during naming must prevent later structural writes");
+  });
 }
