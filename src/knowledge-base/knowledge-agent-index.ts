@@ -1,3 +1,4 @@
+import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
@@ -176,7 +177,7 @@ export class KnowledgeAgentIndex {
   /** Hosts call this for create/modify/rename/delete and committed local writes. */
   invalidate(relativePath?: string): void {
     if (relativePath !== undefined) {
-      const root = relativePath.replace(/\\/gu, "/").split("/", 1)[0]?.toLowerCase();
+      const root = knowledgeRootRole(relativePath);
       if (!KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)) return;
     }
     this.invalidationVersion += 1;
@@ -305,7 +306,7 @@ export class KnowledgeAgentIndex {
   }>): Promise<KnowledgeAgentReadResult> {
     await this.ensureFresh();
     const index = this.requireCurrent();
-    const relativePath = normalizeKnowledgePath(input.vaultRelativePath);
+    const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath));
     const entry = index.entries[relativePath];
     if (!entry) {
       throw new KnowledgeAgentIndexError(
@@ -353,7 +354,7 @@ export class KnowledgeAgentIndex {
   ): Promise<Readonly<KnowledgeAgentReliableRawKnowledge> | null> {
     await this.ensureFresh();
     const index = this.requireCurrent();
-    const rawPath = normalizeRawSourcePath(vaultRelativePath);
+    const rawPath = normalizeRawSourcePath(resolveKnowledgePath(this.vaultPath, vaultRelativePath));
     const raw = index.entries[rawPath];
     if (!raw || raw.kind !== "raw") return null;
     const linked = Object.values(index.entries)
@@ -404,7 +405,7 @@ export class KnowledgeAgentIndex {
     let reusedCount = 0;
 
     for (const kind of KNOWLEDGE_ROOTS) {
-      const files = await walkKnowledgeRoot(vaultRoot, kind);
+      const files = (await Promise.all(knowledgeRoleRoots(vaultRoot, kind).map((root) => walkKnowledgeRoot(vaultRoot, kind, root)))).flat();
       for (const file of files) {
         const oldEntry = previous.entries[file.vaultRelativePath];
         if (oldEntry && metadataMatches(oldEntry, file.stat)) {
@@ -441,7 +442,7 @@ export class KnowledgeAgentIndex {
       const oldEntry = previous.entries[relativePath];
       const contentUnchanged = oldEntry?.contentRevision
         === candidate.contentRevision;
-      combined[relativePath].rawSources = uniqueRawLinks(candidate.rawLinks)
+      combined[relativePath].rawSources = uniqueRawLinks(candidate.rawLinks.map((source) => ({ ...source, vaultRelativePath: resolveKnowledgePath(vaultRoot, source.vaultRelativePath) })))
         .map((source) => ({
           vaultRelativePath: source.vaultRelativePath,
           contentRevision: source.markerRevision
@@ -455,6 +456,9 @@ export class KnowledgeAgentIndex {
         }));
     }
 
+    for (const entry of Object.values(combined)) {
+      entry.rawSources = entry.rawSources.map((source) => ({ ...source, vaultRelativePath: resolveKnowledgePath(vaultRoot, source.vaultRelativePath) }));
+    }
     const nextPaths = Object.keys(combined).sort((left, right) =>
       left.localeCompare(right)
     );
@@ -568,13 +572,14 @@ async function buildCandidateEntry(
 
 async function walkKnowledgeRoot(
   vaultRoot: string,
-  kind: KnowledgeAgentKind
+  kind: KnowledgeAgentKind,
+  actualRoot: string = kind
 ): Promise<Array<{
   absolutePath: string;
   vaultRelativePath: string;
   stat: Stats;
 }>> {
-  const rootPath = path.join(vaultRoot, kind);
+  const rootPath = path.join(vaultRoot, actualRoot);
   const rootStat = await fsp.lstat(rootPath).catch((error) => {
     if (isMissingPathError(error)) return null;
     throw error;
@@ -631,7 +636,7 @@ function shouldIndexPath(
 ): boolean {
   const extension = path.extname(relativePath).toLowerCase();
   if (kind === "raw") {
-    const lower = relativePath.toLowerCase();
+    const lower = knowledgeRolePath(relativePath).toLowerCase();
     if (lower === "raw/index.md" || /^raw\/index \d+\.md$/u.test(lower)) {
       return false;
     }
@@ -695,7 +700,7 @@ function resolveRawLink(value: string, knowledgePath: string): string | null {
   }
   if (!decoded || /^[a-z]+:\/\//iu.test(decoded)) return null;
   const withoutAnchor = decoded.split(/[?#]/u, 1)[0]?.replace(/^\/+/, "") ?? "";
-  const candidate = withoutAnchor.toLowerCase().startsWith("raw/")
+  const candidate = knowledgeRolePath(withoutAnchor).toLowerCase().startsWith("raw/")
     ? path.posix.normalize(withoutAnchor)
     : path.posix.normalize(path.posix.join(
         path.posix.dirname(knowledgePath),
@@ -1136,7 +1141,7 @@ function normalizeKnowledgePath(value: string): string {
 
 function normalizeRawSourcePath(value: string): string {
   const normalized = normalizeKnowledgePath(value);
-  if (!normalized.toLowerCase().startsWith("raw/")) {
+  if (!knowledgeRolePath(normalized).toLowerCase().startsWith("raw/")) {
     throw new KnowledgeAgentIndexError("invalid_path", "Knowledge source must be under raw/.");
   }
   return normalized;
@@ -1185,7 +1190,7 @@ function normalizeNonNegativeNumber(value: unknown): number {
 }
 
 function knowledgeKindForPath(value: string): KnowledgeAgentKind | null {
-  const root = value.split("/", 1)[0]?.toLowerCase();
+  const root = knowledgeRootRole(value);
   return KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)
     ? root as KnowledgeAgentKind
     : null;
@@ -1208,12 +1213,12 @@ function knowledgeTitle(relativePath: string, text: string): string {
 }
 
 function contentRevision(bytes: Uint8Array, relativePath = ""): string {
-  if (relativePath.startsWith("raw/") && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
+  if (knowledgeRolePath(relativePath).startsWith("raw/") && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 async function streamedContentRevision(absolutePath: string, relativePath = ""): Promise<string> {
-  if (relativePath.startsWith("raw/") && isRawMarkdownPath(relativePath)) return contentRevision(await fsp.readFile(absolutePath), relativePath);
+  if (knowledgeRolePath(relativePath).startsWith("raw/") && isRawMarkdownPath(relativePath)) return contentRevision(await fsp.readFile(absolutePath), relativePath);
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(absolutePath);

@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -47,7 +48,7 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
     if (message.role !== "toolResult") continue;
     const details = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
     const adopt = (relative: unknown, revision: unknown) => {
-      if (typeof relative === "string" && relative.startsWith("raw/") && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
+      if (typeof relative === "string" && knowledgeRolePath(relative).startsWith("raw/") && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
     };
     if (message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
       if (details.sourceBodyFingerprints && typeof details.sourceBodyFingerprints === "object") {
@@ -554,7 +555,7 @@ function normalizeMaintenanceRawPath(value: unknown): string {
   }
   const normalized = value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
   if (
-    !normalized.toLocaleLowerCase().startsWith("raw/")
+    !knowledgeRolePath(normalized).toLocaleLowerCase().startsWith("raw/")
     || !isRawMarkdownPath(normalized)
     || normalized.split("/").some((part) => !part || part === "." || part === "..")
   ) {

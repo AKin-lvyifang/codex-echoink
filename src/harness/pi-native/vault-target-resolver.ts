@@ -1,3 +1,4 @@
+import { resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import * as path from "node:path";
 
 export type VaultPathKind =
@@ -111,7 +112,7 @@ export class VaultTargetResolver {
       });
     }
 
-    const segments = requestedRelativePath.split("/");
+    const segments = resolveKnowledgePath(root.canonicalPath, requestedRelativePath, false).split("/");
     let requestedCursor = root.requestedPath;
     let canonicalCursor = root.canonicalPath;
     let encounteredSymbolicLink = root.requestedPath !== root.canonicalPath;

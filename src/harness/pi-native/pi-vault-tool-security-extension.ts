@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "../../knowledge-base/root-paths";
 import {
   type InlineExtension,
   type ToolCallEvent,
@@ -449,7 +450,7 @@ function noteReadKnowledgeReferenceDetails(
     || fileName.replace(/\.[^.]+$/u, "")
     || relativePath;
   const lineNumber = firstEvidenceIndex + 1;
-  const contentRevision = relativePath.startsWith("raw/") && typeof snapshot.bodyFingerprint === "string"
+  const contentRevision = knowledgeRolePath(relativePath).startsWith("raw/") && typeof snapshot.bodyFingerprint === "string"
     ? `sha256:${snapshot.bodyFingerprint.split(":").at(-1)}`
     : `sha256:${snapshot.contentSha256}`;
   const reference = Object.freeze({

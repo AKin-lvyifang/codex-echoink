@@ -467,6 +467,7 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
   let duringWrite: (() => Promise<void>) | undefined;
   try {
     await fsp.mkdir(path.join(vaultRootPath, "raw"), { recursive: true });
+    await fsp.mkdir(path.join(vaultRootPath, "wiki"), { recursive: true });
     await fsp.mkdir(path.join(vaultRootPath, "outputs"), { recursive: true });
     await fsp.mkdir(privateKnowledgeRootPath, { recursive: true, mode: 0o700 });
     await fsp.chmod(privateKnowledgeRootPath, 0o700);

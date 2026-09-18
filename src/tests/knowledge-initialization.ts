@@ -910,7 +910,9 @@ async function assertConflictCancellationAndProviderRecoveryStops(): Promise<voi
     await waitUntil(() => host.batchCalls.length === 1);
     const cancelled = await initializer.cancel();
     assert.equal(cancelled?.status, "cancelled");
-    await waitForTerminal(initializer);
+    const paused = await waitForTerminal(initializer);
+    assert.equal(paused.pauseCause, "pause_button");
+    assert.match(paused.lastError, /暂停按钮/u);
     assert.equal(host.read("notes/move-before-cancel.md"), null);
     assert.equal(
       host.read("raw/imported/notes/move-before-cancel.md"),
@@ -1029,6 +1031,7 @@ async function assertRestartPausesWithoutProviderReplay(): Promise<void> {
     const resumed = new KnowledgeBaseInitializer(host);
     await resumed.initialize();
     assert.equal(resumed.snapshot()?.status, "paused");
+    assert.equal(resumed.snapshot()?.pauseCause, "reload");
     assert.equal(host.batchCalls.length, 0);
   });
 }
