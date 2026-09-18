@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.3.1 - 2026-09-19
+
+![EchoInk Agent 2.3.1](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.1/assets/releases/echoink-agent-2.3.1-release.png)
+
+### 中文
+
+**目录看得懂，整理有交代。**
+
+2.3.1 是一次日常体验优化，重点改进知识库整理、待办统计和操作反馈。
+
+- **目录中英双语：** 初始化和维护使用中英文分类与文件夹名称。已有仓库可点击“优化名称”，将英文一级目录和 Wiki 分类目录实际改名，例如 `raw` 变为 `原始资料（raw）`；已有双语目录继续复用。
+- **复原仓库：** 初始化前保存原始目录记录，之后可把记录中的文件移回原位置。保留最新文件内容和新增文件，同名冲突会保留并说明；这是目录位置恢复，不是内容版本回滚。
+- **初始化更顺畅：** 已有目录直接复用，只补缺失项；单个文件的问题单独说明。Raw 属性或标签更新不再阻断分析，正文变化会重新读取。模型读完资料后认为无需新增知识，也属于正常结果；尚未读取的资料继续列为待处理。
+- **进度和原因说清楚：** 分项显示“准备目录”“归档文件”“分析笔记”的动作、数量和单位。暂停、运行中断和具体错误分别说明，下一步对应实际按钮；初始化需要回答模型问题时，可在当前页面处理。
+- **待办年度热力图：** 在待办设置中查看累计、今日和全年完成数，切换年份，指向格子查看当天数量。旧记录没有完成日期时只计入累计，不会被随意补到某一天。
+- **细节修复：** 改善小窗口下的设置布局，统一新增目录操作卡片；修复 Windows 上部分头像与身份保存报错，以及自定义配置目录、弹出窗口消息测量和收藏失败后的提示与状态恢复。
+
+#### 使用与升级
+
+在 **设置 → EchoInk Agent → 知识库 → 目录管理** 中使用“优化名称”和“复原”；没有原始目录记录时，“复原”不可用。年度完成记录位于 **待办** 设置页。升级本身不要求重新初始化仓库。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。本轮新增目录改名与初始化反馈的完整实机复验尚未完成，Windows/Linux 的对应实机操作也尚未验证。主文件仍超过 Obsidian Sync Standard 的 5 MiB 单文件限制，使用该方案时请在各设备分别更新。头图为功能示意。
+
+### English
+
+**Readable folders. Clearer organization progress.**
+
+2.3.1 focuses on everyday improvements to knowledge organization, to-do statistics, and action feedback.
+
+- **Bilingual folder names:** Initialization and maintenance use Chinese and English category and folder names. In existing vaults, select **Optimize names** to rename English root folders and Wiki category folders on disk—for example, `raw` becomes `原始资料（raw）`. Existing bilingual folders are reused.
+- **Restore vault:** Initialization saves a record of the original folder layout. Restore moves recorded files back to their original locations while keeping their latest content and new files. Conflicts are preserved and explained. This restores locations, not earlier versions of file content.
+- **Smoother initialization:** Existing folders are reused and missing ones are added; individual file issues are reported separately. Raw property or tag updates no longer interrupt analysis, and changed note bodies are read again. A model review that reads the sources and finds no new knowledge to add is also a valid result; unread sources remain pending.
+- **Clear progress and reasons:** Folder preparation, file organization, and note analysis are listed with explicit actions, counts, and units. Pauses, interruptions, and specific errors are distinguished, with next steps matching the available buttons. Questions from the model can be answered on the initialization page.
+- **Yearly to-do heatmap:** View total, today, and annual completion counts in To-dos settings. Switch years and hover over a day for its count. Older completions without a known date count toward the total only; no date is invented.
+- **Detail fixes:** Improved settings layouts in smaller windows and consistent cards for folder actions. Fixed some avatar and identity save errors on Windows, custom configuration-folder paths, message measurement in pop-out windows, and feedback and state recovery after a failed favorite save.
+
+#### Use and upgrade
+
+Open **Settings → EchoInk Agent → Knowledge → Folder management** for **Optimize names** and **Restore**. Restore is unavailable without an original layout record. Annual completion history is in **To-dos** settings. Upgrading does not require vault reinitialization.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Full real-app revalidation of the new folder-renaming and initialization-feedback flow remains pending, including corresponding Windows/Linux interaction. The main file still exceeds Obsidian Sync Standard's 5 MiB per-file limit; update each device separately if you use that plan. The cover is illustrative.
+
 ## 2.3.0 - 2026-09-13
 
 ![EchoInk Agent 2.3.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.0/assets/releases/echoink-agent-2.3.0-release.png)
