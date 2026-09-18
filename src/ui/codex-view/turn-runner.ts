@@ -1966,43 +1966,48 @@ export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label
     text: uiText(view, "正在执行...", "Running..."),
     createdAt: Date.now()
   };
-  await withConversationMutation(view, active.id, async () => {
-    active.messages.push(userMessage, assistantMessage);
-    active.updatedAt = Date.now();
-    view.running = true;
-    view.renderTabs();
-    view.renderMessages({ forceBottom: true });
-    view.renderToolbar();
-    await view.plugin.saveSettings(true);
-  });
   let terminalStatus = "completed";
   let terminalText = "";
   try {
+    await withConversationMutation(view, active.id, async () => {
+      active.messages.push(userMessage, assistantMessage);
+      active.updatedAt = Date.now();
+      view.running = true;
+      view.renderTabs();
+      view.renderMessages({ forceBottom: true });
+      view.renderToolbar();
+      await view.plugin.saveSettings(true);
+    });
     terminalText = await runner();
-    new Notice(label);
   } catch (error) {
     terminalStatus = "failed";
     terminalText = error instanceof Error ? error.message : String(error);
-    new Notice(uiText(
+  } finally {
+    try {
+      await withConversationMutation(view, active.id, async () => {
+        assistantMessage.status = terminalStatus;
+        assistantMessage.text = terminalText;
+        active.updatedAt = Date.now();
+        await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
+        await view.plugin.saveSettings(true);
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      terminalText = [terminalText, uiText(view, `结果保存失败：${detail}`, `Could not save the result: ${detail}`)].filter(Boolean).join("\n");
+      terminalStatus = "failed";
+      assistantMessage.status = terminalStatus;
+      assistantMessage.text = terminalText;
+    } finally {
+      view.running = false;
+      view.renderMessages(messageRenderOptionsForRunUpdate(view));
+      view.renderToolbar();
+      view.applyStatus();
+    }
+    new Notice(terminalStatus === "completed" ? label : uiText(
       view,
       `知识库管理失败：${terminalText}`,
       `Knowledge management failed: ${terminalText}`
     ));
-  } finally {
-    await withConversationMutation(view, active.id, async () => {
-      assistantMessage.status = terminalStatus;
-      assistantMessage.text = terminalText;
-      active.updatedAt = Date.now();
-      try {
-        await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
-        await view.plugin.saveSettings(true);
-      } finally {
-        view.running = false;
-      }
-    });
-    view.renderMessages(messageRenderOptionsForRunUpdate(view));
-    view.renderToolbar();
-    view.applyStatus();
   }
 }
 

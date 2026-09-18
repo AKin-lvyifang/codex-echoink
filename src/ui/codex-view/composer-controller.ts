@@ -180,18 +180,30 @@ export function renderToolbar(host: CodexComposerHost): void {
     {
       onOpenAddMenu: (event) => openAddMenu(host, event),
       onEnhancePrompt: () => host.enhancePrompt(),
-      onCaptureKnowledgeSource: () => host.runKnowledgeBaseShortcut(
-        conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
-        async () => {
-        const paths = await host.plugin.getKnowledgeSurfaceService()?.captureLink();
-        return paths?.length
-          ? conversationUiText(
+      onCaptureKnowledgeSource: () => {
+        void host.runKnowledgeBaseShortcut(
+          conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
+          async () => {
+            const paths = await host.plugin.getKnowledgeSurfaceService()?.captureLink();
+            return paths?.length
+              ? conversationUiText(
+                host.plugin.settings.settingsLanguage,
+                `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
+                `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
+              )
+              : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
+          }
+        ).catch((error: unknown) => {
+          host.running = false;
+          host.renderToolbar();
+          const detail = error instanceof Error ? error.message : String(error);
+          new Notice(conversationUiText(
             host.plugin.settings.settingsLanguage,
-            `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
-            `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
-          )
-          : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
-      }),
+            `收藏失败：${detail}`,
+            `Save failed: ${detail}`
+          ));
+        });
+      },
       onPermissionChange: (value) => {
         host.selectedPermission = value;
         persistComposerDefaults(host);
