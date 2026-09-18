@@ -1,3 +1,4 @@
+import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { FileApprovalTicketStore } from "../../harness/pi-native/tool-authorization";
 import { FileDomainReceiptStore } from "../../harness/pi-native/domain-receipt-store";
 import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteExecutionPort } from "../../plugin/pi-vault-tool-production";
@@ -137,6 +138,11 @@ async function assertSearchAndReadLimits(fixture: Fixture): Promise<void> {
       <= VAULT_READ_RESULT_LIMIT_BYTES
   );
   assert.equal(read.snapshot.contentSha256, sha256(largeText));
+  await fixture.write("raw/large.md", `---\ntags: [test]\n---\n${largeText}`);
+  const raw = await fixture.service.noteRead({ vaultId: fixture.adapter.vaultId, relativePath: "raw/large.md" });
+  assert.equal(raw.snapshot.truncated, true);
+  assert.equal(raw.snapshot.bodyFingerprint, rawDigestFingerprint("raw/large.md", Buffer.from(largeText)));
+  assert.notEqual(raw.snapshot.bodyFingerprint, rawDigestFingerprint("raw/large.md", Buffer.from(raw.snapshot.content)));
 }
 
 async function assertWritesUseCasReadbackAndRecoverableTrash(
@@ -228,15 +234,15 @@ async function assertWritesUseCasReadbackAndRecoverableTrash(
     "must remain byte exact",
     ""
   ].join("\n");
-  await fixture.write("metadata.md", metadataSource);
+  await fixture.write("raw/metadata.md", metadataSource);
   const metadataBefore = await fixture.service.noteRead({
     vaultId: fixture.adapter.vaultId,
-    relativePath: "metadata.md"
+    relativePath: "raw/metadata.md"
   });
   const metadata = await fixture.service.metadataUpdate({
     vaultId: fixture.adapter.vaultId,
     operationIdentity: "op-metadata",
-    relativePath: "metadata.md",
+    relativePath: "raw/metadata.md",
     expectedVersion: metadataBefore.snapshot.version,
     patch: {
       set: { title: "New", tags: ["phase2", "vault"] },
@@ -245,7 +251,7 @@ async function assertWritesUseCasReadbackAndRecoverableTrash(
   });
   assert.equal(metadata.status, "completed");
   assert.equal(metadata.readbackVerified, true);
-  const metadataAfter = await fixture.read("metadata.md");
+  const metadataAfter = await fixture.read("raw/metadata.md");
   assert.match(metadataAfter, /title: New/u);
   assert.doesNotMatch(metadataAfter, /^keep:/mu);
   assert.equal(

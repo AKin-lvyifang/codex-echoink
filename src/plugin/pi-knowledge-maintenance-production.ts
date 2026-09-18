@@ -1,3 +1,5 @@
+import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -28,7 +30,6 @@ import type {
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import {
   PHASE3_MAINTENANCE_RAW_INDEX_PATH,
-  PHASE3_MAINTENANCE_RECOVERED_RETRY_MESSAGE,
   PHASE3_MAINTENANCE_TRACKER_PATH,
   Phase3KnowledgeMaintenanceService,
   Phase3MaintenanceError,
@@ -49,6 +50,7 @@ import {
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
   echoInkKnowledgeMaintenanceProtocolPrompt,
+  completeKnowledgeMaintenanceCandidateSources,
   validateKnowledgeMaintenanceCandidateSources
 } from "../knowledge-base/knowledge-maintenance-protocol";
 import {
@@ -174,7 +176,7 @@ implements PiKnowledgeMaintenanceToolPort {
     try {
       await this.onTerminal?.({ input, result, at: this.now() });
     } catch (error) {
-      console.error("EchoInk maintenance history could not be saved", error);
+      console.error("EchoInk maintenance history could not be saved", knowledgeErrorDetail(error));
     }
     return result;
   }
@@ -185,24 +187,17 @@ implements PiKnowledgeMaintenanceToolPort {
     try {
       this.assertIdentity(input);
       if (input.signal?.aborted) return cancelledResult();
-      const actions = input.candidateActions ?? [];
-      if (actions.length > 0 && !(input.assessments?.length)) {
-        throw new Phase3MaintenanceError(
-          "invalid_input",
-          "Knowledge maintenance writes require at least one assessment"
-        );
-      }
-      const sourcePaths = input.sourcePaths?.length
-        ? [...input.sourcePaths]
-        : extractExplicitRawPaths(input.request);
-      if (sourcePaths.length === 1 && this.knowledgeAgentIndex) {
+      const requestedActions = input.candidateActions ?? [];
+      const requestedSources = input.sourcePaths?.length ? [...input.sourcePaths] : extractExplicitRawPaths(input.request);
+      if (requestedActions.length === 0 && requestedSources.length === 1 && this.knowledgeAgentIndex) {
         const reliable = await this.knowledgeAgentIndex
-          .readReliableKnowledgeForRaw(sourcePaths[0])
+          .readReliableKnowledgeForRaw(requestedSources[0])
           .catch(() => null);
         if (reliable?.entries.length) {
           return Object.freeze({
             status: "completed" as const,
             producedPaths: Object.freeze([]),
+            processedSourcePaths: Object.freeze(requestedSources),
             maintenanceResult: createKnowledgeMaintenanceResultEnvelope({
               status: "noop",
               assessments: input.assessments
@@ -214,12 +209,54 @@ implements PiKnowledgeMaintenanceToolPort {
           });
         }
       }
+      const sourcePaths: string[] = [];
+      const issues: { code: string; message: string; path?: string }[] = [];
+      const refreshedSources: Record<string, string> = {};
+      const changed: string[] = [];
+      for (const relativePath of requestedSources) {
+        try {
+          const file = await readImmutableFile(this.vaultRootPath, normalizeVaultRelativePath(relativePath));
+          const fingerprint = rawDigestFingerprint(relativePath, file.bytes);
+          const expected = input.sourceBodyFingerprints?.[relativePath];
+          if (expected && expected.split(":").at(-1) !== fingerprint.split(":").at(-1)) {
+            if (!changed.length) {
+              // Only acknowledge the source actually included in this bounded Tool result.
+              const text = UTF8_DECODER.decode(file.bytes);
+              let excerpt = text;
+              while (Buffer.byteLength(excerpt, "utf8") > 5_500) excerpt = excerpt.slice(0, Math.floor(excerpt.length * 0.9));
+              refreshedSources[relativePath] = fingerprint;
+              changed.push(`来源正文已变化，已自动重读 ${relativePath}。当前全文版本 ${fingerprint}；返回 ${Buffer.byteLength(excerpt, "utf8")} / ${file.bytes.length} 字节${excerpt === text ? "" : "（当前片段，需要更多内容时可继续读取）"}。请按当前内容重新判断，不重复提交旧候选：\n${excerpt}`);
+            }
+          }
+          sourcePaths.push(relativePath);
+        } catch (error) { issues.push({ code: "source_unavailable", path: relativePath, message: `读取 ${relativePath}：${knowledgeErrorDetail(error)}；该来源待处理。` }); }
+      }
+      if (changed.length) return Object.freeze({
+        status: "failed", errorCode: "preview_stale", message: changed.join("\n\n"), refreshedSources,
+        maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: Object.keys(refreshedSources).map((path) => ({ code: "source_changed", path, message: "正文已变化，已自动重读；请重新判断该来源的候选。" })) })
+      });
+      if (requestedSources.length && !sourcePaths.length) throw new Phase3MaintenanceError("invalid_input", issues.map((issue) => issue.message).join("\n"));
+      const actions: NonNullable<PiKnowledgeMaintenanceToolInput["candidateActions"]>[number][] = [];
+      for (const action of requestedActions) {
+        try {
+          const targetPath = await this.normalizeCandidateTarget(action.targetPath);
+          const current = await readImmutableFileIfPresent(this.vaultRootPath, targetPath);
+          const expected = action.expectedTarget;
+          if (expected.kind === "missing" ? current !== null : !current || `sha256:${current.sha256}` !== expected.contentRevision) {
+            throw new Error("目标已变化，已重读并保留最新内容；请重新读取此目标后调整候选。");
+          }
+          actions.push({ ...action, targetPath });
+        } catch (error) { issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
+      }
+      if (requestedActions.length && !actions.length) return Object.freeze({ status: "failed", errorCode: "proposal_invalid", message: issues.map((issue) => issue.message).join("\n"), maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues }) });
       const preference = requirePreferenceSnapshot(input.preferenceSnapshot);
       const proposal = new FilePhase3MaintenanceShadowProposalPort({
           vaultRootPath: this.vaultRootPath,
           privateKnowledgeRootPath: this.privateKnowledgeRootPath,
           vaultId: this.vaultId,
-          candidateActions: actions
+          candidateActions: actions,
+          readSourcePaths: Object.keys(input.sourceBodyFingerprints ?? {}),
+          issues
       });
       const committed = await this.createService(proposal).execute({
         vaultId: this.vaultId,
@@ -237,19 +274,22 @@ implements PiKnowledgeMaintenanceToolPort {
         },
         ...(input.signal ? { signal: input.signal } : {})
       });
+      const stale = committed.notes.length === 0 ? committed.issues.find((issue) => issue.code === "preview_stale" && issue.path?.startsWith("raw/")) : undefined;
+      if (stale?.path) throw new Phase3MaintenanceError("preview_stale", stale.message, stale.path);
       if (committed.appliedPaths.length && this.onCommitted) {
         await Promise.resolve(this.onCommitted(committed.appliedPaths))
           .catch(() => undefined);
       }
       return Object.freeze({
-        status: committed.status === "completed" ? "completed" as const : "failed" as const,
+        status: committed.status === "completed" || committed.status === "partial" ? "completed" as const : "failed" as const,
+        processedSourcePaths: Object.freeze([...proposal.usedSourcePaths]),
         producedPaths: committed.appliedPaths,
         maintenanceResult: createKnowledgeMaintenanceResultEnvelope({
-          status: actions.length === 0 && committed.status === "completed"
-            ? "noop"
-            : committed.status,
+          status: committed.status === "completed" && committed.notes.length === 0
+            ? (requestedActions.length ? "failed" : "noop")
+            : committed.status === "completed" && issues.length ? "partial" : committed.status,
           notes: committed.notes,
-          issues: committed.issues,
+          issues: [...issues, ...committed.issues],
           systemPaths: committed.systemPaths,
           assessments: input.assessments
         }),
@@ -264,7 +304,7 @@ implements PiKnowledgeMaintenanceToolPort {
               : "write_failed" as const }),
         message: [
           committed.status === "completed" && actions.length === 0
-            ? "Raw 已检查，没有可提炼内容；原文保留，本轮未生成知识笔记。"
+            ? (proposal.usedSourcePaths.size ? "已读取的 Raw 没有可提炼内容；原文保留，本轮未生成知识笔记。" : "本轮未生成知识笔记；未读或未采用的 Raw 保留为待处理。")
             : committed.status === "completed"
               ? "知识维护已安全写入并完成 Readback。"
               : committed.status === "partial"
@@ -272,11 +312,24 @@ implements PiKnowledgeMaintenanceToolPort {
                 : committed.status === "write_uncertain"
                   ? "知识写入状态不确定，已停止继续写入。"
                   : "知识维护失败，未完成回读验证的候选不会显示为成功。",
+          ...issues.map((issue) => issue.message),
+          ...committed.issues.map((issue) => issue.message),
           ...committed.appliedPaths.map((relativePath) => `- ${relativePath}`)
         ].join("\n")
       });
     } catch (error) {
       if (input.signal?.aborted) return cancelledResult();
+      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && error.relativePath?.startsWith("raw/")) {
+        try {
+          const file = await readImmutableFile(this.vaultRootPath, error.relativePath);
+          const fingerprint = rawDigestFingerprint(error.relativePath, file.bytes);
+          let excerpt = UTF8_DECODER.decode(file.bytes);
+          while (Buffer.byteLength(excerpt, "utf8") > 5_500) excerpt = excerpt.slice(0, Math.floor(excerpt.length * 0.9));
+          return Object.freeze({ status: "failed", errorCode: "preview_stale", refreshedSources: { [error.relativePath]: fingerprint },
+            message: `执行中来源正文变化，已自动重读 ${error.relativePath}。当前全文版本 ${fingerprint}；返回 ${Buffer.byteLength(excerpt, "utf8")} / ${file.bytes.length} 字节，请按当前内容重新判断该候选，其他来源无需重来：\n${excerpt}`,
+            maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: [{ code: "source_changed", path: error.relativePath, message: "执行中正文变化，已自动重读，请修正受影响候选后继续。" }] }) });
+        } catch { /* report the original specific failure if reread is unavailable */ }
+      }
       return Object.freeze({
         status: "failed" as const,
         ...(error instanceof Phase3MaintenanceError
@@ -301,6 +354,24 @@ implements PiKnowledgeMaintenanceToolPort {
         })
       });
     }
+  }
+
+  private async normalizeCandidateTarget(value: string): Promise<string> {
+    const target = normalizeVaultRelativePath(value);
+    if (!/^(wiki|projects)\//u.test(target) || !target.endsWith(".md") || target.split("/").some((part) => part.startsWith("."))) throw new Error("候选只可写入 wiki 或 projects 的 Markdown。");
+    if (!target.startsWith("wiki/")) return target;
+    const parts = target.split("/");
+    for (let depth = 1; depth < parts.length - 1; depth++) {
+      const parent = parts.slice(0, depth).join("/");
+      const name = parts[depth].replace(/^(.+?)\s*\(([a-z][a-z0-9_-]*)\)$/iu, "$1（$2）");
+      const siblings: import("node:fs").Dirent[] = await readdir(path.join(this.vaultRootPath, parent), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; });
+      const id = wikiFolderEnglishId(name);
+      const existing = siblings.find((entry) => entry.isDirectory() && (entry.name === name || (id && wikiFolderEnglishId(entry.name) === id)));
+      if (existing) parts[depth] = existing.name;
+      else if (isBilingualWikiFolder(name)) parts[depth] = name;
+      else throw new Error(`分类 ${name} 需要中文（english-slug）；本候选跳过，其余继续。`);
+    }
+    return parts.join("/");
   }
 
   private createService(
@@ -578,11 +649,11 @@ implements Phase3MaintenanceSourceSnapshotPort {
     );
     const text = UTF8_DECODER.decode(raw.bytes);
     const attachments: Phase3MaintenanceImmutableFileBinding[] = [];
-    for (const relativePath of extractAttachmentPaths(raw.relativePath, text)) {
+    for (const relativePath of extractAttachmentPaths(raw.relativePath, canonicalRawMarkdownForDigest(text))) {
       const attachment = await readImmutableFileIfPresent(
         this.vaultRootPath,
         relativePath
-      );
+      ).catch(() => null);
       if (attachment) attachments.push(fileBinding(attachment));
     }
     attachments.sort((left, right) => left.relativePath.localeCompare(
@@ -590,7 +661,7 @@ implements Phase3MaintenanceSourceSnapshotPort {
       "en"
     ));
     return Object.freeze({
-      raw: fileBinding(raw),
+      raw: Object.freeze({ ...fileBinding(raw), revision: rawDigestFingerprint(raw.relativePath, raw.bytes), contentSha256: rawDigestFingerprint(raw.relativePath, raw.bytes).split(":").at(-1)!, byteLength: Buffer.byteLength(canonicalRawMarkdownForDigest(text), "utf8") }),
       attachments: Object.freeze(attachments)
     });
   }
@@ -662,6 +733,7 @@ class FilePhase3MaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {
 
 class FilePhase3MaintenanceShadowProposalPort
 implements Phase3MaintenanceProposalPort {
+  readonly usedSourcePaths = new Set<string>();
   private readonly vaultRootPath: string;
   private readonly privateKnowledgeRootPath: string;
 
@@ -669,6 +741,8 @@ implements Phase3MaintenanceProposalPort {
     vaultRootPath: string;
     privateKnowledgeRootPath: string;
     vaultId: string;
+    issues: { code: string; message: string; path?: string }[];
+    readSourcePaths: readonly string[];
     candidateActions: readonly Readonly<{
       targetPath: string;
       content: string;
@@ -695,60 +769,20 @@ implements Phase3MaintenanceProposalPort {
       this.privateKnowledgeRootPath,
       ["shadow", previewId]
     );
-    const proposedFolders = new Set<string>();
+    const knowledgeActions: { targetPath: string; content: string; expectedTarget: typeof this.options.candidateActions[number]["expectedTarget"] }[] = [];
     for (const action of this.options.candidateActions) {
-      const target = normalizeVaultRelativePath(action.targetPath);
-      if (!target.startsWith("wiki/")) continue;
-      const parts = target.split("/").slice(0, -1);
-      for (let depth = 2; depth <= parts.length; depth++) {
-        const folder = parts.slice(0, depth).join("/");
-        const name = parts[depth - 1];
-        const existing = await lstat(path.join(this.vaultRootPath, folder)).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT") return null; throw error;
+      try {
+        const content = completeKnowledgeMaintenanceCandidateSources({
+          targetPath: action.targetPath, content: action.content,
+          selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 }))
         });
-        if (existing || proposedFolders.has(folder)) continue;
-        if (!isBilingualWikiFolder(name)) throw new Phase3MaintenanceError("proposal_invalid", "wiki_category_requires_bilingual", folder);
-        const parent = parts.slice(0, depth - 1).join("/");
-        const siblings: import("node:fs").Dirent[] = await readdir(path.join(this.vaultRootPath, parent), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT") return []; throw error;
-        });
-        const names = [...siblings.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
-          ...[...proposedFolders].filter((entry) => path.posix.dirname(entry) === parent).map((entry) => path.posix.basename(entry))];
-        const duplicate = names.find((sibling) => wikiFolderEnglishId(sibling) === wikiFolderEnglishId(name));
-        if (duplicate) throw new Phase3MaintenanceError("proposal_invalid", "wiki_category_already_exists", `${parent}/${duplicate}`);
-        proposedFolders.add(folder);
-      }
+        const adopted = validateKnowledgeMaintenanceCandidateSources({ targetPath: action.targetPath, content,
+          selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 })) });
+        for (const source of adopted) this.usedSourcePaths.add(source.relativePath);
+        knowledgeActions.push({ ...action, content });
+      } catch (error) { this.options.issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
     }
-    const knowledgeActions = this.options.candidateActions.map((action) => {
-      const requestedTargetPath = normalizeVaultRelativePath(action.targetPath);
-      if (
-        !requestedTargetPath.toLowerCase().endsWith(".md")
-        || (
-          !requestedTargetPath.startsWith("wiki/")
-          && !requestedTargetPath.startsWith("projects/")
-        )
-        || requestedTargetPath.split("/").some((segment) =>
-          segment.startsWith("."))
-      ) {
-        throw new Error("phase3_model_candidate_outside_knowledge_targets");
-      }
-      // Keep the formal target exactly aligned with the Agent's note_read
-      // evidence. Only the private Shadow file name is flattened below.
-      const targetPath = requestedTargetPath;
-      validateKnowledgeMaintenanceCandidateSources({
-        targetPath,
-        content: action.content,
-        selectedSources: input.selectedSources.map((source) => ({
-          relativePath: source.raw.relativePath,
-          contentSha256: source.raw.contentSha256
-        }))
-      });
-      return Object.freeze({
-        targetPath,
-        content: action.content,
-        expectedTarget: action.expectedTarget
-      });
-    });
+    if (this.options.candidateActions.length && !knowledgeActions.length) throw new Phase3MaintenanceError("proposal_invalid", this.options.issues.map((issue) => issue.message).join("\n"));
     const usedNames = new Set<string>();
     for (const action of knowledgeActions) {
       const fileName = uniqueShadowFileName(action.targetPath, usedNames);
@@ -757,9 +791,16 @@ implements Phase3MaintenanceProposalPort {
         Buffer.from(action.content, "utf8")
       );
     }
+    for (const source of input.selectedSources) {
+      if (this.options.readSourcePaths.includes(source.raw.relativePath)) this.usedSourcePaths.add(source.raw.relativePath);
+    }
     const managedActions = await deterministicManagedActions(
       this.vaultRootPath,
-      input,
+      {
+        ...input,
+        selectedSources: input.selectedSources.filter((source) => this.usedSourcePaths.has(source.raw.relativePath)),
+        remainingRawPaths: [...new Set([...input.remainingRawPaths, ...input.selectedSources.filter((source) => !this.usedSourcePaths.has(source.raw.relativePath)).map((source) => source.raw.relativePath)])]
+      },
       knowledgeActions
     );
     const actions: readonly Readonly<Phase3MaintenanceProposalAction>[] =
@@ -816,7 +857,7 @@ async function deterministicManagedActions(
     ...(input.remainingRawPaths.length
       ? [
           "",
-          "## Changed Raw",
+          "## Changed Raw（待处理）",
           ...input.remainingRawPaths.map((relativePath) =>
             `- \`${relativePath}\``
           )
@@ -1260,38 +1301,9 @@ function cancelledResult(): Readonly<PiKnowledgeMaintenanceToolResult> {
 }
 
 function safeMaintenanceError(error: unknown): string {
-  if (!(error instanceof Phase3MaintenanceError)) {
-    return "Knowledge maintenance failed; unverified candidates are not reported as successful.";
-  }
-  switch (error.code) {
-    case "invalid_input":
-      return "维护请求无效；请检查是否提供了可处理的 Raw 来源。";
-    case "invalid_raw_path":
-      return "Raw 来源路径无效；请重新选择当前 Vault 内的 Raw 文件。";
-    case "proposal_invalid":
-      if (error.message === "wiki_category_requires_bilingual") return "新 Wiki 分类目录须为 中文（english-slug）；本轮没有提交。";
-      if (error.message === "wiki_category_already_exists") return `请复用已有 Wiki 分类 ${error.relativePath}，不要新建同义目录；本轮没有提交。`;
-      if (error.message === PHASE3_MAINTENANCE_RECOVERED_RETRY_MESSAGE) {
-        return "上一次维护事务已完成恢复；本轮候选已作废，请重新运行 /maintain。";
-      }
-      return "维护候选未通过固定协议校验；本轮没有提交。";
-    case "preview_not_found":
-      return "维护预览不存在；请重新生成预览。";
-    case "preview_inactive":
-      return "维护预览已失效或已处理；请重新生成预览。";
-    case "preview_stale":
-      return "维护预览或来源已变化；请重新生成预览。";
-    case "approval_failed":
-      return "维护授权上下文无效；本轮没有继续写入。";
-    case "wal_conflict":
-      return "维护事务状态冲突；请先核对当前维护状态。";
-    case "write_failed":
-      return "维护写入未完成；请核对目标后再决定是否重试。";
-    case "write_uncertain":
-      return "维护写入结果尚不确定；请先核对实际文件，勿自动重试。";
-    case "recovery_blocked":
-      return "维护恢复被阻塞；请先核对上一次事务状态。";
-  }
+  const code = error instanceof Phase3MaintenanceError ? error.code : "knowledge_maintenance_failed";
+  const file = error instanceof Phase3MaintenanceError && error.relativePath ? `（${error.relativePath}）` : "";
+  return `知识维护 ${code}${file}：${knowledgeErrorDetail(error)}；已完成内容保留，请只处理受影响项。`;
 }
 
 function extractExplicitRawPaths(value: string): string[] {

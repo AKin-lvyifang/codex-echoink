@@ -1,3 +1,4 @@
+import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -72,6 +73,8 @@ export interface VaultFileSnapshot {
   byteLength: number;
   content: string;
   contentSha256: string;
+  /** Full Raw body revision, independent of the public excerpt size. */
+  bodyFingerprint?: string;
   truncated: boolean;
 }
 
@@ -344,7 +347,7 @@ export class VaultDomainService {
     });
     throwIfAborted(input.signal);
     const snapshot = await this.adapter.readFile(target, {
-      maxBytes: VAULT_READ_RESULT_LIMIT_BYTES
+      maxBytes: target.relativePath.startsWith("raw/") ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
     });
     if (!snapshot) {
       throw domainError(
@@ -353,11 +356,9 @@ export class VaultDomainService {
       );
     }
     return Object.freeze({
-      snapshot: normalizeSnapshot(
-        snapshot,
-        target,
-        VAULT_READ_RESULT_LIMIT_BYTES
-      )
+      snapshot: Object.freeze({ ...normalizeSnapshot(snapshot, target, VAULT_READ_RESULT_LIMIT_BYTES),
+        ...(!snapshot.truncated && target.relativePath.startsWith("raw/") ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
+      })
     });
   }
 

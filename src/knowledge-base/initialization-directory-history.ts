@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { knowledgeErrorDetail } from "./initialization-error";
 
 interface Position { original: string; current: string; identity: string }
 interface DirectoryHistory {
@@ -76,23 +77,27 @@ export class InitializationDirectoryHistory {
     return record ? { createdAt: record.createdAt, files: record.files.length } : null;
   }
 
-  async capture(jobId: string): Promise<void> {
-    if (await this.read()) return; // Never replace the original with a later layout.
+  async capture(jobId: string): Promise<readonly string[]> {
+    if (await this.read()) return []; // Never replace the original with a later layout.
+    const warnings: string[] = [];
     const record: DirectoryHistory = { version: 1, createdAt: Date.now(), jobId, folders: [], files: [], createdFolders: [], pending: null };
     const walk = async (parent: string): Promise<void> => {
       for (const entry of await fs.readdir(path.join(this.host.vaultRoot, parent), { withFileTypes: true })) {
         if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) continue;
         const relative = parent ? `${parent}/${entry.name}` : entry.name;
-        if (entry.isDirectory()) { record.folders.push(relative); await walk(relative); }
-        else if (entry.isFile() && !["agents.md", "llm-wiki.md"].includes(entry.name.toLowerCase())) {
-          const identity = await this.identity(relative);
-          if (!identity) throw new Error(`记录目录时文件消失：${relative}`);
-          record.files.push({ original: relative, current: relative, identity });
-        }
+        try {
+          if (entry.isDirectory()) { record.folders.push(relative); await walk(relative); }
+          else if (entry.isFile() && !["agents.md", "llm-wiki.md"].includes(entry.name.toLowerCase())) {
+            const identity = await this.identity(relative);
+            if (!identity) continue;
+            record.files.push({ original: relative, current: relative, identity });
+          }
+        } catch (error) { warnings.push(`记录原目录 ${relative}：${knowledgeErrorDetail(error)}；该路径保持原位，其他文件继续。`); }
       }
     };
     await walk("");
     await this.save(record);
+    return warnings;
   }
 
   async createdFolder(relative: string): Promise<void> {
@@ -128,6 +133,20 @@ export class InitializationDirectoryHistory {
     else throw new Error(`上次移动位置无法确认，未猜测：${move.from} → ${move.to}`);
   }
 
+  async moveState(from: string, to: string): Promise<"ready" | "already_moved" | "conflict" | "missing" | "ambiguous"> {
+    const record = await this.read();
+    if (!record) return "ambiguous";
+    try { await this.recoverPending(record); } catch { return "ambiguous"; }
+    const item = record.files.find((item) => item.current === from || item.current === to);
+    const source = await this.identity(from);
+    const target = await this.identity(to);
+    if (!item) return source ? "conflict" : "missing";
+    if (source === null && target === item.identity && item.current === to) return "already_moved";
+    if (source === item.identity && target === null) return "ready";
+    if (source === null && target === null) return "missing";
+    return "conflict";
+  }
+
   async rename(from: string, to: string, assertActive?: () => void): Promise<void> {
     const record = await this.read();
     if (record) await this.recoverPending(record);
@@ -137,6 +156,7 @@ export class InitializationDirectoryHistory {
     if (record) { record.pending = { from, to, identity }; await this.save(record); }
     assertActive?.();
     await this.host.rename(from, to);
+    if (await this.identity(to) !== identity || await this.identity(from) !== null) throw new Error(`移动位置未确认：${from} → ${to}`);
     if (record) await this.applyMove(record, from, to);
   }
 

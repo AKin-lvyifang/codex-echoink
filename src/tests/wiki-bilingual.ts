@@ -28,7 +28,17 @@ export async function runWikiBilingualTests(): Promise<void> {
       removeEmptyFolder: async (name: string) => { await fs.rmdir(path.join(vault, name)); }
     };
     const history = new InitializationDirectoryHistory(host);
-    await history.capture("first");
+    if (process.platform !== "win32" && process.getuid?.() !== 0) {
+      const locked = path.join(vault, "unreadable");
+      await fs.mkdir(locked);
+      await fs.writeFile(path.join(locked, "kept.md"), "keep in place");
+      await fs.chmod(locked, 0);
+      try {
+        const warnings = await history.capture("first");
+        assert.match(warnings.join("\n"), /记录原目录 unreadable：/u);
+        assert.equal(await history.moveState("attachment.bin", "renamed.bin"), "ready", "one unreadable directory must not block independent tracked moves");
+      } finally { await fs.chmod(locked, 0o700); }
+    } else await history.capture("first");
     let folders = ["wiki/AI/sub-topic", "wiki/AI"];
     let modelCalls = 0;
     const renamed: string[] = [];

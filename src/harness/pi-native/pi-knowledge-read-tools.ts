@@ -119,6 +119,7 @@ implements PiVaultAdditionalToolSecurityPort {
   constructor(private readonly options: Readonly<{
     currentRunIdentity(): Readonly<PiKnowledgeRunIdentity>;
     currentWorkflow(): "chat" | "ask" | "maintain" | "none";
+    onSourceRead?(reference: Readonly<PiKnowledgeReference>): void;
     egress: VaultToolResultEgressPort;
   }>) {}
 
@@ -131,7 +132,8 @@ implements PiVaultAdditionalToolSecurityPort {
     }
     if (
       (this.options.currentWorkflow() !== "ask"
-        && this.options.currentWorkflow() !== "chat")
+        && this.options.currentWorkflow() !== "chat"
+        && this.options.currentWorkflow() !== "maintain")
       || this.seenToolCallIds.has(event.toolCallId)
     ) {
       return block("authorization_failed");
@@ -235,6 +237,7 @@ implements PiVaultAdditionalToolSecurityPort {
       const reference = call.result.kind === "read"
         ? call.result.reference
         : null;
+      if (reference) this.options.onSourceRead?.(reference);
       const search = call.result.kind === "search"
         ? call.result
         : null;
