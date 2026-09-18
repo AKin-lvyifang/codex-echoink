@@ -239,8 +239,9 @@ export interface PiKnowledgeUsageEvent {
   readonly personalMemorySources?: readonly Readonly<PersonalMemorySourceReference>[];
 }
 
-/** Read-only Phase 3 domain seam used by the Pi-native runtime. */
+/** Phase 3 domain seam; structural preparation is explicit and write-authorized. */
 export interface PiKnowledgeRuntimePort {
+  prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
   prepareMaintenancePreferences?(): Promise<Readonly<{
     profileVersion: string;

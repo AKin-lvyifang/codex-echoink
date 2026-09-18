@@ -14,6 +14,8 @@ export class Notice {
   }
 }
 
+export class TFolder { path = ""; name = ""; children: (TFile | TFolder)[] = []; }
+
 export class TFile {
   constructor(public readonly path = "") {}
 }

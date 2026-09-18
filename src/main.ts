@@ -1447,6 +1447,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return this.piProviderConfigurationService;
   }
+  async generateWikiFolderNames(systemPrompt: string, userPrompt: string): Promise<string> {
+    return await this.getPiProviderConfigurationService().generateText({
+      draft: this.activePiProviderConfigurationDraft(), systemPrompt, userPrompt,
+      timeoutMs: 60_000, maxTokens: 4_096
+    });
+  }
+  async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
+    const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
+    return `Wiki 目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。${JSON.stringify(result.skipped)}`;
+  }
   private activePiProviderConfigurationDraft(): PiProviderConfigurationDraft {
     const active = getActiveApiProviderModel(this.settings);
     if (!active) throw new Error("请先在 API Provider 中选择可用模型。");

@@ -1,3 +1,4 @@
+import { wikiCategoryLabel } from "./wiki-folder-names";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -14,6 +15,7 @@ export interface KnowledgeBaseDashboardFile {
   path: string;
   size: number;
   mtime: number;
+  createdAt?: number;
   fingerprint?: string;
   rawDigest?: RawDigestFrontmatterRecord | null;
 }
@@ -246,7 +248,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
-  const wikiTodayCount = countFilesChangedToday(wiki.files.filter((file) => file.path !== "wiki/index.md"), generatedAt);
+  const wikiTodayCount = wiki.files.filter((file) => file.path !== "wiki/index.md" && isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)).length;
   const warnings = buildWarnings({
     rawExists: raw.exists,
     wikiExists: wiki.exists,
@@ -405,6 +407,7 @@ async function scanDashboardDirectory(vaultPath: string, relativeDir: string, op
     files.push({
       path: normalizeSlashes(path.relative(vaultPath, full)),
       size: stat.size,
+      createdAt: stat.birthtimeMs || stat.mtimeMs,
       mtime: stat.mtimeMs
     });
   }
@@ -1083,9 +1086,9 @@ function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: numbe
     const folder = parts[1];
     if (!folder || folder.startsWith(".")) continue;
     const groupPath = `wiki/${folder}`;
-    const group = groups.get(groupPath) ?? { path: groupPath, label: folder, totalCount: 0, sharePercent: 0, todayCount: 0 };
+    const group = groups.get(groupPath) ?? { path: groupPath, label: wikiCategoryLabel(folder), totalCount: 0, sharePercent: 0, todayCount: 0 };
     group.totalCount += 1;
-    if (isSameLocalDay(file.mtime, generatedAt)) group.todayCount += 1;
+    if (isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)) group.todayCount += 1;
     groups.set(groupPath, group);
   }
   const result = Array.from(groups.values()).sort((left, right) => left.path.localeCompare(right.path));

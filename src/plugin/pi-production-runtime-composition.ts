@@ -240,6 +240,7 @@ import {
 
 export interface PiProductionPluginHost {
   readonly app: App;
+  prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
   resolveOpenAICodexAccessToken(): Promise<string>;
   createSkillReviewLlmPort(): SkillReviewLlmPort | null;
@@ -371,6 +372,7 @@ export function bindKnowledgeIndexToVault(
     app.vault.on("modify", onChange),
     app.vault.on("delete", onChange),
     app.vault.on("rename", (file, oldPath) => {
+      if ("children" in file) index.invalidate();
       onChange(file);
       index.invalidate(oldPath);
     })
@@ -417,6 +419,7 @@ export async function createPiProductionRuntimeBundle(
     vaultRootPath,
     knowledgeAgentIndex,
     knowledgePreferences,
+    prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore)
   });
   const vaultAdapter = new ObsidianVaultDomainAdapter(
@@ -611,6 +614,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
   knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
+  prepareStructure?: (input: { initialization: boolean; assertActive(): void }) => Promise<string>;
   usage: KnowledgeUsageBridge;
 }>): PiKnowledgeRuntimePort {
   const retriever = new KnowledgeRetriever(input.vaultRootPath, {
@@ -618,6 +622,12 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   });
   const egress = new EchoInkVaultToolEgressPolicy();
   const runtime: PiKnowledgeRuntimePort = {
+    async prepareMaintenanceStructure(initialization) {
+      const result = await input.prepareStructure?.(initialization) ?? "";
+      input.knowledgeAgentIndex.invalidate();
+      await input.knowledgeAgentIndex.refresh();
+      return result;
+    },
     async resolveMaintenanceScope(request) {
       if (!request.trim()) return Object.freeze({ mode: "global" as const });
       const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw"], limit: 50 });

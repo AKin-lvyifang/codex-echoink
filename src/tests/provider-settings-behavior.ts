@@ -1,3 +1,4 @@
+import { todoCompletionStatistics } from "../home/todo-completions";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { mountSettingsEditor } from "../settings/inline-editor";
@@ -2475,6 +2476,10 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
       forgetCalls.push([id, reason, revision]);
     },
     getKnowledgeSurfaceService: () => ({
+      folderOperationBusy: false,
+      directoryWritable: true,
+      folderOperationMessage: "",
+      getOriginalDirectoryStatus: async () => null,
       maintenanceRecoveryStatus: { state: "ready" as const, message: "" },
       getDashboardSnapshot: async () => dashboardSnapshot
     }),
@@ -12864,6 +12869,7 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     returnQuickChatToSidebar: async () => undefined,
     toggleQuickChatWindow: async () => undefined,
     getTodoStore: () => ({
+      completionStatistics: () => todoCompletionStatistics({}),
       subscribe: () => () => undefined,
       snapshot: () => [],
       openSourceFile: async () => undefined,

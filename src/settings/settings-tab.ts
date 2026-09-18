@@ -1,3 +1,5 @@
+import { renderTodoStatistics } from "./todo-statistics";
+import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { OriginSetting } from "./origin-setting";
 import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
@@ -252,6 +254,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private onboardingRestoreFocusEl: HTMLElement | null = null;
   private onboardingRefreshGeneration = 0;
   private developerPanel: DeveloperModePanel | null = null;
+  private disposeTodoStatistics: (() => void) | null = null;
   private inlineEditor: { tab: VisibleSettingsTab; host: HTMLElement; dispose: () => void } | null = null;
   private nativeSettingsNavigation: NativeSettingsNavigation | null = null;
 
@@ -367,6 +370,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.disposeTodoStatistics?.();
+    this.disposeTodoStatistics = null;
     const navigation = this.nativeSettingsNavigation;
     for (const { setting, button } of navigation?.rows.values() ?? []) {
       if (setting.nameEl.parentElement === button) setting.infoEl.appendChild(setting.nameEl);
@@ -435,6 +440,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSettingsContent(): void {
+    this.disposeTodoStatistics?.();
+    this.disposeTodoStatistics = null;
     this.developerPanel?.dispose();
     this.developerPanel = null;
     this.ensureSettingsShell();
@@ -1105,6 +1112,13 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderTodosSettings(page: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const store = this.plugin.getTodoStore();
+    this.disposeTodoStatistics?.();
+    const statistics = page.createDiv();
+    const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage);
+    renderStats();
+    this.disposeTodoStatistics = store.subscribe(() => {
+      if (statistics.isConnected) renderStats();
+    });
     const sourceSection = createSettingsSection(page, {
       title: zh ? "数据文件" : "Data file",
       surface: "group"
@@ -1996,6 +2010,9 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void {
+    const manager = this.plugin.getKnowledgeSurfaceService?.();
+    if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
+      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); });
     if (!this.knowledgeInitSection?.showDashboard) {
       this.knowledgeDashboardEl = null;
       page.createEl("p", { cls: "init-awaiting", text: zh

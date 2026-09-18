@@ -1,3 +1,4 @@
+import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -694,6 +695,30 @@ implements Phase3MaintenanceProposalPort {
       this.privateKnowledgeRootPath,
       ["shadow", previewId]
     );
+    const proposedFolders = new Set<string>();
+    for (const action of this.options.candidateActions) {
+      const target = normalizeVaultRelativePath(action.targetPath);
+      if (!target.startsWith("wiki/")) continue;
+      const parts = target.split("/").slice(0, -1);
+      for (let depth = 2; depth <= parts.length; depth++) {
+        const folder = parts.slice(0, depth).join("/");
+        const name = parts[depth - 1];
+        const existing = await lstat(path.join(this.vaultRootPath, folder)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null; throw error;
+        });
+        if (existing || proposedFolders.has(folder)) continue;
+        if (!isBilingualWikiFolder(name)) throw new Phase3MaintenanceError("proposal_invalid", "wiki_category_requires_bilingual", folder);
+        const parent = parts.slice(0, depth - 1).join("/");
+        const siblings: import("node:fs").Dirent[] = await readdir(path.join(this.vaultRootPath, parent), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return []; throw error;
+        });
+        const names = [...siblings.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+          ...[...proposedFolders].filter((entry) => path.posix.dirname(entry) === parent).map((entry) => path.posix.basename(entry))];
+        const duplicate = names.find((sibling) => wikiFolderEnglishId(sibling) === wikiFolderEnglishId(name));
+        if (duplicate) throw new Phase3MaintenanceError("proposal_invalid", "wiki_category_already_exists", `${parent}/${duplicate}`);
+        proposedFolders.add(folder);
+      }
+    }
     const knowledgeActions = this.options.candidateActions.map((action) => {
       const requestedTargetPath = normalizeVaultRelativePath(action.targetPath);
       if (
@@ -1244,6 +1269,8 @@ function safeMaintenanceError(error: unknown): string {
     case "invalid_raw_path":
       return "Raw 来源路径无效；请重新选择当前 Vault 内的 Raw 文件。";
     case "proposal_invalid":
+      if (error.message === "wiki_category_requires_bilingual") return "新 Wiki 分类目录须为 中文（english-slug）；本轮没有提交。";
+      if (error.message === "wiki_category_already_exists") return `请复用已有 Wiki 分类 ${error.relativePath}，不要新建同义目录；本轮没有提交。`;
       if (error.message === PHASE3_MAINTENANCE_RECOVERED_RETRY_MESSAGE) {
         return "上一次维护事务已完成恢复；本轮候选已作废，请重新运行 /maintain。";
       }

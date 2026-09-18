@@ -167,6 +167,9 @@ export interface KnowledgeInitializationHost {
   readonly vaultRootPath: string;
   readonly privateRootPath: string;
   now(): number;
+  beforeStructureChange?(jobId: string): Promise<void>;
+  withStructureMutation?<T>(action: () => Promise<T>): Promise<T>;
+  optimizeWikiFolders?(assertActive: () => void): Promise<void>;
   listVaultFiles(): Promise<readonly KnowledgeInitializationVaultFile[]>;
   readText(relativePath: string): Promise<string | null>;
   /** 按原始字节计算哈希，适用于 Markdown、图片、PDF 等所有普通文件。 */
@@ -587,6 +590,14 @@ export class KnowledgeBaseInitializer {
     return cloneJob(this.job);
   }
 
+  async markDirectoryRestored(): Promise<void> {
+    if (!this.job) return;
+    this.job.status = "cancelled";
+    this.job.confirmedDigest = null;
+    this.job.recoveryAction = "目录已执行位置恢复；再次初始化请重新生成预览。";
+    await this.persistJob(this.job);
+  }
+
   private startRun(job: KnowledgeInitializationJob): void {
     if (this.runFlight) return;
     const controller = new AbortController();
@@ -607,9 +618,15 @@ export class KnowledgeBaseInitializer {
   }
 
   private async run(job: KnowledgeInitializationJob, signal: AbortSignal): Promise<void> {
-    await this.createDirectories(job, signal);
+    const prepare = async () => {
+      await this.host.beforeStructureChange?.(job.jobId);
+      await this.createDirectories(job, signal);
+      if (job.status === "active") await this.moveNotes(job, signal);
+    };
+    if (this.host.withStructureMutation) await this.host.withStructureMutation(prepare);
+    else await prepare();
     if (job.status !== "active") return;
-    await this.moveNotes(job, signal);
+    await this.host.optimizeWikiFolders?.(() => assertJobActive(job, signal));
     if (job.status !== "active") return;
     await this.runExtractionBatches(job, signal);
     if (job.status !== "active") return;

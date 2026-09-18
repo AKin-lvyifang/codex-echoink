@@ -5901,3 +5901,46 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
     assert.equal(finalized, 0, "read-only maintenance does not finalize any content writes");
   }, { knowledge });
 }
+
+export async function runWikiStructurePreflightTests(): Promise<void> {
+  let prepared = 0;
+  let release: (() => void) | undefined;
+  let entered: (() => void) | undefined;
+  let block = false;
+  const knowledge: PiKnowledgeRuntimePort = {
+    async prepareMaintenanceStructure(input) {
+      prepared++;
+      if (block) { entered?.(); await new Promise<void>((resolve) => { release = resolve; }); }
+      input.assertActive();
+      return "DIRECTORY_LAYOUT_READY";
+    },
+    async prepareMaintenancePreferences() { return { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}`, providerResourceText: "preferences" }; },
+    async retrieveAsk() { throw new Error("not used"); },
+    async verifyAskReferences() { return { status: "valid", references: [] }; }
+  };
+  await withFixture([], async (fixture) => {
+    fixture.configureFactoryTools({ registered: ["note_read", "knowledge_maintain"], defaults: ["note_read", "knowledge_maintain"], planAllowed: ["note_read"] });
+    for (const [id, text, permission] of [["read", "/maintain", "read-only"], ["advice", "/maintain 先不要写入", "workspace-write"]] as const) {
+      const handle = await fixture.submit({ conversationId: id, text, permission, submittedAt: 1 });
+      assert.equal(prepared, 0, "read-only and advice-only must not invoke structural preflight");
+      fixture.latestSession().finishSuccessful("建议");
+      assert.equal((await handle.result).terminalState, "completed");
+    }
+    const writable = await fixture.submit({ conversationId: "write", text: "/maintain", maintenanceScope: { mode: "global" }, permission: "workspace-write", submittedAt: 2 });
+    assert.equal(prepared, 1);
+    const turn = fixture.latestSession().knowledgeTurnsBeforeUserEntryAppend.at(-1);
+    assert.equal(turn?.kind, "maintain");
+    if (turn?.kind === "maintain") assert.match(turn.command.preference.providerResourceText, /DIRECTORY_LAYOUT_READY/u);
+    fixture.latestSession().finishSuccessful("No tool result in this fixture");
+    await writable.result;
+    block = true;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const submitting = fixture.submit({ conversationId: "cancel-before-name", text: "/maintain", maintenanceScope: { mode: "global" }, permission: "workspace-write", submittedAt: 3 });
+    const rejection = assert.rejects(submitting, /维护已取消/u);
+    await started;
+    await fixture.runtime.abort("cancel-before-name");
+    release?.();
+    await rejection;
+  }, { knowledge });
+  console.log("Production runtime structural preflight order, read-only, advice and cancellation: PASS");
+}
