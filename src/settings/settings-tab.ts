@@ -2011,15 +2011,15 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void {
     const manager = this.plugin.getKnowledgeSurfaceService?.();
-    if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
-      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); });
     if (!this.knowledgeInitSection?.showDashboard) {
       this.knowledgeDashboardEl = null;
       page.createEl("p", { cls: "init-awaiting", text: zh
         ? "初始化后，这里会展示知识库状态与统计。"
         : "Knowledge status and statistics will appear here after initialization." });
-      return;
     }
+    if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
+      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); });
+    if (!this.knowledgeInitSection?.showDashboard) return;
     const section = createSettingsSection(page, {
       surface: "flat"
     });

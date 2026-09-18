@@ -44,11 +44,15 @@ export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboar
   assert(stats.textContent?.includes(cells[1].getAttribute("aria-label")!), "keyboard date and count");
 
   const fixture = new Fixture();
-  const page = host.createDiv();
+  const page = host.createDiv({ cls: "codex-knowledge-settings" });
   fixture.mountKnowledgeDashboard(page, true);
   await tick();
   const rows = page.querySelectorAll<HTMLElement>(".echoink-settings-row");
   assert(rows.length === 2, "two independent folder setting rows");
+  const section = page.querySelector<HTMLElement>(".echoink-knowledge-folder-actions")!;
+  const cards = section.querySelectorAll<HTMLElement>(":scope > .settings-card");
+  assert(section.querySelector("h3")?.textContent === "目录管理" && cards.length === 2, "one section heading with two independent cards");
+  assert(rows[0].parentElement === cards[0] && rows[1].parentElement === cards[1], "each action owns its card");
   assert(rows[0].textContent?.includes("文件夹名称优化") && rows[1].textContent?.includes("复原仓库"), "concise row titles");
   assert(!rows[0].textContent?.includes("原始目录记录") && rows[1].textContent?.includes("原始目录记录"), "record belongs to restore only");
   const nav = host.createDiv();
@@ -59,6 +63,11 @@ export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboar
   for (const width of [320, 480, 600, 900]) {
     settings.style.width = `${width}px`;
     await frame();
+    for (const card of cards) {
+      const style = getComputedStyle(card);
+      assert(style.borderTopStyle === "solid" && parseFloat(style.borderTopWidth) > 0 && parseFloat(style.borderRadius) > 0, `folder cards retain visible boundaries at ${width}`);
+    }
+    assert(cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().bottom >= 12, `independent card spacing at ${width}`);
     for (const row of rows) {
       const bounds = row.getBoundingClientRect();
       const copy = row.querySelector<HTMLElement>(".setting-copy")!.getBoundingClientRect();

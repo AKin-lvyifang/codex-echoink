@@ -1,7 +1,7 @@
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { createOriginButton } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
-import { applySettingsRow, createSettingsGroup } from "./settings-v2";
+import { applySettingsRow, createSettingsGroup, createSettingsSection } from "./settings-v2";
 
 type Operation = "optimize" | "restore";
 type OperationState = { optimize: string; restore: string; running: Operation | null };
@@ -17,19 +17,23 @@ export function renderKnowledgeFolderActions(
   const zh = language !== "en";
   const state = operationStates.get(service) ?? { optimize: "", restore: "", running: null };
   operationStates.set(service, state);
-  const panel = createSettingsGroup(container);
-  panel.addClass("echoink-knowledge-folder-actions");
-  const optimizeRow = applySettingsRow(new OriginSetting(panel)
+  const section = createSettingsSection(container, { title: zh ? "目录管理" : "Folder management", surface: "flat" });
+  section.addClass("standard-section", "echoink-knowledge-folder-actions");
+  const optimizeCard = createSettingsGroup(section);
+  optimizeCard.addClass("settings-card");
+  const optimizeRow = applySettingsRow(new OriginSetting(optimizeCard)
     .setName(zh ? "文件夹名称优化" : "Folder names")
     .setDesc(zh ? "将知识库英文文件夹改为中英文名称。" : "Rename English knowledge folders with Chinese and English names."));
   const button = createOriginButton(optimizeRow.controlEl, { text: zh ? "优化名称" : "Optimize names" });
-  const optimizeStatus = optimizeRow.infoEl.createDiv({ cls: "settings-note", attr: { role: "status", "aria-live": "polite" } });
-  const restoreRow = applySettingsRow(new OriginSetting(panel)
+  const optimizeStatus = optimizeRow.infoEl.createDiv({ cls: "setting-item-description", attr: { role: "status", "aria-live": "polite" } });
+  const restoreCard = createSettingsGroup(section);
+  restoreCard.addClass("settings-card");
+  const restoreRow = applySettingsRow(new OriginSetting(restoreCard)
     .setName(zh ? "复原仓库" : "Restore vault")
     .setDesc(zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。" : "Restore the original folder structure, keeping current content and new files."));
   const restore = createOriginButton(restoreRow.controlEl, { text: zh ? "复原" : "Restore" });
-  const original = restoreRow.infoEl.createDiv({ cls: "settings-note" });
-  const restoreStatus = restoreRow.infoEl.createDiv({ cls: "settings-note", attr: { role: "status", "aria-live": "polite" } });
+  const original = restoreRow.infoEl.createDiv({ cls: "setting-item-description" });
+  const restoreStatus = restoreRow.infoEl.createDiv({ cls: "setting-item-description", attr: { role: "status", "aria-live": "polite" } });
   const statuses = { optimize: optimizeStatus, restore: restoreStatus };
   const setStatus = (operation: Operation, message: string) => {
     state[operation] = message;

@@ -1021,6 +1021,7 @@ export class KnowledgeInitializationSection {
     job: Readonly<KnowledgeInitializationJob>
   ): void {
     const zh = this.zh;
+    panel.addClass("echoink-knowledge-init-recovery");
     // 恢复方式完全由结构化字段派生（status / 两个 digest / Provider 快照），
     // 不解析 lastError 中文字符串。
     const recovery = deriveKnowledgeInitializationRecovery({
@@ -1030,7 +1031,11 @@ export class KnowledgeInitializationSection {
     const needsProviderSetup = this.recoveryNeedsProviderSetup(recovery, job);
     const stoppedWithoutCompletion = job.status === "failed_recoverable"
       || job.status === "write_uncertain";
-    panel.createDiv({
+    const heading = panel.createDiv({ cls: "echoink-knowledge-init-recovery-heading" });
+    const icon = heading.createSpan({ cls: "echoink-knowledge-init-pause-icon" });
+    setIcon(icon, "alert-triangle");
+    icon.setAttr("aria-hidden", "true");
+    heading.createDiv({
       cls: "echoink-knowledge-init-heading",
       text: recovery.kind === "recheck-conflict"
         ? (zh ? "初始化遇到冲突" : "Initialization hit a conflict")
@@ -1039,9 +1044,6 @@ export class KnowledgeInitializationSection {
           : (zh ? "初始化已暂停" : "Initialization paused")
     });
     const notice = panel.createDiv({ cls: "echoink-knowledge-init-pause" });
-    const icon = notice.createSpan({ cls: "echoink-knowledge-init-pause-icon" });
-    setIcon(icon, "alert-triangle");
-    icon.setAttr("aria-hidden", "true");
     const pauseText = notice.createDiv({ cls: "echoink-knowledge-init-pause-text" });
     const pauseDetails = pauseText.createDiv({
       cls: "echoink-knowledge-init-pause-details",
