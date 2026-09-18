@@ -1,3 +1,4 @@
+import { knowledgeRolePath, resolveKnowledgePath } from "./root-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import type { KnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
 
@@ -279,7 +280,7 @@ function requireKnowledgePath(value: string): string {
 }
 
 function isKnowledgePath(value: string): boolean {
-  return /^(?:wiki|projects)\/(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(value)
+  return /^(?:wiki|projects)\/(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(knowledgeRolePath(value))
     && safePath(value);
 }
 

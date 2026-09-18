@@ -1,3 +1,4 @@
+import { knowledgeRootRole, resolveKnowledgePath } from "./root-paths";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { TextDecoder } from "node:util";
@@ -832,7 +833,7 @@ async function readKnowledgeSourceSnapshot(
   allowUnrefined: boolean
 ): Promise<KnowledgeSourceSnapshot> {
   const normalizedRequested = normalizeKnowledgeRelativePath(
-    requestedRelativePath,
+    resolveKnowledgePath(vaultPath, requestedRelativePath, false),
     allowUnrefined
   );
   const vaultRoot = await resolveKnowledgeVaultRoot(vaultPath);
@@ -909,7 +910,7 @@ async function readKnowledgeSourceSnapshot(
 function knowledgeSourceType(
   relativePath: string
 ): "wiki" | "projects" | "raw" {
-  const root = relativePath.split("/", 1)[0];
+  const root = knowledgeRootRole(relativePath);
   if (root === "wiki" || root === "projects" || root === "raw") return root;
   return "raw";
 }
@@ -1073,7 +1074,7 @@ function isHiddenKnowledgeName(name: string): boolean {
 }
 
 function isUnrefinedKnowledgePath(relativePath: string): boolean {
-  const first = relativePath.split("/", 1)[0]?.toLowerCase();
+  const first = knowledgeRootRole(relativePath);
   return first === "raw" || first === "inbox";
 }
 
@@ -1218,7 +1219,7 @@ function uniqueExplicitKnowledgePaths(paths: readonly string[]): string[] {
 }
 
 function isKnowledgeAgentIndexedPath(relativePath: string): boolean {
-  const root = relativePath.split("/", 1)[0]?.toLowerCase();
+  const root = knowledgeRootRole(relativePath);
   return root === "wiki" || root === "projects" || root === "raw";
 }
 

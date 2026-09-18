@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "./knowledge-base/root-paths";
 import { HomeActivityService } from "./home/home-activity-service";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -676,7 +677,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         || !relative
         || relative.startsWith("../")
         || path.isAbsolute(relative)
-        || !relative.toLocaleLowerCase().startsWith("raw/")
+        || !knowledgeRolePath(relative).toLocaleLowerCase().startsWith("raw/")
         || !isRawMarkdownPath(relative)
       ) {
         throw new Error("/maintain 附件必须是当前 Vault 的 raw/** Markdown 笔记。");
@@ -1464,7 +1465,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
     const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
-    return `Wiki 目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。${JSON.stringify(result.skipped)}`;
+    return `${result.message ?? `目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。`}${JSON.stringify(result.skipped)}`;
   }
   private activePiProviderConfigurationDraft(): PiProviderConfigurationDraft {
     const active = getActiveApiProviderModel(this.settings);

@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
 import { isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { piWorkspaceAllowsTool, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
@@ -1843,7 +1844,7 @@ async function createProductionAgentSession(input: {
   const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch());
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
-    onSourceRead: (reference) => { if (reference.vaultRelativePath.startsWith("raw/")) sourceBodyFingerprints[reference.vaultRelativePath] = reference.contentRevision; },
+    onSourceRead: (reference) => { if (knowledgeRolePath(reference.vaultRelativePath).startsWith("raw/")) sourceBodyFingerprints[reference.vaultRelativePath] = reference.contentRevision; },
     currentWorkflow: () => {
       const turn = input.input.currentKnowledgeTurnContext();
       return turn?.kind ?? "none";

@@ -37,7 +37,10 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (maintenanceRuntimeOnly ? [
+    contents: (process.argv.includes("--bilingual-lifecycle") ? [
+      'import { runKnowledgeBilingualLifecycleTests } from "./src/tests/knowledge-bilingual-lifecycle";',
+      'await runKnowledgeBilingualLifecycleTests();'
+    ] : maintenanceRuntimeOnly ? [
       'import { runKnowledgeMaintenanceRuntimeTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
       'import { runVaultDomainServiceTests } from "./src/tests/pi-native/vault-domain-service";',
       'await runKnowledgeMaintenanceRuntimeTests();',

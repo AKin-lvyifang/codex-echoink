@@ -106,7 +106,7 @@ export async function runWikiBilingualTests(): Promise<void> {
   } };
   assert.equal(service.renameUnsafeReason("wiki/AI"), null, "absolute Raw outgoing links need no rewrites");
   links["raw/source.md"] = { "wiki/AI/note.md": 1 };
-  assert.match(service.renameUnsafeReason("wiki/AI")!, /Raw/u);
+  assert.match(service.renameUnsafeReason("wiki/AI")!, /Obsidian/u);
   await assert.rejects(prototype.withStructureMutation(async () => 1), /只读/u);
   assert.equal(await prototype.withStructureMutation(async () => 2, true), 2, "turn write permission overrides the default");
 
@@ -135,6 +135,7 @@ export async function runWikiBilingualTests(): Promise<void> {
     await fs.writeFile(path.join(linksRoot, "B.md"), "[[A]]");
     const files = new Map(["A.md", "B.md"].map((name) => [name, { path: name, basename: name.slice(0, -3) }]));
     const renameService = Object.create(EchoInkKnowledgeSurfaceService.prototype) as unknown as { plugin: unknown; renameWithLinks(from: string, to: string, restoring?: boolean): Promise<void> };
+    (renameService as unknown as { syncRenamedPaths(): Promise<void> }).syncRenamedPaths = async () => {};
     renameService.plugin = { app: { vault: { getFiles: () => [...files.values()], getAbstractFileByPath: (name: string) => files.get(name) ?? null, getConfig: () => true },
       metadataCache: { resolvedLinks: { "raw/imported/A.md": { "B.md": 1 } }, unresolvedLinks: {}, getFileCache: () => ({ links: [] }) },
       fileManager: { renameFile: async (file: {path: string}, to: string) => { const from = file.path; await fs.rename(path.join(linksRoot, from), path.join(linksRoot, to)); files.delete(from); file.path = to; files.set(to, file as {path:string;basename:string}); } }

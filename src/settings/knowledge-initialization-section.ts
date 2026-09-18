@@ -1,6 +1,8 @@
+import { resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { redactEchoInkLocalSecretsV1, REDACTED_SECRET } from "../harness/pi-native/vault-tool-result-safety";
+import { InteractionDockController } from "../ui/codex-view/interaction-dock";
 import {
   isKnowledgeInitializationMarkdownPath,
   isKnowledgeInitializationRole,
@@ -50,15 +52,15 @@ interface KnowledgeInitDirectoryDef {
  * 只展示、不参与笔记分配。
  */
 export const KNOWLEDGE_INIT_DIRECTORIES: readonly KnowledgeInitDirectoryDef[] = Object.freeze([
-  { role: "raw", labelZh: "Raw", labelEn: "Raw", descriptionZh: "现有原始文件和后续待提炼资料", descriptionEn: "Original files and new material waiting to be distilled" },
-  { role: "wiki", labelZh: "Wiki", labelEn: "Wiki", descriptionZh: "AI 提炼后的长期知识与索引", descriptionEn: "Long-term knowledge and indexes distilled by AI" },
-  { role: "projects", labelZh: "Projects", labelEn: "Projects", descriptionZh: "按项目组织的资料与知识", descriptionEn: "Notes and knowledge organized by project" },
-  { role: "outputs", labelZh: "Outputs", labelEn: "Outputs", descriptionZh: "整理过程记录与生成结果", descriptionEn: "Processing records and generated results" },
-  { role: "inbox", labelZh: "Inbox", labelEn: "Inbox", descriptionZh: "暂时还没分类的新笔记", descriptionEn: "New notes that have not been sorted yet" },
-  { role: "journal", labelZh: "Journal", labelEn: "Journal", descriptionZh: "日记、复盘与时间记录", descriptionEn: "Journals, reviews, and time-based notes" },
-  { role: "work", labelZh: "Work", labelEn: "Work", descriptionZh: "正在处理的工作资料", descriptionEn: "Active working material" },
-  { role: "archive", labelZh: "Archive", labelEn: "Archive", descriptionZh: "已结束或暂时不用的内容", descriptionEn: "Completed or inactive material" },
-  { role: "templates", labelZh: "Templates", labelEn: "Templates", descriptionZh: "可重复使用的笔记模板", descriptionEn: "Reusable note templates" }
+  { role: "raw", labelZh: "原始资料 / Raw", labelEn: "Raw", descriptionZh: "现有原始文件和后续待提炼资料", descriptionEn: "Original files and new material waiting to be distilled" },
+  { role: "wiki", labelZh: "知识库 / Wiki", labelEn: "Wiki", descriptionZh: "AI 提炼后的长期知识与索引", descriptionEn: "Long-term knowledge and indexes distilled by AI" },
+  { role: "projects", labelZh: "项目 / Projects", labelEn: "Projects", descriptionZh: "按项目组织的资料与知识", descriptionEn: "Notes and knowledge organized by project" },
+  { role: "outputs", labelZh: "输出 / Outputs", labelEn: "Outputs", descriptionZh: "整理过程记录与生成结果", descriptionEn: "Processing records and generated results" },
+  { role: "inbox", labelZh: "收件箱 / Inbox", labelEn: "Inbox", descriptionZh: "暂时还没分类的新笔记", descriptionEn: "New notes that have not been sorted yet" },
+  { role: "journal", labelZh: "日记 / Journal", labelEn: "Journal", descriptionZh: "日记、复盘与时间记录", descriptionEn: "Journals, reviews, and time-based notes" },
+  { role: "work", labelZh: "工作 / Work", labelEn: "Work", descriptionZh: "正在处理的工作资料", descriptionEn: "Active working material" },
+  { role: "archive", labelZh: "归档 / Archive", labelEn: "Archive", descriptionZh: "已结束或暂时不用的内容", descriptionEn: "Completed or inactive material" },
+  { role: "templates", labelZh: "模板 / Templates", labelEn: "Templates", descriptionZh: "可重复使用的笔记模板", descriptionEn: "Reusable note templates" }
 ]);
 
 const FOCUS_KEY = "knowledge:initialize";
@@ -85,6 +87,9 @@ interface KnowledgeInitProgressRefs {
  * 为准。settings 里的 initialized 只保留历史，不再决定当前状态。
  */
 export class KnowledgeInitializationSection {
+  private readonly interactionDock = new InteractionDockController();
+  private interactionEl: HTMLElement | null = null;
+  private interactionKey = "";
   private job: Readonly<KnowledgeInitializationJob> | null = null;
   private loaded = false;
   private loading = false;
@@ -125,6 +130,9 @@ export class KnowledgeInitializationSection {
   }
 
   dispose(): void {
+    this.interactionDock.dispose();
+    this.interactionEl = null;
+    this.interactionKey = "";
     if (this.pollTimer !== null) {
       window.clearTimeout(this.pollTimer);
       this.pollTimer = null;
@@ -679,7 +687,7 @@ export class KnowledgeInitializationSection {
       } });
       setIcon(toggle.createSpan({ cls: "directory-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
       setIcon(toggle.createSpan({ cls: "directory-icon", attr: { "aria-hidden": "true" } }), "folders");
-      const name = toggle.createSpan({ cls: "directory-name", text: directory.labelEn });
+      const name = toggle.createSpan({ cls: "directory-name", text: zh ? directory.labelZh : directory.labelEn });
       name.createEl("small", { text: descriptions[index] });
       attachSettingsTooltip(toggle, description);
       const count = row.createSpan({ cls: "directory-count", text: String(assigned.length), attr: {
@@ -961,6 +969,9 @@ export class KnowledgeInitializationSection {
     const stepsEl = panel.createEl("ol", { cls: "echoink-knowledge-init-steps" });
     this.renderProgressSteps(stepsEl, progress.stage);
     this.progressRefs = { ...this.progressRefs, stepsEl };
+    this.interactionEl = panel.createDiv({ cls: "codex-interaction-dock" });
+    this.interactionKey = "";
+    this.updateInitializationQuestion();
     const actions = this.renderInitializationFooter(panel);
     const pause = actions.createEl("button", {
       cls: "echoink-knowledge-init-secondary",
@@ -1009,8 +1020,30 @@ export class KnowledgeInitializationSection {
     refs.stepEl.setText(progressStepLabel(progress.stage, this.zh));
     refs.countEl.setText(progress.total > 0 ? `${progress.completed} / ${progress.total}` : "");
     refs.statusEl.setText(progressStatusSentence(progress.stage, progress, this.zh));
+    this.updateInitializationQuestion();
     if (refs.stepsEl) this.renderProgressSteps(refs.stepsEl, progress.stage);
     return true;
+  }
+
+  private updateInitializationQuestion(): void {
+    const binding = this.plugin.getKnowledgeSurfaceService?.()?.getInitializationQuestion?.();
+    if (binding && this.progressRefs) {
+      const waiting = this.zh ? "等待你的回答" : "Waiting for your answer";
+      this.progressRefs.stepEl.setText(waiting);
+      this.progressRefs.statusEl.setText(waiting);
+    }
+    const container = this.interactionEl;
+    if (!container) return;
+    const key = binding?.interaction.interactionId ?? "";
+    if (key === this.interactionKey) return;
+    this.interactionKey = key;
+    this.interactionDock.render(container, {
+      sessionId: binding?.interaction.conversationId ?? this.job?.conversationId ?? "",
+      language: this.zh ? "zh-CN" : "en",
+      ...(binding ? { question: { binding, onResolved: () => { this.interactionKey = ""; container.empty(); } } } : {}),
+      onStale: () => { this.interactionKey = ""; container.empty(); },
+      onScheduleMeasure: () => undefined
+    });
   }
 
   private renderProgressSteps(container: HTMLElement, stage: KnowledgeInitializationProgressStage): void {
@@ -1083,7 +1116,7 @@ export class KnowledgeInitializationSection {
         value: this.pauseReasonText(recovery, job, zh, needsProviderSetup)
       },
       {
-        label: zh ? "已完成" : "Completed",
+        label: zh ? "整理进度" : "Organization progress",
         value: this.pauseCompletedText(job, zh)
       },
       {
@@ -1099,10 +1132,10 @@ export class KnowledgeInitializationSection {
         cls: "echoink-knowledge-init-pause-label",
         text: detail.label
       });
-      detailRow.createDiv({
-        cls: "echoink-knowledge-init-pause-value",
-        text: detail.value
-      });
+      if (Array.isArray(detail.value)) {
+        const list = detailRow.createEl("ul", { cls: "echoink-knowledge-init-pause-value" });
+        for (const text of detail.value) list.createEl("li", { text });
+      } else detailRow.createDiv({ cls: "echoink-knowledge-init-pause-value", text: detail.value });
     }
     if (needsProviderSetup) {
       const providerLink = pauseText.createEl("button", {
@@ -1176,6 +1209,15 @@ export class KnowledgeInitializationSection {
     zh: boolean,
     needsProviderSetup = this.recoveryNeedsProviderSetup(recovery, job)
   ): string {
+    if (job.pauseCause === "pause_button") return zh
+      ? "已通过暂停按钮暂停，可从当前进度继续。"
+      : "Paused with the pause button. You can continue from the current progress.";
+    if (job.pauseCause === "reload") return zh
+      ? "上次整理在完成前中断，当前进度已保留。"
+      : "The previous run was interrupted before finishing. Progress was preserved.";
+    if (job.status === "cancelled" && !job.pauseCause) return zh
+      ? "这次整理已停止，旧记录未保存具体原因。当前进度已保留。"
+      : "Organization stopped. This older record has no specific reason; progress was preserved.";
     const detail = this.errorTextForDisplay(job.lastError);
     if (detail) return detail;
     if (recovery.kind === "recheck-conflict") {
@@ -1196,7 +1238,7 @@ export class KnowledgeInitializationSection {
         : "The file plan changed after confirmation, so EchoInk stopped using the old plan.";
     }
     if (job.status === "cancelled") {
-      return zh ? "你暂停了这次初始化。" : "You paused this initialization.";
+      return zh ? "模型请求已取消，暂未取得具体原因。" : "The model request was cancelled; no specific reason is available.";
     }
     if (job.status === "write_uncertain") {
       return zh
@@ -1224,22 +1266,29 @@ export class KnowledgeInitializationSection {
         : "The Wiki guide or index has not finished generating.";
     }
     return zh
-      ? "初始化没有完成，EchoInk 已保留当前进度。"
-      : "Initialization did not finish, and EchoInk preserved the current progress.";
+      ? "整理尚未完成，暂未取得具体原因。当前进度已保留。"
+      : "Organization did not finish. No specific reason is available; progress was preserved.";
   }
 
   private pauseCompletedText(
     job: Readonly<KnowledgeInitializationJob>,
     zh: boolean
-  ): string {
+  ): string[] {
     const moveTotal = job.items.filter((item) => item.targetPath !== null).length;
     const moved = job.items.filter((item) => item.state === "moved").length;
     const directoryTotal = KNOWLEDGE_INITIALIZATION_ROOTS.length;
     const directories = Math.min(job.createdDirectories.length, directoryTotal);
-    if (zh) {
-      return `目录 ${directories}/${directoryTotal}；归档文件 ${moved}/${moveTotal}；AI 检查 ${job.extractionCursor}/${job.extractionQueue.length}。已完成内容和 Raw 原文都会保留。`;
-    }
-    return `Folders ${directories}/${directoryTotal}; archived files ${moved}/${moveTotal}; AI sources ${job.extractionCursor}/${job.extractionQueue.length}. Completed work and Raw source files are preserved.`;
+    const total = job.extractionQueue.length;
+    const analyzed = Math.min(job.analyzedSourcePaths?.length ?? Math.max(0, job.extractionCursor - (job.pendingSourcePaths?.length ?? 0)), total);
+    return zh ? [
+      `准备目录：${directories}/${directoryTotal} 个${directories < directoryTotal ? `，${directoryTotal - directories} 个待处理` : ""}`,
+      moveTotal ? `归档文件：${moved}/${moveTotal} 个文件${moved < moveTotal ? `，${moveTotal - moved} 个待处理` : ""}` : "归档文件：本次无需归档",
+      total ? `分析笔记：${analyzed}/${total} 篇${analyzed < total ? `，${total - analyzed} 篇待处理` : ""}` : "分析笔记：本次无需分析"
+    ] : [
+      `Prepare folders: ${directories}/${directoryTotal}${directories < directoryTotal ? `; ${directoryTotal - directories} pending` : ""}`,
+      moveTotal ? `Archive notes: ${moved}/${moveTotal}${moved < moveTotal ? `; ${moveTotal - moved} pending` : ""}` : "Archive notes: none needed this time",
+      total ? `Analyze notes: ${analyzed}/${total}${analyzed < total ? `; ${total - analyzed} pending` : ""}` : "Analyze notes: none needed this time"
+    ];
   }
 
   private pauseNextStepText(
@@ -1248,6 +1297,9 @@ export class KnowledgeInitializationSection {
     zh: boolean,
     needsProviderSetup = this.recoveryNeedsProviderSetup(recovery, job)
   ): string {
+    if (job.pauseCause === "pause_button" || job.pauseCause === "reload") return zh
+      ? "点击“继续初始化”，从当前进度接着整理。已完成的项目不会重复处理。"
+      : "Select Continue initialization to resume from current progress. Completed items will not be repeated.";
     if (recovery.kind === "recheck-conflict") {
       return zh
         ? "先处理目标路径的同名文件，然后点击“重新检查冲突”。"
@@ -1263,21 +1315,27 @@ export class KnowledgeInitializationSection {
         ? "点击“重新检查并继续”，EchoInk 会根据当前模型和文件重建计划。"
         : "Select Recheck and continue to rebuild the plan from the current model and files.";
     }
-    if (job.phase === "batch_extraction") {
+    if (needsProviderSetup) return zh
+      ? "在 API Provider 设置中补齐失败原因列出的连接或模型配置，然后点击“继续初始化”。"
+      : "Complete the connection or model settings identified above in API Provider, then select Continue initialization.";
+    if (job.pauseCause === "model_cancelled" || job.phase === "batch_extraction") {
       return zh
-        ? "根据上面的原因检查后，点击“继续初始化”。已完成的批次不会重做。"
-        : "Check the reason above, then select Continue initialization. Completed batches will not run again.";
+        ? "点击“继续初始化”，重试待处理笔记。已完成的批次不会重做。"
+        : "Select Continue initialization to retry pending notes. Completed batches will not run again.";
     }
+    if (job.phase === "move_notes" || job.phase === "create_directories") return zh
+      ? "处理失败原因中列出的文件或目录后，点击“继续初始化”。"
+      : "Resolve the files or folders named in the error, then select Continue initialization.";
     return zh
-      ? "根据上面的原因检查后，点击“继续初始化”。已完成的内容会保留。"
-      : "Check the reason above, then select Continue initialization. Completed work is preserved.";
+      ? "点击“继续初始化”重试剩余步骤；若再次停止，查看新返回的具体原因。"
+      : "Select Continue initialization to retry the remaining steps. If it stops again, check the new error details.";
   }
 
   private recoveryNeedsProviderSetup(
     recovery: KnowledgeInitializationRecovery,
     job: Readonly<KnowledgeInitializationJob>
   ): boolean {
-    if (recovery.kind !== "recheck-preview") return false;
+    if (recovery.kind !== "recheck-preview" && job.phase !== "batch_extraction") return false;
     const jobLacksProvider =
       job.provider === null && job.extractionQueue.length > 0;
     return jobLacksProvider || this.currentProviderSnapshot() === null;
@@ -1461,7 +1519,7 @@ export class KnowledgeInitializationSection {
   }
 
   private async openFile(relativePath: string): Promise<void> {
-    const file = this.plugin.app.vault.getFileByPath(relativePath);
+    const file = this.plugin.app.vault.getFileByPath(resolveKnowledgePath(this.plugin.getVaultPath(), relativePath));
     if (!file) {
       new Notice(this.zh ? "知识库文件暂不可用。" : "The Knowledge file is unavailable.");
       return;

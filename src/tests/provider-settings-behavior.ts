@@ -1,3 +1,4 @@
+import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { todoCompletionStatistics } from "../home/todo-completions";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
@@ -5987,6 +5988,7 @@ async function assertKnowledgeInitializationExperienceContract(): Promise<void> 
   await assertKnowledgeInitDefaultTabAndOneClickStart();
   await assertKnowledgeInitCustomTabDirectoriesAndAssignments();
   await assertKnowledgeInitPausedReasonsAndRecovery();
+  await assertKnowledgeInitQuestionSurface();
   await assertKnowledgeInitActualFailureDetails();
   await assertKnowledgeInitProgressAndCompletion();
   await assertKnowledgeInitStructureTruthAndRepair();
@@ -6186,7 +6188,7 @@ async function assertKnowledgeInitPausedReasonsAndRecovery(): Promise<void> {
   assert.match(panel.textContent, /初始化没有完成/u);
   assert.match(panel.textContent, /失败原因/u);
   assert.match(panel.textContent, /File already exists: raw\/imported\/notes\/alpha\.md/u);
-  assert.match(panel.textContent, /已完成/u);
+  assert.match(panel.textContent, /整理进度/u);
   assert.match(panel.textContent, /下一步/u);
   assert.ok(panel.querySelector(".echoink-knowledge-init-pause-icon"));
   const resume = panel.querySelector(".echoink-knowledge-init-cta");
@@ -6250,6 +6252,38 @@ async function assertKnowledgeInitPausedReasonsAndRecovery(): Promise<void> {
   rerunTab.hide();
 }
 
+async function assertKnowledgeInitQuestionSurface(): Promise<void> {
+  installProviderModalDomFixture();
+  const state = { job: makeKnowledgeInitJobFixture({ status: "active", phase: "batch_extraction", conversationId: "question-conversation" }) };
+  const { plugin } = createKnowledgeInitPluginFixture(state);
+  const broker = new PiTurnInteractionBroker();
+  const interaction = {
+    kind: "question" as const, status: "pending" as const, conversationId: "question-conversation", piSessionId: "question-pi", turnId: "question-run", interactionId: "question-id", createdAt: 1, updatedAt: 1,
+    questions: [{ questionId: "choice", prompt: "请选择本批归属", selection: "single" as const, options: [{ optionId: "keep", label: "保留现有归属" }], allowSupplement: false }]
+  };
+  const identity = { conversationId: interaction.conversationId, piSessionId: interaction.piSessionId, productRunId: interaction.turnId, interactionId: interaction.interactionId };
+  const answer = broker.waitForAnswers({ ...identity, interaction });
+  plugin.getKnowledgeSurfaceService = () => ({ getInitializationQuestion: () => broker.bindingFor(identity), folderOperationBusy: true, directoryWritable: true, getOriginalDirectoryStatus: async () => null });
+  const first = await renderKnowledgeInitTab(plugin);
+  assert.match(knowledgeInitPanel(first).textContent, /等待你的回答/u);
+  assert.ok(broker.bindingFor(identity), "rendering must never answer for the user");
+  first.hide();
+  const reopened = await renderKnowledgeInitTab(plugin);
+  const panel = knowledgeInitPanel(reopened);
+  const option = panel.querySelector<HTMLInputElement>(".codex-interaction-option-control")!;
+  assert.ok(option, "pending question remains reachable after reopening settings");
+  const section = (reopened as any).knowledgeInitSection;
+  section.updateProgressInPlace();
+  assert.equal(panel.querySelector(".codex-interaction-option-control") === option, true, "polling must preserve focus and draft controls");
+  assert.match(panel.textContent, /等待你的回答/u);
+  option.checked = true; option.onchange?.(new Event("change"));
+  panel.querySelector<HTMLButtonElement>(".codex-interaction-action.is-primary")!.click();
+  assert.deepEqual((await answer)[0].selectedOptionIds, ["keep"]);
+  section.updateProgressInPlace();
+  assert.doesNotMatch(panel.textContent, /等待你的回答/u);
+  reopened.hide();
+}
+
 async function assertKnowledgeInitActualFailureDetails(): Promise<void> {
   installProviderModalDomFixture();
   const sourceChanged = "待提炼来源已变化：raw/imported/验收入口.md";
@@ -6284,7 +6318,7 @@ async function assertKnowledgeInitActualFailureDetails(): Promise<void> {
   };
 
   const sourceText = await assertReason(sourceChanged);
-  assert.match(sourceText, /AI 检查 0\/1/u);
+  assert.match(sourceText, /分析笔记：0\/1 篇/u);
   assert.match(sourceText, /已完成的批次不会重做/u);
   assert.deepEqual(calls, [], "rendering a pre-model source failure must not rerun the batch");
   for (const [phase, status, message] of [
@@ -6304,6 +6338,21 @@ async function assertKnowledgeInitActualFailureDetails(): Promise<void> {
   settings.settingsLanguage = "en";
   await assertReason("The AI review of the current batch has not finished. Raw sources and completed organization are preserved.");
   settings.settingsLanguage = "zh-CN";
+
+  state.job = { ...state.job, status: "cancelled", pauseCause: "pause_button", createdDirectories: [...KNOWLEDGE_INITIALIZATION_ROOTS], items: [], extractionQueue: ["raw/a.md", "raw/b.md"], extractionCursor: 2, analyzedSourcePaths: [], pendingSourcePaths: ["raw/a.md", "raw/b.md"] };
+  const pausedText = await assertReason("已通过暂停按钮暂停，可从当前进度继续。");
+  assert.match(pausedText, /准备目录：10\/10 个/u);
+  assert.match(pausedText, /归档文件：本次无需归档/u);
+  assert.match(pausedText, /分析笔记：0\/2 篇，2 篇待处理/u);
+  assert.doesNotMatch(pausedText, /根据上面的原因检查|你暂停|已完成：/u);
+  state.job.pauseCause = "reload";
+  await assertReason("上次整理在完成前中断，当前进度已保留。");
+  state.job.pauseCause = "model_cancelled";
+  state.job.lastError = "模型请求已取消，暂未取得具体原因。";
+  await assertReason(state.job.lastError);
+  state.job.pauseCause = undefined;
+  await assertReason("这次整理已停止，旧记录未保存具体原因。当前进度已保留。");
+  state.job = { ...state.job, status: "failed_recoverable", pauseCause: "error" };
 
   state.job.lastError = `请求被拒绝；${readyProvider.apiKey}；fixture-oauth-access；fixture-oauth-refresh；Bearer fixture-secret-token123；api_key=another-secret-value`;
   const redactedText = await assertReason("请求被拒绝；[REDACTED_SECRET]；[REDACTED_SECRET]；[REDACTED_SECRET]；Bearer [REDACTED_SECRET]；api_key=[REDACTED_SECRET]");
@@ -6534,7 +6583,7 @@ async function assertKnowledgeInitNotePickerModalContract(): Promise<void> {
   ]);
   const confirm = modal.contentEl.querySelector<HTMLInputElement>(".echoink-knowledge-note-picker-confirm")!;
   assert.equal(confirm.disabled, true);
-  assert.equal(confirm.textContent, "添加到 Wiki（0）");
+  assert.equal(confirm.textContent, "添加到 知识库 / Wiki（0）");
   const selectAll = modal.contentEl.querySelector<HTMLInputElement>(".picker-select-visible")!;
   const checkboxFor = (path: string) => rows().find(row => row.getAttribute("data-note-path") === path)
     ?.querySelector<HTMLInputElement>(".echoink-knowledge-note-picker-checkbox")!;
@@ -6549,12 +6598,12 @@ async function assertKnowledgeInitNotePickerModalContract(): Promise<void> {
   assert.equal(selectAll.indeterminate, true);
   assert.equal(checkboxFor("notes/beta.md").checked, true);
   assert.equal(checkboxFor("notes/delta.md").checked, true);
-  assert.equal(confirm.textContent, "添加到 Wiki（2）");
+  assert.equal(confirm.textContent, "添加到 知识库 / Wiki（2）");
   const writesBeforeFilter = calls.filter(call => call.method === "assignMany").length;
   search.value = "does-not-exist"; search.fireEvent("input");
   assert.match(modal.contentEl.querySelector(".echoink-knowledge-note-picker-empty")?.textContent ?? "", /没有匹配的笔记/u);
   assert.equal(selectAll.disabled, true);
-  assert.equal(confirm.textContent, "添加到 Wiki（2）");
+  assert.equal(confirm.textContent, "添加到 知识库 / Wiki（2）");
   search.value = "notes/"; search.fireEvent("input");
   assert.equal(rows().length, 5, "folder paths are searchable");
   assert.equal(calls.filter(call => call.method === "assignMany").length, writesBeforeFilter);
@@ -13007,6 +13056,7 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {
   await assertKnowledgeInitDefaultTabAndOneClickStart();
   await assertKnowledgeInitCustomTabDirectoriesAndAssignments();
   await assertKnowledgeInitPausedReasonsAndRecovery();
+  await assertKnowledgeInitQuestionSurface();
   await assertKnowledgeInitActualFailureDetails();
   await assertKnowledgeInitProgressAndCompletion();
   await assertKnowledgeInitStructureTruthAndRepair();

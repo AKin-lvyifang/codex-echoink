@@ -1,3 +1,6 @@
+import type { PiTurnInteractionIdentity } from "./pi-turn-interaction-broker";
+import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
+import { resolveKnowledgePath, knowledgeRootRole, rebaseKnowledgePath, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
 import { createHash } from "node:crypto";
@@ -39,7 +42,7 @@ import {
 } from "../knowledge-base/initializer";
 import { optimizeWikiFolderNames, type WikiFolderNameResult } from "../knowledge-base/wiki-folder-names";
 import { pluginDataDir } from "./plugin-data-paths";
-import { initializeNativeJournal } from "../home/native-journal";
+import { initializeNativeJournal, rebaseNativeJournalPaths } from "../home/native-journal";
 
 export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
   state: "ready";
@@ -107,13 +110,17 @@ export class EchoInkKnowledgeSurfaceService {
   private structureRevision = 0;
   private structureQueue: Promise<unknown> = Promise.resolve();
   folderOperationMessage = "";
+  private initializationInteraction: Readonly<PiTurnInteractionIdentity> | null = null;
+  getInitializationQuestion() {
+    return this.initializationInteraction ? this.plugin.piTurnInteractionBinding(this.initializationInteraction) : null;
+  }
   get directoryWritable(): boolean { return this.plugin.settings.defaultPermission !== "read-only"; }
   get folderOperationBusy(): boolean { return this.namingFlight !== null || this.restoring || this.initializer.isRunning; }
   private namingFlight: Promise<WikiFolderNameResult> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     this.captureService = new KnowledgeBaseCaptureService(plugin);
-    const host = createKnowledgeInitializationHost(plugin);
+    const host = createKnowledgeInitializationHost(plugin, (identity) => { this.initializationInteraction = identity; });
     this.directoryHistory = new InitializationDirectoryHistory({
       vaultRoot: plugin.getVaultPath(), privateRoot: host.privateRootPath,
       mkdir: (folder) => host.createFolder(folder),
@@ -182,6 +189,7 @@ export class EchoInkKnowledgeSurfaceService {
     this.namingFlight = this.withStructureMutation(async () => {
       const vault = this.plugin.app.vault;
       try {
+        await this.directoryHistory.capture(`folder-names-${Date.now()}`);
         return await optimizeWikiFolderNames({
           folders: () => vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder)
             .map((folder) => ({ path: folder.path, titles: folder.children.filter((file) => !(file instanceof TFolder)).map((file) => file.name) })),
@@ -214,7 +222,6 @@ export class EchoInkKnowledgeSurfaceService {
       const metadata = cache.getFileCache(file);
       return [...(metadata?.links ?? []), ...(metadata?.embeds ?? [])].some((link) => /^(?:\.\.?\/)/u.test(link.link));
     });
-    if (linked.some(([from, links]) => from.startsWith("raw/") && Object.keys(links).some((to) => affected.has(to)))) return "Raw 引用了此目录，改名会改写 Raw，已保留原路径";
     const autoLinks = (this.plugin.app.vault as unknown as { getConfig(key: string): unknown }).getConfig("alwaysUpdateLinks");
     if ((linked.length || relativeOutgoing) && autoLinks !== true) return "请在 Obsidian 开启自动更新内部链接，再重试此目录";
     const names = new Set(targets.map((file) => file.basename));
@@ -227,16 +234,57 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   private async renameWithLinks(source: string, target: string, restoring = false): Promise<void> {
-    // Initialization already owns link-aware file moves. Wiki-only Raw protection
-    // must not reject the next note merely because an earlier note moved to Raw.
-    if (restoring && source.startsWith("wiki/") && target.startsWith("wiki/")) {
+    if (restoring) {
       const reason = this.renameUnsafeReason(source);
       if (reason) throw new Error(reason);
     }
     const file = this.plugin.app.vault.getAbstractFileByPath(source);
     if (!file) throw new Error(`源路径不存在：${source}`);
     if (this.plugin.app.vault.getAbstractFileByPath(target)) throw new Error(`目标已存在：${target}`);
+    const isFolder = file instanceof TFolder;
     await this.plugin.app.fileManager.renameFile(file, target);
+    if (isFolder || restoring) await this.syncRenamedPaths(source, target);
+  }
+
+  private async syncRenamedPaths(from: string, to: string): Promise<void> {
+    this.plugin.settings.knowledgeBase = rebaseKnowledgePathRecords(this.plugin.settings.knowledgeBase, from, to);
+    this.plugin.settings.journalDirectory = rebaseKnowledgePath(this.plugin.settings.journalDirectory, from, to);
+    for (const session of this.plugin.settings.sessions) if (session.journalDirectory) session.journalDirectory = rebaseKnowledgePath(session.journalDirectory, from, to);
+    const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
+    if (Object.keys(registry.entries).length) await writeRawDigestRegistry(this.plugin.getVaultPath(), rebaseKnowledgePathRecords(registry, from, to));
+    if (knowledgeRootRole(from) === "raw") {
+      for (const file of this.plugin.app.vault.getMarkdownFiles()) {
+        if (!["wiki", "projects"].includes(knowledgeRootRole(file.path) ?? "")) continue;
+        const rebaseMarkers = (content: string) => content.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker, json: string) => {
+          try {
+            const record = JSON.parse(json);
+            if (typeof record.path !== "string") return marker;
+            const next = rebaseKnowledgePath(record.path, from, to);
+            return next === record.path ? marker : `<!-- echoink-source: ${JSON.stringify({ ...record, path: next })} -->`;
+          } catch { return marker; }
+        });
+        const current = await this.plugin.app.vault.cachedRead(file);
+        if (rebaseMarkers(current) !== current) await this.plugin.app.vault.process(file, rebaseMarkers);
+      }
+      const tracker = resolveKnowledgePath(this.plugin.getVaultPath(), "outputs/.ingest-tracker.md");
+      const trackerAbsolute = path.join(this.plugin.getVaultPath(), tracker);
+      const currentTracker = await fsp.readFile(trackerAbsolute, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+      if (currentTracker !== null) {
+        const next = currentTracker.replace(/^(\s*-\s+`)([^`\r\n]+)(`)/gmu, (_match, prefix: string, source: string, suffix: string) => prefix + rebaseKnowledgePath(source, from, to) + suffix);
+        if (next !== currentTracker) {
+          // Obsidian's hidden-file process preserves its normal concurrent-write behavior.
+          const file = this.plugin.app.vault.getFileByPath(tracker);
+          const update = (text: string) => text.replace(/^(\s*-\s+`)([^`\r\n]+)(`)/gmu, (_match, prefix: string, source: string, suffix: string) => prefix + rebaseKnowledgePath(source, from, to) + suffix);
+          if (file) await this.plugin.app.vault.process(file, update);
+          else await this.plugin.app.vault.adapter.process(tracker, update);
+        }
+      }
+    }
+    await rebaseNativeJournalPaths(this.plugin.app, from, to);
+    await this.initializer.rebasePaths(from, to);
+    await this.plugin.saveSettings(true);
+    this.dashboardSnapshot = null;
+    this.plugin.refreshKnowledgeBaseSurfaces();
   }
 
   async getOriginalDirectoryStatus() { return this.directoryHistory.status(); }
@@ -358,8 +406,9 @@ export class EchoInkKnowledgeSurfaceService {
   async unload(): Promise<void> {}
 }
 
-function createKnowledgeInitializationHost(
-  plugin: CodexForObsidianPlugin
+export function createKnowledgeInitializationHost(
+  plugin: CodexForObsidianPlugin,
+  onInteraction: (identity: Readonly<PiTurnInteractionIdentity> | null) => void = () => undefined
 ): KnowledgeInitializationHost {
   const vaultRootPath = path.resolve(plugin.getVaultPath());
   const privateRootPath = pluginDataDir(
@@ -393,6 +442,7 @@ function createKnowledgeInitializationHost(
   return {
     vaultRootPath,
     privateRootPath,
+    resolvePath: (relative) => resolveKnowledgePath(vaultRootPath, relative),
     now: Date.now,
     async listVaultFiles(): Promise<readonly KnowledgeInitializationVaultFile[]> {
       return await Promise.all(plugin.app.vault.getFiles().map(async (file) => {
@@ -516,13 +566,20 @@ function createKnowledgeInitializationHost(
       );
       const handle = await plugin.submitPiChat({
         conversationId: input.conversationId,
-        text: "/maintain",
+        text: `/maintain 用户已确认知识库初始化，本批 ${input.batchIndex + 1}/${input.expectedBatches}。请只阅读并处理以下指定来源，复用已有知识，按需提炼；无需新增可自然说明。未读或失败来源单列待处理。沿用当前工作区权限；执行受当前权限约束，不需要再次询问是否执行本批，也不要扩展为全库勘查。\n本批来源：\n${input.sourcePaths.map((source) => JSON.stringify(source)).join("\n")}`,
+        permission: plugin.settings.defaultPermission,
         submittedAt: Date.now(),
         ...modelSnapshot,
         maintenanceScope: {
           mode: "batch",
           sourcePaths: Object.freeze([...input.sourcePaths])
         }
+      });
+      const subscription = plugin.subscribePiRun(handle.productRunId, (event) => {
+        if (event.type === "interaction_requested" && event.interaction.kind === "question") {
+          onInteraction({ conversationId: input.conversationId, piSessionId: event.interaction.piSessionId,
+            productRunId: handle.productRunId, interactionId: event.interaction.interactionId });
+        } else if (event.type === "interaction_resolved") onInteraction(null);
       });
       const cancel = () => void plugin.cancelHarnessRun(handle.productRunId);
       input.signal.addEventListener("abort", cancel, { once: true });
@@ -547,6 +604,8 @@ function createKnowledgeInitializationHost(
           message: result.maintenance?.warnings.join("\n")
         };
       } finally {
+        subscription.unsubscribe();
+        onInteraction(null);
         input.signal.removeEventListener("abort", cancel);
         plugin.releasePiProductionRun(handle.productRunId);
       }

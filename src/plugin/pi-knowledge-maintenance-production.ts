@@ -1,3 +1,4 @@
+import { knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
@@ -186,9 +187,10 @@ implements PiKnowledgeMaintenanceToolPort {
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     try {
       this.assertIdentity(input);
+      if (input.sourceBodyFingerprints) input = { ...input, sourceBodyFingerprints: Object.fromEntries(Object.entries(input.sourceBodyFingerprints).map(([relative, revision]) => [resolveKnowledgePath(this.vaultRootPath, relative, false), revision])) };
       if (input.signal?.aborted) return cancelledResult();
       const requestedActions = input.candidateActions ?? [];
-      const requestedSources = input.sourcePaths?.length ? [...input.sourcePaths] : extractExplicitRawPaths(input.request);
+      const requestedSources = (input.sourcePaths?.length ? [...input.sourcePaths] : extractExplicitRawPaths(input.request)).map((value) => resolveKnowledgePath(this.vaultRootPath, value, false));
       if (requestedActions.length === 0 && requestedSources.length === 1 && this.knowledgeAgentIndex) {
         const reliable = await this.knowledgeAgentIndex
           .readReliableKnowledgeForRaw(requestedSources[0])
@@ -274,7 +276,7 @@ implements PiKnowledgeMaintenanceToolPort {
         },
         ...(input.signal ? { signal: input.signal } : {})
       });
-      const stale = committed.notes.length === 0 ? committed.issues.find((issue) => issue.code === "preview_stale" && issue.path?.startsWith("raw/")) : undefined;
+      const stale = committed.notes.length === 0 ? committed.issues.find((issue) => issue.code === "preview_stale" && (issue.path && knowledgeRolePath(issue.path).startsWith("raw/"))) : undefined;
       if (stale?.path) throw new Phase3MaintenanceError("preview_stale", stale.message, stale.path);
       if (committed.appliedPaths.length && this.onCommitted) {
         await Promise.resolve(this.onCommitted(committed.appliedPaths))
@@ -319,7 +321,7 @@ implements PiKnowledgeMaintenanceToolPort {
       });
     } catch (error) {
       if (input.signal?.aborted) return cancelledResult();
-      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && error.relativePath?.startsWith("raw/")) {
+      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && (error.relativePath && knowledgeRolePath(error.relativePath).startsWith("raw/"))) {
         try {
           const file = await readImmutableFile(this.vaultRootPath, error.relativePath);
           const fingerprint = rawDigestFingerprint(error.relativePath, file.bytes);
@@ -357,9 +359,9 @@ implements PiKnowledgeMaintenanceToolPort {
   }
 
   private async normalizeCandidateTarget(value: string): Promise<string> {
-    const target = normalizeVaultRelativePath(value);
-    if (!/^(wiki|projects)\//u.test(target) || !target.endsWith(".md") || target.split("/").some((part) => part.startsWith("."))) throw new Error("候选只可写入 wiki 或 projects 的 Markdown。");
-    if (!target.startsWith("wiki/")) return target;
+    const target = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(value));
+    if (!/^(wiki|projects)\//u.test(knowledgeRolePath(target)) || !target.endsWith(".md") || target.split("/").some((part) => part.startsWith("."))) throw new Error("候选只可写入 wiki 或 projects 的 Markdown。");
+    if (!knowledgeRolePath(target).startsWith("wiki/")) return target;
     const parts = target.split("/");
     for (let depth = 1; depth < parts.length - 1; depth++) {
       const parent = parts.slice(0, depth).join("/");
@@ -378,6 +380,7 @@ implements PiKnowledgeMaintenanceToolPort {
     proposal: Phase3MaintenanceProposalPort
   ): Phase3KnowledgeMaintenanceService {
     return new Phase3KnowledgeMaintenanceService({
+      resolvePath: (relative) => resolveKnowledgePath(this.vaultRootPath, relative),
       domain: this.domainService,
       sources: this.sources,
       tracker: this.tracker,
@@ -697,7 +700,7 @@ class FilePhase3MaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {
       ),
       this.options.domainService.readback({
         vaultId: input.vaultId,
-        relativePath: PHASE3_MAINTENANCE_TRACKER_PATH
+        relativePath: resolveKnowledgePath(this.vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH)
       })
     ]);
     if (!file) {
@@ -726,7 +729,7 @@ class FilePhase3MaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {
       }),
       changedRawPaths: Object.freeze(parseChangedRawPaths(
         UTF8_DECODER.decode(file.bytes)
-      ))
+      ).map((source) => resolveKnowledgePath(this.vaultRootPath, source)))
     });
   }
 }
@@ -774,6 +777,7 @@ implements Phase3MaintenanceProposalPort {
       try {
         const content = completeKnowledgeMaintenanceCandidateSources({
           targetPath: action.targetPath, content: action.content,
+          resolvePath: (value) => resolveKnowledgePath(this.vaultRootPath, value),
           selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 }))
         });
         const adopted = validateKnowledgeMaintenanceCandidateSources({ targetPath: action.targetPath, content,
@@ -886,11 +890,11 @@ async function deterministicManagedActions(
   ].join("\n");
   return Object.freeze([
     Object.freeze({
-      targetPath: PHASE3_MAINTENANCE_RAW_INDEX_PATH,
+      targetPath: resolveKnowledgePath(vaultRootPath, PHASE3_MAINTENANCE_RAW_INDEX_PATH),
       content: rawIndexContent
     }),
     Object.freeze({
-      targetPath: PHASE3_MAINTENANCE_TRACKER_PATH,
+      targetPath: resolveKnowledgePath(vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH),
       content: trackerContent
     }),
     Object.freeze({
@@ -917,7 +921,7 @@ async function readImmutableFile(
   vaultRootPath: string,
   relativePathInput: string
 ): Promise<Readonly<ImmutableFileRead>> {
-  const relativePath = normalizeVaultRelativePath(relativePathInput);
+  const relativePath = resolveKnowledgePath(vaultRootPath, normalizeVaultRelativePath(relativePathInput), false);
   const absolutePath = await resolveRegularFile(vaultRootPath, relativePath);
   const flags = fsConstants.O_RDONLY
     | (typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0);
@@ -1036,7 +1040,7 @@ function parseChangedRawPaths(text: string): string[] {
       continue;
     }
     if (!inChangedSection && !/(?:changed|变更|变化)/iu.test(line)) continue;
-    for (const match of line.matchAll(/raw\/[\p{L}\p{N}_. /-]+?\.md\b/giu)) {
+    for (const match of line.matchAll(/(?:raw|[^\s/`\[\]（）]+（raw）)\/[^`\[\]\r\n]+?\.md\b/giu)) {
       try {
         changed.add(normalizeVaultRelativePath(match[0].trim()));
       } catch {
@@ -1308,7 +1312,7 @@ function safeMaintenanceError(error: unknown): string {
 
 function extractExplicitRawPaths(value: string): string[] {
   const paths = new Set<string>();
-  for (const match of value.matchAll(/raw\/[\p{L}\p{N}_. /-]+?\.md\b/giu)) {
+  for (const match of value.matchAll(/(?:raw|[^\s/`\[\]（）]+（raw）)\/[^`\[\]\r\n]+?\.md\b/giu)) {
     try {
       paths.add(normalizeVaultRelativePath(match[0].trim()));
     } catch {

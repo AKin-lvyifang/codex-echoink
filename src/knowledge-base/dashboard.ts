@@ -1,3 +1,4 @@
+import { knowledgeRootRole, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
 import { wikiCategoryLabel } from "./wiki-folder-names";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
@@ -211,15 +212,15 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     }
   };
   const processedSources = settings.processedSources ?? {};
-  const raw = await scanDashboardDirectory(vaultPath, "raw", { skipHidden: true });
-  const wiki = await scanDashboardDirectory(vaultPath, "wiki", { skipHidden: true });
-  const outputs = await scanDashboardDirectory(vaultPath, "outputs", { skipHidden: false, ignoreNames: new Set([".DS_Store"]) });
-  const inbox = await scanDashboardDirectory(vaultPath, "inbox", { skipHidden: true });
+  const raw = await scanDashboardRole(vaultPath, "raw", { skipHidden: true });
+  const wiki = await scanDashboardRole(vaultPath, "wiki", { skipHidden: true });
+  const outputs = await scanDashboardRole(vaultPath, "outputs", { skipHidden: false, ignoreNames: new Set([".DS_Store"]) });
+  const inbox = await scanDashboardRole(vaultPath, "inbox", { skipHidden: true });
   const reportPath = await resolveLatestReportPath(vaultPath, settings.lastReportPath, outputs.files);
-  const trackerPath = "outputs/.ingest-tracker.md";
+  const trackerPath = resolveKnowledgePath(vaultPath, "outputs/.ingest-tracker.md");
   const trackerExists = await structureExists(trackerPath);
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
-  const wikiIndexExists = await structureExists("wiki/index.md");
+  const wikiIndexExists = await structureExists(resolveKnowledgePath(vaultPath, "wiki/index.md"));
   const rawSourceFiles = raw.files.filter(isRawProcessingSource);
   const registry = await readRawDigestRegistry(vaultPath, true).catch(() => {
     readErrors.push("outputs/.raw-digest-registry.json");
@@ -248,7 +249,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
-  const wikiTodayCount = wiki.files.filter((file) => file.path !== "wiki/index.md" && isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)).length;
+  const wikiTodayCount = wiki.files.filter((file) => knowledgeRolePath(file.path) !== "wiki/index.md" && isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)).length;
   const warnings = buildWarnings({
     rawExists: raw.exists,
     wikiExists: wiki.exists,
@@ -259,7 +260,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const activityDays = buildActivityDays({
     generatedAt,
     rawFiles: rawContentFiles,
-    wikiFiles: wiki.files.filter((file) => file.path !== "wiki/index.md"),
+    wikiFiles: wiki.files.filter((file) => knowledgeRolePath(file.path) !== "wiki/index.md"),
     inboxFiles: inbox.files,
     outputFiles: visibleDashboardCardFiles(outputs.files),
     healthHistory: settings.healthHistory ?? [],
@@ -324,7 +325,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     wiki: {
       ...stripLimited(wiki),
       indexExists: wikiIndexExists,
-      domainCount: await countImmediateDirectories(path.join(vaultPath, "wiki")),
+      domainCount: (await Promise.all(knowledgeRoleRoots(vaultPath, "wiki").map((root) => countImmediateDirectories(path.join(vaultPath, root))))).reduce((sum, count) => sum + count, 0),
       todayCount: wikiTodayCount,
       groups: wikiGroups
     },
@@ -377,6 +378,18 @@ interface DashboardScanResult extends KnowledgeBaseDashboardDirectory {
   files: KnowledgeBaseDashboardFile[];
   limited: boolean;
   failed: boolean;
+}
+
+async function scanDashboardRole(vaultPath: string, role: KnowledgeRootRole, options: DashboardScanOptions): Promise<DashboardScanResult> {
+  const scans = await Promise.all(knowledgeRoleRoots(vaultPath, role).map((root) => scanDashboardDirectory(vaultPath, root, options)));
+  const files = scans.flatMap((scan) => scan.files);
+  return {
+    path: resolveKnowledgePath(vaultPath, role), exists: scans.some((scan) => scan.exists),
+    fileCount: files.length, folderCount: scans.reduce((sum, scan) => sum + scan.folderCount, 0),
+    totalSize: scans.reduce((sum, scan) => sum + scan.totalSize, 0), files,
+    recentFiles: [...files].sort((a, b) => b.mtime - a.mtime).slice(0, RECENT_FILE_LIMIT),
+    limited: scans.some((scan) => scan.limited), failed: scans.some((scan) => scan.failed)
+  };
 }
 
 async function scanDashboardDirectory(vaultPath: string, relativeDir: string, options: DashboardScanOptions): Promise<DashboardScanResult> {
@@ -1082,10 +1095,10 @@ function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: numbe
   const groups = new Map<string, KnowledgeBaseDashboardWikiGroup>();
   for (const file of files) {
     const parts = file.path.split("/");
-    if (parts.length < 3 || parts[0] !== "wiki") continue;
+    if (parts.length < 3 || knowledgeRootRole(file.path) !== "wiki") continue;
     const folder = parts[1];
     if (!folder || folder.startsWith(".")) continue;
-    const groupPath = `wiki/${folder}`;
+    const groupPath = `${parts[0]}/${folder}`;
     const group = groups.get(groupPath) ?? { path: groupPath, label: wikiCategoryLabel(folder), totalCount: 0, sharePercent: 0, todayCount: 0 };
     group.totalCount += 1;
     if (isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)) group.todayCount += 1;
@@ -1194,7 +1207,7 @@ function formatLocalDateKey(value: number): string {
 }
 
 function isRawProcessingSource(file: KnowledgeBaseDashboardFile): boolean {
-  if (file.path === "raw/index.md") return false;
+  if (knowledgeRolePath(file.path) === "raw/index.md") return false;
   const lower = file.path.toLowerCase();
   if (lower.endsWith(".base") || lower.endsWith(".base.md")) return false;
   if (lower.includes(".assets/")) return false;

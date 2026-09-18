@@ -1,3 +1,4 @@
+import { knowledgeRootRole, knowledgeRolePath, rebaseKnowledgePathRecords } from "./root-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import { createHash, randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -155,6 +156,7 @@ export interface KnowledgeInitializationJob {
   counts: KnowledgeInitializationCounts;
   guidePath: string;
   lastError: string;
+  pauseCause?: "pause_button" | "reload" | "model_cancelled" | "error";
   recoveryAction: string;
   warnings?: string[];
   pendingSourcePaths?: string[];
@@ -177,6 +179,7 @@ export interface KnowledgeInitializationHost {
   readonly vaultRootPath: string;
   readonly privateRootPath: string;
   now(): number;
+  resolvePath?(relativePath: string): string;
   beforeStructureChange?(jobId: string): Promise<void | readonly string[]>;
   withStructureMutation?<T>(action: () => Promise<T>): Promise<T>;
   optimizeWikiFolders?(assertActive: () => void): Promise<void>;
@@ -244,12 +247,33 @@ export class KnowledgeBaseInitializer {
 
   constructor(private readonly host: KnowledgeInitializationHost) {}
 
+  private actualPath(relativePath: string): string { return this.host.resolvePath?.(relativePath) ?? relativePath; }
+
+  private isReusableGuide(content: string): boolean {
+    const createdAt = echoInkKnowledgeGuideCreatedAt(content);
+    return isReusableEchoInkKnowledgeGuide(content) || (createdAt !== null && content === this.guide(createdAt));
+  }
+
+  private guide(now: Date): string {
+    return buildKnowledgeInitializationGuideTemplate(now).replace(/\b(raw|wiki|projects|outputs|inbox|journal|work|archive|templates|assets)(?=\/|`)/gu, (root) => this.actualPath(root));
+  }
+
+  async rebasePaths(from: string, to: string): Promise<void> {
+    if (!this.job) return;
+    const confirmed = this.job.confirmedDigest === this.job.planDigest;
+    Object.assign(this.job, rebaseKnowledgePathRecords(this.job, from, to));
+    this.job.planDigest = sha256(stableJson(frozenPlanDocument(this.job)));
+    if (confirmed) this.job.confirmedDigest = this.job.planDigest;
+    await this.persistJob(this.job, true);
+  }
+
   async initialize(): Promise<void> {
     try { this.job = await this.readPersistedJob(); }
     catch (error) { this.readError = `读取初始化记录：${knowledgeErrorDetail(error)}；请重新扫描，原记录会保留。`; return; }
     if (this.job?.status === "active") {
       this.job.status = "paused";
       this.job.lastError = "EchoInk 在知识库初始化期间重新启动。";
+      this.job.pauseCause = "reload";
       this.job.recoveryAction = "请检查冻结计划后点击继续；不会自动重跑 Provider。";
       await this.persistJob(this.job);
     }
@@ -260,21 +284,21 @@ export class KnowledgeBaseInitializer {
    * 不创建初始化作业，不移动文件，不调用 Provider；任一内容冲突即跳过。
    */
   async refreshManagedGuide(): Promise<boolean> {
-    const existingGuide = await this.host.readText(KNOWLEDGE_INITIALIZATION_GUIDE_PATH);
-    if (!existingGuide || !isReusableEchoInkKnowledgeGuide(existingGuide)) return false;
+    const existingGuide = await this.host.readText(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH));
+    if (!existingGuide || !this.isReusableGuide(existingGuide)) return false;
     const createdAt = echoInkKnowledgeGuideCreatedAt(existingGuide);
     if (!createdAt) return false;
     const assets = await this.provisionGuideAssets();
     if (assets.status !== "ready") return false;
-    const expectedGuide = buildKnowledgeInitializationGuideTemplate(createdAt);
+    const expectedGuide = this.guide(createdAt);
     if (existingGuide !== expectedGuide) {
       await this.host.updateText(
-        KNOWLEDGE_INITIALIZATION_GUIDE_PATH,
+        this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH),
         sha256(existingGuide),
         expectedGuide
       );
     }
-    return await this.host.readText(KNOWLEDGE_INITIALIZATION_GUIDE_PATH) === expectedGuide;
+    return await this.host.readText(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH)) === expectedGuide;
   }
 
   snapshot(): Readonly<KnowledgeInitializationJob> | null {
@@ -287,7 +311,7 @@ export class KnowledgeBaseInitializer {
     const kinds = await Promise.all(
       KNOWLEDGE_INITIALIZATION_ROOTS.map(async (root) => ({
         root,
-        kind: await this.host.pathKind(root)
+        kind: await this.host.pathKind(this.actualPath(root))
       }))
     );
     const existingRoots = kinds
@@ -343,10 +367,10 @@ export class KnowledgeBaseInitializer {
       const root = KNOWLEDGE_INITIALIZATION_ROOTS[index];
       if (!root) continue;
       try {
-        const kind = await this.host.pathKind(root);
+        const kind = await this.host.pathKind(this.actualPath(root));
         if (kind === "missing") {
-          await this.host.createFolder(root);
-          if (await this.host.pathKind(root) !== "folder") throw new Error(`创建后仍不可用`);
+          await this.host.createFolder(this.actualPath(root));
+          if (await this.host.pathKind(this.actualPath(root)) !== "folder") throw new Error(`创建后仍不可用`);
           createdRoots.push(root);
         } else if (kind === "other") warnings.push(`目录 ${root} 被同名文件占用，已保留；其他目录继续。`);
       } catch (error) { warnings.push(`补全目录 ${root}：${knowledgeErrorDetail(error)}`); }
@@ -394,7 +418,7 @@ export class KnowledgeBaseInitializer {
         continue;
       }
       const isMarkdown = isKnowledgeInitializationMarkdownPath(relativePath);
-      const topLevel = relativePath.split("/")[0]?.toLocaleLowerCase() ?? "";
+      const topLevel = knowledgeRootRole(relativePath) ?? "";
       if (FIXED_ROOTS.has(topLevel)) {
         // EchoInk 体系内的内容保持原位。只有 Markdown 笔记参与
         // 自定义分配或 Raw 提炼；附件不会被当作可提炼来源。
@@ -409,7 +433,7 @@ export class KnowledgeBaseInitializer {
         }
         if (
           topLevel === "raw"
-          && relativePath.toLocaleLowerCase() !== "raw/index.md"
+          && knowledgeRolePath(relativePath).toLocaleLowerCase() !== "raw/index.md"
           && !this.host.processedRawPaths().has(relativePath)
         ) {
           existingRaw.push({
@@ -444,7 +468,7 @@ export class KnowledgeBaseInitializer {
         ignored += 1;
         continue;
       }
-      const targetPath = importedTarget("raw", relativePath);
+      const targetPath = this.actualPath(importedTarget("raw", relativePath));
       const conflict = await this.host.pathExists(targetPath);
       items.push({
         sourcePath: relativePath,
@@ -482,7 +506,7 @@ export class KnowledgeBaseInitializer {
       conversationId: null,
       productRunIds: [],
       counts: emptyCounts(),
-      guidePath: KNOWLEDGE_INITIALIZATION_GUIDE_PATH,
+      guidePath: this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH),
       warnings,
       lastError: "",
       recoveryAction: "确认前不会移动笔记或调用 Provider。"
@@ -536,7 +560,7 @@ export class KnowledgeBaseInitializer {
       if (role === "keep" || role === managedMarkdownRole(sourcePath)) continue;
       conflictByPath.set(
         sourcePath,
-        await this.host.pathExists(importedTarget(role, sourcePath))
+        await this.host.pathExists(this.actualPath(importedTarget(role, sourcePath)))
       );
     }
     const nextJob = structuredClone(job);
@@ -548,7 +572,7 @@ export class KnowledgeBaseInitializer {
       const remainsInExistingDirectory = role !== "keep" && role === existingRole;
       item.targetPath = role === "keep" || remainsInExistingDirectory
         ? null
-        : importedTarget(role, item.sourcePath);
+        : this.actualPath(importedTarget(role, item.sourcePath));
       item.state = role === "keep" || remainsInExistingDirectory
         ? "kept"
         : conflictByPath.get(sourcePath) ? "conflict" : "pending";
@@ -578,6 +602,7 @@ export class KnowledgeBaseInitializer {
     job.phase = "confirmed";
     job.status = "active";
     job.lastError = "";
+    job.pauseCause = undefined;
     job.recoveryAction = "";
     await this.persistJob(job);
     this.startRun(job);
@@ -611,6 +636,7 @@ export class KnowledgeBaseInitializer {
     job.provider = this.host.currentProvider();
     job.status = "active";
     job.lastError = "";
+    job.pauseCause = undefined;
     job.recoveryAction = "";
     await this.persistJob(job);
     this.startRun(job);
@@ -619,10 +645,11 @@ export class KnowledgeBaseInitializer {
 
   async cancel(): Promise<Readonly<KnowledgeInitializationJob> | null> {
     if (!this.job) return null;
-    this.abortController?.abort();
     this.job.status = "cancelled";
-    this.job.lastError = "初始化已取消；已完成的移动与 Wiki 写入不会回滚。";
-    this.job.recoveryAction = "如需继续，请检查当前状态后点击继续。";
+    this.job.pauseCause = "pause_button";
+    this.job.lastError = "已通过暂停按钮暂停，可从当前进度继续。";
+    this.job.recoveryAction = "点击“继续初始化”，从当前进度接着整理。";
+    this.abortController?.abort();
     await this.persistJob(this.job);
     return cloneJob(this.job);
   }
@@ -644,6 +671,7 @@ export class KnowledgeBaseInitializer {
         if (job.status === "cancelled") return;
         if (job.status !== "initialized") job.status = "failed_recoverable";
         job.lastError = knowledgeErrorDetail(error);
+        job.pauseCause = "error";
         job.recoveryAction = "检查错误详情后点击继续；不会回滚已完成的项目。";
         await this.persistJob(job).catch((saveError) => { job.savePending = true; this.warn(job, `保存进度：${knowledgeErrorDetail(saveError)}；完成内容已保留，继续时只补剩余状态。`); });
       })
@@ -686,10 +714,10 @@ export class KnowledgeBaseInitializer {
     for (const root of KNOWLEDGE_INITIALIZATION_ROOTS) {
       assertNotCancelled(signal);
       await this.optionalStep(job, `创建目录 ${root}`, async () => {
-        const kind = await this.host.pathKind(root);
+        const kind = await this.host.pathKind(this.actualPath(root));
         if (kind === "other") throw new Error("同名文件已保留，此目录下的操作将跳过。");
-        if (kind === "missing") await this.host.createFolder(root);
-        if (await this.host.pathKind(root) !== "folder") throw new Error("创建后未确认文件夹，请检查路径权限。");
+        if (kind === "missing") await this.host.createFolder(this.actualPath(root));
+        if (await this.host.pathKind(this.actualPath(root)) !== "folder") throw new Error("创建后未确认文件夹，请检查路径权限。");
         if (!job.createdDirectories.includes(root)) job.createdDirectories.push(root);
       });
       await this.persistJob(job);
@@ -780,7 +808,8 @@ export class KnowledgeBaseInitializer {
           break;
         }
         if (result.status === "cancelled") {
-          await this.pause(job, "cancelled", result.message || "当前知识分析批次已取消。", "检查当前进度后点击继续。");
+          if (signal.aborted && job.pauseCause === "pause_button") return;
+          await this.pause(job, "cancelled", result.message || "模型请求已取消，暂未取得具体原因。", "点击“继续初始化”重试未完成的笔记。");
           return;
         }
         if (result.status === "write_uncertain") {
@@ -816,11 +845,11 @@ export class KnowledgeBaseInitializer {
     await this.persistJob(job);
     const now = new Date(job.createdAt);
     await this.optionalStep(job, "生成指南", async () => {
-      const expected = buildKnowledgeInitializationGuideTemplate(now);
-      const current = await this.host.readText(KNOWLEDGE_INITIALIZATION_GUIDE_PATH);
-      if (current !== null && current !== expected && !isReusableEchoInkKnowledgeGuide(current)) throw new Error(`保留用户文件 ${KNOWLEDGE_INITIALIZATION_GUIDE_PATH}`);
-      if (current === null) await this.host.createText(KNOWLEDGE_INITIALIZATION_GUIDE_PATH, expected);
-      else if (current !== expected && !current.includes("\ntemplate: echoink-knowledge-guide-v2\n")) await this.host.updateText(KNOWLEDGE_INITIALIZATION_GUIDE_PATH, sha256(current), expected);
+      const expected = this.guide(now);
+      const current = await this.host.readText(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH));
+      if (current !== null && current !== expected && !this.isReusableGuide(current)) throw new Error(`保留用户文件 ${this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH)}`);
+      if (current === null) await this.host.createText(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH), expected);
+      else if (current !== expected && !current.includes("\ntemplate: echoink-knowledge-guide-v2\n")) await this.host.updateText(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH), sha256(current), expected);
     });
     assertJobActive(job, signal);
     await this.optionalStep(job, "生成指南配图", async () => {
@@ -829,9 +858,9 @@ export class KnowledgeBaseInitializer {
     });
     for (const [label, action] of [
       ["更新 Wiki 索引", () => this.ensureIndexMarker(now)],
-      ["补全 Raw 索引", () => this.createTextIfMissing("raw/index.md", buildRawIndexTemplate(now))],
-      ["补全处理记录", () => this.createTextIfMissing(KNOWLEDGE_INITIALIZATION_TRACKER_PATH, buildTrackerTemplate(now))],
-      ["打开指南", () => this.host.openGuide(KNOWLEDGE_INITIALIZATION_GUIDE_PATH)]
+      ["补全 Raw 索引", () => this.createTextIfMissing(this.actualPath("raw/index.md"), buildRawIndexTemplate(now))],
+      ["补全处理记录", () => this.createTextIfMissing(this.actualPath(KNOWLEDGE_INITIALIZATION_TRACKER_PATH), buildTrackerTemplate(now))],
+      ["打开指南", () => this.host.openGuide(this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH))]
     ] as const) {
       assertJobActive(job, signal);
       await this.optionalStep(job, label, action);
@@ -844,6 +873,7 @@ export class KnowledgeBaseInitializer {
   private async finishInitialization(job: KnowledgeInitializationJob): Promise<void> {
     job.status = "initialized";
     job.lastError = "";
+    job.pauseCause = undefined;
     job.recoveryAction = "";
     job.savePending = false;
     job.warnings = (job.warnings ?? []).filter((warning) => !warning.startsWith("保存初始化状态：") && !warning.startsWith("保存进度："));
@@ -878,21 +908,21 @@ export class KnowledgeBaseInitializer {
   > {
     const states = await Promise.all(KNOWLEDGE_INITIALIZATION_GUIDE_ASSETS.map(async (asset) => ({
       asset,
-      kind: await this.host.pathKind(asset.path),
-      contentHash: await this.host.readFileHash(asset.path)
+      kind: await this.host.pathKind(this.actualPath(asset.path)),
+      contentHash: await this.host.readFileHash(this.actualPath(asset.path))
     })));
     for (const state of states) {
       if (state.kind === "missing" || state.contentHash === state.asset.contentHash) continue;
-      return Object.freeze({ status: "conflict" as const, path: state.asset.path });
+      return Object.freeze({ status: "conflict" as const, path: this.actualPath(state.asset.path) });
     }
     for (const state of states) {
       if (state.kind !== "missing") continue;
       beforeWrite();
-      await this.host.createBinary(state.asset.path, state.asset.content.slice(0));
+      await this.host.createBinary(this.actualPath(state.asset.path), state.asset.content.slice(0));
     }
     beforeWrite();
     const readback = await Promise.all(KNOWLEDGE_INITIALIZATION_GUIDE_ASSETS.map(
-      (asset) => this.host.readFileHash(asset.path)
+      (asset) => this.host.readFileHash(this.actualPath(asset.path))
     ));
     if (readback.some((hash, index) =>
       hash !== KNOWLEDGE_INITIALIZATION_GUIDE_ASSETS[index]?.contentHash)) {
@@ -907,10 +937,10 @@ export class KnowledgeBaseInitializer {
   }
 
   private async ensureIndexMarker(now: Date): Promise<void> {
-    const block = buildWikiIndexMarkerBlock(now);
-    const current = await this.host.readText(KNOWLEDGE_INITIALIZATION_INDEX_PATH);
+    const block = buildWikiIndexMarkerBlock(now).replace(/\b(raw|wiki)(?=\/)/gu, (root) => this.actualPath(root));
+    const current = await this.host.readText(this.actualPath(KNOWLEDGE_INITIALIZATION_INDEX_PATH));
     if (current === null) {
-      await this.host.createText(KNOWLEDGE_INITIALIZATION_INDEX_PATH, `# Wiki 知识索引\n\n${block}\n`);
+      await this.host.createText(this.actualPath(KNOWLEDGE_INITIALIZATION_INDEX_PATH), `# Wiki 知识索引\n\n${block}\n`);
       return;
     }
     const start = current.indexOf(INDEX_MARKER_START);
@@ -918,7 +948,7 @@ export class KnowledgeBaseInitializer {
     if (start >= 0 && end >= start) return;
     if (start >= 0 || end >= 0) throw new Error("Wiki 索引生成块标记不完整，保留用户内容；请修复该标记后重试。");
     await this.host.updateText(
-      KNOWLEDGE_INITIALIZATION_INDEX_PATH,
+      this.actualPath(KNOWLEDGE_INITIALIZATION_INDEX_PATH),
       sha256(current),
       `${current.replace(/\s*$/u, "")}\n\n${block}\n`
     );
@@ -956,6 +986,7 @@ export class KnowledgeBaseInitializer {
     recoveryAction: string
   ): Promise<Readonly<KnowledgeInitializationJob>> {
     job.status = status;
+    job.pauseCause = status === "cancelled" ? "model_cancelled" : "error";
     job.lastError = error;
     job.recoveryAction = recoveryAction;
     await this.persistJob(job);
@@ -1098,12 +1129,12 @@ function existingRawSources(
   job: Readonly<KnowledgeInitializationJob>
 ): KnowledgeInitializationSourceSnapshot[] {
   const generatedRawTargets = new Set(job.items.map((item) =>
-    importedTarget("raw", item.sourcePath)
+    knowledgeRolePath(importedTarget("raw", item.sourcePath))
   ));
   // 保留扫描时发现的 Raw 来源快照，即使用户暂时把它分配到别的目录。
   // refreshFrozenPlan 会按当前角色决定它是否进入 extractionQueue；这样再
   // 移回 Raw 时仍能恢复提炼资格，同时不会把体系外笔记的旧生成目标复活。
-  return job.extractionSources.filter((source) => !generatedRawTargets.has(source.path));
+  return job.extractionSources.filter((source) => !generatedRawTargets.has(knowledgeRolePath(source.path)));
 }
 
 function shouldExcludeFile(relativePath: string, file: Readonly<KnowledgeInitializationVaultFile>): boolean {
@@ -1128,7 +1159,7 @@ function managedMarkdownRole(
 ): Exclude<KnowledgeInitializationRole, "keep"> | null {
   const normalized = normalizeRelativePath(sourcePath);
   if (!isKnowledgeInitializationMarkdownPath(normalized)) return null;
-  const topLevel = normalized.split("/")[0]?.toLocaleLowerCase() ?? "";
+  const topLevel = knowledgeRootRole(normalized) ?? "";
   return (KNOWLEDGE_INITIALIZATION_MARKDOWN_ROLES as readonly string[]).includes(topLevel)
     ? topLevel as Exclude<KnowledgeInitializationRole, "keep">
     : null;

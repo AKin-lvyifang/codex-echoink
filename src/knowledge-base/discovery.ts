@@ -1,3 +1,4 @@
+import { resolveKnowledgePath } from "./root-paths";
 import * as path from "path";
 import { mimeForKnowledgeFile, requiredModalityForMime } from "./source-media";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
@@ -108,7 +109,7 @@ export async function discoverKnowledgeBaseSources(
         : {})
     });
   }
-  const trackerPath = path.join(vaultPath, "outputs", ".ingest-tracker.md");
+  const trackerPath = path.join(vaultPath, resolveKnowledgePath(vaultPath, "outputs/.ingest-tracker.md"));
   // Registry entries are the non-Markdown equivalent of managed frontmatter.
   // A metadata match lets the index trust the seed without reading content;
   // if metadata drifted, refreshKnowledgeBaseIndex recomputes the fingerprint
@@ -127,7 +128,7 @@ export async function discoverKnowledgeBaseSources(
     sources: resolvedSources,
     changedSources: resolvedSources.filter((source) => source.changed),
     skippedSources,
-    reportPath: knowledgeBaseReportPathForMode(mode, today),
+    reportPath: resolveKnowledgePath(vaultPath, knowledgeBaseReportPathForMode(mode, today)),
     trackerPath,
     indexStats: {
       reused: refresh.reusedCount,

@@ -81,7 +81,7 @@ export function renderKnowledgeFolderActions(
     void run("optimize", async () => {
       const result = await service.optimizeFolderNames((message) => setStatus("optimize", message));
       return zh
-        ? `已改名 ${result.renamed.length} 个目录；跳过 ${result.skipped.length}。${result.skipped.map((item) => `${item.path}：${item.reason}`).join("；")}`
+        ? `${result.message ?? `已改名 ${result.renamed.length} 个目录；跳过 ${result.skipped.length}。`}${result.skipped.map((item) => `${item.path}：${item.reason}`).join("；")}`
         : `Renamed ${result.renamed.length}; skipped ${result.skipped.length}. ${result.skipped.map((item) => `${item.path}: ${item.reason}`).join("; ")}`;
     });
   };

@@ -1,3 +1,4 @@
+import { knowledgeRolePath, knowledgeRoleRoots } from "./root-paths";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -262,37 +263,40 @@ async function walkIndexRoot(
   root: KnowledgeBaseIndexRoot,
   options: { maxFiles?: number; validateRawSafety: boolean }
 ): Promise<Array<{ absolutePath: string; relativePath: string; stat: fs.Stats }>> {
-  const rootPath = path.join(vaultPath, root);
-  const rootStat = await fsp.lstat(rootPath).catch((error) => {
-    if (isMissingPathError(error)) return null;
-    throw error;
-  });
-  if (!rootStat) return [];
-  if (!rootStat.isDirectory()) {
-    if (options.validateRawSafety) throw new Error("raw/ 不是普通目录，知识库任务不会扫描或处理该路径。");
-    return [];
-  }
+  const rootPaths = knowledgeRoleRoots(vaultPath, root);
   const files: Array<{ absolutePath: string; relativePath: string; stat: fs.Stats }> = [];
   const maxFiles = normalizePositiveLimit(options.maxFiles, Number.POSITIVE_INFINITY);
-  const walk = async (current: string): Promise<void> => {
-    if (files.length >= maxFiles) return;
-    const entries = await fsp.readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      if (files.length >= maxFiles) return;
-      if (entry.name.startsWith(".") || entry.name === ".DS_Store") continue;
-      const absolutePath = path.join(current, entry.name);
-      const stat = await fsp.lstat(absolutePath);
-      const relativePath = normalizeSlashes(path.relative(vaultPath, absolutePath));
-      if (options.validateRawSafety) assertSafeRawIndexEntry(relativePath, stat);
-      if (stat.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (!stat.isFile() || !shouldIndexFile(root, relativePath)) continue;
-      files.push({ absolutePath, relativePath, stat });
+  for (const actualRoot of rootPaths) {
+    const rootPath = path.join(vaultPath, actualRoot);
+    const rootStat = await fsp.lstat(rootPath).catch((error) => {
+      if (isMissingPathError(error)) return null;
+      throw error;
+    });
+    if (!rootStat) continue;
+    if (!rootStat.isDirectory()) {
+      if (options.validateRawSafety) throw new Error("raw/ 不是普通目录，知识库任务不会扫描或处理该路径。");
+      continue;
     }
-  };
-  await walk(rootPath);
+    const walk = async (current: string): Promise<void> => {
+      if (files.length >= maxFiles) return;
+      const entries = await fsp.readdir(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (files.length >= maxFiles) return;
+        if (entry.name.startsWith(".") || entry.name === ".DS_Store") continue;
+        const absolutePath = path.join(current, entry.name);
+        const stat = await fsp.lstat(absolutePath);
+        const relativePath = normalizeSlashes(path.relative(vaultPath, absolutePath));
+        if (options.validateRawSafety) assertSafeRawIndexEntry(relativePath, stat);
+        if (stat.isDirectory()) {
+          await walk(absolutePath);
+          continue;
+        }
+        if (!stat.isFile() || !shouldIndexFile(root, relativePath)) continue;
+        files.push({ absolutePath, relativePath, stat });
+      }
+    };
+    await walk(rootPath);
+  }
   return files;
 }
 
@@ -305,7 +309,7 @@ function assertSafeRawIndexEntry(relativePath: string, stat: fs.Stats): void {
 function shouldIndexFile(root: KnowledgeBaseIndexRoot, relativePath: string): boolean {
   const extension = path.extname(relativePath).toLowerCase();
   if (root === "raw") {
-    if (relativePath === "raw/index.md" || /^raw\/index \d+\.md$/i.test(relativePath)) return false;
+    if (knowledgeRolePath(relativePath) === "raw/index.md" || /^raw\/index \d+\.md$/i.test(knowledgeRolePath(relativePath))) return false;
     const lower = relativePath.toLowerCase();
     if (lower.endsWith(".base") || lower.endsWith(".base.md") || lower.includes(".assets/")) return false;
     return RAW_INDEX_EXTENSIONS.has(extension);

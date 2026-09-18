@@ -1,3 +1,4 @@
+import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
 import { normalizePiWorkspacePermission, piWorkspaceAllowsTool, type PiWorkspaceAccess } from "./pi-workspace-access";
@@ -1621,7 +1622,12 @@ export class PiNativeConversationRuntime {
           initialization: request.maintenanceScope?.mode === "batch",
           assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
         });
-        const command = Object.freeze({ ...resolvedCommand, preference: Object.freeze({
+        const scope = resolvedCommand.scope.mode === "global" ? resolvedCommand.scope : resolvedCommand.scope.mode === "query"
+          ? { ...resolvedCommand.scope, candidatePaths: resolvedCommand.scope.candidatePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) }
+          : resolvedCommand.scope.mode === "exact" ? { ...resolvedCommand.scope, sourcePaths: [resolveKnowledgePath(active.cwd, resolvedCommand.scope.sourcePaths[0], false)] as const }
+          : { ...resolvedCommand.scope, sourcePaths: resolvedCommand.scope.sourcePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) };
+        execution.maintenanceScope = scope;
+        const command = Object.freeze({ ...resolvedCommand, scope, preference: Object.freeze({
           ...preference, providerResourceText: [structureResult, preference.providerResourceText].filter(Boolean).join("\n")
         }) });
         execution.knowledgeWorkflow = { kind: "maintain", command };
@@ -2871,7 +2877,7 @@ export class PiNativeConversationRuntime {
         ? execution.knowledgeWorkflow
         : null;
       const maintenanceResult = maintenance
-        ? classifyKnowledgeMaintenanceResult(runEntries, undefined, collectMaintenanceReadPaths(active.sessionManager.getBranch()).filter((source) => maintenance.command.scope.mode === "global" ? source.startsWith("raw/") || source === "outputs/.ingest-tracker.md" : (maintenance.command.scope.mode === "query" ? maintenance.command.scope.candidatePaths : maintenance.command.scope.sourcePaths).includes(source)))
+        ? classifyKnowledgeMaintenanceResult(runEntries, undefined, collectMaintenanceReadPaths(active.sessionManager.getBranch()).filter((source) => maintenance.command.scope.mode === "global" ? knowledgeRolePath(source).startsWith("raw/") || knowledgeRolePath(source) === "outputs/.ingest-tracker.md" : (maintenance.command.scope.mode === "query" ? maintenance.command.scope.candidatePaths : maintenance.command.scope.sourcePaths).includes(source)))
         : null;
       const maintenanceResultInvalid = maintenanceResult?.kind === "invalid";
       if (
@@ -5674,7 +5680,7 @@ function maintenanceOutcome(execution: ActiveProductRun, entries: readonly Sessi
     if (result) warnings.push(...result.issues.map((issue) => knowledgeErrorDetail(issue.message)));
   }
   const scope = execution.maintenanceScope ?? (execution.knowledgeWorkflow?.kind === "maintain" ? execution.knowledgeWorkflow.command.scope : undefined);
-  const expected = scope && (scope.mode === "exact" || scope.mode === "batch") ? scope.sourcePaths : [...read].filter((value) => value.startsWith("raw/"));
+  const expected = scope && (scope.mode === "exact" || scope.mode === "batch") ? scope.sourcePaths : [...read].filter((value) => knowledgeRolePath(value).startsWith("raw/"));
   const analysisOnly = execution.permission === "read-only" || execution.mode === "plan";
   const processedSourcePaths = terminalState === "completed" ? expected.filter((source) => read.has(source)) : [];
   return Object.freeze({ analysisOnly, processedSourcePaths, pendingSourcePaths: expected.filter((source) => !processedSourcePaths.includes(source)), warnings: [...new Set(warnings)] });
@@ -6233,7 +6239,7 @@ function normalizePiKnowledgeMaintenanceScope(
 function normalizePiKnowledgeMaintenanceRawPath(value: string): string {
   const normalized = String(value).trim().replaceAll("\\", "/").replace(/^\/+/, "");
   if (
-    !normalized.toLocaleLowerCase().startsWith("raw/")
+    !knowledgeRolePath(normalized).toLocaleLowerCase().startsWith("raw/")
     || !isRawMarkdownPath(normalized)
     || normalized.split("/").some((part) => !part || part === "." || part === "..")
   ) {

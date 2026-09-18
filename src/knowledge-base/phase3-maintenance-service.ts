@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "./root-paths";
 import { createHash, randomUUID } from "node:crypto";
 import type {
   VaultDomainService,
@@ -364,6 +365,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
   /** Legacy preview confirmation only; direct maintenance does not use it. */
   approvals?: Phase3MaintenanceBatchApprovalPort;
   state: Phase3MaintenanceStateStore;
+  resolvePath?: (relativePath: string) => string;
   createPreviewId?: () => string;
   now?: () => number;
   faultInjector?: (
@@ -378,6 +380,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
  * exactly once and in preview order.
  */
 export class Phase3KnowledgeMaintenanceService {
+  private readonly resolvePath: (relativePath: string) => string;
   private readonly domain: Phase3MaintenanceVaultDomain;
   private readonly sources: Phase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
@@ -391,6 +394,7 @@ export class Phase3KnowledgeMaintenanceService {
   ) => void | Promise<void>;
 
   constructor(options: Readonly<Phase3KnowledgeMaintenanceServiceOptions>) {
+    this.resolvePath = options.resolvePath ?? ((value) => value);
     this.domain = options.domain;
     this.sources = options.sources;
     this.tracker = options.tracker;
@@ -495,8 +499,8 @@ export class Phase3KnowledgeMaintenanceService {
     const committed = commitResult(wal, false);
     const evidence = await this.collectExecutionEvidence(wal);
     const expectedKnowledgeNotes = preview.actions.some((action) =>
-      action.targetPath.startsWith("wiki/")
-      || action.targetPath.startsWith("projects/")
+      knowledgeRolePath(action.targetPath).startsWith("wiki/")
+      || knowledgeRolePath(action.targetPath).startsWith("projects/")
     );
     if (expectedKnowledgeNotes && evidence.notes.length === 0) {
       return Object.freeze({
@@ -549,8 +553,8 @@ export class Phase3KnowledgeMaintenanceService {
       if (entry.status !== "completed") continue;
       appliedPaths.push(entry.action.targetPath);
       if (
-        entry.action.targetPath.startsWith("wiki/")
-        || entry.action.targetPath.startsWith("projects/")
+        knowledgeRolePath(entry.action.targetPath).startsWith("wiki/")
+        || knowledgeRolePath(entry.action.targetPath).startsWith("projects/")
       ) {
         const readback = await this.domain.readback({
           vaultId: wal.preview.vaultId,
@@ -618,7 +622,7 @@ export class Phase3KnowledgeMaintenanceService {
       candidateSources.slice(0, selectedPaths.length)
     );
     const previewId = requireNonEmpty(this.createPreviewId(), "previewId");
-    const reportPath = phase3MaintenanceReportPath(dateKey);
+    const reportPath = this.resolvePath(phase3MaintenanceReportPath(dateKey));
     const proposal = normalizeProposal(await this.proposal.generate({
       protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
       preferenceProfileVersion: preference.profileVersion,
@@ -1052,8 +1056,8 @@ export class Phase3KnowledgeMaintenanceService {
     });
     for (const draft of drafts) {
       if (
-        draft.targetPath.startsWith("wiki/")
-        || draft.targetPath.startsWith("projects/")
+        knowledgeRolePath(draft.targetPath).startsWith("wiki/")
+        || knowledgeRolePath(draft.targetPath).startsWith("projects/")
       ) {
         if (!draft.expectedTarget) {
           throw phase3Error(
@@ -1089,7 +1093,7 @@ export class Phase3KnowledgeMaintenanceService {
       );
     }
     if (!drafts.some((draft) =>
-      draft.targetPath === PHASE3_MAINTENANCE_TRACKER_PATH)) {
+      knowledgeRolePath(draft.targetPath) === PHASE3_MAINTENANCE_TRACKER_PATH)) {
       throw phase3Error(
         "proposal_invalid",
         "Maintenance proposal must update the ingest tracker"
@@ -1185,7 +1189,7 @@ export class Phase3KnowledgeMaintenanceService {
   ): Promise<void> {
     const current = await this.readTargetBinding(
       vaultId,
-      PHASE3_MAINTENANCE_TRACKER_PATH
+      this.resolvePath(PHASE3_MAINTENANCE_TRACKER_PATH)
     );
     if (!sameTargetBinding(current, expected)) {
       throw phase3Error(
@@ -1320,8 +1324,8 @@ function normalizeRawPath(value: string): string {
     );
   }
   if (
-    !relativePath.startsWith("raw/")
-    || relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    !knowledgeRolePath(relativePath).startsWith("raw/")
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
     || hasHiddenSegment(relativePath)
   ) {
     throw phase3Error(
@@ -1351,15 +1355,15 @@ function normalizeFormalTargetPath(
   }
   const reportPath = phase3MaintenanceReportPath(dateKey);
   const ordinaryKnowledgePage = (
-    relativePath.startsWith("wiki/")
-    || relativePath.startsWith("projects/")
+    knowledgeRolePath(relativePath).startsWith("wiki/")
+    || knowledgeRolePath(relativePath).startsWith("projects/")
   ) && relativePath.toLowerCase().endsWith(".md")
     && !hasHiddenSegment(relativePath);
   if (
     ordinaryKnowledgePage
-    || relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH
-    || relativePath === PHASE3_MAINTENANCE_TRACKER_PATH
-    || relativePath === reportPath
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH
+    || knowledgeRolePath(relativePath) === reportPath
   ) {
     return relativePath;
   }
@@ -1822,10 +1826,10 @@ function commitResult(
 }
 
 function targetRank(relativePath: string): number {
-  if (relativePath.startsWith("wiki/")) return 10;
-  if (relativePath.startsWith("projects/")) return 20;
-  if (relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH) return 30;
-  if (relativePath === PHASE3_MAINTENANCE_TRACKER_PATH) return 40;
+  if (knowledgeRolePath(relativePath).startsWith("wiki/")) return 10;
+  if (knowledgeRolePath(relativePath).startsWith("projects/")) return 20;
+  if (knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH) return 30;
+  if (knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH) return 40;
   return 50;
 }
 

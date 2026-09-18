@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -473,7 +474,7 @@ class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
   ): Promise<void> {
     if (
       hasHiddenPathSegment(target.relativePath)
-      && target.relativePath !== this.trackerRelativePath
+      && knowledgeRolePath(target.relativePath) !== knowledgeRolePath(this.trackerRelativePath)
     ) {
       throw adapterError(
         "unsafe_target",
@@ -492,7 +493,7 @@ class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
       target,
       expectedVersion,
       content,
-      this.trackerRelativePath
+      knowledgeRolePath(target.relativePath) === knowledgeRolePath(this.trackerRelativePath) ? target.relativePath : this.trackerRelativePath
     );
   }
 

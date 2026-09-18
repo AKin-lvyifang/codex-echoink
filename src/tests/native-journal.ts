@@ -1,3 +1,4 @@
+import { KNOWLEDGE_ROOT_NAMES, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import assert from "node:assert/strict";
 import { mkdtemp, realpath, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,10 +39,10 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(fixture.enableCalls(), 2);
     assert.deepEqual(JSON.parse(await readFile(path.join(root, ".obsidian/core-plugins.json"), "utf8")), ["daily-notes", "templates"]);
     assert.equal(readNativeJournalSettings(fixture.app).format, "YYYY-MM/YYYY-MM-DD");
-    assert.equal(await readFile(path.join(root, "templates/此刻速记.md"), "utf8"), QUICK_JOURNAL_TEMPLATE);
+    assert.equal(await readFile(path.join(root, KNOWLEDGE_ROOT_NAMES.templates, "此刻速记.md"), "utf8"), QUICK_JOURNAL_TEMPLATE);
     const date = new Date(2026, 8, 6, 9, 8);
     const context = await readNativeJournalContext(fixture.app, { now: date });
-    assert.equal(context.targetPath, "journal/2026-09/2026-09-06.md");
+    assert.equal(context.targetPath, `${KNOWLEDGE_ROOT_NAMES.journal}/2026-09/2026-09-06.md`);
     assert.equal(context.time, "09:08");
     assert.equal(parseYaml(context.templateContent.split("---")[1]!).date, "2026-09-06");
     assert.doesNotMatch(context.templateContent, /\{\{/u);
@@ -65,7 +66,7 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(fixture.enableCalls(), 2);
 
     const home = new HomeWorkbenchDataService(fixture.app);
-    const legacy = await fixture.write("journal/2026-09-05.md", "legacy original");
+    const legacy = await fixture.write(`${KNOWLEDGE_ROOT_NAMES.journal}/2026-09-05.md`, "legacy original");
     assert.equal(home.existingJournalForDate(new Date(2026, 8, 5))?.path, legacy.path);
     const created = await home.createOrOpenJournal(defaultJournalTemplateChoice(), date);
     assert.equal(created.file.path, context.targetPath);
@@ -163,7 +164,7 @@ async function assertNativeToolsAndManagedWrites(fixture: Awaited<ReturnType<typ
     assert.equal(updated.isError, false);
     assert.equal(updated.details.readbackVerified, true);
     assert.equal((await call("note_update", { relativePath, expectedVersion: snapshot.version, content: "stale" })).isError, true);
-    assert.equal(await readFile(path.join(root, relativePath), "utf8"), appended);
+    assert.equal(await readFile(path.join(root, resolveKnowledgePath(root, relativePath)), "utf8"), appended);
   }
   const search = value(await call("vault_search", { query: "Hello" }));
   assert.ok(JSON.stringify(search).includes("maps/notes.canvas"));

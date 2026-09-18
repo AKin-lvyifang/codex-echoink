@@ -1,3 +1,4 @@
+import { resolveKnowledgePath, knowledgeRolePath } from "./root-paths";
 import { isMissingPathError } from "./utils";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -23,7 +24,7 @@ const UNPROCESSED_TRACKER_TEXT = /(未处理|待处理|未消化|待消化|跳�
 const PROCESSED_LINE_METADATA = /\b(?:size|mtime|fingerprint|digested)=/;
 
 export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, trackerPath: string, files: KnowledgeBaseTrackableFile[]): Promise<KnowledgeBaseTrackerSnapshot> {
-  const absolute = resolveKnowledgeBaseTrackerPath(vaultPath, trackerPath);
+  const absolute = resolveKnowledgeBaseTrackerPath(vaultPath, resolveKnowledgePath(vaultPath, trackerPath));
   const stat = await fsp.lstat(absolute).catch(() => null);
   if (!stat?.isFile()) return { processedSources: {}, updatedAt: 0 };
   const text = await fsp.readFile(absolute, "utf8").catch(() => "");
@@ -32,7 +33,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
   const byPath = new Map(files.map((file) => [file.path, file]));
 
   function mark(relativePath: string, options: { expectedSize?: number; expectedMtime?: number; expectedFingerprint?: string } = {}): void {
-    const file = byPath.get(normalizeRelativePath(relativePath));
+    const file = byPath.get(resolveKnowledgePath(vaultPath, normalizeRelativePath(relativePath)));
     if (!file) return;
     if (!options.expectedFingerprint) return;
     if (typeof options.expectedSize === "number" && options.expectedSize !== file.size) return;
@@ -47,11 +48,11 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
   let inUnprocessedSection = false;
   for (const line of text.split(/\r?\n/)) {
     if (/^#+\s+/.test(line)) inUnprocessedSection = headingHasUnprocessedSignal(line);
-    if (!line.includes("raw/")) continue;
+    if (!/(?:raw|（raw）)\//u.test(line)) continue;
     if (inUnprocessedSection) continue;
     if (!PROCESSED_LINE_METADATA.test(line) && lineHasUnprocessedSignalOutsideTrackablePath(line)) continue;
     const meta = parseTrackerLineMetadata(line);
-    for (const match of line.matchAll(/raw\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
+    for (const match of line.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
       mark(match[0], meta);
     }
   }
@@ -69,7 +70,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
         const meta = parseTrackerLineMetadata(line);
         for (const item of line.matchAll(/^-\s+`?(.+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif))`?(?=$|[\s|,，。;；:：)）\]】])/gim)) {
           const itemPath = normalizeRelativePath(item[1]);
-          if (itemPath.startsWith("raw/")) {
+          if (knowledgeRolePath(itemPath).startsWith("raw/")) {
             mark(itemPath, meta);
             continue;
           }
@@ -83,7 +84,7 @@ export async function readKnowledgeBaseTrackerSnapshot(vaultPath: string, tracke
 }
 
 export async function readKnowledgeBaseTrackerHints(vaultPath: string, trackerPath: string, files: KnowledgeBaseTrackableFile[], strict = false): Promise<KnowledgeBaseTrackerHints> {
-  const absolute = resolveKnowledgeBaseTrackerPath(vaultPath, trackerPath);
+  const absolute = resolveKnowledgeBaseTrackerPath(vaultPath, resolveKnowledgePath(vaultPath, trackerPath));
   const stat = await fsp.lstat(absolute).catch((error) => { if (strict && !isMissingPathError(error)) throw error; return null; });
   if (strict && stat && !stat.isFile()) throw new Error("Tracker is not a readable regular file");
   if (!stat?.isFile()) return { paths: new Set(), updatedAt: 0 };
@@ -92,16 +93,16 @@ export async function readKnowledgeBaseTrackerHints(vaultPath: string, trackerPa
   const paths = new Set<string>();
   const byPath = new Map(files.map((file) => [file.path, file]));
   const mark = (relativePath: string) => {
-    const normalized = normalizeRelativePath(relativePath);
+    const normalized = resolveKnowledgePath(vaultPath, normalizeRelativePath(relativePath));
     if (byPath.has(normalized)) paths.add(normalized);
   };
 
   let inUnprocessedSection = false;
   for (const line of text.split(/\r?\n/)) {
     if (/^#+\s+/.test(line)) inUnprocessedSection = headingHasUnprocessedSignal(line);
-    if (!line.includes("raw/") || inUnprocessedSection) continue;
+    if (!/(?:raw|（raw）)\//u.test(line) || inUnprocessedSection) continue;
     if (lineHasUnprocessedSignalOutsideTrackablePath(line)) continue;
-    for (const match of line.matchAll(/raw\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
+    for (const match of line.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi)) {
       mark(match[0]);
     }
   }
@@ -117,7 +118,7 @@ export async function readKnowledgeBaseTrackerHints(vaultPath: string, trackerPa
     for (const line of bodyLines) {
       for (const item of line.matchAll(/^-\s+`?(.+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif))`?(?=$|[\s|,，。;；:：)）\]】])/gim)) {
         const itemPath = normalizeRelativePath(item[1]);
-        if (itemPath.startsWith("raw/")) {
+        if (knowledgeRolePath(itemPath).startsWith("raw/")) {
           mark(itemPath);
           continue;
         }
@@ -155,22 +156,22 @@ function parseTrackerLineMetadata(line: string): { expectedSize?: number; expect
 function lineHasUnprocessedSignalOutsideTrackablePath(line: string): boolean {
   if (!UNPROCESSED_TRACKER_TEXT.test(line)) return false;
   const withoutTrackablePaths = line
-    .replace(/raw\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi, "")
+    .replace(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^\]\n\r`]+?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b/gi, "")
     .replace(/`?[^`\n\r]*?\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)\b`?/gi, "");
   return UNPROCESSED_TRACKER_TEXT.test(withoutTrackablePaths);
 }
 
 function headingHasUnprocessedSignal(heading: string): boolean {
   if (!UNPROCESSED_TRACKER_TEXT.test(heading)) return false;
-  const withoutRawPrefixes = heading.replace(/raw\/[^、，,;；—\n]+\//g, "");
+  const withoutRawPrefixes = heading.replace(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^、，,;；—\n]+\//g, "");
   return UNPROCESSED_TRACKER_TEXT.test(withoutRawPrefixes);
 }
 
 function rawSectionPrefixes(heading: string): string[] {
   const prefixes = new Set<string>();
-  for (const match of heading.matchAll(/raw\/[^、，,;；—\n]+\//g)) {
+  for (const match of heading.matchAll(/(?:raw|[^/\s`\[\]（）]+（raw）)\/[^、，,;；—\n]+\//g)) {
     const prefix = ensureTrailingSlash(normalizeRelativePath(match[0]));
-    if (prefix.startsWith("raw/")) prefixes.add(prefix);
+    if (knowledgeRolePath(prefix).startsWith("raw/")) prefixes.add(prefix);
   }
   return Array.from(prefixes);
 }
