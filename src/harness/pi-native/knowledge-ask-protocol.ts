@@ -37,7 +37,9 @@ export function knowledgeReadingState(
     if (message.role !== "toolResult" || !["knowledge_read", "knowledge_search"].includes(message.toolName)) continue;
     const details = message.details as Record<string, unknown> | undefined;
     if (message.isError || details?.status !== "completed" || details.truncated === true) {
-      failures.push(String(details?.errorCode ?? (details?.truncated ? "result_truncated" : "result_not_delivered")));
+      failures.push(typeof details?.errorCode === "string"
+        ? details.errorCode
+        : details?.truncated ? "result_truncated" : "result_not_delivered");
       continue;
     }
     for (const reference of (Array.isArray(details.references) ? details.references : []) as PiKnowledgeReference[]) addRead(reference);

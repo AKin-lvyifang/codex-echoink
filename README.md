@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.3.2 release artwork" src="assets/releases/echoink-agent-2.3.2-release.png">
+    <img width="1024" alt="EchoInk Agent 2.4.0 release artwork" src="assets/releases/echoink-agent-2.4.0-release.png">
   </a>
 </p>
 
@@ -9,7 +9,7 @@
 <p align="center">Manage your Obsidian knowledge while your personal agent grows to understand you better.</p>
 
 <p align="center">
-  <a href="#whats-new-in-232">What's New</a> ·
+  <a href="#whats-new-in-240">What's New</a> ·
   <a href="#features">Features</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#quick-start">Quick Start</a> ·
@@ -21,26 +21,26 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-2.3.2-0EA5E9?style=flat-square" alt="Version 2.3.2">
+    <img src="https://img.shields.io/badge/version-2.4.0-0EA5E9?style=flat-square" alt="Version 2.4.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.2"><strong>Download 2.3.2</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0"><strong>Download 2.4.0</strong></a>
 </p>
 
 EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations going, organizes and maintains the current vault, stores useful long-term context as visible and correctable memory, and gradually develops its own way of working with you. No Codex CLI installation is required. Connect a supported model service to get started.
 
-## What's new in 2.3.2
+## What's new in 2.4.0
 
-A smaller download and smoother dropdown interactions.
+Follow the connections between your notes.
 
-- **Main file reduced by about 46.4%:** From about 9.27 MB in 2.3.1 to about 4.97 MB (4.74 MiB), below 5,000,000 bytes. PDF reading, image processing, full Chinese pinyin search, and existing model capabilities are preserved.
-- **Click outside to cancel:** Settings dropdowns and chat model/parameter menus close when you click elsewhere. Hover highlights an option; clicking confirms it. Canceling keeps your previous selection, including in separate windows.
-- **Recognizable model brands:** The selected value and dropdown options under **EchoInk current model** use the same brand icons as the Provider page.
+- **Related reading in Ask:** After finding a note, the model can follow its links and backlinks to read relevant material, choosing what to read next and when to answer.
+- **Context for maintained knowledge:** Maintenance can add subjects, time periods, source types, and applicability conditions to help distinguish projects, versions, and budgeted versus actual figures. Existing notes do not need a fixed set of fields.
+- **Clearer reading progress:** Read passages are distinguished from leads still to explore. Failed reads explain the known cause and are no longer labeled as complete. Failure cards use typography and spacing consistent with other process entries.
 
-Read the [2.3.2 update and usage notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.2). Upgrading does not require vault reinitialization or model reconfiguration. The cover is illustrative.
+Use `/ask` to ask a question or `/maintain` to organize material. Read the [2.4.0 update and usage notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0). Upgrading does not require vault reinitialization or model reconfiguration. Check source passages and calculations for conclusions involving amounts or ratios. The cover is illustrative.
 
 ## Features
 
@@ -110,7 +110,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.3.2 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.2).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.4.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0).
 2. Create this directory inside your vault:
 
 ```text
@@ -120,7 +120,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 3. Place the three files in that directory.
 4. Restart Obsidian and enable `EchoInk Agent` under Community plugins.
 
-> **Sync note:** `main.js` in 2.3.2 is about 4.74 MiB, below the 5 MiB per-file limit of Obsidian Sync Standard. Whether plugins are synced still depends on your sync settings.
+> **Sync note:** `main.js` in 2.4.0 is about 4.75 MiB, below the 5 MiB per-file limit of Obsidian Sync Standard. Whether plugins are synced still depends on your sync settings.
 
 ## Quick start
 
@@ -181,7 +181,7 @@ Open **Settings → EchoInk Agent → Review**:
 ### Upgrading from 2.1.0 or 2.0.3
 
 - Upgrade in place without rebuilding conversations, Knowledge, or long-term memory. Saved Provider and model settings are upgraded automatically.
-- 2.3.2 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
+- 2.4.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
 - Users who completed the guide may not see it again after upgrading. To replay it, disable and re-enable EchoInk in Community plugins; the completion screen also offers Replay.
 
 ### Upgrading from 1.x

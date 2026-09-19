@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.4.0 - 2026-09-20
+
+![EchoInk Agent 2.4.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.4.0/assets/releases/echoink-agent-2.4.0-release.png)
+
+### 中文
+
+**顺着联系，读懂笔记。**
+
+2.4.0 让 Ask 可以顺着笔记之间的联系继续阅读，也让整理后的知识保留更多适用背景。
+
+- **按问题续读相关资料。** 找到一篇笔记后，模型可以查看它链接到的文章，以及引用它的其他笔记，再选择需要的内容继续读。是否补找资料、是否已经足够回答，由模型结合问题判断，无需读完全部链接。
+- **整理时间与适用条件。** `/maintain` 可按需补充主题、时间、资料性质、适用条件和关系描述，帮助后续阅读区分不同项目、版本，以及预算与实际数据。原有笔记仍可直接使用，不要求补齐固定字段。
+- **分清读过什么。** 已交付的正文片段与尚待查看的线索分开记录；未读完的长文、读取失败或未完整返回的结果，不再被当作完整阅读。单份资料缺失时，模型仍可使用其他可用材料继续处理。
+- **失败提示与显示修复。** 文件尚未创建或路径变化时，显示可确定的具体原因；失败的操作不再显示“读取完成”。旧记录没有具体原因时如实说明。失败卡片的字号、行高和间距与外层过程节点统一。
+
+#### 使用与升级
+
+在对话中输入 `/ask`，例如“这个项目最后实际花了多少，与预算差多少？”，让模型按需要查阅相关笔记。用 `/maintain` 整理新资料时，可要求保留时间和适用条件。升级无需重新初始化仓库或重设模型。
+
+关联阅读提供更多判断依据；金额、比例等结论仍应核对原文和计算，模型可能误解条件或作出不准确的推断。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。本轮关联阅读与失败提示已在 macOS 实机验证，Windows/Linux 的对应实机操作尚未验证。头图为功能示意。
+
+### English
+
+**Follow the connections between your notes.**
+
+2.4.0 lets Ask continue reading through related notes and gives maintained knowledge more context about when it applies.
+
+- **Read related material as needed.** After finding a note, the model can inspect its outgoing links and backlinks, then choose what to read next. It decides whether to find more material or answer based on the question; it does not need to open every link.
+- **Keep time periods and conditions.** `/maintain` can add subjects, time periods, source types, applicability conditions, and relationship descriptions to help distinguish projects, versions, and budgeted versus actual figures. Existing notes remain usable without a fixed set of required fields.
+- **Distinguish what has been read.** Delivered passages are tracked separately from leads still to explore. Partially read notes, failed reads, and incomplete results are no longer treated as fully read. A missing source does not prevent the model from continuing with other available material.
+- **Clearer failures and consistent presentation.** Missing files or changed paths now show the specific cause when known, and failed operations are no longer labeled as complete. Older records without a detailed cause say so. Failure cards use font sizes, line heights, and spacing consistent with surrounding process entries.
+
+#### Use and upgrade
+
+Enter `/ask` in a conversation and ask, for example, “How much did this project actually cost, and how did that compare with the budget?” The model can consult related notes as needed. When organizing new material with `/maintain`, you can ask it to preserve time periods and applicability conditions. Upgrading does not require vault reinitialization or model reconfiguration.
+
+Related reading provides more evidence for a judgment. Check source passages and calculations for conclusions involving amounts or ratios; the model can still misunderstand conditions or make inaccurate inferences.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Related reading and failure feedback have been validated in the macOS app; corresponding Windows/Linux interactions have not received real-app validation. The cover is illustrative.
+
 ## 2.3.2 - 2026-09-19
 
 ![EchoInk Agent 2.3.2](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.2/assets/releases/echoink-agent-2.3.2-release.png)

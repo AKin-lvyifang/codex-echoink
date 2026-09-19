@@ -75,9 +75,9 @@ export function extractKnowledgeLinks(content: string): KnowledgeLink[] {
   const result: KnowledgeLink[] = [];
   knowledgeVisibleLines(content).forEach((line, index) => {
     const matches: { offset: number; original: string; rawTarget: string }[] = [];
-    for (const match of line.matchAll(/!?\[\[([^\]\n]+)\]\]/gu)) matches.push({ offset: match.index!, original: match[0], rawTarget: match[1].split("|")[0] });
+    for (const match of line.matchAll(/!?\[\[([^\]\n]+)\]\]/gu)) matches.push({ offset: match.index, original: match[0], rawTarget: match[1].split("|")[0] });
     for (const match of line.matchAll(/!?\[[^\]\n]*\]\(/gu)) {
-      const start = match.index! + match[0].length;
+      const start = match.index + match[0].length;
       let end = start, depth = 1, rawTarget = "", angled = false, targetDone = false;
       for (; end < line.length; end += 1) {
         const char = line[end];
@@ -89,7 +89,7 @@ export function extractKnowledgeLinks(content: string): KnowledgeLink[] {
         if (/\s/u.test(char) && depth === 1) targetDone = true;
         if (!targetDone) rawTarget += char;
       }
-      if (depth === 0) matches.push({ offset: match.index!, original: line.slice(match.index!, end + 1), rawTarget });
+      if (depth === 0) matches.push({ offset: match.index, original: line.slice(match.index, end + 1), rawTarget });
     }
     for (const match of matches.sort((left, right) => left.offset - right.offset)) {
       const rawTarget = match.rawTarget.trim();
