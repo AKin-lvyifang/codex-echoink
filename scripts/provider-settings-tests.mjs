@@ -67,12 +67,42 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "origin-dom") {
   const ast = ts.createSourceFile("settings-tab.ts", source, ts.ScriptTarget.Latest, true);
   const declaration = ast.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === "CodexSettingTab");
   const method = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "runMcpToggleAction").getText(ast);
+  const knowledge = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "renderKnowledgeBaseSettings");
+  const targets = knowledge?.body.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((item) => item.name.getText(ast) === "availableTargets"));
+  let modelDropdown;
+  const findDropdown = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "addOriginDropdown") modelDropdown = node.arguments[1];
+    ts.forEachChild(node, findDropdown);
+  };
+  if (knowledge) findDropdown(knowledge);
+  if (!targets || !modelDropdown) throw new Error("Production current-model dropdown missing");
+  const selectionHelpers = ["providerModelSelectionValue", "parseProviderModelSelectionValue"].map((name) => ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join("\n");
+  const settingsSource = await readFile(path.join(rootDir, "src/settings/settings.ts"), "utf8");
+  const settingsAst = ts.createSourceFile("settings.ts", settingsSource, ts.ScriptTarget.Latest, true);
+  const settingsHelpers = ["apiProviderHasUsableApiKey", "apiProviderHasUsableCredential", "getApiProviderModel", "activateApiProviderModel"].map((name) => settingsAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(settingsAst)).join("\n");
   const directory = path.join(outputDir, "origin-dom");
   await mkdir(directory, { recursive: true });
   await esbuild.build({
     stdin: { contents: `import {runOriginControlsDom} from "./src/tests/origin-controls-dom";
+      import {OriginSetting} from "./src/settings/origin-setting";
+      import {normalizeApiProviderId,apiProviderConfiguredDisplayName,apiProviderApiKeyRequired,getApiProviderPreset} from "./src/settings/provider-presets";
+      import {renderProviderBrandIcon} from "./src/settings/provider-brand-icons";
+      ${selectionHelpers}
+      ${settingsHelpers}
       class Notice { constructor(message){} }
-      class Fixture { plugin={settings:{settingsLanguage:"en"}}; scheduleDisplay(){} announceSettingsStatus(){} ${method} }
+      class Fixture {
+        activations=0; refreshes=0;
+        plugin={settings:{settingsLanguage:"en"},activateApiProviderSettings:async (update)=>{update(this.plugin.settings);this.activations++;}};
+        scheduleDisplay(){this.refreshes++} announceSettingsStatus(){} ${method}
+        renderCurrentModel(parent,settings,app){
+          this.plugin.settings=settings;
+          const zh=true,copy={providers:{saveFailed:"Save failed"}};
+          // Extract the actual production target filter and callback at build time.
+          ${targets.getText(ast)}
+          const row=new OriginSetting(parent).setName("EchoInk 当前模型").addOriginDropdown(app,${modelDropdown.getText(ast)});
+          return row.controlEl.querySelector("[role=combobox]");
+        }
+      }
       runOriginControlsDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
     bundle: true, format: "esm", platform: "browser", define: { "process.env.NODE_ENV": '"development"' },
     alias: { obsidian: path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts") },

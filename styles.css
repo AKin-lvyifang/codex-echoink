@@ -21062,7 +21062,11 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 }
 .echoink-origin-control[data-slot=select-trigger]>[data-slot=select-value] {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .echoink-origin-control[data-slot=select-trigger]>span:last-child {display:flex;flex:none;color:var(--origin-muted)}
-.echoink-origin-control[data-slot=select-trigger] svg {width:16px;height:16px;fill:currentColor;stroke:none}
+.echoink-origin-control[data-slot=select-trigger]>svg {width:16px;height:16px;flex:none;fill:currentColor;stroke:none}
+.echoink-origin-select-label {display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;vertical-align:middle}
+.echoink-origin-select-icon {display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:16px}
+.echoink-origin-control .echoink-origin-select-icon svg {display:block;width:16px;height:16px;fill:none;stroke:none;stroke-width:initial;stroke-linecap:initial;stroke-linejoin:initial}
+.echoink-origin-select-text {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .echoink-settings-demo .setting-item-control {display:flex;align-items:center;justify-content:flex-end;margin-right:0;padding-right:0}
 .echoink-settings-demo .setting-item-control>.echoink-origin-control[data-slot=input] {width:230px}
 .echoink-settings-demo input.echoink-origin-control.echoink-origin-control[data-slot=input] {height:auto;min-height:32px}
@@ -21079,7 +21083,8 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   border-radius:4px;outline:none;cursor:default;user-select:none;overflow-wrap:anywhere;
 }
 .echoink-origin-control[data-slot=select-item]>span:first-child {position:absolute;left:8px;display:flex;align-items:center}
-.echoink-origin-control[data-slot=select-item] svg {width:14px;height:14px;fill:currentColor;stroke:none}
+.echoink-origin-control[data-slot=select-item]>span:first-child svg {width:14px;height:14px;fill:currentColor;stroke:none}
+.echoink-origin-control[data-slot=select-item]>span:last-child {min-width:0}
 .echoink-origin-control[data-slot=select-item][data-highlighted] {background:var(--accent-bg,var(--origin-soft));color:var(--origin-accent)}
 .echoink-origin-control [data-slot^=select-scroll] {display:flex;align-items:center;justify-content:center;padding:3px;color:var(--origin-muted)}
 .echoink-origin-control [data-slot^=select-scroll] svg {width:16px;height:16px;fill:currentColor;stroke:none}

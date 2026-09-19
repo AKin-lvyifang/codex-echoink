@@ -1,7 +1,15 @@
-import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, createOriginSelect, createOriginSlider, createOriginSwitch, disposeOriginControls, type OriginCheckElement } from "../settings/origin-controls";
+import type { App } from "obsidian";
+import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, createOriginSelect, createOriginSlider, createOriginSwitch, disposeOriginControls, type OriginCheckElement, type OriginSelectElement } from "../settings/origin-controls";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
+import type { ApiProviderConfig, CodexForObsidianSettings } from "../settings/settings";
+import { getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
+import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
 
-type AsyncFixture = { runMcpToggleAction(toggle: OriginCheckElement, action: (checked: boolean) => Promise<void>): Promise<void> };
+type AsyncFixture = {
+  activations: number;
+  renderCurrentModel(parent: HTMLElement, settings: CodexForObsidianSettings, app: Pick<App, "keymap" | "scope">): OriginSelectElement;
+  runMcpToggleAction(toggle: OriginCheckElement, action: (checked: boolean) => Promise<void>): Promise<void>;
+};
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 const key = (element: HTMLElement, value: string, modifiers: KeyboardEventInit = {}) => element.dispatchEvent(new (element.ownerDocument.defaultView!.KeyboardEvent)("keydown", { key: value, bubbles: true, cancelable: true, ...modifiers }));
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
@@ -108,6 +116,28 @@ export async function runOriginControlsDom(Fixture: new () => AsyncFixture) {
     await work;
     assert(!toggle.checked && !toggle.disabled, "production rollback did not settle after unmount");
   });
+  await run("select outside pointer cancels in main document even if bubbling stops", async () => {
+    await assertSelectPointerCancellation(document, main, true);
+  });
+  await run("select outside pointer cancels in independent ownerDocument", async () => {
+    const iframe = document.createElement("iframe"); main.append(iframe);
+    await new Promise<void>((resolve) => { iframe.onload = () => resolve(); iframe.srcdoc = "<main></main>"; });
+    try {
+      const other = iframe.contentDocument!;
+      assert(!(other.body instanceof Node), "fixture must exercise another DOM realm");
+      await assertSelectPointerCancellation(other, other.querySelector<HTMLElement>("main")!, false);
+    } finally { iframe.remove(); }
+  });
+  await run("production current model: brand icons, text, typeahead, selection, disabled and empty", async () => {
+    await assertCurrentModelIcons(Fixture, document, group);
+  });
+  await run("production current model icons in independent ownerDocument", async () => {
+    const iframe = document.createElement("iframe"); main.append(iframe);
+    await new Promise<void>((resolve) => { iframe.onload = () => resolve(); iframe.srcdoc = '<link rel="stylesheet" href="styles.css"><main class="echoink-settings-demo"></main>'; });
+    try {
+      await assertCurrentModelIcons(Fixture, iframe.contentDocument!, iframe.contentDocument!.querySelector<HTMLElement>("main")!);
+    } finally { disposeOriginControls(iframe.contentDocument!.body); iframe.remove(); }
+  });
   await run("independent ownerDocument and Select portal cleanup", async () => {
     const iframe = document.createElement("iframe"); iframe.title = "Independent document"; main.append(iframe);
     await new Promise<void>((resolve) => { iframe.onload = () => resolve(); iframe.srcdoc = '<main class="echoink-settings-demo"></main>'; });
@@ -168,4 +198,125 @@ export async function runOriginControlsDom(Fixture: new () => AsyncFixture) {
   const failed = results.some((item) => item.startsWith("FAIL")) || errors.length > 0;
   report.dataset.result = failed ? "failed" : "passed";
   report.textContent = [...results, ...errors.map((error) => `ERROR ${error}`), "Boundary: native browser DOM, synthetic input; no Obsidian, OS IME, Provider or Vault."].join("\n");
+}
+
+async function assertCurrentModelIcons(Fixture: new () => AsyncFixture, owner: Document, parent: HTMLElement) {
+  const fixture = new Fixture();
+  // Only the Obsidian DOM convenience method is shimmed; actual row adapter,
+  // production dropdown callback, SVG renderer and Origin/Radix remain real.
+  owner.defaultView!.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
+  const host = owner.createElement("div"); parent.append(host);
+  const keyboardHost = createOriginSelectHostFixture(owner.defaultView!);
+  const provider = (id: ApiProviderId): ApiProviderConfig => ({
+    ...getApiProviderPreset(id), id: `${id}-fixture`, providerId: id, apiKey: "",
+    models: [{ id: `${id}-model`, displayName: `${id} model` }], defaultModelId: `${id}-model`
+  } as ApiProviderConfig);
+  const deepseek = provider("deepseek"); deepseek.apiKey = "fixture-only";
+  const qwen = provider("qwen-token-plan"); qwen.name = "Qwen team"; qwen.apiKey = "fixture-only";
+  const disabled = provider("kimi");
+  const settings = { settingsLanguage: "zh-CN", openAICodexCredential: null,
+    apiProviders: [deepseek, qwen, disabled], activeApiProviderId: deepseek.id, defaultModel: deepseek.models[0].id
+  } as CodexForObsidianSettings;
+  const select = fixture.renderCurrentModel(host, settings, keyboardHost.app);
+  const popup = () => owner.querySelector<HTMLElement>('[data-slot=select-content]');
+  try {
+    await frame();
+    const expectedLabel = `深度求索 · ${deepseek.models[0].displayName}`;
+    assert(select.textContent?.trim() === expectedLabel && select.getAttribute("aria-label") === "EchoInk 当前模型", "selected text or accessible name changed");
+    const selectedIcon = select.querySelector<SVGSVGElement>('svg[data-provider-brand="deepseek"]')!;
+    assert(selectedIcon?.ownerDocument === owner && selectedIcon.getAttribute("aria-hidden") === "true", "selected brand missing, exposed or in the wrong document");
+    const reference = owner.createElement("span");
+    const providerIcon = renderProviderBrandIcon(reference, "deepseek");
+    const artwork = (svg: Element | null) => svg?.innerHTML.replace(/echoink-provider-deepseek-\d+-/gu, "instance-");
+    assert(artwork(selectedIcon) === artwork(providerIcon), "selected DeepSeek artwork differs from Provider renderer");
+    const bounds = selectedIcon.getBoundingClientRect();
+    assert(bounds.width === 16 && bounds.height === 16, "brand icon is missing its fixed size");
+    select.focus(); key(select, "Enter"); await frame();
+    const options = Array.from(popup()!.querySelectorAll<HTMLElement>('[role=option]'));
+    assert(options.length === 3, "production model options changed");
+    assert(options[0].textContent?.trim() === expectedLabel && artwork(options[0].querySelector("svg[data-provider-brand=deepseek]")) === artwork(providerIcon), "option text or artwork differs from selected value");
+    const paint = (svg: Element) => Array.from(svg.querySelectorAll("path")).map((path) => {
+      const style = owner.defaultView!.getComputedStyle(path);
+      return [style.fill.replace(/echoink-provider-(?:deepseek|qwen-token-plan)-\d+-/gu, "instance-"), style.stroke, style.strokeWidth];
+    });
+    assert(JSON.stringify(paint(select.querySelector("svg[data-provider-brand=deepseek]")!)) === JSON.stringify(paint(options[0].querySelector("svg[data-provider-brand=deepseek]")!)), "trigger and portal apply different brand fill/stroke");
+    assert(options[1].querySelector("svg[data-provider-brand=qwen]"), "Qwen token plan did not reuse Qwen artwork");
+    assert(options[2].getAttribute("aria-disabled") === "true" && options[2].textContent?.endsWith("（需重新保存 API Key）") && options[2].querySelector("svg[data-provider-brand=kimi]"), "disabled option label or icon changed");
+    for (const option of options) {
+      const text = option.querySelector(".echoink-origin-select-text")!;
+      assert(owner.getElementById(option.getAttribute("aria-labelledby")!)?.textContent?.trim() === text.textContent, "icon altered option accessible name");
+    }
+    key(owner.activeElement as HTMLElement, "q"); await frame();
+    assert(owner.activeElement === options[1] && fixture.activations === 0, "typeahead failed or committed on hover/focus");
+    key(owner.activeElement as HTMLElement, "Enter"); await frame();
+    assert(fixture.activations === 1 && settings.activeApiProviderId === qwen.id && settings.defaultModel === qwen.models[0].id, "production onChange did not activate the original model value once");
+    assert(select.value === JSON.stringify([qwen.id, qwen.models[0].id]) && select.querySelector("svg[data-provider-brand=qwen]") && !popup(), "committed icon/value did not reach trigger or close");
+    select.focus(); key(select, "Enter"); await frame();
+    const qwenTrigger = select.querySelector("svg[data-provider-brand=qwen]")!;
+    const qwenOption = popup()!.querySelector("svg[data-provider-brand=qwen]")!;
+    assert(JSON.stringify(paint(qwenTrigger)) === JSON.stringify(paint(qwenOption)) && paint(qwenTrigger).every((path) => path[1] === "none"), "Qwen trigger inherited an extra outline");
+    key(owner.activeElement as HTMLElement, "Escape"); await frame();
+    // Leave the normal model control mounted for actual pointer/visual review.
+    const emptyHost = owner.createElement("div"); host.append(emptyHost);
+    for (const providers of [[], [disabled]]) {
+      const emptySettings = { ...settings, apiProviders: providers };
+      const empty = new Fixture().renderCurrentModel(emptyHost, emptySettings, keyboardHost.app);
+      await frame();
+      assert(empty.value === "" && empty.disabled && !empty.querySelector("svg[data-provider-brand]"), "empty state gained a brand or enabled value");
+      assert(empty.textContent === (providers.length ? "无可用模型" : "尚无已保存模型"), "empty label changed");
+      disposeOriginControls(emptyHost); emptyHost.replaceChildren();
+    }
+    emptyHost.remove();
+  } finally {
+    if (popup()) key(owner.activeElement as HTMLElement, "Escape");
+    keyboardHost.dispose();
+  }
+}
+
+async function assertSelectPointerCancellation(owner: Document, parent: HTMLElement, stopBubbling: boolean) {
+  const host = owner.createElement("div"); parent.append(host);
+  const outside = owner.createElement("button"); outside.textContent = "Outside target"; host.append(outside);
+  if (stopBubbling) outside.addEventListener("pointerdown", (event) => event.stopPropagation());
+  const keyboardHost = createOriginSelectHostFixture(owner.defaultView!);
+  const select = createOriginSelect(host, { attr: { "aria-label": "Pointer selection" } }, [
+    { value: "a", label: "Alpha" }, { value: "b", label: "Beta" }, { value: "c", label: "Disabled", disabled: true }
+  ], "a", keyboardHost.app).element;
+  let changes = 0;
+  select.onchange = () => { changes++; };
+  const pointer = (target: Element, type: string) => {
+    const bounds = target.getBoundingClientRect();
+    target.dispatchEvent(new owner.defaultView!.PointerEvent(type, {
+      bubbles: true, composed: true, cancelable: true, pointerType: "mouse", pointerId: 1, button: 0,
+      clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2
+    }));
+  };
+  const open = async () => { select.focus(); key(select, "Enter"); await frame(); };
+  const popup = () => owner.querySelector<HTMLElement>('[data-slot=select-content]');
+  try {
+    await open();
+    const beta = Array.from(popup()!.querySelectorAll<HTMLElement>('[role=option]'))[1];
+    pointer(beta, "pointermove"); await frame();
+    assert(beta.hasAttribute("data-highlighted"), "hover did not highlight the item");
+    assert(select.value === "a" && changes === 0, "hover committed a value");
+    pointer(popup()!, "pointerdown"); await frame();
+    assert(popup(), "inside pointer dismissed the popup");
+    pointer(outside, "pointerdown"); await frame();
+    assert(!popup(), "one outside pointerdown did not close the popup");
+    assert(select.value === "a" && changes === 0 && keyboardHost.depth === 0, "outside cancellation committed or leaked Scope");
+    await open();
+    const disabled = popup()!.querySelector<HTMLElement>('[data-disabled]')!;
+    pointer(disabled, "pointerdown"); pointer(disabled, "pointerup"); await frame();
+    assert(select.value === "a" && changes === 0 && popup(), "disabled option committed");
+    const next = Array.from(popup()!.querySelectorAll<HTMLElement>('[role=option]'))[1];
+    pointer(next, "pointerdown"); pointer(next, "pointerup"); await frame();
+    assert(select.value === "b" && changes === 1 && !popup(), "item click failed to commit once and close");
+    await open(); key(owner.activeElement as HTMLElement, "Escape"); await frame();
+    assert(!popup() && changes === 1, "Escape cancellation changed the selection");
+    select.disabled = true; key(select, "Enter"); await frame();
+    assert(!popup(), "disabled select opened"); select.disabled = false;
+    await open(); disposeOriginControls(host); pointer(outside, "pointerdown"); await frame();
+    assert(!popup() && keyboardHost.depth === 0 && changes === 1, "disposal left popup or handlers active");
+  } finally {
+    disposeOriginControls(host); keyboardHost.dispose(); host.remove();
+  }
 }

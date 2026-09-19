@@ -2283,12 +2283,9 @@ export class CodexSettingTab extends PluginSettingTab {
             provider,
             this.plugin.settings.openAICodexCredential
           );
+          const providerId = normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name);
           const providerDisplayName = apiProviderConfiguredDisplayName(
-            normalizeApiProviderId(
-              provider.providerId,
-              provider.baseUrl,
-              provider.name
-            ),
+            providerId,
             provider.name,
             this.plugin.settings.settingsLanguage
           );
@@ -2300,7 +2297,8 @@ export class CodexSettingTab extends PluginSettingTab {
                 provider.authMode === "oauth"
                   ? (zh ? "（需要登录）" : " (sign-in required)")
                   : (zh ? "（需重新保存 API Key）" : " (API key required)")
-              )}`
+              )}`,
+              (container) => { renderProviderBrandIcon(container, getApiProviderPreset(providerId).id); }
             );
             dropdown.setOptionDisabled(value, !credentialReady);
           }
