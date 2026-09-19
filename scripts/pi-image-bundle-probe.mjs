@@ -59,9 +59,13 @@ Module._load = function (request, parent, isMain) {
     brotliDecompressSync(...args) {
       const started = performance.now();
       const bytes = zlib.brotliDecompressSync(...args);
-      decompressMs += performance.now() - started;
-      decompressCalls++;
-      assert.deepEqual(bytes, expectedWasm, "restored Photon WASM must match every original byte");
+      // Other complete data dictionaries may also use Brotli. Count Photon
+      // only; its real conversion/resize assertions still fail on bad bytes.
+      if (bytes.subarray(0, 4).equals(Buffer.from([0, 97, 115, 109]))) {
+        decompressMs += performance.now() - started;
+        decompressCalls++;
+        assert.deepEqual(bytes, expectedWasm, "restored Photon WASM must match every original byte");
+      }
       return bytes;
     }
   };

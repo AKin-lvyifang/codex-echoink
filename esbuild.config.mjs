@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
+import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -702,6 +703,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
     "@lezer/lr"
   ],
   format: "cjs",
+  charset: "utf8",
   platform: "node",
   target: "es2022",
   logLevel: "info",
@@ -710,6 +712,8 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   metafile: isProd,
   treeShaking: true,
   plugins: [
+    radixIconsEsmPlugin,
+    pinyinDictionaryCompressionPlugin,
     reactDomScriptResourcesPlugin,
     piBraceExpansionPlugin,
     piOpenAICodexOAuthPlugin,
