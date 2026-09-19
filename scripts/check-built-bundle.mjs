@@ -4,11 +4,8 @@
  * Guards four Obsidian community-review requirements that a plain `npm run
  * build` cannot express:
  *
- *   1. `dist/main.js` size versus the 5 MiB Obsidian Sync Standard cap
- *      (5 * 1024 * 1024 bytes). Exceeding the cap is reported as a warning,
- *      not a failure: the community review surfaces it as a Warning (Standard
- *      Sync cannot sync the asset), and the 2026-08-16 product decision
- *      accepts that to keep the real OpenAI/Anthropic provider SDKs bundled.
+ *   1. `dist/main.js` must be below the 5,000,000-byte project budget.
+ *      The 4,500,000-byte internal target leaves room for future changes.
  *   2. The bundle must not contain Pi CLI / self-update / tool-download code
  *      (ZIP extraction, `Expand-Archive`, `windows-self-update`, the fd/rg
  *      downloader). EchoInk ships a narrowed Pi runtime; see esbuild.config.mjs.
@@ -32,10 +29,10 @@ import { findDynamicScriptCreations, SCRIPT_RESOURCE_DISABLED } from "./react-do
 
 const DIST_MAIN_JS = path.join(process.cwd(), "dist", "main.js");
 
-/** Official Obsidian Sync Standard syncable size cap (5 MiB). */
-const OFFICIAL_LIMIT_BYTES = 5 * 1024 * 1024; // 5,242,880
-/** Internal target ceiling (4.5 MiB); reported, never used to relax the cap. */
-const TARGET_LIMIT_BYTES = 4.5 * 1024 * 1024; // 4,718,592
+/** Project hard limit, in decimal bytes; reaching it fails the build gate. */
+const HARD_LIMIT_BYTES = 5_000_000;
+/** Internal target, reported without relaxing the hard limit. */
+const TARGET_LIMIT_BYTES = 4_500_000;
 
 /**
  * Definitive violation markers. These name the actual ZIP / self-update /
@@ -81,17 +78,14 @@ function checkSize() {
 
   console.log(`dist/main.js: ${bytes} bytes (${sizeMiB} MiB)`);
 
-  if (bytes >= OFFICIAL_LIMIT_BYTES) {
-    console.log(
-      `warning: dist/main.js is ${bytes} bytes (${sizeMiB} MiB), above the `
-        + `5 MiB Obsidian Sync Standard limit (${OFFICIAL_LIMIT_BYTES} bytes). `
-        + "Community review reports this as a Warning only; accepted by the "
-        + "2026-08-16 product decision to keep real provider SDKs bundled."
+  if (bytes >= HARD_LIMIT_BYTES) {
+    failures.push(
+      `dist/main.js must be below ${HARD_LIMIT_BYTES} bytes; got ${bytes} bytes`
     );
   } else if (bytes > TARGET_LIMIT_BYTES) {
     console.log(
       `note: above the ${TARGET_LIMIT_BYTES}-byte internal target but below `
-        + "the official 5 MiB limit."
+        + `the ${HARD_LIMIT_BYTES}-byte hard limit.`
     );
   }
 }

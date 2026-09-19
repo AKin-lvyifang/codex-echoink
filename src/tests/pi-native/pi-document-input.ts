@@ -1,6 +1,6 @@
 import * as assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -18,6 +18,7 @@ import {
 import { recordPiDocumentReplayForEntry } from "../../ui/codex-view/pi-conversation-support";
 import type { StoredSession } from "../../settings/settings";
 import { RuntimeTurnQueue, type QueuedTurnItem } from "../../ui/turn-queue";
+import { BILINGUAL_PDF_TEXT, runPdfTextExtractorTests } from "./pdf-text-extractor";
 
 const NATIVE_TARGET: Readonly<PiDocumentCapabilityTarget> = Object.freeze({
   providerId: "anthropic",
@@ -33,10 +34,59 @@ const EXTRACTED_TARGET: Readonly<PiDocumentCapabilityTarget> = Object.freeze({
 });
 
 export async function runPiDocumentInputTests(): Promise<void> {
+  await runPdfTextExtractorTests();
   exactAnthropicMatrixIsTheOnlyNativeCapability();
   nativeAnthropicPayloadUsesFrozenBytesWithoutPathsOrDuplication();
   await preparedDocumentsFreezeBytesTextAndShaBeforeQueueing();
   await textlessPdfDependsOnTheSelectedTransport();
+  await pdfTextBytesErrorsAndReplay();
+}
+
+async function pdfTextBytesErrorsAndReplay(): Promise<void> {
+  const root = await mkdtemp(path.join(tmpdir(), "echoink-pdf-text-"));
+  const filePath = path.join(root, "bilingual.pdf");
+  const attachment = { type: "file" as const, name: "bilingual.pdf", path: filePath, mimeType: "application/pdf" };
+  try {
+    const bytes = await readFile("src/tests/fixtures/pdf/bilingual-multipage.pdf");
+    await writeFile(filePath, bytes);
+    const prepared = await preparePiChatDocuments([attachment], {
+      availableInputTokens: 10_000, capabilityTarget: NATIVE_TARGET
+    });
+    const document = prepared.documents[0]!;
+    assert.equal(document.transport, "native");
+    assert.equal(document.text, BILINGUAL_PDF_TEXT);
+    assert.deepEqual(document.bytes, new Uint8Array(bytes));
+    assert.equal(document.sha256, createHash("sha256").update(bytes).digest("hex"));
+    await writeFile(filePath, "LATER_DISK_CONTENT_MUST_NOT_BE_READ");
+    const downgraded = reconcilePiDocumentTransports(prepared.documents, EXTRACTED_TARGET);
+    assert.equal(downgraded[0]?.text, BILINGUAL_PDF_TEXT);
+    assert.deepEqual(downgraded[0]?.bytes, new Uint8Array(bytes));
+    const session: StoredSession = {
+      id: "pdf-text-replay", title: "PDF", kind: "chat", piSessionId: "pi-pdf-text",
+      bodyAuthority: "pi_session_only", cwd: root, messages: [], createdAt: 1, updatedAt: 1
+    };
+    recordPiDocumentReplayForEntry(session, "entry-pdf", prepared.documents);
+    const replay = session.piDocumentReplay?.["entry-pdf"]?.[0];
+    const replayed = await preparePiChatDocuments([{ ...attachment, documentReplay: replay }], {
+      availableInputTokens: 10_000, capabilityTarget: NATIVE_TARGET
+    });
+    assert.equal(replayed.documents[0]?.text, BILINGUAL_PDF_TEXT);
+    assert.equal(replayed.documents[0]?.sha256, document.sha256);
+    assert.equal(replayed.documents[0]?.transport, "extracted_text");
+    assert.equal(replayed.documents[0]?.bytes.byteLength, 0);
+
+    for (const [content, code] of [
+      [await readFile("src/tests/fixtures/pdf/encrypted.pdf"), "encrypted"],
+      [Buffer.from("%PDF-1.4\ncorrupted document"), "damaged"]
+    ] as const) {
+      await writeFile(filePath, content);
+      await assert.rejects(preparePiChatDocuments([attachment], {
+        availableInputTokens: 10_000, capabilityTarget: EXTRACTED_TARGET
+      }), (error: PiDocumentInputError) => error.code === code);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 function nativeAnthropicPayloadUsesFrozenBytesWithoutPathsOrDuplication(): void {

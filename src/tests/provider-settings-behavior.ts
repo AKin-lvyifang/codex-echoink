@@ -13045,7 +13045,10 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "document-transport") {
+  await assertAnthropicDocumentTransportContract();
+  console.log("PASS native PDF rejection -> frozen text fallback and tool continuation; non-fallback failures remain failures");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {
   await writeSettingsVisualFixtures();
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "onboarding-candidate") {
   assertOnboardingTruthContract();

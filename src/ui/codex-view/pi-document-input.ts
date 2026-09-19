@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { extractText } from "unpdf";
+import { extractPdfText } from "./pdf-text-extractor";
 import type { PiChatPreparedDocument } from "../../harness/pi-native/contracts";
 import {
   buildPiDocumentProviderContext,
@@ -357,8 +357,7 @@ async function extractDocumentText(
   if (kind === "markdown") return decodeUtf8Strict(bytes, fileName);
   if (kind === "html") return extractLocalHtmlText(decodeUtf8Strict(bytes, fileName));
   if (kind === "pdf") {
-    const result = await extractText(new Uint8Array(bytes), { mergePages: true });
-    return result.text;
+    return extractPdfText(bytes);
   }
   const extractor = await createWordExtractor();
   const document = await extractor.extract(bytes);

@@ -3,6 +3,10 @@ import { createRequire } from "node:module";
 import Module from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import * as zlib from "node:zlib";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const bundlePath = path.join(
@@ -45,7 +49,22 @@ const proxy = new Proxy({}, {
   }
 });
 const originalLoad = Module._load;
+const expectedWasm = readFileSync(path.join(rootDir,
+  "node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm"));
+let decompressCalls = 0;
+let decompressMs = 0;
 Module._load = function (request, parent, isMain) {
+  if (request === "node:zlib") return {
+    ...zlib,
+    brotliDecompressSync(...args) {
+      const started = performance.now();
+      const bytes = zlib.brotliDecompressSync(...args);
+      decompressMs += performance.now() - started;
+      decompressCalls++;
+      assert.deepEqual(bytes, expectedWasm, "restored Photon WASM must match every original byte");
+      return bytes;
+    }
+  };
   if (bundledOnlyModulePrefixes.some((prefix) =>
     request === prefix || request.startsWith(`${prefix}/`)
   )) {
@@ -58,12 +77,22 @@ Module._load = function (request, parent, isMain) {
 try {
   const require = createRequire(import.meta.url);
   const bundle = require(bundlePath);
+  assert.equal(decompressCalls, 0, "Photon must remain lazy at plugin module evaluation");
+  const firstStarted = performance.now();
   const result = await bundle.runPiImageProductionBundleProbe();
+  const firstMs = performance.now() - firstStarted;
+  const cachedStarted = performance.now();
+  await bundle.runPiImageProductionBundleProbe();
+  const cachedMs = performance.now() - cachedStarted;
+  assert.equal(decompressCalls, 1, "all conversion/resizing calls must reuse one restored WASM");
   console.log(
     `Pi image production bundle probe: OK `
       + `(resize=${result.originalSize}->${result.resizedSize} `
       + `${result.resizedMimeType}, convert=${result.convertedMimeType})`
   );
+  console.log(`Photon restore: ${expectedWasm.length} identical bytes, `
+    + `decompress=${decompressMs.toFixed(2)}ms, first helpers=${firstMs.toFixed(2)}ms, `
+    + `cached helpers=${cachedMs.toFixed(2)}ms (${process.platform}/${process.arch}, ${process.version})`);
 } finally {
   Module._load = originalLoad;
 }
