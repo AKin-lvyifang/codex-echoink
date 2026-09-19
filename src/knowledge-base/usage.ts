@@ -120,7 +120,11 @@ const OPTIONAL_REFERENCE_KEYS = [
   "sourceType",
   "recordedAt",
   "publishedAt",
-  "verificationStatus"
+  "verificationStatus",
+  "totalLines",
+  "hasMore",
+  "related",
+  "applicability"
 ] as const;
 
 const PERSONAL_MEMORY_SOURCE_KEYS = ["id", "title"] as const;
@@ -658,6 +662,9 @@ function normalizeKnowledgeReference(
     contentRevision,
     lineStart: lineStart as number,
     lineEnd: lineEnd as number,
+    ...(Number.isSafeInteger(object.totalLines) && (object.totalLines as number) >= (lineEnd as number) ? { totalLines: object.totalLines as number } : {}),
+    ...(typeof object.hasMore === "boolean" ? { hasMore: object.hasMore } : {}),
+    // Relation hints stay in the delivered resource; Sources store body ranges only.
     ...(hasSourceType
       ? { sourceType: object.sourceType as KnowledgeReference["sourceType"] }
       : {}),

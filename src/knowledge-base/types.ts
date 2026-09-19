@@ -107,6 +107,10 @@ export interface KnowledgeBaseCitationSummary {
 
 /** Phase 3 durable pointer to one exact excerpt in the current Vault. */
 export interface KnowledgeReference {
+  totalLines?: number;
+  hasMore?: boolean;
+  related?: import("./knowledge-relations").KnowledgeRelationPage;
+  applicability?: import("./knowledge-relations").KnowledgeApplicability;
   referenceId: string;
   vaultRelativePath: string;
   title: string;
@@ -137,6 +141,7 @@ export interface KnowledgeRetrievalRequest {
 }
 
 export interface KnowledgeRetrievalReadyResult {
+  localIssues?: { vaultRelativePath: string; status: string }[];
   status: "ready";
   shouldInvokePi: true;
   references: KnowledgeReference[];
@@ -149,6 +154,7 @@ export interface KnowledgeRetrievalReadyResult {
 }
 
 export interface KnowledgeRetrievalNoEvidenceResult {
+  localIssues?: { vaultRelativePath: string; status: string }[];
   status: "no_evidence";
   /** New Knowledge Agent index paths invoke Pi; legacy scan callers may not. */
   shouldInvokePi: boolean;

@@ -177,6 +177,10 @@ export interface ExperienceSourceRef {
 
 /** Structural Phase 3 pointer; the Vault file remains the only content source. */
 export interface PiKnowledgeReference {
+  totalLines?: number;
+  hasMore?: boolean;
+  related?: import("../../knowledge-base/knowledge-relations").KnowledgeRelationPage;
+  applicability?: import("../../knowledge-base/knowledge-relations").KnowledgeApplicability;
   readonly referenceId: string;
   readonly vaultRelativePath: string;
   readonly title: string;
