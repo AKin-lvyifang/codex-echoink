@@ -433,7 +433,9 @@ function openComposerParameterMenu(
 ): void {
   event.preventDefault();
   event.stopPropagation();
-  const anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  const currentTarget = event.currentTarget as HTMLElement | null;
+  const AnchorElement = currentTarget?.ownerDocument?.defaultView?.HTMLElement ?? HTMLElement;
+  const anchor = currentTarget instanceof AnchorElement ? currentTarget : null;
   if (!anchor) return;
   if (activeComposerParameterMenu?.anchor === anchor) {
     closeComposerParameterMenu();
@@ -506,7 +508,7 @@ function openComposerParameterMenu(
   active.reposition = reposition;
 
   const onPointerDown = (pointerEvent: PointerEvent) => {
-    const target = pointerEvent.target instanceof Node ? pointerEvent.target : null;
+    const target = pointerEvent.target instanceof (view.Node ?? Node) ? pointerEvent.target : null;
     if (!target || root.contains(target) || active.submenu?.contains(target) || anchor.contains(target)) return;
     closeComposerParameterMenu();
   };
