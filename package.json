@@ -1,6 +1,6 @@
 {
   "name": "echoink-agent",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {

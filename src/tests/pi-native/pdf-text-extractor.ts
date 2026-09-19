@@ -13,7 +13,7 @@ export async function runPdfTextExtractorTests(): Promise<void> {
   assert.equal(await extractPdfText(bytes), BILINGUAL_PDF_TEXT);
   assert.deepEqual(bytes, original);
 
-  for (const failure of [null, "load", "page", "text"] as const) {
+  for (const failure of [null, "load", "page", "text", "destroy"] as const) {
     let destroyed = 0;
     const workerOptions = Object.freeze({ workerSrc: "host-owned-worker" });
     const parseError = new Error(`fixture ${failure}`);
@@ -43,6 +43,7 @@ export async function runPdfTextExtractorTests(): Promise<void> {
           async destroy() {
             destroyed++;
             if (failure === "load") throw new Error("teardown failure must not replace parse error");
+            if (failure === "destroy") throw parseError;
           }
         };
       }

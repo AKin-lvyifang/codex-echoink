@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.3.2 - 2026-09-19
+
+![EchoInk Agent 2.3.2](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.2/assets/releases/echoink-agent-2.3.2-release.png)
+
+### 中文
+
+**更轻，更顺手。**
+
+2.3.2 重点缩小插件包体，并改善设置页和聊天区的下拉交互。
+
+- **主文件减少约 46.4%。** `main.js` 从 2.3.1 的约 9.27 MB 降至约 4.97 MB（4.74 MiB），已低于 Obsidian Sync Standard 的 5 MiB 单文件上限。PDF 阅读、图片处理、完整中文拼音搜索及已有模型能力继续保留。
+- **点击外部即可取消下拉。** 在设置页下拉框以及聊天模型、参数菜单中，点空白或其他位置就会收起列表，保留原选择；鼠标悬停只高亮，点击选项才确认。修复也覆盖独立窗口中的菜单打开和取消。
+- **当前模型显示品牌图标。** “EchoInk 当前模型”的已选项和列表选项现在使用与 Provider 页一致的图标，深度求索等服务商更容易辨认。
+
+#### 使用与升级
+
+升级后直接使用原有设置和模型，无需重新初始化仓库。在 **设置 → EchoInk Agent → 知识库** 中查看当前模型图标；设置下拉和聊天参数菜单均可点击外部取消。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。是否同步插件仍取决于你的同步设置。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。Windows/Linux 的窗口交互尚未进行本轮实机验证。头图为功能示意。
+
+### English
+
+**Lighter to download. Smoother to use.**
+
+2.3.2 focuses on a smaller plugin bundle and better dropdown interactions in settings and chat.
+
+- **Main file reduced by about 46.4%.** `main.js` shrinks from about 9.27 MB in 2.3.1 to about 4.97 MB (4.74 MiB), below the 5 MiB per-file limit of Obsidian Sync Standard. PDF reading, image processing, full Chinese pinyin search, and existing model capabilities are preserved.
+- **Click outside to cancel.** Settings dropdowns and chat model/parameter menus close when you click a blank area or elsewhere, keeping the previous selection. Hover highlights an option; clicking confirms it. This also fixes menu opening and dismissal in separate windows.
+- **Brand icons for the current model.** The selected value and options under **EchoInk current model** now use the same icons as the Provider page, making services such as DeepSeek easier to recognize.
+
+#### Use and upgrade
+
+Keep using your existing settings and models after upgrading; vault reinitialization is not required. Open **Settings → EchoInk Agent → Knowledge** to see the current model's brand icon. Click outside settings dropdowns and chat parameter menus to cancel.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`. Whether plugins are synced still depends on your sync settings.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Window interactions have not received real-app validation on Windows/Linux for this release. The cover is illustrative.
+
 ## 2.3.1 - 2026-09-19
 
 ![EchoInk Agent 2.3.1](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.1/assets/releases/echoink-agent-2.3.1-release.png)

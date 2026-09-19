@@ -36,7 +36,7 @@ export async function extractPdfText(bytes: Uint8Array): Promise<string> {
     useSystemFonts: true,
     isEvalSupported: false
   });
-  let failed = false;
+  let text: string;
   try {
     const document = await task.promise;
     const pages: string[] = [];
@@ -49,20 +49,20 @@ export async function extractPdfText(bytes: Uint8Array): Promise<string> {
         .join(""));
     }
     // Match the previous extractor's page and whitespace semantics.
-    return pages.join("\n")
+    text = pages.join("\n")
       .replace(/[^\S\n]+/gu, " ")
       .replace(/ ?\n ?/gu, "\n")
       .replace(/\n{3,}/gu, "\n\n");
   } catch (error) {
-    failed = true;
-    throw error;
-  } finally {
-    // Release both a loaded document and a rejected loading task. Preserve the
+    // Release a rejected loading/reading task without replacing its original
     // parsing/password error if teardown also fails.
     try {
       await task.destroy();
-    } catch (error) {
-      if (!failed) throw error;
+    } catch {
+      // The original parsing error remains the useful failure to report.
     }
+    throw error;
   }
+  await task.destroy();
+  return text;
 }
