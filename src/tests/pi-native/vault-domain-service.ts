@@ -889,6 +889,17 @@ async function assertWorkspacePermissionDispatchAndJournalWrites(fixture: Fixtur
     const result = await tool.execute(toolCallId, input, undefined, undefined);
     return await handlers.get("tool_result")!({ toolName, toolCallId, ...result, isError: false });
   };
+  assert.deepEqual(await call("note_read", { relativePath: "journal/missing.md" }), {
+    block: true, reason: "target_not_found"
+  });
+  assert.deepEqual(await call("note_read", { relativePath: "journal" }), {
+    block: true, reason: "target_kind_invalid"
+  });
+  assert.deepEqual(await call("note_read", { relativePath: "../outside.md" }), {
+    block: true, reason: "tool_policy_blocked"
+  });
+  assert.equal((await call("note_read", { relativePath: "journal/existing.md" })).isError, false,
+    "a missing target does not prevent the next valid read");
   for (const workflow of ["chat", "ask", "maintain", "daily-journal"]) {
     for (const toolName of ["note_create", "note_update", "metadata_update", "note_move", "note_delete", "memory_write", "knowledge_maintain", "external_write"]) {
       assert.deepEqual(await call(toolName, { relativePath: "journal/existing.md", content: workflow }), { block: true, reason: "tool_policy_blocked" });

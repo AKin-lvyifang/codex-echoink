@@ -35,6 +35,8 @@ export type PiVaultToolBlockReason =
   | "approval_denied"
   | "approval_cancelled"
   | "tool_policy_blocked"
+  | "target_not_found"
+  | "target_kind_invalid"
   | "authorization_failed";
 
 export class PiVaultToolAuthorizationError extends Error {
@@ -504,6 +506,8 @@ function isBlockReason(value: string): value is PiVaultToolBlockReason {
   return value === "approval_denied"
     || value === "approval_cancelled"
     || value === "tool_policy_blocked"
+    || value === "target_not_found"
+    || value === "target_kind_invalid"
     || value === "authorization_failed";
 }
 

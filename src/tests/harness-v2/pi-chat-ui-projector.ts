@@ -53,6 +53,7 @@ export async function runPiChatUiProjectorTests(): Promise<void> {
   assertHiddenDocumentContextProjectsOnlyDisplayMetadata();
   assertLiveEventsMergeUntilTheProductSettlementBoundary();
   assertKnowledgeProgressAndToolPayloadsStayPrivate();
+  assertKnowledgeFailuresStayAccurateAndPrivate();
   assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict();
   assertDurableReadbackRekeysAndResolvesProvisionalItems();
   assertToolOnlyAssistantEntryResolvesFromDurableBranchPresence();
@@ -1419,6 +1420,57 @@ function maintenanceResult(
     }] : [],
     systemPaths: ["raw/index.md", ".echoink/knowledge/tracker.json"]
   };
+}
+
+function assertKnowledgeFailuresStayAccurateAndPrivate(): void {
+  const cases = [
+    { toolName: "note_read", text: "target_not_found", details: {}, expected: "未找到目标文件" },
+    { toolName: "note_read", text: "tool_policy_blocked", details: {}, expected: "记录未保留具体原因" },
+    { toolName: "knowledge_read", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_source_changed" }, expected: "来源内容已变化" },
+    { toolName: "knowledge_search", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_cursor_stale" }, expected: "检索结果已更新" },
+    { toolName: "vault_search", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "记录未保留可展示的具体原因" },
+    { toolName: "knowledge_maintain", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "记录未保留可展示的具体原因" }
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const projector = new PiChatUiProjector();
+    const session = `private-failure-${index}`;
+    const run = `private-failure-run-${index}`;
+    const toolCallId = `private-failure-call-${index}`;
+    const result = { content: [{ type: "text", text: entry.text }], details: entry.details };
+    let live = projector.createEmpty({ piSessionId: session, activeLeafId: "leaf", now: 1 });
+    live = project(projector, live, runtimeEvent("tool_execution_start", 2, {
+      toolCallId, toolName: entry.toolName, privacySafe: true,
+      args: { relativePath: "PRIVATE_PATH_CANARY.md" }
+    }, session, run));
+    live = project(projector, live, runtimeEvent("tool_execution_end", 3, {
+      toolCallId, toolName: entry.toolName, privacySafe: true, result, isError: true
+    }, session, run));
+    const durable = projector.projectSessionBranch({
+      piSessionId: session, activeLeafId: "answer", now: 5, runState: "completed", productRunId: run,
+      entries: [
+        messageEntry("user", null, 1, { role: "user", content: "/maintain fixture" }),
+        messageEntry("call", "user", 2, { role: "assistant", content: [{
+          type: "toolCall", id: toolCallId, name: entry.toolName,
+          arguments: { relativePath: "PRIVATE_PATH_CANARY.md" }
+        }] }),
+        messageEntry("result", "call", 3, { role: "toolResult", toolCallId,
+          toolName: entry.toolName, ...result, isError: true }),
+        messageEntry("answer", "result", 4, { role: "assistant", content: "已通过其他资料继续处理" })
+      ],
+      runIdentities: [{ productRunId: run, userEntryId: "user", assistantEntryId: "answer",
+        toolCallIds: [toolCallId], knowledgeWorkflow: "maintain" }]
+    });
+    for (const view of [live, durable]) {
+      const tool = toolByCall(view, toolCallId);
+      assert.equal(tool.status, "failed");
+      assert.doesNotMatch(tool.title ?? "", /完成/u);
+      assert.match(tool.text ?? "", new RegExp(entry.expected, "u"));
+      assert.doesNotMatch(JSON.stringify(tool), /PRIVATE_(?:PATH|FAILURE)_CANARY|已完成/u);
+      const item = buildActionTimeline([tool]).groups[0]?.items[0];
+      assert.equal(item?.userDetails?.error, tool.text,
+        "the failure detail uses only the safe reason, including after session reopen");
+    }
+  }
 }
 
 function assertKnowledgeProgressAndToolPayloadsStayPrivate(): void {

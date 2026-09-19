@@ -18679,6 +18679,9 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 }
 
 .codex-action-error {
+  display: grid;
+  gap: var(--echoink-conversation-space-1);
+  min-width: 0;
   padding: var(--echoink-conversation-space-2) var(--echoink-conversation-space-3);
   border-radius: var(--echoink-conversation-radius-sm);
   background: color-mix(in srgb, var(--echoink-conversation-status-danger) 7%, transparent);
@@ -18689,6 +18692,8 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 }
 
 .codex-action-error-message {
+  font-size: var(--echoink-conversation-font-status);
+  line-height: var(--echoink-conversation-line-status);
   white-space: pre-wrap;
 }
 
