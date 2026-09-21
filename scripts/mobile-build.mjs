@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import esbuild from "esbuild";
+import { poolDesktopStrings, assertDesktopMarkersPreserved } from "./desktop-string-pool.mjs";
 
 // Keep Pi's real Agent, event stream and tool validation. Exclude the Node
 // provider/auth catalog: mobile always injects its own requestUrl streamFn.
@@ -23,7 +24,12 @@ export async function assemblePlatformBundle(desktopCode, minify) {
   const mobile = await esbuild.build({ ...mobileBuildOptions(), minify });
   const selector = await esbuild.build({ ...mobileBuildOptions("src/platform-entry.ts"), minify });
   const wrap = (name, code) => `function ${name}(){var module={exports:{}};var exports=module.exports;\n${code}\nreturn module.exports;}\n`;
-  const code = selector.outputFiles[0].text + "\n" + wrap("loadMobile", mobile.outputFiles[0].text) + wrap("loadDesktop", desktopCode);
+  const desktop = minify ? poolDesktopStrings(desktopCode).code : desktopCode;
+  let code = selector.outputFiles[0].text + "\n" + wrap("loadMobile", mobile.outputFiles[0].text) + wrap("loadDesktop", desktop);
+  if (minify) {
+    code = (await esbuild.transform(code, { minify: true, charset: "utf8", target: "es2022", format: "cjs", legalComments: "inline" })).code;
+    assertDesktopMarkersPreserved(desktopCode, code);
+  }
   await fs.writeFile("dist/main.js", code);
   console.log(`Mobile browser bundle: ${mobile.outputFiles[0].contents.length} bytes; combined main.js: ${Buffer.byteLength(code)} bytes`);
 }

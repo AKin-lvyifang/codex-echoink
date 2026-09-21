@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.4.0 发布图" src="assets/releases/echoink-agent-2.4.0-release.png">
+    <img width="1024" alt="EchoInk Agent 2.4.1 发布图" src="assets/releases/echoink-agent-2.4.1-release.png">
   </a>
 </p>
 
@@ -9,10 +9,10 @@
 <p align="center">管理你的 Obsidian 知识，也在每次使用中更懂你。</p>
 
 <p align="center">
-  <a href="#240-亮点">2.4.0 亮点</a> ·
+  <a href="#241-亮点">2.4.1 亮点</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#安装">安装</a> ·
-  <a href="#快速开始">快速开始</a> ·
+  <a href="#快速开始桌面端">快速开始</a> ·
   <a href="#把图片文档和笔记加入对话">对话附件</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
   <a href="README.md">English</a>
@@ -20,29 +20,32 @@
 
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：Obsidian 桌面端">
-    <img src="https://img.shields.io/badge/version-2.4.0-0EA5E9?style=flat-square" alt="版本 2.4.0">
+    <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：桌面端与移动端 Beta">
+    <img src="https://img.shields.io/badge/version-2.4.1-0EA5E9?style=flat-square" alt="版本 2.4.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0"><strong>下载 2.4.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1"><strong>下载 2.4.1</strong></a>
 </p>
 
 EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持续对话，整理和维护当前 Vault，把长期有用的信息保存为可查看、可修正的记忆，并随着使用逐渐形成自己的工作方式。无需安装 Codex CLI；连接一个支持的模型服务后即可开始使用。
 
-## 2.4.0 亮点
+## 2.4.1 亮点
 
-顺着联系，读懂笔记。
+把思考，带在身边。**新增移动端 Beta，电脑继续使用原有桌面界面和功能。**
 
-- **Ask 关联阅读：** 找到笔记后，模型可以沿文中的双链和指向它的反向链接，按问题继续阅读相关资料，自主判断何时回答。
-- **整理资料的适用范围：** 知识维护可按需补充主题、时间、资料性质与适用条件，帮助后续阅读区分不同项目、版本以及预算与实际数据。旧笔记无需补齐固定字段。
-- **阅读过程更清楚：** 区分已读正文与待查看的线索；读取失败会说明可确定的原因，不再误标为完成。失败卡片的字号与间距也与其他过程节点统一。
+- **在手机上对话：** 配置 API Key、接口与模型即可提问，支持 OpenAI Chat Completions 和 Responses。回答在完整返回后显示。
+- **读取笔记，写成 Markdown：** 查找并阅读当前 Vault 的笔记，也能按你的要求创建新的 Markdown 文件，不覆盖同名文件。
+- **留住有用的背景：** 在移动会话间保存和召回本地记忆，并按分类查看、编辑或忘记。未配置模型时，仍能管理已有本地历史和记忆。
+- **自定义欢迎语：** 在基础设置里修改欢迎标题和问候语，输入后自动保存。关闭自定义会恢复默认显示，并保留已填内容。
 
-输入 `/ask` 提问，或用 `/maintain` 整理资料。查看 [2.4.0 更新介绍与用法](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0)。升级无需重新初始化仓库或重设模型；涉及金额、比例等结论时，仍应核对原文和计算。头图为功能示意。
+同一个安装包会根据设备选择界面。移动 Beta 优先适配 iOS，Android 共用移动入口，可参与实验性测试；**iOS 和 Android 均尚未完成真机验证**。头图使用 Demo 首页作界面示意，不代表图中所有模块已经接通。查看 [2.4.1 更新介绍与用法](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1)。
 
 ## 主要功能
+
+以下介绍桌面端体验。移动 Beta 当前支持对话、Markdown 笔记读取与新建、本地记忆和欢迎语设置；暂不包含跨设备记忆同步、后台任务、CLI、附件以及完整桌面 Skills/MCP 能力。
 
 ### 持久会话与清楚的对话过程
 
@@ -110,7 +113,7 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 
 ### 手动安装
 
-1. 从 [2.4.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0) 下载 `main.js`、`manifest.json` 和 `styles.css`。
+1. 从 [2.4.1 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1) 下载 `main.js`、`manifest.json` 和 `styles.css`。
 2. 在 Vault 中创建目录：
 
 ```text
@@ -120,9 +123,15 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 3. 将三个文件放入该目录。
 4. 重启 Obsidian，在第三方插件中启用 `EchoInk Agent`。
 
-> **同步说明：** 2.4.0 的 `main.js` 约为 4.75 MiB，已低于 Obsidian Sync Standard 的 5 MiB 单文件上限。是否同步插件仍取决于你的同步设置。
+> **同步说明：** Obsidian Sync Standard 有 5 MiB 单文件上限；文件需符合限制，且各设备需开启社区插件同步。
 
-## 快速开始
+### 移动端 Beta
+
+在手机 Vault 中安装同一套插件文件，启用 EchoInk 后运行 **“打开移动对话”**。进入 **设置 → API Provider → 模型与提供商**，填写 API Key、接口地址和模型 ID，再选择模型，即可提问、引用笔记或要求新建 Markdown 笔记。
+
+在 **复盘 → 记忆** 管理本地记忆，在 **基础设置** 修改欢迎语。移动与桌面的会话、记忆分别保存，本版不会合并或同步两端历史。
+
+## 快速开始（桌面端）
 
 首次使用时，五步引导会带你找到下面这些入口；可以返回、跳步或随时退出：
 
@@ -181,7 +190,7 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 ### 从 2.1.0 或 2.0.3 升级
 
 - 可直接覆盖升级，无需重建会话、知识库或长期记忆；已保存的 Provider 与模型配置会自动升级。
-- 2.4.0 不会改写旧会话中已经保存的内容。如果某个旧会话已经留下重复回答或失败记录，升级后建议新建会话继续。
+- 2.4.1 不会改写旧会话中已经保存的内容。如果某个旧会话已经留下重复回答或失败记录，升级后建议新建会话继续。
 - 已完成引导的旧用户不一定会在升级后再次看到引导；需要重看时，在 Obsidian 社区插件中禁用再启用 EchoInk，完成页也支持“再看一遍”。
 
 ### 从 1.x 升级
@@ -192,20 +201,20 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 
 ## 隐私与数据
 
-- EchoInk 仅支持桌面端，并通过 Obsidian API 访问当前 Vault。
+- EchoInk 通过 Obsidian API 访问当前 Vault；桌面保留既有能力，移动 Beta 的笔记操作限于当前 Vault。
 - 会话、知识文件、记忆和周报保存在本地 Vault 中。
 - API Key、Provider 配置与 OpenAI Codex Beta 登录凭据保存在当前 Vault 的插件设置中。请只在可信设备和可信 Vault 中配置。
-- 你为会话选择的本机工作区可以位于 Vault 外。输入区的文件权限可设为“只读”“工作区可写”或“完全访问权限”；完全访问会解除工作区文件边界，只应在可信任务中使用。EchoInk 还会读取你明确选择、拖入或粘贴的 Vault 外附件。
+- 在桌面端，你为会话选择的本机工作区可以位于 Vault 外。输入区的文件权限可设为“只读”“工作区可写”或“完全访问权限”；完全访问会解除工作区文件边界，只应在可信任务中使用。EchoInk 还会读取你明确选择、拖入或粘贴的 Vault 外附件。
 - 远程 Provider 会接收完成当前请求所需的 Prompt、会话、知识、记忆、笔记、附件和工具结果；EchoInk 不会默认上传整个 Vault 或整个工作区。
 - Custom Provider 与 MCP 连接还受对应服务、服务器和命令的条款约束。只配置你信任的服务和本机命令。
 - EchoInk 没有自己的遥测服务。
 
 ## 使用要求
 
-- Obsidian Desktop 1.11.4 或更高版本。
+- Obsidian 1.11.4 或更高版本。桌面保留既有界面，移动功能为 Beta。
 - 云端 Provider 需要自己的 API Key 或账号，并可能产生 Provider 费用。
 - 图片输入需要当前模型支持视觉能力。
-- 当前不支持 Obsidian Mobile。
+- 移动端需要使用 API Key 的 OpenAI Chat Completions 或 Responses 模型接口；iOS/Android 真机验证尚待完成。
 - Node.js 只用于本地开发，不是普通安装的前置条件。
 
 ## 本地开发

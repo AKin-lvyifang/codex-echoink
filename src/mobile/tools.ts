@@ -14,14 +14,14 @@ export const memoryCategories = [
 ] as const;
 export function checkedNotePath(value: string): string {
   const path = value.trim();
-  if (!path || path.startsWith("/") || /[\\:\u0000-\u001f]/u.test(path) || path.split("/").some(p => !p || p.startsWith(".")) || !path.toLowerCase().endsWith(".md")) {
+  if (!path || path.startsWith("/") || /[\\:]/u.test(path) || Array.from(path).some(character => character.charCodeAt(0) < 32) || path.split("/").some(p => !p || p.startsWith(".")) || !path.toLowerCase().endsWith(".md")) {
     throw new Error("请使用当前笔记库内的 Markdown 相对路径，例如：笔记/想法.md。");
   }
   return path;
 }
 export function searchMemories(records: readonly PersonalMemoryRecord[], query: string, limit = 20): PersonalMemoryRecord[] {
   const text = query.trim().toLocaleLowerCase();
-  const terms = text.match(/[a-z0-9]+|[\u3400-\u9fff]{1,}/gu) ?? [];
+  const terms: readonly string[] = text.match(/[a-z0-9]+|[\u3400-\u9fff]{1,}/gu) ?? [];
   const fragments = terms.flatMap(t => /[\u3400-\u9fff]/u.test(t) && t.length > 2 ? [t, ...Array.from({ length: t.length - 1 }, (_, i) => t.slice(i, i + 2))] : [t]);
   return records.filter(r => r.status === "current").map(record => {
     const haystack = `${record.title}\n${record.content}\n${record.recallWhen}`.toLocaleLowerCase();
@@ -30,8 +30,8 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string): AgentTool<any>[] {
-  const tools: AgentTool<any>[] = [
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string): AgentTool[] {
+  const tools: AgentTool[] = [
     {
       name: "vault_search", label: "查找笔记", description: "按标题或路径查找当前笔记库的 Markdown 笔记。", parameters: Type.Object({ query: Type.String() }),
       async execute(_id, args: { query: string }, signal) {
@@ -89,7 +89,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         if (args.targetId && !old) throw new Error("要修正的记忆不存在。");
         const duplicate = store.state.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
         if (duplicate) return result(duplicate);
-        const record: PersonalMemoryRecord = { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? newId(), kind: args.kind as PersonalMemoryKind, status: "current", date: new Date().toISOString(), source: `mobile:${store.session.id}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: "mobile/state.json" };
+        const record: PersonalMemoryRecord = { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? newId(), kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${store.session.id}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: "mobile/state.json" };
         store.state.memories = [record, ...store.state.memories.filter(r => r.id !== record.id)];
         await store.save();
         return result(record);

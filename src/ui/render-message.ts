@@ -283,10 +283,12 @@ export function splitMessageTableRow(line: string): string[] {
 
 function splitReadableParagraphs(line: string): string[] {
   if (line.length < 180) return [line];
-  const chunks = line
-    .split(/(?<=[。！？；])\s*/u)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const pieces = line.split(/([。！？；])\s*/u);
+  const chunks: string[] = [];
+  for (let index = 0; index < pieces.length; index += 2) {
+    const chunk = `${pieces[index]}${pieces[index + 1] ?? ""}`.trim();
+    if (chunk) chunks.push(chunk);
+  }
   if (chunks.length <= 1) return [line];
   const paragraphs: string[] = [];
   let current = "";

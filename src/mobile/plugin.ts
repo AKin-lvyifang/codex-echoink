@@ -27,7 +27,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
   }
   async saveSettings(): Promise<void> {
-    const snapshot = JSON.parse(JSON.stringify(this.settings));
+    const snapshot: unknown = JSON.parse(JSON.stringify(this.settings));
     const write = this.settingsWrites.catch(() => {}).then(() => this.saveData(snapshot));
     this.settingsWrites = write;
     return write;

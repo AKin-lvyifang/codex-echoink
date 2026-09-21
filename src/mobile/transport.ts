@@ -1,29 +1,37 @@
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Context, Message, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Message, Model, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
+import type { RequestUrlParam } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
 import { apiProviderRequestUrl } from "../settings/provider-presets";
 
-export type MobileRequest = (request: RequestUrlParam) => Promise<Pick<RequestUrlResponse, "status" | "json">>;
+export type MobileRequest = (request: RequestUrlParam) => Promise<{ status: number; json: unknown }>;
 type StoredAssistant = AssistantMessage & { mobileReasoning?: string; mobileResponseItems?: unknown[] };
 const textContent = (message: Message) => typeof message.content === "string" ? message.content : message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
-export function piModel(provider: ApiProviderConfig, model: ApiProviderModelConfig): Model<any> {
+export function piModel(provider: ApiProviderConfig, model: ApiProviderModelConfig): Model<Api> {
   return { id: model.id, name: model.displayName, api: provider.apiProtocol, provider: provider.runtimeProviderId || provider.id, baseUrl: provider.baseUrl, reasoning: model.reasoningEnabled, input: ["text"], contextWindow: model.contextWindow, maxTokens: model.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 }
-function usage(value: any, responses: boolean): Usage {
-  const input = Number(responses ? value?.input_tokens : value?.prompt_tokens) || 0;
-  const output = Number(responses ? value?.output_tokens : value?.completion_tokens) || 0;
-  const cached = Number(responses ? value?.input_tokens_details?.cached_tokens : value?.prompt_tokens_details?.cached_tokens) || 0;
-  return { input: Math.max(0, input - cached), output, cacheRead: cached, cacheWrite: 0, totalTokens: Number(value?.total_tokens) || input + output, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+function records(value: unknown): Record<string, unknown>[] {
+  const items: unknown[] = Array.isArray(value) ? value : [];
+  return items.map(record);
+}
+function usage(value: unknown, responses: boolean): Usage {
+  const data = record(value);
+  const input = Number(responses ? data.input_tokens : data.prompt_tokens) || 0;
+  const output = Number(responses ? data.output_tokens : data.completion_tokens) || 0;
+  const cached = Number(record(responses ? data.input_tokens_details : data.prompt_tokens_details).cached_tokens) || 0;
+  return { input: Math.max(0, input - cached), output, cacheRead: cached, cacheWrite: 0, totalTokens: Number(data.total_tokens) || input + output, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
 function toolArguments(value: unknown): Record<string, unknown> {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("模型返回了无效的工具参数。");
   return parsed as Record<string, unknown>;
 }
-function transcript(context: Context, responses: boolean): any[] {
-  const result: any[] = [];
+function transcript(context: Context, responses: boolean): unknown[] {
+  const result: unknown[] = [];
   const completed = new Set(context.messages.filter(m => m.role === "toolResult").map(m => m.toolCallId));
   for (const message of context.messages) {
     if (message.role === "user") result.push({ role: "user", content: textContent(message) });
@@ -46,19 +54,19 @@ function transcript(context: Context, responses: boolean): any[] {
   }
   return result;
 }
-export function buildMobileRequest(provider: ApiProviderConfig, model: Model<any>, context: Context): RequestUrlParam {
+export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context): RequestUrlParam {
   const responses = provider.apiProtocol === "openai-responses";
   const tools = context.tools?.map(tool => responses
     ? { type: "function", name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }
     : { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } });
-  const body = responses
+  const body: Record<string, unknown> = responses
     ? { model: model.id, stream: false, store: false, instructions: context.systemPrompt, input: transcript(context, true), max_output_tokens: model.maxTokens, include: ["reasoning.encrypted_content"], ...(tools?.length ? { tools } : {}) }
     : { model: model.id, stream: false, messages: [{ role: "system", content: context.systemPrompt }, ...transcript(context, false)], max_completion_tokens: model.maxTokens, ...(tools?.length ? { tools } : {}) };
   // Compatible endpoints generally use max_tokens; OpenAI reasoning models use
   // max_completion_tokens. Keep the protocol independent of a provider catalog.
   if (!responses && !/api\.openai\.com$/u.test(new URL(provider.baseUrl).hostname)) {
-    (body as any).max_tokens = model.maxTokens;
-    delete (body as any).max_completion_tokens;
+    body.max_tokens = model.maxTokens;
+    delete body.max_completion_tokens;
   }
   const url = new URL(apiProviderRequestUrl(provider.baseUrl, provider.apiProtocol));
   for (const [key, value] of Object.entries(provider.queryParams ?? {})) url.searchParams.set(key, value);
@@ -83,37 +91,41 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
         stream.push({ type: "start", partial: message });
         const response = await abortable(request(buildMobileRequest(provider, model, context)), options?.signal);
         if (options?.signal?.aborted) throw new Error("已停止");
-        const data = response.json;
-        if (response.status < 200 || response.status >= 300 || data?.error || data?.status === "failed") {
-          throw new Error(`Provider 请求失败（${response.status}）：${data?.error?.message || "请检查模型、接口地址和 API Key"}`);
+        const data = record(response.json);
+        if (response.status < 200 || response.status >= 300 || data.error || data.status === "failed") {
+          const providerError = record(data.error).message;
+          throw new Error(`Provider 请求失败（${response.status}）：${typeof providerError === "string" && providerError || "请检查模型、接口地址和 API Key"}`);
         }
         const responses = provider.apiProtocol === "openai-responses";
-        message.usage = usage(data?.usage, responses);
-        message.responseId = data?.id;
-        message.responseModel = data?.model;
+        message.usage = usage(data.usage, responses);
+        message.responseId = typeof data.id === "string" ? data.id : undefined;
+        message.responseModel = typeof data.model === "string" ? data.model : undefined;
         if (responses) {
-          if (!Array.isArray(data?.output)) throw new Error("Provider 未返回有效的 Responses 结果。");
-          message.mobileResponseItems = data.output.filter((item: any) => item.type === "reasoning");
-          for (const item of data.output) {
-            if (item.type === "message") for (const part of item.content ?? []) {
-              if (part.type === "output_text") message.content.push({ type: "text", text: part.text });
-              if (part.type === "refusal") message.content.push({ type: "text", text: part.refusal });
+          if (!Array.isArray(data.output)) throw new Error("Provider 未返回有效的 Responses 结果。");
+          const output = records(data.output);
+          message.mobileResponseItems = output.filter(item => item.type === "reasoning");
+          for (const item of output) {
+            if (item.type === "message") for (const part of records(item.content)) {
+              if (part.type === "output_text" && typeof part.text === "string") message.content.push({ type: "text", text: part.text });
+              if (part.type === "refusal" && typeof part.refusal === "string") message.content.push({ type: "text", text: part.refusal });
             }
             if (item.type === "function_call") {
-              if (!item.call_id || !item.name) throw new Error("模型工具调用缺少标识。");
+              if (typeof item.call_id !== "string" || !item.call_id || typeof item.name !== "string" || !item.name) throw new Error("模型工具调用缺少标识。");
               message.content.push({ type: "toolCall", id: item.call_id, name: item.name, arguments: toolArguments(item.arguments) });
             }
           }
           if (data.status === "incomplete") message.stopReason = "length";
         } else {
-          const choice = data?.choices?.[0];
+          const choice = records(data.choices)[0];
           if (!choice?.message) throw new Error("Provider 未返回有效的 Chat Completions 结果。");
-          if (typeof choice.message.content === "string" && choice.message.content) message.content.push({ type: "text", text: choice.message.content });
-          if (typeof choice.message.reasoning_content === "string") message.mobileReasoning = choice.message.reasoning_content;
-          if (choice.message.refusal) message.content.push({ type: "text", text: choice.message.refusal });
-          for (const call of choice.message.tool_calls ?? []) {
-            if (!call.id || !call.function?.name) throw new Error("模型工具调用缺少标识。");
-            message.content.push({ type: "toolCall", id: call.id, name: call.function.name, arguments: toolArguments(call.function.arguments) });
+          const content = record(choice.message);
+          if (typeof content.content === "string" && content.content) message.content.push({ type: "text", text: content.content });
+          if (typeof content.reasoning_content === "string") message.mobileReasoning = content.reasoning_content;
+          if (typeof content.refusal === "string" && content.refusal) message.content.push({ type: "text", text: content.refusal });
+          for (const call of records(content.tool_calls)) {
+            const fn = record(call.function);
+            if (typeof call.id !== "string" || !call.id || typeof fn.name !== "string" || !fn.name) throw new Error("模型工具调用缺少标识。");
+            message.content.push({ type: "toolCall", id: call.id, name: fn.name, arguments: toolArguments(fn.arguments) });
           }
           if (choice.finish_reason === "length") message.stopReason = "length";
           if (choice.finish_reason === "content_filter") throw new Error("Provider 内容过滤，未完成本轮回答。");

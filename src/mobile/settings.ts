@@ -15,10 +15,12 @@ export const mobilePresets = API_PROVIDER_PRESETS.filter(p => p.authMode === "ap
 export function supportedProvider(p: ApiProviderConfig): boolean {
   return p.authMode !== "oauth" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
 }
-export function loadMobileSettings(raw: Record<string, unknown> | null): MobileSettings {
+export function loadMobileSettings(value: unknown): MobileSettings {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
   return {
     ...raw,
-    apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders : [],
+    // Both desktop and mobile persist the same provider configuration schema.
+    apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders as ApiProviderConfig[] : [],
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,

@@ -21,7 +21,7 @@
 
 手机启用后运行 **“打开移动对话”**，进入 **设置 → API Provider → 模型与提供商** 配置模型；在 **复盘 → 记忆** 管理本地记忆，在 **基础设置** 修改欢迎语。电脑用户按原有方式使用，无需切换为手机界面。
 
-需要 **Obsidian 1.11.4 及以上**。移动 Beta 以 iOS 为优先方向，Android 共用移动入口，可参与实验性测试；**真实 iOS、Android 设备验收尚未完成**。桌面保留既有能力，本轮未新增三端真实 Obsidian 验收结果。
+需要 **Obsidian 1.11.4 及以上**。移动 Beta 以 iOS 为优先方向，Android 共用移动入口，可参与实验性测试；**真实 iOS、Android 设备验收尚未完成**。桌面保留既有能力。
 
 移动端当前不包含跨设备记忆同步、后台任务、CLI、附件或完整桌面 Skills/MCP 能力，移动与桌面的会话和记忆分别保存。头图中的手机界面来自 Demo，仅为功能示意，不代表其中所有模块已接通。
 
@@ -42,7 +42,7 @@ Download **main.js, manifest.json, and styles.css** from this release and place 
 
 On mobile, run **打开移动对话** (Open mobile chat), then configure a model under **Settings → API Provider → 模型与提供商** (Models and providers). Manage local memory under **复盘 → 记忆** (Review → Memory) and customize the welcome under **基础设置** (General). The mobile interface is currently in Chinese. Desktop users can continue with their existing workflow.
 
-Requires **Obsidian 1.11.4 or later**. Mobile Beta prioritizes iOS. Android uses the same mobile entry and is available for experimental testing; **real iOS and Android device validation is not complete**. Desktop retains its existing capabilities; this release does not add new real-Obsidian validation results for the three desktop platforms.
+Requires **Obsidian 1.11.4 or later**. Mobile Beta prioritizes iOS. Android uses the same mobile entry and is available for experimental testing; **real iOS and Android device validation is not complete**. Desktop retains its existing capabilities.
 
 Mobile does not yet include cross-device memory sync, background tasks, CLI, attachments, or the complete desktop Skills/MCP features. Mobile and desktop conversations and memory are stored separately. The phone screen in the cover comes from a Demo and is illustrative; not every module shown is connected.
 

@@ -33,7 +33,10 @@ function el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, 
 function icon(parent: HTMLElement, name: string) { const node = el(parent, "span", "em-icon"); node.setAttribute("aria-hidden", "true"); setIcon(node, name); return node; }
 function contentText(message: AgentMessage): string {
   if (!("content" in message)) return "";
-  return typeof message.content === "string" ? message.content : (message.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
+  return typeof message.content === "string" ? message.content : (message.content ?? []).filter(c => c.type === "text").map(c => c.text).join("\n");
+}
+function detailRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 /** The same DOM controller is used by the ItemView and browser host fixture. */
@@ -214,22 +217,23 @@ export class MobileUI {
   }
   private toolContent(parent: HTMLElement, name: string, args: Record<string, unknown>, receipt?: ToolResultMessage) {
     if (receipt?.isError) { el(parent, "p", "", contentText(receipt)); return; }
-    const data = receipt?.details;
+    const data: unknown = receipt?.details;
+    const result = detailRecord(data);
     const note = (path: string) => this.button(parent, path, () => this.host.openNote(path), "file-text", "em-note-link");
     const markdown = (text: string) => { const article = el(parent, "article", "markdown-rendered"); this.host.renderMarkdown(text, article); };
     if (name === "note_read") {
-      if (data?.path) note(data.path); else if (typeof args.path === "string") el(parent, "p", "", args.path);
-      if (typeof data?.content === "string") markdown(data.content);
+      if (typeof result?.path === "string") note(result.path); else if (typeof args.path === "string") el(parent, "p", "", args.path);
+      if (typeof result?.content === "string") markdown(result.content);
     } else if (name === "note_create") {
-      if (data?.saved && data.path) { note(data.path); if (typeof args.content === "string") markdown(args.content); }
+      if (result?.saved && typeof result.path === "string") { note(result.path); if (typeof args.content === "string") markdown(args.content); }
       else el(parent, "p", "", typeof args.path === "string" ? args.path : "等待保存结果");
     } else if (name === "vault_search") {
-      if (Array.isArray(data)) { if (!data.length) el(parent, "p", "", "没有找到相关笔记"); for (const item of data) if (item.path) note(item.path); }
-      else if (args.query) el(parent, "p", "", String(args.query));
+      if (Array.isArray(data)) { if (!data.length) el(parent, "p", "", "没有找到相关笔记"); for (const item of data) { const record = detailRecord(item); if (typeof record?.path === "string") note(record.path); } }
+      else if (typeof args.query === "string") el(parent, "p", "", args.query);
     } else if (name.startsWith("memory_") && toolNames[name]) {
-      const records = Array.isArray(data) ? data : data ? [data] : [];
+      const records: unknown[] = Array.isArray(data) ? data : data ? [data] : [];
       if (receipt && !records.length) el(parent, "p", "", "没有找到相关记忆");
-      for (const record of records) { if (record.title) el(parent, "strong", "", record.title); if (record.content) markdown(record.content); }
+      for (const item of records) { const record = detailRecord(item); if (typeof record?.title === "string") el(parent, "strong", "", record.title); if (typeof record?.content === "string") markdown(record.content); }
       if (!receipt && typeof args.title === "string") el(parent, "p", "", args.title);
     } else {
       el(parent, "pre", "", JSON.stringify(args, null, 2)); if (receipt) el(parent, "pre", "", contentText(receipt));
@@ -295,13 +299,13 @@ export class MobileUI {
     const presetLabel = el(form, "label", "em-field"); el(presetLabel, "span", "", "供应商"); const presets = el(presetLabel, "select"); presets.setAttribute("aria-label", "供应商");
     for (const preset of mobilePresets) { const option = el(presets, "option", "", preset.name.split(" / ")[0]); option.value = preset.id; }
     presets.value = draft.providerId ?? "custom";
-    presets.addEventListener("change", () => { const preset = mobileProvider(presets.value as any); this.providerDraft = { ...draft, ...preset, id: draft.id, apiKey: draft.providerId === preset.providerId ? draft.apiKey : "" }; this.render(); });
+    presets.addEventListener("change", () => { const selected = mobilePresets.find(preset => preset.id === presets.value); if (!selected) return; const preset = mobileProvider(selected.id); this.providerDraft = { ...draft, ...preset, id: draft.id, apiKey: draft.providerId === preset.providerId ? draft.apiKey : "" }; this.render(); });
     this.field(form, "名称", draft.name, value => { draft.name = value; });
     this.field(form, "API Key", draft.apiKey, value => { draft.apiKey = value; }, "password");
     this.field(form, "接口地址", draft.baseUrl, value => { draft.baseUrl = value; }, "url");
     const protocolLabel = el(form, "label", "em-field"); el(protocolLabel, "span", "", "协议"); const protocols = el(protocolLabel, "select"); protocols.setAttribute("aria-label", "协议");
     for (const [value, name] of [["openai-completions", "Chat Completions"], ["openai-responses", "OpenAI Responses"]]) { const option = el(protocols, "option", "", name); option.value = value; } protocols.value = draft.apiProtocol;
-    protocols.addEventListener("change", () => { draft.apiProtocol = protocols.value as any; });
+    protocols.addEventListener("change", () => { if (protocols.value === "openai-completions" || protocols.value === "openai-responses") draft.apiProtocol = protocols.value; });
     this.field(form, "模型 ID（多个用逗号分隔）", draft.models.map(m => m.id).join(", "), value => {
       const ids = [...new Set(value.split(/[,，\n]/u).map(id => id.trim()).filter(Boolean))];
       draft.models = ids.map(id => mobileModel(id, draft.models.find(m => m.id === id))); draft.defaultModelId = ids.includes(draft.defaultModelId) ? draft.defaultModelId : ids[0] ?? "";
