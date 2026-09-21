@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
+import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
 
@@ -647,6 +648,7 @@ const piProviderSdkShimsPlugin = {
 };
 
 const context = await esbuild.context({
+  write: isPiImageBundleProbe,
   banner: {
     js: `/* EchoInk Agent */
 var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
@@ -722,7 +724,17 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
     piLeafModuleShimsPlugin,
     piProviderSdkShimsPlugin,
     piControlledEgressPlugin,
-    piRendererNodeImportShimPlugin
+    piRendererNodeImportShimPlugin,
+    ...(!isPiImageBundleProbe ? [{
+      name: "echoink-platform-bundle",
+      setup(build) {
+        build.onEnd(async result => {
+          if (result.errors.length) return;
+          await fs.promises.mkdir("dist", { recursive: true });
+          await assemblePlatformBundle(result.outputFiles.find(file => file.path.endsWith("main.js")).text, isProd);
+        });
+      }
+    }] : [])
   ],
   outfile: isPiImageBundleProbe
     ? ".tmp/pi-image-production-bundle-probe.cjs"

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.4.0 release artwork" src="assets/releases/echoink-agent-2.4.0-release.png">
+    <img width="1024" alt="EchoInk Agent 2.4.1 release artwork" src="assets/releases/echoink-agent-2.4.1-release.png">
   </a>
 </p>
 
@@ -9,10 +9,10 @@
 <p align="center">Manage your Obsidian knowledge while your personal agent grows to understand you better.</p>
 
 <p align="center">
-  <a href="#whats-new-in-240">What's New</a> ·
+  <a href="#whats-new-in-241">What's New</a> ·
   <a href="#features">Features</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="#quick-start">Quick Start</a> ·
+  <a href="#quick-start-desktop">Quick Start</a> ·
   <a href="#add-images-documents-and-notes-to-a-conversation">Conversation Files</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
   <a href="README_CN.md">中文</a>
@@ -20,29 +20,32 @@
 
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-2.4.0-0EA5E9?style=flat-square" alt="Version 2.4.0">
+    <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: desktop and mobile Beta">
+    <img src="https://img.shields.io/badge/version-2.4.1-0EA5E9?style=flat-square" alt="Version 2.4.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0"><strong>Download 2.4.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1"><strong>Download 2.4.1</strong></a>
 </p>
 
 EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations going, organizes and maintains the current vault, stores useful long-term context as visible and correctable memory, and gradually develops its own way of working with you. No Codex CLI installation is required. Connect a supported model service to get started.
 
-## What's new in 2.4.0
+## What's new in 2.4.1
 
-Follow the connections between your notes.
+Take your thoughts with you. **Mobile is now available as a Beta**, while computers keep the existing desktop interface and features.
 
-- **Related reading in Ask:** After finding a note, the model can follow its links and backlinks to read relevant material, choosing what to read next and when to answer.
-- **Context for maintained knowledge:** Maintenance can add subjects, time periods, source types, and applicability conditions to help distinguish projects, versions, and budgeted versus actual figures. Existing notes do not need a fixed set of fields.
-- **Clearer reading progress:** Read passages are distinguished from leads still to explore. Failed reads explain the known cause and are no longer labeled as complete. Failure cards use typography and spacing consistent with other process entries.
+- **Chat on your phone:** Connect an API-key Provider using OpenAI Chat Completions or Responses, choose a model, and start a conversation. Replies appear once the complete response has arrived.
+- **Work with Markdown:** Find and read notes in the current vault, then ask EchoInk to save a new Markdown note. Existing files with the same name are not overwritten.
+- **Keep useful local memory:** Save and recall memory across mobile conversations, and view, edit, or forget individual entries. Local history and memory management remain available without a configured Provider.
+- **Make the welcome your own:** Change the welcome title and greeting in General settings. Turning customization off restores the default text and keeps your saved wording.
 
-Use `/ask` to ask a question or `/maintain` to organize material. Read the [2.4.0 update and usage notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0). Upgrading does not require vault reinitialization or model reconfiguration. Check source passages and calculations for conclusions involving amounts or ratios. The cover is illustrative.
+The same plugin package selects the mobile interface on a phone and the existing desktop interface on a computer. This Beta focuses on iOS; Android uses the same mobile entry and is open to experimental testing. **Neither iOS nor Android has completed real-device validation.** The cover uses a Demo screen for illustration; not every module shown in the Demo is available. Read the [2.4.1 release notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1).
 
 ## Features
+
+The sections below describe the desktop experience. Mobile Beta currently covers chat, Markdown note reading and creation, local memory, and a custom welcome. Cross-device memory sync, background tasks, CLI, attachments, and the complete desktop Skills/MCP features are not included on mobile.
 
 ### Persistent conversations with a visible working process
 
@@ -110,7 +113,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.4.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.4.1 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1).
 2. Create this directory inside your vault:
 
 ```text
@@ -120,9 +123,15 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 3. Place the three files in that directory.
 4. Restart Obsidian and enable `EchoInk Agent` under Community plugins.
 
-> **Sync note:** `main.js` in 2.4.0 is about 4.75 MiB, below the 5 MiB per-file limit of Obsidian Sync Standard. Whether plugins are synced still depends on your sync settings.
+> **Sync note:** Obsidian Sync Standard has a 5 MiB per-file limit. Plugin files must fit the limit, and community-plugin syncing must be enabled on each device.
 
-## Quick start
+### Mobile Beta
+
+After installing the same three files in your mobile vault, enable EchoInk and run **打开移动对话** (Open mobile chat). In the mobile settings, open **API Provider → 模型与提供商** (Models and providers), enter your API key, endpoint, and model ID, and select the model. You can then ask a question, reference a note, or request a new Markdown note. The mobile interface is currently in Chinese.
+
+Manage local memory under **复盘 → 记忆** (Review → Memory), and customize the welcome under **基础设置** (General). Mobile conversations and memory are stored separately from the desktop format; this release does not merge or sync the two histories.
+
+## Quick start (desktop)
 
 On first use, the five-step guide points to these controls. Go back, jump between steps, or dismiss it at any time:
 
@@ -181,7 +190,7 @@ Open **Settings → EchoInk Agent → Review**:
 ### Upgrading from 2.1.0 or 2.0.3
 
 - Upgrade in place without rebuilding conversations, Knowledge, or long-term memory. Saved Provider and model settings are upgraded automatically.
-- 2.4.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
+- 2.4.1 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
 - Users who completed the guide may not see it again after upgrading. To replay it, disable and re-enable EchoInk in Community plugins; the completion screen also offers Replay.
 
 ### Upgrading from 1.x
@@ -192,20 +201,20 @@ Open **Settings → EchoInk Agent → Review**:
 
 ## Privacy and data
 
-- EchoInk is desktop-only and accesses the current vault through Obsidian APIs.
+- EchoInk accesses the current vault through Obsidian APIs. Desktop keeps its existing capabilities; Mobile Beta limits note operations to the current vault.
 - Conversation records, knowledge files, memory, and reports stay in the local vault.
 - API keys, Provider configuration, and OpenAI Codex Beta sign-in credentials are stored in plugin settings for the current vault. Configure them only on trusted devices and in trusted vaults.
-- A local workspace selected for a conversation can be outside the current vault. The composer's file access can be Read only, Workspace write, or Full access. Full access removes the workspace boundary and should be used only for trusted tasks. EchoInk also reads outside-vault attachments only when you explicitly select, drag, or paste them.
+- On desktop, a local workspace selected for a conversation can be outside the current vault. The composer's file access can be Read only, Workspace write, or Full access. Full access removes the workspace boundary and should be used only for trusted tasks. EchoInk also reads outside-vault attachments only when you explicitly select, drag, or paste them.
 - Remote Providers receive the prompt, conversation, Knowledge, memory, notes, attachments, and tool results required for the current request. EchoInk does not upload the entire vault or workspace by default.
 - Custom Providers and MCP connections are also subject to the policies of their services, servers, and commands. Configure only services and local commands you trust.
 - EchoInk has no telemetry service of its own.
 
 ## Requirements
 
-- Obsidian Desktop 1.11.4 or later.
+- Obsidian 1.11.4 or later. Desktop retains its existing interface; mobile features are Beta.
 - Cloud Providers require their own API key or account and may charge for usage.
 - Image input requires a vision-capable model.
-- Obsidian Mobile is not supported.
+- Mobile requires an API-key model using OpenAI Chat Completions or Responses. Real iOS/Android device validation is still pending.
 - Node.js is required only for local development, not for normal installation.
 
 ## Development

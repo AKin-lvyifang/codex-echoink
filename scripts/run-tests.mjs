@@ -20,3 +20,8 @@ for (const suite of suites) {
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+
+const desktopDataResult = spawnSync(process.execPath, ["scripts/desktop-string-pool-tests.mjs"], {
+  stdio: "inherit"
+});
+if (desktopDataResult.status !== 0) process.exit(desktopDataResult.status ?? 1);

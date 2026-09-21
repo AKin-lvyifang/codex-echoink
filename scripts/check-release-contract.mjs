@@ -11,6 +11,7 @@ const expectedAssets = ["main.js", "manifest.json", "styles.css"];
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const manifest = readJson("manifest.json");
 const packageJson = readJson("package.json");
+const packageLock = readJson("package-lock.json");
 const versions = readJson("versions.json");
 const workflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const workflowDocument = parseWorkflow(workflowPath);
@@ -18,6 +19,8 @@ const workflow = workflowDocument?.toJS() ?? {};
 
 validateManifest(manifest);
 check(packageJson.version === manifest.version, "package.json version must match manifest.json.");
+check(packageLock.version === manifest.version, "package-lock.json version must match manifest.json.");
+check(packageLock.packages?.[""]?.version === manifest.version, "package-lock.json root package version must match manifest.json.");
 check(versions[manifest.version] === manifest.minAppVersion, "versions.json must map the manifest version to its minimum app version.");
 if (args.tag) {
   const tag = args.allowVTag ? args.tag.replace(/^v/, "") : args.tag;
@@ -27,6 +30,7 @@ if (args.tag) {
 
 checkPinnedWorkflowActions();
 validateReleaseWorkflow(workflow);
+validatePlatformBoundary();
 validateArtifacts();
 
 if (failures.length > 0) {
@@ -50,7 +54,23 @@ function validateManifest(value) {
   check(typeof value.id === "string" && /^[a-z]+(?:-[a-z]+)*$/.test(value.id), "manifest id must use lowercase hyphenated words.");
   check(typeof value.version === "string" && semver.test(value.version), "manifest version must use x.y.z SemVer.");
   check(typeof value.minAppVersion === "string" && semver.test(value.minAppVersion), "manifest minAppVersion must use x.y.z SemVer.");
-  check(value.isDesktopOnly === true, "manifest must declare isDesktopOnly while EchoInk depends on Node APIs.");
+  check(value.isDesktopOnly === false, "manifest must allow mobile with EchoInk's isolated platform entries.");
+}
+
+function validatePlatformBoundary() {
+  const entry = fs.readFileSync(path.join(rootDir, "src/platform-entry.ts"), "utf8");
+  check(/module\.exports\s*=\s*Platform\.isMobile\s*\?\s*loadMobile\(\)\s*:\s*loadDesktop\(\)/u.test(entry),
+    "platform entry must select the mobile loader before evaluating the desktop loader.");
+  check(packageJson.scripts?.["test:mobile"] === "node scripts/mobile-tests.mjs",
+    "test:mobile must run the mobile integration and production no-Node entry checks.");
+  const verify = packageJson.scripts?.["verify:obsidian"] ?? "";
+  check(verify.includes("npm run build") && verify.indexOf("npm run test:mobile") > verify.indexOf("npm run build"),
+    "verify:obsidian must check the mobile entry after building the production bundle.");
+  const review = parseWorkflow(path.join(rootDir, ".github/workflows/obsidian-review.yml"))?.toJS();
+  check(review?.jobs?.review?.steps?.some(step => step.run === "npm run verify:obsidian"),
+    "review CI must run verify:obsidian, including the mobile production entry.");
+  check(review?.jobs?.["bundle-load"]?.steps?.some(step => step.run === "npm run test:mobile"),
+    "cross-platform CI must check the mobile entry in the same downloaded production bundle.");
 }
 
 function validateReleaseWorkflow(config) {
@@ -61,6 +81,14 @@ function validateReleaseWorkflow(config) {
   const publishIndex = steps.findIndex(isPublishStep);
   const guardIndex = steps.findIndex(isExistingReleaseGuard);
   const attestIndex = steps.findIndex((step) => typeof step?.uses === "string" && step.uses.startsWith("actions/attest@"));
+  const buildIndex = steps.findIndex(step => step.run === "npm run build");
+  const desktopCheckIndex = steps.findIndex(step => step.run === "npm run check:bundle");
+  const mobileCheckIndex = steps.findIndex(step => step.run === "npm run test:mobile");
+
+  check(buildIndex >= 0 && desktopCheckIndex > buildIndex && mobileCheckIndex > buildIndex
+    && mobileCheckIndex < attestIndex && desktopCheckIndex < attestIndex
+    && steps[mobileCheckIndex]?.if === undefined,
+    "release workflow must verify desktop and mobile production entries after build and before attestation.");
 
   check(attestIndex >= 0, "release workflow must attest the release assets.");
   check(draftIndex >= 0, "release workflow must create a draft release without overwriting files.");
@@ -130,6 +158,12 @@ function validateArtifacts() {
   for (const asset of expectedAssets) {
     const assetPath = path.join(directory, asset);
     check(fs.existsSync(assetPath) && fs.statSync(assetPath).size > 0, `release asset must be non-empty: ${asset}.`);
+    const sourcePath = path.join(rootDir, asset === "main.js" ? "dist/main.js" : asset);
+    if (fs.existsSync(assetPath) && fs.existsSync(sourcePath)) {
+      check(fs.readFileSync(assetPath).equals(fs.readFileSync(sourcePath)), `release asset must match the verified source: ${asset}.`);
+    } else {
+      check(false, `missing verified source or release asset: ${asset}.`);
+    }
   }
 }
 

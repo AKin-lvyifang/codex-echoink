@@ -1,12 +1,13 @@
 {
   "name": "echoink-agent",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {
     "build": "npm run build:home-magic-ui-css && node esbuild.config.mjs production",
     "build:home-magic-ui-css": "node scripts/build-home-magic-ui-css.mjs",
     "check:bundle": "node scripts/check-built-bundle.mjs",
+    "test:mobile": "node scripts/mobile-tests.mjs",
     "check:phase1-obsidian-runtime": "node scripts/check-phase1-obsidian-runtime.mjs",
     "check:public": "node scripts/check-public-files.mjs",
     "check:release": "node scripts/check-release-contract.mjs",
@@ -30,7 +31,7 @@
     "test:skill-runtime": "node src/tests/skill-runtime-tests.mjs",
     "test:knowledge": "node scripts/phase3-tests.mjs",
     "test:mcp-vault": "node scripts/mcp-vault-tests.mjs",
-    "verify:obsidian": "npm run check:public && npm run lint && npm run test && npm run typecheck && npm run build && npm run check:bundle",
+    "verify:obsidian": "npm run check:public && npm run lint && npm run test && npm run typecheck && npm run build && npm run check:bundle && npm run test:mobile",
     "package": "npm run build && node scripts/package.mjs",
     "deploy": "npm run build && node scripts/deploy.mjs"
   },
@@ -78,6 +79,7 @@
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "tailwind-merge": "3.3.1",
+    "typebox": "1.1.38",
     "word-extractor": "1.0.4"
   },
   "overrides": {

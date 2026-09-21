@@ -1043,6 +1043,28 @@ function taskPlanMessage(
 }
 
 export async function runSmoothConversationUiTests(): Promise<void> {
+  const paragraphContext = createTestContext();
+  const firstSentence = `${"甲".repeat(70)}。`;
+  const secondSentence = `${"乙".repeat(55)}！`;
+  const thirdSentence = `${"丙".repeat(70)}？`;
+  const paragraphCases: Array<[string, string[]]> = [
+    ["短句。 保留空格！", ["短句。 保留空格！"]],
+    [`${firstSentence} \t${secondSentence}\u3000${thirdSentence}`, [firstSentence, secondSentence, thirdSentence]],
+    [`${firstSentence}！${secondSentence}；${thirdSentence}`, [`${firstSentence}！`, `${secondSentence}；`, thirdSentence]],
+    ["没有句号的内容".repeat(40), ["没有句号的内容".repeat(40)]],
+    [`${firstSentence}${secondSentence}${"尾".repeat(70)}`, [firstSentence, secondSentence, "尾".repeat(70)]]
+  ];
+  for (const [input, expected] of paragraphCases) {
+    const container = new FakeElement("div");
+    renderRichText(
+      paragraphContext.app as Parameters<typeof renderRichText>[0],
+      paragraphContext.component as Parameters<typeof renderRichText>[1],
+      container as unknown as HTMLElement,
+      input
+    );
+    assert.deepEqual(container.findAllByTag("p").map(renderedText), expected,
+      "paragraph rendering preserves punctuation, whitespace rules and unfinished sentences without lookbehind");
+  }
   assertSessionSummaryTooltipLifecycle();
   assertSessionPickerArchiveActions();
   assert.equal(

@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.4.1 - 2026-09-21
+
+![EchoInk Agent 2.4.1 移动端 Beta，Demo 界面示意](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.4.1/assets/releases/echoink-agent-2.4.1-release.png)
+
+### 中文
+
+**把思考，带在身边。**
+
+2.4.1 加入移动端 Beta。同一个插件包在手机上打开移动界面，在电脑上继续使用原有桌面形态和功能。
+
+- **在手机上对话。** 配置 API Key、接口和模型后即可提问，支持 OpenAI Chat Completions 和 Responses。当前回答会在完整返回后显示。
+- **读取笔记，写成 Markdown。** 查找并读取当前仓库的笔记，再让 EchoInk 整理为新的 Markdown 文件。已有同名文件不会被覆盖；只读权限下不会创建笔记。
+- **记住有用的背景。** 在移动会话中保存和召回本地记忆，也可以查看、编辑或忘记某一条。关闭长期记忆会停止召回与写入；未配置模型时仍能管理已有本地历史和记忆。
+- **自定义欢迎语。** 在基础设置中修改空会话的欢迎标题和问候语，输入后自动保存。关闭自定义或留空时使用默认文案，关闭开关会保留已填内容。
+
+#### 使用与升级
+
+下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/`，保留已有 `data.json` 和 `mobile/`，重新启用插件。社区目录同步版本后，也可在 Obsidian 社区插件页面检查更新。
+
+手机启用后运行 **“打开移动对话”**，进入 **设置 → API Provider → 模型与提供商** 配置模型；在 **复盘 → 记忆** 管理本地记忆，在 **基础设置** 修改欢迎语。电脑用户按原有方式使用，无需切换为手机界面。
+
+需要 **Obsidian 1.11.4 及以上**。移动 Beta 以 iOS 为优先方向，Android 共用移动入口，可参与实验性测试；**真实 iOS、Android 设备验收尚未完成**。桌面保留既有能力。
+
+移动端当前不包含跨设备记忆同步、后台任务、CLI、附件或完整桌面 Skills/MCP 能力，移动与桌面的会话和记忆分别保存。头图中的手机界面来自 Demo，仅为功能示意，不代表其中所有模块已接通。
+
+### English
+
+**Take your thoughts with you.**
+
+2.4.1 introduces Mobile Beta. The same plugin package opens the mobile interface on a phone and keeps the existing desktop interface and features on a computer.
+
+- **Chat on your phone.** Configure an API key, endpoint, and model to start asking questions. OpenAI Chat Completions and Responses are supported. Replies currently appear after the complete response arrives.
+- **Read notes and create Markdown.** Find and read notes in the current vault, then ask EchoInk to turn them into a new Markdown file. Existing files with the same name are not overwritten, and read-only access prevents note creation.
+- **Keep useful context.** Save and recall local memory in mobile conversations, or view, edit, and forget individual entries. Turning long-term memory off stops recall and writes. Existing local history and memory can still be managed without a configured model.
+- **Customize the welcome.** Change the empty conversation's title and greeting in General settings; edits save automatically. Disabling customization or leaving a field blank restores the default wording. Turning it off keeps your saved text.
+
+#### Use and upgrade
+
+Download **main.js, manifest.json, and styles.css** from this release and place them in the vault's `.obsidian/plugins/codex-echoink/` folder. Keep existing `data.json` and `mobile/`, then re-enable the plugin. You can also check for updates in Obsidian Community plugins once its directory has picked up this version.
+
+On mobile, run **打开移动对话** (Open mobile chat), then configure a model under **Settings → API Provider → 模型与提供商** (Models and providers). Manage local memory under **复盘 → 记忆** (Review → Memory) and customize the welcome under **基础设置** (General). The mobile interface is currently in Chinese. Desktop users can continue with their existing workflow.
+
+Requires **Obsidian 1.11.4 or later**. Mobile Beta prioritizes iOS. Android uses the same mobile entry and is available for experimental testing; **real iOS and Android device validation is not complete**. Desktop retains its existing capabilities.
+
+Mobile does not yet include cross-device memory sync, background tasks, CLI, attachments, or the complete desktop Skills/MCP features. Mobile and desktop conversations and memory are stored separately. The phone screen in the cover comes from a Demo and is illustrative; not every module shown is connected.
+
 ## 2.4.0 - 2026-09-20
 
 ![EchoInk Agent 2.4.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.4.0/assets/releases/echoink-agent-2.4.0-release.png)

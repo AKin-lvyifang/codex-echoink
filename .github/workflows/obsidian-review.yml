@@ -77,3 +77,6 @@ jobs:
 
       - name: Check native identity persistence
         run: node src/tests/agent-identity-paths-tests.mjs
+
+      - name: Check the same production bundle on the mobile entry
+        run: npm run test:mobile
