@@ -114,7 +114,7 @@ export function renderSettingsKnowledgeDashboard(
   const wiki = table(panels, t("Wiki 结构", "Wiki structure"), snapshot.wiki.fileCount, [t("分类", "Category"), t("数量", "Count"), t("占比", "Share"), t("今日新增", "Added today")]);
   for (const group of snapshot.wiki.groups) {
     const names: Record<string, string> = { 概念: "Concepts", 实体: "Entities", 主题: "Topics", 来源: "Sources", 其他: "Other" };
-    const row = cells(wiki, [zh ? group.label : names[group.label] ?? group.path, String(group.totalCount), "", group.todayCount ? `+${group.todayCount}` : "—"]);
+    const row = cells(wiki, [zh ? group.label : names[group.label] ?? group.label, String(group.totalCount), "", group.todayCount ? `+${group.todayCount}` : "—"]);
     const share = (row.children[2] as HTMLElement).createDiv({ cls: "wiki-share" });
     share.createSpan({ text: `${group.sharePercent}%` });
     share.createDiv({ cls: "wiki-share-track", attr: { "aria-hidden": "true" } })

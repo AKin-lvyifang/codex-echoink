@@ -1,3 +1,4 @@
+import { resolveKnowledgePath } from "./root-paths";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { contentFingerprint } from "./raw-integrity";
@@ -157,7 +158,7 @@ export function rawDigestUserFrontmatterProjectionBytes(
 }
 
 export async function readRawDigestRegistry(vaultPath: string, strict = false): Promise<RawDigestRegistry> {
-  const absolute = path.join(vaultPath, RAW_DIGEST_REGISTRY_PATH);
+  const absolute = path.join(vaultPath, resolveKnowledgePath(vaultPath, RAW_DIGEST_REGISTRY_PATH));
   const stat = await fsp.lstat(absolute).catch((error) => { if (strict && !isMissingPathError(error)) throw error; return null; });
   if (strict && stat && (!stat.isFile() || stat.nlink > 1)) throw new Error("Raw registry is not a readable regular file");
   if (!stat?.isFile() || stat.nlink > 1) return emptyRawDigestRegistry();
@@ -172,7 +173,7 @@ export async function readRawDigestRegistry(vaultPath: string, strict = false): 
 }
 
 export async function writeRawDigestRegistry(vaultPath: string, registry: RawDigestRegistry): Promise<void> {
-  const absolute = path.join(vaultPath, RAW_DIGEST_REGISTRY_PATH);
+  const absolute = path.join(vaultPath, resolveKnowledgePath(vaultPath, RAW_DIGEST_REGISTRY_PATH));
   await writeFileAtomic(absolute, buildRawDigestRegistryContent(registry));
 }
 
@@ -216,7 +217,7 @@ export function emptyRawDigestRegistry(): RawDigestRegistry {
   return { schemaVersion: RAW_DIGEST_SCHEMA_VERSION, updatedAt: "", entries: {} };
 }
 
-function canonicalRawMarkdownForDigest(text: string): string {
+export function canonicalRawMarkdownForDigest(text: string): string {
   const parsed = splitFrontmatter(text);
   return parsed.body.replace(/^\r?\n/, "");
 }

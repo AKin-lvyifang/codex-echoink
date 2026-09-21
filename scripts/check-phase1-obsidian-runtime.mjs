@@ -7,20 +7,25 @@ import { fileURLToPath } from "node:url";
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const bundlePath = path.join(rootDir, "dist", "main.js");
 const bundle = await readFile(bundlePath, "utf8");
+const metafile = JSON.parse(await readFile(path.join(rootDir, ".tmp/production-metafile.json"), "utf8"));
+const output = metafile.outputs["dist/main.js"];
+assert.equal(output?.bytes, Buffer.byteLength(bundle), "production metafile must match the current bundle size");
+const bundledInputs = Object.entries(output.inputs)
+  .filter(([, contribution]) => contribution.bytesInOutput > 0)
+  .map(([name]) => name);
 
-assert.match(
-  bundle,
-  /@earendil-works\/pi-coding-agent\/node_modules\/openai\//,
+// npm may deduplicate these SDKs to the root. Minification also removes module
+// path comments, so use actual emitted contributions instead of path strings.
+assert.ok(
+  bundledInputs.some((name) => /node_modules\/openai\//u.test(name)),
   "production bundle must include the real OpenAI provider SDK"
 );
-assert.match(
-  bundle,
-  /@earendil-works\/pi-coding-agent\/node_modules\/@anthropic-ai\/sdk\//,
+assert.ok(
+  bundledInputs.some((name) => /node_modules\/@anthropic-ai\/sdk\//u.test(name)),
   "production bundle must include the real Anthropic provider SDK"
 );
-assert.doesNotMatch(
-  bundle,
-  /@earendil-works\/pi-coding-agent\/node_modules\/undici/,
+assert.ok(
+  !bundledInputs.some((name) => /node_modules\/undici\//u.test(name)),
   "production bundle must not evaluate Pi's Node 22-only undici dependency"
 );
 assert.doesNotMatch(
@@ -33,15 +38,17 @@ assert.doesNotMatch(
   /Promise\.withResolvers\s*\(/,
   "production bundle must not call Node 22-only Promise.withResolvers"
 );
-assert.match(
-  bundle,
-  /auth\/oauth\/openai-codex\.js/,
+assert.ok(
+  bundledInputs.some((name) => /auth\/oauth\/openai-codex\.js$/u.test(name)),
   "production bundle must statically contain the OpenAI Codex OAuth flow"
 );
-assert.match(
-  bundle,
-  /api\/openai-codex-responses\.js/,
+assert.ok(
+  bundledInputs.some((name) => /api\/openai-codex-responses\.js$/u.test(name)),
   "production bundle must contain the OpenAI Codex Responses SSE adapter"
+);
+assert.ok(
+  !bundledInputs.some((name) => /node_modules\/(?:unpdf|pdfjs-dist)\//u.test(name)),
+  "production bundle must reuse Obsidian PDF.js instead of embedding a second PDF engine"
 );
 assert.doesNotMatch(
   bundle,

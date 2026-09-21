@@ -1,10 +1,13 @@
 import esbuild from "esbuild";
 import { createHash } from "node:crypto";
+import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
 import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
+import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
+import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -244,7 +247,9 @@ if (
       + "re-audit the embedded image runtime before building."
   );
 }
-const piPhotonWasmBase64 = piPhotonWasmBytes.toString("base64");
+const piPhotonWasmBrotliBase64 = brotliCompressSync(piPhotonWasmBytes, {
+  params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 }
+}).toString("base64");
 
 const piRuntimeSurfacePlugin = {
   name: "echoink-pi-runtime-surface",
@@ -314,7 +319,8 @@ export { resizeImage } from "./utils/image-resize.js";
  * itself. Obsidian ships EchoInk as one main.js, so there is no package-local
  * WASM file at runtime. Keep Pi's public image helpers and the existing
  * transitive Photon implementation, but replace only that fixed file read with
- * the version- and hash-verified bytes captured above. The marker remains in
+ * the losslessly compressed, version- and hash-verified bytes captured above.
+ * Decompression stays inside Photon's existing lazy, cached module load. The marker remains in
  * the built bundle so the post-build gate can prove this bridge was retained.
  */
 const piPhotonRuntimePlugin = {
@@ -334,8 +340,11 @@ const bytes = require('fs').readFileSync(path);`;
             "Photon 0.3.4 CommonJS loader changed; re-audit the embedded WASM bridge."
           );
         }
-        const embedded = `const bytes = Buffer.from(${JSON.stringify(piPhotonWasmBase64)}, "base64");
-if (bytes.byteLength !== ${PI_PHOTON_WASM_BYTE_LENGTH}) {
+        const embedded = `const bytes = require("node:zlib").brotliDecompressSync(
+  Buffer.from(${JSON.stringify(piPhotonWasmBrotliBase64)}, "base64")
+);
+if (bytes.byteLength !== ${PI_PHOTON_WASM_BYTE_LENGTH}
+  || require("node:crypto").createHash("sha256").update(bytes).digest("hex") !== ${JSON.stringify(PI_PHOTON_WASM_SHA256)}) {
   throw new Error(${JSON.stringify(
     `EchoInk embedded Photon runtime mismatch: photon-node@${PI_PHOTON_VERSION} wasm sha256:${PI_PHOTON_WASM_SHA256}`
   )});
@@ -696,14 +705,19 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
     "@lezer/lr"
   ],
   format: "cjs",
+  charset: "utf8",
   platform: "node",
   target: "es2022",
   logLevel: "info",
   sourcemap: isProd ? false : "inline",
   minify: isProd,
+  metafile: isProd,
   treeShaking: true,
   plugins: [
+    radixIconsEsmPlugin,
+    pinyinDictionaryCompressionPlugin,
     reactDomScriptResourcesPlugin,
+    piBraceExpansionPlugin,
     piOpenAICodexOAuthPlugin,
     piRuntimeSurfacePlugin,
     piPhotonRuntimePlugin,
@@ -730,6 +744,10 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
 if (isWatch) {
   await context.watch();
 } else {
-  await context.rebuild();
+  const result = await context.rebuild();
+  if (buildMode === "production") {
+    fs.mkdirSync(".tmp", { recursive: true });
+    fs.writeFileSync(".tmp/production-metafile.json", JSON.stringify(result.metafile));
+  }
   await context.dispose();
 }

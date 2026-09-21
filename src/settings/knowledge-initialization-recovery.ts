@@ -53,7 +53,7 @@ export function deriveKnowledgeInitializationRecovery(
   if (job.status === "blocked_conflict") {
     return { kind: "recheck-conflict", digestMismatch, providerOutdated };
   }
-  if (providerOutdated || digestMismatch) {
+  if (digestMismatch) {
     return { kind: "recheck-preview", digestMismatch, providerOutdated };
   }
   return { kind: "continue", digestMismatch, providerOutdated };

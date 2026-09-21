@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "../../knowledge-base/root-paths";
 import {
   type InlineExtension,
   type ToolCallEvent,
@@ -34,6 +35,8 @@ export type PiVaultToolBlockReason =
   | "approval_denied"
   | "approval_cancelled"
   | "tool_policy_blocked"
+  | "target_not_found"
+  | "target_kind_invalid"
   | "authorization_failed";
 
 export class PiVaultToolAuthorizationError extends Error {
@@ -90,6 +93,7 @@ export interface CreatePiVaultToolSecurityAdapterOptions {
   readonly resultCorrection: PiVaultToolResultCorrectionPort;
   /** Phase 3 production only: persist a citation envelope on note_read. */
   readonly includeNoteReadKnowledgeReferences?: boolean;
+  readonly onSuccessfulNoteRead?: (value: unknown) => void;
   /** One separately policy-bound product Tool may share the sole Extension. */
   readonly additionalToolSecurity?: PiVaultAdditionalToolSecurityPort;
   /** Dynamic declared-readonly MCP Tools use that same sole Extension. */
@@ -296,6 +300,7 @@ implements PiVaultToolExecutionSecurityPort {
         isError: event.isError || record.status !== "completed"
       }));
       const content = normalizeCorrectedContent(result.content);
+      if (event.toolName === "note_read" && !result.isError && record.status === "completed") this.options.onSuccessfulNoteRead?.(record.value);
       return Object.freeze({
         content,
         details: safeDetails(
@@ -447,7 +452,9 @@ function noteReadKnowledgeReferenceDetails(
     || fileName.replace(/\.[^.]+$/u, "")
     || relativePath;
   const lineNumber = firstEvidenceIndex + 1;
-  const contentRevision = `sha256:${snapshot.contentSha256}`;
+  const contentRevision = knowledgeRolePath(relativePath).startsWith("raw/") && typeof snapshot.bodyFingerprint === "string"
+    ? `sha256:${snapshot.bodyFingerprint.split(":").at(-1)}`
+    : `sha256:${snapshot.contentSha256}`;
   const reference = Object.freeze({
     referenceId: `knowledge-reference:${createHash("sha256")
       .update(relativePath, "utf8")
@@ -499,6 +506,8 @@ function isBlockReason(value: string): value is PiVaultToolBlockReason {
   return value === "approval_denied"
     || value === "approval_cancelled"
     || value === "tool_policy_blocked"
+    || value === "target_not_found"
+    || value === "target_kind_invalid"
     || value === "authorization_failed";
 }
 

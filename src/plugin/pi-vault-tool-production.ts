@@ -145,7 +145,13 @@ export function createPiVaultProductionAuthorizationPort(
         );
       } catch (error) {
         if (error instanceof VaultTargetResolutionError) {
-          throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+          // Missing/wrong-kind targets are local resolution failures, not policy denials.
+          // Only safe categories cross this boundary; paths and adapter messages do not.
+          throw new PiVaultToolAuthorizationError(
+            error.code === "target_not_found" || error.code === "target_kind_invalid"
+              ? error.code
+              : "tool_policy_blocked"
+          );
         }
         throw error;
       }

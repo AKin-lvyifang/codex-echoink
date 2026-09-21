@@ -20,6 +20,7 @@ function createTodoFixture(initial = "- [ ] Existing <!-- echoink-todo-id: exist
     if (writeError) throw writeError;
   };
   const vault = {
+    on: () => ({}),
     getAbstractFileByPath: (path: string) => path === "EchoInk" ? {} : file,
     read: async () => content,
     cachedRead: async () => {
@@ -39,7 +40,8 @@ function createTodoFixture(initial = "- [ ] Existing <!-- echoink-todo-id: exist
   const plugin = {
     app: { vault },
     settings: structuredClone(DEFAULT_SETTINGS),
-    saveSettings: async () => undefined
+    saveSettings: async () => undefined,
+    registerEvent: () => undefined
   } as unknown as CodexForObsidianPlugin;
   const store = new EchoInkTodoStore(plugin);
   plugin.getTodoStore = () => store;
@@ -47,6 +49,7 @@ function createTodoFixture(initial = "- [ ] Existing <!-- echoink-todo-id: exist
     plugin,
     store,
     content: () => content,
+    externalEdit: (next: string) => { content = next; },
     failWrite: (value: boolean) => { writeError = value ? new Error("disk write failed") : null; },
     failRefresh: () => { failRefresh = true; },
     editBeforeWrite: (line: string) => { beforeWrite = () => { content += `${line}\n`; }; }
@@ -113,6 +116,54 @@ export async function runHomeTodoTests(): Promise<void> {
     refresh.failRefresh();
     await refresh.store.addTodo({ title: "Saved once" });
     assert.equal(parseTodoMarkdown(refresh.content()).records.filter((record) => record.title === "Saved once").length, 1);
+
+    const history = createTodoFixture("- [x] Old without a date\n- [ ] Today <!-- echoink-todo-id: today -->\n");
+    await history.store.reload();
+    assert.equal(history.store.completionStatistics().total, 1);
+    assert.equal(history.store.completionStatistics().unknown, 1);
+    const today = history.store.snapshot().find((record) => record.id === "today")!;
+    await history.store.toggleDone(today, true);
+    assert.equal(history.store.completionStatistics().total, 2);
+    assert.equal(history.store.completionStatistics().today, 1);
+    await history.store.updateTodo(today, { title: "Edited title" });
+    await history.store.reload();
+    assert.equal(history.store.completionStatistics().total, 2);
+    await history.store.toggleDone(today, false);
+    assert.equal(history.store.completionStatistics().total, 1);
+    history.externalEdit(history.content().replace("- [ ] Edited title", "- [x] Edited title"));
+    await history.store.reload();
+    assert.equal(history.store.completionStatistics().today, 1);
+    const persisted = JSON.parse(JSON.stringify(history.plugin.settings));
+    history.plugin.settings = normalizeSettingsData(persisted).settings;
+    const restarted = new EchoInkTodoStore(history.plugin);
+    await restarted.reload();
+    assert.equal(restarted.completionStatistics().total, 2);
+    await restarted.removeTodo(restarted.snapshot().find((record) => record.id === "today")!);
+    assert.equal(restarted.completionStatistics().total, 2, "completed deletion retains history");
+    history.externalEdit(history.content() + "- [x] Offline addition <!-- echoink-todo-id: offline -->\n");
+    const offline = new EchoInkTodoStore(history.plugin);
+    await offline.reload();
+    assert.equal(offline.completionStatistics().unknown, 2);
+    await offline.reload();
+    assert.equal(offline.completionStatistics().total, 3);
+
+    const legacy = createTodoFixture("- [x] Migrated\n");
+    legacy.plugin.settings.todos = [{ id: "legacy-id", title: "Migrated", done: true, people: "", dueDate: "", categoryId: "", createdAt: 1, completedAt: new Date(2025, 11, 10, 23, 30).getTime() }];
+    await legacy.store.initialize();
+    assert.deepEqual(Object.values(legacy.plugin.settings.todoCompletions), ["2025-12-10"]);
+    assert.equal(legacy.store.completionStatistics().total, 1);
+    assert.equal(legacy.store.completionStatistics().unknown, 0);
+    assert.deepEqual(legacy.plugin.settings.todos, []);
+
+    const retryHistory = createTodoFixture("- [ ] Retry <!-- echoink-todo-id: retry -->\n");
+    await retryHistory.store.reload();
+    let persistenceFails = true;
+    retryHistory.plugin.saveSettings = async () => { if (persistenceFails) throw new Error("settings persistence unavailable"); };
+    await retryHistory.store.toggleDone(retryHistory.store.snapshot()[0], true);
+    assert.deepEqual(retryHistory.plugin.settings.todoCompletions, {}, "failed history save restores memory so persistence can retry");
+    persistenceFails = false;
+    await retryHistory.store.reload();
+    assert.equal(retryHistory.store.completionStatistics().today, 1);
 
     const cleared = normalizeSettingsData({ ...structuredClone(DEFAULT_SETTINGS), todoCategories: [] }).settings;
     assert.deepEqual(cleared.todoCategories, []);

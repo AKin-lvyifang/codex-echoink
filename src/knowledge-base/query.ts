@@ -1,3 +1,4 @@
+import { knowledgeRootRole, resolveKnowledgePath } from "./root-paths";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { TextDecoder } from "node:util";
@@ -152,6 +153,8 @@ export class KnowledgeReferenceBuilder {
       contentRevision: snapshot.contentRevision,
       lineStart: lineRange.lineStart,
       lineEnd: lineRange.lineEnd,
+      totalLines: snapshot.lines.length,
+      hasMore: lineRange.lineStart > 1 || lineRange.lineEnd < snapshot.lines.length,
       sourceType: snapshot.sourceType,
       recordedAt: snapshot.recordedAt,
       ...(snapshot.publishedAt ? { publishedAt: snapshot.publishedAt } : {}),
@@ -385,8 +388,10 @@ export class KnowledgeRetriever {
       request.explicitPaths ?? []
     );
     const references: KnowledgeReference[] = [];
+    const localIssues: { vaultRelativePath: string; status: string }[] = [];
     const explicitSet = new Set<string>();
     for (const explicitPath of explicitPaths.slice(0, limit)) {
+      try {
       const reference = await this.referenceBuilder.buildReference({
         vaultRelativePath: explicitPath,
         question,
@@ -395,6 +400,10 @@ export class KnowledgeRetriever {
       if (!explicitSet.has(reference.vaultRelativePath)) {
         explicitSet.add(reference.vaultRelativePath);
         if (!request.cursor) references.push(reference);
+      }
+      } catch (error) {
+        if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8"].includes(error.code)) throw error;
+        localIssues.push({ vaultRelativePath: explicitPath, status: error.code });
       }
     }
     const indexedExplicitPaths = Array.from(explicitSet)
@@ -429,21 +438,20 @@ export class KnowledgeRetriever {
           expectedContentRevision: hit.contentRevision
         }));
       } catch (error) {
-        if (
-          hit.kind !== "raw"
-          || !(error instanceof KnowledgeRetrievalError)
-          || (error.code !== "not-markdown" && error.code !== "invalid-utf8")
-        ) {
-          throw error;
-        }
-        // Binary or non-UTF-8 Raw entries stay discoverable in the index but
-        // cannot become Markdown references. Version and path failures remain
-        // fail-closed instead of being downgraded to no_evidence.
+        if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8"].includes(error.code)) throw error;
+        localIssues.push({ vaultRelativePath: hit.vaultRelativePath, status: error.code });
       }
+    }
+    for (let i = 0; i < references.length; i += 1) {
+      try {
+        const related = await this.agentIndex!.related({ vaultRelativePath: references[i].vaultRelativePath, limit: 4 });
+        if (related.contentRevision === references[i].contentRevision) references[i] = Object.freeze({ ...references[i], related, applicability: (() => { const hit = search.hits.find((candidate) => candidate.vaultRelativePath === references[i].vaultRelativePath); return hit ? { subjects: hit.subjects, applicableTime: hit.applicableTime, documentKind: hit.documentKind } : undefined; })() });
+      } catch { /* A relationship enhancement never hides an already readable excerpt. */ }
     }
     const total = search.total + explicitSet.size;
     if (references.length === 0) {
       return {
+        localIssues,
         status: "no_evidence",
         shouldInvokePi: true,
         references: [],
@@ -459,6 +467,7 @@ export class KnowledgeRetriever {
       };
     }
     return {
+      localIssues,
       status: "ready",
       shouldInvokePi: true,
       references,
@@ -481,12 +490,14 @@ export function formatKnowledgeReferencesForPrompt(
     (reference, index) => [
       `### ${index + 1}. ${reference.title}`,
       `来源：${reference.vaultRelativePath}`,
-      `行号：${reference.lineStart}-${reference.lineEnd}`,
+      `行号：${reference.lineStart}-${reference.lineEnd}；${reference.totalLines === undefined ? "正文范围未完整核验" : `全文 ${reference.totalLines} 行`}；${reference.hasMore === false ? "已交付全文" : "仅交付片段，可按需 knowledge_read 续读"}`,
       `版本：${reference.contentRevision}`,
       `来源类型：${reference.sourceType ?? "unknown"}`,
       `记录时间：${reference.recordedAt === undefined ? "unknown" : new Date(reference.recordedAt).toISOString()}`,
       `发布时间：${reference.publishedAt ?? "未声明"}`,
       `核验状态：${reference.verificationStatus ?? "unknown"}；未表示已联网核验`,
+      ...(reference.applicability ? [`适用信息（资料声明）：${JSON.stringify(reference.applicability)}`] : []),
+      ...(reference.related ? [`关联候选（由整篇链接生成，不代表已读关联正文；mode=related 可续查）：${JSON.stringify(reference.related)}`] : []),
       "原文：",
       reference.excerpt
     ].join("\n")
@@ -832,7 +843,7 @@ async function readKnowledgeSourceSnapshot(
   allowUnrefined: boolean
 ): Promise<KnowledgeSourceSnapshot> {
   const normalizedRequested = normalizeKnowledgeRelativePath(
-    requestedRelativePath,
+    resolveKnowledgePath(vaultPath, requestedRelativePath, false),
     allowUnrefined
   );
   const vaultRoot = await resolveKnowledgeVaultRoot(vaultPath);
@@ -909,7 +920,7 @@ async function readKnowledgeSourceSnapshot(
 function knowledgeSourceType(
   relativePath: string
 ): "wiki" | "projects" | "raw" {
-  const root = relativePath.split("/", 1)[0];
+  const root = knowledgeRootRole(relativePath);
   if (root === "wiki" || root === "projects" || root === "raw") return root;
   return "raw";
 }
@@ -1073,7 +1084,7 @@ function isHiddenKnowledgeName(name: string): boolean {
 }
 
 function isUnrefinedKnowledgePath(relativePath: string): boolean {
-  const first = relativePath.split("/", 1)[0]?.toLowerCase();
+  const first = knowledgeRootRole(relativePath);
   return first === "raw" || first === "inbox";
 }
 
@@ -1218,7 +1229,7 @@ function uniqueExplicitKnowledgePaths(paths: readonly string[]): string[] {
 }
 
 function isKnowledgeAgentIndexedPath(relativePath: string): boolean {
-  const root = relativePath.split("/", 1)[0]?.toLowerCase();
+  const root = knowledgeRootRole(relativePath);
   return root === "wiki" || root === "projects" || root === "raw";
 }
 

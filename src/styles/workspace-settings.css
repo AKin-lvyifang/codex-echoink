@@ -876,7 +876,7 @@
 .echoink-settings-demo input:focus,.echoink-settings-demo select:focus,.echoink-settings-demo textarea:focus{border-color:var(--accent);outline:2px solid var(--accent-bg);outline-offset:1px}
 .echoink-settings-demo input[type=range]{accent-color:var(--accent);max-width:170px}
 .echoink-settings-demo [data-slot=checkbox],.echoink-settings-demo input[type=radio]{accent-color:var(--accent)}
-.echoink-settings-demo button:not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
+.echoink-settings-demo button:not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
 .echoink-settings-demo .echoink-amicro-button,.echoink-settings-demo .mod-cta{--interactive-accent:var(--accent);--interactive-normal:var(--bg);--interactive-hover:var(--soft)}
 .echoink-settings-demo .echoink-settings-navigation-row{border:0;border-radius:0;border-top:1px solid var(--line);padding:17px 0;background:none;box-shadow:none;width:100%;height:auto;white-space:normal}
 .echoink-settings-demo .echoink-settings-navigation-row:first-child{border-top:0}
@@ -1073,6 +1073,24 @@
 .echoink-settings-demo .echoink-knowledge-init-bar-indicator{height:100%;background:var(--accent)}
 /* The initialization flow and assignment rows are distinct product structures. */
 .echoink-settings-demo .codex-knowledge-settings .echoink-knowledge-init-panel{display:block;margin:0;background:var(--bg);padding:22px}
+/* Recovery keeps the same text scale and shared edges as the surrounding settings cards. */
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-recovery-heading{display:flex;align-items:center;gap:8px;margin-bottom:14px;min-width:0}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-heading{font-size:calc(var(--font-text-size,16px)*.75);font-weight:500;line-height:1.6;min-width:0;overflow-wrap:anywhere}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-icon{margin:0;align-self:flex-start;height:calc(var(--font-text-size,16px)*1.2);align-items:center}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-icon svg{width:14px;height:14px}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause{display:block;min-width:0}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-text{gap:10px;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.85}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-details{grid-template-columns:max-content minmax(0,1fr);gap:8px 12px}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-detail{display:contents}
+.echoink-settings-demo .echoink-knowledge-init-recovery :is(.echoink-knowledge-init-pause-label,.echoink-knowledge-init-pause-value){font-size:inherit;line-height:inherit;min-width:0}
+.echoink-settings-demo .echoink-knowledge-init-recovery ul.echoink-knowledge-init-pause-value{margin:0;padding-inline-start:1.2em;list-style:disc}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-label{font-weight:500}
+.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-provider-link{margin-inline-start:0;justify-self:start}
+.echoink-settings-demo .echoink-knowledge-init-recovery>.echoink-knowledge-init-actions{margin-top:16px;padding-top:0;gap:8px 12px;justify-content:flex-start}
+@container settings (max-width:520px){
+ .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-details{grid-template-columns:minmax(0,1fr);gap:10px}
+ .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-detail{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
+}
 .echoink-settings-demo .codex-knowledge-settings .echoink-knowledge-init-panel.initialization{display:flex;flex-direction:row;align-items:center;gap:14px;padding:18px 20px;background:var(--soft)}
 .echoink-settings-demo .echoink-knowledge-init-panel.initialization>.echoink-init-ready-copy{flex:1;min-width:0}
 .echoink-settings-demo .echoink-init-ready-copy h3{font-size:calc(var(--font-text-size,16px)*.8125);font-weight:500;margin:0 0 5px}
@@ -1193,6 +1211,8 @@
  .echoink-settings-demo .echoink-knowledge-protocol-list{grid-template-columns:repeat(2,1fr)}
 }
 @container settings (max-width:600px){
+ /* Navigation rows stack here; stretch their copy despite the shared button's centered alignment. */
+ .echoink-settings-demo .echoink-settings-navigation-row>.echoink-settings-navigation-copy{align-self:stretch;width:100%;text-align:start}
  .echoink-settings-demo .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}
  .echoink-settings-demo .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
  /* Keep Demo switch rows compact after the legacy narrow setting-row layout. */
@@ -1441,3 +1461,23 @@
 .echoink-native-settings-workspace .codex-settings-tabs>.echoink-native-settings-row>.setting-item-info {flex:0 0 auto;margin:0;padding:0}
 .echoink-native-settings-workspace .codex-settings-tabs>.echoink-native-settings-row>.setting-item-control {flex:0 0 auto;flex-wrap:nowrap;width:auto;max-width:none;margin:0;padding:0;gap:0}
 .echoink-native-settings-workspace .codex-settings-tab>.setting-item-name {margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:1;color:inherit;white-space:inherit}
+
+.echoink-settings-demo .echoink-todo-statistics { margin: 16px 0 24px; min-width: 0; }
+.echoink-settings-demo .todo-history-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.echoink-settings-demo .todo-history-year { width: auto; min-width: 0; }
+.echoink-settings-demo .todo-history-period { margin: 0; width: auto; order: initial; }
+.echoink-settings-demo .todo-heatmap-scroll { overflow-x: auto; max-width: 100%; min-width: 0; padding: 1px 0 5px; scrollbar-width: thin; }
+.echoink-settings-demo .todo-heatmap-grid { display: grid; grid-template-columns: 20px repeat(var(--todo-heatmap-weeks, 53), minmax(0, 1fr)); grid-template-rows: 18px repeat(7, minmax(0, 1fr)); gap: 3px; min-width: 640px; align-items: center; }
+.echoink-settings-demo .todo-heatmap-month, .echoink-settings-demo .todo-heatmap-weekday { color: var(--muted); font-size: calc(var(--font-text-size,16px)*.5625); }
+.echoink-settings-demo .todo-heatmap-month { grid-row: 1; white-space: nowrap; align-self: start; }
+.echoink-settings-demo .todo-heatmap-weekday { grid-column: 1; }
+.echoink-settings-demo button.todo-heatmap-cell { display: block; appearance: none; width: 100%; height: auto; min-height: 0; min-width: 0; aspect-ratio: 1; padding: 0; line-height: 1; box-shadow: none; border: 1px solid var(--line); border-radius: 2px; background: var(--soft); }
+.echoink-settings-demo .todo-history-panel .todo-level-1 { background: color-mix(in srgb, var(--green, #76ad8a) 35%, var(--soft)); }
+.echoink-settings-demo .todo-history-panel .todo-level-2 { background: color-mix(in srgb, var(--green, #76ad8a) 65%, var(--soft)); }
+.echoink-settings-demo .todo-history-panel .todo-level-3 { background: var(--green, #76ad8a); }
+.echoink-settings-demo .todo-heatmap-cell:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.echoink-settings-demo .todo-history-footer { flex-wrap: wrap; gap: 12px; }
+.echoink-settings-demo .todo-heatmap-legend { flex-wrap: wrap; }
+.echoink-settings-demo .echoink-knowledge-folder-actions { overflow-wrap: anywhere; }
+.echoink-settings-demo .echoink-knowledge-folder-actions > .settings-card + .settings-card { margin-top: 12px; }
+.echoink-settings-demo .echoink-knowledge-folder-actions [hidden] { display: none; }

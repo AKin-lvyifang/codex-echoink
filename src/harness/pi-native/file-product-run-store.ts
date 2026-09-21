@@ -105,6 +105,7 @@ export type PiProductRunUpdate = Partial<Pick<
   | "error"
   | "memoryRecall"
   | "knowledge"
+  | "maintenance"
 >> & {
   updatedAt?: number;
 };
@@ -630,7 +631,8 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
       "settledAt",
       "error",
       "memoryRecall",
-      "knowledge"
+      "knowledge",
+      "maintenance"
     ],
     "ProductRun record"
   );
@@ -758,6 +760,7 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
     ...(error ? { error } : {}),
     ...(memoryRecall ? { memoryRecall } : {}),
     ...(knowledge ? { knowledge } : {}),
+    ...(object.maintenance === undefined ? {} : { maintenance: requireMaintenanceOutcome(object.maintenance) }),
     createdAt,
     updatedAt
   };
@@ -778,6 +781,7 @@ function definedUpdate(update: Readonly<PiProductRunUpdate>): PiProductRunUpdate
   if (update.memoryRecall !== undefined) {
     output.memoryRecall = { ...update.memoryRecall };
   }
+  if (update.maintenance !== undefined) output.maintenance = requireMaintenanceOutcome(update.maintenance);
   if (update.knowledge !== undefined) {
     output.knowledge = { ...update.knowledge };
   }
@@ -796,6 +800,7 @@ function assertUpdateKeys(update: Readonly<PiProductRunUpdate>): void {
     "error",
     "memoryRecall",
     "knowledge",
+    "maintenance",
     "updatedAt"
   ]);
   for (const key of Object.keys(update)) {
@@ -937,6 +942,18 @@ function requireMemoryRecallObservation(value: unknown): PiMemoryRecallObservati
     remaining: object.remaining as number,
     exhausted: object.exhausted
   });
+}
+
+function requireMaintenanceOutcome(value: unknown): NonNullable<PiProductRunRecord["maintenance"]> {
+  const object = requirePlainObject(value, "productRun.maintenance");
+  requireExactKeys(object, ["analysisOnly", "processedSourcePaths", "pendingSourcePaths", "warnings"], [], "productRun.maintenance");
+  if (typeof object.analysisOnly !== "boolean") throw new Error("Invalid maintenance analysis mode");
+  const strings = (field: string): readonly string[] => {
+    const values = object[field];
+    if (!Array.isArray(values) || values.some((entry) => typeof entry !== "string")) throw new Error(`Invalid maintenance ${field}`);
+    return Object.freeze([...(values as string[])]);
+  };
+  return Object.freeze({ analysisOnly: object.analysisOnly, processedSourcePaths: strings("processedSourcePaths"), pendingSourcePaths: strings("pendingSourcePaths"), warnings: strings("warnings") });
 }
 
 function requireKnowledgeObservation(value: unknown): PiKnowledgeObservation {
@@ -1088,6 +1105,7 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
     ...(run.error ? { error: run.error } : {}),
     ...(run.memoryRecall ? { memoryRecall: { ...run.memoryRecall } } : {}),
     ...(run.knowledge ? { knowledge: { ...run.knowledge } } : {}),
+    ...(run.maintenance ? { maintenance: requireMaintenanceOutcome(run.maintenance) } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt
   };

@@ -1,3 +1,4 @@
+import { localTodoDate, reconcileTodoCompletions, todoCompletionStatistics } from "./todo-completions";
 import { Notice, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { newId } from "../settings/settings";
@@ -34,12 +35,15 @@ export class EchoInkTodoStore {
   private writeQueue: Promise<void> = Promise.resolve();
   private reloadTimer: number | null = null;
   private initialized = false;
+  private hasObserved = false;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   get sourcePath(): string {
     return TODO_SOURCE_PATH;
   }
+
+  completionStatistics(now = new Date(), year = now.getFullYear()) { return todoCompletionStatistics(this.plugin.settings.todoCompletions, now, year); }
 
   snapshot(): readonly ParsedTodoRecord[] {
     return this.records;
@@ -91,14 +95,48 @@ export class EchoInkTodoStore {
   }
 
   async reload(): Promise<void> {
+    const run = this.writeQueue.then(() => this.reloadInner());
+    this.writeQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async saveCompletionHistory(records: readonly ParsedTodoRecord[], previous: readonly ParsedTodoRecord[], observed: boolean, localWrite = false): Promise<void> {
+    const next = reconcileTodoCompletions(this.plugin.settings.todoCompletions, records, previous, observed, new Date(), localWrite);
+    if (JSON.stringify(next) !== JSON.stringify(this.plugin.settings.todoCompletions)) {
+      const previousHistory = this.plugin.settings.todoCompletions;
+      this.plugin.settings.todoCompletions = next;
+      try { await this.plugin.saveSettings(); }
+      catch (error) { this.plugin.settings.todoCompletions = previousHistory; throw error; }
+    }
+  }
+
+  private assignStableIds(content: string): string {
+    const lines = content.split("\n");
+    const seen = new Set<string>();
+    for (const record of parseTodoMarkdown(content).records) {
+      if (!record.id || seen.has(record.id)) {
+        const id = newId("todo");
+        lines[record.lineStart] = lines[record.lineStart].replace(/\s*<!--\s*echoink-todo-id:[^>]*-->/gu, "") + ` <!-- echoink-todo-id: ${id} -->`;
+        seen.add(id);
+      } else seen.add(record.id);
+    }
+    return lines.join("\n");
+  }
+
+  private async reloadInner(): Promise<void> {
     const file = this.plugin.app.vault.getAbstractFileByPath(TODO_SOURCE_PATH);
     if (!(file instanceof TFile)) {
       this.records = [];
       this.notify();
       return;
     }
-    const content = await this.plugin.app.vault.cachedRead(file);
+    let content = await this.plugin.app.vault.cachedRead(file);
+    if (this.assignStableIds(content) !== content) {
+      content = await this.plugin.app.vault.process(file, (latest) => this.assignStableIds(latest));
+    }
     const parsed = parseTodoMarkdown(content);
+    await this.saveCompletionHistory(parsed.records, this.records, this.hasObserved);
+    this.hasObserved = true;
     this.records = parsed.records;
     if (parsed.warnings.length) {
       console.warn(
@@ -151,12 +189,22 @@ export class EchoInkTodoStore {
       );
     }
     const file = vault.getAbstractFileByPath(TODO_SOURCE_PATH);
-    const existing = file instanceof TFile
+    let existing = file instanceof TFile
       ? await vault.read(file)
       : "";
+    if (file instanceof TFile && this.assignStableIds(existing) !== existing) {
+      existing = await vault.process(file, (latest) => this.assignStableIds(latest));
+    }
     const existingKeys = new Set(
       parseTodoMarkdown(existing).records.map((record) => this.recordKey(record.title, record.done, record.dueDate))
     );
+    const existingRecords = parseTodoMarkdown(existing).records;
+    for (const todo of legacy) {
+      if (!todo.done || typeof todo.completedAt !== "number" || !Number.isFinite(todo.completedAt) || todo.completedAt <= 0 || todo.completedAt > Date.now()) continue;
+      const match = existingRecords.find((record) => this.recordKey(record.title, record.done, record.dueDate) === this.recordKey(todo.title, todo.done, todo.dueDate));
+      const id = match?.id || todo.id;
+      if (id) this.plugin.settings.todoCompletions[id] = localTodoDate(new Date(todo.completedAt));
+    }
     const blocks = legacy
       .filter((todo) => !existingKeys.has(this.recordKey(todo.title, todo.done, todo.dueDate)))
       .map((todo) => serializeTodoRecord({
@@ -296,19 +344,30 @@ export class EchoInkTodoStore {
       const file = abstract instanceof TFile
         ? abstract
         : await vault.create(TODO_SOURCE_PATH, `${SOURCE_HEADER}\n`);
+      let previous: ParsedTodoRecord[] = [];
+      let next: ParsedTodoRecord[] = [];
       await vault.process(file, (content) => {
-        const result = mutate(content);
+        const stable = this.assignStableIds(content);
+        previous = parseTodoMarkdown(stable).records;
+        const result = mutate(stable);
         if (result.skipped) {
           throw new Error(this.plugin.settings.settingsLanguage === "en"
             ? "The to-do changed or was removed. Refresh the list and try again."
             : "这条待办已被修改或删除，请刷新列表后重试。");
         }
-        return result.content;
+        const stableResult = this.assignStableIds(result.content);
+        next = parseTodoMarkdown(stableResult).records;
+        return stableResult;
       });
       // A refresh failure after a successful write must not invite a retry
       // that would add the same task twice.
       try {
-        await this.reload();
+        // Observe the pre-write source too: deleting an old completed task retains its history.
+        await this.saveCompletionHistory(previous, this.records, this.hasObserved);
+        await this.saveCompletionHistory(next, previous, true, true);
+        this.records = next;
+        this.hasObserved = true;
+        await this.reloadInner();
       } catch (error) {
         console.error("[EchoInk] To-do source was saved but could not be refreshed:", error);
         new Notice(this.plugin.settings.settingsLanguage === "en"

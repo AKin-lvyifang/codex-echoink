@@ -1780,7 +1780,7 @@ function toolMessage(input: {
     };
   }
   const privateCopy = input.privacySafe
-    ? privacySafeKnowledgeToolCopy(input.toolName, input.status)
+    ? privacySafeKnowledgeToolCopy(input.toolName, input.status, input.result, input.resultText)
     : null;
   if (privateCopy) {
     return {
@@ -3310,55 +3310,102 @@ function knowledgeProgressCopy(
 
 function privacySafeKnowledgeToolCopy(
   toolName: string,
-  status: string
+  status: string,
+  result: unknown,
+  resultText: string | undefined
 ): Readonly<{
   processKind: ProcessEventKind;
   title: string;
   details: string;
   text: string;
 }> | null {
-  const terminal = status !== "running" && status !== "waiting_approval"
-    && status !== "approved" && status !== "verifying";
+  const inProgress = runtimeMessageStillActive(status);
+  const completed = status === "completed";
+  const title = (running: string, success: string, stopped: string) =>
+    inProgress ? running : completed ? success : stopped;
+  const text = (running: string, success: string) =>
+    inProgress ? running : completed ? success
+      : status === "interrupted" || status === "cancelled"
+        ? "本次操作已停止，未确认完成。"
+        : privacySafeToolFailureText(result, resultText);
   switch (toolName) {
     case "knowledge_search":
     case "vault_search":
       return {
         processKind: "search",
-        title: terminal ? "知识库检索完成" : "正在检索知识库",
+        title: title("正在检索知识库", "知识库检索完成", "检索知识库"),
         details: "Knowledge 索引",
-        text: terminal ? "已完成本次知识库检索" : "正在查找相关本地知识"
+        text: text("正在查找相关本地知识", "已完成本次知识库检索")
       };
     case "knowledge_read":
     case "note_read":
       return {
         processKind: "view",
-        title: terminal ? "相关笔记读取完成" : "正在读取相关笔记",
+        title: title("正在读取相关笔记", "相关笔记读取完成", "读取相关笔记"),
         details: "只读笔记",
-        text: terminal ? "已完成本次只读核对" : "正在核对可引用的真实内容"
+        text: text("正在核对可引用的真实内容", "已完成本次只读核对")
       };
     case "memory_search":
     case "memory_read":
       return {
         processKind: toolName === "memory_search" ? "search" : "view",
-        title: terminal ? "历史偏好比对完成" : "正在比对历史偏好",
+        title: title("正在比对历史偏好", "历史偏好比对完成", "比对历史偏好"),
         details: "只读 Personal Memory",
-        text: terminal ? "已完成本次历史偏好核对" : "正在核对相关 Personal Memory"
+        text: text("正在核对相关 Personal Memory", "已完成本次历史偏好核对")
       };
     case "knowledge_maintain":
       return {
         processKind: "other",
-        title: terminal ? "知识维护处理完成" : "正在处理知识维护",
+        title: title("正在处理知识维护", "知识维护处理完成", "处理知识维护"),
         details: "固定六步协议",
-        text: terminal ? "已完成本次维护 Tool" : "正在提炼、写入并回读验证"
+        text: text("正在提炼、写入并回读验证", "已完成本次维护 Tool")
       };
     default:
       return {
         processKind: "other",
-        title: terminal ? "Knowledge Agent 工具完成" : "Knowledge Agent 正在处理",
+        title: title("Knowledge Agent 正在处理", "Knowledge Agent 工具完成", "Knowledge Agent 工具"),
         details: "隐私安全进度",
-        text: terminal ? "已完成本次受控处理" : "正在执行受控本地步骤"
+        text: text("正在执行受控本地步骤", "已完成本次受控处理")
       };
   }
+}
+
+function privacySafeToolFailureText(result: unknown, resultText: string | undefined): string {
+  const copy: Readonly<Record<string, string>> = {
+    target_not_found: "未找到目标文件，文件可能尚未创建或路径已变化。",
+    target_kind_invalid: "目标类型不符合本次操作要求，文件与文件夹不能互换。",
+    knowledge_not_found: "未找到目标资料，资料可能已移除或尚未进入索引。",
+    knowledge_source_changed: "来源内容已变化，本次读取未完成。",
+    knowledge_cursor_stale: "检索结果已更新，本次后续页未读取。",
+    knowledge_cursor_invalid: "后续页位置无效，本次检索未完成。",
+    knowledge_invalid_request: "本次检索或阅读参数不符合要求。",
+    knowledge_unsupported_content: "暂不支持读取这份资料的内容格式。",
+    knowledge_read_failed: "本次知识读取未完成，记录未保留可展示的具体原因。",
+    tool_policy_blocked: "此次调用被阻止，记录未保留具体原因。",
+    authorization_failed: "此次调用未通过执行校验，没有执行。",
+    approval_denied: "此次操作未获批准，没有执行。",
+    approval_cancelled: "此次操作已取消。",
+    operation_cancelled: "此次操作已取消。"
+  };
+  // Live events wrap content/details; durable blocked calls can contain only a code.
+  // Match known codes exactly, never render raw result bodies or exception messages.
+  const outer = plainObject(result);
+  const content = Array.isArray(outer?.content) ? outer.content : [];
+  const candidates: unknown[] = [result, resultText, ...content.map((item) => plainObject(item)?.text)];
+  for (let value of candidates) {
+    if (typeof value === "string") {
+      const code = value.trim();
+      if (Object.hasOwn(copy, code)) return copy[code];
+      try { value = JSON.parse(code); } catch { continue; }
+    }
+    const record = plainObject(value);
+    const details = plainObject(record?.details);
+    const error = plainObject(record?.error);
+    for (const code of [details?.errorCode, record?.errorCode, error?.code, record?.error, record?.code]) {
+      if (typeof code === "string" && Object.hasOwn(copy, code)) return copy[code];
+    }
+  }
+  return "本次操作未完成，记录未保留可展示的具体原因。";
 }
 
 function removeRuntimeProgressMessages(

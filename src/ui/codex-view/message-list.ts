@@ -476,7 +476,7 @@ export class CodexMessageListRenderer {
     if (messagesEl.clientHeight === 0) return false;
     let changed = false;
     for (const child of Array.from(virtualListEl.children)) {
-      if (!(child instanceof HTMLElement)) continue;
+      if (!(child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue;
       const id = child.dataset.rowId;
       if (!id) continue;
       const measuredHeight = child.getBoundingClientRect().height;
@@ -665,7 +665,7 @@ export class CodexMessageListRenderer {
       this.measureVisibleVirtualRows(messagesEl, virtualListEl, forceBottom);
     });
     for (const child of Array.from(virtualListEl.children)) {
-      if (child instanceof HTMLElement) this.visibleRowsResizeObserver.observe(child);
+      if (child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)) this.visibleRowsResizeObserver.observe(child);
     }
   }
 

@@ -1,5 +1,20 @@
 import type { App } from "obsidian";
 
+/** Obsidian row shell only; Origin controls and browser DOM stay real. */
+export class Setting {
+  readonly settingEl: HTMLElement;
+  readonly controlEl: HTMLElement;
+  private readonly nameEl: HTMLElement;
+  constructor(parent: HTMLElement) {
+    const owner = parent.ownerDocument;
+    this.settingEl = owner.createElement("div"); this.settingEl.className = "setting-item";
+    this.nameEl = owner.createElement("span"); this.nameEl.className = "setting-item-info";
+    this.controlEl = owner.createElement("div"); this.controlEl.className = "setting-item-control";
+    this.settingEl.append(this.nameEl, this.controlEl); parent.append(this.settingEl);
+  }
+  setName(name: string): this { this.nameEl.textContent = name; return this; }
+}
+
 /** Browser-only host fixture. Native Obsidian acceptance remains separate. */
 export class Scope {
   private readonly handlers = new Map<string, (event: KeyboardEvent) => unknown>();

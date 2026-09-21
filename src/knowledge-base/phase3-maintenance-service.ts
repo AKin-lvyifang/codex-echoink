@@ -1,3 +1,4 @@
+import { knowledgeRolePath } from "./root-paths";
 import { createHash, randomUUID } from "node:crypto";
 import type {
   VaultDomainService,
@@ -364,6 +365,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
   /** Legacy preview confirmation only; direct maintenance does not use it. */
   approvals?: Phase3MaintenanceBatchApprovalPort;
   state: Phase3MaintenanceStateStore;
+  resolvePath?: (relativePath: string) => string;
   createPreviewId?: () => string;
   now?: () => number;
   faultInjector?: (
@@ -378,6 +380,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
  * exactly once and in preview order.
  */
 export class Phase3KnowledgeMaintenanceService {
+  private readonly resolvePath: (relativePath: string) => string;
   private readonly domain: Phase3MaintenanceVaultDomain;
   private readonly sources: Phase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
@@ -391,6 +394,7 @@ export class Phase3KnowledgeMaintenanceService {
   ) => void | Promise<void>;
 
   constructor(options: Readonly<Phase3KnowledgeMaintenanceServiceOptions>) {
+    this.resolvePath = options.resolvePath ?? ((value) => value);
     this.domain = options.domain;
     this.sources = options.sources;
     this.tracker = options.tracker;
@@ -495,8 +499,8 @@ export class Phase3KnowledgeMaintenanceService {
     const committed = commitResult(wal, false);
     const evidence = await this.collectExecutionEvidence(wal);
     const expectedKnowledgeNotes = preview.actions.some((action) =>
-      action.targetPath.startsWith("wiki/")
-      || action.targetPath.startsWith("projects/")
+      knowledgeRolePath(action.targetPath).startsWith("wiki/")
+      || knowledgeRolePath(action.targetPath).startsWith("projects/")
     );
     if (expectedKnowledgeNotes && evidence.notes.length === 0) {
       return Object.freeze({
@@ -513,11 +517,11 @@ export class Phase3KnowledgeMaintenanceService {
       });
     }
     return Object.freeze({
-      status: committed.status,
+      status: wal.actions.some((entry) => entry.status === "failed") && evidence.notes.length ? "partial" : committed.status,
       appliedPaths: evidence.appliedPaths,
       notes: evidence.notes,
       systemPaths: evidence.systemPaths,
-      issues: Object.freeze([]),
+      issues: Object.freeze(wal.actions.filter((entry) => entry.status === "failed").map((entry) => ({ code: "write_failed", path: entry.action.targetPath, message: `${entry.action.targetPath}: ${entry.error ?? "写入失败，其他内容已保留"}` }))),
       readbackVerified: committed.readbackVerified,
       recovered: false
     });
@@ -549,8 +553,8 @@ export class Phase3KnowledgeMaintenanceService {
       if (entry.status !== "completed") continue;
       appliedPaths.push(entry.action.targetPath);
       if (
-        entry.action.targetPath.startsWith("wiki/")
-        || entry.action.targetPath.startsWith("projects/")
+        knowledgeRolePath(entry.action.targetPath).startsWith("wiki/")
+        || knowledgeRolePath(entry.action.targetPath).startsWith("projects/")
       ) {
         const readback = await this.domain.readback({
           vaultId: wal.preview.vaultId,
@@ -618,7 +622,7 @@ export class Phase3KnowledgeMaintenanceService {
       candidateSources.slice(0, selectedPaths.length)
     );
     const previewId = requireNonEmpty(this.createPreviewId(), "previewId");
-    const reportPath = phase3MaintenanceReportPath(dateKey);
+    const reportPath = this.resolvePath(phase3MaintenanceReportPath(dateKey));
     const proposal = normalizeProposal(await this.proposal.generate({
       protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
       preferenceProfileVersion: preference.profileVersion,
@@ -795,6 +799,8 @@ export class Phase3KnowledgeMaintenanceService {
         await this.resumeWal(latest);
         recovered += 1;
       } catch (error) {
+        const latest = await this.state.loadWal(candidate.preview.previewId);
+        if (latest?.status === "completed" && latest.actions.every((entry) => entry.status === "failed")) { recovered += 1; continue; }
         blocked += 1;
         issues.push(
           `${candidate.preview.previewId}: ${errorMessage(error)}`
@@ -823,13 +829,7 @@ export class Phase3KnowledgeMaintenanceService {
   }
 
   async recoverBeforeExecute(vaultId: string): Promise<void> {
-    const recovery = await this.recoverPendingOrThrow(vaultId);
-    if (recovery.recovered > 0) {
-      throw phase3Error(
-        "proposal_invalid",
-        PHASE3_MAINTENANCE_RECOVERED_RETRY_MESSAGE
-      );
-    }
+    await this.recoverPendingOrThrow(vaultId);
   }
 
   private async resumeWal(
@@ -846,7 +846,9 @@ export class Phase3KnowledgeMaintenanceService {
     try {
       await this.assertWalCanResume(wal);
     } catch (error) {
-      await this.blockWal(wal, errorMessage(error));
+      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && wal.actions.every((entry) => entry.status === "pending")) {
+        await this.saveWal(wal, { status: "completed", actions: wal.actions.map((entry) => ({ ...entry, status: "failed" as const, error: errorMessage(error) })), error: errorMessage(error), updatedAt: this.now() });
+      } else await this.blockWal(wal, errorMessage(error));
       throw error;
     }
     if (wal.status === "prepared") {
@@ -858,7 +860,7 @@ export class Phase3KnowledgeMaintenanceService {
 
     for (let index = 0; index < wal.actions.length; index += 1) {
       const entry = wal.actions[index];
-      if (entry.status === "completed") continue;
+      if (entry.status === "completed" || entry.status === "failed") continue;
       const current = await this.readTargetBinding(
         wal.preview.vaultId,
         entry.action.targetPath
@@ -878,12 +880,8 @@ export class Phase3KnowledgeMaintenanceService {
       }
       if (!sameTargetBinding(current, entry.action.expected)) {
         const message = `Target revision changed before batch write: ${entry.action.targetPath}`;
-        await this.blockWal(wal, message);
-        throw phase3Error(
-          "preview_stale",
-          message,
-          entry.action.targetPath
-        );
+        wal = await this.saveWalAction(wal, index, { status: "failed", error: message });
+        continue;
       }
       const result = await this.executeAction(
         wal.authorization,
@@ -899,9 +897,10 @@ export class Phase3KnowledgeMaintenanceService {
         });
         const message = result.error?.message
           ?? `Maintenance write ended as ${result.status}`;
+        if (!uncertain) continue;
         await this.blockWal(wal, message);
         throw phase3Error(
-          uncertain ? "write_uncertain" : "write_failed",
+          "write_uncertain",
           message,
           entry.action.targetPath
         );
@@ -950,19 +949,6 @@ export class Phase3KnowledgeMaintenanceService {
       preview.vaultId,
       preview.selectedSources
     );
-    for (const action of preview.actions) {
-      const current = await this.readTargetBinding(
-        preview.vaultId,
-        action.targetPath
-      );
-      if (!sameTargetBinding(current, action.expected)) {
-        throw phase3Error(
-          "preview_stale",
-          `Target revision changed after preview: ${action.targetPath}`,
-          action.targetPath
-        );
-      }
-    }
   }
 
   private async assertWalCanResume(
@@ -974,6 +960,7 @@ export class Phase3KnowledgeMaintenanceService {
       wal.preview.selectedSources
     );
     for (const entry of wal.actions) {
+      if (entry.status === "pending" || entry.status === "failed") continue;
       const current = await this.readTargetBinding(
         wal.preview.vaultId,
         entry.action.targetPath
@@ -993,24 +980,7 @@ export class Phase3KnowledgeMaintenanceService {
           entry.action.targetPath
         );
       }
-      if (
-        entry.status === "pending"
-        && !desired
-        && !sameTargetBinding(current, entry.action.expected)
-      ) {
-        throw phase3Error(
-          "preview_stale",
-          `WAL target no longer matches expected revision: ${entry.action.targetPath}`,
-          entry.action.targetPath
-        );
-      }
-      if (entry.status === "failed") {
-        throw phase3Error(
-          "recovery_blocked",
-          `Failed WAL action cannot be retried automatically: ${entry.action.targetPath}`,
-          entry.action.targetPath
-        );
-      }
+
     }
   }
 
@@ -1086,8 +1056,8 @@ export class Phase3KnowledgeMaintenanceService {
     });
     for (const draft of drafts) {
       if (
-        draft.targetPath.startsWith("wiki/")
-        || draft.targetPath.startsWith("projects/")
+        knowledgeRolePath(draft.targetPath).startsWith("wiki/")
+        || knowledgeRolePath(draft.targetPath).startsWith("projects/")
       ) {
         if (!draft.expectedTarget) {
           throw phase3Error(
@@ -1123,7 +1093,7 @@ export class Phase3KnowledgeMaintenanceService {
       );
     }
     if (!drafts.some((draft) =>
-      draft.targetPath === PHASE3_MAINTENANCE_TRACKER_PATH)) {
+      knowledgeRolePath(draft.targetPath) === PHASE3_MAINTENANCE_TRACKER_PATH)) {
       throw phase3Error(
         "proposal_invalid",
         "Maintenance proposal must update the ingest tracker"
@@ -1203,10 +1173,10 @@ export class Phase3KnowledgeMaintenanceService {
         }),
         source.raw.relativePath
       );
-      if (stableStringify(current) !== stableStringify(source)) {
+      if (current.raw.relativePath !== source.raw.relativePath || current.raw.contentSha256 !== source.raw.contentSha256) {
         throw phase3Error(
           "preview_stale",
-          `Raw bytes, path, or attachments changed: ${source.raw.relativePath}`,
+          `Raw body changed: ${source.raw.relativePath}`,
           source.raw.relativePath
         );
       }
@@ -1219,7 +1189,7 @@ export class Phase3KnowledgeMaintenanceService {
   ): Promise<void> {
     const current = await this.readTargetBinding(
       vaultId,
-      PHASE3_MAINTENANCE_TRACKER_PATH
+      this.resolvePath(PHASE3_MAINTENANCE_TRACKER_PATH)
     );
     if (!sameTargetBinding(current, expected)) {
       throw phase3Error(
@@ -1354,8 +1324,8 @@ function normalizeRawPath(value: string): string {
     );
   }
   if (
-    !relativePath.startsWith("raw/")
-    || relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    !knowledgeRolePath(relativePath).startsWith("raw/")
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
     || hasHiddenSegment(relativePath)
   ) {
     throw phase3Error(
@@ -1385,15 +1355,15 @@ function normalizeFormalTargetPath(
   }
   const reportPath = phase3MaintenanceReportPath(dateKey);
   const ordinaryKnowledgePage = (
-    relativePath.startsWith("wiki/")
-    || relativePath.startsWith("projects/")
+    knowledgeRolePath(relativePath).startsWith("wiki/")
+    || knowledgeRolePath(relativePath).startsWith("projects/")
   ) && relativePath.toLowerCase().endsWith(".md")
     && !hasHiddenSegment(relativePath);
   if (
     ordinaryKnowledgePage
-    || relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH
-    || relativePath === PHASE3_MAINTENANCE_TRACKER_PATH
-    || relativePath === reportPath
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH
+    || knowledgeRolePath(relativePath) === reportPath
   ) {
     return relativePath;
   }
@@ -1837,7 +1807,7 @@ function commitResult(
 ): Readonly<Phase3MaintenanceCommitResult> {
   if (
     wal.status !== "completed"
-    || wal.actions.some((entry) => entry.status !== "completed")
+    || wal.actions.some((entry) => entry.status !== "completed" && entry.status !== "failed")
   ) {
     throw phase3Error(
       "wal_conflict",
@@ -1848,7 +1818,7 @@ function commitResult(
     previewId: wal.preview.previewId,
     status: "completed",
     appliedPaths: Object.freeze(
-      wal.actions.map((entry) => entry.action.targetPath)
+      wal.actions.filter((entry) => entry.status === "completed").map((entry) => entry.action.targetPath)
     ),
     readbackVerified: true,
     recovered
@@ -1856,10 +1826,10 @@ function commitResult(
 }
 
 function targetRank(relativePath: string): number {
-  if (relativePath.startsWith("wiki/")) return 10;
-  if (relativePath.startsWith("projects/")) return 20;
-  if (relativePath === PHASE3_MAINTENANCE_RAW_INDEX_PATH) return 30;
-  if (relativePath === PHASE3_MAINTENANCE_TRACKER_PATH) return 40;
+  if (knowledgeRolePath(relativePath).startsWith("wiki/")) return 10;
+  if (knowledgeRolePath(relativePath).startsWith("projects/")) return 20;
+  if (knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH) return 30;
+  if (knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH) return 40;
   return 50;
 }
 

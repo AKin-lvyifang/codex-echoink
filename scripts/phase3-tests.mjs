@@ -10,10 +10,13 @@ const outputFile = path.join(outputDir, "knowledge-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 const homeWorkbenchOnly = process.argv.includes("--home-workbench");
 const workspaceDataOnly = process.argv.includes("--workspace-data");
+const maintenanceRuntimeOnly = process.argv.includes("--maintenance-runtime");
 const maintenanceOnly = process.argv.includes("--production-maintenance");
+const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
+  'import { runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
   'import { runKnowledgeMaintenancePreferenceTests } from "./src/tests/knowledge-maintenance-preferences";',
@@ -23,6 +26,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeAssociativeReadingTests();",
   "await runKnowledgeAgentIndexTests();",
   "await runKnowledgeMaintenancePreferenceTests();",
   "await runPiKnowledgeReadToolTests();",
@@ -35,7 +39,26 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (workspaceDataOnly ? [
+    contents: (process.argv.includes("--bilingual-lifecycle") ? [
+      'import { runKnowledgeBilingualLifecycleTests } from "./src/tests/knowledge-bilingual-lifecycle";',
+      'await runKnowledgeBilingualLifecycleTests();'
+    ] : maintenanceRuntimeOnly ? [
+      'import { runKnowledgeMaintenanceRuntimeTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
+      'import { runVaultDomainServiceTests } from "./src/tests/pi-native/vault-domain-service";',
+      'await runKnowledgeMaintenanceRuntimeTests();',
+      'await runVaultDomainServiceTests();',
+      'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
+      'await runKnowledgeAgentIndexTests();'
+    ] : wikiTodoOnly ? [
+      'import { runWikiBilingualTests } from "./src/tests/wiki-bilingual";',
+      'import { runKnowledgeInitializationTests } from "./src/tests/knowledge-initialization";',
+      'import { runHomeTodoTests } from "./src/tests/home-todos";',
+      'import { runWikiStructurePreflightTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
+      'await runWikiStructurePreflightTests();',
+      'await runWikiBilingualTests();',
+      'await runKnowledgeInitializationTests();',
+      'await runHomeTodoTests();'
+    ] : workspaceDataOnly ? [
       'import { runHomeWorkspaceDataTests } from "./src/tests/home-workspace-data";',
       'await runHomeWorkspaceDataTests();'
     ] : maintenanceOnly ? [

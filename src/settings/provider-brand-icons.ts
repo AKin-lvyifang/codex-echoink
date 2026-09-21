@@ -124,7 +124,9 @@ export function renderProviderBrandIcon(
   container: HTMLElement,
   providerId: ProviderBrandId
 ): SVGSVGElement {
-  const parsed = new DOMParser().parseFromString(
+  const ownerDocument = container.ownerDocument;
+  const OwnerDOMParser = ownerDocument.defaultView?.DOMParser ?? DOMParser;
+  const parsed = new OwnerDOMParser().parseFromString(
     providerBrandSvg(providerId),
     "image/svg+xml"
   );
@@ -152,8 +154,9 @@ export function renderProviderBrandIcon(
     }
   }
 
-  const importedSvg = document.importNode(parsedSvg, true);
-  if (!(importedSvg instanceof SVGSVGElement)) {
+  const importedSvg = ownerDocument.importNode(parsedSvg, true);
+  const OwnerSVGSVGElement = ownerDocument.defaultView?.SVGSVGElement ?? SVGSVGElement;
+  if (!(importedSvg instanceof OwnerSVGSVGElement)) {
     throw new Error(`Invalid bundled Provider brand SVG element: ${providerId}`);
   }
   const svg = importedSvg;

@@ -15,18 +15,94 @@ const obsidianShimPath = path.join(
 );
 
 await mkdir(outputDir, { recursive: true });
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
+  const ts = await import("typescript");
+  const source = await readFile(path.join(rootDir, "src/settings/settings-tab.ts"), "utf8");
+  const ast = ts.createSourceFile("settings-tab.ts", source, ts.ScriptTarget.Latest, true);
+  const declaration = ast.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === "CodexSettingTab");
+  const method = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "mountKnowledgeDashboard").getText(ast);
+  const directory = path.join(outputDir, "wiki-todo-dom");
+  await mkdir(directory, { recursive: true });
+  await esbuild.build({
+    stdin: { contents: `import {runWikiTodoDom} from "./src/tests/wiki-todo-dom";
+      import {renderKnowledgeFolderActions} from "./src/settings/knowledge-folder-actions";
+      class Fixture {
+        refreshes=0; knowledgeInitSection={showDashboard:false}; knowledgeDashboardSnapshot=null; knowledgeDashboardEl=null;
+        service={folderOperationBusy:false,directoryWritable:true,folderOperationMessage:"",
+          async getOriginalDirectoryStatus(){return {createdAt:1,files:2}},
+          async restoreOriginalDirectories(){return {restored:1,skipped:[{path:"old.md",reason:"原位置已被占用"}]}},
+          async optimizeFolderNames(){return {renamed:[],skipped:[]}}};
+        plugin={settings:{settingsLanguage:"zh"},getKnowledgeSurfaceService:()=>this.service};
+        scheduleDisplay(){this.refreshes++}; ${method}
+      }
+      runWikiTodoDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
+    bundle: true, format: "esm", platform: "browser", outfile: path.join(directory, "regression.js"), logLevel: "silent",
+    define: { "process.env.NODE_ENV": '"production"' },
+    plugins: [{ name: "wiki-todo-dom-host", setup(build) {
+      build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "wiki-todo-fixture" }));
+      build.onLoad({ filter: /.*/, namespace: "wiki-todo-fixture" }, () => ({ contents: `
+        export {Scope} from "./src/tests/origin-obsidian-dom-shim";
+        export function setIcon(){};
+        export class Setting {
+          constructor(parent){
+            this.settingEl=parent.createDiv({cls:"setting-item"});
+            this.infoEl=this.settingEl.createDiv({cls:"setting-item-info"});
+            this.nameEl=this.infoEl.createDiv({cls:"setting-item-name"});
+            this.descEl=this.infoEl.createDiv({cls:"setting-item-description"});
+            this.controlEl=this.settingEl.createDiv({cls:"setting-item-control"});
+          }
+          setName(name){this.nameEl.setText(name);return this;}
+          setDesc(description){this.descEl.setText(description);return this;}
+        }`, resolveDir: rootDir, loader: "js" }));
+    } }]
+  });
+  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wiki and todo UI checks</title><link rel="stylesheet" href="styles.css"><style>:root{--font-text-size:16px;--background-primary:white;--background-secondary:#f8f8f8;--text-normal:#333;--text-muted:#777;--interactive-accent:#52756e}body{font-family:sans-serif;margin:16px}main{max-width:100%}.setting-item{display:flex;align-items:center}.setting-item-info{flex:1}.setting-item-control{display:flex;align-items:center}</style><p id="report">Running</p><main id="settings" class="echoink-settings-demo"><div class="codex-settings-body"><div id="fixture" class="echoink-settings-page"></div></div></main><script type="module" src="regression.js"></script>');
+  await writeFile(path.join(directory,"styles.css"), await readFile(path.join(rootDir,"styles.css")));
+  console.log(`Open ${path.join(directory,"index.html")}`);
+  process.exit(0);
+}
 if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "origin-dom") {
   const ts = await import("typescript");
   const source = await readFile(path.join(rootDir, "src/settings/settings-tab.ts"), "utf8");
   const ast = ts.createSourceFile("settings-tab.ts", source, ts.ScriptTarget.Latest, true);
   const declaration = ast.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === "CodexSettingTab");
   const method = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "runMcpToggleAction").getText(ast);
+  const knowledge = declaration.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(ast) === "renderKnowledgeBaseSettings");
+  const targets = knowledge?.body.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((item) => item.name.getText(ast) === "availableTargets"));
+  let modelDropdown;
+  const findDropdown = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "addOriginDropdown") modelDropdown = node.arguments[1];
+    ts.forEachChild(node, findDropdown);
+  };
+  if (knowledge) findDropdown(knowledge);
+  if (!targets || !modelDropdown) throw new Error("Production current-model dropdown missing");
+  const selectionHelpers = ["providerModelSelectionValue", "parseProviderModelSelectionValue"].map((name) => ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join("\n");
+  const settingsSource = await readFile(path.join(rootDir, "src/settings/settings.ts"), "utf8");
+  const settingsAst = ts.createSourceFile("settings.ts", settingsSource, ts.ScriptTarget.Latest, true);
+  const settingsHelpers = ["apiProviderHasUsableApiKey", "apiProviderHasUsableCredential", "getApiProviderModel", "activateApiProviderModel"].map((name) => settingsAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(settingsAst)).join("\n");
   const directory = path.join(outputDir, "origin-dom");
   await mkdir(directory, { recursive: true });
   await esbuild.build({
     stdin: { contents: `import {runOriginControlsDom} from "./src/tests/origin-controls-dom";
+      import {OriginSetting} from "./src/settings/origin-setting";
+      import {normalizeApiProviderId,apiProviderConfiguredDisplayName,apiProviderApiKeyRequired,getApiProviderPreset} from "./src/settings/provider-presets";
+      import {renderProviderBrandIcon} from "./src/settings/provider-brand-icons";
+      ${selectionHelpers}
+      ${settingsHelpers}
       class Notice { constructor(message){} }
-      class Fixture { plugin={settings:{settingsLanguage:"en"}}; scheduleDisplay(){} announceSettingsStatus(){} ${method} }
+      class Fixture {
+        activations=0; refreshes=0;
+        plugin={settings:{settingsLanguage:"en"},activateApiProviderSettings:async (update)=>{update(this.plugin.settings);this.activations++;}};
+        scheduleDisplay(){this.refreshes++} announceSettingsStatus(){} ${method}
+        renderCurrentModel(parent,settings,app){
+          this.plugin.settings=settings;
+          const zh=true,copy={providers:{saveFailed:"Save failed"}};
+          // Extract the actual production target filter and callback at build time.
+          ${targets.getText(ast)}
+          const row=new OriginSetting(parent).setName("EchoInk 当前模型").addOriginDropdown(app,${modelDropdown.getText(ast)});
+          return row.controlEl.querySelector("[role=combobox]");
+        }
+      }
       runOriginControlsDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
     bundle: true, format: "esm", platform: "browser", define: { "process.env.NODE_ENV": '"development"' },
     alias: { obsidian: path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts") },

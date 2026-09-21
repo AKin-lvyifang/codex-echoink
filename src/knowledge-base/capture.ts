@@ -1,3 +1,4 @@
+import { resolveKnowledgePath } from "./root-paths";
 import { execFile } from "child_process";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -99,7 +100,7 @@ export class KnowledgeBaseCaptureService {
     }
     const vaultPath = this.plugin.getVaultPath();
     const source = path.join(vaultPath, file.path);
-    const targetDir = path.join(vaultPath, "raw", "attachments");
+    const targetDir = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
     await fsp.mkdir(targetDir, { recursive: true });
     const target = path.join(targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
     await fsp.copyFile(source, target);
@@ -117,7 +118,7 @@ export class KnowledgeBaseCaptureService {
     const vaultPath = this.plugin.getVaultPath();
     const now = new Date();
     const stamp = formatDateTimeForFile(now);
-    const dir = target === "inbox" ? path.join(vaultPath, "inbox") : path.join(vaultPath, "raw", "articles", "手动收集");
+    const dir = target === "inbox" ? path.join(vaultPath, resolveKnowledgePath(vaultPath, "inbox")) : path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "手动收集");
     await fsp.mkdir(dir, { recursive: true });
     const fileName = target === "inbox" ? `${stamp} 知识库想法.md` : `${stamp} 手动收集.md`;
     const body = [
@@ -136,7 +137,7 @@ export class KnowledgeBaseCaptureService {
 
   private async captureWeChatUrl(url: string): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = path.join(vaultPath, "raw", "articles", "微信公众号");
+    const dest = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "微信公众号");
     await fsp.mkdir(dest, { recursive: true });
     const skillScript = path.join(process.env.HOME || "", ".codex", "skills", "wechat-article-to-obsidian-raw", "scripts", "wechat_capture.mjs");
     if (await exists(skillScript)) {
@@ -156,7 +157,7 @@ export class KnowledgeBaseCaptureService {
 
   private async captureWebUrl(url: string, originalInput = ""): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = path.join(vaultPath, "raw", "articles", "网页收藏");
+    const dest = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "网页收藏");
     await fsp.mkdir(dest, { recursive: true });
     return [await this.captureHtmlLikePage(url, dest, "web", originalInput)];
   }
@@ -209,8 +210,8 @@ export class KnowledgeBaseCaptureService {
       if (!KNOWLEDGE_FILE_CAPTURE_EXTENSIONS.has(ext)) continue;
       const textLike = [".md", ".markdown", ".txt"].includes(ext);
       const targetDir = textLike
-        ? path.join(vaultPath, "raw", "articles", "文件收藏")
-        : path.join(vaultPath, "raw", "attachments");
+        ? path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "文件收藏")
+        : path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
       await fsp.mkdir(targetDir, { recursive: true });
       const target = path.join(targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
       await fsp.copyFile(file.path, target);
@@ -223,7 +224,7 @@ export class KnowledgeBaseCaptureService {
   async copyAttachmentsToRaw(attachments: StoredAttachment[]): Promise<string[]> {
     if (!attachments.length) return [];
     const vaultPath = this.plugin.getVaultPath();
-    const targetDir = path.join(vaultPath, "raw", "attachments");
+    const targetDir = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
     await fsp.mkdir(targetDir, { recursive: true });
     const copied: string[] = [];
     for (const attachment of attachments) {

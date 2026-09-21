@@ -32,7 +32,7 @@ class OriginDropdownControl {
   readonly selectEl: OriginSelectElement;
   private readonly select: ReturnType<typeof createOriginSelect>;
   constructor(parent: HTMLElement, app: App) { this.select = createOriginSelect(parent, {}, [], "", app); this.selectEl = this.select.element; }
-  addOption(value: string, label: string): this { this.select.addOption(value, label); return this; }
+  addOption(value: string, label: string, renderIcon?: (container: HTMLElement) => void): this { this.select.addOption(value, label, renderIcon); return this; }
   addOptions(options: Record<string, string>): this { for (const [value, label] of Object.entries(options)) this.select.addOption(value, label); return this; }
   setOptionDisabled(value: string, disabled: boolean): this { this.select.setOptionDisabled(value, disabled); return this; }
   getValue(): string { return this.selectEl.value; }

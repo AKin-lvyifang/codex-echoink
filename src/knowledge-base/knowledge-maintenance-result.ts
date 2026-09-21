@@ -1,3 +1,5 @@
+import { knowledgeRolePath, resolveKnowledgePath } from "./root-paths";
+import { knowledgeErrorDetail } from "./initialization-error";
 import type { KnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
 
 export const KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA =
@@ -112,7 +114,7 @@ export function parseKnowledgeMaintenanceResultEnvelope(
       || (raw.path !== undefined && (typeof raw.path !== "string" || !safePath(raw.path)))) return null;
     issues.push(Object.freeze({
       code: raw.code,
-      message: raw.message.trim().replace(/\s+/g, " ").slice(0, 500),
+      message: knowledgeErrorDetail(raw.message.trim()),
       ...(typeof raw.path === "string" ? { path: raw.path } : {})
     }));
   }
@@ -278,7 +280,7 @@ function requireKnowledgePath(value: string): string {
 }
 
 function isKnowledgePath(value: string): boolean {
-  return /^(?:wiki|projects)\/(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(value)
+  return /^(?:wiki|projects)\/(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(knowledgeRolePath(value))
     && safePath(value);
 }
 

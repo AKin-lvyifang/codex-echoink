@@ -1,3 +1,4 @@
+import { resolveKnowledgePathFromRoots, rebaseKnowledgePath } from "../knowledge-base/root-paths";
 import { moment, TFile, type App } from "obsidian";
 import { normalizeJournalDirectory, normalizedJournalDirectoryOrNull } from "./journal-directory";
 
@@ -59,13 +60,36 @@ function relativePath(value: string): string {
   return normalized;
 }
 
+function actualJournalPath(app: App, value: string): string {
+  const roots = app.vault.getAllLoadedFiles?.().map((file) => file.path.split("/")[0]).filter(Boolean) ?? [];
+  return resolveKnowledgePathFromRoots(relativePath(value), roots);
+}
+
+export async function rebaseNativeJournalPaths(app: App, from: string, to: string): Promise<void> {
+  for (const [id, keys] of [["daily-notes", ["folder", "template"]], ["templates", ["folder"]]] as const) {
+    const options = optionsOf(app, id);
+    const patch: Record<string, unknown> = {};
+    for (const key of keys) if (typeof options[key] === "string") {
+      const next = rebaseKnowledgePath(options[key], from, to);
+      if (next !== options[key]) patch[key] = next;
+    }
+    if (Object.keys(patch).length) await updateCoreOptions(app, id, patch, false);
+  }
+  const vault = app.vault as unknown as { getConfig?(key: string): unknown; setConfig?(key: string, value: string): void };
+  const attachments = vault.getConfig?.("attachmentFolderPath");
+  if (typeof attachments === "string") {
+    const next = rebaseKnowledgePath(attachments, from, to);
+    if (next !== attachments) vault.setConfig?.("attachmentFolderPath", next);
+  }
+}
+
 export function readNativeJournalSettings(app: App, legacyDirectory?: string) {
   const daily = optionsOf(app, "daily-notes");
   const templates = optionsOf(app, "templates");
-  const templatesFolder = relativePath(nonempty(templates.folder) ?? DEFAULT_TEMPLATES_DIRECTORY);
-  const template = relativePath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`);
+  const templatesFolder = actualJournalPath(app, nonempty(templates.folder) ?? DEFAULT_TEMPLATES_DIRECTORY);
+  const template = actualJournalPath(app, nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`);
   return Object.freeze({
-    folder: relativePath(nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory)),
+    folder: actualJournalPath(app, nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory)),
     format: nonempty(daily.format) ?? DEFAULT_JOURNAL_DATE_FORMAT,
     template: /\.md$/iu.test(template) ? template : `${template}.md`,
     templatesFolder,
@@ -173,9 +197,9 @@ export async function initializeNativeJournal(app: App, legacyDirectory?: string
   const template = app.vault.getAbstractFileByPath(quickTemplatePath);
   if (template && !(template instanceof TFile)) throw new Error("此刻速记模板路径已被文件夹占用。");
   if (!template) await app.vault.create(quickTemplatePath, QUICK_JOURNAL_TEMPLATE);
-  await updateCoreOptions(app, "templates", { folder: DEFAULT_TEMPLATES_DIRECTORY, dateFormat: "YYYY-MM-DD", timeFormat: "HH:mm" }, true);
+  await updateCoreOptions(app, "templates", { folder: before.templatesFolder, dateFormat: "YYYY-MM-DD", timeFormat: "HH:mm" }, true);
   await updateCoreOptions(app, "daily-notes", {
-    folder: normalizeJournalDirectory(legacyDirectory),
+    folder: before.folder,
     format: DEFAULT_JOURNAL_DATE_FORMAT,
     template: quickTemplatePath
   }, true);

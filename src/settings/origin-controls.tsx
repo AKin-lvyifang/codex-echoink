@@ -111,13 +111,25 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
 }
 
 export type OriginSelectElement = HTMLButtonElement & { value: string };
+type OriginSelectOption = { value: string; label: string; disabled?: boolean; renderIcon?: (container: HTMLElement) => void };
 export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
-  choices: readonly { value: string; label: string; disabled?: boolean }[], initialValue = "", app?: Pick<App, "keymap" | "scope">) {
+  choices: readonly OriginSelectOption[], initialValue = "", app?: Pick<App, "keymap" | "scope">) {
   const island = createIsland(parent);
   let value = initialValue || choices[0]?.value || "";
   let disabled = false;
   const items = [...choices];
   let open = false;
+  let popupElement: HTMLDivElement | null = null;
+  const ownerDocument = parent.ownerDocument;
+  const setPopupElement = (element: HTMLDivElement | null) => { popupElement = element; };
+  const onOutsidePointerDown = (event: PointerEvent) => {
+    // Radix's outside handler uses the main realm's Node constructor. A node
+    // from an independent settings window fails that check. Capture in the
+    // owning document also survives a host handler stopping the bubble phase.
+    const path = event.composedPath();
+    if (path.includes(island.element()) || (popupElement && path.includes(popupElement))) return;
+    setOpen(false);
+  };
   // Restore Origin/Radix's body portal, explicitly bound to the owning window.
   // Settings' size containment and native scrollport must not clip fixed content.
   const portalHost = parent.ownerDocument.body;
@@ -144,9 +156,12 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     return false;
   });
   const setOpen = (next: boolean) => {
+    if (open === next) return;
     clearEscapeScope();
+    ownerDocument.removeEventListener("pointerdown", onOutsidePointerDown, true);
     open = next;
     if (next) {
+      ownerDocument.addEventListener("pointerdown", onOutsidePointerDown, true);
       capturePopupTheme();
       // Obsidian dispatches its window capture listener through the active
       // Scope first. Match native popovers instead of racing that listener.
@@ -157,7 +172,11 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     }
     render();
   };
-  island.onDispose(clearEscapeScope);
+  island.onDispose(() => {
+    clearEscapeScope();
+    ownerDocument.removeEventListener("pointerdown", onOutsidePointerDown, true);
+    popupElement = null;
+  });
   const emptyValue = "__echoink_empty_selection__";
   const render = () => island.render(<Select value={value || emptyValue} disabled={disabled} open={open} onOpenChange={setOpen} onValueChange={(next) => {
     value = next === emptyValue ? "" : next; render();
@@ -165,7 +184,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     element.dispatchEvent(new (element.ownerDocument.defaultView!.Event)("change", { bubbles: true }));
   }}>
     <SelectTrigger ref={island.ref} className="echoink-origin-control"><SelectValue /></SelectTrigger>
-    <SelectContent container={portalHost} className="echoink-origin-control" position="popper" style={popupTheme}
+    <SelectContent ref={setPopupElement} container={portalHost} className="echoink-origin-control" position="popper" style={popupTheme}
       onFocusCapture={(event) => {
         const content = event.currentTarget;
         // Radix's fallback focus loop reads the main document. In a detached
@@ -188,7 +207,12 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
         options[index]?.scrollIntoView({ block: "nearest" });
       }}
       onEscapeKeyDown={(event) => { event.preventDefault(); event.stopPropagation(); closePopup(); }}>
-      {items.map((item) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled}>{item.label}</SelectItem>)}
+      {items.map((item) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>
+        {item.renderIcon ? <span className="echoink-origin-select-label">
+          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) item.renderIcon!(container); }} />
+          <span className="echoink-origin-select-text">{item.label}</span>
+        </span> : item.label}
+      </SelectItem>)}
     </SelectContent>
   </Select>);
   render();
@@ -197,7 +221,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   Object.defineProperty(element, "disabled", { get: () => disabled, set: (next: boolean) => { disabled = Boolean(next); render(); } });
   decorate(element, options);
   return { element,
-    addOption(next: string, label: string) { items.push({ value: next, label }); if (!value) value = next; render(); },
+    addOption(next: string, label: string, renderIcon?: OriginSelectOption["renderIcon"]) { items.push({ value: next, label, renderIcon }); if (!value) value = next; render(); },
     setOptionDisabled(next: string, disabled: boolean) { const item = items.find((item) => item.value === next); if (item) { item.disabled = disabled; render(); } }
   };
 }

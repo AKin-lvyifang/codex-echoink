@@ -1,3 +1,6 @@
+import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
+import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
+import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
 import { normalizePiWorkspacePermission, piWorkspaceAllowsTool, type PiWorkspaceAccess } from "./pi-workspace-access";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -1598,7 +1601,7 @@ export class PiNativeConversationRuntime {
           execution.requiresFreshnessVerification = true;
           this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
         }
-      } else if (knowledgeCommand.kind === "maintain" && permission === "read-only") {
+      } else if (knowledgeCommand.kind === "maintain" && (permission === "read-only" || mode === "plan" || maintenanceRequestsAdviceOnly(knowledgeCommand.request))) {
         execution.knowledgeObservation = createKnowledgeObservation("maintain", null);
         active.knowledgeTurnContext = Object.freeze({
           kind: "chat",
@@ -1614,11 +1617,19 @@ export class PiNativeConversationRuntime {
             "Pi Knowledge maintenance preferences are unavailable"
           );
         }
-        const command = maintenanceCommandContext(
-          knowledgeCommand,
-          preference,
-          request.maintenanceScope
-        );
+        const resolvedCommand = maintenanceCommandContext(knowledgeCommand, preference, request.maintenanceScope);
+        const structureResult = await this.options.knowledge?.prepareMaintenanceStructure?.({
+          initialization: request.maintenanceScope?.mode === "batch",
+          assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
+        });
+        const scope = resolvedCommand.scope.mode === "global" ? resolvedCommand.scope : resolvedCommand.scope.mode === "query"
+          ? { ...resolvedCommand.scope, candidatePaths: resolvedCommand.scope.candidatePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) }
+          : resolvedCommand.scope.mode === "exact" ? { ...resolvedCommand.scope, sourcePaths: [resolveKnowledgePath(active.cwd, resolvedCommand.scope.sourcePaths[0], false)] as const }
+          : { ...resolvedCommand.scope, sourcePaths: resolvedCommand.scope.sourcePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) };
+        execution.maintenanceScope = scope;
+        const command = Object.freeze({ ...resolvedCommand, scope, preference: Object.freeze({
+          ...preference, providerResourceText: [structureResult, preference.providerResourceText].filter(Boolean).join("\n")
+        }) });
         execution.knowledgeWorkflow = { kind: "maintain", command };
         execution.knowledgeObservation = createKnowledgeObservation(
           "maintain",
@@ -2866,7 +2877,7 @@ export class PiNativeConversationRuntime {
         ? execution.knowledgeWorkflow
         : null;
       const maintenanceResult = maintenance
-        ? classifyKnowledgeMaintenanceResult(runEntries)
+        ? classifyKnowledgeMaintenanceResult(runEntries, undefined, collectMaintenanceReadPaths(active.sessionManager.getBranch()).filter((source) => maintenance.command.scope.mode === "global" ? knowledgeRolePath(source).startsWith("raw/") || knowledgeRolePath(source) === "outputs/.ingest-tracker.md" : (maintenance.command.scope.mode === "query" ? maintenance.command.scope.candidatePaths : maintenance.command.scope.sourcePaths).includes(source)))
         : null;
       const maintenanceResultInvalid = maintenanceResult?.kind === "invalid";
       if (
@@ -2878,6 +2889,10 @@ export class PiNativeConversationRuntime {
       ) {
         terminalState = "failed";
       }
+      const tailFailed = terminalState === "failed" && maintenanceResult?.kind === "trusted_success";
+      if (tailFailed && !execution.abortRequested) terminalState = "completed";
+      const maintenanceSummary = execution.commandKind === "maintain" ? maintenanceOutcome(execution, runEntries, terminalState, collectMaintenanceReadPaths(active.sessionManager.getBranch())) : undefined;
+      if (maintenanceSummary && tailFailed) (maintenanceSummary.warnings as string[]).push(`最后回复未完成：${safeProductRunErrorCode(promptError, runEntries)}；已确认的内容结果保留。`);
       await this.closeRemainingProviderReasoning(
         active,
         execution,
@@ -3041,7 +3056,7 @@ export class PiNativeConversationRuntime {
           producedPaths: collectKnowledgeMaintenanceProducedPaths(runEntries),
           assistantEntryId,
           entries: active.sessionManager.getBranch()
-        });
+        }).catch((error) => { (maintenanceSummary?.warnings as string[] | undefined)?.push(`保存分析记录：${knowledgeErrorDetail(error)}`); });
       } else if (
         !readWorkflow
         && terminalState === "completed"
@@ -3064,6 +3079,7 @@ export class PiNativeConversationRuntime {
       const agentSettledAt = Math.max(accepted.createdAt, this.now());
       await this.productRuns.update(execution.productRunId, {
         state: "agent_settled",
+        ...(maintenanceSummary ? { maintenance: maintenanceSummary } : {}),
         assistantEntryId,
         toolCallIds,
         activeLeafId: active.sessionManager.getLeafId(),
@@ -5573,13 +5589,14 @@ function collectKnowledgeMaintenanceProducedPaths(
 }
 
 type KnowledgeMaintenanceResultClassification = Readonly<{
-  kind: "invalid" | "trusted_success" | "trusted_failure";
+  kind: "invalid" | "natural_success" | "trusted_success" | "trusted_failure";
   toolCallIds: readonly string[];
 }>;
 
 function classifyKnowledgeMaintenanceResult(
   entries: readonly SessionEntry[],
-  allowedToolCallIds?: ReadonlySet<string>
+  allowedToolCallIds?: ReadonlySet<string>,
+  providedSourcePaths: readonly string[] = collectMaintenanceReadPaths(entries)
 ): KnowledgeMaintenanceResultClassification {
   const toolCallIds = collectKnowledgeMaintenanceToolCallIds(
     entries,
@@ -5603,38 +5620,70 @@ function classifyKnowledgeMaintenanceResult(
     ...toolCallIds,
     ...results.map((result) => result.toolCallId)
   ])];
-  if (
-    toolCallIds.length !== 1
-    || results.length !== 1
-    || results[0]?.toolCallId !== toolCallIds[0]
-  ) {
-    return Object.freeze({
-      kind: "invalid" as const,
-      toolCallIds: Object.freeze(affectedToolCallIds)
-    });
+  if (!affectedToolCallIds.length) {
+    return Object.freeze({ kind: providedSourcePaths.length ? "natural_success" : "invalid", toolCallIds: [] });
   }
-  const envelope = knowledgeMaintenanceEnvelopeFromToolResult(results[0]);
-  if (!envelope) {
-    return Object.freeze({
-      kind: "invalid" as const,
-      toolCallIds: Object.freeze(affectedToolCallIds)
-    });
+  if (new Set(toolCallIds).size !== toolCallIds.length || toolCallIds.some((id) => results.filter((result) => result.toolCallId === id).length !== 1) || results.some((result) => !toolCallIds.includes(result.toolCallId))) {
+    return Object.freeze({ kind: "invalid", toolCallIds: affectedToolCallIds });
   }
-  if (
-    results[0].isError
-    && (envelope.status === "completed" || envelope.status === "noop")
-  ) {
-    return Object.freeze({
-      kind: "invalid" as const,
-      toolCallIds: Object.freeze(affectedToolCallIds)
-    });
+  let successful = false;
+  for (const result of results) {
+    const envelope = knowledgeMaintenanceEnvelopeFromToolResult(result);
+    if (!envelope) continue; // A blocked/invalid attempt can be corrected in a later call.
+    if (envelope.status === "write_uncertain") return Object.freeze({ kind: "trusted_failure", toolCallIds: affectedToolCallIds });
+    if (!result.isError && ["completed", "noop", "partial"].includes(envelope.status)) successful = true;
   }
-  return Object.freeze({
-    kind: envelope.status === "completed" || envelope.status === "noop"
-      ? "trusted_success" as const
-      : "trusted_failure" as const,
-    toolCallIds: Object.freeze(affectedToolCallIds)
-  });
+  return Object.freeze({ kind: successful ? "trusted_success" : "trusted_failure", toolCallIds: affectedToolCallIds });
+}
+
+function collectMaintenanceReadPaths(entries: readonly SessionEntry[]): string[] {
+  const paths = new Set<string>();
+  const reads = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    if (entry.message.role === "assistant") {
+      for (const part of entry.message.content) {
+        if (part.type !== "toolCall" || !["note_read", "knowledge_read"].includes(part.name)) continue;
+        const relative: unknown = part.arguments?.relativePath ?? part.arguments?.vaultRelativePath;
+        if (typeof relative === "string") reads.set(part.id, relative);
+      }
+      continue;
+    }
+    if (entry.message.role !== "toolResult") continue;
+    const details = safeRecord(entry.message.details);
+    if (entry.message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
+      for (const value of Array.isArray(details?.readSourcePaths) ? details.readSourcePaths : []) if (typeof value === "string") paths.add(value);
+      continue;
+    }
+    if (!["knowledge_read", "note_read"].includes(entry.message.toolName)) continue;
+    const relative = reads.get(entry.message.toolCallId);
+    if (entry.message.isError) { if (relative) paths.delete(relative); continue; }
+    if (relative) paths.add(relative);
+    for (const raw of Array.isArray(details?.references) ? details.references : []) {
+      const reference = safeRecord(raw);
+      if (typeof reference?.vaultRelativePath === "string") paths.add(reference.vaultRelativePath);
+    }
+  }
+  return [...paths];
+}
+
+function maintenanceOutcome(execution: ActiveProductRun, entries: readonly SessionEntry[], terminalState: PiProductRunTerminalState, providedSourcePaths: readonly string[] = []): NonNullable<PiProductRunRecord["maintenance"]> {
+  const read = new Set([...providedSourcePaths, ...collectMaintenanceReadPaths(entries)]);
+  const warnings: string[] = [];
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== PI_KNOWLEDGE_MAINTAIN_TOOL_ID) continue;
+    const result = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
+    const details = safeRecord(entry.message.details);
+    if (result && ["completed", "noop", "partial"].includes(result.status)) {
+      for (const value of Array.isArray(details?.processedSourcePaths) ? details.processedSourcePaths : []) if (typeof value === "string") read.add(value);
+    }
+    if (result) warnings.push(...result.issues.map((issue) => knowledgeErrorDetail(issue.message)));
+  }
+  const scope = execution.maintenanceScope ?? (execution.knowledgeWorkflow?.kind === "maintain" ? execution.knowledgeWorkflow.command.scope : undefined);
+  const expected = scope && (scope.mode === "exact" || scope.mode === "batch") ? scope.sourcePaths : [...read].filter((value) => knowledgeRolePath(value).startsWith("raw/"));
+  const analysisOnly = execution.permission === "read-only" || execution.mode === "plan";
+  const processedSourcePaths = terminalState === "completed" ? expected.filter((source) => read.has(source)) : [];
+  return Object.freeze({ analysisOnly, processedSourcePaths, pendingSourcePaths: expected.filter((source) => !processedSourcePaths.includes(source)), warnings: [...new Set(warnings)] });
 }
 
 function collectKnowledgeMaintenanceToolCallIds(
@@ -5717,6 +5766,17 @@ function safeProductRunErrorCode(
   if (promptError instanceof PiSessionDurabilityError) {
     return `pi_session_${promptError.code}`;
   }
+  for (const entry of [...entries].reverse()) {
+    if (entry.type !== "message" || entry.message.role !== "toolResult") continue;
+    const result = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
+    if (result && ["failed", "write_uncertain"].includes(result.status) && result.issues.length) return knowledgeErrorDetail(result.issues.map((issue) => `${issue.code}${issue.path ? ` (${issue.path})` : ""}: ${issue.message}`).join("\n"));
+    if (!result && entry.message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID && entry.message.isError) {
+      const text = entry.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+      if (text.trim()) return knowledgeErrorDetail(`维护工具未执行：${text}`);
+    }
+  }
+  if (promptError) return knowledgeErrorDetail(promptError);
+  if (assistant?.errorMessage) return knowledgeErrorDetail(assistant.errorMessage);
   const providerFailure = safeProviderFailureCode(assistant?.errorMessage);
   if (providerFailure) return providerFailure;
   if (assistant?.stopReason === "length") {
@@ -6179,7 +6239,7 @@ function normalizePiKnowledgeMaintenanceScope(
 function normalizePiKnowledgeMaintenanceRawPath(value: string): string {
   const normalized = String(value).trim().replaceAll("\\", "/").replace(/^\/+/, "");
   if (
-    !normalized.toLocaleLowerCase().startsWith("raw/")
+    !knowledgeRolePath(normalized).toLocaleLowerCase().startsWith("raw/")
     || !isRawMarkdownPath(normalized)
     || normalized.split("/").some((part) => !part || part === "." || part === "..")
   ) {

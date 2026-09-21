@@ -126,6 +126,13 @@ export interface PiKnowledgeObservation {
   readonly preferenceState?: "default" | "custom";
 }
 
+export interface PiKnowledgeMaintenanceOutcome {
+  readonly analysisOnly: boolean;
+  readonly processedSourcePaths: readonly string[];
+  readonly pendingSourcePaths: readonly string[];
+  readonly warnings: readonly string[];
+}
+
 export interface PiProductRunRecord {
   productRunId: string;
   conversationId: string;
@@ -144,6 +151,7 @@ export interface PiProductRunRecord {
   error?: string;
   memoryRecall?: PiMemoryRecallObservation;
   knowledge?: PiKnowledgeObservation;
+  maintenance?: PiKnowledgeMaintenanceOutcome;
   createdAt: number;
   updatedAt: number;
 }
@@ -169,6 +177,10 @@ export interface ExperienceSourceRef {
 
 /** Structural Phase 3 pointer; the Vault file remains the only content source. */
 export interface PiKnowledgeReference {
+  totalLines?: number;
+  hasMore?: boolean;
+  related?: import("../../knowledge-base/knowledge-relations").KnowledgeRelationPage;
+  applicability?: import("../../knowledge-base/knowledge-relations").KnowledgeApplicability;
   readonly referenceId: string;
   readonly vaultRelativePath: string;
   readonly title: string;
@@ -239,8 +251,9 @@ export interface PiKnowledgeUsageEvent {
   readonly personalMemorySources?: readonly Readonly<PersonalMemorySourceReference>[];
 }
 
-/** Read-only Phase 3 domain seam used by the Pi-native runtime. */
+/** Phase 3 domain seam; structural preparation is explicit and write-authorized. */
 export interface PiKnowledgeRuntimePort {
+  prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
   prepareMaintenancePreferences?(): Promise<Readonly<{
     profileVersion: string;
@@ -312,6 +325,8 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
     >;
   }>[];
   readonly assessments?: readonly Readonly<KnowledgeMaintenanceAssessment>[];
+  /** Existing source reads supplied by the host, never model-authored. */
+  readonly sourceBodyFingerprints?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
 }
 
@@ -319,6 +334,8 @@ export interface PiKnowledgeMaintenanceToolResult {
   readonly status: "completed" | "failed" | "cancelled";
   readonly message: string;
   readonly producedPaths?: readonly string[];
+  readonly refreshedSources?: Readonly<Record<string, string>>;
+  readonly processedSourcePaths?: readonly string[];
   readonly maintenanceResult?: Readonly<KnowledgeMaintenanceResultEnvelope>;
   /** Safe structured metadata for ProductRun diagnostics; never content hashes. */
   readonly protocolVersion?: string;

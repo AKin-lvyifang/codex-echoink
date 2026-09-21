@@ -1,5 +1,137 @@
 # Changelog
 
+## 2.4.0 - 2026-09-20
+
+![EchoInk Agent 2.4.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.4.0/assets/releases/echoink-agent-2.4.0-release.png)
+
+### 中文
+
+**顺着联系，读懂笔记。**
+
+2.4.0 让 Ask 可以顺着笔记之间的联系继续阅读，也让整理后的知识保留更多适用背景。
+
+- **按问题续读相关资料。** 找到一篇笔记后，模型可以查看它链接到的文章，以及引用它的其他笔记，再选择需要的内容继续读。是否补找资料、是否已经足够回答，由模型结合问题判断，无需读完全部链接。
+- **整理时间与适用条件。** `/maintain` 可按需补充主题、时间、资料性质、适用条件和关系描述，帮助后续阅读区分不同项目、版本，以及预算与实际数据。原有笔记仍可直接使用，不要求补齐固定字段。
+- **分清读过什么。** 已交付的正文片段与尚待查看的线索分开记录；未读完的长文、读取失败或未完整返回的结果，不再被当作完整阅读。单份资料缺失时，模型仍可使用其他可用材料继续处理。
+- **失败提示与显示修复。** 文件尚未创建或路径变化时，显示可确定的具体原因；失败的操作不再显示“读取完成”。旧记录没有具体原因时如实说明。失败卡片的字号、行高和间距与外层过程节点统一。
+
+#### 使用与升级
+
+在对话中输入 `/ask`，例如“这个项目最后实际花了多少，与预算差多少？”，让模型按需要查阅相关笔记。用 `/maintain` 整理新资料时，可要求保留时间和适用条件。升级无需重新初始化仓库或重设模型。
+
+关联阅读提供更多判断依据；金额、比例等结论仍应核对原文和计算，模型可能误解条件或作出不准确的推断。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。本轮关联阅读与失败提示已在 macOS 实机验证，Windows/Linux 的对应实机操作尚未验证。头图为功能示意。
+
+### English
+
+**Follow the connections between your notes.**
+
+2.4.0 lets Ask continue reading through related notes and gives maintained knowledge more context about when it applies.
+
+- **Read related material as needed.** After finding a note, the model can inspect its outgoing links and backlinks, then choose what to read next. It decides whether to find more material or answer based on the question; it does not need to open every link.
+- **Keep time periods and conditions.** `/maintain` can add subjects, time periods, source types, applicability conditions, and relationship descriptions to help distinguish projects, versions, and budgeted versus actual figures. Existing notes remain usable without a fixed set of required fields.
+- **Distinguish what has been read.** Delivered passages are tracked separately from leads still to explore. Partially read notes, failed reads, and incomplete results are no longer treated as fully read. A missing source does not prevent the model from continuing with other available material.
+- **Clearer failures and consistent presentation.** Missing files or changed paths now show the specific cause when known, and failed operations are no longer labeled as complete. Older records without a detailed cause say so. Failure cards use font sizes, line heights, and spacing consistent with surrounding process entries.
+
+#### Use and upgrade
+
+Enter `/ask` in a conversation and ask, for example, “How much did this project actually cost, and how did that compare with the budget?” The model can consult related notes as needed. When organizing new material with `/maintain`, you can ask it to preserve time periods and applicability conditions. Upgrading does not require vault reinitialization or model reconfiguration.
+
+Related reading provides more evidence for a judgment. Check source passages and calculations for conclusions involving amounts or ratios; the model can still misunderstand conditions or make inaccurate inferences.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Related reading and failure feedback have been validated in the macOS app; corresponding Windows/Linux interactions have not received real-app validation. The cover is illustrative.
+
+## 2.3.2 - 2026-09-19
+
+![EchoInk Agent 2.3.2](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.2/assets/releases/echoink-agent-2.3.2-release.png)
+
+### 中文
+
+**更轻，更顺手。**
+
+2.3.2 重点缩小插件包体，并改善设置页和聊天区的下拉交互。
+
+- **主文件减少约 46.4%。** `main.js` 从 2.3.1 的约 9.27 MB 降至约 4.97 MB（4.74 MiB），已低于 Obsidian Sync Standard 的 5 MiB 单文件上限。PDF 阅读、图片处理、完整中文拼音搜索及已有模型能力继续保留。
+- **点击外部即可取消下拉。** 在设置页下拉框以及聊天模型、参数菜单中，点空白或其他位置就会收起列表，保留原选择；鼠标悬停只高亮，点击选项才确认。修复也覆盖独立窗口中的菜单打开和取消。
+- **当前模型显示品牌图标。** “EchoInk 当前模型”的已选项和列表选项现在使用与 Provider 页一致的图标，深度求索等服务商更容易辨认。
+
+#### 使用与升级
+
+升级后直接使用原有设置和模型，无需重新初始化仓库。在 **设置 → EchoInk Agent → 知识库** 中查看当前模型图标；设置下拉和聊天参数菜单均可点击外部取消。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。是否同步插件仍取决于你的同步设置。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。Windows/Linux 的窗口交互尚未进行本轮实机验证。头图为功能示意。
+
+### English
+
+**Lighter to download. Smoother to use.**
+
+2.3.2 focuses on a smaller plugin bundle and better dropdown interactions in settings and chat.
+
+- **Main file reduced by about 46.4%.** `main.js` shrinks from about 9.27 MB in 2.3.1 to about 4.97 MB (4.74 MiB), below the 5 MiB per-file limit of Obsidian Sync Standard. PDF reading, image processing, full Chinese pinyin search, and existing model capabilities are preserved.
+- **Click outside to cancel.** Settings dropdowns and chat model/parameter menus close when you click a blank area or elsewhere, keeping the previous selection. Hover highlights an option; clicking confirms it. This also fixes menu opening and dismissal in separate windows.
+- **Brand icons for the current model.** The selected value and options under **EchoInk current model** now use the same icons as the Provider page, making services such as DeepSeek easier to recognize.
+
+#### Use and upgrade
+
+Keep using your existing settings and models after upgrading; vault reinitialization is not required. Open **Settings → EchoInk Agent → Knowledge** to see the current model's brand icon. Click outside settings dropdowns and chat parameter menus to cancel.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`. Whether plugins are synced still depends on your sync settings.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Window interactions have not received real-app validation on Windows/Linux for this release. The cover is illustrative.
+
+## 2.3.1 - 2026-09-19
+
+![EchoInk Agent 2.3.1](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.1/assets/releases/echoink-agent-2.3.1-release.png)
+
+### 中文
+
+**目录看得懂，整理有交代。**
+
+2.3.1 是一次日常体验优化，重点改进知识库整理、待办统计和操作反馈。
+
+- **目录中英双语：** 初始化和维护使用中英文分类与文件夹名称。已有仓库可点击“优化名称”，将英文一级目录和 Wiki 分类目录实际改名，例如 `raw` 变为 `原始资料（raw）`；已有双语目录继续复用。
+- **复原仓库：** 初始化前保存原始目录记录，之后可把记录中的文件移回原位置。保留最新文件内容和新增文件，同名冲突会保留并说明；这是目录位置恢复，不是内容版本回滚。
+- **初始化更顺畅：** 已有目录直接复用，只补缺失项；单个文件的问题单独说明。Raw 属性或标签更新不再阻断分析，正文变化会重新读取。模型读完资料后认为无需新增知识，也属于正常结果；尚未读取的资料继续列为待处理。
+- **进度和原因说清楚：** 分项显示“准备目录”“归档文件”“分析笔记”的动作、数量和单位。暂停、运行中断和具体错误分别说明，下一步对应实际按钮；初始化需要回答模型问题时，可在当前页面处理。
+- **待办年度热力图：** 在待办设置中查看累计、今日和全年完成数，切换年份，指向格子查看当天数量。旧记录没有完成日期时只计入累计，不会被随意补到某一天。
+- **细节修复：** 改善小窗口下的设置布局，统一新增目录操作卡片；修复 Windows 上部分头像与身份保存报错，以及自定义配置目录、弹出窗口消息测量和收藏失败后的提示与状态恢复。
+
+#### 使用与升级
+
+在 **设置 → EchoInk Agent → 知识库 → 目录管理** 中使用“优化名称”和“复原”；没有原始目录记录时，“复原”不可用。年度完成记录位于 **待办** 设置页。升级本身不要求重新初始化仓库。
+
+在 Obsidian 社区插件页面检查更新，或下载本页的 **main.js、manifest.json、styles.css**，放入 Vault 的 `.obsidian/plugins/codex-echoink/` 后重新启用插件；保留自己的 `data.json`。
+
+需要 **Obsidian Desktop 1.11.4 及以上**，暂不支持移动端。本轮新增目录改名与初始化反馈的完整实机复验尚未完成，Windows/Linux 的对应实机操作也尚未验证。主文件仍超过 Obsidian Sync Standard 的 5 MiB 单文件限制，使用该方案时请在各设备分别更新。头图为功能示意。
+
+### English
+
+**Readable folders. Clearer organization progress.**
+
+2.3.1 focuses on everyday improvements to knowledge organization, to-do statistics, and action feedback.
+
+- **Bilingual folder names:** Initialization and maintenance use Chinese and English category and folder names. In existing vaults, select **Optimize names** to rename English root folders and Wiki category folders on disk—for example, `raw` becomes `原始资料（raw）`. Existing bilingual folders are reused.
+- **Restore vault:** Initialization saves a record of the original folder layout. Restore moves recorded files back to their original locations while keeping their latest content and new files. Conflicts are preserved and explained. This restores locations, not earlier versions of file content.
+- **Smoother initialization:** Existing folders are reused and missing ones are added; individual file issues are reported separately. Raw property or tag updates no longer interrupt analysis, and changed note bodies are read again. A model review that reads the sources and finds no new knowledge to add is also a valid result; unread sources remain pending.
+- **Clear progress and reasons:** Folder preparation, file organization, and note analysis are listed with explicit actions, counts, and units. Pauses, interruptions, and specific errors are distinguished, with next steps matching the available buttons. Questions from the model can be answered on the initialization page.
+- **Yearly to-do heatmap:** View total, today, and annual completion counts in To-dos settings. Switch years and hover over a day for its count. Older completions without a known date count toward the total only; no date is invented.
+- **Detail fixes:** Improved settings layouts in smaller windows and consistent cards for folder actions. Fixed some avatar and identity save errors on Windows, custom configuration-folder paths, message measurement in pop-out windows, and feedback and state recovery after a failed favorite save.
+
+#### Use and upgrade
+
+Open **Settings → EchoInk Agent → Knowledge → Folder management** for **Optimize names** and **Restore**. Restore is unavailable without an original layout record. Annual completion history is in **To-dos** settings. Upgrading does not require vault reinitialization.
+
+Check for updates in Obsidian's Community plugins page, or download **main.js, manifest.json, and styles.css** from this release, place them in the vault's `.obsidian/plugins/codex-echoink/` folder, and re-enable the plugin. Keep your own `data.json`.
+
+Requires **Obsidian Desktop 1.11.4 or later**. Mobile is not supported. Full real-app revalidation of the new folder-renaming and initialization-feedback flow remains pending, including corresponding Windows/Linux interaction. The main file still exceeds Obsidian Sync Standard's 5 MiB per-file limit; update each device separately if you use that plan. The cover is illustrative.
+
 ## 2.3.0 - 2026-09-13
 
 ![EchoInk Agent 2.3.0](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.3.0/assets/releases/echoink-agent-2.3.0-release.png)

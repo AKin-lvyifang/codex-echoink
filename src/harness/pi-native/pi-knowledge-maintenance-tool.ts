@@ -1,7 +1,10 @@
+import { knowledgeRolePath } from "../../knowledge-base/root-paths";
+import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
 import {
   defineTool,
   type AgentToolResult,
+  type SessionEntry,
   type ToolCallEvent,
   type ToolDefinition,
   type ToolResultEvent
@@ -26,6 +29,42 @@ export const PI_KNOWLEDGE_MAINTAIN_TOOL_ID = "knowledge_maintain" as const;
 
 const MAINTENANCE_RESULT_LIMIT_BYTES = 8_000;
 const RESULT_PENDING_SAFETY = "knowledge_maintain_result_pending_safety";
+
+/** Reuse source versions already delivered in this conversation after reopening. */
+export function maintenanceSourceFingerprintsFromEntries(entries: readonly SessionEntry[]): Record<string, string> {
+  const fingerprints: Record<string, string> = {};
+  const reads = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const message = entry.message;
+    if (message.role === "assistant") {
+      for (const part of message.content) {
+        if (part.type !== "toolCall" || !["note_read", "knowledge_read"].includes(part.name)) continue;
+        const relative: unknown = part.arguments?.relativePath ?? part.arguments?.vaultRelativePath;
+        if (typeof relative === "string") reads.set(part.id, relative);
+      }
+      continue;
+    }
+    if (message.role !== "toolResult") continue;
+    const details = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
+    const adopt = (relative: unknown, revision: unknown) => {
+      if (typeof relative === "string" && knowledgeRolePath(relative).startsWith("raw/") && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
+    };
+    if (message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
+      if (details.sourceBodyFingerprints && typeof details.sourceBodyFingerprints === "object") {
+        for (const [relative, revision] of Object.entries(details.sourceBodyFingerprints)) adopt(relative, revision);
+      }
+    } else if (["note_read", "knowledge_read"].includes(message.toolName)) {
+      if (message.isError) { const relative = reads.get(message.toolCallId); if (relative) delete fingerprints[relative]; continue; }
+      for (const raw of Array.isArray(details.references) ? details.references : []) {
+        if (!raw || typeof raw !== "object") continue;
+        const reference = raw as Record<string, unknown>;
+        adopt(reference.vaultRelativePath, reference.contentRevision);
+      }
+    }
+  }
+  return fingerprints;
+}
 
 export type PiKnowledgeMaintenanceCommandContext = Readonly<{
   mode: "maintain";
@@ -75,7 +114,6 @@ implements PiVaultAdditionalToolSecurityPort {
 
   private readonly executions = new Map<string, AuthorizedMaintenanceExecution>();
   private readonly seenToolCallIds = new Set<string>();
-  private readonly seenProductRunIds = new Set<string>();
 
   constructor(
     private readonly options: Readonly<CreatePiKnowledgeMaintenanceSecurityOptions>
@@ -101,9 +139,6 @@ implements PiVaultAdditionalToolSecurityPort {
     try {
       identity = freezeIdentity(this.options.currentRunIdentity());
       command = freezeCommand(await this.options.currentCommand());
-      if (this.seenProductRunIds.has(identity.productRunId)) {
-        return block("authorization_failed");
-      }
       externalReadVerified = this.options.hasSuccessfulExternalRead?.() === true;
       const normalized = normalizeArguments(
         event.input,
@@ -114,11 +149,10 @@ implements PiVaultAdditionalToolSecurityPort {
       sourcePaths = normalized.sourcePaths;
       assessments = normalized.assessments;
       normalizedArguments = normalized.arguments;
-    } catch {
-      return block("tool_policy_blocked");
+    } catch (error) {
+      return block(`维护参数未通过：${knowledgeErrorDetail(error)}；请修正本次参数后重试。`);
     }
     this.seenToolCallIds.add(event.toolCallId);
-    this.seenProductRunIds.add(identity.productRunId);
     this.executions.set(event.toolCallId, {
       identity,
       command,
@@ -230,6 +264,8 @@ implements PiVaultAdditionalToolSecurityPort {
           ...(execution.result.errorCode
             ? { errorCode: execution.result.errorCode }
             : {}),
+          ...(execution.result.refreshedSources ? { readSourcePaths: Object.keys(execution.result.refreshedSources), sourceBodyFingerprints: execution.result.refreshedSources } : {}),
+          ...(execution.result.processedSourcePaths ? { processedSourcePaths: [...execution.result.processedSourcePaths] } : {}),
           ...(execution.result.producedPaths
             ? { producedPaths: [...execution.result.producedPaths] }
             : {}),
@@ -278,8 +314,8 @@ export function createPiKnowledgeMaintenanceToolDefinition(
       "再读取 Tracker 标记 changed 的 Raw。candidateActions 只可包含 wiki/** 或 projects/** 的 Markdown 候选；",
       "每个候选必须携带 expectedTarget。更新已有目标前先 note_read，并原样使用其 contentRevision；确认目标不存在时使用 kind=missing。",
       "raw/index.md、Tracker 和维护报告由 EchoInk 确定性生成，不要放进 candidateActions。",
-      "候选完成自检后只调用一次本工具；工具会直接安全写入并回读。不要调用任何 Vault 写 Tool。",
-      "同时对重要知识主张给出 assessments：仍有效(valid)、需补充(needs_supplement)、已过时(outdated)或冲突(conflict)，并记录证据、日期和是否完成外部核验；candidateActions 非空时 assessments 至少一项；无法核验时使用 unverified。"
+      "候选完成自检后可分次提交或修正后重试；工具会安全写入并回读。Raw 属性和 Tag 使用 metadata_update，保持正文不变。",
+      "同时对重要知识主张给出 assessments：仍有效(valid)、需补充(needs_supplement)、已过时(outdated)或冲突(conflict)，并记录证据、日期和是否完成外部核验；assessments 可选；无法核验时使用 unverified。"
     ].join(""),
     parameters: Type.Object({
       sourcePaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
@@ -300,7 +336,7 @@ export function createPiKnowledgeMaintenanceToolDefinition(
             })
           }, { additionalProperties: false })
         ])
-      }, { additionalProperties: false }))),
+      }, { additionalProperties: true }))),
       assessments: Type.Optional(Type.Array(Type.Object({
         claim: Type.String({ minLength: 1, maxLength: 500 }),
         status: Type.Union([
@@ -377,21 +413,18 @@ function normalizeArguments(
   const keys = Object.keys(record);
   const allowedKeys = new Set(["candidateActions", "sourcePaths", "assessments"]);
   if (
-    !Object.prototype.hasOwnProperty.call(record, "candidateActions")
-    || keys.some((key) => !allowedKeys.has(key))
-    || !Array.isArray(record.candidateActions)
-    || record.candidateActions.length > 100
+    keys.some((key) => !allowedKeys.has(key))
+    || (record.candidateActions !== undefined && (!Array.isArray(record.candidateActions) || record.candidateActions.length > 100))
   ) {
     throw new TypeError("knowledge_maintenance_arguments_invalid");
   }
-  const candidateActions = Object.freeze(record.candidateActions.map((item) => {
+  const candidateActions = Object.freeze((record.candidateActions as unknown[] ?? []).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new TypeError("knowledge_maintenance_action_invalid");
     }
     const action = item as Record<string, unknown>;
     if (
-      Object.keys(action).length !== 3
-      || !Object.prototype.hasOwnProperty.call(action, "targetPath")
+      !Object.prototype.hasOwnProperty.call(action, "targetPath")
       || !Object.prototype.hasOwnProperty.call(action, "content")
       || !Object.prototype.hasOwnProperty.call(action, "expectedTarget")
       || typeof action.targetPath !== "string"
@@ -414,9 +447,6 @@ function normalizeArguments(
     record.assessments,
     externalReadVerified
   );
-  if (candidateActions.length > 0 && assessments.length === 0) {
-    throw new TypeError("knowledge_maintenance_assessments_required");
-  }
   return Object.freeze({
     arguments: Object.freeze({
       candidateActions,
@@ -504,10 +534,10 @@ function normalizeMaintenanceSourcePaths(
       throw new TypeError("knowledge_maintenance_source_scope_invalid");
     }
     const selected = value.map(normalizeMaintenanceRawPath);
-    if (!isDeepStrictEqual(selected, expected)) {
+    if (new Set(selected).size !== expected.length || selected.some((source) => !expected.includes(source))) {
       throw new TypeError("knowledge_maintenance_source_scope_invalid");
     }
-    return Object.freeze(selected);
+    return Object.freeze([...expected]);
   }
   if (!Array.isArray(value) || value.length !== 1) {
     throw new TypeError("knowledge_maintenance_source_scope_invalid");
@@ -525,7 +555,7 @@ function normalizeMaintenanceRawPath(value: unknown): string {
   }
   const normalized = value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
   if (
-    !normalized.toLocaleLowerCase().startsWith("raw/")
+    !knowledgeRolePath(normalized).toLocaleLowerCase().startsWith("raw/")
     || !isRawMarkdownPath(normalized)
     || normalized.split("/").some((part) => !part || part === "." || part === "..")
   ) {

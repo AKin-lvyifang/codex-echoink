@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rmdir } from "node:fs/promises";
 import * as path from "node:path";
-import { TFile, type App } from "obsidian";
+import { TFile, TFolder, type App } from "obsidian";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 
 /** Only host I/O is simulated. Core method signatures follow Obsidian 1.13.7. */
@@ -33,6 +33,16 @@ export async function nativeJournalFixture(root: string) {
       return entry.isDirectory() ? list(name) : [file(name)!];
     });
   const records: Record<string, any> = {};
+  const loaded = (dir = ""): (TFile | TFolder)[] => readdirSync(path.join(root, dir), { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith("."))
+    .flatMap((entry): (TFile | TFolder)[] => {
+      const name = dir ? `${dir}/${entry.name}` : entry.name;
+      if (!entry.isDirectory()) return [file(name)!];
+      const descendants = loaded(name);
+      const folder = Object.assign(new TFolder(), { path: name, name: entry.name, children: descendants.filter((item) => path.posix.dirname(item.path) === name) });
+      return [folder, ...descendants];
+    });
+  const vaultConfig: Record<string, unknown> = { alwaysUpdateLinks: true };
   for (const id of ["daily-notes", "templates"]) {
     const configPath = path.join(root, ".obsidian", `${id}.json`);
     const record: any = {
@@ -71,9 +81,13 @@ export async function nativeJournalFixture(root: string) {
       adapter: { getBasePath: () => root },
       getName: () => "offline-journal-fixture",
       getFiles: () => list(),
+      getAllLoadedFiles: () => loaded(),
+      getConfig: (key: string) => vaultConfig[key],
+      setConfig: (key: string, value: unknown) => { vaultConfig[key] = value; },
       getMarkdownFiles: () => list().filter((file) => file.extension === "md"),
       getFileByPath: file,
-      getAbstractFileByPath: (name: string) => file(name) ?? (existsSync(path.join(root, name)) ? { path: name, children: [] } : null),
+      getAbstractFileByPath: (name: string) => file(name) ?? loaded().find((item) => item.path === name) ?? null,
+      delete: (folder: TFolder) => rmdir(path.join(root, folder.path)),
       createFolder: async (name: string) => await mkdir(path.join(root, name)),
       async create(name: string, content: string) { await writeFile(path.join(root, name), content, { flag: "wx" }); return file(name)!; },
       async createBinary(name: string, content: ArrayBuffer) { await writeFile(path.join(root, name), Buffer.from(content), { flag: "wx" }); return file(name)!; },
@@ -86,7 +100,8 @@ export async function nativeJournalFixture(root: string) {
       }
     },
     workspace: { onLayoutReady() {}, getLeaf: () => ({ async openFile() {} }) },
-    metadataCache: { getFileCache: () => null, getFirstLinkpathDest: () => null }
+    fileManager: { async renameFile(value: TFile | TFolder, target: string) { await rename(path.join(root, value.path), path.join(root, target)); files.clear(); } },
+    metadataCache: { resolvedLinks: {}, unresolvedLinks: {}, getFileCache: () => null, getFirstLinkpathDest: () => null }
   };
   const plugin: any = {
     app: app as App,

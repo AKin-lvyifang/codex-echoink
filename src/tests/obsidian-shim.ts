@@ -14,11 +14,17 @@ export class Notice {
   }
 }
 
+export class TFolder { path = ""; name = ""; children: (TFile | TFolder)[] = []; }
+
 export class TFile {
   constructor(public readonly path = "") {}
 }
 
-export class App {}
+export class App {
+  vault = {
+    getAllLoadedFiles: (): Array<TFile | TFolder> => []
+  };
+}
 
 export class Plugin {}
 
@@ -316,6 +322,19 @@ export function setTooltip(
 
 export async function requestUrl(): Promise<{ text: string }> {
   throw new Error("requestUrl is not available in unit tests");
+}
+
+let pdfJsForTests: unknown;
+
+export function setPdfJsForTests(engine: unknown): void {
+  pdfJsForTests = engine;
+}
+
+export async function loadPdfJs(): Promise<unknown> {
+  if (pdfJsForTests) return pdfJsForTests;
+  // Test engine only: production resolves the real Obsidian public API.
+  const { getResolvedPDFJS } = await import("unpdf");
+  return getResolvedPDFJS();
 }
 
 export function sanitizeHTMLToDom(html: string): DocumentFragment { return document.createRange().createContextualFragment(html); }

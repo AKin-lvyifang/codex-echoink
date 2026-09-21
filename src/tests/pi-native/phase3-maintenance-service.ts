@@ -1,3 +1,4 @@
+import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -59,7 +60,7 @@ const PREFERENCE = Object.freeze({
  * fixture as the only filesystem acceptance Vault.
  */
 export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void> {
-  assertProtocolRequiresStructuredNoop();
+  assertProtocolAllowsNaturalCompletion();
   assertStrictDurableResultEnvelope();
   await assertMaintenanceScopeSecurityIsFailClosed();
   await assertReliableExistingKnowledgeReturnsNoopBeforeWrites();
@@ -76,18 +77,18 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertCandidateActionExpectedTargetIsStrict();
   await assertWalRecoveryDoesNotRegenerateOrRepeatWrite();
   await assertTruncatedLargeKnowledgeReadbackStillProducesNote();
-  await assertBlockedWalRejectsNextMaintenance();
+  await assertStaleUnwrittenWalDoesNotBlockCorrection();
   await assertCompletedCheckpointFailureIsWriteUncertainAndRecoveredFirst();
-  await assertRecoveredWalRejectsCandidatesBuiltBeforeRecovery();
+  await assertRecoveredWalContinuesWithCurrentTargets();
 }
 
-function assertProtocolRequiresStructuredNoop(): void {
+function assertProtocolAllowsNaturalCompletion(): void {
   const prompt = echoInkKnowledgeMaintenanceProtocolPrompt();
   assert.match(
     prompt,
-    /无需更新时传入 candidateActions: \[\]，由工具返回 noop/u
+    /实际阅读并判断无需新增时自然说明结果即可/u
   );
-  assert.match(prompt, /不得只用普通 Assistant 文本结束维护/u);
+  assert.match(prompt, /不要求固定话术、JSON 或维护工具调用/u);
 }
 
 async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
@@ -129,7 +130,8 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
       toolCallId,
       input: input.arguments
     } as never, undefined);
-    return { security, toolCallId, blocked };
+    if (blocked && blocked.reason !== "authorization_failed") assert.match(blocked.reason, /维护参数未通过：.*；请修正本次参数后重试。/u);
+    return { security, toolCallId, blocked: blocked ? { ...blocked, reason: blocked.reason === "authorization_failed" ? blocked.reason : "tool_policy_blocked" } : undefined };
   };
 
   const global = await authorize({
@@ -251,7 +253,7 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
     request: "",
     scope: { mode: "batch", sourcePaths: batchPaths },
     arguments: { candidateActions: [], sourcePaths: [...batchPaths].reverse() }
-  })).blocked, { block: true, reason: "tool_policy_blocked" });
+  })).blocked, undefined);
   assert.deepEqual((await authorize({
     name: "batch-outside",
     request: "",
@@ -354,10 +356,9 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
       }]
     }
   });
-  assert.deepEqual(actionWithoutAssessment.blocked, {
-    block: true,
-    reason: "tool_policy_blocked"
-  });
+  assert.equal(actionWithoutAssessment.blocked, undefined);
+  assert.equal(await actionWithoutAssessment.security.handleToolCall({ toolName: "knowledge_maintain", toolCallId: "corrected-new-call", input: {} } as never, undefined), undefined);
+  assert.deepEqual(actionWithoutAssessment.security.consume("corrected-new-call", {}).candidateActions, []);
 
   for (const [index, status] of [
     "valid",
@@ -435,11 +436,7 @@ async function assertReliableExistingKnowledgeReturnsNoopBeforeWrites(): Promise
     request: "目标笔记",
     sourcePaths: ["raw/a.md"],
     preferenceSnapshot: PREFERENCE,
-    candidateActions: [{
-      targetPath: "wiki/should-not-write.md",
-      content: "不得写入",
-      expectedTarget: { kind: "missing" }
-    }],
+    candidateActions: [],
     assessments: [{
       claim: "现有知识仍与当前 Raw 一致",
       status: "valid",
@@ -466,9 +463,11 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
   const rawPath = "raw/a.md";
   const rawContent = "没有可提炼的测试内容";
   const trackerContent = "# Knowledge Maintenance Tracker\n";
-  const domain = new FakeVaultDomain();
+  const domain = new FakeVaultDomain(vaultRootPath);
+  let duringWrite: (() => Promise<void>) | undefined;
   try {
     await fsp.mkdir(path.join(vaultRootPath, "raw"), { recursive: true });
+    await fsp.mkdir(path.join(vaultRootPath, "wiki"), { recursive: true });
     await fsp.mkdir(path.join(vaultRootPath, "outputs"), { recursive: true });
     await fsp.mkdir(privateKnowledgeRootPath, { recursive: true, mode: 0o700 });
     await fsp.chmod(privateKnowledgeRootPath, 0o700);
@@ -487,7 +486,8 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
       userId: "user-phase3",
       deviceId: "device-phase3",
       domainService: domain as never,
-      dateKey: () => DATE_KEY
+      dateKey: () => DATE_KEY,
+      faultInjector: async () => { const mutate = duringWrite; duringWrite = undefined; await mutate?.(); }
     });
     await port.initialize();
     const writesBeforeRejectedCandidate = domain.formalWrites.length;
@@ -507,19 +507,28 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
         expectedTarget: { kind: "missing" }
       }]
     });
-    assert.equal(rejectedCandidate.status, "failed");
-    assert.equal(
-      domain.formalWrites.length,
-      writesBeforeRejectedCandidate,
-      "candidateActions without assessments fail before any Vault write"
-    );
+    assert.equal(rejectedCandidate.status, "completed", rejectedCandidate.message);
+    assert.match(domain.content("wiki/missing-assessment.md") ?? "", /echoink-source/u);
 
+    await fsp.mkdir(path.join(vaultRootPath, "wiki/人工智能（AI）"), { recursive: true });
+    for (const [targetPath, reason] of [["wiki/english-only/note.md", "分类"]]) {
+      const invalidFolder = await port.execute({
+        vaultId: VAULT_ID, conversationId: "category-contract", piSessionId: "pi-category-contract",
+        productRunId: `category-${reason}`, toolCallId: `category-${reason}`, mode: "maintain", request: "", sourcePaths: [rawPath], preferenceSnapshot: PREFERENCE,
+        candidateActions: [{ targetPath, content: "not written", expectedTarget: {kind:"missing"} }],
+        assessments: [{ claim: "fixture", status:"valid", evidence:[rawPath], asOf:DATE_KEY, verification:"unverified" }]
+      });
+      assert.equal(invalidFolder.status, "failed");
+      assert.ok(invalidFolder.message.includes(reason), invalidFolder.message);
+      assert.equal(domain.formalWrites.length, writesBeforeRejectedCandidate + 4);
+    }
     const result = await port.execute({
       vaultId: VAULT_ID,
       conversationId: "conversation-production-noop",
       piSessionId: "pi-production-noop",
       productRunId: "run-production-noop",
       toolCallId: "tool-production-noop",
+      sourceBodyFingerprints: { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from(rawContent)) },
       mode: "maintain",
       request: "/maintain",
       sourcePaths: [rawPath],
@@ -537,7 +546,54 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
       ),
       true
     );
-    assert.equal(domain.formalWrites.length, 3);
+    assert.equal(domain.formalWrites.length, 7);
+    const setRaw = async (value: string) => { await fsp.writeFile(path.join(vaultRootPath, rawPath), value); domain.seed(rawPath, value); };
+    const executeCandidate = (id: string, content: string, fingerprints?: Readonly<Record<string, string>>) => port.execute({
+      vaultId: VAULT_ID, conversationId: "tolerant-production", piSessionId: "pi-tolerant", productRunId: "same-run-corrections", toolCallId: id,
+      mode: "maintain", request: "", sourcePaths: [rawPath], preferenceSnapshot: PREFERENCE, sourceBodyFingerprints: fingerprints,
+      candidateActions: [{ targetPath: `wiki/${id}.md`, content, expectedTarget: { kind: "missing" } }]
+    });
+    duringWrite = () => setRaw(`---\ntags: [updated]\ncover: '![[missing-image.png]]'\n---\n${rawContent}`);
+    const properties = await executeCandidate("properties", "正文不变时仍可提炼", { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from(rawContent)) });
+    assert.equal(properties.status, "completed", properties.message);
+    const oldFingerprint = rawDigestFingerprint(rawPath, Buffer.from(rawContent));
+    duringWrite = () => setRaw("正文已在执行中改成新的事实");
+    const stale = await executeCandidate("during-change", "不能写入旧事实", { [rawPath]: oldFingerprint });
+    assert.equal(stale.status, "failed");
+    assert.match(stale.message, /已自动重读.*raw\/a.md/u);
+    assert.match(stale.message, /正文已在执行中改成新的事实/u);
+    assert.equal(domain.content("wiki/during-change.md"), undefined);
+    const corrected = await executeCandidate("corrected-body", "依据新事实重新判断", stale.refreshedSources);
+    assert.equal(corrected.status, "completed", corrected.message);
+    const longBody = "长文有效事实。".repeat(8_000);
+    await setRaw(`---\ntags: [long]\n---\n${longBody}`);
+    const longRead = await executeCandidate("long-raw", "基于长文的已读部分", { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from(longBody)) });
+    assert.equal(longRead.status, "completed", longRead.message);
+    await fsp.writeFile(path.join(vaultRootPath, "raw/b.md"), "第二篇当前正文");
+    domain.seed("raw/b.md", "第二篇当前正文");
+    const changedLong = await port.execute({ vaultId: VAULT_ID, conversationId: "tolerant-production", piSessionId: "pi-tolerant", productRunId: "same-run-corrections", toolCallId: "changed-long", mode: "maintain", request: "", preferenceSnapshot: PREFERENCE,
+      sourcePaths: [rawPath, "raw/b.md"], sourceBodyFingerprints: { [rawPath]: oldFingerprint, "raw/b.md": oldFingerprint }, candidateActions: [] });
+    assert.deepEqual(Object.keys(changedLong.refreshedSources ?? {}), [rawPath], "only the source actually sent in the bounded result is acknowledged");
+    assert.ok(Buffer.byteLength(changedLong.message) < 8_000);
+    assert.match(changedLong.message, /当前片段/u);
+    const subset = await port.execute({
+      vaultId: VAULT_ID, conversationId: "tolerant-production", piSessionId: "pi-tolerant", productRunId: "subset-run", toolCallId: "subset", mode: "maintain", request: "", preferenceSnapshot: PREFERENCE,
+      sourcePaths: [rawPath, "raw/b.md"], sourceBodyFingerprints: { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from(longBody)) },
+      candidateActions: [{ targetPath: "wiki/subset.md", content: "仅采用 [[raw/a.md]] 的事实。", expectedTarget: { kind: "missing" } }]
+    });
+    assert.equal(subset.status, "completed", subset.message);
+    assert.deepEqual(subset.processedSourcePaths, [rawPath]);
+    const tracker = domain.content(PHASE3_MAINTENANCE_TRACKER_PATH)!;
+    assert.doesNotMatch(tracker.split("## Processed").at(-1)!.split("## Changed Raw")[0], /raw\/b.md/u);
+    assert.match(tracker.split("## Changed Raw").at(-1)!, /raw\/b.md/u);
+    const { readKnowledgeBaseTrackerHints } = await import("../../knowledge-base/tracker");
+    const hints = await readKnowledgeBaseTrackerHints(vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH,
+      [{ path: rawPath, size: 1, mtime: 1 }, { path: "raw/b.md", size: 1, mtime: 1 }], true);
+    assert.equal(hints.paths.has(rawPath), true);
+    assert.equal(hints.paths.has("raw/b.md"), false, "downstream digest hints must not promote an unread source");
+    const report = domain.content(phase3MaintenanceReportPath(DATE_KEY))!;
+    assert.doesNotMatch(report.split("## Processed Raw")[1].split("## Knowledge targets")[0], /raw\/b.md/u);
+    assert.match(report.split("## Remaining Raw")[1], /raw\/b.md/u);
   } finally {
     await fsp.rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -774,16 +830,11 @@ async function assertWhitelistAndBatchCasConflictWriteNothing(): Promise<void> {
       conflict.domain.externalSet(relativePath, "user changed target");
     }
   };
-  await assert.rejects(
-    conflict.service.execute({
-      vaultId: VAULT_ID,
-      dateKey: DATE_KEY,
-      preference: PREFERENCE,
-      toolCall: toolCallFor("cas-conflict")
-    }),
-    phase3Error("preview_stale")
-  );
-  assert.equal(conflict.domain.formalWrites.length, 0);
+  const partial = await conflict.service.execute({
+    vaultId: VAULT_ID, dateKey: DATE_KEY, preference: PREFERENCE, toolCall: toolCallFor("cas-conflict")
+  });
+  assert.equal(partial.status, "failed", "the conflicted knowledge note is never claimed as written");
+  assert.equal(conflict.domain.formalWrites.includes("wiki/phase3-summary.md"), false);
   assert.equal(
     conflict.domain.content("wiki/phase3-summary.md"),
     "user changed target"
@@ -935,14 +986,12 @@ async function assertCandidateActionExpectedTargetIsStrict(): Promise<void> {
     }
   ];
   for (const [index, action] of invalidActions.entries()) {
-    assert.deepEqual(await security.handleToolCall({
-      toolName: "knowledge_maintain",
-      toolCallId: `invalid-expected-target-${index}`,
+    const denial = await security.handleToolCall({
+      toolName: "knowledge_maintain", toolCallId: `invalid-expected-target-${index}`,
       input: { candidateActions: [action] }
-    } as never, undefined), {
-      block: true,
-      reason: "tool_policy_blocked"
-    });
+    } as never, undefined);
+    assert.equal(denial?.block, true);
+    assert.match(denial?.reason ?? "", /维护参数未通过/u);
   }
 }
 
@@ -1082,7 +1131,7 @@ Promise<void> {
   }]);
 }
 
-async function assertBlockedWalRejectsNextMaintenance(): Promise<void> {
+async function assertStaleUnwrittenWalDoesNotBlockCorrection(): Promise<void> {
   const fixture = createFixture({
     trackerPaths: ["raw/a.md"],
     faultInjector: () => {
@@ -1103,25 +1152,12 @@ async function assertBlockedWalRejectsNextMaintenance(): Promise<void> {
   fixture.domain.externalSet("raw/a.md", "raw changed after WAL");
   const recoveredService = fixture.createService();
   const firstRecovery = await recoveredService.recoverPending(VAULT_ID);
-  assert.equal(firstRecovery.blocked, 1);
-  assert.equal(
-    (await fixture.state.loadWal("preview-1"))?.status,
-    "blocked"
-  );
-  const proposalCalls = fixture.proposal.calls;
-  const formalWrites = [...fixture.domain.formalWrites];
+  assert.equal(firstRecovery.blocked, 0);
+  assert.equal((await fixture.state.loadWal("preview-1"))?.status, "completed");
+  assert.deepEqual(fixture.domain.formalWrites, []);
+  const corrected = await recoveredService.execute({ vaultId: VAULT_ID, dateKey: DATE_KEY, preference: PREFERENCE, toolCall: toolCallFor("corrected-next") });
+  assert.equal(corrected.status, "completed");
 
-  await assert.rejects(
-    recoveredService.execute({
-      vaultId: VAULT_ID,
-      dateKey: DATE_KEY,
-      preference: PREFERENCE,
-      toolCall: toolCallFor("blocked-next")
-    }),
-    phase3Error("recovery_blocked")
-  );
-  assert.equal(fixture.proposal.calls, proposalCalls);
-  assert.deepEqual(fixture.domain.formalWrites, formalWrites);
 }
 
 async function assertCompletedCheckpointFailureIsWriteUncertainAndRecoveredFirst():
@@ -1176,7 +1212,7 @@ Promise<void> {
   assert.equal(await fixture.state.loadWal("preview-2"), null);
 }
 
-async function assertRecoveredWalRejectsCandidatesBuiltBeforeRecovery():
+async function assertRecoveredWalContinuesWithCurrentTargets():
 Promise<void> {
   let proposalCall = 0;
   const recoveredKnowledge = [
@@ -1219,25 +1255,14 @@ Promise<void> {
     Phase3MaintenanceSimulatedReload
   );
 
-  await assert.rejects(
-    fixture.createService().execute({
-      vaultId: VAULT_ID,
-      dateKey: DATE_KEY,
-      preference: PREFERENCE,
-      toolCall: toolCallFor("stale-candidate-next")
-    }),
-    (error: unknown) => error instanceof Phase3MaintenanceError
-      && error.code === "proposal_invalid"
-      && /run \/maintain again/iu.test(error.message)
-  );
-  assert.equal(proposalCall, 1, "stale candidates must not be regenerated or consumed");
-  assert.equal(
-    fixture.domain.content("wiki/phase3-summary.md"),
-    recoveredKnowledge
-  );
-  assert.equal(fixture.domain.formalWrites.length, 4);
+  await assert.rejects(fixture.createService().execute({
+    vaultId: VAULT_ID, dateKey: DATE_KEY, preference: PREFERENCE,
+    toolCall: toolCallFor("stale-candidate-next")
+  }), phase3Error("preview_stale"));
+  assert.equal(proposalCall, 2, "recovery continues directly; the new candidate still must respect the current target");
+  assert.equal(fixture.domain.content("wiki/phase3-summary.md"), recoveredKnowledge);
   assert.equal((await fixture.state.loadWal("preview-1"))?.status, "completed");
-  assert.equal(await fixture.state.loadWal("preview-2"), null);
+
 }
 
 function toolCallFor(
@@ -1304,6 +1329,7 @@ function createFixture(options: FixtureOptions): {
 }
 
 class FakeVaultDomain {
+  constructor(private readonly diskRoot?: string) {}
   readonly formalWrites: string[] = [];
   beforeReadback?: (relativePath: string, count: number) => void;
   private readonly files = new Map<string, string>();
@@ -1382,6 +1408,7 @@ class FakeVaultDomain {
     }
     this.files.set(input.relativePath, input.content);
     this.formalWrites.push(input.relativePath);
+    if (this.diskRoot) { await fsp.mkdir(path.dirname(path.join(this.diskRoot, input.relativePath)), { recursive: true }); await fsp.writeFile(path.join(this.diskRoot, input.relativePath), input.content); }
     return this.completedResult(
       input.operationIdentity,
       "note_create",
@@ -1408,6 +1435,7 @@ class FakeVaultDomain {
     }
     this.files.set(input.relativePath, input.content);
     this.formalWrites.push(input.relativePath);
+    if (this.diskRoot) { await fsp.mkdir(path.dirname(path.join(this.diskRoot, input.relativePath)), { recursive: true }); await fsp.writeFile(path.join(this.diskRoot, input.relativePath), input.content); }
     return this.completedResult(
       input.operationIdentity,
       "note_update",

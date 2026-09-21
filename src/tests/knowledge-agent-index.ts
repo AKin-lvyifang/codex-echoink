@@ -332,12 +332,10 @@ export async function runKnowledgeAgentIndexTests(): Promise<void> {
     const originalSearch = index.search.bind(index);
     index.search = async () => raw;
     try {
-      await assert.rejects(
-        retriever.retrieve({ question: "RAW_ORIGIN_TOKEN", limit: 5 }),
-        (error) => error instanceof Error
-          && "code" in error
-          && error.code === "source-changed"
-      );
+      const partial = await retriever.retrieve({ question: "RAW_ORIGIN_TOKEN", limit: 5 });
+      assert.equal(partial.shouldInvokePi, true);
+      assert.equal(partial.localIssues?.some((issue) => issue.status === "source-changed"), true);
+      assert.equal(partial.references.some((reference) => reference.contentRevision === rawEntry.contentRevision), false);
     } finally {
       index.search = originalSearch;
     }

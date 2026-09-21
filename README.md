@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.3.0 release artwork" src="assets/releases/echoink-agent-2.3.0-release.png">
+    <img width="1024" alt="EchoInk Agent 2.4.0 release artwork" src="assets/releases/echoink-agent-2.4.0-release.png">
   </a>
 </p>
 
@@ -9,7 +9,7 @@
 <p align="center">Manage your Obsidian knowledge while your personal agent grows to understand you better.</p>
 
 <p align="center">
-  <a href="#whats-new-in-230">What's New</a> ·
+  <a href="#whats-new-in-240">What's New</a> ·
   <a href="#features">Features</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#quick-start">Quick Start</a> ·
@@ -21,29 +21,26 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Obsidian_Desktop-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: Obsidian Desktop">
-    <img src="https://img.shields.io/badge/version-2.3.0-0EA5E9?style=flat-square" alt="Version 2.3.0">
+    <img src="https://img.shields.io/badge/version-2.4.0-0EA5E9?style=flat-square" alt="Version 2.4.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.0"><strong>Download 2.3.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0"><strong>Download 2.4.0</strong></a>
 </p>
 
 EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations going, organizes and maintains the current vault, stores useful long-term context as visible and correctable memory, and gradually develops its own way of working with you. No Codex CLI installation is required. Connect a supported model service to get started.
 
-## What's new in 2.3.0
+## What's new in 2.4.0
 
-Ask when you need to, and pick up where you left off. This release adds a global quick AI window and Markdown to-dos, with clearer navigation for settings and conversations.
+Follow the connections between your notes.
 
-- **Quick AI window:** While Obsidian runs, open a conversation from another application with a global shortcut. Move the window freely; closing it returns the conversation to the top of the right sidebar with drafts, note references, and generation intact.
-- **Markdown to-dos:** Manage tasks, people, dates, categories, and progress on the homepage. Content lives in `EchoInk/待办.md` and remains directly editable.
-- **Bookmark settings:** Inactive tabs show only icons; the selected tab rises and reveals its name. Layout & appearance has its own page for homepage visibility.
-- **Conversation turn navigator:** Preview and jump to earlier turns along the right edge of a long conversation.
+- **Related reading in Ask:** After finding a note, the model can follow its links and backlinks to read relevant material, choosing what to read next and when to answer.
+- **Context for maintained knowledge:** Maintenance can add subjects, time periods, source types, and applicability conditions to help distinguish projects, versions, and budgeted versus actual figures. Existing notes do not need a fixed set of fields.
+- **Clearer reading progress:** Read passages are distinguished from leads still to explore. Failed reads explain the known cause and are no longer labeled as complete. Failure cards use typography and spacing consistent with other process entries.
 
-Enable **General → Quick AI window**. The default shortcut is **⌘⇧E** on macOS or **Ctrl+Shift+E** on Windows/Linux. The quick window has been verified on macOS; Windows/Linux interaction still needs real-device verification.
-
-Read the [2.3.0 update and usage notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.0). The cover is illustrative; the plugin is the source of truth for UI and data.
+Use `/ask` to ask a question or `/maintain` to organize material. Read the [2.4.0 update and usage notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0). Upgrading does not require vault reinitialization or model reconfiguration. Check source passages and calculations for conclusions involving amounts or ratios. The cover is illustrative.
 
 ## Features
 
@@ -113,7 +110,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.3.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.3.0).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.4.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.0).
 2. Create this directory inside your vault:
 
 ```text
@@ -123,7 +120,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 3. Place the three files in that directory.
 4. Restart Obsidian and enable `EchoInk Agent` under Community plugins.
 
-> **Sync note:** `main.js` in 2.3.0 is about 8.71 MiB, above the 5 MiB per-file limit of Obsidian Sync Standard. Local installation and Community downloads still work, but install or update EchoInk Agent separately on each device, or use a sync method that supports larger files.
+> **Sync note:** `main.js` in 2.4.0 is about 4.75 MiB, below the 5 MiB per-file limit of Obsidian Sync Standard. Whether plugins are synced still depends on your sync settings.
 
 ## Quick start
 
@@ -184,7 +181,7 @@ Open **Settings → EchoInk Agent → Review**:
 ### Upgrading from 2.1.0 or 2.0.3
 
 - Upgrade in place without rebuilding conversations, Knowledge, or long-term memory. Saved Provider and model settings are upgraded automatically.
-- 2.3.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
+- 2.4.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
 - Users who completed the guide may not see it again after upgrading. To replay it, disable and re-enable EchoInk in Community plugins; the completion screen also offers Replay.
 
 ### Upgrading from 1.x

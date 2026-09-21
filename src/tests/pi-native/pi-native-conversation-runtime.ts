@@ -21,6 +21,7 @@ import {
   SessionManager,
   VERSION,
   type AgentSession,
+  type SessionEntry,
   type AgentSessionEvent
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
@@ -36,6 +37,7 @@ import type {
   UserMessage
 } from "@earendil-works/pi-ai";
 import { FileConversationCatalog } from "../../harness/pi-native/file-conversation-catalog";
+import { maintenanceSourceFingerprintsFromEntries } from "../../harness/pi-native/pi-knowledge-maintenance-tool";
 import { createPiLocalConversation } from "../../harness/pi-native/pi-local-data-service";
 import { FileProductRunStore } from "../../harness/pi-native/file-product-run-store";
 import {
@@ -120,6 +122,61 @@ const QUERY_MAINTENANCE_SCOPE = Object.freeze({
   mode: "query" as const,
   candidatePaths: Object.freeze(["raw/a.md"])
 });
+
+export async function runKnowledgeMaintenanceRuntimeTests(): Promise<void> {
+  assertPersistedMaintenanceSourceVersions();
+  await assertNaturalMaintenanceAndCorrection();
+  await assertKnowledgeMaintenanceSettlementRequiresUniqueDurableResult();
+  await assertTrustedKnowledgeMaintenanceResultsSurviveSettlementAndReopen();
+  console.log("Pi maintenance natural completion, corrections, multiple submissions, trailing failure and durable reopen: PASS");
+}
+
+function assertPersistedMaintenanceSourceVersions(): void {
+  const old = `sha256:${"a".repeat(64)}`;
+  const refreshed = `sha256:12:${"b".repeat(64)}`;
+  const entries = [
+    { type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: "raw/a.md", contentRevision: old }] } } },
+    { type: "message", message: { role: "toolResult", toolName: "knowledge_maintain", isError: true, details: { sourceBodyFingerprints: { "raw/a.md": refreshed } } } },
+    { type: "message", message: { role: "toolResult", toolName: "knowledge_read", isError: false, details: { references: [{ vaultRelativePath: "raw/b.md", contentRevision: old }] } } }
+  ] as unknown as SessionEntry[];
+  assert.deepEqual(maintenanceSourceFingerprintsFromEntries(entries), { "raw/a.md": refreshed, "raw/b.md": old });
+}
+
+async function assertNaturalMaintenanceAndCorrection(): Promise<void> {
+  await withFixture(["run-natural", "run-context", "run-corrected", "run-readonly", "run-parameter-error"], async (fixture) => {
+    fixture.configureFactoryTools({ registered: ["vault_search", "note_read", "knowledge_maintain"], defaults: [], planAllowed: [] });
+    const conversationId = "natural-maintenance";
+    await createAndActivateMaintenanceConversation(fixture, conversationId);
+    const natural = await fixture.submit({ conversationId, text: "/maintain", maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md", "raw/unread.md"] }, submittedAt: 3 });
+    fixture.latestSession().finishTool("read-natural", "note_read", { details: { type: "echoink.knowledge-references.v1", schemaVersion: 1, references: [{ vaultRelativePath: "raw/a.md" }] } }, false);
+    fixture.latestSession().finishSuccessful("这篇内容已检查，无需增加知识笔记。");
+    const completed = await natural.result;
+    assert.equal(completed.terminalState, "completed");
+    assert.deepEqual(completed.maintenance?.processedSourcePaths, ["raw/a.md"]);
+    assert.deepEqual(completed.maintenance?.pendingSourcePaths, ["raw/unread.md"]);
+    const context = await fixture.submit({ conversationId, text: "/maintain", maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] }, submittedAt: 4 });
+    fixture.latestSession().finishSuccessful("沿用已提供的正文，无需新增。");
+    assert.equal((await context.result).terminalState, "completed");
+    const corrected = await fixture.submit({ conversationId, text: "/maintain", maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] }, submittedAt: 5 });
+    fixture.latestSession().finishTool("failed-candidate", "knowledge_maintain", { details: { status: "failed", maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: [{ code: "proposal_invalid", message: "bad candidate" }] }) } }, true);
+    fixture.latestSession().finishTool("corrected-candidate", "knowledge_maintain", { details: { status: "completed", processedSourcePaths: ["raw/a.md"], maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }) } }, false);
+    fixture.latestSession().finishSuccessful("已纠正。");
+    assert.equal((await corrected.result).terminalState, "completed");
+    const readonly = await fixture.submit({ conversationId, text: "/maintain", permission: "read-only", maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md", "raw/unread.md"] }, submittedAt: 6 });
+    fixture.latestSession().finishSuccessful("沿用当前内容做只读分析。");
+    const readonlyResult = await readonly.result;
+    assert.equal(readonlyResult.maintenance?.analysisOnly, true);
+    assert.deepEqual(readonlyResult.maintenance?.processedSourcePaths, ["raw/a.md"]);
+    assert.deepEqual(readonlyResult.maintenance?.pendingSourcePaths, ["raw/unread.md"]);
+    const invalid = await fixture.submit({ conversationId, text: "/maintain", maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] }, submittedAt: 7 });
+    fixture.latestSession().finishTool("parameter-error", "knowledge_maintain", { content: [{ type: "text", text: "参数 candidateActions 无效，权限拒绝 api_key=sk-fixture-secret" }] }, true);
+    fixture.latestSession().finishSuccessful("工具未能执行。");
+    assert.equal((await invalid.result).terminalState, "failed");
+    const failed = await fixture.productRuns.read(invalid.productRunId);
+    assert.match(failed?.error ?? "", /参数 candidateActions 无效，权限拒绝/u);
+    assert.doesNotMatch(failed?.error ?? "", /sk-fixture-secret/u);
+  }, { knowledge: maintenanceKnowledgeFixture() });
+}
 
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertWorkspacePermissionsAndLateSources();
@@ -2272,12 +2329,11 @@ Promise<void> {
         );
       }
       session.finishSuccessful("知识维护已完成。");
-      assert.equal((await duplicate.result).terminalState, "failed");
-      assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
-      session = await assertInvalidMaintenanceResultSurvivesReopen(
-        fixture,
-        conversationId
-      );
+      assert.equal((await duplicate.result).terminalState, "completed");
+      assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
+      await fixture.runtime.releaseConversation(conversationId);
+      await fixture.runtime.activateConversation(conversationId);
+      session = fixture.latestSession();
 
       const failedResult = await fixture.submit({
         conversationId,
@@ -2304,7 +2360,7 @@ Promise<void> {
       );
       session.finishSuccessful("知识维护已完成。");
       assert.equal((await failedResult.result).terminalState, "failed");
-      assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
+      assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
 
       const missingTerminal = await fixture.submit({
         conversationId,
@@ -2319,7 +2375,7 @@ Promise<void> {
       );
       session.finishSuccessful("知识维护已完成。");
       assert.equal((await missingTerminal.result).terminalState, "failed");
-      assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
+      assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
       session = await assertInvalidMaintenanceResultSurvivesReopen(
         fixture,
         conversationId
@@ -2357,7 +2413,7 @@ Promise<void> {
         );
         session.finishSuccessful("知识维护已完成。");
         assert.equal((await errorSuccess.result).terminalState, "failed");
-        assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
+        assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
         session = await assertInvalidMaintenanceResultSurvivesReopen(
           fixture,
           conversationId
@@ -2383,7 +2439,7 @@ Promise<void> {
       );
       session.finishSuccessful("知识维护已完成。");
       assert.equal((await malformed.result).terminalState, "failed");
-      assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
+      assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
       session = await assertInvalidMaintenanceResultSurvivesReopen(
         fixture,
         conversationId
@@ -2414,7 +2470,7 @@ Promise<void> {
       );
       session.finishSuccessful("知识维护已完成。");
       assert.equal((await mismatched.result).terminalState, "failed");
-      assert.deepEqual(finalizedProductRunIds, [valid.productRunId]);
+      assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
       await assertInvalidMaintenanceResultSurvivesReopen(
         fixture,
         conversationId,
@@ -2592,7 +2648,9 @@ Promise<void> {
           false
         );
         fixture.latestSession().finishFailed("后续 Agent 回答失败");
-        assert.equal((await handle.result).terminalState, "failed");
+        const completed = await handle.result;
+        assert.equal(completed.terminalState, "completed");
+        assert.match(completed.maintenance?.warnings.join("\n") ?? "", /最后回复未完成/u);
         await assertMaintenanceCardSurvivesReopen({
           fixture,
           conversationId,
@@ -5658,7 +5716,7 @@ class ControlledAgentSession {
       role: "toolResult",
       toolCallId,
       toolName,
-      content: [{ type: "text", text: isError ? "failed" : "completed" }],
+      content: Array.isArray(result.content) ? result.content as Array<{ type: "text"; text: string }> : [{ type: "text", text: isError ? "failed" : "completed" }],
       details: result.details,
       isError,
       timestamp: 250_000 + this.toolSequence
@@ -5900,4 +5958,47 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
     assert.equal((await readonlyMaintain.result).terminalState, "completed");
     assert.equal(finalized, 0, "read-only maintenance does not finalize any content writes");
   }, { knowledge });
+}
+
+export async function runWikiStructurePreflightTests(): Promise<void> {
+  let prepared = 0;
+  let release: (() => void) | undefined;
+  let entered: (() => void) | undefined;
+  let block = false;
+  const knowledge: PiKnowledgeRuntimePort = {
+    async prepareMaintenanceStructure(input) {
+      prepared++;
+      if (block) { entered?.(); await new Promise<void>((resolve) => { release = resolve; }); }
+      input.assertActive();
+      return "DIRECTORY_LAYOUT_READY";
+    },
+    async prepareMaintenancePreferences() { return { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}`, providerResourceText: "preferences" }; },
+    async retrieveAsk() { throw new Error("not used"); },
+    async verifyAskReferences() { return { status: "valid", references: [] }; }
+  };
+  await withFixture([], async (fixture) => {
+    fixture.configureFactoryTools({ registered: ["note_read", "knowledge_maintain"], defaults: ["note_read", "knowledge_maintain"], planAllowed: ["note_read"] });
+    for (const [id, text, permission] of [["read", "/maintain", "read-only"], ["advice", "/maintain 先不要写入", "workspace-write"]] as const) {
+      const handle = await fixture.submit({ conversationId: id, text, permission, submittedAt: 1 });
+      assert.equal(prepared, 0, "read-only and advice-only must not invoke structural preflight");
+      fixture.latestSession().finishSuccessful("建议");
+      assert.equal((await handle.result).terminalState, "completed");
+    }
+    const writable = await fixture.submit({ conversationId: "write", text: "/maintain", maintenanceScope: { mode: "global" }, permission: "workspace-write", submittedAt: 2 });
+    assert.equal(prepared, 1);
+    const turn = fixture.latestSession().knowledgeTurnsBeforeUserEntryAppend.at(-1);
+    assert.equal(turn?.kind, "maintain");
+    if (turn?.kind === "maintain") assert.match(turn.command.preference.providerResourceText, /DIRECTORY_LAYOUT_READY/u);
+    fixture.latestSession().finishSuccessful("No tool result in this fixture");
+    await writable.result;
+    block = true;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const submitting = fixture.submit({ conversationId: "cancel-before-name", text: "/maintain", maintenanceScope: { mode: "global" }, permission: "workspace-write", submittedAt: 3 });
+    const rejection = assert.rejects(submitting, /维护已取消/u);
+    await started;
+    await fixture.runtime.abort("cancel-before-name");
+    release?.();
+    await rejection;
+  }, { knowledge });
+  console.log("Production runtime structural preflight order, read-only, advice and cancellation: PASS");
 }
