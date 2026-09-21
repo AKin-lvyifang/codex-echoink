@@ -2613,6 +2613,11 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   assertSettingsToggleAccessibleName(tab.containerEl, "生成后打开 HTML");
   assert.ok(Array.from(tab.containerEl.querySelectorAll("button"))
     .some((candidate) => candidate.textContent === "选择"));
+  const autoArchive = tab.containerEl.querySelector<HTMLSelectElement>('[aria-label="自动归档"]');
+  assert.ok(autoArchive, "automatic archive belongs to Review settings");
+  assert.deepEqual(Array.from(autoArchive.querySelectorAll("option")).map(option => option.value), ["0", "7", "14", "30", "90"]);
+  assert.equal(autoArchive.value, "0");
+  assert.ok(tab.containerEl.textContent.indexOf("自动归档") < tab.containerEl.textContent.indexOf("已归档会话"), "automatic archive precedes archived conversations");
   assert.match(tab.containerEl.textContent, /已归档会话/u);
   assert.match(tab.containerEl.textContent, /记忆修正/u);
   assert.doesNotMatch(tab.containerEl.textContent, /最近报告|打开最近 HTML/u);
@@ -2865,6 +2870,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   tab.display();
   await settleMicrotasks();
   tab.display();
+  assert.equal(tab.containerEl.querySelector('[aria-label="自动归档"]'), null, "Knowledge settings must not expose conversation automatic archive");
   const dashboardControl = tab as unknown as {
     knowledgeDashboardSnapshot: typeof dashboardSnapshot | null;
     refreshKnowledgeSettingsDashboard(force?: boolean): Promise<void>;
@@ -13046,7 +13052,10 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "document-transport") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "archive-placement") {
+  await assertSettingsAccessibleNamesAndOverflow();
+  console.log("PASS automatic archive appears only in Review before archived conversations, with unchanged options/default");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "document-transport") {
   await assertAnthropicDocumentTransportContract();
   console.log("PASS native PDF rejection -> frozen text fallback and tool continuation; non-fallback failures remain failures");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "visual") {

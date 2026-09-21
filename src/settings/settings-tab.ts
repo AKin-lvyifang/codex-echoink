@@ -2371,19 +2371,6 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     management.addClass("standard-section");
     const managementGroup = createSettingsGroup(management);
-    applySettingsRow(new OriginSetting(managementGroup)
-      .setName(zh ? "自动归档" : "Automatically archive")
-      .setDesc(zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below.")
-      .addOriginDropdown(this.app, dropdown => {
-        dropdown.selectEl.setAttr("aria-label", zh ? "自动归档" : "Automatically archive");
-        dropdown.addOption("0", zh ? "关闭" : "Off");
-        for (const days of [7, 14, 30, 90]) dropdown.addOption(String(days), zh ? `${days} 天` : `${days} days`);
-        dropdown.setValue(String(this.plugin.settings.autoArchiveDays));
-        dropdown.onChange(async value => {
-          this.plugin.settings.autoArchiveDays = normalizeAutoArchiveDays(Number(value));
-          await this.plugin.saveSettings();
-        });
-      }));
     managementGroup.addClass("settings-card");
     createSettingsNavigationRow(managementGroup, {
       title: zh ? "知识提炼偏好" : "Knowledge refinement preferences",
@@ -2651,6 +2638,19 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: "group"
     });
     const managementGroup = createSettingsGroup(management);
+    applySettingsRow(new OriginSetting(managementGroup)
+      .setName(zh ? "自动归档" : "Automatically archive")
+      .setDesc(zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below.")
+      .addOriginDropdown(this.app, dropdown => {
+        dropdown.selectEl.setAttr("aria-label", zh ? "自动归档" : "Automatically archive");
+        dropdown.addOption("0", zh ? "关闭" : "Off");
+        for (const days of [7, 14, 30, 90]) dropdown.addOption(String(days), zh ? `${days} 天` : `${days} days`);
+        dropdown.setValue(String(this.plugin.settings.autoArchiveDays));
+        dropdown.onChange(async value => {
+          this.plugin.settings.autoArchiveDays = normalizeAutoArchiveDays(Number(value));
+          await this.plugin.saveSettings();
+        });
+      }));
     createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
       description: zh
