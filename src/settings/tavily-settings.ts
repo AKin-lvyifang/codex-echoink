@@ -1,7 +1,7 @@
 import { setIcon } from "obsidian";
 import { createOriginButton, createOriginInput, createOriginSwitch } from "./origin-controls";
 import { applyAmicroButton } from "./amicro-buttons";
-import { createSettingsSection, createSettingsState } from "./settings-v2";
+import { createSettingsGroup, createSettingsSection, createSettingsState } from "./settings-v2";
 import { searchTavily, tavilyErrorMessage, TavilyError, type TavilySettings } from "../tools/tavily-search";
 
 export function renderTavilySettings(parent: HTMLElement, host: {
@@ -36,7 +36,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   actions.createSpan({ cls: "settings-note", text: label("执行一次搜索，消耗 1 积分", "Runs one search and uses 1 credit") });
   const state = card.createDiv({ cls: "echoink-tavily-state" });
   const show = (text: string, tone: "error" | "success" | "neutral" = "neutral") => { state.empty(); createSettingsState(state, text, tone); };
-  const row = card.createDiv({ cls: "setting-item echoink-settings-row setting-row" });
+  const row = createSettingsGroup(card).createDiv({ cls: "setting-item echoink-settings-row setting-row" });
   const copy = row.createDiv({ cls: "setting-item-info setting-copy" });
   copy.createDiv({ cls: "setting-item-name", text: label("联网搜索", "Web search") });
   copy.createDiv({ cls: "setting-item-description", text: label("开启后，模型可按需搜索网页；关闭后从下一轮移除搜索工具。", "Allow the model to search when needed. Turning this off removes search from the next turn.") });

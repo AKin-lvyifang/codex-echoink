@@ -21378,7 +21378,7 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-settings-demo .echoink-tavily-card > .echoink-settings-section-header,
 .echoink-settings-demo .echoink-tavily-card > .settings-note { margin: 0; }
 .echoink-tavily-state:empty { display: none; }
-.echoink-settings-demo .echoink-tavily-card > .setting-row { padding: 0; }
+.echoink-settings-demo .echoink-tavily-card > .settings-stack > .setting-row { padding: 0; }
 .echoink-tavily-links, .echoink-tavily-test { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .echoink-tavily-key-label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
 .echoink-tavily-key-control { display: flex; gap: 8px; min-width: 0; }
