@@ -2497,6 +2497,7 @@ function toolItemType(toolName: string, args: unknown, result: unknown): string 
 }
 
 function exactPiToolDisplayTitle(toolName: string): string | undefined {
+  if (normalizedToolName(toolName) === "web_search") return "网页搜索 · Tavily";
   return normalizedToolName(toolName) === "memory_write"
     ? "写入个人记忆"
     : undefined;

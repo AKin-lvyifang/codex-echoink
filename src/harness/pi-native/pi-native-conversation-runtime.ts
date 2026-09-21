@@ -363,6 +363,7 @@ export interface PiNativeAgentSessionFactoryResult {
   memoryToolNames?: readonly string[];
   /** Existing authorized read-only external Tools that `/ask` may use for freshness checks. */
   externalReadToolNames?: readonly string[];
+  isToolCurrentlyEnabled?: (name: string) => boolean;
   warnings?: readonly string[];
 }
 
@@ -650,6 +651,7 @@ interface ActiveConversation {
   planToolNames: readonly string[];
   memoryToolNames: readonly string[];
   externalReadToolNames: readonly string[];
+  isToolCurrentlyEnabled?: (name: string) => boolean;
   registeredToolNames: ReadonlySet<string>;
   sessionManager: SessionManager;
   session: AgentSession;
@@ -1865,7 +1867,7 @@ export class PiNativeConversationRuntime {
       externalReadToolNames: active.externalReadToolNames,
       requiresFreshnessVerification:
         active.currentRun?.requiresFreshnessVerification === true
-    });
+    }).filter(name => active.isToolCurrentlyEnabled?.(name) !== false);
     if (mode === "plan") {
       if (
         names.length === 0
@@ -1901,7 +1903,7 @@ export class PiNativeConversationRuntime {
       active.currentExecution = null;
     }
     active.knowledgeTurnContext = null;
-    active.session.setActiveToolsByName([...active.defaultToolNames]);
+    active.session.setActiveToolsByName(active.defaultToolNames.filter(name => active.isToolCurrentlyEnabled?.(name) !== false));
     execution.settlementBarrier.resolve();
     if (active.pendingSettlement === execution) {
       active.pendingSettlement = null;
@@ -2765,6 +2767,7 @@ export class PiNativeConversationRuntime {
       sessionManager: opened.sessionManager,
       session: created.session,
       defaultToolNames: Object.freeze(created.session.getActiveToolNames()),
+      isToolCurrentlyEnabled: created.isToolCurrentlyEnabled,
       planToolNames: Object.freeze([
         ...(created.planToolNames ?? [])
       ]),

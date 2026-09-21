@@ -12970,6 +12970,7 @@ function dataAttributeKey(name: string): string {
 function withSettingsTabDefaults<T extends object>(plugin: T) {
   return {
     register: () => undefined,
+    onConversationCatalogChanged: () => () => undefined,
     getEchoInkKnowledgeInitializationState: async () => null,
     getEchoInkKnowledgeBaseStructure: async () =>
       makeKnowledgeBaseStructureFixture("uninitialized"),

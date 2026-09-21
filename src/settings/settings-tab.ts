@@ -1,3 +1,4 @@
+import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
 import { renderTodoStatistics } from "./todo-statistics";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { OriginSetting } from "./origin-setting";
@@ -70,6 +71,7 @@ import {
   getDefaultApiProviderModel,
   newId,
   normalizeReviewOutputDir,
+  normalizeAutoArchiveDays,
   normalizeSettingsLanguage,
   validateApiProvider,
   type ApiProviderConfig,
@@ -260,6 +262,10 @@ export class CodexSettingTab extends PluginSettingTab {
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
+    plugin.register(plugin.onConversationCatalogChanged(() => {
+      this.archivedConversations = null;
+      if (this.settingsDetail === "review-archives") void this.loadArchivedConversations(true);
+    }));
     this.plugin.register(() => this.disposeSettingsView());
     this.resourceSnapshot = snapshotFromWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache);
     this.resourceLoaded = loadedTabsFromWorkspaceResourceCache(this.plugin.settings.workspaceResourceCache);
@@ -2365,6 +2371,19 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     management.addClass("standard-section");
     const managementGroup = createSettingsGroup(management);
+    applySettingsRow(new OriginSetting(managementGroup)
+      .setName(zh ? "自动归档" : "Automatically archive")
+      .setDesc(zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below.")
+      .addOriginDropdown(this.app, dropdown => {
+        dropdown.selectEl.setAttr("aria-label", zh ? "自动归档" : "Automatically archive");
+        dropdown.addOption("0", zh ? "关闭" : "Off");
+        for (const days of [7, 14, 30, 90]) dropdown.addOption(String(days), zh ? `${days} 天` : `${days} days`);
+        dropdown.setValue(String(this.plugin.settings.autoArchiveDays));
+        dropdown.onChange(async value => {
+          this.plugin.settings.autoArchiveDays = normalizeAutoArchiveDays(Number(value));
+          await this.plugin.saveSettings();
+        });
+      }));
     managementGroup.addClass("settings-card");
     createSettingsNavigationRow(managementGroup, {
       title: zh ? "知识提炼偏好" : "Knowledge refinement preferences",
@@ -3521,18 +3540,33 @@ export class CodexSettingTab extends PluginSettingTab {
     });
   }
 
+  private providerSubTab: "models" | "tools" = "models";
+
   private renderProviderModelManager(container: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const label = (chinese: string, english: string) => zh ? chinese : english;
-    const wrapper = createSettingsPage(container, {
+    const page = createSettingsPage(container, {
       title: label("模型与提供商", "Models and providers"),
       description: label(
         "管理 EchoInk 使用的 Provider 和模型。每个 Provider 可启用多个模型，指定其中一个作为默认。",
         "Manage EchoInk's providers and models. Enable multiple models per provider and choose one as the default."
       )
     });
-    wrapper.addClass("codex-provider-model-manager");
-    this.renderSettingsActionError(wrapper, "providers");
+    page.addClass("codex-provider-model-manager");
+    this.renderSettingsActionError(page, "providers");
+    const wrapper = renderProviderTabs(page, this.providerSubTab, !zh, (tab, focus) => {
+      this.providerSubTab = tab;
+      disposeOriginControls(container);
+      container.empty();
+      this.renderProviderModelManager(container);
+      const active = container.querySelector<HTMLElement>(`#echoink-provider-tab-${tab}`);
+      if (focus) active?.focus();
+      active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    if (this.providerSubTab === "tools") {
+      renderTavilySettings(wrapper, this.plugin);
+      return;
+    }
 
     const savedSection = wrapper.createDiv({ cls: "codex-provider-saved-section settings-card provider-list-card" });
     const addSection = savedSection.createDiv({

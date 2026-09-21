@@ -1,0 +1,12 @@
+import esbuild from "esbuild";
+import {mkdir,writeFile,readFile} from "node:fs/promises";
+import path from "node:path";
+const dir = '.tmp/tavily-ui'; await mkdir(dir,{recursive:true});
+await esbuild.build({entryPoints:['src/tests/tavily-settings-dom.ts'],bundle:true,format:'esm',platform:'browser',outfile:`${dir}/preview.js`,define:{'process.env.NODE_ENV':'"production"'},
+plugins:[{name:'obsidian-browser-fixture',setup(build){build.onResolve({filter:/^obsidian$/},()=>({path:'fixture',namespace:'host'}));build.onLoad({filter:/.*/,namespace:'host'},()=>({contents:'export {Scope} from "./src/tests/origin-obsidian-dom-shim"; export class Setting{}; export function setIcon(el,name){el.textContent = name === "eye" ? "◉" : "◎";} export async function requestUrl(){throw new Error("No live requests in fixture");}',resolveDir:process.cwd(),loader:'js'}));}}]});
+await writeFile(`${dir}/styles.css`,await readFile('styles.css'));
+await writeFile(`${dir}/index.html`, `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tavily settings checks</title><link rel="stylesheet" href="styles.css"><style>
+:root{--background-primary:#fff;--background-secondary:#f7f7f9;--background-modifier-border:#e6e7eb;--text-normal:#303238;--text-muted:#73767e;--text-faint:#9699a0;--interactive-accent:#7860b3;--interactive-normal:#f7f7f9;--text-on-accent:#fff;--input-radius:6px;--input-height:30px;--font-interface:system-ui;--font-text-size:14px;--text-error:#bb3333;--text-success:#287644}
+body{font-family:system-ui;margin:0;padding:20px;background:var(--background-primary);color:var(--text-normal)}body.theme-dark{--background-primary:#202124;--background-secondary:#292b30;--background-modifier-border:#42454b;--text-normal:#e5e6ea;--text-muted:#a4a7b0;--interactive-normal:#292b30}a{color:var(--interactive-accent)}.setting-item{display:flex;align-items:center;gap:16px}.setting-item-info{flex:1}.setting-item-control{display:flex}#fixture{max-width:800px;margin:auto}#report{white-space:pre-wrap;font-size:11px}.echoink-settings-demo{container-type:inline-size}
+</style><pre id="report">Running…</pre><main id="fixture" class="echoink-settings-demo"><div class="codex-settings-body" id="content"></div></main><script type="module" src="preview.js"></script></html>`);
+console.log(`Preview built in ${path.resolve(dir)}`);

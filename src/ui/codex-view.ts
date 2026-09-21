@@ -716,6 +716,12 @@ export class CodexView extends ItemView {
     this.focusInput();
   }
 
+  isConversationInUse(id: string): boolean {
+    return this.plugin.settings.activeSessionId === id
+      || this.runningSessionIds.has(id) || this.turnQueue.hasQueuedItems(id);
+  }
+  refreshAfterAutomaticArchive(): void { this.renderTabs(); }
+
   async refreshPiConversationCatalog(): Promise<void> {
     await refreshPiConversationShellsAction(this.sessionHost());
     this.refreshActiveSession();

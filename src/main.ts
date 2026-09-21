@@ -1,3 +1,4 @@
+import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { knowledgeRolePath } from "./knowledge-base/root-paths";
 import { HomeActivityService } from "./home/home-activity-service";
 import * as fsp from "node:fs/promises";
@@ -174,6 +175,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   private todoStore: EchoInkTodoStore | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
+  private autoArchive: ConversationAutoArchive | null = null;
+  private readonly conversationCatalogListeners = new Set<() => void>();
   private pendingSettingsResourceDetailId = "";
   private pendingKnowledgeDashboardFocus = false;
   private mcpBrokerService: EchoInkMcpBrokerService | null = null;
@@ -242,6 +245,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       activity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     });
     await this.initializePiLocalData();
+    this.initializeAutoArchive();
     // Cognitive main-chain (personality / dreaming / secondary facts): start the
     // scheduler as soon as local data is ready; failures never block the plugin.
     void this.getCognitiveSystem().catch((error) => {
@@ -265,6 +269,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async performUnload(): Promise<void> {
+    await this.autoArchive?.dispose();
+    this.autoArchive = null;
     this.quickChatWindow?.dispose();
     this.quickChatWindow = null;
     const activity = this.homeActivity;
@@ -852,6 +858,45 @@ export default class CodexForObsidianPlugin extends Plugin {
           defaultMemoryMode
         );
   }
+  onConversationCatalogChanged(listener: () => void): () => void {
+    this.conversationCatalogListeners.add(listener);
+    return () => { this.conversationCatalogListeners.delete(listener); };
+  }
+  private isAutoArchiveProtected(id: string): boolean {
+    if (this.piSubmittingConversations.has(id)
+      || this.piConversationActivationTasks.has(id) || [...this.piRunConversations.values()].includes(id)) return true;
+    return this.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX).some(leaf =>
+      leaf.view instanceof CodexView && leaf.view.isConversationInUse(id));
+  }
+  private initializeAutoArchive(): void {
+    if (this.autoArchive || !this.piLocalData) return;
+    const data = this.piLocalData;
+    this.autoArchive = new ConversationAutoArchive({
+      days: () => this.settings.autoArchiveDays,
+      list: () => data.listConversations(["active"]),
+      activity: async id => {
+        const [entry, runs, drafts] = await Promise.all([data.catalog.get(id), data.productRuns.list(id), data.catalog.drafts(id)]);
+        return { updatedAt: runs.reduce((latest, run) => Math.max(latest, run.updatedAt), entry?.updatedAt ?? 0), hasDrafts: drafts.length > 0 || entry?.status !== "active" };
+      },
+      isProtected: id => this.isAutoArchiveProtected(id),
+      archive: async id => {
+        if (this.isAutoArchiveProtected(id) || !this.settings.autoArchiveDays) return;
+        await this.setPiConversationStatus(id, "archived");
+        this.settings.sessions = this.settings.sessions.filter(session => session.id !== id);
+        if (this.settings.activeSessionId === id) this.settings.activeSessionId = this.settings.sessions[0]?.id ?? "";
+      },
+      changed: async () => {
+        await this.saveSettings(true, { flushConversationStore: false });
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
+          if (leaf.view instanceof CodexView) leaf.view.refreshAfterAutomaticArchive();
+        }
+        for (const listener of this.conversationCatalogListeners) listener();
+      },
+      onError: () => console.warn("EchoInk automatic archive could not complete; it will retry next hour.")
+    });
+    this.autoArchive.configure();
+    this.register(() => { void this.autoArchive?.dispose(); });
+  }
   async setPiConversationStatus(
     conversationId: string,
     status: PiConversationCatalogStatus
@@ -1365,7 +1410,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     return pluginInstallDir(this.manifest, this.app.vault.configDir);
   }
   async loadSettings(): Promise<Readonly<SettingsLoadResult>> { return this.getSettingsStore().loadSettings(); }
-  async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> { return this.getSettingsStore().saveSettings(force, options); }
+  async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
+    await this.getSettingsStore().saveSettings(force, options);
+    this.autoArchive?.configure();
+  }
   async persistPiNativeSettings(): Promise<void> {
     await this.getSettingsStore().saveSettings(true, {
       flushConversationStore: false

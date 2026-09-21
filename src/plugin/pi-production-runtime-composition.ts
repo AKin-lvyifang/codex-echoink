@@ -1,3 +1,4 @@
+import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
 import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
@@ -1867,10 +1868,12 @@ async function createProductionAgentSession(input: {
     egress: new EchoInkVaultToolEgressPolicy()
   });
   const mcpSnapshot = await discoverPiMcpTools(input, mcpSecurity);
+  const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily);
   const security = createPiVaultToolSecurityAdapter({
     isToolAllowed: (toolName) => {
       const access = input.input.currentWorkspaceAccess?.();
       if (!access) return false;
+      if (toolName === WEB_SEARCH_TOOL_NAME && !webSearchSecurity.available()) return false;
       if (!configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some((name) => name === toolName)) return false;
       return piWorkspaceAllowsTool({
         ...access,
@@ -1879,7 +1882,7 @@ async function createProductionAgentSession(input: {
         toolName,
         planToolNames,
         memoryToolNames: PI_PERSONAL_MEMORY_TOOL_IDS,
-        externalReadToolNames: mcpSnapshot.toolSecurity.filter((tool) => tool.readOnly).map((tool) => tool.name)
+        externalReadToolNames: [WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity.filter((tool) => tool.readOnly).map((tool) => tool.name)]
       });
     },
     authorization,
@@ -1890,6 +1893,7 @@ async function createProductionAgentSession(input: {
     },
     additionalToolSecurity: maintenanceSecurity,
     additionalToolSecurities: [
+      webSearchSecurity,
       mcpSecurity,
       taskPlanSecurity,
       userQuestionSecurity,
@@ -2016,7 +2020,7 @@ async function createProductionAgentSession(input: {
       ? [input.input.skillPath]
       : [...(input.input.skillPaths ?? [])],
     systemPrompt: buildEchoInkRuntimeSystemPrompt(),
-    appendSystemPrompt: [],
+    appendSystemPrompt: [WEB_SEARCH_INSTRUCTIONS],
     inlineExtension
   });
   const loadedSkills = resourceLoader.getSkills();
@@ -2044,6 +2048,7 @@ async function createProductionAgentSession(input: {
   }
 
   const registeredTools = [
+    createWebSearchTool(webSearchSecurity),
     ...vaultTools,
     ...obsidianTools,
     maintenanceTool,
@@ -2103,6 +2108,7 @@ async function createProductionAgentSession(input: {
     ...toolRegistration
   });
   created.session.setActiveToolsByName([
+    WEB_SEARCH_TOOL_NAME,
     ...PI_VAULT_TOOL_IDS,
     ...PI_OBSIDIAN_TOOL_IDS,
     maintenanceTool.name,
@@ -2113,6 +2119,7 @@ async function createProductionAgentSession(input: {
     ...mcpSnapshot.toolNames
   ]);
   const planToolNames = [
+    WEB_SEARCH_TOOL_NAME,
     "vault_search",
     "note_read",
     ...PI_OBSIDIAN_TOOL_IDS,
@@ -2134,14 +2141,15 @@ async function createProductionAgentSession(input: {
     .map((warning) => redactEchoInkLocalSecretsV1(warning));
   return {
     providerSettingsId: configured.provider.id,
+    isToolCurrentlyEnabled: (name) => name !== WEB_SEARCH_TOOL_NAME || webSearchSecurity.available(),
     session: created.session,
     memoryToolNames: configured.toolCalling
       ? PI_PERSONAL_MEMORY_TOOL_IDS
       : Object.freeze([]),
     planToolNames: Object.freeze(planToolNames),
-    externalReadToolNames: Object.freeze(mcpSnapshot.toolSecurity
+    externalReadToolNames: Object.freeze([WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity
       .filter((descriptor) => descriptor.readOnly)
-      .map((descriptor) => descriptor.name)),
+      .map((descriptor) => descriptor.name)]),
     ...(skillCommandName ? { skillCommandName } : {}),
     ...(skillPromptPrefix ? { skillPromptPrefix } : {}),
     ...(warnings.length ? { warnings } : {})

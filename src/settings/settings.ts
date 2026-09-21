@@ -1,3 +1,4 @@
+import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-search";
 import { normalizeTodoCompletions, type TodoCompletionHistory } from "../home/todo-completions";
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
 import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
@@ -489,6 +490,8 @@ export interface CodexForObsidianSettings {
   proxyUrl: string;
   proxyEndpoint: string;
   proxyCredentialRef: string;
+  tavily: TavilySettings;
+  autoArchiveDays: 0 | 7 | 14 | 30 | 90;
   providerMode: ProviderMode;
   activeApiProviderId: string;
   apiProviders: ApiProviderConfig[];
@@ -530,6 +533,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   proxyUrl: "http://127.0.0.1:7890",
   proxyEndpoint: "",
   proxyCredentialRef: "",
+  tavily: { enabled: false, apiKey: "" },
+  autoArchiveDays: 0,
   providerMode: "custom-api",
   activeApiProviderId: "",
   apiProviders: [createDefaultApiProvider()],
@@ -647,6 +652,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     productGeneration: DEFAULT_SETTINGS.productGeneration,
     settingsLanguage: normalizedLanguage,
     settingsTab: normalizeSettingsTab(data?.settingsTab),
+    tavily: normalizeTavilySettings(data.tavily),
+    autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
@@ -3031,4 +3038,8 @@ function isEchoInkResourceLike(value: unknown): value is EchoInkResourceSettings
 
 function settingsRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function normalizeAutoArchiveDays(value: unknown): 0 | 7 | 14 | 30 | 90 {
+  return value === 7 || value === 14 || value === 30 || value === 90 ? value : 0;
 }

@@ -21370,3 +21370,19 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-home-workspace .todo-progress-fill{display:block;height:100%;border-radius:999px;background:var(--secondary);transition:width .2s ease}
 .echoink-home-workspace .todo-progress-count{font-size:calc(var(--font-text-size,16px)*.6875);color:var(--secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
 /* ===== ECHOINK_TODO_V12_END ===== */
+
+/* Provider tools share the resource navigation and settings surfaces. */
+.echoink-provider-tabs { margin-bottom: 20px; }
+.echoink-provider-panel, .echoink-tavily-card { min-width: 0; }
+.echoink-tavily-card { display: flex; flex-direction: column; gap: 14px; }
+.echoink-settings-demo .echoink-tavily-card > .echoink-settings-section-header,
+.echoink-settings-demo .echoink-tavily-card > .settings-note { margin: 0; }
+.echoink-tavily-state:empty { display: none; }
+.echoink-settings-demo .echoink-tavily-card > .setting-row { padding: 0; }
+.echoink-tavily-links, .echoink-tavily-test { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.echoink-tavily-key-label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+.echoink-tavily-key-control { display: flex; gap: 8px; min-width: 0; }
+.echoink-tavily-key-control input { flex: 1; min-width: 0; width: 100%; }
+.echoink-tavily-key-control button { flex: 0 0 auto; }
+.echoink-tavily-test .settings-note { margin: 0; }
+.echoink-tavily-card .setting-item-control { flex-shrink: 0; }
