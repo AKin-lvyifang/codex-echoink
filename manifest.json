@@ -1,7 +1,7 @@
 {
   "id": "codex-echoink",
   "name": "EchoInk Agent",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "minAppVersion": "1.11.4",
   "description": "A personal knowledge agent that manages your vault, builds editable memory, and grows to understand you better. Connect to OpenAI or compatible providers with your own API key.",
   "author": "AKin-lvyifang",
