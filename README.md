@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.4.1 release artwork" src="assets/releases/echoink-agent-2.4.1-release.png">
+    <img width="1024" alt="EchoInk Agent 2.5.0 release artwork" src="assets/releases/echoink-agent-2.5.0-release.png">
   </a>
 </p>
 
@@ -9,7 +9,7 @@
 <p align="center">Manage your Obsidian knowledge while your personal agent grows to understand you better.</p>
 
 <p align="center">
-  <a href="#whats-new-in-241">What's New</a> ·
+  <a href="#whats-new-in-250">What's New</a> ·
   <a href="#features">Features</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#quick-start-desktop">Quick Start</a> ·
@@ -21,27 +21,27 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: desktop and mobile Beta">
-    <img src="https://img.shields.io/badge/version-2.4.1-0EA5E9?style=flat-square" alt="Version 2.4.1">
+    <img src="https://img.shields.io/badge/version-2.5.0-0EA5E9?style=flat-square" alt="Version 2.5.0">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1"><strong>Download 2.4.1</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0"><strong>Download 2.5.0</strong></a>
 </p>
 
 EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations going, organizes and maintains the current vault, stores useful long-term context as visible and correctable memory, and gradually develops its own way of working with you. No Codex CLI installation is required. Connect a supported model service to get started.
 
-## What's new in 2.4.1
+## What's new in 2.5.0
 
-Take your thoughts with you. **Mobile is now available as a Beta**, while computers keep the existing desktop interface and features.
+**Web search and automatic conversation archiving arrive on desktop.** Ask EchoInk to look up web sources, and keep inactive conversations out of the active list on a schedule you choose.
 
-- **Chat on your phone:** Connect an API-key Provider using OpenAI Chat Completions or Responses, choose a model, and start a conversation. Replies appear once the complete response has arrived.
-- **Work with Markdown:** Find and read notes in the current vault, then ask EchoInk to save a new Markdown note. Existing files with the same name are not overwritten.
-- **Keep useful local memory:** Save and recall memory across mobile conversations, and view, edit, or forget individual entries. Local history and memory management remain available without a configured Provider.
-- **Make the welcome your own:** Change the welcome title and greeting in General settings. Turning customization off restores the default text and keeps your saved wording.
+- **Search the web and follow sources:** Enter your Tavily API key under **API Provider → tool 工具** (Tools), test the connection, and enable web search. The model can search when a question calls for it and answer using the returned links.
+- **Configure models and tools separately:** The Provider page now separates model APIs from tool APIs. Search uses its own Tavily key, so you can keep your existing chat model.
+- **Archive older conversations automatically:** Choose 7, 14, 30, or 90 days under **Review → Management → Automatic archiving**. Conversations in use are skipped, and archived conversations can be restored. It is off by default and needs no model or API key.
+- **Use settings in a narrow window:** Tavily descriptions and the search switch now stay aligned in smaller settings windows.
 
-The same plugin package selects the mobile interface on a phone and the existing desktop interface on a computer. This Beta focuses on iOS; Android uses the same mobile entry and is open to experimental testing. **Neither iOS nor Android has completed real-device validation.** The cover uses a Demo screen for illustration; not every module shown in the Demo is available. Read the [2.4.1 release notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1).
+Web search and automatic archiving are desktop-only in this release. Mobile retains its existing Beta features; real iOS and Android device validation is not complete. Tavily requires a separate account and API key. Each connection test makes one basic search and consumes 1 credit; quotas and pricing follow [Tavily's current policy](https://docs.tavily.com/documentation/api-credits). Read the [2.5.0 release notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0).
 
 ## Features
 
@@ -113,7 +113,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.4.1 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.4.1).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.5.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0).
 2. Create this directory inside your vault:
 
 ```text
@@ -190,7 +190,7 @@ Open **Settings → EchoInk Agent → Review**:
 ### Upgrading from 2.1.0 or 2.0.3
 
 - Upgrade in place without rebuilding conversations, Knowledge, or long-term memory. Saved Provider and model settings are upgraded automatically.
-- 2.4.1 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
+- 2.5.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
 - Users who completed the guide may not see it again after upgrading. To replay it, disable and re-enable EchoInk in Community plugins; the completion screen also offers Replay.
 
 ### Upgrading from 1.x
@@ -206,6 +206,7 @@ Open **Settings → EchoInk Agent → Review**:
 - API keys, Provider configuration, and OpenAI Codex Beta sign-in credentials are stored in plugin settings for the current vault. Configure them only on trusted devices and in trusted vaults.
 - On desktop, a local workspace selected for a conversation can be outside the current vault. The composer's file access can be Read only, Workspace write, or Full access. Full access removes the workspace boundary and should be used only for trusted tasks. EchoInk also reads outside-vault attachments only when you explicitly select, drag, or paste them.
 - Remote Providers receive the prompt, conversation, Knowledge, memory, notes, attachments, and tool results required for the current request. EchoInk does not upload the entire vault or workspace by default.
+- Desktop Tavily web search is off by default. When enabled, search queries are sent to Tavily (`api.tavily.com`), and returned snippets and links go to the current model for its answer. Queries may include content from your current question. Connection tests also send one public query to Tavily and consume credits. The Tavily key is stored in local plugin settings; service terms, quotas, and pricing follow [Tavily](https://www.tavily.com/).
 - Custom Providers and MCP connections are also subject to the policies of their services, servers, and commands. Configure only services and local commands you trust.
 - EchoInk has no telemetry service of its own.
 

@@ -44,9 +44,12 @@ export async function searchTavily(input: {
     if (response.status < 200 || response.status >= 300) throw new TavilyError("network");
     const body = response.json as { results?: unknown } | null;
     if (!body || !Array.isArray(body.results)) throw new TavilyError("invalid_response");
+    const rows: unknown[] = body.results;
     const results: WebSearchResult[] = [];
-    for (const row of body.results.slice(0, input.maxResults ?? 5)) {
-      if (!row || typeof row !== "object" || typeof row.url !== "string" || typeof row.title !== "string" || typeof row.content !== "string") throw new TavilyError("invalid_response");
+    for (const value of rows.slice(0, input.maxResults ?? 5)) {
+      if (!value || typeof value !== "object") throw new TavilyError("invalid_response");
+      const row = value as Record<string, unknown>;
+      if (typeof row.url !== "string" || typeof row.title !== "string" || typeof row.content !== "string") throw new TavilyError("invalid_response");
       let url: URL;
       try { url = new URL(row.url); } catch { throw new TavilyError("invalid_response"); }
       if (!["https:", "http:"].includes(url.protocol)) continue;
