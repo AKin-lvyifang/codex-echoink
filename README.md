@@ -9,7 +9,7 @@
 <p align="center">Manage your Obsidian knowledge while your personal agent grows to understand you better.</p>
 
 <p align="center">
-  <a href="#whats-new-in-250">What's New</a> ·
+  <a href="#whats-new-in-251">What's New</a> ·
   <a href="#features">Features</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#quick-start-desktop">Quick Start</a> ·
@@ -21,18 +21,20 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="Platform: desktop and mobile Beta">
-    <img src="https://img.shields.io/badge/version-2.5.0-0EA5E9?style=flat-square" alt="Version 2.5.0">
+    <img src="https://img.shields.io/badge/version-2.5.1-0EA5E9?style=flat-square" alt="Version 2.5.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT License">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0"><strong>Download 2.5.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1"><strong>Download 2.5.1</strong></a>
 </p>
 
 EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations going, organizes and maintains the current vault, stores useful long-term context as visible and correctable memory, and gradually develops its own way of working with you. No Codex CLI installation is required. Connect a supported model service to get started.
 
-## What's new in 2.5.0
+## What's new in 2.5.1
+
+**Fixed Codex chat connectivity.** Fixed an issue where desktop OpenAI Codex Beta could report a network interruption when sending messages after authorization and model setup. All other features remain as in 2.5.0.
 
 **Web search and automatic conversation archiving arrive on desktop.** Ask EchoInk to look up web sources, and keep inactive conversations out of the active list on a schedule you choose.
 
@@ -41,7 +43,7 @@ EchoInk Agent is a personal knowledge agent for Obsidian. It keeps conversations
 - **Archive older conversations automatically:** Choose 7, 14, 30, or 90 days under **Review → Management → Automatic archiving**. Conversations in use are skipped, and archived conversations can be restored. It is off by default and needs no model or API key.
 - **Use settings in a narrow window:** Tavily descriptions and the search switch now stay aligned in smaller settings windows.
 
-Web search and automatic archiving are desktop-only in this release. Mobile retains its existing Beta features; real iOS and Android device validation is not complete. Tavily requires a separate account and API key. Each connection test makes one basic search and consumes 1 credit; quotas and pricing follow [Tavily's current policy](https://docs.tavily.com/documentation/api-credits). Read the [2.5.0 release notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0).
+Web search and automatic archiving are desktop-only in this release. Mobile retains its existing Beta features; real iOS and Android device validation is not complete. Tavily requires a separate account and API key. Each connection test makes one basic search and consumes 1 credit; quotas and pricing follow [Tavily's current policy](https://docs.tavily.com/documentation/api-credits). Read the [2.5.1 release notes](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1).
 
 ## Features
 
@@ -113,7 +115,7 @@ If EchoInk Agent is available in the Obsidian Community Plugins directory:
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.5.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [2.5.1 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1).
 2. Create this directory inside your vault:
 
 ```text
@@ -190,7 +192,7 @@ Open **Settings → EchoInk Agent → Review**:
 ### Upgrading from 2.1.0 or 2.0.3
 
 - Upgrade in place without rebuilding conversations, Knowledge, or long-term memory. Saved Provider and model settings are upgraded automatically.
-- 2.5.0 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
+- 2.5.1 does not rewrite content already stored in old conversations. If an older conversation already contains repeated answers or failed turns, create a new conversation after upgrading.
 - Users who completed the guide may not see it again after upgrading. To replay it, disable and re-enable EchoInk in Community plugins; the completion screen also offers Replay.
 
 ### Upgrading from 1.x

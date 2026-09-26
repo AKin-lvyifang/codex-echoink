@@ -9,7 +9,7 @@
 <p align="center">管理你的 Obsidian 知识，也在每次使用中更懂你。</p>
 
 <p align="center">
-  <a href="#250-亮点">2.5.0 亮点</a> ·
+  <a href="#251-亮点">2.5.1 亮点</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#安装">安装</a> ·
   <a href="#快速开始桌面端">快速开始</a> ·
@@ -21,18 +21,20 @@
 <p align="center">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
     <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：桌面端与移动端 Beta">
-    <img src="https://img.shields.io/badge/version-2.5.0-0EA5E9?style=flat-square" alt="版本 2.5.0">
+    <img src="https://img.shields.io/badge/version-2.5.1-0EA5E9?style=flat-square" alt="版本 2.5.1">
     <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0"><strong>下载 2.5.0</strong></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1"><strong>下载 2.5.1</strong></a>
 </p>
 
 EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持续对话，整理和维护当前 Vault，把长期有用的信息保存为可查看、可修正的记忆，并随着使用逐渐形成自己的工作方式。无需安装 Codex CLI；连接一个支持的模型服务后即可开始使用。
 
-## 2.5.0 亮点
+## 2.5.1 亮点
+
+**修复 Codex 对话连接。** 修复桌面端 OpenAI Codex Beta 已授权并保存模型后，发送消息仍提示“网络连接中断”的问题。其余功能沿用 2.5.0。
 
 **桌面端新增联网搜索与会话自动归档。** 查资料时可以让 EchoInk 搜索网页，闲置对话也能按你选择的期限收进归档。
 
@@ -41,7 +43,7 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 - **让旧对话自动归档：** 在 **复盘 → 管理 → 自动归档** 选择 7、14、30 或 90 天。使用中的对话会被跳过，归档后仍可恢复。默认关闭，不需要模型或 API Key。
 - **小窗口也能正常操作：** 修复 Tavily 说明与开关在窄窗口下错位的问题。
 
-联网搜索和自动归档本版仅用于桌面端。移动端继续保留已有 Beta 功能；iOS 与 Android 尚未完成真机验证。Tavily 需要单独的账号和 API Key，连接测试会执行一次 basic 搜索并消耗 1 credit；额度与价格以 [Tavily 官方政策](https://docs.tavily.com/documentation/api-credits) 为准。查看 [2.5.0 更新介绍与用法](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0)。
+联网搜索和自动归档本版仅用于桌面端。移动端继续保留已有 Beta 功能；iOS 与 Android 尚未完成真机验证。Tavily 需要单独的账号和 API Key，连接测试会执行一次 basic 搜索并消耗 1 credit；额度与价格以 [Tavily 官方政策](https://docs.tavily.com/documentation/api-credits) 为准。查看 [2.5.1 更新介绍与用法](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1)。
 
 ## 主要功能
 
@@ -113,7 +115,7 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 
 ### 手动安装
 
-1. 从 [2.5.0 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.0) 下载 `main.js`、`manifest.json` 和 `styles.css`。
+1. 从 [2.5.1 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.1) 下载 `main.js`、`manifest.json` 和 `styles.css`。
 2. 在 Vault 中创建目录：
 
 ```text
@@ -190,7 +192,7 @@ EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持�
 ### 从 2.1.0 或 2.0.3 升级
 
 - 可直接覆盖升级，无需重建会话、知识库或长期记忆；已保存的 Provider 与模型配置会自动升级。
-- 2.5.0 不会改写旧会话中已经保存的内容。如果某个旧会话已经留下重复回答或失败记录，升级后建议新建会话继续。
+- 2.5.1 不会改写旧会话中已经保存的内容。如果某个旧会话已经留下重复回答或失败记录，升级后建议新建会话继续。
 - 已完成引导的旧用户不一定会在升级后再次看到引导；需要重看时，在 Obsidian 社区插件中禁用再启用 EchoInk，完成页也支持“再看一遍”。
 
 ### 从 1.x 升级
