@@ -75,6 +75,9 @@ jobs:
       - name: Install regression dependencies
         run: npm ci
 
+      - name: Check Codex desktop transport and Pi stream integration
+        run: node scripts/codex-desktop-transport-tests.mjs
+
       - name: Check native identity persistence
         run: node src/tests/agent-identity-paths-tests.mjs
 

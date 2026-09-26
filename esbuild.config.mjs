@@ -8,6 +8,7 @@ import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resour
 import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
+import { piCodexDesktopTransportPlugin } from "./scripts/pi-codex-desktop-transport.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -719,6 +720,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
     reactDomScriptResourcesPlugin,
     piBraceExpansionPlugin,
     piOpenAICodexOAuthPlugin,
+    piCodexDesktopTransportPlugin,
     piRuntimeSurfacePlugin,
     piPhotonRuntimePlugin,
     piLeafModuleShimsPlugin,

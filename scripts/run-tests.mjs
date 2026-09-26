@@ -25,3 +25,8 @@ const desktopDataResult = spawnSync(process.execPath, ["scripts/desktop-string-p
   stdio: "inherit"
 });
 if (desktopDataResult.status !== 0) process.exit(desktopDataResult.status ?? 1);
+
+const codexTransportResult = spawnSync(process.execPath, ["scripts/codex-desktop-transport-tests.mjs"], {
+  stdio: "inherit"
+});
+if (codexTransportResult.status !== 0) process.exit(codexTransportResult.status ?? 1);
