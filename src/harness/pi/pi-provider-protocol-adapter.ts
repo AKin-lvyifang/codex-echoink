@@ -634,6 +634,8 @@ export function requireApiProviderProtocol(
   throw new Error("provider_protocol_unsupported");
 }
 
+// The Codex OAuth backend rejects temperature, including the zero supplied by
+// connection checks and chat defaults. Other Provider adapters keep their options.
 export function createOpenAICodexSseAdapter(
   upstream: ProviderStreams = openAICodexResponsesApi()
 ): ProviderStreams {
@@ -645,7 +647,7 @@ export function createOpenAICodexSseAdapter(
     ) => upstream.stream(
       model,
       context,
-      { ...options, transport: "sse" }
+      { ...options, temperature: undefined, transport: "sse" }
     ),
     streamSimple: (
       model: Model<Api>,
@@ -654,7 +656,7 @@ export function createOpenAICodexSseAdapter(
     ) => upstream.streamSimple(
       model,
       context,
-      { ...options, transport: "sse" }
+      { ...options, temperature: undefined, transport: "sse" }
     )
   });
 }

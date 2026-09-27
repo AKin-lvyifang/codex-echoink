@@ -253,6 +253,34 @@ function startPi(fixture, signal) {
     apiKey: token, signal, timeoutMs: 1000, maxRetries: 0
   });
 }
+await test("Codex connection and chat streams omit unsupported temperature while preserving completion events", async () => {
+  for (const method of ["stream", "streamSimple"]) {
+    const fixture = host();
+    nativeRequestFactory = fixture.factory;
+    const stream = createOpenAICodexSseAdapter()[method](
+      { ...model, id: "gpt-5.6-sol" },
+      { systemPrompt: "Connection check. Reply with OK only.", messages: [{ role: "user", content: "只回复 OK", timestamp: 1 }], tools: [] },
+      { apiKey: token, temperature: 0, maxTokens: 32, maxRetries: 0, timeoutMs: 1000 }
+    );
+    await until(() => fixture.requests.length, `${method} native request`);
+    const request = fixture.requests[0];
+    const payload = JSON.parse(Buffer.concat(request.writes).toString());
+    assert.equal(payload.model, "gpt-5.6-sol");
+    assert.equal(payload.instructions, "Connection check. Reply with OK only.");
+    assert.equal(payload.stream, true);
+    assert.equal(Object.hasOwn(payload, "temperature"), false,
+      "Codex OAuth rejects temperature; both preflight and chat must omit it");
+    const incoming = request.respond();
+    textStart(incoming);
+    incoming.emit("data", sse({ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "OK" }));
+    incoming.emit("data", sse({ type: method === "stream" ? "response.done" : "response.completed", response: { id: "fixture-response", status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } }));
+    incoming.emit("end");
+    const result = await bounded(stream.result(), `${method} Codex completion`);
+    assert.equal(result.stopReason, "stop");
+    assert.equal(result.content[0].text, "OK");
+  }
+});
+
 function textStart(incoming) {
   incoming.emit("data", sse({ type: "response.created", response: { id: "fixture-response" } }));
   incoming.emit("data", sse({ type: "response.output_item.added", output_index: 0, item: { id: "fixture-message", type: "message", role: "assistant", content: [] } }));
