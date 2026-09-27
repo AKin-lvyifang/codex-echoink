@@ -21,6 +21,7 @@ assert.ok(adapter, "production Codex SSE adapter must exist");
 const build = await esbuild.build({
   stdin: {
     contents: `export {createCodexDesktopFetch} from "./src/plugin/codex-desktop-fetch";
+      export {decodeCodexJwtBase64Url} from "./src/plugin/codex-protocol-compat";
       import {openAICodexResponsesApi} from "@earendil-works/pi-ai/api/openai-codex-responses.lazy";
       ${adapter.getText(adapterAst)}`,
     resolveDir: root,
@@ -60,7 +61,7 @@ const context = vm.createContext({
   setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask, console
 });
 vm.runInContext(build.outputFiles[0].text, context, { filename: "codex-desktop-transport-fixture.cjs" });
-const { createCodexDesktopFetch, createOpenAICodexSseAdapter } = module.exports;
+const { createCodexDesktopFetch, createOpenAICodexSseAdapter, decodeCodexJwtBase64Url } = module.exports;
 
 class NativeRequest extends EventEmitter {
   headers = new Map();
@@ -285,6 +286,98 @@ function textStart(incoming) {
   incoming.emit("data", sse({ type: "response.created", response: { id: "fixture-response" } }));
   incoming.emit("data", sse({ type: "response.output_item.added", output_index: 0, item: { id: "fixture-message", type: "message", role: "assistant", content: [] } }));
 }
+
+function writeSseEvents(incoming, events, newline = "\n") {
+  const bytes = Buffer.from(events.map(event => `data: ${JSON.stringify(event)}${newline}${newline}`).join(""));
+  // Single-byte chunks split CRLF pairs and multi-byte Chinese characters.
+  for (const byte of bytes) incoming.emit("data", Buffer.from([byte]));
+  incoming.emit("end");
+}
+
+function completeTextEvents() {
+  return [
+    { type: "response.created", response: { id: "fixture-response" } },
+    { type: "response.output_item.added", output_index: 0, item: { id: "fixture-message", type: "message", role: "assistant", content: [] } },
+    { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "你好" },
+    { type: "response.output_item.done", output_index: 0, item: { id: "fixture-message", type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "你好" }] } },
+    { type: "response.done", response: { id: "fixture-response", status: "completed", output: [], usage: { input_tokens: 20, input_tokens_details: { cached_tokens: 5 }, output_tokens: 10, output_tokens_details: { reasoning_tokens: 4 }, total_tokens: 30 } } }
+  ];
+}
+
+await test("Codex JWT accepts unpadded Base64URL and preserves UTF-8 claims", async () => {
+  const claims = { "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" }, name: "小明🙂𐐀x>" };
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  assert.ok(payload.includes("-") && payload.includes("_") && payload.length % 4 !== 0);
+  assert.deepEqual(JSON.parse(decodeCodexJwtBase64Url(payload)), claims);
+  const fixture = host(); nativeRequestFactory = fixture.factory;
+  const stream = createOpenAICodexSseAdapter().streamSimple(model, { messages: [{ role: "user", content: "fixture", timestamp: 1 }] }, {
+    apiKey: `fixture.${payload}.fixture`, maxRetries: 0, timeoutMs: 1000
+  });
+  await until(() => fixture.requests.length, "Base64URL JWT request");
+  assert.equal(fixture.requests[0].headers.get("chatgpt-account-id"), "fixture-account");
+  writeSseEvents(fixture.requests[0].respond(), completeTextEvents());
+  assert.equal((await bounded(stream.result(), "Base64URL JWT completion")).stopReason, "stop");
+
+  const invalid = host(); nativeRequestFactory = invalid.factory;
+  const rejected = createOpenAICodexSseAdapter().streamSimple(model, { messages: [] }, {
+    apiKey: "fixture.not!base64.fixture", maxRetries: 0
+  });
+  assert.equal((await bounded(rejected.result(), "invalid JWT rejection")).stopReason, "error");
+  assert.equal(invalid.requests.length, 0, "invalid JWT must fail before dispatch");
+});
+
+await test("Codex SSE handles LF, CRLF and trailing CR across chunks with text and usage intact", async () => {
+  for (const newline of ["\n", "\r\n", "\r"]) {
+    const fixture = host(); const stream = startPi(fixture);
+    await until(() => fixture.requests.length, "SSE line-ending request");
+    writeSseEvents(fixture.requests[0].respond(), completeTextEvents(), newline);
+    const result = await bounded(stream.result(), "SSE line-ending completion");
+    assert.equal(result.stopReason, "stop");
+    assert.equal(result.content[0].text, "你好");
+    assert.equal(JSON.parse(result.content[0].textSignature).phase, "final_answer");
+    assert.equal(result.usage.input, 15);
+    assert.equal(result.usage.cacheRead, 5);
+    assert.equal(result.usage.output, 10);
+    assert.equal(result.usage.reasoning, 4);
+    assert.equal(result.usage.totalTokens, 30);
+  }
+});
+
+await test("Codex CRLF tool call preserves arguments and encrypted reasoning for continuation", async () => {
+  const messages = [{ role: "user", content: "read fixture", timestamp: 1 }];
+  const tools = [{ name: "read", description: "Read a fixture", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+  const first = host(); nativeRequestFactory = first.factory;
+  const stream = createOpenAICodexSseAdapter().streamSimple(model, { messages, tools }, { apiKey: token, maxRetries: 0, timeoutMs: 1000 });
+  await until(() => first.requests.length, "tool request");
+  writeSseEvents(first.requests[0].respond(), [
+    { type: "response.created", response: { id: "fixture-tool-response" } },
+    { type: "response.output_item.added", output_index: 0, item: { id: "rs_fixture", type: "reasoning", summary: [] } },
+    { type: "response.output_item.done", output_index: 0, item: { id: "rs_fixture", type: "reasoning", summary: [{ type: "summary_text", text: "Read the file." }], encrypted_content: "encrypted-fixture" } },
+    { type: "response.output_item.added", output_index: 1, item: { id: "fc_fixture", call_id: "call_fixture", type: "function_call", name: "read", arguments: "" } },
+    { type: "response.function_call_arguments.delta", output_index: 1, delta: '{"path":' },
+    { type: "response.function_call_arguments.delta", output_index: 1, delta: '"note.md"}' },
+    { type: "response.output_item.done", output_index: 1, item: { id: "fc_fixture", call_id: "call_fixture", type: "function_call", name: "read", arguments: '{"path":"note.md"}' } },
+    { type: "response.completed", response: { id: "fixture-tool-response", status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } }
+  ], "\r\n");
+  const assistant = await bounded(stream.result(), "tool result");
+  assert.equal(assistant.stopReason, "toolUse");
+  const call = assistant.content.find(block => block.type === "toolCall");
+  assert.equal(call.arguments.path, "note.md");
+
+  const second = host(); nativeRequestFactory = second.factory;
+  const followup = createOpenAICodexSseAdapter().streamSimple(model, {
+    messages: [...messages, assistant, { role: "toolResult", toolCallId: call.id, toolName: "read", content: [{ type: "text", text: "fixture content" }], isError: false, timestamp: 2 }], tools
+  }, { apiKey: token, maxRetries: 0, timeoutMs: 1000 });
+  await until(() => second.requests.length, "tool continuation request");
+  const payload = JSON.parse(Buffer.concat(second.requests[0].writes).toString());
+  assert.equal(payload.input.find(item => item.type === "reasoning").encrypted_content, "encrypted-fixture");
+  assert.equal(payload.input.find(item => item.type === "function_call").call_id, "call_fixture");
+  assert.equal(payload.input.find(item => item.type === "function_call_output").call_id, "call_fixture");
+  assert.equal(payload.input.find(item => item.type === "function_call_output").output, "fixture content");
+  writeSseEvents(second.requests[0].respond(), completeTextEvents(), "\r\n");
+  assert.equal((await bounded(followup.result(), "tool continuation completion")).stopReason, "stop");
+});
+
 await test("production Pi build rewrite streams Codex text without browser fetch", async () => {
   const fixture = host(); const stream = startPi(fixture); const events = [];
   const consume = (async () => { for await (const event of stream) events.push(event); })();

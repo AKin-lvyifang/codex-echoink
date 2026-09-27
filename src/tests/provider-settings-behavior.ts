@@ -120,10 +120,12 @@ import {
   type LoopbackProviderRequest
 } from "../plugin/loopback-openai-provider-adapter";
 import {
+  classifyPiProviderConnectionFailure,
   createOpenAICodexSseAdapter,
   PiProviderProtocolDispatcher,
   PiProviderProtocolTransport,
 } from "../harness/pi/pi-provider-protocol-adapter";
+import { preventProviderRetryAfterPartial, providerFailureText } from "../harness/pi/provider-failure";
 import {
   createPiProviderModelDefinition
 } from "../harness/pi/production-pi-model-resolver";
@@ -281,6 +283,7 @@ export async function runProviderSettingsBehaviorTests(): Promise<void> {
   await runEditorTranslationServiceTests();
   runEditorTranslationSelectionTests();
   await assertProviderTextGenerationCompletionContract();
+  await assertCodexConnectionTestContract();
   assertPresetRequestMappings();
   assertAnthropicProviderContract();
   assertQwenProviderContract();
@@ -1007,6 +1010,132 @@ async function assertProviderTextGenerationCompletionContract(): Promise<void> {
   );
   assert.equal(providerSignal?.aborted, true);
   assert.equal(writebackAttempts, 0);
+}
+
+async function assertCodexConnectionTestContract(): Promise<void> {
+  const partial = providerTextMessage("error", "已收到的内容");
+  partial.errorMessage = preventProviderRetryAfterPartial("provider_request_timeout", partial);
+  assert.equal(isRetryableAssistantError(partial), false, "timeout must not restart a turn after partial output");
+  assert.match(providerFailureText(partial.errorMessage) ?? "", /超时/u);
+  assert.equal(classifyPiProviderConnectionFailure(400, "Unsupported parameter: temperature"), "request");
+  assert.equal(classifyPiProviderConnectionFailure(400, "The model is not supported when using Codex with a ChatGPT account"), "model");
+  assert.equal(classifyPiProviderConnectionFailure(200, "You have hit your ChatGPT usage limit"), "rate_limit");
+  assert.notEqual(providerFailureText("provider_http_failed"), providerFailureText("provider_protocol_mismatch"));
+  const draft: PiProviderConfigurationDraft = {
+    ...providerModelDiscoveryDraft("openai-completions"),
+    providerId: "openai-codex",
+    runtimeProviderId: "openai-codex",
+    apiProtocol: "openai-codex-responses",
+    authMode: "oauth",
+    baseUrl: "https://chatgpt.com/backend-api",
+    modelId: "gpt-5.6-sol",
+    reasoning: true
+  };
+  const host = { settings: structuredClone(DEFAULT_SETTINGS) };
+  let capturedOptions: (StreamOptions & { reasoningEffort?: string }) | undefined;
+  let requests = 0;
+  let nextResult = async (_signal?: AbortSignal): Promise<AssistantMessage> =>
+    providerTextMessage("stop", "OK");
+  const run: ProviderStreams["stream"] = (model, context, options) => {
+    requests++;
+    capturedOptions = options;
+    assert.equal(context.messages.length, 1);
+    assert.deepEqual(context.tools, []);
+    const output = createAssistantMessageEventStream();
+    void (async () => {
+      await options?.onResponse?.({
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      });
+      output.push({ type: "start", partial: fixtureAssistantMessage(model) });
+      const message = await nextResult(options?.signal);
+      if (message.stopReason === "error" || message.stopReason === "aborted") {
+        output.push({ type: "error", reason: message.stopReason, error: message });
+      } else {
+        output.push({ type: "done", reason: message.stopReason, message });
+      }
+    })();
+    return output;
+  };
+  const adapters = {
+    "openai-codex-responses": { stream: run, streamSimple: run },
+    "openai-completions": { stream: run, streamSimple: run }
+  };
+  const service = new PiProviderConfigurationService(host, {
+    adapters,
+    resolveOAuthAccessToken: async () => "fixture-codex-token"
+  });
+  const pendingAnswer = deferred<AssistantMessage>();
+  nextResult = async () => await pendingAnswer.promise;
+  let finished = false;
+  const pending = service.testConnection(draft).then((result) => {
+    finished = true;
+    return result;
+  });
+  await flushProviderModalTasks();
+  assert.equal(finished, false, "HTTP 200 and a started response are not a completed connection test");
+  assert.equal(capturedOptions?.timeoutMs, 60_000);
+  assert.equal(capturedOptions?.reasoningEffort, "low");
+  assert.equal(capturedOptions?.maxTokens, 32);
+  pendingAnswer.resolve(providerTextMessage("stop", "OK"));
+  assert.deepEqual(await pending, { status: "available" });
+
+  nextResult = async () => providerTextMessage("stop", "OK");
+  assert.deepEqual(await service.testConnection({
+    ...providerModelDiscoveryDraft("openai-completions"),
+    modelId: "fixture-model",
+    apiKey: "fixture-key"
+  }), { status: "available" });
+  assert.equal(capturedOptions?.timeoutMs, 10_000);
+  assert.equal(capturedOptions?.reasoningEffort, undefined);
+
+  for (const stopReason of ["length", "toolUse", "error", "aborted", "stop"] as const) {
+    nextResult = async () => providerTextMessage(
+      stopReason,
+      stopReason === "stop" ? " \n " : "partial answer"
+    );
+    assert.equal((await service.testConnection(draft)).status, "failed");
+  }
+
+  const limited = new PiProviderConfigurationService(host, {
+    adapters,
+    resolveOAuthAccessToken: async () => "fixture-codex-token",
+    timeoutMs: 5
+  });
+  for (const stopReason of ["aborted", "stop"] as const) {
+    nextResult = async (signal) => await new Promise((resolve) => {
+      signal?.addEventListener("abort", () => {
+        resolve(providerTextMessage(stopReason, "late answer"));
+      }, { once: true });
+    });
+    assert.deepEqual(await limited.testConnection(draft), {
+      status: "failed", failure: "timeout"
+    }, "an HTTP 200 stream that exceeds the limit must report timeout, even with late text");
+    assert.equal(capturedOptions?.timeoutMs, 5);
+  }
+
+  for (const [code, failure] of [
+    ["provider_oauth_relogin_required", "auth"],
+    ["provider_network_error", "network"],
+    ["provider_service_unavailable", "provider"],
+    ["provider_protocol_failed", "protocol"],
+    ["provider_rate_limited", "rate_limit"]
+  ] as const) {
+    const requestsBefore = requests;
+    const failedAuth = new PiProviderConfigurationService(host, {
+      adapters,
+      resolveOAuthAccessToken: async () => {
+        throw Object.assign(new Error("fixture private detail"), { code });
+      }
+    });
+    const result = await failedAuth.testConnection(draft);
+    assert.deepEqual(result, { status: "failed", failure });
+    assert.equal(requests, requestsBefore);
+    assert.equal(JSON.stringify(result).includes("private detail"), false);
+  }
+  assert.deepEqual(await new PiProviderConfigurationService(host).testConnection(draft), {
+    status: "failed", failure: "auth"
+  });
 }
 
 function providerTextMessage(
@@ -8566,7 +8695,7 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
     }),
     timeoutMs: 5
   });
-  assert.deepEqual(timedOut, { status: "failed", failure: "network" });
+  assert.deepEqual(timedOut, { status: "failed", failure: "timeout" });
   assert.equal(
     JSON.stringify([malformed, incomplete, oversized, timedOut])
       .includes(fixtureKey),
@@ -9724,7 +9853,8 @@ function fixtureAssistantMessage(
 
 async function assertProviderAuthResolutionFailureContract(): Promise<void> {
   const failureCode = async (
-    authMode: "api-key" | "oauth"
+    authMode: "api-key" | "oauth",
+    error: Error = new Error("fixture-auth-resolution-failed")
   ): Promise<string | undefined> => {
     const oauth = authMode === "oauth";
     const model = createPiProviderModelDefinition({
@@ -9741,7 +9871,7 @@ async function assertProviderAuthResolutionFailureContract(): Promise<void> {
       authorityId: "fixture-authority",
       storeSetId: "fixture-store-set",
       resolveAuthToken: async () => {
-        throw new Error("fixture-auth-resolution-failed");
+        throw error;
       }
     });
     const stream = await transport.stream({
@@ -9766,17 +9896,30 @@ async function assertProviderAuthResolutionFailureContract(): Promise<void> {
         timeoutMs: 1_000
       }
     });
-    return (await stream.result()).errorMessage;
+    const message = await stream.result();
+    assert.equal(JSON.stringify(message).includes("fixture private auth detail"), false);
+    return message.errorMessage;
   };
 
   assert.equal(
     await failureCode("oauth"),
-    "provider_oauth_relogin_required"
+    "provider_service_unavailable"
   );
   assert.equal(
     await failureCode("api-key"),
     "provider_api_key_missing"
   );
+  for (const code of [
+    "provider_network_error",
+    "provider_oauth_relogin_required",
+    "provider_service_unavailable",
+    "provider_rate_limited",
+    "provider_protocol_failed"
+  ]) {
+    assert.equal(await failureCode("oauth", Object.assign(
+      new Error("fixture private auth detail"), { code }
+    )), code);
+  }
 }
 
 function assertProviderTooltipBehavior(): void {
@@ -13052,7 +13195,11 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "archive-placement") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "codex-connection") {
+  await assertCodexConnectionTestContract();
+  await assertProviderAuthResolutionFailureContract();
+  console.log("PASS Codex connection timeout, low reasoning, complete answers and safe auth failures");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "archive-placement") {
   await assertSettingsAccessibleNamesAndOverflow();
   console.log("PASS automatic archive appears only in Review before archived conversations, with unchanged options/default");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "document-transport") {

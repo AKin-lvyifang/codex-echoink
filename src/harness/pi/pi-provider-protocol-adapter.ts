@@ -38,6 +38,7 @@ import {
 import {
   assistantHasPartialOutput,
   preventProviderRetryAfterPartial,
+  providerFailureCodeFromError,
   safeProviderFailureCode
 } from "./provider-failure";
 import { validProviderHistory } from "./provider-stream-codec";
@@ -64,6 +65,8 @@ export type PiProviderConnectionFailureKind =
   | "model"
   | "rate_limit"
   | "network"
+  | "timeout"
+  | "request"
   | "provider";
 
 const DEFAULT_PI_PROVIDER_PROTOCOL_ADAPTERS:
@@ -184,12 +187,15 @@ implements ControlledPiStreamPort {
     let apiKey: string;
     try {
       apiKey = await this.options.resolveAuthToken();
-    } catch {
+    } catch (error) {
       return failedStream(
         input.model,
-        input.provider.authMode === "oauth"
-          ? "provider_oauth_relogin_required"
-          : "provider_api_key_missing"
+        providerFailureCodeFromError(error)
+          ?? (input.provider.authMode === "oauth"
+            ? (error instanceof Error && /授权已失效/u.test(error.message)
+              ? "provider_oauth_relogin_required"
+              : thrownProviderFailureCode(null, error instanceof Error ? error.message : ""))
+            : "provider_api_key_missing")
       );
     }
     let responseStatus: number | null = null;
@@ -305,20 +311,45 @@ export function classifyPiProviderConnectionFailure(
   message: string
 ): PiProviderConnectionFailureKind {
   const normalized = message.toLowerCase();
+  // OAuth and local adapters provide content-free codes. Keep those categories
+  // instead of treating their human-readable messages as upstream response bodies.
+  switch (safeProviderFailureCode(message)) {
+    case "provider_oauth_relogin_required":
+    case "provider_auth_failed":
+    case "provider_api_key_missing": return "auth";
+    case "provider_model_invalid":
+    case "provider_model_unavailable": return "model";
+    case "provider_rate_limited": return "rate_limit";
+    case "provider_request_rejected": return "request";
+    case "provider_request_timeout": return "timeout";
+    case "provider_network_error":
+    case "provider_network_failed":
+    case "provider_network_interrupted": return "network";
+    case "provider_protocol_failed":
+    case "provider_protocol_mismatch":
+    case "provider_sse_json_invalid": return "protocol";
+    case "provider_service_unavailable":
+    case "provider_service_failed": return "provider";
+  }
   if (status === 401 || status === 403) return "auth";
-  if (status === 429) return "rate_limit";
+  if (status === 429 || /rate[ _-]?limit|usage[ _-]?limit|quota|too many requests/u.test(normalized)) {
+    return "rate_limit";
+  }
   if (
-    /(?:model).*(?:not found|does not exist|unsupported|invalid)/u.test(
+    /(?:model).*(?:not found|does not exist|unsupported|not supported|invalid|not available|unavailable|do not have access)/u.test(
       normalized
     )
     || /(?:unknown|invalid).*(?:model)/u.test(normalized)
   ) {
     return "model";
   }
-  if ([400, 404, 405, 422].includes(status ?? -1)) return "protocol";
+  if (status === 400 || status === 422) return "request";
+  if (status === 404 || status === 405) return "protocol";
   if (status !== null && status >= 500) return "provider";
+  if (/timeout|timed out|provider_request_timeout/u.test(normalized)) return "timeout";
+  if (/unsupported[_ ]parameter|invalid[_ ](?:request|parameter)|unknown[_ ]parameter/u.test(normalized)) return "request";
   if (
-    /timeout|timed out|abort|network|connection error|failed to fetch|fetch failed|enotfound|econn|dns|tls|certificate|offline/u.test(
+    /abort|network|connection error|failed to fetch|fetch failed|enotfound|econn|dns|tls|certificate|offline/u.test(
       normalized
     )
   ) {
@@ -615,6 +646,10 @@ function providerFailureCode(
       return "provider_rate_limited";
     case "network":
       return "provider_network_error";
+    case "timeout":
+      return "provider_request_timeout";
+    case "request":
+      return "provider_request_rejected";
     case "provider":
       return "provider_service_unavailable";
   }

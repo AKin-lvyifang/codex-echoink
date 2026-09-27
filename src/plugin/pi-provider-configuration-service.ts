@@ -10,6 +10,9 @@ import {
   type PiProviderConnectionFailureKind
 } from "../harness/pi/pi-provider-protocol-adapter";
 import {
+  providerFailureCodeFromError
+} from "../harness/pi/provider-failure";
+import {
   createPiNativeModelFromConfiguration
 } from "../harness/pi-native/pi-native-controlled-provider";
 import {
@@ -17,7 +20,8 @@ import {
   type CodexForObsidianSettings
 } from "../settings/settings";
 import {
-  resolveEchoInkPiCatalogModel
+  resolveEchoInkPiCatalogModel,
+  resolveEchoInkPiModelReasoningCapabilities
 } from "../settings/pi-model-catalog";
 import {
   apiProviderAuthMode,
@@ -39,6 +43,7 @@ import {
 } from "./configured-pi-provider-dispatcher";
 
 const PROVIDER_REQUEST_TIMEOUT_MS = 10_000;
+const CODEX_CONNECTION_TIMEOUT_MS = 60_000;
 const PROVIDER_MODEL_LIMIT = 200;
 
 export interface PiProviderConfigurationDraft {
@@ -145,8 +150,18 @@ export class PiProviderConfigurationService {
     let apiKey: string;
     try {
       apiKey = await this.resolveAuthToken(normalized);
-    } catch {
-      return { status: "failed", failure: "auth" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      return {
+        status: "failed",
+        failure: message === "provider_api_key_missing"
+          || message === "provider_oauth_missing"
+          ? "auth"
+          : classifyPiProviderConnectionFailure(
+            null,
+            providerFailureCodeFromError(error) ?? message
+          )
+      };
     }
     return await testProviderConnection({
       draft: normalized,
@@ -154,7 +169,7 @@ export class PiProviderConfigurationService {
       dispatcher: this.options.adapters
         ? new PiProviderProtocolDispatcher(this.options.adapters)
         : createConfiguredPiProviderProtocolDispatcher(normalized),
-      timeoutMs: this.options.timeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS
+      timeoutMs: this.options.timeoutMs
     });
   }
 
@@ -383,12 +398,20 @@ export async function testProviderConnection(input: {
   timeoutMs?: number;
 }): Promise<PiProviderConnectionTestResult> {
   const controller = new AbortController();
-  const timeoutMs = input.timeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS;
+  const codex = input.draft.providerId === "openai-codex";
+  const timeoutMs = input.timeoutMs ?? (codex
+    ? CODEX_CONNECTION_TIMEOUT_MS
+    : PROVIDER_REQUEST_TIMEOUT_MS);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let responseStatus: number | null = null;
   try {
+    const model = createProviderModelFromDraft(input.draft);
+    const reasoning = codex
+      ? resolveEchoInkPiModelReasoningCapabilities(model)
+        .enabledOptions[0]?.piLevel
+      : undefined;
     const stream = input.dispatcher.stream({
-      model: createProviderModelFromDraft(input.draft),
+      model,
       context: {
         systemPrompt: "Connection check. Reply with OK only.",
         messages: [{
@@ -401,6 +424,7 @@ export async function testProviderConnection(input: {
       apiKey: input.apiKey,
       options: {
         signal: controller.signal,
+        ...(reasoning && reasoning !== "off" ? { reasoning } : {}),
         maxTokens: 32,
         temperature: 0,
         cacheRetention: "none",
@@ -412,9 +436,11 @@ export async function testProviderConnection(input: {
       }
     });
     const message = await stream.result();
+    if (controller.signal.aborted) {
+      return { status: "failed", failure: "timeout" };
+    }
     if (
-      message.stopReason !== "error"
-      && message.stopReason !== "aborted"
+      message.stopReason === "stop"
       && assistantText(message).trim().length > 0
     ) {
       return { status: "available" };
@@ -429,12 +455,12 @@ export async function testProviderConnection(input: {
   } catch (error) {
     return {
       status: "failed",
-      failure: classifyPiProviderConnectionFailure(
-        responseStatus,
-        controller.signal.aborted
-          ? "timeout"
-          : error instanceof Error ? error.message : ""
-      )
+      failure: controller.signal.aborted
+        ? "timeout"
+        : classifyPiProviderConnectionFailure(
+          responseStatus,
+          error instanceof Error ? error.message : ""
+        )
     };
   } finally {
     clearTimeout(timer);

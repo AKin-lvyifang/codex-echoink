@@ -19,12 +19,15 @@ const PROVIDER_FAILURE_CODES = new Set([
   "provider_oauth_relogin_required",
   "provider_output_limit_reached",
   "provider_partial_interrupted_context",
+  "provider_partial_interrupted_deadline",
   "provider_partial_interrupted_network",
   "provider_partial_interrupted_rate",
   "provider_partial_interrupted_service",
   "provider_protocol_failed",
   "provider_protocol_mismatch",
   "provider_rate_limited",
+  "provider_request_rejected",
+  "provider_request_timeout",
   "provider_service_failed",
   "provider_service_unavailable",
   "provider_sse_json_invalid",
@@ -37,6 +40,13 @@ export function safeProviderFailureCode(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return PROVIDER_FAILURE_CODES.has(normalized) ? normalized : null;
+}
+
+export function providerFailureCodeFromError(error: unknown): string | null {
+  if (typeof error === "string") return safeProviderFailureCode(error);
+  if (!error || typeof error !== "object") return null;
+  return safeProviderFailureCode("code" in error ? error.code : null)
+    ?? safeProviderFailureCode("message" in error ? error.message : null);
 }
 
 export function assistantHasPartialOutput(
@@ -62,6 +72,9 @@ export function preventProviderRetryAfterPartial(
   if (!assistantHasPartialOutput(partial)) return safeCode;
   if (safeCode === "context_length_exceeded") {
     return "provider_partial_interrupted_context";
+  }
+  if (safeCode === "provider_request_timeout") {
+    return "provider_partial_interrupted_deadline";
   }
   if (
     safeCode === "provider_network_error"
@@ -106,7 +119,13 @@ export function providerFailureText(value: unknown): string | null {
       return "本次回答在上下文超限前已产生部分内容，已停止自动重试。";
     case "provider_partial_interrupted_rate":
     case "provider_rate_limited":
-      return "Provider 当前请求受限，回答未完成。";
+      return "Provider 请求过于频繁或额度已用尽，请稍后重试或检查账户额度。";
+    case "provider_request_timeout":
+      return "等待 Provider 回答超时，请稍后重试。";
+    case "provider_partial_interrupted_deadline":
+      return "等待后续回答超时，已保留收到的内容并停止自动重试。";
+    case "provider_request_rejected":
+      return "Provider 拒绝了请求，请检查模型或参数设置。";
     case "provider_partial_interrupted_service":
     case "provider_service_failed":
     case "provider_service_unavailable":
@@ -127,6 +146,7 @@ export function providerFailureText(value: unknown): string | null {
     case "controlled_transport_aborted":
       return "已停止生成。";
     case "provider_http_failed":
+      return "Provider 请求失败，请检查服务与请求设置。";
     case "provider_protocol_failed":
     case "provider_protocol_mismatch":
       return "Provider 返回格式不符合当前协议，回答未完成。";

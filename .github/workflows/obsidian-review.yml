@@ -77,6 +77,8 @@ jobs:
 
       - name: Check Codex desktop transport and Pi stream integration
         run: node scripts/codex-desktop-transport-tests.mjs
+      - name: Check Codex OAuth compatibility
+        run: node scripts/codex-oauth-compat-tests.mjs
 
       - name: Check native identity persistence
         run: node src/tests/agent-identity-paths-tests.mjs

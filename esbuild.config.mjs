@@ -9,6 +9,7 @@ import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
 import { piCodexDesktopTransportPlugin } from "./scripts/pi-codex-desktop-transport.mjs";
+import { piOpenAICodexOAuthPlugin } from "./scripts/pi-codex-oauth-compat.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -98,81 +99,6 @@ const piRendererNodeImportShimPlugin = {
           );
         }
         return { loader: "js", contents: rewritten };
-      }
-    );
-  }
-};
-
-/**
- * EchoInk exposes only Pi 0.82.1's OpenAI Codex OAuth flow. Pi deliberately
- * hides OAuth implementations behind a variable dynamic import for browser
- * builds, but an Obsidian single-file plugin has no package-relative module at
- * runtime. Rewrite only the OpenAI Codex loader to a static import and bridge
- * its Node builtins through the CommonJS path supported by Obsidian Node 20.
- */
-const piOpenAICodexOAuthPlugin = {
-  name: "echoink-pi-openai-codex-oauth",
-  setup(build) {
-    build.onLoad(
-      {
-        filter:
-          /[\\/]@earendil-works[\\/]pi-ai[\\/]dist[\\/]auth[\\/]oauth[\\/]load\.js$/
-      },
-      async (args) => {
-        const source = await fs.promises.readFile(args.path, "utf8");
-        const original = `export const loadOpenAICodexOAuth = async () => {
-    if (bundledLoaders)
-        return bundledLoaders.openaiCodex();
-    return (await importOAuthModule("./openai-codex.ts")).openaiCodexOAuth;
-};`;
-        if (!source.includes(original)) {
-          throw new Error(
-            "Pi OpenAI Codex OAuth loader changed; re-audit the static bundle bridge."
-          );
-        }
-        const rewritten = `import { openaiCodexOAuth as echoInkOpenAICodexOAuth } from "./openai-codex.js";\n`
-          + source.replace(original, `export const loadOpenAICodexOAuth = async () => {
-    if (bundledLoaders)
-        return bundledLoaders.openaiCodex();
-    return echoInkOpenAICodexOAuth;
-};`);
-        return {
-          loader: "js",
-          resolveDir: path.dirname(args.path),
-          contents: rewritten
-        };
-      }
-    );
-
-    build.onLoad(
-      {
-        filter:
-          /[\\/]@earendil-works[\\/]pi-ai[\\/]dist[\\/]auth[\\/]oauth[\\/]openai-codex\.js$/
-      },
-      async (args) => {
-        const source = await fs.promises.readFile(args.path, "utf8");
-        const original = `if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-    import("node:crypto").then((m) => {
-        _randomBytes = m.randomBytes;
-    });
-    import("node:http").then((m) => {
-        _http = m;
-    });
-}`;
-        if (!source.includes(original)) {
-          throw new Error(
-            "Pi OpenAI Codex OAuth Node bridge changed; re-audit Obsidian compatibility."
-          );
-        }
-        const rewritten = source.replace(original, `if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-    _randomBytes = require("node:crypto").randomBytes;
-    _http = require("node:http");
-}`);
-        return {
-          loader: "js",
-          resolveDir: path.dirname(args.path),
-          contents: rewritten
-        };
       }
     );
   }

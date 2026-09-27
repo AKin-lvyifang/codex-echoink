@@ -204,10 +204,12 @@ const ZH_CN = {
     connectionAvailable: "连接可用",
     connectionFailures: {
       auth: "API Key 无效或没有权限",
-      protocol: "Base URL 与所选协议可能不匹配",
-      model: "当前 Model ID 不可用",
-      rate_limit: "已连接，但当前额度不足或正在限流",
-      network: "无法连接服务",
+      protocol: "接口地址、协议或返回数据不匹配，请检查 Provider 设置。",
+      model: "模型不可用，请检查 Model ID 或当前账号的模型权限。",
+      rate_limit: "请求过于频繁或额度已用尽，请稍后重试或检查账户额度。",
+      network: "网络连接失败，请检查网络或代理后重试。",
+      timeout: "等待模型回答超时，请稍后重试。",
+      request: "请求参数被服务拒绝，请检查模型与参数设置。",
       provider: "Provider 暂时异常"
     },
     saveAndUse: "保存并使用",
@@ -461,10 +463,12 @@ const EN: SettingsCopy = {
     connectionAvailable: "Connection available",
     connectionFailures: {
       auth: "The API key is invalid or lacks permission",
-      protocol: "The Base URL may not match the selected protocol",
-      model: "The current Model ID is unavailable",
-      rate_limit: "Connected, but the account is rate-limited or out of quota",
+      protocol: "The endpoint, protocol, or response format does not match. Check provider settings.",
+      model: "The model is unavailable. Check the Model ID and your account's model access.",
+      rate_limit: "Requests are rate-limited or quota is exhausted. Retry later or check account usage.",
       network: "Could not connect to the service",
+      timeout: "Timed out waiting for the model's answer. Try again later.",
+      request: "The service rejected the request parameters. Check the model and parameter settings.",
       provider: "The provider is temporarily unavailable"
     },
     saveAndUse: "Save and use",

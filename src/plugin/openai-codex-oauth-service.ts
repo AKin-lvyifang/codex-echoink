@@ -11,11 +11,11 @@ import {
   openaiCodexProvider
 } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { CodexForObsidianSettings } from "../settings/settings";
+import { OpenAICodexAuthError, safeOpenAICodexAuthError } from "./codex-oauth-errors";
+
+export { OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE, OpenAICodexAuthError } from "./codex-oauth-errors";
 
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
-
-export const OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE =
-  "OpenAI Codex 授权已失效，请在设置中重新登录。";
 
 export type OpenAICodexAuthState =
   | "disconnected"
@@ -172,10 +172,10 @@ export class OpenAICodexOAuthService {
     try {
       const resolved = await this.models.getAuth(OPENAI_CODEX_PROVIDER_ID);
       const access = resolved?.auth.apiKey?.trim() ?? "";
-      if (!access) throw new Error("missing");
+      if (!access) throw new OpenAICodexAuthError("provider_oauth_relogin_required");
       return access;
-    } catch {
-      throw new Error(OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE);
+    } catch (error) {
+      throw safeOpenAICodexAuthError(error);
     }
   }
 
